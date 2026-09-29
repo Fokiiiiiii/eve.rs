@@ -54,6 +54,9 @@ public static class SimCommands
     public const byte GotoDirection = 2;
     public const byte Stop = 3;
     public const byte Dock = 4;
+    public const byte FollowBall = 5;
+    public const byte Orbit = 6;
+    public const byte AlignTo = 7;
 }
 
 public sealed record SimCommand(ulong SessionId, byte Code, IReadOnlyList<double> Args) : SimMessage;
@@ -70,5 +73,8 @@ public sealed record SimDocked(ulong SessionId, long StationId) : SimMessage;
 /// <summary>A command the scene cannot do.</summary>
 public sealed record SimRefused(ulong SessionId, byte Command, string Reason) : SimMessage;
 
-/// <summary>A <c>Dock</c> was accepted (the call is answered with the time, a FILETIME).</summary>
+/// <summary>A command was accepted, after the update it made. A <c>Dock</c> is answered with the time (a FILETIME).</summary>
 public sealed record SimAccepted(ulong SessionId, byte Command, long At) : SimMessage;
+
+/// <summary>A <c>Dock</c> could not be done from where the ship is: it now approaches the station, <paramref name="Distance"/> metres off its surface.</summary>
+public sealed record SimApproaching(ulong SessionId, byte Command, double Distance) : SimMessage;

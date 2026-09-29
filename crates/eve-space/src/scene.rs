@@ -6,9 +6,10 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use eve_destiny::{DESTINY_SPACE_FRICTION, Vec3, integrate_carbon_motion};
+use eve_destiny::Vec3;
 use eve_marshal::Value;
 
+use crate::motion::{self, Target};
 use crate::payload;
 use crate::ship::{Course, Ship, ShipSpec};
 use crate::wire::{filetime, id, int, real, tuple, vector};
@@ -38,7 +39,23 @@ pub enum Command {
     SetSpeedFraction(f64),
     GotoDirection(Vec3),
     Stop,
-    Dock { station_id: i64 },
+    Dock {
+        station_id: i64,
+    },
+    /// Approach a body and stay `range` metres off its surface.
+    FollowBall {
+        target_id: i64,
+        range: f64,
+    },
+    /// Circle a body `distance` metres off its surface.
+    Orbit {
+        target_id: i64,
+        distance: f64,
+    },
+    /// Turn towards a body and fly at it.
+    AlignTo {
+        target_id: i64,
+    },
 }
 
 impl Command {
@@ -49,6 +66,9 @@ impl Command {
             Self::GotoDirection(_) => 2,
             Self::Stop => 3,
             Self::Dock { .. } => 4,
+            Self::FollowBall { .. } => 5,
+            Self::Orbit { .. } => 6,
+            Self::AlignTo { .. } => 7,
         }
     }
 }
@@ -66,8 +86,10 @@ pub enum Departure {
 pub enum Out {
     /// A notification for the player's client; the host numbers it and sends it.
     Notify { session: SessionId, name: &'static str, id_type: &'static str, args: Vec<Value> },
-    /// A `Dock` was accepted (the call is answered with the time).
+    /// A command was accepted, after the update it made (a `Dock` is answered with the time it was accepted at).
     Accepted { session: SessionId, command: u8, at: i64 },
+    /// A `Dock` could not be done from here: the ship now approaches the station, `distance` metres off its surface.
+    Approaching { session: SessionId, command: u8, distance: f64 },
     /// The ship has docked: the host moves the character into the station.
     Docked { session: SessionId, station_id: i64 },
     /// A command the scene cannot do.
@@ -128,7 +150,7 @@ impl Scene {
     /// The ship of a session, as it is at `now`.
     pub fn ship(&mut self, session: SessionId, now: i64) -> Option<&Ship> {
         let pilot = self.pilots.get_mut(&session)?;
-        settle(pilot, now);
+        settle(pilot, &self.system, now);
         Some(&pilot.ship)
     }
 
@@ -196,17 +218,11 @@ impl Scene {
         let second = self.next_stamp(now);
         let system = Arc::clone(&self.system);
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
-        settle(pilot, now);
+        settle(pilot, &system, now);
         let ship = &pilot.ship;
         let ship_id = id(ship.spec.ship_id);
-        let heading = |action_stamp: u32| match ship.course {
-            Course::Goto => payload::action(
-                action_stamp,
-                "GotoDirection",
-                with_id(&ship_id, vector(ship.direction.x, ship.direction.y, ship.direction.z)),
-            ),
-            Course::Stop => payload::action(action_stamp, "Stop", [ship_id.clone()]),
-        };
+        let heading =
+            |action_stamp: u32| payload::action(action_stamp, heading_name(ship), heading_args(ship));
 
         let Ok(added) = payload::add_ship(first, ship, now) else { return Vec::new() };
         let Ok(state) = payload::set_state(second, &system, ship, now) else { return Vec::new() };
@@ -257,7 +273,7 @@ impl Scene {
         let stamp = self.next_stamp(now);
         let system = Arc::clone(&self.system);
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
-        settle(pilot, now);
+        settle(pilot, &system, now);
         match payload::set_state(stamp, &system, &pilot.ship, now) {
             Ok(state) => {
                 vec![Self::notify(session, "DoDestinyUpdate", payload::destiny_update([state], false))]
@@ -266,7 +282,8 @@ impl Scene {
         }
     }
 
-    /// A command of the player's. Movement is applied from `now`; what the client is told is one update at the next stamp.
+    /// A command of the player's. Movement is applied from `now`; what the client is told is one update at the next stamp (none when the
+    /// ship already does what it is asked), and the host is told the command was accepted, after the update.
     pub fn command(&mut self, session: SessionId, command: Command, now: i64) -> Vec<Out> {
         let code = command.code();
         if !self.pilots.contains_key(&session) {
@@ -275,37 +292,36 @@ impl Scene {
         if let Command::Dock { station_id } = command {
             return self.dock(session, station_id, now);
         }
-        let stamp = self.next_stamp(now);
-        let pilot = self.pilots.get_mut(&session).expect("checked above");
+        self.steer_pilot(session, command, now)
+    }
+
+    /// A movement command of a ship that is in the scene (settled first, at `now`).
+    fn steer_pilot(&mut self, session: SessionId, command: Command, now: i64) -> Vec<Out> {
+        let code = command.code();
+        let system = Arc::clone(&self.system);
+        let pilot = self.pilots.get_mut(&session).expect("the caller checked");
         if pilot.docking.is_some() {
             // a ship that is docking follows no orders
-            return Vec::new();
+            return vec![Out::Refused { session, command: code, reason: "DOCKING" }];
         }
-        settle(pilot, now);
-        let ship = &mut pilot.ship;
-        let ship_id = id(ship.spec.ship_id);
-        let change = match command {
-            Command::SetSpeedFraction(fraction) => {
-                ship.speed_fraction = if fraction.is_finite() { fraction.clamp(0.0, 1.0) } else { 0.0 };
-                ship.course = if ship.speed_fraction > 0.0 { Course::Goto } else { Course::Stop };
-                payload::action(stamp, "SetSpeedFraction", [ship_id, real(ship.speed_fraction)])
+        settle(pilot, &system, now);
+        let ship_id = id(pilot.ship.spec.ship_id);
+        match steer(&mut pilot.ship, &system, command) {
+            Steering::Refused(reason) => vec![Out::Refused { session, command: code, reason }],
+            Steering::Nothing => vec![Out::Accepted { session, command: code, at: now }],
+            Steering::Actions(actions) => {
+                let stamp = self.next_stamp(now);
+                let actions = actions.into_iter().map(|(name, args)| {
+                    let mut all = vec![ship_id.clone()];
+                    all.extend(args);
+                    payload::action(stamp, name, all)
+                });
+                vec![
+                    Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false)),
+                    Out::Accepted { session, command: code, at: now },
+                ]
             }
-            Command::GotoDirection(direction) => {
-                let Some(unit) = unit(direction) else {
-                    return vec![Out::Refused { session, command: code, reason: "NO_DIRECTION" }];
-                };
-                ship.direction = unit;
-                ship.course = Course::Goto;
-                payload::action(stamp, "GotoDirection", with_id(&ship_id, vector(unit.x, unit.y, unit.z)))
-            }
-            Command::Stop => {
-                ship.speed_fraction = 0.0;
-                ship.course = Course::Stop;
-                payload::action(stamp, "Stop", [ship_id])
-            }
-            Command::Dock { .. } => unreachable!("handled above"),
-        };
-        vec![Self::notify(session, "DoDestinyUpdate", payload::destiny_update([change], false))]
+        }
     }
 
     fn dock(&mut self, session: SessionId, station_id: i64, now: i64) -> Vec<Out> {
@@ -314,16 +330,26 @@ impl Scene {
         else {
             return vec![Out::Refused { session, command: code, reason: "STATION_NOT_FOUND" }];
         };
-        let stamp = self.next_stamp(now);
+        let system = Arc::clone(&self.system);
         let pilot = self.pilots.get_mut(&session).expect("the caller checked");
         if let Some(pending) = pilot.docking.as_ref().filter(|p| p.station_id == station_id) {
             return vec![Out::Accepted { session, command: code, at: pending.accepted_at }];
         }
-        settle(pilot, now);
-        let ship = &mut pilot.ship;
-        if surface_distance(ship, station.position, station.radius) > DOCKING_RANGE {
-            return vec![Out::Refused { session, command: code, reason: "DOCKING_APPROACH_REQUIRED" }];
+        settle(pilot, &system, now);
+        let distance = surface_distance(&pilot.ship, station.position, station.radius);
+        if distance > DOCKING_RANGE {
+            return self.approach(session, station_id, distance, now);
         }
+        let mut out = self.accept_docking(session, station_id, now);
+        out.push(Out::Accepted { session, command: code, at: now });
+        out
+    }
+
+    /// The ship is in range and the docking begins: the client is told, and the ship stops and waits for the docking to take its time.
+    fn accept_docking(&mut self, session: SessionId, station_id: i64, now: i64) -> Vec<Out> {
+        let stamp = self.next_stamp(now);
+        let pilot = self.pilots.get_mut(&session).expect("the caller checked");
+        let ship = &mut pilot.ship;
         ship.speed_fraction = 0.0;
         ship.course = Course::Stop;
         pilot.docking = Some(PendingDock { station_id, accepted_at: now });
@@ -341,8 +367,18 @@ impl Scene {
                     false,
                 ),
             ),
-            Out::Accepted { session, command: code, at: now },
         ]
+    }
+
+    /// A docking asked for from too far: the ship goes to the station on its own (following it to the docking range) and the host is told how far
+    /// off it was, for the client's message. As in the reference the docking is not done on arrival: the pilot asks again.
+    fn approach(&mut self, session: SessionId, station_id: i64, distance: f64, now: i64) -> Vec<Out> {
+        let code = Command::Dock { station_id }.code();
+        let follow = Command::FollowBall { target_id: station_id, range: DOCKING_RANGE };
+        let mut out = self.steer_pilot(session, follow, now);
+        out.retain(|o| !matches!(o, Out::Accepted { .. }));
+        out.push(Out::Approaching { session, command: code, distance });
+        out
     }
 
     fn notify_charid(session: SessionId, name: &'static str, args: Vec<Value>) -> Out {
@@ -352,8 +388,9 @@ impl Scene {
     /// The numbers of a ship in space changed (a skill finished, a module went on): the client is told the ones that differ.
     pub fn respec(&mut self, session: SessionId, spec: ShipSpec, now: i64) -> Vec<Out> {
         let stamp = self.next_stamp(now);
+        let system = Arc::clone(&self.system);
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
-        settle(pilot, now);
+        settle(pilot, &system, now);
         let old = std::mem::replace(&mut pilot.ship.spec, spec);
         let new = &pilot.ship.spec;
         let ship_id = id(new.ship_id);
@@ -401,19 +438,13 @@ fn with_id(ship_id: &Value, rest: [Value; 3]) -> Vec<Value> {
     args
 }
 
-/// A vector of length 1 along the given one, if it has a direction.
-fn unit(v: Vec3) -> Option<Vec3> {
-    let length = (v.x * v.x + v.y * v.y + v.z * v.z).sqrt();
-    (length.is_finite() && length > 1e-12).then(|| Vec3::new(v.x / length, v.y / length, v.z / length))
-}
-
 /// Which way a ship leaves a station: the station's own orientation when it has one, otherwise away from the star.
 fn undock_direction(station_id: i64, position: Vec3) -> Vec3 {
     if let Some(angles) = crate::slim::station_rotation(station_id) {
         let (yaw, pitch) = (angles[0].to_radians(), angles[1].to_radians());
         return Vec3::new(yaw.sin() * pitch.cos(), -pitch.sin(), yaw.cos() * pitch.cos());
     }
-    unit(position).unwrap_or(Vec3::new(0.0, 0.0, 1.0))
+    motion::unit(position).unwrap_or(Vec3::new(0.0, 0.0, 1.0))
 }
 
 fn surface_distance(ship: &Ship, station: Vec3, station_radius: f64) -> f64 {
@@ -422,33 +453,176 @@ fn surface_distance(ship: &Ship, station: Vec3, station_radius: f64) -> f64 {
     ((dx * dx + dy * dy + dz * dz).sqrt() - ship.spec.radius - station_radius).max(0.0)
 }
 
-/// Brings a ship's position and velocity to `now`: it eases towards the speed it is asked for, the way the client integrates it.
-fn settle(pilot: &mut Pilot, now: i64) {
+/// Brings a ship's position and velocity to `now`: it eases towards the speed it is asked for, the way the client integrates it, and a ship
+/// that follows or orbits a body is steered by where the body is.
+fn settle(pilot: &mut Pilot, system: &SolarSystem, now: i64) {
     let seconds = (now - pilot.settled_at) as f64 / TICKS_PER_SECOND as f64;
     pilot.settled_at = now;
     if seconds <= 0.0 {
         return;
     }
-    let ship = &mut pilot.ship;
-    let inertial_mass = ship.spec.mass * ship.spec.agility;
-    let agility_seconds = (inertial_mass / DESTINY_SPACE_FRICTION).max(0.05);
-    let cruise = match ship.course {
-        Course::Goto => ship.spec.max_velocity * ship.speed_fraction,
-        Course::Stop => 0.0,
+    let target = match pilot.ship.course {
+        Course::Follow { target, .. } | Course::Orbit { target, .. } => {
+            system.body(target).map(|body| Target { position: body.position, radius: body.radius })
+        }
+        Course::Goto | Course::Stop => None,
     };
-    let thrust = cruise / agility_seconds;
-    let acceleration =
-        Vec3::new(ship.direction.x * thrust, ship.direction.y * thrust, ship.direction.z * thrust);
-    let motion = integrate_carbon_motion(
-        ship.position,
-        ship.velocity,
-        acceleration,
-        inertial_mass,
-        DESTINY_SPACE_FRICTION,
-        seconds,
-    );
-    ship.position = motion.position;
-    ship.velocity = motion.velocity;
+    motion::advance(&mut pilot.ship, seconds, target);
+}
+
+/// What a movement command comes to once the ship has looked at it.
+enum Steering {
+    /// Accepted, and the ship already does it: the client has nothing to be told.
+    Nothing,
+    /// Accepted: the actions of one update, each with what follows the ship's id.
+    Actions(Vec<(&'static str, Vec<Value>)>),
+    Refused(&'static str),
+}
+
+/// The heading of a ship as the client's action names it.
+fn heading_name(ship: &Ship) -> &'static str {
+    match ship.course {
+        Course::Goto => "GotoDirection",
+        Course::Stop => "Stop",
+        Course::Follow { .. } => "FollowBall",
+        Course::Orbit { .. } => "Orbit",
+    }
+}
+
+/// The arguments of that action, the ship's id first.
+fn heading_args(ship: &Ship) -> Vec<Value> {
+    let ship_id = id(ship.spec.ship_id);
+    match ship.course {
+        Course::Goto => {
+            with_id(&ship_id, vector(ship.direction.x, ship.direction.y, ship.direction.z)).to_vec()
+        }
+        Course::Stop => vec![ship_id],
+        Course::Follow { target, range } => vec![ship_id, id(target), int(whole(range))],
+        Course::Orbit { target, distance } => vec![ship_id, id(target), int(whole(distance))],
+    }
+}
+
+/// A distance as the client's actions carry it: whole metres, cut off.
+fn whole(metres: f64) -> i64 {
+    metres.trunc().clamp(i32::MIN as f64, i32::MAX as f64) as i64
+}
+
+fn speed_of(velocity: Vec3) -> f64 {
+    (velocity.x * velocity.x + velocity.y * velocity.y + velocity.z * velocity.z).sqrt()
+}
+
+/// The speed a ship that is not moving at one has to be asked for to move: what it had, or `otherwise`.
+fn resumed_speed(ship: &Ship, otherwise: f64) -> (f64, bool) {
+    let before = ship.speed_fraction;
+    let after = if before > 0.0 { before } else { otherwise };
+    (after, (after - before).abs() > 1e-6)
+}
+
+fn speed_action(ship: &Ship, changed: bool, actions: &mut Vec<(&'static str, Vec<Value>)>) {
+    if changed {
+        actions.push(("SetSpeedFraction", vec![real(ship.speed_fraction)]));
+    }
+}
+
+/// Puts a movement command into effect on a ship whose motion is settled, and says what the client is to be told.
+fn steer(ship: &mut Ship, system: &SolarSystem, command: Command) -> Steering {
+    match command {
+        Command::SetSpeedFraction(fraction) => {
+            let fraction = if fraction.is_finite() { fraction.clamp(0.0, 1.0) } else { 0.0 };
+            if fraction <= 0.0 {
+                return stop(ship);
+            }
+            ship.speed_fraction = fraction;
+            if matches!(ship.course, Course::Stop) {
+                ship.course = Course::Goto;
+            }
+            Steering::Actions(vec![("SetSpeedFraction", vec![real(fraction)])])
+        }
+        Command::GotoDirection(direction) => {
+            let Some(unit) = motion::unit(direction) else { return Steering::Refused("NO_DIRECTION") };
+            let stopped = ship.speed_fraction <= 0.0 || matches!(ship.course, Course::Stop);
+            let same = matches!(ship.course, Course::Goto)
+                && ship.direction.x * unit.x + ship.direction.y * unit.y + ship.direction.z * unit.z
+                    >= 0.999_999;
+            if same && !stopped {
+                return Steering::Nothing;
+            }
+            ship.direction = unit;
+            ship.course = Course::Goto;
+            if stopped {
+                ship.speed_fraction = 1.0;
+            }
+            let mut actions = vec![("GotoDirection", vector(unit.x, unit.y, unit.z).to_vec())];
+            speed_action(ship, stopped, &mut actions);
+            Steering::Actions(actions)
+        }
+        Command::Stop => stop(ship),
+        Command::Dock { .. } => Steering::Refused("NOT_A_MOVEMENT"),
+        Command::FollowBall { target_id, range } => {
+            if !range.is_finite() {
+                return Steering::Refused("BAD_RANGE");
+            }
+            if system.body(target_id).is_none() {
+                return Steering::Refused("UNKNOWN_TARGET");
+            }
+            let range = range.max(0.0);
+            if matches!(ship.course, Course::Follow { target, range: had } if target == target_id && (had - range).abs() < 1.0)
+            {
+                return Steering::Nothing;
+            }
+            let (speed, changed) = resumed_speed(ship, 1.0);
+            ship.course = Course::Follow { target: target_id, range };
+            ship.speed_fraction = speed;
+            let mut actions = vec![("FollowBall", vec![id(target_id), int(whole(range))])];
+            speed_action(ship, changed, &mut actions);
+            Steering::Actions(actions)
+        }
+        Command::Orbit { target_id, distance } => {
+            if !distance.is_finite() {
+                return Steering::Refused("BAD_RANGE");
+            }
+            if system.body(target_id).is_none() {
+                return Steering::Refused("UNKNOWN_TARGET");
+            }
+            let distance = distance.max(0.0);
+            if matches!(ship.course, Course::Orbit { target, distance: had } if target == target_id && (had - distance).abs() < 1.0)
+                && ship.speed_fraction > 0.0
+            {
+                return Steering::Nothing;
+            }
+            let (speed, changed) = resumed_speed(ship, 1.0);
+            ship.course = Course::Orbit { target: target_id, distance };
+            ship.speed_fraction = speed;
+            let mut actions = vec![("Orbit", vec![id(target_id), int(whole(distance))])];
+            speed_action(ship, changed, &mut actions);
+            Steering::Actions(actions)
+        }
+        Command::AlignTo { target_id } => {
+            let Some(body) = system.body(target_id) else { return Steering::Refused("UNKNOWN_TARGET") };
+            let towards = Vec3::new(
+                body.position.x - ship.position.x,
+                body.position.y - ship.position.y,
+                body.position.z - ship.position.z,
+            );
+            let direction = motion::unit(towards).unwrap_or(ship.direction);
+            let (speed, changed) = resumed_speed(ship, 0.75);
+            ship.direction = direction;
+            ship.course = Course::Goto;
+            ship.speed_fraction = speed;
+            let mut actions = vec![("GotoDirection", vector(direction.x, direction.y, direction.z).to_vec())];
+            speed_action(ship, changed, &mut actions);
+            Steering::Actions(actions)
+        }
+    }
+}
+
+/// A ship told to stop: it says so unless it stands still already.
+fn stop(ship: &mut Ship) -> Steering {
+    let standing =
+        matches!(ship.course, Course::Stop) && ship.speed_fraction <= 0.0 && speed_of(ship.velocity) < 0.1;
+    ship.course = Course::Stop;
+    ship.speed_fraction = 0.0;
+    if standing { Steering::Nothing } else { Steering::Actions(vec![("Stop", Vec::new())]) }
 }
 
 #[cfg(test)]
@@ -704,7 +878,9 @@ pub(crate) mod tests {
         scene.pilots.get_mut(&SESSION).unwrap().ship.position =
             Vec3::new(1_000_000.0 + 1_000.0 + 47.0 + 10_000.0, 0.0, 0.0);
         let out = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
-        assert_eq!(out, [Out::Refused { session: SESSION, command: 4, reason: "DOCKING_APPROACH_REQUIRED" }]);
+        assert_eq!(action_names(&out[0]), ["FollowBall"], "it goes there by itself");
+        assert_eq!(out[1], Out::Approaching { session: SESSION, command: 4, distance: 10_000.0 });
+        assert_eq!(out.len(), 2);
         let out = scene.command(SESSION, Command::Dock { station_id: 42 }, NOON);
         assert_eq!(out, [Out::Refused { session: SESSION, command: 4, reason: "STATION_NOT_FOUND" }]);
         assert!(scene.contains(SESSION));
@@ -744,7 +920,10 @@ pub(crate) mod tests {
         scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
         let again = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON + seconds(1));
         assert_eq!(again, [Out::Accepted { session: SESSION, command: 4, at: NOON }]);
-        assert!(scene.command(SESSION, Command::SetSpeedFraction(1.0), NOON + seconds(1)).is_empty());
+        assert_eq!(
+            scene.command(SESSION, Command::SetSpeedFraction(1.0), NOON + seconds(1)),
+            [Out::Refused { session: SESSION, command: 1, reason: "DOCKING" }]
+        );
         assert_eq!(scene.ship(SESSION, NOON + seconds(1)).unwrap().speed_fraction, 0.0);
     }
 
@@ -757,9 +936,8 @@ pub(crate) mod tests {
             scene.command(SESSION, Command::Dock { station_id: STATION }, NOON)
         };
         assert!(matches!(dock_from(2_500.0).last(), Some(Out::Accepted { .. })));
-        assert_eq!(
-            dock_from(2_500.5),
-            [Out::Refused { session: SESSION, command: 4, reason: "DOCKING_APPROACH_REQUIRED" }]
+        assert!(
+            matches!(dock_from(2_500.5).last(), Some(Out::Approaching { distance, .. }) if *distance == 2_500.5)
         );
     }
 
@@ -777,6 +955,246 @@ pub(crate) mod tests {
         // and is at once within docking range of it, as the reference's ship was
         let out = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
         assert!(matches!(out.last(), Some(Out::Accepted { .. })));
+    }
+
+    /// The arguments (without the ship's id) of the actions in an update, by name.
+    fn actions_of(out: &Out) -> Vec<(String, Vec<Value>)> {
+        let Out::Notify { args, .. } = out else { return Vec::new() };
+        let Some(Value::List(actions)) = args.first() else { return Vec::new() };
+        actions
+            .iter()
+            .map(|a| {
+                let Value::Tuple(pair) = a else { panic!("{a:?}") };
+                let Value::Tuple(inner) = &pair[1] else { panic!("{:?}", pair[1]) };
+                let Value::Str(name) = &inner[0] else { panic!("{:?}", inner[0]) };
+                let Value::Tuple(args) = &inner[1] else { panic!("{:?}", inner[1]) };
+                (name.to_string(), args[1..].to_vec())
+            })
+            .collect()
+    }
+
+    fn accepted(command: u8, at: i64) -> Out {
+        Out::Accepted { session: SESSION, command, at }
+    }
+
+    #[test]
+    fn a_ship_told_to_follow_says_so_and_a_repeat_says_nothing() {
+        let mut scene = scene();
+        let out = scene.command(SESSION, Command::FollowBall { target_id: STATION, range: 3_000.0 }, NOON);
+        assert_eq!(
+            actions_of(&out[0]),
+            [("FollowBall".to_string(), vec![Value::Int(STATION), Value::Int(3_000)])]
+        );
+        assert_eq!(out[1], accepted(5, NOON));
+        assert_eq!(out.len(), 2);
+        // the same again, or within a metre of it, is done already
+        let again = scene.command(
+            SESSION,
+            Command::FollowBall { target_id: STATION, range: 3_000.5 },
+            NOON + seconds(1),
+        );
+        assert_eq!(again, [accepted(5, NOON + seconds(1))]);
+        // another range is a new order, and a fraction of a metre is cut off
+        let other = scene.command(
+            SESSION,
+            Command::FollowBall { target_id: STATION, range: 1_000.9 },
+            NOON + seconds(2),
+        );
+        assert_eq!(
+            actions_of(&other[0]),
+            [("FollowBall".to_string(), vec![Value::Int(STATION), Value::Int(1_000)])]
+        );
+    }
+
+    #[test]
+    fn a_ship_that_stands_still_is_set_going_by_the_command_that_follows_orbits_or_aligns() {
+        let stopped = || {
+            let mut scene = scene();
+            scene.command(SESSION, Command::Stop, NOON);
+            scene
+        };
+        let later = NOON + seconds(120);
+        let speed_set = |out: &[Out]| {
+            actions_of(&out[0]).into_iter().find(|(name, _)| name == "SetSpeedFraction").map(|(_, a)| a)
+        };
+
+        let follow =
+            stopped().command(SESSION, Command::FollowBall { target_id: STATION, range: 1_000.0 }, later);
+        assert_eq!(action_names(&follow[0]), ["FollowBall", "SetSpeedFraction"]);
+        assert_eq!(speed_set(&follow), Some(vec![Value::Real(1.0)]));
+
+        let orbit =
+            stopped().command(SESSION, Command::Orbit { target_id: STATION, distance: 5_000.0 }, later);
+        assert_eq!(action_names(&orbit[0]), ["Orbit", "SetSpeedFraction"]);
+        assert_eq!(speed_set(&orbit), Some(vec![Value::Real(1.0)]));
+
+        // aligning starts at three quarters
+        let align = stopped().command(SESSION, Command::AlignTo { target_id: STATION }, later);
+        assert_eq!(action_names(&align[0]), ["GotoDirection", "SetSpeedFraction"]);
+        assert_eq!(speed_set(&align), Some(vec![Value::Real(0.75)]));
+
+        // a ship already moving keeps its speed and says nothing of it
+        let moving = scene().command(SESSION, Command::AlignTo { target_id: STATION }, later);
+        assert_eq!(action_names(&moving[0]), ["GotoDirection"]);
+    }
+
+    #[test]
+    fn aligning_points_the_ship_at_the_body() {
+        let mut scene = scene();
+        let at = NOON + seconds(30);
+        let position = scene.ship(SESSION, at).unwrap().position;
+        let out = scene.command(SESSION, Command::AlignTo { target_id: STATION }, at);
+        let (_, args) = actions_of(&out[0]).remove(0);
+        let toward = motion::unit(Vec3::new(1_000_000.0 - position.x, -position.y, -position.z)).unwrap();
+        let Some(Value::Real(x)) = args.first() else { panic!("{args:?}") };
+        assert!((x - toward.x).abs() < 1e-12, "{x} against {}", toward.x);
+        let ship = scene.ship(SESSION, at).unwrap();
+        assert_eq!((ship.direction.x, ship.direction.y, ship.direction.z), (toward.x, toward.y, toward.z));
+        assert_eq!(ship.course, Course::Goto);
+    }
+
+    #[test]
+    fn a_range_below_nothing_is_nothing() {
+        let mut scene = scene();
+        let out = scene.command(SESSION, Command::FollowBall { target_id: STATION, range: -100.0 }, NOON);
+        assert_eq!(
+            actions_of(&out[0]),
+            [("FollowBall".to_string(), vec![Value::Int(STATION), Value::Int(0)])]
+        );
+        let out =
+            scene.command(SESSION, Command::Orbit { target_id: STATION, distance: -1.0 }, NOON + seconds(1));
+        assert_eq!(actions_of(&out[0]), [("Orbit".to_string(), vec![Value::Int(STATION), Value::Int(0)])]);
+        assert_eq!(
+            scene.ship(SESSION, NOON + seconds(1)).unwrap().course,
+            Course::Orbit { target: STATION, distance: 0.0 }
+        );
+    }
+
+    #[test]
+    fn a_ship_told_to_orbit_says_so_and_a_repeat_says_nothing() {
+        let mut scene = scene();
+        let out = scene.command(SESSION, Command::Orbit { target_id: STATION, distance: 5_000.0 }, NOON);
+        assert_eq!(
+            actions_of(&out[0]),
+            [("Orbit".to_string(), vec![Value::Int(STATION), Value::Int(5_000)])]
+        );
+        assert_eq!(out[1], accepted(6, NOON));
+        let again = scene.command(
+            SESSION,
+            Command::Orbit { target_id: STATION, distance: 5_000.0 },
+            NOON + seconds(1),
+        );
+        assert_eq!(again, [accepted(6, NOON + seconds(1))]);
+        let closer = scene.command(
+            SESSION,
+            Command::Orbit { target_id: STATION, distance: 2_500.7 },
+            NOON + seconds(2),
+        );
+        assert_eq!(
+            actions_of(&closer[0]),
+            [("Orbit".to_string(), vec![Value::Int(STATION), Value::Int(2_500)])]
+        );
+    }
+
+    #[test]
+    fn a_target_that_is_not_there_or_a_range_that_is_no_number_is_refused() {
+        let mut scene = scene();
+        let refused = |reason| vec![Out::Refused { session: SESSION, command: 0, reason }];
+        let mut check = |command: Command, reason: &'static str| {
+            let mut expected = refused(reason);
+            if let Out::Refused { command: code, .. } = &mut expected[0] {
+                *code = command.code();
+            }
+            assert_eq!(scene.command(SESSION, command, NOON), expected);
+        };
+        check(Command::FollowBall { target_id: 42, range: 500.0 }, "UNKNOWN_TARGET");
+        check(Command::Orbit { target_id: 42, distance: 500.0 }, "UNKNOWN_TARGET");
+        check(Command::AlignTo { target_id: 42 }, "UNKNOWN_TARGET");
+        check(Command::FollowBall { target_id: STATION, range: f64::NAN }, "BAD_RANGE");
+        check(Command::Orbit { target_id: STATION, distance: f64::INFINITY }, "BAD_RANGE");
+        // and nothing changed
+        assert_eq!(scene.ship(SESSION, NOON).unwrap().course, Course::Goto);
+    }
+
+    #[test]
+    fn a_ship_that_stands_still_is_not_told_to_stop_again() {
+        let mut scene = scene();
+        let first = scene.command(SESSION, Command::Stop, NOON);
+        assert_eq!(action_names(&first[0]), ["Stop"]);
+        // it has not slowed yet, so it is told again; a minute later it stands
+        assert_eq!(action_names(&scene.command(SESSION, Command::Stop, NOON + seconds(1))[0]), ["Stop"]);
+        let later = scene.command(SESSION, Command::Stop, NOON + seconds(120));
+        assert_eq!(later, [accepted(3, NOON + seconds(120))]);
+        // an order to go at no speed at all is an order to stop
+        let none = scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON + seconds(121));
+        assert_eq!(none, [accepted(1, NOON + seconds(121))]);
+    }
+
+    #[test]
+    fn a_direction_given_to_a_ship_that_stands_sets_it_going_and_the_same_direction_twice_says_nothing() {
+        let mut scene = scene();
+        let west = Vec3::new(-1.0, 0.0, 0.0);
+        let first = scene.command(SESSION, Command::GotoDirection(west), NOON);
+        assert_eq!(action_names(&first[0]), ["GotoDirection"], "it is going already");
+        let again = scene.command(SESSION, Command::GotoDirection(west), NOON + seconds(1));
+        assert_eq!(again, [accepted(2, NOON + seconds(1))]);
+
+        scene.command(SESSION, Command::Stop, NOON + seconds(2));
+        let restart = scene.command(SESSION, Command::GotoDirection(west), NOON + seconds(3));
+        assert_eq!(action_names(&restart[0]), ["GotoDirection", "SetSpeedFraction"]);
+        assert_eq!(scene.ship(SESSION, NOON + seconds(3)).unwrap().speed_fraction, 1.0);
+    }
+
+    #[test]
+    fn a_speed_fraction_keeps_the_course_but_wakes_a_stopped_ship() {
+        let mut scene = scene();
+        scene.command(SESSION, Command::Orbit { target_id: STATION, distance: 5_000.0 }, NOON);
+        scene.command(SESSION, Command::SetSpeedFraction(0.5), NOON + seconds(1));
+        let ship = scene.ship(SESSION, NOON + seconds(1)).unwrap();
+        assert_eq!(
+            (ship.course, ship.speed_fraction),
+            (Course::Orbit { target: STATION, distance: 5_000.0 }, 0.5)
+        );
+
+        scene.command(SESSION, Command::Stop, NOON + seconds(2));
+        scene.command(SESSION, Command::SetSpeedFraction(0.5), NOON + seconds(3));
+        assert_eq!(scene.ship(SESSION, NOON + seconds(3)).unwrap().course, Course::Goto);
+    }
+
+    #[test]
+    fn a_ship_that_follows_the_station_comes_to_rest_in_docking_range_and_docks_when_asked_again() {
+        let mut scene = scene();
+        // 50 km off the station's surface, at rest
+        scene.pilots.get_mut(&SESSION).unwrap().ship.position =
+            Vec3::new(1_000_000.0 + 1_047.0 + 50_000.0, 0.0, 0.0);
+        scene.pilots.get_mut(&SESSION).unwrap().ship.velocity = Vec3::ZERO;
+        let first = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
+        assert_eq!(
+            first.last(),
+            Some(&Out::Approaching { session: SESSION, command: 4, distance: 50_000.0 })
+        );
+        assert!(scene.poll(NOON + seconds(400)).is_empty(), "it does not dock by itself");
+
+        let ship = scene.ship(SESSION, NOON + seconds(400)).unwrap().clone();
+        let gap = ((ship.position.x - 1_000_000.0).powi(2) + ship.position.y.powi(2)).sqrt() - 47.0 - 1_000.0;
+        assert!((2_400.0..=2_500.0).contains(&gap), "it stands {gap} m off the surface");
+        assert!(speed(&ship) < 1.0);
+
+        let second = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON + seconds(400));
+        assert_eq!(action_names(&second[1]), ["SetBallMassive", "Stop"]);
+        assert_eq!(second.last(), Some(&accepted(4, NOON + seconds(400))));
+    }
+
+    #[test]
+    fn binding_a_ship_that_follows_sends_the_follow() {
+        let mut scene = scene();
+        scene.command(SESSION, Command::FollowBall { target_id: STATION, range: 3_000.0 }, NOON);
+        let out = scene.bind(SESSION, NOON);
+        let heading = actions_of(&out[3]);
+        assert_eq!(
+            heading.last().unwrap(),
+            &("FollowBall".to_string(), vec![Value::Int(STATION), Value::Int(3_000)])
+        );
     }
 
     #[test]

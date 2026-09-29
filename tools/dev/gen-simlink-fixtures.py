@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "..", "..", "oracle", "fixtures", "simlink", "messages.json")
 
 KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateState": 6, "Command": 7,
-         "ShipSpec": 8, "Notify": 9, "Docked": 10, "Refused": 11, "Accepted": 12, "EnterReply": 13}
+         "ShipSpec": 8, "Notify": 9, "Docked": 10, "Refused": 11, "Accepted": 12, "EnterReply": 13, "Approaching": 14}
 
 
 def s(text):  # u16 length + UTF-8
@@ -76,6 +76,8 @@ def build(m):
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + s(m["reason"]))
     if k == "Accepted":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + i64(m["at"]))
+    if k == "Approaching":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<d", m["distance"]))
     raise ValueError(k)
 
 
@@ -107,6 +109,12 @@ valid = [
      "args": [-0.8191520442889917, 0.0, 0.5735764363510462]},
     {"name": "command with none", "kind": "Command", "sessionId": "1790646377000015", "command": 3, "args": []},
     {"name": "dock command", "kind": "Command", "sessionId": "1790646377000015", "command": 4, "args": [60015249.0]},
+    {"name": "follow command", "kind": "Command", "sessionId": "1790646377000015", "command": 5,
+     "args": [60015249.0, 2500.0]},
+    {"name": "orbit command", "kind": "Command", "sessionId": "1790646377000015", "command": 6,
+     "args": [40009076.0, 5000.0]},
+    {"name": "align command", "kind": "Command", "sessionId": "1790646377000015", "command": 7,
+     "args": [60015249.0]},
     {"name": "new ship numbers", "kind": "ShipSpec", "sessionId": "1790646377000015", "ship": IBIS},
     {"name": "notification", "kind": "Notify", "sessionId": "1790646377000015", "notification": "OnSetTimeDilation",
      "idType": "clientID", "args": "7e0000000004010100"},
@@ -114,9 +122,13 @@ valid = [
      "idType": "clientID", "args": ""},
     {"name": "docked", "kind": "Docked", "sessionId": "1790646377000015", "stationId": "60015249"},
     {"name": "refused", "kind": "Refused", "sessionId": "1790646377000015", "command": 4,
-     "reason": "DOCKING_APPROACH_REQUIRED"},
+     "reason": "UNKNOWN_TARGET"},
     {"name": "accepted", "kind": "Accepted", "sessionId": "1790646377000015", "command": 4,
      "at": "134351527136350000"},
+    {"name": "a movement command accepted", "kind": "Accepted", "sessionId": "1790646377000015", "command": 5,
+     "at": "134351527136350000"},
+    {"name": "approaching", "kind": "Approaching", "sessionId": "1790646377000015", "command": 4,
+     "distance": 15975.3},
 ]
 for case in valid:
     case["hex"] = build(case).hex()

@@ -9,9 +9,9 @@ public class SpaceServiceTests
 {
     private static long Id(PyValue value) => Events.Number(value);
 
-    private static async Task<(Rig Rig, Eve.Characters.Created Character, ClientSession Session)> DockedAsync()
+    private static async Task<(Rig Rig, Eve.Characters.Created Character, ClientSession Session)> DockedAsync(TimeSpan? protection = null)
     {
-        var rig = await Rig.CreateAsync();
+        var rig = await Rig.CreateAsync(protection);
         var character = await rig.NewCharacterAsync();
         return (rig, character, await rig.SessionAsync(character));
     }
@@ -215,6 +215,10 @@ public class SpaceServiceTests
         await rig.BeyonceCallAsync(session, "CmdSetSpeedFraction", oid, new PyReal(0.5));
         await rig.BeyonceCallAsync(session, "CmdGotoDirection", oid, new PyReal(1), new PyInt(0), new PyReal(0));
         await rig.BeyonceCallAsync(session, "CmdStop", oid);
+        await rig.BeyonceCallAsync(session, "CmdFollowBall", oid, new PyInt((int)Rig.Station), new PyInt(2500));
+        await rig.BeyonceCallAsync(session, "CmdOrbit", oid, new PyInt((int)Rig.Station), new PyReal(5000.5));
+        await rig.BeyonceCallAsync(session, "CmdAlignTo", oid, new PyInt((int)Rig.Station));
+        await rig.BeyonceCallWithAsync(session, "CmdAlignTo", oid, ("dstID", new PyInt((int)Rig.Station))); // named, as the client may call it
         await rig.BeyonceCallAsync(session, "UpdateStateRequest", oid);
 
         Assert.Equal(
@@ -223,6 +227,10 @@ public class SpaceServiceTests
                 new SimCommand((ulong)session.SessionId, SimCommands.SetSpeedFraction, [0.5]),
                 new SimCommand((ulong)session.SessionId, SimCommands.GotoDirection, [1, 0, 0]),
                 new SimCommand((ulong)session.SessionId, SimCommands.Stop, []),
+                new SimCommand((ulong)session.SessionId, SimCommands.FollowBall, [Rig.Station, 2500]),
+                new SimCommand((ulong)session.SessionId, SimCommands.Orbit, [Rig.Station, 5000.5]),
+                new SimCommand((ulong)session.SessionId, SimCommands.AlignTo, [Rig.Station]),
+                new SimCommand((ulong)session.SessionId, SimCommands.AlignTo, [Rig.Station]),
                 new SimUpdateState((ulong)session.SessionId),
             }.Select(Describe),
             rig.Sim.Heard.Skip(before).Select(Describe));
@@ -232,7 +240,10 @@ public class SpaceServiceTests
         await rig.BeyonceCallAsync(session, "CmdStop", "N=65450:999");
         await rig.BeyonceCallAsync(session, "CmdSetSpeedFraction", oid, new PyStr("fast"));
         await rig.BeyonceCallAsync(session, "CmdGotoDirection", oid, new PyReal(1));
-        Assert.Equal(before + 4, rig.Sim.Heard.Count);
+        await rig.BeyonceCallAsync(session, "CmdFollowBall", oid, new PyStr("station"), new PyInt(500));
+        await rig.BeyonceCallAsync(session, "CmdOrbit", "N=65450:999", new PyInt((int)Rig.Station), new PyInt(500));
+        await rig.BeyonceCallAsync(session, "CmdAlignTo", oid, new PyInt(0));
+        Assert.Equal(before + 8, rig.Sim.Heard.Count);
     }
 
     private static string Describe(SimMessage message) => message switch
@@ -246,33 +257,75 @@ public class SpaceServiceTests
         MarshalCodec.Encode(Py.Tuple(new PyList([Py.Tuple(new PyInt(1790679102), Py.Tuple(new PyStr("Stop"), Py.Tuple(new PyLong(9988400001939))))]), PyBool.False)));
 
     [PgFact]
-    public async Task The_first_speed_command_while_the_protection_lasts_ends_it_and_the_client_is_told_once_after_the_update()
+    public async Task The_first_movement_the_simulation_accepts_while_the_protection_lasts_ends_it_and_the_client_is_told_once_after_the_update()
     {
         var (rig, _, session) = await DockedAsync();
         await using var _ = rig;
         await InSpaceAsync(rig, session);
         var oid = await rig.BindBeyonceAsync(session);
         Events.Of(session);
+        var id = (ulong)session.SessionId;
 
-        // going in a direction, or stopping, does not end it
-        await rig.BeyonceCallAsync(session, "CmdGotoDirection", oid, new PyReal(1), new PyInt(0), new PyReal(0));
-        await rig.BeyonceCallAsync(session, "CmdStop", oid);
+        // a command the simulation refuses costs the pilot nothing, and neither does a docking that is accepted
+        await rig.BeyonceCallAsync(session, "CmdAlignTo", oid, new PyInt(42));
+        rig.Sim.Say(new SimRefused(id, SimCommands.AlignTo, "UNKNOWN_TARGET"));
+        rig.Sim.Say(new SimAccepted(id, SimCommands.Dock, 134351527136350000));
         rig.Sim.Say(Update(session));
         Assert.Equal(["DoDestinyUpdate"], Events.Of(session).Select(e => e.Name));
 
-        // a speed does, and the client hears of it after what the simulation said the command did
-        await rig.BeyonceCallAsync(session, "CmdSetSpeedFraction", oid, new PyReal(0.5));
-        Assert.Empty(Events.Of(session));
+        // a movement it accepts does, whatever it is (stopping included), and the client hears of it after the update the command made
+        await rig.BeyonceCallAsync(session, "CmdStop", oid);
         rig.Sim.Say(Update(session));
+        Assert.Equal(["DoDestinyUpdate"], Events.Of(session).Select(e => e.Name));
+        rig.Sim.Say(new SimAccepted(id, SimCommands.Stop, 134351527136350000));
         var events = Events.Of(session);
-        Assert.Equal(["DoDestinyUpdate", "OnInvulnCancelled"], events.Select(e => e.Name));
-        Assert.Equal(("OnInvulnCancelled", "shipid"), (events[1].Name, events[1].IdType));
-        Assert.Equal(session.GetInt("shipid"), Id(events[1].Args[0]));
+        Assert.Equal(["OnInvulnCancelled"], events.Select(e => e.Name));
+        Assert.Equal(("OnInvulnCancelled", "shipid"), (events[0].Name, events[0].IdType));
+        Assert.Equal(session.GetInt("shipid"), Id(events[0].Args[0]));
 
         // once
         await rig.BeyonceCallAsync(session, "CmdSetSpeedFraction", oid, new PyReal(1));
         rig.Sim.Say(Update(session));
+        rig.Sim.Say(new SimAccepted(id, SimCommands.SetSpeedFraction, 134351527136350000));
         Assert.Equal(["DoDestinyUpdate"], Events.Of(session).Select(e => e.Name));
+    }
+
+    [PgFact]
+    public async Task When_the_time_is_up_and_the_pilot_has_not_flown_the_client_is_told_the_protection_ended_once()
+    {
+        var (rig, _, session) = await DockedAsync(TimeSpan.FromMilliseconds(150));
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        Events.Of(session);
+
+        await Rig.UntilAsync(() => Events.Of(session, clear: false).Any(e => e.Name == "OnInvulnCancelled"));
+        var events = Events.Of(session);
+        var told = events.Single(e => e.Name == "OnInvulnCancelled");
+        Assert.Equal(("OnInvulnCancelled", "shipid"), (told.Name, told.IdType));
+        Assert.Equal(session.GetInt("shipid"), Id(told.Args[0]));
+
+        // a movement after that has nothing left to end
+        var oid = await rig.BindBeyonceAsync(session);
+        await rig.BeyonceCallAsync(session, "CmdStop", oid);
+        rig.Sim.Say(new SimAccepted((ulong)session.SessionId, SimCommands.Stop, 134351527136350000));
+        await Task.Delay(300);
+        Assert.DoesNotContain(Events.Of(session), e => e.Name == "OnInvulnCancelled");
+    }
+
+    [PgFact]
+    public async Task A_pilot_who_flew_before_the_time_was_up_is_not_told_again_when_it_is()
+    {
+        var (rig, _, session) = await DockedAsync(TimeSpan.FromMilliseconds(400));
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        Events.Of(session);
+
+        await rig.BeyonceCallAsync(session, "CmdStop", oid);
+        rig.Sim.Say(new SimAccepted((ulong)session.SessionId, SimCommands.Stop, 134351527136350000));
+        Assert.Equal(["OnInvulnCancelled"], Events.Of(session).Select(e => e.Name));
+        await Task.Delay(800);
+        Assert.Empty(Events.Of(session));
     }
 
     [PgFact]
@@ -321,9 +374,40 @@ public class SpaceServiceTests
         Assert.Equal(new PyLong(134351527136350000), answer);
         Assert.Equal(Describe(new SimCommand((ulong)session.SessionId, SimCommands.Dock, [Rig.Station])), Describe(rig.Sim.Heard.Last()));
 
-        rig.Sim.DockAnswer = new DockReply(false, 0, "DOCKING_APPROACH_REQUIRED");
+        rig.Sim.DockAnswer = new DockReply(false, 0, "STATION_NOT_FOUND");
         Assert.Equal(PyNone.Instance, await rig.BeyonceCallAsync(session, "CmdDock", oid, new PyInt((int)Rig.Station), new PyLong(1)));
         Assert.True(rig.Space.IsInSpace(session), "a refused docking leaves the ship where it is");
+    }
+
+    [PgFact]
+    public async Task A_dock_from_beyond_the_range_is_answered_with_the_reference_user_error_and_the_distance_rounded_half_up()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+
+        async Task<MachoWrappedException> Asked(double distance)
+        {
+            rig.Sim.DockAnswer = new DockReply(false, 0, null, distance);
+            return await Assert.ThrowsAsync<MachoWrappedException>(() => rig.BeyonceCallAsync(session, "CmdDock", oid, new PyInt((int)Rig.Station), new PyLong(1)));
+        }
+
+        static long DistanceOf(MachoWrappedException error)
+        {
+            var values = (PyDict)((PyTuple)((PyTuple)((PyObjectEx)error.Error.Payload).Header).Items[1]).Items[1];
+            var (name, distance) = Assert.Single(values.Entries.Select(e => (JsSemantics.StringValue(e.Key), Id(e.Value))));
+            Assert.Equal("distance", name);
+            return distance;
+        }
+
+        var error = await Asked(15974.5);
+        Assert.True(error.Error.IsUserError);
+        Assert.Equal("DockingApproach", error.Error.UserErrorMessage);
+        Assert.Equal(15975, DistanceOf(error));
+        Assert.Equal(15974, DistanceOf(await Asked(15974.4)));
+        Assert.Equal(0, DistanceOf(await Asked(0.4)));
+        Assert.True(rig.Space.IsInSpace(session), "the ship is on its way, not gone");
     }
 
     [PgFact]

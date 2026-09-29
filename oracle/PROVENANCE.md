@@ -47,8 +47,13 @@ watches or is away, which needs a reference started with `EVEJS_SKILL_TRAINING_S
 and the replay is skipped by a server that trains at another).
 and `undock.json` a new character leaving its station, being sent the solar system, flying and docking again (the ship
 service's `Undock`, the ballpark bound for the system and `UpdateStateRequest`, the movement commands and `CmdDock`; each step
-with everything the client is sent, the destiny actions opened).
-`--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock` records one and leaves the others as they are.
+with everything the client is sent, the destiny actions opened),
+`movement.json` the orders a ship in space is given (`CmdAlignTo`, `CmdOrbit`, `CmdFollowBall`, `CmdStop`, `CmdSetSpeedFraction`, repeats, a
+target that is not there) with what the reference answers and sends, and `approach.json` a ship that flies out of docking range and is told to
+dock (the reference makes it follow the station, gives the user error `DockingApproach`, does not dock it by itself, and docks it when asked
+again in range; the file also holds the ship's distance from the station's surface every few seconds of the approach). Each is recorded
+with no other player in the system: another ship would appear in the balls.
+`--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement` records one and leaves the others as they are.
 
 `fixtures/simlink/messages.json` is not from the reference: it is what `tools/dev/gen-simlink-fixtures.py` writes, the golden
 frames of the link between the service host and the simulation (`docs/adr/0007`), a third writer of the format that the Rust

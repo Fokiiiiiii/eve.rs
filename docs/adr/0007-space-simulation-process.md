@@ -55,20 +55,23 @@ not exist is the scene: which balls a system has, who is where, how commands cha
    | `Leave` | 4 | host -> sim | `u64 sessionId`, `u8 why` (0 docked, 1 logged off, 2 jumped) |
    | `Bind` | 5 | host -> sim | `u64 sessionId`: the client bound the solar system's ballpark, send it the scene |
    | `UpdateState` | 6 | host -> sim | `u64 sessionId`: `UpdateStateRequest` |
-   | `Command` | 7 | host -> sim | `u64 sessionId`, `u8 command` (1 speed fraction, 2 go in a direction, 3 stop, 4 dock), `u8 argc`, `f64 args[argc]` (ids travel as `f64` up to 2^53) |
+   | `Command` | 7 | host -> sim | `u64 sessionId`, `u8 command` (1 speed fraction, 2 go in a direction, 3 stop, 4 dock, 5 follow a body `(id, range)`, 6 orbit a body `(id, distance)`, 7 align to a body `(id)`), `u8 argc`, `f64 args[argc]` (ids travel as `f64` up to 2^53) |
    | `ShipSpec` | 8 | host -> sim | `u64 sessionId`, the ship's spec: new numbers for a ship in space |
    | `Notify` | 9 | sim -> host | `u64 sessionId`, text `name`, text `idType`, bytes `marshalledArgs` (a marshalled tuple of the arguments) |
    | `Docked` | 10 | sim -> host | `u64 sessionId`, `i64 stationId`: the ship has arrived and the docking is done in space; the host moves the character |
    | `Refused` | 11 | sim -> host | `u64 sessionId`, `u8 command`, text `reason`: a command the scene cannot do (the host answers the client with the reason) |
-   | `Accepted` | 12 | sim -> host | `u64 sessionId`, `u8 command`, `i64 filetime`: a `Dock` was accepted (the call is answered with the time) |
+   | `Accepted` | 12 | sim -> host | `u64 sessionId`, `u8 command`, `i64 filetime`: a command was accepted, sent after the update it made (a `Dock` is answered with the time) |
+   | `Approaching` | 14 | sim -> host | `u64 sessionId`, `u8 command`, `f64 distance`: a `Dock` could not be done from here, the ship now follows the station; the host answers the call with `DockingApproach` (the distance is metres off the station's surface) |
 
    The ship's spec is `i64 shipId`, `i64 characterId`, `i32 typeId`, `i32 groupId`, `i32 categoryId`, text `name`,
    `i64 ownerId`, `i32 corporationId`, `i32 allianceId`, `i32 warFactionId`, `f64 securityStatus`, `f64 radius`,
    `f64 mass`, `f64 maxVelocity`, `f64 agility`, `f64 warpSpeedAu`, `f64 shieldRechargeMs`, `u32 moduleCount` and per
    module `i64 itemId`, `i32 typeId`, `i32 flag`.
 
-   Movement commands other than `Dock` are not answered when they succeed (the client's calls answer `None`); a
-   `Dock` is answered by `Accepted` or `Refused`, and an `Enter` by `EnterReply`.
+   The client's movement calls answer `None`, so the host does not wait for the sim; the sim still says what became of each command,
+   after the update it made: `Accepted` (also for an order the ship already follows, which makes no update) or `Refused` (with why).
+   The host needs that to end the undocking protection at the first movement that was accepted. A `Dock` is answered by `Accepted`,
+   `Approaching` or `Refused`, and an `Enter` by `EnterReply`.
 
 6. **The scene is a deterministic function of its inputs.** A scene has no clock: every call says what time it is (a
    FILETIME) and a ship's position and velocity are worked out from when they were last settled to that time with the
@@ -105,6 +108,12 @@ not exist is the scene: which balls a system has, who is where, how commands cha
   the front).
 
 ## Amendments
+
+- 2026-09-29, approach and orders: commands 5 to 7 (follow, orbit, align), `Accepted` after every accepted command and `Approaching`
+  (kind 14) for a dock from beyond the range. A ship that follows or orbits is steered stepwise (a quarter of a second at most) by where
+  its body is (`crates/eve-space/src/motion.rs`); `docs/compat/DEVIATIONS.md` #20 says how that differs from the client's own law. The
+  reference does not dock a ship that arrives by itself (`approach.json`: it follows the station to the docking range and waits for
+  the pilot to ask again), and nor does the sim.
 
 - 2026-09-29, while building the slice: `Enter` names the solar system and `EnterReply` answers it (the host must know
   whether an undock worked before it answers the client); `Accepted` answers a `Dock` (the call's answer is the time);

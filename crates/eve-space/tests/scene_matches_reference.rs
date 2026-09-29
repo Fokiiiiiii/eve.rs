@@ -125,11 +125,93 @@ fn each_command_is_answered_with_the_update_the_reference_sent() {
     for label in ["speed fraction", "go in a direction", "go in another direction", "stop"] {
         let (stamp, command, expected) = recorded_command(&recorded, label);
         let out = scene.command(SESSION, command, at_stamp(stamp));
-        assert_eq!(out.len(), 1, "{label}");
+        assert_eq!(out.len(), 2, "{label}: the update and the word that the command was accepted");
         assert_eq!(out_args(&out[0]), expected, "{label}");
         let Out::Notify { name, id_type, .. } = &out[0] else { unreachable!() };
         assert_eq!((*name, *id_type), ("DoDestinyUpdate", "clientID"));
+        assert_eq!(
+            out[1],
+            Out::Accepted { session: SESSION, command: command.code(), at: at_stamp(stamp) },
+            "{label}"
+        );
         assert_eq!(stamp_at(at_stamp(stamp)), stamp as u32);
+    }
+}
+
+/// The actions of an update as `(name, arguments after the ship's id)`.
+fn actions_without_the_ship(actions: &[Value]) -> Vec<(String, Vec<Value>)> {
+    actions
+        .iter()
+        .map(|a| {
+            let inner = &a["$tuple"][1]["$tuple"];
+            let args = inner[1]["$tuple"].as_array().unwrap();
+            (inner[0].as_str().unwrap().to_string(), args[1..].to_vec())
+        })
+        .collect()
+}
+
+#[test]
+fn each_order_is_answered_with_the_update_the_reference_sent() {
+    let Some((mut scene, _)) = scene_at(SIM_TIME) else { return };
+    let movement = fixture("movement.json");
+    let race = &movement["races"][0];
+    let station = race["stationID"].as_i64().unwrap();
+    let nowhere = 99_999_999;
+    scene.bind(SESSION, SIM_TIME);
+    let orders = [
+        ("align to the station", Command::AlignTo { target_id: station }),
+        ("align to what is not there", Command::AlignTo { target_id: nowhere }),
+        ("orbit the station", Command::Orbit { target_id: station, distance: 5000.0 }),
+        ("orbit it again", Command::Orbit { target_id: station, distance: 5000.0 }),
+        ("orbit closer", Command::Orbit { target_id: station, distance: 2500.7 }),
+        ("follow the station", Command::FollowBall { target_id: station, range: 3000.0 }),
+        ("follow it again", Command::FollowBall { target_id: station, range: 3000.0 }),
+        ("stop", Command::Stop),
+        ("follow from a standstill", Command::FollowBall { target_id: station, range: 1000.0 }),
+        ("speed fraction", Command::SetSpeedFraction(0.0)),
+        ("align from a standstill", Command::AlignTo { target_id: station }),
+        ("follow what is not there", Command::FollowBall { target_id: nowhere, range: 500.0 }),
+    ];
+    let mut now = SIM_TIME + 20_000_000;
+    for (label, command) in orders {
+        now += 15_000_000; // the recorder waited a second and a half after each order
+        let out = scene.command(SESSION, command, now);
+        let recorded = step(race, label);
+        let recorded_update = events_named(recorded, "DoDestinyUpdate");
+        let code = command.code();
+        match recorded_update.first() {
+            Some(update) => {
+                assert_eq!(out.len(), 2, "{label}");
+                let ours = out_args(&out[0]);
+                let ours = actions_without_the_ship(ours["$tuple"][0].as_array().unwrap());
+                let theirs = actions_without_the_ship(event_args(update)["$tuple"][0].as_array().unwrap());
+                assert_eq!(
+                    ours.iter().map(|a| &a.0).collect::<Vec<_>>(),
+                    theirs.iter().map(|a| &a.0).collect::<Vec<_>>(),
+                    "{label}"
+                );
+                for ((name, mine), (_, expected)) in ours.iter().zip(&theirs) {
+                    if name == "GotoDirection" {
+                        assert_eq!(shape(&json!(mine)), shape(&json!(expected)), "{label}");
+                    } else {
+                        assert_eq!(mine, expected, "{label}: {name}");
+                    }
+                }
+                assert_eq!(out[1], Out::Accepted { session: SESSION, command: code, at: now }, "{label}");
+            }
+            None if label.ends_with("not there") => {
+                assert_eq!(
+                    out,
+                    [Out::Refused { session: SESSION, command: code, reason: "UNKNOWN_TARGET" }],
+                    "{label}"
+                );
+            }
+            None => assert_eq!(
+                out,
+                [Out::Accepted { session: SESSION, command: code, at: now }],
+                "{label}: nothing to say"
+            ),
+        }
     }
 }
 

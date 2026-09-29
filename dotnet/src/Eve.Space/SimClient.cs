@@ -182,6 +182,9 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
             case SimRefused { Command: SimCommands.Dock } refused when _docking.TryRemove(refused.SessionId, out var refusing):
                 refusing.TrySetResult(new DockReply(false, 0, refused.Reason));
                 break;
+            case SimApproaching { Command: SimCommands.Dock } approaching when _docking.TryRemove(approaching.SessionId, out var approach):
+                approach.TrySetResult(new DockReply(false, 0, null, approaching.Distance));
+                break;
             default:
                 Received?.Invoke(message);
                 break;

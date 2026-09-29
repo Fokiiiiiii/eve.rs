@@ -69,13 +69,21 @@ fn command_of(code: u8, args: &[f64]) -> Option<Command> {
         (1, [fraction]) => Some(Command::SetSpeedFraction(*fraction)),
         (2, [x, y, z]) => Some(Command::GotoDirection(Vec3::new(*x, *y, *z))),
         (3, []) => Some(Command::Stop),
-        (4, [station])
-            if station.is_finite() && station.fract() == 0.0 && station.abs() < 9_007_199_254_740_992.0 =>
-        {
-            Some(Command::Dock { station_id: *station as i64 })
+        (4, [station]) if is_id(*station) => Some(Command::Dock { station_id: *station as i64 }),
+        (5, [target, range]) if is_id(*target) && range.is_finite() => {
+            Some(Command::FollowBall { target_id: *target as i64, range: *range })
         }
+        (6, [target, distance]) if is_id(*target) && distance.is_finite() => {
+            Some(Command::Orbit { target_id: *target as i64, distance: *distance })
+        }
+        (7, [target]) if is_id(*target) => Some(Command::AlignTo { target_id: *target as i64 }),
         _ => None,
     }
+}
+
+/// Whether a link number is an id: a whole number the link's `f64` holds exactly.
+fn is_id(value: f64) -> bool {
+    value.is_finite() && value.fract() == 0.0 && value.abs() < 9_007_199_254_740_992.0
 }
 
 impl Sim {
@@ -100,6 +108,9 @@ impl Sim {
                 }
             }
             Out::Accepted { session, command, at } => Message::Accepted { session_id: session, command, at },
+            Out::Approaching { session, command, distance } => {
+                Message::Approaching { session_id: session, command, distance }
+            }
             Out::Docked { session, station_id } => Message::Docked { session_id: session, station_id },
             Out::Refused { session, command, reason } => {
                 Message::Refused { session_id: session, command, reason: reason.to_string() }
@@ -350,7 +361,8 @@ mod tests {
         let mut sim = undocked();
         let out =
             sim.handle(Message::Command { session_id: SESSION, command: 1, args: vec![1.0] }, NOON).unwrap();
-        assert_eq!(names(&out), ["DoDestinyUpdate"]);
+        assert_eq!(names(&out[..1]), ["DoDestinyUpdate"]);
+        assert_eq!(out[1], Message::Accepted { session_id: SESSION, command: 1, at: NOON });
 
         // the ship has not gone anywhere yet, so it is still within range of the station
         let out = sim

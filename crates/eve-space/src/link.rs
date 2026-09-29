@@ -24,6 +24,7 @@ pub mod kind {
     pub const REFUSED: u8 = 11;
     pub const ACCEPTED: u8 = 12;
     pub const ENTER_REPLY: u8 = 13;
+    pub const APPROACHING: u8 = 14;
 }
 
 /// How a ship comes into space.
@@ -100,6 +101,11 @@ pub enum Message {
         session_id: u64,
         command: u8,
         at: i64,
+    },
+    Approaching {
+        session_id: u64,
+        command: u8,
+        distance: f64,
     },
 }
 
@@ -297,6 +303,7 @@ impl Message {
             Self::Docked { .. } => kind::DOCKED,
             Self::Refused { .. } => kind::REFUSED,
             Self::Accepted { .. } => kind::ACCEPTED,
+            Self::Approaching { .. } => kind::APPROACHING,
         }
     }
 
@@ -371,6 +378,11 @@ impl Message {
                 out.push(*command);
                 out.extend_from_slice(&at.to_le_bytes());
             }
+            Self::Approaching { session_id, command, distance } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.push(*command);
+                out.extend_from_slice(&distance.to_le_bytes());
+            }
         }
         out
     }
@@ -437,6 +449,9 @@ impl Message {
             kind::DOCKED => Message::Docked { session_id: r.u64()?, station_id: r.i64()? },
             kind::REFUSED => Message::Refused { session_id: r.u64()?, command: r.u8()?, reason: r.text()? },
             kind::ACCEPTED => Message::Accepted { session_id: r.u64()?, command: r.u8()?, at: r.i64()? },
+            kind::APPROACHING => {
+                Message::Approaching { session_id: r.u64()?, command: r.u8()?, distance: r.f64()? }
+            }
             other => return Err(DecodeError::UnknownKind(other)),
         };
         r.finish()?;

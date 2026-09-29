@@ -57,11 +57,12 @@ public class SimClientTests
     }
 
     [Fact]
-    public async Task A_dock_is_accepted_with_the_time_or_refused_with_the_reason()
+    public async Task A_dock_is_accepted_with_the_time_refused_with_the_reason_or_answered_with_the_distance_the_ship_now_goes()
     {
         var (sim, client) = await ConnectedAsync(message => message switch
         {
             SimCommand { SessionId: 7, Code: SimCommands.Dock } c => [new SimAccepted(c.SessionId, c.Code, 134351527136350000)],
+            SimCommand { SessionId: 9, Code: SimCommands.Dock } c => [new SimApproaching(c.SessionId, c.Code, 15974.6)],
             SimCommand { Code: SimCommands.Dock } c => [new SimRefused(c.SessionId, c.Code, "DOCKING_APPROACH_REQUIRED")],
             _ => [],
         });
@@ -70,6 +71,7 @@ public class SimClientTests
 
         Assert.Equal(new DockReply(true, 134351527136350000, null), await Within(client.DockAsync(7, 60015249)));
         Assert.Equal(new DockReply(false, 0, "DOCKING_APPROACH_REQUIRED"), await Within(client.DockAsync(8, 60015249)));
+        Assert.Equal(new DockReply(false, 0, null, 15974.6), await Within(client.DockAsync(9, 60015249)));
         var dock = sim.HeardNow().OfType<SimCommand>().First();
         Assert.Equal([60015249d], dock.Args);
     }
@@ -87,11 +89,13 @@ public class SimClientTests
         await sim.SayAsync(new SimNotify(7, "DoDestinyUpdate", "clientID", new byte[] { 1, 2, 3 }));
         await sim.SayAsync(new SimRefused(7, SimCommands.Stop, "NO_SHIP_IN_SPACE"));
         await sim.SayAsync(new SimDocked(7, 60015249));
-        await Until(() => heard.Count == 3);
+        await sim.SayAsync(new SimAccepted(7, SimCommands.FollowBall, 134351527136350000)); // a movement is accepted: nobody waits for that
+        await Until(() => heard.Count == 4);
 
         Assert.IsType<SimNotify>(heard[0]);
         Assert.Equal(new SimRefused(7, SimCommands.Stop, "NO_SHIP_IN_SPACE"), heard[1]);
         Assert.Equal(new SimDocked(7, 60015249), heard[2]);
+        Assert.Equal(new SimAccepted(7, SimCommands.FollowBall, 134351527136350000), heard[3]);
     }
 
     [Fact]

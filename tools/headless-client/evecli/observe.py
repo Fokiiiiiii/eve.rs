@@ -122,3 +122,37 @@ def wait_quietly(client: Client, seconds: float, until=None) -> list:
             break
         time.sleep(0.25)
     return seen
+
+
+def timed_events(who: Client, seconds: float, until=None) -> list:
+    """`wait_quietly` with the seconds since the call each event arrived at (`at`): what a ship that flies somewhere takes to get there."""
+    started = time.time()
+    seen: list = []
+    while time.time() - started < seconds:
+        for event in events_of(who):
+            event["at"] = round(time.time() - started, 2)
+            seen.append(event)
+        if until is not None and until(seen):
+            break
+        time.sleep(0.25)
+    return seen
+
+
+def ego_state(events: list, ship_id: int):
+    """Where the ship is and how big, from the `SetState` among the events: `(position, radius)` of its ball, or None."""
+    import struct
+
+    for event in events:
+        if event["name"] != "DoDestinyUpdate":
+            continue
+        actions, _ = event["args"]["$tuple"][1]["$tuple"][1]["$tuple"]
+        for action in actions:
+            name, args = action["$tuple"][1]["$tuple"]
+            if name != "SetState":
+                continue
+            fields = {k: v for k, v in args["$tuple"][0]["args"]["$dict"]}
+            buffer = bytes.fromhex(fields["state"]["$buffer"])
+            at = buffer.rfind(struct.pack("<q", ship_id))
+            if at >= 0:
+                return struct.unpack_from("<3d", buffer, at + 13), struct.unpack_from("<f", buffer, at + 9)[0]
+    return None

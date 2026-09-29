@@ -165,6 +165,38 @@
    "hex": "13000000074f2c3859955c0600040100000088149e8c41"
   },
   {
+   "name": "follow command",
+   "kind": "Command",
+   "sessionId": "1790646377000015",
+   "command": 5,
+   "args": [
+    60015249.0,
+    2500.0
+   ],
+   "hex": "1b000000074f2c3859955c0600050200000088149e8c41000000000088a340"
+  },
+  {
+   "name": "orbit command",
+   "kind": "Command",
+   "sessionId": "1790646377000015",
+   "command": 6,
+   "args": [
+    40009076.0,
+    5000.0
+   ],
+   "hex": "1b000000074f2c3859955c06000602000000a0eb138341000000000088b340"
+  },
+  {
+   "name": "align command",
+   "kind": "Command",
+   "sessionId": "1790646377000015",
+   "command": 7,
+   "args": [
+    60015249.0
+   ],
+   "hex": "13000000074f2c3859955c0600070100000088149e8c41"
+  },
+  {
    "name": "new ship numbers",
    "kind": "ShipSpec",
    "sessionId": "1790646377000015",
@@ -231,8 +263,8 @@
    "kind": "Refused",
    "sessionId": "1790646377000015",
    "command": 4,
-   "reason": "DOCKING_APPROACH_REQUIRED",
-   "hex": "250000000b4f2c3859955c0600041900444f434b494e475f415050524f4143485f5245515549524544"
+   "reason": "UNKNOWN_TARGET",
+   "hex": "1a0000000b4f2c3859955c0600040e00554e4b4e4f574e5f544152474554"
   },
   {
    "name": "accepted",
@@ -241,6 +273,22 @@
    "command": 4,
    "at": "134351527136350000",
    "hex": "120000000c4f2c3859955c060004304ffe890050dd01"
+  },
+  {
+   "name": "a movement command accepted",
+   "kind": "Accepted",
+   "sessionId": "1790646377000015",
+   "command": 5,
+   "at": "134351527136350000",
+   "hex": "120000000c4f2c3859955c060005304ffe890050dd01"
+  },
+  {
+   "name": "approaching",
+   "kind": "Approaching",
+   "sessionId": "1790646377000015",
+   "command": 4,
+   "distance": 15975.3,
+   "hex": "120000000e4f2c3859955c06000466666666a633cf40"
   }
  ],
  "invalid": [

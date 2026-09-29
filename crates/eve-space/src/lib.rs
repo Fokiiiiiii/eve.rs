@@ -7,6 +7,7 @@
 
 pub mod geo;
 pub mod link;
+pub mod motion;
 pub mod names;
 pub mod payload;
 pub mod scene;

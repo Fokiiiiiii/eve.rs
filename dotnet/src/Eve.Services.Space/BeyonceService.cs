@@ -103,6 +103,42 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
         return None;
     }
 
+    /// <summary><c>CmdFollowBall(targetID, range)</c>: go to a body and stay <c>range</c> metres off it.</summary>
+    [Method("CmdFollowBall")]
+    public PyValue CmdFollowBall(ServiceCall call)
+    {
+        if (_binding.Owns(call) && Number(call.Arg(0)) is { } target)
+        {
+            space.Command(call.Session, SimCommands.FollowBall, target, Number(call.Arg(1)) ?? 0);
+        }
+        return None;
+    }
+
+    /// <summary><c>CmdOrbit(targetID, distance)</c>: circle a body <c>distance</c> metres off it.</summary>
+    [Method("CmdOrbit")]
+    public PyValue CmdOrbit(ServiceCall call)
+    {
+        if (_binding.Owns(call) && Number(call.Arg(0)) is { } target)
+        {
+            space.Command(call.Session, SimCommands.Orbit, target, Number(call.Arg(1)) ?? 0);
+        }
+        return None;
+    }
+
+    /// <summary><c>CmdAlignTo(targetID)</c> (or <c>dstID=</c>): turn towards a body and fly at it.</summary>
+    [Method("CmdAlignTo")]
+    public PyValue CmdAlignTo(ServiceCall call)
+    {
+        var target = Number(call.Arg(0)) is { } positional && positional != 0
+            ? positional
+            : call.Kwarg("dstID") is { } named ? Number(named) : null;
+        if (_binding.Owns(call) && target is { } id && id > 0)
+        {
+            space.Command(call.Session, SimCommands.AlignTo, id);
+        }
+        return None;
+    }
+
     /// <summary>
     /// <c>CmdDock(stationID, shipID)</c>: dock at a station. The answer is the time the docking was accepted; the docking itself is done a few
     /// seconds later, when the client is told the session has changed.

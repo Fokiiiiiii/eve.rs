@@ -101,6 +101,11 @@ fn message_of(case: &Value) -> Message {
             command: number("command") as u8,
             at: wide(case, "at"),
         },
+        "Approaching" => Message::Approaching {
+            session_id: session_id(),
+            command: number("command") as u8,
+            distance: case["distance"].as_f64().unwrap(),
+        },
         other => panic!("unknown kind {other}"),
     }
 }

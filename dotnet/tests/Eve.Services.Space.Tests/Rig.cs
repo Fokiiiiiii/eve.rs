@@ -44,7 +44,7 @@ internal sealed class Rig : IAsyncDisposable
 
     private readonly string[] _schemas;
 
-    private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, StationCatalog stations, PgModuleStateStore modules)
+    private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, StationCatalog stations, PgModuleStateStore modules, TimeSpan protection)
     {
         Source = source;
         _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}"];
@@ -55,7 +55,7 @@ internal sealed class Rig : IAsyncDisposable
         Creation = creation;
         Modules = modules;
         Ships = new CharacterShips(source, statics, Characters, Items, Skills, modules);
-        Space = new SpaceSessions(Sim, Ships, statics, stations, () => ClockMs, Log.Add) { Registry = Registry };
+        Space = new SpaceSessions(Sim, Ships, statics, stations, () => ClockMs, Log.Add, protection) { Registry = Registry };
         Ship = new ShipService(Space, () => ClockMs);
         Beyonce = new BeyonceService(Space, () => ClockMs);
         Registry.Register(Ship);
@@ -90,7 +90,8 @@ internal sealed class Rig : IAsyncDisposable
 
     public BeyonceService Beyonce { get; }
 
-    public static async Task<Rig> CreateAsync()
+    /// <param name="protection">How long a ship is protected after it undocks (never, unless a test wants the end of it).</param>
+    public static async Task<Rig> CreateAsync(TimeSpan? protection = null)
     {
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
@@ -109,7 +110,7 @@ internal sealed class Rig : IAsyncDisposable
         await PgModuleStateStore.MigrateAsync(source, $"pf_{suffix}");
         var creation = new CharacterCreation(
             source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), await CreationCatalog.LoadAsync(sde, Station), modules);
-        return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation, await StationCatalog.LoadAsync(sde), modules);
+        return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation, await StationCatalog.LoadAsync(sde), modules, protection ?? Timeout.InfiniteTimeSpan);
     }
 
     /// <summary>A new character (Caldari), in its rookie ship in the station.</summary>
@@ -139,6 +140,18 @@ internal sealed class Rig : IAsyncDisposable
     public Task<PyValue> ShipCallAsync(ClientSession session, string method, string? bound = null, params PyValue[] args) => CallAsync(Ship, session, method, bound, args);
 
     public Task<PyValue> BeyonceCallAsync(ClientSession session, string method, string? bound = null, params PyValue[] args) => CallAsync(Beyonce, session, method, bound, args);
+
+    /// <summary>A call of <c>beyonce</c> with keyword arguments (no positional ones).</summary>
+    public async Task<PyValue> BeyonceCallWithAsync(ClientSession session, string method, string bound, params (string Name, PyValue Value)[] kwargs) =>
+        await ((IService)Beyonce).CallAsync(new ServiceCall
+        {
+            Method = method,
+            Args = [],
+            Kwargs = new PyDict([.. kwargs.Select(k => new KeyValuePair<PyValue, PyValue>(new PyStr(k.Name), k.Value))]),
+            Session = session,
+            CallId = new PyInt(1),
+            BoundObjectId = bound,
+        });
 
     /// <summary>Binds a service the way the dispatcher does for the client: the answer's bound object is registered and the session is given it.</summary>
     private async Task<string> BindAsync(IService service, ClientSession session, long place, long group)

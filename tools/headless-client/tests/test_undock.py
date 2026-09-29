@@ -208,24 +208,39 @@ def compare_answer(label: str, recorded: dict, ours: dict, where: str) -> list[s
     return [] if shape(recorded) == shape(ours) else [f"{where}: answer {shape(ours)} in place of {shape(recorded)}"]
 
 
+def arrive(who, race: dict, run: str) -> tuple[int, int, list, dict]:
+    """A character like the recorded one is created and chosen and stands in its station with its ship: `(character id, ship id, the
+    fitted modules' ids, the mapping from the recording's ids to this run's)`."""
+    recorded_run = re.search(r"(\d{6,})$", race["create"]["call"][2][0]).group(1)
+    service, method, *args = [race["create"]["call"][0], race["create"]["call"][1], *[base.revive(a, run, {}, recorded_run) for a in race["create"]["call"][2]]]
+    kind, made = base.attempt(who, service, method, *args)
+    assert kind == "ok", base.brief(made)
+    character = int(made)
+    assert base.attempt(who, "charUnboundMgr", "SelectCharacterID", character, None, False) == ("ok", None)
+    manager = who.call("invbroker", "MachoBindObject", (STATION, 15), None)[0]
+    hangar = who.call_bound(manager, "GetInventory", 10004)
+    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    info = who.call("dogmaIM", "MachoBindObject", (STATION, 15), ("GetAllInfo", (True, True, None), None))
+    fitted = [number(k) for k, _ in keyval(describe(info[1]))["shipInfo"]["$dict"]][1:]
+    mapping = {int(race["characterID"]): character, int(race["shipID"]): ship_id, **dict(zip(race["moduleIDs"], fitted))}
+    wait_quietly(who, 1.0)  # what the choosing of the character and the binds sent
+    return character, ship_id, fitted, mapping
+
+
+def outcome(call):
+    """What a call comes to: `(raw answer, None)` or `(None, the error described)`."""
+    try:
+        return call(), None
+    except p.MachoError as failure:
+        return None, describe(failure.payload)
+
+
 @pytest.mark.parametrize("race", UNDOCK["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_ship_undocks_flies_and_docks_as_the_reference_did(race):
     run = uuid.uuid4().hex[:10]
-    recorded_run = re.search(r"(\d{6,})$", race["create"]["call"][2][0]).group(1)
     problems: list[str] = []
     with base.connect(f"walk-undock-{run}") as who:
-        service, method, *args = [race["create"]["call"][0], race["create"]["call"][1], *[base.revive(a, run, {}, recorded_run) for a in race["create"]["call"][2]]]
-        kind, made = base.attempt(who, service, method, *args)
-        assert kind == "ok", base.brief(made)
-        character = int(made)
-        assert base.attempt(who, "charUnboundMgr", "SelectCharacterID", character, None, False) == ("ok", None)
-        manager = who.call("invbroker", "MachoBindObject", (STATION, 15), None)[0]
-        hangar = who.call_bound(manager, "GetInventory", 10004)
-        ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
-        info = who.call("dogmaIM", "MachoBindObject", (STATION, 15), ("GetAllInfo", (True, True, None), None))
-        fitted = [number(k) for k, _ in keyval(describe(info[1]))["shipInfo"]["$dict"]][1:]
-        mapping = {int(race["characterID"]): character, int(race["shipID"]): ship_id, **dict(zip(race["moduleIDs"], fitted))}
-        wait_quietly(who, 1.0)  # what the choosing of the character and the binds sent
+        _, ship_id, fitted, mapping = arrive(who, race, run)
 
         calls = {
             "bind the ship service": (lambda: who.call("ship", "MachoBindObject", (STATION, 15), None), 0.5, None),
@@ -244,11 +259,7 @@ def test_a_ship_undocks_flies_and_docks_as_the_reference_did(race):
             label = step["label"]
             where = f"race {race['raceID']} {label}"
             call, seconds, until = calls[label]
-            try:
-                raw = call()
-                error = None
-            except p.MachoError as failure:
-                raw, error = None, describe(failure.payload)
+            raw, error = outcome(call)
             if error is not None:
                 problems.append(f"{where}: error {base.brief(error)}")
                 continue
@@ -262,4 +273,3 @@ def test_a_ship_undocks_flies_and_docks_as_the_reference_did(race):
                 problems += compare_answer(label, step["ok"], answer, where)
             problems += compare_events(step["events"], events, where, mapping)
     assert problems == [], "\n".join(problems[:40])
-

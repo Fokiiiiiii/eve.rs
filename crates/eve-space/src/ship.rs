@@ -43,6 +43,10 @@ pub enum Course {
     Goto,
     /// Slowing to a halt.
     Stop,
+    /// Approaching a body and staying `range` metres off its surface.
+    Follow { target: i64, range: f64 },
+    /// Circling a body `distance` metres off its surface.
+    Orbit { target: i64, distance: f64 },
 }
 
 /// A ship in a scene: its spec and its motion.
@@ -66,6 +70,17 @@ impl Ship {
             legacy_mode: match self.course {
                 Course::Goto => LegacyMode::Goto,
                 Course::Stop => LegacyMode::Stop,
+                Course::Follow { .. } => LegacyMode::Follow,
+                Course::Orbit { .. } => LegacyMode::Orbit,
+            },
+            follow_target: match self.course {
+                Course::Follow { target, .. } | Course::Orbit { target, .. } => IdRef::Valid(target),
+                _ => IdRef::Absent,
+            },
+            follow_range: match self.course {
+                Course::Follow { range, .. } => range,
+                Course::Orbit { distance, .. } => distance,
+                _ => 0.0,
             },
             radius: self.spec.radius,
             position: self.position,

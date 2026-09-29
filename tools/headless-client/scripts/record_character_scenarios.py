@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record what the EVE.js reference does from login to a session with a character.
 
-    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock]
+    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement]
 
 The recording is the contract for the same path in eve.rs: `tests/test_login_to_character.py` replays the calls
 against any server and compares each answer with what is stored here, by shape, treating per-run values
@@ -30,7 +30,7 @@ from evecli import marshal as m  # noqa: E402
 from evecli import packet as p  # noqa: E402
 from evecli.client import Client  # noqa: E402
 from evecli.describe import describe  # noqa: E402
-from evecli.observe import events_of, hangar_and_ship, notifications_of, ship_of, training_view, wait_for_events, wait_quietly  # noqa: E402
+from evecli.observe import ego_state, events_of, hangar_and_ship, notifications_of, ship_of, timed_events, training_view, wait_for_events, wait_quietly  # noqa: E402
 
 # The school the reference offers each playable race (its minimal map), as the client would send one.
 SCHOOL_OF_RACE = {1: 35, 2: 33, 4: 31, 8: 37}
@@ -576,6 +576,138 @@ def record_undock(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         handle.write("\n")
 
 
+def record_approach(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """A ship flies out of docking range of its station and is told to dock: the reference makes it approach the station and tells the client
+    (a user error); it does not dock by itself, the pilot asks again. It takes about five minutes (the station's bounding sphere is 70 km
+    across), so one race."""
+    station = (311989870775.0, -13069156275.0, 156646281447.0)
+    station_radius = 70000.0
+    bloodline = 1
+    who = rec.login(f"approach{bloodline}")
+    created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Approacher {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
+    char_id = int(created["ok"])
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
+    hangar = who.call_bound(manager, "GetInventory", 10004)
+    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
+    events_of(who)
+
+    steps = []
+    ship = who.call("ship", "MachoBindObject", (60015249, 15), None)
+    steps.append({"label": "bind the ship service", "ok": describe(ship), "events": wait_quietly(who, 0.5)})
+    undock = {"label": "undock", "ok": describe(who.call_bound(ship[0], "Undock", ship_id, False))}
+    undock["events"] = wait_quietly(who, 2.0)
+    steps.append(undock)
+    beyonce = who.call("beyonce", "MachoBindObject", 30100032, None)
+    steps.append({"label": "bind the ballpark", "ok": describe(beyonce), "events": wait_quietly(who, 2.5)})
+
+    # the ship leaves the station at full speed; ask for its state until it is out of range (the docking range is 2.5 km off the surface)
+    started = time.time()
+    distance = 0.0
+    while time.time() - started < 420:
+        who.call_bound(beyonce[0], "UpdateStateRequest")
+        events = timed_events(who, 15.0)
+        state = ego_state(events, ship_id)
+        if state is not None:
+            (x, y, z), radius = state
+            distance = ((x - station[0]) ** 2 + (y - station[1]) ** 2 + (z - station[2]) ** 2) ** 0.5 - radius - station_radius
+            print(f"approach: {distance:.0f} m off the station's surface after {time.time() - started:.0f} s", file=sys.stderr)
+            if distance > 6000:
+                break
+    steps.append({"label": "out of range", "distanceFromSurface": distance, "seconds": round(time.time() - started, 1)})
+
+    entry = {"label": "dock from beyond the range"}
+    call_started = time.time()
+    try:
+        entry["ok"] = describe(who.call_bound(beyonce[0], "CmdDock", 60015249))
+    except p.MachoError as error:
+        entry["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+    entry["answeredAfter"] = round(time.time() - call_started, 2)
+    entry["events"] = timed_events(who, 1.0)
+    steps.append(entry)
+
+    # the reference approaches on its own; watch how it gets there (it does not dock by itself)
+    approach = []
+    arrived_at = time.time()
+    while time.time() - call_started < 150:
+        who.call_bound(beyonce[0], "UpdateStateRequest")
+        state = ego_state(timed_events(who, 4.0), ship_id)
+        if state is None:
+            continue
+        (x, y, z), radius = state
+        distance = ((x - station[0]) ** 2 + (y - station[1]) ** 2 + (z - station[2]) ** 2) ** 0.5 - radius - station_radius
+        approach.append({"seconds": round(time.time() - call_started, 1), "distanceFromSurface": distance})
+        print(f"approach: {distance:.0f} m off the station's surface after {time.time() - call_started:.0f} s (following)", file=sys.stderr)
+        if len(approach) >= 2 and abs(approach[-1]["distanceFromSurface"] - approach[-2]["distanceFromSurface"]) < 20 and distance < 5000:
+            break
+    steps.append({"label": "the approach", "readings": approach})
+
+    entry = {"label": "dock again, in range"}
+    try:
+        entry["ok"] = describe(who.call_bound(beyonce[0], "CmdDock", 60015249))
+    except p.MachoError as error:
+        entry["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+    entry["events"] = timed_events(who, 15.0, until=lambda seen: any(e["name"] == "$sessionchange" for e in seen))
+    steps.append(entry)
+    race = {"bloodlineID": bloodline, "raceID": RACE_OF_BLOODLINE[bloodline], "create": created, "characterID": char_id, "shipID": ship_id,
+            "moduleIDs": [ship_id + 1, ship_id + 2, ship_id + 3], "solarSystemID": 30100032, "stationID": 60015249, "steps": steps}
+    with open(os.path.join(out, "approach.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [race]}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+    who.close()
+
+
+def record_movement(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """A ship in space is told to align to, orbit and follow the station: what each command makes the reference send (one destiny update
+    with the action, and a speed fraction when the command changes it), and what it does with a target it does not know."""
+    bloodline = 1
+    who = rec.login(f"movement{bloodline}")
+    created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Mover {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
+    char_id = int(created["ok"])
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
+    hangar = who.call_bound(manager, "GetInventory", 10004)
+    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
+    events_of(who)
+
+    def step(label, call, wait=1.5):
+        entry = {"label": label}
+        try:
+            entry["ok"] = describe(call())
+        except p.MachoError as error:
+            entry["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+        entry["events"] = wait_quietly(who, wait)
+        return entry
+
+    steps = []
+    ship = who.call("ship", "MachoBindObject", (60015249, 15), None)
+    steps.append({"label": "bind the ship service", "ok": describe(ship), "events": wait_quietly(who, 0.5)})
+    steps.append(step("undock", lambda: who.call_bound(ship[0], "Undock", ship_id, False), 2.0))
+    beyonce = who.call("beyonce", "MachoBindObject", 30100032, None)
+    steps.append({"label": "bind the ballpark", "ok": describe(beyonce), "events": wait_quietly(who, 2.5)})
+    call = lambda name, *args: (lambda: who.call_bound(beyonce[0], name, *args))
+    steps.append(step("align to the station", call("CmdAlignTo", 60015249)))
+    steps.append(step("align to what is not there", call("CmdAlignTo", 99999999)))
+    steps.append(step("orbit the station", call("CmdOrbit", 60015249, 5000)))
+    steps.append(step("orbit it again", call("CmdOrbit", 60015249, 5000)))
+    steps.append(step("orbit closer", call("CmdOrbit", 60015249, 2500.7)))
+    steps.append(step("follow the station", call("CmdFollowBall", 60015249, 3000)))
+    steps.append(step("follow it again", call("CmdFollowBall", 60015249, 3000)))
+    steps.append(step("stop", call("CmdStop")))
+    steps.append(step("follow from a standstill", call("CmdFollowBall", 60015249, 1000)))
+    steps.append(step("speed fraction", call("CmdSetSpeedFraction", 0.0)))
+    steps.append(step("align from a standstill", call("CmdAlignTo", 60015249)))
+    steps.append(step("follow what is not there", call("CmdFollowBall", 99999999, 500)))
+    race = {"bloodlineID": bloodline, "raceID": RACE_OF_BLOODLINE[bloodline], "create": created, "characterID": char_id, "shipID": ship_id,
+            "moduleIDs": [ship_id + 1, ship_id + 2, ship_id + 3], "solarSystemID": 30100032, "stationID": 60015249, "steps": steps}
+    with open(os.path.join(out, "movement.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [race]}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+    who.close()
+
+
 def main() -> int:
     if len(sys.argv) < 4:
         print(__doc__)
@@ -588,10 +720,10 @@ def main() -> int:
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement}
     try:
         for name, record in parts.items():
-            if only == name or (only is None and name not in ("training_fast", "undock")):  # the fast one needs a reference started for it
+            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement")):  # the fast one needs a reference started for it
                 record(rec, out, meta, ancestry, run)
         if only in (None, "stations"):
             record_stations(rec, out, meta, ancestry, run, sde)

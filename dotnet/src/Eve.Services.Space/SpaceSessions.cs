@@ -35,10 +35,17 @@ public sealed class SpaceSessions : IDisposable
         /// <summary>A FILETIME: until when the ship cannot be hurt, unless a command of its pilot breaks it first.</summary>
         public long InvulnerableUntil { get; } = invulnerableUntil;
 
-        public bool InvulnerabilityEnded;
+        private int _ended;
 
-        /// <summary>The pilot gave a command that ends the protection: the client is told once the simulation has told it what the command did.</summary>
-        public bool EndAfterNextUpdate;
+        /// <summary>The timer that ends the protection when it runs out, if the pilot has not ended it by then.</summary>
+        public Timer? Expiry { get; set; }
+
+        /// <summary>Marks the protection ended; false when it had ended already (each ending is told once).</summary>
+        public bool End()
+        {
+            Expiry?.Dispose();
+            return Interlocked.Exchange(ref _ended, 1) == 0;
+        }
     }
 
     private readonly ISimulation _sim;
@@ -48,9 +55,12 @@ public sealed class SpaceSessions : IDisposable
     private readonly Func<long> _nowUnixMs;
     private readonly Action<string>? _log;
     private readonly ConcurrentDictionary<ulong, Pilot> _pilots = new();
+    private readonly TimeSpan _protection;
 
-    public SpaceSessions(ISimulation sim, CharacterShips ships, DogmaStatic statics, StationCatalog stations, Func<long> nowUnixMs, Action<string>? log = null)
+    /// <param name="protection">How long a ship that has just undocked is protected if its pilot does not fly it first (the client is told when it ends); <see cref="Timeout.InfiniteTimeSpan"/> for never.</param>
+    public SpaceSessions(ISimulation sim, CharacterShips ships, DogmaStatic statics, StationCatalog stations, Func<long> nowUnixMs, Action<string>? log = null, TimeSpan? protection = null)
     {
+        _protection = protection ?? TimeSpan.FromTicks(UndockInvulnerabilityTicks);
         _sim = sim;
         _ships = ships;
         _statics = statics;
@@ -133,6 +143,7 @@ public sealed class SpaceSessions : IDisposable
         var pilot = new Pilot(session, characterId, moved.Ship.Id, systemId, now + UndockInvulnerabilityTicks);
         _pilots[(ulong)session.SessionId] = pilot;
         session.Closed += () => OnSessionClosed(pilot);
+        pilot.Expiry = new Timer(_ => ProtectionRanOut(pilot), null, _protection, Timeout.InfiniteTimeSpan);
 
         var type = _statics.Type(moved.Ship.TypeId);
         session.SendNotification(
@@ -189,28 +200,39 @@ public sealed class SpaceSessions : IDisposable
     }
 
     /// <summary>
-    /// A movement command. The first speed command a pilot gives while the undocking protection lasts ends it: the client is told, after the
-    /// update the simulation sends for the command (the reference's order).
+    /// A movement command. The first one the simulation accepts while the undocking protection lasts ends it (whatever the command is, stopping
+    /// included): the client is told after the update the simulation sent for the command, which is the order the reference keeps
+    /// (<see cref="OnReceived"/>). A command the simulation refuses costs the pilot nothing.
     /// </summary>
     public void Command(ClientSession session, byte code, params double[] args)
     {
-        if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
+        if (_pilots.ContainsKey((ulong)session.SessionId))
         {
-            return;
-        }
-        _sim.Command((ulong)session.SessionId, code, args);
-        if (code == SimCommands.SetSpeedFraction && !pilot.InvulnerabilityEnded && FileTimeNow() < pilot.InvulnerableUntil)
-        {
-            pilot.EndAfterNextUpdate = true;
+            _sim.Command((ulong)session.SessionId, code, args);
         }
     }
 
     private void EndInvulnerability(Pilot pilot)
     {
-        if (!pilot.InvulnerabilityEnded && FileTimeNow() < pilot.InvulnerableUntil)
+        if (pilot.End())
         {
-            pilot.InvulnerabilityEnded = true;
             pilot.Session.SendNotification("OnInvulnCancelled", "shipid", InventoryWire.Id(pilot.ShipId));
+        }
+    }
+
+    /// <summary>The time is up and the pilot has not flown the ship: the client is told, as when a movement ends it.</summary>
+    private void ProtectionRanOut(Pilot pilot)
+    {
+        try
+        {
+            if (_pilots.TryGetValue((ulong)pilot.Session.SessionId, out var current) && ReferenceEquals(current, pilot))
+            {
+                EndInvulnerability(pilot);
+            }
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"the end of the protection of session {pilot.Session.SessionId} could not be told: {error.Message}");
         }
     }
 
@@ -227,6 +249,11 @@ public sealed class SpaceSessions : IDisposable
             if (reply.Accepted)
             {
                 return new PyLong(reply.At);
+            }
+            if (reply.ApproachDistance is { } distance)
+            {
+                // the ship is on its way to the station; the client is told how far it was (the reference rounds half up)
+                throw MachoErrors.ThrowUserError("DockingApproach", ("distance", new PyInt((long)Math.Max(0, Math.Floor(distance + 0.5)))));
             }
             _log?.Invoke($"docking of session {session.SessionId} at {stationId} refused: {reply.Reason}");
         }
@@ -247,11 +274,9 @@ public sealed class SpaceSessions : IDisposable
             {
                 case SimNotify notify when _pilots.TryGetValue(notify.SessionId, out var pilot):
                     Forward(pilot.Session, notify);
-                    if (pilot.EndAfterNextUpdate && notify.Name == "DoDestinyUpdate")
-                    {
-                        pilot.EndAfterNextUpdate = false;
-                        EndInvulnerability(pilot);
-                    }
+                    break;
+                case SimAccepted { Command: not SimCommands.Dock } accepted when _pilots.TryGetValue(accepted.SessionId, out var mover):
+                    EndInvulnerability(mover);
                     break;
                 case SimDocked docked when _pilots.TryGetValue(docked.SessionId, out var pilot):
                     _ = Task.Run(() => FinishDockingAsync(pilot, docked.StationId));
@@ -288,6 +313,7 @@ public sealed class SpaceSessions : IDisposable
         try
         {
             var session = pilot.Session;
+            pilot.End();
             pilot.Session.SendNotification("OnInvulnCancelled", "shipid", InventoryWire.Id(pilot.ShipId));
             ReleaseBoundObjects(session);
             var transition = await _ships.DockAsync(pilot.CharacterId, stationId);
@@ -333,6 +359,7 @@ public sealed class SpaceSessions : IDisposable
     {
         if (_pilots.TryRemove((ulong)pilot.Session.SessionId, out _))
         {
+            pilot.End();
             _sim.Leave((ulong)pilot.Session.SessionId, LeaveWhy.LoggedOff);
             _ = Task.Run(async () =>
             {

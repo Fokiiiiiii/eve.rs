@@ -1,5 +1,6 @@
 using Eve.Inventory;
 using Eve.Skills;
+using Eve.Wallet;
 using Npgsql;
 
 namespace Eve.Characters;
@@ -30,12 +31,22 @@ public sealed record Created(long CharacterId, long ShipId) : CreationOutcome;
 
 public sealed record CreationRefused(CreationRefusal Reason) : CreationOutcome;
 
+/// <summary>What a new character starts with besides its skills (the reference's development values).</summary>
+public sealed record StartingWallet(decimal Isk = 100_000m, long Plex = 2_222);
+
 /// <summary>
 /// Makes a character: the character itself, the rookie ship of its race docked in the hangar of the station it starts
-/// at, and the skills its race starts with, in one transaction (so a failure leaves none of them behind).
+/// at, the skills its race starts with and its wallet, in one transaction (so a failure leaves none of them behind).
 /// </summary>
 public sealed class CharacterCreation(
-    NpgsqlDataSource source, PgCharacterStore characters, PgItemStore items, PgSkillStore skills, SkillCatalog skillCatalog, CreationCatalog catalog)
+    NpgsqlDataSource source,
+    PgCharacterStore characters,
+    PgItemStore items,
+    PgSkillStore skills,
+    SkillCatalog skillCatalog,
+    PgWalletStore wallet,
+    StartingWallet startingWallet,
+    CreationCatalog catalog)
 {
     /// <summary>How many characters an account may have.</summary>
     public const int SlotsPerAccount = 3;
@@ -86,6 +97,7 @@ public sealed class CharacterCreation(
         var starting = skillCatalog.StartingSet(race.Id)
             ?? throw new InvalidOperationException($"race {race.Id} starts with a skill that is not in the skill catalog: the static data does not agree with itself");
         await skills.GrantAsync(connection, transaction, characterId, starting, cancellationToken);
+        await wallet.OpenAsync(connection, transaction, characterId, startingWallet.Isk, startingWallet.Plex, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new Created(characterId, shipId);
     }

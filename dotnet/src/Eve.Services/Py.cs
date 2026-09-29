@@ -13,6 +13,16 @@ public static class Py
 
     public static PyValue KeyVal(IEnumerable<KeyValuePair<PyValue, PyValue>> entries) => new PyObject(new PyStr("util.KeyVal"), new PyDict([.. entries]));
 
+    /// <summary>A <c>Rowset</c>: named columns and their rows (the client's table type for lists of records).</summary>
+    public static PyValue Rowset(IReadOnlyList<string> columns, IEnumerable<PyValue> lines) => new PyObject(
+        new PyStr("eve.common.script.sys.rowset.Rowset"),
+        new PyDict([
+            new(new PyStr("header"), new PyList([.. columns.Select(c => (PyValue)new PyStr(c))])),
+            new(new PyStr("columns"), new PyList([.. columns.Select(c => (PyValue)new PyStr(c))])),
+            new(new PyStr("RowClass"), new PyToken("util.Row")),
+            new(new PyStr("lines"), new PyList([.. lines])),
+        ]));
+
     public static PyList List(params PyValue[] items) => new(items);
 
     public static PyTuple Tuple(params PyValue[] items) => new(items);

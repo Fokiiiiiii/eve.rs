@@ -15,7 +15,11 @@
     <ProjectReference Include="../Eve.Inventory/Eve.Inventory.csproj" />
     <ProjectReference Include="../Eve.Sde/Eve.Sde.csproj" />
     <ProjectReference Include="../Eve.Skills/Eve.Skills.csproj" />
+    <ProjectReference Include="../Eve.Wallet/Eve.Wallet.csproj" />
+    <ProjectReference Include="../Eve.Universe/Eve.Universe.csproj" />
     <ProjectReference Include="../Eve.Services.Skills/Eve.Services.Skills.csproj" />
+    <ProjectReference Include="../Eve.Services.CharacterInfo/Eve.Services.CharacterInfo.csproj" />
+    <ProjectReference Include="../Eve.Services.Wallet/Eve.Services.Wallet.csproj" />
     <ProjectReference Include="../Eve.Services.CharacterSelect/Eve.Services.CharacterSelect.csproj" />
     <ProjectReference Include="../Eve.Services.Core/Eve.Services.Core.csproj" />
     <ProjectReference Include="../Eve.Services.Generator/Eve.Services.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />

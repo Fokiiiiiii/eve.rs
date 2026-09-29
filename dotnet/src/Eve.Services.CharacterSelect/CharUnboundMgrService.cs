@@ -4,6 +4,7 @@ using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Skills;
+using Eve.Wallet;
 
 namespace Eve.Services.CharacterSelect;
 
@@ -18,6 +19,7 @@ public sealed partial class CharUnboundMgrService(
     PgCharacterStore characters,
     PgItemStore items,
     PgSkillStore skills,
+    PgWalletStore wallets,
     CharacterCreation creation,
     CreationCatalog catalog,
     OnlineCharacters online,
@@ -57,7 +59,7 @@ public sealed partial class CharUnboundMgrService(
 
     /// <summary>
     /// <c>(account rows, (None, None), character rows, [])</c>. The rows carry values that belong to modules that do not
-    /// exist yet (wallet, mail): they are the reference's for a new character, and are marked below.
+    /// exist yet (mail): they are the reference's for a new character, and are marked below.
     /// </summary>
     [Method("GetCharacterSelectionData")]
     public async ValueTask<PyValue> GetCharacterSelectionData(ServiceCall call)
@@ -66,10 +68,11 @@ public sealed partial class CharUnboundMgrService(
         var list = account is { } id ? await characters.ForAccountAsync(id, Token(call)) : [];
         var info = account is { } known ? await accounts.FindAsync(checked((uint)known), Token(call)) : null;
         var points = await skills.TotalPointsAsync(list.Select(c => c.Id), Token(call));
+        var balances = await wallets.ForOwnersAsync(list.Select(c => c.Id), Token(call));
         var rows = new List<PyValue>();
         foreach (var character in list)
         {
-            rows.Add(await SelectionRow(character, points[character.Id], Token(call)));
+            rows.Add(await SelectionRow(character, points[character.Id], balances.GetValueOrDefault(character.Id), Token(call)));
         }
         return Py.Tuple(
             new PyList(info is null ? [] : [AccountRow(info)]),
@@ -231,7 +234,7 @@ public sealed partial class CharUnboundMgrService(
         ("subscriptionEndTime", new PyLong(SubscriptionEndFileTime)),
         ("maxCharacterSlots", new PyInt(CharacterCreation.SlotsPerAccount)));
 
-    private async Task<PyValue> SelectionRow(Character c, long skillPoints, CancellationToken ct)
+    private async Task<PyValue> SelectionRow(Character c, long skillPoints, Balance? balance, CancellationToken ct)
     {
         var ship = c.ShipId is { } shipId ? await items.GetAsync(shipId, ct) : null;
         var logoff = c.LastLogoffAt ?? c.CreatedAt;
@@ -253,9 +256,9 @@ public sealed partial class CharUnboundMgrService(
             ("solarSystemID", new PyInt(c.SolarSystemId)),
             ("constellationID", new PyInt(c.ConstellationId)),
             ("regionID", new PyInt(c.RegionId)),
-            // Gap: wallet, PLEX and mail belong to modules that do not exist yet; these are the reference's values for a new character.
-            ("balance", new PyReal(100_000.0)),
-            ("plexBalance", new PyInt(2222)),
+            ("balance", new PyReal((double)(balance?.Isk ?? 0m))),
+            ("plexBalance", new PyInt(balance?.Plex ?? 0)),
+            // Gap: the wallet has no journal yet, so nothing has changed the balance.
             ("balanceChange", new PyReal(0.0)),
             ("skillPoints", new PyInt(skillPoints)),
             ("shipTypeID", ship is null ? None : new PyInt(ship.TypeId)),
@@ -263,6 +266,7 @@ public sealed partial class CharUnboundMgrService(
             ("securityRating", new PyInt(0)),
             ("securityStatus", new PyInt(0)),
             ("title", new PyStr("")),
+            // Gap: mail belongs to a module that does not exist yet; this is the reference's value for a new character.
             ("unreadMailCount", new PyInt(1)),
             ("paperdollState", new PyInt(0)),
             ("lockTypeID", None),

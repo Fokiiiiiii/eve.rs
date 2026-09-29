@@ -6,6 +6,7 @@ using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Skills;
 using Eve.Skills;
+using Eve.Wallet;
 using Npgsql;
 
 namespace Eve.Services.CharacterSelect.Tests;
@@ -62,6 +63,7 @@ public sealed class Harness : IAsyncDisposable
     private readonly string _characterSchema;
     private readonly string _inventorySchema;
     private readonly string _skillsSchema;
+    private readonly string _walletSchema;
 
     private Harness(NpgsqlDataSource source, string suffix)
     {
@@ -69,13 +71,16 @@ public sealed class Harness : IAsyncDisposable
         _characterSchema = $"cs_test_{suffix}";
         _inventorySchema = $"csi_test_{suffix}";
         _skillsSchema = $"css_test_{suffix}";
+        _walletSchema = $"csw_test_{suffix}";
         Characters = new PgCharacterStore(source, _characterSchema);
         Items = new PgItemStore(source, _inventorySchema);
         SkillStore = new PgSkillStore(source, _skillsSchema);
+        Wallets = new PgWalletStore(source, _walletSchema);
         Accounts = new InMemoryAccountDirectory(new AccountOptions());
         Online = new OnlineCharacters();
         Service = new CharUnboundMgrService(
-            Accounts, Characters, Items, SkillStore, new CharacterCreation(source, Characters, Items, SkillStore, Skills, Catalog), Catalog, Online,
+            Accounts, Characters, Items, SkillStore, Wallets,
+            new CharacterCreation(source, Characters, Items, SkillStore, Skills, Wallets, new StartingWallet(), Catalog), Catalog, Online,
             [new SkillsLoginHook(SkillStore, Skills, () => ClockUnixMs)], new Random(7));
         Handler = new SkillHandlerService(SkillStore, Skills, () => ClockUnixMs);
         Door = new SkillMgr2Service();
@@ -88,6 +93,8 @@ public sealed class Harness : IAsyncDisposable
     public PgItemStore Items { get; }
 
     public PgSkillStore SkillStore { get; }
+
+    public PgWalletStore Wallets { get; }
 
     public SkillHandlerService Handler { get; }
 
@@ -107,6 +114,7 @@ public sealed class Harness : IAsyncDisposable
         await PgCharacterStore.MigrateAsync(source, harness._characterSchema);
         await PgItemStore.MigrateAsync(source, harness._inventorySchema);
         await PgSkillStore.MigrateAsync(source, harness._skillsSchema);
+        await PgWalletStore.MigrateAsync(source, harness._walletSchema);
         return harness;
     }
 
@@ -140,7 +148,7 @@ public sealed class Harness : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        foreach (var schema in new[] { _characterSchema, _inventorySchema, _skillsSchema })
+        foreach (var schema in new[] { _characterSchema, _inventorySchema, _skillsSchema, _walletSchema })
         {
             await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
             await command.ExecuteNonQueryAsync();

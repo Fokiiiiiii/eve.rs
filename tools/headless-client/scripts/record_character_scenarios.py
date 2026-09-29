@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record what the EVE.js reference does from login to a session with a character.
 
-    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills]
+    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations]
 
 The recording is the contract for the same path in eve.rs: `tests/test_login_to_character.py` replays the calls
 against any server and compares each answer with what is stored here, by shape, treating per-run values
@@ -10,8 +10,9 @@ makes, and the answers are what the reference sent.
 
 It writes login_to_character.json (one account walked through creation and selection, plus name validation,
 errors and limits), starters.json (a character per playable bloodline: what the reference gives each) and
-skills.json (what the skill handler answers for a new character of each race). `--only` records one of them and
-leaves the others as they are.
+skills.json (what the skill handler answers for a new character of each race) and character_info.json (what the
+character manager and the wallet answer for one) and stations.json (the reference's record of a sample of stations,
+for their names and places). `--only` records one of them and leaves the others as they are.
 """
 
 from __future__ import annotations
@@ -222,6 +223,54 @@ def record_skills(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         handle.write("\n")
 
 
+# What the client asks about the character it plays: `None` stands for the character's own id, filled in when the call is made.
+INFO_CALLS = [
+    ("charMgr", "GetPublicInfo", (None,)),
+    ("charMgr", "GetPublicInfo3", (None,)),
+    ("charMgr", "GetPublicInfo3", (None, 0)),
+    ("charMgr", "GetHomeStationRow", ()),
+    ("charMgr", "GetCharacterDescription", (None,)),
+    ("charMgr", "GetPaperdollState", ()),
+    ("charMgr", "GetCharacterCreationDate", (None,)),
+    ("charMgr", "GetCohortsForCharacter", ()),
+    ("charMgr", "GetSettingsInfo", ()),
+    ("charMgr", "GetContactList", ()),
+    ("charMgr", "GetRecentShipKillsAndLosses", (10, 0)),
+    ("account", "GetCashBalance", ()),
+    ("account", "GetCashBalance", (0,)),
+    ("account", "GetCashBalance", (1,)),
+]
+
+
+def record_info(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """One new character per playable race, chosen, and what the character manager and the wallet tell it."""
+    races = []
+    for bloodline in (1, 3, 5, 7):
+        who = rec.login(f"info{bloodline}")
+        created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Informed {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
+        char_id = int(created["ok"])
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        calls = [rec.call(who, service, method, *[char_id if a is None else a for a in args]) for service, method, args in INFO_CALLS]
+        races.append({"bloodlineID": bloodline, "raceID": RACE_OF_BLOODLINE[bloodline], "create": created, "calls": calls})
+    with open(os.path.join(out, "character_info.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": races}, handle, indent=1, ensure_ascii=False)
+        handle.write("\n")
+
+
+def record_stations(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str, sde: str = "") -> None:
+    """The reference's station record for a sample of the stations in the static data (every 87th, in file order, and
+    the two the character screens use), to check the names and places eve.rs derives from the same data."""
+    rows = load_jsonl(sde, "npcStations")
+    wanted = [row["_key"] for row in rows[::87]] + [60015249, 60003760]
+    who = rec.login("stations")
+    stations = []
+    for station_id in dict.fromkeys(wanted):
+        stations.append({"id": station_id, "call": rec.call(who, "stationSvc", "GetStation", station_id)})
+    with open(os.path.join(out, "stations.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "stations": stations}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+
+
 def main() -> int:
     if len(sys.argv) < 4:
         print(__doc__)
@@ -234,11 +283,13 @@ def main() -> int:
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info}
     try:
         for name, record in parts.items():
             if only in (None, name):
                 record(rec, out, meta, ancestry, run)
+        if only in (None, "stations"):
+            record_stations(rec, out, meta, ancestry, run, sde)
     finally:
         rec.close()
     print("recorded to", out)

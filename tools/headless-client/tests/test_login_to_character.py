@@ -327,3 +327,59 @@ def test_a_new_character_has_the_skills_the_reference_gives(race):
             if method == "GetSkills":
                 problems += _item_ids_follow_the_scheme(outcome, where)
     assert problems == [], "\n".join(problems[:20])
+
+
+# ── what the character manager and the wallet say about a new character ─────
+
+INFO = load("character_info.json")
+RECORDED_INFO_RUN = re.search(r"(\d{6,})$", INFO["races"][0]["create"]["call"][2][0]).group(1)
+TIMES = {"createDateTime", "startDateTime"}
+DESCRIPTION = "Character created via EveJS Elysian"
+
+
+def with_description(described, text: str):
+    """A recorded public record whose description is `text` (the reference's own is its branding)."""
+    copy = json.loads(json.dumps(described))
+    records = copy if isinstance(copy, list) else [copy]
+    for record in records:
+        for pair in record["args"]["$dict"]:
+            if pair[0] == "description":
+                pair[1] = text
+    return copy
+
+
+@pytest.mark.parametrize("race", INFO["races"], ids=lambda r: f"race-{r['raceID']}")
+def test_a_new_character_is_described_as_the_reference_describes_it(race):
+    run = uuid.uuid4().hex[:10]
+    ids: dict[int, int] = {}
+    with connect(f"walk-info-{run}") as client:
+        service, method, *args = [race["create"]["call"][0], race["create"]["call"][1], *[revive(a, run, ids, RECORDED_INFO_RUN) for a in race["create"]["call"][2]]]
+        kind, made = attempt(client, service, method, *args)
+        assert kind == "ok", brief(made)
+        ids[int(race["create"]["ok"])] = int(made)
+        assert attempt(client, "charUnboundMgr", "SelectCharacterID", int(made), None, False) == ("ok", None)
+
+        problems = []
+        for step in race["calls"]:
+            service, method, described = step["call"]
+            where = f"race {race['raceID']} {service}.{method}{json.dumps(described)}"
+            kind, outcome = attempt(client, service, method, *[revive(a, run, ids, RECORDED_INFO_RUN) for a in described])
+            if kind != ("ok" if "ok" in step else "error"):
+                problems.append(f"{where}: recorded {'ok' if 'ok' in step else 'error'}, got {kind}: {brief(outcome)}")
+                continue
+            if kind == "error":
+                problems += same_way(as_dict(step["error"]), as_dict(outcome), where)
+                continue
+            expected = step["ok"]
+            if method == "GetCharacterCreationDate":
+                if type_name(expected) != type_name(outcome):
+                    problems.append(f"{where}: {type_name(expected)} expected, got {type_name(outcome)}")
+                continue
+            if not REFERENCE:
+                # DEVIATION (description): the reference's default description is its own branding; eve.rs has none
+                if method == "GetCharacterDescription":
+                    expected = ""
+                if method in ("GetPublicInfo", "GetPublicInfo3"):
+                    expected = with_description(expected, "")
+            problems += same_way(expected, outcome, where, volatile=VOLATILE | TIMES)
+    assert problems == [], "\n".join(problems[:20])

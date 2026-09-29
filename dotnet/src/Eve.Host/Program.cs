@@ -8,11 +8,15 @@ using Eve.Inventory;
 using Eve.Marshal;
 using Eve.Sde;
 using Eve.Skills;
+using Eve.Universe;
+using Eve.Wallet;
 using Npgsql;
 using Eve.Services;
 using Eve.Services.CharacterSelect;
 using Eve.Services.Core;
+using Eve.Services.CharacterInfo;
 using Eve.Services.Skills;
+using Eve.Services.Wallet;
 
 // eve-host: the service host.
 //
@@ -24,6 +28,8 @@ using Eve.Services.Skills;
 //   EVE_CHARACTERS_SCHEMA  the schema of the characters module                                (default characters)
 //   EVE_INVENTORY_SCHEMA   the schema of the inventory module                                 (default inventory)
 //   EVE_SKILLS_SCHEMA      the schema of the skills module                                    (default skills)
+//   EVE_WALLET_SCHEMA      the schema of the wallet module                                    (default wallet)
+//   EVE_START_ISK / EVE_START_PLEX   what a new character starts with                         (100000 / 2222, the reference's)
 //   EVE_START_STATION      the station every new character starts at (the reference's; 60015249), or
 //                          "school" for the headquarters of the character's school corporation
 //                          Characters need EVE_PG_URL and the SDE (`eve-sde ensure`): without them the host runs
@@ -133,9 +139,11 @@ static async Task<IReadOnlyList<IService>> CharacterServicesAsync(NpgsqlDataSour
     var characterSchema = Env("EVE_CHARACTERS_SCHEMA", PgCharacterStore.DefaultSchema);
     var inventorySchema = Env("EVE_INVENTORY_SCHEMA", PgItemStore.DefaultSchema);
     var skillsSchema = Env("EVE_SKILLS_SCHEMA", PgSkillStore.DefaultSchema);
+    var walletSchema = Env("EVE_WALLET_SCHEMA", PgWalletStore.DefaultSchema);
     await PgCharacterStore.MigrateAsync(source, characterSchema);
     await PgItemStore.MigrateAsync(source, inventorySchema);
     await PgSkillStore.MigrateAsync(source, skillsSchema);
+    await PgWalletStore.MigrateAsync(source, walletSchema);
 
     var sde = new SdeReader(source);
     if (await sde.BuildAsync() is not { } build)
@@ -150,13 +158,20 @@ static async Task<IReadOnlyList<IService>> CharacterServicesAsync(NpgsqlDataSour
     var items = new PgItemStore(source, inventorySchema);
     var skills = new PgSkillStore(source, skillsSchema);
     var skillCatalog = await SkillCatalog.LoadAsync(sde);
-    Console.Error.WriteLine($"eve-host: characters in PostgreSQL, schemas {characterSchema}, {inventorySchema} and {skillsSchema}; static data build {build}; new characters start at {(startStation is { } id ? $"station {id}" : "their school's headquarters")}");
-    var creation = new CharacterCreation(source, characters, items, skills, skillCatalog, catalog);
+    var wallets = new PgWalletStore(source, walletSchema);
+    var stations = await StationCatalog.LoadAsync(sde);
+    var startingWallet = new StartingWallet(
+        decimal.Parse(Env("EVE_START_ISK", "100000"), System.Globalization.CultureInfo.InvariantCulture),
+        long.Parse(Env("EVE_START_PLEX", "2222"), System.Globalization.CultureInfo.InvariantCulture));
+    Console.Error.WriteLine($"eve-host: characters in PostgreSQL, schemas {characterSchema}, {inventorySchema}, {skillsSchema} and {walletSchema}; {stations.Count} stations; static data build {build}; new characters start at {(startStation is { } id ? $"station {id}" : "their school's headquarters")}");
+    var creation = new CharacterCreation(source, characters, items, skills, skillCatalog, wallets, startingWallet, catalog);
     return
     [
-        new CharUnboundMgrService(accounts, characters, items, skills, creation, catalog, online, [new SkillsLoginHook(skills, skillCatalog, now)], Random.Shared),
+        new CharUnboundMgrService(accounts, characters, items, skills, wallets, creation, catalog, online, [new SkillsLoginHook(skills, skillCatalog, now)], Random.Shared),
         new SkillMgr2Service(),
         new SkillHandlerService(skills, skillCatalog, now),
+        new CharMgrService(characters, stations),
+        new AccountService(wallets),
     ];
 }
 

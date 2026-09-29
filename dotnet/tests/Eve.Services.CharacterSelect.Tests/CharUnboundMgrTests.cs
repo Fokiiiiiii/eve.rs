@@ -164,6 +164,7 @@ public class CharUnboundMgrTests
         Assert.Equal((new PyInt(1000006), new PyInt(60000610), new PyInt(30002775), new PyInt(20000406), new PyInt(10000033)), ((PyValue)v["corporationID"], v["stationID"], v["solarSystemID"], v["constellationID"], v["regionID"]));
         Assert.Equal((new PyInt(601), new PyStr("Ibis")), ((PyValue)v["shipTypeID"], v["shipName"]));
         Assert.Equal(new PyInt(Harness.Race1Points), v["skillPoints"]); // the points its skills add up to, not a constant
+        Assert.Equal((new PyReal(100_000.0), new PyInt(2_222), new PyReal(0.0)), ((PyValue)v["balance"], v["plexBalance"], v["balanceChange"])); // its wallet
         Assert.Equal(PyNone.Instance, v["factionID"]);
         Assert.Equal(PyNone.Instance, v["allianceID"]);
     }

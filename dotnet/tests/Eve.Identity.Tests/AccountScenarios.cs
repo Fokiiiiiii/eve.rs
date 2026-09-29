@@ -27,6 +27,23 @@ internal static class AccountScenarios
         Assert.Equal(2u, Assert.IsType<LoggedIn>(await Login(directory, "other", 4)).AccountId);
     }
 
+    public static async Task An_account_can_be_looked_up_by_its_id(Make make)
+    {
+        var directory = make(new AccountOptions());
+        var lookup = Assert.IsAssignableFrom<IAccountLookup>(directory);
+        var before = DateTimeOffset.UtcNow.AddMinutes(-1);
+        var pilot = Assert.IsType<LoggedIn>(await Login(directory, "pilot", 1, 2, 3));
+        var other = Assert.IsType<LoggedIn>(await Login(directory, "other", 4));
+
+        var found = await lookup.FindAsync(pilot.AccountId, CancellationToken.None);
+        Assert.NotNull(found);
+        Assert.Equal(pilot.AccountId, found.Id);
+        Assert.Equal("pilot", found.UserName);
+        Assert.InRange(found.CreatedAt, before, DateTimeOffset.UtcNow.AddMinutes(1));
+        Assert.Equal("other", (await lookup.FindAsync(other.AccountId, CancellationToken.None))!.UserName);
+        Assert.Null(await lookup.FindAsync(999, CancellationToken.None));
+    }
+
     public static async Task A_hash_of_another_length_is_not_the_hash(Make make)
     {
         var directory = make(new AccountOptions());

@@ -8,6 +8,9 @@ public class InMemoryAccountTests
     public Task First_login_creates_the_account_and_then_needs_the_same_hash() => AccountScenarios.First_login_creates_the_account_and_then_needs_the_same_hash(Directory);
 
     [Fact]
+    public Task An_account_can_be_looked_up_by_its_id() => AccountScenarios.An_account_can_be_looked_up_by_its_id(Directory);
+
+    [Fact]
     public Task A_hash_of_another_length_is_not_the_hash() => AccountScenarios.A_hash_of_another_length_is_not_the_hash(Directory);
 
     [Fact]

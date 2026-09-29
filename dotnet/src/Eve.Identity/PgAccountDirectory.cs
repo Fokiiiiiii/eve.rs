@@ -6,7 +6,7 @@ using Npgsql;
 namespace Eve.Identity;
 
 /// <summary>Accounts in PostgreSQL, in the module's own schema (<c>identity</c> unless told otherwise).</summary>
-public sealed partial class PgAccountDirectory : IAccountDirectory
+public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLookup
 {
     public const string DefaultSchema = "identity";
 
@@ -18,6 +18,7 @@ public sealed partial class PgAccountDirectory : IAccountDirectory
     private readonly string _find;
     private readonly string _create;
     private readonly string _touch;
+    private readonly string _info;
 
     public PgAccountDirectory(NpgsqlDataSource source, AccountOptions options, string schema = DefaultSchema)
     {
@@ -32,6 +33,7 @@ public sealed partial class PgAccountDirectory : IAccountDirectory
         _find = $"SELECT {Columns} FROM {schema}.accounts WHERE user_name = $1";
         _create = $"INSERT INTO {schema}.accounts (user_name, password_hash, role, country_code) VALUES ($1, $2, $3, $4) " +
                   $"ON CONFLICT (user_name) DO NOTHING RETURNING {Columns}";
+        _info = $"SELECT id, user_name, created_at FROM {schema}.accounts WHERE id = $1";
         _touch = $"UPDATE {schema}.accounts SET last_login_at = now() WHERE id = $1";
     }
 
@@ -51,6 +53,16 @@ public sealed partial class PgAccountDirectory : IAccountDirectory
         await using var reader = await command.ExecuteReaderAsync(ct);
         return await reader.ReadAsync(ct)
             ? new Row(reader.GetInt32(0), (byte[])reader[1], reader.GetInt64(2), reader.GetBoolean(3))
+            : null;
+    }
+
+    public async ValueTask<AccountInfo?> FindAsync(uint accountId, CancellationToken cancellationToken)
+    {
+        await using var command = _source.CreateCommand(_info);
+        command.Parameters.Add(new NpgsqlParameter { Value = checked((int)accountId) });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new AccountInfo((uint)reader.GetInt32(0), reader.GetString(1), reader.GetFieldValue<DateTimeOffset>(2))
             : null;
     }
 

@@ -25,6 +25,15 @@ public interface IAccountDirectory
     ValueTask<LoginResult> LoginAsync(LoginAttempt attempt, CancellationToken cancellationToken);
 }
 
+/// <summary>What other modules may know about an account.</summary>
+public sealed record AccountInfo(uint Id, string UserName, DateTimeOffset CreatedAt);
+
+/// <summary>Reads an account by its id (the character selection screen shows the user name and when it began).</summary>
+public interface IAccountLookup
+{
+    ValueTask<AccountInfo?> FindAsync(uint accountId, CancellationToken cancellationToken);
+}
+
 public sealed record AccountOptions
 {
     /// <summary>An unknown user name creates an account with the password hash it presented.</summary>
@@ -52,11 +61,15 @@ public static class AccountNames
 /// <summary>
 /// Accounts kept in memory: for tests and for running without a database. Nothing survives a restart.
 /// </summary>
-public sealed class InMemoryAccountDirectory : IAccountDirectory
+public sealed class InMemoryAccountDirectory : IAccountDirectory, IAccountLookup
 {
-    private sealed class Account(uint id, byte[] passwordHash, ulong role)
+    private sealed class Account(uint id, string userName, byte[] passwordHash, ulong role, DateTimeOffset createdAt)
     {
         public uint Id { get; } = id;
+
+        public string UserName { get; } = userName;
+
+        public DateTimeOffset CreatedAt { get; } = createdAt;
 
         public byte[] PasswordHash { get; } = passwordHash;
 
@@ -100,6 +113,11 @@ public sealed class InMemoryAccountDirectory : IAccountDirectory
         }
     }
 
+    public ValueTask<AccountInfo?> FindAsync(uint accountId, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(_store.Accounts.Values.FirstOrDefault(a => a.Id == accountId) is { } account
+            ? new AccountInfo(account.Id, account.UserName, account.CreatedAt)
+            : null);
+
     public ValueTask<LoginResult> LoginAsync(LoginAttempt attempt, CancellationToken cancellationToken)
     {
         if (!AccountNames.IsAcceptable(attempt.UserName))
@@ -116,7 +134,7 @@ public sealed class InMemoryAccountDirectory : IAccountDirectory
             {
                 if (!_store.Accounts.TryGetValue(attempt.UserName, out account))
                 {
-                    account = new Account(++_store.LastId, attempt.PasswordHash.ToArray(), _options.NewAccountRole);
+                    account = new Account(++_store.LastId, attempt.UserName, attempt.PasswordHash.ToArray(), _options.NewAccountRole, DateTimeOffset.UtcNow);
                     _store.Accounts[attempt.UserName] = account;
                 }
             }

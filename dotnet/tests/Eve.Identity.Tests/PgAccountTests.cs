@@ -14,6 +14,9 @@ public class PgAccountTests
     public Task First_login_creates_the_account_and_then_needs_the_same_hash() => With((_, make) => AccountScenarios.First_login_creates_the_account_and_then_needs_the_same_hash(make));
 
     [PgFact]
+    public Task An_account_can_be_looked_up_by_its_id() => With((_, make) => AccountScenarios.An_account_can_be_looked_up_by_its_id(make));
+
+    [PgFact]
     public Task A_hash_of_another_length_is_not_the_hash() => With((_, make) => AccountScenarios.A_hash_of_another_length_is_not_the_hash(make));
 
     [PgFact]

@@ -13,6 +13,11 @@ type Entries = Vec<(&'static str, Value)>;
 const STATION_ROTATIONS: [(i64, [f64; 3]); 2] =
     [(60003760, [206.8031, 0.0, 0.0]), (60015249, [305.0, 0.0, 0.0])];
 
+/// The orientation the reference authors for a station, if it has one.
+pub fn station_rotation(station_id: i64) -> Option<[f64; 3]> {
+    STATION_ROTATIONS.iter().find(|(id, _)| *id == station_id).map(|(_, angles)| *angles)
+}
+
 /// A rotation as the client reads it: whole angles are ints.
 fn number(value: f64) -> Value {
     if value.fract() == 0.0 && value.abs() < 1e9 { int(value as i64) } else { real(value) }
@@ -108,8 +113,8 @@ pub fn body_entries(system: &SolarSystem, body: &Body) -> Entries {
             entries.push(("incapacitated", int(0)));
             entries.push(("activityLevel", Value::None));
             entries.push(("skinMaterialSetID", Value::None));
-            if let Some((_, angles)) = STATION_ROTATIONS.iter().find(|(station, _)| *station == body.id) {
-                entries.push(("dunRotation", rotation(*angles)));
+            if let Some(angles) = station_rotation(body.id) {
+                entries.push(("dunRotation", rotation(angles)));
             }
         }
         BodyKind::Stargate => stargate_fields(system, body, &mut entries),

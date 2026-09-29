@@ -8,6 +8,7 @@
 pub mod geo;
 pub mod names;
 pub mod payload;
+pub mod scene;
 pub mod sde;
 pub mod security;
 pub mod ship;

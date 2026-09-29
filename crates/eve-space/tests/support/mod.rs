@@ -4,7 +4,9 @@
 
 use std::path::PathBuf;
 
-use serde_json::Value;
+use eve_destiny::Vec3;
+use eve_space::ship::{Course, ModuleSpec, Ship, ShipSpec};
+use serde_json::{Value, json};
 
 pub fn fixture(name: &str) -> Value {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../oracle/fixtures/scenarios").join(name);
@@ -152,4 +154,147 @@ pub fn same_but_the_far_target(ours: &str, theirs: &str) -> bool {
             let (x, y) = (double(ours, a + 16 * k), double(theirs, b + 16 * k));
             (x - y).abs() <= 1e-12 * x.abs().max(y.abs())
         })
+}
+
+pub fn field(fields: &Value, name: &str) -> Value {
+    fields
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p[0] == name)
+        .map(|p| p[1].clone())
+        .unwrap_or_else(|| panic!("no field {name}"))
+}
+
+pub fn f64_at(bytes: &[u8], at: usize) -> f64 {
+    f64::from_le_bytes(bytes[at..at + 8].try_into().unwrap())
+}
+
+pub fn vec_at(bytes: &[u8], at: usize) -> Vec3 {
+    Vec3::new(f64_at(bytes, at), f64_at(bytes, at + 8), f64_at(bytes, at + 16))
+}
+
+/// A number the reference sent the client about the ship in an action of the bind (mass, top speed, agility).
+fn number_of(race: &Value, action: &str) -> f64 {
+    let (_, _, args) = destiny_actions(step(race, "bind the ballpark"))
+        .into_iter()
+        .find(|(_, name, _)| name == action)
+        .unwrap();
+    args["$tuple"][1].as_f64().unwrap()
+}
+
+/// The ship the reference undocked, put together from what it sent (the slim item and the ball).
+pub fn recorded_ship(race: &Value, ball: &[u8], direction: Vec3) -> Ship {
+    let bind = step(race, "bind the ballpark");
+    let added = destiny_actions(bind).into_iter().find(|(_, name, _)| name == "AddBalls2").unwrap().2;
+    let extra = &added["$tuple"][0]["$tuple"][1][0]["$tuple"];
+    let slim = &extra[0]["$dict"];
+    let modules = field(slim, "modules")
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| {
+            let m = &m["$tuple"];
+            ModuleSpec { item_id: number(&m[0]), type_id: number(&m[1]) as i32, flag: number(&m[2]) as i32 }
+        })
+        .collect();
+    let shield_tau = extra[1]["$tuple"][0]["$tuple"][1].as_f64().unwrap();
+    // the ball: id, mode, radius, position, flags, mass, cloak, harmonic, corporation, alliance, top speed, velocity, inertia, speed fraction
+    let f32_at = |at: usize| f64::from(f32::from_le_bytes(ball[at..at + 4].try_into().unwrap()));
+    let spec = ShipSpec {
+        ship_id: number(&field(slim, "itemID")),
+        character_id: number(&field(slim, "charID")),
+        type_id: number(&field(slim, "typeID")) as i32,
+        group_id: number(&field(slim, "groupID")) as i32,
+        category_id: number(&field(slim, "categoryID")) as i32,
+        name: field(slim, "name").as_str().unwrap().to_string(),
+        owner_id: number(&field(slim, "ownerID")),
+        corporation_id: number(&field(slim, "corpID")) as i32,
+        alliance_id: number(&field(slim, "allianceID")) as i32,
+        war_faction_id: number(&field(slim, "warFactionID")) as i32,
+        security_status: 0.0,
+        radius: f32_at(9),
+        mass: number_of(race, "SetBallMass"),
+        max_velocity: number_of(race, "SetMaxSpeed"),
+        agility: number_of(race, "SetBallAgility"),
+        warp_speed_au: 0.0,
+        shield_recharge_ms: shield_tau * 5.0,
+        modules,
+    };
+    Ship {
+        spec,
+        position: vec_at(ball, 13),
+        velocity: vec_at(ball, 67),
+        direction,
+        speed_fraction: f32_at(95),
+        course: Course::Goto,
+    }
+}
+
+pub fn recorded_direction(race: &Value) -> Vec3 {
+    let (_, _, args) = destiny_actions(step(race, "bind the ballpark"))
+        .into_iter()
+        .find(|(_, name, _)| name == "GotoDirection")
+        .unwrap();
+    let a = args["$tuple"].as_array().unwrap();
+    Vec3::new(a[1].as_f64().unwrap(), a[2].as_f64().unwrap(), a[3].as_f64().unwrap())
+}
+
+/// A recorded action as it reads whole: `(stamp, (name, args))`.
+pub fn recorded_action(stamp: i64, name: &str, args: &Value) -> Value {
+    json!({"$tuple": [stamp, {"$tuple": [name, args]}]})
+}
+
+/// The arguments a recorded notification carried, as a `$tuple`.
+pub fn event_args(event: &Value) -> Value {
+    event["args"]["$tuple"][1]["$tuple"][1].clone()
+}
+
+/// The recorded events of a step with this name.
+pub fn events_named<'a>(step: &'a Value, name: &str) -> Vec<&'a Value> {
+    step["events"].as_array().unwrap().iter().filter(|e| e["name"] == name).collect()
+}
+
+/// A description reduced to its structure and the types of its leaves.
+pub fn shape(value: &Value) -> Value {
+    match value {
+        Value::Null => json!("none"),
+        Value::Bool(_) => json!("bool"),
+        Value::Number(n) => json!(if n.is_f64() { "float" } else { "int" }),
+        Value::String(_) => json!("str"),
+        Value::Array(items) => Value::Array(items.iter().map(shape).collect()),
+        Value::Object(map) => {
+            if let Some(items) = map.get("$tuple") {
+                json!({"$tuple": shape(items)})
+            } else if map.contains_key("$long") {
+                json!("long")
+            } else if map.contains_key("$buffer") {
+                json!("buffer")
+            } else if let Some(pairs) = map.get("$dict") {
+                json!({"$dict": pairs.as_array().unwrap().iter().map(|p| json!([shape(&p[0]), shape(&p[1])])).collect::<Vec<_>>()})
+            } else if let Some(name) = map.get("$object") {
+                json!({"$object": name, "args": shape(&map["args"])})
+            } else if let Some(row) = map.get("$row") {
+                json!({"$row": row.as_object().unwrap().iter().map(|(k, v)| (k.clone(), shape(v))).collect::<serde_json::Map<_, _>>()})
+            } else {
+                map.iter().map(|(k, v)| (k.clone(), shape(v))).collect::<serde_json::Map<_, _>>().into()
+            }
+        }
+    }
+}
+
+/// A notification of the scene as a recording describes the arguments of one.
+pub fn out_args(out: &eve_space::scene::Out) -> Value {
+    let eve_space::scene::Out::Notify { args, .. } = out else { panic!("not a notification: {out:?}") };
+    json!({"$tuple": args.iter().map(describe).collect::<Vec<_>>()})
+}
+
+/// The names of the actions of a `DoDestinyUpdate` described as arguments.
+pub fn action_names_of(args: &Value) -> Vec<String> {
+    args["$tuple"][0]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["$tuple"][1]["$tuple"][0].as_str().unwrap().to_string())
+        .collect()
 }

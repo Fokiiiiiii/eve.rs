@@ -91,7 +91,7 @@ not exist is the scene: which balls a system has, who is where, how commands cha
 - Bad: a third process to start and supervise. `tools/dev/run-eve-live.sh` starts it; a host that cannot reach it
   refuses `Undock` with a message rather than hang.
 - The slice: undock, `beyonce` bind and state, `CmdSetSpeedFraction`, `CmdGotoDirection`, `CmdStop`, `CmdDock`
-  (approach, then dock). Warp, stargate jumps, targeting and combat, drones and NPCs come as later slices over
+  (within the docking range; approaching a station from beyond it comes next). Warp, stargate jumps, targeting and combat, drones and NPCs come as later slices over
   the same link (new commands and new `Notify`s, not new mechanisms).
 
 ## Alternatives considered

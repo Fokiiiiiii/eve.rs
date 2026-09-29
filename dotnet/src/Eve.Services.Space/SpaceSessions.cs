@@ -36,6 +36,9 @@ public sealed class SpaceSessions : IDisposable
         public long InvulnerableUntil { get; } = invulnerableUntil;
 
         public bool InvulnerabilityEnded;
+
+        /// <summary>The pilot gave a command that ends the protection: the client is told once the simulation has told it what the command did.</summary>
+        public bool EndAfterNextUpdate;
     }
 
     private readonly ISimulation _sim;
@@ -185,7 +188,10 @@ public sealed class SpaceSessions : IDisposable
         }
     }
 
-    /// <summary>A movement command. The first one a pilot gives while the undocking protection lasts ends it, and the client is told.</summary>
+    /// <summary>
+    /// A movement command. The first speed command a pilot gives while the undocking protection lasts ends it: the client is told, after the
+    /// update the simulation sends for the command (the reference's order).
+    /// </summary>
     public void Command(ClientSession session, byte code, params double[] args)
     {
         if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
@@ -193,9 +199,9 @@ public sealed class SpaceSessions : IDisposable
             return;
         }
         _sim.Command((ulong)session.SessionId, code, args);
-        if (code == SimCommands.SetSpeedFraction)
+        if (code == SimCommands.SetSpeedFraction && !pilot.InvulnerabilityEnded && FileTimeNow() < pilot.InvulnerableUntil)
         {
-            EndInvulnerability(pilot);
+            pilot.EndAfterNextUpdate = true;
         }
     }
 
@@ -241,6 +247,11 @@ public sealed class SpaceSessions : IDisposable
             {
                 case SimNotify notify when _pilots.TryGetValue(notify.SessionId, out var pilot):
                     Forward(pilot.Session, notify);
+                    if (pilot.EndAfterNextUpdate && notify.Name == "DoDestinyUpdate")
+                    {
+                        pilot.EndAfterNextUpdate = false;
+                        EndInvulnerability(pilot);
+                    }
                     break;
                 case SimDocked docked when _pilots.TryGetValue(docked.SessionId, out var pilot):
                     _ = Task.Run(() => FinishDockingAsync(pilot, docked.StationId));

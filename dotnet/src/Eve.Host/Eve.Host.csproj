@@ -25,6 +25,8 @@
     <ProjectReference Include="../Eve.Services.Wallet/Eve.Services.Wallet.csproj" />
     <ProjectReference Include="../Eve.Services.Station/Eve.Services.Station.csproj" />
     <ProjectReference Include="../Eve.Services.Inventory/Eve.Services.Inventory.csproj" />
+    <ProjectReference Include="../Eve.Services.Space/Eve.Services.Space.csproj" />
+    <ProjectReference Include="../Eve.Space/Eve.Space.csproj" />
     <ProjectReference Include="../Eve.Services.Dogma/Eve.Services.Dogma.csproj" />
     <ProjectReference Include="../Eve.Services.CharacterSelect/Eve.Services.CharacterSelect.csproj" />
     <ProjectReference Include="../Eve.Services.Core/Eve.Services.Core.csproj" />

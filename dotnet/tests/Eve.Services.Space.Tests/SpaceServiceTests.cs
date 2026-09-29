@@ -241,8 +241,12 @@ public class SpaceServiceTests
         var other => other.ToString()!,
     };
 
+    private static SimNotify Update(ClientSession session) => new(
+        (ulong)session.SessionId, "DoDestinyUpdate", "clientID",
+        MarshalCodec.Encode(Py.Tuple(new PyList([Py.Tuple(new PyInt(1790679102), Py.Tuple(new PyStr("Stop"), Py.Tuple(new PyLong(9988400001939))))]), PyBool.False)));
+
     [PgFact]
-    public async Task The_first_speed_command_while_the_protection_lasts_ends_it_and_the_client_is_told_once()
+    public async Task The_first_speed_command_while_the_protection_lasts_ends_it_and_the_client_is_told_once_after_the_update()
     {
         var (rig, _, session) = await DockedAsync();
         await using var _ = rig;
@@ -250,18 +254,25 @@ public class SpaceServiceTests
         var oid = await rig.BindBeyonceAsync(session);
         Events.Of(session);
 
+        // going in a direction, or stopping, does not end it
         await rig.BeyonceCallAsync(session, "CmdGotoDirection", oid, new PyReal(1), new PyInt(0), new PyReal(0));
         await rig.BeyonceCallAsync(session, "CmdStop", oid);
-        Assert.Empty(Events.Of(session));
+        rig.Sim.Say(Update(session));
+        Assert.Equal(["DoDestinyUpdate"], Events.Of(session).Select(e => e.Name));
 
+        // a speed does, and the client hears of it after what the simulation said the command did
         await rig.BeyonceCallAsync(session, "CmdSetSpeedFraction", oid, new PyReal(0.5));
-        var events = Events.Of(session);
-        var cancelled = Assert.Single(events);
-        Assert.Equal(("OnInvulnCancelled", "shipid"), (cancelled.Name, cancelled.IdType));
-        Assert.Equal(session.GetInt("shipid"), Id(cancelled.Args[0]));
-
-        await rig.BeyonceCallAsync(session, "CmdSetSpeedFraction", oid, new PyReal(1));
         Assert.Empty(Events.Of(session));
+        rig.Sim.Say(Update(session));
+        var events = Events.Of(session);
+        Assert.Equal(["DoDestinyUpdate", "OnInvulnCancelled"], events.Select(e => e.Name));
+        Assert.Equal(("OnInvulnCancelled", "shipid"), (events[1].Name, events[1].IdType));
+        Assert.Equal(session.GetInt("shipid"), Id(events[1].Args[0]));
+
+        // once
+        await rig.BeyonceCallAsync(session, "CmdSetSpeedFraction", oid, new PyReal(1));
+        rig.Sim.Say(Update(session));
+        Assert.Equal(["DoDestinyUpdate"], Events.Of(session).Select(e => e.Name));
     }
 
     [PgFact]

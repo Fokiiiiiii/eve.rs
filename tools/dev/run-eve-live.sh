@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Run the headless client's live tests against eve.rs: the C# service host and the Rust network front,
-# started on a private socket and a local port, then stopped.
+# Run the headless client's live tests against eve.rs: the C# service host, the Rust network front and the Rust
+# space simulation, started on private sockets and a local port, then stopped.
 #
 #   tools/dev/run-eve-live.sh              the same tests/test_live.py that runs against the reference server
 #   EVE_RUN='<command>' tools/dev/run-eve-live.sh   run <command> instead (EVE_LIVE_HOST is set)
@@ -15,9 +15,11 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PORT="${EVE_LIVE_PORT:-26100}"
 SOCK="$(mktemp -u /tmp/eve-host.XXXXXX.sock)"
+SIMSOCK="$(mktemp -u /tmp/eve-sim.XXXXXX.sock)"
 LOG="$(mktemp -d)"
 host_pid=""
 net_pid=""
+sim_pid=""
 
 SCRATCH=""
 if [ -n "${EVE_PG_URL:-}" ]; then
@@ -33,16 +35,26 @@ cleanup() {
   fi
   [ -n "$net_pid" ] && kill "$net_pid" 2>/dev/null || true
   [ -n "$host_pid" ] && kill "$host_pid" 2>/dev/null || true
-  rm -f "$SOCK"
+  [ -n "$sim_pid" ] && kill "$sim_pid" 2>/dev/null || true
+  rm -f "$SOCK" "$SIMSOCK"
   if [ "${KEEP_LOGS:-0}" = "1" ]; then echo "logs in $LOG"; else rm -rf "$LOG"; fi
 }
 trap cleanup EXIT
 
-echo "building the host and the front"
+echo "building the host, the front and the simulation"
 (cd "$HERE/dotnet" && dotnet build -c Release src/Eve.Host -nologo -v q 2>&1 | tail -3)
-(cd "$HERE" && cargo build -q --release -p eve-net)
+(cd "$HERE" && cargo build -q --release -p eve-net -p eve-sim)
 
-EVE_HOST="$SOCK" dotnet "$HERE/dotnet/src/Eve.Host/bin/Release/net10.0/eve-host.dll" >"$LOG/host.out" 2>&1 &
+# the simulation reads the static data itself (EVE_SDE_DIR, or the copy `eve-sde ensure` keeps under .cache/sde)
+(cd "$HERE" && exec env EVE_SIM_SOCKET="$SIMSOCK" "$HERE/target/release/eve-sim" >"$LOG/sim.out" 2>&1) &
+sim_pid=$!
+for _ in $(seq 1 300); do
+  [ -S "$SIMSOCK" ] && break
+  kill -0 "$sim_pid" 2>/dev/null || { echo "the simulation exited early:"; cat "$LOG/sim.out"; exit 1; }
+  sleep 0.1
+done
+
+EVE_HOST="$SOCK" EVE_SIM_SOCKET="$SIMSOCK" dotnet "$HERE/dotnet/src/Eve.Host/bin/Release/net10.0/eve-host.dll" >"$LOG/host.out" 2>&1 &
 host_pid=$!
 for _ in $(seq 1 100); do
   [ -S "$SOCK" ] && break
@@ -64,5 +76,5 @@ if [ -n "${EVE_RUN:-}" ]; then
   cd "$HERE" && bash -c "$EVE_RUN"
 else
   cd "$HERE/tools/headless-client"
-  EVE_LIVE_SERVER=eve.rs EVE_LIVE_STRICT_PASSWORDS=1 .venv/bin/python -m pytest -q tests/test_live.py tests/test_login_to_character.py -rs
+  EVE_LIVE_SERVER=eve.rs EVE_LIVE_STRICT_PASSWORDS=1 .venv/bin/python -m pytest -q tests/test_live.py tests/test_login_to_character.py tests/test_undock.py -rs
 fi

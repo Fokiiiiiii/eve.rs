@@ -21,6 +21,8 @@ using Eve.Services.Dogma;
 using Eve.Services.Inventory;
 using Eve.Services.CharacterInfo;
 using Eve.Services.Skills;
+using Eve.Services.Space;
+using Eve.Space;
 using Eve.Services.Station;
 using Eve.Services.Wallet;
 
@@ -36,6 +38,8 @@ using Eve.Services.Wallet;
 //   EVE_SKILLS_SCHEMA      the schema of the skills module                                    (default skills)
 //   EVE_WALLET_SCHEMA      the schema of the wallet module                                    (default wallet)
 //   EVE_FITTING_SCHEMA     the schema of the fitting module (which modules are online)        (default fitting)
+//   EVE_SIM_SOCKET         the Unix socket of the space simulation (eve-sim)                  (default /tmp/eve-sim.sock)
+//   EVE_SIM                off runs without the simulation: nobody can undock                 (default on)
 //   EVE_START_ISK / EVE_START_PLEX   what a new character starts with                         (100000 / 2222, the reference's)
 //   EVE_START_STATION      the station every new character starts at (the reference's; 60015249), or
 //                          "school" for the headquarters of the character's school corporation
@@ -81,6 +85,8 @@ var accountOptions = new AccountOptions
 };
 IAccountDirectory accounts;
 IReadOnlyList<IService> characterServices = [];
+SpaceSessions? space = null;
+SimClient? simulation = null;
 var online = new OnlineCharacters();
 if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
 {
@@ -90,7 +96,7 @@ if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
     Console.Error.WriteLine($"eve-host: accounts in PostgreSQL, schema {schema}{(applied.Count > 0 ? "; applied " + string.Join(", ", applied) : "")}");
     var directory = new PgAccountDirectory(source, accountOptions, schema);
     accounts = directory;
-    characterServices = await CharacterServicesAsync(source, directory, online, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+    (characterServices, space, simulation) = await CharacterServicesAsync(source, directory, online, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
 }
 else
 {
@@ -113,6 +119,10 @@ if (characterServices.Count > 0)
     // names the client also uses for the same service
     registry.RegisterAlias("station", "stationSvc");
     registry.RegisterAlias("skillMgr", "skillHandler");
+}
+if (space is not null)
+{
+    space.Registry = registry;
 }
 var config = GlobalConfig.Build(options);
 var info = new HostMachoNetInfo(registry, config);
@@ -140,13 +150,18 @@ Console.CancelKeyPress += (_, args) =>
 };
 Console.Error.WriteLine($"eve-host: listening on {endpoint}; {registry.Count} services");
 await server.ServeAsync(listener, cancel.Token);
+space?.Dispose();
+if (simulation is not null)
+{
+    await simulation.DisposeAsync();
+}
 return 0;
 
 /// <summary>
 /// The character-side modules (characters, inventory, skills) and their services, or none (with the reason logged) when
 /// the static data they need is not in the database.
 /// </summary>
-static async Task<IReadOnlyList<IService>> CharacterServicesAsync(NpgsqlDataSource source, IAccountLookup accounts, OnlineCharacters online, Func<long> now)
+static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation)> CharacterServicesAsync(NpgsqlDataSource source, IAccountLookup accounts, OnlineCharacters online, Func<long> now)
 {
     CharacterNames.EnsureUnicodeSupport();
     var characterSchema = Env("EVE_CHARACTERS_SCHEMA", PgCharacterStore.DefaultSchema);
@@ -164,7 +179,7 @@ static async Task<IReadOnlyList<IService>> CharacterServicesAsync(NpgsqlDataSour
     if (await sde.BuildAsync() is not { } build)
     {
         Console.Error.WriteLine("eve-host: the static data is not loaded (run `eve-sde ensure --pg $EVE_PG_URL`): no charUnboundMgr, no skills");
-        return [];
+        return ([], null, null);
     }
     var startText = Env("EVE_START_STATION", "60015249");
     long? startStation = startText == "school" ? null : long.Parse(startText, System.Globalization.CultureInfo.InvariantCulture);
@@ -196,7 +211,17 @@ static async Task<IReadOnlyList<IService>> CharacterServicesAsync(NpgsqlDataSour
         long.Parse(Env("EVE_START_PLEX", "2222"), System.Globalization.CultureInfo.InvariantCulture));
     Console.Error.WriteLine($"eve-host: characters in PostgreSQL, schemas {characterSchema}, {inventorySchema}, {skillsSchema} and {walletSchema}; {stations.Count} stations; dogma of {dogma.AttributeCount} attributes and {dogma.EffectCount} effects; static data build {build}; new characters start at {(startStation is { } id ? $"station {id}" : "their school's headquarters")}");
     var creation = new CharacterCreation(source, characters, items, skills, skillCatalog, wallets, startingWallet, catalog, modules);
-    return
+    SimClient? sim = null;
+    SpaceSessions? spaceSessions = null;
+    if (Env("EVE_SIM", "on") is not ("off" or "0" or "false"))
+    {
+        var socket = Env("EVE_SIM_SOCKET", "/tmp/eve-sim.sock");
+        sim = SimClient.ToUnixSocket(socket, message => Console.Error.WriteLine($"eve-host: {message}"));
+        sim.Start();
+        spaceSessions = new SpaceSessions(sim, ships, dogma, stations, now, message => Console.Error.WriteLine($"eve-host: space: {message}"));
+        Console.Error.WriteLine($"eve-host: the space simulation is expected at {socket}");
+    }
+    IReadOnlyList<IService> services =
     [
         new CharUnboundMgrService(accounts, characters, items, skills, wallets, creation, catalog, online, [new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now)], Random.Shared),
         new SkillMgr2Service(),
@@ -206,7 +231,9 @@ static async Task<IReadOnlyList<IService>> CharacterServicesAsync(NpgsqlDataSour
         new InvBrokerService(items, new ItemTypeCatalog(sde), stations, ships, dogma, now),
         new DogmaIMService(dogma, ships, now, dogmaSync),
         new AccountService(wallets),
+        .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now), new BeyonceService(spaceSessions, now) },
     ];
+    return (services, spaceSessions, sim);
 }
 
 /// <summary>Until accounts live in the database (S2), nobody has a stored Omega expiry.</summary>

@@ -15,11 +15,14 @@ run the same scenarios against. Start with `CLAUDE.md`, `docs/PLAN.md` and `docs
 |---|---|
 | `crates/eve-marshal` | MachoNet marshal codec, checked byte-for-byte against the reference's recorded output |
 | `crates/eve-destiny` | Carbon motion integration (bit-identical, with V8's `Math.exp`) and ball wire encoding |
+| `crates/eve-space` | Space: a solar system's stations, celestials and stargates from the static data, slim items and the destiny payloads (`AddBalls2`, `SetState`), and a scene of ships that undock, fly and dock; checked against the recorded undock |
+| `crates/eve-sim` | `eve-sim`: the space simulation process. The service host connects to its Unix socket (`oracle/fixtures/simlink` pins the link for both languages) |
 | `crates/eve-oracle` | Replays `oracle/fixtures/**` against the crates |
 | `crates/eve-bench` | Throughput benchmarks with ratios against the JS baseline |
 | `oracle/` | Golden fixtures and the JS baseline, generated from EVE.js (see `oracle/PROVENANCE.md`); `oracle/fixtures/hostlink` pins the front-host link for both languages |
 | `crates/eve-net` | The network front: the client's TCP connection, the login handshake, and the link to the service host. `eve-net` is the server binary; `eve-loadgen` measures any server from the client side |
 | `dotnet/src/Eve.Host` | The service host (`eve-host`): sessions, the packet dispatcher, `machoNet`, development accounts |
+| `dotnet/src/Eve.Space`, `Eve.Services.Space` | The link to the space simulation (codec, client) and the `ship` and `beyonce` services: undock, the destiny stream, movement commands, docking |
 | `crates/eve-sde` | Reads the static data export (JSONL) and loads it into PostgreSQL 18 (`sde."<table>"(ord, key, doc jsonb)`) |
 | `sde/` | Fetching the static data export: `fetch.sh`, and `lock.json` once fetched (the data itself is never committed) |
 | `dotnet/src/Eve.GameStore` | The PostgreSQL 18 persistence layer: per-table `(key, doc jsonb, rev)`, owner leases with epoch fencing, a write-ahead outbox, and the cache-first store the services use |
@@ -42,7 +45,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 tools/dev/pg18.sh start                                  # a local PostgreSQL 18 for the database tests
 EVE_PG_URL=$(tools/dev/pg18.sh url) cargo test --workspace
 (cd tools/headless-client && .venv/bin/python -m pytest -q)
-(cd dotnet && EVE_PG_URL=$(../tools/dev/pg18.sh url) dotnet test EveRs.slnx)      # 2,158 tests; the database ones are skipped without EVE_PG_URL
+(cd dotnet && EVE_PG_URL=$(../tools/dev/pg18.sh url) dotnet test EveRs.slnx)      # 2,229 tests; the database ones are skipped without EVE_PG_URL
 cargo run --release -p eve-bench -- --compare
 ```
 

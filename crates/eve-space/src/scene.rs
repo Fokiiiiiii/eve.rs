@@ -27,9 +27,10 @@ const DOCKING_DELAY: i64 = 4 * TICKS_PER_SECOND;
 const DOCKING_RANGE: f64 = 2_500.0;
 /// How far ahead of the clock a stamp may be sent (the client holds updates until their stamp).
 const MAX_STAMP_LEAD: u32 = 2;
-/// The least a ship is put from its station, and how far outside the station's radius it is put.
-const UNDOCK_MIN_DISTANCE: f64 = 8_000.0;
-const UNDOCK_CLEARANCE: f64 = 2_500.0;
+/// How far from the station's centre a ship is put, as a share of the station's radius (the reference's recorded ship left the station
+/// at 0.34 of it, inside the sphere the station's docking range is measured from), and the least it is put from it.
+const UNDOCK_RADIUS_SHARE: f64 = 0.34;
+const UNDOCK_MIN_DISTANCE: f64 = 2_000.0;
 
 /// What a player can ask of their ship (the numbers of the client's `CmdXxx` calls).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -161,7 +162,7 @@ impl Scene {
             .filter(|b| b.kind == BodyKind::Station)
             .ok_or(SceneError::UnknownStation(station_id))?;
         let direction = undock_direction(station.id, station.position);
-        let distance = UNDOCK_MIN_DISTANCE.max(station.radius + UNDOCK_CLEARANCE);
+        let distance = UNDOCK_MIN_DISTANCE.max(station.radius * UNDOCK_RADIUS_SHARE);
         let position = Vec3::new(
             station.position.x + direction.x * distance,
             station.position.y + direction.y * distance,
@@ -562,13 +563,13 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_undocked_ship_is_put_outside_the_station_and_moves_away_at_top_speed() {
+    fn an_undocked_ship_is_put_off_the_station_and_moves_away_at_top_speed() {
         let mut scene = scene();
         let ship = scene.ship(SESSION, NOON).unwrap().clone();
         let gap =
             ((ship.position.x - 1_000_000.0).powi(2) + ship.position.y.powi(2) + ship.position.z.powi(2))
                 .sqrt();
-        assert!((gap - 8_000.0).abs() < 1e-6, "{gap}");
+        assert!((gap - 2_000.0).abs() < 1e-6, "{gap}");
         assert!((speed(&ship) - 339.25).abs() < 1e-9);
         assert_eq!((ship.course, ship.speed_fraction), (Course::Goto, 1.0));
         // away from the star at the origin: the station is on +x, so the ship is further out
@@ -699,6 +700,9 @@ pub(crate) mod tests {
     #[test]
     fn docking_needs_the_station_to_be_close_and_to_exist() {
         let mut scene = scene();
+        // 10 km off the station's surface
+        scene.pilots.get_mut(&SESSION).unwrap().ship.position =
+            Vec3::new(1_000_000.0 + 1_000.0 + 47.0 + 10_000.0, 0.0, 0.0);
         let out = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
         assert_eq!(out, [Out::Refused { session: SESSION, command: 4, reason: "DOCKING_APPROACH_REQUIRED" }]);
         let out = scene.command(SESSION, Command::Dock { station_id: 42 }, NOON);
@@ -760,7 +764,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_ship_leaves_a_big_station_by_its_radius_and_a_clearance() {
+    fn a_ship_leaves_a_big_station_at_a_third_of_its_radius_and_is_within_docking_range() {
         let mut big = (*system()).clone();
         big.bodies[0].radius = 70_000.0;
         let mut scene = Scene::new(Arc::new(big));
@@ -769,7 +773,7 @@ pub(crate) mod tests {
         let gap =
             ((ship.position.x - 1_000_000.0).powi(2) + ship.position.y.powi(2) + ship.position.z.powi(2))
                 .sqrt();
-        assert!((gap - 72_500.0).abs() < 1e-6, "{gap}");
+        assert!((gap - 23_800.0).abs() < 1e-6, "{gap}");
         // and is at once within docking range of it, as the reference's ship was
         let out = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
         assert!(matches!(out.last(), Some(Out::Accepted { .. })));

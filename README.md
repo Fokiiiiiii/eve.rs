@@ -49,6 +49,9 @@ cargo run --release -p eve-bench -- --compare
   `.cache/sde/` (git-ignored) and records its hash in `sde/lock.json`. The pinned build
   is 3396210, the one that matches client 24.01. Load it with
   `cargo run -p eve-sde -- load .cache/sde/eve-online-static-data-3396210-jsonl --pg $(tools/dev/pg18.sh url)`.
+  The archive of the pinned build is also kept in `sde/data/` (downloaded in a browser, because the
+  development environment cannot reach `developers.eveonline.com`); extract it with
+  `SDE_BASE_URL=file://<dir> sde/fetch.sh 3396210`, where `<dir>/tranquility/` holds that file.
 - **Client source.** Some scripts read a local checkout of the decompiled client
   as a read-only reference (`tools/spec-extract`). Its files are CCP's property:
   they are never copied into this repository, and extracted outputs that

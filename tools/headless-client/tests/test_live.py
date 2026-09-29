@@ -55,11 +55,18 @@ def test_get_init_vals_lists_services_and_config():
         assert isinstance(global_config, dict) and global_config
 
 
-def test_unknown_service_is_an_error_not_a_hang():
+def test_unknown_service_and_method_are_answered_not_a_hang():
+    # The reference answers a call it cannot dispatch with a None result (only a
+    # wrapped exception becomes an error response), so the client must get an
+    # answer either way rather than time out.
     with _client() as client:
         client.login("evecli-live", "evecli-live")
-        with pytest.raises((packet.MachoError, TimeoutError)):
-            client.call("noSuchService", "Nothing")
+        for service, method in (("noSuchService", "Nothing"), ("machoNet", "NoSuchMethod")):
+            try:
+                result = client.call(service, method)
+            except packet.MachoError:
+                continue
+            assert m.plain(result) is None
 
 
 @pytest.mark.skipif(not os.environ.get("EVE_LIVE_STRICT_PASSWORDS"), reason="the server does not validate passwords")

@@ -115,8 +115,7 @@ slower than Node on buffer-heavy encoding (a memory copy the JS `Buffer.concat` 
   repository). The login-path latency benchmark needs a running world.
 - **M3 is a foundation plus three services, not the service layer.** The reference has 77 service directories
   (205 services); three are ported. Waves that need the SDE (account/character/skills, inventory/dogma/fitting,
-  ship/station, market, then the long tail) cannot start until the SDE is fetched (`developers.eveonline.com` is
-  denied by this environment's network policy). Not yet ported from the dispatcher: the object-cache
+  ship/station, market, then the long tail) can now start: the SDE is loaded (below). Not yet ported from the dispatcher: the object-cache
   (`CacheOK`) short-circuit for cached method calls, `afterCallResponse` hooks, packet types other than
   call/ping/release-notification (session change notifications are only acknowledged), and the tracing hooks.
   Method names are matched exactly and only the `[Method]` names are reachable, unlike the reference where a
@@ -139,15 +138,26 @@ slower than Node on buffer-heavy encoding (a memory copy the JS `Buffer.concat` 
 - **`tools/headless-client` (`evecli`)**: a Python client with its own marshal
   codec (a third implementation of the golden fixtures), the login handshake and
   service calls. It passes against a scripted mock server. The same tests run
-  against the real Node server with `tools/dev/run-evejs-live.sh`, which needs
-  the SDE-derived data first; that has **not** been run yet.
+  against the real Node server with `tools/dev/run-evejs-live.sh`: login, server
+  time and ping, `GetInitVals`, and the answer to an unknown service pass (4 tests; the wrong-password test is
+  skipped because the development server does not validate passwords).
 - **`docs/spec`, `tools/spec-extract`**: facts (packet layout, handshake,
   service and method names, dogma operators) taken from a local copy of the
   client source. No client code is copied.
-- **Blocked on the environment**: the egress proxy denies
-  `developers.eveonline.com`, so the real SDE has not been fetched. PostgreSQL 18
-  comes from the npm-packaged binaries because `apt.postgresql.org` is denied;
-  .NET 10 comes from Ubuntu's packages.
+- **SDE build 3396210 loaded.** The environment cannot reach `developers.eveonline.com`, so the official archive
+  (`eve-online-static-data-3396210-jsonl.zip`, sha256 `17ae0c7f...279b3e`, 84,190,400 bytes) was downloaded in a
+  browser and committed under `sde/data/`. `sde/fetch.sh` extracted it (61 tables, 668,618 records) and `eve-sde
+  load` put it in PostgreSQL 18.4, the loader's own count check passing. Against the tables the reference's
+  `DatabaseCreator` builds from the same archive: `solarSystems` 8,490 and `stations` 5,210 match exactly,
+  `typeDogma` 26,724 matches, and `itemTypes` has one row fewer than `types` (typeID 0, `#System`, which
+  `DatabaseCreator` leaves out). Only the newest build 3396210 is vendored; a `latest` build has not been fetched.
+- **Reference server start-up.** Booting it on that data takes about five minutes and 3-4 GB before it listens on
+  26000. Its static tables are read from `EVEJS_GAMESTORE_DATA_DIR` (default `<repo>/_local/gameStore/data`, else
+  the source tree), not from `EVEJS_DATA_ROOT`, so a relocated data root also needs that variable.
+- **A call the reference cannot dispatch gets a `None` result**, for an unknown service as much as an unknown method
+  (checked live); the client test expects that, as the dispatcher fixtures record.
+- **Still blocked on the environment**: `apt.postgresql.org` and `www.postgresql.org` are denied, so PostgreSQL 18
+  comes from the npm-packaged binaries; .NET 10 comes from Ubuntu's packages.
 
 ## Policy
 

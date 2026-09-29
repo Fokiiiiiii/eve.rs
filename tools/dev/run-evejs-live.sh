@@ -27,10 +27,11 @@ echo "generating the reference server's data from $SDE"
 node "$EVEJS/tools/DatabaseCreator/database-creator.js" --sde-dir "$SDE" --out "$DATA/gameStore/data" --force
 
 echo "starting the reference server (data root $DATA)"
-( cd "$EVEJS/server" && EVEJS_DATA_ROOT="$DATA" node index.js >"$LOG" 2>&1 ) &
+( cd "$EVEJS/server" && EVEJS_DATA_ROOT="$DATA" EVEJS_GAMESTORE_DATA_DIR="$DATA/gameStore/data" node index.js >"$LOG" 2>&1 ) &
 server_pid=$!
 
-for _ in $(seq 1 120); do
+# the reference server loads every table before it listens: about five minutes on a cold start
+for _ in $(seq 1 "${EVE_LIVE_BOOT_SECONDS:-900}"); do
   if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then break; fi
   kill -0 "$server_pid" 2>/dev/null || { echo "the server exited early:"; tail -30 "$LOG"; exit 1; }
   sleep 1

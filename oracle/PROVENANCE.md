@@ -45,4 +45,7 @@ pausing and resuming a queue, the errors it gives, stopping, the history, each w
 afterwards), recorded at the reference's own training speed, and `training_fast.json` the levels that finish while the client
 watches or is away, which needs a reference started with `EVEJS_SKILL_TRAINING_SPEED=60000` (the file records the speed it saw,
 and the replay is skipped by a server that trains at another).
-`--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast` records one and leaves the others as they are.
+and `undock.json` a new character leaving its station, being sent the solar system, flying and docking again (the ship
+service's `Undock`, the ballpark bound for the system and `UpdateStateRequest`, the movement commands and `CmdDock`; each step
+with everything the client is sent, the destiny actions opened).
+`--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock` records one and leaves the others as they are.

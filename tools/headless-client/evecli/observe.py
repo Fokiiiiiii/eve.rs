@@ -27,6 +27,24 @@ def notifications_of(client: Client) -> list[dict]:
     return out
 
 
+def events_of(client: Client) -> list[dict]:
+    """Everything the server has sent the client since it last looked, in order: named events (as `notifications_of`) and session
+    changes (`{"name": "$sessionchange", "idType": None, "args": <the packet described>}`)."""
+    client.ping()
+    out = []
+    for n in client.notifications:
+        if n.command == p.NOTIFICATION:
+            address = n.raw[2]
+            fields = address.args if hasattr(address, "args") else address
+            body = n.payload[0][1]
+            inner = m.decode(bytes(body.value if hasattr(body, "value") else body))
+            out.append({"name": describe(fields[1]), "idType": describe(fields[3]), "args": open_buffers(describe(inner))})
+        elif n.command == p.SESSIONCHANGENOTIFICATION:
+            out.append({"name": "$sessionchange", "idType": None, "args": describe(n.raw)})
+    client.notifications.clear()
+    return out
+
+
 def open_buffers(described):
     """A description with every buffer that holds a marshalled value replaced by that value, so the events that carry
     one (the brain) can be compared by what is in them: `{"$marshalled": description}`."""
@@ -91,4 +109,16 @@ def wait_for_events(who: Client, done, timeout: float = 15.0) -> list:
         if done(seen):
             break
         time.sleep(0.2)
+    return seen
+
+
+def wait_quietly(client: Client, seconds: float, until=None) -> list:
+    """The events that arrive in `seconds` (or until `until(all so far)` is true)."""
+    seen: list = []
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        seen += events_of(client)
+        if until is not None and until(seen):
+            break
+        time.sleep(0.25)
     return seen

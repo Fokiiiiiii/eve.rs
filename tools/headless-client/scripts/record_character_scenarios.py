@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record what the EVE.js reference does from login to a session with a character.
 
-    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast]
+    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock]
 
 The recording is the contract for the same path in eve.rs: `tests/test_login_to_character.py` replays the calls
 against any server and compares each answer with what is stored here, by shape, treating per-run values
@@ -30,7 +30,7 @@ from evecli import marshal as m  # noqa: E402
 from evecli import packet as p  # noqa: E402
 from evecli.client import Client  # noqa: E402
 from evecli.describe import describe  # noqa: E402
-from evecli.observe import hangar_and_ship, notifications_of, ship_of, training_view, wait_for_events  # noqa: E402
+from evecli.observe import events_of, hangar_and_ship, notifications_of, ship_of, training_view, wait_for_events, wait_quietly  # noqa: E402
 
 # The school the reference offers each playable race (its minimal map), as the client would send one.
 SCHOOL_OF_RACE = {1: 35, 2: 33, 4: 31, 8: 37}
@@ -528,6 +528,54 @@ def record_training_fast(rec: Recorder, out: str, meta: dict, ancestry: dict, ru
         handle.write("\n")
 
 
+def record_undock(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """A new character leaves its station, is sent the solar system, flies and docks again: `ship.Undock` on the ship service bound
+    to the station, the ballpark (`beyonce`) bound to the solar system, `UpdateStateRequest`, then the movement commands and
+    `CmdDock`. Each step: the answer and everything the client is sent while it waits (named events and session changes, the
+    destiny actions inside them opened)."""
+    races = []
+    for bloodline in (1, 5):
+        who = rec.login(f"undock{bloodline}")
+        created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Undocker {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
+        char_id = int(created["ok"])
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
+        hangar = who.call_bound(manager, "GetInventory", 10004)
+        ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+        who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
+        events_of(who)
+
+        def step(label, call, wait=1.5, until=None):
+            entry = {"label": label}
+            try:
+                entry["ok"] = describe(call())
+            except p.MachoError as error:
+                entry["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+            entry["events"] = wait_quietly(who, wait, until)
+            return entry
+
+        steps = []
+        ship = who.call("ship", "MachoBindObject", (60015249, 15), None)
+        steps.append({"label": "bind the ship service", "ok": describe(ship), "events": wait_quietly(who, 0.5)})
+        steps.append(step("undock", lambda: who.call_bound(ship[0], "Undock", ship_id, False, onlineModules=m.List([ship_id + 1, ship_id + 2, ship_id + 3])), 2.0))
+        beyonce = who.call("beyonce", "MachoBindObject", 30100032, None)
+        steps.append({"label": "bind the ballpark", "ok": describe(beyonce), "events": wait_quietly(who, 2.5)})
+        steps.append(step("formations", lambda: who.call_bound(beyonce[0], "GetFormations"), 0.5))
+        steps.append(step("update state", lambda: who.call_bound(beyonce[0], "UpdateStateRequest"), 2.0))
+        steps.append(step("speed fraction", lambda: who.call_bound(beyonce[0], "CmdSetSpeedFraction", 0.5), 1.5))
+        steps.append(step("go in a direction", lambda: who.call_bound(beyonce[0], "CmdGotoDirection", 1.0, 0.0, 0.0), 1.5))
+        steps.append(step("go in another direction", lambda: who.call_bound(beyonce[0], "CmdGotoDirection", 0.0, 0.0, 1.0), 1.5))
+        steps.append(step("stop", lambda: who.call_bound(beyonce[0], "CmdStop"), 1.5))
+        steps.append(step("dock", lambda: who.call_bound(beyonce[0], "CmdDock", 60015249), 9.0, until=lambda seen: any(e["name"] == "$sessionchange" for e in seen)))
+        races.append({"bloodlineID": bloodline, "raceID": RACE_OF_BLOODLINE[bloodline], "create": created, "characterID": char_id, "shipID": ship_id,
+                      "moduleIDs": [ship_id + 1, ship_id + 2, ship_id + 3], "solarSystemID": 30100032, "stationID": 60015249, "steps": steps})
+        who.close()
+        time.sleep(1.5)
+    with open(os.path.join(out, "undock.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": races}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+
+
 def main() -> int:
     if len(sys.argv) < 4:
         print(__doc__)
@@ -540,10 +588,10 @@ def main() -> int:
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock}
     try:
         for name, record in parts.items():
-            if only == name or (only is None and name != "training_fast"):  # the fast one needs a reference started for it
+            if only == name or (only is None and name not in ("training_fast", "undock")):  # the fast one needs a reference started for it
                 record(rec, out, meta, ancestry, run)
         if only in (None, "stations"):
             record_stations(rec, out, meta, ancestry, run, sde)

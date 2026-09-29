@@ -17,90 +17,44 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download and expand pinned SDE
+      - name: Download pinned SDE archive
         shell: bash
         run: |
           set -euo pipefail
           build=3396210
           name="eve-online-static-data-${build}-jsonl"
           url="https://data.everef.net/ccp/sde/2026/${name}.zip"
-          archive="${RUNNER_TEMP}/${name}.zip"
-          out="sde/data/${name}"
 
-          rm -rf "$out"
-          mkdir -p "$out"
-          curl -fL --retry 5 --retry-delay 2 -o "$archive" "$url"
+          mkdir -p sde/data
+          rm -rf "sde/data/${name}"
+          rm -f .gitattributes
+          curl -fL --retry 5 --retry-delay 2             -o "sde/data/${name}.zip"             "$url"
 
-          python3 - "$archive" "$out" <<'PY'
-          import os, sys, zipfile
-          archive, out = sys.argv[1:3]
-          with zipfile.ZipFile(archive) as z:
+          python3 - "sde/data/${name}.zip" <<'PY'
+          import sys, zipfile
+          path = sys.argv[1]
+          with zipfile.ZipFile(path) as z:
               bad = z.testzip()
               if bad:
                   raise SystemExit(f"corrupt zip member: {bad}")
-              files = [m for m in z.infolist() if not m.is_dir()]
-              if not any(os.path.basename(m.filename) == "_sde.jsonl" for m in files):
+              names = [x.filename.rsplit("/", 1)[-1] for x in z.infolist() if not x.is_dir()]
+              if "_sde.jsonl" not in names:
                   raise SystemExit("not an SDE archive: missing _sde.jsonl")
-              for member in files:
-                  target = os.path.join(out, os.path.basename(member.filename))
-                  with z.open(member) as src, open(target, "wb") as dst:
-                      while True:
-                          chunk = src.read(1 << 20)
-                          if not chunk:
-                              break
-                          dst.write(chunk)
+              print(f"verified {path}: {len(names)} files")
           PY
 
-          sha256sum "$archive" | tee "$out/ARCHIVE.sha256"
-          printf '%s\n' "$url" > "$out/SOURCE.url"
+          sha256sum "sde/data/${name}.zip"
 
-      - name: Record manifest and size guard
-        shell: bash
-        run: |
-          set -euo pipefail
-          root="sde/data/eve-online-static-data-3396210-jsonl"
-          python3 - "$root" <<'PY'
-          import json, os, pathlib, sys
-          root = pathlib.Path(sys.argv[1])
-          rows = {}
-          largest = []
-          total = 0
-          for p in sorted(root.glob("*.jsonl")):
-              size = p.stat().st_size
-              total += size
-              with p.open("rb") as f:
-                  count = sum(1 for line in f if line.strip())
-              rows[p.name] = {"rows": count, "bytes": size}
-              largest.append((size, p.name))
-          manifest = {
-              "build": 3396210,
-              "format": "jsonl",
-              "source": (root / "SOURCE.url").read_text().strip(),
-              "tables": rows,
-              "totalBytes": total,
-          }
-          (root / "MANIFEST.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-          print(f"{len(rows)} JSONL tables, {total} bytes")
-          for size, name in sorted(largest, reverse=True)[:10]:
-              print(f"{size:>12}  {name}")
-          too_big = [(s,n) for s,n in largest if s >= 100_000_000]
-          if too_big:
-              print("Files that will use Git LFS:", too_big)
-          PY
-
-      - name: Commit expanded SDE
+      - name: Commit archive only
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git lfs install --local
-          git lfs track "sde/data/eve-online-static-data-3396210-jsonl/mapMoons.jsonl"
-          git lfs track "sde/data/eve-online-static-data-3396210-jsonl/types.jsonl"
-          git add .gitattributes sde/data/eve-online-static-data-3396210-jsonl
+          git add -A -- .gitattributes sde/data
           if git diff --cached --quiet; then
-            echo "Pinned SDE is already vendored."
+            echo "Pinned SDE archive is already present."
             exit 0
           fi
-          git commit -m "Vendor expanded EVE SDE build 3396210"
+          git commit -m "Store EVE SDE build 3396210 as archive only"
           git push origin HEAD:main

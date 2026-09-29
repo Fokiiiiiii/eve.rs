@@ -3,6 +3,7 @@ using Eve.Identity;
 using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Skills;
 
 namespace Eve.Services.CharacterSelect;
 
@@ -16,9 +17,11 @@ public sealed partial class CharUnboundMgrService(
     IAccountLookup accounts,
     PgCharacterStore characters,
     PgItemStore items,
+    PgSkillStore skills,
     CharacterCreation creation,
     CreationCatalog catalog,
     OnlineCharacters online,
+    IReadOnlyList<ICharacterEntryHook> entryHooks,
     Random random)
 {
     /// <summary>What every session's role gets on top of the account's (the client shows staff roles and the base bits alike).</summary>
@@ -54,7 +57,7 @@ public sealed partial class CharUnboundMgrService(
 
     /// <summary>
     /// <c>(account rows, (None, None), character rows, [])</c>. The rows carry values that belong to modules that do not
-    /// exist yet (wallet, skills, mail): they are the reference's for a new character, and are marked below.
+    /// exist yet (wallet, mail): they are the reference's for a new character, and are marked below.
     /// </summary>
     [Method("GetCharacterSelectionData")]
     public async ValueTask<PyValue> GetCharacterSelectionData(ServiceCall call)
@@ -62,10 +65,11 @@ public sealed partial class CharUnboundMgrService(
         var account = AccountOf(call);
         var list = account is { } id ? await characters.ForAccountAsync(id, Token(call)) : [];
         var info = account is { } known ? await accounts.FindAsync(checked((uint)known), Token(call)) : null;
+        var points = await skills.TotalPointsAsync(list.Select(c => c.Id), Token(call));
         var rows = new List<PyValue>();
         foreach (var character in list)
         {
-            rows.Add(await SelectionRow(character, Token(call)));
+            rows.Add(await SelectionRow(character, points[character.Id], Token(call)));
         }
         return Py.Tuple(
             new PyList(info is null ? [] : [AccountRow(info)]),
@@ -165,7 +169,7 @@ public sealed partial class CharUnboundMgrService(
         }
 
         var accountRole = call.Session.Get("accountRole") is PyLong r ? r.Value : 0;
-        call.Session.Change(
+        var announced = call.Session.Change(
             ("charid", new PyInt(character.Id)),
             ("corpid", new PyInt(character.CorporationId)),
             ("genderID", new PyInt(character.Gender)),
@@ -188,6 +192,15 @@ public sealed partial class CharUnboundMgrService(
             ("rolesAtBase", new PyLong(0)),
             ("rolesAtHQ", new PyLong(0)),
             ("rolesAtOther", new PyLong(0)));
+        // Whatever else the client needs to learn about the character: the skills module tells it to load its skills.
+        // Choosing the character the session already has is not entering it again, as on the reference.
+        if (announced.Any(change => change.Name == "charid"))
+        {
+            foreach (var hook in entryHooks)
+            {
+                await hook.OnCharacterEnteredAsync(call.Session, character.Id, Token(call));
+            }
+        }
         return None;
     }
 
@@ -218,15 +231,7 @@ public sealed partial class CharUnboundMgrService(
         ("subscriptionEndTime", new PyLong(SubscriptionEndFileTime)),
         ("maxCharacterSlots", new PyInt(CharacterCreation.SlotsPerAccount)));
 
-    /// <summary>Skill points a new character of a race starts with (the skills module will own this).</summary>
-    private static int StartingSkillPoints(int raceId) => raceId switch
-    {
-        1 => 384_036,
-        2 => 384_402,
-        _ => 386_730,
-    };
-
-    private async Task<PyValue> SelectionRow(Character c, CancellationToken ct)
+    private async Task<PyValue> SelectionRow(Character c, long skillPoints, CancellationToken ct)
     {
         var ship = c.ShipId is { } shipId ? await items.GetAsync(shipId, ct) : null;
         var logoff = c.LastLogoffAt ?? c.CreatedAt;
@@ -252,8 +257,7 @@ public sealed partial class CharUnboundMgrService(
             ("balance", new PyReal(100_000.0)),
             ("plexBalance", new PyInt(2222)),
             ("balanceChange", new PyReal(0.0)),
-            // Gap: skills module.
-            ("skillPoints", new PyInt(StartingSkillPoints(c.RaceId))),
+            ("skillPoints", new PyInt(skillPoints)),
             ("shipTypeID", ship is null ? None : new PyInt(ship.TypeId)),
             ("shipName", new PyStr(ship is null ? "" : catalog.ShipName(ship.TypeId))),
             ("securityRating", new PyInt(0)),

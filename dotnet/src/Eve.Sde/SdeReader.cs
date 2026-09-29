@@ -79,6 +79,35 @@ public sealed partial class SdeReader
         return rows;
     }
 
+    /// <summary>
+    /// The records of <paramref name="table"/> whose number field <paramref name="field"/> is one of <paramref name="values"/>
+    /// (<c>groupID</c> of the types of some groups), in file order.
+    /// </summary>
+    public async Task<IReadOnlyList<SdeRow>> ReadByFieldAsync(string table, string field, IEnumerable<long> values, CancellationToken cancellationToken = default)
+    {
+        if (!TableName().IsMatch(table) || !TableName().IsMatch(field))
+        {
+            throw new ArgumentException($"not a usable table or field name: {table}.{field}");
+        }
+        var rows = new List<SdeRow>();
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            $"SELECT key, doc FROM {_schema}.\"{table}\" WHERE jsonb_typeof(doc->'{field}') = 'number' AND (doc->>'{field}')::bigint = ANY($1) ORDER BY ord",
+            connection)
+        {
+            Parameters = { new() { Value = values.ToArray() } },
+        };
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (long.TryParse(reader.GetString(0), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var key))
+            {
+                rows.Add(new SdeRow(key, reader.GetFieldValue<JsonDocument>(1).RootElement.Clone()));
+            }
+        }
+        return rows;
+    }
+
     /// <summary>A text in the export's English, from a <c>{"en": ..., ...}</c> object.</summary>
     public static string English(JsonElement value) =>
         value.ValueKind == JsonValueKind.Object && value.TryGetProperty("en", out var en) && en.ValueKind == JsonValueKind.String

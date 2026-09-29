@@ -3,6 +3,7 @@
     <ProjectReference Include="../Eve.Data/Eve.Data.csproj" />
     <ProjectReference Include="../Eve.Sde/Eve.Sde.csproj" />
     <ProjectReference Include="../Eve.Inventory/Eve.Inventory.csproj" />
+    <ProjectReference Include="../Eve.Skills/Eve.Skills.csproj" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Migrations/*.sql" />

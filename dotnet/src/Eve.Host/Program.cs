@@ -7,10 +7,12 @@ using Eve.Identity;
 using Eve.Inventory;
 using Eve.Marshal;
 using Eve.Sde;
+using Eve.Skills;
 using Npgsql;
 using Eve.Services;
 using Eve.Services.CharacterSelect;
 using Eve.Services.Core;
+using Eve.Services.Skills;
 
 // eve-host: the service host.
 //
@@ -21,6 +23,7 @@ using Eve.Services.Core;
 //   EVE_IDENTITY_SCHEMA    the schema of the accounts module                                  (default identity)
 //   EVE_CHARACTERS_SCHEMA  the schema of the characters module                                (default characters)
 //   EVE_INVENTORY_SCHEMA   the schema of the inventory module                                 (default inventory)
+//   EVE_SKILLS_SCHEMA      the schema of the skills module                                    (default skills)
 //   EVE_START_STATION      the station every new character starts at (the reference's; 60015249), or
 //                          "school" for the headquarters of the character's school corporation
 //                          Characters need EVE_PG_URL and the SDE (`eve-sde ensure`): without them the host runs
@@ -64,7 +67,7 @@ var accountOptions = new AccountOptions
     AutoCreate = Flag("EVE_DEV_AUTO_CREATE", true),
 };
 IAccountDirectory accounts;
-IService? characterSelect = null;
+IReadOnlyList<IService> characterServices = [];
 var online = new OnlineCharacters();
 if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
 {
@@ -74,7 +77,7 @@ if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
     Console.Error.WriteLine($"eve-host: accounts in PostgreSQL, schema {schema}{(applied.Count > 0 ? "; applied " + string.Join(", ", applied) : "")}");
     var directory = new PgAccountDirectory(source, accountOptions, schema);
     accounts = directory;
-    characterSelect = await CharacterSelectAsync(source, directory, online);
+    characterServices = await CharacterServicesAsync(source, directory, online, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
 }
 else
 {
@@ -88,9 +91,9 @@ foreach (var service in CoreServices.Create(new SubscriptionSettings(), new NoOm
 {
     registry.Register(service);
 }
-if (characterSelect is not null)
+foreach (var service in characterServices)
 {
-    registry.Register(characterSelect);
+    registry.Register(service);
 }
 var config = GlobalConfig.Build(options);
 var info = new HostMachoNetInfo(registry, config);
@@ -121,30 +124,40 @@ await server.ServeAsync(listener, cancel.Token);
 return 0;
 
 /// <summary>
-/// The characters and inventory modules and the character selection service, or null (with the reason logged) when the
-/// static data they need is not in the database.
+/// The character-side modules (characters, inventory, skills) and their services, or none (with the reason logged) when
+/// the static data they need is not in the database.
 /// </summary>
-static async Task<IService?> CharacterSelectAsync(NpgsqlDataSource source, IAccountLookup accounts, OnlineCharacters online)
+static async Task<IReadOnlyList<IService>> CharacterServicesAsync(NpgsqlDataSource source, IAccountLookup accounts, OnlineCharacters online, Func<long> now)
 {
     CharacterNames.EnsureUnicodeSupport();
     var characterSchema = Env("EVE_CHARACTERS_SCHEMA", PgCharacterStore.DefaultSchema);
     var inventorySchema = Env("EVE_INVENTORY_SCHEMA", PgItemStore.DefaultSchema);
+    var skillsSchema = Env("EVE_SKILLS_SCHEMA", PgSkillStore.DefaultSchema);
     await PgCharacterStore.MigrateAsync(source, characterSchema);
     await PgItemStore.MigrateAsync(source, inventorySchema);
+    await PgSkillStore.MigrateAsync(source, skillsSchema);
 
     var sde = new SdeReader(source);
     if (await sde.BuildAsync() is not { } build)
     {
-        Console.Error.WriteLine("eve-host: the static data is not loaded (run `eve-sde ensure --pg $EVE_PG_URL`): no charUnboundMgr");
-        return null;
+        Console.Error.WriteLine("eve-host: the static data is not loaded (run `eve-sde ensure --pg $EVE_PG_URL`): no charUnboundMgr, no skills");
+        return [];
     }
     var startText = Env("EVE_START_STATION", "60015249");
     long? startStation = startText == "school" ? null : long.Parse(startText, System.Globalization.CultureInfo.InvariantCulture);
     var catalog = await CreationCatalog.LoadAsync(sde, startStation);
     var characters = new PgCharacterStore(source, characterSchema);
     var items = new PgItemStore(source, inventorySchema);
-    Console.Error.WriteLine($"eve-host: characters in PostgreSQL, schemas {characterSchema} and {inventorySchema}; static data build {build}; new characters start at {(startStation is { } id ? $"station {id}" : "their school's headquarters")}");
-    return new CharUnboundMgrService(accounts, characters, items, new CharacterCreation(source, characters, items, catalog), catalog, online, Random.Shared);
+    var skills = new PgSkillStore(source, skillsSchema);
+    var skillCatalog = await SkillCatalog.LoadAsync(sde);
+    Console.Error.WriteLine($"eve-host: characters in PostgreSQL, schemas {characterSchema}, {inventorySchema} and {skillsSchema}; static data build {build}; new characters start at {(startStation is { } id ? $"station {id}" : "their school's headquarters")}");
+    var creation = new CharacterCreation(source, characters, items, skills, skillCatalog, catalog);
+    return
+    [
+        new CharUnboundMgrService(accounts, characters, items, skills, creation, catalog, online, [new SkillsLoginHook(skills, skillCatalog, now)], Random.Shared),
+        new SkillMgr2Service(),
+        new SkillHandlerService(skills, skillCatalog, now),
+    ];
 }
 
 /// <summary>Until accounts live in the database (S2), nobody has a stored Omega expiry.</summary>

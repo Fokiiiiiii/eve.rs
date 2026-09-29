@@ -1,5 +1,6 @@
 using Eve.Data;
 using Eve.Inventory;
+using Eve.Skills;
 using Npgsql;
 
 namespace Eve.Characters.Tests;
@@ -26,8 +27,10 @@ public sealed class PgSchemas : IAsyncDisposable
         Source = source;
         CharactersSchema = $"ch_test_{suffix}";
         InventorySchema = $"inv_test_{suffix}";
+        SkillsSchema = $"sk_test_{suffix}";
         Characters = new PgCharacterStore(source, CharactersSchema);
         Items = new PgItemStore(source, InventorySchema);
+        Skills = new PgSkillStore(source, SkillsSchema);
     }
 
     public NpgsqlDataSource Source { get; }
@@ -36,7 +39,11 @@ public sealed class PgSchemas : IAsyncDisposable
 
     public string InventorySchema { get; }
 
+    public string SkillsSchema { get; }
+
     public PgCharacterStore Characters { get; }
+
+    public PgSkillStore Skills { get; }
 
     public PgItemStore Items { get; }
 
@@ -46,6 +53,7 @@ public sealed class PgSchemas : IAsyncDisposable
         var schemas = new PgSchemas(source, Guid.NewGuid().ToString("N")[..12]);
         await PgCharacterStore.MigrateAsync(source, schemas.CharactersSchema);
         await PgItemStore.MigrateAsync(source, schemas.InventorySchema);
+        await PgSkillStore.MigrateAsync(source, schemas.SkillsSchema);
         return schemas;
     }
 
@@ -57,7 +65,7 @@ public sealed class PgSchemas : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        foreach (var schema in new[] { CharactersSchema, InventorySchema })
+        foreach (var schema in new[] { CharactersSchema, InventorySchema, SkillsSchema })
         {
             await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
             await command.ExecuteNonQueryAsync();

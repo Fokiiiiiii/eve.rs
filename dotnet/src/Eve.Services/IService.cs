@@ -47,3 +47,12 @@ public sealed class DeferredContext(Eve.Macho.MachoPacket packet, ClientSession 
     /// <summary>Sends the call response.</summary>
     public void Reply(PyValue result) => reply(result);
 }
+
+/// <summary>
+/// Something to do for a session when it has chosen a character and the session has been told (the client wants its
+/// skill cache primed, its ...): each module that owns login state gives one.
+/// </summary>
+public interface ICharacterEntryHook
+{
+    ValueTask OnCharacterEnteredAsync(ClientSession session, long characterId, CancellationToken cancellationToken);
+}

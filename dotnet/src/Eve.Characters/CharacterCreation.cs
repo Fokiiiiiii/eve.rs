@@ -1,4 +1,5 @@
 using Eve.Inventory;
+using Eve.Skills;
 using Npgsql;
 
 namespace Eve.Characters;
@@ -30,10 +31,11 @@ public sealed record Created(long CharacterId, long ShipId) : CreationOutcome;
 public sealed record CreationRefused(CreationRefusal Reason) : CreationOutcome;
 
 /// <summary>
-/// Makes a character: the character itself and the rookie ship of its race, docked in the hangar of the station its
-/// school's corporation is based at, in one transaction (so a failure leaves neither behind).
+/// Makes a character: the character itself, the rookie ship of its race docked in the hangar of the station it starts
+/// at, and the skills its race starts with, in one transaction (so a failure leaves none of them behind).
 /// </summary>
-public sealed class CharacterCreation(NpgsqlDataSource source, PgCharacterStore characters, PgItemStore items, CreationCatalog catalog)
+public sealed class CharacterCreation(
+    NpgsqlDataSource source, PgCharacterStore characters, PgItemStore items, PgSkillStore skills, SkillCatalog skillCatalog, CreationCatalog catalog)
 {
     /// <summary>How many characters an account may have.</summary>
     public const int SlotsPerAccount = 3;
@@ -81,6 +83,9 @@ public sealed class CharacterCreation(NpgsqlDataSource source, PgCharacterStore 
         var shipId = await items.CreateAsync(
             connection, transaction, new NewItem(race.ShipTypeId, characterId, start.StationId, ItemFlags.Hangar, Singleton: true), cancellationToken);
         await characters.SetShipAsync(connection, transaction, characterId, shipId, cancellationToken);
+        var starting = skillCatalog.StartingSet(race.Id)
+            ?? throw new InvalidOperationException($"race {race.Id} starts with a skill that is not in the skill catalog: the static data does not agree with itself");
+        await skills.GrantAsync(connection, transaction, characterId, starting, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new Created(characterId, shipId);
     }

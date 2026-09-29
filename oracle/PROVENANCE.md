@@ -30,4 +30,7 @@ reader in `crates/eve-oracle/src/js.rs`.
 answered to the headless client (`tools/headless-client/scripts/record_character_scenarios.py`, against a reference
 started by `tools/dev/ref-server.sh` on data built from SDE build 3396210). `referenceCommit` and `recordedAt` are in
 each file. They pin what the client can see on the way from login to a session with a character; where eve.rs
-deliberately differs, `docs/compat/DEVIATIONS.md` says so.
+deliberately differs, `docs/compat/DEVIATIONS.md` says so. `login_to_character.json` is the walk, `starters.json` what
+each bloodline is given, and `skills.json` what the skill handler answers for a new character of each race (the three
+calls that return the whole skill list share one copy, marked `{"$same": "GetSkills"}`). `--only walk|starters|skills`
+records one and leaves the others as they are.

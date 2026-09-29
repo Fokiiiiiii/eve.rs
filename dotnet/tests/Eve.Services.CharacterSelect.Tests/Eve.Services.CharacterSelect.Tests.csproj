@@ -12,6 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Eve.Services.CharacterSelect/Eve.Services.CharacterSelect.csproj" />
+    <ProjectReference Include="../../src/Eve.Services.Skills/Eve.Services.Skills.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

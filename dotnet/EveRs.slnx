@@ -10,9 +10,11 @@
     <Project Path="src/Eve.Macho/Eve.Macho.csproj" />
     <Project Path="src/Eve.Marshal/Eve.Marshal.csproj" />
     <Project Path="src/Eve.Sde/Eve.Sde.csproj" />
+    <Project Path="src/Eve.Skills/Eve.Skills.csproj" />
     <Project Path="src/Eve.Services.CharacterSelect/Eve.Services.CharacterSelect.csproj" />
     <Project Path="src/Eve.Services.Core/Eve.Services.Core.csproj" />
     <Project Path="src/Eve.Services.Generator/Eve.Services.Generator.csproj" />
+    <Project Path="src/Eve.Services.Skills/Eve.Services.Skills.csproj" />
     <Project Path="src/Eve.Services/Eve.Services.csproj" />
   </Folder>
   <Folder Name="/tests/">
@@ -23,8 +25,10 @@
     <Project Path="tests/Eve.Identity.Tests/Eve.Identity.Tests.csproj" />
     <Project Path="tests/Eve.Marshal.Tests/Eve.Marshal.Tests.csproj" />
     <Project Path="tests/Eve.Services.CharacterSelect.Tests/Eve.Services.CharacterSelect.Tests.csproj" />
+    <Project Path="tests/Eve.Skills.Tests/Eve.Skills.Tests.csproj" />
     <Project Path="tests/Eve.Services.Core.Tests/Eve.Services.Core.Tests.csproj" />
     <Project Path="tests/Eve.Services.Generator.Tests/Eve.Services.Generator.Tests.csproj" />
+    <Project Path="tests/Eve.Services.Skills.Tests/Eve.Services.Skills.Tests.csproj" />
     <Project Path="tests/Eve.Services.Tests/Eve.Services.Tests.csproj" />
   </Folder>
 </Solution>

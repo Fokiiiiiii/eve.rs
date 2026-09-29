@@ -83,6 +83,14 @@ public sealed class ClientSession
     public void Send(PyValue packet) => Sink?.Send(packet);
 
     private int _closed;
+    private int _notificationSequence = -1;
+
+    /// <summary>
+    /// Sends the client a named event (<c>OnServerSkillsChanged</c>, ...) addressed by <paramref name="idType"/> (<c>charid</c>,
+    /// <c>clientID</c>, ...). The session numbers its notifications from 0.
+    /// </summary>
+    public void SendNotification(string name, string idType, params PyValue[] args) =>
+        Send(ClientNotification.Build(UserId ?? 0, NodeId, name, idType, args, Interlocked.Increment(ref _notificationSequence)));
 
     /// <summary>Raised once, when the connection of this session has ended: modules release what the session held.</summary>
     public event Action? Closed;

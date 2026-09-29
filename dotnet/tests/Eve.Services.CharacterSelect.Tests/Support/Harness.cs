@@ -4,6 +4,8 @@ using Eve.Identity;
 using Eve.Inventory;
 using Eve.Marshal;
 using Eve.Services;
+using Eve.Services.Skills;
+using Eve.Skills;
 using Npgsql;
 
 namespace Eve.Services.CharacterSelect.Tests;
@@ -43,20 +45,40 @@ public sealed class Harness : IAsyncDisposable
             new StarterLocation(1000044, 500002, 60000001, 30000001, 20000001, 10000001),
         ]);
 
+    /// <summary>The skills of the small catalog: race 1 starts with three of them, race 2 with one.</summary>
+    public static readonly SkillCatalog Skills = new(
+        [new SkillType(3300, "Gunnery", 255, "Gunnery", true, 1), new SkillType(3301, "Small Hybrid Turret", 255, "Gunnery", true, 1), new SkillType(3315, "Repair Systems", 1210, "Armor", true, 4)],
+        new Dictionary<int, IReadOnlyList<StartingSkill>>
+        {
+            [1] = [new(3300, 4), new(3301, 1), new(3315, 0)],
+            [2] = [new(3300, 3)],
+        });
+
+    /// <summary>What a race-1 character starts with: 45255 + 250 + 0 points.</summary>
+    public const long Race1Points = 45_505;
+
+    public const long ClockUnixMs = 1_700_000_000_123;
+
     private readonly string _characterSchema;
     private readonly string _inventorySchema;
+    private readonly string _skillsSchema;
 
     private Harness(NpgsqlDataSource source, string suffix)
     {
         Source = source;
         _characterSchema = $"cs_test_{suffix}";
         _inventorySchema = $"csi_test_{suffix}";
+        _skillsSchema = $"css_test_{suffix}";
         Characters = new PgCharacterStore(source, _characterSchema);
         Items = new PgItemStore(source, _inventorySchema);
+        SkillStore = new PgSkillStore(source, _skillsSchema);
         Accounts = new InMemoryAccountDirectory(new AccountOptions());
         Online = new OnlineCharacters();
         Service = new CharUnboundMgrService(
-            Accounts, Characters, Items, new CharacterCreation(source, Characters, Items, Catalog), Catalog, Online, new Random(7));
+            Accounts, Characters, Items, SkillStore, new CharacterCreation(source, Characters, Items, SkillStore, Skills, Catalog), Catalog, Online,
+            [new SkillsLoginHook(SkillStore, Skills, () => ClockUnixMs)], new Random(7));
+        Handler = new SkillHandlerService(SkillStore, Skills, () => ClockUnixMs);
+        Door = new SkillMgr2Service();
     }
 
     public NpgsqlDataSource Source { get; }
@@ -64,6 +86,12 @@ public sealed class Harness : IAsyncDisposable
     public PgCharacterStore Characters { get; }
 
     public PgItemStore Items { get; }
+
+    public PgSkillStore SkillStore { get; }
+
+    public SkillHandlerService Handler { get; }
+
+    public SkillMgr2Service Door { get; }
 
     public InMemoryAccountDirectory Accounts { get; }
 
@@ -78,6 +106,7 @@ public sealed class Harness : IAsyncDisposable
         var harness = new Harness(source, Guid.NewGuid().ToString("N")[..12]);
         await PgCharacterStore.MigrateAsync(source, harness._characterSchema);
         await PgItemStore.MigrateAsync(source, harness._inventorySchema);
+        await PgSkillStore.MigrateAsync(source, harness._skillsSchema);
         return harness;
     }
 
@@ -100,6 +129,9 @@ public sealed class Harness : IAsyncDisposable
     public async ValueTask<PyValue> CallAsync(ClientSession session, string method, params PyValue[] args) =>
         await ((IService)Service).CallAsync(new ServiceCall { Method = method, Args = args, Session = session });
 
+    public async ValueTask<PyValue> SkillsAsync(ClientSession session, string method, params PyValue[] args) =>
+        await ((IService)Handler).CallAsync(new ServiceCall { Method = method, Args = args, Session = session });
+
     public async Task<long> ExecuteAsync(string sql)
     {
         await using var command = Source.CreateCommand(sql.Replace("{characters}", _characterSchema, StringComparison.Ordinal));
@@ -108,7 +140,7 @@ public sealed class Harness : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        foreach (var schema in new[] { _characterSchema, _inventorySchema })
+        foreach (var schema in new[] { _characterSchema, _inventorySchema, _skillsSchema })
         {
             await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
             await command.ExecuteNonQueryAsync();

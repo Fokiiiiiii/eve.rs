@@ -163,7 +163,7 @@ public class CharUnboundMgrTests
         Assert.Equal((new PyInt(1), new PyInt(1), new PyInt(1), new PyInt(10), new PyInt(35)), ((PyValue)v["gender"], v["raceID"], v["bloodlineID"], v["ancestryID"], v["schoolID"]));
         Assert.Equal((new PyInt(1000006), new PyInt(60000610), new PyInt(30002775), new PyInt(20000406), new PyInt(10000033)), ((PyValue)v["corporationID"], v["stationID"], v["solarSystemID"], v["constellationID"], v["regionID"]));
         Assert.Equal((new PyInt(601), new PyStr("Ibis")), ((PyValue)v["shipTypeID"], v["shipName"]));
-        Assert.Equal(new PyInt(384_036), v["skillPoints"]);
+        Assert.Equal(new PyInt(Harness.Race1Points), v["skillPoints"]); // the points its skills add up to, not a constant
         Assert.Equal(PyNone.Instance, v["factionID"]);
         Assert.Equal(PyNone.Instance, v["allianceID"]);
     }
@@ -264,7 +264,11 @@ public class CharUnboundMgrTests
 
         Assert.Equal(PyNone.Instance, await h.CallAsync(session, "SelectCharacterID", new PyInt(id)));
 
-        var packet = Assert.Single(sink.Sent);
+        // the session change first, then the skills notification, as the reference orders them
+        Assert.Equal(2, sink.Sent.Count);
+        var packet = sink.Sent[0];
+        Assert.Equal(new PyInt(16), ((PyTuple)((PyObject)packet).Args).Items[0]);
+        Assert.Equal(new PyInt(12), ((PyTuple)((PyObject)sink.Sent[1]).Args).Items[0]);
         var changes = ChangesOf(packet);
         var recorded = Recorded.Login["afterSelect"]![0]!["$tuple"]![4]!["$tuple"]![1]!["$tuple"]![1]!["$dict"]!.AsArray();
         Assert.Equal(recorded.Select(e => e![0]!.GetValue<string>()), changes.Select(c => c.Name));
@@ -361,18 +365,21 @@ public class CharUnboundMgrTests
         Assert.False(h.Online.IsOnline(id));
         await h.CallAsync(second, "SelectCharacterID", new PyInt(id));
         Assert.Equal(id, second.CharacterId);
-        Assert.Single(secondSink.Sent);
+        Assert.Equal(2, secondSink.Sent.Count); // the session change and the skills notification
     }
 
     [PgFact]
-    public async Task Choosing_the_same_character_twice_in_one_session_announces_nothing_the_second_time()
+    public async Task Choosing_the_same_character_twice_in_one_session_changes_nothing_the_second_time()
     {
         await using var h = await Harness.CreateAsync();
         var (session, sink) = await h.LoginAsync("pilot");
         var id = await CreateAsync(h, session, "Ann Lee");
         await h.CallAsync(session, "SelectCharacterID", new PyInt(id));
+        var announced = sink.Sent.Count;
         await h.CallAsync(session, "SelectCharacterID", new PyInt(id));
-        Assert.Single(sink.Sent);
+        Assert.Equal(2, announced);
+        // the character is the same: no session change, and it does not enter again (no second skills notification)
+        Assert.Equal(announced, sink.Sent.Count);
     }
 
     [PgFact]

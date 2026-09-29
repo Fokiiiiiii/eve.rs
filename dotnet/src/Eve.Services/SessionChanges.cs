@@ -48,3 +48,32 @@ public static class SessionChangeNotification
         return new PyObject(new PyStr(ClassName), new PyTuple(packet));
     }
 }
+
+/// <summary>The packet that delivers a named event to a client (a <c>Notification</c> to a broadcast address).</summary>
+public static class ClientNotification
+{
+    public const string ClassName = "carbon.common.script.net.machoNetPacket.Notification";
+
+    /// <summary>
+    /// <c>(NOTIFICATION, node, broadcast(name, idType), userID, ((0, marshal((0, (1, args)))),), {sn: sequence}, ...)</c>:
+    /// the arguments travel as a marshalled stream of their own inside the packet, and <c>sn</c> counts the session's
+    /// notifications from 0.
+    /// </summary>
+    public static PyValue Build(long userId, int nodeId, string name, string idType, IReadOnlyList<PyValue> args, int sequence)
+    {
+        var inner = MarshalCodec.Encode(new PyTuple([new PyInt(0), new PyTuple([new PyInt(1), new PyTuple(args)])]));
+        var source = new MachoAddress(AddressKind.Node, NodeId: new PyInt(nodeId));
+        var destination = new MachoAddress(AddressKind.Broadcast, BroadcastId: name, IdType: idType);
+        PyValue[] packet =
+        [
+            new PyInt(MachoMessage.Notification),
+            source.Encode(),
+            destination.Encode(),
+            userId != 0 ? new PyInt(userId) : PyNone.Instance,
+            new PyTuple([new PyTuple([new PyInt(0), new PyBuffer(inner)])]),
+            Py.Dict(("sn", new PyInt(sequence))),
+            .. Enumerable.Repeat<PyValue>(PyNone.Instance, 8),
+        ];
+        return new PyObject(new PyStr(ClassName), new PyTuple(packet));
+    }
+}

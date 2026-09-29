@@ -1,3 +1,5 @@
+using Eve.Skills;
+
 namespace Eve.Characters.Tests;
 
 public class CreationTests
@@ -11,7 +13,15 @@ public class CreationTests
             new StarterLocation(1000044, 500002, 60000001, 30000001, 20000001, 10000001),
         ]);
 
-    private static CharacterCreation Creation(PgSchemas s) => new(s.Source, s.Characters, s.Items, Catalog);
+    private static readonly SkillCatalog Skills = new(
+        [new SkillType(3300, "Gunnery", 255, "Gunnery", true, 1), new SkillType(3301, "Small Hybrid Turret", 255, "Gunnery", true, 1), new SkillType(3315, "Repair Systems", 1210, "Armor", true, 4)],
+        new Dictionary<int, IReadOnlyList<StartingSkill>>
+        {
+            [1] = [new(3300, 4), new(3301, 1), new(3315, 0)],
+            [2] = [new(3300, 3), new(9999, 1)], // 9999 is not a skill: the data disagrees with itself
+        });
+
+    private static CharacterCreation Creation(PgSchemas s) => new(s.Source, s.Characters, s.Items, s.Skills, Skills, Catalog);
 
     private static CreationRequest Request(string name, int account = 1, int race = 1, int bloodline = 1, int gender = 1, int school = 35) =>
         new(account, name, race, bloodline, gender, AncestryId: 10, school, [1, 2], [3]);
@@ -32,6 +42,26 @@ public class CreationTests
 
         var ship = (await s.Items.GetAsync(created.ShipId))!;
         Assert.Equal((601, created.CharacterId, 60000610L, 4, true, 1L), (ship.TypeId, ship.OwnerId, ship.LocationId, ship.Flag, ship.Singleton, ship.Quantity));
+    }
+
+    [PgFact]
+    public async Task The_character_starts_with_the_skills_of_its_race_at_their_points()
+    {
+        await using var s = await PgSchemas.CreateAsync();
+        var created = Assert.IsType<Created>(await Creation(s).CreateAsync(Request("Ann Lee")));
+        Assert.Equal(
+            new CharacterSkill[] { new(3300, 4, 45255), new(3301, 1, 250), new(3315, 0, 0) },
+            await s.Skills.ForCharacterAsync(created.CharacterId));
+    }
+
+    [PgFact]
+    public async Task A_race_whose_starting_skill_is_not_in_the_catalog_makes_nothing()
+    {
+        await using var s = await PgSchemas.CreateAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Creation(s).CreateAsync(Request("Bad Data", race: 2, bloodline: 3, school: 33)));
+        Assert.Equal(0L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.CharactersSchema}.characters"));
+        Assert.Equal(0L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.InventorySchema}.items"));
+        Assert.Equal(0L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.SkillsSchema}.character_skills"));
     }
 
     [PgFact]
@@ -58,6 +88,7 @@ public class CreationTests
 
         Assert.Equal(1L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.CharactersSchema}.characters"));
         Assert.Equal(1L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.InventorySchema}.items"));
+        Assert.Equal(3L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.SkillsSchema}.character_skills"));
     }
 
     [PgFact]
@@ -110,6 +141,20 @@ public class CreationTests
         }
         await Assert.ThrowsAsync<Npgsql.PostgresException>(() => Creation(s).CreateAsync(Request("Ann Lee")));
         Assert.Equal(0L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.CharactersSchema}.characters"));
+        Assert.Equal(0L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.SkillsSchema}.character_skills"));
+    }
+
+    [PgFact]
+    public async Task A_failure_in_the_skills_rolls_back_the_character_and_the_ship()
+    {
+        await using var s = await PgSchemas.CreateAsync();
+        await using (var drop = s.Source.CreateCommand($"DROP TABLE {s.SkillsSchema}.character_skills"))
+        {
+            await drop.ExecuteNonQueryAsync();
+        }
+        await Assert.ThrowsAsync<Npgsql.PostgresException>(() => Creation(s).CreateAsync(Request("Ann Lee")));
+        Assert.Equal(0L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.CharactersSchema}.characters"));
+        Assert.Equal(0L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.InventorySchema}.items"));
     }
 }
 

@@ -153,6 +153,10 @@ def differences(expected: Any, actual: Any, path: str = "$", *, volatile_keys: f
             if expected["$object"] != actual["$object"]:
                 out.append(f"{path}: class {expected['$object']} expected, got {actual['$object']}")
             out += differences(expected["args"], actual["args"], f"{path}.args", volatile_keys=volatile_keys)
+        elif key == "$objectex":
+            out += differences(expected["$objectex"], actual["$objectex"], f"{path}.header", volatile_keys=volatile_keys)
+            for part in ("list", "dict"):
+                out += differences(expected.get(part, []), actual.get(part, []), f"{path}.{part}", volatile_keys=volatile_keys)
         elif key in ("$substream", "$substruct", "$checksummed"):
             out += differences(expected[key], actual[key], f"{path}.{key[1:]}", volatile_keys=volatile_keys)
         elif key == "$row":

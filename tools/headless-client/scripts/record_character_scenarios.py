@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record what the EVE.js reference does from login to a session with a character.
 
-    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA]
+    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills]
 
 The recording is the contract for the same path in eve.rs: `tests/test_login_to_character.py` replays the calls
 against any server and compares each answer with what is stored here, by shape, treating per-run values
@@ -9,7 +9,9 @@ against any server and compares each answer with what is stored here, by shape, 
 makes, and the answers are what the reference sent.
 
 It writes login_to_character.json (one account walked through creation and selection, plus name validation,
-errors and limits) and starters.json (a character per playable bloodline: what the reference gives each).
+errors and limits), starters.json (a character per playable bloodline: what the reference gives each) and
+skills.json (what the skill handler answers for a new character of each race). `--only` records one of them and
+leaves the others as they are.
 """
 
 from __future__ import annotations
@@ -86,84 +88,157 @@ def create_args(name: str, bloodline: int, gender: int, ancestry: int) -> tuple:
     return (name, race, bloodline, gender, ancestry, doll, portrait, SCHOOL_OF_RACE[race], None, None)
 
 
+def record_walk(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    # ── the walk: one new account, from nothing to a session with a character ──
+    c = rec.login("walk")
+    walk = {
+        "login": {
+            "serverVersion": describe(tuple(c.session.server.__dict__.values())),
+            "sessionInit": describe(c.session.session_init) if not isinstance(c.session.session_init, dict) else {k: describe(v) for k, v in c.session.session_init.items()},
+        },
+        "steps": [],
+    }
+    steps = walk["steps"]
+    add = lambda *a: steps.append(rec.call(c, *a))  # noqa: E731
+
+    for method, args in [("GetNumCharacters", ()), ("GetCharactersToSelect", ()), ("GetCharacterSelectionData", ()),
+                         ("GetCohortsForUser", ()), ("GetCharacterLockType", ()), ("ToggleValidation", (True,))]:
+        add("charUnboundMgr", method, *args)
+    for race in (1, 2, 4, 8):
+        add("charUnboundMgr", "GetValidRandomName", race)
+
+    names = ["Recorded Pilot", "ab", "abc", "a" * 37, "a" * 38, "Two  Spaces", "One Two Three Four", "Bad@Name", "Bad_Name",
+             "CCP Someone", "GM Someone", "ISD Someone", "Elysian", "O'Brien-Smith", "Ünïcode Pilote", "Ölçü 123", "", "   ", " Recorded Pilot ", "recorded pilot"]
+    walk["names"] = [{"name": n, **{k: v for k, v in rec.call(c, "charUnboundMgr", "ValidateNameEx", n).items() if k != "call"}} for n in names]
+
+    created = rec.call(c, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Recorded Pilot {run}", 1, 1, ancestry[1]))
+    steps.append(created)
+    char_id = int(created["ok"]) if "ok" in created else None
+    for method in ("GetNumCharacters", "GetCharactersToSelect", "GetCharacterSelectionData"):
+        add("charUnboundMgr", method)
+    steps.append(rec.call(c, "charUnboundMgr", "ValidateNameEx", f"Recorded Pilot {run}"))  # now taken
+    steps.append(rec.call(c, "charUnboundMgr", "ValidateNameEx", f"recorded  pilot {run}".replace("  ", " ")))  # case-folded duplicate
+
+    # errors and limits
+    steps.append(rec.call(c, "charUnboundMgr", "CreateCharacterWithDoll", *create_args("a", 1, 1, ancestry[1])))
+    steps.append(rec.call(c, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Recorded Pilot {run}", 1, 1, ancestry[1])))
+    for n in (2, 3):
+        steps.append(rec.call(c, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Recorded X{n} {run}", 2, 2, ancestry[2])))
+    steps.append(rec.call(c, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Recorded X4 {run}", 3, 1, ancestry[3])))
+    steps.append(rec.call(c, "charUnboundMgr", "GetNumCharacters"))
+    steps.append(rec.call(c, "charUnboundMgr", "SelectCharacterID", 1))
+    other = rec.login("other")
+    other_char = rec.call(other, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Recorded Other {run}", 7, 1, ancestry[7]))
+    walk["otherAccountCharacter"] = other_char
+    if "ok" in other_char:
+        steps.append(rec.call(c, "charUnboundMgr", "SelectCharacterID", int(other_char["ok"])))
+
+    # the selection itself
+    c.notifications.clear()
+    steps.append(rec.call(c, "charUnboundMgr", "SelectCharacterID", char_id))
+    walk["afterSelect"] = rec.drain(c)
+    steps.append(rec.call(c, "machoNet", "GetTime"))
+
+    with open(os.path.join(out, "login_to_character.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", **walk}, handle, indent=1, ensure_ascii=False)
+        handle.write("\n")
+
+
+def record_starters(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    # ── what each playable bloodline gets ──
+    starters = []
+    for bloodline in RACE_OF_BLOODLINE:
+        who = rec.login(f"bl{bloodline}")
+        gender = 1 if bloodline % 2 else 2
+        made = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Starter {bloodline} {run}", bloodline, gender, ancestry[bloodline]))
+        row = rec.call(who, "charUnboundMgr", "GetCharacterSelectionData")
+        starters.append({"bloodlineID": bloodline, "raceID": RACE_OF_BLOODLINE[bloodline], "genderID": gender, "ancestryID": ancestry[bloodline],
+                         "schoolID": SCHOOL_OF_RACE[RACE_OF_BLOODLINE[bloodline]], "create": made, "selection": row})
+    with open(os.path.join(out, "starters.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "starters": starters}, handle, indent=1, ensure_ascii=False)
+        handle.write("\n")
+
+
+# What the client asks the skill handler, and with what, in the order its skill window and login make the calls.
+SKILL_CALLS = [
+    ("skillMgr2", "GetMySkillHandler", ()),
+    ("skillHandler", "GetSkills", ()),
+    ("skillHandler", "GetAllSkills", ()),
+    ("skillHandler", "GetSkillPoints", ()),
+    ("skillHandler", "GetFreeSkillPoints", ()),
+    ("skillHandler", "GetSkillQueue", ()),
+    ("skillHandler", "GetMySkillQueue", ()),
+    ("skillHandler", "GetSkillQueueAndFreePoints", ()),
+    ("skillHandler", "GetAttributes", ()),
+    ("skillHandler", "GetCharacterAttributeModifiers", ()),
+    ("skillHandler", "GetBoosters", ()),
+    ("skillHandler", "GetImplants", ()),
+    ("skillHandler", "GetSkillHistory", ()),
+    ("skillHandler", "GetRespecInfo", ()),
+    ("skillHandler", "GetFreeSkillPointsAppliedToQueue", ()),
+    ("skillHandler", "GetFreeSkillPointsAppliedToSkills", ()),
+    ("skillHandler", "GetMySkillInfo", ()),
+    ("skillHandler", "IsSkillInjected", (3300,)),
+    ("skillHandler", "IsSkillInjected", (3301,)),
+    ("skillHandler", "IsSkill", (3300,)),
+    ("skillHandler", "IsSkill", (587,)),
+]
+
+
+def share_skill_list(calls: list) -> None:
+    """The three calls that return the whole skill list return the same list: store it once (`{"$same": "GetSkills"}`)."""
+    skills = next(step["ok"] for step in calls if step["call"][1] == "GetSkills")
+    for step in calls:
+        if step["call"][1] == "GetAllSkills" and step.get("ok") == skills:
+            step["ok"] = {"$same": "GetSkills"}
+        if step["call"][1] == "GetMySkillInfo" and "ok" in step:
+            pairs = step["ok"]["args"]["$dict"]
+            for pair in pairs:
+                if pair[0] == "skills" and pair[1] == skills:
+                    pair[1] = {"$same": "GetSkills"}
+
+
+def record_skills(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """One new character per playable race, chosen, and what the skill handler tells it. The client gets its skill
+    handler through a moniker and binds it: the bind call, with a nested call, is recorded too."""
+    races = []
+    for bloodline in (1, 3, 5, 7):
+        who = rec.login(f"skills{bloodline}")
+        created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Skilled {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
+        char_id = int(created["ok"])
+        who.notifications.clear()
+        select = rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        after = rec.drain(who)
+        calls = [rec.call(who, service, method, *args) for service, method, args in SKILL_CALLS]
+        share_skill_list(calls)
+        bind = [
+            rec.call(who, "skillHandler", "MachoResolveObject", char_id, 0),
+            rec.call(who, "skillHandler", "MachoBindObject", char_id, ("GetSkillPoints", (), None)),
+        ]
+        races.append({"bloodlineID": bloodline, "raceID": RACE_OF_BLOODLINE[bloodline], "create": created, "select": select,
+                      "afterSelect": after, "calls": calls, "bind": bind})
+    with open(os.path.join(out, "skills.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": races}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+
+
 def main() -> int:
     if len(sys.argv) < 4:
         print(__doc__)
         return 2
     address, sde, out = sys.argv[1], sys.argv[2], sys.argv[3]
     commit = sys.argv[sys.argv.index("--reference-commit") + 1] if "--reference-commit" in sys.argv else None
+    only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
     host, _, port = address.partition(":")
     run = str(int(time.time()))
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills}
     try:
-        # ── the walk: one new account, from nothing to a session with a character ──
-        c = rec.login("walk")
-        walk = {
-            "login": {
-                "serverVersion": describe(tuple(c.session.server.__dict__.values())),
-                "sessionInit": describe(c.session.session_init) if not isinstance(c.session.session_init, dict) else {k: describe(v) for k, v in c.session.session_init.items()},
-            },
-            "steps": [],
-        }
-        steps = walk["steps"]
-        add = lambda *a: steps.append(rec.call(c, *a))  # noqa: E731
-
-        for method, args in [("GetNumCharacters", ()), ("GetCharactersToSelect", ()), ("GetCharacterSelectionData", ()),
-                             ("GetCohortsForUser", ()), ("GetCharacterLockType", ()), ("ToggleValidation", (True,))]:
-            add("charUnboundMgr", method, *args)
-        for race in (1, 2, 4, 8):
-            add("charUnboundMgr", "GetValidRandomName", race)
-
-        names = ["Recorded Pilot", "ab", "abc", "a" * 37, "a" * 38, "Two  Spaces", "One Two Three Four", "Bad@Name", "Bad_Name",
-                 "CCP Someone", "GM Someone", "ISD Someone", "Elysian", "O'Brien-Smith", "Ünïcode Pilote", "Ölçü 123", "", "   ", " Recorded Pilot ", "recorded pilot"]
-        walk["names"] = [{"name": n, **{k: v for k, v in rec.call(c, "charUnboundMgr", "ValidateNameEx", n).items() if k != "call"}} for n in names]
-
-        created = rec.call(c, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Recorded Pilot {run}", 1, 1, ancestry[1]))
-        steps.append(created)
-        char_id = int(created["ok"]) if "ok" in created else None
-        for method in ("GetNumCharacters", "GetCharactersToSelect", "GetCharacterSelectionData"):
-            add("charUnboundMgr", method)
-        steps.append(rec.call(c, "charUnboundMgr", "ValidateNameEx", f"Recorded Pilot {run}"))  # now taken
-        steps.append(rec.call(c, "charUnboundMgr", "ValidateNameEx", f"recorded  pilot {run}".replace("  ", " ")))  # case-folded duplicate
-
-        # errors and limits
-        steps.append(rec.call(c, "charUnboundMgr", "CreateCharacterWithDoll", *create_args("a", 1, 1, ancestry[1])))
-        steps.append(rec.call(c, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Recorded Pilot {run}", 1, 1, ancestry[1])))
-        for n in (2, 3):
-            steps.append(rec.call(c, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Recorded X{n} {run}", 2, 2, ancestry[2])))
-        steps.append(rec.call(c, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Recorded X4 {run}", 3, 1, ancestry[3])))
-        steps.append(rec.call(c, "charUnboundMgr", "GetNumCharacters"))
-        steps.append(rec.call(c, "charUnboundMgr", "SelectCharacterID", 1))
-        other = rec.login("other")
-        other_char = rec.call(other, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Recorded Other {run}", 7, 1, ancestry[7]))
-        walk["otherAccountCharacter"] = other_char
-        if "ok" in other_char:
-            steps.append(rec.call(c, "charUnboundMgr", "SelectCharacterID", int(other_char["ok"])))
-
-        # the selection itself
-        c.notifications.clear()
-        steps.append(rec.call(c, "charUnboundMgr", "SelectCharacterID", char_id))
-        walk["afterSelect"] = rec.drain(c)
-        steps.append(rec.call(c, "machoNet", "GetTime"))
-
-        with open(os.path.join(out, "login_to_character.json"), "w", encoding="utf-8") as handle:
-            json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", **walk}, handle, indent=1, ensure_ascii=False)
-            handle.write("\n")
-
-        # ── what each playable bloodline gets ──
-        starters = []
-        for bloodline in RACE_OF_BLOODLINE:
-            who = rec.login(f"bl{bloodline}")
-            gender = 1 if bloodline % 2 else 2
-            made = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Starter {bloodline} {run}", bloodline, gender, ancestry[bloodline]))
-            row = rec.call(who, "charUnboundMgr", "GetCharacterSelectionData")
-            starters.append({"bloodlineID": bloodline, "raceID": RACE_OF_BLOODLINE[bloodline], "genderID": gender, "ancestryID": ancestry[bloodline],
-                             "schoolID": SCHOOL_OF_RACE[RACE_OF_BLOODLINE[bloodline]], "create": made, "selection": row})
-        with open(os.path.join(out, "starters.json"), "w", encoding="utf-8") as handle:
-            json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "starters": starters}, handle, indent=1, ensure_ascii=False)
-            handle.write("\n")
+        for name, record in parts.items():
+            if only in (None, name):
+                record(rec, out, meta, ancestry, run)
     finally:
         rec.close()
     print("recorded to", out)

@@ -42,6 +42,8 @@ VOLATILE = {
     # in the session change
     "charid", "shipid", "role",
 }
+# the ids in a skill entry are this character's
+ITEM_FIELDS = {"itemID", "ownerID", "locationID"}
 
 
 def load(name):
@@ -69,14 +71,21 @@ def attempt(client: Client, service: str, method: str, *args):
         return "error", {"code": describe(error.code), "payload": describe(error.payload)}
 
 
-def revive(value, run: str):
-    """A recorded argument as a value to send. Names carry the run they were recorded in: they get this one."""
+def revive(value, run: str, ids: dict | None = None, recorded_run: str = RECORDED_RUN):
+    """A recorded argument as a value to send. Names carry the run they were recorded in: they get this one, and
+    a character id the recording made becomes the one this server gave (`ids`)."""
     if isinstance(value, str):
-        return value.replace(RECORDED_RUN, run)
-    if value is None or isinstance(value, (bool, int)):
+        return value.replace(recorded_run, run)
+    if isinstance(value, bool) or value is None:
         return value
+    if isinstance(value, int):
+        return (ids or {}).get(value, value)
+    if isinstance(value, list):
+        return [revive(v, run, ids, recorded_run) for v in value]
     if isinstance(value, dict) and "$dict" in value:
-        return m.Dict([(k, revive(v, run)) for k, v in value["$dict"]])
+        return m.Dict([(k, revive(v, run, ids, recorded_run)) for k, v in value["$dict"]])
+    if isinstance(value, dict) and "$tuple" in value:
+        return tuple(revive(v, run, ids, recorded_run) for v in value["$tuple"])
     raise ValueError(f"cannot replay {value!r}")
 
 
@@ -171,18 +180,13 @@ def test_the_recorded_walk_replays():
                 recorded_ok = min(recorded_ok, 3)  # DEVIATION (slots), see above
             problems += same_way(recorded_ok, outcome, where)
 
-        # the session change the reference sent when the character was chosen
+        # what the reference sent when the character was chosen: the session change, then the skills notification
         walker.ping()
         seen = [describe(n.raw) for n in walker.notifications if n.command in (p.SESSIONCHANGENOTIFICATION, p.NOTIFICATION)]
         recorded_changes = WALK["afterSelect"]
-        problems += _compare_session_change(recorded_changes[0], seen[0] if seen else None)
-        rest = [n for n in seen[1:]]
-        if REFERENCE:
-            assert len(seen) == len(recorded_changes), f"{len(seen)} notifications after selecting, {len(recorded_changes)} recorded"
-        else:
-            # GAP (skills): the reference also broadcasts OnServerSkillsChanged with the character's skills; eve.rs has
-            # no skills module yet. Nothing else may arrive.
-            assert rest == [], f"unexpected notifications: {brief(rest)}"
+        assert len(seen) == len(recorded_changes), f"{len(seen)} notifications after selecting, {len(recorded_changes)} recorded"
+        problems += _compare_session_change(recorded_changes[0], seen[0])
+        problems += _compare_skills_notification(recorded_changes[1], seen[1])
     finally:
         walker.close()
         if other is not None:
@@ -218,6 +222,22 @@ def _compare_session_change(recorded, ours) -> list[str]:
     return out
 
 
+def unpack(notification):
+    """A notification with the marshalled stream inside it decoded, so it can be compared as the values it holds."""
+    copy = json.loads(json.dumps(notification))
+    wrapper = copy["$tuple"][4]["$tuple"][0]["$tuple"]
+    wrapper[1] = describe(m.decode(bytes.fromhex(wrapper[1]["$buffer"])))
+    return copy
+
+
+def _compare_skills_notification(recorded, ours) -> list[str]:
+    recorded, ours = unpack(recorded), unpack(ours)
+    # the user, and the time it was sent
+    for path in (("$tuple", 3), ("$tuple", 4, "$tuple", 0, "$tuple", 1, "$tuple", 1, "$tuple", 1, "$tuple", 2)):
+        recorded, ours = blank(recorded, *path), blank(ours, *path)
+    return same_way(recorded, ours, "OnServerSkillsChanged", volatile=VOLATILE | ITEM_FIELDS)
+
+
 # ── names ───────────────────────────────────────────────────────────────────
 
 
@@ -243,3 +263,67 @@ def test_each_bloodline_starts_as_recorded(starter):
         kind, selection = attempt(client, "charUnboundMgr", "GetCharacterSelectionData")
         assert kind == "ok", brief(selection)
     assert same_way(starter["selection"]["ok"], selection, f"bloodline {starter['bloodlineID']}") == []
+
+
+def _item_ids_follow_the_scheme(skills, where: str) -> list[str]:
+    """A skill's item id is its character's id times 100000 plus the skill's type (both servers number them so)."""
+    out = []
+    for type_id, entry in skills["$dict"]:
+        state = {k: v for k, v in entry["$objectex"]["$tuple"][2]["$dict"]}
+        item, owner = state["itemID"]["$long"], state["ownerID"]
+        if item != owner * 100000 + type_id:
+            out.append(f"{where}: skill {type_id} has item id {item}, expected {owner * 100000 + type_id}")
+    return out
+
+
+# ── the skills of a new character ───────────────────────────────────────────
+
+SKILLS = load("skills.json")
+RECORDED_SKILLS_RUN = re.search(r"(\d{6,})$", SKILLS["races"][0]["create"]["call"][2][0]).group(1)
+
+
+def expand(step, shared):
+    """A recorded answer with the list it shares with `GetSkills` put back."""
+    text = json.dumps(step["ok"])
+    if '"$same"' not in text:
+        return step["ok"]
+    return json.loads(text.replace('{"$same": "GetSkills"}', json.dumps(shared)))
+
+
+@pytest.mark.parametrize("race", SKILLS["races"], ids=lambda r: f"race-{r['raceID']}")
+def test_a_new_character_has_the_skills_the_reference_gives(race):
+    run = uuid.uuid4().hex[:10]
+    ids: dict[int, int] = {}
+    with connect(f"walk-skills-{run}") as client:
+        service, method, *args = [
+            x for x in [race["create"]["call"][0], race["create"]["call"][1], *[revive(a, run, ids, RECORDED_SKILLS_RUN) for a in race["create"]["call"][2]]]
+        ]
+        kind, made = attempt(client, service, method, *args)
+        assert kind == "ok", brief(made)
+        ids[int(race["create"]["ok"])] = int(made)
+        client.notifications.clear()
+        assert attempt(client, "charUnboundMgr", "SelectCharacterID", int(made), None, False) == ("ok", None)
+        client.ping()
+        seen = [describe(n.raw) for n in client.notifications if n.command in (p.SESSIONCHANGENOTIFICATION, p.NOTIFICATION)]
+        assert len(seen) == len(race["afterSelect"]) == 2
+        problems = _compare_skills_notification(race["afterSelect"][1], seen[1])
+
+        shared = next(step["ok"] for step in race["calls"] if step["call"][1] == "GetSkills")
+        for step in race["calls"] + race["bind"]:
+            service, method, described = step["call"]
+            where = f"race {race['raceID']} {service}.{method}{json.dumps(described)}"
+            kind, outcome = attempt(client, service, method, *[revive(a, run, ids, RECORDED_SKILLS_RUN) for a in described])
+            if kind != "ok" or "ok" not in step:
+                problems.append(f"{where}: recorded {'ok' if 'ok' in step else 'error'}, got {kind}: {brief(outcome)}")
+                continue
+            expected = expand(step, shared)
+            if method == "GetMySkillHandler":
+                # the moniker names the character it is for
+                expected, outcome = blank(expected, "args", "$tuple", 2), blank(outcome, "args", "$tuple", 2)
+            if method == "MachoBindObject":
+                # a bound object is named by a counter and the time it was made
+                expected, outcome = blank(expected, "$tuple", 0, "$substruct", "$substream", "$tuple"), blank(outcome, "$tuple", 0, "$substruct", "$substream", "$tuple")
+            problems += same_way(expected, outcome, where, volatile=VOLATILE | ITEM_FIELDS)
+            if method == "GetSkills":
+                problems += _item_ids_follow_the_scheme(outcome, where)
+    assert problems == [], "\n".join(problems[:20])

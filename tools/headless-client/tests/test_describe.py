@@ -82,3 +82,20 @@ def test_object_class_names_are_compared():
     a = describe(m.Object("util.KeyVal", ()))
     b = describe(m.Object("util.Row", ()))
     assert "class util.KeyVal expected" in differences(a, b)[0]
+
+
+def _extended(name, args, state):
+    return {"$objectex": {"$tuple": [{"$token": name}, {"$tuple": args}, {"$dict": state}]}, "list": [], "dict": []}
+
+
+def test_extended_objects_are_compared_inside_and_their_volatile_keys_by_type():
+    a = _extended("x.Entry", [3300, 4], [["itemID", {"$long": 5}], ["groupName", "Gunnery"]])
+    same = _extended("x.Entry", [3300, 4], [["itemID", {"$long": 5}], ["groupName", "Gunnery"]])
+    other_item = _extended("x.Entry", [3300, 4], [["itemID", {"$long": 99}], ["groupName", "Gunnery"]])
+    assert differences(a, same) == []
+    assert differences(a, other_item) != []
+    assert differences(a, other_item, volatile_keys={"itemID"}) == []
+    # a volatile key still has to have the same type, and everything else is compared by value
+    assert differences(a, _extended("x.Entry", [3300, 4], [["itemID", "text"], ["groupName", "Gunnery"]]), volatile_keys={"itemID"}) != []
+    assert "5" in differences(a, _extended("x.Entry", [3300, 5], [["itemID", {"$long": 5}], ["groupName", "Gunnery"]]))[0]
+    assert differences(a, _extended("y.Entry", [3300, 4], [["itemID", {"$long": 5}], ["groupName", "Gunnery"]])) != []

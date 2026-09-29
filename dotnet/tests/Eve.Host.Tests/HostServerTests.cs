@@ -252,6 +252,12 @@ public class HostServerTests : IAsyncLifetime
         Assert.Equal("EN", T(initial["languageID"]));
         Assert.Equal("GB", T(initial["countryCode"]));
         Assert.Equal("127.0.0.1", T(initial["address"]));
+        // the reference names these two as well, unset
+        Assert.Equal(PyNone.Instance, initial["maxSessionTime"]);
+        Assert.Equal(PyNone.Instance, initial["inDetention"]);
+        Assert.Equal(
+            ["languageID", "countryCode", "userid", "maxSessionTime", "userType", "role", "address", "inDetention"],
+            ((PyDict)payload[2]).Entries.Select(e => T(e.Key)!));
         // the client's address: type 2 (client), its client id
         var destination = (PyTuple)((PyObject)state[2]).Args;
         Assert.Equal(new PyInt(2), destination.Items[0]);

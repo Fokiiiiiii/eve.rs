@@ -16,13 +16,16 @@ public static class SessionInitialState
 
     public static PyValue Build(ulong sessionId, ulong clientId, uint userId, ulong role, string address, string language, string countryCode)
     {
+        // The keys and their order are the reference's; a session that is not limited or detained says None.
         var state = Py.Dict(
+            ("languageID", new PyStr(language)),
+            ("countryCode", new PyStr(countryCode)),
             ("userid", new PyInt(userId)),
+            ("maxSessionTime", PyNone.Instance),
             ("userType", new PyInt(UserType)),
             ("role", new PyLong(unchecked((long)role))),
             ("address", new PyStr(address)),
-            ("languageID", new PyStr(language)),
-            ("countryCode", new PyStr(countryCode)));
+            ("inDetention", PyNone.Instance));
         var source = new MachoAddress(AddressKind.Node, NodeId: new PyInt(MachoMessage.ProxyNodeId), CallId: new PyInt(0));
         var destination = new MachoAddress(AddressKind.Client, ClientId: new PyLong(unchecked((long)clientId)), CallId: new PyInt(0));
         PyValue[] packet =

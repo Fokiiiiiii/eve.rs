@@ -16,6 +16,9 @@ public sealed record HostOptions
 
     /// <summary>Called with a problem worth logging.</summary>
     public Action<string>? Log { get; init; }
+
+    /// <summary>Called for every new session, before its first packet: attach what must be released when it ends.</summary>
+    public Action<ClientSession>? SessionOpened { get; init; }
 }
 
 /// <summary>
@@ -192,15 +195,18 @@ internal sealed class FrontConnection : IAsyncDisposable
 
     private void OpenSession(SessionOpen open, CancellationToken ct)
     {
-        var session = new ClientSession { SessionId = unchecked((long)open.SessionId) };
+        var session = new ClientSession { SessionId = unchecked((long)open.SessionId), ClientId = unchecked((long)open.ClientId) };
         session.Sink = new LinkSink(this, open.SessionId);
         session.UserId = open.UserId;
         session.Set("clientID", new PyLong(unchecked((long)open.ClientId)));
-        session.Set("role", new PyLong(unchecked((long)open.Role)));
+        // The account's role is kept apart: the client's own `role` only comes with a character (SelectCharacterID).
+        session.Set("accountRole", new PyLong(unchecked((long)open.Role)));
+        session.Set("hqID", new PyInt(0));
         session.Set("address", new PyStr(open.Address));
         session.Set("languageID", new PyStr(open.Language));
         session.Set("countryCode", new PyStr(open.CountryCode));
 
+        _options.SessionOpened?.Invoke(session);
         var actor = new SessionActor(session, _dispatcher, _options, Disconnect: reason => Disconnect(open.SessionId, reason), ct);
         if (!_sessions.TryAdd(open.SessionId, actor))
         {
@@ -344,6 +350,18 @@ internal sealed class SessionActor
     public void Complete() => _inbox.Writer.TryComplete();
 
     private async Task RunAsync()
+    {
+        try
+        {
+            await RunLoopAsync();
+        }
+        finally
+        {
+            _session.Close();
+        }
+    }
+
+    private async Task RunLoopAsync()
     {
         await foreach (var payload in _inbox.Reader.ReadAllAsync())
         {

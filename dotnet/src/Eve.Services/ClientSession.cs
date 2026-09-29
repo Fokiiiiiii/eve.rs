@@ -28,6 +28,12 @@ public sealed class ClientSession
 
     public long SessionId { get; init; }
 
+    /// <summary>The client's id on the network (the address session notifications are sent to).</summary>
+    public long ClientId { get; init; }
+
+    /// <summary>The proxy node the client is connected to.</summary>
+    public int NodeId { get; init; } = MachoMessage.ProxyNodeId;
+
     /// <summary>The bound object a call in progress was addressed to (null for an unbound call).</summary>
     public string? CurrentBoundObjectId { get; set; }
 
@@ -75,4 +81,45 @@ public sealed class ClientSession
     }
 
     public void Send(PyValue packet) => Sink?.Send(packet);
+
+    private int _closed;
+
+    /// <summary>Raised once, when the connection of this session has ended: modules release what the session held.</summary>
+    public event Action? Closed;
+
+    /// <summary>Ends the session. Later calls do nothing.</summary>
+    public void Close()
+    {
+        if (Interlocked.Exchange(ref _closed, 1) == 0)
+        {
+            Closed?.Invoke();
+        }
+    }
+
+    /// <summary>
+    /// Sets session attributes. The ones the client tracks (<see cref="SessionAttributes.ClientVisible"/>) that
+    /// actually change are announced to it in one <c>SessionChangeNotification</c>, in the order given; the others
+    /// are the server's own. Returns what was announced.
+    /// </summary>
+    public IReadOnlyList<SessionChange> Change(params (string Name, PyValue Value)[] values)
+    {
+        List<SessionChange> announced = [];
+        lock (_gate)
+        {
+            foreach (var (name, value) in values)
+            {
+                var old = _attributes.GetValueOrDefault(name) ?? PyNone.Instance;
+                _attributes[name] = value;
+                if (SessionAttributes.ClientVisible.Contains(name) && !Equals(old, value))
+                {
+                    announced.Add(new SessionChange(name, old, value));
+                }
+            }
+        }
+        if (announced.Count > 0)
+        {
+            Send(SessionChangeNotification.Build(SessionId, ClientId, UserId ?? 0, NodeId, announced));
+        }
+        return announced;
+    }
 }

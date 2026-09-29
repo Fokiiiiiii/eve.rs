@@ -49,3 +49,8 @@ and `undock.json` a new character leaving its station, being sent the solar syst
 service's `Undock`, the ballpark bound for the system and `UpdateStateRequest`, the movement commands and `CmdDock`; each step
 with everything the client is sent, the destiny actions opened).
 `--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock` records one and leaves the others as they are.
+
+`fixtures/simlink/messages.json` is not from the reference: it is what `tools/dev/gen-simlink-fixtures.py` writes, the golden
+frames of the link between the service host and the simulation (`docs/adr/0007`), a third writer of the format that the Rust
+simulation (`crates/eve-space/tests/simlink_fixtures.rs`) and the C# host replay.
+

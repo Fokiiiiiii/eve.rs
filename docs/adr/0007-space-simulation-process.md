@@ -29,7 +29,7 @@ not exist is the scene: which balls a system has, who is where, how commands cha
 ## Decision
 
 1. **The simulation is its own process**, `eve-sim` (Rust), started next to the host and the front. It owns scenes
-   (one per solar system that has a player in it), their balls and the tick. It reads the static data from the SDE
+   (one per solar system that has a player in it), their balls and the ships in them. It reads the static data from the SDE
    files (`EVE_SDE_DIR`), not from PostgreSQL, so it starts with nothing else running. A crash of the simulation
    does not take the network front or the host down (the reason ADR 0002 gives for separate processes).
 2. **The host commands it and the host talks to the client.** The sim never touches a client connection. It hands the
@@ -43,36 +43,47 @@ not exist is the scene: which balls a system has, who is where, how commands cha
 4. **The host gives the sim numbers, not rules.** A ship enters a scene with what motion needs, worked out by dogma
    (ADR 0004): mass, radius, top speed, inertia (agility), warp speed, and what its slim item shows (names, ids,
    the modules). A change to them (skills, fitting) is another message. The sim does not know skills or modules.
-5. **Messages (version 1).**
+5. **Messages (version 1).** Every message of the host that has to be answered is answered by one of the simulation's;
+   the rest are not. `oracle/fixtures/simlink/messages.json` holds the golden frames (`tools/dev/gen-simlink-fixtures.py`).
 
    | Kind | Code | Direction | Body |
    |---|---|---|---|
    | `Hello` | 1 | host -> sim | `u16 version` |
-   | `HelloAck` | 2 | sim -> host | `u16 version`, `u32 tickHz` |
-   | `Enter` | 3 | host -> sim | `u64 sessionId`, the ship's spec (below), `i64 stationId` (0 when not undocking), `u8 how` (0 undock, 1 already in space) |
+   | `HelloAck` | 2 | sim -> host | `u16 version`, `u32 pollHz` |
+   | `Enter` | 3 | host -> sim | `u64 sessionId`, `i32 solarSystemId`, `u8 how` (0 undock, 1 already in space), `i64 stationId` (0 when not undocking), the ship's spec |
+   | `EnterReply` | 13 | sim -> host | `u64 sessionId`, `u8 status` (0 done, 1 refused), text `reason` (empty when done) |
    | `Leave` | 4 | host -> sim | `u64 sessionId`, `u8 why` (0 docked, 1 logged off, 2 jumped) |
    | `Bind` | 5 | host -> sim | `u64 sessionId`: the client bound the solar system's ballpark, send it the scene |
    | `UpdateState` | 6 | host -> sim | `u64 sessionId`: `UpdateStateRequest` |
-   | `Command` | 7 | host -> sim | `u64 sessionId`, `u8 command`, `u8 argc`, `f64 args[argc]` (ids travel as `f64` up to 2^53) |
+   | `Command` | 7 | host -> sim | `u64 sessionId`, `u8 command` (1 speed fraction, 2 go in a direction, 3 stop, 4 dock), `u8 argc`, `f64 args[argc]` (ids travel as `f64` up to 2^53) |
    | `ShipSpec` | 8 | host -> sim | `u64 sessionId`, the ship's spec: new numbers for a ship in space |
-   | `Notify` | 9 | sim -> host | `u64 sessionId`, text `name`, text `idType`, bytes `marshalledArgs` |
+   | `Notify` | 9 | sim -> host | `u64 sessionId`, text `name`, text `idType`, bytes `marshalledArgs` (a marshalled tuple of the arguments) |
    | `Docked` | 10 | sim -> host | `u64 sessionId`, `i64 stationId`: the ship has arrived and the docking is done in space; the host moves the character |
    | `Refused` | 11 | sim -> host | `u64 sessionId`, `u8 command`, text `reason`: a command the scene cannot do (the host answers the client with the reason) |
+   | `Accepted` | 12 | sim -> host | `u64 sessionId`, `u8 command`, `i64 filetime`: a `Dock` was accepted (the call is answered with the time) |
 
    The ship's spec is `i64 shipId`, `i64 characterId`, `i32 typeId`, `i32 groupId`, `i32 categoryId`, text `name`,
-   `i32 ownerId`, `i32 corporationId`, `i32 allianceId`, `i32 warFactionId`, `f64 securityStatus`, `f64 radius`,
-   `f64 mass`, `f64 maxVelocity`, `f64 agility`, `f64 warpSpeedAu`, `u32 moduleCount` and per module `i64 itemId`,
-   `i32 typeId`, `i32 flag`.
-6. **The scene is a deterministic function of its inputs.** A scene has a sim clock and steps in whole ticks (1 Hz,
-   the stamp); commands are applied at the tick they arrive in; time dilation is reported and constant 1.0 until
-   load says otherwise. With the same messages and the same clock the sim emits the same bytes, which is what the
-   differential tests check.
+   `i64 ownerId`, `i32 corporationId`, `i32 allianceId`, `i32 warFactionId`, `f64 securityStatus`, `f64 radius`,
+   `f64 mass`, `f64 maxVelocity`, `f64 agility`, `f64 warpSpeedAu`, `f64 shieldRechargeMs`, `u32 moduleCount` and per
+   module `i64 itemId`, `i32 typeId`, `i32 flag`.
+
+   Movement commands other than `Dock` are not answered when they succeed (the client's calls answer `None`); a
+   `Dock` is answered by `Accepted` or `Refused`, and an `Enter` by `EnterReply`.
+
+6. **The scene is a deterministic function of its inputs.** A scene has no clock: every call says what time it is (a
+   FILETIME) and a ship's position and velocity are worked out from when they were last settled to that time with the
+   carbon integrator (the ship eases towards the speed it is asked for). What the client is told is stamped with the
+   destiny stamp (whole seconds of the Unix clock), never more than two ahead of the clock, as the reference does.
+   Time dilation is reported and constant 1.0 until load says otherwise. With the same messages at the same times the
+   sim emits the same bytes, which is what the differential tests check. The one thing that happens by itself, a docking
+   finishing four seconds after it was accepted, is found by a poll of the clock (`pollHz` a second).
+
 7. **Static data is built once per system** (`world`): the stations and celestials as rigid balls with their slim
    items, from the SDE. A scene copies them; nothing mutates them.
 
 ## Consequences
 
-- Good: the sim can be run, tested and benchmarked without a database, a client or the host; a scene tick is a
+- Good: the sim can be run, tested and benchmarked without a database, a client or the host; a scene call is a
   Rust function of plain data; the protocol layer stays in the host, so one place numbers notifications.
 - Bad: a notification travels sim -> host -> front -> client (two extra hops); at destiny's rate (a handful per
   second per pilot) this is small, and the front may take over the delivery later with the same message
@@ -92,3 +103,12 @@ not exist is the scene: which balls a system has, who is where, how commands cha
   and the Rust destiny kernel already verified against the reference.
 - **A library called through FFI**: fastest, but couples lifetimes and memory (ADR 0002 rejected the same for
   the front).
+
+## Amendments
+
+- 2026-09-29, while building the slice: `Enter` names the solar system and `EnterReply` answers it (the host must know
+  whether an undock worked before it answers the client); `Accepted` answers a `Dock` (the call's answer is the time);
+  the ship's spec carries the shield recharge (the damage state shows a fifth of it) and a 64-bit owner; the 1 Hz tick
+  became "time comes with each call" plus a poll, because the reference itself sends the state as it is at the moment of
+  the call. The undock place is ours (see `docs/compat/DEVIATIONS.md`): the reference picks a random authored locator
+  of the station's type, which the SDE does not have.

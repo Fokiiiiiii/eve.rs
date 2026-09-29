@@ -348,6 +348,30 @@ impl Scene {
         Out::Notify { session, name, id_type: "charid", args }
     }
 
+    /// The numbers of a ship in space changed (a skill finished, a module went on): the client is told the ones that differ.
+    pub fn respec(&mut self, session: SessionId, spec: ShipSpec, now: i64) -> Vec<Out> {
+        let stamp = self.next_stamp(now);
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        settle(pilot, now);
+        let old = std::mem::replace(&mut pilot.ship.spec, spec);
+        let new = &pilot.ship.spec;
+        let ship_id = id(new.ship_id);
+        let mut actions = Vec::new();
+        if new.mass != old.mass {
+            actions.push(payload::action(stamp, "SetBallMass", [ship_id.clone(), real(new.mass)]));
+        }
+        if new.agility != old.agility {
+            actions.push(payload::action(stamp, "SetBallAgility", [ship_id.clone(), real(new.agility)]));
+        }
+        if new.max_velocity != old.max_velocity {
+            actions.push(payload::action(stamp, "SetMaxSpeed", [ship_id, real(new.max_velocity)]));
+        }
+        if actions.is_empty() {
+            return Vec::new();
+        }
+        vec![Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false))]
+    }
+
     /// Finishes what is due at `now`: a docking that has taken its time takes the ship out of space.
     pub fn poll(&mut self, now: i64) -> Vec<Out> {
         let due: Vec<(SessionId, i64)> = self
@@ -427,17 +451,17 @@ fn settle(pilot: &mut Pilot, now: i64) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::ship::ModuleSpec;
     use crate::world::{Body, Detail};
 
-    const STATION: i64 = 60_000_001;
-    const SESSION: SessionId = 7;
+    pub(crate) const STATION: i64 = 60_000_001;
+    pub(crate) const SESSION: SessionId = 7;
     /// 2026-09-29 12:00:00 UTC as a FILETIME.
-    const NOON: i64 = 134_351_688_000_000_000;
+    pub(crate) const NOON: i64 = 134_351_688_000_000_000;
 
-    fn system() -> Arc<SolarSystem> {
+    pub(crate) fn system() -> Arc<SolarSystem> {
         let station = Body {
             id: STATION,
             type_id: 1531,
@@ -462,7 +486,7 @@ mod tests {
         })
     }
 
-    fn spec() -> ShipSpec {
+    pub(crate) fn spec() -> ShipSpec {
         ShipSpec {
             ship_id: 9_988_400_001_939,
             character_id: 140_000_342,
@@ -749,6 +773,25 @@ mod tests {
         // and is at once within docking range of it, as the reference's ship was
         let out = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
         assert!(matches!(out.last(), Some(Out::Accepted { .. })));
+    }
+
+    #[test]
+    fn a_change_of_the_ships_numbers_tells_the_client_what_differs() {
+        let mut scene = scene();
+        let mut faster = spec();
+        faster.max_velocity = 400.0;
+        faster.agility = 3.5;
+        let out = scene.respec(SESSION, faster.clone(), NOON);
+        assert_eq!(action_names(&out[0]), ["SetBallAgility", "SetMaxSpeed"]);
+        assert_eq!(scene.ship(SESSION, NOON).unwrap().spec, faster);
+        assert!(scene.respec(SESSION, faster.clone(), NOON).is_empty(), "nothing changed");
+        assert!(scene.respec(9, faster, NOON).is_empty(), "no ship, nothing to say");
+        let mut heavier = spec();
+        heavier.mass = 2_000_000.0;
+        assert_eq!(
+            action_names(&scene.respec(SESSION, heavier, NOON)[0]),
+            ["SetBallMass", "SetBallAgility", "SetMaxSpeed"]
+        );
     }
 
     #[test]

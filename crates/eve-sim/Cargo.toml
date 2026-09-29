@@ -1,0 +1,16 @@
+[package]
+name = "eve-sim"
+description = "The space simulation process of eve.rs: solar systems and the ships in them, driven by the service host over a socket"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+eve-space = { path = "../eve-space" }
+tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "time", "macros", "signal"] }
+
+[dev-dependencies]
+eve-destiny = { path = "../eve-destiny" }
+tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "time", "macros", "signal"] }

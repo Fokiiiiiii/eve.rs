@@ -207,6 +207,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "eve-sim"
+version = "0.1.0"
+dependencies = [
+ "eve-destiny",
+ "eve-space",
+ "tokio",
+]
+
+[[package]]
 name = "eve-space"
 version = "0.1.0"
 dependencies = [

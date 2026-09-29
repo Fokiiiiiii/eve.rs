@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Writes oracle/fixtures/simlink/messages.json: the frames between the host and the simulation of docs/adr/0007, byte for byte.
+
+This is the third writer of the wire format (the Rust simulation and the C# host are the other two); both replay the
+file, so a layout change has to be made here first. 64-bit integers are decimal strings in the JSON.
+"""
+import json
+import os
+import struct
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+OUT = os.path.join(HERE, "..", "..", "oracle", "fixtures", "simlink", "messages.json")
+
+KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateState": 6, "Command": 7,
+         "ShipSpec": 8, "Notify": 9, "Docked": 10, "Refused": 11, "Accepted": 12, "EnterReply": 13}
+
+
+def s(text):  # u16 length + UTF-8
+    data = text.encode("utf-8")
+    return struct.pack("<H", len(data)) + data
+
+
+def b(data):  # u32 length + bytes
+    return struct.pack("<I", len(data)) + data
+
+
+def frame(kind, body):
+    payload = bytes([KINDS[kind]]) + body
+    return struct.pack("<I", len(payload)) + payload
+
+
+def i64(value):
+    return struct.pack("<q", int(value))
+
+
+def u64(value):
+    return struct.pack("<Q", int(value))
+
+
+def ship(m):
+    body = i64(m["shipId"]) + i64(m["characterId"]) + struct.pack("<iii", m["typeId"], m["groupId"], m["categoryId"])
+    body += s(m["name"]) + i64(m["ownerId"]) + struct.pack("<iii", m["corporationId"], m["allianceId"], m["warFactionId"])
+    body += struct.pack("<7d", m["securityStatus"], m["radius"], m["mass"], m["maxVelocity"], m["agility"],
+                        m["warpSpeedAu"], m["shieldRechargeMs"])
+    body += struct.pack("<I", len(m["modules"]))
+    for module in m["modules"]:
+        body += i64(module["itemId"]) + struct.pack("<ii", module["typeId"], module["flag"])
+    return body
+
+
+def build(m):
+    k = m["kind"]
+    if k == "Hello":
+        return frame(k, struct.pack("<H", m["version"]))
+    if k == "HelloAck":
+        return frame(k, struct.pack("<HI", m["version"], m["pollHz"]))
+    if k == "Enter":
+        return frame(k, u64(m["sessionId"]) + struct.pack("<iB", m["solarSystemId"], m["how"]) + i64(m["stationId"])
+                     + ship(m["ship"]))
+    if k == "EnterReply":
+        return frame(k, u64(m["sessionId"]) + bytes([0 if m["ok"] else 1]) + s("" if m["ok"] else m["reason"]))
+    if k == "Leave":
+        return frame(k, u64(m["sessionId"]) + bytes([m["why"]]))
+    if k in ("Bind", "UpdateState"):
+        return frame(k, u64(m["sessionId"]))
+    if k == "Command":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"], len(m["args"])])
+                     + b"".join(struct.pack("<d", a) for a in m["args"]))
+    if k == "ShipSpec":
+        return frame(k, u64(m["sessionId"]) + ship(m["ship"]))
+    if k == "Notify":
+        return frame(k, u64(m["sessionId"]) + s(m["notification"]) + s(m["idType"]) + b(bytes.fromhex(m["args"])))
+    if k == "Docked":
+        return frame(k, u64(m["sessionId"]) + i64(m["stationId"]))
+    if k == "Refused":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + s(m["reason"]))
+    if k == "Accepted":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + i64(m["at"]))
+    raise ValueError(k)
+
+
+IBIS = {"shipId": "9988400001939", "characterId": "140000342", "typeId": 601, "groupId": 237, "categoryId": 6,
+        "name": "Ibis", "ownerId": "140000342", "corporationId": 1000006, "allianceId": 0, "warFactionId": 0,
+        "securityStatus": 0.0, "radius": 47.0, "mass": 1163000.0, "maxVelocity": 339.25, "agility": 4.0185,
+        "warpSpeedAu": 3.0, "shieldRechargeMs": 860000.0,
+        "modules": [{"itemId": "9988400001940", "typeId": 21857, "flag": 19},
+                    {"itemId": "9988400001941", "typeId": 3638, "flag": 27}]}
+BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5)
+
+valid = [
+    {"name": "hello", "kind": "Hello", "version": 1},
+    {"name": "hello ack", "kind": "HelloAck", "version": 1, "pollHz": 4},
+    {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
+     "how": 0, "stationId": "60015249", "ship": IBIS},
+    {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
+     "solarSystemId": 30000142, "how": 1, "stationId": "0", "ship": dict(BARE, name="イビス")},
+    {"name": "enter accepted", "kind": "EnterReply", "sessionId": "1790646377000015", "ok": True},
+    {"name": "enter refused", "kind": "EnterReply", "sessionId": "1790646377000015", "ok": False,
+     "reason": "UNKNOWN_STATION 60015249"},
+    {"name": "leave docked", "kind": "Leave", "sessionId": "1790646377000015", "why": 0},
+    {"name": "leave logged off", "kind": "Leave", "sessionId": "1790646377000015", "why": 1},
+    {"name": "bind", "kind": "Bind", "sessionId": "1790646377000015"},
+    {"name": "update state", "kind": "UpdateState", "sessionId": "1790646377000015"},
+    {"name": "command with one argument", "kind": "Command", "sessionId": "1790646377000015", "command": 1,
+     "args": [0.5]},
+    {"name": "command with three arguments", "kind": "Command", "sessionId": "1790646377000015", "command": 2,
+     "args": [-0.8191520442889917, 0.0, 0.5735764363510462]},
+    {"name": "command with none", "kind": "Command", "sessionId": "1790646377000015", "command": 3, "args": []},
+    {"name": "dock command", "kind": "Command", "sessionId": "1790646377000015", "command": 4, "args": [60015249.0]},
+    {"name": "new ship numbers", "kind": "ShipSpec", "sessionId": "1790646377000015", "ship": IBIS},
+    {"name": "notification", "kind": "Notify", "sessionId": "1790646377000015", "notification": "OnSetTimeDilation",
+     "idType": "clientID", "args": "7e0000000004010100"},
+    {"name": "notification without arguments", "kind": "Notify", "sessionId": "1", "notification": "DoDestinyUpdate",
+     "idType": "clientID", "args": ""},
+    {"name": "docked", "kind": "Docked", "sessionId": "1790646377000015", "stationId": "60015249"},
+    {"name": "refused", "kind": "Refused", "sessionId": "1790646377000015", "command": 4,
+     "reason": "DOCKING_APPROACH_REQUIRED"},
+    {"name": "accepted", "kind": "Accepted", "sessionId": "1790646377000015", "command": 4,
+     "at": "134351527136350000"},
+]
+for case in valid:
+    case["hex"] = build(case).hex()
+
+# each of these is refused for the stated reason
+good = build(valid[2])  # a good Enter
+invalid = [
+    {"name": "unknown kind", "reason": "unknown-kind", "hex": "01000000ff"},
+    {"name": "kind zero", "reason": "unknown-kind", "hex": "0100000000"},
+    {"name": "empty frame", "reason": "empty", "hex": "00000000"},
+    {"name": "hello truncated", "reason": "truncated", "hex": "02000000" + "0101"},
+    {"name": "hello trailing bytes", "reason": "trailing", "hex": "04000000" + "01" + "0100" + "00"},
+    {"name": "enter with an unknown way in", "reason": "bad-value",
+     "hex": (good[:4] + good[4:17] + bytes([7]) + good[18:]).hex()},
+    {"name": "enter cut short", "reason": "truncated", "hex": (struct.pack("<I", 20) + good[4:24]).hex()},
+    {"name": "enter reply with an unknown status", "reason": "bad-value",
+     "hex": (struct.pack("<I", 12) + bytes([13]) + u64(1) + bytes([2]) + s("")).hex()},
+    {"name": "text that is not UTF-8", "reason": "utf8",
+     "hex": (struct.pack("<I", 1 + 8 + 1 + 2 + 1) + bytes([11]) + u64(1) + bytes([4]) + struct.pack("<H", 1) + b"\xff").hex()},
+    {"name": "command that promises more arguments than it carries", "reason": "truncated",
+     "hex": (struct.pack("<I", 1 + 8 + 2) + bytes([7]) + u64(1) + bytes([1, 2])).hex()},
+]
+
+os.makedirs(os.path.dirname(OUT), exist_ok=True)
+with open(OUT, "w", encoding="utf-8") as f:
+    json.dump({"note": "Generated by tools/dev/gen-simlink-fixtures.py. Frames include their u32 length prefix.",
+               "valid": valid, "invalid": invalid}, f, indent=1, ensure_ascii=False)
+    f.write("\n")
+print(f"{len(valid)} valid, {len(invalid)} invalid -> {OUT}")

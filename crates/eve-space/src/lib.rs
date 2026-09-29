@@ -6,12 +6,14 @@
 //! of the destiny stream; `scene` is the running system (`docs/adr/0007-space-simulation-process.md`).
 
 pub mod geo;
+pub mod link;
 pub mod names;
 pub mod payload;
 pub mod scene;
 pub mod sde;
 pub mod security;
 pub mod ship;
+pub mod sim;
 pub mod slim;
 pub mod wire;
 pub mod world;

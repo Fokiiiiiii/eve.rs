@@ -17,6 +17,9 @@ use eve_destiny::ball::{BallEntity, IdRef, Kind, LegacyMode, encode_entity_ball}
 use eve_destiny::{Vec3, integrate_carbon_motion};
 use eve_marshal::{Bytes, Descriptor, ObjectExKind, PackedRow, SubStream, Value, decode_bytes, encode};
 use eve_oracle::marshal_adapter::plain_number;
+use eve_space::scene::{Command, Scene};
+use eve_space::ship::ShipSpec;
+use eve_space::world::{Body, BodyKind, Detail, SolarSystem};
 use serde_json::Value as Json;
 
 #[cfg(feature = "mimalloc")]
@@ -156,6 +159,104 @@ fn check(name: &str, actual: &[u8], baseline: Option<&Json>) {
     }
 }
 
+// ─── The scene (no counterpart in the JS baseline: it needs the whole service graph and the generated tables) ───
+
+const TICKS_PER_SECOND: i64 = 10_000_000;
+/// 2026-09-29 12:00:00 UTC as a FILETIME.
+const NOON: i64 = 134_351_688_000_000_000;
+
+fn bench_system() -> std::sync::Arc<SolarSystem> {
+    let station = Body {
+        id: 60_000_001,
+        type_id: 1531,
+        group_id: 15,
+        category_id: 3,
+        owner_id: 1_000_001,
+        name: "Bench I - Trade Hub".to_string(),
+        kind: BodyKind::Station,
+        position: Vec3::new(1_000_000.0, 0.0, 0.0),
+        radius: 1_000.0,
+        graphic_id: None,
+        detail: Detail::Station { corporation_id: 1_000_001 },
+    };
+    std::sync::Arc::new(SolarSystem {
+        id: 30_000_001,
+        name: "Bench".to_string(),
+        constellation_id: 20_000_001,
+        region_id: 10_000_001,
+        faction_id: None,
+        security: 0.9,
+        bodies: vec![station],
+    })
+}
+
+fn bench_ship(index: u64) -> ShipSpec {
+    ShipSpec {
+        ship_id: 9_988_400_000_000 + index as i64,
+        character_id: 140_000_000 + index as i64,
+        type_id: 601,
+        group_id: 237,
+        category_id: 6,
+        name: "Ibis".to_string(),
+        owner_id: 140_000_000 + index as i64,
+        corporation_id: 1_000_006,
+        alliance_id: 0,
+        war_faction_id: 0,
+        security_status: 0.0,
+        radius: 47.0,
+        mass: 1_163_000.0,
+        max_velocity: 339.25,
+        agility: 4.0185,
+        warp_speed_au: 3.0,
+        shield_recharge_ms: 860_000.0,
+        modules: Vec::new(),
+    }
+}
+
+/// A scene with `ships` ships that came out of the station, have bound the ballpark and see one another.
+fn crowded(ships: u64) -> Scene {
+    let mut scene = Scene::new(bench_system());
+    for index in 1..=ships {
+        let at = NOON + index as i64 * TICKS_PER_SECOND / 10;
+        scene.undock(index, bench_ship(index), 60_000_001, at).expect("the bench station is there");
+        scene.bind(index, at);
+    }
+    scene
+}
+
+fn scene_benches(benches: &mut Vec<Bench>) {
+    for ships in [1u64, 10, 100, 500] {
+        // one poll of the scene a quarter of a second after the last: every ship's motion brought on, and what each sees checked
+        let mut scene: Option<Scene> = None;
+        let mut now = NOON + 3_600 * TICKS_PER_SECOND;
+        benches.push(Bench {
+            name: format!("scene.poll.{ships}-ships"),
+            bytes_per_op: None,
+            ops_per_run: 1,
+            run: Box::new(move || {
+                let scene = scene.get_or_insert_with(|| crowded(ships));
+                now += TICKS_PER_SECOND / 4;
+                black_box(scene.poll(black_box(now)));
+            }),
+        });
+        // one order given to a ship that every other ship has in view: the update is told to all of them
+        let mut scene: Option<Scene> = None;
+        let mut now = NOON + 3_600 * TICKS_PER_SECOND;
+        let mut fraction = 0.5;
+        benches.push(Bench {
+            name: format!("scene.command.told-to-{ships}"),
+            bytes_per_op: None,
+            ops_per_run: 1,
+            run: Box::new(move || {
+                let scene = scene.get_or_insert_with(|| crowded(ships));
+                now += TICKS_PER_SECOND / 4;
+                fraction = if fraction > 0.75 { 0.5 } else { 1.0 };
+                black_box(scene.command(1, Command::SetSpeedFraction(black_box(fraction)), now));
+            }),
+        });
+    }
+}
+
 struct Bench {
     name: String,
     bytes_per_op: Option<usize>,
@@ -249,6 +350,7 @@ fn build(baseline: Option<&Json>) -> Vec<Bench> {
             }
         }),
     });
+    scene_benches(&mut benches);
     benches
 }
 

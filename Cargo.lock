@@ -162,6 +162,7 @@ dependencies = [
  "eve-destiny",
  "eve-marshal",
  "eve-oracle",
+ "eve-space",
  "mimalloc",
  "serde_json",
 ]

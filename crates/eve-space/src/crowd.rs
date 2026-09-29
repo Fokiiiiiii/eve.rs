@@ -12,7 +12,7 @@ use eve_marshal::Value;
 use crate::payload;
 use crate::scene::{Out, Scene, SessionId};
 use crate::ship::Ship;
-use crate::visibility::{Presence, can_see};
+use crate::visibility::{Presence, can_see, grid_of};
 use crate::wire::{id, real};
 
 impl Scene {
@@ -141,8 +141,26 @@ impl Scene {
     pub(crate) fn reconcile(&mut self, now: i64) -> Vec<Out> {
         let order = self.in_entry_order();
         if order.len() < 2 {
+            self.boxes.clear();
+            self.warped_last = false;
             return Vec::new();
         }
+        // what can change who sees whom is a ship crossing into or out of a box, coming or going, or a warp: when none of that has happened since
+        // the last look there is nothing to do (the look costs a pass over the ships, not over the pairs)
+        let mut boxes: std::collections::HashMap<(i64, i64, i64), Vec<SessionId>> =
+            std::collections::HashMap::new();
+        let mut warping = false;
+        for session in &order {
+            if let Some(presence) = self.presence(*session) {
+                boxes.entry(grid_of(presence.position)).or_default().push(*session);
+                warping |= presence.warping;
+            }
+        }
+        if !warping && !self.warped_last && boxes == self.boxes {
+            return Vec::new();
+        }
+        self.boxes = boxes;
+        self.warped_last = warping;
         let mut out = Vec::new();
         let mut entering: Vec<(SessionId, SessionId)> = Vec::new();
         let mut leaving: Vec<(SessionId, Vec<SessionId>)> = Vec::new();
@@ -507,6 +525,58 @@ mod tests {
         assert!(
             !text.contains(&other_spec().ship_id.to_string()),
             "the ship that warped off is not in the state"
+        );
+    }
+
+    #[test]
+    fn a_ship_that_warps_to_a_place_in_another_box_within_the_envelope_is_taken_from_view_when_it_comes_to_rest()
+     {
+        const BELT: i64 = 40_000_009;
+        let mut world = (*system()).clone();
+        world.bodies.push(Body {
+            id: BELT,
+            type_id: 15,
+            group_id: 9,
+            category_id: 2,
+            owner_id: 0,
+            name: "Testing Belt".to_string(),
+            kind: BodyKind::Belt,
+            position: Vec3::new(20_000_000.0, 0.0, 0.0), // 20 000 km: two boxes off, and inside the 50 000 km of the warp envelope
+            radius: 1_000.0,
+            graphic_id: None,
+            detail: Detail::None,
+        });
+        let mut scene = Scene::new(Arc::new(world));
+        scene.undock(A, spec(), STATION, NOON).unwrap();
+        scene.bind(A, NOON);
+        scene.undock(B, other_spec(), STATION, NOON + SECOND).unwrap();
+        scene.bind(B, NOON + SECOND);
+        let at = NOON + 2 * SECOND;
+        scene.command(B, Command::WarpTo { target_id: BELT, range: 0.0 }, at);
+
+        let mut removals: Vec<(i64, SessionId)> = Vec::new();
+        let mut massless = None;
+        let mut rested = None;
+        let mut t = at;
+        while t < at + 300 * SECOND && (rested.is_none() || removals.len() < 2) {
+            t += SECOND / 4;
+            for out in scene.poll(t) {
+                match names(&out).first().map(String::as_str) {
+                    Some("PackagedAction") => removals.push((t, recipient(&out))),
+                    Some("SetBallMassive") if recipient(&out) == B => massless = massless.or(Some(t)),
+                    Some("SetBallPosition") if recipient(&out) == B => rested = Some(t),
+                    _ => {}
+                }
+            }
+        }
+        let (massless, rested) =
+            (massless.expect("the ship drops out"), rested.expect("the ship comes to rest"));
+        assert_eq!(removals.len(), 2, "each is told the other is gone: {removals:?}");
+        // it stayed in view while it warped and went from view at the poll in which the warp ended (the drop-out comes two seconds after the
+        // warning), though neither ship had crossed into another box since the poll before: the ship comes to rest half a minute later
+        assert!(
+            removals.iter().all(|(when, _)| *when >= massless + 2 * SECOND && *when <= massless + 3 * SECOND),
+            "removals {removals:?}, the warning at {massless}, the rest at {rested}"
         );
     }
 

@@ -3,7 +3,7 @@
 //! The scene has no clock of its own. Every call says what time it is (a FILETIME) and a ship's motion is worked out
 //! from the time it was last settled to that time, so the same calls at the same times give the same bytes.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use eve_destiny::Vec3;
@@ -177,6 +177,10 @@ pub struct Scene {
     next_stamp: u32,
     /// How many ships have come into the scene.
     pub(crate) entries: u64,
+    /// Who was in each box of the grid at the last look at what the ships see, and whether a ship was in warp then: while neither changes
+    /// no ship can have come into view or left it, and the look is skipped.
+    pub(crate) boxes: HashMap<(i64, i64, i64), Vec<SessionId>>,
+    pub(crate) warped_last: bool,
     /// What happened to ships while their motion was worked out (a ship dropped out of warp), to be told with the next call.
     backlog: Vec<Out>,
 }
@@ -188,7 +192,15 @@ pub fn stamp_at(now: i64) -> u32 {
 
 impl Scene {
     pub fn new(system: Arc<SolarSystem>) -> Self {
-        Self { system, pilots: BTreeMap::new(), next_stamp: 0, entries: 0, backlog: Vec::new() }
+        Self {
+            system,
+            pilots: BTreeMap::new(),
+            next_stamp: 0,
+            entries: 0,
+            boxes: HashMap::new(),
+            warped_last: false,
+            backlog: Vec::new(),
+        }
     }
 
     pub fn system(&self) -> &SolarSystem {

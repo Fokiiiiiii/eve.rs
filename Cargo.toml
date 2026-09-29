@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/eve-marshal",
     "crates/eve-destiny",
+    "crates/eve-space",
     "crates/eve-oracle",
     "crates/eve-sde",
     "crates/eve-net",

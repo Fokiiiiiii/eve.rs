@@ -207,6 +207,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "eve-space"
+version = "0.1.0"
+dependencies = [
+ "eve-destiny",
+ "eve-marshal",
+ "eve-sde",
+ "serde_json",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,0 +1,1244 @@
+{
+ "reference": "EVE.js",
+ "referenceCommit": "b637d2a55469ee23d24411ed5a7646391de314d9",
+ "recordedAt": "2026-09-29T03:48:04Z",
+ "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py",
+ "login": {
+  "serverVersion": {
+   "$tuple": [
+    170472,
+    496,
+    1,
+    24.01,
+    3396210,
+    "V24.01@ccp"
+   ]
+  },
+  "sessionInit": {
+   "languageID": "EN",
+   "countryCode": "GB",
+   "userid": 34,
+   "maxSessionTime": null,
+   "userType": 30,
+   "role": {
+    "$long": 90071993086640128
+   },
+   "address": "127.0.0.1",
+   "inDetention": null
+  }
+ },
+ "steps": [
+  {
+   "call": [
+    "charUnboundMgr",
+    "GetNumCharacters",
+    []
+   ],
+   "ok": 0
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "GetCharactersToSelect",
+    []
+   ],
+   "ok": []
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "GetCharacterSelectionData",
+    []
+   ],
+   "ok": {
+    "$tuple": [
+     [
+      {
+       "$object": "util.KeyVal",
+       "args": {
+        "$dict": [
+         [
+          "characterSlots",
+          3
+         ],
+         [
+          "userName",
+          "rec-1790653684-walk"
+         ],
+         [
+          "creationDate",
+          {
+           "$long": 132000000000000000
+          }
+         ],
+         [
+          "subscriptionEndTime",
+          {
+           "$long": 157469184000000000
+          }
+         ],
+         [
+          "maxCharacterSlots",
+          3
+         ]
+        ]
+       }
+      }
+     ],
+     {
+      "$tuple": [
+       null,
+       null
+      ]
+     },
+     [],
+     []
+    ]
+   }
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "GetCohortsForUser",
+    []
+   ],
+   "ok": []
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "GetCharacterLockType",
+    []
+   ],
+   "ok": null
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "ToggleValidation",
+    [
+     true
+    ]
+   ],
+   "ok": false
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "GetValidRandomName",
+    [
+     1
+    ]
+   ],
+   "ok": "Noura Aikinen"
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "GetValidRandomName",
+    [
+     2
+    ]
+   ],
+   "ok": "Tarkon Yrjot"
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "GetValidRandomName",
+    [
+     4
+    ]
+   ],
+   "ok": "Mikram Zerk"
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "GetValidRandomName",
+    [
+     8
+    ]
+   ],
+   "ok": "Corin Lafleur"
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "CreateCharacterWithDoll",
+    [
+     "Recorded Pilot 1790653684",
+     1,
+     1,
+     1,
+     10,
+     {
+      "$dict": [
+       [
+        "recorded",
+        1
+       ]
+      ]
+     },
+     {
+      "$dict": [
+       [
+        "recorded",
+        2
+       ]
+      ]
+     },
+     35,
+     null,
+     null
+    ]
+   ],
+   "ok": 140000038
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "GetNumCharacters",
+    []
+   ],
+   "ok": 1
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "GetCharactersToSelect",
+    []
+   ],
+   "ok": [
+    {
+     "$object": "util.KeyVal",
+     "args": {
+      "$dict": [
+       [
+        "characterID",
+        140000038
+       ],
+       [
+        "characterName",
+        "Recorded Pilot 1790653684"
+       ],
+       [
+        "deletePrepareDateTime",
+        null
+       ],
+       [
+        "gender",
+        1
+       ],
+       [
+        "typeID",
+        1373
+       ]
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "GetCharacterSelectionData",
+    []
+   ],
+   "ok": {
+    "$tuple": [
+     [
+      {
+       "$object": "util.KeyVal",
+       "args": {
+        "$dict": [
+         [
+          "characterSlots",
+          3
+         ],
+         [
+          "userName",
+          "rec-1790653684-walk"
+         ],
+         [
+          "creationDate",
+          {
+           "$long": 132000000000000000
+          }
+         ],
+         [
+          "subscriptionEndTime",
+          {
+           "$long": 157469184000000000
+          }
+         ],
+         [
+          "maxCharacterSlots",
+          3
+         ]
+        ]
+       }
+      }
+     ],
+     {
+      "$tuple": [
+       null,
+       null
+      ]
+     },
+     [
+      {
+       "$object": "util.KeyVal",
+       "args": {
+        "$dict": [
+         [
+          "characterID",
+          140000038
+         ],
+         [
+          "characterName",
+          "Recorded Pilot 1790653684"
+         ],
+         [
+          "deletePrepareDateTime",
+          null
+         ],
+         [
+          "gender",
+          1
+         ],
+         [
+          "typeID",
+          1373
+         ],
+         [
+          "raceID",
+          1
+         ],
+         [
+          "bloodlineID",
+          1
+         ],
+         [
+          "ancestryID",
+          10
+         ],
+         [
+          "schoolID",
+          35
+         ],
+         [
+          "corporationID",
+          1000006
+         ],
+         [
+          "allianceID",
+          null
+         ],
+         [
+          "factionID",
+          null
+         ],
+         [
+          "stationID",
+          60015249
+         ],
+         [
+          "solarSystemID",
+          30100032
+         ],
+         [
+          "constellationID",
+          20010001
+         ],
+         [
+          "regionID",
+          10001004
+         ],
+         [
+          "balance",
+          100000.0
+         ],
+         [
+          "plexBalance",
+          2222
+         ],
+         [
+          "balanceChange",
+          0.0
+         ],
+         [
+          "skillPoints",
+          384036
+         ],
+         [
+          "shipTypeID",
+          601
+         ],
+         [
+          "shipName",
+          "Ibis"
+         ],
+         [
+          "securityRating",
+          0
+         ],
+         [
+          "securityStatus",
+          0
+         ],
+         [
+          "title",
+          ""
+         ],
+         [
+          "unreadMailCount",
+          1
+         ],
+         [
+          "paperdollState",
+          0
+         ],
+         [
+          "lockTypeID",
+          null
+         ],
+         [
+          "logoffDate",
+          {
+           "$long": 134351272842510000
+          }
+         ],
+         [
+          "skillTypeID",
+          null
+         ],
+         [
+          "toLevel",
+          null
+         ],
+         [
+          "trainingStartTime",
+          null
+         ],
+         [
+          "trainingEndTime",
+          null
+         ],
+         [
+          "queueEndTime",
+          null
+         ],
+         [
+          "finishSP",
+          null
+         ],
+         [
+          "trainedSP",
+          null
+         ],
+         [
+          "finishedSkills",
+          0
+         ]
+        ]
+       }
+      }
+     ],
+     []
+    ]
+   }
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "ValidateNameEx",
+    [
+     "Recorded Pilot 1790653684"
+    ]
+   ],
+   "ok": -101
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "ValidateNameEx",
+    [
+     "recorded pilot 1790653684"
+    ]
+   ],
+   "ok": -101
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "CreateCharacterWithDoll",
+    [
+     "a",
+     1,
+     1,
+     1,
+     10,
+     {
+      "$dict": [
+       [
+        "recorded",
+        1
+       ]
+      ]
+     },
+     {
+      "$dict": [
+       [
+        "recorded",
+        2
+       ]
+      ]
+     },
+     35,
+     null,
+     null
+    ]
+   ],
+   "error": {
+    "code": 2,
+    "payload": {
+     "$objectex": {
+      "$tuple": [
+       {
+        "$token": "eveexceptions.UserError"
+       },
+       {
+        "$tuple": [
+         "CharNameInvalid",
+         {
+          "$dict": []
+         }
+        ]
+       },
+       {
+        "$dict": [
+         [
+          "msg",
+          "CharNameInvalid"
+         ],
+         [
+          "dict",
+          {
+           "$dict": []
+          }
+         ]
+        ]
+       }
+      ]
+     },
+     "list": [],
+     "dict": []
+    }
+   }
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "CreateCharacterWithDoll",
+    [
+     "Recorded Pilot 1790653684",
+     1,
+     1,
+     1,
+     10,
+     {
+      "$dict": [
+       [
+        "recorded",
+        1
+       ]
+      ]
+     },
+     {
+      "$dict": [
+       [
+        "recorded",
+        2
+       ]
+      ]
+     },
+     35,
+     null,
+     null
+    ]
+   ],
+   "error": {
+    "code": 2,
+    "payload": {
+     "$objectex": {
+      "$tuple": [
+       {
+        "$token": "eveexceptions.UserError"
+       },
+       {
+        "$tuple": [
+         "CharNameInvalid",
+         {
+          "$dict": []
+         }
+        ]
+       },
+       {
+        "$dict": [
+         [
+          "msg",
+          "CharNameInvalid"
+         ],
+         [
+          "dict",
+          {
+           "$dict": []
+          }
+         ]
+        ]
+       }
+      ]
+     },
+     "list": [],
+     "dict": []
+    }
+   }
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "CreateCharacterWithDoll",
+    [
+     "Recorded X2 1790653684",
+     1,
+     2,
+     2,
+     7,
+     {
+      "$dict": [
+       [
+        "recorded",
+        1
+       ]
+      ]
+     },
+     {
+      "$dict": [
+       [
+        "recorded",
+        2
+       ]
+      ]
+     },
+     35,
+     null,
+     null
+    ]
+   ],
+   "ok": 140000039
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "CreateCharacterWithDoll",
+    [
+     "Recorded X3 1790653684",
+     1,
+     2,
+     2,
+     7,
+     {
+      "$dict": [
+       [
+        "recorded",
+        1
+       ]
+      ]
+     },
+     {
+      "$dict": [
+       [
+        "recorded",
+        2
+       ]
+      ]
+     },
+     35,
+     null,
+     null
+    ]
+   ],
+   "ok": 140000040
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "CreateCharacterWithDoll",
+    [
+     "Recorded X4 1790653684",
+     2,
+     3,
+     1,
+     19,
+     {
+      "$dict": [
+       [
+        "recorded",
+        1
+       ]
+      ]
+     },
+     {
+      "$dict": [
+       [
+        "recorded",
+        2
+       ]
+      ]
+     },
+     33,
+     null,
+     null
+    ]
+   ],
+   "ok": 140000041
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "GetNumCharacters",
+    []
+   ],
+   "ok": 4
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "SelectCharacterID",
+    [
+     1
+    ]
+   ],
+   "ok": null
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "SelectCharacterID",
+    [
+     140000042
+    ]
+   ],
+   "error": {
+    "code": 2,
+    "payload": {
+     "$objectex": {
+      "$tuple": [
+       {
+        "$token": "eveexceptions.UserError"
+       },
+       {
+        "$tuple": [
+         "CustomInfo",
+         {
+          "$dict": [
+           [
+            "info",
+            "That character is not available on this account."
+           ]
+          ]
+         }
+        ]
+       },
+       {
+        "$dict": [
+         [
+          "msg",
+          "CustomInfo"
+         ],
+         [
+          "dict",
+          {
+           "$dict": [
+            [
+             "info",
+             "That character is not available on this account."
+            ]
+           ]
+          }
+         ]
+        ]
+       }
+      ]
+     },
+     "list": [],
+     "dict": []
+    }
+   }
+  },
+  {
+   "call": [
+    "charUnboundMgr",
+    "SelectCharacterID",
+    [
+     140000038
+    ]
+   ],
+   "ok": null
+  },
+  {
+   "call": [
+    "machoNet",
+    "GetTime",
+    []
+   ],
+   "ok": {
+    "$long": 134351272844960000
+   }
+  }
+ ],
+ "names": [
+  {
+   "name": "Recorded Pilot",
+   "ok": 1
+  },
+  {
+   "name": "ab",
+   "ok": -1
+  },
+  {
+   "name": "abc",
+   "ok": 1
+  },
+  {
+   "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "ok": 1
+  },
+  {
+   "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "ok": -2
+  },
+  {
+   "name": "Two  Spaces",
+   "ok": -7
+  },
+  {
+   "name": "One Two Three Four",
+   "ok": -6
+  },
+  {
+   "name": "Bad@Name",
+   "ok": -5
+  },
+  {
+   "name": "Bad_Name",
+   "ok": -5
+  },
+  {
+   "name": "CCP Someone",
+   "ok": -102
+  },
+  {
+   "name": "GM Someone",
+   "ok": -102
+  },
+  {
+   "name": "ISD Someone",
+   "ok": -102
+  },
+  {
+   "name": "Elysian",
+   "ok": -102
+  },
+  {
+   "name": "O'Brien-Smith",
+   "ok": 1
+  },
+  {
+   "name": "Ünïcode Pilote",
+   "ok": 1
+  },
+  {
+   "name": "Ölçü 123",
+   "ok": 1
+  },
+  {
+   "name": "",
+   "ok": -1
+  },
+  {
+   "name": "   ",
+   "ok": -1
+  },
+  {
+   "name": " Recorded Pilot ",
+   "ok": 1
+  },
+  {
+   "name": "recorded pilot",
+   "ok": 1
+  }
+ ],
+ "otherAccountCharacter": {
+  "call": [
+   "charUnboundMgr",
+   "CreateCharacterWithDoll",
+   [
+    "Recorded Other 1790653684",
+    8,
+    7,
+    1,
+    13,
+    {
+     "$dict": [
+      [
+       "recorded",
+       1
+      ]
+     ]
+    },
+    {
+     "$dict": [
+      [
+       "recorded",
+       2
+      ]
+     ]
+    },
+    37,
+    null,
+    null
+   ]
+  ],
+  "ok": 140000042
+ },
+ "afterSelect": [
+  {
+   "$tuple": [
+    16,
+    {
+     "$object": "carbon.common.script.net.machoNetPacket.MachoAddress",
+     "args": {
+      "$tuple": [
+       1,
+       65450,
+       null,
+       null
+      ]
+     }
+    },
+    {
+     "$object": "carbon.common.script.net.machoNetPacket.MachoAddress",
+     "args": {
+      "$tuple": [
+       2,
+       34065450,
+       null,
+       null
+      ]
+     }
+    },
+    34,
+    {
+     "$tuple": [
+      {
+       "$long": 26859805263195
+      },
+      {
+       "$tuple": [
+        0,
+        {
+         "$dict": [
+          [
+           "charid",
+           {
+            "$tuple": [
+             null,
+             140000038
+            ]
+           }
+          ],
+          [
+           "corpid",
+           {
+            "$tuple": [
+             null,
+             1000006
+            ]
+           }
+          ],
+          [
+           "genderID",
+           {
+            "$tuple": [
+             null,
+             1
+            ]
+           }
+          ],
+          [
+           "bloodlineID",
+           {
+            "$tuple": [
+             null,
+             1
+            ]
+           }
+          ],
+          [
+           "raceID",
+           {
+            "$tuple": [
+             null,
+             1
+            ]
+           }
+          ],
+          [
+           "schoolID",
+           {
+            "$tuple": [
+             null,
+             35
+            ]
+           }
+          ],
+          [
+           "factionid",
+           {
+            "$tuple": [
+             null,
+             500001
+            ]
+           }
+          ],
+          [
+           "stationid",
+           {
+            "$tuple": [
+             null,
+             60015249
+            ]
+           }
+          ],
+          [
+           "stationid2",
+           {
+            "$tuple": [
+             null,
+             60015249
+            ]
+           }
+          ],
+          [
+           "solarsystemid2",
+           {
+            "$tuple": [
+             null,
+             30100032
+            ]
+           }
+          ],
+          [
+           "constellationid",
+           {
+            "$tuple": [
+             null,
+             20010001
+            ]
+           }
+          ],
+          [
+           "regionid",
+           {
+            "$tuple": [
+             null,
+             10001004
+            ]
+           }
+          ],
+          [
+           "shipid",
+           {
+            "$tuple": [
+             null,
+             {
+              "$long": 9988400000246
+             }
+            ]
+           }
+          ],
+          [
+           "locationid",
+           {
+            "$tuple": [
+             null,
+             60015249
+            ]
+           }
+          ],
+          [
+           "corpAccountKey",
+           {
+            "$tuple": [
+             null,
+             1000
+            ]
+           }
+          ],
+          [
+           "hqID",
+           {
+            "$tuple": [
+             0,
+             null
+            ]
+           }
+          ],
+          [
+           "role",
+           {
+            "$tuple": [
+             null,
+             {
+              "$long": 7348784299939993600
+             }
+            ]
+           }
+          ],
+          [
+           "corprole",
+           {
+            "$tuple": [
+             null,
+             {
+              "$long": 0
+             }
+            ]
+           }
+          ],
+          [
+           "rolesAtAll",
+           {
+            "$tuple": [
+             null,
+             {
+              "$long": 0
+             }
+            ]
+           }
+          ],
+          [
+           "rolesAtBase",
+           {
+            "$tuple": [
+             null,
+             {
+              "$long": 0
+             }
+            ]
+           }
+          ],
+          [
+           "rolesAtHQ",
+           {
+            "$tuple": [
+             null,
+             {
+              "$long": 0
+             }
+            ]
+           }
+          ],
+          [
+           "rolesAtOther",
+           {
+            "$tuple": [
+             null,
+             {
+              "$long": 0
+             }
+            ]
+           }
+          ]
+         ]
+        }
+       ]
+      },
+      [
+       65450
+      ]
+     ]
+    },
+    {
+     "$dict": []
+    },
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "$tuple": [
+    12,
+    {
+     "$object": "carbon.common.script.net.machoNetPacket.MachoAddress",
+     "args": {
+      "$tuple": [
+       1,
+       65450,
+       null,
+       null
+      ]
+     }
+    },
+    {
+     "$object": "carbon.common.script.net.machoNetPacket.MachoAddress",
+     "args": {
+      "$tuple": [
+       4,
+       "OnServerSkillsChanged",
+       [],
+       "charid"
+      ]
+     }
+    },
+    34,
+    {
+     "$tuple": [
+      {
+       "$tuple": [
+        0,
+        {
+         "$buffer": "7e000000002c082c09140316012214030240636861726163746572736b696c6c732e636f6d6d6f6e2e6368617261637465725f736b696c6c5f656e7472792e436861726163746572536b696c6c456e747279140505e40c060404c7b000000901160903a4e840a1bb0c0000112704263b5808113f04263b5808112c06071306666c6167494405ff0011230610110a130747756e6e657279130967726f75704e616d651f13097075626c697368656420130a696e547261696e696e672d2d05e40c010350f30955c54fdd01"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "$dict": [
+      [
+       "sn",
+       0
+      ]
+     ]
+    },
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ]
+  }
+ ]
+}

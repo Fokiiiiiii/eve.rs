@@ -1,0 +1,3008 @@
+{
+ "reference": "EVE.js",
+ "referenceCommit": "b637d2a55469ee23d24411ed5a7646391de314d9",
+ "recordedAt": "2026-09-29T03:48:04Z",
+ "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py",
+ "starters": [
+  {
+   "bloodlineID": 1,
+   "raceID": 1,
+   "genderID": 1,
+   "ancestryID": 10,
+   "schoolID": 35,
+   "create": {
+    "call": [
+     "charUnboundMgr",
+     "CreateCharacterWithDoll",
+     [
+      "Starter 1 1790653684",
+      1,
+      1,
+      1,
+      10,
+      {
+       "$dict": [
+        [
+         "recorded",
+         1
+        ]
+       ]
+      },
+      {
+       "$dict": [
+        [
+         "recorded",
+         2
+        ]
+       ]
+      },
+      35,
+      null,
+      null
+     ]
+    ],
+    "ok": 140000043
+   },
+   "selection": {
+    "call": [
+     "charUnboundMgr",
+     "GetCharacterSelectionData",
+     []
+    ],
+    "ok": {
+     "$tuple": [
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterSlots",
+           3
+          ],
+          [
+           "userName",
+           "rec-1790653684-bl1"
+          ],
+          [
+           "creationDate",
+           {
+            "$long": 132000000000000000
+           }
+          ],
+          [
+           "subscriptionEndTime",
+           {
+            "$long": 157469184000000000
+           }
+          ],
+          [
+           "maxCharacterSlots",
+           3
+          ]
+         ]
+        }
+       }
+      ],
+      {
+       "$tuple": [
+        null,
+        null
+       ]
+      },
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterID",
+           140000043
+          ],
+          [
+           "characterName",
+           "Starter 1 1790653684"
+          ],
+          [
+           "deletePrepareDateTime",
+           null
+          ],
+          [
+           "gender",
+           1
+          ],
+          [
+           "typeID",
+           1373
+          ],
+          [
+           "raceID",
+           1
+          ],
+          [
+           "bloodlineID",
+           1
+          ],
+          [
+           "ancestryID",
+           10
+          ],
+          [
+           "schoolID",
+           35
+          ],
+          [
+           "corporationID",
+           1000006
+          ],
+          [
+           "allianceID",
+           null
+          ],
+          [
+           "factionID",
+           null
+          ],
+          [
+           "stationID",
+           60015249
+          ],
+          [
+           "solarSystemID",
+           30100032
+          ],
+          [
+           "constellationID",
+           20010001
+          ],
+          [
+           "regionID",
+           10001004
+          ],
+          [
+           "balance",
+           100000.0
+          ],
+          [
+           "plexBalance",
+           2222
+          ],
+          [
+           "balanceChange",
+           0.0
+          ],
+          [
+           "skillPoints",
+           384036
+          ],
+          [
+           "shipTypeID",
+           601
+          ],
+          [
+           "shipName",
+           "Ibis"
+          ],
+          [
+           "securityRating",
+           0
+          ],
+          [
+           "securityStatus",
+           0
+          ],
+          [
+           "title",
+           ""
+          ],
+          [
+           "unreadMailCount",
+           1
+          ],
+          [
+           "paperdollState",
+           0
+          ],
+          [
+           "lockTypeID",
+           null
+          ],
+          [
+           "logoffDate",
+           {
+            "$long": 134351272845130000
+           }
+          ],
+          [
+           "skillTypeID",
+           null
+          ],
+          [
+           "toLevel",
+           null
+          ],
+          [
+           "trainingStartTime",
+           null
+          ],
+          [
+           "trainingEndTime",
+           null
+          ],
+          [
+           "queueEndTime",
+           null
+          ],
+          [
+           "finishSP",
+           null
+          ],
+          [
+           "trainedSP",
+           null
+          ],
+          [
+           "finishedSkills",
+           0
+          ]
+         ]
+        }
+       }
+      ],
+      []
+     ]
+    }
+   }
+  },
+  {
+   "bloodlineID": 2,
+   "raceID": 1,
+   "genderID": 2,
+   "ancestryID": 7,
+   "schoolID": 35,
+   "create": {
+    "call": [
+     "charUnboundMgr",
+     "CreateCharacterWithDoll",
+     [
+      "Starter 2 1790653684",
+      1,
+      2,
+      2,
+      7,
+      {
+       "$dict": [
+        [
+         "recorded",
+         1
+        ]
+       ]
+      },
+      {
+       "$dict": [
+        [
+         "recorded",
+         2
+        ]
+       ]
+      },
+      35,
+      null,
+      null
+     ]
+    ],
+    "ok": 140000044
+   },
+   "selection": {
+    "call": [
+     "charUnboundMgr",
+     "GetCharacterSelectionData",
+     []
+    ],
+    "ok": {
+     "$tuple": [
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterSlots",
+           3
+          ],
+          [
+           "userName",
+           "rec-1790653684-bl2"
+          ],
+          [
+           "creationDate",
+           {
+            "$long": 132000000000000000
+           }
+          ],
+          [
+           "subscriptionEndTime",
+           {
+            "$long": 157469184000000000
+           }
+          ],
+          [
+           "maxCharacterSlots",
+           3
+          ]
+         ]
+        }
+       }
+      ],
+      {
+       "$tuple": [
+        null,
+        null
+       ]
+      },
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterID",
+           140000044
+          ],
+          [
+           "characterName",
+           "Starter 2 1790653684"
+          ],
+          [
+           "deletePrepareDateTime",
+           null
+          ],
+          [
+           "gender",
+           2
+          ],
+          [
+           "typeID",
+           1374
+          ],
+          [
+           "raceID",
+           1
+          ],
+          [
+           "bloodlineID",
+           2
+          ],
+          [
+           "ancestryID",
+           7
+          ],
+          [
+           "schoolID",
+           35
+          ],
+          [
+           "corporationID",
+           1000006
+          ],
+          [
+           "allianceID",
+           null
+          ],
+          [
+           "factionID",
+           null
+          ],
+          [
+           "stationID",
+           60015249
+          ],
+          [
+           "solarSystemID",
+           30100032
+          ],
+          [
+           "constellationID",
+           20010001
+          ],
+          [
+           "regionID",
+           10001004
+          ],
+          [
+           "balance",
+           100000.0
+          ],
+          [
+           "plexBalance",
+           2222
+          ],
+          [
+           "balanceChange",
+           0.0
+          ],
+          [
+           "skillPoints",
+           384036
+          ],
+          [
+           "shipTypeID",
+           601
+          ],
+          [
+           "shipName",
+           "Ibis"
+          ],
+          [
+           "securityRating",
+           0
+          ],
+          [
+           "securityStatus",
+           0
+          ],
+          [
+           "title",
+           ""
+          ],
+          [
+           "unreadMailCount",
+           1
+          ],
+          [
+           "paperdollState",
+           0
+          ],
+          [
+           "lockTypeID",
+           null
+          ],
+          [
+           "logoffDate",
+           {
+            "$long": 134351272845520000
+           }
+          ],
+          [
+           "skillTypeID",
+           null
+          ],
+          [
+           "toLevel",
+           null
+          ],
+          [
+           "trainingStartTime",
+           null
+          ],
+          [
+           "trainingEndTime",
+           null
+          ],
+          [
+           "queueEndTime",
+           null
+          ],
+          [
+           "finishSP",
+           null
+          ],
+          [
+           "trainedSP",
+           null
+          ],
+          [
+           "finishedSkills",
+           0
+          ]
+         ]
+        }
+       }
+      ],
+      []
+     ]
+    }
+   }
+  },
+  {
+   "bloodlineID": 3,
+   "raceID": 2,
+   "genderID": 1,
+   "ancestryID": 19,
+   "schoolID": 33,
+   "create": {
+    "call": [
+     "charUnboundMgr",
+     "CreateCharacterWithDoll",
+     [
+      "Starter 3 1790653684",
+      2,
+      3,
+      1,
+      19,
+      {
+       "$dict": [
+        [
+         "recorded",
+         1
+        ]
+       ]
+      },
+      {
+       "$dict": [
+        [
+         "recorded",
+         2
+        ]
+       ]
+      },
+      33,
+      null,
+      null
+     ]
+    ],
+    "ok": 140000045
+   },
+   "selection": {
+    "call": [
+     "charUnboundMgr",
+     "GetCharacterSelectionData",
+     []
+    ],
+    "ok": {
+     "$tuple": [
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterSlots",
+           3
+          ],
+          [
+           "userName",
+           "rec-1790653684-bl3"
+          ],
+          [
+           "creationDate",
+           {
+            "$long": 132000000000000000
+           }
+          ],
+          [
+           "subscriptionEndTime",
+           {
+            "$long": 157469184000000000
+           }
+          ],
+          [
+           "maxCharacterSlots",
+           3
+          ]
+         ]
+        }
+       }
+      ],
+      {
+       "$tuple": [
+        null,
+        null
+       ]
+      },
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterID",
+           140000045
+          ],
+          [
+           "characterName",
+           "Starter 3 1790653684"
+          ],
+          [
+           "deletePrepareDateTime",
+           null
+          ],
+          [
+           "gender",
+           1
+          ],
+          [
+           "typeID",
+           1375
+          ],
+          [
+           "raceID",
+           2
+          ],
+          [
+           "bloodlineID",
+           3
+          ],
+          [
+           "ancestryID",
+           19
+          ],
+          [
+           "schoolID",
+           33
+          ],
+          [
+           "corporationID",
+           1000044
+          ],
+          [
+           "allianceID",
+           null
+          ],
+          [
+           "factionID",
+           null
+          ],
+          [
+           "stationID",
+           60015249
+          ],
+          [
+           "solarSystemID",
+           30100032
+          ],
+          [
+           "constellationID",
+           20010001
+          ],
+          [
+           "regionID",
+           10001004
+          ],
+          [
+           "balance",
+           100000.0
+          ],
+          [
+           "plexBalance",
+           2222
+          ],
+          [
+           "balanceChange",
+           0.0
+          ],
+          [
+           "skillPoints",
+           384402
+          ],
+          [
+           "shipTypeID",
+           588
+          ],
+          [
+           "shipName",
+           "Reaper"
+          ],
+          [
+           "securityRating",
+           0
+          ],
+          [
+           "securityStatus",
+           0
+          ],
+          [
+           "title",
+           ""
+          ],
+          [
+           "unreadMailCount",
+           1
+          ],
+          [
+           "paperdollState",
+           0
+          ],
+          [
+           "lockTypeID",
+           null
+          ],
+          [
+           "logoffDate",
+           {
+            "$long": 134351272846000000
+           }
+          ],
+          [
+           "skillTypeID",
+           null
+          ],
+          [
+           "toLevel",
+           null
+          ],
+          [
+           "trainingStartTime",
+           null
+          ],
+          [
+           "trainingEndTime",
+           null
+          ],
+          [
+           "queueEndTime",
+           null
+          ],
+          [
+           "finishSP",
+           null
+          ],
+          [
+           "trainedSP",
+           null
+          ],
+          [
+           "finishedSkills",
+           0
+          ]
+         ]
+        }
+       }
+      ],
+      []
+     ]
+    }
+   }
+  },
+  {
+   "bloodlineID": 4,
+   "raceID": 2,
+   "genderID": 2,
+   "ancestryID": 22,
+   "schoolID": 33,
+   "create": {
+    "call": [
+     "charUnboundMgr",
+     "CreateCharacterWithDoll",
+     [
+      "Starter 4 1790653684",
+      2,
+      4,
+      2,
+      22,
+      {
+       "$dict": [
+        [
+         "recorded",
+         1
+        ]
+       ]
+      },
+      {
+       "$dict": [
+        [
+         "recorded",
+         2
+        ]
+       ]
+      },
+      33,
+      null,
+      null
+     ]
+    ],
+    "ok": 140000046
+   },
+   "selection": {
+    "call": [
+     "charUnboundMgr",
+     "GetCharacterSelectionData",
+     []
+    ],
+    "ok": {
+     "$tuple": [
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterSlots",
+           3
+          ],
+          [
+           "userName",
+           "rec-1790653684-bl4"
+          ],
+          [
+           "creationDate",
+           {
+            "$long": 132000000000000000
+           }
+          ],
+          [
+           "subscriptionEndTime",
+           {
+            "$long": 157469184000000000
+           }
+          ],
+          [
+           "maxCharacterSlots",
+           3
+          ]
+         ]
+        }
+       }
+      ],
+      {
+       "$tuple": [
+        null,
+        null
+       ]
+      },
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterID",
+           140000046
+          ],
+          [
+           "characterName",
+           "Starter 4 1790653684"
+          ],
+          [
+           "deletePrepareDateTime",
+           null
+          ],
+          [
+           "gender",
+           2
+          ],
+          [
+           "typeID",
+           1376
+          ],
+          [
+           "raceID",
+           2
+          ],
+          [
+           "bloodlineID",
+           4
+          ],
+          [
+           "ancestryID",
+           22
+          ],
+          [
+           "schoolID",
+           33
+          ],
+          [
+           "corporationID",
+           1000044
+          ],
+          [
+           "allianceID",
+           null
+          ],
+          [
+           "factionID",
+           null
+          ],
+          [
+           "stationID",
+           60015249
+          ],
+          [
+           "solarSystemID",
+           30100032
+          ],
+          [
+           "constellationID",
+           20010001
+          ],
+          [
+           "regionID",
+           10001004
+          ],
+          [
+           "balance",
+           100000.0
+          ],
+          [
+           "plexBalance",
+           2222
+          ],
+          [
+           "balanceChange",
+           0.0
+          ],
+          [
+           "skillPoints",
+           384402
+          ],
+          [
+           "shipTypeID",
+           588
+          ],
+          [
+           "shipName",
+           "Reaper"
+          ],
+          [
+           "securityRating",
+           0
+          ],
+          [
+           "securityStatus",
+           0
+          ],
+          [
+           "title",
+           ""
+          ],
+          [
+           "unreadMailCount",
+           1
+          ],
+          [
+           "paperdollState",
+           0
+          ],
+          [
+           "lockTypeID",
+           null
+          ],
+          [
+           "logoffDate",
+           {
+            "$long": 134351272846410000
+           }
+          ],
+          [
+           "skillTypeID",
+           null
+          ],
+          [
+           "toLevel",
+           null
+          ],
+          [
+           "trainingStartTime",
+           null
+          ],
+          [
+           "trainingEndTime",
+           null
+          ],
+          [
+           "queueEndTime",
+           null
+          ],
+          [
+           "finishSP",
+           null
+          ],
+          [
+           "trainedSP",
+           null
+          ],
+          [
+           "finishedSkills",
+           0
+          ]
+         ]
+        }
+       }
+      ],
+      []
+     ]
+    }
+   }
+  },
+  {
+   "bloodlineID": 5,
+   "raceID": 4,
+   "genderID": 1,
+   "ancestryID": 1,
+   "schoolID": 31,
+   "create": {
+    "call": [
+     "charUnboundMgr",
+     "CreateCharacterWithDoll",
+     [
+      "Starter 5 1790653684",
+      4,
+      5,
+      1,
+      1,
+      {
+       "$dict": [
+        [
+         "recorded",
+         1
+        ]
+       ]
+      },
+      {
+       "$dict": [
+        [
+         "recorded",
+         2
+        ]
+       ]
+      },
+      31,
+      null,
+      null
+     ]
+    ],
+    "ok": 140000047
+   },
+   "selection": {
+    "call": [
+     "charUnboundMgr",
+     "GetCharacterSelectionData",
+     []
+    ],
+    "ok": {
+     "$tuple": [
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterSlots",
+           3
+          ],
+          [
+           "userName",
+           "rec-1790653684-bl5"
+          ],
+          [
+           "creationDate",
+           {
+            "$long": 132000000000000000
+           }
+          ],
+          [
+           "subscriptionEndTime",
+           {
+            "$long": 157469184000000000
+           }
+          ],
+          [
+           "maxCharacterSlots",
+           3
+          ]
+         ]
+        }
+       }
+      ],
+      {
+       "$tuple": [
+        null,
+        null
+       ]
+      },
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterID",
+           140000047
+          ],
+          [
+           "characterName",
+           "Starter 5 1790653684"
+          ],
+          [
+           "deletePrepareDateTime",
+           null
+          ],
+          [
+           "gender",
+           1
+          ],
+          [
+           "typeID",
+           1377
+          ],
+          [
+           "raceID",
+           4
+          ],
+          [
+           "bloodlineID",
+           5
+          ],
+          [
+           "ancestryID",
+           1
+          ],
+          [
+           "schoolID",
+           31
+          ],
+          [
+           "corporationID",
+           1000166
+          ],
+          [
+           "allianceID",
+           null
+          ],
+          [
+           "factionID",
+           null
+          ],
+          [
+           "stationID",
+           60015249
+          ],
+          [
+           "solarSystemID",
+           30100032
+          ],
+          [
+           "constellationID",
+           20010001
+          ],
+          [
+           "regionID",
+           10001004
+          ],
+          [
+           "balance",
+           100000.0
+          ],
+          [
+           "plexBalance",
+           2222
+          ],
+          [
+           "balanceChange",
+           0.0
+          ],
+          [
+           "skillPoints",
+           386730
+          ],
+          [
+           "shipTypeID",
+           596
+          ],
+          [
+           "shipName",
+           "Impairor"
+          ],
+          [
+           "securityRating",
+           0
+          ],
+          [
+           "securityStatus",
+           0
+          ],
+          [
+           "title",
+           ""
+          ],
+          [
+           "unreadMailCount",
+           1
+          ],
+          [
+           "paperdollState",
+           0
+          ],
+          [
+           "lockTypeID",
+           null
+          ],
+          [
+           "logoffDate",
+           {
+            "$long": 134351272846920000
+           }
+          ],
+          [
+           "skillTypeID",
+           null
+          ],
+          [
+           "toLevel",
+           null
+          ],
+          [
+           "trainingStartTime",
+           null
+          ],
+          [
+           "trainingEndTime",
+           null
+          ],
+          [
+           "queueEndTime",
+           null
+          ],
+          [
+           "finishSP",
+           null
+          ],
+          [
+           "trainedSP",
+           null
+          ],
+          [
+           "finishedSkills",
+           0
+          ]
+         ]
+        }
+       }
+      ],
+      []
+     ]
+    }
+   }
+  },
+  {
+   "bloodlineID": 6,
+   "raceID": 4,
+   "genderID": 2,
+   "ancestryID": 4,
+   "schoolID": 31,
+   "create": {
+    "call": [
+     "charUnboundMgr",
+     "CreateCharacterWithDoll",
+     [
+      "Starter 6 1790653684",
+      4,
+      6,
+      2,
+      4,
+      {
+       "$dict": [
+        [
+         "recorded",
+         1
+        ]
+       ]
+      },
+      {
+       "$dict": [
+        [
+         "recorded",
+         2
+        ]
+       ]
+      },
+      31,
+      null,
+      null
+     ]
+    ],
+    "ok": 140000048
+   },
+   "selection": {
+    "call": [
+     "charUnboundMgr",
+     "GetCharacterSelectionData",
+     []
+    ],
+    "ok": {
+     "$tuple": [
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterSlots",
+           3
+          ],
+          [
+           "userName",
+           "rec-1790653684-bl6"
+          ],
+          [
+           "creationDate",
+           {
+            "$long": 132000000000000000
+           }
+          ],
+          [
+           "subscriptionEndTime",
+           {
+            "$long": 157469184000000000
+           }
+          ],
+          [
+           "maxCharacterSlots",
+           3
+          ]
+         ]
+        }
+       }
+      ],
+      {
+       "$tuple": [
+        null,
+        null
+       ]
+      },
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterID",
+           140000048
+          ],
+          [
+           "characterName",
+           "Starter 6 1790653684"
+          ],
+          [
+           "deletePrepareDateTime",
+           null
+          ],
+          [
+           "gender",
+           2
+          ],
+          [
+           "typeID",
+           1378
+          ],
+          [
+           "raceID",
+           4
+          ],
+          [
+           "bloodlineID",
+           6
+          ],
+          [
+           "ancestryID",
+           4
+          ],
+          [
+           "schoolID",
+           31
+          ],
+          [
+           "corporationID",
+           1000166
+          ],
+          [
+           "allianceID",
+           null
+          ],
+          [
+           "factionID",
+           null
+          ],
+          [
+           "stationID",
+           60015249
+          ],
+          [
+           "solarSystemID",
+           30100032
+          ],
+          [
+           "constellationID",
+           20010001
+          ],
+          [
+           "regionID",
+           10001004
+          ],
+          [
+           "balance",
+           100000.0
+          ],
+          [
+           "plexBalance",
+           2222
+          ],
+          [
+           "balanceChange",
+           0.0
+          ],
+          [
+           "skillPoints",
+           386730
+          ],
+          [
+           "shipTypeID",
+           596
+          ],
+          [
+           "shipName",
+           "Impairor"
+          ],
+          [
+           "securityRating",
+           0
+          ],
+          [
+           "securityStatus",
+           0
+          ],
+          [
+           "title",
+           ""
+          ],
+          [
+           "unreadMailCount",
+           1
+          ],
+          [
+           "paperdollState",
+           0
+          ],
+          [
+           "lockTypeID",
+           null
+          ],
+          [
+           "logoffDate",
+           {
+            "$long": 134351272847310000
+           }
+          ],
+          [
+           "skillTypeID",
+           null
+          ],
+          [
+           "toLevel",
+           null
+          ],
+          [
+           "trainingStartTime",
+           null
+          ],
+          [
+           "trainingEndTime",
+           null
+          ],
+          [
+           "queueEndTime",
+           null
+          ],
+          [
+           "finishSP",
+           null
+          ],
+          [
+           "trainedSP",
+           null
+          ],
+          [
+           "finishedSkills",
+           0
+          ]
+         ]
+        }
+       }
+      ],
+      []
+     ]
+    }
+   }
+  },
+  {
+   "bloodlineID": 7,
+   "raceID": 8,
+   "genderID": 1,
+   "ancestryID": 13,
+   "schoolID": 37,
+   "create": {
+    "call": [
+     "charUnboundMgr",
+     "CreateCharacterWithDoll",
+     [
+      "Starter 7 1790653684",
+      8,
+      7,
+      1,
+      13,
+      {
+       "$dict": [
+        [
+         "recorded",
+         1
+        ]
+       ]
+      },
+      {
+       "$dict": [
+        [
+         "recorded",
+         2
+        ]
+       ]
+      },
+      37,
+      null,
+      null
+     ]
+    ],
+    "ok": 140000049
+   },
+   "selection": {
+    "call": [
+     "charUnboundMgr",
+     "GetCharacterSelectionData",
+     []
+    ],
+    "ok": {
+     "$tuple": [
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterSlots",
+           3
+          ],
+          [
+           "userName",
+           "rec-1790653684-bl7"
+          ],
+          [
+           "creationDate",
+           {
+            "$long": 132000000000000000
+           }
+          ],
+          [
+           "subscriptionEndTime",
+           {
+            "$long": 157469184000000000
+           }
+          ],
+          [
+           "maxCharacterSlots",
+           3
+          ]
+         ]
+        }
+       }
+      ],
+      {
+       "$tuple": [
+        null,
+        null
+       ]
+      },
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterID",
+           140000049
+          ],
+          [
+           "characterName",
+           "Starter 7 1790653684"
+          ],
+          [
+           "deletePrepareDateTime",
+           null
+          ],
+          [
+           "gender",
+           1
+          ],
+          [
+           "typeID",
+           1379
+          ],
+          [
+           "raceID",
+           8
+          ],
+          [
+           "bloodlineID",
+           7
+          ],
+          [
+           "ancestryID",
+           13
+          ],
+          [
+           "schoolID",
+           37
+          ],
+          [
+           "corporationID",
+           1000094
+          ],
+          [
+           "allianceID",
+           null
+          ],
+          [
+           "factionID",
+           null
+          ],
+          [
+           "stationID",
+           60015249
+          ],
+          [
+           "solarSystemID",
+           30100032
+          ],
+          [
+           "constellationID",
+           20010001
+          ],
+          [
+           "regionID",
+           10001004
+          ],
+          [
+           "balance",
+           100000.0
+          ],
+          [
+           "plexBalance",
+           2222
+          ],
+          [
+           "balanceChange",
+           0.0
+          ],
+          [
+           "skillPoints",
+           386730
+          ],
+          [
+           "shipTypeID",
+           606
+          ],
+          [
+           "shipName",
+           "Velator"
+          ],
+          [
+           "securityRating",
+           0
+          ],
+          [
+           "securityStatus",
+           0
+          ],
+          [
+           "title",
+           ""
+          ],
+          [
+           "unreadMailCount",
+           1
+          ],
+          [
+           "paperdollState",
+           0
+          ],
+          [
+           "lockTypeID",
+           null
+          ],
+          [
+           "logoffDate",
+           {
+            "$long": 134351272847890000
+           }
+          ],
+          [
+           "skillTypeID",
+           null
+          ],
+          [
+           "toLevel",
+           null
+          ],
+          [
+           "trainingStartTime",
+           null
+          ],
+          [
+           "trainingEndTime",
+           null
+          ],
+          [
+           "queueEndTime",
+           null
+          ],
+          [
+           "finishSP",
+           null
+          ],
+          [
+           "trainedSP",
+           null
+          ],
+          [
+           "finishedSkills",
+           0
+          ]
+         ]
+        }
+       }
+      ],
+      []
+     ]
+    }
+   }
+  },
+  {
+   "bloodlineID": 8,
+   "raceID": 8,
+   "genderID": 2,
+   "ancestryID": 16,
+   "schoolID": 37,
+   "create": {
+    "call": [
+     "charUnboundMgr",
+     "CreateCharacterWithDoll",
+     [
+      "Starter 8 1790653684",
+      8,
+      8,
+      2,
+      16,
+      {
+       "$dict": [
+        [
+         "recorded",
+         1
+        ]
+       ]
+      },
+      {
+       "$dict": [
+        [
+         "recorded",
+         2
+        ]
+       ]
+      },
+      37,
+      null,
+      null
+     ]
+    ],
+    "ok": 140000050
+   },
+   "selection": {
+    "call": [
+     "charUnboundMgr",
+     "GetCharacterSelectionData",
+     []
+    ],
+    "ok": {
+     "$tuple": [
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterSlots",
+           3
+          ],
+          [
+           "userName",
+           "rec-1790653684-bl8"
+          ],
+          [
+           "creationDate",
+           {
+            "$long": 132000000000000000
+           }
+          ],
+          [
+           "subscriptionEndTime",
+           {
+            "$long": 157469184000000000
+           }
+          ],
+          [
+           "maxCharacterSlots",
+           3
+          ]
+         ]
+        }
+       }
+      ],
+      {
+       "$tuple": [
+        null,
+        null
+       ]
+      },
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterID",
+           140000050
+          ],
+          [
+           "characterName",
+           "Starter 8 1790653684"
+          ],
+          [
+           "deletePrepareDateTime",
+           null
+          ],
+          [
+           "gender",
+           2
+          ],
+          [
+           "typeID",
+           1380
+          ],
+          [
+           "raceID",
+           8
+          ],
+          [
+           "bloodlineID",
+           8
+          ],
+          [
+           "ancestryID",
+           16
+          ],
+          [
+           "schoolID",
+           37
+          ],
+          [
+           "corporationID",
+           1000094
+          ],
+          [
+           "allianceID",
+           null
+          ],
+          [
+           "factionID",
+           null
+          ],
+          [
+           "stationID",
+           60015249
+          ],
+          [
+           "solarSystemID",
+           30100032
+          ],
+          [
+           "constellationID",
+           20010001
+          ],
+          [
+           "regionID",
+           10001004
+          ],
+          [
+           "balance",
+           100000.0
+          ],
+          [
+           "plexBalance",
+           2222
+          ],
+          [
+           "balanceChange",
+           0.0
+          ],
+          [
+           "skillPoints",
+           386730
+          ],
+          [
+           "shipTypeID",
+           606
+          ],
+          [
+           "shipName",
+           "Velator"
+          ],
+          [
+           "securityRating",
+           0
+          ],
+          [
+           "securityStatus",
+           0
+          ],
+          [
+           "title",
+           ""
+          ],
+          [
+           "unreadMailCount",
+           1
+          ],
+          [
+           "paperdollState",
+           0
+          ],
+          [
+           "lockTypeID",
+           null
+          ],
+          [
+           "logoffDate",
+           {
+            "$long": 134351272848310000
+           }
+          ],
+          [
+           "skillTypeID",
+           null
+          ],
+          [
+           "toLevel",
+           null
+          ],
+          [
+           "trainingStartTime",
+           null
+          ],
+          [
+           "trainingEndTime",
+           null
+          ],
+          [
+           "queueEndTime",
+           null
+          ],
+          [
+           "finishSP",
+           null
+          ],
+          [
+           "trainedSP",
+           null
+          ],
+          [
+           "finishedSkills",
+           0
+          ]
+         ]
+        }
+       }
+      ],
+      []
+     ]
+    }
+   }
+  },
+  {
+   "bloodlineID": 11,
+   "raceID": 1,
+   "genderID": 1,
+   "ancestryID": 31,
+   "schoolID": 35,
+   "create": {
+    "call": [
+     "charUnboundMgr",
+     "CreateCharacterWithDoll",
+     [
+      "Starter 11 1790653684",
+      1,
+      11,
+      1,
+      31,
+      {
+       "$dict": [
+        [
+         "recorded",
+         1
+        ]
+       ]
+      },
+      {
+       "$dict": [
+        [
+         "recorded",
+         2
+        ]
+       ]
+      },
+      35,
+      null,
+      null
+     ]
+    ],
+    "ok": 140000051
+   },
+   "selection": {
+    "call": [
+     "charUnboundMgr",
+     "GetCharacterSelectionData",
+     []
+    ],
+    "ok": {
+     "$tuple": [
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterSlots",
+           3
+          ],
+          [
+           "userName",
+           "rec-1790653684-bl11"
+          ],
+          [
+           "creationDate",
+           {
+            "$long": 132000000000000000
+           }
+          ],
+          [
+           "subscriptionEndTime",
+           {
+            "$long": 157469184000000000
+           }
+          ],
+          [
+           "maxCharacterSlots",
+           3
+          ]
+         ]
+        }
+       }
+      ],
+      {
+       "$tuple": [
+        null,
+        null
+       ]
+      },
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterID",
+           140000051
+          ],
+          [
+           "characterName",
+           "Starter 11 1790653684"
+          ],
+          [
+           "deletePrepareDateTime",
+           null
+          ],
+          [
+           "gender",
+           1
+          ],
+          [
+           "typeID",
+           1383
+          ],
+          [
+           "raceID",
+           1
+          ],
+          [
+           "bloodlineID",
+           11
+          ],
+          [
+           "ancestryID",
+           31
+          ],
+          [
+           "schoolID",
+           35
+          ],
+          [
+           "corporationID",
+           1000006
+          ],
+          [
+           "allianceID",
+           null
+          ],
+          [
+           "factionID",
+           null
+          ],
+          [
+           "stationID",
+           60015249
+          ],
+          [
+           "solarSystemID",
+           30100032
+          ],
+          [
+           "constellationID",
+           20010001
+          ],
+          [
+           "regionID",
+           10001004
+          ],
+          [
+           "balance",
+           100000.0
+          ],
+          [
+           "plexBalance",
+           2222
+          ],
+          [
+           "balanceChange",
+           0.0
+          ],
+          [
+           "skillPoints",
+           384036
+          ],
+          [
+           "shipTypeID",
+           601
+          ],
+          [
+           "shipName",
+           "Ibis"
+          ],
+          [
+           "securityRating",
+           0
+          ],
+          [
+           "securityStatus",
+           0
+          ],
+          [
+           "title",
+           ""
+          ],
+          [
+           "unreadMailCount",
+           1
+          ],
+          [
+           "paperdollState",
+           0
+          ],
+          [
+           "lockTypeID",
+           null
+          ],
+          [
+           "logoffDate",
+           {
+            "$long": 134351272848800000
+           }
+          ],
+          [
+           "skillTypeID",
+           null
+          ],
+          [
+           "toLevel",
+           null
+          ],
+          [
+           "trainingStartTime",
+           null
+          ],
+          [
+           "trainingEndTime",
+           null
+          ],
+          [
+           "queueEndTime",
+           null
+          ],
+          [
+           "finishSP",
+           null
+          ],
+          [
+           "trainedSP",
+           null
+          ],
+          [
+           "finishedSkills",
+           0
+          ]
+         ]
+        }
+       }
+      ],
+      []
+     ]
+    }
+   }
+  },
+  {
+   "bloodlineID": 12,
+   "raceID": 8,
+   "genderID": 2,
+   "ancestryID": 34,
+   "schoolID": 37,
+   "create": {
+    "call": [
+     "charUnboundMgr",
+     "CreateCharacterWithDoll",
+     [
+      "Starter 12 1790653684",
+      8,
+      12,
+      2,
+      34,
+      {
+       "$dict": [
+        [
+         "recorded",
+         1
+        ]
+       ]
+      },
+      {
+       "$dict": [
+        [
+         "recorded",
+         2
+        ]
+       ]
+      },
+      37,
+      null,
+      null
+     ]
+    ],
+    "ok": 140000052
+   },
+   "selection": {
+    "call": [
+     "charUnboundMgr",
+     "GetCharacterSelectionData",
+     []
+    ],
+    "ok": {
+     "$tuple": [
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterSlots",
+           3
+          ],
+          [
+           "userName",
+           "rec-1790653684-bl12"
+          ],
+          [
+           "creationDate",
+           {
+            "$long": 132000000000000000
+           }
+          ],
+          [
+           "subscriptionEndTime",
+           {
+            "$long": 157469184000000000
+           }
+          ],
+          [
+           "maxCharacterSlots",
+           3
+          ]
+         ]
+        }
+       }
+      ],
+      {
+       "$tuple": [
+        null,
+        null
+       ]
+      },
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterID",
+           140000052
+          ],
+          [
+           "characterName",
+           "Starter 12 1790653684"
+          ],
+          [
+           "deletePrepareDateTime",
+           null
+          ],
+          [
+           "gender",
+           2
+          ],
+          [
+           "typeID",
+           1384
+          ],
+          [
+           "raceID",
+           8
+          ],
+          [
+           "bloodlineID",
+           12
+          ],
+          [
+           "ancestryID",
+           34
+          ],
+          [
+           "schoolID",
+           37
+          ],
+          [
+           "corporationID",
+           1000094
+          ],
+          [
+           "allianceID",
+           null
+          ],
+          [
+           "factionID",
+           null
+          ],
+          [
+           "stationID",
+           60015249
+          ],
+          [
+           "solarSystemID",
+           30100032
+          ],
+          [
+           "constellationID",
+           20010001
+          ],
+          [
+           "regionID",
+           10001004
+          ],
+          [
+           "balance",
+           100000.0
+          ],
+          [
+           "plexBalance",
+           2222
+          ],
+          [
+           "balanceChange",
+           0.0
+          ],
+          [
+           "skillPoints",
+           386730
+          ],
+          [
+           "shipTypeID",
+           606
+          ],
+          [
+           "shipName",
+           "Velator"
+          ],
+          [
+           "securityRating",
+           0
+          ],
+          [
+           "securityStatus",
+           0
+          ],
+          [
+           "title",
+           ""
+          ],
+          [
+           "unreadMailCount",
+           1
+          ],
+          [
+           "paperdollState",
+           0
+          ],
+          [
+           "lockTypeID",
+           null
+          ],
+          [
+           "logoffDate",
+           {
+            "$long": 134351272849210000
+           }
+          ],
+          [
+           "skillTypeID",
+           null
+          ],
+          [
+           "toLevel",
+           null
+          ],
+          [
+           "trainingStartTime",
+           null
+          ],
+          [
+           "trainingEndTime",
+           null
+          ],
+          [
+           "queueEndTime",
+           null
+          ],
+          [
+           "finishSP",
+           null
+          ],
+          [
+           "trainedSP",
+           null
+          ],
+          [
+           "finishedSkills",
+           0
+          ]
+         ]
+        }
+       }
+      ],
+      []
+     ]
+    }
+   }
+  },
+  {
+   "bloodlineID": 13,
+   "raceID": 4,
+   "genderID": 1,
+   "ancestryID": 37,
+   "schoolID": 31,
+   "create": {
+    "call": [
+     "charUnboundMgr",
+     "CreateCharacterWithDoll",
+     [
+      "Starter 13 1790653684",
+      4,
+      13,
+      1,
+      37,
+      {
+       "$dict": [
+        [
+         "recorded",
+         1
+        ]
+       ]
+      },
+      {
+       "$dict": [
+        [
+         "recorded",
+         2
+        ]
+       ]
+      },
+      31,
+      null,
+      null
+     ]
+    ],
+    "ok": 140000053
+   },
+   "selection": {
+    "call": [
+     "charUnboundMgr",
+     "GetCharacterSelectionData",
+     []
+    ],
+    "ok": {
+     "$tuple": [
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterSlots",
+           3
+          ],
+          [
+           "userName",
+           "rec-1790653684-bl13"
+          ],
+          [
+           "creationDate",
+           {
+            "$long": 132000000000000000
+           }
+          ],
+          [
+           "subscriptionEndTime",
+           {
+            "$long": 157469184000000000
+           }
+          ],
+          [
+           "maxCharacterSlots",
+           3
+          ]
+         ]
+        }
+       }
+      ],
+      {
+       "$tuple": [
+        null,
+        null
+       ]
+      },
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterID",
+           140000053
+          ],
+          [
+           "characterName",
+           "Starter 13 1790653684"
+          ],
+          [
+           "deletePrepareDateTime",
+           null
+          ],
+          [
+           "gender",
+           1
+          ],
+          [
+           "typeID",
+           1385
+          ],
+          [
+           "raceID",
+           4
+          ],
+          [
+           "bloodlineID",
+           13
+          ],
+          [
+           "ancestryID",
+           37
+          ],
+          [
+           "schoolID",
+           31
+          ],
+          [
+           "corporationID",
+           1000166
+          ],
+          [
+           "allianceID",
+           null
+          ],
+          [
+           "factionID",
+           null
+          ],
+          [
+           "stationID",
+           60015249
+          ],
+          [
+           "solarSystemID",
+           30100032
+          ],
+          [
+           "constellationID",
+           20010001
+          ],
+          [
+           "regionID",
+           10001004
+          ],
+          [
+           "balance",
+           100000.0
+          ],
+          [
+           "plexBalance",
+           2222
+          ],
+          [
+           "balanceChange",
+           0.0
+          ],
+          [
+           "skillPoints",
+           386730
+          ],
+          [
+           "shipTypeID",
+           596
+          ],
+          [
+           "shipName",
+           "Impairor"
+          ],
+          [
+           "securityRating",
+           0
+          ],
+          [
+           "securityStatus",
+           0
+          ],
+          [
+           "title",
+           ""
+          ],
+          [
+           "unreadMailCount",
+           1
+          ],
+          [
+           "paperdollState",
+           0
+          ],
+          [
+           "lockTypeID",
+           null
+          ],
+          [
+           "logoffDate",
+           {
+            "$long": 134351272849790000
+           }
+          ],
+          [
+           "skillTypeID",
+           null
+          ],
+          [
+           "toLevel",
+           null
+          ],
+          [
+           "trainingStartTime",
+           null
+          ],
+          [
+           "trainingEndTime",
+           null
+          ],
+          [
+           "queueEndTime",
+           null
+          ],
+          [
+           "finishSP",
+           null
+          ],
+          [
+           "trainedSP",
+           null
+          ],
+          [
+           "finishedSkills",
+           0
+          ]
+         ]
+        }
+       }
+      ],
+      []
+     ]
+    }
+   }
+  },
+  {
+   "bloodlineID": 14,
+   "raceID": 2,
+   "genderID": 2,
+   "ancestryID": 40,
+   "schoolID": 33,
+   "create": {
+    "call": [
+     "charUnboundMgr",
+     "CreateCharacterWithDoll",
+     [
+      "Starter 14 1790653684",
+      2,
+      14,
+      2,
+      40,
+      {
+       "$dict": [
+        [
+         "recorded",
+         1
+        ]
+       ]
+      },
+      {
+       "$dict": [
+        [
+         "recorded",
+         2
+        ]
+       ]
+      },
+      33,
+      null,
+      null
+     ]
+    ],
+    "ok": 140000054
+   },
+   "selection": {
+    "call": [
+     "charUnboundMgr",
+     "GetCharacterSelectionData",
+     []
+    ],
+    "ok": {
+     "$tuple": [
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterSlots",
+           3
+          ],
+          [
+           "userName",
+           "rec-1790653684-bl14"
+          ],
+          [
+           "creationDate",
+           {
+            "$long": 132000000000000000
+           }
+          ],
+          [
+           "subscriptionEndTime",
+           {
+            "$long": 157469184000000000
+           }
+          ],
+          [
+           "maxCharacterSlots",
+           3
+          ]
+         ]
+        }
+       }
+      ],
+      {
+       "$tuple": [
+        null,
+        null
+       ]
+      },
+      [
+       {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "characterID",
+           140000054
+          ],
+          [
+           "characterName",
+           "Starter 14 1790653684"
+          ],
+          [
+           "deletePrepareDateTime",
+           null
+          ],
+          [
+           "gender",
+           2
+          ],
+          [
+           "typeID",
+           1386
+          ],
+          [
+           "raceID",
+           2
+          ],
+          [
+           "bloodlineID",
+           14
+          ],
+          [
+           "ancestryID",
+           40
+          ],
+          [
+           "schoolID",
+           33
+          ],
+          [
+           "corporationID",
+           1000044
+          ],
+          [
+           "allianceID",
+           null
+          ],
+          [
+           "factionID",
+           null
+          ],
+          [
+           "stationID",
+           60015249
+          ],
+          [
+           "solarSystemID",
+           30100032
+          ],
+          [
+           "constellationID",
+           20010001
+          ],
+          [
+           "regionID",
+           10001004
+          ],
+          [
+           "balance",
+           100000.0
+          ],
+          [
+           "plexBalance",
+           2222
+          ],
+          [
+           "balanceChange",
+           0.0
+          ],
+          [
+           "skillPoints",
+           384402
+          ],
+          [
+           "shipTypeID",
+           588
+          ],
+          [
+           "shipName",
+           "Reaper"
+          ],
+          [
+           "securityRating",
+           0
+          ],
+          [
+           "securityStatus",
+           0
+          ],
+          [
+           "title",
+           ""
+          ],
+          [
+           "unreadMailCount",
+           1
+          ],
+          [
+           "paperdollState",
+           0
+          ],
+          [
+           "lockTypeID",
+           null
+          ],
+          [
+           "logoffDate",
+           {
+            "$long": 134351272850190000
+           }
+          ],
+          [
+           "skillTypeID",
+           null
+          ],
+          [
+           "toLevel",
+           null
+          ],
+          [
+           "trainingStartTime",
+           null
+          ],
+          [
+           "trainingEndTime",
+           null
+          ],
+          [
+           "queueEndTime",
+           null
+          ],
+          [
+           "finishSP",
+           null
+          ],
+          [
+           "trainedSP",
+           null
+          ],
+          [
+           "finishedSkills",
+           0
+          ]
+         ]
+        }
+       }
+      ],
+      []
+     ]
+    }
+   }
+  }
+ ]
+}

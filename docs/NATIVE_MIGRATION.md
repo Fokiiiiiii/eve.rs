@@ -1,0 +1,86 @@
+# Moving EVE.js to Rust, C# and PostgreSQL
+
+Status of the migration from the Node.js server to Rust (compute core), C#/.NET 10
+(service layer) and PostgreSQL 18 (persistence). The plan is a full rewrite with
+the Node server kept, until cut-over, as the executable specification: every
+native component is checked against it through recorded golden fixtures.
+
+## What the current server looks like
+
+About 865k lines of JavaScript under `server/src` (205 services, 181k lines of
+space simulation, 128k of Abyssal content logic), one world process holding all
+state and a 10 Hz scene tick, and 114 runtime tables in SQLite as JSON blobs
+behind a synchronous cache-first API (about 415 call sites). There was no test
+coverage of marshal, Destiny, dogma or inventory, so the first job was to create
+an oracle.
+
+## Done
+
+| Milestone | What | Where |
+|---|---|---|
+| M0 | Golden fixtures recorded from the JS implementation (marshal: 543 cases; destiny: 4758 cases, exact IEEE-754 bits) and a JS baseline benchmark | `oracle/`, `tools/bench`, `server/tests/oracle_*.test.js` |
+| M1a | Rust marshal codec, byte-identical to `marshal.js` on every fixture | `crates/eve-marshal` |
+| M1b | Rust carbon integration and ball wire encoding, bit/byte-identical on every fixture | `crates/eve-destiny` |
+
+Run the checks:
+
+```
+node tools/run-isolated-tests.js server/tests/oracle_marshal.test.js server/tests/oracle_destiny.test.js
+cd rust && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings
+```
+
+## Measured (same machine, Rust release build vs. Node 22)
+
+| Workload | JS | Rust | Ratio |
+|---|---|---|---|
+| marshal encode, small call | 127k/s | 3.9M/s | ~29x |
+| marshal encode, 200-entry dict | 4.8k/s | 135k/s | ~28x |
+| marshal encode, 1000-row rowset | 42/s | 3,000/s | ~60x |
+| marshal decode, 1000-row rowset | 132/s | 2,370/s | ~20x |
+| marshal decode, small call | 734k/s | 1.2M/s | ~1.8x |
+| marshal decode, 200-entry dict | 34k/s | 50k/s | ~1.5x |
+| carbon integrate | 1.27M/s | 12.6M/s | ~10x |
+| ball encode (500 ships) | 205k ships/s | 12.2M ships/s | ~60x |
+
+Small-message decode is allocation-bound and only modestly faster; at about a
+microsecond per packet it is not what limits the server. The large wins are on
+rowsets (shared row descriptors), encoding, and numeric kernels.
+
+## Findings worth knowing
+
+- **`Math.exp` is not the platform `exp`.** V8 uses its own fdlibm-derived
+  routine. Using Rust's `f64::exp` changes the last bit in about 2% of carbon
+  steps. `eve-destiny` ports V8's routine and is bit-identical on 4,000+
+  recorded arguments, including subnormals and thresholds. Any port of a
+  Destiny kernel that calls `exp`, `pow` or trigonometry must be checked the
+  same way.
+- **`decode(encode(x))` is not `x`.** The JS decoder returns every string
+  opcode as a `Buffer` and every 64-bit integer as a `BigInt`, and it is
+  deliberately lenient (a string longer than the input yields the bytes that
+  are there). The Rust decoder reproduces both, and adds bounds the JS one does
+  not have: nesting depth, and allocation proportional to the input.
+- **The JS reference throws lazily.** A malformed identity only fails an encode
+  whose mode needs it. The Rust port keeps that (`IdRef::Invalid`) so recorded
+  failures match by class (`TypeError`, `RangeError`, ...).
+
+## Not done
+
+- **Not wired into the running server.** There is no N-API/FFI layer. Marshal
+  alone would gain little across N-API (the cost moves to building JS objects);
+  the real gain is a Rust network front (M4).
+- **movement / warp / nativeSubwarp** (about 4k lines) are not ported: they are
+  factories whose ~30 helpers are wired in `space/runtime/destinyMovementEngine.js`,
+  which needs the full service graph to load.
+- **The scene tick benchmark** needs the generated SDE tables (not in the
+  repository). The login-path latency benchmark needs a running world.
+- **M2 PostgreSQL 18, M3 C# services, M4 Rust network front, M5 Rust tick and
+  visibility, M6 cut-over**: not started. The environment used so far has no
+  .NET SDK and no PostgreSQL 18 server.
+
+## Policy
+
+`server/src/space/destiny/native/README.md` requires native Destiny ports to be
+independently derived from the pinned Carbon source and not to be relied on by
+live gameplay without a separate reviewed change. `eve-destiny` therefore is
+not loaded by anything. New Rust code is AGPL-3.0-only like the rest of the
+repository; the Carbon-derived integration keeps its MIT notice.

@@ -1,0 +1,19 @@
+[package]
+name = "eve-bench"
+description = "Throughput benchmarks reporting in the same format as tools/bench/run.js"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Measure with mimalloc as the global allocator (decode is allocation-bound).
+mimalloc = ["dep:mimalloc"]
+
+[dependencies]
+eve-destiny = { path = "../eve-destiny" }
+eve-marshal = { path = "../eve-marshal" }
+eve-oracle = { path = "../eve-oracle" }
+serde_json = "1"
+mimalloc = { version = "0.1", optional = true }

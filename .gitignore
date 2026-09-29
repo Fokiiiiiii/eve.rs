@@ -1,0 +1,23 @@
+# Build output
+/target/
+**/*.rs.bk
+
+# Local data: the SDE and anything derived from the client are never committed
+/.cache/
+/sde/data/
+/tools/spec-extract/out/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# .NET
+bin/
+obj/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

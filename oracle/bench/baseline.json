@@ -1,0 +1,68 @@
+{
+  "meta": {
+    "node": "v22.22.2",
+    "v8": "12.4.254.21-node.39",
+    "platform": "linux-x64",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.80GHz",
+    "cpuCount": 4,
+    "recordedAt": "2026-09-28T23:55:08.056Z"
+  },
+  "results": {
+    "marshal.encode.small-call": {
+      "opsPerSec": 136854,
+      "bytesPerOp": 91,
+      "mbPerSec": 12.5,
+      "encodedFnv1a64": "1a69596f93007e35"
+    },
+    "marshal.decode.small-call": {
+      "opsPerSec": 663223,
+      "bytesPerOp": 91,
+      "mbPerSec": 60.4,
+      "encodedFnv1a64": "1a69596f93007e35"
+    },
+    "marshal.encode.dict-200": {
+      "opsPerSec": 4751,
+      "bytesPerOp": 4176,
+      "mbPerSec": 19.8,
+      "encodedFnv1a64": "335aa8a3b66e7ccf"
+    },
+    "marshal.decode.dict-200": {
+      "opsPerSec": 33259,
+      "bytesPerOp": 4176,
+      "mbPerSec": 138.9,
+      "encodedFnv1a64": "335aa8a3b66e7ccf"
+    },
+    "marshal.encode.rowset-1000": {
+      "opsPerSec": 48,
+      "bytesPerOp": 130407,
+      "mbPerSec": 6.2,
+      "encodedFnv1a64": "31abcec73ce4635b"
+    },
+    "marshal.decode.rowset-1000": {
+      "opsPerSec": 117,
+      "bytesPerOp": 130407,
+      "mbPerSec": 15.3,
+      "encodedFnv1a64": "31abcec73ce4635b"
+    },
+    "marshal.encode.buffers-64x4k": {
+      "opsPerSec": 13752,
+      "bytesPerOp": 262535,
+      "mbPerSec": 3610.3,
+      "encodedFnv1a64": "38b5ab144271f22d"
+    },
+    "marshal.decode.buffers-64x4k": {
+      "opsPerSec": 138530,
+      "bytesPerOp": 262535,
+      "mbPerSec": 36369,
+      "encodedFnv1a64": "38b5ab144271f22d"
+    },
+    "destiny.carbon.integrate": {
+      "opsPerSec": 1272547,
+      "encodedFnv1a64": "d3276d635d423cd9"
+    },
+    "destiny.ball.encode.500-ships": {
+      "opsPerSec": 204964,
+      "encodedFnv1a64": "10ad4563fb33d867"
+    }
+  }
+}

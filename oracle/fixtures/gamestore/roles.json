@@ -1,0 +1,655 @@
+{
+  "roles": {
+    "WORLD": "world",
+    "WALLET": "wallet",
+    "SCHEDULER": "scheduler",
+    "MAINTENANCE": "maintenance",
+    "READER": "reader",
+    "STANDALONE": "standalone"
+  },
+  "tableRole": {
+    "walletAuthorityState": "wallet",
+    "scheduledJobs": "scheduler"
+  },
+  "normalizeRole": [
+    {
+      "input": "world",
+      "output": "world"
+    },
+    {
+      "input": "wallet",
+      "output": "wallet"
+    },
+    {
+      "input": "scheduler",
+      "output": "scheduler"
+    },
+    {
+      "input": "maintenance",
+      "output": "maintenance"
+    },
+    {
+      "input": "reader",
+      "output": "reader"
+    },
+    {
+      "input": "standalone",
+      "output": "standalone"
+    },
+    {
+      "input": "World",
+      "output": "world"
+    },
+    {
+      "input": " wallet ",
+      "output": "wallet"
+    },
+    {
+      "input": "Weird Role!",
+      "output": "weird-role"
+    },
+    {
+      "input": "",
+      "output": "reader"
+    },
+    {
+      "input": {
+        "$undefined": true
+      },
+      "output": "reader"
+    },
+    {
+      "input": null,
+      "output": "reader"
+    },
+    {
+      "input": "a.b_c-d",
+      "output": "a.b_c-d"
+    }
+  ],
+  "ownerRoleForTable": [
+    {
+      "table": "walletAuthorityState",
+      "role": "wallet"
+    },
+    {
+      "table": "scheduledJobs",
+      "role": "scheduler"
+    },
+    {
+      "table": "characters",
+      "role": "world"
+    },
+    {
+      "table": "items",
+      "role": "world"
+    },
+    {
+      "table": "mail",
+      "role": "world"
+    },
+    {
+      "table": "",
+      "role": "world"
+    },
+    {
+      "table": {
+        "$undefined": true
+      },
+      "role": "world"
+    }
+  ],
+  "mayMutate": [
+    {
+      "role": "world",
+      "table": "walletAuthorityState",
+      "mayMutate": false
+    },
+    {
+      "role": "world",
+      "table": "scheduledJobs",
+      "mayMutate": false
+    },
+    {
+      "role": "world",
+      "table": "characters",
+      "mayMutate": true
+    },
+    {
+      "role": "world",
+      "table": "items",
+      "mayMutate": true
+    },
+    {
+      "role": "world",
+      "table": "mail",
+      "mayMutate": true
+    },
+    {
+      "role": "world",
+      "table": "",
+      "mayMutate": true
+    },
+    {
+      "role": "world",
+      "table": {
+        "$undefined": true
+      },
+      "mayMutate": true
+    },
+    {
+      "role": "wallet",
+      "table": "walletAuthorityState",
+      "mayMutate": true
+    },
+    {
+      "role": "wallet",
+      "table": "scheduledJobs",
+      "mayMutate": false
+    },
+    {
+      "role": "wallet",
+      "table": "characters",
+      "mayMutate": false
+    },
+    {
+      "role": "wallet",
+      "table": "items",
+      "mayMutate": false
+    },
+    {
+      "role": "wallet",
+      "table": "mail",
+      "mayMutate": false
+    },
+    {
+      "role": "wallet",
+      "table": "",
+      "mayMutate": false
+    },
+    {
+      "role": "wallet",
+      "table": {
+        "$undefined": true
+      },
+      "mayMutate": false
+    },
+    {
+      "role": "scheduler",
+      "table": "walletAuthorityState",
+      "mayMutate": false
+    },
+    {
+      "role": "scheduler",
+      "table": "scheduledJobs",
+      "mayMutate": true
+    },
+    {
+      "role": "scheduler",
+      "table": "characters",
+      "mayMutate": false
+    },
+    {
+      "role": "scheduler",
+      "table": "items",
+      "mayMutate": false
+    },
+    {
+      "role": "scheduler",
+      "table": "mail",
+      "mayMutate": false
+    },
+    {
+      "role": "scheduler",
+      "table": "",
+      "mayMutate": false
+    },
+    {
+      "role": "scheduler",
+      "table": {
+        "$undefined": true
+      },
+      "mayMutate": false
+    },
+    {
+      "role": "maintenance",
+      "table": "walletAuthorityState",
+      "mayMutate": true
+    },
+    {
+      "role": "maintenance",
+      "table": "scheduledJobs",
+      "mayMutate": true
+    },
+    {
+      "role": "maintenance",
+      "table": "characters",
+      "mayMutate": true
+    },
+    {
+      "role": "maintenance",
+      "table": "items",
+      "mayMutate": true
+    },
+    {
+      "role": "maintenance",
+      "table": "mail",
+      "mayMutate": true
+    },
+    {
+      "role": "maintenance",
+      "table": "",
+      "mayMutate": true
+    },
+    {
+      "role": "maintenance",
+      "table": {
+        "$undefined": true
+      },
+      "mayMutate": true
+    },
+    {
+      "role": "reader",
+      "table": "walletAuthorityState",
+      "mayMutate": false
+    },
+    {
+      "role": "reader",
+      "table": "scheduledJobs",
+      "mayMutate": false
+    },
+    {
+      "role": "reader",
+      "table": "characters",
+      "mayMutate": false
+    },
+    {
+      "role": "reader",
+      "table": "items",
+      "mayMutate": false
+    },
+    {
+      "role": "reader",
+      "table": "mail",
+      "mayMutate": false
+    },
+    {
+      "role": "reader",
+      "table": "",
+      "mayMutate": false
+    },
+    {
+      "role": "reader",
+      "table": {
+        "$undefined": true
+      },
+      "mayMutate": false
+    },
+    {
+      "role": "standalone",
+      "table": "walletAuthorityState",
+      "mayMutate": true
+    },
+    {
+      "role": "standalone",
+      "table": "scheduledJobs",
+      "mayMutate": true
+    },
+    {
+      "role": "standalone",
+      "table": "characters",
+      "mayMutate": true
+    },
+    {
+      "role": "standalone",
+      "table": "items",
+      "mayMutate": true
+    },
+    {
+      "role": "standalone",
+      "table": "mail",
+      "mayMutate": true
+    },
+    {
+      "role": "standalone",
+      "table": "",
+      "mayMutate": true
+    },
+    {
+      "role": "standalone",
+      "table": {
+        "$undefined": true
+      },
+      "mayMutate": true
+    },
+    {
+      "role": "World",
+      "table": "walletAuthorityState",
+      "mayMutate": false
+    },
+    {
+      "role": "World",
+      "table": "scheduledJobs",
+      "mayMutate": false
+    },
+    {
+      "role": "World",
+      "table": "characters",
+      "mayMutate": true
+    },
+    {
+      "role": "World",
+      "table": "items",
+      "mayMutate": true
+    },
+    {
+      "role": "World",
+      "table": "mail",
+      "mayMutate": true
+    },
+    {
+      "role": "World",
+      "table": "",
+      "mayMutate": true
+    },
+    {
+      "role": "World",
+      "table": {
+        "$undefined": true
+      },
+      "mayMutate": true
+    },
+    {
+      "role": " wallet ",
+      "table": "walletAuthorityState",
+      "mayMutate": true
+    },
+    {
+      "role": " wallet ",
+      "table": "scheduledJobs",
+      "mayMutate": false
+    },
+    {
+      "role": " wallet ",
+      "table": "characters",
+      "mayMutate": false
+    },
+    {
+      "role": " wallet ",
+      "table": "items",
+      "mayMutate": false
+    },
+    {
+      "role": " wallet ",
+      "table": "mail",
+      "mayMutate": false
+    },
+    {
+      "role": " wallet ",
+      "table": "",
+      "mayMutate": false
+    },
+    {
+      "role": " wallet ",
+      "table": {
+        "$undefined": true
+      },
+      "mayMutate": false
+    },
+    {
+      "role": "Weird Role!",
+      "table": "walletAuthorityState",
+      "mayMutate": false
+    },
+    {
+      "role": "Weird Role!",
+      "table": "scheduledJobs",
+      "mayMutate": false
+    },
+    {
+      "role": "Weird Role!",
+      "table": "characters",
+      "mayMutate": false
+    },
+    {
+      "role": "Weird Role!",
+      "table": "items",
+      "mayMutate": false
+    },
+    {
+      "role": "Weird Role!",
+      "table": "mail",
+      "mayMutate": false
+    },
+    {
+      "role": "Weird Role!",
+      "table": "",
+      "mayMutate": false
+    },
+    {
+      "role": "Weird Role!",
+      "table": {
+        "$undefined": true
+      },
+      "mayMutate": false
+    },
+    {
+      "role": "",
+      "table": "walletAuthorityState",
+      "mayMutate": false
+    },
+    {
+      "role": "",
+      "table": "scheduledJobs",
+      "mayMutate": false
+    },
+    {
+      "role": "",
+      "table": "characters",
+      "mayMutate": false
+    },
+    {
+      "role": "",
+      "table": "items",
+      "mayMutate": false
+    },
+    {
+      "role": "",
+      "table": "mail",
+      "mayMutate": false
+    },
+    {
+      "role": "",
+      "table": "",
+      "mayMutate": false
+    },
+    {
+      "role": "",
+      "table": {
+        "$undefined": true
+      },
+      "mayMutate": false
+    },
+    {
+      "role": {
+        "$undefined": true
+      },
+      "table": "walletAuthorityState",
+      "mayMutate": false
+    },
+    {
+      "role": {
+        "$undefined": true
+      },
+      "table": "scheduledJobs",
+      "mayMutate": false
+    },
+    {
+      "role": {
+        "$undefined": true
+      },
+      "table": "characters",
+      "mayMutate": false
+    },
+    {
+      "role": {
+        "$undefined": true
+      },
+      "table": "items",
+      "mayMutate": false
+    },
+    {
+      "role": {
+        "$undefined": true
+      },
+      "table": "mail",
+      "mayMutate": false
+    },
+    {
+      "role": {
+        "$undefined": true
+      },
+      "table": "",
+      "mayMutate": false
+    },
+    {
+      "role": {
+        "$undefined": true
+      },
+      "table": {
+        "$undefined": true
+      },
+      "mayMutate": false
+    },
+    {
+      "role": null,
+      "table": "walletAuthorityState",
+      "mayMutate": false
+    },
+    {
+      "role": null,
+      "table": "scheduledJobs",
+      "mayMutate": false
+    },
+    {
+      "role": null,
+      "table": "characters",
+      "mayMutate": false
+    },
+    {
+      "role": null,
+      "table": "items",
+      "mayMutate": false
+    },
+    {
+      "role": null,
+      "table": "mail",
+      "mayMutate": false
+    },
+    {
+      "role": null,
+      "table": "",
+      "mayMutate": false
+    },
+    {
+      "role": null,
+      "table": {
+        "$undefined": true
+      },
+      "mayMutate": false
+    },
+    {
+      "role": "a.b_c-d",
+      "table": "walletAuthorityState",
+      "mayMutate": false
+    },
+    {
+      "role": "a.b_c-d",
+      "table": "scheduledJobs",
+      "mayMutate": false
+    },
+    {
+      "role": "a.b_c-d",
+      "table": "characters",
+      "mayMutate": false
+    },
+    {
+      "role": "a.b_c-d",
+      "table": "items",
+      "mayMutate": false
+    },
+    {
+      "role": "a.b_c-d",
+      "table": "mail",
+      "mayMutate": false
+    },
+    {
+      "role": "a.b_c-d",
+      "table": "",
+      "mayMutate": false
+    },
+    {
+      "role": "a.b_c-d",
+      "table": {
+        "$undefined": true
+      },
+      "mayMutate": false
+    }
+  ],
+  "mayDriveWorldState": [
+    {
+      "role": "world",
+      "mayDrive": true
+    },
+    {
+      "role": "wallet",
+      "mayDrive": false
+    },
+    {
+      "role": "scheduler",
+      "mayDrive": false
+    },
+    {
+      "role": "maintenance",
+      "mayDrive": true
+    },
+    {
+      "role": "reader",
+      "mayDrive": false
+    },
+    {
+      "role": "standalone",
+      "mayDrive": true
+    },
+    {
+      "role": "World",
+      "mayDrive": true
+    },
+    {
+      "role": " wallet ",
+      "mayDrive": false
+    },
+    {
+      "role": "Weird Role!",
+      "mayDrive": false
+    },
+    {
+      "role": "",
+      "mayDrive": false
+    },
+    {
+      "role": {
+        "$undefined": true
+      },
+      "mayDrive": false
+    },
+    {
+      "role": null,
+      "mayDrive": false
+    },
+    {
+      "role": "a.b_c-d",
+      "mayDrive": false
+    }
+  ]
+}

@@ -8,9 +8,11 @@ repository only carries their output.
 | Item | Source |
 |---|---|
 | Source repository | `Fokiiiiiii/evejs-v0.12.9`, branch `ccr-fd6b2132-4353h1` |
-| Source commit | `3dc49bb275656c6d9df1ae6c3c0fb102a3b354c0` |
+| Source commit | `d1fd295d5a093fd6a948a4233d27165d99fb4919` |
 | `fixtures/marshal/cases.json` | `node tools/oracle/marshalFixtures.js --write` (543 cases) |
 | `fixtures/destiny/cases.json` | `node tools/oracle/destinyFixtures.js --write` (4758 cases) |
+| `fixtures/gamestore/{tables,roles,rowcodec}.json` | `node tools/oracle/gamestoreFixtures.js --write` (114 runtime tables, 59 row-group tables, 241 row-codec cases) |
+| `fixtures/gamestore/reference.sqlite`, `reference.expected.json` | `node tools/oracle/gamestoreSqliteFixture.js`: a gamestore.sqlite written by the real JS store (not byte-reproducible; committed as is) |
 | `bench/baseline.json` | `node tools/bench/run.js --write` (machine-specific: re-record before comparing) |
 | `crates/eve-marshal/src/string_table.rs` | `node tools/oracle/genStringTable.js --write` |
 

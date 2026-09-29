@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Eve.GameStore/Eve.GameStore.csproj" />
+    <ProjectReference Include="../../src/Eve.GameStore.Import/Eve.GameStore.Import.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Compile Include="../Eve.GameStore.Tests/Support/*.cs" Link="Support/%(Filename)%(Extension)" />
+    <None Include="../../../oracle/fixtures/gamestore/*.json;../../../oracle/fixtures/gamestore/reference.sqlite" Link="fixtures/gamestore/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

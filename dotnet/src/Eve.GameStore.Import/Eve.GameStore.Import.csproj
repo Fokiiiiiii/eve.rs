@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>eve-gamestore-import</AssemblyName>
+    <RootNamespace>Eve.GameStore.Import</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Eve.GameStore/Eve.GameStore.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Eve.GameStore.Import.Tests" />
+  </ItemGroup>
+</Project>

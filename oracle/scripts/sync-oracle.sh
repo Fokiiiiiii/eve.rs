@@ -9,10 +9,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ( cd "$EVEJS" \
   && node tools/oracle/marshalFixtures.js --write \
   && node tools/oracle/destinyFixtures.js --write \
+  && node tools/oracle/gamestoreFixtures.js --write \
   && node tools/oracle/genStringTable.js --write )
 
 cp "$EVEJS/tools/oracle/fixtures/marshal/cases.json" "$HERE/oracle/fixtures/marshal/cases.json"
 cp "$EVEJS/tools/oracle/fixtures/destiny/cases.json" "$HERE/oracle/fixtures/destiny/cases.json"
+mkdir -p "$HERE/oracle/fixtures/gamestore"
+cp "$EVEJS"/tools/oracle/fixtures/gamestore/*.json "$EVEJS"/tools/oracle/fixtures/gamestore/reference.sqlite "$HERE/oracle/fixtures/gamestore/"
 cp "$EVEJS/rust/crates/eve-marshal/src/string_table.rs" "$HERE/crates/eve-marshal/src/string_table.rs"
 
 echo "synced from $(git -C "$EVEJS" rev-parse HEAD); update oracle/PROVENANCE.md"

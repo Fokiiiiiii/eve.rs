@@ -115,11 +115,15 @@ def shape(described: Any) -> Any:
     return kind
 
 
-def differences(expected: Any, actual: Any, path: str = "$", *, volatile_keys: frozenset[str] | set[str] = frozenset()) -> list[str]:
+def differences(
+    expected: Any, actual: Any, path: str = "$", *, volatile_keys: frozenset[str] | set[str] = frozenset(), float_tolerance: float = 0.0,
+) -> list[str]:
     """What differs between a recorded description and a live one.
 
     The value under a dictionary key in `volatile_keys` (a per-run identifier, a time) is compared by type
-    only, however deeply it is nested: `["charid", (None, 140000005)]` matches `["charid", (None, 140000123)]`."""
+    only, however deeply it is nested: `["charid", (None, 140000005)]` matches `["charid", (None, 140000123)]`.
+    Two reals are equal when they differ by no more than `float_tolerance` of the larger (1.0 at least): numbers two
+    servers work out separately (dogma attributes) need not agree to the last bit."""
     out: list[str] = []
     if type_name(expected) != type_name(actual):
         out.append(f"{path}: expected {type_name(expected)} {_brief(expected)}, got {type_name(actual)} {_brief(actual)}")
@@ -128,14 +132,14 @@ def differences(expected: Any, actual: Any, path: str = "$", *, volatile_keys: f
         if len(expected) != len(actual):
             out.append(f"{path}: {len(expected)} items expected, {len(actual)} received")
         for index, (a, b) in enumerate(zip(expected, actual)):
-            out += differences(a, b, f"{path}[{index}]", volatile_keys=volatile_keys)
+            out += differences(a, b, f"{path}[{index}]", volatile_keys=volatile_keys, float_tolerance=float_tolerance)
     elif isinstance(expected, dict):
         key = next(k for k in expected if k.startswith("$"))
         if key == "$tuple":
             if len(expected[key]) != len(actual[key]):
                 out.append(f"{path}: tuple of {len(expected[key])} expected, {len(actual[key])} received")
             for index, (a, b) in enumerate(zip(expected[key], actual[key])):
-                out += differences(a, b, f"{path}.{index}", volatile_keys=volatile_keys)
+                out += differences(a, b, f"{path}.{index}", volatile_keys=volatile_keys, float_tolerance=float_tolerance)
         elif key == "$dict":
             exp = {_key(k): v for k, v in expected["$dict"]}
             act = {_key(k): v for k, v in actual["$dict"]}
@@ -148,17 +152,17 @@ def differences(expected: Any, actual: Any, path: str = "$", *, volatile_keys: f
                     if shape(exp[name]) != shape(act[name]):
                         out.append(f"{path}.{name}: shape {shape(exp[name])} became {shape(act[name])}")
                 else:
-                    out += differences(exp[name], act[name], f"{path}.{name}", volatile_keys=volatile_keys)
+                    out += differences(exp[name], act[name], f"{path}.{name}", volatile_keys=volatile_keys, float_tolerance=float_tolerance)
         elif key == "$object":
             if expected["$object"] != actual["$object"]:
                 out.append(f"{path}: class {expected['$object']} expected, got {actual['$object']}")
-            out += differences(expected["args"], actual["args"], f"{path}.args", volatile_keys=volatile_keys)
+            out += differences(expected["args"], actual["args"], f"{path}.args", volatile_keys=volatile_keys, float_tolerance=float_tolerance)
         elif key == "$objectex":
-            out += differences(expected["$objectex"], actual["$objectex"], f"{path}.header", volatile_keys=volatile_keys)
+            out += differences(expected["$objectex"], actual["$objectex"], f"{path}.header", volatile_keys=volatile_keys, float_tolerance=float_tolerance)
             for part in ("list", "dict"):
-                out += differences(expected.get(part, []), actual.get(part, []), f"{path}.{part}", volatile_keys=volatile_keys)
+                out += differences(expected.get(part, []), actual.get(part, []), f"{path}.{part}", volatile_keys=volatile_keys, float_tolerance=float_tolerance)
         elif key in ("$substream", "$substruct", "$checksummed"):
-            out += differences(expected[key], actual[key], f"{path}.{key[1:]}", volatile_keys=volatile_keys)
+            out += differences(expected[key], actual[key], f"{path}.{key[1:]}", volatile_keys=volatile_keys, float_tolerance=float_tolerance)
         elif key == "$row":
             exp, act = expected["$row"], actual["$row"]
             for name in exp.keys() - act.keys():
@@ -170,8 +174,11 @@ def differences(expected: Any, actual: Any, path: str = "$", *, volatile_keys: f
                     if shape(exp[name]) != shape(act[name]):
                         out.append(f"{path}.{name}: shape {shape(exp[name])} became {shape(act[name])}")
                 else:
-                    out += differences(exp[name], act[name], f"{path}.{name}", volatile_keys=volatile_keys)
+                    out += differences(exp[name], act[name], f"{path}.{name}", volatile_keys=volatile_keys, float_tolerance=float_tolerance)
         elif expected != actual:
+            out.append(f"{path}: {_brief(expected)} expected, got {_brief(actual)}")
+    elif isinstance(expected, float) and isinstance(actual, float) and float_tolerance > 0:
+        if abs(expected - actual) > float_tolerance * max(1.0, abs(expected), abs(actual)):
             out.append(f"{path}: {_brief(expected)} expected, got {_brief(actual)}")
     elif expected != actual:
         out.append(f"{path}: {_brief(expected)} expected, got {_brief(actual)}")

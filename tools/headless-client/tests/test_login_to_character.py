@@ -468,6 +468,37 @@ def inventory_form(described):
     return unwrap_longs(as_rows(described))
 
 
+def starter_modules(race_id: int) -> list[tuple[int, int]]:
+    """(type, flag) of what a new ship of this race is fitted with, from the dogma recording, in the order of its slots."""
+    race = next(r for r in DOGMA["races"] if r["raceID"] == race_id)
+    info = keyval(race["bind"]["ok"]["$tuple"][1])
+    ship, *modules = pairs(info["shipInfo"])
+    rows = [keyval(item)["invItem"]["$row"] for _, item in modules]
+    return sorted(((row["typeID"], row["flagID"]) for row in rows), key=lambda t: t[1])
+
+
+def ship_contents(race_id: int, method: str, described: list, outcome, where: str) -> list[str]:
+    """What eve.rs answers a ship's List, ListByFlags and GetContainerContents with: the modules fitted to it."""
+    kit = starter_modules(race_id)
+    if method == "GetContainerContents":
+        lines = next(v for k, v in outcome["args"]["$dict"] if k == "lines")
+        got = sorted(((line["$tuple"][1], number(line["$tuple"][4])) for line in lines), key=lambda t: t[1])
+        return [] if got == kit else [f"{where}: fitted {got}, expected {kit}"]
+    flags = None
+    if method == "List" and described and described[0] not in (None, 0):
+        flags = {described[0]}
+    if method == "ListByFlags":
+        flags = set(described[0]["$tuple"])
+    wanted = [(t, f) for t, f in kit if flags is None or f in flags]
+    if not wanted and method == "List":
+        empty_set = {"$objectex": {"$tuple": [{"$token": "__builtin__.set"}, {"$tuple": [[]]}]}, "list": [], "dict": []}
+        return [] if outcome == empty_set else [f"{where}: expected the empty set, got {brief(outcome)}"]
+    if not isinstance(outcome, list):
+        return [f"{where}: expected the modules, got {brief(outcome)}"]
+    got = sorted(((row["$row"]["typeID"], row["$row"]["flagID"]) for row in outcome), key=lambda t: t[1])
+    return [] if got == wanted else [f"{where}: fitted {got}, expected {wanted}"]
+
+
 @pytest.mark.parametrize("race", INVENTORY["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_new_characters_inventories_are_those_of_the_reference(race):
     run = uuid.uuid4().hex[:10]
@@ -509,14 +540,114 @@ def test_a_new_characters_inventories_are_those_of_the_reference(race):
                             problems.append(f"{where}: eve.rs has no capacity yet, got {brief(outcome)}")
                         continue
                     if label == "ship":
-                        # DEVIATION (ship contents): the reference answers null for what is in a ship and lists the ship among
-                        # its own contents; eve.rs answers an empty list (the client iterates the answer) and an empty rowset
-                        if method in ("List", "ListByFlags") and expected is None:
-                            expected = []
-                        if method == "GetContainerContents":
-                            expected = json.loads(json.dumps(expected))
-                            for pair in expected["args"]["$dict"]:
-                                if pair[0] == "lines":
-                                    pair[1] = []
+                        # DEVIATION (ship contents): the reference answers null for what is in a ship and lists the ship among its own
+                        # contents. eve.rs lists what is fitted to it (the client iterates the answer): the starter modules of the race,
+                        # each in its slot, and a flag with nothing in it is the empty set a hangar answers with (DEVIATIONS.md #10)
+                        if method in ("List", "ListByFlags", "GetContainerContents"):
+                            problems += ship_contents(race["raceID"], method, described, outcome, where)
+                            continue
                 problems += same_way(inventory_form(expected), inventory_form(outcome), where, volatile=VOLATILE | ITEM_FIELDS)
     assert problems == [], "\n".join(problems[:20])
+
+
+# ── dogma: the ship, its fitting and the character ──────────────────────────
+
+DOGMA = load("dogma.json")
+RECORDED_DOGMA_RUN = re.search(r"(\d{6,})$", DOGMA["races"][0]["create"]["call"][2][0]).group(1)
+# a Windows FILETIME of these years is a time, whatever the run: it is compared by shape only
+FILETIME_RANGE = (10**17, 2 * 10**17)
+# two servers work out the attributes separately: to nine digits is the same number
+DOGMA_TOLERANCE = 1e-9
+
+
+def number(described):
+    return described["$long"] if isinstance(described, dict) else described
+
+
+def keyval(described) -> dict:
+    return {k: v for k, v in described["args"]["$dict"]}
+
+
+def pairs(described) -> list:
+    return described["$dict"]
+
+
+def dogma_ids(info) -> list[int]:
+    """The ids of a GetAllInfo answer that belong to a run: the character, the ship and what is fitted to it."""
+    fields = keyval(info)
+    (character, _), = pairs(fields["charInfo"]["$tuple"][0])
+    return [number(character)] + [number(key) for key, _ in pairs(fields["shipInfo"])]
+
+
+def substitute(described, mapping: dict[int, int]):
+    """A description with the ids of a recording replaced by the ones this run was given."""
+    if isinstance(described, bool) or described is None:
+        return described
+    if isinstance(described, int):
+        return mapping.get(described, described)
+    if isinstance(described, list):
+        return [substitute(v, mapping) for v in described]
+    if isinstance(described, dict):
+        if "$long" in described:
+            given = mapping.get(described["$long"], described["$long"])
+            # a number is written as JavaScript's marshal writes it: a long only when it does not fit 32 bits
+            return {"$long": given} if not -(2**31) <= given < 2**31 else given
+        return {k: substitute(v, mapping) for k, v in described.items()}
+    return described
+
+
+def blank_times(described):
+    """A description with every FILETIME replaced by a marker: when something started is not part of what it is."""
+    if isinstance(described, list):
+        return [blank_times(v) for v in described]
+    if isinstance(described, dict):
+        if "$long" in described and isinstance(described["$long"], int) and FILETIME_RANGE[0] <= described["$long"] <= FILETIME_RANGE[1]:
+            return "$time"
+        return {k: blank_times(v) for k, v in described.items()}
+    return described
+
+
+def set_attribute(attributes: list, attribute: int, value) -> None:
+    for pair in attributes:
+        if pair[0] == attribute:
+            pair[1] = value
+            return
+    raise AssertionError(f"attribute {attribute} is not in the recording")
+
+
+@pytest.mark.parametrize("race", DOGMA["races"], ids=lambda r: f"race-{r['raceID']}")
+def test_a_new_characters_dogma_is_that_of_the_reference(race):
+    run = uuid.uuid4().hex[:10]
+    ids: dict[int, int] = {}
+    with connect(f"walk-dogma-{run}") as client:
+        service, method, *args = [race["create"]["call"][0], race["create"]["call"][1], *[revive(a, run, ids, RECORDED_DOGMA_RUN) for a in race["create"]["call"][2]]]
+        kind, made = attempt(client, service, method, *args)
+        assert kind == "ok", brief(made)
+        assert attempt(client, "charUnboundMgr", "SelectCharacterID", int(made), None, False) == ("ok", None)
+
+        service, method, call_args = race["bind"]["call"]
+        outcome = describe(client.call(service, method, *[revive(a, run, ids, RECORDED_DOGMA_RUN) for a in call_args]))
+
+    handle_shape = ("$substruct", "$substream", "$tuple")
+    expected = race["bind"]["ok"]
+    problems = same_way(blank(expected["$tuple"][0], *handle_shape), blank(outcome["$tuple"][0], *handle_shape), "MachoBindObject", volatile=set())
+    expected_info, actual_info = expected["$tuple"][1], outcome["$tuple"][1]
+
+    recorded_ids, given_ids = dogma_ids(expected_info), dogma_ids(actual_info)
+    assert len(recorded_ids) == len(given_ids), f"ids {recorded_ids} against {given_ids}"
+    expected_info = substitute(expected_info, dict(zip(recorded_ids, given_ids)))
+    if not REFERENCE:
+        # DEVIATION (drone limits on the ship): the reference also gives the ship the character's two drone limits, which the client
+        # reads from the character (docs/compat/DEVIATIONS.md #12)
+        ship_attributes = pairs(keyval(pairs(keyval(expected_info)["shipInfo"])[0][1])["attributes"])
+        ship_attributes[:] = [pair for pair in ship_attributes if pair[0] not in (352, 458)]
+        # DEVIATION (the character as the ship changes it): eve.rs applies every modifier that reaches the character: the trade
+        # premium is 0.9 with Trade trained (the reference says 0, which its own brain contradicts), and the Gallente rookie ship's
+        # mining-drone bonus is there (DEVIATIONS.md #11)
+        character_attributes = pairs(keyval(keyval(expected_info)["shipModifiedCharAttribs"])["attributes"])
+        set_attribute(character_attributes, 443, 0.9)
+        if race["raceID"] == 8:
+            set_attribute(character_attributes, 428, 120)
+    problems += differences(
+        blank_times(expected_info), blank_times(actual_info), "GetAllInfo", volatile_keys=set(), float_tolerance=DOGMA_TOLERANCE)
+    assert problems == [], "\n".join(problems[:30])

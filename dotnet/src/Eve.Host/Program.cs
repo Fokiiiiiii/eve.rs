@@ -4,6 +4,7 @@ using Eve.Characters;
 using Eve.Data;
 using Eve.Host;
 using Eve.Identity;
+using Eve.Dogma;
 using Eve.Inventory;
 using Eve.Marshal;
 using Eve.Sde;
@@ -14,6 +15,7 @@ using Npgsql;
 using Eve.Services;
 using Eve.Services.CharacterSelect;
 using Eve.Services.Core;
+using Eve.Services.Dogma;
 using Eve.Services.Inventory;
 using Eve.Services.CharacterInfo;
 using Eve.Services.Skills;
@@ -168,10 +170,11 @@ static async Task<IReadOnlyList<IService>> CharacterServicesAsync(NpgsqlDataSour
     var skillCatalog = await SkillCatalog.LoadAsync(sde);
     var wallets = new PgWalletStore(source, walletSchema);
     var stations = await StationCatalog.LoadAsync(sde);
+    var dogma = await DogmaStatic.LoadAsync(sde);
     var startingWallet = new StartingWallet(
         decimal.Parse(Env("EVE_START_ISK", "100000"), System.Globalization.CultureInfo.InvariantCulture),
         long.Parse(Env("EVE_START_PLEX", "2222"), System.Globalization.CultureInfo.InvariantCulture));
-    Console.Error.WriteLine($"eve-host: characters in PostgreSQL, schemas {characterSchema}, {inventorySchema}, {skillsSchema} and {walletSchema}; {stations.Count} stations; static data build {build}; new characters start at {(startStation is { } id ? $"station {id}" : "their school's headquarters")}");
+    Console.Error.WriteLine($"eve-host: characters in PostgreSQL, schemas {characterSchema}, {inventorySchema}, {skillsSchema} and {walletSchema}; {stations.Count} stations; dogma of {dogma.AttributeCount} attributes and {dogma.EffectCount} effects; static data build {build}; new characters start at {(startStation is { } id ? $"station {id}" : "their school's headquarters")}");
     var creation = new CharacterCreation(source, characters, items, skills, skillCatalog, wallets, startingWallet, catalog);
     return
     [
@@ -181,6 +184,7 @@ static async Task<IReadOnlyList<IService>> CharacterServicesAsync(NpgsqlDataSour
         new CharMgrService(characters, stations),
         new StationService(stations, characters, online, now),
         new InvBrokerService(items, new ItemTypeCatalog(sde), stations, now),
+        new DogmaIMService(dogma, characters, items, skills, now),
         new AccountService(wallets),
     ];
 }

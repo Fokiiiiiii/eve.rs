@@ -8,6 +8,15 @@ public static class ItemFlags
 {
     /// <summary>The hangar of a station.</summary>
     public const int Hangar = 4;
+
+    /// <summary>The first of the eight low slots of a ship (11 to 18).</summary>
+    public const int LowSlot0 = 11;
+
+    /// <summary>The first of the eight medium slots of a ship (19 to 26).</summary>
+    public const int MedSlot0 = 19;
+
+    /// <summary>The first of the eight high slots of a ship (27 to 34).</summary>
+    public const int HiSlot0 = 27;
 }
 
 public sealed record Item(long Id, int TypeId, long OwnerId, long LocationId, int Flag, long Quantity, bool Singleton, string? CustomName);

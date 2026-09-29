@@ -345,7 +345,7 @@ public class InvBrokerTests
     }
 
     [PgFact]
-    public async Task A_ship_has_no_cargo_or_fitting_yet_and_is_its_own_item()
+    public async Task An_empty_ship_lists_nothing_and_is_its_own_item()
     {
         await using var rig = await Rig.CreateAsync();
         var ship = await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.Station, singleton: true);
@@ -353,7 +353,7 @@ public class InvBrokerTests
         var inventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
 
         Assert.Equal(new PyList([]), await rig.CallAsync(session, "List", inventory));
-        Assert.Equal(new PyList([]), await rig.CallAsync(session, "List", inventory, new PyInt(5)));
+        Assert.Equal(InventoryWire.EmptySet(), await rig.CallAsync(session, "List", inventory, new PyInt(5))); // a flag with nothing in it, as in the hangar
         Assert.Equal(new PyList([]), await rig.CallAsync(session, "ListByFlags", inventory, new PyTuple([new PyInt(5), new PyInt(27)])));
         Assert.Equal(new PyList([]), await rig.CallAsync(session, "GetItems", inventory));
         var lines = ((PyDict)((PyObject)await rig.CallAsync(session, "GetContainerContents", inventory)).Args).Entries.Single(e => JsSemantics.StringValue(e.Key) == "lines").Value;
@@ -362,6 +362,32 @@ public class InvBrokerTests
         var self = (PyTuple)((PyDict)((PyObject)await rig.CallAsync(session, "GetItem", inventory)).Args).Entries[1].Value;
         Assert.Equal((new PyInt(ship), new PyInt(601), new PyInt(Rig.Character), new PyInt(Rig.Station), new PyInt(4), new PyInt(-1)), (self.Items[0], self.Items[1], self.Items[2], self.Items[3], self.Items[4], self.Items[5]));
         Assert.Equal(new PyInt(ship), (await rig.CallAsync(session, "GetSelfInvItem", inventory) is PyPackedRow row ? row.Values[0] : null) is PyLong l ? new PyInt(l.Value) : null);
+    }
+
+    [PgFact]
+    public async Task A_ship_lists_what_is_fitted_to_it_and_what_it_carries_but_not_the_hangar_or_another_ships()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var ship = await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.Station, singleton: true);
+        var other = await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.Station, singleton: true);
+        var afterburner = await rig.AddAsync(21857, Rig.Character, ship, flag: 19, singleton: true);
+        var weapon = await rig.AddAsync(3638, Rig.Character, ship, flag: 27, singleton: true);
+        var cargo = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, flag: 5, quantity: 40);
+        await rig.AddAsync(21857, Rig.Character, other, flag: 19, singleton: true); // fitted to the other ship
+        await rig.AddAsync(21857, 140_000_002, ship, flag: 20, singleton: true);     // someone else's item in this ship
+        var session = Rig.Session();
+        var inventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
+
+        long IdOf(PyPackedRow row) => row.Values[0] is PyLong l ? l.Value : ((PyInt)row.Values[0]).Value;
+        Assert.Equal(new[] { afterburner, weapon, cargo }, Rows(await rig.CallAsync(session, "List", inventory)).Select(IdOf).Order());
+        Assert.Equal(new[] { weapon }, Rows(await rig.CallAsync(session, "List", inventory, new PyInt(27))).Select(IdOf));
+        Assert.Equal(new[] { afterburner, weapon }, Rows(await rig.CallAsync(session, "ListByFlags", inventory, new PyTuple([new PyInt(19), new PyInt(27)]))).Select(IdOf).Order());
+        Assert.Equal(new[] { cargo }, Rows(await rig.CallAsync(session, "GetItems", inventory, new PyTuple([new PyLong(cargo), new PyLong(other)]))).Select(IdOf));
+        var lines = (PyList)((PyDict)((PyObject)await rig.CallAsync(session, "GetContainerContents", inventory)).Args).Entries.Single(e => JsSemantics.StringValue(e.Key) == "lines").Value;
+        Assert.Equal(3, lines.Items.Count);
+        // the hangar still lists the two ships and nothing fitted or carried
+        var hangar = await rig.HangarAsync(session);
+        Assert.Equal(new[] { ship, other }.Order(), Rows(await rig.CallAsync(session, "List", hangar)).Select(IdOf).Order());
     }
 
     [PgFact]

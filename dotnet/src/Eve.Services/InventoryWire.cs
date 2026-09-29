@@ -1,8 +1,8 @@
 using Eve.Marshal;
 
-namespace Eve.Services.Inventory;
+namespace Eve.Services;
 
-/// <summary>One item as the client's inventory rows show it.</summary>
+/// <summary>One item as the client's inventory rows show it (shared by the adapters that hand items out: the inventory broker and dogma).</summary>
 public sealed record ItemRow(long ItemId, int TypeId, long OwnerId, long LocationId, int Flag, long Quantity, int GroupId, int CategoryId);
 
 /// <summary>How inventory rows look on the wire: the descriptor the client is told about, and the three forms a row comes in.</summary>
@@ -34,10 +34,13 @@ public static class InventoryWire
     /// <summary>A whole number as JavaScript's marshal writes it: an integer that fits 32 bits is an int, a larger one a long.</summary>
     public static PyValue Id(long value) => value is >= int.MinValue and <= int.MaxValue ? new PyInt(value) : new PyLong(value);
 
-    /// <summary>A packed row (<c>blue.DBRow</c>): the stored columns, the client fills in the rest.</summary>
-    public static PyValue PackedRow(ItemRow item) => new PyPackedRow(RowDescriptor, [
+    /// <summary>
+    /// A packed row (<c>blue.DBRow</c>): the stored columns, the client fills in the rest. The custom info is an empty string
+    /// unless the caller says otherwise (dogma's item info leaves it out, <c>None</c>, for everything but the character).
+    /// </summary>
+    public static PyValue PackedRow(ItemRow item, PyValue? customInfo = null) => new PyPackedRow(RowDescriptor, [
         new PyLong(item.ItemId), new PyInt(item.TypeId), new PyInt(item.OwnerId), new PyLong(item.LocationId), new PyInt(item.Flag),
-        new PyInt(item.Quantity), new PyInt(item.GroupId), new PyInt(item.CategoryId), new PyStr("")]);
+        new PyInt(item.Quantity), new PyInt(item.GroupId), new PyInt(item.CategoryId), customInfo ?? new PyStr("")]);
 
     private static long StackSize(ItemRow item) => item.Quantity < 0 ? 1 : item.Quantity;
 

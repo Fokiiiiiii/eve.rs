@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Eve.Data;
+using Eve.Inventory;
 using Eve.Sde;
 using Npgsql;
 
@@ -28,6 +29,30 @@ public class CatalogTests
         Assert.Equal((596, "Impairor"), (catalog.Race(4)!.ShipTypeId, catalog.Race(4)!.ShipName));
         Assert.Equal((606, "Velator"), (catalog.Race(8)!.ShipTypeId, catalog.Race(8)!.ShipName));
         Assert.Null(catalog.Race(16)); // the Jove cannot be played
+    }
+
+    [PgFact]
+    public async Task Every_rookie_ship_has_a_kit_that_fits_its_slots()
+    {
+        var (catalog, source) = await LoadAsync();
+        var reader = new SdeReader(source);
+        // effects of the static data: hiPower 12 (high slot), medPower 13 (medium), loPower 11 (low)
+        int[] slotEffects = [11, 12, 13];
+        foreach (var race in catalog.Races)
+        {
+            var kit = StarterKits.For(race.ShipTypeId);
+            Assert.NotEmpty(kit);
+            var dogma = (await reader.ReadAsync("typeDogma", kit.Select(m => (long)m.TypeId))).ToDictionary(r => r.Key, r => r.Doc);
+            var slots = new HashSet<int>();
+            foreach (var module in kit)
+            {
+                var effects = dogma[module.TypeId].GetProperty("dogmaEffects").EnumerateArray().Select(e => e.GetProperty("effectID").GetInt32()).Where(slotEffects.Contains).ToArray();
+                var family = Assert.Single(effects);
+                var first = family switch { 12 => ItemFlags.HiSlot0, 13 => ItemFlags.MedSlot0, _ => ItemFlags.LowSlot0 };
+                Assert.InRange(module.Flag, first, first + 7);
+                Assert.True(slots.Add(module.Flag), $"two modules in slot {module.Flag}");
+            }
+        }
     }
 
     [PgFact]

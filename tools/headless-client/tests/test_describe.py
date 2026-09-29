@@ -99,3 +99,13 @@ def test_extended_objects_are_compared_inside_and_their_volatile_keys_by_type():
     assert differences(a, _extended("x.Entry", [3300, 4], [["itemID", "text"], ["groupName", "Gunnery"]]), volatile_keys={"itemID"}) != []
     assert "5" in differences(a, _extended("x.Entry", [3300, 5], [["itemID", {"$long": 5}], ["groupName", "Gunnery"]]))[0]
     assert differences(a, _extended("y.Entry", [3300, 4], [["itemID", {"$long": 5}], ["groupName", "Gunnery"]])) != []
+
+
+def test_reals_that_two_servers_work_out_separately_may_agree_to_a_tolerance():
+    assert differences(201.25, 201.25000000000003, "x") != []                               # exact by default
+    assert differences(201.25, 201.25000000000003, "x", float_tolerance=1e-9) == []
+    assert differences(201.25, 201.26, "x", float_tolerance=1e-9) != []                     # a real difference still shows
+    assert differences({"$tuple": [1.5, 2.5]}, {"$tuple": [1.5, 2.5000000001]}, "x", float_tolerance=1e-9) == []  # in a structure
+    assert differences(1.0, 1, "x", float_tolerance=1e-9) != []                             # a real is not an int
+    assert differences(0.0, 1e-12, "x", float_tolerance=1e-9) == []                         # near zero the tolerance is absolute
+    assert differences(0.0, 1e-6, "x", float_tolerance=1e-9) != []

@@ -36,4 +36,6 @@ calls that return the whole skill list share one copy, marked `{"$same": "GetSki
 `charMgr` and `account` answer for a new character of each race, and `stations.json` the reference's station record for
 a sample of 62 stations (every 87th of the static data and two more), which the station names are checked against, and
 `inventory.json` what the inventory broker and the bound inventories of a new character's hangar, station and ship
-answer. `--only walk|starters|skills|info|stations|inventory` records one and leaves the others as they are.
+answer, and `dogma.json` the answer of `dogmaIM.GetAllInfo` (ship, fitted modules, character, brain, state) for a new
+character of each of the four playable races, which the dogma engine's values and the brain are checked against.
+`--only walk|starters|skills|info|stations|inventory|dogma` records one and leaves the others as they are.

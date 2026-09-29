@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record what the EVE.js reference does from login to a session with a character.
 
-    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory]
+    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma]
 
 The recording is the contract for the same path in eve.rs: `tests/test_login_to_character.py` replays the calls
 against any server and compares each answer with what is stored here, by shape, treating per-run values
@@ -337,6 +337,24 @@ def record_inventory(rec: Recorder, out: str, meta: dict, ancestry: dict, run: s
         handle.write("\n")
 
 
+def record_dogma(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """One new character per playable race, chosen; then what the client asks the dogma manager when it enters the station:
+    the location is bound with (station, group station) and `GetAllInfo(character, ship, structure)` is the nested call."""
+    races = []
+    for bloodline in (1, 3, 5, 7):
+        who = rec.login(f"dogma{bloodline}")
+        created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Dogmatic {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
+        char_id = int(created["ok"])
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        bind = rec.call(who, "dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
+        races.append({"bloodlineID": bloodline, "raceID": RACE_OF_BLOODLINE[bloodline], "create": created, "bind": bind})
+        who.close()
+        time.sleep(1.5)
+    with open(os.path.join(out, "dogma.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": races}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+
+
 def main() -> int:
     if len(sys.argv) < 4:
         print(__doc__)
@@ -349,7 +367,7 @@ def main() -> int:
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma}
     try:
         for name, record in parts.items():
             if only in (None, name):

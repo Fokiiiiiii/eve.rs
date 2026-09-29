@@ -24,7 +24,7 @@ public sealed partial class InvBrokerService(PgItemStore items, ItemTypeCatalog 
         /// <summary>The character's hangar in its station (also what the station's own inventory shows).</summary>
         Hangar,
 
-        /// <summary>A ship in the hangar: its cargo and fitting, which nothing fills yet.</summary>
+        /// <summary>A ship in the hangar: its fitted modules and its cargo.</summary>
         Ship,
     }
 
@@ -76,6 +76,14 @@ public sealed partial class InvBrokerService(PgItemStore items, ItemTypeCatalog 
         StationOf(session) is { } station && session.CharacterId is { } character
             ? await RowsAsync(await items.InLocationAsync(station, character, cancellationToken), cancellationToken)
             : [];
+
+    /// <summary>What is in the bound inventory: the hangar's ships, or a ship's fitted modules and cargo.</summary>
+    private async Task<IReadOnlyList<ItemRow>> ContentsAsync(Context context, ClientSession session, CancellationToken cancellationToken) =>
+        context.Kind == Kind.Hangar
+            ? await HangarAsync(session, cancellationToken)
+            : session.CharacterId is { } character
+                ? await RowsAsync(await items.InLocationAsync(context.ItemId, character, cancellationToken), cancellationToken)
+                : [];
 
     /// <summary>The station as an item of its own: the "container" the hangar is in.</summary>
     private async Task<ItemRow?> StationRowAsync(ClientSession session, CancellationToken cancellationToken)
@@ -154,11 +162,11 @@ public sealed partial class InvBrokerService(PgItemStore items, ItemTypeCatalog 
             return None;
         }
         var flag = FlagOf(call);
-        var contents = context.Kind == Kind.Hangar ? await HangarAsync(call.Session, call.Cancellation) : [];
+        var contents = await ContentsAsync(context, call.Session, call.Cancellation);
         var chosen = flag is { } f ? contents.Where(r => r.Flag == f).ToList() : [.. contents];
-        return chosen.Count == 0 && flag is not null && context.Kind == Kind.Hangar
+        return chosen.Count == 0 && flag is not null
             ? InventoryWire.EmptySet()
-            : new PyList([.. chosen.Select(InventoryWire.PackedRow)]);
+            : new PyList([.. chosen.Select(r => InventoryWire.PackedRow(r))]);
     }
 
     /// <summary><c>ListByFlags(flags)</c>: the rows in any of the flags, as a list (empty when there are none).</summary>
@@ -170,8 +178,8 @@ public sealed partial class InvBrokerService(PgItemStore items, ItemTypeCatalog 
             return None;
         }
         var wanted = (call.Arg(0) switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] }).Select(IdOf).Where(v => v is not null).Select(v => (int)v!.Value).ToHashSet();
-        var contents = context.Kind == Kind.Hangar ? await HangarAsync(call.Session, call.Cancellation) : [];
-        return new PyList([.. contents.Where(r => wanted.Contains(r.Flag)).Select(InventoryWire.PackedRow)]);
+        var contents = await ContentsAsync(context, call.Session, call.Cancellation);
+        return new PyList([.. contents.Where(r => wanted.Contains(r.Flag)).Select(r => InventoryWire.PackedRow(r))]);
     }
 
     /// <summary><c>GetItems(itemIDs)</c>: the rows of these items where they are in the inventory (none, when no ids are given).</summary>
@@ -183,8 +191,8 @@ public sealed partial class InvBrokerService(PgItemStore items, ItemTypeCatalog 
             return None;
         }
         var wanted = (call.Arg(0) switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] }).Select(IdOf).Where(v => v is not null).Select(v => v!.Value).ToHashSet();
-        var contents = context.Kind == Kind.Hangar ? await HangarAsync(call.Session, call.Cancellation) : [];
-        return new PyList([.. contents.Where(r => wanted.Contains(r.ItemId)).Select(InventoryWire.PackedRow)]);
+        var contents = await ContentsAsync(context, call.Session, call.Cancellation);
+        return new PyList([.. contents.Where(r => wanted.Contains(r.ItemId)).Select(r => InventoryWire.PackedRow(r))]);
     }
 
     /// <summary>The item the inventory is of (the station, or the ship) as a <c>util.Row</c>.</summary>
@@ -205,7 +213,7 @@ public sealed partial class InvBrokerService(PgItemStore items, ItemTypeCatalog 
         {
             return None;
         }
-        return InventoryWire.Rowset(context.Kind == Kind.Hangar ? await HangarAsync(call.Session, call.Cancellation) : []);
+        return InventoryWire.Rowset(await ContentsAsync(context, call.Session, call.Cancellation));
     }
 
     // ── binding by the inventory's own name ──────────────────────────────────

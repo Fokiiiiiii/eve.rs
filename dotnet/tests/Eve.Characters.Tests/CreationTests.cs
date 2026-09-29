@@ -46,6 +46,42 @@ public class CreationTests
     }
 
     [PgFact]
+    public async Task The_ship_comes_with_its_starter_modules_fitted_in_their_slots()
+    {
+        await using var s = await PgSchemas.CreateAsync();
+        var created = Assert.IsType<Created>(await Creation(s).CreateAsync(Request("Ann Lee")));
+
+        var fitted = await s.Items.InLocationAsync(created.ShipId, created.CharacterId);
+        Assert.Equal(
+            [(21857, 19), (3638, 27), (3651, 28)],
+            fitted.OrderBy(i => i.Id).Select(i => (i.TypeId, i.Flag)));
+        Assert.All(fitted, i => Assert.True(i.Singleton && i.OwnerId == created.CharacterId && i.Quantity == 1));
+        // made after the ship, in the order of the kit
+        Assert.Equal(Enumerable.Range(1, 3).Select(n => created.ShipId + n), fitted.OrderBy(i => i.Id).Select(i => i.Id));
+        // and nothing else is left in the hangar but the ship
+        var hangar = await s.Items.InLocationAsync(60000610, created.CharacterId);
+        Assert.Equal([created.ShipId], hangar.Select(i => i.Id));
+    }
+
+    [Theory]
+    [InlineData(601, 3638)]
+    [InlineData(606, 3638)]
+    [InlineData(588, 3636)]
+    [InlineData(596, 3634)]
+    public void Each_rookie_ship_has_an_afterburner_the_weapon_of_its_race_and_a_miner(int ship, int weapon)
+    {
+        Assert.Equal(
+            [new StarterModule(21857, 19), new StarterModule(weapon, 27), new StarterModule(3651, 28)],
+            StarterKits.For(ship));
+    }
+
+    [Fact]
+    public void A_ship_without_a_kit_starts_empty()
+    {
+        Assert.Empty(StarterKits.For(0));
+    }
+
+    [PgFact]
     public async Task The_character_starts_with_the_skills_of_its_race_at_their_points()
     {
         await using var s = await PgSchemas.CreateAsync();
@@ -73,7 +109,7 @@ public class CreationTests
         await using var s = await PgSchemas.CreateAsync();
         await Assert.ThrowsAsync<InvalidOperationException>(() => Creation(s).CreateAsync(Request("Bad Data", race: 2, bloodline: 3, school: 33)));
         Assert.Equal(0L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.CharactersSchema}.characters"));
-        Assert.Equal(0L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.InventorySchema}.items"));
+        Assert.Equal(0L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.InventorySchema}.items")); // the ship and its modules included
         Assert.Equal(0L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.SkillsSchema}.character_skills"));
         Assert.Equal(0L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.WalletSchema}.balances"));
     }
@@ -101,7 +137,7 @@ public class CreationTests
         Assert.Equal(new CreationRefused(CreationRefusal.NameTaken), await creation.CreateAsync(Request("ANN LEE", account: 2)));
 
         Assert.Equal(1L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.CharactersSchema}.characters"));
-        Assert.Equal(1L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.InventorySchema}.items"));
+        Assert.Equal(4L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.InventorySchema}.items")); // the one ship and its three modules
         Assert.Equal(3L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.SkillsSchema}.character_skills"));
     }
 
@@ -181,7 +217,7 @@ public class CreationTests
         }
         await Assert.ThrowsAsync<Npgsql.PostgresException>(() => Creation(s).CreateAsync(Request("Ann Lee")));
         Assert.Equal(0L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.CharactersSchema}.characters"));
-        Assert.Equal(0L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.InventorySchema}.items"));
+        Assert.Equal(0L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.InventorySchema}.items")); // the ship and its modules included
         Assert.Equal(0L, await s.ScalarAsync<long>($"SELECT count(*) FROM {s.SkillsSchema}.character_skills"));
     }
 }

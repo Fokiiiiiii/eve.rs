@@ -1,0 +1,180 @@
+using Eve.Dogma;
+using Eve.Marshal;
+
+namespace Eve.Services.Dogma;
+
+/// <summary>
+/// Builds what <c>dogmaIM.GetAllInfo</c> answers: for the ship, what is fitted to it and the character, their attributes and the
+/// effects running, and the brain of the character. The attribute values are the engine's; which attributes are listed follows the
+/// reference (docs/compat/DEVIATIONS.md #11 and #12).
+/// </summary>
+public sealed class DogmaInfo(DogmaStatic statics)
+{
+    private const int CharacterGroup = 1;
+
+    /// <summary>The reference files the character under category 3.</summary>
+    private const int CharacterCategory = 3;
+
+    private const int Mass = 4;
+    private const int Capacity = 38;
+    private const int Volume = 161;
+    private const int Radius = 162;
+    private const int Damage = 3;
+    private const int IsOnline = 2;
+    private const int Charge = 18;
+    private const int ShieldCharge = 264;
+    private const int ArmorDamage = 266;
+    private const int ShieldCapacity = 263;
+    private const int ArmorHitPoints = 265;
+    private const int CapacitorCapacity = 482;
+    private const int Quantity = 805;
+    private const int PilotSecurityStatus = 2610;
+
+    /// <summary>Every item is told about these, with these values when its type has none of its own.</summary>
+    private static readonly (int Attribute, double Default)[] Intrinsic = [(Mass, 0), (Capacity, 0), (Volume, 0), (Radius, 1)];
+
+    /// <summary>What every ship is told about its fitting.</summary>
+    private static readonly int[] FittingLoads = [15, 49, 1152];
+
+    /// <summary>What the character is always told about itself: how it learns, its limits, what it can build, its clones and its standing.</summary>
+    public static readonly int[] CharacterInfoAttributes =
+        [164, 165, 166, 167, 168, 192, 196, 219, 385, 387, 398, 467, 979, 1174, 1267, 1277, 1921, 1959, 2610, 2662, 2664];
+
+    /// <summary>What the character's attributes as the ship changes them always include, whatever the type says.</summary>
+    private static readonly int[] CharacterAlways = [979, 1921, 2610, 2662];
+
+    /// <summary>The character's security status: 0 until standings come with the module that keeps them.</summary>
+    public const double SecurityStatus = 0;
+
+    public static ItemRow RowOf(Eve.Inventory.Item item, TypeDef? type) =>
+        new(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, item.Singleton ? -1 : item.Quantity, type?.GroupId ?? 0, type?.CategoryId ?? 0);
+
+    private ItemRow CharacterRow(DogmaSnapshot s) =>
+        new(s.Character.Id, s.Character.TypeId, s.Character.Id, s.Ship.Id, DogmaSnapshot.PilotFlag, -1, CharacterGroup, CharacterCategory);
+
+    private static PyValue Row(ItemRow row, bool character) => InventoryWire.PackedRow(row, character ? new PyStr("") : PyNone.Instance);
+
+    private Dictionary<int, double> WithIntrinsics(DogmaSnapshot s, long itemId, bool withDefaults = true)
+    {
+        var attributes = s.World.Attributes(itemId).ToDictionary(a => a.Key, a => a.Value);
+        if (withDefaults)
+        {
+            foreach (var (attribute, value) in Intrinsic)
+            {
+                attributes.TryAdd(attribute, value);
+            }
+        }
+        return attributes;
+    }
+
+    /// <summary>The ship's attributes: the engine's, the ones every ship reports, and what it has taken (as fractions of what it can).</summary>
+    public IReadOnlyDictionary<int, double> ShipAttributes(DogmaSnapshot s)
+    {
+        var attributes = WithIntrinsics(s, s.Ship.Id);
+        foreach (var load in FittingLoads)
+        {
+            attributes.TryAdd(load, s.World.Get(s.Ship.Id, load));
+        }
+        attributes[Damage] = s.Condition.Damage;
+        var capacitor = s.World.Get(s.Ship.Id, CapacitorCapacity);
+        if (capacitor > 0)
+        {
+            attributes[Charge] = Round6(capacitor * s.Condition.Charge);
+        }
+        attributes[ShieldCharge] = Round6(s.World.Get(s.Ship.Id, ShieldCapacity) * s.Condition.ShieldCharge);
+        attributes[ArmorDamage] = Round6(s.World.Get(s.Ship.Id, ArmorHitPoints) * s.Condition.ArmorDamage);
+        attributes[PilotSecurityStatus] = SecurityStatus;
+        return attributes;
+    }
+
+    /// <summary>A fitted module's attributes: the engine's, its own state, and the ones every item reports.</summary>
+    public IReadOnlyDictionary<int, double> ModuleAttributes(DogmaSnapshot s, long moduleId)
+    {
+        var attributes = WithIntrinsics(s, moduleId);
+        attributes[IsOnline] = s.World.Item(moduleId)?.State >= ItemState.Online ? 1 : 0;
+        attributes[Damage] = 0;
+        attributes[ShieldCharge] = 0;
+        attributes[ArmorDamage] = 0;
+        attributes[Quantity] = 1;
+        return attributes;
+    }
+
+    /// <summary>The character's attributes with the ship's changes to them (its fitting and the rookie ship's bonus among them).</summary>
+    public IReadOnlyDictionary<int, double> ShipModifiedCharacterAttributes(DogmaSnapshot s)
+    {
+        var attributes = WithIntrinsics(s, s.Character.Id, withDefaults: false);
+        attributes.Remove(Volume);
+        foreach (var attribute in CharacterAlways)
+        {
+            attributes.TryAdd(attribute, s.World.Get(s.Character.Id, attribute));
+        }
+        return attributes;
+    }
+
+    /// <summary>The character's attributes as it is told them: the fixed list.</summary>
+    public IReadOnlyDictionary<int, double> CharacterAttributes(DogmaSnapshot s) =>
+        CharacterInfoAttributes.ToDictionary(a => a, a => s.World.Get(s.Character.Id, a));
+
+    private static double Round6(double value) => Math.Round(value, 6, MidpointRounding.AwayFromZero);
+
+    private PyValue ModuleInfo(DogmaSnapshot s, Eve.Inventory.Item module, long now)
+    {
+        var running = s.World.Item(module.Id) is { State: >= ItemState.Online }
+            ? new PyDict([new(new PyInt(BuiltInEffects.Online), DogmaWire.RunningEffect(module.Id, s.Character.Id, s.Ship.Id, BuiltInEffects.Online, now))])
+            : new PyDict([]);
+        return DogmaWire.ItemInfo(module.Id, Row(RowOf(module, statics.Type(module.TypeId)), false), running, DogmaWire.Attributes(ModuleAttributes(s, module.Id)), now);
+    }
+
+    private PyValue ShipInfo(DogmaSnapshot s, long now)
+    {
+        var entries = new List<KeyValuePair<PyValue, PyValue>>
+        {
+            new(InventoryWire.Id(s.Ship.Id), DogmaWire.ItemInfo(
+                s.Ship.Id, Row(RowOf(s.Ship, statics.Type(s.Ship.TypeId)), false), new PyDict([]), DogmaWire.Attributes(ShipAttributes(s)), now)),
+        };
+        entries.AddRange(s.Fitted.Select(m => new KeyValuePair<PyValue, PyValue>(InventoryWire.Id(m.Id), ModuleInfo(s, m, now))));
+        return new PyDict(entries);
+    }
+
+    private PyValue CharacterInfo(DogmaSnapshot s, IReadOnlyDictionary<int, double> attributes, long now) =>
+        DogmaWire.ItemInfo(s.Character.Id, Row(CharacterRow(s), true), new PyDict([]), DogmaWire.Attributes(attributes), now);
+
+    /// <summary>The state of everything the client keeps a state for: the ship, the character and each module, and the heat of the slots.</summary>
+    private PyValue ShipState(DogmaSnapshot s, long now)
+    {
+        var rows = new List<KeyValuePair<PyValue, PyValue>>
+        {
+            new(InventoryWire.Id(s.Ship.Id), DogmaWire.InstanceRow(
+                s.Ship.Id, damage: s.Condition.Damage, charge: s.Condition.Charge, armorDamage: s.Condition.ArmorDamage, shieldCharge: s.Condition.ShieldCharge, incapacitated: s.Condition.Incapacitated)),
+            new(InventoryWire.Id(s.Character.Id), DogmaWire.InstanceRow(s.Character.Id, online: true, skillPoints: (int)s.TotalSkillPoints)),
+        };
+        rows.AddRange(s.Fitted.Select(m => new KeyValuePair<PyValue, PyValue>(
+            InventoryWire.Id(m.Id), DogmaWire.InstanceRow(m.Id, online: s.World.Item(m.Id)?.State >= ItemState.Online))));
+        return Py.Tuple(new PyDict(rows), new PyDict([]), new PyDict([]), DogmaWire.HeatState(now));
+    }
+
+    /// <summary>
+    /// <c>GetAllInfo</c> for a character in its ship in a station. What is left out follows the reference: the character and
+    /// ship info asked for; a docked ship asked for on its own brings the character with it.
+    /// </summary>
+    public PyValue GetAllInfo(DogmaSnapshot s, bool getCharInfo, bool getShipInfo, bool getStructureInfo, long fileTime)
+    {
+        _ = getStructureInfo; // a character docked in a station has no structure to tell about
+        var dockedShipOnly = getShipInfo && !getCharInfo;
+        var includeCharacter = getCharInfo || dockedShipOnly;
+        var brain = BrainBuilder.Build(s.World, statics);
+        return Py.KeyVal(
+            ("systemWideEffectsOnShip", new PyDict([])),
+            ("shipModifiedCharAttribs", getShipInfo && getCharInfo ? CharacterInfo(s, ShipModifiedCharacterAttributes(s), fileTime) : PyNone.Instance),
+            ("structureInfo", new PyDict([])),
+            ("locationInfo", new PyDict([])),
+            ("shipInfo", getShipInfo ? ShipInfo(s, fileTime) : new PyDict([])),
+            ("activeShipID", InventoryWire.Id(s.Ship.Id)),
+            ("shipState", getShipInfo ? ShipState(s, fileTime) : PyNone.Instance),
+            ("charInfo", includeCharacter
+                ? Py.Tuple(
+                    new PyDict([new(InventoryWire.Id(s.Character.Id), CharacterInfo(s, CharacterAttributes(s), fileTime))]),
+                    DogmaWire.Brain(brain, s.Character.Id, s.Ship.Id, s.Character.Id))
+                : PyNone.Instance));
+    }
+}

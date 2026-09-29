@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record what the EVE.js reference does from login to a session with a character.
 
-    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others|target]
+    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others|target|module]
 
 The recording is the contract for the same path in eve.rs: `tests/test_login_to_character.py` replays the calls
 against any server and compares each answer with what is stored here, by shape, treating per-run values
@@ -1055,6 +1055,94 @@ def record_target(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     b.close()
 
 
+def record_module(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """Two characters in space by the same station: what the one that works its modules (the actor, B) and the one that watches (A) are sent as
+    the actor flies, starts and stops its afterburner, and tries its gun and its miner where they cannot be used. Each step holds what B is sent
+    (`events`) and what A is sent (`seen`), with the seconds each arrived at."""
+    system, station = 30100032, 60015249
+
+    def character(name: str):
+        who = rec.login(name)
+        created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"{name} {run}", 1, 1, ancestry[1]))
+        char_id = int(created["ok"])
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
+        hangar = who.call_bound(manager, "GetInventory", 10004)
+        ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+        who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
+        events_of(who)
+        return who, created, char_id, ship_id
+
+    a, a_created, a_char, a_ship = character("Watcher")
+    b, b_created, b_char, b_ship = character("Actor")
+    both = {"events": b, "seen": a}
+    steps: list = []
+
+    def step(label, call, seconds=2.0, until=None):
+        entry = {"label": label}
+        try:
+            entry["ok"] = describe(call())
+        except p.MachoError as error:
+            entry["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+        entry.update(watch(both, seconds, until))
+        steps.append(entry)
+        return entry
+
+    a_service = a.call("ship", "MachoBindObject", (station, 15), None)
+    b_service = b.call("ship", "MachoBindObject", (station, 15), None)
+    watch(both, 0.5)
+    step("the watcher undocks", lambda: a.call_bound(a_service[0], "Undock", a_ship, False), 2.0)
+    a_ballpark = a.call("beyonce", "MachoBindObject", system, None)
+    step("the watcher binds the ballpark", lambda: a_ballpark, 2.5)
+    step("the actor undocks", lambda: b.call_bound(b_service[0], "Undock", b_ship, False), 2.5)
+    b_ballpark = b.call("beyonce", "MachoBindObject", system, None)
+    step("the actor binds the ballpark", lambda: b_ballpark, 3.0)
+    a_dogma = a.call("dogmaIM", "MachoBindObject", (system, 5), None)
+    b_dogma = b.call("dogmaIM", "MachoBindObject", (system, 5), None)
+    steps.append({"label": "both bind dogma in space", "ok": describe([a_dogma, b_dogma]), **watch(both, 1.0)})
+    info = b.call_bound(b_dogma[0], "GetAllInfo", True, True, None)
+    described = describe(info)
+    ship_info = {k: v for k, v in described["args"]["$dict"]}["shipInfo"]["$dict"]
+    fitted = {}
+    for key, value in ship_info:
+        item = {k: v for k, v in value["args"]["$dict"]}["invItem"]["$row"]
+        fitted[item["typeID"]] = int(key["$long"] if isinstance(key, dict) else key)
+    afterburner, gun, miner = fitted[21857], fitted[3638], fitted[3651]
+    steps.append({"label": "the actor asks for its ship", "ok": described, **watch(both, 1.0)})
+    steps.append({"label": "both wait for the protection to end", **watch(both, 40.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))})
+
+    fly = lambda name, *args: (lambda: b.call_bound(b_ballpark[0], name, *args))  # noqa: E731
+    activate = lambda module, effect, target=None: (lambda: b.call_bound(b_dogma[0], "Activate", module, effect, target, 1000))  # noqa: E731
+    stopped = lambda seen: any(e["name"] == "OnGodmaShipEffect" and len(args_of_effect(e)) > 3 and args_of_effect(e)[3] == 0 for e in seen["events"])  # noqa: E731
+    step("the actor flies at full speed", fly("CmdGotoDirection", 1.0, 0.0, 0.0), 3.0)
+    step("the actor starts the afterburner", activate(afterburner, "moduleBonusAfterburner"), 13.0)
+    step("the actor starts the afterburner again", activate(afterburner, "moduleBonusAfterburner"), 1.0)
+    step("the actor stops the afterburner", lambda: b.call_bound(b_dogma[0], "Deactivate", afterburner, "moduleBonusAfterburner"), 12.0, until=stopped)
+    step("the actor stops the afterburner again", lambda: b.call_bound(b_dogma[0], "Deactivate", afterburner, "moduleBonusAfterburner"), 2.0)
+    step("the actor fires the gun with no target", activate(gun, "targetAttack"), 2.0)
+    step("the actor locks the watcher", lambda: b.call_bound(b_dogma[0], "AddTarget", a_ship), 8.0, until=lambda seen: any(e["name"] == "OnTarget" for e in seen["events"]))
+    step("the actor fires the gun at the watcher without a charge", activate(gun, "targetAttack", a_ship), 3.0)
+    step("the actor works the miner on the watcher", activate(miner, "miningLaser", a_ship), 3.0)
+    step("the actor works the miner with no target", activate(miner, "miningLaser"), 2.0)
+    race = {"bloodlineID": 1, "raceID": 1, "solarSystemID": system, "stationID": station,
+            "modules": {"afterburner": afterburner, "gun": gun, "miner": miner},
+            "watcher": {"create": a_created, "characterID": a_char, "shipID": a_ship}, "actor": {"create": b_created, "characterID": b_char, "shipID": b_ship},
+            "steps": steps}
+    with open(os.path.join(out, "module.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [race]}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+    a.close()
+    b.close()
+
+
+def args_of_effect(event: dict) -> list:
+    """The arguments of an `OnGodmaShipEffect`: `(itemID, effectID, when, isStart, isActive, environment, startTime, duration, repeat, error)`."""
+    try:
+        return event["args"]["$tuple"][1]["$tuple"][1]["$tuple"]
+    except (KeyError, TypeError):
+        return []
+
+
 def main() -> int:
     if len(sys.argv) < 4:
         print(__doc__)
@@ -1067,10 +1155,10 @@ def main() -> int:
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others, "target": record_target}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others, "target": record_target, "module": record_module}
     try:
         for name, record in parts.items():
-            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others", "target")):  # the fast one needs a reference started for it
+            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others", "target", "module")):  # the fast one needs a reference started for it
                 record(rec, out, meta, ancestry, run)
         if only in (None, "stations"):
             record_stations(rec, out, meta, ancestry, run, sde)

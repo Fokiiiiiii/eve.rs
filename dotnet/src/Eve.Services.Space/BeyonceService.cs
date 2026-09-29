@@ -140,6 +140,25 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
     }
 
     /// <summary>
+    /// <c>CmdWarpToStuff(type, target, minRange=)</c>: warp to a body of the system (<c>type</c> is <c>"item"</c>; the other kinds of place, bookmarks,
+    /// scanned sites and the like, are not there yet and are told as a warp that cannot be done).
+    /// </summary>
+    [Method("CmdWarpToStuff")]
+    public async ValueTask<PyValue> CmdWarpToStuff(ServiceCall call)
+    {
+        if (!_binding.Owns(call))
+        {
+            return None;
+        }
+        if (JsSemantics.PlainText(call.Arg(0)) != "item" || Number(call.Arg(1)) is not { } target)
+        {
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You cannot warp there right now.")));
+        }
+        var range = call.Kwarg("minRange") is { } named ? Number(named) ?? 0 : 0;
+        return await space.WarpAsync(call.Session, (long)target, range, call.Cancellation);
+    }
+
+    /// <summary>
     /// <c>CmdDock(stationID, shipID)</c>: dock at a station. The answer is the time the docking was accepted; the docking itself is done a few
     /// seconds later, when the client is told the session has changed.
     /// </summary>

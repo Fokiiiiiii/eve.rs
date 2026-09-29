@@ -55,7 +55,7 @@ not exist is the scene: which balls a system has, who is where, how commands cha
    | `Leave` | 4 | host -> sim | `u64 sessionId`, `u8 why` (0 docked, 1 logged off, 2 jumped) |
    | `Bind` | 5 | host -> sim | `u64 sessionId`: the client bound the solar system's ballpark, send it the scene |
    | `UpdateState` | 6 | host -> sim | `u64 sessionId`: `UpdateStateRequest` |
-   | `Command` | 7 | host -> sim | `u64 sessionId`, `u8 command` (1 speed fraction, 2 go in a direction, 3 stop, 4 dock, 5 follow a body `(id, range)`, 6 orbit a body `(id, distance)`, 7 align to a body `(id)`), `u8 argc`, `f64 args[argc]` (ids travel as `f64` up to 2^53) |
+   | `Command` | 7 | host -> sim | `u64 sessionId`, `u8 command` (1 speed fraction, 2 go in a direction, 3 stop, 4 dock, 5 follow a body `(id, range)`, 6 orbit a body `(id, distance)`, 7 align to a body `(id)`, 8 warp to a body `(id, range)`), `u8 argc`, `f64 args[argc]` (ids travel as `f64` up to 2^53) |
    | `ShipSpec` | 8 | host -> sim | `u64 sessionId`, the ship's spec: new numbers for a ship in space |
    | `Notify` | 9 | sim -> host | `u64 sessionId`, text `name`, text `idType`, bytes `marshalledArgs` (a marshalled tuple of the arguments) |
    | `Docked` | 10 | sim -> host | `u64 sessionId`, `i64 stationId`: the ship has arrived and the docking is done in space; the host moves the character |
@@ -108,6 +108,12 @@ not exist is the scene: which balls a system has, who is where, how commands cha
   the front).
 
 ## Amendments
+
+- 2026-09-29, warp: command 8 (warp to a body). A warp is answered to the caller (the host awaits `Accepted` or `Refused` with `TARGET_NOT_FOUND`,
+  `WARP_DISTANCE_TOO_CLOSE` or `IN_WARP`), and the ship's motion in warp is the sim's own: it aligns, enters warp, drops out and comes to rest,
+  and tells the client at the reference's moments (`WarpTo` at once; two `SetBallMassive` two seconds before the dropout; `SetBallPosition`,
+  `SetBallVelocity`, `SetSpeedFraction`, `Stop` at rest). What the scene worked out while a call came in is handed on with the next call or poll.
+  The host's `CommandAsync` replaces `DockAsync`: any command the caller waits for is answered by its own code.
 
 - 2026-09-29, approach and orders: commands 5 to 7 (follow, orbit, align), `Accepted` after every accepted command and `Approaching`
   (kind 14) for a dock from beyond the range. A ship that follows or orbits is steered stepwise (a quarter of a second at most) by where

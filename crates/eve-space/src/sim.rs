@@ -77,6 +77,9 @@ fn command_of(code: u8, args: &[f64]) -> Option<Command> {
             Some(Command::Orbit { target_id: *target as i64, distance: *distance })
         }
         (7, [target]) if is_id(*target) => Some(Command::AlignTo { target_id: *target as i64 }),
+        (8, [target, range]) if is_id(*target) && range.is_finite() => {
+            Some(Command::WarpTo { target_id: *target as i64, range: *range })
+        }
         _ => None,
     }
 }

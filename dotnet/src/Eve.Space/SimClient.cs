@@ -19,7 +19,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     private readonly CancellationTokenSource _stop = new();
     private readonly Channel<byte[]> _outbox = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<string?>> _entering = new();
-    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<DockReply>> _docking = new();
+    private readonly ConcurrentDictionary<(ulong Session, byte Code), TaskCompletionSource<CommandReply>> _answered = new();
     private Task? _run;
     private volatile bool _connected;
     private TimeSpan _retryDelay = RetryDelay;
@@ -173,18 +173,17 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                     entering.TrySetResult(reply.Error);
                 }
                 break;
-            case SimAccepted { Command: SimCommands.Dock } accepted:
-                if (_docking.TryRemove(accepted.SessionId, out var accepting))
-                {
-                    accepting.TrySetResult(new DockReply(true, accepted.At, null));
-                }
+            case SimAccepted accepted when _answered.TryRemove((accepted.SessionId, accepted.Command), out var accepting):
+                accepting.TrySetResult(new CommandReply(true, accepted.At, null));
                 break;
-            case SimRefused { Command: SimCommands.Dock } refused when _docking.TryRemove(refused.SessionId, out var refusing):
-                refusing.TrySetResult(new DockReply(false, 0, refused.Reason));
+            case SimRefused refused when _answered.TryRemove((refused.SessionId, refused.Command), out var refusing):
+                refusing.TrySetResult(new CommandReply(false, 0, refused.Reason));
                 break;
-            case SimApproaching { Command: SimCommands.Dock } approaching when _docking.TryRemove(approaching.SessionId, out var approach):
-                approach.TrySetResult(new DockReply(false, 0, null, approaching.Distance));
+            case SimApproaching approaching when _answered.TryRemove((approaching.SessionId, approaching.Command), out var approach):
+                approach.TrySetResult(new CommandReply(false, 0, null, approaching.Distance));
                 break;
+            case SimApproaching:
+                break; // nobody is waiting for it
             default:
                 Received?.Invoke(message);
                 break;
@@ -200,9 +199,9 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 pending.TrySetException(new SimUnavailableException("the link to the simulation broke"));
             }
         }
-        foreach (var session in _docking.Keys)
+        foreach (var key in _answered.Keys)
         {
-            if (_docking.TryRemove(session, out var pending))
+            if (_answered.TryRemove(key, out var pending))
             {
                 pending.TrySetException(new SimUnavailableException("the link to the simulation broke"));
             }
@@ -218,7 +217,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         _outbox.Writer.TryWrite(SimCodec.Encode(message));
     }
 
-    private async Task<T> AwaitAsync<T>(ConcurrentDictionary<ulong, TaskCompletionSource<T>> pending, ulong session, SimMessage request, CancellationToken cancellationToken)
+    private async Task<T> AwaitAsync<TKey, T>(ConcurrentDictionary<TKey, TaskCompletionSource<T>> pending, TKey session, SimMessage request, CancellationToken cancellationToken)
+        where TKey : notnull
     {
         if (!_connected)
         {
@@ -241,8 +241,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public Task<string?> EnterAsync(SimEnter enter, CancellationToken cancellationToken = default) =>
         AwaitAsync(_entering, enter.SessionId, enter, cancellationToken);
 
-    public Task<DockReply> DockAsync(ulong sessionId, long stationId, CancellationToken cancellationToken = default) =>
-        AwaitAsync(_docking, sessionId, new SimCommand(sessionId, SimCommands.Dock, [stationId]), cancellationToken);
+    public Task<CommandReply> CommandAsync(ulong sessionId, byte code, double[] args, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_answered, (sessionId, code), new SimCommand(sessionId, code, args), cancellationToken);
 
     public void Leave(ulong sessionId, LeaveWhy why) => Send(new SimLeave(sessionId, why));
 

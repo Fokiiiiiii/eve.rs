@@ -197,6 +197,17 @@
    "hex": "13000000074f2c3859955c0600070100000088149e8c41"
   },
   {
+   "name": "warp command",
+   "kind": "Command",
+   "sessionId": "1790646377000015",
+   "command": 8,
+   "args": [
+    40491233.0,
+    30000.0
+   ],
+   "hex": "1b000000074f2c3859955c0600080200000008c74e834100000000004cdd40"
+  },
+  {
    "name": "new ship numbers",
    "kind": "ShipSpec",
    "sessionId": "1790646377000015",

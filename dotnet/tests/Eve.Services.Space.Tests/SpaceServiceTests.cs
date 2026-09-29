@@ -99,6 +99,11 @@ public class SpaceServiceTests
         Assert.Equal((character.ShipId, character.CharacterId, "Ibis"), (enter.Ship.ShipId, enter.Ship.CharacterId, enter.Ship.Name));
         Assert.True(enter.Ship.Mass > 0 && enter.Ship.MaxVelocity > 0 && enter.Ship.Agility > 0 && enter.Ship.Radius > 0 && enter.Ship.ShieldRechargeMs > 0);
         Assert.Equal(3, enter.Ship.Modules.Count);
+        Assert.Equal(3.0, enter.Ship.WarpSpeedAu); // an Ibis warps at 3 AU a second (the reference's WarpTo says 3000)
+        Assert.Equal(3.0, SimShips.WarpSpeedAu(1.0, 3.0));
+        Assert.Equal(1.5, SimShips.WarpSpeedAu(0.5, 3.0)); // a base speed that something changed counts
+        Assert.Equal(3.0, SimShips.WarpSpeedAu(0.0, 3.0)); // no base speed is the base of one
+        Assert.Equal(1.0, SimShips.WarpSpeedAu(1.0, 0.0)); // no multiplier is a multiplier of one
         Assert.True(rig.Space.IsInSpace(session));
     }
 
@@ -218,7 +223,7 @@ public class SpaceServiceTests
         await rig.BeyonceCallAsync(session, "CmdFollowBall", oid, new PyInt((int)Rig.Station), new PyInt(2500));
         await rig.BeyonceCallAsync(session, "CmdOrbit", oid, new PyInt((int)Rig.Station), new PyReal(5000.5));
         await rig.BeyonceCallAsync(session, "CmdAlignTo", oid, new PyInt((int)Rig.Station));
-        await rig.BeyonceCallWithAsync(session, "CmdAlignTo", oid, ("dstID", new PyInt((int)Rig.Station))); // named, as the client may call it
+        await rig.BeyonceCallWithAsync(session, "CmdAlignTo", oid, [], ("dstID", new PyInt((int)Rig.Station))); // named, as the client may call it
         await rig.BeyonceCallAsync(session, "UpdateStateRequest", oid);
 
         Assert.Equal(
@@ -288,6 +293,87 @@ public class SpaceServiceTests
         rig.Sim.Say(Update(session));
         rig.Sim.Say(new SimAccepted(id, SimCommands.SetSpeedFraction, 134351527136350000));
         Assert.Equal(["DoDestinyUpdate"], Events.Of(session).Select(e => e.Name));
+    }
+
+    // ── warp ─────────────────────────────────────────────────────────────────
+
+    [PgFact]
+    public async Task A_warp_is_given_to_the_simulation_with_the_range_the_client_asked_for_and_ends_the_protection()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        Events.Of(session);
+        var before = rig.Sim.Heard.Count;
+
+        var answer = await rig.BeyonceCallWithAsync(session, "CmdWarpToStuff", oid, [new PyStr("item"), new PyInt(40491233)], ("minRange", new PyInt(30000)));
+        Assert.Equal(PyNone.Instance, answer);
+        Assert.Equal(
+            [Describe(new SimCommand((ulong)session.SessionId, SimCommands.WarpTo, [40491233, 30000]))],
+            rig.Sim.Heard.Skip(before).Select(Describe));
+        // no range asked for is none
+        await rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("item"), new PyInt(40491233));
+        Assert.Equal(Describe(new SimCommand((ulong)session.SessionId, SimCommands.WarpTo, [40491233, 0])), Describe(rig.Sim.Heard.Last()));
+
+        // the ship has left its protection: the client is told once, whatever the simulation said before
+        var told = Events.Of(session).Where(e => e.Name == "OnInvulnCancelled").ToArray();
+        Assert.Single(told);
+        Assert.Equal(("OnInvulnCancelled", "shipid"), (told[0].Name, told[0].IdType));
+    }
+
+    [PgFact]
+    public async Task A_warp_that_cannot_be_done_is_a_message_the_client_shows_and_one_of_another_kind_of_place_is_not_passed_on()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        Events.Of(session);
+        var before = rig.Sim.Heard.Count;
+
+        foreach (var reason in new[] { "TARGET_NOT_FOUND", "WARP_DISTANCE_TOO_CLOSE" })
+        {
+            rig.Sim.WarpAnswer = new CommandReply(false, 0, reason);
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("item"), new PyInt(99999999)));
+            Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+            var values = (PyDict)((PyTuple)((PyTuple)((PyObjectEx)error.Error.Payload).Header).Items[1]).Items[1];
+            Assert.Equal("You cannot warp there right now.", JsSemantics.StringValue(values.Entries.Single().Value));
+        }
+        Assert.DoesNotContain(Events.Of(session), e => e.Name == "OnInvulnCancelled"); // a warp that was refused costs the pilot nothing
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("bookmark"), new PyInt(5)));
+        await Assert.ThrowsAsync<MachoWrappedException>(() => rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("item"), new PyStr("planet")));
+        Assert.Equal(before + 2, rig.Sim.Heard.Count);
+
+        // not from an object of this session
+        Assert.Equal(PyNone.Instance, await rig.BeyonceCallAsync(session, "CmdWarpToStuff", null, new PyStr("item"), new PyInt(40491233)));
+        Assert.Equal(before + 2, rig.Sim.Heard.Count);
+    }
+
+    [PgFact]
+    public async Task A_ship_that_is_in_warp_is_told_so_when_it_is_asked_to_warp_or_to_stop_and_is_not_otherwise_answered()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        Events.Of(session);
+
+        rig.Sim.WarpAnswer = new CommandReply(false, 0, "IN_WARP");
+        Assert.Equal(PyNone.Instance, await rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("item"), new PyInt(40491233)));
+        var told = Assert.Single(Events.Of(session));
+        Assert.Equal(("OnRemoteMessage", "clientID"), (told.Name, told.IdType));
+        Assert.Equal("ShipInWarp", JsSemantics.StringValue(told.Args[0]));
+        Assert.Equal(PyNone.Instance, told.Args[1]);
+
+        // a stop in warp is refused by the simulation and the client is told the same
+        await rig.BeyonceCallAsync(session, "CmdStop", oid);
+        rig.Sim.Say(new SimRefused((ulong)session.SessionId, SimCommands.Stop, "IN_WARP"));
+        Assert.Equal(["OnRemoteMessage"], Events.Of(session).Select(e => e.Name));
+        // other orders that are refused in warp say nothing
+        rig.Sim.Say(new SimRefused((ulong)session.SessionId, SimCommands.GotoDirection, "IN_WARP"));
+        Assert.Empty(Events.Of(session));
     }
 
     [PgFact]
@@ -374,7 +460,7 @@ public class SpaceServiceTests
         Assert.Equal(new PyLong(134351527136350000), answer);
         Assert.Equal(Describe(new SimCommand((ulong)session.SessionId, SimCommands.Dock, [Rig.Station])), Describe(rig.Sim.Heard.Last()));
 
-        rig.Sim.DockAnswer = new DockReply(false, 0, "STATION_NOT_FOUND");
+        rig.Sim.DockAnswer = new CommandReply(false, 0, "STATION_NOT_FOUND");
         Assert.Equal(PyNone.Instance, await rig.BeyonceCallAsync(session, "CmdDock", oid, new PyInt((int)Rig.Station), new PyLong(1)));
         Assert.True(rig.Space.IsInSpace(session), "a refused docking leaves the ship where it is");
     }
@@ -389,7 +475,7 @@ public class SpaceServiceTests
 
         async Task<MachoWrappedException> Asked(double distance)
         {
-            rig.Sim.DockAnswer = new DockReply(false, 0, null, distance);
+            rig.Sim.DockAnswer = new CommandReply(false, 0, null, distance);
             return await Assert.ThrowsAsync<MachoWrappedException>(() => rig.BeyonceCallAsync(session, "CmdDock", oid, new PyInt((int)Rig.Station), new PyLong(1)));
         }
 

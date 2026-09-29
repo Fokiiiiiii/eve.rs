@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record what the EVE.js reference does from login to a session with a character.
 
-    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement]
+    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp]
 
 The recording is the contract for the same path in eve.rs: `tests/test_login_to_character.py` replays the calls
 against any server and compares each answer with what is stored here, by shape, treating per-run values
@@ -708,6 +708,77 @@ def record_movement(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
     who.close()
 
 
+def record_warp(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """A ship warps to a planet two AU away and then stops there: `CmdWarpToStuff('item', planet, minRange=)` and what the client is sent while
+    the ship goes (every event with the seconds since the call it arrived at), then the same again at a nearer range, and a stop in warp."""
+    bloodline = 1
+    who = rec.login(f"warp{bloodline}")
+    created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Warper {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
+    char_id = int(created["ok"])
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
+    hangar = who.call_bound(manager, "GetInventory", 10004)
+    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
+    events_of(who)
+
+    steps = []
+    ship = who.call("ship", "MachoBindObject", (60015249, 15), None)
+    steps.append({"label": "bind the ship service", "ok": describe(ship), "events": wait_quietly(who, 0.5)})
+    undock = {"label": "undock", "ok": describe(who.call_bound(ship[0], "Undock", ship_id, False))}
+    undock["events"] = wait_quietly(who, 2.0)
+    steps.append(undock)
+    beyonce = who.call("beyonce", "MachoBindObject", 30100032, None)
+    steps.append({"label": "bind the ballpark", "ok": describe(beyonce), "events": wait_quietly(who, 2.5)})
+
+    def timed(label, call, seconds, until=None):
+        entry = {"label": label}
+        started = time.time()
+        try:
+            entry["ok"] = describe(call())
+        except p.MachoError as error:
+            entry["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+        entry["answeredAfter"] = round(time.time() - started, 2)
+        entry["events"] = timed_events(who, seconds, until)
+        return entry
+
+    planet = 40491233  # 2.05 AU from the station
+    warp = timed("warp to a planet", lambda: who.call_bound(beyonce[0], "CmdWarpToStuff", "item", planet, minRange=0), 1.0)
+    # where the ship is every few seconds while it goes (the state the server gives), and every event of the warp
+    readings = []
+    warp_started = time.time()
+    while time.time() - warp_started < 150:
+        who.call_bound(beyonce[0], "UpdateStateRequest")
+        seen = timed_events(who, 3.0)
+        for event in seen:
+            event["at"] = round(event["at"] + (time.time() - warp_started) - 3.0, 2)
+        state = ego_state(seen, ship_id)
+        if state is not None:
+            readings.append({"seconds": round(time.time() - warp_started, 1), "position": list(state[0])})
+        warp["events"] += [e for e in seen if not (e["name"] == "DoDestinyUpdate" and dest_names(e) == ["SetState"])]
+        if any("Stop" in dest_names(e) for e in warp["events"]):
+            break
+    warp["readings"] = readings
+    steps.append(warp)
+    steps.append(timed("look at the state", lambda: who.call_bound(beyonce[0], "UpdateStateRequest"), 2.0))
+    steps.append(timed("warp to it again, in warp range", lambda: who.call_bound(beyonce[0], "CmdWarpToStuff", "item", planet, minRange=0), 3.0))
+    steps.append(timed("a warp to what is not there", lambda: who.call_bound(beyonce[0], "CmdWarpToStuff", "item", 99999999, minRange=0), 3.0))
+    race = {"bloodlineID": bloodline, "raceID": RACE_OF_BLOODLINE[bloodline], "create": created, "characterID": char_id, "shipID": ship_id,
+            "moduleIDs": [ship_id + 1, ship_id + 2, ship_id + 3], "solarSystemID": 30100032, "stationID": 60015249, "planetID": planet, "steps": steps}
+    with open(os.path.join(out, "warp.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [race]}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+    who.close()
+
+
+def dest_names(event: dict) -> list:
+    """The names of the destiny actions in a `DoDestinyUpdate` event."""
+    if event["name"] != "DoDestinyUpdate":
+        return []
+    actions, _ = event["args"]["$tuple"][1]["$tuple"][1]["$tuple"]
+    return [a["$tuple"][1]["$tuple"][0] for a in actions]
+
+
 def main() -> int:
     if len(sys.argv) < 4:
         print(__doc__)
@@ -720,10 +791,10 @@ def main() -> int:
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp}
     try:
         for name, record in parts.items():
-            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement")):  # the fast one needs a reference started for it
+            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp")):  # the fast one needs a reference started for it
                 record(rec, out, meta, ancestry, run)
         if only in (None, "stations"):
             record_stations(rec, out, meta, ancestry, run, sde)

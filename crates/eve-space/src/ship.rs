@@ -1,6 +1,6 @@
 //! A ship in space: what the host says about it (`ShipSpec`, ADR 0007) and where it is and how it is moving.
 
-use eve_destiny::ball::LegacyMode;
+use eve_destiny::ball::{LegacyMode, WarpState};
 use eve_destiny::{BallEntity, IdRef, Kind, Vec3};
 
 /// A fitted module, as the ship's slim item lists it.
@@ -47,6 +47,15 @@ pub enum Course {
     Follow { target: i64, range: f64 },
     /// Circling a body `distance` metres off its surface.
     Orbit { target: i64, distance: f64 },
+    /// Warping (or, while `active` is false, turning to enter warp) to `raw_destination`, ending `stop_distance` short of it.
+    Warp {
+        raw_destination: Vec3,
+        target_point: Vec3,
+        stop_distance: f64,
+        total_distance: f64,
+        factor: i64,
+        active: bool,
+    },
 }
 
 /// A ship in a scene: its spec and its motion.
@@ -72,6 +81,7 @@ impl Ship {
                 Course::Stop => LegacyMode::Stop,
                 Course::Follow { .. } => LegacyMode::Follow,
                 Course::Orbit { .. } => LegacyMode::Orbit,
+                Course::Warp { .. } => LegacyMode::Warp,
             },
             follow_target: match self.course {
                 Course::Follow { target, .. } | Course::Orbit { target, .. } => IdRef::Valid(target),
@@ -82,6 +92,26 @@ impl Ship {
                 Course::Orbit { distance, .. } => distance,
                 _ => 0.0,
             },
+            warp_state: match self.course {
+                Course::Warp {
+                    raw_destination,
+                    target_point,
+                    stop_distance,
+                    total_distance,
+                    factor,
+                    active,
+                } => Some(WarpState {
+                    effect_stamp: if active { f64::NAN } else { -1.0 },
+                    total_distance,
+                    stop_distance,
+                    warp_speed: Some(factor as f64),
+                    native_command_is_goto: false,
+                    raw_destination: Some(raw_destination),
+                    target_point: Some(target_point),
+                }),
+                _ => None,
+            },
+            pending_warp: matches!(self.course, Course::Warp { active: false, .. }),
             radius: self.spec.radius,
             position: self.position,
             velocity: self.velocity,

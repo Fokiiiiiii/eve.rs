@@ -45,7 +45,7 @@ pub fn unit(a: Vec3) -> Option<Vec3> {
 }
 
 /// How long the ship takes to reach the speed it is asked for, in seconds: its mass times its inertia over the friction of space.
-fn agility_seconds(ship: &Ship) -> f64 {
+pub(crate) fn agility_seconds(ship: &Ship) -> f64 {
     (ship.spec.mass * ship.spec.agility / DESTINY_SPACE_FRICTION).max(0.05)
 }
 
@@ -55,7 +55,7 @@ fn cruise(ship: &Ship) -> f64 {
 }
 
 /// Moves the ship for `seconds` under a thrust that carries it to `cruise` along `direction` (the acceleration is the steady speed over the time it takes).
-fn integrate(ship: &mut Ship, thrust_direction: Vec3, speed: f64, seconds: f64) {
+pub(crate) fn integrate(ship: &mut Ship, thrust_direction: Vec3, speed: f64, seconds: f64) {
     let inertial_mass = ship.spec.mass * ship.spec.agility;
     let thrust = speed / agility_seconds(ship);
     let motion = integrate_carbon_motion(

@@ -69,11 +69,36 @@ public class SimClientTests
         await using var _ = sim;
         await using var __ = client;
 
-        Assert.Equal(new DockReply(true, 134351527136350000, null), await Within(client.DockAsync(7, 60015249)));
-        Assert.Equal(new DockReply(false, 0, "DOCKING_APPROACH_REQUIRED"), await Within(client.DockAsync(8, 60015249)));
-        Assert.Equal(new DockReply(false, 0, null, 15974.6), await Within(client.DockAsync(9, 60015249)));
+        Assert.Equal(new CommandReply(true, 134351527136350000, null), await Within(client.CommandAsync(7, SimCommands.Dock, [60015249])));
+        Assert.Equal(new CommandReply(false, 0, "DOCKING_APPROACH_REQUIRED"), await Within(client.CommandAsync(8, SimCommands.Dock, [60015249])));
+        Assert.Equal(new CommandReply(false, 0, null, 15974.6), await Within(client.CommandAsync(9, SimCommands.Dock, [60015249])));
         var dock = sim.HeardNow().OfType<SimCommand>().First();
         Assert.Equal([60015249d], dock.Args);
+    }
+
+    [Fact]
+    public async Task A_command_that_is_waited_for_is_answered_by_its_own_code_and_a_movement_that_is_not_is_handed_on()
+    {
+        var (sim, client) = await ConnectedAsync(message => message switch
+        {
+            SimCommand { Code: SimCommands.WarpTo, SessionId: 7 } c => [new SimAccepted(c.SessionId, c.Code, 5)],
+            SimCommand { Code: SimCommands.WarpTo } c => [new SimRefused(c.SessionId, c.Code, "TARGET_NOT_FOUND")],
+            SimCommand { Code: SimCommands.Stop } c => [new SimAccepted(c.SessionId, c.Code, 6)],
+            _ => [],
+        });
+        await using var _ = sim;
+        await using var __ = client;
+        var heard = new List<SimMessage>();
+        client.Received += heard.Add;
+
+        Assert.Equal(new CommandReply(true, 5, null), await Within(client.CommandAsync(7, SimCommands.WarpTo, [40491233, 0])));
+        Assert.Equal(new CommandReply(false, 0, "TARGET_NOT_FOUND"), await Within(client.CommandAsync(8, SimCommands.WarpTo, [1, 0])));
+        Assert.Equal([40491233d, 0d], sim.HeardNow().OfType<SimCommand>().First().Args);
+
+        // a stop nobody waits for: its acceptance reaches the listener; a waited one does not
+        client.Command(7, SimCommands.Stop);
+        await Until(() => heard.Count == 1);
+        Assert.Equal(new SimAccepted(7, SimCommands.Stop, 6), heard.Single());
     }
 
     [Fact]
@@ -129,7 +154,7 @@ public class SimClientTests
         client.Start();
         Assert.False(client.IsConnected);
         await Assert.ThrowsAsync<SimUnavailableException>(() => client.EnterAsync(Enter()));
-        await Assert.ThrowsAsync<SimUnavailableException>(() => client.DockAsync(7, 1));
+        await Assert.ThrowsAsync<SimUnavailableException>(() => client.CommandAsync(7, SimCommands.Dock, [1]));
         client.Bind(7); // said to nobody: nothing happens
     }
 

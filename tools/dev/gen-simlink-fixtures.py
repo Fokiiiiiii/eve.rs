@@ -115,6 +115,8 @@ valid = [
      "args": [40009076.0, 5000.0]},
     {"name": "align command", "kind": "Command", "sessionId": "1790646377000015", "command": 7,
      "args": [60015249.0]},
+    {"name": "warp command", "kind": "Command", "sessionId": "1790646377000015", "command": 8,
+     "args": [40491233.0, 30000.0]},
     {"name": "new ship numbers", "kind": "ShipSpec", "sessionId": "1790646377000015", "ship": IBIS},
     {"name": "notification", "kind": "Notify", "sessionId": "1790646377000015", "notification": "OnSetTimeDilation",
      "idType": "clientID", "args": "7e0000000004010100"},

@@ -53,7 +53,9 @@ target that is not there) with what the reference answers and sends, and `approa
 dock (the reference makes it follow the station, gives the user error `DockingApproach`, does not dock it by itself, and docks it when asked
 again in range; the file also holds the ship's distance from the station's surface every few seconds of the approach). Each is recorded
 with no other player in the system: another ship would appear in the balls.
-`--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement` records one and leaves the others as they are.
+`warp.json` a ship warping to a planet two AU away (the update that starts the warp, every event until the ship is at rest with the seconds each arrived
+at, the ship's distance to the warp's end every three seconds, and the messages for a warp that cannot be done).
+`--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp` records one and leaves the others as they are.
 
 `fixtures/simlink/messages.json` is not from the reference: it is what `tools/dev/gen-simlink-fixtures.py` writes, the golden
 frames of the link between the service host and the simulation (`docs/adr/0007`), a third writer of the format that the Rust

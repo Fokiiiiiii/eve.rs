@@ -57,6 +57,7 @@ public static class SimCommands
     public const byte FollowBall = 5;
     public const byte Orbit = 6;
     public const byte AlignTo = 7;
+    public const byte WarpTo = 8;
 }
 
 public sealed record SimCommand(ulong SessionId, byte Code, IReadOnlyList<double> Args) : SimMessage;

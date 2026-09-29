@@ -141,12 +141,12 @@ internal sealed class Rig : IAsyncDisposable
 
     public Task<PyValue> BeyonceCallAsync(ClientSession session, string method, string? bound = null, params PyValue[] args) => CallAsync(Beyonce, session, method, bound, args);
 
-    /// <summary>A call of <c>beyonce</c> with keyword arguments (no positional ones).</summary>
-    public async Task<PyValue> BeyonceCallWithAsync(ClientSession session, string method, string bound, params (string Name, PyValue Value)[] kwargs) =>
+    /// <summary>A call of <c>beyonce</c> with keyword arguments.</summary>
+    public async Task<PyValue> BeyonceCallWithAsync(ClientSession session, string method, string bound, PyValue[] args, params (string Name, PyValue Value)[] kwargs) =>
         await ((IService)Beyonce).CallAsync(new ServiceCall
         {
             Method = method,
-            Args = [],
+            Args = args,
             Kwargs = new PyDict([.. kwargs.Select(k => new KeyValuePair<PyValue, PyValue>(new PyStr(k.Name), k.Value))]),
             Session = session,
             CallId = new PyInt(1),

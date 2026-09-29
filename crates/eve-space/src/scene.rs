@@ -9,9 +9,11 @@ use std::sync::Arc;
 use eve_destiny::Vec3;
 use eve_marshal::Value;
 
+use crate::flight::{Flight, Milestone};
 use crate::motion::{self, Target};
 use crate::payload;
 use crate::ship::{Course, Ship, ShipSpec};
+use crate::warp;
 use crate::wire::{filetime, id, int, real, tuple, vector};
 use crate::world::{BodyKind, SolarSystem};
 
@@ -56,6 +58,11 @@ pub enum Command {
     AlignTo {
         target_id: i64,
     },
+    /// Warp to a body, ending `range` metres off it (further, for bodies that keep ships at a distance).
+    WarpTo {
+        target_id: i64,
+        range: f64,
+    },
 }
 
 impl Command {
@@ -69,6 +76,7 @@ impl Command {
             Self::FollowBall { .. } => 5,
             Self::Orbit { .. } => 6,
             Self::AlignTo { .. } => 7,
+            Self::WarpTo { .. } => 8,
         }
     }
 }
@@ -115,6 +123,8 @@ struct Pilot {
     /// The moment the ship's position and velocity are those of.
     settled_at: i64,
     docking: Option<PendingDock>,
+    /// The warp the ship is in, from the command until it is at rest again.
+    flight: Option<Flight>,
 }
 
 /// One solar system with the ships in it.
@@ -123,6 +133,8 @@ pub struct Scene {
     system: Arc<SolarSystem>,
     pilots: BTreeMap<SessionId, Pilot>,
     next_stamp: u32,
+    /// What happened to ships while their motion was worked out (a ship dropped out of warp), to be told with the next call.
+    backlog: Vec<Out>,
 }
 
 /// The destiny stamp of a moment: whole seconds of the Unix clock.
@@ -132,7 +144,7 @@ pub fn stamp_at(now: i64) -> u32 {
 
 impl Scene {
     pub fn new(system: Arc<SolarSystem>) -> Self {
-        Self { system, pilots: BTreeMap::new(), next_stamp: 0 }
+        Self { system, pilots: BTreeMap::new(), next_stamp: 0, backlog: Vec::new() }
     }
 
     pub fn system(&self) -> &SolarSystem {
@@ -149,9 +161,9 @@ impl Scene {
 
     /// The ship of a session, as it is at `now`.
     pub fn ship(&mut self, session: SessionId, now: i64) -> Option<&Ship> {
-        let pilot = self.pilots.get_mut(&session)?;
-        settle(pilot, &self.system, now);
-        Some(&pilot.ship)
+        self.pilots.contains_key(&session).then_some(())?;
+        self.settle_pilot(session, now);
+        self.pilots.get(&session).map(|pilot| &pilot.ship)
     }
 
     /// The next stamp a change can carry: one after the last, but never more than two ahead of the clock, and never behind it.
@@ -193,7 +205,7 @@ impl Scene {
             course: Course::Goto,
             spec,
         };
-        self.pilots.insert(session, Pilot { ship, settled_at: now, docking: None });
+        self.pilots.insert(session, Pilot { ship, settled_at: now, docking: None, flight: None });
         Ok(())
     }
 
@@ -208,11 +220,14 @@ impl Scene {
 
     /// The client bound the system's ballpark: it is told the time, and given its ship and then everything around it.
     pub fn bind(&mut self, session: SessionId, now: i64) -> Vec<Out> {
+        if !self.pilots.contains_key(&session) {
+            return Vec::new();
+        }
+        self.settle_pilot(session, now);
         let first = self.next_stamp(now);
         let second = self.next_stamp(now);
         let system = Arc::clone(&self.system);
-        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
-        settle(pilot, &system, now);
+        let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
         let ship = &pilot.ship;
         let ship_id = id(ship.spec.ship_id);
         let heading =
@@ -220,7 +235,7 @@ impl Scene {
 
         let Ok(added) = payload::add_ship(first, ship, now) else { return Vec::new() };
         let Ok(state) = payload::set_state(second, &system, ship, now) else { return Vec::new() };
-        vec![
+        let told = vec![
             Self::notify(session, "OnSetTimeDilation", vec![int(1), int(1), int(100_000_000)]),
             Self::notify(session, "DoSimClockRebase", vec![tuple([filetime(now), filetime(now)])]),
             Self::notify(session, "DoDestinyUpdate", payload::destiny_update([added], true)),
@@ -259,21 +274,26 @@ impl Scene {
                     false,
                 ),
             ),
-        ]
+        ];
+        self.with_backlog(told)
     }
 
     /// The client asked for the state again (`UpdateStateRequest`): every ball as it is now.
     pub fn update_state(&mut self, session: SessionId, now: i64) -> Vec<Out> {
+        if !self.pilots.contains_key(&session) {
+            return Vec::new();
+        }
+        self.settle_pilot(session, now);
         let stamp = self.next_stamp(now);
         let system = Arc::clone(&self.system);
-        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
-        settle(pilot, &system, now);
-        match payload::set_state(stamp, &system, &pilot.ship, now) {
+        let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
+        let told = match payload::set_state(stamp, &system, &pilot.ship, now) {
             Ok(state) => {
                 vec![Self::notify(session, "DoDestinyUpdate", payload::destiny_update([state], false))]
             }
             Err(_) => Vec::new(),
-        }
+        };
+        self.with_backlog(told)
     }
 
     /// A command of the player's. Movement is applied from `now`; what the client is told is one update at the next stamp (none when the
@@ -283,10 +303,151 @@ impl Scene {
         if !self.pilots.contains_key(&session) {
             return vec![Out::Refused { session, command: code, reason: "NO_SHIP_IN_SPACE" }];
         }
-        if let Command::Dock { station_id } = command {
-            return self.dock(session, station_id, now);
+        self.settle_pilot(session, now);
+        let told = match command {
+            Command::Dock { station_id } => self.dock(session, station_id, now),
+            Command::WarpTo { target_id, range } => self.warp_to(session, target_id, range, now),
+            other => self.steer_pilot(session, other, now),
+        };
+        self.with_backlog(told)
+    }
+
+    /// Tells what happened while ships were moved on, then `told`.
+    fn with_backlog(&mut self, told: Vec<Out>) -> Vec<Out> {
+        let mut out = std::mem::take(&mut self.backlog);
+        out.extend(told);
+        out
+    }
+
+    /// Brings a ship's motion to `now`; what happens to it on the way (a warp's dropout, coming to rest) is told with the next call.
+    fn settle_pilot(&mut self, session: SessionId, now: i64) {
+        let system = Arc::clone(&self.system);
+        let Some(pilot) = self.pilots.get_mut(&session) else { return };
+        let milestones = settle(pilot, &system, now);
+        for milestone in milestones {
+            let told = self.tell(session, milestone);
+            self.backlog.extend(told);
         }
-        self.steer_pilot(session, command, now)
+    }
+
+    /// What the client is told of a milestone of a warp.
+    fn tell(&mut self, session: SessionId, milestone: Milestone) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
+        let ship_id = id(pilot.ship.spec.ship_id);
+        match milestone {
+            Milestone::Dropout { at } => {
+                // the ship is set massless again, told twice: at the stamp and two on
+                let stamp = self.next_stamp(at);
+                let update = |stamp: u32| {
+                    let action = payload::action(stamp, "SetBallMassive", [ship_id.clone(), int(0)]);
+                    Self::notify(session, "DoDestinyUpdate", payload::destiny_update([action], false))
+                };
+                vec![update(stamp), update(stamp + 2)]
+            }
+            Milestone::Rest { at, position, velocity } => {
+                let stamp = self.next_stamp(at);
+                let actions = [
+                    payload::action(
+                        stamp,
+                        "SetBallPosition",
+                        with_id(&ship_id, vector(position.x, position.y, position.z)),
+                    ),
+                    payload::action(
+                        stamp,
+                        "SetBallVelocity",
+                        with_id(&ship_id, vector(velocity.x, velocity.y, velocity.z)),
+                    ),
+                    payload::action(stamp, "SetSpeedFraction", [ship_id.clone(), real(0.0)]),
+                    payload::action(stamp, "Stop", [ship_id]),
+                ];
+                vec![Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false))]
+            }
+        }
+    }
+
+    /// `CmdWarpToStuff`: the ship lines up with where it is to end and goes into warp. The client is told at once (`WarpTo` with the point and
+    /// the warp factor); it works out the warp itself, and this side keeps its own copy of it to know where the ship is.
+    fn warp_to(&mut self, session: SessionId, target_id: i64, range: f64, now: i64) -> Vec<Out> {
+        let code = Command::WarpTo { target_id, range }.code();
+        let refused = |reason: &'static str| vec![Out::Refused { session, command: code, reason }];
+        let system = Arc::clone(&self.system);
+        let Some(pilot) = self.pilots.get(&session) else { return refused("NO_SHIP_IN_SPACE") };
+        if pilot.docking.is_some() {
+            return refused("DOCKING");
+        }
+        if pilot.flight.is_some() {
+            return refused("IN_WARP");
+        }
+        let Some(body) = system.body(target_id) else { return refused("TARGET_NOT_FOUND") };
+        let ship = &pilot.ship;
+        let (raw, stop) = match warp::warp_in_point(body) {
+            Some(point) => (point, range.max(0.0)),
+            None => (body.position, warp::stop_distance(body, ship.spec.radius, range)),
+        };
+        let toward = motion::unit(Vec3::new(
+            raw.x - ship.position.x,
+            raw.y - ship.position.y,
+            raw.z - ship.position.z,
+        ))
+        .unwrap_or(ship.direction);
+        let end = Vec3::new(raw.x - toward.x * stop, raw.y - toward.y * stop, raw.z - toward.z * stop);
+        let total = ((end.x - ship.position.x).powi(2)
+            + (end.y - ship.position.y).powi(2)
+            + (end.z - ship.position.z).powi(2))
+        .sqrt();
+        if total < warp::MINIMUM_WARP_DISTANCE {
+            return refused("WARP_DISTANCE_TOO_CLOSE");
+        }
+
+        let profile = warp::Profile::new(total, ship.spec.warp_speed_au, ship.spec.max_velocity);
+        let ship_id = id(ship.spec.ship_id);
+        let boosted = ship.spec.max_velocity * warp::START_SPEED_SCALE;
+        let stamp = self.next_stamp(now);
+        let pilot = self.pilots.get_mut(&session).expect("checked above");
+        pilot.ship.course = Course::Warp {
+            raw_destination: raw,
+            target_point: end,
+            stop_distance: stop,
+            total_distance: total,
+            factor: profile.factor,
+            active: false,
+        };
+        pilot.ship.speed_fraction = 1.0;
+        pilot.ship.direction = toward;
+        pilot.flight = Some(Flight::begin(now, raw, stop));
+        let actions = [
+            payload::action(stamp, "SetMaxSpeed", [ship_id.clone(), real(boosted)]),
+            payload::action(
+                stamp,
+                "WarpTo",
+                [ship_id.clone(), real(raw.x), real(raw.y), real(raw.z), real(stop), int(profile.factor)],
+            ),
+            payload::action(
+                stamp,
+                "OnSpecialFX",
+                [
+                    ship_id.clone(),
+                    Value::None,
+                    Value::None,
+                    Value::None,
+                    Value::None,
+                    Value::Str("effects.Warping".into()),
+                    int(0),
+                    int(1),
+                    int(0),
+                    int(-1),
+                    Value::None,
+                    Value::None,
+                    int(0),
+                    Value::None,
+                ],
+            ),
+            payload::action(stamp, "SetSpeedFraction", [ship_id, real(1.0)]),
+        ];
+        vec![
+            Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false)),
+            Out::Accepted { session, command: code, at: now },
+        ]
     }
 
     /// A movement command of a ship that is in the scene (settled first, at `now`).
@@ -298,7 +459,10 @@ impl Scene {
             // a ship that is docking follows no orders
             return vec![Out::Refused { session, command: code, reason: "DOCKING" }];
         }
-        settle(pilot, &system, now);
+        if pilot.flight.is_some() {
+            // a ship in warp, or lining up for it, follows none either
+            return vec![Out::Refused { session, command: code, reason: "IN_WARP" }];
+        }
         let ship_id = id(pilot.ship.spec.ship_id);
         match steer(&mut pilot.ship, &system, command) {
             Steering::Refused(reason) => vec![Out::Refused { session, command: code, reason }],
@@ -324,12 +488,13 @@ impl Scene {
         else {
             return vec![Out::Refused { session, command: code, reason: "STATION_NOT_FOUND" }];
         };
-        let system = Arc::clone(&self.system);
-        let pilot = self.pilots.get_mut(&session).expect("the caller checked");
+        let pilot = self.pilots.get(&session).expect("the caller checked");
         if let Some(pending) = pilot.docking.as_ref().filter(|p| p.station_id == station_id) {
             return vec![Out::Accepted { session, command: code, at: pending.accepted_at }];
         }
-        settle(pilot, &system, now);
+        if pilot.flight.is_some() {
+            return vec![Out::Refused { session, command: code, reason: "IN_WARP" }];
+        }
         let distance = surface_distance(&pilot.ship, station.position, station.radius);
         if distance > DOCKING_RANGE {
             return self.approach(session, station_id, distance, now);
@@ -381,10 +546,12 @@ impl Scene {
 
     /// The numbers of a ship in space changed (a skill finished, a module went on): the client is told the ones that differ.
     pub fn respec(&mut self, session: SessionId, spec: ShipSpec, now: i64) -> Vec<Out> {
+        if !self.pilots.contains_key(&session) {
+            return Vec::new();
+        }
+        self.settle_pilot(session, now);
         let stamp = self.next_stamp(now);
-        let system = Arc::clone(&self.system);
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
-        settle(pilot, &system, now);
         let old = std::mem::replace(&mut pilot.ship.spec, spec);
         let new = &pilot.ship.spec;
         let ship_id = id(new.ship_id);
@@ -398,14 +565,25 @@ impl Scene {
         if new.max_velocity != old.max_velocity {
             actions.push(payload::action(stamp, "SetMaxSpeed", [ship_id, real(new.max_velocity)]));
         }
-        if actions.is_empty() {
-            return Vec::new();
-        }
-        vec![Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false))]
+        let told = if actions.is_empty() {
+            Vec::new()
+        } else {
+            vec![Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false))]
+        };
+        self.with_backlog(told)
     }
 
     /// Finishes what is due at `now`: a docking that has taken its time takes the ship out of space.
     pub fn poll(&mut self, now: i64) -> Vec<Out> {
+        let warping: Vec<SessionId> = self
+            .pilots
+            .iter()
+            .filter(|(_, pilot)| pilot.flight.is_some())
+            .map(|(session, _)| *session)
+            .collect();
+        for session in warping {
+            self.settle_pilot(session, now);
+        }
         let due: Vec<(SessionId, i64)> = self
             .pilots
             .iter()
@@ -417,12 +595,14 @@ impl Scene {
                     .map(|d| (*session, d.station_id))
             })
             .collect();
-        due.into_iter()
+        let docked: Vec<Out> = due
+            .into_iter()
             .map(|(session, station_id)| {
                 self.pilots.remove(&session);
                 Out::Docked { session, station_id }
             })
-            .collect()
+            .collect();
+        self.with_backlog(docked)
     }
 }
 
@@ -472,19 +652,32 @@ fn surface_distance(ship: &Ship, station: Vec3, station_radius: f64) -> f64 {
 
 /// Brings a ship's position and velocity to `now`: it eases towards the speed it is asked for, the way the client integrates it, and a ship
 /// that follows or orbits a body is steered by where the body is.
-fn settle(pilot: &mut Pilot, system: &SolarSystem, now: i64) {
-    let seconds = (now - pilot.settled_at) as f64 / TICKS_PER_SECOND as f64;
+fn settle(pilot: &mut Pilot, system: &SolarSystem, now: i64) -> Vec<Milestone> {
+    let from = pilot.settled_at;
     pilot.settled_at = now;
+    let seconds = (now - from) as f64 / TICKS_PER_SECOND as f64;
     if seconds <= 0.0 {
-        return;
+        return Vec::new();
+    }
+    if let Some(flight) = pilot.flight.as_mut() {
+        let advance = flight.advance(&mut pilot.ship, from, now);
+        if let Some(rested) = advance.finished_at {
+            // the warp is over: what is left of the time is a stopped ship's
+            pilot.flight = None;
+            pilot.ship.course = Course::Stop;
+            pilot.ship.speed_fraction = 0.0;
+            motion::advance(&mut pilot.ship, (now - rested) as f64 / TICKS_PER_SECOND as f64, None);
+        }
+        return advance.milestones;
     }
     let target = match pilot.ship.course {
         Course::Follow { target, .. } | Course::Orbit { target, .. } => {
             system.body(target).map(|body| Target { position: body.position, radius: body.radius })
         }
-        Course::Goto | Course::Stop => None,
+        Course::Goto | Course::Stop | Course::Warp { .. } => None,
     };
     motion::advance(&mut pilot.ship, seconds, target);
+    Vec::new()
 }
 
 /// What a movement command comes to once the ship has looked at it.
@@ -503,6 +696,7 @@ fn heading_name(ship: &Ship) -> &'static str {
         Course::Stop => "Stop",
         Course::Follow { .. } => "FollowBall",
         Course::Orbit { .. } => "Orbit",
+        Course::Warp { .. } => "WarpTo",
     }
 }
 
@@ -516,6 +710,9 @@ fn heading_args(ship: &Ship) -> Vec<Value> {
         Course::Stop => vec![ship_id],
         Course::Follow { target, range } => vec![ship_id, id(target), int(whole(range))],
         Course::Orbit { target, distance } => vec![ship_id, id(target), int(whole(distance))],
+        Course::Warp { raw_destination: r, stop_distance, factor, .. } => {
+            vec![ship_id, real(r.x), real(r.y), real(r.z), real(stop_distance), int(factor)]
+        }
     }
 }
 
@@ -574,7 +771,7 @@ fn steer(ship: &mut Ship, system: &SolarSystem, command: Command) -> Steering {
             Steering::Actions(actions)
         }
         Command::Stop => stop(ship),
-        Command::Dock { .. } => Steering::Refused("NOT_A_MOVEMENT"),
+        Command::Dock { .. } | Command::WarpTo { .. } => Steering::Refused("NOT_A_MOVEMENT"),
         Command::FollowBall { target_id, range } => {
             if !range.is_finite() {
                 return Steering::Refused("BAD_RANGE");
@@ -1132,6 +1329,160 @@ pub(crate) mod tests {
         assert_eq!(
             scene.ship(SESSION, NOON + seconds(1)).unwrap().course,
             Course::Orbit { target: STATION, distance: 0.0 }
+        );
+    }
+
+    const PLANET: i64 = 40_000_001;
+
+    /// The test system with a planet 0.3 AU from the star, far from the station.
+    fn scene_with_a_planet() -> Scene {
+        let mut world = (*system()).clone();
+        world.bodies.push(Body {
+            id: PLANET,
+            type_id: 2015,
+            group_id: 7,
+            category_id: 2,
+            owner_id: 0,
+            name: "Testing III".to_string(),
+            kind: BodyKind::Planet,
+            position: Vec3::new(45_000_000_000.0, 0.0, 20_000_000_000.0),
+            radius: 6_000_000.0,
+            graphic_id: None,
+            detail: Detail::None,
+        });
+        let mut scene = Scene::new(Arc::new(world));
+        scene.undock(SESSION, spec(), STATION, NOON).unwrap();
+        scene
+    }
+
+    #[test]
+    fn a_warp_to_what_is_not_there_or_too_near_is_refused() {
+        let mut scene = scene_with_a_planet();
+        let refused = |reason| vec![Out::Refused { session: SESSION, command: 8, reason }];
+        assert_eq!(
+            scene.command(SESSION, Command::WarpTo { target_id: 42, range: 0.0 }, NOON),
+            refused("TARGET_NOT_FOUND")
+        );
+        // the station is a thousand kilometres away; 100 km off it, a warp there would end within 150 km of the ship
+        scene.pilots.get_mut(&SESSION).unwrap().ship.position = Vec3::new(1_000_000.0 - 100_000.0, 0.0, 0.0);
+        assert_eq!(
+            scene.command(SESSION, Command::WarpTo { target_id: STATION, range: 0.0 }, NOON),
+            refused("WARP_DISTANCE_TOO_CLOSE")
+        );
+        // and nothing was set going
+        assert!(!matches!(scene.ship(SESSION, NOON).unwrap().course, Course::Warp { .. }));
+    }
+
+    #[test]
+    fn a_ship_lining_up_for_warp_or_in_it_takes_no_orders() {
+        let mut scene = scene_with_a_planet();
+        let out = scene.command(SESSION, Command::WarpTo { target_id: PLANET, range: 0.0 }, NOON);
+        assert_eq!(action_names(&out[0]), ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"]);
+        for command in [
+            Command::Stop,
+            Command::SetSpeedFraction(0.5),
+            Command::GotoDirection(Vec3::new(0.0, 1.0, 0.0)),
+            Command::Orbit { target_id: STATION, distance: 5_000.0 },
+            Command::Dock { station_id: STATION },
+            Command::WarpTo { target_id: PLANET, range: 0.0 },
+        ] {
+            let told = scene.command(SESSION, command, NOON + seconds(2));
+            assert_eq!(
+                told,
+                [Out::Refused { session: SESSION, command: command.code(), reason: "IN_WARP" }],
+                "{command:?}"
+            );
+        }
+        // it is told to the client as a ball that is turning to warp, and, once in warp, as one in warp
+        let bound = scene.bind(SESSION, NOON + seconds(3));
+        assert_eq!(action_names(&bound[3]).last().map(String::as_str), Some("WarpTo"));
+    }
+
+    #[test]
+    fn a_warp_ends_with_the_ship_at_rest_by_the_planet_and_the_pilot_may_order_it_about_again() {
+        let mut scene = scene_with_a_planet();
+        let start = scene.ship(SESSION, NOON).unwrap().position;
+        scene.command(SESSION, Command::WarpTo { target_id: PLANET, range: 0.0 }, NOON);
+        let mut told = Vec::new();
+        let mut t = NOON;
+        while t < NOON + seconds(200) {
+            t += 2_500_000;
+            told.extend(scene.poll(t));
+        }
+        let names: Vec<String> =
+            told.iter().filter(|o| matches!(o, Out::Notify { .. })).flat_map(action_names).collect();
+        assert_eq!(
+            names,
+            [
+                "SetBallMassive",
+                "SetBallMassive",
+                "SetBallPosition",
+                "SetBallVelocity",
+                "SetSpeedFraction",
+                "Stop"
+            ]
+        );
+        let ship = scene.ship(SESSION, t).unwrap().clone();
+        assert_eq!(ship.course, Course::Stop);
+        let point = crate::warp::warp_in_point(scene.system().body(PLANET).unwrap()).unwrap();
+        let apart = ((ship.position.x - point.x).powi(2)
+            + (ship.position.y - point.y).powi(2)
+            + (ship.position.z - point.z).powi(2))
+        .sqrt();
+        assert!(apart < 2_000.0, "{apart} m from the point the client warps in at");
+        assert!(
+            ((point.x - start.x).powi(2) + (point.z - start.z).powi(2)).sqrt() > 1.0e10,
+            "it went a long way"
+        );
+        // it takes orders again, and it is no longer in warp for another warp: the planet is where it stands
+        let told = scene.command(SESSION, Command::SetSpeedFraction(1.0), t);
+        assert_eq!(action_names(&told[0]), ["SetSpeedFraction"]);
+        let told = scene.command(SESSION, Command::WarpTo { target_id: PLANET, range: 0.0 }, t + seconds(1));
+        assert_eq!(told, [Out::Refused { session: SESSION, command: 8, reason: "WARP_DISTANCE_TOO_CLOSE" }]);
+    }
+
+    #[test]
+    fn a_ship_that_stands_still_enters_warp_only_when_it_has_speed_enough_and_faces_the_place() {
+        let mut scene = scene_with_a_planet();
+        let planet = scene.system().body(PLANET).unwrap().position;
+        {
+            let ship = &mut scene.pilots.get_mut(&SESSION).unwrap().ship;
+            let toward =
+                Vec3::new(planet.x - ship.position.x, planet.y - ship.position.y, planet.z - ship.position.z);
+            ship.direction = motion::unit(toward).unwrap();
+            ship.velocity = Vec3::ZERO;
+            ship.speed_fraction = 0.0;
+            ship.course = Course::Stop;
+        }
+        scene.command(SESSION, Command::WarpTo { target_id: PLANET, range: 0.0 }, NOON);
+        let entered = |scene: &mut Scene, seconds_after: i64| {
+            matches!(
+                scene.ship(SESSION, NOON + seconds(seconds_after)).unwrap().course,
+                Course::Warp { active: true, .. }
+            )
+        };
+        // its speed builds with the time it takes a ship to get to 75 % (1.39 times its reaction time: about 6.5 s here)
+        assert!(!entered(&mut scene, 3));
+        assert!(!entered(&mut scene, 6));
+        assert!(entered(&mut scene, 8));
+    }
+
+    #[test]
+    fn what_happened_to_a_ship_while_its_motion_was_worked_out_is_told_before_the_answer_to_the_next_call() {
+        let mut scene = scene_with_a_planet();
+        scene.command(SESSION, Command::WarpTo { target_id: PLANET, range: 0.0 }, NOON);
+        // no poll in between: the next call finds the ship at rest and says so first
+        let told = scene.command(SESSION, Command::SetSpeedFraction(1.0), NOON + seconds(600));
+        let names: Vec<Vec<String>> =
+            told.iter().filter(|o| matches!(o, Out::Notify { .. })).map(action_names).collect();
+        assert_eq!(
+            names,
+            [
+                vec!["SetBallMassive"],
+                vec!["SetBallMassive"],
+                vec!["SetBallPosition", "SetBallVelocity", "SetSpeedFraction", "Stop"],
+                vec!["SetSpeedFraction"]
+            ]
         );
     }
 

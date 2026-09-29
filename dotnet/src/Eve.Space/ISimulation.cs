@@ -1,10 +1,10 @@
 namespace Eve.Space;
 
 /// <summary>
-/// The answer to a <c>Dock</c>: accepted (with the time it was), refused (with why), or not possible from here, in which case the ship approaches
-/// the station and <paramref name="ApproachDistance"/> is how far off it was.
+/// The answer to a command the caller waits for (a <c>Dock</c>, a warp): accepted (with the time it was), refused (with why), or, for a dock from
+/// too far, not possible from here: the ship approaches the station and <paramref name="ApproachDistance"/> is how far off it was.
 /// </summary>
-public sealed record DockReply(bool Accepted, long At, string? Reason, double? ApproachDistance = null);
+public sealed record CommandReply(bool Accepted, long At, string? Reason, double? ApproachDistance = null);
 
 /// <summary>The simulation cannot be reached (it is not running, or the link broke).</summary>
 public sealed class SimUnavailableException(string message, Exception? inner = null) : Exception(message, inner);
@@ -33,8 +33,8 @@ public interface ISimulation
     /// <summary>A movement command (<see cref="SimCommands"/>); the simulation answers it with <see cref="SimAccepted"/> or <see cref="SimRefused"/> (<see cref="Received"/>).</summary>
     void Command(ulong sessionId, byte code, params double[] args);
 
-    /// <summary>Asks the ship to dock and waits for the simulation to accept or refuse.</summary>
-    Task<DockReply> DockAsync(ulong sessionId, long stationId, CancellationToken cancellationToken = default);
+    /// <summary>Gives a command that is answered to the caller (a dock, a warp) and waits for the simulation to accept or refuse it.</summary>
+    Task<CommandReply> CommandAsync(ulong sessionId, byte code, double[] args, CancellationToken cancellationToken = default);
 
     void ShipChanged(ulong sessionId, SimShip ship);
 }

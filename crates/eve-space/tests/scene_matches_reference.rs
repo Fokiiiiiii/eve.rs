@@ -132,6 +132,112 @@ fn the_ship_comes_out_where_the_reference_put_its_ship() {
     assert!((0.0..1_000.0).contains(&along), "and {along} m along it");
 }
 
+/// The warp of `warp.json`: the update a `CmdWarpToStuff` was answered with, and when the ship dropped out and came to rest.
+fn recorded_warp() -> (Value, Vec<(f64, String, Value)>) {
+    let recording = fixture("warp.json");
+    let race = recording["races"][0].clone();
+    let warp = step(&race, "warp to a planet").clone();
+    let mut actions = Vec::new();
+    for event in warp["events"].as_array().unwrap() {
+        if event["name"] != "DoDestinyUpdate" {
+            continue;
+        }
+        let at = event["at"].as_f64().unwrap();
+        let updates = &event["args"]["$tuple"][1]["$tuple"][1]["$tuple"][0];
+        for action in updates.as_array().unwrap() {
+            let inner = &action["$tuple"][1]["$tuple"];
+            actions.push((at, inner[0].as_str().unwrap().to_string(), inner[1].clone()));
+        }
+    }
+    (race, actions)
+}
+
+#[test]
+fn a_warp_is_answered_with_the_update_the_reference_sent() {
+    let Some((mut scene, _)) = scene_at(SIM_TIME) else { return };
+    let (race, recorded) = recorded_warp();
+    let planet = race["planetID"].as_i64().unwrap();
+    let now = SIM_TIME + 50_000_000;
+    let out = scene.command(SESSION, Command::WarpTo { target_id: planet, range: 0.0 }, now);
+    assert_eq!(out.len(), 2, "the update and the word that it was accepted");
+    assert_eq!(out[1], Out::Accepted { session: SESSION, command: 8, at: now });
+
+    // the names in order, and every argument after the ship's id equal to the recorded one: the point the client warps in at to the last bit
+    let ours = out_args(&out[0]);
+    let ours = ours["$tuple"][0].as_array().unwrap();
+    let theirs: Vec<&(f64, String, Value)> = recorded.iter().filter(|(at, _, _)| *at == 0.0).collect();
+    let names = |a: &[Value]| {
+        a.iter().map(|x| x["$tuple"][1]["$tuple"][0].as_str().unwrap().to_string()).collect::<Vec<_>>()
+    };
+    assert_eq!(names(ours), theirs.iter().map(|(_, n, _)| n.clone()).collect::<Vec<_>>());
+    for (mine, (_, name, expected)) in ours.iter().zip(&theirs) {
+        let mine = &mine["$tuple"][1]["$tuple"][1]["$tuple"];
+        let expected = expected["$tuple"].as_array().unwrap();
+        assert_eq!(&mine.as_array().unwrap()[1..], &expected[1..], "{name}");
+    }
+}
+
+#[test]
+fn a_warp_drops_out_and_comes_to_rest_when_the_reference_ship_did() {
+    let Some((mut scene, _)) = scene_at(SIM_TIME) else { return };
+    let (race, recorded) = recorded_warp();
+    let planet = race["planetID"].as_i64().unwrap();
+    let now = SIM_TIME + 50_000_000;
+    scene.command(SESSION, Command::WarpTo { target_id: planet, range: 0.0 }, now);
+
+    // the times the recorded ship dropped out (the massless update) and came to rest, from the command
+    let seen =
+        |name: &str| recorded.iter().find(|(at, n, _)| n == name && *at > 1.0).map(|(at, _, _)| *at).unwrap();
+    let (dropout, rest) = (seen("SetBallMassive"), seen("SetBallPosition"));
+    let (mut got_dropout, mut got_rest, mut rest_at) = (None, None, 0.0);
+    let mut outs = Vec::new();
+    for quarter in 1..=(120 * 4) {
+        let t = now + quarter * 2_500_000;
+        let told = scene.poll(t);
+        if !told.is_empty() {
+            let elapsed = (t - now) as f64 / 10_000_000.0;
+            let names: Vec<String> = told
+                .iter()
+                .flat_map(|o| if let Out::Notify { .. } = o { action_names_of(&out_args(o)) } else { vec![] })
+                .collect();
+            if names.contains(&"SetBallMassive".to_string()) && got_dropout.is_none() {
+                got_dropout = Some(elapsed);
+            }
+            if names == ["SetBallPosition", "SetBallVelocity", "SetSpeedFraction", "Stop"] {
+                got_rest = Some(elapsed);
+                rest_at = t as f64;
+            }
+            outs.extend(told);
+        }
+        if got_rest.is_some() {
+            break;
+        }
+    }
+    let (got_dropout, got_rest) = (got_dropout.expect("it dropped out"), got_rest.expect("it came to rest"));
+    assert!(
+        (got_dropout - dropout).abs() < 1.0,
+        "dropped out {got_dropout} s after the command, the reference's ship {dropout} s"
+    );
+    assert!(
+        (got_rest - rest).abs() < 1.5,
+        "came to rest {got_rest} s after the command, the reference's ship {rest} s"
+    );
+    assert!(rest_at > 0.0);
+
+    // the two massless updates are two stamps apart, and the ship is then a stopped ship at the point
+    let massive: Vec<Value> = outs
+        .iter()
+        .filter(|o| matches!(o, Out::Notify { .. }) && action_names_of(&out_args(o)) == ["SetBallMassive"])
+        .map(out_args)
+        .collect();
+    assert_eq!(massive.len(), 2);
+    let stamp = |v: &Value| v["$tuple"][0][0]["$tuple"][0].as_i64().unwrap();
+    assert_eq!(stamp(&massive[1]) - stamp(&massive[0]), 2);
+    let ship = scene.ship(SESSION, now + 200_000_000).unwrap().clone();
+    assert_eq!(ship.course, eve_space::ship::Course::Stop);
+    assert!(ship.velocity.x.abs() + ship.velocity.y.abs() + ship.velocity.z.abs() < 0.05, "at rest");
+}
+
 /// The recorded update a command was answered with and the command it must have been.
 fn recorded_command(recorded: &Recorded, label: &str) -> (i64, Command, Value) {
     let step = step(recorded.race(), label);

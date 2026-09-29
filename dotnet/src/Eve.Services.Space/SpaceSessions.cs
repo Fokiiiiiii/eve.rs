@@ -245,7 +245,7 @@ public sealed class SpaceSessions : IDisposable
         }
         try
         {
-            var reply = await _sim.DockAsync((ulong)session.SessionId, stationId, cancellationToken);
+            var reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.Dock, [stationId], cancellationToken);
             if (reply.Accepted)
             {
                 return new PyLong(reply.At);
@@ -264,6 +264,44 @@ public sealed class SpaceSessions : IDisposable
         return None;
     }
 
+    /// <summary>
+    /// <c>CmdWarpToStuff</c> to a body of the system: the answer is nothing whether the ship goes or not, and a warp that cannot be done is a message
+    /// the client shows ("You cannot warp there right now."). A ship that is in warp already is told so and nothing else happens. The first movement
+    /// the simulation accepts ends the undocking protection, and a warp is one.
+    /// </summary>
+    public async Task<PyValue> WarpAsync(ClientSession session, long targetId, double range, CancellationToken cancellationToken)
+    {
+        if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
+        {
+            return None;
+        }
+        CommandReply reply;
+        try
+        {
+            reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.WarpTo, [targetId, range], cancellationToken);
+        }
+        catch (SimUnavailableException error)
+        {
+            _log?.Invoke($"warp of session {session.SessionId}: {error.Message}");
+            throw Notify("Space is not available right now. Try again in a moment.");
+        }
+        if (reply.Accepted)
+        {
+            EndInvulnerability(pilot);
+            return None;
+        }
+        _log?.Invoke($"warp of session {session.SessionId} to {targetId} refused: {reply.Reason}");
+        if (reply.Reason == "IN_WARP")
+        {
+            TellShipInWarp(session);
+            return None;
+        }
+        throw Notify("You cannot warp there right now.");
+    }
+
+    /// <summary>The message the client shows when it gives an order to a ship that is in warp.</summary>
+    private static void TellShipInWarp(ClientSession session) => session.SendNotification("OnRemoteMessage", "clientID", new PyStr("ShipInWarp"), None);
+
     // ── what the simulation says ─────────────────────────────────────────────
 
     private void OnReceived(SimMessage message)
@@ -280,6 +318,9 @@ public sealed class SpaceSessions : IDisposable
                     break;
                 case SimDocked docked when _pilots.TryGetValue(docked.SessionId, out var pilot):
                     _ = Task.Run(() => FinishDockingAsync(pilot, docked.StationId));
+                    break;
+                case SimRefused { Command: SimCommands.Stop, Reason: "IN_WARP" } inWarp when _pilots.TryGetValue(inWarp.SessionId, out var warping):
+                    TellShipInWarp(warping.Session);
                     break;
                 case SimRefused refused:
                     _log?.Invoke($"the simulation refused command {refused.Command} of session {refused.SessionId}: {refused.Reason}");

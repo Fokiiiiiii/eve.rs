@@ -17,9 +17,11 @@ component is checked against it through recorded golden fixtures.
 | `crates/eve-oracle` | Replays `oracle/fixtures/**` against the crates |
 | `crates/eve-bench` | Throughput benchmarks with ratios against the JS baseline |
 | `oracle/` | Golden fixtures and the JS baseline, generated from EVE.js (see `oracle/PROVENANCE.md`) |
-| `sde/` | Static data export: pinned fetch and integrity record (the data itself is never committed) |
+| `crates/eve-sde` | Reads the static data export (JSONL) and loads it into PostgreSQL 18 (`sde."<table>"(ord, key, doc jsonb)`) |
+| `sde/` | Fetching the static data export: `fetch.sh`, and `lock.json` once fetched (the data itself is never committed) |
 | `dotnet/` | The .NET 10 service layer (not started) |
-| `tools/headless-client` | A small Python client that speaks the wire protocol: handshake, service calls |
+| `tools/headless-client` | A small Python client that speaks the wire protocol (handshake, service calls); replays the same golden fixtures |
+| `tools/dev` | `pg18.sh` (a local PostgreSQL 18), `run-evejs-live.sh` (live tests against the reference server) |
 | `tools/spec-extract` | Scripts that extract facts (names, constants) from a local copy of the client source |
 | `docs/` | Migration status (`NATIVE_MIGRATION.md`) and extracted client-spec facts (`spec/`) |
 
@@ -28,14 +30,18 @@ component is checked against it through recorded golden fixtures.
 ```
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+tools/dev/pg18.sh start                                  # a local PostgreSQL 18 for the database tests
+EVE_PG_URL=$(tools/dev/pg18.sh url) cargo test --workspace
+(cd tools/headless-client && .venv/bin/python -m pytest -q)
 cargo run --release -p eve-bench -- --compare
 ```
 
 ## Data and the client source
 
-- **SDE.** Fetch it with `sde/fetch.sh` into `.cache/sde/` (git-ignored). The build
-  is pinned in `sde/lock.json`; the client build it matches is 24.01 (3396210).
+- **SDE.** `sde/fetch.sh` downloads a build of the official JSONL export into
+  `.cache/sde/` (git-ignored) and records its hash in `sde/lock.json`. The pinned build
+  is 3396210, the one that matches client 24.01. Load it with
+  `cargo run -p eve-sde -- load .cache/sde/eve-online-static-data-3396210-jsonl --pg $(tools/dev/pg18.sh url)`.
 - **Client source.** Some scripts read a local checkout of the decompiled client
   as a read-only reference (`tools/spec-extract`). Its files are CCP's property:
   they are never copied into this repository, and extracted outputs that

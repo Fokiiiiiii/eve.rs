@@ -4,6 +4,7 @@ members = [
     "crates/eve-marshal",
     "crates/eve-destiny",
     "crates/eve-oracle",
+    "crates/eve-sde",
     "crates/eve-bench",
 ]
 

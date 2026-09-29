@@ -1,0 +1,12 @@
+[package]
+name = "eve-sde"
+description = "Reads the EVE static data export (JSONL) and loads it into PostgreSQL 18"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+postgres = { version = "0.19", features = ["with-serde_json-1"] }
+serde_json = "1"

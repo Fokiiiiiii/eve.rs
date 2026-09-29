@@ -59,7 +59,11 @@ at, the ship's distance to the warp's end every three seconds, and the messages 
 the seconds each arrived at, `CmdStargateJump` and everything the client is sent for twelve seconds (the effect and the stop, `OnJumpQueueUpdate`, the objects
 let go, `OnItemChange`, `OnJumpCloakUpdated`, the session change), then the ballpark of the next system bound and its state asked for. The reference draws
 where the ship lands and where it appears at random, so those are bounds, not values (`crates/eve-space/tests/jump_matches_reference.rs`).
-`--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump` records one and leaves the others as they are.
+`others.json` two characters in one system (a watcher in space and an actor that undocks, binds, is given orders, stops, docks, undocks again and warps to a
+planet): for each step what the actor was sent and what the watcher was sent, with the seconds each arrived at. It shows what the reference tells a ship of
+another that comes, moves, warps off and docks (the ball and its numbers in one update, the orders as they are, the ship taken out of view 7 seconds into a
+warp, in a `PackagedAction`) and that the newcomer's first `AddBalls2` lists both ships.
+`--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others` records one and leaves the others as they are.
 
 `fixtures/simlink/messages.json` is not from the reference: it is what `tools/dev/gen-simlink-fixtures.py` writes, the golden
 frames of the link between the service host and the simulation (`docs/adr/0007`), a third writer of the format that the Rust

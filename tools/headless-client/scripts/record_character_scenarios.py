@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record what the EVE.js reference does from login to a session with a character.
 
-    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump]
+    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others]
 
 The recording is the contract for the same path in eve.rs: `tests/test_login_to_character.py` replays the calls
 against any server and compares each answer with what is stored here, by shape, treating per-run values
@@ -840,6 +840,111 @@ def record_jump(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
     who.close()
 
 
+def watch(clients: dict, seconds: float, until=None) -> dict:
+    """The events each client is sent in `seconds` (or until `until(all so far)` is true), with the seconds since the start each arrived at."""
+    started = time.time()
+    out: dict = {name: [] for name in clients}
+    while time.time() - started < seconds:
+        for name, client in clients.items():
+            for event in events_of(client):
+                event["at"] = round(time.time() - started, 2)
+                out[name].append(event)
+        if until is not None and until(out):
+            break
+        time.sleep(0.25)
+    return out
+
+
+def record_others(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """Two characters in one system: what the one that is in space (the watcher, A) is sent while the other (B) undocks, binds the ballpark, is
+    given orders, stops, docks, and at the end undocks again and warps to a planet. Each step holds what B is sent (`events`) and what A is sent
+    (`seen`), with the seconds each arrived at."""
+    def character(name: str):
+        who = rec.login(name)
+        created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"{name} {run}", 1, 1, ancestry[1]))
+        char_id = int(created["ok"])
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
+        hangar = who.call_bound(manager, "GetInventory", 10004)
+        ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+        who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
+        events_of(who)
+        return who, created, char_id, ship_id
+
+    a, a_created, a_char, a_ship = character("Watcher")
+    b, b_created, b_char, b_ship = character("Actor")
+    both = {"events": b, "seen": a}
+    steps: list = []
+
+    a_service = a.call("ship", "MachoBindObject", (60015249, 15), None)
+    b_service = b.call("ship", "MachoBindObject", (60015249, 15), None)
+    watch(both, 0.5)
+    steps.append({"label": "the watcher undocks", "ok": describe(a.call_bound(a_service[0], "Undock", a_ship, False)), **watch(both, 2.0)})
+    a_ballpark = a.call("beyonce", "MachoBindObject", 30100032, None)
+    steps.append({"label": "the watcher binds the ballpark", "ok": describe(a_ballpark), **watch(both, 2.5)})
+
+    def step(label, call, seconds=2.0, until=None):
+        entry = {"label": label}
+        try:
+            entry["ok"] = describe(call())
+        except p.MachoError as error:
+            entry["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+        entry.update(watch(both, seconds, until))
+        return entry
+
+    steps.append(step("the actor undocks", lambda: b.call_bound(b_service[0], "Undock", b_ship, False), 2.5))
+    b_ballpark = None
+
+    def bind():
+        nonlocal b_ballpark
+        b_ballpark = b.call("beyonce", "MachoBindObject", 30100032, None)
+        return b_ballpark
+
+    steps.append(step("the actor binds the ballpark", bind, 3.0))
+    fly = lambda name, *args: (lambda: b.call_bound(b_ballpark[0], name, *args))  # noqa: E731
+    steps.append(step("the actor goes in a direction", fly("CmdGotoDirection", 1.0, 0.0, 0.0), 2.0))
+    steps.append(step("the actor slows down", fly("CmdSetSpeedFraction", 0.5), 2.0))
+    steps.append(step("the actor orbits the station", fly("CmdOrbit", 60015249, 5000), 2.0))
+    steps.append(step("the actor stops", fly("CmdStop"), 2.0))
+    steps.append(step("the watcher asks for the state", lambda: a.call_bound(a_ballpark[0], "UpdateStateRequest"), 2.0))
+    steps.append(step("the actor docks", fly("CmdDock", 60015249), 9.0, until=lambda seen: any(e["name"] == "$sessionchange" for e in seen["events"])))
+    steps.append(step("the watcher asks for the state again", lambda: a.call_bound(a_ballpark[0], "UpdateStateRequest"), 2.0))
+
+    # the actor goes out again and warps to a planet two AU away while the watcher stays where it is
+    b_service = b.call("ship", "MachoBindObject", (60015249, 15), None)
+    watch(both, 0.5)
+    steps.append({"label": "the actor undocks again", "ok": describe(b.call_bound(b_service[0], "Undock", b_ship, False)), **watch(both, 2.5)})
+    b_ballpark = b.call("beyonce", "MachoBindObject", 30100032, None)
+    steps.append({"label": "the actor binds the ballpark again", "ok": describe(b_ballpark), **watch(both, 3.0)})
+    planet = 40491233
+    warp = {"label": "the actor warps to a planet"}
+    try:
+        warp["ok"] = describe(b.call_bound(b_ballpark[0], "CmdWarpToStuff", "item", planet, minRange=0))
+    except p.MachoError as error:
+        warp["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+    started = time.time()
+    seen_both: dict = {"events": [], "seen": []}
+    while time.time() - started < 150:
+        got = watch(both, 3.0)
+        for name in seen_both:
+            for event in got[name]:
+                event["at"] = round(event["at"] + (time.time() - started) - 3.0, 2)
+            seen_both[name] += [e for e in got[name] if not (e["name"] == "DoDestinyUpdate" and dest_names(e) == ["SetState"])]
+        if any("Stop" in dest_names(e) for e in seen_both["events"]):
+            break
+    warp.update(seen_both)
+    steps.append(warp)
+    steps.append(step("the watcher asks for the state after the warp", lambda: a.call_bound(a_ballpark[0], "UpdateStateRequest"), 2.0))
+    race = {"bloodlineID": 1, "raceID": 1, "solarSystemID": 30100032, "stationID": 60015249, "planetID": planet,
+            "watcher": {"create": a_created, "characterID": a_char, "shipID": a_ship}, "actor": {"create": b_created, "characterID": b_char, "shipID": b_ship},
+            "steps": steps}
+    with open(os.path.join(out, "others.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [race]}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+    a.close()
+    b.close()
+
+
 def main() -> int:
     if len(sys.argv) < 4:
         print(__doc__)
@@ -852,10 +957,10 @@ def main() -> int:
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others}
     try:
         for name, record in parts.items():
-            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump")):  # the fast one needs a reference started for it
+            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others")):  # the fast one needs a reference started for it
                 record(rec, out, meta, ancestry, run)
         if only in (None, "stations"):
             record_stations(rec, out, meta, ancestry, run, sde)

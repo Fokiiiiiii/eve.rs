@@ -133,9 +133,10 @@ impl Sim {
         self.scenes.get_mut(system)
     }
 
-    fn enter(&mut self, enter: Enter, now: i64) -> Message {
+    /// An undock: the answer, and the notifications for the ships that are in view of the one that came out.
+    fn enter(&mut self, enter: Enter, now: i64) -> Vec<Message> {
         let Enter { session_id, solar_system_id, how, station_id, ship } = enter;
-        let reply = |outcome| Message::EnterReply { session_id, outcome };
+        let reply = |outcome| vec![Message::EnterReply { session_id, outcome }];
         if how == How::InSpace {
             return reply(Err("NOT_SUPPORTED: only an undock puts a ship in space for now".to_string()));
         }
@@ -148,9 +149,11 @@ impl Sim {
         };
         let scene = self.scenes.entry(solar_system_id).or_insert_with(|| Scene::new(system));
         match scene.undock(session_id, ship, station_id, now) {
-            Ok(()) => {
+            Ok(told) => {
                 self.sessions.insert(session_id, solar_system_id);
-                reply(Ok(()))
+                let mut messages = reply(Ok(()));
+                messages.extend(told.into_iter().map(Self::out_message));
+                messages
             }
             Err(SceneError::UnknownStation(station)) => {
                 if scene.is_empty() {
@@ -176,18 +179,19 @@ impl Sim {
             Message::Hello { .. } => {
                 return Ok(vec![Message::HelloAck { version: PROTOCOL_VERSION, poll_hz: POLL_HZ }]);
             }
-            Message::Enter(enter) => return Ok(vec![self.enter(*enter, now)]),
+            Message::Enter(enter) => return Ok(self.enter(*enter, now)),
             Message::Leave { session_id, why } => {
                 let why = match why {
                     0 => Departure::Docked,
                     1 => Departure::LoggedOff,
                     _ => Departure::Jumped,
                 };
-                if let Some(scene) = self.scene_of(session_id) {
-                    scene.leave(session_id, why);
-                }
+                let told = match self.scene_of(session_id) {
+                    Some(scene) => scene.leave(session_id, why, now).unwrap_or_default(),
+                    None => Vec::new(),
+                };
                 self.forget(session_id);
-                Vec::new()
+                told
             }
             Message::Bind { session_id } => {
                 self.scene_of(session_id).map(|s| s.bind(session_id, now)).unwrap_or_default()
@@ -215,7 +219,8 @@ impl Sim {
         Ok(outs.into_iter().map(Self::out_message).collect())
     }
 
-    /// What is due at `now`: ships that finished docking leave their scenes, and ships whose jump is due arrive in the scene of the other system.
+    /// What is due at `now`: ships that finished docking leave their scenes, ships whose jump is due arrive in the scene of the other system,
+    /// and ships that have come into view or left it are told of one another.
     pub fn poll(&mut self, now: i64) -> Vec<Message> {
         let outs: Vec<Out> = self.scenes.values_mut().flat_map(|scene| scene.poll(now)).collect();
         for out in &outs {
@@ -224,10 +229,14 @@ impl Sim {
             }
         }
         let mut messages: Vec<Message> = outs.into_iter().map(Self::out_message).collect();
-        let travellers: Vec<Traveller> =
-            self.scenes.values_mut().flat_map(|scene| scene.due_jumps(now)).collect();
+        let mut travellers: Vec<Traveller> = Vec::new();
+        for scene in self.scenes.values_mut() {
+            let (gone, told) = scene.due_jumps(now);
+            travellers.extend(gone);
+            messages.extend(told.into_iter().map(Self::out_message));
+        }
         for traveller in travellers {
-            messages.push(self.arrive(traveller, now));
+            messages.extend(self.arrive(traveller, now));
         }
         self.scenes.retain(|_, scene| !scene.is_empty());
         messages
@@ -235,7 +244,7 @@ impl Sim {
 
     /// A ship whose jump is due appears at the gate it leads to (the scene of that system is made when it has none): the host is told it has
     /// gone. A jump that cannot be finished leaves the ship where it was, and the host is told the command was refused.
-    fn arrive(&mut self, traveller: Traveller, now: i64) -> Message {
+    fn arrive(&mut self, traveller: Traveller, now: i64) -> Vec<Message> {
         let (session, from_system, from_gate, to_system, to_gate) = (
             traveller.session,
             traveller.from_system,
@@ -244,21 +253,25 @@ impl Sim {
             traveller.to_gate,
         );
         let failed = |sim: &mut Self, traveller: Traveller| {
-            if let Some(scene) = sim.scenes.get_mut(&traveller.from_system) {
-                scene.restore(traveller);
-            }
-            Message::Refused {
+            let mut messages = vec![Message::Refused {
                 session_id: session,
                 command: 9,
                 reason: "DESTINATION_UNAVAILABLE".to_string(),
+            }];
+            if let Some(scene) = sim.scenes.get_mut(&traveller.from_system) {
+                messages.extend(scene.restore(traveller, now).into_iter().map(Self::out_message));
             }
+            messages
         };
         let Ok(system) = self.universe.system(to_system) else { return failed(self, traveller) };
         let scene = self.scenes.entry(to_system).or_insert_with(|| Scene::new(system));
         match scene.arrive(traveller, now) {
-            Ok(()) => {
+            Ok(told) => {
                 self.sessions.insert(session, to_system);
-                Message::Jumped { session_id: session, from_system, from_gate, to_system, to_gate }
+                let mut messages =
+                    vec![Message::Jumped { session_id: session, from_system, from_gate, to_system, to_gate }];
+                messages.extend(told.into_iter().map(Self::out_message));
+                messages
             }
             Err(traveller) => {
                 if scene.is_empty() {
@@ -604,5 +617,81 @@ mod tests {
             out.iter().flat_map(Message::encode).collect::<Vec<u8>>()
         };
         assert_eq!(run(), run());
+    }
+
+    // ── other ships ──────────────────────────────────────────────────────────
+
+    const OTHER: SessionId = 9;
+
+    fn other_enter() -> Message {
+        let mut ship = spec();
+        ship.ship_id += 4;
+        ship.character_id += 1;
+        Message::Enter(Box::new(Enter {
+            session_id: OTHER,
+            solar_system_id: SYSTEM,
+            how: How::Undock,
+            station_id: STATION,
+            ship,
+        }))
+    }
+
+    fn recipients(messages: &[Message]) -> Vec<(u64, String)> {
+        messages
+            .iter()
+            .map(|m| match m {
+                Message::Notify { session_id, name, .. } => (*session_id, name.clone()),
+                Message::EnterReply { session_id, .. } => (*session_id, "EnterReply".to_string()),
+                Message::Docked { session_id, .. } => (*session_id, "Docked".to_string()),
+                other => panic!("{other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_second_ship_that_undocks_is_answered_and_shown_to_the_first_that_has_bound() {
+        let mut sim = undocked();
+        // the first has not bound: it is told nothing
+        let reply = sim.handle(other_enter(), NOON).unwrap();
+        assert_eq!(recipients(&reply), [(OTHER, "EnterReply".to_string())]);
+        sim.handle(Message::Leave { session_id: OTHER, why: 1 }, NOON).unwrap();
+
+        sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
+        let reply = sim.handle(other_enter(), NOON + SECOND).unwrap();
+        assert_eq!(
+            recipients(&reply),
+            [(OTHER, "EnterReply".to_string()), (SESSION, "DoDestinyUpdate".to_string())],
+            "the answer first, then what the first ship is told"
+        );
+        assert_eq!(sim.ships(), 2);
+    }
+
+    #[test]
+    fn a_ship_that_leaves_is_taken_from_the_view_of_the_ones_that_saw_it() {
+        let mut sim = undocked();
+        sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
+        sim.handle(other_enter(), NOON + SECOND).unwrap();
+        let told = sim.handle(Message::Leave { session_id: OTHER, why: 1 }, NOON + 2 * SECOND).unwrap();
+        assert_eq!(recipients(&told), [(SESSION, "DoDestinyUpdate".to_string())]);
+        assert_eq!(sim.ships(), 1);
+    }
+
+    #[test]
+    fn a_ship_that_has_docked_is_taken_from_the_view_of_the_others_by_the_poll() {
+        let mut sim = undocked();
+        sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
+        sim.handle(other_enter(), NOON + SECOND).unwrap();
+        sim.handle(Message::Bind { session_id: OTHER }, NOON + SECOND).unwrap();
+        sim.handle(
+            Message::Command { session_id: OTHER, command: 4, args: vec![STATION as f64] },
+            NOON + 2 * SECOND,
+        )
+        .unwrap();
+        let gone = sim.poll(NOON + 6 * SECOND);
+        assert_eq!(
+            recipients(&gone),
+            [(OTHER, "Docked".to_string()), (SESSION, "DoDestinyUpdate".to_string())]
+        );
+        assert_eq!(sim.ships(), 1, "the first ship is still there");
     }
 }

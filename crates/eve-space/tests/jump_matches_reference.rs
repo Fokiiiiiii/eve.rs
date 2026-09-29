@@ -182,8 +182,8 @@ fn a_jump_is_told_as_the_reference_told_it_and_the_ship_leaves_when_the_referenc
     let recorded_change = events_named(jump, "$sessionchange")[0]["at"].as_f64().unwrap();
     let ours_at = 4.0;
     assert!((recorded_change - ours_at).abs() < 1.0, "recorded {recorded_change} s, ours {ours_at} s");
-    assert!(scene.due_jumps(t + 4 * SECOND - 1).is_empty());
-    assert_eq!(scene.due_jumps(t + 4 * SECOND).len(), 1);
+    assert!(scene.due_jumps(t + 4 * SECOND - 1).0.is_empty());
+    assert_eq!(scene.due_jumps(t + 4 * SECOND).0.len(), 1);
 }
 
 #[test]
@@ -191,7 +191,7 @@ fn the_ship_that_has_jumped_is_bound_in_the_other_system_as_the_reference_bound_
     let Some(r) = recorded() else { return };
     let (mut scene, t) = by_the_gate(&r);
     scene.command(SESSION, Command::Jump { gate_id: GATE, destination_gate: ARRIVAL_GATE }, t);
-    let traveller = scene.due_jumps(t + 4 * SECOND).pop().unwrap();
+    let traveller = scene.due_jumps(t + 4 * SECOND).0.pop().unwrap();
     let mut there = Scene::new(Arc::clone(&r.destination));
     let arrived = t + 5 * SECOND;
     there.arrive(traveller, arrived).unwrap();

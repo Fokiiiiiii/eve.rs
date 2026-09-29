@@ -46,9 +46,29 @@ fn ship_dict(ship: &Ship) -> Value {
 
 /// `AddBalls2` for the ship alone: the buffer with its ball, and the slim item with the damage state.
 pub fn add_ship(stamp: u32, ship: &Ship, now: i64) -> Result<Value, BallError> {
-    let buffer = state_buffer(ADD_BALLS, stamp, &[ship.ball()])?;
-    let extra = tuple([ship_dict(ship), damage_state(ship.spec.shield_recharge_ms / 5.0, now)]);
-    Ok(action(stamp, "AddBalls2", [tuple([buffer, list([extra])])]))
+    add_ships(stamp, &[ship], now)
+}
+
+/// `AddBalls2` for several ships: the buffer with their balls, and their slim items with the damage state of each, in the order given.
+pub fn add_ships(stamp: u32, ships: &[&Ship], now: i64) -> Result<Value, BallError> {
+    let balls: Vec<BallEntity> = ships.iter().map(|ship| ship.ball()).collect();
+    let buffer = state_buffer(ADD_BALLS, stamp, &balls)?;
+    let extras = ships
+        .iter()
+        .map(|ship| tuple([ship_dict(ship), damage_state(ship.spec.shield_recharge_ms / 5.0, now)]));
+    Ok(action(stamp, "AddBalls2", [tuple([buffer, list(extras)])]))
+}
+
+/// `RemoveBalls`: the balls of these ships are gone.
+pub fn remove_ships(stamp: u32, ship_ids: impl IntoIterator<Item = i64>) -> Value {
+    action(stamp, "RemoveBalls", [list(ship_ids.into_iter().map(id))])
+}
+
+/// The same removal as the reference sends it while a ship is warping away or in: inside a `PackagedAction`, the action marshalled whole.
+pub fn remove_ships_packaged(stamp: u32, ship_ids: impl IntoIterator<Item = i64>) -> Value {
+    let inner =
+        eve_marshal::encode(&tuple([remove_ships(stamp, ship_ids)])).expect("the sim's own values encode");
+    tuple([id(i64::from(stamp)), tuple([word("PackagedAction"), Value::Buffer(inner.into())])])
 }
 
 fn rigid_ball(system: &SolarSystem, index: usize) -> BallEntity {
@@ -73,10 +93,17 @@ fn drone_state() -> Value {
     slim::rowset(&columns, [])
 }
 
-/// `SetState`: every ball of the system and the ship, with slim items, damage and the system's own item.
-pub fn set_state(stamp: u32, system: &SolarSystem, ship: &Ship, now: i64) -> Result<Value, BallError> {
+/// `SetState`: every ball of the system and the ships in view of `ego` (itself included, in the order they came into the scene), with slim
+/// items, damage and the system's own item.
+pub fn set_state(
+    stamp: u32,
+    system: &SolarSystem,
+    ego: &Ship,
+    ships: &[&Ship],
+    now: i64,
+) -> Result<Value, BallError> {
     let mut balls: Vec<BallEntity> = (0..system.bodies.len()).map(|i| rigid_ball(system, i)).collect();
-    balls.push(ship.ball());
+    balls.extend(ships.iter().map(|ship| ship.ball()));
 
     let mut damage: Vec<(Value, Value)> = system
         .bodies
@@ -84,16 +111,20 @@ pub fn set_state(stamp: u32, system: &SolarSystem, ship: &Ship, now: i64) -> Res
         .filter(|b| b.kind == BodyKind::Station)
         .map(|b| (id(b.id), damage_state(STATION_SHIELD_TAU_MS, now)))
         .collect();
-    damage.push((id(ship.spec.ship_id), damage_state(ship.spec.shield_recharge_ms / 5.0, now)));
+    damage.extend(
+        ships
+            .iter()
+            .map(|ship| (id(ship.spec.ship_id), damage_state(ship.spec.shield_recharge_ms / 5.0, now))),
+    );
 
     let mut slims: Vec<Value> =
         system.bodies.iter().map(|b| slim_object(slim::body_entries(system, b))).collect();
-    slims.push(slim_object(slim::ship_entries(&ship.spec)));
+    slims.extend(ships.iter().map(|ship| slim_object(slim::ship_entries(&ship.spec))));
 
     let state = key_val([
         ("stamp", id(i64::from(stamp))),
         ("state", state_buffer(SET_STATE, stamp, &balls)?),
-        ("ego", id(ship.spec.ship_id)),
+        ("ego", id(ego.spec.ship_id)),
         ("industryLevel", int(0)),
         ("researchLevel", int(0)),
         ("damageState", Value::Dict(damage)),

@@ -3,7 +3,7 @@
 //! The scene has no clock of its own. Every call says what time it is (a FILETIME) and a ship's motion is worked out
 //! from the time it was last settled to that time, so the same calls at the same times give the same bytes.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use eve_destiny::Vec3;
@@ -131,17 +131,23 @@ struct PendingDock {
 }
 
 #[derive(Debug, Clone)]
-struct Pilot {
-    ship: Ship,
+pub(crate) struct Pilot {
+    pub(crate) ship: Ship,
     /// The moment the ship's position and velocity are those of.
     settled_at: i64,
     docking: Option<PendingDock>,
     /// The warp the ship is in, from the command until it is at rest again.
-    flight: Option<Flight>,
+    pub(crate) flight: Option<Flight>,
     /// The jump the ship has begun, until it leaves for the other system.
     jump: Option<PendingJump>,
     /// The ship came through a gate (it is bound differently from one that undocked).
     jumped_in: bool,
+    /// The client has bound the ballpark: it can be sent destiny updates.
+    pub(crate) bound: bool,
+    /// When the ship came into the scene (the ships are listed in this order).
+    pub(crate) entered: u64,
+    /// The other ships this pilot has been told of and not told to forget: those in its ballpark.
+    pub(crate) sees: BTreeSet<SessionId>,
 }
 
 #[derive(Debug, Clone)]
@@ -167,8 +173,10 @@ pub struct Traveller {
 #[derive(Debug)]
 pub struct Scene {
     system: Arc<SolarSystem>,
-    pilots: BTreeMap<SessionId, Pilot>,
+    pub(crate) pilots: BTreeMap<SessionId, Pilot>,
     next_stamp: u32,
+    /// How many ships have come into the scene.
+    pub(crate) entries: u64,
     /// What happened to ships while their motion was worked out (a ship dropped out of warp), to be told with the next call.
     backlog: Vec<Out>,
 }
@@ -180,7 +188,7 @@ pub fn stamp_at(now: i64) -> u32 {
 
 impl Scene {
     pub fn new(system: Arc<SolarSystem>) -> Self {
-        Self { system, pilots: BTreeMap::new(), next_stamp: 0, backlog: Vec::new() }
+        Self { system, pilots: BTreeMap::new(), next_stamp: 0, entries: 0, backlog: Vec::new() }
     }
 
     pub fn system(&self) -> &SolarSystem {
@@ -203,7 +211,7 @@ impl Scene {
     }
 
     /// The next stamp a change can carry: one after the last, but never more than two ahead of the clock, and never behind it.
-    fn next_stamp(&mut self, now: i64) -> u32 {
+    pub(crate) fn next_stamp(&mut self, now: i64) -> u32 {
         let current = stamp_at(now);
         self.next_stamp = if self.next_stamp < current {
             current
@@ -222,7 +230,7 @@ impl Scene {
         spec: ShipSpec,
         station_id: i64,
         now: i64,
-    ) -> Result<(), SceneError> {
+    ) -> Result<Vec<Out>, SceneError> {
         if self.pilots.contains_key(&session) {
             return Err(SceneError::AlreadyInSpace(session));
         }
@@ -241,39 +249,54 @@ impl Scene {
             course: Course::Goto,
             spec,
         };
+        let entered = self.next_entry();
         self.pilots.insert(
             session,
-            Pilot { ship, settled_at: now, docking: None, flight: None, jump: None, jumped_in: false },
+            Pilot {
+                ship,
+                settled_at: now,
+                docking: None,
+                flight: None,
+                jump: None,
+                jumped_in: false,
+                bound: false,
+                entered,
+                sees: BTreeSet::new(),
+            },
         );
-        Ok(())
+        Ok(self.announce_arrival(session, now))
     }
 
-    /// The ship leaves the scene (docked, gone offline, jumped).
-    pub fn leave(&mut self, session: SessionId, _why: Departure) -> bool {
-        self.pilots.remove(&session).is_some()
+    /// The ship leaves the scene (docked, gone offline, jumped): the ones who had it in view are told. None when it was not here.
+    pub fn leave(&mut self, session: SessionId, _why: Departure, now: i64) -> Option<Vec<Out>> {
+        let pilot = self.pilots.remove(&session)?;
+        Some(self.announce_departure(session, pilot.ship.spec.ship_id, now))
     }
 
-    fn notify(session: SessionId, name: &'static str, args: Vec<Value>) -> Out {
+    pub(crate) fn notify(session: SessionId, name: &'static str, args: Vec<Value>) -> Out {
         Out::Notify { session, name, id_type: "clientID", args }
     }
 
-    /// The client bound the system's ballpark: it is told the time, and given its ship and then everything around it.
+    /// The client bound the system's ballpark: it is told the time, and given the ships in view (its own among them, in the order they came into
+    /// the scene) and then everything around them.
     pub fn bind(&mut self, session: SessionId, now: i64) -> Vec<Out> {
         if !self.pilots.contains_key(&session) {
             return Vec::new();
         }
-        self.settle_pilot(session, now);
+        self.settle_all(now);
+        self.take_in_view(session);
         let first = self.next_stamp(now);
         let second = self.next_stamp(now);
         let system = Arc::clone(&self.system);
+        let ships = self.ships_in_view(session);
         let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
         let ship = &pilot.ship;
         let ship_id = id(ship.spec.ship_id);
         let heading =
             |action_stamp: u32| payload::action(action_stamp, heading_name(ship), heading_args(ship));
 
-        let Ok(added) = payload::add_ship(first, ship, now) else { return Vec::new() };
-        let Ok(state) = payload::set_state(second, &system, ship, now) else { return Vec::new() };
+        let Ok(added) = payload::add_ships(first, &ships, now) else { return Vec::new() };
+        let Ok(state) = payload::set_state(second, &system, ship, &ships, now) else { return Vec::new() };
         let update = |actions: Vec<Value>| {
             Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false))
         };
@@ -303,12 +326,21 @@ impl Scene {
             ]));
         }
         told.push(update(vec![state]));
-        let mut numbers =
-            vec![payload::action(second, "SetBallAgility", [ship_id.clone(), real(ship.spec.agility)])];
-        if pilot.jumped_in {
-            numbers.push(payload::action(second, "SetBallMass", [ship_id.clone(), real(ship.spec.mass)]));
+        // the numbers of every ship in view; the pilot's own lack the mass when the bind has sent it already
+        let mut numbers = Vec::new();
+        for other in &ships {
+            if other.spec.ship_id != ship.spec.ship_id || pilot.jumped_in {
+                numbers.extend(Self::numbers_of(other, second));
+            } else {
+                let own = id(ship.spec.ship_id);
+                numbers.push(payload::action(
+                    second,
+                    "SetBallAgility",
+                    [own.clone(), real(ship.spec.agility)],
+                ));
+                numbers.push(payload::action(second, "SetMaxSpeed", [own, real(ship.spec.max_velocity)]));
+            }
         }
-        numbers.push(payload::action(second, "SetMaxSpeed", [ship_id, real(ship.spec.max_velocity)]));
         told.push(update(numbers));
         self.with_backlog(told)
     }
@@ -318,11 +350,12 @@ impl Scene {
         if !self.pilots.contains_key(&session) {
             return Vec::new();
         }
-        self.settle_pilot(session, now);
+        self.settle_all(now);
         let stamp = self.next_stamp(now);
         let system = Arc::clone(&self.system);
+        let ships = self.ships_in_view(session);
         let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
-        let told = match payload::set_state(stamp, &system, &pilot.ship, now) {
+        let told = match payload::set_state(stamp, &system, &pilot.ship, &ships, now) {
             Ok(state) => {
                 vec![Self::notify(session, "DoDestinyUpdate", payload::destiny_update([state], false))]
             }
@@ -366,23 +399,48 @@ impl Scene {
         }
     }
 
-    /// What the client is told of a milestone of a warp.
+    /// Brings the motion of every ship to `now`.
+    fn settle_all(&mut self, now: i64) {
+        let sessions: Vec<SessionId> = self.pilots.keys().copied().collect();
+        for session in sessions {
+            self.settle_pilot(session, now);
+        }
+    }
+
+    /// What is told of a milestone of a warp: to the pilot, and to the ones who watch it.
     fn tell(&mut self, session: SessionId, milestone: Milestone) -> Vec<Out> {
         let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
         let ship_id = id(pilot.ship.spec.ship_id);
         match milestone {
+            Milestone::Entered { at } => {
+                // the ship is in warp: those who watch it are told now (the pilot was told when it asked for the warp)
+                let Course::Warp { raw_destination: r, stop_distance, factor, .. } = pilot.ship.course else {
+                    return Vec::new();
+                };
+                let stamp = self.next_stamp(at);
+                let watchers = vec![
+                    warping_effect(stamp, &ship_id),
+                    payload::action(stamp, "SetSpeedFraction", [ship_id.clone(), real(1.0)]),
+                    payload::action(
+                        stamp,
+                        "WarpTo",
+                        [ship_id, real(r.x), real(r.y), real(r.z), real(stop_distance), int(factor)],
+                    ),
+                ];
+                self.tell_split(session, Vec::new(), watchers)
+            }
             Milestone::Dropout { at } => {
                 // the ship is set massless again, told twice: at the stamp and two on
                 let stamp = self.next_stamp(at);
-                let update = |stamp: u32| {
-                    let action = payload::action(stamp, "SetBallMassive", [ship_id.clone(), int(0)]);
-                    Self::notify(session, "DoDestinyUpdate", payload::destiny_update([action], false))
-                };
-                vec![update(stamp), update(stamp + 2)]
+                let massless =
+                    |stamp: u32| vec![payload::action(stamp, "SetBallMassive", [ship_id.clone(), int(0)])];
+                let mut out = self.tell_all(session, massless(stamp));
+                out.extend(self.tell_all(session, massless(stamp + 2)));
+                out
             }
             Milestone::Rest { at, position, velocity } => {
                 let stamp = self.next_stamp(at);
-                let actions = [
+                let actions = vec![
                     payload::action(
                         stamp,
                         "SetBallPosition",
@@ -396,7 +454,7 @@ impl Scene {
                     payload::action(stamp, "SetSpeedFraction", [ship_id.clone(), real(0.0)]),
                     payload::action(stamp, "Stop", [ship_id]),
                 ];
-                vec![Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false))]
+                self.tell_all(session, actions)
             }
         }
     }
@@ -458,39 +516,25 @@ impl Scene {
         pilot.ship.speed_fraction = 1.0;
         pilot.ship.direction = toward;
         pilot.flight = Some(Flight::begin(now, raw, stop));
-        let actions = [
+        let own = vec![
             payload::action(stamp, "SetMaxSpeed", [ship_id.clone(), real(boosted)]),
             payload::action(
                 stamp,
                 "WarpTo",
                 [ship_id.clone(), real(raw.x), real(raw.y), real(raw.z), real(stop), int(profile.factor)],
             ),
-            payload::action(
-                stamp,
-                "OnSpecialFX",
-                [
-                    ship_id.clone(),
-                    Value::None,
-                    Value::None,
-                    Value::None,
-                    Value::None,
-                    Value::Str("effects.Warping".into()),
-                    int(0),
-                    int(1),
-                    int(0),
-                    int(-1),
-                    Value::None,
-                    Value::None,
-                    int(0),
-                    Value::None,
-                ],
-            ),
-            payload::action(stamp, "SetSpeedFraction", [ship_id, real(1.0)]),
+            warping_effect(stamp, &ship_id),
+            payload::action(stamp, "SetSpeedFraction", [ship_id.clone(), real(1.0)]),
         ];
-        vec![
-            Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false)),
-            Out::Accepted { session, command: code, at: now },
-        ]
+        // those who watch see the ship turn towards the place at once and go into warp when it does (`Milestone::Entered`)
+        let watchers = vec![payload::action(
+            stamp,
+            "GotoDirection",
+            with_id(&ship_id, vector(toward.x, toward.y, toward.z)),
+        )];
+        let mut out = self.tell_split(session, own, watchers);
+        out.push(Out::Accepted { session, command: code, at: now });
+        out
     }
 
     /// A movement command of a ship that is in the scene (settled first, at `now`).
@@ -516,15 +560,17 @@ impl Scene {
             Steering::Nothing => vec![Out::Accepted { session, command: code, at: now }],
             Steering::Actions(actions) => {
                 let stamp = self.next_stamp(now);
-                let actions = actions.into_iter().map(|(name, args)| {
-                    let mut all = vec![ship_id.clone()];
-                    all.extend(args);
-                    payload::action(stamp, name, all)
-                });
-                vec![
-                    Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false)),
-                    Out::Accepted { session, command: code, at: now },
-                ]
+                let actions: Vec<Value> = actions
+                    .into_iter()
+                    .map(|(name, args)| {
+                        let mut all = vec![ship_id.clone()];
+                        all.extend(args);
+                        payload::action(stamp, name, all)
+                    })
+                    .collect();
+                let mut out = self.tell_all(session, actions);
+                out.push(Out::Accepted { session, command: code, at: now });
+                out
             }
         }
     }
@@ -563,20 +609,15 @@ impl Scene {
         ship.course = Course::Stop;
         pilot.docking = Some(PendingDock { station_id, accepted_at: now });
         let ship_id = id(ship.spec.ship_id);
-        vec![
-            Self::notify_charid(session, "OnDockingAccepted", vec![id(station_id)]),
-            Self::notify(
-                session,
-                "DoDestinyUpdate",
-                payload::destiny_update(
-                    [
-                        payload::action(stamp, "SetBallMassive", [ship_id.clone(), int(0)]),
-                        payload::action(stamp, "Stop", [ship_id]),
-                    ],
-                    false,
-                ),
-            ),
-        ]
+        let mut out = vec![Self::notify_charid(session, "OnDockingAccepted", vec![id(station_id)])];
+        out.extend(self.tell_all(
+            session,
+            vec![
+                payload::action(stamp, "SetBallMassive", [ship_id.clone(), int(0)]),
+                payload::action(stamp, "Stop", [ship_id]),
+            ],
+        ));
+        out
     }
 
     /// A docking asked for from too far: the ship goes to the station on its own (following it to the docking range) and the host is told how far
@@ -663,20 +704,19 @@ impl Scene {
             ),
             payload::action(stamp, "Stop", [ship_id]),
         ];
-        vec![
-            Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false)),
-            Out::Jumping {
-                session,
-                command: code,
-                destination_system: *destination_system,
-                destination_gate: *leads_to,
-            },
-        ]
+        let mut out = self.tell_all(session, actions.into());
+        out.push(Out::Jumping {
+            session,
+            command: code,
+            destination_system: *destination_system,
+            destination_gate: *leads_to,
+        });
+        out
     }
 
-    /// The ships whose jump is due at `now`. Each has left this scene; the caller puts it in the scene of the system it is going to
-    /// ([`Scene::arrive`]), or back ([`Scene::restore`]) when that cannot be done.
-    pub fn due_jumps(&mut self, now: i64) -> Vec<Traveller> {
+    /// The ships whose jump is due at `now`, and what the ones who watched them go are told. Each ship has left this scene; the caller puts it in
+    /// the scene of the system it is going to ([`Scene::arrive`]), or back ([`Scene::restore`]) when that cannot be done.
+    pub fn due_jumps(&mut self, now: i64) -> (Vec<Traveller>, Vec<Out>) {
         let due: Vec<SessionId> = self
             .pilots
             .iter()
@@ -684,10 +724,12 @@ impl Scene {
             .map(|(session, _)| *session)
             .collect();
         let mut travellers = Vec::new();
+        let mut told = Vec::new();
         for session in due {
             self.settle_pilot(session, now);
             let Some(mut pilot) = self.pilots.remove(&session) else { continue };
             let Some(jump) = pilot.jump.take() else { continue };
+            told.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
             travellers.push(Traveller {
                 session,
                 from_system: self.system.id,
@@ -697,12 +739,12 @@ impl Scene {
                 pilot,
             });
         }
-        travellers
+        (travellers, told)
     }
 
     /// A ship that has jumped appears in front of the gate it came out of, at rest, and is bound like any ship that arrives (the client binds
     /// the ballpark of the new system when its session has changed). Gives the ship back when this system has no such gate.
-    pub fn arrive(&mut self, traveller: Traveller, now: i64) -> Result<(), Box<Traveller>> {
+    pub fn arrive(&mut self, traveller: Traveller, now: i64) -> Result<Vec<Out>, Box<Traveller>> {
         let system = Arc::clone(&self.system);
         let Some(gate) = system.body(traveller.to_gate).filter(|b| b.kind == BodyKind::Stargate) else {
             return Err(Box::new(traveller));
@@ -723,14 +765,20 @@ impl Scene {
         pilot.flight = None;
         pilot.jump = None;
         pilot.jumped_in = true;
+        // the client binds the ballpark of this system afresh, and is then sent what is in view
+        pilot.bound = false;
+        pilot.sees.clear();
+        pilot.entered = self.next_entry();
         self.pilots.insert(session, pilot);
-        Ok(())
+        Ok(self.announce_arrival(session, now))
     }
 
-    /// A ship whose jump could not be finished goes on in the scene it left.
-    pub fn restore(&mut self, traveller: Traveller) {
-        let Traveller { session, pilot, .. } = traveller;
+    /// A ship whose jump could not be finished goes on in the scene it left (and those who saw it go are shown it again).
+    pub fn restore(&mut self, traveller: Traveller, now: i64) -> Vec<Out> {
+        let Traveller { session, mut pilot, .. } = traveller;
+        pilot.entered = self.next_entry();
         self.pilots.insert(session, pilot);
+        self.announce_arrival(session, now)
     }
 
     fn notify_charid(session: SessionId, name: &'static str, args: Vec<Value>) -> Out {
@@ -758,25 +806,14 @@ impl Scene {
         if new.max_velocity != old.max_velocity {
             actions.push(payload::action(stamp, "SetMaxSpeed", [ship_id, real(new.max_velocity)]));
         }
-        let told = if actions.is_empty() {
-            Vec::new()
-        } else {
-            vec![Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false))]
-        };
+        let told = if actions.is_empty() { Vec::new() } else { self.tell_all(session, actions) };
         self.with_backlog(told)
     }
 
-    /// Finishes what is due at `now`: a docking that has taken its time takes the ship out of space.
+    /// Finishes what is due at `now`: a docking that has taken its time takes the ship out of space (the ones who watched it are told it is gone),
+    /// and ships that have come into view or left it are told of one another.
     pub fn poll(&mut self, now: i64) -> Vec<Out> {
-        let warping: Vec<SessionId> = self
-            .pilots
-            .iter()
-            .filter(|(_, pilot)| pilot.flight.is_some())
-            .map(|(session, _)| *session)
-            .collect();
-        for session in warping {
-            self.settle_pilot(session, now);
-        }
+        self.settle_all(now);
         let due: Vec<(SessionId, i64)> = self
             .pilots
             .iter()
@@ -788,14 +825,15 @@ impl Scene {
                     .map(|d| (*session, d.station_id))
             })
             .collect();
-        let docked: Vec<Out> = due
-            .into_iter()
-            .map(|(session, station_id)| {
-                self.pilots.remove(&session);
-                Out::Docked { session, station_id }
-            })
-            .collect();
-        self.with_backlog(docked)
+        let mut told = Vec::new();
+        for (session, station_id) in due {
+            if let Some(pilot) = self.pilots.remove(&session) {
+                told.push(Out::Docked { session, station_id });
+                told.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
+            }
+        }
+        told.extend(self.reconcile(now));
+        self.with_backlog(told)
     }
 }
 
@@ -803,6 +841,30 @@ impl Scene {
 /// points (the reference draws them from the clock).
 fn seed_of(ship_id: i64, gate_id: i64, now: i64) -> u64 {
     (ship_id as u64).rotate_left(11) ^ (gate_id as u64).rotate_left(37) ^ (now as u64)
+}
+
+/// The effect the client plays on a ship that goes into warp.
+fn warping_effect(stamp: u32, ship_id: &Value) -> Value {
+    payload::action(
+        stamp,
+        "OnSpecialFX",
+        [
+            ship_id.clone(),
+            Value::None,
+            Value::None,
+            Value::None,
+            Value::None,
+            Value::Str("effects.Warping".into()),
+            int(0),
+            int(1),
+            int(0),
+            int(-1),
+            Value::None,
+            Value::None,
+            int(0),
+            Value::None,
+        ],
+    )
 }
 
 fn with_id(ship_id: &Value, rest: [Value; 3]) -> Vec<Value> {
@@ -1836,8 +1898,8 @@ pub(crate) mod tests {
     #[test]
     fn leaving_removes_the_ship() {
         let mut scene = scene();
-        assert!(scene.leave(SESSION, Departure::LoggedOff));
-        assert!(!scene.leave(SESSION, Departure::LoggedOff));
+        assert!(scene.leave(SESSION, Departure::LoggedOff, NOON).is_some());
+        assert!(scene.leave(SESSION, Departure::LoggedOff, NOON).is_none());
         assert!(scene.is_empty());
     }
 
@@ -2036,9 +2098,9 @@ pub(crate) mod tests {
     fn the_ship_leaves_four_seconds_after_the_command_and_not_before() {
         let mut scene = scene_by_a_gate();
         scene.command(SESSION, jump(NEAR_GATE, 0), NOON);
-        assert!(scene.due_jumps(NOON + seconds(3)).is_empty());
-        assert!(scene.due_jumps(NOON + seconds(4) - 1).is_empty());
-        let gone = scene.due_jumps(NOON + seconds(4));
+        assert!(scene.due_jumps(NOON + seconds(3)).0.is_empty());
+        assert!(scene.due_jumps(NOON + seconds(4) - 1).0.is_empty());
+        let (gone, _) = scene.due_jumps(NOON + seconds(4));
         assert_eq!(gone.len(), 1);
         let traveller = &gone[0];
         assert_eq!(
@@ -2052,7 +2114,7 @@ pub(crate) mod tests {
             (SESSION, 30_000_001, NEAR_GATE, OTHER_SYSTEM, ARRIVAL_GATE)
         );
         assert!(scene.is_empty(), "it is no longer here");
-        assert!(scene.due_jumps(NOON + seconds(9)).is_empty(), "and goes once");
+        assert!(scene.due_jumps(NOON + seconds(9)).0.is_empty(), "and goes once");
     }
 
     #[test]
@@ -2065,8 +2127,8 @@ pub(crate) mod tests {
         assert_eq!(stamp, i64::from(stamp_at(NOON)) + 2);
         let leaves = (stamp + UNIX_EPOCH_SECONDS + 3) * TICKS_PER_SECOND;
         assert!(leaves > NOON + seconds(4), "a later moment than the four seconds");
-        assert!(scene.due_jumps(leaves - 1).is_empty());
-        assert_eq!(scene.due_jumps(leaves).len(), 1);
+        assert!(scene.due_jumps(leaves - 1).0.is_empty());
+        assert_eq!(scene.due_jumps(leaves).0.len(), 1);
     }
 
     #[test]
@@ -2098,7 +2160,8 @@ pub(crate) mod tests {
 
     fn jumped(scene: &mut Scene) -> Traveller {
         scene.command(SESSION, jump(NEAR_GATE, 0), NOON);
-        scene.due_jumps(NOON + seconds(4)).pop().unwrap()
+        // (a scene that has been bound has stamped ahead: the ship may leave a second or two after the four)
+        scene.due_jumps(NOON + seconds(6)).0.pop().unwrap()
     }
 
     #[test]
@@ -2168,6 +2231,20 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_ship_that_has_jumped_is_not_told_of_the_others_until_it_binds_the_ballpark_there() {
+        let mut scene = scene_by_a_gate();
+        scene.bind(SESSION, NOON); // it had bound the ballpark of the system it leaves
+        let traveller = jumped(&mut scene);
+        let mut there = other_scene();
+        there.arrive(traveller, NOON + seconds(5)).unwrap();
+        // the ship arrived: it has bound nothing here, so it is told nothing and holds nothing in view until it does
+        let pilot = there.pilots.get(&SESSION).unwrap();
+        assert!(!pilot.bound && pilot.sees.is_empty());
+        there.bind(SESSION, NOON + seconds(6));
+        assert!(there.pilots.get(&SESSION).unwrap().bound);
+    }
+
+    #[test]
     fn a_ship_sent_to_a_system_without_the_gate_is_given_back_and_goes_on_where_it_was() {
         let mut scene = scene_by_a_gate();
         let traveller = jumped(&mut scene);
@@ -2175,7 +2252,7 @@ pub(crate) mod tests {
         let mut wrong = Scene::new(system());
         let back = wrong.arrive(traveller, NOON + seconds(5)).unwrap_err();
         assert!(wrong.is_empty());
-        scene.restore(*back);
+        scene.restore(*back, NOON + seconds(6));
         let told = scene.command(SESSION, Command::SetSpeedFraction(1.0), NOON + seconds(6));
         assert!(matches!(told[0], Out::Notify { .. }), "it takes orders again: {told:?}");
         // and it can try the jump again

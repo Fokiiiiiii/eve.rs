@@ -111,6 +111,14 @@ not exist is the scene: which balls a system has, who is where, how commands cha
 
 ## Amendments
 
+- 2026-09-29, other ships: a scene holds several pilots and each is the audience of the others. A pilot that has bound the ballpark keeps the
+  set of ships it has been told of (`Pilot::sees`), brought into line with `visibility::can_see` when a ship comes, goes or is in warp
+  (`crowd.rs`). What happens to a ship is told to whoever has it in view (`tell_all`): an order, the stop of a docking, the drop-out and the rest
+  of a warp; the heading at a warp order and the warp when it starts are told to the watchers only (`tell_split`); `Enter` and `Leave` answer with the
+  notifications for the others, and a poll takes a docked or jumped ship from their view. The first `AddBalls2` of a bind and the `SetState` list
+  the ships in view in the order they came into the scene, the numbers follow for each. No message of the link changed: a `Notify` names the
+  session it is for. `docs/compat/DEVIATIONS.md` #23 (ambient ships), #27 and #28 say what differs from the reference.
+
 - 2026-09-29, stargate jumps: command 9 and the messages `Jumping` (15) and `Jumped` (16). The sim owns the crossing: a `Jump` checks the gate
   (in this system, leading where the client says, within 2.5 km of the ship's surface), stops the ship and sends the jump-out effect with the `Stop`
   in one update; four seconds later (or three after the effect's stamp, if that is later) the scene gives the ship up (`Scene::due_jumps`) and the

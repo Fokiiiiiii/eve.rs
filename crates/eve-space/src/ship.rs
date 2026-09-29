@@ -33,6 +33,13 @@ pub struct ShipSpec {
     pub warp_speed_au: f64,
     /// How long the shield takes to recharge, in milliseconds (`shieldRechargeRate`): the damage state shows a fifth of it.
     pub shield_recharge_ms: f64,
+    /// How far the ship can lock a target, in metres, measured between surfaces (`maxTargetRange`).
+    pub max_target_range: f64,
+    /// How many targets it can lock at once (`maxLockedTargets`, the lower of the ship's and the pilot's).
+    pub max_locked_targets: i32,
+    /// How fast it locks (`scanResolution`, in mm) and how big it looks to a ship that locks it (`signatureRadius`, in metres).
+    pub scan_resolution: f64,
+    pub signature_radius: f64,
     pub modules: Vec<ModuleSpec>,
 }
 

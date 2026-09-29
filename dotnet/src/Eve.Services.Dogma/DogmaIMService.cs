@@ -13,7 +13,7 @@ namespace Eve.Services.Dogma;
 /// of <c>Eve.Dogma</c>; this only loads what a character has, asks, and puts the answer in the shapes the client reads.
 /// </summary>
 [Service("dogmaIM")]
-public sealed partial class DogmaIMService(DogmaStatic statics, CharacterShips ships, Func<long> nowUnixMs, CharacterDogmaSync? sync = null) : IBoundObjectReleaseHandler
+public sealed partial class DogmaIMService(DogmaStatic statics, CharacterShips ships, Func<long> nowUnixMs, CharacterDogmaSync? sync = null, ISpaceTargeting? space = null) : IBoundObjectReleaseHandler
 {
     private readonly CharacterDogmaSync _sync = sync ?? new CharacterDogmaSync(statics, ships, nowUnixMs);
 
@@ -64,9 +64,11 @@ public sealed partial class DogmaIMService(DogmaStatic statics, CharacterShips s
     public async ValueTask<PyValue> MachoBindObject(ServiceCall call)
     {
         var parameters = call.Arg(0) switch { PyTuple t when t.Items.Count > 0 => t.Items[0], PyList l when l.Items.Count > 0 => l.Items[0], var other => other };
-        if (IdOf(parameters) is not { } location || call.Session.GetInt("stationid") != location)
+        // the place the client is in: the station it is docked at, or, when it is in space, the solar system
+        var place = call.Session.GetInt("stationid") ?? (space is not null ? call.Session.GetInt("solarsystemid") : null);
+        if (IdOf(parameters) is not { } location || place != location)
         {
-            return None; // only the station the character is docked at can be bound to
+            return None;
         }
         var bound = Bind(location, call.Session);
         var oid = JsSemantics.StringValue(((PyTuple)((PySubStream)((PySubStruct)bound).Value).Decoded!).Items[0]);

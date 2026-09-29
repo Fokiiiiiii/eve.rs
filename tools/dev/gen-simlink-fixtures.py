@@ -13,7 +13,7 @@ OUT = os.path.join(HERE, "..", "..", "oracle", "fixtures", "simlink", "messages.
 
 KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateState": 6, "Command": 7,
          "ShipSpec": 8, "Notify": 9, "Docked": 10, "Refused": 11, "Accepted": 12, "EnterReply": 13, "Approaching": 14,
-         "Jumping": 15, "Jumped": 16}
+         "Jumping": 15, "Jumped": 16, "Targets": 17, "TargetRefused": 18}
 
 
 def s(text):  # u16 length + UTF-8
@@ -41,8 +41,10 @@ def u64(value):
 def ship(m):
     body = i64(m["shipId"]) + i64(m["characterId"]) + struct.pack("<iii", m["typeId"], m["groupId"], m["categoryId"])
     body += s(m["name"]) + i64(m["ownerId"]) + struct.pack("<iii", m["corporationId"], m["allianceId"], m["warFactionId"])
-    body += struct.pack("<7d", m["securityStatus"], m["radius"], m["mass"], m["maxVelocity"], m["agility"],
-                        m["warpSpeedAu"], m["shieldRechargeMs"])
+    body += struct.pack("<10d", m["securityStatus"], m["radius"], m["mass"], m["maxVelocity"], m["agility"],
+                        m["warpSpeedAu"], m["shieldRechargeMs"], m["maxTargetRange"], m["scanResolution"],
+                        m["signatureRadius"])
+    body += struct.pack("<i", m["maxLockedTargets"])
     body += struct.pack("<I", len(m["modules"]))
     for module in m["modules"]:
         body += i64(module["itemId"]) + struct.pack("<ii", module["typeId"], module["flag"])
@@ -82,6 +84,12 @@ def build(m):
     if k == "Jumping":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<i", m["destinationSystem"])
                      + i64(m["destinationGate"]))
+    if k == "Targets":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"], 1 if m["pending"] else 0])
+                     + struct.pack("<I", len(m["targets"])) + b"".join(i64(t) for t in m["targets"]))
+    if k == "TargetRefused":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + s(m["reason"])
+                     + struct.pack("<i", m["targetType"]) + struct.pack("<dd", m["desiredRange"], m["actualDistance"]))
     if k == "Jumped":
         return frame(k, u64(m["sessionId"]) + struct.pack("<i", m["fromSystem"]) + i64(m["fromGate"])
                      + struct.pack("<i", m["toSystem"]) + i64(m["toGate"]))
@@ -91,7 +99,8 @@ def build(m):
 IBIS = {"shipId": "9988400001939", "characterId": "140000342", "typeId": 601, "groupId": 237, "categoryId": 6,
         "name": "Ibis", "ownerId": "140000342", "corporationId": 1000006, "allianceId": 0, "warFactionId": 0,
         "securityStatus": 0.0, "radius": 47.0, "mass": 1163000.0, "maxVelocity": 339.25, "agility": 4.0185,
-        "warpSpeedAu": 3.0, "shieldRechargeMs": 860000.0,
+        "warpSpeedAu": 3.0, "shieldRechargeMs": 860000.0, "maxTargetRange": 29700.0, "scanResolution": 660.0,
+        "signatureRadius": 28.0, "maxLockedTargets": 4,
         "modules": [{"itemId": "9988400001940", "typeId": 21857, "flag": 19},
                     {"itemId": "9988400001941", "typeId": 3638, "flag": 27}]}
 BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5)
@@ -126,6 +135,16 @@ valid = [
      "args": [40491233.0, 30000.0]},
     {"name": "jump command", "kind": "Command", "sessionId": "1790646377000015", "command": 9,
      "args": [50016630.0, 50016839.0]},
+    {"name": "add target command", "kind": "Command", "sessionId": "1790646377000015", "command": 10,
+     "args": [9988400002151.0]},
+    {"name": "cancel add target command", "kind": "Command", "sessionId": "1790646377000015", "command": 11,
+     "args": [9988400002151.0]},
+    {"name": "remove targets command", "kind": "Command", "sessionId": "1790646377000015", "command": 12,
+     "args": [9988400002151.0, 60015249.0]},
+    {"name": "clear targets command", "kind": "Command", "sessionId": "1790646377000015", "command": 13,
+     "args": []},
+    {"name": "get targets command", "kind": "Command", "sessionId": "1790646377000015", "command": 14, "args": []},
+    {"name": "get targeters command", "kind": "Command", "sessionId": "1790646377000015", "command": 15, "args": []},
     {"name": "new ship numbers", "kind": "ShipSpec", "sessionId": "1790646377000015", "ship": IBIS},
     {"name": "notification", "kind": "Notify", "sessionId": "1790646377000015", "notification": "OnSetTimeDilation",
      "idType": "clientID", "args": "7e0000000004010100"},
@@ -142,6 +161,14 @@ valid = [
      "distance": 15975.3},
     {"name": "jumping", "kind": "Jumping", "sessionId": "1790646377000015", "command": 9,
      "destinationSystem": 30100034, "destinationGate": "50016839"},
+    {"name": "targets with a lock going", "kind": "Targets", "sessionId": "1790646377000015", "command": 10,
+     "pending": True, "targets": ["60015249"]},
+    {"name": "targets none", "kind": "Targets", "sessionId": "1790646377000015", "command": 14, "pending": False,
+     "targets": []},
+    {"name": "target refused out of range", "kind": "TargetRefused", "sessionId": "1790646377000015", "command": 10,
+     "reason": "TARGET_OUT_OF_RANGE", "targetType": 92885, "desiredRange": 29700.0, "actualDistance": 306288156879.55023},
+    {"name": "target refused without figures", "kind": "TargetRefused", "sessionId": "1790646377000015", "command": 10,
+     "reason": "TARGET_SELF", "targetType": 0, "desiredRange": 0.0, "actualDistance": 0.0},
     {"name": "jumped", "kind": "Jumped", "sessionId": "1790646377000015", "fromSystem": 30100032,
      "fromGate": "50016630", "toSystem": 30100034, "toGate": "50016839"},
 ]

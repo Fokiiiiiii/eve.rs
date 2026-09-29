@@ -104,6 +104,11 @@ public class SpaceServiceTests
         Assert.Equal(1.5, SimShips.WarpSpeedAu(0.5, 3.0)); // a base speed that something changed counts
         Assert.Equal(3.0, SimShips.WarpSpeedAu(0.0, 3.0)); // no base speed is the base of one
         Assert.Equal(1.0, SimShips.WarpSpeedAu(1.0, 0.0)); // no multiplier is a multiplier of one
+        // what the ship may lock: the lower of the ship's and the pilot's limit when both allow some, else the higher
+        Assert.Equal([3, 3, 4, 4, 0], new[] { SimShips.LockLimit(3, 4), SimShips.LockLimit(4, 3), SimShips.LockLimit(0, 4), SimShips.LockLimit(4, 0), SimShips.LockLimit(-1, 0) });
+        // the numbers of the starter Ibis with the skills of a new character: the range is the one the reference told a client that locked from too far
+        // (`TargetNotWithinRangeGeneric`, 29700), and a lock of 52 m at 522.5 mm takes 3.55 s (the recorded one was had 3.8 s after it was asked for: the reference's tick and the call)
+        Assert.Equal((29_700.0, 522.5, 52.0, 3), (enter.Ship.MaxTargetRange, enter.Ship.ScanResolution, enter.Ship.SignatureRadius, enter.Ship.MaxLockedTargets));
         Assert.True(rig.Space.IsInSpace(session));
     }
 
@@ -293,6 +298,109 @@ public class SpaceServiceTests
         rig.Sim.Say(Update(session));
         rig.Sim.Say(new SimAccepted(id, SimCommands.SetSpeedFraction, 134351527136350000));
         Assert.Equal(["DoDestinyUpdate"], Events.Of(session).Select(e => e.Name));
+    }
+
+    // ── targets ──────────────────────────────────────────────────────────────
+
+    private static string Describe(TargetingResult? result) =>
+        result is null ? "none" : $"{result.Ok} {result.Pending} [{string.Join(",", result.Targets)}] {result.Reason} {result.TargetType} {result.DesiredRange} {result.ActualDistance}";
+
+    [PgFact]
+    public async Task An_order_about_targets_is_given_to_the_simulation_and_is_answered_with_what_it_says_only_for_a_ship_in_space()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        Assert.Null(await rig.Space.OrderAsync(session, TargetingOrder.Lock, [42], CancellationToken.None));
+        Assert.DoesNotContain(rig.Sim.Heard, m => m is SimCommand);
+        await InSpaceAsync(rig, session);
+        rig.Sim.TargetAnswer = new CommandReply(true, 0, null) { Pending = false, Targets = [60015249, 9988400002151] };
+        var answer = await rig.Space.OrderAsync(session, TargetingOrder.Remove, [42, 43], CancellationToken.None);
+        Assert.Equal("True False [60015249,9988400002151]  0 0 0", Describe(answer));
+        Assert.Equal(Describe(new SimCommand((ulong)session.SessionId, SimCommands.RemoveTargets, [42, 43])), Describe(rig.Sim.Heard.Last()));
+        foreach (var (order, code) in new[] { (TargetingOrder.Lock, SimCommands.AddTarget), (TargetingOrder.Cancel, SimCommands.CancelAddTarget), (TargetingOrder.Clear, SimCommands.ClearTargets), (TargetingOrder.Targets, SimCommands.GetTargets), (TargetingOrder.Targeters, SimCommands.GetTargeters) })
+        {
+            await rig.Space.OrderAsync(session, order, [], CancellationToken.None);
+            Assert.Equal(code, ((SimCommand)rig.Sim.Heard.Last()).Code);
+        }
+    }
+
+    [PgFact]
+    public async Task A_lock_the_simulation_accepts_ends_the_protection_and_the_client_is_told_twice_as_the_reference_tells_it()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        Events.Of(session);
+        var answer = await rig.Space.OrderAsync(session, TargetingOrder.Lock, [9988400002151], CancellationToken.None);
+        Assert.Equal("True True []  0 0 0", Describe(answer));
+        var told = Events.Of(session);
+        Assert.Equal(["OnInvulnCancelled", "OnInvulnCancelled"], told.Select(e => e.Name));
+        Assert.All(told, e => Assert.Equal(("shipid", session.GetInt("shipid")), (e.IdType, Id(e.Args[0]))));
+        // the protection is over: the next lock is told once, and so is a movement that follows
+        await rig.Space.OrderAsync(session, TargetingOrder.Lock, [9988400002152], CancellationToken.None);
+        Assert.Equal(["OnInvulnCancelled"], Events.Of(session).Select(e => e.Name));
+        rig.Sim.Say(new SimAccepted((ulong)session.SessionId, SimCommands.Stop, 134351527136350000));
+        Assert.Empty(Events.Of(session));
+    }
+
+    [PgFact]
+    public async Task A_lock_that_is_refused_costs_the_pilot_its_protection_nothing_and_says_why()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        Events.Of(session);
+        rig.Sim.TargetAnswer = new CommandReply(false, 0, "TARGET_OUT_OF_RANGE") { TargetType = 92885, DesiredRange = 29700, ActualDistance = 306288156879.55023 };
+        var answer = await rig.Space.OrderAsync(session, TargetingOrder.Lock, [60015249], CancellationToken.None);
+        Assert.Equal("False False [] TARGET_OUT_OF_RANGE 92885 29700 306288156879.55023", Describe(answer));
+        Assert.Empty(Events.Of(session));
+        // the protection is still there to be ended by a movement
+        rig.Sim.Say(new SimAccepted((ulong)session.SessionId, SimCommands.Stop, 134351527136350000));
+        Assert.Equal(["OnInvulnCancelled"], Events.Of(session).Select(e => e.Name));
+    }
+
+    [PgFact]
+    public async Task Questions_about_targets_do_not_end_the_protection()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        Events.Of(session);
+        rig.Sim.TargetAnswer = new CommandReply(true, 0, null) { Targets = [1] };
+        foreach (var order in new[] { TargetingOrder.Targets, TargetingOrder.Targeters, TargetingOrder.Clear, TargetingOrder.Cancel, TargetingOrder.Remove })
+        {
+            await rig.Space.OrderAsync(session, order, [], CancellationToken.None);
+        }
+        Assert.Empty(Events.Of(session));
+    }
+
+    [PgFact]
+    public async Task Without_the_simulation_a_targeting_order_is_a_message_the_client_shows()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        rig.Sim.TargetsUnavailable = true;
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await rig.Space.OrderAsync(session, TargetingOrder.Lock, [1], CancellationToken.None));
+        var arguments = ((PyTuple)((PyTuple)((PyObjectEx)error.Error.Payload).Header).Items[1]).Items;
+        Assert.Equal("CustomNotify", ((PyStr)arguments[0]).Value);
+        Assert.Equal("Space is not available right now. Try again in a moment.", ((PyStr)((PyDict)arguments[1]).Entries.Single().Value).Value);
+    }
+
+    [PgFact]
+    public async Task The_orders_of_a_pilot_are_asked_one_at_a_time_and_each_is_answered_to_the_one_that_asked()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        rig.Sim.TargetGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var first = rig.Space.OrderAsync(session, TargetingOrder.Lock, [1], CancellationToken.None);
+        var second = rig.Space.OrderAsync(session, TargetingOrder.Lock, [2], CancellationToken.None);
+        await Task.Delay(50);
+        Assert.Equal([1.0], rig.Sim.Heard.OfType<SimCommand>().Where(c => c.Code == SimCommands.AddTarget).SelectMany(c => c.Args).ToArray());
+        rig.Sim.TargetGate.SetResult();
+        await Task.WhenAll(first, second);
+        Assert.Equal([1.0, 2.0], rig.Sim.Heard.OfType<SimCommand>().Where(c => c.Code == SimCommands.AddTarget).SelectMany(c => c.Args).ToArray());
     }
 
     // ── warp ─────────────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@ public class SimClientTests
 {
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(5);
 
-    private static SimShip Ship() => new(9988400001939, 140000342, 601, 237, 6, "Ibis", 140000342, 1000006, 0, 0, 0, 47, 1163000, 339.25, 4.0185, 3, 860000, []);
+    private static SimShip Ship() => new(9988400001939, 140000342, 601, 237, 6, "Ibis", 140000342, 1000006, 0, 0, 0, 47, 1163000, 339.25, 4.0185, 3, 860000, 29700, 660, 28, 4, []);
 
     private static SimEnter Enter(ulong session = 7) => new(session, 30100032, EnterHow.Undock, 60015249, Ship());
 
@@ -125,6 +125,41 @@ public class SimClientTests
         await sim.SayAsync(new SimJumping(9, SimCommands.Jump, 30100034, 50016839));
         await Until(() => heard.Count == 1);
         Assert.Equal(new SimJumped(7, 30100032, 50016630, 30100034, 50016839), heard.Single());
+    }
+
+    [Fact]
+    public async Task A_targeting_order_is_answered_with_what_is_locked_or_why_it_is_refused_and_an_answer_nobody_waits_for_is_dropped()
+    {
+        var (sim, client) = await ConnectedAsync(message => message switch
+        {
+            SimCommand { Code: SimCommands.AddTarget, SessionId: 7 } c => [new SimTargets(c.SessionId, c.Code, true, [60015249])],
+            SimCommand { Code: SimCommands.AddTarget } c => [new SimTargetRefused(c.SessionId, c.Code, "TARGET_OUT_OF_RANGE", 92885, 29700, 12345.5)],
+            SimCommand { Code: SimCommands.GetTargets } c => [new SimTargets(c.SessionId, c.Code, false, [1, 2])],
+            SimCommand { Code: SimCommands.ClearTargets } c => [new SimRefused(c.SessionId, c.Code, "NO_SHIP_IN_SPACE")],
+            _ => [],
+        });
+        await using var _ = sim;
+        await using var __ = client;
+        var heard = new List<SimMessage>();
+        client.Received += heard.Add;
+
+        var going = await Within(client.CommandAsync(7, SimCommands.AddTarget, [9988400002151]));
+        Assert.Equal((true, true), (going.Accepted, going.Pending));
+        Assert.Equal([60015249L], going.Targets);
+        var refused = await Within(client.CommandAsync(8, SimCommands.AddTarget, [60015249]));
+        Assert.Equal((false, "TARGET_OUT_OF_RANGE", 92885, 29700d, 12345.5), (refused.Accepted, refused.Reason, refused.TargetType, refused.DesiredRange, refused.ActualDistance));
+        var held = await Within(client.CommandAsync(7, SimCommands.GetTargets, []));
+        Assert.Equal((true, false), (held.Accepted, held.Pending));
+        Assert.Equal([1L, 2L], held.Targets);
+        Assert.Equal(new CommandReply(false, 0, "NO_SHIP_IN_SPACE"), await Within(client.CommandAsync(7, SimCommands.ClearTargets, [])));
+        Assert.Empty(heard);
+
+        // an answer nobody waits for is not handed on as news
+        await sim.SayAsync(new SimTargets(9, SimCommands.AddTarget, true, []));
+        await sim.SayAsync(new SimTargetRefused(9, SimCommands.AddTarget, "TARGET_SELF", 0, 0, 0));
+        await sim.SayAsync(new SimBind(9));
+        await Until(() => heard.Count == 1);
+        Assert.IsType<SimBind>(heard.Single());
     }
 
     [Fact]

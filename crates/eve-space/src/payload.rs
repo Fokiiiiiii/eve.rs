@@ -18,7 +18,7 @@ pub fn damage_state(shield_tau_ms: f64, now: i64) -> Value {
 }
 
 /// A station always answers with the same recharge, whatever it is.
-const STATION_SHIELD_TAU_MS: f64 = 110_000.0;
+pub(crate) const STATION_SHIELD_TAU_MS: f64 = 110_000.0;
 
 fn state_buffer(kind: u8, stamp: u32, balls: &[BallEntity]) -> Result<Value, BallError> {
     let mut bytes = vec![kind];

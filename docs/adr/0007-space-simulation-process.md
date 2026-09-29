@@ -111,6 +111,18 @@ not exist is the scene: which balls a system has, who is where, how commands cha
 
 ## Amendments
 
+- 2026-09-29, targeting: commands 10 to 15 (`AddTarget`, `CancelAddTarget`, `RemoveTargets`, `ClearTargets`, `GetTargets`, `GetTargeters`; ids as
+  the `f64` arguments) and the messages `Targets` (17: `session u64, command u8, pending u8, count u32, ids i64…`) and `TargetRefused` (18: `session u64,
+  command u8, reason text, target type i32, desired range f64, actual distance f64`), which answer them (the host awaits by `(session, command)`, one
+  order of a pilot at a time). The ship's spec carries what a lock depends on: `maxTargetRange`, `scanResolution`, `signatureRadius` (three more
+  `f64` after the shield recharge) and `maxLockedTargets` (an `i32`, the lower of the ship's and the pilot's). The sim owns the locks (`targeting.rs`):
+  a lock is asked for and answered as going; the poll has it when its time is up; a lock that can no longer be had is dropped (either ship warps,
+  the range, the ship is gone) and one that is held is told as `OnTarget lost`. `OnTarget` and the damage state (`OnDamageStateChange` in a
+  `DoDestinyUpdate`) travel as `Notify`. The sim keeps its own copy of the undocking protection (thirty seconds from the undock, ended by an accepted
+  movement or a lock that was asked for) to refuse a lock on a protected ship; the host still tells the client when it ends. A refusal that carries
+  the number of locks a ship may hold (`TARGET_LOCK_LIMIT_REACHED`) puts it in the place of the range. `docs/compat/DEVIATIONS.md` #29 to #31 say what
+  differs from the reference.
+
 - 2026-09-29, other ships: a scene holds several pilots and each is the audience of the others. A pilot that has bound the ballpark keeps the
   set of ships it has been told of (`Pilot::sees`), brought into line with `visibility::can_see` when a ship comes, goes or is in warp
   (`crowd.rs`). What happens to a ship is told to whoever has it in view (`tell_all`): an order, the stop of a docking, the drop-out and the rest

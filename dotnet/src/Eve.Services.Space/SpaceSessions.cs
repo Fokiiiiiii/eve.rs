@@ -14,7 +14,7 @@ namespace Eve.Services.Space;
 /// the notifications), forwarding what the simulation says to the client that plays the ship, and bringing the ship home when it docks, or
 /// when the simulation is lost. What happens in space itself (motion, the balls, the stamps) is the simulation's (ADR 0007).
 /// </summary>
-public sealed class SpaceSessions : IDisposable
+public sealed class SpaceSessions : IDisposable, ISpaceTargeting
 {
     /// <summary>How long a ship that has undocked cannot be hurt (the reference's: 30 seconds).</summary>
     public const long UndockInvulnerabilityTicks = 300_000_000;
@@ -69,6 +69,7 @@ public sealed class SpaceSessions : IDisposable
     private readonly Func<long> _nowUnixMs;
     private readonly Action<string>? _log;
     private readonly ConcurrentDictionary<ulong, Pilot> _pilots = new();
+    private readonly ConcurrentDictionary<ulong, SemaphoreSlim> _targeting = new();
     private readonly TimeSpan _protection;
     private readonly TimeSpan _jumpCloak;
     private readonly ConcurrentDictionary<int, ConcurrentDictionary<long, (long FileTime, long ExpiresAtMs)>> _queues = new();
@@ -257,6 +258,46 @@ public sealed class SpaceSessions : IDisposable
         {
             _log?.Invoke($"the end of the protection of session {pilot.Session.SessionId} could not be told: {error.Message}");
         }
+    }
+
+    /// <summary>
+    /// An order about the ship's targets. The simulation keeps the locks (a lock takes time, and ends when either ship warps or goes); this asks and
+    /// hears back. A lock the simulation accepts ends the undocking protection, and the client is told once more that it is over, as the reference
+    /// does after every lock it accepts. One order of a pilot is asked at a time (the answers are matched by what was asked).
+    /// </summary>
+    public async Task<TargetingResult?> OrderAsync(ClientSession session, TargetingOrder order, IReadOnlyList<long> targets, CancellationToken cancellationToken)
+    {
+        var id = (ulong)session.SessionId;
+        if (!_pilots.TryGetValue(id, out var pilot))
+        {
+            return null;
+        }
+        var gate = _targeting.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken);
+        CommandReply reply;
+        try
+        {
+            reply = await _sim.CommandAsync(id, (byte)order, [.. targets.Select(target => (double)target)], cancellationToken);
+        }
+        catch (SimUnavailableException error)
+        {
+            _log?.Invoke($"targeting of session {session.SessionId}: {error.Message}");
+            throw Notify("Space is not available right now. Try again in a moment.");
+        }
+        finally
+        {
+            gate.Release();
+        }
+        if (!reply.Accepted)
+        {
+            return TargetingResult.Refusal(reply.Reason ?? "REFUSED", reply.TargetType, reply.DesiredRange, reply.ActualDistance);
+        }
+        if (order == TargetingOrder.Lock)
+        {
+            EndInvulnerability(pilot);
+            session.SendNotification("OnInvulnCancelled", "shipid", InventoryWire.Id(pilot.ShipId));
+        }
+        return new TargetingResult(true, reply.Pending, reply.Targets);
     }
 
     /// <summary>Asks the simulation to dock the ship; the answer to the client's call is the time the docking was accepted, or nothing when it was not.</summary>
@@ -551,6 +592,7 @@ public sealed class SpaceSessions : IDisposable
 
     private void OnSessionClosed(ClientSession session)
     {
+        _targeting.TryRemove((ulong)session.SessionId, out _); // not disposed: an order may still be waiting on it
         if (_pilots.TryRemove((ulong)session.SessionId, out var pilot))
         {
             pilot.End();

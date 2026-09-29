@@ -14,6 +14,7 @@ use crate::gate;
 use crate::motion::{self, Target};
 use crate::payload;
 use crate::ship::{Course, Ship, ShipSpec};
+use crate::targeting::{Targeting, UNDOCK_PROTECTION};
 use crate::warp::{self, PythonRandom};
 use crate::wire::{filetime, id, int, real, text, tuple, vector};
 use crate::world::{BodyKind, Detail, SolarSystem};
@@ -22,7 +23,7 @@ use crate::world::{BodyKind, Detail, SolarSystem};
 pub type SessionId = u64;
 
 /// FILETIME ticks in a second.
-const TICKS_PER_SECOND: i64 = 10_000_000;
+pub(crate) const TICKS_PER_SECOND: i64 = 10_000_000;
 /// Seconds between 1601 and 1970.
 const UNIX_EPOCH_SECONDS: i64 = 11_644_473_600;
 /// How long a docking takes from the moment it is accepted.
@@ -115,6 +116,17 @@ pub enum Out {
     Docked { session: SessionId, station_id: i64 },
     /// A command the scene cannot do.
     Refused { session: SessionId, command: u8, reason: &'static str },
+    /// The answer to a targeting order: whether a lock is going, and the ships and bodies locked (or, to `GetTargeters`, the ships that lock this one).
+    Targets { session: SessionId, command: u8, pending: bool, targets: Vec<i64> },
+    /// A targeting order the scene refused, with what the client is told about the target.
+    TargetRefused {
+        session: SessionId,
+        command: u8,
+        reason: &'static str,
+        target_type: i32,
+        desired_range: f64,
+        actual_distance: f64,
+    },
 }
 
 /// Why the scene cannot take a ship.
@@ -148,6 +160,10 @@ pub(crate) struct Pilot {
     pub(crate) entered: u64,
     /// The other ships this pilot has been told of and not told to forget: those in its ballpark.
     pub(crate) sees: BTreeSet<SessionId>,
+    /// What the ship has locked and is locking.
+    pub(crate) targeting: Targeting,
+    /// Until when the ship cannot be locked (the undocking protection; it ends sooner when the ship is flown or locks something).
+    pub(crate) protected_until: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -183,6 +199,8 @@ pub struct Scene {
     pub(crate) warped_last: bool,
     /// What happened to ships while their motion was worked out (a ship dropped out of warp), to be told with the next call.
     backlog: Vec<Out>,
+    /// The number the last lock of a ship in this scene was given (locks are listed in the order they were asked for).
+    pub(crate) target_sequence: u64,
 }
 
 /// The destiny stamp of a moment: whole seconds of the Unix clock.
@@ -200,6 +218,7 @@ impl Scene {
             boxes: HashMap::new(),
             warped_last: false,
             backlog: Vec::new(),
+            target_sequence: 0,
         }
     }
 
@@ -274,6 +293,8 @@ impl Scene {
                 bound: false,
                 entered,
                 sees: BTreeSet::new(),
+                targeting: Targeting::default(),
+                protected_until: now + UNDOCK_PROTECTION,
             },
         );
         Ok(self.announce_arrival(session, now))
@@ -282,7 +303,9 @@ impl Scene {
     /// The ship leaves the scene (docked, gone offline, jumped): the ones who had it in view are told. None when it was not here.
     pub fn leave(&mut self, session: SessionId, _why: Departure, now: i64) -> Option<Vec<Out>> {
         let pilot = self.pilots.remove(&session)?;
-        Some(self.announce_departure(session, pilot.ship.spec.ship_id, now))
+        let mut out = self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting);
+        out.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
+        Some(out)
     }
 
     pub(crate) fn notify(session: SessionId, name: &'static str, args: Vec<Value>) -> Out {
@@ -390,11 +413,17 @@ impl Scene {
             Command::Jump { gate_id, destination_gate } => self.jump(session, gate_id, destination_gate, now),
             other => self.steer_pilot(session, other, now),
         };
+        // the ship was flown: the undocking protection is over (a docking does not end it)
+        if told.iter().any(|o| matches!(o, Out::Accepted { command, .. } if *command != 4))
+            && let Some(pilot) = self.pilots.get_mut(&session)
+        {
+            pilot.protected_until = 0;
+        }
         self.with_backlog(told)
     }
 
     /// Tells what happened while ships were moved on, then `told`.
-    fn with_backlog(&mut self, told: Vec<Out>) -> Vec<Out> {
+    pub(crate) fn with_backlog(&mut self, told: Vec<Out>) -> Vec<Out> {
         let mut out = std::mem::take(&mut self.backlog);
         out.extend(told);
         out
@@ -412,7 +441,7 @@ impl Scene {
     }
 
     /// Brings the motion of every ship to `now`.
-    fn settle_all(&mut self, now: i64) {
+    pub(crate) fn settle_all(&mut self, now: i64) {
         let sessions: Vec<SessionId> = self.pilots.keys().copied().collect();
         for session in sessions {
             self.settle_pilot(session, now);
@@ -741,6 +770,8 @@ impl Scene {
             self.settle_pilot(session, now);
             let Some(mut pilot) = self.pilots.remove(&session) else { continue };
             let Some(jump) = pilot.jump.take() else { continue };
+            let held = std::mem::take(&mut pilot.targeting);
+            told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &held));
             told.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
             travellers.push(Traveller {
                 session,
@@ -841,9 +872,11 @@ impl Scene {
         for (session, station_id) in due {
             if let Some(pilot) = self.pilots.remove(&session) {
                 told.push(Out::Docked { session, station_id });
+                told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting));
                 told.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
             }
         }
+        told.extend(self.settle_targets(now));
         told.extend(self.reconcile(now));
         self.with_backlog(told)
     }
@@ -1169,6 +1202,10 @@ pub(crate) mod tests {
             agility: 4.0185,
             warp_speed_au: 3.0,
             shield_recharge_ms: 860_000.0,
+            max_target_range: 29_700.0,
+            max_locked_targets: 4,
+            scan_resolution: 660.0,
+            signature_radius: 28.0,
             modules: vec![ModuleSpec { item_id: 9_988_400_001_940, type_id: 21857, flag: 19 }],
         }
     }

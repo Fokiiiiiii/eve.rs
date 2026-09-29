@@ -34,9 +34,26 @@ internal sealed class FakeSim : ISimulation
         return Task.FromResult(EnterAnswer);
     }
 
+    /// <summary>What a targeting order is answered with.</summary>
+    public CommandReply TargetAnswer { get; set; } = new(true, 0, null) { Pending = true };
+
+    /// <summary>When set, a targeting order fails as it does when the link to the simulation breaks.</summary>
+    public bool TargetsUnavailable { get; set; }
+
+    /// <summary>When set, a targeting order is not answered until the test completes it.</summary>
+    public TaskCompletionSource? TargetGate { get; set; }
+
     public Task<CommandReply> CommandAsync(ulong sessionId, byte code, double[] args, CancellationToken cancellationToken = default)
     {
         Heard.Add(new SimCommand(sessionId, code, args));
+        if (code is >= SimCommands.AddTarget and <= SimCommands.GetTargeters)
+        {
+            if (TargetsUnavailable)
+            {
+                throw new SimUnavailableException("the link to the simulation broke");
+            }
+            return TargetGate is { } gate ? gate.Task.ContinueWith(_ => TargetAnswer, cancellationToken) : Task.FromResult(TargetAnswer);
+        }
         return Task.FromResult(code switch { SimCommands.WarpTo => WarpAnswer, SimCommands.Jump => JumpAnswer, _ => DockAnswer });
     }
 

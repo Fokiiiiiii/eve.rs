@@ -20,6 +20,7 @@ pub mod security;
 pub mod ship;
 pub mod sim;
 pub mod slim;
+pub mod targeting;
 pub mod visibility;
 pub mod warp;
 pub mod wire;

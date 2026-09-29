@@ -73,6 +73,7 @@ domain module.
 | S2 | **Login to a character (done for the screen).** Accounts in PostgreSQL (development auto-create and strict-password mode), character list, name rules and creation with a rookie ship, choosing a character (session attributes, the session change, the skills notification), the skills a new character starts with and the skill handler's reads. Still to come inside S2: the other caches and static data the client downloads after the session has a character | `tests/test_login_to_character.py` replays the recorded walks against the reference (38 tests) and against eve.rs (43 with the live tests); deviations are in `docs/compat/DEVIATIONS.md` |
 | S3 | **Station.** Docked state, hangar, ships and items, skills, dogma for a fitted ship (done: `stationSvc`, `invbroker`, `dogmaIM.GetAllInfo`, moving items between hangar and ship, fitting, module state, skill training and its queue; partial stacks and charges remain) | A scenario reads a ship's attributes and inventory; values equal the reference's |
 | S4 | **Space.** Undock, the destiny stream, movement (done: undock, bind, state, speed, direction, stop, align, orbit, follow, dock in range and the approach from beyond it, warp to a body of the system and to a stargate, the stargate jump into the next system, other ships in the same system; `adr/0007`), then time dilation | The client receives the destiny stream; balls and timing match within a stated tolerance (done: `tests/test_undock.py`, `tests/test_movement.py`, `tests/test_warp.py`, `tests/test_jump.py` and `tests/test_others.py` against the recordings, on the reference and on eve.rs); a tick benchmark (done: `scene.*` in `eve-bench`, see NATIVE_MIGRATION) |
+| S5a | **Targeting (done).** Locks between ships and on stations, with the reference's refusals, timing and events (`tests/test_target.py`; `adr/0007`); next in S5: modules and weapons (activation, cycles, capacitor), damage and the damage state, then NPCs and their behaviour | The client's target bar, `OnTarget` and the damage state match the recording; a lock takes the reference's time |
 | S5 | **The long tail, by importance.** Rank the client's services by how often and how early it calls them (`docs/spec/services.tsv` and live runs); market, corporations, chat and mail, agents and missions, and the rest | Each service group has a scenario |
 | S6 | **Cut-over.** Legacy data import, operations tooling, a performance and stability report | A player can move from EVE.js to eve.rs with their data |
 
@@ -102,8 +103,8 @@ domain module.
 2. **Continue S4, space**: a ship undocks, is sent the system, flies (speed, direction, stop, align, orbit, follow) and
    docks, also from beyond the range, where it follows the station and is told `DockingApproach` (`adr/0007`). Ships come out
    at the reference's authored undock points (its static table `stationGraphicLocators`, kept in `crates/eve-space/data`).
-   Warp to a stargate and the jump into the next system (`tests/test_jump.py`) and ships seeing one another (`tests/test_others.py`)
-   are done. The tick benchmark is done. Next: NPCs (S5). Where the SDE has no value, the
+   Warp to a stargate and the jump into the next system (`tests/test_jump.py`) and ships seeing one another (`tests/test_others.py`) and locking one another (`tests/test_target.py`)
+   are done. The tick benchmark is done. Targeting is done (S5a). Next: modules and weapons, damage, then NPCs (S5). Where the SDE has no value, the
    reference's own static tables and the parts of its server that the client extraction carries are trusted as sources
    (with their provenance recorded), and the code is never copied.
 3. Tag the fixtures by tier and record the next deviations with evidence from the client source.

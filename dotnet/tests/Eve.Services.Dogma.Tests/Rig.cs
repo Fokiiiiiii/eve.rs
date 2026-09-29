@@ -55,9 +55,12 @@ internal sealed class Rig : IAsyncDisposable
         Creation = creation;
         Modules = modules;
         Ships = new CharacterShips(source, statics, Characters, Items, Skills, modules);
-        Service = new DogmaIMService(statics, Ships, () => ClockMs);
+        Service = new DogmaIMService(statics, Ships, () => ClockMs, null, Targeting);
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(sde), new Eve.Universe.StationCatalog([]), Ships, statics, () => ClockMs);
     }
+
+    /// <summary>Space as a test plays it: it keeps the orders and answers what the test tells it to.</summary>
+    public FakeTargeting Targeting { get; } = new();
 
     public NpgsqlDataSource Source { get; }
 
@@ -127,6 +130,13 @@ internal sealed class Rig : IAsyncDisposable
 
     public async Task<PyValue> InventoryAsync(ClientSession session, string method, string? bound = null, PyValue[]? args = null, PyValue? kwargs = null) =>
         await ((IService)Inventory).CallAsync(new ServiceCall { Method = method, Args = args ?? [], Kwargs = kwargs ?? PyNone.Instance, Session = session, CallId = new PyInt(1), BoundObjectId = bound });
+
+    /// <summary>Binds dogma to the solar system the session's ship is in and returns the bound object's id.</summary>
+    public async Task<string> BindInSpaceAsync(ClientSession session, long system)
+    {
+        var answer = (PyTuple)await CallAsync(session, "MachoBindObject", null, Py.Tuple(new PyInt(system), new PyInt(5)), PyNone.Instance);
+        return OidOf(answer.Items[0]);
+    }
 
     /// <summary>Binds dogma to the station and returns the bound object's id.</summary>
     public async Task<string> BindAsync(ClientSession session)

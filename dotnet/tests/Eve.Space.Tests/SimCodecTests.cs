@@ -27,6 +27,7 @@ public class SimCodecTests
         Wide(s, "shipId"), Wide(s, "characterId"), (int)s["typeId"]!, (int)s["groupId"]!, (int)s["categoryId"]!, (string)s["name"]!, Wide(s, "ownerId"),
         (int)s["corporationId"]!, (int)s["allianceId"]!, (int)s["warFactionId"]!, (double)s["securityStatus"]!, (double)s["radius"]!, (double)s["mass"]!,
         (double)s["maxVelocity"]!, (double)s["agility"]!, (double)s["warpSpeedAu"]!, (double)s["shieldRechargeMs"]!,
+        (double)s["maxTargetRange"]!, (double)s["scanResolution"]!, (double)s["signatureRadius"]!, (int)s["maxLockedTargets"]!,
         [.. ((JsonArray)s["modules"]!).Select(m => new SimModule(Wide(m!, "itemId"), (int)m!["typeId"]!, (int)m["flag"]!))]);
 
     private static SimMessage MessageOf(JsonObject c)
@@ -50,6 +51,8 @@ public class SimCodecTests
             "Approaching" => new SimApproaching(Session(), (byte)(int)c["command"]!, (double)c["distance"]!),
             "Jumping" => new SimJumping(Session(), (byte)(int)c["command"]!, (int)c["destinationSystem"]!, Wide(c, "destinationGate")),
             "Jumped" => new SimJumped(Session(), (int)c["fromSystem"]!, Wide(c, "fromGate"), (int)c["toSystem"]!, Wide(c, "toGate")),
+            "Targets" => new SimTargets(Session(), (byte)(int)c["command"]!, (bool)c["pending"]!, [.. ((JsonArray)c["targets"]!).Select(x => long.Parse((string)x!, CultureInfo.InvariantCulture))]),
+            "TargetRefused" => new SimTargetRefused(Session(), (byte)(int)c["command"]!, (string)c["reason"]!, (int)c["targetType"]!, (double)c["desiredRange"]!, (double)c["actualDistance"]!),
             var other => throw new InvalidOperationException(other),
         };
     }
@@ -58,7 +61,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-        Assert.Equal(["Accepted", "Approaching", "Bind", "Command", "Docked", "Enter", "EnterReply", "Hello", "HelloAck", "Jumped", "Jumping", "Leave", "Notify", "Refused", "ShipSpec", "UpdateState"], kinds);
+        Assert.Equal(["Accepted", "Approaching", "Bind", "Command", "Docked", "Enter", "EnterReply", "Hello", "HelloAck", "Jumped", "Jumping", "Leave", "Notify", "Refused", "ShipSpec", "TargetRefused", "Targets", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);
     }
 
@@ -118,6 +121,34 @@ public class SimCodecTests
         BitConverter.GetBytes(uint.MaxValue).CopyTo(forged, at);
         var error = Assert.Throws<SimLinkException>(() => SimCodec.Decode(forged.AsMemory(4)));
         Assert.Equal(SimLinkError.Truncated, error.Error);
+    }
+
+    [Fact]
+    public void A_target_count_the_frame_cannot_hold_is_refused_without_allocating_for_it()
+    {
+        var good = SimCodec.Encode(MessageOf(Case("valid", "targets with a lock going")));
+        // the count is the four bytes before the one 8-byte target at the end of the frame
+        var forged = (byte[])good.Clone();
+        BitConverter.GetBytes(uint.MaxValue).CopyTo(forged, good.Length - 8 - 4);
+        var error = Assert.Throws<SimLinkException>(() => SimCodec.Decode(forged.AsMemory(4)));
+        Assert.Equal(SimLinkError.Truncated, error.Error);
+    }
+
+    [Fact]
+    public void A_pending_flag_that_is_not_a_flag_is_refused()
+    {
+        var forged = SimCodec.Encode(MessageOf(Case("valid", "targets none")));
+        // u32 length, kind, u64 session, u8 command, then the flag
+        forged[4 + 1 + 8 + 1] = 2;
+        Assert.Equal(SimLinkError.BadValue, Assert.Throws<SimLinkException>(() => SimCodec.Decode(forged.AsMemory(4))).Error);
+    }
+
+    [Fact]
+    public void A_decoded_ship_carries_what_the_ship_may_lock()
+    {
+        var c = Case("valid", "enter by undocking");
+        var enter = Assert.IsType<SimEnter>(SimCodec.Decode(Hex((string)c["hex"]!).AsMemory(4)));
+        Assert.Equal((29700.0, 660.0, 28.0, 4), (enter.Ship.MaxTargetRange, enter.Ship.ScanResolution, enter.Ship.SignatureRadius, enter.Ship.MaxLockedTargets));
     }
 
     [Fact]

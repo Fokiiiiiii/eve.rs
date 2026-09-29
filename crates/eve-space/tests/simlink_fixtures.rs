@@ -43,6 +43,10 @@ fn ship_of(case: &Value) -> ShipSpec {
         agility: number("agility"),
         warp_speed_au: number("warpSpeedAu"),
         shield_recharge_ms: number("shieldRechargeMs"),
+        max_target_range: number("maxTargetRange"),
+        max_locked_targets: int("maxLockedTargets"),
+        scan_resolution: number("scanResolution"),
+        signature_radius: number("signatureRadius"),
         modules: case["modules"]
             .as_array()
             .unwrap()
@@ -118,6 +122,25 @@ fn message_of(case: &Value) -> Message {
             from_gate: wide(case, "fromGate"),
             to_system: number("toSystem") as i32,
             to_gate: wide(case, "toGate"),
+        },
+        "Targets" => Message::Targets {
+            session_id: session_id(),
+            command: number("command") as u8,
+            pending: case["pending"].as_bool().unwrap(),
+            targets: case["targets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t.as_str().unwrap().parse().unwrap())
+                .collect(),
+        },
+        "TargetRefused" => Message::TargetRefused {
+            session_id: session_id(),
+            command: number("command") as u8,
+            reason: text(case, "reason"),
+            target_type: case["targetType"].as_i64().unwrap() as i32,
+            desired_range: case["desiredRange"].as_f64().unwrap(),
+            actual_distance: case["actualDistance"].as_f64().unwrap(),
         },
         other => panic!("unknown kind {other}"),
     }

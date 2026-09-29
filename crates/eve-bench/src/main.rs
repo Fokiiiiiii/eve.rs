@@ -209,6 +209,10 @@ fn bench_ship(index: u64) -> ShipSpec {
         agility: 4.0185,
         warp_speed_au: 3.0,
         shield_recharge_ms: 860_000.0,
+        max_target_range: 29_700.0,
+        max_locked_targets: 4,
+        scan_resolution: 660.0,
+        signature_radius: 28.0,
         modules: Vec::new(),
     }
 }

@@ -52,6 +52,8 @@ public static class SimCodec
         public const byte Approaching = 14;
         public const byte Jumping = 15;
         public const byte Jumped = 16;
+        public const byte Targets = 17;
+        public const byte TargetRefused = 18;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)
@@ -139,6 +141,10 @@ public static class SimCodec
         var agility = r.F64();
         var warpSpeed = r.F64();
         var shieldRecharge = r.F64();
+        var maxTargetRange = r.F64();
+        var scanResolution = r.F64();
+        var signatureRadius = r.F64();
+        var maxLockedTargets = r.I32();
         var count = r.U32();
         // a module takes 16 bytes, so a count the frame cannot hold is refused before anything is allocated for it
         if (count > r.Remaining / 16)
@@ -150,7 +156,7 @@ public static class SimCodec
         {
             modules[i] = new SimModule(r.I64(), r.I32(), r.I32());
         }
-        return new SimShip(shipId, characterId, typeId, groupId, categoryId, name, ownerId, corporationId, allianceId, warFactionId, security, radius, mass, maxVelocity, agility, warpSpeed, shieldRecharge, modules);
+        return new SimShip(shipId, characterId, typeId, groupId, categoryId, name, ownerId, corporationId, allianceId, warFactionId, security, radius, mass, maxVelocity, agility, warpSpeed, shieldRecharge, maxTargetRange, scanResolution, signatureRadius, maxLockedTargets, modules);
     }
 
     /// <summary>Decodes a frame's payload: the kind byte and the body (without the length prefix).</summary>
@@ -242,6 +248,33 @@ public static class SimCodec
             case Kind.Jumped:
                 message = new SimJumped(r.U64(), r.I32(), r.I64(), r.I32(), r.I64());
                 break;
+            case Kind.Targets:
+                {
+                    var session = r.U64();
+                    var command = r.U8();
+                    var pending = r.U8() switch
+                    {
+                        0 => false,
+                        1 => true,
+                        _ => throw new SimLinkException(SimLinkError.BadValue, "bad pending"),
+                    };
+                    var count = r.U32();
+                    // a target takes 8 bytes, so a count the frame cannot hold is refused before anything is allocated for it
+                    if (count > r.Remaining / 8)
+                    {
+                        throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");
+                    }
+                    var targets = new long[count];
+                    for (var i = 0; i < targets.Length; i++)
+                    {
+                        targets[i] = r.I64();
+                    }
+                    message = new SimTargets(session, command, pending, targets);
+                    break;
+                }
+            case Kind.TargetRefused:
+                message = new SimTargetRefused(r.U64(), r.U8(), r.Text(), r.I32(), r.F64(), r.F64());
+                break;
             case var other:
                 throw new SimLinkException(SimLinkError.UnknownKind, $"unknown message kind {other}");
         }
@@ -306,10 +339,11 @@ public static class SimCodec
         w.I32(s.CorporationId);
         w.I32(s.AllianceId);
         w.I32(s.WarFactionId);
-        foreach (var number in new[] { s.SecurityStatus, s.Radius, s.Mass, s.MaxVelocity, s.Agility, s.WarpSpeedAu, s.ShieldRechargeMs })
+        foreach (var number in new[] { s.SecurityStatus, s.Radius, s.Mass, s.MaxVelocity, s.Agility, s.WarpSpeedAu, s.ShieldRechargeMs, s.MaxTargetRange, s.ScanResolution, s.SignatureRadius })
         {
             w.F64(number);
         }
+        w.I32(s.MaxLockedTargets);
         w.U32((uint)s.Modules.Count);
         foreach (var module in s.Modules)
         {
@@ -420,6 +454,26 @@ public static class SimCodec
                 w.I64(m.FromGate);
                 w.I32(m.ToSystem);
                 w.I64(m.ToGate);
+                break;
+            case SimTargets m:
+                w.U8(Kind.Targets);
+                w.U64(m.SessionId);
+                w.U8(m.Command);
+                w.U8((byte)(m.Pending ? 1 : 0));
+                w.U32((uint)m.Targets.Count);
+                foreach (var target in m.Targets)
+                {
+                    w.I64(target);
+                }
+                break;
+            case SimTargetRefused m:
+                w.U8(Kind.TargetRefused);
+                w.U64(m.SessionId);
+                w.U8(m.Command);
+                w.Text(m.Reason);
+                w.I32(m.TargetType);
+                w.F64(m.DesiredRange);
+                w.F64(m.ActualDistance);
                 break;
             default:
                 throw new ArgumentException($"cannot encode {message.GetType().Name}", nameof(message));

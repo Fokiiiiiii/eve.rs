@@ -27,6 +27,8 @@ pub mod kind {
     pub const APPROACHING: u8 = 14;
     pub const JUMPING: u8 = 15;
     pub const JUMPED: u8 = 16;
+    pub const TARGETS: u8 = 17;
+    pub const TARGET_REFUSED: u8 = 18;
 }
 
 /// How a ship comes into space.
@@ -123,6 +125,25 @@ pub enum Message {
         from_gate: i64,
         to_system: i32,
         to_gate: i64,
+    },
+    /// What a targeting command answers: `pending` is set when a lock is going (an `AddTarget`), `targets` are the ships and bodies locked (or,
+    /// for `GetTargeters`, those that have this ship locked).
+    Targets {
+        session_id: u64,
+        command: u8,
+        pending: bool,
+        targets: Vec<i64>,
+    },
+    /// A targeting command the scene refused, with what the client is told of the target: its type, the range the ship can lock at and how far
+    /// away the target is (both 0 unless the target was out of range; for `TARGET_LOCK_LIMIT_REACHED` the range is the number of targets the ship
+    /// may hold).
+    TargetRefused {
+        session_id: u64,
+        command: u8,
+        reason: String,
+        target_type: i32,
+        desired_range: f64,
+        actual_distance: f64,
     },
 }
 
@@ -241,9 +262,13 @@ fn put_ship(out: &mut Vec<u8>, ship: &ShipSpec) {
         ship.agility,
         ship.warp_speed_au,
         ship.shield_recharge_ms,
+        ship.max_target_range,
+        ship.scan_resolution,
+        ship.signature_radius,
     ] {
         out.extend_from_slice(&number.to_le_bytes());
     }
+    out.extend_from_slice(&ship.max_locked_targets.to_le_bytes());
     out.extend_from_slice(&(ship.modules.len() as u32).to_le_bytes());
     for module in &ship.modules {
         out.extend_from_slice(&module.item_id.to_le_bytes());
@@ -263,7 +288,21 @@ fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
     let corporation_id = reader.i32()?;
     let alliance_id = reader.i32()?;
     let war_faction_id = reader.i32()?;
-    let [security_status, radius, mass, max_velocity, agility, warp_speed_au, shield_recharge_ms] = [
+    let [
+        security_status,
+        radius,
+        mass,
+        max_velocity,
+        agility,
+        warp_speed_au,
+        shield_recharge_ms,
+        max_target_range,
+        scan_resolution,
+        signature_radius,
+    ] = [
+        reader.f64()?,
+        reader.f64()?,
+        reader.f64()?,
         reader.f64()?,
         reader.f64()?,
         reader.f64()?,
@@ -272,6 +311,7 @@ fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
         reader.f64()?,
         reader.f64()?,
     ];
+    let max_locked_targets = reader.i32()?;
     let count = reader.u32()? as usize;
     // a module takes 16 bytes, so a count the frame cannot hold is refused before anything is allocated for it
     if count > reader.data.len() / 16 {
@@ -299,6 +339,10 @@ fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
         agility,
         warp_speed_au,
         shield_recharge_ms,
+        max_target_range,
+        max_locked_targets,
+        scan_resolution,
+        signature_radius,
         modules,
     })
 }
@@ -323,6 +367,8 @@ impl Message {
             Self::Approaching { .. } => kind::APPROACHING,
             Self::Jumping { .. } => kind::JUMPING,
             Self::Jumped { .. } => kind::JUMPED,
+            Self::Targets { .. } => kind::TARGETS,
+            Self::TargetRefused { .. } => kind::TARGET_REFUSED,
         }
     }
 
@@ -415,6 +461,30 @@ impl Message {
                 out.extend_from_slice(&to_system.to_le_bytes());
                 out.extend_from_slice(&to_gate.to_le_bytes());
             }
+            Self::Targets { session_id, command, pending, targets } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.push(*command);
+                out.push(u8::from(*pending));
+                out.extend_from_slice(&(targets.len() as u32).to_le_bytes());
+                for target in targets {
+                    out.extend_from_slice(&target.to_le_bytes());
+                }
+            }
+            Self::TargetRefused {
+                session_id,
+                command,
+                reason,
+                target_type,
+                desired_range,
+                actual_distance,
+            } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.push(*command);
+                put_text(&mut out, reason);
+                out.extend_from_slice(&target_type.to_le_bytes());
+                out.extend_from_slice(&desired_range.to_le_bytes());
+                out.extend_from_slice(&actual_distance.to_le_bytes());
+            }
         }
         out
     }
@@ -496,6 +566,33 @@ impl Message {
                 from_gate: r.i64()?,
                 to_system: r.i32()?,
                 to_gate: r.i64()?,
+            },
+            kind::TARGETS => {
+                let session_id = r.u64()?;
+                let command = r.u8()?;
+                let pending = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("pending")),
+                };
+                let count = r.u32()? as usize;
+                // a target takes 8 bytes: a count the frame cannot hold is refused before anything is allocated for it
+                if count > r.data.len() / 8 {
+                    return Err(DecodeError::Truncated);
+                }
+                let mut targets = Vec::with_capacity(count);
+                for _ in 0..count {
+                    targets.push(r.i64()?);
+                }
+                Message::Targets { session_id, command, pending, targets }
+            }
+            kind::TARGET_REFUSED => Message::TargetRefused {
+                session_id: r.u64()?,
+                command: r.u8()?,
+                reason: r.text()?,
+                target_type: r.i32()?,
+                desired_range: r.f64()?,
+                actual_distance: r.f64()?,
             },
             other => return Err(DecodeError::UnknownKind(other)),
         };

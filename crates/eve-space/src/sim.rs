@@ -11,6 +11,7 @@ use eve_marshal::Value;
 
 use crate::link::{Enter, How, Message, PROTOCOL_VERSION};
 use crate::scene::{Command, Departure, Out, Scene, SceneError, SessionId, Traveller};
+use crate::targeting::Order;
 use crate::world::{SolarSystem, World};
 
 /// How often the host's clock is polled for what is due (dockings); the link says it in `HelloAck`.
@@ -88,6 +89,21 @@ fn command_of(code: u8, args: &[f64]) -> Option<Command> {
     }
 }
 
+/// The targeting order a code and its arguments say, if they say one (codes 10 to 15).
+fn order_of(code: u8, args: &[f64]) -> Option<Order> {
+    match (code, args) {
+        (10, [target]) if is_id(*target) => Some(Order::Lock(*target as i64)),
+        (11, [target]) if is_id(*target) => Some(Order::Cancel(*target as i64)),
+        (12, targets) if targets.iter().all(|t| is_id(*t)) => {
+            Some(Order::Remove(targets.iter().map(|t| *t as i64).collect()))
+        }
+        (13, []) => Some(Order::Clear),
+        (14, []) => Some(Order::Targets),
+        (15, []) => Some(Order::Targeters),
+        _ => None,
+    }
+}
+
 /// Whether a link number is an id: a whole number the link's `f64` holds exactly.
 fn is_id(value: f64) -> bool {
     value.is_finite() && value.fract() == 0.0 && value.abs() < 9_007_199_254_740_992.0
@@ -124,6 +140,19 @@ impl Sim {
             Out::Docked { session, station_id } => Message::Docked { session_id: session, station_id },
             Out::Refused { session, command, reason } => {
                 Message::Refused { session_id: session, command, reason: reason.to_string() }
+            }
+            Out::Targets { session, command, pending, targets } => {
+                Message::Targets { session_id: session, command, pending, targets }
+            }
+            Out::TargetRefused { session, command, reason, target_type, desired_range, actual_distance } => {
+                Message::TargetRefused {
+                    session_id: session,
+                    command,
+                    reason: reason.to_string(),
+                    target_type,
+                    desired_range,
+                    actual_distance,
+                }
             }
         }
     }
@@ -199,13 +228,30 @@ impl Sim {
             Message::UpdateState { session_id } => {
                 self.scene_of(session_id).map(|s| s.update_state(session_id, now)).unwrap_or_default()
             }
-            Message::Command { session_id, command, args } => match command_of(command, &args) {
-                Some(cmd) => match self.scene_of(session_id) {
-                    Some(scene) => scene.command(session_id, cmd, now),
-                    None => vec![Out::Refused { session: session_id, command, reason: "NO_SHIP_IN_SPACE" }],
-                },
-                None => vec![Out::Refused { session: session_id, command, reason: "UNKNOWN_COMMAND" }],
-            },
+            Message::Command { session_id, command, args } => {
+                if let Some(order) = order_of(command, &args) {
+                    match self.scene_of(session_id) {
+                        Some(scene) => scene.target_order(session_id, order, now),
+                        None => {
+                            vec![Out::Refused { session: session_id, command, reason: "NO_SHIP_IN_SPACE" }]
+                        }
+                    }
+                } else {
+                    match command_of(command, &args) {
+                        Some(cmd) => match self.scene_of(session_id) {
+                            Some(scene) => scene.command(session_id, cmd, now),
+                            None => vec![Out::Refused {
+                                session: session_id,
+                                command,
+                                reason: "NO_SHIP_IN_SPACE",
+                            }],
+                        },
+                        None => {
+                            vec![Out::Refused { session: session_id, command, reason: "UNKNOWN_COMMAND" }]
+                        }
+                    }
+                }
+            }
             Message::ShipSpec { session_id, ship } => {
                 self.scene_of(session_id).map(|s| s.respec(session_id, ship, now)).unwrap_or_default()
             }

@@ -5,7 +5,20 @@ namespace Eve.Space;
 /// too far, not possible from here: the ship approaches the station and <paramref name="ApproachDistance"/> is how far off it was. A jump that
 /// was accepted says where the ship is going (<paramref name="DestinationSystem"/>, <paramref name="DestinationGate"/>).
 /// </summary>
-public sealed record CommandReply(bool Accepted, long At, string? Reason, double? ApproachDistance = null, int? DestinationSystem = null, long DestinationGate = 0);
+public sealed record CommandReply(bool Accepted, long At, string? Reason, double? ApproachDistance = null, int? DestinationSystem = null, long DestinationGate = 0)
+{
+    /// <summary>The answer to a targeting order: what the ship has locked (or who has it locked) and whether a lock is going.</summary>
+    public IReadOnlyList<long> Targets { get; init; } = [];
+
+    public bool Pending { get; init; }
+
+    /// <summary>What a refused targeting order says of the target: its type, and (out of range only) the range and the distance.</summary>
+    public int TargetType { get; init; }
+
+    public double DesiredRange { get; init; }
+
+    public double ActualDistance { get; init; }
+}
 
 /// <summary>The simulation cannot be reached (it is not running, or the link broke).</summary>
 public sealed class SimUnavailableException(string message, Exception? inner = null) : Exception(message, inner);

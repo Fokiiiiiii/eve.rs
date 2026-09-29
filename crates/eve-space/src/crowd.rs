@@ -37,7 +37,7 @@ impl Scene {
     }
 
     /// The sessions of the pilots, in the order they came into the scene.
-    fn in_entry_order(&self) -> Vec<SessionId> {
+    pub(crate) fn in_entry_order(&self) -> Vec<SessionId> {
         let mut order: Vec<(u64, SessionId)> = self.pilots.iter().map(|(s, p)| (p.entered, *s)).collect();
         order.sort_unstable();
         order.into_iter().map(|(_, s)| s).collect()
@@ -61,7 +61,7 @@ impl Scene {
             .collect()
     }
 
-    fn update(session: SessionId, actions: Vec<Value>) -> Out {
+    pub(crate) fn update(session: SessionId, actions: Vec<Value>) -> Out {
         Scene::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false))
     }
 

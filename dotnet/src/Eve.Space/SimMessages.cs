@@ -23,7 +23,8 @@ public sealed record SimModule(long ItemId, int TypeId, int Flag);
 /// <summary>What motion and the slim item need to know of a ship: the host works these out (dogma, skills, fitting), the simulation only uses them.</summary>
 public sealed record SimShip(
     long ShipId, long CharacterId, int TypeId, int GroupId, int CategoryId, string Name, long OwnerId, int CorporationId, int AllianceId, int WarFactionId,
-    double SecurityStatus, double Radius, double Mass, double MaxVelocity, double Agility, double WarpSpeedAu, double ShieldRechargeMs, IReadOnlyList<SimModule> Modules);
+    double SecurityStatus, double Radius, double Mass, double MaxVelocity, double Agility, double WarpSpeedAu, double ShieldRechargeMs,
+    double MaxTargetRange, double ScanResolution, double SignatureRadius, int MaxLockedTargets, IReadOnlyList<SimModule> Modules);
 
 /// <summary>A ship enters a solar system.</summary>
 public sealed record SimEnter(ulong SessionId, int SolarSystemId, EnterHow How, long StationId, SimShip Ship) : SimMessage;
@@ -59,6 +60,24 @@ public static class SimCommands
     public const byte AlignTo = 7;
     public const byte WarpTo = 8;
     public const byte Jump = 9;
+
+    /// <summary>Start locking a target (the target's id).</summary>
+    public const byte AddTarget = 10;
+
+    /// <summary>Give up a lock that is going (the target's id).</summary>
+    public const byte CancelAddTarget = 11;
+
+    /// <summary>Let go of locked targets (their ids).</summary>
+    public const byte RemoveTargets = 12;
+
+    /// <summary>Let go of every target.</summary>
+    public const byte ClearTargets = 13;
+
+    /// <summary>What the ship has locked.</summary>
+    public const byte GetTargets = 14;
+
+    /// <summary>Who has the ship locked.</summary>
+    public const byte GetTargeters = 15;
 }
 
 public sealed record SimCommand(ulong SessionId, byte Code, IReadOnlyList<double> Args) : SimMessage;
@@ -86,3 +105,15 @@ public sealed record SimJumping(ulong SessionId, byte Command, int DestinationSy
 
 /// <summary>The ship has left its system through a gate and is in the scene of the other one, in front of <paramref name="ToGate"/>: the host moves the character.</summary>
 public sealed record SimJumped(ulong SessionId, int FromSystem, long FromGate, int ToSystem, long ToGate) : SimMessage;
+
+/// <summary>
+/// What a targeting command answers: <paramref name="Pending"/> is set when a lock is going, <paramref name="Targets"/> are the ships and bodies locked
+/// (for <c>GetTargeters</c>, the ships that have this one locked).
+/// </summary>
+public sealed record SimTargets(ulong SessionId, byte Command, bool Pending, IReadOnlyList<long> Targets) : SimMessage;
+
+/// <summary>
+/// A targeting command the scene refused, with what the client is told of the target: its type, and (only when it was out of range) the range the ship
+/// locks at and how far off the target is.
+/// </summary>
+public sealed record SimTargetRefused(ulong SessionId, byte Command, string Reason, int TargetType, double DesiredRange, double ActualDistance) : SimMessage;

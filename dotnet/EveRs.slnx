@@ -2,9 +2,11 @@
   <Folder Name="/src/">
     <Project Path="src/Eve.GameStore.Import/Eve.GameStore.Import.csproj" />
     <Project Path="src/Eve.GameStore/Eve.GameStore.csproj" />
+    <Project Path="src/Eve.Marshal/Eve.Marshal.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Eve.GameStore.Import.Tests/Eve.GameStore.Import.Tests.csproj" />
     <Project Path="tests/Eve.GameStore.Tests/Eve.GameStore.Tests.csproj" />
+    <Project Path="tests/Eve.Marshal.Tests/Eve.Marshal.Tests.csproj" />
   </Folder>
 </Solution>

@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use crate::names;
 use crate::sde::{Sde, SdeError, english, f, i};
+use crate::security;
 
 /// What kind of body a ball stands for. The kind decides its flags and how it is named.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +32,9 @@ pub enum Detail {
         destination_gate: i64,
         destination_name: String,
         destination_security: f64,
+        destination_faction: Option<i64>,
+        /// Whether the jump leads to less safe space (the client warns before it).
+        hazardous: bool,
         facing: Option<[f64; 3]>,
     },
 }
@@ -122,8 +126,27 @@ impl World {
                 category_of_group.insert(key, category as i32);
             }
         })?;
+        // a system without a faction of its own belongs to its constellation's, and that to its region's
+        let mut constellation_factions = HashMap::new();
+        sde.scan("mapConstellations", None, |key, record| {
+            if let Some(faction) = i(record, "factionID") {
+                constellation_factions.insert(key, faction);
+            }
+        })?;
+        let mut region_factions = HashMap::new();
+        sde.scan("mapRegions", None, |key, record| {
+            if let Some(faction) = i(record, "factionID") {
+                region_factions.insert(key, faction);
+            }
+        })?;
         let mut systems = HashMap::new();
         sde.scan("mapSolarSystems", None, |key, record| {
+            let constellation = i(record, "constellationID").unwrap_or(0);
+            let region = i(record, "regionID").unwrap_or(0);
+            let faction = i(record, "factionID")
+                .or_else(|| constellation_factions.get(&constellation).copied())
+                .or_else(|| region_factions.get(&region).copied())
+                .filter(|faction| *faction > 0);
             systems.insert(
                 key,
                 SystemInfo {
@@ -131,7 +154,7 @@ impl World {
                     position: Self::position(record),
                     constellation_id: i(record, "constellationID").unwrap_or(0) as i32,
                     region_id: i(record, "regionID").unwrap_or(0) as i32,
-                    faction_id: i(record, "factionID"),
+                    faction_id: faction,
                     security: f(record, "securityStatus").unwrap_or(0.0),
                 },
             );
@@ -262,7 +285,7 @@ impl World {
                 type_id: type_id as i32,
                 group_id,
                 category_id: self.category(group_id),
-                owner_id: info.faction_id.unwrap_or(0),
+                owner_id: info.faction_id.unwrap_or(1),
                 name: names::stargate(destination_info.map_or("", |d| d.name.as_str())),
                 kind: BodyKind::Stargate,
                 position: Self::position(record),
@@ -273,6 +296,9 @@ impl World {
                     destination_gate: destination.and_then(|d| i(d, "stargateID")).unwrap_or(0),
                     destination_name: destination_info.map(|d| d.name.clone()).unwrap_or_default(),
                     destination_security: destination_info.map_or(0.0, |d| d.security),
+                    destination_faction: destination_info.and_then(|d| d.faction_id),
+                    hazardous: destination_info
+                        .is_some_and(|d| security::hazardous_transition(info.security, d.security)),
                     facing: destination_info
                         .and_then(|d| crate::geo::stargate_facing(info.position, d.position)),
                 },

@@ -87,3 +87,69 @@ pub fn rigid_balls(buffer: &[u8]) -> Vec<RecordedBall> {
     }
     balls
 }
+
+/// The bytes of the rigid balls of a state buffer, one slice per ball, and what follows them (the ship's free ball).
+pub fn split_state(buffer: &[u8]) -> (Vec<(i64, &[u8])>, &[u8]) {
+    let mut balls = Vec::new();
+    let mut at = 5;
+    while at + 39 <= buffer.len() && buffer[at + 8] == 11 {
+        balls.push((i64::from_le_bytes(buffer[at..at + 8].try_into().unwrap()), &buffer[at..at + 39]));
+        at += 39;
+    }
+    (balls, &buffer[at..])
+}
+
+/// A value as the recordings describe it (`tools/headless-client/evecli/describe.py`), so it can be compared with one.
+pub fn describe(value: &eve_marshal::Value) -> Value {
+    use eve_marshal::Value as V;
+    use serde_json::json;
+    let pairs = |entries: &[(V, V)]| {
+        Value::Array(entries.iter().map(|(k, v)| json!([describe(k), describe(v)])).collect())
+    };
+    match value {
+        V::None => Value::Null,
+        V::Bool(b) => json!(b),
+        V::Int(n) if i32::try_from(*n).is_ok() => json!(n),
+        V::Int(n) | V::Long(n) => json!({"$long": n}),
+        V::Real(r) => json!(r),
+        V::Str(s) => json!(s),
+        V::Bytes(b) => json!(String::from_utf8_lossy(b)),
+        V::Buffer(b) => json!({"$buffer": b.iter().map(|byte| format!("{byte:02x}")).collect::<String>()}),
+        V::WString(s) => json!({"$unicode": s}),
+        V::Token(t) => json!({"$token": t}),
+        V::Tuple(items) => json!({"$tuple": items.iter().map(describe).collect::<Vec<_>>()}),
+        V::List(items) => Value::Array(items.iter().map(describe).collect()),
+        V::Dict(entries) => json!({"$dict": pairs(entries)}),
+        V::Object { name, args } => json!({"$object": describe(name), "args": describe(args)}),
+        V::PackedRow(row) => {
+            let fields: serde_json::Map<String, Value> = row
+                .descriptor
+                .columns
+                .iter()
+                .zip(&row.values)
+                // a fixed-width column reads back as a plain integer whatever its width
+                .map(|(c, v)| (c.name.clone(), if let V::Long(n) = v { json!(n) } else { describe(v) }))
+                .collect();
+            json!({"$row": fields})
+        }
+        other => panic!("not described: {other:?}"),
+    }
+}
+
+/// Whether two hex-written buffers are the same but for the last three doubles, which may differ in their last digits.
+///
+/// A ship going in a direction is sent with a point far along it (1e16 metres away); the reference works it out from a
+/// direction it holds unrounded, so its low bits are not ours, and the client only reads the heading from it.
+pub fn same_but_the_far_target(ours: &str, theirs: &str) -> bool {
+    let tail = 48; // three doubles, two hex digits a byte
+    if ours.len() != theirs.len() || ours.len() < tail {
+        return false;
+    }
+    let (a, b) = (ours.len() - tail, theirs.len() - tail);
+    let double = |hex: &str, i: usize| f64::from_le_bytes(unhex(&hex[i..i + 16]).try_into().unwrap());
+    ours[..a] == theirs[..b]
+        && (0..3).all(|k| {
+            let (x, y) = (double(ours, a + 16 * k), double(theirs, b + 16 * k));
+            (x - y).abs() <= 1e-12 * x.abs().max(y.abs())
+        })
+}

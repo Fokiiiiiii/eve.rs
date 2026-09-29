@@ -7,5 +7,10 @@
 
 pub mod geo;
 pub mod names;
+pub mod payload;
 pub mod sde;
+pub mod security;
+pub mod ship;
+pub mod slim;
+pub mod wire;
 pub mod world;

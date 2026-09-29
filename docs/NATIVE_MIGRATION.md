@@ -74,8 +74,27 @@ rowsets (shared row descriptors), encoding, and numeric kernels.
 - **The scene tick benchmark** needs the generated SDE tables (not in the
   repository). The login-path latency benchmark needs a running world.
 - **M2 PostgreSQL 18, M3 C# services, M4 Rust network front, M5 Rust tick and
-  visibility, M6 cut-over**: not started. The environment used so far has no
-  .NET SDK and no PostgreSQL 18 server.
+  visibility, M6 cut-over**: not started beyond the pieces below.
+
+## Added since the first import
+
+- **`eve-sde`**: loads the JSONL static-data export into a PostgreSQL 18 `sde`
+  schema (`ord`, `key`, `doc jsonb`) and verifies row counts. Tested against a
+  local PostgreSQL 18.4. `sde/fetch.sh` downloads and pins an SDE build
+  (default 3396210, the version `DatabaseCreator` targets) into `.cache/`; the
+  export itself is not committed.
+- **`tools/headless-client` (`evecli`)**: a Python client with its own marshal
+  codec (a third implementation of the golden fixtures), the login handshake and
+  service calls. It passes against a scripted mock server. The same tests run
+  against the real Node server with `tools/dev/run-evejs-live.sh`, which needs
+  the SDE-derived data first; that has **not** been run yet.
+- **`docs/spec`, `tools/spec-extract`**: facts (packet layout, handshake,
+  service and method names, dogma operators) taken from a local copy of the
+  client source. No client code is copied.
+- **Blocked on the environment**: the egress proxy denies
+  `developers.eveonline.com`, so the real SDE has not been fetched. PostgreSQL 18
+  comes from the npm-packaged binaries because `apt.postgresql.org` is denied;
+  .NET 10 comes from Ubuntu's packages.
 
 ## Policy
 

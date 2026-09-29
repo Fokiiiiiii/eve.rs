@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record what the EVE.js reference does from login to a session with a character.
 
-    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others]
+    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others|target]
 
 The recording is the contract for the same path in eve.rs: `tests/test_login_to_character.py` replays the calls
 against any server and compares each answer with what is stored here, by shape, treating per-run values
@@ -945,6 +945,116 @@ def record_others(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     b.close()
 
 
+def record_target(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """Two characters in space by the same station: what the one that locks (the actor, B) and the one that is locked (the watcher, A) are
+    sent as the actor asks for its targets, tries to lock itself, a planet out of range, the watcher and the station, gives up a lock, drops
+    one and clears the lot. Each step holds what B is sent (`events`) and what A is sent (`seen`), with the seconds each arrived at."""
+    system, station, planet = 30100032, 60015249, 40491233
+
+    def character(name: str):
+        who = rec.login(name)
+        created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"{name} {run}", 1, 1, ancestry[1]))
+        char_id = int(created["ok"])
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
+        hangar = who.call_bound(manager, "GetInventory", 10004)
+        ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+        who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
+        events_of(who)
+        return who, created, char_id, ship_id
+
+    a, a_created, a_char, a_ship = character("Watcher")
+    b, b_created, b_char, b_ship = character("Actor")
+    both = {"events": b, "seen": a}
+    steps: list = []
+
+    def step(label, call, seconds=2.0, until=None):
+        entry = {"label": label}
+        try:
+            entry["ok"] = describe(call())
+        except p.MachoError as error:
+            entry["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+        entry.update(watch(both, seconds, until))
+        steps.append(entry)
+        return entry
+
+    a_service = a.call("ship", "MachoBindObject", (station, 15), None)
+    b_service = b.call("ship", "MachoBindObject", (station, 15), None)
+    watch(both, 0.5)
+    step("the watcher undocks", lambda: a.call_bound(a_service[0], "Undock", a_ship, False), 2.0)
+    a_ballpark = a.call("beyonce", "MachoBindObject", system, None)
+    step("the watcher binds the ballpark", lambda: a_ballpark, 2.5)
+    step("the actor undocks", lambda: b.call_bound(b_service[0], "Undock", b_ship, False), 2.5)
+    b_ballpark = b.call("beyonce", "MachoBindObject", system, None)
+    step("the actor binds the ballpark", lambda: b_ballpark, 3.0)
+    a_dogma = a.call("dogmaIM", "MachoBindObject", (system, 5), None)
+    b_dogma = b.call("dogmaIM", "MachoBindObject", (system, 5), None)
+    steps.append({"label": "both bind dogma in space", "ok": describe([a_dogma, b_dogma]), **watch(both, 1.0)})
+    # a ship that has just undocked cannot be locked until its protection ends (thirty seconds)
+    lock = lambda ship: (lambda: b.call_bound(b_dogma[0], "AddTarget", ship))  # noqa: E731
+    got_lock = lambda seen: any(e["name"] == "OnTarget" for e in seen["events"])  # noqa: E731
+    watcher_free = lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["seen"])  # noqa: E731
+    steps.append({"label": "the protection of the watcher ends", **watch(both, 40.0, until=watcher_free)})
+    # the actor's own protection has a few seconds to run: a lock before it ends
+    step("the actor locks itself while it is protected", lock(b_ship))
+    step("the actor locks the watcher while it is protected", lock(a_ship), 20.0, until=got_lock)
+    step("the actor unlocks the watcher it locked while protected", lambda: b.call_bound(b_dogma[0], "RemoveTarget", a_ship), 2.0)
+    steps.append({"label": "the protection of the actor ends", **watch(both, 6.0)})
+    step("the actor asks what it has locked", lambda: b.call_bound(b_dogma[0], "GetTargets"))
+    step("the watcher asks what has locked it", lambda: a.call_bound(a_dogma[0], "GetTargeters"))
+    step("the actor locks itself", lock(b_ship))
+    step("the actor locks a planet", lock(planet))
+    step("the actor locks something that is not there", lock(99999999))
+    step("the actor locks the watcher", lock(a_ship), 20.0, until=got_lock)
+    step("the actor asks what it has locked with the watcher locked", lambda: b.call_bound(b_dogma[0], "GetTargets"))
+    step("the watcher asks what has locked it with the actor locking", lambda: a.call_bound(a_dogma[0], "GetTargeters"))
+    step("the actor locks the watcher again", lock(a_ship), 2.0)
+    step("the actor unlocks the watcher", lambda: b.call_bound(b_dogma[0], "RemoveTarget", a_ship), 2.0)
+    step("the actor locks the watcher to give up", lock(a_ship), 1.5)
+    step("the actor gives up the lock", lambda: b.call_bound(b_dogma[0], "CancelAddTarget", a_ship), 2.0)
+    step("the actor locks the station", lock(station), 20.0, until=got_lock)
+    step("the actor locks the watcher after the station", lock(a_ship), 20.0, until=got_lock)
+    step("the actor unlocks the station with a list", lambda: b.call_bound(b_dogma[0], "RemoveTargets", m.List([station])), 2.0)
+    step("the actor locks the station again", lock(station), 20.0, until=got_lock)
+    step("the actor clears its targets", lambda: b.call_bound(b_dogma[0], "ClearTargets"), 2.0)
+    step("the actor asks what it has locked after clearing", lambda: b.call_bound(b_dogma[0], "GetTargets"))
+    # a ship that is locked docks: the one that locked it is told it is gone
+    step("the actor locks the watcher before it docks", lock(a_ship), 20.0, until=got_lock)
+    step("the watcher docks", lambda: a.call_bound(a_ballpark[0], "CmdDock", station), 9.0, until=lambda seen: any(e["name"] == "$sessionchange" for e in seen["seen"]))
+    step("the actor asks what it has locked after the watcher docked", lambda: b.call_bound(b_dogma[0], "GetTargets"))
+
+    # the actor warps to a planet with the station locked, tries to lock in warp and, when it is far away, from there
+    step("the actor locks the station before warping", lock(station), 20.0, until=got_lock)
+    warp = {"label": "the actor warps to a planet"}
+    try:
+        warp["ok"] = describe(b.call_bound(b_ballpark[0], "CmdWarpToStuff", "item", planet, minRange=0))
+    except p.MachoError as error:
+        warp["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+    warp.update(watch(both, 14.0))
+    steps.append(warp)
+    step("the actor locks the station in warp", lock(station), 2.0)
+    started = time.time()
+    seen_both: dict = {"events": [], "seen": []}
+    while time.time() - started < 150:
+        got = watch(both, 3.0)
+        for name in seen_both:
+            for event in got[name]:
+                event["at"] = round(event["at"] + (time.time() - started) - 3.0, 2)
+            seen_both[name] += [e for e in got[name] if not (e["name"] == "DoDestinyUpdate" and dest_names(e) == ["SetState"])]
+        if any("Stop" in dest_names(e) for e in seen_both["events"]):
+            break
+    steps.append({"label": "the actor arrives", **seen_both})
+    step("the actor locks the station from far away", lock(station), 2.0)
+    race = {"bloodlineID": 1, "raceID": 1, "solarSystemID": system, "stationID": station, "planetID": planet,
+            "watcher": {"create": a_created, "characterID": a_char, "shipID": a_ship}, "actor": {"create": b_created, "characterID": b_char, "shipID": b_ship},
+            "steps": steps}
+    with open(os.path.join(out, "target.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [race]}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+    a.close()
+    b.close()
+
+
 def main() -> int:
     if len(sys.argv) < 4:
         print(__doc__)
@@ -957,10 +1067,10 @@ def main() -> int:
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others, "target": record_target}
     try:
         for name, record in parts.items():
-            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others")):  # the fast one needs a reference started for it
+            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others", "target")):  # the fast one needs a reference started for it
                 record(rec, out, meta, ancestry, run)
         if only in (None, "stations"):
             record_stations(rec, out, meta, ancestry, run, sde)

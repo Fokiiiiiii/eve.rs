@@ -63,7 +63,12 @@ where the ship lands and where it appears at random, so those are bounds, not va
 planet): for each step what the actor was sent and what the watcher was sent, with the seconds each arrived at. It shows what the reference tells a ship of
 another that comes, moves, warps off and docks (the ball and its numbers in one update, the orders as they are, the ship taken out of view 7 seconds into a
 warp, in a `PackagedAction`) and that the newcomer's first `AddBalls2` lists both ships.
-`--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others` records one and leaves the others as they are.
+`target.json` two characters in one system by the same station (the watcher is locked, the actor locks): what each is sent, with the seconds each arrived at, as the actor
+asks for its targets and its targeters, locks itself, a planet and something that is not there (`DeniedTargetSelf`, `DeniedTargetingAttemptFailed`, `TargetingAttemptCancelled`),
+locks a ship still under its undocking protection (`CustomNotify`), locks the watcher (about 3.8 s, `OnTarget add` and the damage state to both, `otheradd` to the watcher),
+the station (0.76 s), locks again, unlocks (`lost`, `otherlost`), gives a lock up, unlocks with a list, clears (`clear`, `otherlost`), sees a locked ship dock (`lost` when it has
+docked), warps with the station locked (`clear` when the warp is entered), tries to lock in warp (`DeniedTargetSelfWarping`) and from 2 AU away (`TargetNotWithinRangeGeneric`).
+`--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others|target` records one and leaves the others as they are.
 
 `fixtures/simlink/messages.json` is not from the reference: it is what `tools/dev/gen-simlink-fixtures.py` writes, the golden
 frames of the link between the service host and the simulation (`docs/adr/0007`), a third writer of the format that the Rust

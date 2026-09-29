@@ -1135,6 +1135,63 @@ def record_module(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     b.close()
 
 
+def record_health(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """One character damages its ship in the hangar (`/dmg`, the reference's only way to hurt a ship on demand), asks for it, leaves the station
+    with the damage, watches its shield and capacitor recharge, heals in space and tries to damage again there. Each step holds the answer (or
+    the error) and what the client was sent, with the seconds each arrived at."""
+    system, station = 30100032, 60015249
+    who = rec.login("Damaged")
+    created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Damaged {run}", 1, 1, ancestry[1]))
+    char_id = int(created["ok"])
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
+    hangar = who.call_bound(manager, "GetInventory", 10004)
+    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
+    events_of(who)
+    only = {"events": who}
+    steps: list = []
+
+    def step(label, call, seconds=1.5, until=None):
+        entry = {"label": label}
+        try:
+            entry["ok"] = describe(call())
+        except p.MachoError as error:
+            entry["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+        entry["events"] = watch(only, seconds, (lambda seen: until(seen["events"])) if until else None)["events"]
+        steps.append(entry)
+        return entry
+
+    docked = who.call("dogmaIM", "MachoBindObject", (station, 15), None)
+    info = lambda: who.call_bound(docked[0], "GetAllInfo", True, True, None)  # noqa: E731
+    slash = lambda command: (lambda: who.call("slash", "SlashCmd", command))  # noqa: E731
+    step("the pilot asks for its ship", info)
+    step("light damage in the hangar", slash("/dmg light"), 1.5)
+    step("the pilot asks for its damaged ship", info)
+    step("heavy damage in the hangar", slash("/dmg heavy"), 1.5)
+    step("the pilot asks for its badly damaged ship", info)
+    step("a heal in the hangar", slash("/heal"), 1.5)
+    step("the pilot asks for its healed ship", info)
+    step("heavy damage before the undock", slash("/dmg heavy"), 1.5)
+    ship = who.call("ship", "MachoBindObject", (station, 15), None)
+    step("the damaged ship undocks", lambda: who.call_bound(ship[0], "Undock", ship_id, False, onlineModules=m.List([ship_id + 1, ship_id + 2, ship_id + 3])), 2.5)
+    ballpark = who.call("beyonce", "MachoBindObject", system, None)
+    step("the pilot binds the ballpark", lambda: ballpark, 3.0)
+    space = who.call("dogmaIM", "MachoBindObject", (system, 5), None)
+    step("the pilot binds dogma in space", lambda: space, 1.0)
+    step("the pilot asks for its damaged ship in space", lambda: who.call_bound(space[0], "GetAllInfo", True, True, None), 1.0)
+    step("the shield and the capacitor recharge", lambda: None, 20.0)
+    step("damage in space", slash("/dmg light"), 2.0)
+    step("a heal in space", slash("/heal"), 3.0)
+    step("the healed ship stays as it is", lambda: None, 3.0)
+    race = {"bloodlineID": 1, "raceID": 1, "solarSystemID": system, "stationID": station, "create": created, "characterID": char_id, "shipID": ship_id,
+            "moduleIDs": [ship_id + 1, ship_id + 2, ship_id + 3], "steps": steps}
+    with open(os.path.join(out, "health.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [race]}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+    who.close()
+
+
 def args_of_effect(event: dict) -> list:
     """The arguments of an `OnGodmaShipEffect`: `(itemID, effectID, when, isStart, isActive, environment, startTime, duration, repeat, error)`."""
     try:
@@ -1155,10 +1212,10 @@ def main() -> int:
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others, "target": record_target, "module": record_module}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others, "target": record_target, "module": record_module, "health": record_health}
     try:
         for name, record in parts.items():
-            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others", "target", "module")):  # the fast one needs a reference started for it
+            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others", "target", "module", "health")):  # the fast one needs a reference started for it
                 record(rec, out, meta, ancestry, run)
         if only in (None, "stations"):
             record_stations(rec, out, meta, ancestry, run, sde)

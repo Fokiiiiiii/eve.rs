@@ -20,3 +20,6 @@ obj/
 .idea/
 .vscode/
 .DS_Store
+
+# SDE archives and extracted builds are fetched on first start (eve-sde ensure), never committed
+/sde/data/

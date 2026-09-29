@@ -8,9 +8,12 @@
 //! every file becomes a table `sde."<file>"(ord, key, doc jsonb)`. Typed models
 //! for the tables the server uses are built on top of that, table by table.
 //!
-//! The data itself is CCP's and is fetched at development time (see
-//! `sde/fetch.sh`); it is never committed.
+//! The data itself is CCP's and is never committed. [`ensure`] fetches it on a
+//! first start ([`fetch`]) and loads it once; `sde/fetch.sh` is the shell
+//! equivalent of the fetch half.
 
+pub mod ensure;
+pub mod fetch;
 pub mod jsonl;
 pub mod load;
 pub mod manifest;

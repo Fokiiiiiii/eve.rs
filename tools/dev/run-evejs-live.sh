@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
 # Run the headless client's live tests against the EVE.js reference server.
 #
-#   tools/dev/run-evejs-live.sh /path/to/evejs /path/to/sde-jsonl-dir
+#   tools/dev/run-evejs-live.sh /path/to/evejs [/path/to/sde-jsonl-dir]
+#
+# Without an SDE directory, `eve-sde ensure` fetches the pinned build into .cache/sde first.
 #
 # The reference server needs the tables EVE.js derives from the SDE, so this
 # generates them into a throwaway data root, boots the server on it, runs
 # tests/test_live.py, and stops the server. Prerequisites: `npm ci` in
-# <evejs>/server and <evejs>, and an SDE directory (sde/fetch.sh).
+# <evejs>/server and <evejs>. The SDE directory is optional (see above).
 set -euo pipefail
 
-EVEJS="$(cd "${1:?usage: run-evejs-live.sh /path/to/evejs /path/to/sde-dir}" && pwd)"
-SDE="$(cd "${2:?usage: run-evejs-live.sh /path/to/evejs /path/to/sde-dir}" && pwd)"
+EVEJS="$(cd "${1:?usage: run-evejs-live.sh /path/to/evejs [/path/to/sde-dir]}" && pwd)"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [ -n "${2:-}" ]; then
+  SDE="$(cd "$2" && pwd)"
+else
+  # EVE_PG_URL is unset here: the server needs the JSONL files, not the database copy.
+  SDE="$(cd "$HERE" && env -u EVE_PG_URL cargo run -q --release -p eve-sde -- ensure --cache "$HERE/.cache/sde")"
+fi
 PORT="${EVE_LIVE_PORT:-26000}"
 DATA="$(mktemp -d)"
 LOG="$DATA/server.out"

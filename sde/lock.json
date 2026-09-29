@@ -3,8 +3,12 @@
     "3396210": {
       "bytes": 84190400,
       "fetchedAt": "2026-09-29T02:03:07Z",
-      "obtainedVia": "downloaded in a browser and vendored as sde/data/eve-online-static-data-3396210-jsonl.zip (egress to developers.eveonline.com is denied in the dev environment)",
+      "obtainedVia": "the sha256 below is that of the copy a GitHub Actions workflow downloaded from the second source (EVE Ref mirror); the development environment cannot reach either host, so the first source has not been compared against it",
       "sha256": "17ae0c7f00fec4c2b79f785a9c35debdc5ae9edde558d18dc26d51cf87279b3e",
+      "sources": [
+        "https://developers.eveonline.com/static-data/tranquility/eve-online-static-data-3396210-jsonl.zip",
+        "https://data.everef.net/ccp/sde/2026/eve-online-static-data-3396210-jsonl.zip"
+      ],
       "tables": {
         "_sde": 1,
         "agentTypes": 13,
@@ -71,5 +75,6 @@
       "url": "https://developers.eveonline.com/static-data/tranquility/eve-online-static-data-3396210-jsonl.zip"
     }
   },
-  "note": "SDE builds fetched for development. The data itself is never committed."
+  "note": "SDE builds fetched for development. The data itself is never committed.",
+  "pinned": "3396210"
 }

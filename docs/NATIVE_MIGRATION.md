@@ -144,13 +144,22 @@ slower than Node on buffer-heavy encoding (a memory copy the JS `Buffer.concat` 
 - **`docs/spec`, `tools/spec-extract`**: facts (packet layout, handshake,
   service and method names, dogma operators) taken from a local copy of the
   client source. No client code is copied.
-- **SDE build 3396210 loaded.** The environment cannot reach `developers.eveonline.com`, so the official archive
-  (`eve-online-static-data-3396210-jsonl.zip`, sha256 `17ae0c7f...279b3e`, 84,190,400 bytes) was downloaded in a
-  browser and committed under `sde/data/`. `sde/fetch.sh` extracted it (61 tables, 668,618 records) and `eve-sde
-  load` put it in PostgreSQL 18.4, the loader's own count check passing. Against the tables the reference's
-  `DatabaseCreator` builds from the same archive: `solarSystems` 8,490 and `stations` 5,210 match exactly,
-  `typeDogma` 26,724 matches, and `itemTypes` has one row fewer than `types` (typeID 0, `#System`, which
-  `DatabaseCreator` leaves out). Only the newest build 3396210 is vendored; a `latest` build has not been fetched.
+- **SDE build 3396210 loaded, and fetched on the first start from now on.** The development environment cannot
+  reach `developers.eveonline.com` (or `data.everef.net`), so the archive
+  (`eve-online-static-data-3396210-jsonl.zip`, sha256 `17ae0c7f...279b3e`, 84,190,400 bytes) was downloaded by a
+  one-off GitHub Actions workflow from the EVE Ref mirror and committed, to get it into the environment. It has
+  since been removed from the tree (it stays in the history of `main`), `sde/data/` is git-ignored, and
+  `eve-sde ensure` (`crates/eve-sde/src/{fetch,ensure}.rs`) replaces it: on start-up it skips everything if
+  `sde._build` already names the build, else downloads from the sources in `sde/lock.json` (CCP's host, then the
+  mirror), refuses an archive whose SHA-256 is not the pinned one or whose `_sde.jsonl` is another build,
+  extracts flat, loads in one transaction and deletes the archive. Whether CCP's own copy has the same bytes as
+  the mirror's has not been compared, since neither host is reachable from here; if it does not, that source
+  is skipped on the hash and the mirror serves. The download half was exercised here only against `file://`
+  and loopback HTTP sources and against the real archive passed with `--archive`, never against either host.
+  Loaded, the archive gave 61 tables, 668,618 records. Against the tables the reference's `DatabaseCreator`
+  builds from the same archive: `solarSystems` 8,490 and `stations` 5,210 match exactly, `typeDogma` 26,724
+  matches, and `itemTypes` has one row fewer than `types` (typeID 0, `#System`, which `DatabaseCreator` leaves
+  out). Only build 3396210 has been used; a `latest` build has not been fetched.
 - **Reference server start-up.** Booting it on that data takes about five minutes and 3-4 GB before it listens on
   26000. Its static tables are read from `EVEJS_GAMESTORE_DATA_DIR` (default `<repo>/_local/gameStore/data`, else
   the source tree), not from `EVEJS_DATA_ROOT`, so a relocated data root also needs that variable.

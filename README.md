@@ -45,13 +45,16 @@ cargo run --release -p eve-bench -- --compare
 
 ## Data and the client source
 
-- **SDE.** `sde/fetch.sh` downloads a build of the official JSONL export into
-  `.cache/sde/` (git-ignored) and records its hash in `sde/lock.json`. The pinned build
-  is 3396210, the one that matches client 24.01. Load it with
-  `cargo run -p eve-sde -- load .cache/sde/eve-online-static-data-3396210-jsonl --pg $(tools/dev/pg18.sh url)`.
-  The archive of the pinned build is also kept in `sde/data/` (downloaded in a browser, because the
-  development environment cannot reach `developers.eveonline.com`); extract it with
-  `SDE_BASE_URL=file://<dir> sde/fetch.sh 3396210`, where `<dir>/tranquility/` holds that file.
+- **SDE.** Fetched on the first start, never committed (`sde/data/` and `.cache/` are git-ignored).
+  `cargo run -p eve-sde -- ensure --pg $(tools/dev/pg18.sh url)` does the whole job and is what a server
+  calls at start-up (`eve_sde::ensure::ensure_loaded`): if the database already holds the wanted build it
+  does nothing; otherwise it downloads the archive (CCP's host first, then the mirror listed in
+  `sde/lock.json`), checks its SHA-256 against the pin, extracts it under `.cache/sde/`, loads it, and
+  deletes the archive. The pinned build is 3396210, the one that matches client 24.01. Downloads use `curl`.
+  Without `--pg` it only fetches and extracts, and prints the directory. `--archive FILE` uses a local zip
+  instead of downloading (for a host that cannot reach either source), `--build latest` follows CCP's
+  current export, `--sha256 skip` accepts an archive that is not the pinned one. `sde/fetch.sh` is the
+  shell equivalent of the fetch half.
 - **Client source.** Some scripts read a local checkout of the decompiled client
   as a read-only reference (`tools/spec-extract`). Its files are CCP's property:
   they are never copied into this repository, and extracted outputs that

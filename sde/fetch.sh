@@ -5,6 +5,9 @@
 #   sde/fetch.sh latest     whatever CCP currently publishes
 #   sde/fetch.sh 3400000    a specific build
 #
+# `cargo run -p eve-sde -- ensure` is the same fetch, natively, plus the database load; a server
+# calls it on its first start. This script stays for shell-only use.
+#
 # The data is CCP's; it is downloaded for development and never committed
 # (.cache/ is git-ignored). SDE_BASE_URL overrides the host, for tests.
 set -euo pipefail

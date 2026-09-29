@@ -31,8 +31,8 @@ with Client("127.0.0.1", 26000) as client:
 | `test_handshake_mock.py`: the client against a scripted server built from the reference's message shapes (login, calls, errors, rejected logins, wire shape of a call) | nothing |
 | `test_live.py`: the client against a running server | `EVE_LIVE_HOST=host:port` |
 
-`tools/dev/run-evejs-live.sh <evejs> <sde-dir>` generates the reference server's
-data from an SDE, boots it, and runs `test_live.py`. The reference server loads
+`tools/dev/run-evejs-live.sh <evejs> [<sde-dir>]` generates the reference server's
+data from an SDE (fetched with `eve-sde ensure` when no directory is given), boots it, and runs `test_live.py`. The reference server loads
 every table before it listens (about five minutes on a cold start; the script
 waits up to `EVE_LIVE_BOOT_SECONDS`, default 900). It is pointed at the
 generated tables with `EVEJS_GAMESTORE_DATA_DIR`; `EVEJS_DATA_ROOT` alone does

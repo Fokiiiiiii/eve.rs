@@ -1,6 +1,6 @@
 using Npgsql;
 
-namespace Eve.GameStore;
+namespace Eve.Data;
 
 /// <summary>Accepts both a <c>postgres://</c> URL (what the tooling and Rust crates use) and an Npgsql keyword string.</summary>
 public static class PgConnection

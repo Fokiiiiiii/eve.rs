@@ -1,7 +1,10 @@
 using System.Net;
 using System.Net.Sockets;
+using Eve.Data;
 using Eve.Host;
+using Eve.Identity;
 using Eve.Marshal;
+using Npgsql;
 using Eve.Services;
 using Eve.Services.Core;
 
@@ -9,6 +12,9 @@ using Eve.Services.Core;
 //
 //   EVE_HOST               where to listen: a socket path, "unix:/path" or "tcp:host:port"   (default /tmp/eve-host.sock)
 //   EVE_IMAGE_SERVER_URL   the image server the client is told about                         (default http://127.0.0.1:26001/)
+//   EVE_PG_URL             PostgreSQL for accounts (postgres://... or an Npgsql string); without it accounts
+//                          live in memory and are lost when the host stops
+//   EVE_IDENTITY_SCHEMA    the schema of the accounts module                                  (default identity)
 //   EVE_DEV_SKIP_PASSWORD  1 accepts any password (development only)                          (default 0)
 //   EVE_DEV_AUTO_CREATE    0 refuses unknown user names                                       (default 1)
 
@@ -42,11 +48,25 @@ static Socket Listen(string endpoint)
 
 var endpoint = Env("EVE_HOST", "/tmp/eve-host.sock");
 var options = new ClusterOptions { ImageServerUrl = Env("EVE_IMAGE_SERVER_URL", "http://127.0.0.1:26001/") };
-var identity = new DevIdentityDirectory(new DevIdentityOptions
+var accountOptions = new AccountOptions
 {
     SkipPasswordCheck = Flag("EVE_DEV_SKIP_PASSWORD", false),
     AutoCreate = Flag("EVE_DEV_AUTO_CREATE", true),
-});
+};
+IAccountDirectory accounts;
+if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
+{
+    var schema = Env("EVE_IDENTITY_SCHEMA", PgAccountDirectory.DefaultSchema);
+    var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(pgUrl));
+    var applied = await PgAccountDirectory.MigrateAsync(source, schema);
+    Console.Error.WriteLine($"eve-host: accounts in PostgreSQL, schema {schema}{(applied.Count > 0 ? "; applied " + string.Join(", ", applied) : "")}");
+    accounts = new PgAccountDirectory(source, accountOptions, schema);
+}
+else
+{
+    Console.Error.WriteLine("eve-host: no EVE_PG_URL: accounts are kept in memory and lost when the host stops");
+    accounts = new InMemoryAccountDirectory(accountOptions);
+}
 
 var registry = new ServiceRegistry();
 Func<long> now = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -64,7 +84,7 @@ var clusterConfig = MarshalCodec.Encode(config);
 var server = new HostServer(
     new HostOptions { Log = message => Console.Error.WriteLine($"eve-host: {message}") },
     dispatcher,
-    identity,
+    accounts,
     () => clusterConfig);
 
 using var listener = Listen(endpoint);

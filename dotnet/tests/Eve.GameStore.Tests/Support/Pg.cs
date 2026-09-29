@@ -1,3 +1,4 @@
+using Eve.Data;
 using Npgsql;
 
 namespace Eve.GameStore.Tests;

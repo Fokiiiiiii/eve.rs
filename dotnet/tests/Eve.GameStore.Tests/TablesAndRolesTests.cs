@@ -1,3 +1,4 @@
+using Eve.Data;
 using System.Text.Json.Nodes;
 
 namespace Eve.GameStore.Tests;

@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Channels;
+using Eve.Identity;
 using Eve.Marshal;
 using Eve.Services;
 
@@ -24,7 +25,7 @@ public sealed record HostOptions
 public sealed class HostServer(
     HostOptions options,
     PacketDispatcher dispatcher,
-    IIdentityDirectory identity,
+    IAccountDirectory accounts,
     Func<ReadOnlyMemory<byte>> clusterConfig)
 {
     private int _connections;
@@ -55,7 +56,7 @@ public sealed class HostServer(
     public async Task RunAsync(Stream stream, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref _connections);
-        await using var connection = new FrontConnection(stream, options, dispatcher, identity, clusterConfig);
+        await using var connection = new FrontConnection(stream, options, dispatcher, accounts, clusterConfig);
         try
         {
             await connection.RunAsync(cancellationToken);
@@ -80,19 +81,19 @@ internal sealed class FrontConnection : IAsyncDisposable
     private readonly Stream _stream;
     private readonly HostOptions _options;
     private readonly PacketDispatcher _dispatcher;
-    private readonly IIdentityDirectory _identity;
+    private readonly IAccountDirectory _accounts;
     private readonly Func<ReadOnlyMemory<byte>> _clusterConfig;
     private readonly Channel<byte[]> _outgoing = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
     private readonly ConcurrentDictionary<ulong, SessionActor> _sessions = new();
     private readonly CancellationTokenSource _stop = new();
     private Task _writer = Task.CompletedTask;
 
-    public FrontConnection(Stream stream, HostOptions options, PacketDispatcher dispatcher, IIdentityDirectory identity, Func<ReadOnlyMemory<byte>> clusterConfig)
+    public FrontConnection(Stream stream, HostOptions options, PacketDispatcher dispatcher, IAccountDirectory accounts, Func<ReadOnlyMemory<byte>> clusterConfig)
     {
         _stream = stream;
         _options = options;
         _dispatcher = dispatcher;
-        _identity = identity;
+        _accounts = accounts;
         _clusterConfig = clusterConfig;
     }
 
@@ -169,7 +170,13 @@ internal sealed class FrontConnection : IAsyncDisposable
         AuthOutcome outcome;
         try
         {
-            outcome = await _identity.AuthenticateAsync(new LoginAttempt(request.UserName, request.PasswordHash, request.Language, request.Address), ct);
+            var result = await _accounts.LoginAsync(new LoginAttempt(request.UserName, request.PasswordHash, request.Language, request.Address), ct);
+            outcome = result switch
+            {
+                LoggedIn login => new Accepted(login.AccountId, login.Role, login.CountryCode),
+                LoginRefused refused => new Rejected(refused.Reason),
+                _ => new Rejected(LoginRefused.Unavailable),
+            };
         }
         catch (OperationCanceledException)
         {
@@ -178,7 +185,7 @@ internal sealed class FrontConnection : IAsyncDisposable
         catch (Exception error)
         {
             _options.Log?.Invoke($"authenticating {request.UserName}: {error}");
-            outcome = new Rejected("Unavailable");
+            outcome = new Rejected(LoginRefused.Unavailable);
         }
         Post(new AuthReply(request.Corr, outcome));
     }

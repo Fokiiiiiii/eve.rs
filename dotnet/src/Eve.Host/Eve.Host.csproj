@@ -8,6 +8,7 @@
     <TieredPGO>true</TieredPGO>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../Eve.Identity/Eve.Identity.csproj" />
     <ProjectReference Include="../Eve.Services.Core/Eve.Services.Core.csproj" />
     <ProjectReference Include="../Eve.Services.Generator/Eve.Services.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>

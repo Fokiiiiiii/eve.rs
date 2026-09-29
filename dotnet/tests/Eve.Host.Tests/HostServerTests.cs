@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
+using Eve.Identity;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
@@ -24,7 +25,7 @@ public class HostServerTests : IAsyncLifetime
 
     public Task InitializeAsync() => Task.CompletedTask;
 
-    private void Start(DevIdentityOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null)
+    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null)
     {
         var registry = new ServiceRegistry();
         configure?.Invoke(registry);
@@ -40,7 +41,7 @@ public class HostServerTests : IAsyncLifetime
         _server = new HostServer(
             new HostOptions { MaxPendingPacketsPerSession = maxPending, Log = message => { lock (_log) { _log.Add(message); } } },
             dispatcher,
-            new DevIdentityDirectory(identity ?? new DevIdentityOptions()),
+            accounts ?? new InMemoryAccountDirectory(identity ?? new AccountOptions()),
             () => encoded);
         _listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         _listener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
@@ -164,6 +165,41 @@ public class HostServerTests : IAsyncLifetime
         Assert.Equal(2u, Assert.IsType<Accepted>((await front.AuthenticateAsync("other", [4], 4)).Outcome).UserId);
     }
 
+    private sealed class FixedAccounts(Func<LoginAttempt, LoginResult> answer) : IAccountDirectory
+    {
+        public ValueTask<LoginResult> LoginAsync(LoginAttempt attempt, CancellationToken cancellationToken) => ValueTask.FromResult(answer(attempt));
+    }
+
+    private sealed class BrokenAccounts : IAccountDirectory
+    {
+        public ValueTask<LoginResult> LoginAsync(LoginAttempt attempt, CancellationToken cancellationToken) => throw new InvalidOperationException("the database is down");
+    }
+
+    [Fact]
+    public async Task The_accounts_decision_reaches_the_front_as_it_was_made()
+    {
+        Start(accounts: new FixedAccounts(a => a.UserName switch
+        {
+            "banned" => new LoginRefused(LoginRefused.Banned),
+            "gm" => new LoggedIn(7, 0xF00D, "JP"),
+            _ => new LoginRefused(LoginRefused.BadCredentials),
+        }));
+        var front = await Handshaken(await ConnectAsync());
+        Assert.Equal(new Accepted(7, 0xF00D, "JP"), (await front.AuthenticateAsync("gm", [1], 1)).Outcome);
+        Assert.Equal(new Rejected("ACCOUNTBANNED"), (await front.AuthenticateAsync("banned", [1], 2)).Outcome);
+        Assert.Equal(new Rejected("LoginAuthFailed"), (await front.AuthenticateAsync("anyone", [1], 3)).Outcome);
+    }
+
+    [Fact]
+    public async Task A_failing_accounts_store_refuses_the_login_and_the_link_survives()
+    {
+        Start(accounts: new BrokenAccounts());
+        var front = await Handshaken(await ConnectAsync());
+        Assert.Equal(new Rejected("Unavailable"), (await front.AuthenticateAsync("pilot", [1], 1)).Outcome);
+        Assert.Equal(new Rejected("Unavailable"), (await front.AuthenticateAsync("pilot", [1], 2)).Outcome); // still answering
+        Assert.Contains(_log, line => line.Contains("the database is down", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task The_replies_carry_the_correlation_of_their_request()
     {
@@ -176,7 +212,7 @@ public class HostServerTests : IAsyncLifetime
     [Fact]
     public async Task Development_switches_can_skip_the_password_or_refuse_unknown_users()
     {
-        Start(new DevIdentityOptions { SkipPasswordCheck = true });
+        Start(new AccountOptions { SkipPasswordCheck = true });
         var open = await Handshaken(await ConnectAsync());
         Assert.IsType<Accepted>((await open.AuthenticateAsync("pilot", [1], 1)).Outcome);
         Assert.IsType<Accepted>((await open.AuthenticateAsync("pilot", [2], 2)).Outcome);
@@ -185,7 +221,7 @@ public class HostServerTests : IAsyncLifetime
     [Fact]
     public async Task Unknown_users_are_refused_when_auto_creation_is_off()
     {
-        Start(new DevIdentityOptions { AutoCreate = false });
+        Start(new AccountOptions { AutoCreate = false });
         var front = await Handshaken(await ConnectAsync());
         Assert.Equal("LoginAuthFailed", Assert.IsType<Rejected>((await front.AuthenticateAsync("nobody", [1], 1)).Outcome).Reason);
     }

@@ -239,6 +239,15 @@ INFO_CALLS = [
     ("account", "GetCashBalance", ()),
     ("account", "GetCashBalance", (0,)),
     ("account", "GetCashBalance", (1,)),
+    # the station the character starts in
+    ("stationSvc", "GetStation", (60015249,)),
+    ("stationSvc", "GetStationItemBits", ()),
+    ("station", "GetStationItemBits", ()),
+    ("stationSvc", "GetGuests", ()),
+    ("station", "GetGuests", ()),
+    ("stationSvc", "GetSolarSystem", ()),
+    ("stationSvc", "GetAllianceSystems", ()),
+    ("stationSvc", "GetSystemsForAlliance", (0,)),
 ]
 
 
@@ -252,6 +261,9 @@ def record_info(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
         rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
         calls = [rec.call(who, service, method, *[char_id if a is None else a for a in args]) for service, method, args in INFO_CALLS]
         races.append({"bloodlineID": bloodline, "raceID": RACE_OF_BLOODLINE[bloodline], "create": created, "calls": calls})
+        # leave the game before the next character enters, so the guest list of each is its own
+        who.close()
+        time.sleep(1.5)
     with open(os.path.join(out, "character_info.json"), "w", encoding="utf-8") as handle:
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": races}, handle, indent=1, ensure_ascii=False)
         handle.write("\n")

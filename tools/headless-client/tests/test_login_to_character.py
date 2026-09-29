@@ -337,6 +337,26 @@ TIMES = {"createDateTime", "startDateTime"}
 DESCRIPTION = "Character created via EveJS Elysian"
 
 
+def substitute(described, ids: dict):
+    """A recorded answer with the character ids the recording made replaced by the ones this server gave."""
+    if isinstance(described, bool):
+        return described
+    if isinstance(described, int):
+        return ids.get(described, described)
+    if isinstance(described, list):
+        return [substitute(item, ids) for item in described]
+    if isinstance(described, dict):
+        return {key: substitute(value, ids) for key, value in described.items()}
+    return described
+
+
+def without_cache_time(described):
+    """A cached method result without the time its version was made (the checksum after it is the marshalled result's)."""
+    if isinstance(described, dict) and described.get("$object", "").endswith("CachedMethodCallResult"):
+        return blank(described, "args", "$tuple", 2, 0)
+    return described
+
+
 def with_description(described, text: str):
     """A recorded public record whose description is `text` (the reference's own is its branding)."""
     copy = json.loads(json.dumps(described))
@@ -381,5 +401,33 @@ def test_a_new_character_is_described_as_the_reference_describes_it(race):
                     expected = ""
                 if method in ("GetPublicInfo", "GetPublicInfo3"):
                     expected = with_description(expected, "")
+            expected, outcome = without_cache_time(substitute(expected, ids)), without_cache_time(outcome)
             problems += same_way(expected, outcome, where, volatile=VOLATILE | TIMES)
     assert problems == [], "\n".join(problems[:20])
+
+
+# ── the stations of the game ────────────────────────────────────────────────
+
+STATIONS = load("stations.json")["stations"]
+
+
+def test_every_recorded_station_is_reported_as_the_reference_reported_it():
+    with connect(f"walk-stations-{uuid.uuid4().hex[:8]}") as client:
+        problems = []
+        for station in STATIONS:
+            where = f"station {station['id']}"
+            kind, outcome = attempt(client, "stationSvc", "GetStation", station["id"])
+            if kind != "ok":
+                problems.append(f"{where}: {brief(outcome)}")
+                continue
+            # the checksum in the version is that of the marshalled record: the same bytes as the reference wrote
+            problems += same_way(without_cache_time(station["call"]["ok"]), without_cache_time(outcome), where)
+        assert problems == [], "\n".join(problems[:20])
+
+
+def test_a_station_that_does_not_exist_is_not_made_up():
+    if REFERENCE:
+        pytest.skip("the reference answers a made-up station id with Jita IV (DEVIATIONS.md, row 9)")
+    with connect(f"walk-nostation-{uuid.uuid4().hex[:8]}") as client:
+        assert client.call("stationSvc", "GetStation", 1) is None
+        assert client.call("stationSvc", "GetStation", 60003759) is None

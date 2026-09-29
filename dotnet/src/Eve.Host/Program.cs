@@ -16,6 +16,7 @@ using Eve.Services.CharacterSelect;
 using Eve.Services.Core;
 using Eve.Services.CharacterInfo;
 using Eve.Services.Skills;
+using Eve.Services.Station;
 using Eve.Services.Wallet;
 
 // eve-host: the service host.
@@ -101,6 +102,12 @@ foreach (var service in characterServices)
 {
     registry.Register(service);
 }
+if (characterServices.Count > 0)
+{
+    // names the client also uses for the same service
+    registry.RegisterAlias("station", "stationSvc");
+    registry.RegisterAlias("skillMgr", "skillHandler");
+}
 var config = GlobalConfig.Build(options);
 var info = new HostMachoNetInfo(registry, config);
 registry.Register(new MachoNetService(info, now));
@@ -171,6 +178,7 @@ static async Task<IReadOnlyList<IService>> CharacterServicesAsync(NpgsqlDataSour
         new SkillMgr2Service(),
         new SkillHandlerService(skills, skillCatalog, now),
         new CharMgrService(characters, stations),
+        new StationService(stations, characters, online, now),
         new AccountService(wallets),
     ];
 }

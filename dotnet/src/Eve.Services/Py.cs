@@ -23,6 +23,10 @@ public static class Py
             new(new PyStr("lines"), new PyList([.. lines])),
         ]));
 
+    /// <summary>A number as JavaScript's marshal writes it: a whole number is an integer and anything else a real.</summary>
+    public static PyValue Number(double value) =>
+        value == Math.Floor(value) && Math.Abs(value) < 9_007_199_254_740_992d ? new PyInt((long)value) : new PyReal(value);
+
     public static PyList List(params PyValue[] items) => new(items);
 
     public static PyTuple Tuple(params PyValue[] items) => new(items);

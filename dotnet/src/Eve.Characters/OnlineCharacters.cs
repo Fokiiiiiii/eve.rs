@@ -52,6 +52,15 @@ public sealed class OnlineCharacters
         }
     }
 
+    /// <summary>The characters in the game now.</summary>
+    public IReadOnlyList<long> Snapshot()
+    {
+        lock (_gate)
+        {
+            return [.. _byCharacter.Keys];
+        }
+    }
+
     public bool IsOnline(long characterId)
     {
         lock (_gate)

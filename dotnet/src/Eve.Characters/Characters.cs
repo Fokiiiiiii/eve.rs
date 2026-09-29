@@ -76,6 +76,25 @@ public sealed class PgCharacterStore
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
 
+    /// <summary>The characters with these ids, by id (an id that is not a character is left out).</summary>
+    public async Task<IReadOnlyList<Character>> GetManyAsync(IEnumerable<long> ids, CancellationToken cancellationToken = default)
+    {
+        var wanted = ids.ToArray();
+        var list = new List<Character>();
+        if (wanted.Length == 0)
+        {
+            return list;
+        }
+        await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.characters WHERE id = ANY($1) ORDER BY id");
+        command.Parameters.Add(new NpgsqlParameter { Value = wanted });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            list.Add(Read(reader));
+        }
+        return list;
+    }
+
     public async Task<int> CountForAccountAsync(int accountId, CancellationToken cancellationToken = default)
     {
         await using var command = _source.CreateCommand($"SELECT count(*) FROM {_schema}.characters WHERE account_id = $1");

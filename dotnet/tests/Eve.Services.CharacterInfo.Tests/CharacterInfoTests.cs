@@ -26,8 +26,10 @@ internal sealed class Rig : IAsyncDisposable
     public static readonly string? Url = Environment.GetEnvironmentVariable("EVE_PG_URL");
 
     public static readonly StationCatalog Stations = new([
-        new Station(60015249, 92885, "Manifest V - AIR Laboratories Trade Center", 1000413, 123, 30100032, 20010001, 10001004, 0.9),
-        new Station(60000610, 4023, "Paara I - Deep Core Mining Inc. Mining Outpost", 1000006, 7, 30002775, 20000407, 10000033, 0.7785),
+        new Station(60015249, 92885, "Manifest V - AIR Laboratories Trade Center", 1000413, "AIR Laboratories", 500028, "Association for Interdisciplinary Research", 123, 40491241,
+            30100032, "Manifest", 20010001, "Manifest District", 10001004, "Exordium", 1.0, 0.05, 4),
+        new Station(60000610, 4023, "Paara I - Deep Core Mining Inc. Mining Outpost", 1000006, "Deep Core Mining Inc.", 500001, "Caldari State", 7, 40003891,
+            30002775, "Paara", 20000407, "Peyiri", 10000033, "The Citadel", 0.7785, 0.05, 4),
     ]);
 
     private readonly string _characters = $"ci_{Guid.NewGuid():N}"[..20];

@@ -1,7 +1,7 @@
 {
  "reference": "EVE.js",
  "referenceCommit": "b637d2a55469ee23d24411ed5a7646391de314d9",
- "recordedAt": "2026-09-29T04:36:17Z",
+ "recordedAt": "2026-09-29T04:52:05Z",
  "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py",
  "races": [
   {
@@ -12,7 +12,7 @@
      "charUnboundMgr",
      "CreateCharacterWithDoll",
      [
-      "Informed 1 1790656577",
+      "Informed 1 1790657525",
       1,
       1,
       1,
@@ -38,7 +38,7 @@
       null
      ]
     ],
-    "ok": 140000112
+    "ok": 140000130
    },
    "calls": [
     {
@@ -46,7 +46,7 @@
       "charMgr",
       "GetPublicInfo",
       [
-       140000112
+       140000130
       ]
      ],
      "ok": {
@@ -55,11 +55,11 @@
        "$dict": [
         [
          "characterID",
-         140000112
+         140000130
         ],
         [
          "characterName",
-         "Informed 1 1790656577"
+         "Informed 1 1790657525"
         ],
         [
          "typeID",
@@ -104,13 +104,13 @@
         [
          "createDateTime",
          {
-          "$long": 134351301779560000
+          "$long": 134351311254520000
          }
         ],
         [
          "startDateTime",
          {
-          "$long": 134351301779560000
+          "$long": 134351311254520000
          }
         ],
         [
@@ -162,7 +162,7 @@
       "charMgr",
       "GetPublicInfo3",
       [
-       140000112
+       140000130
       ]
      ],
      "ok": [
@@ -172,11 +172,11 @@
         "$dict": [
          [
           "characterID",
-          140000112
+          140000130
          ],
          [
           "characterName",
-          "Informed 1 1790656577"
+          "Informed 1 1790657525"
          ],
          [
           "typeID",
@@ -221,13 +221,13 @@
          [
           "createDateTime",
           {
-           "$long": 134351301779560000
+           "$long": 134351311254520000
           }
          ],
          [
           "startDateTime",
           {
-           "$long": 134351301779560000
+           "$long": 134351311254520000
           }
          ],
          [
@@ -280,7 +280,7 @@
       "charMgr",
       "GetPublicInfo3",
       [
-       140000112,
+       140000130,
        0
       ]
      ],
@@ -291,11 +291,11 @@
         "$dict": [
          [
           "characterID",
-          140000112
+          140000130
          ],
          [
           "characterName",
-          "Informed 1 1790656577"
+          "Informed 1 1790657525"
          ],
          [
           "typeID",
@@ -340,13 +340,13 @@
          [
           "createDateTime",
           {
-           "$long": 134351301779560000
+           "$long": 134351311254520000
           }
          ],
          [
           "startDateTime",
           {
-           "$long": 134351301779560000
+           "$long": 134351311254520000
           }
          ],
          [
@@ -505,7 +505,7 @@
       "charMgr",
       "GetCharacterDescription",
       [
-       140000112
+       140000130
       ]
      ],
      "ok": "Character created via EveJS Elysian"
@@ -523,11 +523,11 @@
       "charMgr",
       "GetCharacterCreationDate",
       [
-       140000112
+       140000130
       ]
      ],
      "ok": {
-      "$long": 134351301779560000
+      "$long": 134351311254520000
      }
     },
     {
@@ -730,6 +730,293 @@
        "dict": []
       }
      }
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetStation",
+      [
+       60015249
+      ]
+     ],
+     "ok": {
+      "$object": "carbon.common.script.net.objectCaching.CachedMethodCallResult",
+      "args": {
+       "$tuple": [
+        {
+         "$dict": [
+          [
+           "versionCheck",
+           "run"
+          ]
+         ]
+        },
+        {
+         "$substream": {
+          "$object": "util.KeyVal",
+          "args": {
+           "$dict": [
+            [
+             "stationID",
+             60015249
+            ],
+            [
+             "stationName",
+             "Manifest V - AIR Laboratories Trade Center"
+            ],
+            [
+             "stationTypeID",
+             92885
+            ],
+            [
+             "solarSystemID",
+             30100032
+            ],
+            [
+             "constellationID",
+             20010001
+            ],
+            [
+             "regionID",
+             10001004
+            ],
+            [
+             "ownerID",
+             1000413
+            ],
+            [
+             "corporationID",
+             1000413
+            ],
+            [
+             "dockingCostPerVolume",
+             0
+            ],
+            [
+             "maxShipVolumeDockable",
+             50000000
+            ],
+            [
+             "officeRentalCost",
+             10000
+            ],
+            [
+             "operationID",
+             123
+            ],
+            [
+             "stationTypeID",
+             92885
+            ],
+            [
+             "security",
+             1
+            ],
+            [
+             "x",
+             0
+            ],
+            [
+             "y",
+             0
+            ],
+            [
+             "z",
+             0
+            ],
+            [
+             "reprocessingEfficiency",
+             0.5
+            ],
+            [
+             "reprocessingStationsTake",
+             0.05
+            ],
+            [
+             "reprocessingHangarFlag",
+             4
+            ],
+            [
+             "serviceMask",
+             1143312
+            ]
+           ]
+          }
+         }
+        },
+        [
+         {
+          "$long": 134351311256130000
+         },
+         2093777349
+        ]
+       ]
+      }
+     }
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetStationItemBits",
+      []
+     ],
+     "ok": {
+      "$tuple": [
+       1000413,
+       60015249,
+       123,
+       92885
+      ]
+     }
+    },
+    {
+     "call": [
+      "station",
+      "GetStationItemBits",
+      []
+     ],
+     "ok": {
+      "$tuple": [
+       1000413,
+       60015249,
+       123,
+       92885
+      ]
+     }
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetGuests",
+      []
+     ],
+     "ok": [
+      {
+       "$tuple": [
+        140000130,
+        1000006,
+        0,
+        0
+       ]
+      }
+     ]
+    },
+    {
+     "call": [
+      "station",
+      "GetGuests",
+      []
+     ],
+     "ok": [
+      {
+       "$tuple": [
+        140000130,
+        1000006,
+        0,
+        0
+       ]
+      }
+     ]
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetSolarSystem",
+      []
+     ],
+     "ok": {
+      "$object": "util.KeyVal",
+      "args": {
+       "$dict": [
+        [
+         "solarSystemID",
+         30100032
+        ],
+        [
+         "solarSystemName",
+         "Manifest"
+        ],
+        [
+         "constellationID",
+         20010001
+        ],
+        [
+         "constellationName",
+         "Manifest District"
+        ],
+        [
+         "regionID",
+         10001004
+        ],
+        [
+         "regionName",
+         "Exordium"
+        ],
+        [
+         "security",
+         1
+        ],
+        [
+         "factionID",
+         500028
+        ],
+        [
+         "factionName",
+         "Association for Interdisciplinary Research"
+        ],
+        [
+         "stationID",
+         60015249
+        ],
+        [
+         "stationName",
+         "Manifest V - AIR Laboratories Trade Center"
+        ],
+        [
+         "ownerID",
+         1000413
+        ],
+        [
+         "ownerName",
+         "AIR Laboratories"
+        ],
+        [
+         "corporationID",
+         1000413
+        ],
+        [
+         "corporationName",
+         "AIR Laboratories"
+        ],
+        [
+         "orbitID",
+         40491241
+        ],
+        [
+         "stationTypeID",
+         92885
+        ]
+       ]
+      }
+     }
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetAllianceSystems",
+      []
+     ],
+     "ok": []
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetSystemsForAlliance",
+      [
+       0
+      ]
+     ],
+     "ok": []
     }
    ]
   },
@@ -741,7 +1028,7 @@
      "charUnboundMgr",
      "CreateCharacterWithDoll",
      [
-      "Informed 3 1790656577",
+      "Informed 3 1790657525",
       2,
       3,
       1,
@@ -767,7 +1054,7 @@
       null
      ]
     ],
-    "ok": 140000113
+    "ok": 140000131
    },
    "calls": [
     {
@@ -775,7 +1062,7 @@
       "charMgr",
       "GetPublicInfo",
       [
-       140000113
+       140000131
       ]
      ],
      "ok": {
@@ -784,11 +1071,11 @@
        "$dict": [
         [
          "characterID",
-         140000113
+         140000131
         ],
         [
          "characterName",
-         "Informed 3 1790656577"
+         "Informed 3 1790657525"
         ],
         [
          "typeID",
@@ -833,13 +1120,13 @@
         [
          "createDateTime",
          {
-          "$long": 134351301780660000
+          "$long": 134351311271370000
          }
         ],
         [
          "startDateTime",
          {
-          "$long": 134351301780660000
+          "$long": 134351311271370000
          }
         ],
         [
@@ -891,7 +1178,7 @@
       "charMgr",
       "GetPublicInfo3",
       [
-       140000113
+       140000131
       ]
      ],
      "ok": [
@@ -901,11 +1188,11 @@
         "$dict": [
          [
           "characterID",
-          140000113
+          140000131
          ],
          [
           "characterName",
-          "Informed 3 1790656577"
+          "Informed 3 1790657525"
          ],
          [
           "typeID",
@@ -950,13 +1237,13 @@
          [
           "createDateTime",
           {
-           "$long": 134351301780660000
+           "$long": 134351311271370000
           }
          ],
          [
           "startDateTime",
           {
-           "$long": 134351301780660000
+           "$long": 134351311271370000
           }
          ],
          [
@@ -1009,7 +1296,7 @@
       "charMgr",
       "GetPublicInfo3",
       [
-       140000113,
+       140000131,
        0
       ]
      ],
@@ -1020,11 +1307,11 @@
         "$dict": [
          [
           "characterID",
-          140000113
+          140000131
          ],
          [
           "characterName",
-          "Informed 3 1790656577"
+          "Informed 3 1790657525"
          ],
          [
           "typeID",
@@ -1069,13 +1356,13 @@
          [
           "createDateTime",
           {
-           "$long": 134351301780660000
+           "$long": 134351311271370000
           }
          ],
          [
           "startDateTime",
           {
-           "$long": 134351301780660000
+           "$long": 134351311271370000
           }
          ],
          [
@@ -1234,7 +1521,7 @@
       "charMgr",
       "GetCharacterDescription",
       [
-       140000113
+       140000131
       ]
      ],
      "ok": "Character created via EveJS Elysian"
@@ -1252,11 +1539,11 @@
       "charMgr",
       "GetCharacterCreationDate",
       [
-       140000113
+       140000131
       ]
      ],
      "ok": {
-      "$long": 134351301780660000
+      "$long": 134351311271370000
      }
     },
     {
@@ -1459,6 +1746,293 @@
        "dict": []
       }
      }
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetStation",
+      [
+       60015249
+      ]
+     ],
+     "ok": {
+      "$object": "carbon.common.script.net.objectCaching.CachedMethodCallResult",
+      "args": {
+       "$tuple": [
+        {
+         "$dict": [
+          [
+           "versionCheck",
+           "run"
+          ]
+         ]
+        },
+        {
+         "$substream": {
+          "$object": "util.KeyVal",
+          "args": {
+           "$dict": [
+            [
+             "stationID",
+             60015249
+            ],
+            [
+             "stationName",
+             "Manifest V - AIR Laboratories Trade Center"
+            ],
+            [
+             "stationTypeID",
+             92885
+            ],
+            [
+             "solarSystemID",
+             30100032
+            ],
+            [
+             "constellationID",
+             20010001
+            ],
+            [
+             "regionID",
+             10001004
+            ],
+            [
+             "ownerID",
+             1000413
+            ],
+            [
+             "corporationID",
+             1000413
+            ],
+            [
+             "dockingCostPerVolume",
+             0
+            ],
+            [
+             "maxShipVolumeDockable",
+             50000000
+            ],
+            [
+             "officeRentalCost",
+             10000
+            ],
+            [
+             "operationID",
+             123
+            ],
+            [
+             "stationTypeID",
+             92885
+            ],
+            [
+             "security",
+             1
+            ],
+            [
+             "x",
+             0
+            ],
+            [
+             "y",
+             0
+            ],
+            [
+             "z",
+             0
+            ],
+            [
+             "reprocessingEfficiency",
+             0.5
+            ],
+            [
+             "reprocessingStationsTake",
+             0.05
+            ],
+            [
+             "reprocessingHangarFlag",
+             4
+            ],
+            [
+             "serviceMask",
+             1143312
+            ]
+           ]
+          }
+         }
+        },
+        [
+         {
+          "$long": 134351311272460000
+         },
+         2093777349
+        ]
+       ]
+      }
+     }
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetStationItemBits",
+      []
+     ],
+     "ok": {
+      "$tuple": [
+       1000413,
+       60015249,
+       123,
+       92885
+      ]
+     }
+    },
+    {
+     "call": [
+      "station",
+      "GetStationItemBits",
+      []
+     ],
+     "ok": {
+      "$tuple": [
+       1000413,
+       60015249,
+       123,
+       92885
+      ]
+     }
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetGuests",
+      []
+     ],
+     "ok": [
+      {
+       "$tuple": [
+        140000131,
+        1000044,
+        0,
+        0
+       ]
+      }
+     ]
+    },
+    {
+     "call": [
+      "station",
+      "GetGuests",
+      []
+     ],
+     "ok": [
+      {
+       "$tuple": [
+        140000131,
+        1000044,
+        0,
+        0
+       ]
+      }
+     ]
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetSolarSystem",
+      []
+     ],
+     "ok": {
+      "$object": "util.KeyVal",
+      "args": {
+       "$dict": [
+        [
+         "solarSystemID",
+         30100032
+        ],
+        [
+         "solarSystemName",
+         "Manifest"
+        ],
+        [
+         "constellationID",
+         20010001
+        ],
+        [
+         "constellationName",
+         "Manifest District"
+        ],
+        [
+         "regionID",
+         10001004
+        ],
+        [
+         "regionName",
+         "Exordium"
+        ],
+        [
+         "security",
+         1
+        ],
+        [
+         "factionID",
+         500028
+        ],
+        [
+         "factionName",
+         "Association for Interdisciplinary Research"
+        ],
+        [
+         "stationID",
+         60015249
+        ],
+        [
+         "stationName",
+         "Manifest V - AIR Laboratories Trade Center"
+        ],
+        [
+         "ownerID",
+         1000413
+        ],
+        [
+         "ownerName",
+         "AIR Laboratories"
+        ],
+        [
+         "corporationID",
+         1000413
+        ],
+        [
+         "corporationName",
+         "AIR Laboratories"
+        ],
+        [
+         "orbitID",
+         40491241
+        ],
+        [
+         "stationTypeID",
+         92885
+        ]
+       ]
+      }
+     }
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetAllianceSystems",
+      []
+     ],
+     "ok": []
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetSystemsForAlliance",
+      [
+       0
+      ]
+     ],
+     "ok": []
     }
    ]
   },
@@ -1470,7 +2044,7 @@
      "charUnboundMgr",
      "CreateCharacterWithDoll",
      [
-      "Informed 5 1790656577",
+      "Informed 5 1790657525",
       4,
       5,
       1,
@@ -1496,7 +2070,7 @@
       null
      ]
     ],
-    "ok": 140000114
+    "ok": 140000132
    },
    "calls": [
     {
@@ -1504,7 +2078,7 @@
       "charMgr",
       "GetPublicInfo",
       [
-       140000114
+       140000132
       ]
      ],
      "ok": {
@@ -1513,11 +2087,11 @@
        "$dict": [
         [
          "characterID",
-         140000114
+         140000132
         ],
         [
          "characterName",
-         "Informed 5 1790656577"
+         "Informed 5 1790657525"
         ],
         [
          "typeID",
@@ -1562,13 +2136,13 @@
         [
          "createDateTime",
          {
-          "$long": 134351301781990000
+          "$long": 134351311287660000
          }
         ],
         [
          "startDateTime",
          {
-          "$long": 134351301781990000
+          "$long": 134351311287660000
          }
         ],
         [
@@ -1620,7 +2194,7 @@
       "charMgr",
       "GetPublicInfo3",
       [
-       140000114
+       140000132
       ]
      ],
      "ok": [
@@ -1630,11 +2204,11 @@
         "$dict": [
          [
           "characterID",
-          140000114
+          140000132
          ],
          [
           "characterName",
-          "Informed 5 1790656577"
+          "Informed 5 1790657525"
          ],
          [
           "typeID",
@@ -1679,13 +2253,13 @@
          [
           "createDateTime",
           {
-           "$long": 134351301781990000
+           "$long": 134351311287660000
           }
          ],
          [
           "startDateTime",
           {
-           "$long": 134351301781990000
+           "$long": 134351311287660000
           }
          ],
          [
@@ -1738,7 +2312,7 @@
       "charMgr",
       "GetPublicInfo3",
       [
-       140000114,
+       140000132,
        0
       ]
      ],
@@ -1749,11 +2323,11 @@
         "$dict": [
          [
           "characterID",
-          140000114
+          140000132
          ],
          [
           "characterName",
-          "Informed 5 1790656577"
+          "Informed 5 1790657525"
          ],
          [
           "typeID",
@@ -1798,13 +2372,13 @@
          [
           "createDateTime",
           {
-           "$long": 134351301781990000
+           "$long": 134351311287660000
           }
          ],
          [
           "startDateTime",
           {
-           "$long": 134351301781990000
+           "$long": 134351311287660000
           }
          ],
          [
@@ -1963,7 +2537,7 @@
       "charMgr",
       "GetCharacterDescription",
       [
-       140000114
+       140000132
       ]
      ],
      "ok": "Character created via EveJS Elysian"
@@ -1981,11 +2555,11 @@
       "charMgr",
       "GetCharacterCreationDate",
       [
-       140000114
+       140000132
       ]
      ],
      "ok": {
-      "$long": 134351301781990000
+      "$long": 134351311287660000
      }
     },
     {
@@ -2188,6 +2762,293 @@
        "dict": []
       }
      }
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetStation",
+      [
+       60015249
+      ]
+     ],
+     "ok": {
+      "$object": "carbon.common.script.net.objectCaching.CachedMethodCallResult",
+      "args": {
+       "$tuple": [
+        {
+         "$dict": [
+          [
+           "versionCheck",
+           "run"
+          ]
+         ]
+        },
+        {
+         "$substream": {
+          "$object": "util.KeyVal",
+          "args": {
+           "$dict": [
+            [
+             "stationID",
+             60015249
+            ],
+            [
+             "stationName",
+             "Manifest V - AIR Laboratories Trade Center"
+            ],
+            [
+             "stationTypeID",
+             92885
+            ],
+            [
+             "solarSystemID",
+             30100032
+            ],
+            [
+             "constellationID",
+             20010001
+            ],
+            [
+             "regionID",
+             10001004
+            ],
+            [
+             "ownerID",
+             1000413
+            ],
+            [
+             "corporationID",
+             1000413
+            ],
+            [
+             "dockingCostPerVolume",
+             0
+            ],
+            [
+             "maxShipVolumeDockable",
+             50000000
+            ],
+            [
+             "officeRentalCost",
+             10000
+            ],
+            [
+             "operationID",
+             123
+            ],
+            [
+             "stationTypeID",
+             92885
+            ],
+            [
+             "security",
+             1
+            ],
+            [
+             "x",
+             0
+            ],
+            [
+             "y",
+             0
+            ],
+            [
+             "z",
+             0
+            ],
+            [
+             "reprocessingEfficiency",
+             0.5
+            ],
+            [
+             "reprocessingStationsTake",
+             0.05
+            ],
+            [
+             "reprocessingHangarFlag",
+             4
+            ],
+            [
+             "serviceMask",
+             1143312
+            ]
+           ]
+          }
+         }
+        },
+        [
+         {
+          "$long": 134351311288720000
+         },
+         2093777349
+        ]
+       ]
+      }
+     }
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetStationItemBits",
+      []
+     ],
+     "ok": {
+      "$tuple": [
+       1000413,
+       60015249,
+       123,
+       92885
+      ]
+     }
+    },
+    {
+     "call": [
+      "station",
+      "GetStationItemBits",
+      []
+     ],
+     "ok": {
+      "$tuple": [
+       1000413,
+       60015249,
+       123,
+       92885
+      ]
+     }
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetGuests",
+      []
+     ],
+     "ok": [
+      {
+       "$tuple": [
+        140000132,
+        1000166,
+        0,
+        0
+       ]
+      }
+     ]
+    },
+    {
+     "call": [
+      "station",
+      "GetGuests",
+      []
+     ],
+     "ok": [
+      {
+       "$tuple": [
+        140000132,
+        1000166,
+        0,
+        0
+       ]
+      }
+     ]
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetSolarSystem",
+      []
+     ],
+     "ok": {
+      "$object": "util.KeyVal",
+      "args": {
+       "$dict": [
+        [
+         "solarSystemID",
+         30100032
+        ],
+        [
+         "solarSystemName",
+         "Manifest"
+        ],
+        [
+         "constellationID",
+         20010001
+        ],
+        [
+         "constellationName",
+         "Manifest District"
+        ],
+        [
+         "regionID",
+         10001004
+        ],
+        [
+         "regionName",
+         "Exordium"
+        ],
+        [
+         "security",
+         1
+        ],
+        [
+         "factionID",
+         500028
+        ],
+        [
+         "factionName",
+         "Association for Interdisciplinary Research"
+        ],
+        [
+         "stationID",
+         60015249
+        ],
+        [
+         "stationName",
+         "Manifest V - AIR Laboratories Trade Center"
+        ],
+        [
+         "ownerID",
+         1000413
+        ],
+        [
+         "ownerName",
+         "AIR Laboratories"
+        ],
+        [
+         "corporationID",
+         1000413
+        ],
+        [
+         "corporationName",
+         "AIR Laboratories"
+        ],
+        [
+         "orbitID",
+         40491241
+        ],
+        [
+         "stationTypeID",
+         92885
+        ]
+       ]
+      }
+     }
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetAllianceSystems",
+      []
+     ],
+     "ok": []
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetSystemsForAlliance",
+      [
+       0
+      ]
+     ],
+     "ok": []
     }
    ]
   },
@@ -2199,7 +3060,7 @@
      "charUnboundMgr",
      "CreateCharacterWithDoll",
      [
-      "Informed 7 1790656577",
+      "Informed 7 1790657525",
       8,
       7,
       1,
@@ -2225,7 +3086,7 @@
       null
      ]
     ],
-    "ok": 140000115
+    "ok": 140000133
    },
    "calls": [
     {
@@ -2233,7 +3094,7 @@
       "charMgr",
       "GetPublicInfo",
       [
-       140000115
+       140000133
       ]
      ],
      "ok": {
@@ -2242,11 +3103,11 @@
        "$dict": [
         [
          "characterID",
-         140000115
+         140000133
         ],
         [
          "characterName",
-         "Informed 7 1790656577"
+         "Informed 7 1790657525"
         ],
         [
          "typeID",
@@ -2291,13 +3152,13 @@
         [
          "createDateTime",
          {
-          "$long": 134351301783730000
+          "$long": 134351311304040000
          }
         ],
         [
          "startDateTime",
          {
-          "$long": 134351301783730000
+          "$long": 134351311304040000
          }
         ],
         [
@@ -2349,7 +3210,7 @@
       "charMgr",
       "GetPublicInfo3",
       [
-       140000115
+       140000133
       ]
      ],
      "ok": [
@@ -2359,11 +3220,11 @@
         "$dict": [
          [
           "characterID",
-          140000115
+          140000133
          ],
          [
           "characterName",
-          "Informed 7 1790656577"
+          "Informed 7 1790657525"
          ],
          [
           "typeID",
@@ -2408,13 +3269,13 @@
          [
           "createDateTime",
           {
-           "$long": 134351301783730000
+           "$long": 134351311304040000
           }
          ],
          [
           "startDateTime",
           {
-           "$long": 134351301783730000
+           "$long": 134351311304040000
           }
          ],
          [
@@ -2467,7 +3328,7 @@
       "charMgr",
       "GetPublicInfo3",
       [
-       140000115,
+       140000133,
        0
       ]
      ],
@@ -2478,11 +3339,11 @@
         "$dict": [
          [
           "characterID",
-          140000115
+          140000133
          ],
          [
           "characterName",
-          "Informed 7 1790656577"
+          "Informed 7 1790657525"
          ],
          [
           "typeID",
@@ -2527,13 +3388,13 @@
          [
           "createDateTime",
           {
-           "$long": 134351301783730000
+           "$long": 134351311304040000
           }
          ],
          [
           "startDateTime",
           {
-           "$long": 134351301783730000
+           "$long": 134351311304040000
           }
          ],
          [
@@ -2692,7 +3553,7 @@
       "charMgr",
       "GetCharacterDescription",
       [
-       140000115
+       140000133
       ]
      ],
      "ok": "Character created via EveJS Elysian"
@@ -2710,11 +3571,11 @@
       "charMgr",
       "GetCharacterCreationDate",
       [
-       140000115
+       140000133
       ]
      ],
      "ok": {
-      "$long": 134351301783730000
+      "$long": 134351311304040000
      }
     },
     {
@@ -2917,6 +3778,293 @@
        "dict": []
       }
      }
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetStation",
+      [
+       60015249
+      ]
+     ],
+     "ok": {
+      "$object": "carbon.common.script.net.objectCaching.CachedMethodCallResult",
+      "args": {
+       "$tuple": [
+        {
+         "$dict": [
+          [
+           "versionCheck",
+           "run"
+          ]
+         ]
+        },
+        {
+         "$substream": {
+          "$object": "util.KeyVal",
+          "args": {
+           "$dict": [
+            [
+             "stationID",
+             60015249
+            ],
+            [
+             "stationName",
+             "Manifest V - AIR Laboratories Trade Center"
+            ],
+            [
+             "stationTypeID",
+             92885
+            ],
+            [
+             "solarSystemID",
+             30100032
+            ],
+            [
+             "constellationID",
+             20010001
+            ],
+            [
+             "regionID",
+             10001004
+            ],
+            [
+             "ownerID",
+             1000413
+            ],
+            [
+             "corporationID",
+             1000413
+            ],
+            [
+             "dockingCostPerVolume",
+             0
+            ],
+            [
+             "maxShipVolumeDockable",
+             50000000
+            ],
+            [
+             "officeRentalCost",
+             10000
+            ],
+            [
+             "operationID",
+             123
+            ],
+            [
+             "stationTypeID",
+             92885
+            ],
+            [
+             "security",
+             1
+            ],
+            [
+             "x",
+             0
+            ],
+            [
+             "y",
+             0
+            ],
+            [
+             "z",
+             0
+            ],
+            [
+             "reprocessingEfficiency",
+             0.5
+            ],
+            [
+             "reprocessingStationsTake",
+             0.05
+            ],
+            [
+             "reprocessingHangarFlag",
+             4
+            ],
+            [
+             "serviceMask",
+             1143312
+            ]
+           ]
+          }
+         }
+        },
+        [
+         {
+          "$long": 134351311305040000
+         },
+         2093777349
+        ]
+       ]
+      }
+     }
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetStationItemBits",
+      []
+     ],
+     "ok": {
+      "$tuple": [
+       1000413,
+       60015249,
+       123,
+       92885
+      ]
+     }
+    },
+    {
+     "call": [
+      "station",
+      "GetStationItemBits",
+      []
+     ],
+     "ok": {
+      "$tuple": [
+       1000413,
+       60015249,
+       123,
+       92885
+      ]
+     }
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetGuests",
+      []
+     ],
+     "ok": [
+      {
+       "$tuple": [
+        140000133,
+        1000094,
+        0,
+        0
+       ]
+      }
+     ]
+    },
+    {
+     "call": [
+      "station",
+      "GetGuests",
+      []
+     ],
+     "ok": [
+      {
+       "$tuple": [
+        140000133,
+        1000094,
+        0,
+        0
+       ]
+      }
+     ]
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetSolarSystem",
+      []
+     ],
+     "ok": {
+      "$object": "util.KeyVal",
+      "args": {
+       "$dict": [
+        [
+         "solarSystemID",
+         30100032
+        ],
+        [
+         "solarSystemName",
+         "Manifest"
+        ],
+        [
+         "constellationID",
+         20010001
+        ],
+        [
+         "constellationName",
+         "Manifest District"
+        ],
+        [
+         "regionID",
+         10001004
+        ],
+        [
+         "regionName",
+         "Exordium"
+        ],
+        [
+         "security",
+         1
+        ],
+        [
+         "factionID",
+         500028
+        ],
+        [
+         "factionName",
+         "Association for Interdisciplinary Research"
+        ],
+        [
+         "stationID",
+         60015249
+        ],
+        [
+         "stationName",
+         "Manifest V - AIR Laboratories Trade Center"
+        ],
+        [
+         "ownerID",
+         1000413
+        ],
+        [
+         "ownerName",
+         "AIR Laboratories"
+        ],
+        [
+         "corporationID",
+         1000413
+        ],
+        [
+         "corporationName",
+         "AIR Laboratories"
+        ],
+        [
+         "orbitID",
+         40491241
+        ],
+        [
+         "stationTypeID",
+         92885
+        ]
+       ]
+      }
+     }
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetAllianceSystems",
+      []
+     ],
+     "ok": []
+    },
+    {
+     "call": [
+      "stationSvc",
+      "GetSystemsForAlliance",
+      [
+       0
+      ]
+     ],
+     "ok": []
     }
    ]
   }

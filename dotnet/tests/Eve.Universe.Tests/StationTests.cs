@@ -88,9 +88,20 @@ public class StationCatalogTests
             Assert.Equal(((int)f["stationTypeID"]!, (long)f["ownerID"]!, (int)f["operationID"]!), (station.TypeId, station.OwnerId, station.OperationId));
             Assert.Equal(((int)f["solarSystemID"]!, (int)f["constellationID"]!, (int)f["regionID"]!), (station.SolarSystemId, station.ConstellationId, station.RegionId));
             Assert.Equal((double)f["security"]!, Math.Round(station.Security, 6), 6);
+            Assert.Equal(((double)f["reprocessingStationsTake"]!, (int)f["reprocessingHangarFlag"]!), (station.ReprocessingStationsTake, station.ReprocessingHangarFlag));
             checkedStations++;
         }
         Assert.InRange(checkedStations, 60, 70);
+    }
+
+    [PgFact]
+    public async Task The_names_of_the_place_the_owner_and_the_faction_come_with_the_station()
+    {
+        var catalog = await LoadAsync();
+        var manifest = catalog.Get(60015249)!;
+        Assert.Equal(("Manifest", "Manifest District", "Exordium", "AIR Laboratories", "Association for Interdisciplinary Research"),
+            (manifest.SolarSystemName, manifest.ConstellationName, manifest.RegionName, manifest.OwnerName, manifest.FactionName));
+        Assert.Equal((500028L, 40491241L), (manifest.FactionId, manifest.OrbitId)); // recorded from the reference's GetSolarSystem
     }
 
     [PgFact]

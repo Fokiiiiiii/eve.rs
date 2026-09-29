@@ -1,9 +1,12 @@
 # Moving EVE.js to Rust, C# and PostgreSQL
 
-Status of the migration from the Node.js server to Rust (compute core), C#/.NET 10
-(service layer) and PostgreSQL 18 (persistence). The plan is a full rewrite with
-the Node server kept, until cut-over, as the executable specification: every
-native component is checked against it through recorded golden fixtures.
+Status log of the work that replaces the Node.js server with Rust (network front, simulation), C#/.NET 10
+(service layer) and PostgreSQL 18. **The direction and the order of work are in `PLAN.md`**: the goal is a new,
+faster, more maintainable server that the same client can play on, keeping only the external compatibility of
+EVE.js and redesigning the internals (`adr/0001-external-compatibility-only.md`). The Node server is the
+behavioural reference, checked through recorded golden fixtures and live scenarios, not a design to reproduce.
+The milestones M0 to M3 below are the foundations (slice S0 in the plan); M4 to M6 are replaced by the plan's
+slices S1 to S6.
 
 ## What the current server looks like
 
@@ -124,7 +127,8 @@ slower than Node on buffer-heavy encoding (a memory copy the JS `Buffer.concat` 
   preloaded), which keeps the ~415 call sites' shape but not their aliasing: code that mutated a value returned
   by `read` and never called `write` (which the JS store tolerates) must be found and fixed during the port.
   Static (SDE and hand-curated) tables are not part of this store yet.
-- **M4 Rust network front, M5 Rust tick and visibility, M6 cut-over**: not started beyond the pieces below. The
+- **Slices S1 to S6 of `PLAN.md`** (the Rust network front, the walking skeleton, login to a character, station,
+  space, the long tail, cut-over): not started beyond the pieces below. The
   dispatcher fixtures are the conformance suite the Rust front will be checked against (they include the
   response packet bytes the front must produce).
 

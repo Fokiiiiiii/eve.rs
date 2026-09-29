@@ -1,9 +1,10 @@
 # eve.rs
 
-A rewrite of the EVE.js server (a local EVE Online server emulator, Node.js) as
-a Rust compute core, a C#/.NET 10 service layer, and PostgreSQL 18. The Node
-implementation stays the executable specification until cut-over: every native
-component is checked against it through recorded golden fixtures.
+A new server for the EVE Online client, in Rust (network front and simulation), C#/.NET 10 (service layer) and
+PostgreSQL 18. The aim is a server that the same, unmodified client can play on, that is faster and easier to
+maintain, and that does not depend on EVE.js. EVE.js is not ported line by line: its external behaviour (what the
+client can observe) is kept, and everything behind that is designed again. It stays as a behavioural reference to
+run the same scenarios against. Start with `CLAUDE.md`, `docs/PLAN.md` and `docs/adr/`.
 
 > Localhost-only research project. Not affiliated with CCP hf. It contains no
 > CCP client code and no copy of the static data export.
@@ -12,7 +13,7 @@ component is checked against it through recorded golden fixtures.
 
 | Path | What |
 |---|---|
-| `crates/eve-marshal` | MachoNet marshal codec, byte-identical to the JS reference |
+| `crates/eve-marshal` | MachoNet marshal codec, checked byte-for-byte against the reference's recorded output |
 | `crates/eve-destiny` | Carbon motion integration (bit-identical, with V8's `Math.exp`) and ball wire encoding |
 | `crates/eve-oracle` | Replays `oracle/fixtures/**` against the crates |
 | `crates/eve-bench` | Throughput benchmarks with ratios against the JS baseline |
@@ -29,7 +30,7 @@ component is checked against it through recorded golden fixtures.
 | `tools/headless-client` | A small Python client that speaks the wire protocol (handshake, service calls); replays the same golden fixtures |
 | `tools/dev` | `pg18.sh` (a local PostgreSQL 18), `run-evejs-live.sh` (live tests against the reference server) |
 | `tools/spec-extract` | Scripts that extract facts (names, constants) from a local copy of the client source |
-| `docs/` | Migration status (`NATIVE_MIGRATION.md`) and extracted client-spec facts (`spec/`) |
+| `docs/` | The plan (`PLAN.md`), decisions (`adr/`), registered deviations from the reference (`compat/`), status (`NATIVE_MIGRATION.md`) and extracted client-spec facts (`spec/`) |
 
 ## Checks
 

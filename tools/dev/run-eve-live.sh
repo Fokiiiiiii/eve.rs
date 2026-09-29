@@ -5,8 +5,9 @@
 #   tools/dev/run-eve-live.sh              the same tests/test_live.py that runs against the reference server
 #   EVE_RUN='<command>' tools/dev/run-eve-live.sh   run <command> instead (EVE_LIVE_HOST is set)
 #
-# With EVE_PG_URL set the host keeps its accounts in PostgreSQL (in a scratch schema, dropped at the end);
-# without it they live in memory.
+# With EVE_PG_URL set the host keeps its accounts, characters and items in PostgreSQL (in scratch schemas, dropped
+# at the end) and serves the character screen from the loaded static data (`eve-sde ensure`); without it accounts
+# live in memory and there are no characters.
 # EVE_LIVE_PORT (default 26100) is where the front listens. Passwords are checked (an unknown user name
 # creates the account; the same name needs the same password afterwards), so the wrong-password test runs too.
 set -euo pipefail
@@ -18,14 +19,18 @@ LOG="$(mktemp -d)"
 host_pid=""
 net_pid=""
 
-IDENTITY_SCHEMA=""
+SCRATCH=""
 if [ -n "${EVE_PG_URL:-}" ]; then
-  IDENTITY_SCHEMA="live_$$"
-  export EVE_IDENTITY_SCHEMA="$IDENTITY_SCHEMA"
+  SCRATCH="live_$$"
+  export EVE_IDENTITY_SCHEMA="${SCRATCH}_identity" EVE_CHARACTERS_SCHEMA="${SCRATCH}_characters" EVE_INVENTORY_SCHEMA="${SCRATCH}_inventory"
 fi
 
 cleanup() {
-  [ -n "$IDENTITY_SCHEMA" ] && psql "$EVE_PG_URL" -qc "DROP SCHEMA IF EXISTS $IDENTITY_SCHEMA CASCADE" 2>/dev/null || true
+  if [ -n "$SCRATCH" ]; then
+    for schema in "$EVE_IDENTITY_SCHEMA" "$EVE_CHARACTERS_SCHEMA" "$EVE_INVENTORY_SCHEMA"; do
+      psql "$EVE_PG_URL" -qc "DROP SCHEMA IF EXISTS $schema CASCADE" 2>/dev/null || true
+    done
+  fi
   [ -n "$net_pid" ] && kill "$net_pid" 2>/dev/null || true
   [ -n "$host_pid" ] && kill "$host_pid" 2>/dev/null || true
   rm -f "$SOCK"
@@ -59,5 +64,5 @@ if [ -n "${EVE_RUN:-}" ]; then
   cd "$HERE" && bash -c "$EVE_RUN"
 else
   cd "$HERE/tools/headless-client"
-  EVE_LIVE_STRICT_PASSWORDS=1 .venv/bin/python -m pytest -q tests/test_live.py -rs
+  EVE_LIVE_SERVER=eve.rs EVE_LIVE_STRICT_PASSWORDS=1 .venv/bin/python -m pytest -q tests/test_live.py tests/test_login_to_character.py -rs
 fi

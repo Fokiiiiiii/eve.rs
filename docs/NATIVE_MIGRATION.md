@@ -29,6 +29,7 @@ an oracle.
 | M3b | The C# service layer: MachoNet packets, a packet dispatcher, service and bound-object registry, `[Service]`/`[Method]` with a source-generated dispatch. Checked against 21 scenarios (76 requests) recorded from the real JS dispatcher: request bytes in, response bytes and bound-object state out | `dotnet/src/Eve.Macho`, `dotnet/src/Eve.Services`, `dotnet/src/Eve.Services.Generator` |
 | M3c | First service wave: `pingService`, `browserLockdownSvc`, `subscriptionMgr` (the last reads Omega licences from the store). 50 scenarios (197 requests) recorded from the real JS services across environment, config, stored-licence, clock and session variants | `dotnet/src/Eve.Services.Core` |
 | S1 | **The walking skeleton.** A Rust network front (`eve-net`: TCP, framing, the Placebo handshake, forwarding raw packets) and a C# service host (`Eve.Host`: sessions, the dispatcher, `machoNet`, a development account directory) joined by the link of ADR 0002. The headless client's live tests, the same file that passes against the EVE.js reference, pass against it | `crates/eve-net`, `dotnet/src/Eve.Host`, `oracle/fixtures/hostlink` |
+| S2 | **Login to a character.** Accounts in PostgreSQL (`Eve.Identity`), characters (`Eve.Characters`), items (`Eve.Inventory`) and the static data they need (`Eve.Sde`), each module with its own schema and migrations (`Eve.Data`); `charUnboundMgr` (`Eve.Services.CharacterSelect`) with the screen's calls, character creation with its rookie ship in one transaction, three slots, name rules, and choosing a character, which sets the session and sends the session change. The scenario recorded from the reference (`oracle/fixtures/scenarios`) is replayed against a running server and compared by shape and value: it passes against the reference itself (34 tests) and against eve.rs with the deviations of `compat/DEVIATIONS.md` (39 tests with the S1 live tests) | `dotnet/src/Eve.{Identity,Characters,Inventory,Sde,Data,Services.CharacterSelect}`, `tools/headless-client/tests/test_login_to_character.py` |
 
 Run the checks (the server itself: `tools/dev/run-eve-live.sh`):
 
@@ -145,12 +146,11 @@ Nothing was tuned yet: a frame is copied several times and the host allocates pe
   which needs the full service graph to load.
 - **The scene tick benchmark** needs the generated SDE tables (not in the
   repository). The login-path latency benchmark needs a running world.
-- **S1 is a skeleton.** The front and the host run and pass the client's live tests, but the host has four services
-  (`machoNet` with `GetTime`, `GetInitVals`, `GetServiceInfo`, `GetGlobalConfig`, `GetGlobalConfigValue`,
-  `GetServerStatus`, `GetNodeID`; `pingService`; `browserLockdownSvc`; `subscriptionMgr`), accounts live in memory,
-  and the service table lists only what exists. The real client needs the services S2 onwards add. Not yet
-  matched: `machoNet`'s other methods, the portrait-upload and skill-extractor patches the reference sends in the
-  login function, the store entries in the global config, the cluster-wide user count, login queues.
+- **S1 and S2 reach the character screen, not the world.** The host serves `machoNet` (`GetTime`, `GetInitVals`,
+  `GetServiceInfo`, `GetGlobalConfig`, `GetGlobalConfigValue`, `GetServerStatus`, `GetNodeID`), `pingService`,
+  `browserLockdownSvc`, `subscriptionMgr` and, with PostgreSQL and the SDE, `charUnboundMgr`. After a character is
+  chosen the session is in a station with a ship and nothing answers what the client asks next (S3). Not yet
+  matched: see "Not yet matched" in `compat/DEVIATIONS.md`.
 - **M3 is a foundation plus three services, not the service layer.** The reference has 77 service directories
   (205 services); three are ported. Waves that need the SDE (account/character/skills, inventory/dogma/fitting,
   ship/station, market, then the long tail) can now start: the SDE is loaded (below). Not yet ported from the dispatcher: the object-cache

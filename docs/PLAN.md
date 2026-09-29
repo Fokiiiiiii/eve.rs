@@ -70,7 +70,7 @@ domain module.
 |---|---|---|
 | S0 | Foundations: oracle fixtures, Rust and C# marshal, MachoNet packets and dispatcher, the store, SDE loading, the headless client | Done; see `docs/NATIVE_MIGRATION.md` |
 | S1 | **Walking skeleton (done).** `eve-net` accepts the headless client, completes the handshake, and answers `machoNet` and ping through the C# host (`Eve.Host`), over the link of ADR 0002 | `tools/dev/run-eve-live.sh` runs `tests/test_live.py`, the file that passes against the reference, and passes; about 11-15x the reference's call rate on the same machine (`docs/NATIVE_MIGRATION.md`) |
-| S2 | **Login to a character.** Accounts (development auto-create and strict-password mode), character list and creation, the session initialisation the client expects, the static data it downloads | A headless scenario, login to character select to a session with a character, passes on both servers |
+| S2 | **Login to a character (done for the screen).** Accounts in PostgreSQL (development auto-create and strict-password mode), character list, name rules and creation with a rookie ship, choosing a character (session attributes and the session change). Still to come inside S2: the caches and static data the client downloads after the session has a character | `tests/test_login_to_character.py` replays the recorded walk against the reference (34 tests) and against eve.rs (39 with the live tests); deviations are in `docs/compat/DEVIATIONS.md` |
 | S3 | **Station.** Docked state, hangar, ships and items, skills, dogma for a fitted ship | A scenario reads a ship's attributes and inventory; values equal the reference's |
 | S4 | **Space.** Undock, the scene tick, the destiny stream, movement and warp, visibility, time dilation | The client receives the destiny stream; balls and timing match within a stated tolerance; a tick benchmark |
 | S5 | **The long tail, by importance.** Rank the client's services by how often and how early it calls them (`docs/spec/services.tsv` and live runs); market, corporations, chat and mail, agents and missions, and the rest | Each service group has a scenario |
@@ -82,7 +82,8 @@ domain module.
 |---|---|
 | `crates/eve-marshal`, `dotnet/src/Eve.Marshal` | Kept: the wire contract |
 | `crates/eve-destiny` | Kept: the destiny wire encoding and the motion maths S4 uses |
-| `crates/eve-net`, `dotnet/src/Eve.Host` | New in S1: the front and the service host (ADR 0002). The host's development account directory is replaced by the identity module in S2 |
+| `crates/eve-net`, `dotnet/src/Eve.Host` | New in S1: the front and the service host (ADR 0002). The host keeps accounts in the identity module (PostgreSQL) since S2; the in-memory directory is for tests and for running without a database |
+| `dotnet/src/Eve.{Identity,Characters,Inventory,Sde,Data}`, `Eve.Services.CharacterSelect` | New in S2: domain modules with their own PostgreSQL schemas and migrations, and the protocol adapter for the character screen |
 | `dotnet/src/Eve.Macho`, `Eve.Services`, `Eve.Services.Generator` | Kept as the protocol-adapter layer of the service host. The reference's behaviour on failure (a `None` reply) and its number and truthiness rules are candidates in `docs/compat/DEVIATIONS.md` |
 | `dotnet/src/Eve.Services.Core` | Kept: three services as adapters. `subscriptionMgr` moves into the identity module when that exists |
 | `dotnet/src/Eve.GameStore` and its importer | **Transitional.** It mirrors EVE.js's store to make a direct port possible. Domain modules will not build on it; it stays for the legacy import until S6, and its owner-lease and outbox ideas are reused where a module needs them. Decided in an ADR at the start of S2 |
@@ -92,11 +93,11 @@ domain module.
 
 ## 6. Next
 
-1. **S2 design first**: the identity module (accounts, roles, banned, in PostgreSQL) replacing the in-memory
-   directory, then character list and creation, the session attributes the client expects after character
-   selection, and the static-data caches it downloads. Decide in an ADR whether `Eve.GameStore` is kept for
-   anything but the legacy import.
-2. Make `tests/test_live.py` (and the scenarios after it) take the server from an environment variable for
-   both servers, and run each scenario against the reference and eve.rs.
+1. **Finish S2**: what the client asks for after `SelectCharacterID` (the session attributes it reads, the caches it
+   downloads, `OnServerSkillsChanged` and the other login notifications); record the reference's next stretch of the
+   login with the headless client and replay it the way `tests/test_login_to_character.py` does.
+2. **S3 design**: decide in an ADR what `Eve.GameStore` is kept for (the legacy import only, if the modules do not
+   build on it), then station, inventory, skills and dogma for a fitted ship. Wallet, skills and mail replace the
+   constants the selection screen carries now (`docs/compat/DEVIATIONS.md`, "Not yet matched").
 3. Tag the fixtures by tier and record the next deviations with evidence from the client source.
 4. Measure before tuning the S1 path (frame copies, per-packet allocation, ping in the front).

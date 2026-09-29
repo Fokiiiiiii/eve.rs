@@ -1,22 +1,28 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Eve.Characters/Eve.Characters.csproj" />
     <Project Path="src/Eve.Data/Eve.Data.csproj" />
     <Project Path="src/Eve.GameStore.Import/Eve.GameStore.Import.csproj" />
     <Project Path="src/Eve.GameStore/Eve.GameStore.csproj" />
     <Project Path="src/Eve.Host/Eve.Host.csproj" />
     <Project Path="src/Eve.Identity/Eve.Identity.csproj" />
+    <Project Path="src/Eve.Inventory/Eve.Inventory.csproj" />
     <Project Path="src/Eve.Macho/Eve.Macho.csproj" />
     <Project Path="src/Eve.Marshal/Eve.Marshal.csproj" />
+    <Project Path="src/Eve.Sde/Eve.Sde.csproj" />
+    <Project Path="src/Eve.Services.CharacterSelect/Eve.Services.CharacterSelect.csproj" />
     <Project Path="src/Eve.Services.Core/Eve.Services.Core.csproj" />
     <Project Path="src/Eve.Services.Generator/Eve.Services.Generator.csproj" />
     <Project Path="src/Eve.Services/Eve.Services.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Eve.Characters.Tests/Eve.Characters.Tests.csproj" />
     <Project Path="tests/Eve.GameStore.Import.Tests/Eve.GameStore.Import.Tests.csproj" />
     <Project Path="tests/Eve.GameStore.Tests/Eve.GameStore.Tests.csproj" />
     <Project Path="tests/Eve.Host.Tests/Eve.Host.Tests.csproj" />
     <Project Path="tests/Eve.Identity.Tests/Eve.Identity.Tests.csproj" />
     <Project Path="tests/Eve.Marshal.Tests/Eve.Marshal.Tests.csproj" />
+    <Project Path="tests/Eve.Services.CharacterSelect.Tests/Eve.Services.CharacterSelect.Tests.csproj" />
     <Project Path="tests/Eve.Services.Core.Tests/Eve.Services.Core.Tests.csproj" />
     <Project Path="tests/Eve.Services.Generator.Tests/Eve.Services.Generator.Tests.csproj" />
     <Project Path="tests/Eve.Services.Tests/Eve.Services.Tests.csproj" />

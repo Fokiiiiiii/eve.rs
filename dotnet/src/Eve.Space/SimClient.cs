@@ -1,0 +1,269 @@
+using System.Collections.Concurrent;
+using System.Net.Sockets;
+using System.Threading.Channels;
+
+namespace Eve.Space;
+
+/// <summary>
+/// The service host's end of the link to the simulation process: it connects to the simulation's socket (and again, after a
+/// break), says hello, sends what the host asks and hands back what the simulation says. Requests that are answered (an
+/// <c>Enter</c>, a <c>Dock</c>) are awaited; the rest are sent and forgotten.
+/// </summary>
+public sealed class SimClient : ISimulation, IAsyncDisposable
+{
+    private static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan HelloTimeout = TimeSpan.FromSeconds(5);
+
+    private readonly Func<CancellationToken, Task<Stream>> _connect;
+    private readonly Action<string>? _log;
+    private readonly CancellationTokenSource _stop = new();
+    private readonly Channel<byte[]> _outbox = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<string?>> _entering = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<DockReply>> _docking = new();
+    private Task? _run;
+    private volatile bool _connected;
+    private TimeSpan _retryDelay = RetryDelay;
+
+    public SimClient(Func<CancellationToken, Task<Stream>> connect, Action<string>? log = null)
+    {
+        _connect = connect;
+        _log = log;
+    }
+
+    /// <summary>A client of the simulation listening on a Unix socket.</summary>
+    public static SimClient ToUnixSocket(string path, Action<string>? log = null) => new(async cancellationToken =>
+    {
+        var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        try
+        {
+            await socket.ConnectAsync(new UnixDomainSocketEndPoint(path), cancellationToken);
+            return new NetworkStream(socket, ownsSocket: true);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    }, log);
+
+    public bool IsConnected => _connected;
+
+    public event Action<SimMessage>? Received;
+
+    public event Action? Lost;
+
+    /// <summary>How long to wait before trying to connect again.</summary>
+    public TimeSpan RetryAfter
+    {
+        get => _retryDelay;
+        set => _retryDelay = value;
+    }
+
+    /// <summary>Starts connecting (and keeps at it).</summary>
+    public void Start() => _run ??= Task.Run(() => RunAsync(_stop.Token));
+
+    private async Task RunAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await using var stream = await _connect(cancellationToken);
+                await ServeAsync(stream, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception error) when (error is IOException or SocketException or SimLinkException or UnauthorizedAccessException or InvalidOperationException or OperationCanceledException)
+            {
+                _log?.Invoke($"the simulation link: {error.Message}");
+            }
+            if (_connected)
+            {
+                _connected = false;
+                FailPending();
+                Lost?.Invoke();
+            }
+            try
+            {
+                await Task.Delay(_retryDelay, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+        _connected = false;
+        FailPending();
+    }
+
+    private static async Task<SimMessage> ReadAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        var length = new byte[4];
+        await stream.ReadExactlyAsync(length, cancellationToken);
+        var size = BitConverter.ToUInt32(length);
+        if (size > SimCodec.MaxFrame)
+        {
+            throw new SimLinkException(SimLinkError.FrameTooLarge, $"frame of {size} bytes exceeds {SimCodec.MaxFrame}");
+        }
+        var payload = new byte[size];
+        await stream.ReadExactlyAsync(payload, cancellationToken);
+        return SimCodec.Decode(payload);
+    }
+
+    private async Task ServeAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        await stream.WriteAsync(SimCodec.Encode(new SimHello(SimCodec.ProtocolVersion)), cancellationToken);
+        using (var hello = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        {
+            hello.CancelAfter(HelloTimeout);
+            var ack = await ReadAsync(stream, hello.Token);
+            if (ack is not SimHelloAck { Version: SimCodec.ProtocolVersion })
+            {
+                throw new SimLinkException(SimLinkError.BadValue, $"the simulation answered hello with {ack.GetType().Name}");
+            }
+        }
+        _log?.Invoke("connected to the simulation");
+        // whatever was queued for a link that broke is stale
+        while (_outbox.Reader.TryRead(out _))
+        {
+        }
+        _connected = true;
+
+        using var session = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var writer = Task.Run(async () =>
+        {
+            await foreach (var frame in _outbox.Reader.ReadAllAsync(session.Token))
+            {
+                await stream.WriteAsync(frame, session.Token);
+            }
+        }, session.Token);
+        try
+        {
+            while (true)
+            {
+                Dispatch(await ReadAsync(stream, session.Token));
+                if (writer.IsFaulted)
+                {
+                    await writer;
+                }
+            }
+        }
+        finally
+        {
+            await session.CancelAsync();
+            try
+            {
+                await writer;
+            }
+            catch (Exception error) when (error is OperationCanceledException or IOException or SocketException or ObjectDisposedException)
+            {
+            }
+        }
+    }
+
+    private void Dispatch(SimMessage message)
+    {
+        switch (message)
+        {
+            case SimEnterReply reply:
+                if (_entering.TryRemove(reply.SessionId, out var entering))
+                {
+                    entering.TrySetResult(reply.Error);
+                }
+                break;
+            case SimAccepted { Command: SimCommands.Dock } accepted:
+                if (_docking.TryRemove(accepted.SessionId, out var accepting))
+                {
+                    accepting.TrySetResult(new DockReply(true, accepted.At, null));
+                }
+                break;
+            case SimRefused { Command: SimCommands.Dock } refused when _docking.TryRemove(refused.SessionId, out var refusing):
+                refusing.TrySetResult(new DockReply(false, 0, refused.Reason));
+                break;
+            default:
+                Received?.Invoke(message);
+                break;
+        }
+    }
+
+    private void FailPending()
+    {
+        foreach (var session in _entering.Keys)
+        {
+            if (_entering.TryRemove(session, out var pending))
+            {
+                pending.TrySetException(new SimUnavailableException("the link to the simulation broke"));
+            }
+        }
+        foreach (var session in _docking.Keys)
+        {
+            if (_docking.TryRemove(session, out var pending))
+            {
+                pending.TrySetException(new SimUnavailableException("the link to the simulation broke"));
+            }
+        }
+    }
+
+    private void Send(SimMessage message)
+    {
+        if (!_connected)
+        {
+            return; // nobody is there to hear it
+        }
+        _outbox.Writer.TryWrite(SimCodec.Encode(message));
+    }
+
+    private async Task<T> AwaitAsync<T>(ConcurrentDictionary<ulong, TaskCompletionSource<T>> pending, ulong session, SimMessage request, CancellationToken cancellationToken)
+    {
+        if (!_connected)
+        {
+            throw new SimUnavailableException("the simulation is not running");
+        }
+        var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!pending.TryAdd(session, completion))
+        {
+            throw new InvalidOperationException($"session {session} already has a request of this kind waiting");
+        }
+        using var registration = cancellationToken.Register(() =>
+        {
+            pending.TryRemove(session, out _);
+            completion.TrySetCanceled(cancellationToken);
+        });
+        Send(request);
+        return await completion.Task;
+    }
+
+    public Task<string?> EnterAsync(SimEnter enter, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_entering, enter.SessionId, enter, cancellationToken);
+
+    public Task<DockReply> DockAsync(ulong sessionId, long stationId, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_docking, sessionId, new SimCommand(sessionId, SimCommands.Dock, [stationId]), cancellationToken);
+
+    public void Leave(ulong sessionId, LeaveWhy why) => Send(new SimLeave(sessionId, why));
+
+    public void Bind(ulong sessionId) => Send(new SimBind(sessionId));
+
+    public void UpdateState(ulong sessionId) => Send(new SimUpdateState(sessionId));
+
+    public void Command(ulong sessionId, byte code, params double[] args) => Send(new SimCommand(sessionId, code, args));
+
+    public void ShipChanged(ulong sessionId, SimShip ship) => Send(new SimShipChanged(sessionId, ship));
+
+    public async ValueTask DisposeAsync()
+    {
+        await _stop.CancelAsync();
+        if (_run is not null)
+        {
+            try
+            {
+                await _run;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+        _stop.Dispose();
+    }
+}

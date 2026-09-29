@@ -9,7 +9,7 @@ namespace Eve.Host.Tests;
 public class ArchitectureTests
 {
     /// <summary>The domain modules and what they may build on: each other (in this order) and the database helpers.</summary>
-    private static readonly string[] Modules = ["Eve.Data", "Eve.Sde", "Eve.Dogma", "Eve.Fitting", "Eve.Identity", "Eve.Inventory", "Eve.Skills", "Eve.Wallet", "Eve.Universe", "Eve.Characters", "Eve.Ships"];
+    private static readonly string[] Modules = ["Eve.Data", "Eve.Sde", "Eve.Dogma", "Eve.Fitting", "Eve.Identity", "Eve.Inventory", "Eve.Skills", "Eve.Wallet", "Eve.Universe", "Eve.Characters", "Eve.Ships", "Eve.Space"];
 
     private static string Source
     {

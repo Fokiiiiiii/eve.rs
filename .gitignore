@@ -2,9 +2,8 @@
 /target/
 **/*.rs.bk
 
-# Local data: the SDE and anything derived from the client are never committed
+# Local caches and client-derived output
 /.cache/
-/sde/data/
 /tools/spec-extract/out/
 
 # Python

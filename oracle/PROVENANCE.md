@@ -37,5 +37,8 @@ calls that return the whole skill list share one copy, marked `{"$same": "GetSki
 a sample of 62 stations (every 87th of the static data and two more), which the station names are checked against, and
 `inventory.json` what the inventory broker and the bound inventories of a new character's hangar, station and ship
 answer, and `dogma.json` the answer of `dogmaIM.GetAllInfo` (ship, fitted modules, character, brain, state) for a new
-character of each of the four playable races, which the dogma engine's values and the brain are checked against.
-`--only walk|starters|skills|info|stations|inventory|dogma` records one and leaves the others as they are.
+character of each of the four playable races (with the three notifications sent after it), which the dogma engine's values
+and the brain are checked against, and `fitting.json` what the client is sent when a module is taken out of its slot, taken
+offline and put online again (the events and the items that moved), and what the reference answers to a module call it
+cannot do.
+`--only walk|starters|skills|info|stations|inventory|dogma|fitting` records one and leaves the others as they are.

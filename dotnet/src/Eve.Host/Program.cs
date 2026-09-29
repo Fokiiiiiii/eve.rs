@@ -5,7 +5,9 @@ using Eve.Data;
 using Eve.Host;
 using Eve.Identity;
 using Eve.Dogma;
+using Eve.Fitting;
 using Eve.Inventory;
+using Eve.Ships;
 using Eve.Marshal;
 using Eve.Sde;
 using Eve.Skills;
@@ -33,6 +35,7 @@ using Eve.Services.Wallet;
 //   EVE_INVENTORY_SCHEMA   the schema of the inventory module                                 (default inventory)
 //   EVE_SKILLS_SCHEMA      the schema of the skills module                                    (default skills)
 //   EVE_WALLET_SCHEMA      the schema of the wallet module                                    (default wallet)
+//   EVE_FITTING_SCHEMA     the schema of the fitting module (which modules are online)        (default fitting)
 //   EVE_START_ISK / EVE_START_PLEX   what a new character starts with                         (100000 / 2222, the reference's)
 //   EVE_START_STATION      the station every new character starts at (the reference's; 60015249), or
 //                          "school" for the headquarters of the character's school corporation
@@ -150,10 +153,12 @@ static async Task<IReadOnlyList<IService>> CharacterServicesAsync(NpgsqlDataSour
     var inventorySchema = Env("EVE_INVENTORY_SCHEMA", PgItemStore.DefaultSchema);
     var skillsSchema = Env("EVE_SKILLS_SCHEMA", PgSkillStore.DefaultSchema);
     var walletSchema = Env("EVE_WALLET_SCHEMA", PgWalletStore.DefaultSchema);
+    var fittingSchema = Env("EVE_FITTING_SCHEMA", PgModuleStateStore.DefaultSchema);
     await PgCharacterStore.MigrateAsync(source, characterSchema);
     await PgItemStore.MigrateAsync(source, inventorySchema);
     await PgSkillStore.MigrateAsync(source, skillsSchema);
     await PgWalletStore.MigrateAsync(source, walletSchema);
+    await PgModuleStateStore.MigrateAsync(source, fittingSchema);
 
     var sde = new SdeReader(source);
     if (await sde.BuildAsync() is not { } build)
@@ -169,13 +174,15 @@ static async Task<IReadOnlyList<IService>> CharacterServicesAsync(NpgsqlDataSour
     var skills = new PgSkillStore(source, skillsSchema);
     var skillCatalog = await SkillCatalog.LoadAsync(sde);
     var wallets = new PgWalletStore(source, walletSchema);
+    var modules = new PgModuleStateStore(source, fittingSchema);
     var stations = await StationCatalog.LoadAsync(sde);
     var dogma = await DogmaStatic.LoadAsync(sde);
+    var ships = new CharacterShips(source, dogma, characters, items, skills, modules);
     var startingWallet = new StartingWallet(
         decimal.Parse(Env("EVE_START_ISK", "100000"), System.Globalization.CultureInfo.InvariantCulture),
         long.Parse(Env("EVE_START_PLEX", "2222"), System.Globalization.CultureInfo.InvariantCulture));
     Console.Error.WriteLine($"eve-host: characters in PostgreSQL, schemas {characterSchema}, {inventorySchema}, {skillsSchema} and {walletSchema}; {stations.Count} stations; dogma of {dogma.AttributeCount} attributes and {dogma.EffectCount} effects; static data build {build}; new characters start at {(startStation is { } id ? $"station {id}" : "their school's headquarters")}");
-    var creation = new CharacterCreation(source, characters, items, skills, skillCatalog, wallets, startingWallet, catalog);
+    var creation = new CharacterCreation(source, characters, items, skills, skillCatalog, wallets, startingWallet, catalog, modules);
     return
     [
         new CharUnboundMgrService(accounts, characters, items, skills, wallets, creation, catalog, online, [new SkillsLoginHook(skills, skillCatalog, now)], Random.Shared),
@@ -183,8 +190,8 @@ static async Task<IReadOnlyList<IService>> CharacterServicesAsync(NpgsqlDataSour
         new SkillHandlerService(skills, skillCatalog, now),
         new CharMgrService(characters, stations),
         new StationService(stations, characters, online, now),
-        new InvBrokerService(items, new ItemTypeCatalog(sde), stations, now),
-        new DogmaIMService(dogma, characters, items, skills, now),
+        new InvBrokerService(items, new ItemTypeCatalog(sde), stations, ships, dogma, now),
+        new DogmaIMService(dogma, ships, now),
         new AccountService(wallets),
     ];
 }

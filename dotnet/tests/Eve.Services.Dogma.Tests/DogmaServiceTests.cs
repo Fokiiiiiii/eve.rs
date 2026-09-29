@@ -204,3 +204,159 @@ public class DogmaServiceTests
         Assert.Equal([588, 21857, 3636, 3651], shipInfo.Entries.Select(e => (int)((PyInt)((PyPackedRow)Field(e.Value, "invItem")).Values[1]).Value));
     }
 }
+
+public class ShipEventTests
+{
+    private static async Task<(Rig Rig, Created Character, ClientSession Session, string Dogma, string Hangar)> ReadyAsync()
+    {
+        var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        var session = Rig.Session(character.CharacterId);
+        var dogma = await rig.BindAsync(session);
+        var hangar = Rig.OidOf(await rig.InventoryAsync(session, "GetInventory", args: [new PyInt(10004)]));
+        Events.Of(session); // what the setup sent is not what the test looks at
+        return (rig, character, session, dogma, hangar);
+    }
+
+    private static Task<PyValue> Inventory(Rig rig, ClientSession session, string bound, string method, PyValue[] args, PyValue? kwargs = null) =>
+        rig.InventoryAsync(session, method, bound, args, kwargs);
+
+    private static PyValue Kw(string name, long value) => new PyDict([new(new PyStr(name), new PyInt(value))]);
+
+    [PgFact]
+    public async Task GetAllInfo_is_followed_by_the_characters_attributes_and_the_brain_and_the_brain_version_counts()
+    {
+        var (rig, _, session, oid, _) = await ReadyAsync();
+        await using var owned = rig;
+        await rig.CallAsync(session, "GetAllInfo", oid, PyBool.True, PyBool.True, PyNone.Instance);
+        Assert.Empty(Events.Of(session, clear: false)); // nothing is sent before the answer has gone
+        session.RunAfterResponse();
+
+        var events = Events.Of(session);
+        Assert.Equal(["OnModuleAttributeChanges", "OnModuleAttributeChanges", "OnServerBrainUpdated"], events.Select(e => e.Name));
+        Assert.All(events, e => Assert.Equal("clientID", e.IdType));
+        var industry = ((PyList)events[0].Args[0]).Items.Cast<PyTuple>().ToArray();
+        Assert.Equal([196L, 219, 385, 387, 398, 467, 1959, 2662, 2664], industry.Select(t => Events.Number(t.Items[3])));
+        Assert.All(industry, t => Assert.Equal((new PyStr("OnModuleAttributeChange"), (PyValue)PyNone.Instance), (t.Items[0], t.Items[6])));
+        Assert.Equal(new PyReal(0.96), industry[1].Items[5]);
+        var learning = ((PyList)events[1].Args[0]).Items.Cast<PyTuple>().ToArray();
+        Assert.Equal([164L, 165, 166, 167, 168], learning.Select(t => Events.Number(t.Items[3])));
+        Assert.All(learning, t => Assert.Equal(new PyInt(20), t.Items[5]));
+
+        var brain = (PyTuple)events[2].Args[0];
+        Assert.Equal(new PyInt(1), brain.Items[0]);
+        var lists = (PyTuple)MarshalCodec.Decode(((PyBuffer)brain.Items[1]).Value.ToArray());
+        Assert.Equal((9, 55, 0), (((PyList)lists.Items[0]).Items.Count, ((PyList)lists.Items[1]).Items.Count, ((PyList)lists.Items[2]).Items.Count));
+
+        await rig.CallAsync(session, "GetAllInfo", oid, PyBool.True, PyBool.True, PyNone.Instance);
+        session.RunAfterResponse();
+        Assert.Equal(new PyInt(2), ((PyTuple)Events.Of(session).Last().Args[0]).Items[0]);
+    }
+
+    [PgFact]
+    public async Task Asking_for_only_the_ship_sends_the_character_events_too_but_asking_for_nothing_sends_none()
+    {
+        var (rig, _, session, oid, _) = await ReadyAsync();
+        await using var owned = rig;
+        await rig.CallAsync(session, "GetAllInfo", oid, PyBool.False, PyBool.False, PyNone.Instance);
+        session.RunAfterResponse();
+        Assert.Empty(Events.Of(session));
+        await rig.CallAsync(session, "GetAllInfo", oid, PyBool.False, PyBool.True, PyNone.Instance);
+        session.RunAfterResponse();
+        Assert.Equal(3, Events.Of(session).Count);
+    }
+
+    [PgFact]
+    public async Task Taking_a_module_offline_and_online_tells_the_client_in_one_batch_each_and_answers_none()
+    {
+        var (rig, character, session, oid, _) = await ReadyAsync();
+        await using var owned = rig;
+        var ship = character.ShipId;
+        var afterburner = ship + 1;
+
+        Assert.Equal(PyNone.Instance, await rig.CallAsync(session, "TakeModuleOffline", oid, new PyLong(ship), new PyLong(afterburner)));
+        var off = Assert.Single(Events.Of(session));
+        Assert.Equal(("OnMultiEvent", "clientID"), (off.Name, off.IdType));
+        var batch = ((PyList)off.Args[0]).Items.Cast<PyTuple>().ToArray();
+        // (event, time) each; a module's attribute and the ship's, then the effect
+        Assert.Equal(
+            ["OnModuleAttributeChange", "OnModuleAttributeChange", "OnModuleAttributeChange", "OnGodmaShipEffect"],
+            batch.Select(b => JsSemantics.StringValue(Events.Items(b.Items[0])[0])));
+        var first = Events.Items(batch[0].Items[0]);
+        Assert.Equal((afterburner, 2L, new PyInt(0), new PyInt(1)), (Events.Number(first[2]), Events.Number(first[3]), first[5], first[6]));
+        var effect = Events.Items(batch[3].Items[0]);
+        Assert.Equal((new PyInt(16), new PyInt(0), new PyInt(0), PyBool.False, new PyInt(-1)), (effect[2], effect[4], effect[5], effect[9], effect[8]));
+        Assert.All(batch, b => Assert.IsType<PyLong>(b.Items[1]));
+
+        Assert.Equal(PyNone.Instance, await rig.CallAsync(session, "SetModuleOnline", oid, new PyLong(ship), new PyLong(afterburner)));
+        var on = Assert.Single(Events.Of(session));
+        Assert.Equal(new PyInt(1), Events.Items(((PyTuple)((PyList)on.Args[0]).Items[^1]).Items[0])[4]); // the effect starts
+    }
+
+    [PgFact]
+    public async Task A_call_about_a_module_that_is_not_the_characters_or_a_session_that_did_not_bind_is_answered_with_a_message_or_none()
+    {
+        var (rig, character, session, oid, _) = await ReadyAsync();
+        await using var owned = rig;
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () => await rig.CallAsync(session, "SetModuleOnline", oid, new PyLong(character.ShipId), new PyLong(12345)));
+        Assert.Equal("DeniedShipChanged", refusal.Error.UserErrorMessage);
+        Assert.Equal(PyNone.Instance, await rig.CallAsync(Rig.Session(character.CharacterId, id: 2), "SetModuleOnline", oid, new PyLong(character.ShipId), new PyLong(character.ShipId + 1)));
+        Assert.Empty(Events.Of(session));
+    }
+
+    [PgFact]
+    public async Task Adding_a_module_to_the_hangar_takes_it_out_of_its_slot_and_the_client_is_told_in_the_order_the_reference_does()
+    {
+        var (rig, character, session, _, hangar) = await ReadyAsync();
+        await using var owned = rig;
+        var weapon = character.ShipId + 2;
+        var answer = await Inventory(rig, session, hangar, "Add", [new PyLong(weapon), new PyLong(character.ShipId)], Kw("flag", 4));
+        Assert.Equal(weapon, Events.Number(answer)); // ids of new items fit an int, and the wire follows the value
+
+        var events = Events.Of(session);
+        Assert.Equal(["OnMultiEvent", "OnItemsChanged"], events.Select(e => e.Name));
+        Assert.Equal(["clientID", "charid"], events.Select(e => e.IdType));
+        var changed = events[1].Args;
+        var row = (PyPackedRow)((PyList)changed[0]).Items.Single();
+        Assert.Equal((weapon, 3638L, Rig.Station, 4L), (Events.Number(row.Values[0]), Events.Number(row.Values[1]), Events.Number(row.Values[3]), Events.Number(row.Values[4])));
+        Assert.Empty(Assert.IsType<PyBytes>(row.Values[8]).Value.ToArray()); // no custom info
+        var change = (PyDict)changed[1];
+        Assert.Equal([(3L, character.ShipId), (4L, 27L)], change.Entries.Select(e => (Events.Number(e.Key), Events.Number(e.Value))));
+        Assert.Equal(PyNone.Instance, changed[2]);
+        var listed = ((PyList)await Inventory(rig, session, hangar, "List", [])).Items.Cast<PyPackedRow>().Select(r => Events.Number(r.Values[0]));
+        Assert.Equal([character.ShipId, weapon], listed.Order());
+    }
+
+    [PgFact]
+    public async Task Adding_to_the_ship_fits_the_module_and_a_refusal_is_a_message_the_client_shows()
+    {
+        var (rig, character, session, _, hangar) = await ReadyAsync();
+        await using var owned = rig;
+        var ship = character.ShipId;
+        var shipInventory = Rig.OidOf(await rig.InventoryAsync(session, "GetInventoryFromId", args: [new PyLong(ship)]));
+        await Inventory(rig, session, hangar, "Add", [new PyLong(ship + 2), new PyLong(ship)], Kw("flag", 4));
+        Events.Of(session);
+
+        Assert.Equal(ship + 2, Events.Number(await Inventory(rig, session, shipInventory, "Add", [new PyLong(ship + 2), new PyLong(Rig.Station)], Kw("flag", 27))));
+        var events = Events.Of(session);
+        Assert.Equal(["OnMultiEvent", "OnItemsChanged"], events.Select(e => e.Name));
+        Assert.Single(((PyList)events[0].Args[0]).Items); // only the turret hard point, an offline module costs nothing
+
+        // the slot is taken now: a user error with the reference's words
+        await Inventory(rig, session, hangar, "Add", [new PyLong(ship + 3), new PyLong(ship)], Kw("flag", 4)); // the miner out
+        Events.Of(session);
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(async () => await Inventory(rig, session, shipInventory, "Add", [new PyLong(ship + 3), new PyLong(Rig.Station)], Kw("flag", 27)));
+        Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
+        Assert.Empty(Events.Of(session));
+    }
+
+    [PgFact]
+    public async Task Adding_something_that_is_not_there_is_answered_with_none_and_tells_nothing()
+    {
+        var (rig, character, session, _, hangar) = await ReadyAsync();
+        await using var owned = rig;
+        Assert.Equal(PyNone.Instance, await Inventory(rig, session, hangar, "Add", [new PyLong(123456789), new PyLong(character.ShipId)], Kw("flag", 4)));
+        Assert.Equal(PyNone.Instance, await Inventory(rig, session, hangar, "Add", [PyNone.Instance, PyNone.Instance]));
+        Assert.Empty(Events.Of(session));
+    }
+}

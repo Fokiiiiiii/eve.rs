@@ -27,6 +27,7 @@ from evecli import marshal as m
 from evecli import packet as p
 from evecli.client import Client
 from evecli.describe import describe, differences, type_name
+from evecli.observe import hangar_and_ship, notifications_of
 
 LIVE = os.environ.get("EVE_LIVE_HOST", "")
 SERVER = os.environ.get("EVE_LIVE_SERVER", "eve.rs")
@@ -607,6 +608,20 @@ def blank_times(described):
     return described
 
 
+def events_form(events: list[dict]) -> list:
+    """Recorded events (plain dictionaries: name, id type, arguments) in the form `differences` compares."""
+    return [as_dict({"name": e["name"], "idType": e["idType"], "args": e["args"]}) for e in events]
+
+
+def where_form(state: dict) -> dict:
+    """Where things are (plain dictionaries of lists) in the form `differences` compares."""
+    return as_dict({k: json_list(rows) for k, rows in state.items()})
+
+
+def json_list(rows: list) -> list:
+    return [as_dict(row) for row in rows]
+
+
 def set_attribute(attributes: list, attribute: int, value) -> None:
     for pair in attributes:
         if pair[0] == attribute:
@@ -625,8 +640,10 @@ def test_a_new_characters_dogma_is_that_of_the_reference(race):
         assert kind == "ok", brief(made)
         assert attempt(client, "charUnboundMgr", "SelectCharacterID", int(made), None, False) == ("ok", None)
 
+        notifications_of(client)  # what choosing the character sent is not what is asked about here
         service, method, call_args = race["bind"]["call"]
         outcome = describe(client.call(service, method, *[revive(a, run, ids, RECORDED_DOGMA_RUN) for a in call_args]))
+        sent = notifications_of(client)
 
     handle_shape = ("$substruct", "$substream", "$tuple")
     expected = race["bind"]["ok"]
@@ -650,4 +667,61 @@ def test_a_new_characters_dogma_is_that_of_the_reference(race):
             set_attribute(character_attributes, 428, 120)
     problems += differences(
         blank_times(expected_info), blank_times(actual_info), "GetAllInfo", volatile_keys=set(), float_tolerance=DOGMA_TOLERANCE)
+
+    # the events that come with the answer: the character's attributes, then its brain (the client's copy of the character is made from them)
+    mapping = dict(zip(recorded_ids, given_ids))
+    expected_events = blank_times(events_form(substitute(race["notifications"], mapping)))
+    if race["notificationsBeforeAnswer"] != 0:
+        problems.append("the recording has events before the answer, which this test does not place")
+    problems += differences(
+        expected_events, blank_times(events_form(sent)), "GetAllInfo events", volatile_keys=set(), float_tolerance=DOGMA_TOLERANCE)
+    assert problems == [], "\n".join(problems[:30])
+
+
+# ── fitting: switching modules and moving them out of their slots ───────────
+
+FITTING = load("fitting.json")
+RECORDED_FITTING_RUN = re.search(r"(\d{6,})$", FITTING["races"][0]["create"]["call"][2][0]).group(1)
+
+
+@pytest.mark.parametrize("race", FITTING["races"], ids=lambda r: f"race-{r['raceID']}")
+def test_switching_and_moving_modules_is_what_the_reference_does(race):
+    run = uuid.uuid4().hex[:10]
+    ids: dict[int, int] = {}
+    problems: list[str] = []
+    with connect(f"walk-fitting-{run}") as client:
+        service, method, *args = [race["create"]["call"][0], race["create"]["call"][1], *[revive(a, run, ids, RECORDED_FITTING_RUN) for a in race["create"]["call"][2]]]
+        kind, made = attempt(client, service, method, *args)
+        assert kind == "ok", brief(made)
+        assert attempt(client, "charUnboundMgr", "SelectCharacterID", int(made), None, False) == ("ok", None)
+        mgr = client.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
+        hangar = client.call_bound(mgr, "GetInventory", 10004)
+        ship_id = int(client.call_bound(hangar, "List")[0].fields()["itemID"])
+        before = hangar_and_ship(client, mgr, ship_id)
+        given = [number(x["itemID"]) for x in before["shipInfo"]]
+        recorded = [number(x["itemID"]) for x in race["before"]["shipInfo"]]
+        mapping = {int(race["create"]["ok"]): int(made), **dict(zip(recorded, given))}
+        problems += differences(where_form(blank_times(substitute(race["before"], mapping))), where_form(blank_times(before)), "before")
+        dogma = client.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))[0]
+        notifications_of(client)
+
+        handles = {"hangar": hangar, "dogma": dogma}
+        for step in race["steps"]:
+            method, recorded_args, kwargs = step["call"]
+            target = "hangar" if method == "Add" else "dogma"
+            args = [mapping.get(a, a) for a in recorded_args]
+            where = f"race {race['raceID']} {step['label']}"
+            try:
+                outcome = describe(client.call_bound(handles[target], method, *args, **kwargs))
+            except p.MachoError as error:
+                problems.append(f"{where}: error {brief(describe(error.payload))}")
+                continue
+            sent = notifications_of(client)
+            after = hangar_and_ship(client, mgr, ship_id)
+            notifications_of(client)  # what looking made the server send is not part of the step
+            problems += differences(substitute(step["ok"], mapping), outcome, f"{where}: answer")
+            problems += differences(
+                blank_times(events_form(substitute(step["notifications"], mapping))), blank_times(events_form(sent)), f"{where}: events",
+                float_tolerance=DOGMA_TOLERANCE)
+            problems += differences(where_form(blank_times(substitute(step["after"], mapping))), where_form(blank_times(after)), f"{where}: after")
     assert problems == [], "\n".join(problems[:30])

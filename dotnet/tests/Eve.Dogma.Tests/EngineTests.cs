@@ -3,11 +3,11 @@ namespace Eve.Dogma.Tests;
 /// <summary>The engine against a small hand-made world: the rules of the client's dogma, one at a time.</summary>
 public class EngineTests
 {
-    // attributes: 1 plain, 2 not stackable (penalised), 3 a cap, 4 capped by 3, 7 a whole number, 9 hit points, 15 power, 280 skill level, 327 a skill's bonus
+    // attributes: 1 plain, 8 not stackable (penalised), 3 a cap, 4 capped by 3, 7 a whole number, 9 hit points, 15 power, 280 skill level, 327 a skill's bonus
     private static readonly AttributeDef[] Attributes =
     [
         new(1, "plain", 100, true, true, 4),
-        new(2, "penalised", 100, false, true, 4),
+        new(8, "penalised", 100, false, true, 4),
         new(3, "cap", 150, true, true, 4),
         new(4, "capped", 100, true, true, 4, MaxAttributeId: 3),
         new(5, "count", 0, true, true, 5),
@@ -32,7 +32,7 @@ public class EngineTests
             Attributes,
             [effect],
             [
-                new TypeDef(Ship, 25, 6, new Dictionary<int, double> { [1] = 100, [2] = 100, [9] = 200, [3] = 150, [4] = 100 }, []),
+                new TypeDef(Ship, 25, 6, new Dictionary<int, double> { [1] = 100, [8] = 100, [9] = 200, [3] = 150, [4] = 100 }, []),
                 new TypeDef(Module, 40, 7, new Dictionary<int, double> { [6] = bonus }, [1]),
             ]);
         var world = new DogmaWorld(statics, shipId: 1000);
@@ -134,10 +134,10 @@ public class EngineTests
     public void A_penalised_attribute_weakens_each_further_modifier()
     {
         // three +20% on a non-stackable attribute: 1.2, then 1 + 0.2/exp((1/2.67)^2), then 1 + 0.2/exp((2/2.67)^2)
-        var world = Fit(Operation.PostPercent, 2, 3);
+        var world = Fit(Operation.PostPercent, 8, 3);
         var expected = 100 * 1.2 * (1 + 0.2 / Math.Exp(Math.Pow(1 / 2.67, 2))) * (1 + 0.2 / Math.Exp(Math.Pow(2 / 2.67, 2)));
-        Assert.Equal(expected, world.Get(1000, 2), 9);
-        Assert.True(world.Get(1000, 2) < 100 * 1.2 * 1.2 * 1.2);
+        Assert.Equal(expected, world.Get(1000, 8), 9);
+        Assert.True(world.Get(1000, 8) < 100 * 1.2 * 1.2 * 1.2);
     }
 
     [Fact]
@@ -185,25 +185,25 @@ public class EngineTests
     [Fact]
     public void Adding_and_subtracting_are_never_penalised()
     {
-        var world = Fit(Operation.ModAdd, 2, 3); // attribute 2 is not stackable
-        Assert.Equal(160, world.Get(1000, 2), 9);
+        var world = Fit(Operation.ModAdd, 8, 3); // attribute 8 is not stackable
+        Assert.Equal(160, world.Get(1000, 8), 9);
     }
 
     [Fact]
     public void The_unpenalised_percentage_is_never_penalised()
     {
-        var world = Fit(Operation.PostPercentUnpenalised, 2, 3);
-        Assert.Equal(100 * 1.2 * 1.2 * 1.2, world.Get(1000, 2), 9);
+        var world = Fit(Operation.PostPercentUnpenalised, 8, 3);
+        Assert.Equal(100 * 1.2 * 1.2 * 1.2, world.Get(1000, 8), 9);
     }
 
     [Fact]
     public void Skills_implants_ships_and_charges_are_not_penalised_but_modules_are()
     {
         // an implant (category 20) with a percentage on a non-stackable attribute of the ship, three times over
-        var effect = new EffectDef(1, "e", 0, [Mod(ModifierFunc.Item, "shipID", Operation.PostPercent, 2, 6)]);
+        var effect = new EffectDef(1, "e", 0, [Mod(ModifierFunc.Item, "shipID", Operation.PostPercent, 8, 6)]);
         var statics = new DogmaStatic(Attributes, [effect],
         [
-            new TypeDef(Ship, 25, 6, new Dictionary<int, double> { [2] = 100 }, []),
+            new TypeDef(Ship, 25, 6, new Dictionary<int, double> { [8] = 100 }, []),
             new TypeDef(Implant, 300, 20, new Dictionary<int, double> { [6] = 10 }, [1]),
             new TypeDef(Module, 40, 7, new Dictionary<int, double> { [6] = 10 }, [1]),
         ]);
@@ -214,14 +214,14 @@ public class EngineTests
         {
             world.Add(new DogmaItem(3000 + i, Implant, 1, 1, 89 + i));
         }
-        Assert.Equal(100 * 1.1 * 1.1 * 1.1, world.Get(1000, 2), 9);
+        Assert.Equal(100 * 1.1 * 1.1 * 1.1, world.Get(1000, 8), 9);
         world = new DogmaWorld(statics, characterId: 1, shipId: 1000);
         world.Add(new DogmaItem(1000, Ship, 1, 5));
         for (var i = 0; i < 3; i++)
         {
             world.Add(new DogmaItem(2000 + i, Module, 1, 1000, 19 + i));
         }
-        Assert.True(world.Get(1000, 2) < 100 * 1.1 * 1.1 * 1.1);
+        Assert.True(world.Get(1000, 8) < 100 * 1.1 * 1.1 * 1.1);
     }
 
     [Fact]
@@ -292,6 +292,20 @@ public class EngineTests
     }
 
     [Fact]
+    public void Whether_an_item_is_online_is_its_state_and_an_own_value_overrides_it()
+    {
+        var world = Fit(Operation.ModAdd, 1, 1, ItemState.Online);
+        Assert.Equal(1, world.Get(2000, BuiltInEffects.IsOnline));
+        world.SetState(2000, ItemState.Offline);
+        Assert.Equal(0, world.Get(2000, BuiltInEffects.IsOnline));
+        world.SetState(2000, ItemState.Active);
+        Assert.Equal(1, world.Get(2000, BuiltInEffects.IsOnline));
+        world.SetValue(2000, BuiltInEffects.IsOnline, 0);
+        Assert.Equal(0, world.Get(2000, BuiltInEffects.IsOnline));
+        Assert.Equal(0, world.Get(1000, BuiltInEffects.IsOnline)); // a ship is not online
+    }
+
+    [Fact]
     public void A_skills_level_is_given_and_no_modifier_changes_it()
     {
         var effect = new EffectDef(1, "e", 0, [Mod(ModifierFunc.Item, "itemID", Operation.ModAdd, 280, 327)]);
@@ -327,6 +341,14 @@ public class EngineTests
 
         world.SetValue(50, 280, 5);
         Assert.Equal(175 * 1.25, world.Get(1000, 9), 9);
+    }
+
+    [Fact]
+    public void A_module_lying_in_a_hangar_does_not_act_on_the_ship_the_character_flies()
+    {
+        var world = Fit(Operation.ModAdd, 1, 1);      // a module fitted to the ship: +20
+        world.Add(new DogmaItem(3000, Module, 1, 60_000_001, 4, ItemState.Online)); // another, owned by the same character, in the hangar
+        Assert.Equal(120, world.Get(1000, 1));
     }
 
     [Fact]
@@ -397,10 +419,10 @@ public class EngineTests
     {
         var effects = new[]
         {
-            new EffectDef(1, "a", 0, [Mod(ModifierFunc.Item, "itemID", Operation.ModAdd, 1, 2)]),
-            new EffectDef(2, "b", 0, [Mod(ModifierFunc.Item, "itemID", Operation.ModAdd, 2, 1)]),
+            new EffectDef(1, "a", 0, [Mod(ModifierFunc.Item, "itemID", Operation.ModAdd, 1, 8)]),
+            new EffectDef(2, "b", 0, [Mod(ModifierFunc.Item, "itemID", Operation.ModAdd, 8, 1)]),
         };
-        var statics = new DogmaStatic(Attributes, effects, [new TypeDef(Module, 40, 7, new Dictionary<int, double> { [1] = 1, [2] = 2 }, [1, 2])]);
+        var statics = new DogmaStatic(Attributes, effects, [new TypeDef(Module, 40, 7, new Dictionary<int, double> { [1] = 1, [8] = 2 }, [1, 2])]);
         var world = new DogmaWorld(statics);
         world.Add(new DogmaItem(5, Module, 1, 1, 0, ItemState.Online));
         var value = world.Get(5, 1);

@@ -1,10 +1,9 @@
 using System.Collections.Concurrent;
-using Eve.Characters;
 using Eve.Dogma;
-using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
-using Eve.Skills;
+using Eve.Services.Ships;
+using Eve.Ships;
 
 namespace Eve.Services.Dogma;
 
@@ -14,10 +13,12 @@ namespace Eve.Services.Dogma;
 /// of <c>Eve.Dogma</c>; this only loads what a character has, asks, and puts the answer in the shapes the client reads.
 /// </summary>
 [Service("dogmaIM")]
-public sealed partial class DogmaIMService(
-    DogmaStatic statics, PgCharacterStore characters, PgItemStore items, PgSkillStore skills, Func<long> nowUnixMs) : IBoundObjectReleaseHandler
+public sealed partial class DogmaIMService(DogmaStatic statics, CharacterShips ships, Func<long> nowUnixMs) : IBoundObjectReleaseHandler
 {
     private readonly DogmaInfo _info = new(statics);
+
+    /// <summary>How many times each character's brain has been told to the client (the version it carries).</summary>
+    private readonly ConcurrentDictionary<long, int> _brainVersions = new();
 
     /// <summary>What a bound dogma object is: the session that opened it and the place it was opened for.</summary>
     private sealed record Context(long SessionId, long LocationId);
@@ -89,21 +90,64 @@ public sealed partial class DogmaIMService(
 
     /// <summary>
     /// <c>GetAllInfo(getCharInfo, getShipInfo, getStructureInfo)</c>: the ship the character sits in, what is fitted to it, the character and
-    /// its brain. Each flag left out (None) is asked for, except the structure, which is asked for only inside one.
+    /// its brain. Each flag left out (None) is asked for, except the structure, which is asked for only inside one. When the character is
+    /// asked for the client is then sent its attributes and its brain as events of their own.
     /// </summary>
     [Method("GetAllInfo")]
     public async ValueTask<PyValue> GetAllInfo(ServiceCall call)
     {
-        if (call.BoundObjectId is not { } oid || !_bound.TryGetValue(oid, out var context) || context.SessionId != call.Session.SessionId
-            || call.Session.CharacterId is not { } character)
-        {
-            return None;
-        }
-        if (await DogmaSnapshot.LoadAsync(statics, characters, items, skills, character, call.Cancellation) is not { } snapshot)
+        if (BoundContextOf(call) is null || call.Session.CharacterId is not { } character || await ships.LoadAsync(character, call.Cancellation) is not { } snapshot)
         {
             return None;
         }
         var fileTime = Py.FileTimeFromUnixMs(nowUnixMs());
-        return _info.GetAllInfo(snapshot, Flag(call.Arg(0), true), Flag(call.Arg(1), true), Flag(call.Arg(2), false), fileTime);
+        var wantCharacter = Flag(call.Arg(0), true);
+        var wantShip = Flag(call.Arg(1), true);
+        var answer = _info.GetAllInfo(snapshot, wantCharacter, wantShip, Flag(call.Arg(2), false), fileTime);
+        if (wantCharacter || (wantShip && !wantCharacter))
+        {
+            // sent after the answer: the client has the character before it is told how the character's attributes came to be
+            var version = _brainVersions.AddOrUpdate(character, 1, (_, v) => v + 1);
+            call.Session.AfterResponse(() =>
+            {
+                foreach (var events in _info.CharacterAttributeEvents(snapshot, fileTime))
+                {
+                    call.Session.SendNotification("OnModuleAttributeChanges", "clientID", events);
+                }
+                call.Session.SendNotification("OnServerBrainUpdated", "clientID", _info.BrainUpdate(snapshot, version));
+            });
+        }
+        return answer;
+    }
+
+    private Context? BoundContextOf(ServiceCall call) =>
+        call.BoundObjectId is { } oid && _bound.TryGetValue(oid, out var context) && context.SessionId == call.Session.SessionId ? context : null;
+
+    /// <summary><c>SetModuleOnline(shipID, moduleID)</c>: switches a fitted module on; the client is told what changed by events.</summary>
+    [Method("SetModuleOnline")]
+    public ValueTask<PyValue> SetModuleOnline(ServiceCall call) => SwitchAsync(call, online: true);
+
+    /// <summary><c>TakeModuleOffline(shipID, moduleID)</c>: switches a fitted module off.</summary>
+    [Method("TakeModuleOffline")]
+    public ValueTask<PyValue> TakeModuleOffline(ServiceCall call) => SwitchAsync(call, online: false);
+
+    private async ValueTask<PyValue> SwitchAsync(ServiceCall call, bool online)
+    {
+        if (BoundContextOf(call) is null || call.Session.CharacterId is not { } character)
+        {
+            return None;
+        }
+        var shipId = IdOf(call.Arg(0)) ?? 0;
+        var moduleId = IdOf(call.Arg(1)) ?? 0;
+        switch (await ships.SetOnlineAsync(character, shipId, moduleId, online, call.Cancellation))
+        {
+            case ShipChanged changed:
+                ShipNotifications.Send(call.Session, character, changed, item => DogmaInfo.RowOf(item, statics.Type(item.TypeId)), Py.FileTimeFromUnixMs(nowUnixMs()));
+                return None;
+            case ShipRefused refused:
+                throw ShipErrors.Of(refused, statics);
+            default:
+                return None;
+        }
     }
 }

@@ -1,0 +1,341 @@
+using Eve.Dogma;
+
+namespace Eve.Fitting.Tests;
+
+/// <summary>The rules of fitting, one at a time, on a small made-up ship.</summary>
+public class RulesTests
+{
+    private const int Char = 1, ShipId = 1000, ShipType = 601, ShipGroup = 237, Skill = 3300;
+    private const long Station = 60_000_001;
+
+    private static readonly AttributeDef[] Attributes =
+    [
+        new(12, "lowSlots", 0, true, true, 4), new(13, "medSlots", 0, true, true, 4), new(14, "hiSlots", 0, true, true, 4), new(1137, "rigSlots", 0, true, true, 4),
+        new(1367, "maxSubSystems", 0, true, true, 4), new(101, "launcherSlotsLeft", 0, true, true, 4), new(102, "turretSlotsLeft", 0, true, true, 4),
+        new(47, "slots", 1, true, true, 4), new(280, "skillLevel", 0, true, true, 4), new(1547, "rigSize", 0, true, true, 4),
+        new(1132, "upgradeCapacity", 0, true, true, 4), new(1153, "upgradeCost", 0, true, true, 4), new(2431, "maxTypeFitted", 0, true, true, 4),
+        new(1544, "maxGroupFitted", 0, true, true, 4), new(1298, "canFitShipGroup01", 0, true, true, 4), new(1302, "canFitShipType1", 0, true, true, 4),
+        new(182, "requiredSkill1", 0, true, true, 4), new(277, "requiredSkill1Level", 0, true, true, 4),
+    ];
+
+    private const int HighModule = 5001, MediumModule = 5002, LowModule = 5003, Rig = 5004, Turret = 5005, Launcher = 5006, Charge = 5007, Plain = 5008, SkilledModule = 5009;
+
+    private static TypeDef Module(int type, int group, int category, Dictionary<int, double>? attributes, params int[] effects) =>
+        new(type, group, category, attributes ?? new Dictionary<int, double>(), effects);
+
+    private static DogmaStatic Statics(Dictionary<int, double>? shipAttributes = null) => new(
+        Attributes, BuiltInEffects.Merge([]),
+        [
+            new TypeDef(ShipType, ShipGroup, 6, shipAttributes ?? new Dictionary<int, double> { [14] = 3, [13] = 2, [12] = 2, [1137] = 3, [102] = 2, [101] = 1, [1547] = 1, [1132] = 400 }, []),
+            new TypeDef(1373, 1, 1, new Dictionary<int, double>(), []),
+            new TypeDef(Skill, 255, 16, new Dictionary<int, double>(), []),
+            Module(HighModule, 53, 7, null, 12),
+            Module(MediumModule, 46, 7, null, 13),
+            Module(LowModule, 60, 7, null, 11),
+            Module(Rig, 773, 7, new Dictionary<int, double> { [1547] = 1, [1153] = 150 }, BuiltInEffects.RigSlot),
+            Module(Turret, 55, 7, new Dictionary<int, double> { [47] = 1 }, 12, BuiltInEffects.TurretFitted),
+            Module(Launcher, 507, 7, new Dictionary<int, double> { [47] = 1 }, 12, BuiltInEffects.LauncherFitted),
+            Module(Charge, 86, 8, null, 12),
+            Module(Plain, 1, 4, null),
+            Module(SkilledModule, 53, 7, new Dictionary<int, double> { [182] = Skill, [277] = 3 }, 12),
+        ]);
+
+    private static (DogmaWorld World, DogmaStatic Statics) Ship(Dictionary<int, double>? shipAttributes = null, int skillLevel = 0, DogmaStatic? statics = null)
+    {
+        statics ??= Statics(shipAttributes);
+        var world = new DogmaWorld(statics, Char, ShipId);
+        world.Add(new DogmaItem(Char, 1373, Char, ShipId, 57));
+        world.Add(new DogmaItem(ShipId, ShipType, Char, Station, 4));
+        if (skillLevel > 0)
+        {
+            world.Add(new DogmaItem(50, Skill, Char, Char, 7));
+            world.SetValue(50, DogmaWorld.SkillLevel, skillLevel);
+        }
+        return (world, statics);
+    }
+
+    private static DogmaItem Candidate(DogmaWorld world, int type, long id = 2000)
+    {
+        var item = new DogmaItem(id, type, Char, Station, 4);
+        world.Add(item);
+        return item;
+    }
+
+    private static FitError? Why(DogmaWorld world, DogmaStatic statics, DogmaItem item, int flag) => FittingRules.Check(world, statics, ShipId, item, flag)?.Error;
+
+    private static void Fit(DogmaWorld world, int type, int flag, long id)
+    {
+        world.Add(new DogmaItem(id, type, Char, ShipId, flag, ItemState.Offline));
+    }
+
+    [Fact]
+    public void A_module_that_fits_is_accepted_in_a_slot_of_its_kind_the_ship_has()
+    {
+        var (world, statics) = Ship();
+        Assert.Null(FittingRules.Check(world, statics, ShipId, Candidate(world, HighModule), Slots.HighFirst));
+        Assert.Null(FittingRules.Check(world, statics, ShipId, Candidate(world, MediumModule, 2001), Slots.MediumFirst + 1));
+        Assert.Null(FittingRules.Check(world, statics, ShipId, Candidate(world, LowModule, 2002), Slots.LowFirst));
+        Assert.Null(FittingRules.Check(world, statics, ShipId, Candidate(world, Rig, 2003), Slots.RigFirst + 2));
+    }
+
+    [Fact]
+    public void Nothing_is_fitted_without_a_ship_a_module_or_a_slot_flag()
+    {
+        var (world, statics) = Ship();
+        var module = Candidate(world, HighModule);
+        Assert.Equal(FitError.InvalidRequest, FittingRules.Check(world, statics, 9999, module, Slots.HighFirst)?.Error);
+        Assert.Equal(FitError.InvalidRequest, Why(world, statics, module, 0));
+        Assert.Equal(FitError.InvalidRequest, Why(world, statics, new DogmaItem(2222, 987654, Char, Station, 4), Slots.HighFirst)); // a type nobody knows
+        Assert.Equal(FitError.InvalidFlag, Why(world, statics, module, 4));   // the hangar is no slot
+        Assert.Equal(FitError.InvalidFlag, Why(world, statics, module, 5));   // nor is the cargo
+        Assert.Equal(FitError.InvalidFlag, Why(world, statics, module, 35));  // one past the high slots
+    }
+
+    [Fact]
+    public void A_charge_is_loaded_not_fitted_and_a_thing_that_is_no_module_is_not_fittable()
+    {
+        var (world, statics) = Ship();
+        Assert.Equal(FitError.ChargesUseLoadAmmo, Why(world, statics, Candidate(world, Charge), Slots.HighFirst));
+        Assert.Equal(FitError.TypeNotFittable, Why(world, statics, Candidate(world, Plain, 2001), Slots.HighFirst));
+    }
+
+    [Theory]
+    [InlineData(HighModule, 27, null)]
+    [InlineData(HighModule, 29, null)]
+    [InlineData(HighModule, 30, FitError.InvalidSlot)]      // the ship has three high slots: 27, 28, 29
+    [InlineData(HighModule, 19, FitError.InvalidSlot)]      // a medium slot is no place for a high module
+    [InlineData(MediumModule, 20, null)]
+    [InlineData(MediumModule, 21, FitError.InvalidSlot)]    // two medium slots
+    [InlineData(LowModule, 12, null)]
+    [InlineData(LowModule, 13, FitError.InvalidSlot)]       // two low slots
+    [InlineData(Rig, 94, null)]
+    [InlineData(Rig, 95, FitError.InvalidSlot)]             // three rig slots
+    public void A_module_goes_in_the_slots_of_its_kind_the_ship_has(int type, int flag, FitError? expected)
+    {
+        var (world, statics) = Ship();
+        Assert.Equal(expected, Why(world, statics, Candidate(world, type), flag));
+    }
+
+    [Fact]
+    public void An_occupied_slot_refuses_and_the_module_itself_does_not_count_as_in_its_way()
+    {
+        var (world, statics) = Ship();
+        Fit(world, HighModule, Slots.HighFirst, 3000);
+        var other = Candidate(world, HighModule);
+        Assert.Equal(FitError.SlotOccupied, Why(world, statics, other, Slots.HighFirst));
+        Assert.Null(Why(world, statics, other, Slots.HighFirst + 1));
+        // moving a fitted module to another slot: it is not its own obstacle
+        Assert.Null(FittingRules.Check(world, statics, ShipId, world.Item(3000)!, Slots.HighFirst));
+    }
+
+    [Fact]
+    public void A_module_needs_the_skills_it_names_at_the_level_it_names()
+    {
+        var (none, s0) = Ship();
+        var failure = FittingRules.Check(none, s0, ShipId, Candidate(none, SkilledModule), Slots.HighFirst);
+        Assert.Equal(FitError.SkillRequired, failure?.Error);
+        Assert.Equal((Skill, 3, 0), (failure!.Data["skillTypeID"], failure.Data["requiredLevel"], failure.Data["currentLevel"]));
+
+        var (two, s2) = Ship(skillLevel: 2);
+        Assert.Equal(2, FittingRules.Check(two, s2, ShipId, Candidate(two, SkilledModule), Slots.HighFirst)!.Data["currentLevel"]);
+
+        var (three, s3) = Ship(skillLevel: 3);
+        Assert.Null(FittingRules.Check(three, s3, ShipId, Candidate(three, SkilledModule), Slots.HighFirst));
+    }
+
+    [Fact]
+    public void A_module_that_fits_only_some_groups_or_types_of_ship_says_so()
+    {
+        var restricted = new DogmaStatic(Attributes, BuiltInEffects.Merge([]),
+        [
+            new TypeDef(ShipType, ShipGroup, 6, new Dictionary<int, double> { [14] = 3 }, []),
+            new TypeDef(1373, 1, 1, new Dictionary<int, double>(), []),
+            Module(6001, 53, 7, new Dictionary<int, double> { [1298] = 999 }, 12),        // only ships of group 999
+            Module(6002, 53, 7, new Dictionary<int, double> { [1298] = ShipGroup }, 12),   // ships of this group
+            Module(6003, 53, 7, new Dictionary<int, double> { [1302] = 12345 }, 12),      // only the ship of type 12345
+            Module(6004, 53, 7, new Dictionary<int, double> { [1302] = ShipType }, 12),
+        ]);
+        var (world, statics) = Ship(statics: restricted);
+        Assert.Equal(FitError.InvalidShipGroup, Why(world, statics, Candidate(world, 6001), Slots.HighFirst));
+        Assert.Null(Why(world, statics, Candidate(world, 6002, 2001), Slots.HighFirst));
+        Assert.Equal(FitError.InvalidShipType, Why(world, statics, Candidate(world, 6003, 2002), Slots.HighFirst));
+        Assert.Null(Why(world, statics, Candidate(world, 6004, 2003), Slots.HighFirst));
+    }
+
+    [Fact]
+    public void Only_so_many_of_a_type_or_of_a_group_may_be_fitted()
+    {
+        var limited = new DogmaStatic(Attributes, BuiltInEffects.Merge([]),
+        [
+            new TypeDef(ShipType, ShipGroup, 6, new Dictionary<int, double> { [14] = 4 }, []),
+            new TypeDef(1373, 1, 1, new Dictionary<int, double>(), []),
+            Module(6100, 53, 7, new Dictionary<int, double> { [2431] = 1 }, 12),   // one of this type
+            Module(6101, 77, 7, new Dictionary<int, double> { [1544] = 2 }, 12),   // two of this group
+            Module(6102, 77, 7, new Dictionary<int, double> { [1544] = 2 }, 12),   // the same group, another type
+        ]);
+        var (world, statics) = Ship(statics: limited);
+        Fit(world, 6100, Slots.HighFirst, 3000);
+        var second = FittingRules.Check(world, statics, ShipId, Candidate(world, 6100), Slots.HighFirst + 1);
+        Assert.Equal(FitError.MaxTypeFitted, second?.Error);
+        Assert.Equal((1, 1), (second!.Data["maxTypeFitted"], second.Data["existingTypeCount"]));
+
+        Fit(world, 6101, Slots.HighFirst + 1, 3001);
+        Fit(world, 6102, Slots.HighFirst + 2, 3002);
+        var third = FittingRules.Check(world, statics, ShipId, Candidate(world, 6101, 2001), Slots.HighFirst + 3);
+        Assert.Equal(FitError.MaxGroupFitted, third?.Error);
+        Assert.Equal((2, 2), (third!.Data["maxGroupFitted"], third.Data["existingGroupCount"]));
+    }
+
+    [Fact]
+    public void A_rig_must_be_the_size_of_the_ship_and_within_what_the_ship_can_calibrate()
+    {
+        var rigs = new DogmaStatic(Attributes, BuiltInEffects.Merge([]),
+        [
+            new TypeDef(ShipType, ShipGroup, 6, new Dictionary<int, double> { [1137] = 3, [1547] = 1, [1132] = 400 }, []),
+            new TypeDef(1373, 1, 1, new Dictionary<int, double>(), []),
+            Module(7001, 773, 7, new Dictionary<int, double> { [1547] = 2, [1153] = 50 }, BuiltInEffects.RigSlot),   // a medium rig
+            Module(7002, 773, 7, new Dictionary<int, double> { [1547] = 1, [1153] = 150 }, BuiltInEffects.RigSlot),  // a small one costing 150
+        ]);
+        var (world, statics) = Ship(statics: rigs);
+        Assert.Equal(FitError.RigSizeMismatch, Why(world, statics, Candidate(world, 7001), Slots.RigFirst));
+
+        Fit(world, 7002, Slots.RigFirst, 3000);
+        Fit(world, 7002, Slots.RigFirst + 1, 3001);
+        var third = FittingRules.Check(world, statics, ShipId, Candidate(world, 7002), Slots.RigFirst + 2);
+        Assert.Equal(FitError.InsufficientCalibration, third?.Error); // 450 of 400
+        Assert.Equal((400, 450), (third!.Data["upgradeCapacity"], third.Data["upgradeLoad"]));
+    }
+
+    [Fact]
+    public void A_rig_that_fills_the_calibration_exactly_is_allowed()
+    {
+        var rigs = new DogmaStatic(Attributes, BuiltInEffects.Merge([]),
+        [
+            new TypeDef(ShipType, ShipGroup, 6, new Dictionary<int, double> { [1137] = 3, [1547] = 1, [1132] = 450 }, []),
+            new TypeDef(1373, 1, 1, new Dictionary<int, double>(), []),
+            Module(7002, 773, 7, new Dictionary<int, double> { [1547] = 1, [1153] = 150 }, BuiltInEffects.RigSlot),
+        ]);
+        var (world, statics) = Ship(statics: rigs);
+        Fit(world, 7002, Slots.RigFirst, 3000);
+        Fit(world, 7002, Slots.RigFirst + 1, 3001);
+        Assert.Null(Why(world, statics, Candidate(world, 7002), Slots.RigFirst + 2)); // 450 of 450
+    }
+
+    [Fact]
+    public void A_ship_never_has_more_than_eight_slots_of_a_kind()
+    {
+        var (world, statics) = Ship(new Dictionary<int, double> { [14] = 12, [13] = 2, [12] = 2 });
+        Assert.Equal(8, Slots.Count(world, ShipId, SlotFamily.High));
+        Assert.Equal(Enumerable.Range(Slots.HighFirst, 8), Slots.Flags(world, ShipId, SlotFamily.High));
+    }
+
+    private static (DogmaWorld World, DogmaStatic Statics) Loaded()
+    {
+        var statics = new DogmaStatic(Attributes, BuiltInEffects.Merge([]),
+        [
+            new TypeDef(ShipType, ShipGroup, 6, new Dictionary<int, double> { [48] = 100, [11] = 50, [14] = 4 }, []),
+            new TypeDef(1373, 1, 1, new Dictionary<int, double>(), []),
+            Module(7101, 53, 7, new Dictionary<int, double> { [50] = 60, [30] = 10 }, 12, BuiltInEffects.Online),  // running: 60 of 100 processor, 10 of 50 power
+            Module(7102, 53, 7, new Dictionary<int, double> { [50] = 40, [30] = 40 }, 12, BuiltInEffects.Online),  // fills both to the last point
+            Module(7103, 53, 7, new Dictionary<int, double> { [50] = 40.5 }, 12, BuiltInEffects.Online),           // over the processor by half a point
+            Module(7104, 53, 7, new Dictionary<int, double> { [30] = 40.5 }, 12, BuiltInEffects.Online),           // over the power by half a point
+            Module(7105, 53, 7, null, 12, BuiltInEffects.Online),                                                  // costs nothing
+        ]);
+        var (world, _) = Ship(statics: statics);
+        world.Add(new DogmaItem(3000, 7101, Char, ShipId, Slots.HighFirst, ItemState.Online));
+        foreach (var (id, type, flag) in new[] { (3001L, 7102, 1), (3002L, 7103, 2), (3003L, 7104, 3), (3004L, 7105, 4) })
+        {
+            world.Add(new DogmaItem(id, type, Char, ShipId, Slots.HighFirst + flag, ItemState.Offline));
+        }
+        return (world, statics);
+    }
+
+    [Theory]
+    [InlineData(3001, null)]                       // 60 + 40 is 100 of 100, 10 + 40 is 50 of 50
+    [InlineData(3002, FitError.NotEnoughCpu)]
+    [InlineData(3003, FitError.NotEnoughPower)]
+    [InlineData(3004, null)]
+    public void A_module_is_allowed_the_processor_and_power_it_exactly_fills_and_refused_what_it_would_overrun(long module, FitError? expected)
+    {
+        var (world, _) = Loaded();
+        Assert.Equal(expected, FittingRules.OnlineShortage(world, ShipId, module));
+    }
+
+    [Fact]
+    public void The_first_skill_a_module_needs_and_the_owner_lacks_is_named()
+    {
+        var (world, statics) = Ship(skillLevel: 2);
+        var needs3 = statics.Type(SkilledModule)!;
+        var failure = FittingRules.MissingSkill(world, Char, needs3)!;
+        Assert.Equal(FitError.SkillRequired, failure.Error);
+        Assert.Equal((Skill, 3, 2), (failure.Data["skillTypeID"], failure.Data["requiredLevel"], failure.Data["currentLevel"]));
+        var (untrained, _) = Ship();
+        untrained.Add(new DogmaItem(51, Skill, 2, 2, 7)); // another character's Gunnery, trained to the top, is not the pilot's
+        untrained.SetValue(51, DogmaWorld.SkillLevel, 5);
+        Assert.Equal(FitError.SkillRequired, FittingRules.MissingSkill(untrained, Char, needs3)?.Error);
+        Assert.Null(FittingRules.MissingSkill(world, Char, statics.Type(Plain)!));
+        Assert.Null(FittingRules.MissingSkill(Ship(skillLevel: 3).World, Char, needs3));
+        Assert.Equal(0, FittingRules.MissingSkill(Ship().World, Char, needs3)!.Data["currentLevel"]); // not trained at all
+    }
+
+    [Fact]
+    public void Turrets_and_launchers_need_a_hard_point_each()
+    {
+        var (world, statics) = Ship(); // two turret hard points, one launcher
+        Assert.Null(Why(world, statics, Candidate(world, Turret), Slots.HighFirst));
+        Fit(world, Turret, Slots.HighFirst, 3000);
+        Assert.Null(Why(world, statics, Candidate(world, Turret, 2001), Slots.HighFirst + 1));
+        Fit(world, Turret, Slots.HighFirst + 1, 3001);
+        Assert.Equal(FitError.NoTurretHardpoints, Why(world, statics, Candidate(world, Turret, 2002), Slots.HighFirst + 2));
+        Assert.Null(Why(world, statics, Candidate(world, HighModule, 2003), Slots.HighFirst + 2)); // a module that is no turret does not need one
+
+        Assert.Null(Why(world, statics, Candidate(world, Launcher, 2004), Slots.HighFirst + 2));
+        Fit(world, Launcher, Slots.HighFirst + 2, 3002);
+        var (full, s) = Ship(new Dictionary<int, double> { [14] = 3, [101] = 0, [102] = 0 });
+        Assert.Equal(FitError.NoLauncherHardpoints, Why(full, s, Candidate(full, Launcher), Slots.HighFirst));
+    }
+
+    [Fact]
+    public void The_first_free_slot_of_the_right_kind_is_found_and_none_is_found_when_all_are_taken()
+    {
+        var (world, statics) = Ship();
+        var module = Candidate(world, HighModule);
+        Assert.Equal(Slots.HighFirst, FittingRules.FirstFreeSlot(world, statics, ShipId, module));
+        Fit(world, HighModule, Slots.HighFirst, 3000);
+        Assert.Equal(Slots.HighFirst + 1, FittingRules.FirstFreeSlot(world, statics, ShipId, module));
+        Fit(world, HighModule, Slots.HighFirst + 1, 3001);
+        Fit(world, HighModule, Slots.HighFirst + 2, 3002);
+        Assert.Null(FittingRules.FirstFreeSlot(world, statics, ShipId, module));
+        Assert.Null(FittingRules.FirstFreeSlot(world, statics, ShipId, Candidate(world, Plain, 2001))); // not a module
+    }
+
+    [Theory]
+    [InlineData(11, SlotFamily.Low)]
+    [InlineData(18, SlotFamily.Low)]
+    [InlineData(19, SlotFamily.Medium)]
+    [InlineData(26, SlotFamily.Medium)]
+    [InlineData(27, SlotFamily.High)]
+    [InlineData(34, SlotFamily.High)]
+    [InlineData(92, SlotFamily.Rig)]
+    [InlineData(99, SlotFamily.Rig)]
+    [InlineData(125, SlotFamily.Subsystem)]
+    [InlineData(132, SlotFamily.Subsystem)]
+    public void The_flags_of_the_slots(int flag, SlotFamily family)
+    {
+        Assert.Equal(family, Slots.FamilyOfFlag(flag));
+    }
+
+    [Theory]
+    [InlineData(4)]
+    [InlineData(5)]
+    [InlineData(10)]
+    [InlineData(35)]
+    [InlineData(57)]
+    [InlineData(87)]
+    [InlineData(100)]
+    [InlineData(133)]
+    public void Other_flags_are_no_slot(int flag)
+    {
+        Assert.Null(Slots.FamilyOfFlag(flag));
+    }
+}

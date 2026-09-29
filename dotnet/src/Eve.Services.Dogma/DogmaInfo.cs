@@ -1,5 +1,7 @@
 using Eve.Dogma;
 using Eve.Marshal;
+using Eve.Ships;
+using Eve.Services.Ships;
 
 namespace Eve.Services.Dogma;
 
@@ -49,12 +51,12 @@ public sealed class DogmaInfo(DogmaStatic statics)
     public static ItemRow RowOf(Eve.Inventory.Item item, TypeDef? type) =>
         new(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, item.Singleton ? -1 : item.Quantity, type?.GroupId ?? 0, type?.CategoryId ?? 0);
 
-    private ItemRow CharacterRow(DogmaSnapshot s) =>
-        new(s.Character.Id, s.Character.TypeId, s.Character.Id, s.Ship.Id, DogmaSnapshot.PilotFlag, -1, CharacterGroup, CharacterCategory);
+    private ItemRow CharacterRow(ShipSnapshot s) =>
+        new(s.Character.Id, s.Character.TypeId, s.Character.Id, s.Ship.Id, ShipSnapshot.PilotFlag, -1, CharacterGroup, CharacterCategory);
 
     private static PyValue Row(ItemRow row, bool character) => InventoryWire.PackedRow(row, character ? new PyStr("") : PyNone.Instance);
 
-    private Dictionary<int, double> WithIntrinsics(DogmaSnapshot s, long itemId, bool withDefaults = true)
+    private Dictionary<int, double> WithIntrinsics(ShipSnapshot s, long itemId, bool withDefaults = true)
     {
         var attributes = s.World.Attributes(itemId).ToDictionary(a => a.Key, a => a.Value);
         if (withDefaults)
@@ -68,7 +70,7 @@ public sealed class DogmaInfo(DogmaStatic statics)
     }
 
     /// <summary>The ship's attributes: the engine's, the ones every ship reports, and what it has taken (as fractions of what it can).</summary>
-    public IReadOnlyDictionary<int, double> ShipAttributes(DogmaSnapshot s)
+    public IReadOnlyDictionary<int, double> ShipAttributes(ShipSnapshot s)
     {
         var attributes = WithIntrinsics(s, s.Ship.Id);
         foreach (var load in FittingLoads)
@@ -88,7 +90,7 @@ public sealed class DogmaInfo(DogmaStatic statics)
     }
 
     /// <summary>A fitted module's attributes: the engine's, its own state, and the ones every item reports.</summary>
-    public IReadOnlyDictionary<int, double> ModuleAttributes(DogmaSnapshot s, long moduleId)
+    public IReadOnlyDictionary<int, double> ModuleAttributes(ShipSnapshot s, long moduleId)
     {
         var attributes = WithIntrinsics(s, moduleId);
         attributes[IsOnline] = s.World.Item(moduleId)?.State >= ItemState.Online ? 1 : 0;
@@ -100,7 +102,7 @@ public sealed class DogmaInfo(DogmaStatic statics)
     }
 
     /// <summary>The character's attributes with the ship's changes to them (its fitting and the rookie ship's bonus among them).</summary>
-    public IReadOnlyDictionary<int, double> ShipModifiedCharacterAttributes(DogmaSnapshot s)
+    public IReadOnlyDictionary<int, double> ShipModifiedCharacterAttributes(ShipSnapshot s)
     {
         var attributes = WithIntrinsics(s, s.Character.Id, withDefaults: false);
         attributes.Remove(Volume);
@@ -112,12 +114,37 @@ public sealed class DogmaInfo(DogmaStatic statics)
     }
 
     /// <summary>The character's attributes as it is told them: the fixed list.</summary>
-    public IReadOnlyDictionary<int, double> CharacterAttributes(DogmaSnapshot s) =>
+    public IReadOnlyDictionary<int, double> CharacterAttributes(ShipSnapshot s) =>
         CharacterInfoAttributes.ToDictionary(a => a, a => s.World.Get(s.Character.Id, a));
+
+    /// <summary>The character's attributes that make up the first change events: what it can build, then how it learns.</summary>
+    private static readonly int[][] CharacterEventGroups = [[196, 219, 385, 387, 398, 467, 1959, 2662, 2664], [164, 165, 166, 167, 168]];
+
+    /// <summary>
+    /// What the client is told about the character's attributes after <c>GetAllInfo</c>: two batches of changes from nothing to the value now
+    /// (the client's own copy of the character starts from these).
+    /// </summary>
+    public IEnumerable<PyValue> CharacterAttributeEvents(ShipSnapshot s, long fileTime)
+    {
+        var attributes = CharacterAttributes(s);
+        foreach (var group in CharacterEventGroups)
+        {
+            yield return new PyList([.. group.Select(a => ShipNotifications.AttributeChange(s.Character.Id, s.Character.Id, a, fileTime, null, attributes[a]))]);
+        }
+    }
+
+    /// <summary>The brain as the client is told it changed: its version and the effects, marshalled (a list each for the character, the ship and the structure).</summary>
+    public PyValue BrainUpdate(ShipSnapshot s, int version)
+    {
+        var brain = BrainBuilder.Build(s.World, statics);
+        PyValue List(IEnumerable<BrainEffect> effects, long target) => new PyList([.. effects.Select(e => DogmaWire.BrainEffect(e, target))]);
+        var grayMatter = MarshalCodec.Encode(Py.Tuple(List(brain.Character, s.Character.Id), List(brain.Ship, s.Ship.Id), List(brain.Structure, s.Character.Id)));
+        return Py.Tuple(new PyInt(version), new PyBuffer(grayMatter));
+    }
 
     private static double Round6(double value) => Math.Round(value, 6, MidpointRounding.AwayFromZero);
 
-    private PyValue ModuleInfo(DogmaSnapshot s, Eve.Inventory.Item module, long now)
+    private PyValue ModuleInfo(ShipSnapshot s, Eve.Inventory.Item module, long now)
     {
         var running = s.World.Item(module.Id) is { State: >= ItemState.Online }
             ? new PyDict([new(new PyInt(BuiltInEffects.Online), DogmaWire.RunningEffect(module.Id, s.Character.Id, s.Ship.Id, BuiltInEffects.Online, now))])
@@ -125,7 +152,7 @@ public sealed class DogmaInfo(DogmaStatic statics)
         return DogmaWire.ItemInfo(module.Id, Row(RowOf(module, statics.Type(module.TypeId)), false), running, DogmaWire.Attributes(ModuleAttributes(s, module.Id)), now);
     }
 
-    private PyValue ShipInfo(DogmaSnapshot s, long now)
+    private PyValue ShipInfo(ShipSnapshot s, long now)
     {
         var entries = new List<KeyValuePair<PyValue, PyValue>>
         {
@@ -136,11 +163,11 @@ public sealed class DogmaInfo(DogmaStatic statics)
         return new PyDict(entries);
     }
 
-    private PyValue CharacterInfo(DogmaSnapshot s, IReadOnlyDictionary<int, double> attributes, long now) =>
+    private PyValue CharacterInfo(ShipSnapshot s, IReadOnlyDictionary<int, double> attributes, long now) =>
         DogmaWire.ItemInfo(s.Character.Id, Row(CharacterRow(s), true), new PyDict([]), DogmaWire.Attributes(attributes), now);
 
     /// <summary>The state of everything the client keeps a state for: the ship, the character and each module, and the heat of the slots.</summary>
-    private PyValue ShipState(DogmaSnapshot s, long now)
+    private PyValue ShipState(ShipSnapshot s, long now)
     {
         var rows = new List<KeyValuePair<PyValue, PyValue>>
         {
@@ -157,7 +184,7 @@ public sealed class DogmaInfo(DogmaStatic statics)
     /// <c>GetAllInfo</c> for a character in its ship in a station. What is left out follows the reference: the character and
     /// ship info asked for; a docked ship asked for on its own brings the character with it.
     /// </summary>
-    public PyValue GetAllInfo(DogmaSnapshot s, bool getCharInfo, bool getShipInfo, bool getStructureInfo, long fileTime)
+    public PyValue GetAllInfo(ShipSnapshot s, bool getCharInfo, bool getShipInfo, bool getStructureInfo, long fileTime)
     {
         _ = getStructureInfo; // a character docked in a station has no structure to tell about
         var dockedShipOnly = getShipInfo && !getCharInfo;

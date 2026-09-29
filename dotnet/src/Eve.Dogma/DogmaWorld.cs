@@ -254,7 +254,8 @@ public sealed class DogmaWorld
                     }
                     at = up;
                 }
-                return source.OwnerId == CharacterId && CharacterId != 0 ? ShipId : -1;
+                // what the pilot carries (skills, implants) acts on the ship he flies, in the ship or not; a module lying in a hangar does not
+                return CharacterId != 0 && (source.Id == CharacterId || source.LocationId == CharacterId) ? ShipId : -1;
             default:
                 return -1; // targets, other items, structures: nothing in a station reaches them
         }
@@ -285,6 +286,10 @@ public sealed class DogmaWorld
         if (item.Own.TryGetValue(attributeId, out var own))
         {
             return own;
+        }
+        if (attributeId == BuiltInEffects.IsOnline)
+        {
+            return item.State >= ItemState.Online ? 1d : 0d; // whether a module is online is its state, not something its type says
         }
         if (_static.Type(item.TypeId) is { } type && type.Attributes.TryGetValue(attributeId, out var typed))
         {

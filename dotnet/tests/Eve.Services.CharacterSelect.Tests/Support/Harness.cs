@@ -1,5 +1,6 @@
 using Eve.Characters;
 using Eve.Data;
+using Eve.Fitting;
 using Eve.Identity;
 using Eve.Inventory;
 using Eve.Marshal;
@@ -64,6 +65,7 @@ public sealed class Harness : IAsyncDisposable
     private readonly string _inventorySchema;
     private readonly string _skillsSchema;
     private readonly string _walletSchema;
+    private readonly string _fittingSchema;
 
     private Harness(NpgsqlDataSource source, string suffix)
     {
@@ -72,6 +74,7 @@ public sealed class Harness : IAsyncDisposable
         _inventorySchema = $"csi_test_{suffix}";
         _skillsSchema = $"css_test_{suffix}";
         _walletSchema = $"csw_test_{suffix}";
+        _fittingSchema = $"csf_test_{suffix}";
         Characters = new PgCharacterStore(source, _characterSchema);
         Items = new PgItemStore(source, _inventorySchema);
         SkillStore = new PgSkillStore(source, _skillsSchema);
@@ -80,7 +83,7 @@ public sealed class Harness : IAsyncDisposable
         Online = new OnlineCharacters();
         Service = new CharUnboundMgrService(
             Accounts, Characters, Items, SkillStore, Wallets,
-            new CharacterCreation(source, Characters, Items, SkillStore, Skills, Wallets, new StartingWallet(), Catalog), Catalog, Online,
+            new CharacterCreation(source, Characters, Items, SkillStore, Skills, Wallets, new StartingWallet(), Catalog, new PgModuleStateStore(source, _fittingSchema)), Catalog, Online,
             [new SkillsLoginHook(SkillStore, Skills, () => ClockUnixMs)], new Random(7));
         Handler = new SkillHandlerService(SkillStore, Skills, () => ClockUnixMs);
         Door = new SkillMgr2Service();
@@ -115,6 +118,7 @@ public sealed class Harness : IAsyncDisposable
         await PgItemStore.MigrateAsync(source, harness._inventorySchema);
         await PgSkillStore.MigrateAsync(source, harness._skillsSchema);
         await PgWalletStore.MigrateAsync(source, harness._walletSchema);
+        await PgModuleStateStore.MigrateAsync(source, harness._fittingSchema);
         return harness;
     }
 
@@ -148,7 +152,7 @@ public sealed class Harness : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        foreach (var schema in new[] { _characterSchema, _inventorySchema, _skillsSchema, _walletSchema })
+        foreach (var schema in new[] { _characterSchema, _inventorySchema, _skillsSchema, _walletSchema, _fittingSchema })
         {
             await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
             await command.ExecuteNonQueryAsync();

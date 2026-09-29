@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record what the EVE.js reference does from login to a session with a character.
 
-    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma]
+    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting]
 
 The recording is the contract for the same path in eve.rs: `tests/test_login_to_character.py` replays the calls
 against any server and compares each answer with what is stored here, by shape, treating per-run values
@@ -30,6 +30,7 @@ from evecli import marshal as m  # noqa: E402
 from evecli import packet as p  # noqa: E402
 from evecli.client import Client  # noqa: E402
 from evecli.describe import describe  # noqa: E402
+from evecli.observe import hangar_and_ship, notifications_of  # noqa: E402
 
 # The school the reference offers each playable race (its minimal map), as the client would send one.
 SCHOOL_OF_RACE = {1: 35, 2: 33, 4: 31, 8: 37}
@@ -339,18 +340,68 @@ def record_inventory(rec: Recorder, out: str, meta: dict, ancestry: dict, run: s
 
 def record_dogma(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One new character per playable race, chosen; then what the client asks the dogma manager when it enters the station:
-    the location is bound with (station, group station) and `GetAllInfo(character, ship, structure)` is the nested call."""
+    the location is bound with (station, group station) and `GetAllInfo(character, ship, structure)` is the nested call.
+    The events the server sends because of it (the character's attributes, the brain) are recorded with the answer."""
     races = []
     for bloodline in (1, 3, 5, 7):
         who = rec.login(f"dogma{bloodline}")
         created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Dogmatic {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
         char_id = int(created["ok"])
         rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        who.notifications.clear()
         bind = rec.call(who, "dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
-        races.append({"bloodlineID": bloodline, "raceID": RACE_OF_BLOODLINE[bloodline], "create": created, "bind": bind})
+        arrived_first = len([n for n in who.notifications if n.command == p.NOTIFICATION])  # how many came before the answer
+        races.append({"bloodlineID": bloodline, "raceID": RACE_OF_BLOODLINE[bloodline], "create": created, "bind": bind,
+                      "notifications": notifications_of(who), "notificationsBeforeAnswer": arrived_first})
         who.close()
         time.sleep(1.5)
     with open(os.path.join(out, "dogma.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": races}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+
+
+def record_fitting(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """What the reference does when modules are switched and moved: the online state of the afterburner and the weapon
+    (`SetModuleOnline` and `TakeModuleOffline` on the bound dogma manager), and a module moved out to the hangar (the unfit the
+    client sends is `hangar.Add(itemID, shipID, flag=hangar)`). Each step: the answer, the events the client is sent, and
+    where everything is after. Two races, so the weapon differs."""
+    races = []
+    for bloodline in (1, 3):
+        who = rec.login(f"fitting{bloodline}")
+        created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Fitted {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
+        char_id = int(created["ok"])
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        mgr = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
+        hangar = who.call_bound(mgr, "GetInventory", 10004)
+        ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+        before = hangar_and_ship(who, mgr, ship_id)
+        ids = [int(x["itemID"]["$long"] if isinstance(x["itemID"], dict) else x["itemID"]) for x in before["shipInfo"]]
+        dogma = who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))[0]
+        _ship, afterburner, weapon, _miner = ids
+        notifications_of(who)
+        plan = [
+            ("afterburner offline", dogma, "TakeModuleOffline", (ship_id, afterburner), {}),
+            ("afterburner online", dogma, "SetModuleOnline", (ship_id, afterburner), {}),
+            ("afterburner online again", dogma, "SetModuleOnline", (ship_id, afterburner), {}),
+            ("weapon offline", dogma, "TakeModuleOffline", (ship_id, weapon), {}),
+            ("weapon to the hangar while offline", hangar, "Add", (weapon, ship_id), {"flag": 4}),
+            ("afterburner to the hangar", hangar, "Add", (afterburner, ship_id), {"flag": 4}),
+        ]
+        steps = []
+        for label, handle, method, args, kwargs in plan:
+            step = {"label": label, "call": [method, list(args), kwargs]}
+            try:
+                step["ok"] = describe(who.call_bound(handle, method, *args, **kwargs))
+            except p.MachoError as error:
+                step["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+            step["notifications"] = notifications_of(who)
+            step["after"] = hangar_and_ship(who, mgr, ship_id)
+            notifications_of(who)  # what looking made the server send is not part of the step
+            steps.append(step)
+        races.append({"bloodlineID": bloodline, "raceID": RACE_OF_BLOODLINE[bloodline], "create": created, "shipID": ship_id, "moduleIDs": ids, "before": before, "steps": steps})
+        who.close()
+        time.sleep(1.5)
+    with open(os.path.join(out, "fitting.json"), "w", encoding="utf-8") as handle:
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": races}, handle, separators=(",", ":"), ensure_ascii=False)
         handle.write("\n")
 
@@ -367,7 +418,7 @@ def main() -> int:
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting}
     try:
         for name, record in parts.items():
             if only in (None, name):

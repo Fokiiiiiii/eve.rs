@@ -82,6 +82,43 @@ public sealed class ClientSession
 
     public void Send(PyValue packet) => Sink?.Send(packet);
 
+    private readonly List<Action> _afterResponse = [];
+
+    /// <summary>
+    /// Runs <paramref name="action"/> once the answer to the call in progress has been sent (the reference's <c>afterCallResponse</c>): the events
+    /// a call causes that the client expects after its answer. Dropped if the call fails.
+    /// </summary>
+    public void AfterResponse(Action action)
+    {
+        lock (_gate)
+        {
+            _afterResponse.Add(action);
+        }
+    }
+
+    /// <summary>Runs what the call in progress queued with <see cref="AfterResponse"/>; the dispatcher does this once the answer is sent.</summary>
+    public void RunAfterResponse()
+    {
+        Action[] pending;
+        lock (_gate)
+        {
+            pending = [.. _afterResponse];
+            _afterResponse.Clear();
+        }
+        foreach (var action in pending)
+        {
+            action();
+        }
+    }
+
+    internal void DropAfterResponse()
+    {
+        lock (_gate)
+        {
+            _afterResponse.Clear();
+        }
+    }
+
     private int _closed;
     private int _notificationSequence = -1;
 

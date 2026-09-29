@@ -22,7 +22,7 @@ public class CreationTests
             [2] = [new(3300, 3), new(9999, 1)], // 9999 is not a skill: the data disagrees with itself
         });
 
-    private static CharacterCreation Creation(PgSchemas s) => new(s.Source, s.Characters, s.Items, s.Skills, Skills, s.Wallets, new StartingWallet(), Catalog);
+    private static CharacterCreation Creation(PgSchemas s) => new(s.Source, s.Characters, s.Items, s.Skills, Skills, s.Wallets, new StartingWallet(), Catalog, s.Modules);
 
     private static CreationRequest Request(string name, int account = 1, int race = 1, int bloodline = 1, int gender = 1, int school = 35) =>
         new(account, name, race, bloodline, gender, AncestryId: 10, school, [1, 2], [3]);
@@ -98,7 +98,7 @@ public class CreationTests
         var created = Assert.IsType<Created>(await Creation(s).CreateAsync(Request("Ann Lee")));
         Assert.Equal(new Balance(created.CharacterId, 100_000m, 2_222), await s.Wallets.GetAsync(created.CharacterId));
 
-        var rich = new CharacterCreation(s.Source, s.Characters, s.Items, s.Skills, Skills, s.Wallets, new StartingWallet(Isk: 5m, Plex: 7), Catalog);
+        var rich = new CharacterCreation(s.Source, s.Characters, s.Items, s.Skills, Skills, s.Wallets, new StartingWallet(Isk: 5m, Plex: 7), Catalog, s.Modules);
         var other = Assert.IsType<Created>(await rich.CreateAsync(Request("Bob Roe", account: 2)));
         Assert.Equal(new Balance(other.CharacterId, 5m, 7), await s.Wallets.GetAsync(other.CharacterId));
     }

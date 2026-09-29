@@ -18,8 +18,9 @@ public sealed class DogmaStatic
     private readonly Dictionary<int, AttributeDef> _attributes;
     private readonly Dictionary<int, EffectDef> _effects;
     private readonly Dictionary<int, int> _categoryOfGroup;
+    private readonly Dictionary<int, string> _groupNames;
 
-    public DogmaStatic(IEnumerable<AttributeDef> attributes, IEnumerable<EffectDef> effects, IEnumerable<TypeDef> types, SdeReader? sde = null, IReadOnlyDictionary<int, int>? categoryOfGroup = null)
+    public DogmaStatic(IEnumerable<AttributeDef> attributes, IEnumerable<EffectDef> effects, IEnumerable<TypeDef> types, SdeReader? sde = null, IReadOnlyDictionary<int, int>? categoryOfGroup = null, IReadOnlyDictionary<int, string>? groupNames = null)
     {
         _attributes = attributes.ToDictionary(a => a.Id);
         _effects = effects.ToDictionary(e => e.Id);
@@ -29,6 +30,7 @@ public sealed class DogmaStatic
         }
         _sde = sde;
         _categoryOfGroup = categoryOfGroup is null ? [] : new Dictionary<int, int>(categoryOfGroup);
+        _groupNames = groupNames is null ? [] : new Dictionary<int, string>(groupNames);
     }
 
     public AttributeDef? Attribute(int id) => _attributes.GetValueOrDefault(id);
@@ -36,6 +38,9 @@ public sealed class DogmaStatic
     public EffectDef? Effect(int id) => _effects.GetValueOrDefault(id);
 
     public TypeDef? Type(int typeId) => _types.GetValueOrDefault(typeId);
+
+    /// <summary>The English name of a group (an empty string when the data has none).</summary>
+    public string GroupName(int groupId) => _groupNames.GetValueOrDefault(groupId, "");
 
     public int AttributeCount => _attributes.Count;
 
@@ -82,7 +87,8 @@ public sealed class DogmaStatic
                     }
                 }
             }
-            _types[(int)row.Key] = new TypeDef((int)row.Key, group, _categoryOfGroup.GetValueOrDefault(group), attributes, effects);
+            var name = row.Doc.TryGetProperty("name", out var names) ? SdeReader.English(names) : "";
+            _types[(int)row.Key] = new TypeDef((int)row.Key, group, _categoryOfGroup.GetValueOrDefault(group), attributes, effects, name);
         }
     }
 
@@ -139,7 +145,9 @@ public sealed class DogmaStatic
                 modifiers);
         }).ToList();
 
-        var groups = (await sde.ReadAsync("groups", cancellationToken: cancellationToken)).ToDictionary(g => (int)g.Key, g => g.Doc.GetProperty("categoryID").GetInt32());
-        return new DogmaStatic(attributes, BuiltInEffects.Merge(effects), [], sde, groups);
+        var groupRows = await sde.ReadAsync("groups", cancellationToken: cancellationToken);
+        var groups = groupRows.ToDictionary(g => (int)g.Key, g => g.Doc.GetProperty("categoryID").GetInt32());
+        var groupNames = groupRows.ToDictionary(g => (int)g.Key, g => g.Doc.TryGetProperty("name", out var n) ? SdeReader.English(n) : "");
+        return new DogmaStatic(attributes, BuiltInEffects.Merge(effects), [], sde, groups, groupNames);
     }
 }

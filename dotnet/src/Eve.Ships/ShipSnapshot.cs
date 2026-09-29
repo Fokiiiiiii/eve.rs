@@ -1,9 +1,10 @@
 using Eve.Characters;
 using Eve.Dogma;
+using Eve.Fitting;
 using Eve.Inventory;
 using Eve.Skills;
 
-namespace Eve.Services.Dogma;
+namespace Eve.Ships;
 
 /// <summary>What a ship has taken and what it has left: the fractions dogma reports next to its attributes.</summary>
 public sealed record ShipCondition(double Damage, double Charge, double ShieldCharge, double ArmorDamage, bool Incapacitated)
@@ -13,7 +14,7 @@ public sealed record ShipCondition(double Damage, double Charge, double ShieldCh
 }
 
 /// <summary>A character's ship and what is fitted to it, with the skills the character has trained, ready to be worked out.</summary>
-public sealed class DogmaSnapshot
+public sealed class ShipSnapshot
 {
     /// <summary>The item id of a trained skill: the character's id times a hundred thousand, plus the type.</summary>
     public static long SkillItemId(long characterId, int typeId) => (characterId * 100_000L) + typeId;
@@ -23,6 +24,14 @@ public sealed class DogmaSnapshot
 
     /// <summary>The flag skills are kept under.</summary>
     public const int SkillFlag = 7;
+
+    /// <summary>charisma, intelligence, memory, perception, willpower: how fast the character learns.</summary>
+    public static readonly int[] LearningAttributes = [164, 165, 166, 167, 168];
+
+    /// <summary>What a new character has in each (the reference's value: attributes are not remapped or raised by implants yet).</summary>
+    public const double StartingLearningAttribute = 20;
+
+    private const int SkillPointsAttribute = 276;
 
     public required Character Character { get; init; }
 
@@ -39,25 +48,27 @@ public sealed class DogmaSnapshot
 
     public long TotalSkillPoints => Skills.Sum(s => s.SkillPoints);
 
+    /// <summary>How far a fitted module is switched on.</summary>
+    public ItemState StateOf(long moduleId) => World.Item(moduleId)?.State ?? ItemState.Offline;
+
     /// <summary>
-    /// The character's active ship in its hangar with its fitting and skills, or null when the character has none.
-    /// Every fitted module is online: what a module has been switched to is not kept yet.
+    /// A character's ship in its hangar with its fitting and skills, or null when the character has none. Every ship the character owns
+    /// can be loaded, but only the active one (the character's <c>ShipId</c>) has the character's skills acting on it.
     /// </summary>
-    public static async Task<DogmaSnapshot?> LoadAsync(
-        DogmaStatic statics, PgCharacterStore characters, PgItemStore items, PgSkillStore skills, long characterId, CancellationToken cancellationToken)
+    internal static async Task<ShipSnapshot?> LoadAsync(
+        DogmaStatic statics, PgCharacterStore characters, PgItemStore items, PgSkillStore skills, PgModuleStateStore modules, long characterId, CancellationToken cancellationToken)
     {
         if (await characters.GetAsync(characterId, cancellationToken) is not { ShipId: { } shipId } character
             || await items.GetAsync(shipId, cancellationToken) is not { } ship || ship.OwnerId != characterId)
         {
             return null;
         }
-        var fitted = (await items.InLocationAsync(shipId, characterId, cancellationToken))
-            .Where(i => i.Flag is >= ItemFlags.LowSlot0 and < ItemFlags.HiSlot0 + 8)
-            .OrderBy(i => i.Flag).ThenBy(i => i.Id)
-            .ToList();
+        var contents = await items.InLocationAsync(shipId, characterId, cancellationToken);
+        var fitted = contents.Where(i => Slots.IsSlotFlag(i.Flag)).OrderBy(i => i.Flag).ThenBy(i => i.Id).ToList();
+        var states = await modules.StatesAsync(fitted.Select(i => i.Id), cancellationToken);
         var trained = await skills.ForCharacterAsync(characterId, cancellationToken);
 
-        await statics.EnsureTypesAsync([character.TypeId, ship.TypeId, .. fitted.Select(i => i.TypeId), .. trained.Select(s => s.TypeId)], cancellationToken);
+        await statics.EnsureTypesAsync([character.TypeId, ship.TypeId, .. contents.Select(i => i.TypeId), .. trained.Select(s => s.TypeId)], cancellationToken);
 
         var world = new DogmaWorld(statics, characterId, shipId);
         world.Add(new DogmaItem(characterId, character.TypeId, characterId, shipId, PilotFlag, ItemState.Online));
@@ -68,7 +79,7 @@ public sealed class DogmaSnapshot
         world.Add(new DogmaItem(shipId, ship.TypeId, characterId, ship.LocationId, ship.Flag));
         foreach (var module in fitted)
         {
-            world.Add(new DogmaItem(module.Id, module.TypeId, characterId, shipId, module.Flag, ItemState.Online));
+            world.Add(new DogmaItem(module.Id, module.TypeId, characterId, shipId, module.Flag, states[module.Id]));
         }
         foreach (var skill in trained)
         {
@@ -77,14 +88,6 @@ public sealed class DogmaSnapshot
             world.SetValue(id, DogmaWorld.SkillLevel, skill.Level);
             world.SetValue(id, SkillPointsAttribute, skill.SkillPoints);
         }
-        return new DogmaSnapshot { Character = character, Ship = ship, Fitted = fitted, Skills = trained, World = world };
+        return new ShipSnapshot { Character = character, Ship = ship, Fitted = fitted, Skills = trained, World = world };
     }
-
-    /// <summary>charisma, intelligence, memory, perception, willpower: how fast the character learns.</summary>
-    public static readonly int[] LearningAttributes = [164, 165, 166, 167, 168];
-
-    /// <summary>What a new character has in each (the reference's value: attributes are not remapped or raised by implants yet).</summary>
-    public const double StartingLearningAttribute = 20;
-
-    private const int SkillPointsAttribute = 276;
 }

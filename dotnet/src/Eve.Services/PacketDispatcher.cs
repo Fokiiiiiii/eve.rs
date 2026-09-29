@@ -118,10 +118,12 @@ public sealed class PacketDispatcher
 
             RegisterBoundObjects(result, service);
             SendCallResponse(packet, result, session, service.Name);
+            session.RunAfterResponse();
             return true;
         }
         catch (MachoWrappedException wrapped)
         {
+            session.DropAfterResponse();
             if (!wrapped.Error.IsUserError)
             {
                 OnProblem?.Invoke($"{service.Name}.{call.Method}: wrapped exception {wrapped.Error.ClassName}", wrapped);
@@ -132,6 +134,7 @@ public sealed class PacketDispatcher
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // The reference answers a failing handler with a None result rather than an error.
+            session.DropAfterResponse();
             OnProblem?.Invoke($"{service.Name}.{call.Method}: {ex.Message}", ex);
             SendCallResponse(packet, PyNone.Instance, session, service.Name);
             return true;

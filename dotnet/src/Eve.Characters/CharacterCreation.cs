@@ -1,3 +1,5 @@
+using Eve.Dogma;
+using Eve.Fitting;
 using Eve.Inventory;
 using Eve.Skills;
 using Eve.Wallet;
@@ -35,7 +37,7 @@ public sealed record CreationRefused(CreationRefusal Reason) : CreationOutcome;
 public sealed record StartingWallet(decimal Isk = 100_000m, long Plex = 2_222);
 
 /// <summary>
-/// Makes a character: the character itself, the rookie ship of its race with its starter modules docked in the hangar of
+/// Makes a character: the character itself, the rookie ship of its race with its starter modules (online) docked in the hangar of
 /// the station it starts at, the skills its race starts with and its wallet, in one transaction (so a failure leaves none of them behind).
 /// </summary>
 public sealed class CharacterCreation(
@@ -46,7 +48,8 @@ public sealed class CharacterCreation(
     SkillCatalog skillCatalog,
     PgWalletStore wallet,
     StartingWallet startingWallet,
-    CreationCatalog catalog)
+    CreationCatalog catalog,
+    PgModuleStateStore modules)
 {
     /// <summary>How many characters an account may have.</summary>
     public const int SlotsPerAccount = 3;
@@ -95,7 +98,8 @@ public sealed class CharacterCreation(
             connection, transaction, new NewItem(race.ShipTypeId, characterId, start.StationId, ItemFlags.Hangar, Singleton: true), cancellationToken);
         foreach (var module in StarterKits.For(race.ShipTypeId))
         {
-            await items.CreateAsync(connection, transaction, new NewItem(module.TypeId, characterId, shipId, module.Flag, Singleton: true), cancellationToken);
+            var moduleId = await items.CreateAsync(connection, transaction, new NewItem(module.TypeId, characterId, shipId, module.Flag, Singleton: true), cancellationToken);
+            await modules.SetAsync(connection, transaction, moduleId, ItemState.Online, cancellationToken); // the starter modules come online
         }
         await characters.SetShipAsync(connection, transaction, characterId, shipId, cancellationToken);
         var starting = skillCatalog.StartingSet(race.Id)

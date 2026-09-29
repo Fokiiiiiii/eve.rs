@@ -72,6 +72,16 @@ public sealed class PgItemStore
         return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
     }
 
+    /// <summary>Puts an item somewhere else (another location, another flag), inside the caller's transaction.</summary>
+    public async Task MoveAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, long locationId, int flag, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"UPDATE {_schema}.items SET location_id = $2, flag = $3 WHERE id = $1", connection, transaction)
+        {
+            Parameters = { new() { Value = id }, new() { Value = locationId }, new() { Value = flag } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task<Item?> GetAsync(long id, CancellationToken cancellationToken = default)
     {
         await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.items WHERE id = $1");

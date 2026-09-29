@@ -1,8 +1,13 @@
+using Eve.Characters;
 using Eve.Data;
+using Eve.Dogma;
+using Eve.Fitting;
 using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Sde;
+using Eve.Ships;
+using Eve.Skills;
 using Eve.Universe;
 using Npgsql;
 
@@ -46,8 +51,12 @@ internal sealed class Rig : IAsyncDisposable
     {
         Source = source;
         Items = new PgItemStore(source, _schema);
-        Service = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, () => ClockMs);
+        Service = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Unused(source, Items), new DogmaStatic([], [], []), () => ClockMs);
     }
+
+    /// <summary>Ships that these reads never ask anything of.</summary>
+    public static CharacterShips Unused(NpgsqlDataSource source, PgItemStore items) =>
+        new(source, new DogmaStatic([], [], []), new PgCharacterStore(source, "unused"), items, new PgSkillStore(source, "unused"), new PgModuleStateStore(source, "unused"));
 
     public NpgsqlDataSource Source { get; }
 
@@ -452,7 +461,9 @@ public class InvBrokerTests
     [Fact]
     public void The_descriptor_call_needs_no_database()
     {
-        var service = new InvBrokerService(new PgItemStore(NpgsqlDataSource.Create("Host=localhost"), "inventory"), new ItemTypeCatalog(new SdeReader(NpgsqlDataSource.Create("Host=localhost"))), Rig.Stations, () => 1);
+        var source = NpgsqlDataSource.Create("Host=localhost");
+        var items = new PgItemStore(source, "inventory");
+        var service = new InvBrokerService(items, new ItemTypeCatalog(new SdeReader(source)), Rig.Stations, Rig.Unused(source, items), new DogmaStatic([], [], []), () => 1);
         Assert.Equal(InventoryWire.DescriptorHeader, service.GetItemDescriptor(new ServiceCall { Method = "GetItemDescriptor", Args = [], Session = new ClientSession() }));
     }
 }

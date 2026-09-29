@@ -5,6 +5,7 @@
     <ProjectReference Include="../Eve.Inventory/Eve.Inventory.csproj" />
     <ProjectReference Include="../Eve.Skills/Eve.Skills.csproj" />
     <ProjectReference Include="../Eve.Wallet/Eve.Wallet.csproj" />
+    <ProjectReference Include="../Eve.Fitting/Eve.Fitting.csproj" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Migrations/*.sql" />

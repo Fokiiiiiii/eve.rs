@@ -1,7 +1,10 @@
 using System.Collections.Concurrent;
+using Eve.Dogma;
 using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Services.Ships;
+using Eve.Ships;
 using Eve.Universe;
 
 namespace Eve.Services.Inventory;
@@ -12,7 +15,8 @@ namespace Eve.Services.Inventory;
 /// items come later.
 /// </summary>
 [Service("invbroker")]
-public sealed partial class InvBrokerService(PgItemStore items, ItemTypeCatalog types, StationCatalog stations, Func<long> nowUnixMs) : IBoundObjectReleaseHandler
+public sealed partial class InvBrokerService(
+    PgItemStore items, ItemTypeCatalog types, StationCatalog stations, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs) : IBoundObjectReleaseHandler
 {
     /// <summary>The container the client asks for to get the hangar of the station it is docked at.</summary>
     public const int ContainerHangar = 10004;
@@ -215,6 +219,42 @@ public sealed partial class InvBrokerService(PgItemStore items, ItemTypeCatalog 
         }
         return InventoryWire.Rowset(await ContentsAsync(context, call.Session, call.Cancellation));
     }
+
+    // ── moving items ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// <c>Add(itemID, sourceLocationID, qty=None, flag=None)</c>: moves an item into this inventory: a module into a slot of the ship (or the first
+    /// free one), a module out of its slot into the hangar, goods into the cargo hold. Answers the id of the item that moved, and the client is
+    /// told what changed. What cannot be done is answered with a message or, for an item that is not there, with None.
+    /// </summary>
+    [Method("Add")]
+    public async ValueTask<PyValue> Add(ServiceCall call)
+    {
+        if (ContextOf(call) is not { } context || call.Session.CharacterId is not { } character || IdOf(call.Arg(0)) is not { } itemId)
+        {
+            return None;
+        }
+        var destination = context.Kind == Kind.Hangar ? StationOf(call.Session) : context.ItemId;
+        if (destination is not { } location)
+        {
+            return None;
+        }
+        int? flag = call.Kwarg("flag") is { } named ? Flag(named) : null;
+        long? quantity = (call.Kwarg("qty") ?? call.Kwarg("quantity")) is { } asked ? IdOf(asked) : null;
+        switch (await ships.MoveAsync(character, itemId, IdOf(call.Arg(1)) ?? 0, location, flag, quantity, call.Cancellation))
+        {
+            case ShipChanged changed:
+                ShipNotifications.Send(call.Session, character, changed, item => DogmaRow(item), Py.FileTimeFromUnixMs(nowUnixMs()));
+                return InventoryWire.Id(changed.ItemId);
+            case ShipRefused refused:
+                throw ShipErrors.Of(refused, statics);
+            default:
+                return None;
+        }
+    }
+
+    private ItemRow DogmaRow(Item item) =>
+        new(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, item.Singleton ? -1 : item.Quantity, statics.Type(item.TypeId)?.GroupId ?? 0, statics.Type(item.TypeId)?.CategoryId ?? 0);
 
     // ── binding by the inventory's own name ──────────────────────────────────
 

@@ -18,6 +18,8 @@
     <ProjectReference Include="../Eve.Wallet/Eve.Wallet.csproj" />
     <ProjectReference Include="../Eve.Universe/Eve.Universe.csproj" />
     <ProjectReference Include="../Eve.Dogma/Eve.Dogma.csproj" />
+    <ProjectReference Include="../Eve.Fitting/Eve.Fitting.csproj" />
+    <ProjectReference Include="../Eve.Ships/Eve.Ships.csproj" />
     <ProjectReference Include="../Eve.Services.Skills/Eve.Services.Skills.csproj" />
     <ProjectReference Include="../Eve.Services.CharacterInfo/Eve.Services.CharacterInfo.csproj" />
     <ProjectReference Include="../Eve.Services.Wallet/Eve.Services.Wallet.csproj" />

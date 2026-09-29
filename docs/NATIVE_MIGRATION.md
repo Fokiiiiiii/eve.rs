@@ -28,8 +28,9 @@ an oracle.
 | M3a | The marshal codec in C#, byte-identical on all 543 marshal fixtures in both directions; corrupt and hostile input only ever fails with a `MarshalException` | `dotnet/src/Eve.Marshal` |
 | M3b | The C# service layer: MachoNet packets, a packet dispatcher, service and bound-object registry, `[Service]`/`[Method]` with a source-generated dispatch. Checked against 21 scenarios (76 requests) recorded from the real JS dispatcher: request bytes in, response bytes and bound-object state out | `dotnet/src/Eve.Macho`, `dotnet/src/Eve.Services`, `dotnet/src/Eve.Services.Generator` |
 | M3c | First service wave: `pingService`, `browserLockdownSvc`, `subscriptionMgr` (the last reads Omega licences from the store). 50 scenarios (197 requests) recorded from the real JS services across environment, config, stored-licence, clock and session variants | `dotnet/src/Eve.Services.Core` |
+| S1 | **The walking skeleton.** A Rust network front (`eve-net`: TCP, framing, the Placebo handshake, forwarding raw packets) and a C# service host (`Eve.Host`: sessions, the dispatcher, `machoNet`, a development account directory) joined by the link of ADR 0002. The headless client's live tests, the same file that passes against the EVE.js reference, pass against it | `crates/eve-net`, `dotnet/src/Eve.Host`, `oracle/fixtures/hostlink` |
 
-Run the checks:
+Run the checks (the server itself: `tools/dev/run-eve-live.sh`):
 
 ```
 node tools/run-isolated-tests.js server/tests/oracle_marshal.test.js server/tests/oracle_destiny.test.js
@@ -70,6 +71,24 @@ The Rust codec stays the one for the network front (about 2.6x the C# rowset enc
 slower than Node on buffer-heavy encoding (a memory copy the JS `Buffer.concat` path avoids); an
 `IBufferWriter` overload that writes straight into the socket buffer is the fix, not done yet.
 
+
+### The front and the host (S1), against the EVE.js reference
+
+Same machine (4 cores, shared with the load generator), same client (`eve-loadgen`, which speaks the wire
+protocol and works against either server), `machoNet.GetTime` as the call, release builds. A run against a fresh
+server includes account creation, so each was run twice; the ranges are those runs.
+
+| Workload | EVE.js reference | eve.rs (front + host) | Ratio |
+|---|---|---|---|
+| 100 clients log in at once | 116-187/s, p50 281-450 ms | 3,400-4,100/s, p50 20-26 ms | ~20-35x |
+| 100 clients x 2,000 calls, one in flight each | 2,613-2,675 calls/s, p50 36 ms, p99 60 ms | 29,300-41,100 calls/s, p50 2.1-2.6 ms, p99 6-12 ms | ~11-15x |
+| 10 clients x 20,000 calls, one in flight each | 2,413 calls/s, p50 3.4 ms, p99 14 ms | 25,300 calls/s, p50 0.36 ms, p99 1.1 ms | ~10x, latency ~9x lower |
+| 10 clients x 20,000 calls, 32 in flight each | not measured | 107,000 calls/s, p50 2.7 ms | |
+
+The reference is one JavaScript thread that also runs its world; here the front (Rust, threads), the host (C#)
+and the load generator share the four cores. Numbers move between runs by about a third on this machine.
+Nothing was tuned yet: a frame is copied several times and the host allocates per packet.
+
 ## Findings worth knowing
 
 - **`Math.exp` is not the platform `exp`.** V8 uses its own fdlibm-derived
@@ -87,6 +106,16 @@ slower than Node on buffer-heavy encoding (a memory copy the JS `Buffer.concat` 
   whose mode needs it. The Rust port keeps that (`IdRef::Invalid`) so recorded
   failures match by class (`TypeError`, `RangeError`, ...).
 
+- **The reference's session id can repeat.** `sessionID = ms * 15 + clientID % 15`, so two logins in the same
+  millisecond whose account ids differ by a multiple of three get the same id. In the reference that is a latent
+  bug; in the front it replaced a live session's queue, which a concurrent-login test caught. Ids are still
+  formed that way (the client only sees an opaque long) but are moved up past the last one issued.
+- **`challenge_responsehash` (`"55087"`) is a constant, not the CRC of the challenge.** The Placebo answer the
+  client sends back is `crc_hqx` of the marshalled challenge, but the value the server sends is fixed and no
+  headless client checks it. Recorded so nobody derives it again.
+- **Everything the client sees at login is small.** The handshake is nine messages, one Python function to run
+  on the client (the time-dilation handler), and a session-initial-state packet the client blocks on. That is
+  why the front can be small: the game starts after it.
 - **jsonb does not keep key order.** PostgreSQL orders object keys by length and then bytes, and the JS server
   iterates integer-like keys first and the rest in insertion order. Nothing in the store depends on the order of
   keys inside a document, and services ported from JS must not either (the row codec fixtures compare documents
@@ -116,6 +145,12 @@ slower than Node on buffer-heavy encoding (a memory copy the JS `Buffer.concat` 
   which needs the full service graph to load.
 - **The scene tick benchmark** needs the generated SDE tables (not in the
   repository). The login-path latency benchmark needs a running world.
+- **S1 is a skeleton.** The front and the host run and pass the client's live tests, but the host has four services
+  (`machoNet` with `GetTime`, `GetInitVals`, `GetServiceInfo`, `GetGlobalConfig`, `GetGlobalConfigValue`,
+  `GetServerStatus`, `GetNodeID`; `pingService`; `browserLockdownSvc`; `subscriptionMgr`), accounts live in memory,
+  and the service table lists only what exists. The real client needs the services S2 onwards add. Not yet
+  matched: `machoNet`'s other methods, the portrait-upload and skill-extractor patches the reference sends in the
+  login function, the store entries in the global config, the cluster-wide user count, login queues.
 - **M3 is a foundation plus three services, not the service layer.** The reference has 77 service directories
   (205 services); three are ported. Waves that need the SDE (account/character/skills, inventory/dogma/fitting,
   ship/station, market, then the long tail) can now start: the SDE is loaded (below). Not yet ported from the dispatcher: the object-cache

@@ -52,6 +52,9 @@ Details: `docs/adr/0001-external-compatibility-only.md`, `docs/PLAN.md`, `docs/c
 - Checks: see `README.md` ("Checks"). Environment variables do not persist between shell calls, so export
   `EVE_PG_URL=$(tools/dev/pg18.sh url)` in the same command. Without it the database tests are skipped, not
   failed: check that they ran.
+- Run the new server and the client's live tests: `tools/dev/run-eve-live.sh` (starts `eve-host` and `eve-net`
+  on a private socket and port 26100). `EVE_RUN='<command>' tools/dev/run-eve-live.sh` runs another command
+  against it, for example `target/release/eve-loadgen $EVE_LIVE_HOST` to measure it.
 - The reference server is the `Fokiiiiiii/evejs-v0.12.9` repository (branch `ccr-fd6b2132-4353h1` holds the
   oracle generators under `tools/oracle`). It boots in about five minutes on the SDE-derived data and needs
   `EVEJS_GAMESTORE_DATA_DIR`; `tools/dev/run-evejs-live.sh` does this.

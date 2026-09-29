@@ -69,7 +69,7 @@ domain module.
 | # | Slice | Runs when |
 |---|---|---|
 | S0 | Foundations: oracle fixtures, Rust and C# marshal, MachoNet packets and dispatcher, the store, SDE loading, the headless client | Done; see `docs/NATIVE_MIGRATION.md` |
-| S1 | **Walking skeleton.** `eve-net` accepts the headless client, completes the handshake, and answers `machoNet` (`GetTime`, `GetInitVals`) and ping through the C# host. Decides the internal protocol | `EVE_LIVE_HOST=<eve.rs> pytest tests/test_live.py` passes, the same file that passes against the reference |
+| S1 | **Walking skeleton (done).** `eve-net` accepts the headless client, completes the handshake, and answers `machoNet` and ping through the C# host (`Eve.Host`), over the link of ADR 0002 | `tools/dev/run-eve-live.sh` runs `tests/test_live.py`, the file that passes against the reference, and passes; about 11-15x the reference's call rate on the same machine (`docs/NATIVE_MIGRATION.md`) |
 | S2 | **Login to a character.** Accounts (development auto-create and strict-password mode), character list and creation, the session initialisation the client expects, the static data it downloads | A headless scenario, login to character select to a session with a character, passes on both servers |
 | S3 | **Station.** Docked state, hangar, ships and items, skills, dogma for a fitted ship | A scenario reads a ship's attributes and inventory; values equal the reference's |
 | S4 | **Space.** Undock, the scene tick, the destiny stream, movement and warp, visibility, time dilation | The client receives the destiny stream; balls and timing match within a stated tolerance; a tick benchmark |
@@ -82,6 +82,7 @@ domain module.
 |---|---|
 | `crates/eve-marshal`, `dotnet/src/Eve.Marshal` | Kept: the wire contract |
 | `crates/eve-destiny` | Kept: the destiny wire encoding and the motion maths S4 uses |
+| `crates/eve-net`, `dotnet/src/Eve.Host` | New in S1: the front and the service host (ADR 0002). The host's development account directory is replaced by the identity module in S2 |
 | `dotnet/src/Eve.Macho`, `Eve.Services`, `Eve.Services.Generator` | Kept as the protocol-adapter layer of the service host. The reference's behaviour on failure (a `None` reply) and its number and truthiness rules are candidates in `docs/compat/DEVIATIONS.md` |
 | `dotnet/src/Eve.Services.Core` | Kept: three services as adapters. `subscriptionMgr` moves into the identity module when that exists |
 | `dotnet/src/Eve.GameStore` and its importer | **Transitional.** It mirrors EVE.js's store to make a direct port possible. Domain modules will not build on it; it stays for the legacy import until S6, and its owner-lease and outbox ideas are reused where a module needs them. Decided in an ADR at the start of S2 |
@@ -91,7 +92,11 @@ domain module.
 
 ## 6. Next
 
-1. S1: create `crates/eve-net` (TCP listener, handshake, framing) using `eve-marshal`, and wire it to the C#
-   dispatcher; write the ADR for the internal protocol; make `test_live.py` run against a chosen server.
-2. Tag the fixtures by tier and record the first deviations with evidence from the client source.
-3. S2's account and session design, before code.
+1. **S2 design first**: the identity module (accounts, roles, banned, in PostgreSQL) replacing the in-memory
+   directory, then character list and creation, the session attributes the client expects after character
+   selection, and the static-data caches it downloads. Decide in an ADR whether `Eve.GameStore` is kept for
+   anything but the legacy import.
+2. Make `tests/test_live.py` (and the scenarios after it) take the server from an environment variable for
+   both servers, and run each scenario against the reference and eve.rs.
+3. Tag the fixtures by tier and record the next deviations with evidence from the client source.
+4. Measure before tuning the S1 path (frame copies, per-packet allocation, ping in the front).

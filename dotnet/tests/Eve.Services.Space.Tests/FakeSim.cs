@@ -57,6 +57,25 @@ internal sealed class FakeSim : ISimulation
         return Task.FromResult(code switch { SimCommands.WarpTo => WarpAnswer, SimCommands.Jump => JumpAnswer, _ => DockAnswer });
     }
 
+    /// <summary>What an effect that is started is answered with.</summary>
+    public CommandReply ActivateAnswer { get; set; } = new(true, 134351527136350000, null);
+
+    /// <summary>When set, starting an effect is not answered until the test completes it.</summary>
+    public TaskCompletionSource? ActivateGate { get; set; }
+
+    /// <summary>When set, starting an effect fails as it does when the link to the simulation breaks.</summary>
+    public bool ActivateUnavailable { get; set; }
+
+    public Task<CommandReply> ActivateAsync(ulong sessionId, SimEffect effect, CancellationToken cancellationToken = default)
+    {
+        if (ActivateUnavailable)
+        {
+            throw new SimUnavailableException("the link to the simulation broke");
+        }
+        Heard.Add(new SimActivate(sessionId, effect));
+        return ActivateGate is { } gate ? gate.Task.ContinueWith(_ => ActivateAnswer, cancellationToken) : Task.FromResult(ActivateAnswer);
+    }
+
     public void Leave(ulong sessionId, LeaveWhy why) => Heard.Add(new SimLeave(sessionId, why));
 
     public void Bind(ulong sessionId) => Heard.Add(new SimBind(sessionId));

@@ -14,7 +14,7 @@ namespace Eve.Services.Space;
 /// the notifications), forwarding what the simulation says to the client that plays the ship, and bringing the ship home when it docks, or
 /// when the simulation is lost. What happens in space itself (motion, the balls, the stamps) is the simulation's (ADR 0007).
 /// </summary>
-public sealed class SpaceSessions : IDisposable, ISpaceTargeting
+public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules
 {
     /// <summary>How long a ship that has undocked cannot be hurt (the reference's: 30 seconds).</summary>
     public const long UndockInvulnerabilityTicks = 300_000_000;
@@ -298,6 +298,70 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting
             session.SendNotification("OnInvulnCancelled", "shipid", InventoryWire.Id(pilot.ShipId));
         }
         return new TargetingResult(true, reply.Pending, reply.Targets);
+    }
+
+    /// <summary>
+    /// Starts an effect of a module. The dogma engine works out the package (the cycle, its cost, the ship's numbers with and without the effect) and the
+    /// simulation runs it; an effect it accepts ends the undocking protection, as a movement does. A module order is asked one at a time for a pilot.
+    /// </summary>
+    public async Task<ModuleResult?> ActivateAsync(ClientSession session, long moduleId, string effectName, long targetId, int repeat, CancellationToken cancellationToken)
+    {
+        var id = (ulong)session.SessionId;
+        if (!_pilots.TryGetValue(id, out var pilot) || session.CharacterId is not { } characterId)
+        {
+            return null;
+        }
+        if (await _ships.LoadAsync(characterId, cancellationToken) is not { } snapshot)
+        {
+            return null;
+        }
+        var made = ModulePackages.Of(snapshot, _statics, moduleId, effectName, targetId, repeat);
+        if (made.Effect is not { } package)
+        {
+            return ModuleResult.Refusal(made.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
+        }
+        var reply = await AskSimAsync(id, () => _sim.ActivateAsync(id, package, cancellationToken), session);
+        if (!reply.Accepted)
+        {
+            return ModuleResult.Refusal(reply.Reason == "ALREADY_ACTIVE" ? "MODULE_ALREADY_ACTIVE" : reply.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
+        }
+        EndInvulnerability(pilot);
+        return ModuleResult.Done;
+    }
+
+    /// <summary>Asks for an effect to stop at the end of the cycle it is in.</summary>
+    public async Task<ModuleResult?> DeactivateAsync(ClientSession session, long moduleId, string effectName, CancellationToken cancellationToken)
+    {
+        var id = (ulong)session.SessionId;
+        if (!_pilots.ContainsKey(id) || session.CharacterId is not { } characterId)
+        {
+            return null;
+        }
+        var snapshot = await _ships.LoadAsync(characterId, cancellationToken);
+        var module = snapshot?.Fitted.FirstOrDefault(m => m.Id == moduleId);
+        var type = module is null ? null : _statics.Type(module.TypeId);
+        var reply = await AskSimAsync(id, () => _sim.CommandAsync(id, SimCommands.Deactivate, [moduleId], cancellationToken), session);
+        return reply.Accepted ? ModuleResult.Done : ModuleResult.Refusal(reply.Reason == "NOT_ACTIVE" ? "MODULE_NOT_ACTIVE" : reply.Reason ?? "REFUSED", module?.TypeId ?? 0, type?.Name ?? "");
+    }
+
+    /// <summary>One order about a pilot's modules or targets is asked of the simulation at a time (the answers are matched by what was asked); an unreachable simulation is a message the client shows.</summary>
+    private async Task<CommandReply> AskSimAsync(ulong id, Func<Task<CommandReply>> ask, ClientSession session)
+    {
+        var gate = _targeting.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync();
+        try
+        {
+            return await ask();
+        }
+        catch (SimUnavailableException error)
+        {
+            _log?.Invoke($"modules of session {session.SessionId}: {error.Message}");
+            throw Notify("Space is not available right now. Try again in a moment.");
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     /// <summary>Asks the simulation to dock the ship; the answer to the client's call is the time the docking was accepted, or nothing when it was not.</summary>

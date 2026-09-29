@@ -40,6 +40,9 @@ pub struct ShipSpec {
     /// How fast it locks (`scanResolution`, in mm) and how big it looks to a ship that locks it (`signatureRadius`, in metres).
     pub scan_resolution: f64,
     pub signature_radius: f64,
+    /// The capacitor: how much it holds (GJ) and how long it takes to recharge (seconds).
+    pub capacitor_capacity: f64,
+    pub capacitor_recharge_s: f64,
     pub modules: Vec<ModuleSpec>,
 }
 

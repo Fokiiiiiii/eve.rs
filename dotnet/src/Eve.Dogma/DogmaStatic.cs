@@ -142,7 +142,12 @@ public sealed class DogmaStatic
                 (int)row.Key,
                 row.Doc.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
                 row.Doc.TryGetProperty("effectCategoryID", out var c) ? c.GetInt32() : 0,
-                modifiers);
+                modifiers)
+            {
+                Guid = row.Doc.TryGetProperty("guid", out var guid) && guid.ValueKind == JsonValueKind.String ? guid.GetString() ?? "" : "",
+                DurationAttributeId = row.Doc.TryGetProperty("durationAttributeID", out var duration) && duration.ValueKind == JsonValueKind.Number ? duration.GetInt32() : 0,
+                DischargeAttributeId = row.Doc.TryGetProperty("dischargeAttributeID", out var discharge) && discharge.ValueKind == JsonValueKind.Number ? discharge.GetInt32() : 0,
+            };
         }).ToList();
 
         var groupRows = await sde.ReadAsync("groups", cancellationToken: cancellationToken);

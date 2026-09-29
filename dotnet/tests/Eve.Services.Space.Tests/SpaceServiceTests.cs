@@ -109,6 +109,8 @@ public class SpaceServiceTests
         // the numbers of the starter Ibis with the skills of a new character: the range is the one the reference told a client that locked from too far
         // (`TargetNotWithinRangeGeneric`, 29700), and a lock of 52 m at 522.5 mm takes 3.55 s (the recorded one was had 3.8 s after it was asked for: the reference's tick and the call)
         Assert.Equal((29_700.0, 522.5, 52.0, 3), (enter.Ship.MaxTargetRange, enter.Ship.ScanResolution, enter.Ship.SignatureRadius, enter.Ship.MaxLockedTargets));
+        // the capacitor the reference's ship had (149.5 GJ, told in the recording) and how long it takes to recharge (55 250 ms)
+        Assert.Equal((149.5, 55.25), (enter.Ship.CapacitorCapacity, enter.Ship.CapacitorRechargeSeconds));
         Assert.True(rig.Space.IsInSpace(session));
     }
 
@@ -401,6 +403,166 @@ public class SpaceServiceTests
         rig.Sim.TargetGate.SetResult();
         await Task.WhenAll(first, second);
         Assert.Equal([1.0, 2.0], rig.Sim.Heard.OfType<SimCommand>().Where(c => c.Code == SimCommands.AddTarget).SelectMany(c => c.Args).ToArray());
+    }
+
+    // ── modules ──────────────────────────────────────────────────────────────
+
+    /// <summary>The ship a new character has, as dogma sees it, and the id of one of its modules by type.</summary>
+    private static async Task<(Eve.Ships.ShipSnapshot Snapshot, long Afterburner, long Gun, long Miner)> ShipAsync(Rig rig, Eve.Characters.Created character)
+    {
+        var snapshot = (await rig.Ships.LoadAsync(character.CharacterId, CancellationToken.None))!;
+        long Of(int type) => snapshot.Fitted.Single(m => m.TypeId == type).Id;
+        return (snapshot, Of(21857), Of(3638), Of(3651));
+    }
+
+    [Fact]
+    public void An_afterburner_makes_the_ship_heavier_by_its_mass_and_faster_by_its_speed_factor_over_the_new_mass()
+    {
+        // the recorded Ibis: 1 163 000 kg and 339.25 m/s, with the 1MN Civilian Afterburner: +500 000 kg, speed factor 60, speed boost factor 1 500 000
+        var (on, off) = ModulePackages.Propulsion(1_163_000, 339.25, 52, 500_000, 60, 1_500_000, 0);
+        Assert.Equal(new SimNumbers(1_663_000, 522.848918, 52), on);
+        Assert.Equal(new SimNumbers(1_163_000, 339.25, 52), off);
+        // a microwarpdrive also makes the ship look bigger, by its signature bonus (a percentage)
+        var (bigger, _) = ModulePackages.Propulsion(1_163_000, 339.25, 52, 500_000, 60, 1_500_000, 25);
+        Assert.Equal(65, bigger.SignatureRadius);
+        // a ship with no mass has nothing to be boosted
+        Assert.Equal(339.25, ModulePackages.Propulsion(0, 339.25, 52, 0, 60, 1_500_000, 0).On.MaxVelocity);
+    }
+
+    [PgFact]
+    public async Task What_the_simulation_is_asked_to_run_for_an_afterburner_is_what_the_reference_told_the_client()
+    {
+        var (rig, character, _) = await DockedAsync();
+        await using var _ = rig;
+        var (snapshot, afterburner, _, _) = await ShipAsync(rig, character);
+        var made = ModulePackages.Of(snapshot, rig.Statics, afterburner, "moduleBonusAfterburner", 0, 1000);
+        var package = made.Effect!;
+        Assert.Equal((afterburner, 21857, 6731, "effects.Afterburner", 10_000.0, 5.0, 1000, 0L), (package.ModuleId, package.ModuleType, package.EffectId, package.Fx, package.DurationMs, package.CapacitorNeed, package.Repeat, package.TargetId));
+        Assert.Equal(new SimNumbers(1_663_000, 522.848918, 52), package.On);
+        Assert.Equal(new SimNumbers(1_163_000, 339.25, 52), package.Off);
+        // the module's speed factor, the capacitor it needs and the length of its cycle, then the ship's mass, top speed and signature, as recorded
+        var ship = snapshot.Ship.Id;
+        Assert.Equal(
+            [(afterburner, 20, 60.0), (afterburner, 6, 5.0), (afterburner, 73, 10_000.0), (ship, 4, 1_663_000.0), (ship, 37, 522.848918), (ship, 552, 52.0)],
+            package.OnChanges.Select(c => (c.ItemId, c.AttributeId, c.Value)));
+        Assert.Equal(
+            [(afterburner, 20, 60.0), (afterburner, 6, 5.0), (afterburner, 73, 10_000.0), (ship, 4, 1_163_000.0), (ship, 37, 339.25), (ship, 552, 52.0)],
+            package.OffChanges.Select(c => (c.ItemId, c.AttributeId, c.Value)));
+        // the name of the effect does not have to be in the case the client wrote it
+        Assert.NotNull(ModulePackages.Of(snapshot, rig.Statics, afterburner, "MODULEBONUSAFTERBURNER", 0, 1).Effect);
+        // and at least one cycle is asked for
+        Assert.Equal(1, ModulePackages.Of(snapshot, rig.Statics, afterburner, "moduleBonusAfterburner", 0, 0).Effect!.Repeat);
+    }
+
+    [PgFact]
+    public async Task What_cannot_be_run_is_refused_with_the_reason_and_the_module_that_the_message_names()
+    {
+        var (rig, character, _) = await DockedAsync();
+        await using var _ = rig;
+        var (snapshot, afterburner, gun, miner) = await ShipAsync(rig, character);
+        string Why(long module, string effect, long target = 0) => ModulePackages.Of(snapshot, rig.Statics, module, effect, target, 1).Reason!;
+        Assert.Equal("MODULE_NOT_FOUND", Why(42, "moduleBonusAfterburner"));
+        Assert.Equal("UNSUPPORTED_EFFECT", Why(afterburner, "targetAttack"));
+        Assert.Equal("UNSUPPORTED_EFFECT", Why(afterburner, "online")); // an effect that is not the module's to start
+        // a weapon and a miner need a target; with one they are not run yet
+        Assert.Equal("TARGET_REQUIRED", Why(gun, "targetAttack"));
+        Assert.Equal("TARGET_REQUIRED", Why(miner, "miningLaser"));
+        Assert.Equal("UNSUPPORTED_EFFECT", Why(gun, "targetAttack", 9988400002215));
+        var named = ModulePackages.Of(snapshot, rig.Statics, gun, "targetAttack", 0, 1);
+        Assert.Equal((3638, "Civilian Gatling Railgun"), (named.ModuleType, named.ModuleName));
+        // a module that is switched off cannot run anything
+        snapshot.World.SetState(afterburner, Eve.Dogma.ItemState.Offline);
+        Assert.Equal("MODULE_NOT_ONLINE", Why(afterburner, "moduleBonusAfterburner"));
+    }
+
+    [PgFact]
+    public async Task An_effect_the_simulation_accepts_ends_the_protection_and_the_client_is_told_once_and_only_for_a_ship_in_space()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        var (_, afterburner, _, _) = await ShipAsync(rig, character);
+        Assert.Null(await rig.Space.ActivateAsync(session, afterburner, "moduleBonusAfterburner", 0, 1000, CancellationToken.None));
+        await InSpaceAsync(rig, session);
+        Events.Of(session);
+        var answer = await rig.Space.ActivateAsync(session, afterburner, "moduleBonusAfterburner", 0, 1000, CancellationToken.None);
+        Assert.Equal(ModuleResult.Done, answer);
+        var told = Events.Of(session);
+        Assert.Equal(["OnInvulnCancelled"], told.Select(e => e.Name));
+        var heard = Assert.IsType<SimActivate>(rig.Sim.Heard.Last());
+        Assert.Equal(((ulong)session.SessionId, afterburner, "effects.Afterburner"), (heard.SessionId, heard.Effect.ModuleId, heard.Effect.Fx));
+        // the protection has ended: a second effect tells nothing more
+        rig.Sim.ActivateAnswer = new CommandReply(true, 0, null);
+        await rig.Space.ActivateAsync(session, afterburner, "moduleBonusAfterburner", 0, 1000, CancellationToken.None);
+        Assert.Empty(Events.Of(session));
+    }
+
+    [PgFact]
+    public async Task An_effect_the_simulation_refuses_costs_the_protection_nothing_and_says_why()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        var (_, afterburner, gun, _) = await ShipAsync(rig, character);
+        await InSpaceAsync(rig, session);
+        Events.Of(session);
+        rig.Sim.ActivateAnswer = new CommandReply(false, 0, "ALREADY_ACTIVE");
+        var running = await rig.Space.ActivateAsync(session, afterburner, "moduleBonusAfterburner", 0, 1000, CancellationToken.None);
+        Assert.Equal(new ModuleResult(false, "MODULE_ALREADY_ACTIVE", 21857, "1MN Civilian Afterburner"), running);
+        rig.Sim.ActivateAnswer = new CommandReply(false, 0, "NOT_ENOUGH_CAPACITOR");
+        Assert.Equal("NOT_ENOUGH_CAPACITOR", (await rig.Space.ActivateAsync(session, afterburner, "moduleBonusAfterburner", 0, 1, CancellationToken.None))!.Reason);
+        // a package that cannot be made is never asked of the simulation
+        var before = rig.Sim.Heard.Count;
+        Assert.Equal("TARGET_REQUIRED", (await rig.Space.ActivateAsync(session, gun, "targetAttack", 0, 1, CancellationToken.None))!.Reason);
+        Assert.Equal(before, rig.Sim.Heard.Count);
+        Assert.Empty(Events.Of(session));
+        // the protection is still there to be ended by a movement
+        rig.Sim.Say(new SimAccepted((ulong)session.SessionId, SimCommands.Stop, 134351527136350000));
+        Assert.Equal(["OnInvulnCancelled"], Events.Of(session).Select(e => e.Name));
+    }
+
+    [PgFact]
+    public async Task Asking_for_an_effect_to_stop_is_given_to_the_simulation_and_a_refusal_names_the_module()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        var (_, afterburner, _, _) = await ShipAsync(rig, character);
+        Assert.Null(await rig.Space.DeactivateAsync(session, afterburner, "moduleBonusAfterburner", CancellationToken.None));
+        await InSpaceAsync(rig, session);
+        Assert.Equal(ModuleResult.Done, await rig.Space.DeactivateAsync(session, afterburner, "moduleBonusAfterburner", CancellationToken.None));
+        Assert.Equal(new SimCommand((ulong)session.SessionId, SimCommands.Deactivate, [afterburner]).Code, ((SimCommand)rig.Sim.Heard.Last()).Code);
+        Assert.Equal([(double)afterburner], ((SimCommand)rig.Sim.Heard.Last()).Args);
+        rig.Sim.DockAnswer = new CommandReply(false, 0, "NOT_ACTIVE");
+        Assert.Equal(new ModuleResult(false, "MODULE_NOT_ACTIVE", 21857, "1MN Civilian Afterburner"), await rig.Space.DeactivateAsync(session, afterburner, "moduleBonusAfterburner", CancellationToken.None));
+    }
+
+    [PgFact]
+    public async Task The_module_orders_of_a_pilot_are_asked_one_at_a_time()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        var (_, afterburner, _, _) = await ShipAsync(rig, character);
+        await InSpaceAsync(rig, session);
+        rig.Sim.ActivateGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var first = rig.Space.ActivateAsync(session, afterburner, "moduleBonusAfterburner", 0, 1000, CancellationToken.None);
+        var second = rig.Space.ActivateAsync(session, afterburner, "moduleBonusAfterburner", 0, 1, CancellationToken.None);
+        await Task.Delay(100);
+        Assert.Single(rig.Sim.Heard.OfType<SimActivate>());
+        rig.Sim.ActivateGate.SetResult();
+        await Task.WhenAll(first, second);
+        Assert.Equal(2, rig.Sim.Heard.OfType<SimActivate>().Count());
+    }
+
+    [PgFact]
+    public async Task Without_the_simulation_a_module_order_is_a_message_the_client_shows()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        var (_, afterburner, _, _) = await ShipAsync(rig, character);
+        await InSpaceAsync(rig, session);
+        rig.Sim.IsConnected = false;
+        rig.Sim.ActivateUnavailable = true;
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await rig.Space.ActivateAsync(session, afterburner, "moduleBonusAfterburner", 0, 1000, CancellationToken.None));
+        var arguments = ((PyTuple)((PyTuple)((PyObjectEx)error.Error.Payload).Header).Items[1]).Items;
+        Assert.Equal("CustomNotify", ((PyStr)arguments[0]).Value);
     }
 
     // ── warp ─────────────────────────────────────────────────────────────────

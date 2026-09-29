@@ -259,6 +259,9 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public Task<CommandReply> CommandAsync(ulong sessionId, byte code, double[] args, CancellationToken cancellationToken = default) =>
         AwaitAsync(_answered, (sessionId, code), new SimCommand(sessionId, code, args), cancellationToken);
 
+    public Task<CommandReply> ActivateAsync(ulong sessionId, SimEffect effect, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_answered, (sessionId, SimCommands.Activate), new SimActivate(sessionId, effect), cancellationToken);
+
     public void Leave(ulong sessionId, LeaveWhy why) => Send(new SimLeave(sessionId, why));
 
     public void Bind(ulong sessionId) => Send(new SimBind(sessionId));

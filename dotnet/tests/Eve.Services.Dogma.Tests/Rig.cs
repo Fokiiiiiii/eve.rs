@@ -55,12 +55,15 @@ internal sealed class Rig : IAsyncDisposable
         Creation = creation;
         Modules = modules;
         Ships = new CharacterShips(source, statics, Characters, Items, Skills, modules);
-        Service = new DogmaIMService(statics, Ships, () => ClockMs, null, Targeting);
+        Service = new DogmaIMService(statics, Ships, () => ClockMs, null, Targeting, SpaceModules);
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(sde), new Eve.Universe.StationCatalog([]), Ships, statics, () => ClockMs);
     }
 
     /// <summary>Space as a test plays it: it keeps the orders and answers what the test tells it to.</summary>
     public FakeTargeting Targeting { get; } = new();
+
+    /// <summary>The modules of space as a test plays them.</summary>
+    public FakeModules SpaceModules { get; } = new();
 
     public NpgsqlDataSource Source { get; }
 

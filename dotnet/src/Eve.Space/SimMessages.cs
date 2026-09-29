@@ -24,7 +24,7 @@ public sealed record SimModule(long ItemId, int TypeId, int Flag);
 public sealed record SimShip(
     long ShipId, long CharacterId, int TypeId, int GroupId, int CategoryId, string Name, long OwnerId, int CorporationId, int AllianceId, int WarFactionId,
     double SecurityStatus, double Radius, double Mass, double MaxVelocity, double Agility, double WarpSpeedAu, double ShieldRechargeMs,
-    double MaxTargetRange, double ScanResolution, double SignatureRadius, int MaxLockedTargets, IReadOnlyList<SimModule> Modules);
+    double MaxTargetRange, double ScanResolution, double SignatureRadius, int MaxLockedTargets, double CapacitorCapacity, double CapacitorRechargeSeconds, IReadOnlyList<SimModule> Modules);
 
 /// <summary>A ship enters a solar system.</summary>
 public sealed record SimEnter(ulong SessionId, int SolarSystemId, EnterHow How, long StationId, SimShip Ship) : SimMessage;
@@ -78,6 +78,12 @@ public static class SimCommands
 
     /// <summary>Who has the ship locked.</summary>
     public const byte GetTargeters = 15;
+
+    /// <summary>Stop a module's effect at the end of its cycle (the module's id).</summary>
+    public const byte Deactivate = 16;
+
+    /// <summary>The code an <see cref="SimActivate"/> is answered under.</summary>
+    public const byte Activate = 17;
 }
 
 public sealed record SimCommand(ulong SessionId, byte Code, IReadOnlyList<double> Args) : SimMessage;
@@ -117,3 +123,17 @@ public sealed record SimTargets(ulong SessionId, byte Command, bool Pending, IRe
 /// locks at and how far off the target is.
 /// </summary>
 public sealed record SimTargetRefused(ulong SessionId, byte Command, string Reason, int TargetType, double DesiredRange, double ActualDistance) : SimMessage;
+
+/// <summary>The ship's numbers an effect changes.</summary>
+public sealed record SimNumbers(double Mass, double MaxVelocity, double SignatureRadius);
+
+/// <summary>A value the client is told an item now has.</summary>
+public sealed record SimChange(long ItemId, int AttributeId, double Value);
+
+/// <summary>An effect the host asks the simulation to run, with what the host has worked out for it (dogma): the numbers of the ship with and without it, the cycle and its cost.</summary>
+public sealed record SimEffect(
+    long ModuleId, int ModuleType, int EffectId, string Fx, double DurationMs, double CapacitorNeed, int Repeat, long TargetId, SimNumbers? On, SimNumbers? Off,
+    IReadOnlyList<SimChange> OnChanges, IReadOnlyList<SimChange> OffChanges);
+
+/// <summary>Run an effect. Answered under <see cref="SimCommands.Activate"/>: <see cref="SimAccepted"/> or <see cref="SimRefused"/>.</summary>
+public sealed record SimActivate(ulong SessionId, SimEffect Effect) : SimMessage;

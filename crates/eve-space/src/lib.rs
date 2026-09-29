@@ -11,6 +11,7 @@ pub mod gate;
 pub mod geo;
 pub mod link;
 pub mod locators;
+pub mod modules;
 pub mod motion;
 pub mod names;
 pub mod payload;

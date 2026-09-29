@@ -5,6 +5,7 @@
 //! [`Message::decode`] reads a frame's payload (the kind and the body), so the same functions serve any framing layer.
 //! `oracle/fixtures/simlink/messages.json` pins the layout for both sides.
 
+use crate::modules::{Change, Effect, Numbers};
 use crate::ship::{ModuleSpec, ShipSpec};
 
 pub const PROTOCOL_VERSION: u16 = 1;
@@ -29,6 +30,7 @@ pub mod kind {
     pub const JUMPED: u8 = 16;
     pub const TARGETS: u8 = 17;
     pub const TARGET_REFUSED: u8 = 18;
+    pub const ACTIVATE: u8 = 19;
 }
 
 /// How a ship comes into space.
@@ -133,6 +135,11 @@ pub enum Message {
         command: u8,
         pending: bool,
         targets: Vec<i64>,
+    },
+    /// A module effect the host asks the scene to run (answered with `Accepted` or `Refused` of command 17).
+    Activate {
+        session_id: u64,
+        effect: Box<Effect>,
     },
     /// A targeting command the scene refused, with what the client is told of the target: its type, the range the ship can lock at and how far
     /// away the target is (both 0 unless the target was out of range; for `TARGET_LOCK_LIMIT_REACHED` the range is the number of targets the ship
@@ -265,6 +272,8 @@ fn put_ship(out: &mut Vec<u8>, ship: &ShipSpec) {
         ship.max_target_range,
         ship.scan_resolution,
         ship.signature_radius,
+        ship.capacitor_capacity,
+        ship.capacitor_recharge_s,
     ] {
         out.extend_from_slice(&number.to_le_bytes());
     }
@@ -275,6 +284,88 @@ fn put_ship(out: &mut Vec<u8>, ship: &ShipSpec) {
         out.extend_from_slice(&module.type_id.to_le_bytes());
         out.extend_from_slice(&module.flag.to_le_bytes());
     }
+}
+
+fn put_numbers(out: &mut Vec<u8>, numbers: &Numbers) {
+    for number in [numbers.mass, numbers.max_velocity, numbers.signature_radius] {
+        out.extend_from_slice(&number.to_le_bytes());
+    }
+}
+
+fn put_changes(out: &mut Vec<u8>, changes: &[Change]) {
+    out.extend_from_slice(&(changes.len() as u32).to_le_bytes());
+    for change in changes {
+        out.extend_from_slice(&change.item_id.to_le_bytes());
+        out.extend_from_slice(&change.attribute_id.to_le_bytes());
+        out.extend_from_slice(&change.value.to_le_bytes());
+    }
+}
+
+fn put_effect(out: &mut Vec<u8>, effect: &Effect) {
+    out.extend_from_slice(&effect.module_id.to_le_bytes());
+    out.extend_from_slice(&effect.module_type.to_le_bytes());
+    out.extend_from_slice(&effect.effect_id.to_le_bytes());
+    put_text(out, &effect.fx);
+    out.extend_from_slice(&effect.duration_ms.to_le_bytes());
+    out.extend_from_slice(&effect.capacitor_need.to_le_bytes());
+    out.extend_from_slice(&effect.repeat.to_le_bytes());
+    out.extend_from_slice(&effect.target_id.to_le_bytes());
+    out.push(u8::from(effect.on.is_some()) | (u8::from(effect.off.is_some()) << 1));
+    for numbers in [&effect.on, &effect.off].into_iter().flatten() {
+        put_numbers(out, numbers);
+    }
+    put_changes(out, &effect.on_changes);
+    put_changes(out, &effect.off_changes);
+}
+
+fn read_numbers(reader: &mut Reader) -> Result<Numbers, DecodeError> {
+    Ok(Numbers { mass: reader.f64()?, max_velocity: reader.f64()?, signature_radius: reader.f64()? })
+}
+
+fn read_changes(reader: &mut Reader) -> Result<Vec<Change>, DecodeError> {
+    let count = reader.u32()? as usize;
+    // a change takes 20 bytes, so a count the frame cannot hold is refused before anything is allocated for it
+    if count > reader.data.len() / 20 {
+        return Err(DecodeError::Truncated);
+    }
+    let mut changes = Vec::with_capacity(count);
+    for _ in 0..count {
+        changes.push(Change { item_id: reader.i64()?, attribute_id: reader.i32()?, value: reader.f64()? });
+    }
+    Ok(changes)
+}
+
+fn read_effect(reader: &mut Reader) -> Result<Effect, DecodeError> {
+    let module_id = reader.i64()?;
+    let module_type = reader.i32()?;
+    let effect_id = reader.i32()?;
+    let fx = reader.text()?;
+    let duration_ms = reader.f64()?;
+    let capacitor_need = reader.f64()?;
+    let repeat = reader.i32()?;
+    let target_id = reader.i64()?;
+    let flags = reader.u8()?;
+    if flags > 3 {
+        return Err(DecodeError::BadValue("flags"));
+    }
+    let on = if flags & 1 != 0 { Some(read_numbers(reader)?) } else { None };
+    let off = if flags & 2 != 0 { Some(read_numbers(reader)?) } else { None };
+    let on_changes = read_changes(reader)?;
+    let off_changes = read_changes(reader)?;
+    Ok(Effect {
+        module_id,
+        module_type,
+        effect_id,
+        fx,
+        duration_ms,
+        capacitor_need,
+        repeat,
+        target_id,
+        on,
+        off,
+        on_changes,
+        off_changes,
+    })
 }
 
 fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
@@ -299,7 +390,11 @@ fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
         max_target_range,
         scan_resolution,
         signature_radius,
+        capacitor_capacity,
+        capacitor_recharge_s,
     ] = [
+        reader.f64()?,
+        reader.f64()?,
         reader.f64()?,
         reader.f64()?,
         reader.f64()?,
@@ -343,6 +438,8 @@ fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
         max_locked_targets,
         scan_resolution,
         signature_radius,
+        capacitor_capacity,
+        capacitor_recharge_s,
         modules,
     })
 }
@@ -369,6 +466,7 @@ impl Message {
             Self::Jumped { .. } => kind::JUMPED,
             Self::Targets { .. } => kind::TARGETS,
             Self::TargetRefused { .. } => kind::TARGET_REFUSED,
+            Self::Activate { .. } => kind::ACTIVATE,
         }
     }
 
@@ -469,6 +567,10 @@ impl Message {
                 for target in targets {
                     out.extend_from_slice(&target.to_le_bytes());
                 }
+            }
+            Self::Activate { session_id, effect } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                put_effect(&mut out, effect);
             }
             Self::TargetRefused {
                 session_id,
@@ -585,6 +687,9 @@ impl Message {
                     targets.push(r.i64()?);
                 }
                 Message::Targets { session_id, command, pending, targets }
+            }
+            kind::ACTIVATE => {
+                Message::Activate { session_id: r.u64()?, effect: Box::new(read_effect(&mut r)?) }
             }
             kind::TARGET_REFUSED => Message::TargetRefused {
                 session_id: r.u64()?,

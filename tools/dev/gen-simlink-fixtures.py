@@ -13,7 +13,7 @@ OUT = os.path.join(HERE, "..", "..", "oracle", "fixtures", "simlink", "messages.
 
 KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateState": 6, "Command": 7,
          "ShipSpec": 8, "Notify": 9, "Docked": 10, "Refused": 11, "Accepted": 12, "EnterReply": 13, "Approaching": 14,
-         "Jumping": 15, "Jumped": 16, "Targets": 17, "TargetRefused": 18}
+         "Jumping": 15, "Jumped": 16, "Targets": 17, "TargetRefused": 18, "Activate": 19}
 
 
 def s(text):  # u16 length + UTF-8
@@ -41,14 +41,34 @@ def u64(value):
 def ship(m):
     body = i64(m["shipId"]) + i64(m["characterId"]) + struct.pack("<iii", m["typeId"], m["groupId"], m["categoryId"])
     body += s(m["name"]) + i64(m["ownerId"]) + struct.pack("<iii", m["corporationId"], m["allianceId"], m["warFactionId"])
-    body += struct.pack("<10d", m["securityStatus"], m["radius"], m["mass"], m["maxVelocity"], m["agility"],
+    body += struct.pack("<12d", m["securityStatus"], m["radius"], m["mass"], m["maxVelocity"], m["agility"],
                         m["warpSpeedAu"], m["shieldRechargeMs"], m["maxTargetRange"], m["scanResolution"],
-                        m["signatureRadius"])
+                        m["signatureRadius"], m["capacitorCapacity"], m["capacitorRechargeS"])
     body += struct.pack("<i", m["maxLockedTargets"])
     body += struct.pack("<I", len(m["modules"]))
     for module in m["modules"]:
         body += i64(module["itemId"]) + struct.pack("<ii", module["typeId"], module["flag"])
     return body
+
+
+def numbers(n):
+    return struct.pack("<3d", n["mass"], n["maxVelocity"], n["signatureRadius"])
+
+
+def changes(items):
+    return struct.pack("<I", len(items)) + b"".join(
+        i64(c["itemId"]) + struct.pack("<id", c["attributeId"], c["value"]) for c in items)
+
+
+def effect(e):
+    body = i64(e["moduleId"]) + struct.pack("<ii", e["moduleType"], e["effectId"]) + s(e["fx"])
+    body += struct.pack("<ddi", e["durationMs"], e["capacitorNeed"], e["repeat"]) + i64(e["targetId"])
+    on, off = e.get("on"), e.get("off")
+    body += bytes([(1 if on else 0) | (2 if off else 0)])
+    for n in (on, off):
+        if n:
+            body += numbers(n)
+    return body + changes(e["onChanges"]) + changes(e["offChanges"])
 
 
 def build(m):
@@ -84,6 +104,8 @@ def build(m):
     if k == "Jumping":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<i", m["destinationSystem"])
                      + i64(m["destinationGate"]))
+    if k == "Activate":
+        return frame(k, u64(m["sessionId"]) + effect(m["effect"]))
     if k == "Targets":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"], 1 if m["pending"] else 0])
                      + struct.pack("<I", len(m["targets"])) + b"".join(i64(t) for t in m["targets"]))
@@ -100,7 +122,7 @@ IBIS = {"shipId": "9988400001939", "characterId": "140000342", "typeId": 601, "g
         "name": "Ibis", "ownerId": "140000342", "corporationId": 1000006, "allianceId": 0, "warFactionId": 0,
         "securityStatus": 0.0, "radius": 47.0, "mass": 1163000.0, "maxVelocity": 339.25, "agility": 4.0185,
         "warpSpeedAu": 3.0, "shieldRechargeMs": 860000.0, "maxTargetRange": 29700.0, "scanResolution": 660.0,
-        "signatureRadius": 28.0, "maxLockedTargets": 4,
+        "signatureRadius": 28.0, "maxLockedTargets": 4, "capacitorCapacity": 149.5, "capacitorRechargeS": 55.25,
         "modules": [{"itemId": "9988400001940", "typeId": 21857, "flag": 19},
                     {"itemId": "9988400001941", "typeId": 3638, "flag": 27}]}
 BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5)
@@ -145,6 +167,8 @@ valid = [
      "args": []},
     {"name": "get targets command", "kind": "Command", "sessionId": "1790646377000015", "command": 14, "args": []},
     {"name": "get targeters command", "kind": "Command", "sessionId": "1790646377000015", "command": 15, "args": []},
+    {"name": "deactivate command", "kind": "Command", "sessionId": "1790646377000015", "command": 16,
+     "args": [9988400001941.0]},
     {"name": "new ship numbers", "kind": "ShipSpec", "sessionId": "1790646377000015", "ship": IBIS},
     {"name": "notification", "kind": "Notify", "sessionId": "1790646377000015", "notification": "OnSetTimeDilation",
      "idType": "clientID", "args": "7e0000000004010100"},
@@ -161,6 +185,18 @@ valid = [
      "distance": 15975.3},
     {"name": "jumping", "kind": "Jumping", "sessionId": "1790646377000015", "command": 9,
      "destinationSystem": 30100034, "destinationGate": "50016839"},
+    {"name": "activate an afterburner", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400001940", "moduleType": 21857, "effectId": 6731, "fx": "effects.Afterburner",
+                "durationMs": 10000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "0",
+                "on": {"mass": 1663000.0, "maxVelocity": 522.848918, "signatureRadius": 52.0},
+                "off": {"mass": 1163000.0, "maxVelocity": 339.25, "signatureRadius": 52.0},
+                "onChanges": [{"itemId": "9988400001940", "attributeId": 20, "value": 60.0},
+                              {"itemId": "9988400001939", "attributeId": 37, "value": 522.848918}],
+                "offChanges": [{"itemId": "9988400001940", "attributeId": 20, "value": 60.0},
+                               {"itemId": "9988400001939", "attributeId": 37, "value": 339.25}]}},
+    {"name": "activate an effect that changes nothing of the ship", "kind": "Activate", "sessionId": "1",
+     "effect": {"moduleId": "9988400001941", "moduleType": 3651, "effectId": 67, "fx": "", "durationMs": 3000.0,
+                "capacitorNeed": 0.0, "repeat": 1, "targetId": "9988400002151", "onChanges": [], "offChanges": []}},
     {"name": "targets with a lock going", "kind": "Targets", "sessionId": "1790646377000015", "command": 10,
      "pending": True, "targets": ["60015249"]},
     {"name": "targets none", "kind": "Targets", "sessionId": "1790646377000015", "command": 14, "pending": False,

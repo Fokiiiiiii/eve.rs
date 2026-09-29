@@ -50,5 +50,8 @@ public interface ISimulation
     /// <summary>Gives a command that is answered to the caller (a dock, a warp) and waits for the simulation to accept or refuse it.</summary>
     Task<CommandReply> CommandAsync(ulong sessionId, byte code, double[] args, CancellationToken cancellationToken = default);
 
+    /// <summary>Asks the simulation to run an effect; it answers <see cref="SimAccepted"/> or <see cref="SimRefused"/> under <see cref="SimCommands.Activate"/>.</summary>
+    Task<CommandReply> ActivateAsync(ulong sessionId, SimEffect effect, CancellationToken cancellationToken = default);
+
     void ShipChanged(ulong sessionId, SimShip ship);
 }

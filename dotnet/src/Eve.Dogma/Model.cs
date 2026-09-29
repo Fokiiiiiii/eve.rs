@@ -78,6 +78,15 @@ public sealed record EffectDef(int Id, string Name, int Category, IReadOnlyList<
     public const int Area = 3;
     public const int Online = 4;
     public const int Overload = 5;
+
+    /// <summary>What the client's effects are called in the destiny stream (<c>effects.Afterburner</c>); empty when the data has none.</summary>
+    public string Guid { get; init; } = "";
+
+    /// <summary>The attribute that holds how long a cycle of the effect takes (0 when it has none).</summary>
+    public int DurationAttributeId { get; init; }
+
+    /// <summary>The attribute that holds the capacitor a cycle takes (0 when it needs none).</summary>
+    public int DischargeAttributeId { get; init; }
 }
 
 /// <summary>What an attribute is: its default, whether stacking penalties apply to it, its cap and floor, and its kind of number.</summary>

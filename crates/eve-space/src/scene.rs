@@ -11,6 +11,7 @@ use eve_marshal::Value;
 
 use crate::flight::{Flight, Milestone};
 use crate::gate;
+use crate::modules::Modules;
 use crate::motion::{self, Target};
 use crate::payload;
 use crate::ship::{Course, Ship, ShipSpec};
@@ -162,6 +163,8 @@ pub(crate) struct Pilot {
     pub(crate) sees: BTreeSet<SessionId>,
     /// What the ship has locked and is locking.
     pub(crate) targeting: Targeting,
+    /// The capacitor and the effects of the ship's modules that run.
+    pub(crate) modules: Modules,
     /// Until when the ship cannot be locked (the undocking protection; it ends sooner when the ship is flown or locks something).
     pub(crate) protected_until: i64,
 }
@@ -272,6 +275,7 @@ impl Scene {
             .ok_or(SceneError::UnknownStation(station_id))?;
         let (position, direction) = undock_place(station, spec.group_id);
         let speed = spec.max_velocity;
+        let modules = Modules::new(spec.capacitor_capacity, spec.capacitor_recharge_s, now);
         let ship = Ship {
             position,
             velocity: Vec3::new(direction.x * speed, direction.y * speed, direction.z * speed),
@@ -294,6 +298,7 @@ impl Scene {
                 entered,
                 sees: BTreeSet::new(),
                 targeting: Targeting::default(),
+                modules,
                 protected_until: now + UNDOCK_PROTECTION,
             },
         );
@@ -877,6 +882,7 @@ impl Scene {
             }
         }
         told.extend(self.settle_targets(now));
+        told.extend(self.settle_modules(now));
         told.extend(self.reconcile(now));
         self.with_backlog(told)
     }
@@ -1206,6 +1212,8 @@ pub(crate) mod tests {
             max_locked_targets: 4,
             scan_resolution: 660.0,
             signature_radius: 28.0,
+            capacitor_capacity: 149.5,
+            capacitor_recharge_s: 55.25,
             modules: vec![ModuleSpec { item_id: 9_988_400_001_940, type_id: 21857, flag: 19 }],
         }
     }

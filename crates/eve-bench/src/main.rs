@@ -213,6 +213,8 @@ fn bench_ship(index: u64) -> ShipSpec {
         max_locked_targets: 4,
         scan_resolution: 660.0,
         signature_radius: 28.0,
+        capacitor_capacity: 149.5,
+        capacitor_recharge_s: 55.25,
         modules: Vec::new(),
     }
 }

@@ -2,6 +2,7 @@
 //! file): every valid frame encodes to its bytes and decodes back, every invalid one is refused for the stated reason.
 
 use eve_space::link::{DecodeError, Enter, How, Message};
+use eve_space::modules::{Change, Effect, Numbers};
 use eve_space::ship::{ModuleSpec, ShipSpec};
 use serde_json::Value;
 
@@ -47,6 +48,8 @@ fn ship_of(case: &Value) -> ShipSpec {
         max_locked_targets: int("maxLockedTargets"),
         scan_resolution: number("scanResolution"),
         signature_radius: number("signatureRadius"),
+        capacitor_capacity: number("capacitorCapacity"),
+        capacitor_recharge_s: number("capacitorRechargeS"),
         modules: case["modules"]
             .as_array()
             .unwrap()
@@ -57,6 +60,42 @@ fn ship_of(case: &Value) -> ShipSpec {
                 flag: m["flag"].as_i64().unwrap() as i32,
             })
             .collect(),
+    }
+}
+
+fn effect_of(case: &Value) -> Effect {
+    let number = |v: &Value, field: &str| v[field].as_f64().unwrap_or_else(|| panic!("{field} in {v}"));
+    let numbers = |v: &Value| {
+        (!v.is_null()).then(|| Numbers {
+            mass: number(v, "mass"),
+            max_velocity: number(v, "maxVelocity"),
+            signature_radius: number(v, "signatureRadius"),
+        })
+    };
+    let changes = |v: &Value| -> Vec<Change> {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|c| Change {
+                item_id: wide(c, "itemId"),
+                attribute_id: c["attributeId"].as_i64().unwrap() as i32,
+                value: number(c, "value"),
+            })
+            .collect()
+    };
+    Effect {
+        module_id: wide(case, "moduleId"),
+        module_type: case["moduleType"].as_i64().unwrap() as i32,
+        effect_id: case["effectId"].as_i64().unwrap() as i32,
+        fx: text(case, "fx"),
+        duration_ms: number(case, "durationMs"),
+        capacitor_need: number(case, "capacitorNeed"),
+        repeat: case["repeat"].as_i64().unwrap() as i32,
+        target_id: wide(case, "targetId"),
+        on: numbers(&case["on"]),
+        off: numbers(&case["off"]),
+        on_changes: changes(&case["onChanges"]),
+        off_changes: changes(&case["offChanges"]),
     }
 }
 
@@ -123,6 +162,9 @@ fn message_of(case: &Value) -> Message {
             to_system: number("toSystem") as i32,
             to_gate: wide(case, "toGate"),
         },
+        "Activate" => {
+            Message::Activate { session_id: session_id(), effect: Box::new(effect_of(&case["effect"])) }
+        }
         "Targets" => Message::Targets {
             session_id: session_id(),
             command: number("command") as u8,

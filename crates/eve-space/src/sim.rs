@@ -228,6 +228,23 @@ impl Sim {
             Message::UpdateState { session_id } => {
                 self.scene_of(session_id).map(|s| s.update_state(session_id, now)).unwrap_or_default()
             }
+            Message::Activate { session_id, effect } => match self.scene_of(session_id) {
+                Some(scene) => scene.activate(session_id, *effect, now),
+                None => vec![Out::Refused { session: session_id, command: 17, reason: "NO_SHIP_IN_SPACE" }],
+            },
+            Message::Command { session_id, command: 16, args } => {
+                match (self.scene_of(session_id), args.as_slice()) {
+                    (Some(scene), [module]) if is_id(*module) => {
+                        scene.deactivate(session_id, *module as i64, now)
+                    }
+                    (Some(_), _) => {
+                        vec![Out::Refused { session: session_id, command: 16, reason: "UNKNOWN_COMMAND" }]
+                    }
+                    (None, _) => {
+                        vec![Out::Refused { session: session_id, command: 16, reason: "NO_SHIP_IN_SPACE" }]
+                    }
+                }
+            }
             Message::Command { session_id, command, args } => {
                 if let Some(order) = order_of(command, &args) {
                     match self.scene_of(session_id) {
@@ -364,6 +381,96 @@ mod tests {
         let reply = sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
         assert_eq!(reply, [Message::EnterReply { session_id: SESSION, outcome: Ok(()) }]);
         sim
+    }
+
+    fn afterburner(module: i64) -> crate::modules::Effect {
+        crate::modules::Effect {
+            module_id: module,
+            module_type: 21857,
+            effect_id: 6731,
+            fx: "effects.Afterburner".to_string(),
+            duration_ms: 10_000.0,
+            capacitor_need: 5.0,
+            repeat: 1000,
+            target_id: 0,
+            on: None,
+            off: None,
+            on_changes: Vec::new(),
+            off_changes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn an_effect_is_started_by_a_message_and_stopped_by_the_command_and_each_is_answered_under_its_code() {
+        let mut sim = undocked();
+        let started = sim
+            .handle(
+                Message::Activate { session_id: SESSION, effect: Box::new(afterburner(77)) },
+                NOON + 40 * SECOND,
+            )
+            .unwrap();
+        assert!(
+            started.contains(&Message::Accepted { session_id: SESSION, command: 17, at: NOON + 40 * SECOND }),
+            "{started:?}"
+        );
+        let again = sim
+            .handle(
+                Message::Activate { session_id: SESSION, effect: Box::new(afterburner(77)) },
+                NOON + 41 * SECOND,
+            )
+            .unwrap();
+        assert_eq!(
+            again,
+            [Message::Refused { session_id: SESSION, command: 17, reason: "ALREADY_ACTIVE".to_string() }]
+        );
+        let stopped = sim
+            .handle(
+                Message::Command { session_id: SESSION, command: 16, args: vec![77.0] },
+                NOON + 42 * SECOND,
+            )
+            .unwrap();
+        assert_eq!(stopped, [Message::Accepted { session_id: SESSION, command: 16, at: NOON + 42 * SECOND }]);
+        let unknown = sim
+            .handle(
+                Message::Command { session_id: SESSION, command: 16, args: vec![77.0] },
+                NOON + 43 * SECOND,
+            )
+            .unwrap();
+        assert_eq!(
+            unknown,
+            [Message::Accepted { session_id: SESSION, command: 16, at: NOON + 43 * SECOND }],
+            "the effect is still running until its cycle ends"
+        );
+        let after = sim
+            .handle(
+                Message::Command { session_id: SESSION, command: 16, args: vec![99.0] },
+                NOON + 43 * SECOND,
+            )
+            .unwrap();
+        assert_eq!(
+            after,
+            [Message::Refused { session_id: SESSION, command: 16, reason: "NOT_ACTIVE".to_string() }]
+        );
+        // a command that is not one is refused, and so is one for a ship that is not there
+        let bad =
+            sim.handle(Message::Command { session_id: SESSION, command: 16, args: vec![] }, NOON).unwrap();
+        assert_eq!(
+            bad,
+            [Message::Refused { session_id: SESSION, command: 16, reason: "UNKNOWN_COMMAND".to_string() }]
+        );
+        let gone =
+            sim.handle(Message::Command { session_id: 555, command: 16, args: vec![77.0] }, NOON).unwrap();
+        assert_eq!(
+            gone,
+            [Message::Refused { session_id: 555, command: 16, reason: "NO_SHIP_IN_SPACE".to_string() }]
+        );
+        let none = sim
+            .handle(Message::Activate { session_id: 555, effect: Box::new(afterburner(77)) }, NOON)
+            .unwrap();
+        assert_eq!(
+            none,
+            [Message::Refused { session_id: 555, command: 17, reason: "NO_SHIP_IN_SPACE".to_string() }]
+        );
     }
 
     fn names(messages: &[Message]) -> Vec<String> {

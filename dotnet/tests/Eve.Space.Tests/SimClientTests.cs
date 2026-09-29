@@ -4,7 +4,7 @@ public class SimClientTests
 {
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(5);
 
-    private static SimShip Ship() => new(9988400001939, 140000342, 601, 237, 6, "Ibis", 140000342, 1000006, 0, 0, 0, 47, 1163000, 339.25, 4.0185, 3, 860000, 29700, 660, 28, 4, []);
+    private static SimShip Ship() => new(9988400001939, 140000342, 601, 237, 6, "Ibis", 140000342, 1000006, 0, 0, 0, 47, 1163000, 339.25, 4.0185, 3, 860000, 29700, 660, 28, 4, 149.5, 55.25, []);
 
     private static SimEnter Enter(ulong session = 7) => new(session, 30100032, EnterHow.Undock, 60015249, Ship());
 
@@ -160,6 +160,30 @@ public class SimClientTests
         await sim.SayAsync(new SimBind(9));
         await Until(() => heard.Count == 1);
         Assert.IsType<SimBind>(heard.Single());
+    }
+
+    [Fact]
+    public async Task An_effect_is_given_to_the_simulation_and_answered_under_its_own_code()
+    {
+        var effect = new SimEffect(9988400001940, 21857, 6731, "effects.Afterburner", 10000, 5, 1000, 0, new SimNumbers(1663000, 522.848918, 52), null, [new SimChange(9988400001940, 20, 60)], []);
+        var (sim, client) = await ConnectedAsync(message => message switch
+        {
+            SimActivate { SessionId: 7 } a => [new SimAccepted(a.SessionId, SimCommands.Activate, 42)],
+            SimActivate a => [new SimRefused(a.SessionId, SimCommands.Activate, "ALREADY_ACTIVE")],
+            _ => [],
+        });
+        await using var _ = sim;
+        await using var __ = client;
+        var heard = new List<SimMessage>();
+        client.Received += heard.Add;
+
+        Assert.Equal(new CommandReply(true, 42, null), await Within(client.ActivateAsync(7, effect)));
+        Assert.Equal(new CommandReply(false, 0, "ALREADY_ACTIVE"), await Within(client.ActivateAsync(8, effect)));
+        // the simulation was given the effect whole
+        var asked = sim.HeardNow().OfType<SimActivate>().First();
+        Assert.Equal(("effects.Afterburner", 522.848918, 1000), (asked.Effect.Fx, asked.Effect.On!.MaxVelocity, asked.Effect.Repeat));
+        Assert.Equal([(9988400001940, 20, 60.0)], asked.Effect.OnChanges.Select(c => (c.ItemId, c.AttributeId, c.Value)));
+        Assert.Empty(heard);
     }
 
     [Fact]

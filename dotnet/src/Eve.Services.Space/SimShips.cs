@@ -17,6 +17,8 @@ internal static class SimShips
     private const int MaxLockedTargets = 192;
     private const int SignatureRadius = 552;
     private const int ScanResolution = 564;
+    private const int CapacitorCapacity = 482;
+    private const int RechargeRate = 55;
 
     private const int BaseWarpSpeed = 1281;
 
@@ -41,6 +43,7 @@ internal static class SimShips
             (int)character.CorporationId, (int)(character.AllianceId ?? 0), 0, 0,
             Attribute(Radius), Attribute(Mass), Attribute(MaxVelocity), Attribute(Agility), WarpSpeedAu(Attribute(BaseWarpSpeed), Attribute(WarpSpeedMultiplier)), Attribute(ShieldRechargeRate),
             Attribute(MaxTargetRange), Attribute(ScanResolution), Attribute(SignatureRadius), LockLimit(Attribute(MaxLockedTargets), snapshot.World.Get(character.Id, MaxLockedTargets)),
+            Attribute(CapacitorCapacity), Attribute(RechargeRate) / 1000.0,
             [.. snapshot.Fitted.Select(module => new SimModule(module.Id, module.TypeId, module.Flag))]);
     }
 }

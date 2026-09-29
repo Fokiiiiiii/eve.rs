@@ -54,6 +54,7 @@ public static class SimCodec
         public const byte Jumped = 16;
         public const byte Targets = 17;
         public const byte TargetRefused = 18;
+        public const byte Activate = 19;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)
@@ -144,6 +145,8 @@ public static class SimCodec
         var maxTargetRange = r.F64();
         var scanResolution = r.F64();
         var signatureRadius = r.F64();
+        var capacitorCapacity = r.F64();
+        var capacitorRecharge = r.F64();
         var maxLockedTargets = r.I32();
         var count = r.U32();
         // a module takes 16 bytes, so a count the frame cannot hold is refused before anything is allocated for it
@@ -156,7 +159,47 @@ public static class SimCodec
         {
             modules[i] = new SimModule(r.I64(), r.I32(), r.I32());
         }
-        return new SimShip(shipId, characterId, typeId, groupId, categoryId, name, ownerId, corporationId, allianceId, warFactionId, security, radius, mass, maxVelocity, agility, warpSpeed, shieldRecharge, maxTargetRange, scanResolution, signatureRadius, maxLockedTargets, modules);
+        return new SimShip(shipId, characterId, typeId, groupId, categoryId, name, ownerId, corporationId, allianceId, warFactionId, security, radius, mass, maxVelocity, agility, warpSpeed, shieldRecharge, maxTargetRange, scanResolution, signatureRadius, maxLockedTargets, capacitorCapacity, capacitorRecharge, modules);
+    }
+
+    private static SimNumbers ReadNumbers(ref Reader r) => new(r.F64(), r.F64(), r.F64());
+
+    private static SimChange[] ReadChanges(ref Reader r)
+    {
+        var count = r.U32();
+        // a change takes 20 bytes, so a count the frame cannot hold is refused before anything is allocated for it
+        if (count > r.Remaining / 20)
+        {
+            throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");
+        }
+        var changes = new SimChange[count];
+        for (var i = 0; i < changes.Length; i++)
+        {
+            changes[i] = new SimChange(r.I64(), r.I32(), r.F64());
+        }
+        return changes;
+    }
+
+    private static SimEffect ReadEffect(ref Reader r)
+    {
+        var module = r.I64();
+        var moduleType = r.I32();
+        var effectId = r.I32();
+        var fx = r.Text();
+        var duration = r.F64();
+        var capacitor = r.F64();
+        var repeat = r.I32();
+        var target = r.I64();
+        var flags = r.U8();
+        if (flags > 3)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad flags");
+        }
+        var on = (flags & 1) != 0 ? ReadNumbers(ref r) : null;
+        var off = (flags & 2) != 0 ? ReadNumbers(ref r) : null;
+        var onChanges = ReadChanges(ref r);
+        var offChanges = ReadChanges(ref r);
+        return new SimEffect(module, moduleType, effectId, fx, duration, capacitor, repeat, target, on, off, onChanges, offChanges);
     }
 
     /// <summary>Decodes a frame's payload: the kind byte and the body (without the length prefix).</summary>
@@ -275,6 +318,9 @@ public static class SimCodec
             case Kind.TargetRefused:
                 message = new SimTargetRefused(r.U64(), r.U8(), r.Text(), r.I32(), r.F64(), r.F64());
                 break;
+            case Kind.Activate:
+                message = new SimActivate(r.U64(), ReadEffect(ref r));
+                break;
             case var other:
                 throw new SimLinkException(SimLinkError.UnknownKind, $"unknown message kind {other}");
         }
@@ -327,6 +373,47 @@ public static class SimCodec
         public byte[] ToArray() => _out.ToArray();
     }
 
+    private static void WriteNumbers(Writer w, SimNumbers n)
+    {
+        w.F64(n.Mass);
+        w.F64(n.MaxVelocity);
+        w.F64(n.SignatureRadius);
+    }
+
+    private static void WriteChanges(Writer w, IReadOnlyList<SimChange> changes)
+    {
+        w.U32((uint)changes.Count);
+        foreach (var change in changes)
+        {
+            w.I64(change.ItemId);
+            w.I32(change.AttributeId);
+            w.F64(change.Value);
+        }
+    }
+
+    private static void WriteEffect(Writer w, SimEffect e)
+    {
+        w.I64(e.ModuleId);
+        w.I32(e.ModuleType);
+        w.I32(e.EffectId);
+        w.Text(e.Fx);
+        w.F64(e.DurationMs);
+        w.F64(e.CapacitorNeed);
+        w.I32(e.Repeat);
+        w.I64(e.TargetId);
+        w.U8((byte)((e.On is null ? 0 : 1) | (e.Off is null ? 0 : 2)));
+        if (e.On is { } on)
+        {
+            WriteNumbers(w, on);
+        }
+        if (e.Off is { } off)
+        {
+            WriteNumbers(w, off);
+        }
+        WriteChanges(w, e.OnChanges);
+        WriteChanges(w, e.OffChanges);
+    }
+
     private static void WriteShip(Writer w, SimShip s)
     {
         w.I64(s.ShipId);
@@ -339,7 +426,7 @@ public static class SimCodec
         w.I32(s.CorporationId);
         w.I32(s.AllianceId);
         w.I32(s.WarFactionId);
-        foreach (var number in new[] { s.SecurityStatus, s.Radius, s.Mass, s.MaxVelocity, s.Agility, s.WarpSpeedAu, s.ShieldRechargeMs, s.MaxTargetRange, s.ScanResolution, s.SignatureRadius })
+        foreach (var number in new[] { s.SecurityStatus, s.Radius, s.Mass, s.MaxVelocity, s.Agility, s.WarpSpeedAu, s.ShieldRechargeMs, s.MaxTargetRange, s.ScanResolution, s.SignatureRadius, s.CapacitorCapacity, s.CapacitorRechargeSeconds })
         {
             w.F64(number);
         }
@@ -465,6 +552,11 @@ public static class SimCodec
                 {
                     w.I64(target);
                 }
+                break;
+            case SimActivate m:
+                w.U8(Kind.Activate);
+                w.U64(m.SessionId);
+                WriteEffect(w, m.Effect);
                 break;
             case SimTargetRefused m:
                 w.U8(Kind.TargetRefused);

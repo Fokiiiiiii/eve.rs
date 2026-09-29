@@ -81,11 +81,14 @@ public sealed class Harness : IAsyncDisposable
         Wallets = new PgWalletStore(source, _walletSchema);
         Accounts = new InMemoryAccountDirectory(new AccountOptions());
         Online = new OnlineCharacters();
+        Training = new CharacterTraining(source, Skills, SkillStore, new PgTrainingStore(source, _skillsSchema), new TrainingSettings(), () => ClockUnixMs);
+        Sessions = new CharacterSessions();
+        Announcer = new TrainingAnnouncer(Training, Skills, Sessions, null, () => ClockUnixMs, schedule: false);
         Service = new CharUnboundMgrService(
             Accounts, Characters, Items, SkillStore, Wallets,
             new CharacterCreation(source, Characters, Items, SkillStore, Skills, Wallets, new StartingWallet(), Catalog, new PgModuleStateStore(source, _fittingSchema)), Catalog, Online,
-            [new SkillsLoginHook(SkillStore, Skills, () => ClockUnixMs)], new Random(7));
-        Handler = new SkillHandlerService(SkillStore, Skills, () => ClockUnixMs);
+            [new SkillsLoginHook(Training, Skills, Sessions, Announcer, () => ClockUnixMs)], new Random(7));
+        Handler = new SkillHandlerService(SkillStore, Skills, Training, Characters, Announcer, () => ClockUnixMs);
         Door = new SkillMgr2Service();
     }
 
@@ -98,6 +101,12 @@ public sealed class Harness : IAsyncDisposable
     public PgSkillStore SkillStore { get; }
 
     public PgWalletStore Wallets { get; }
+
+    public CharacterTraining Training { get; }
+
+    public CharacterSessions Sessions { get; }
+
+    public TrainingAnnouncer Announcer { get; }
 
     public SkillHandlerService Handler { get; }
 

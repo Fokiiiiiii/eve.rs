@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record what the EVE.js reference does from login to a session with a character.
 
-    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting]
+    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast]
 
 The recording is the contract for the same path in eve.rs: `tests/test_login_to_character.py` replays the calls
 against any server and compares each answer with what is stored here, by shape, treating per-run values
@@ -30,7 +30,7 @@ from evecli import marshal as m  # noqa: E402
 from evecli import packet as p  # noqa: E402
 from evecli.client import Client  # noqa: E402
 from evecli.describe import describe  # noqa: E402
-from evecli.observe import hangar_and_ship, notifications_of  # noqa: E402
+from evecli.observe import hangar_and_ship, notifications_of, ship_of, training_view, wait_for_events  # noqa: E402
 
 # The school the reference offers each playable race (its minimal map), as the client would send one.
 SCHOOL_OF_RACE = {1: 35, 2: 33, 4: 31, 8: 37}
@@ -406,6 +406,128 @@ def record_fitting(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str
         handle.write("\n")
 
 
+def record_training(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """The skill queue as the client uses it, at the reference's normal training speed: starting a skill, saving and
+    reordering a queue, pausing and resuming it, the errors the queue gives, aborting. Each step: the answer, the events
+    the client is sent, and the skill window afterwards. Times differ per run; the tests compare the durations."""
+    races = []
+    for bloodline in (1, 5):
+        who = rec.login(f"training{bloodline}")
+        created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Trained {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
+        char_id = int(created["ok"])
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        before = training_view(who)
+        speed = describe(who.call("skillHandler", "GetAttributes"))["$dict"][0][1] / 20
+        ship_id = ship_of(who)
+        notifications_of(who)
+        own = sorted(before["skills"], key=lambda t: (before["skills"][t]["level"], t))
+        below_five = [t for t in own if 1 <= before["skills"][t]["level"] <= 3]
+        first, second = below_five[0], below_five[1]
+        first_level = before["skills"][first]["level"]
+        item = char_id * 100000 + first
+        queue = m.Dict([(0, (first, first_level + 1)), (1, (first, first_level + 2)), (2, (second, before["skills"][second]["level"] + 1))])
+        reordered = m.Dict([(0, (second, before["skills"][second]["level"] + 1)), (1, (first, first_level + 1))])
+        plan = [
+            ("empty queue", "skillHandler", "GetSkillQueue", (), {}),
+            ("empty queue and free points", "skillHandler", "GetSkillQueueAndFreePoints", (), {}),
+            ("start by type", "skillHandler", "CharStartTrainingSkillByTypeID", (first,), {}),
+            ("start by type again", "skillHandler", "CharStartTrainingSkillByTypeID", (first,), {}),
+            ("start two levels ahead", "skillHandler", "CharStartTrainingSkillByTypeID", (first, first_level + 2), {}),
+            ("start unknown type", "skillHandler", "CharStartTrainingSkillByTypeID", (99,), {}),
+            ("start by item", "skillHandler", "CharStartTrainingSkill", (item,), {}),
+            ("start by unknown item", "skillHandler", "CharStartTrainingSkill", (12345,), {}),
+            ("save three", "skillHandler", "SaveNewQueue", (queue,), {}),
+            ("save the same again", "skillHandler", "SaveNewQueue", (queue,), {}),
+            ("save reordered", "skillHandler", "SaveNewQueue", (reordered,), {}),
+            ("save paused", "skillHandler", "SaveNewQueue", (queue,), {"activate": False}),
+            ("save and start", "skillHandler", "SaveNewQueue", (queue,), {}),
+            ("level out of order", "skillHandler", "SaveNewQueue", (m.Dict([(0, (first, first_level + 2))]),), {}),
+            ("level already trained", "skillHandler", "SaveNewQueue", (m.Dict([(0, (first, first_level))]),), {}),
+            ("the same level twice", "skillHandler", "SaveNewQueue", (m.Dict([(0, (first, first_level + 1)), (1, (first, first_level + 1))]),), {}),
+            ("level six", "skillHandler", "SaveNewQueue", (m.Dict([(0, (first, 6))]),), {}),
+            ("skill not injected", "skillHandler", "SaveNewQueue", (m.Dict([(0, (20315, 1))]),), {}),
+            ("skill queue after the errors", "skillHandler", "GetSkillQueue", (), {}),
+            ("abort", "skillHandler", "AbortTraining", (), {}),
+            ("abort again", "skillHandler", "AbortTraining", (), {}),
+            ("stop while stopped", "skillHandler", "CharStopTrainingSkill", (), {}),
+            ("start again", "skillHandler", "CharStartTrainingSkillByTypeID", (second,), {}),
+            ("stop", "skillHandler", "CharStopTrainingSkill", (), {}),
+            ("save empty", "skillHandler", "SaveNewQueue", (m.Dict([]),), {}),
+            ("history", "skillHandler", "GetSkillHistory", (), {}),
+        ]
+        steps = []
+        for label, service, method, args, kwargs in plan:
+            step = {"label": label, "call": [service, method, [describe(a) for a in args], kwargs]}
+            try:
+                step["ok"] = describe(who.call(service, method, *args, **kwargs))
+            except p.MachoError as error:
+                step["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+            step["notifications"] = notifications_of(who)
+            if method != "GetSkillHistory":
+                step["after"] = training_view(who)
+                notifications_of(who)
+            steps.append(step)
+        races.append({"bloodlineID": bloodline, "raceID": RACE_OF_BLOODLINE[bloodline], "create": created, "characterID": char_id, "shipID": ship_id,
+                      "skills": {"first": first, "second": second}, "trainingSpeed": speed, "before": before, "steps": steps})
+        who.close()
+        time.sleep(1.5)
+    with open(os.path.join(out, "training.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": races}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+
+
+def record_training_fast(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """Skills that finish while the client watches, which needs a reference started with a huge EVEJS_SKILL_TRAINING_SPEED
+    (the file records the speed it saw): a queue of two levels running out, a rank 5 skill (its points are rounded up), and a
+    queue that finishes while the character is not logged in. Each step: the events the client is sent while it waits, and the
+    skill window afterwards."""
+    who = rec.login("trainfast")
+    created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Swift {run}", 1, 1, ancestry[1]))
+    char_id = int(created["ok"])
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    before = training_view(who)
+    speed = describe(who.call("skillHandler", "GetAttributes"))["$dict"][0][1] / 20
+    ship_id = ship_of(who)
+    notifications_of(who)
+    if speed < 1000:
+        raise SystemExit(f"the reference trains at speed {speed}: start it with EVEJS_SKILL_TRAINING_SPEED=60000 to record this")
+    skills = before["skills"]
+    ranked = {t: v for t, v in skills.items() if v["level"] == 1}
+    plan = [
+        ("two levels in a queue", "SaveNewQueue", (m.Dict([(0, (3301, 2)), (1, (3301, 3))]),), 2),
+        ("a rank five skill", "CharStartTrainingSkillByTypeID", (3317,), 1),
+        ("a rank one skill from level three", "CharStartTrainingSkillByTypeID", (3327,), 1),
+    ]
+    steps = []
+    for label, method, args, levels in plan:
+        step = {"label": label, "call": ["skillHandler", method, [describe(a) for a in args], {}]}
+        try:
+            step["ok"] = describe(who.call("skillHandler", method, *args))
+        except p.MachoError as error:
+            step["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+        step["notifications"] = wait_for_events(who, lambda seen: sum(1 for e in seen if e["name"] == "OnSkillQueuePausedServer") >= 1)
+        step["after"] = training_view(who)
+        notifications_of(who)
+        steps.append(step)
+    # a level that finishes while nobody is logged in is found when the character comes back
+    step = {"label": "finished while away", "call": ["skillHandler", "SaveNewQueue", [], {}]}
+    who.call("skillHandler", "SaveNewQueue", m.Dict([(0, (3319, 2))]))
+    notifications_of(who)
+    who.close()
+    time.sleep(4)
+    back = rec.login("trainfast")
+    back.notifications.clear()
+    rec.call(back, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    step["notifications"] = notifications_of(back)
+    step["after"] = training_view(back)
+    steps.append(step)
+    back.close()
+    with open(os.path.join(out, "training_fast.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "trainingSpeed": speed, "create": created,
+                   "characterID": char_id, "shipID": ship_id, "before": before, "steps": steps}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+
+
 def main() -> int:
     if len(sys.argv) < 4:
         print(__doc__)
@@ -418,10 +540,10 @@ def main() -> int:
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast}
     try:
         for name, record in parts.items():
-            if only in (None, name):
+            if only == name or (only is None and name != "training_fast"):  # the fast one needs a reference started for it
                 record(rec, out, meta, ancestry, run)
         if only in (None, "stations"):
             record_stations(rec, out, meta, ancestry, run, sde)

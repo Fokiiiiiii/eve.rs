@@ -3,8 +3,19 @@ using Eve.Sde;
 
 namespace Eve.Skills;
 
-/// <summary>A skill as the static data describes it.</summary>
-public sealed record SkillType(int TypeId, string Name, int GroupId, string GroupName, bool Published, int Rank);
+/// <summary>A skill another skill needs, at a level.</summary>
+public sealed record SkillRequirement(int TypeId, int Level);
+
+/// <summary>
+/// A skill as the static data describes it: its rank, the two attributes it is trained with (attribute ids of the character:
+/// perception, willpower...) and the skills it needs.
+/// </summary>
+public sealed record SkillType(
+    int TypeId, string Name, int GroupId, string GroupName, bool Published, int Rank,
+    int PrimaryAttribute = 0, int SecondaryAttribute = 0, IReadOnlyList<SkillRequirement>? Requirements = null)
+{
+    public IReadOnlyList<SkillRequirement> Needs => Requirements ?? [];
+}
 
 /// <summary>A skill at a level a new character of a race starts with.</summary>
 public sealed record StartingSkill(int TypeId, int Level);
@@ -20,6 +31,13 @@ public sealed class SkillCatalog
 
     /// <summary>The dogma attribute that holds a skill's rank (<c>skillTimeConstant</c>).</summary>
     public const int RankAttributeId = 275;
+
+    private const int PrimaryAttributeId = 180;
+    private const int SecondaryAttributeId = 181;
+
+    /// <summary>The attributes that name the skills a type needs and the levels of them, in pairs (requiredSkill1 to requiredSkill6).</summary>
+    private static readonly (int Skill, int Level)[] RequirementAttributes =
+        [(182, 277), (183, 278), (184, 279), (1285, 1286), (1289, 1287), (1290, 1288)];
 
     private readonly Dictionary<int, SkillType> _skills;
     private readonly Dictionary<int, StartingSkill[]> _starting;
@@ -59,28 +77,33 @@ public sealed class SkillCatalog
         var types = await sde.ReadByFieldAsync("types", "groupID", groups.Keys, cancellationToken);
         var dogma = await sde.ReadAsync("typeDogma", types.Select(t => t.Key), cancellationToken);
 
-        var ranks = new Dictionary<long, int>();
+        var attributesOf = new Dictionary<long, Dictionary<int, double>>();
         foreach (var row in dogma)
         {
+            var values = new Dictionary<int, double>();
             foreach (var attribute in row.Doc.GetProperty("dogmaAttributes").EnumerateArray())
             {
-                if (attribute.GetProperty("attributeID").GetInt32() == RankAttributeId)
-                {
-                    ranks[row.Key] = (int)Math.Round(attribute.GetProperty("value").GetDouble());
-                }
+                values[attribute.GetProperty("attributeID").GetInt32()] = attribute.GetProperty("value").GetDouble();
             }
+            attributesOf[row.Key] = values;
         }
 
         var skills = new List<SkillType>();
         foreach (var type in types)
         {
-            if (!ranks.TryGetValue(type.Key, out var rank))
+            if (!attributesOf.TryGetValue(type.Key, out var attributes) || !attributes.TryGetValue(RankAttributeId, out var rankValue))
             {
                 continue; // in a skill group but with no rank: not a trainable skill
             }
             var group = type.Doc.GetProperty("groupID").GetInt32();
             var published = type.Doc.TryGetProperty("published", out var flag) && flag.ValueKind == JsonValueKind.True;
-            skills.Add(new SkillType((int)type.Key, SdeReader.English(type.Doc.GetProperty("name")), group, groups[group], published, rank));
+            var needs = RequirementAttributes
+                .Where(pair => attributes.TryGetValue(pair.Skill, out var skill) && skill > 0)
+                .Select(pair => new SkillRequirement((int)attributes[pair.Skill], attributes.TryGetValue(pair.Level, out var level) ? (int)level : 1))
+                .ToList();
+            skills.Add(new SkillType(
+                (int)type.Key, SdeReader.English(type.Doc.GetProperty("name")), group, groups[group], published, (int)Math.Round(rankValue),
+                (int)attributes.GetValueOrDefault(PrimaryAttributeId), (int)attributes.GetValueOrDefault(SecondaryAttributeId), needs));
         }
 
         var starting = new Dictionary<int, IReadOnlyList<StartingSkill>>();

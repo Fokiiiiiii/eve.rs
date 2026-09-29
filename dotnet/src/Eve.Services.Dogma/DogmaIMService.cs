@@ -13,12 +13,11 @@ namespace Eve.Services.Dogma;
 /// of <c>Eve.Dogma</c>; this only loads what a character has, asks, and puts the answer in the shapes the client reads.
 /// </summary>
 [Service("dogmaIM")]
-public sealed partial class DogmaIMService(DogmaStatic statics, CharacterShips ships, Func<long> nowUnixMs) : IBoundObjectReleaseHandler
+public sealed partial class DogmaIMService(DogmaStatic statics, CharacterShips ships, Func<long> nowUnixMs, CharacterDogmaSync? sync = null) : IBoundObjectReleaseHandler
 {
-    private readonly DogmaInfo _info = new(statics);
+    private readonly CharacterDogmaSync _sync = sync ?? new CharacterDogmaSync(statics, ships, nowUnixMs);
 
-    /// <summary>How many times each character's brain has been told to the client (the version it carries).</summary>
-    private readonly ConcurrentDictionary<long, int> _brainVersions = new();
+    private DogmaInfo _info => _sync.Info;
 
     /// <summary>What a bound dogma object is: the session that opened it and the place it was opened for.</summary>
     private sealed record Context(long SessionId, long LocationId);
@@ -107,15 +106,8 @@ public sealed partial class DogmaIMService(DogmaStatic statics, CharacterShips s
         if (wantCharacter || (wantShip && !wantCharacter))
         {
             // sent after the answer: the client has the character before it is told how the character's attributes came to be
-            var version = _brainVersions.AddOrUpdate(character, 1, (_, v) => v + 1);
-            call.Session.AfterResponse(() =>
-            {
-                foreach (var events in _info.CharacterAttributeEvents(snapshot, fileTime))
-                {
-                    call.Session.SendNotification("OnModuleAttributeChanges", "clientID", events);
-                }
-                call.Session.SendNotification("OnServerBrainUpdated", "clientID", _info.BrainUpdate(snapshot, version));
-            });
+            var version = _sync.NextBrainVersion(character);
+            call.Session.AfterResponse(() => _sync.SendCharacter(call.Session, snapshot, fileTime, version));
         }
         return answer;
     }

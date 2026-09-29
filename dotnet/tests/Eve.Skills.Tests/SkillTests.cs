@@ -100,10 +100,24 @@ public class SkillCatalogTests
     {
         var catalog = await LoadAsync();
         Assert.InRange(catalog.Skills.Count, 300, 1000);
-        Assert.Equal(new SkillType(3300, "Gunnery", 255, "Gunnery", true, 1), catalog.Get(3300));
+        var gunnery = catalog.Get(3300)!;
+        Assert.Equal(("Gunnery", 255, "Gunnery", true, 1), (gunnery.Name, gunnery.GroupId, gunnery.GroupName, gunnery.Published, gunnery.Rank));
+        Assert.Empty(gunnery.Needs);
         Assert.Equal((4, 1210, "Armor"), (catalog.Get(3315)!.Rank, catalog.Get(3393)!.GroupId, catalog.Get(3393)!.GroupName));
         Assert.All(catalog.Skills.Where(skill => skill.Published), skill => Assert.InRange(skill.Rank, 1, 16)); // the unpublished test skills have odd ranks
         Assert.Null(catalog.Get(587)); // a ship is not a skill
+    }
+
+    [PgFact]
+    public async Task A_skill_is_trained_with_two_attributes_and_needs_the_skills_the_data_names()
+    {
+        var catalog = await LoadAsync();
+        var strike = catalog.Get(3315)!; // Surgical Strike: perception and willpower, Gunnery IV
+        Assert.Equal((167, 168), (strike.PrimaryAttribute, strike.SecondaryAttribute));
+        Assert.Equal([new SkillRequirement(3300, 4)], strike.Needs);
+        var hacking = catalog.Get(21718)!; // Hacking needs two skills, each at III
+        Assert.Equal([new SkillRequirement(3402, 3), new SkillRequirement(3432, 3)], hacking.Needs);
+        Assert.Empty(catalog.Get(3327)!.Needs); // Spaceship Command needs nothing
     }
 
     [PgFact]

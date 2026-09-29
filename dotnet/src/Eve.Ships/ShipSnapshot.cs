@@ -56,7 +56,8 @@ public sealed class ShipSnapshot
     /// can be loaded, but only the active one (the character's <c>ShipId</c>) has the character's skills acting on it.
     /// </summary>
     internal static async Task<ShipSnapshot?> LoadAsync(
-        DogmaStatic statics, PgCharacterStore characters, PgItemStore items, PgSkillStore skills, PgModuleStateStore modules, long characterId, CancellationToken cancellationToken)
+        DogmaStatic statics, PgCharacterStore characters, PgItemStore items, PgSkillStore skills, PgModuleStateStore modules, long characterId,
+        Func<int, double>? learningAttribute, IReadOnlyList<CharacterSkill>? skillsOverride, CancellationToken cancellationToken)
     {
         if (await characters.GetAsync(characterId, cancellationToken) is not { ShipId: { } shipId } character
             || await items.GetAsync(shipId, cancellationToken) is not { } ship || ship.OwnerId != characterId)
@@ -66,7 +67,7 @@ public sealed class ShipSnapshot
         var contents = await items.InLocationAsync(shipId, characterId, cancellationToken);
         var fitted = contents.Where(i => Slots.IsSlotFlag(i.Flag)).OrderBy(i => i.Flag).ThenBy(i => i.Id).ToList();
         var states = await modules.StatesAsync(fitted.Select(i => i.Id), cancellationToken);
-        var trained = await skills.ForCharacterAsync(characterId, cancellationToken);
+        var trained = skillsOverride ?? await skills.ForCharacterAsync(characterId, cancellationToken);
 
         await statics.EnsureTypesAsync([character.TypeId, ship.TypeId, .. contents.Select(i => i.TypeId), .. trained.Select(s => s.TypeId)], cancellationToken);
 
@@ -74,7 +75,7 @@ public sealed class ShipSnapshot
         world.Add(new DogmaItem(characterId, character.TypeId, characterId, shipId, PilotFlag, ItemState.Online));
         foreach (var learning in LearningAttributes)
         {
-            world.SetValue(characterId, learning, StartingLearningAttribute);
+            world.SetValue(characterId, learning, learningAttribute?.Invoke(learning) ?? StartingLearningAttribute);
         }
         world.Add(new DogmaItem(shipId, ship.TypeId, characterId, ship.LocationId, ship.Flag));
         foreach (var module in fitted)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from . import marshal as m
 from . import packet as p
 from .client import Client
@@ -54,3 +56,39 @@ def hangar_and_ship(client: Client, mgr, ship_id: int) -> dict:
         row = {k: v for k, v in item["args"]["$dict"]}["invItem"]["$row"]
         fitted.append({k: row[k] for k in ("itemID", "typeID", "locationID", "flagID")})
     return {"hangar": rows, "shipInfo": fitted}
+
+
+def ship_of(client: Client) -> int:
+    """The item id of the ship a character docked in its station has: the one the hangar lists."""
+    manager = client.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
+    hangar = client.call_bound(manager, "GetInventory", 10004)
+    return int(client.call_bound(hangar, "List")[0].fields()["itemID"])
+
+
+def queue_of(described) -> list:
+    """A queue as the client reads it: each entry as its fields (`{"trainingTypeID": ..}`), in order."""
+    return [{k: v for k, v in entry["args"]["$dict"]} for entry in described]
+
+
+def training_view(who: Client) -> dict:
+    """What the skill window shows after a step: the queue, the totals, and the skills that are in training or were changed."""
+    info = describe(who.call("skillHandler", "GetMySkillInfo"))
+    fields = {k: v for k, v in info["args"]["$dict"]}
+    skills = {}
+    for type_id, entry in fields["skills"]["$dict"]:
+        header = entry["$objectex"]["$tuple"]
+        state = {k: v for k, v in header[2]["$dict"]} if len(header) > 2 else {}
+        skills[type_id] = {"level": header[1]["$tuple"][1], "points": header[1]["$tuple"][2], "inTraining": state.get("inTraining")}
+    return {"queue": queue_of(fields["queue"]), "skillPoints": fields["skillPoints"], "freeSkillPoints": fields["freeSkillPoints"], "skills": skills}
+
+
+def wait_for_events(who: Client, done, timeout: float = 15.0) -> list:
+    """The events the server sends until `done(all so far)` is true (the reference finishes a level in the background)."""
+    seen: list = []
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        seen += notifications_of(who)
+        if done(seen):
+            break
+        time.sleep(0.2)
+    return seen

@@ -26,28 +26,34 @@ public static class SkillWire
         return (characterId * SkillItemCharacterStride) + typeId;
     }
 
-    /// <summary>A <c>CharacterSkillEntry</c>: <c>(typeID, trainedLevel, trainedPoints, rank, virtualLevel)</c> and the item's fields.</summary>
-    public static PyValue Entry(long characterId, SkillType type, CharacterSkill skill) => MachoErrors.WrappedObject(
+    /// <summary>
+    /// A <c>CharacterSkillEntry</c>: <c>(typeID, trainedLevel, trainedPoints, rank, virtualLevel)</c> and, with <paramref name="metadata"/>, the item's fields
+    /// (the events that only carry points leave them out).
+    /// </summary>
+    public static PyValue Entry(long characterId, SkillType type, CharacterSkill skill, bool inTraining = false, bool metadata = true) => MachoErrors.WrappedObject(
         EntryClass,
         [new PyInt(type.TypeId), new PyInt(skill.Level), new PyInt(skill.SkillPoints), new PyInt(type.Rank), PyNone.Instance],
-        [
-            Field("itemID", new PyLong(ItemId(characterId, type.TypeId))),
-            Field("ownerID", new PyInt(characterId)),
-            Field("locationID", new PyInt(characterId)),
-            Field("flagID", new PyInt(SkillFlag)),
-            Field("groupID", new PyInt(type.GroupId)),
-            Field("categoryID", new PyInt(SkillCatalog.SkillCategoryId)),
-            Field("groupName", new PyStr(type.GroupName)),
-            Field("published", PyValue.Of(type.Published)),
-            Field("inTraining", PyBool.False),
-        ]);
+        !metadata
+            ? null
+            :
+            [
+                Field("itemID", new PyLong(ItemId(characterId, type.TypeId))),
+                Field("ownerID", new PyInt(characterId)),
+                Field("locationID", new PyInt(characterId)),
+                Field("flagID", new PyInt(SkillFlag)),
+                Field("groupID", new PyInt(type.GroupId)),
+                Field("categoryID", new PyInt(SkillCatalog.SkillCategoryId)),
+                Field("groupName", new PyStr(type.GroupName)),
+                Field("published", PyValue.Of(type.Published)),
+                Field("inTraining", PyValue.Of(inTraining)),
+            ]);
 
     /// <summary>The character's skills as the client keeps them: type id to entry, in type order.</summary>
-    public static PyValue EntryDictionary(long characterId, SkillCatalog catalog, IEnumerable<CharacterSkill> skills) =>
+    public static PyValue EntryDictionary(long characterId, SkillCatalog catalog, IEnumerable<CharacterSkill> skills, int? inTraining = null, bool metadata = true) =>
         new PyDict([.. skills
             .OrderBy(s => s.TypeId)
             .Where(s => catalog.Get(s.TypeId) is not null)
-            .Select(s => new KeyValuePair<PyValue, PyValue>(new PyInt(s.TypeId), Entry(characterId, catalog.Get(s.TypeId)!, s)))]);
+            .Select(s => new KeyValuePair<PyValue, PyValue>(new PyInt(s.TypeId), Entry(characterId, catalog.Get(s.TypeId)!, s, s.TypeId == inTraining, metadata)))]);
 
     private static KeyValuePair<PyValue, PyValue> Field(string name, PyValue value) => new(new PyStr(name), value);
 }

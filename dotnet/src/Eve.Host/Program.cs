@@ -177,7 +177,20 @@ static async Task<IReadOnlyList<IService>> CharacterServicesAsync(NpgsqlDataSour
     var modules = new PgModuleStateStore(source, fittingSchema);
     var stations = await StationCatalog.LoadAsync(sde);
     var dogma = await DogmaStatic.LoadAsync(sde);
-    var ships = new CharacterShips(source, dogma, characters, items, skills, modules);
+    var omega = new OmegaLicenses(new SubscriptionSettings(), new NoOmegaAccounts(), now);
+    var training = new CharacterTraining(
+        source, skillCatalog, skills, new PgTrainingStore(source, skillsSchema),
+        new TrainingSettings
+        {
+            Speed = double.Parse(Env("EVE_SKILL_TRAINING_SPEED", "1"), System.Globalization.CultureInfo.InvariantCulture),
+            HasOmega = account => omega.Resolve(new PyInt(account)).HasLicense,
+        },
+        now);
+    var ships = new CharacterShips(source, dogma, characters, items, skills, modules, training);
+    var dogmaSync = new CharacterDogmaSync(dogma, ships, now);
+    var characterSessions = new CharacterSessions();
+    var announcer = new TrainingAnnouncer(training, skillCatalog, characterSessions, dogmaSync, now);
+    announcer.Attach();
     var startingWallet = new StartingWallet(
         decimal.Parse(Env("EVE_START_ISK", "100000"), System.Globalization.CultureInfo.InvariantCulture),
         long.Parse(Env("EVE_START_PLEX", "2222"), System.Globalization.CultureInfo.InvariantCulture));
@@ -185,13 +198,13 @@ static async Task<IReadOnlyList<IService>> CharacterServicesAsync(NpgsqlDataSour
     var creation = new CharacterCreation(source, characters, items, skills, skillCatalog, wallets, startingWallet, catalog, modules);
     return
     [
-        new CharUnboundMgrService(accounts, characters, items, skills, wallets, creation, catalog, online, [new SkillsLoginHook(skills, skillCatalog, now)], Random.Shared),
+        new CharUnboundMgrService(accounts, characters, items, skills, wallets, creation, catalog, online, [new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now)], Random.Shared),
         new SkillMgr2Service(),
-        new SkillHandlerService(skills, skillCatalog, now),
+        new SkillHandlerService(skills, skillCatalog, training, characters, announcer, now),
         new CharMgrService(characters, stations),
         new StationService(stations, characters, online, now),
         new InvBrokerService(items, new ItemTypeCatalog(sde), stations, ships, dogma, now),
-        new DogmaIMService(dogma, ships, now),
+        new DogmaIMService(dogma, ships, now, dogmaSync),
         new AccountService(wallets),
     ];
 }

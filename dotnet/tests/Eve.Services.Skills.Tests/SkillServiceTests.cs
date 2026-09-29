@@ -39,14 +39,29 @@ internal sealed class Rig : IAsyncDisposable
 
     private readonly string _schema = $"sks_{Guid.NewGuid():N}"[..20];
 
-    private Rig(NpgsqlDataSource source)
+    private Rig(NpgsqlDataSource source, TrainingSettings? settings = null)
     {
         Source = source;
         Store = new PgSkillStore(source, _schema);
-        Handler = new SkillHandlerService(Store, Catalog, () => ClockMs);
+        Training = new CharacterTraining(source, Catalog, Store, new PgTrainingStore(source, _schema), settings ?? new TrainingSettings(), () => Now);
+        Sessions = new CharacterSessions();
+        Announcer = new TrainingAnnouncer(Training, Catalog, Sessions, null, () => Now, schedule: false);
+        Announcer.Attach();
+        Handler = new SkillHandlerService(Store, Catalog, Training, new Eve.Characters.PgCharacterStore(source, _schema + "c"), Announcer, () => Now);
         Door = new SkillMgr2Service();
-        Hook = new SkillsLoginHook(Store, Catalog, () => ClockMs);
+        Hook = new SkillsLoginHook(Training, Catalog, Sessions, Announcer, () => Now);
     }
+
+    /// <summary>The clock of the rig: it stands still until a test moves it.</summary>
+    public long Now = ClockMs;
+
+    public void Wait(TimeSpan time) => Now += (long)time.TotalMilliseconds;
+
+    public CharacterTraining Training { get; }
+
+    public CharacterSessions Sessions { get; }
+
+    public TrainingAnnouncer Announcer { get; }
 
     public NpgsqlDataSource Source { get; }
 
@@ -58,11 +73,12 @@ internal sealed class Rig : IAsyncDisposable
 
     public SkillsLoginHook Hook { get; }
 
-    public static async Task<Rig> CreateAsync()
+    public static async Task<Rig> CreateAsync(TrainingSettings? settings = null)
     {
         var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
-        var rig = new Rig(source);
+        var rig = new Rig(source, settings);
         await PgSkillStore.MigrateAsync(source, rig._schema);
+        await Eve.Characters.PgCharacterStore.MigrateAsync(source, rig._schema + "c");
         return rig;
     }
 
@@ -90,7 +106,7 @@ internal sealed class Rig : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS {_schema} CASCADE");
+        await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS {_schema} CASCADE; DROP SCHEMA IF EXISTS {_schema}c CASCADE");
         await command.ExecuteNonQueryAsync();
         await Source.DisposeAsync();
     }

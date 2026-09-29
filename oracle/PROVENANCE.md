@@ -40,5 +40,9 @@ answer, and `dogma.json` the answer of `dogmaIM.GetAllInfo` (ship, fitted module
 character of each of the four playable races (with the three notifications sent after it), which the dogma engine's values
 and the brain are checked against, and `fitting.json` what the client is sent when a module is taken out of its slot, taken
 offline and put online again (the events and the items that moved), and what the reference answers to a module call it
-cannot do.
-`--only walk|starters|skills|info|stations|inventory|dogma|fitting` records one and leaves the others as they are.
+cannot do, and `training.json` the skill queue of a Caldari and an Amarr character (starting a skill, saving, reordering,
+pausing and resuming a queue, the errors it gives, stopping, the history, each with the events sent and the skill window
+afterwards), recorded at the reference's own training speed, and `training_fast.json` the levels that finish while the client
+watches or is away, which needs a reference started with `EVEJS_SKILL_TRAINING_SPEED=60000` (the file records the speed it saw,
+and the replay is skipped by a server that trains at another).
+`--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast` records one and leaves the others as they are.

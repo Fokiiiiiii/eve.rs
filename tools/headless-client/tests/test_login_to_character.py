@@ -27,7 +27,7 @@ from evecli import marshal as m
 from evecli import packet as p
 from evecli.client import Client
 from evecli.describe import describe, differences, type_name
-from evecli.observe import hangar_and_ship, notifications_of
+from evecli.observe import hangar_and_ship, notifications_of, ship_of, training_view, wait_for_events
 
 LIVE = os.environ.get("EVE_LIVE_HOST", "")
 SERVER = os.environ.get("EVE_LIVE_SERVER", "eve.rs")
@@ -725,3 +725,173 @@ def test_switching_and_moving_modules_is_what_the_reference_does(race):
                 float_tolerance=DOGMA_TOLERANCE)
             problems += differences(where_form(blank_times(substitute(step["after"], mapping))), where_form(blank_times(after)), f"{where}: after")
     assert problems == [], "\n".join(problems[:30])
+
+
+# ── skill training: the queue, and levels that finish ───────────────────────
+
+TRAINING = load("training.json")
+RECORDED_TRAINING_RUN = re.search(r"(\d{6,})$", TRAINING["races"][0]["create"]["call"][2][0]).group(1)
+TRAINING_FAST = load("training_fast.json")
+RECORDED_FAST_RUN = re.search(r"(\d{6,})$", TRAINING_FAST["create"]["call"][2][0]).group(1)
+# a skill in training gains a point every couple of seconds: the points it has are the recording's within what a slow test adds
+TRAINING_POINTS_SLACK = 30
+
+
+def queue_form(queue: list[dict]) -> list[dict]:
+    """A queue in a form that does not depend on the clock: a line's start as its distance from the first line's start, and how long it takes."""
+    first = None
+    lines = []
+    for line in queue:
+        start = number(line["trainingStartTime"]) if line["trainingStartTime"] is not None else None
+        end = number(line["trainingEndTime"]) if line["trainingEndTime"] is not None else None
+        if first is None and start is not None:
+            first = start
+        lines.append({
+            "position": line["queuePosition"], "skill": line["trainingTypeID"], "toLevel": line["trainingToLevel"],
+            "startSP": line["trainingStartSP"], "destinationSP": line["trainingDestinationSP"],
+            "startsAfter": None if start is None else start - first, "takes": None if start is None else end - start,
+        })
+    return lines
+
+
+def view_problems(expected: dict, actual: dict, where: str) -> list[str]:
+    """What the skill window shows, compared: the queue by its shape in time, the skills by level and points (a skill that is training may
+    have gained a few points more or less), the totals."""
+    problems = []
+    if queue_form(expected["queue"]) != queue_form(actual["queue"]):
+        problems.append(f"{where}: queue {queue_form(actual['queue'])} instead of {queue_form(expected['queue'])}")
+    if expected["freeSkillPoints"] != actual["freeSkillPoints"]:
+        problems.append(f"{where}: free skill points {actual['freeSkillPoints']} instead of {expected['freeSkillPoints']}")
+    recorded = {int(k): v for k, v in expected["skills"].items()}
+    if not REFERENCE and not any(line["trainingStartTime"] for line in expected["queue"]):
+        # DEVIATION (a paused queue): the reference shows the first skill of a queue that does not run as in training; eve.rs shows what
+        # trains (DEVIATIONS.md #14)
+        recorded = {t: {**v, "inTraining": False} for t, v in recorded.items()}
+    if set(recorded) != set(actual["skills"]):
+        problems.append(f"{where}: skills {sorted(actual['skills'])} instead of {sorted(recorded)}")
+    training = False
+    for type_id, skill in recorded.items():
+        ours = actual["skills"].get(type_id)
+        if ours is None:
+            continue
+        training = training or bool(skill["inTraining"])
+        slack = TRAINING_POINTS_SLACK if skill["inTraining"] else 0
+        if (ours["level"], ours["inTraining"]) != (skill["level"], skill["inTraining"]) or abs(ours["points"] - skill["points"]) > slack:
+            problems.append(f"{where}: skill {type_id} is {ours} instead of {skill}")
+    if abs(actual["skillPoints"] - expected["skillPoints"]) > (TRAINING_POINTS_SLACK if training else 0):
+        problems.append(f"{where}: {actual['skillPoints']} skill points instead of {expected['skillPoints']}")
+    return problems
+
+
+def training_client(name: str, recording: dict, recorded_run: str, run: str, ids: dict) -> tuple[Client, int]:
+    client = connect(name)
+    service, method, *args = [recording["create"]["call"][0], recording["create"]["call"][1], *[revive(a, run, ids, recorded_run) for a in recording["create"]["call"][2]]]
+    kind, made = attempt(client, service, method, *args)
+    assert kind == "ok", brief(made)
+    assert attempt(client, "charUnboundMgr", "SelectCharacterID", int(made), None, False) == ("ok", None)
+    return client, int(made)
+
+
+def id_mapping(recorded_character: int, character: int, skills) -> dict[int, int]:
+    """The ids of a recording that belong to the run: the character, and the item id of each of its skills (the character's id and the type)."""
+    return {recorded_character: character, **{recorded_character * 100000 + int(t): character * 100000 + int(t) for t in skills}}
+
+
+def speed_of(client: Client) -> float:
+    """How fast this server trains: its learning attributes over the game's 20 (the server's multiplier is in them)."""
+    return describe(client.call("skillHandler", "GetAttributes"))["$dict"][0][1] / 20
+
+
+@pytest.mark.parametrize("race", TRAINING["races"], ids=lambda r: f"race-{r['raceID']}")
+def test_the_skill_queue_is_what_the_reference_does(race):
+    run = uuid.uuid4().hex[:10]
+    ids: dict[int, int] = {}
+    problems: list[str] = []
+    client, character = training_client(f"walk-training-{run}", race, RECORDED_TRAINING_RUN, run, ids)
+    with client:
+        if speed_of(client) != race["trainingSpeed"]:
+            pytest.skip(f"the server does not train at the recorded speed ({race['trainingSpeed']})")
+        ids[int(race["create"]["ok"])] = character
+        mapping = {**id_mapping(int(race["characterID"]), character, race["before"]["skills"]), int(race["shipID"]): ship_of(client)}
+        problems += view_problems(race["before"], training_view(client), "before")
+        notifications_of(client)
+
+        recorded_steps: dict[str, dict] = {}
+        for step in race["steps"]:
+            service, method, recorded_args, kwargs = step["call"]
+            args = [revive(a, run, mapping, RECORDED_TRAINING_RUN) for a in recorded_args]
+            if step["label"] == "start by item":
+                args = [character * 100000 + race["skills"]["first"]]
+            where = f"race {race['raceID']} {step['label']}"
+            expected_events = step["notifications"]
+            expected_after = step.get("after")
+            if step["label"] == "start by item" and not REFERENCE:
+                # DEVIATION (starting a skill by its item): the reference cannot find a skill's item and does nothing; eve.rs starts the skill,
+                # which for the skill that is training already is the same queue told again (DEVIATIONS.md #13)
+                expected_events = recorded_steps["start by type again"]["notifications"]
+                expected_after = recorded_steps["start by type again"]["after"]
+            try:
+                outcome = describe(client.call(service, method, *args, **kwargs))
+                error = None
+            except p.MachoError as failure:
+                outcome, error = None, describe(failure.payload)
+            sent = notifications_of(client)
+            if "error" in step:
+                problems += differences(step["error"]["payload"], error, f"{where}: error") if error is not None else [f"{where}: no error"]
+            elif error is not None:
+                problems.append(f"{where}: error {brief(error)}")
+            else:
+                problems += differences(blank_times(step["ok"]), blank_times(outcome), f"{where}: answer") if method != "GetSkillHistory" else _history_problems(step["ok"], outcome, where)
+            problems += differences(
+                blank_times(events_form(substitute(expected_events, mapping))), blank_times(events_form(sent)), f"{where}: events", float_tolerance=DOGMA_TOLERANCE)
+            if expected_after is not None:
+                problems += view_problems(expected_after, training_view(client), f"{where}: after")
+                notifications_of(client)  # what looking made the server send is not part of the step
+            recorded_steps[step["label"]] = step
+    assert problems == [], "\n".join(problems[:30])
+
+
+def _history_problems(expected: list, actual: list, where: str) -> list[str]:
+    """What the history lists, without its dates."""
+    def form(entries):
+        return [{k: v for k, v in e["args"]["$dict"] if k != "logDate"} for e in entries]
+    return [] if form(expected) == form(actual) else [f"{where}: history {form(actual)} instead of {form(expected)}"]
+
+
+def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level():
+    run = uuid.uuid4().hex[:10]
+    ids: dict[int, int] = {}
+    problems: list[str] = []
+    client, character = training_client(f"walk-swift-{run}", TRAINING_FAST, RECORDED_FAST_RUN, run, ids)
+    with client:
+        if speed_of(client) != TRAINING_FAST["trainingSpeed"]:
+            pytest.skip(f"the server does not train at the recorded speed ({TRAINING_FAST['trainingSpeed']}): start it with EVE(JS)_SKILL_TRAINING_SPEED")
+        mapping = {**id_mapping(int(TRAINING_FAST["characterID"]), character, TRAINING_FAST["before"]["skills"]), int(TRAINING_FAST["shipID"]): ship_of(client)}
+        problems += view_problems(TRAINING_FAST["before"], training_view(client), "before")
+        notifications_of(client)
+
+        for step in TRAINING_FAST["steps"][:-1]:
+            service, method, recorded_args, kwargs = step["call"]
+            args = [revive(a, run, mapping, RECORDED_FAST_RUN) for a in recorded_args]
+            where = step["label"]
+            problems += differences(step["ok"], describe(client.call(service, method, *args, **kwargs)), f"{where}: answer")
+            sent = wait_for_events(client, lambda seen: any(e["name"] == "OnSkillQueuePausedServer" for e in seen))
+            problems += differences(
+                blank_times(events_form(substitute(step["notifications"], mapping))), blank_times(events_form(sent)), f"{where}: events", float_tolerance=DOGMA_TOLERANCE)
+            problems += view_problems(step["after"], training_view(client), f"{where}: after")
+            notifications_of(client)
+
+        # a level that finishes while nobody is logged in is found when the character comes back
+        away = TRAINING_FAST["steps"][-1]
+        client.call("skillHandler", "SaveNewQueue", m.Dict([(0, (3319, 2))]))
+        notifications_of(client)
+    import time
+    time.sleep(4)
+    with connect(f"walk-swift-{run}") as back:
+        notifications_of(back)
+        assert attempt(back, "charUnboundMgr", "SelectCharacterID", character, None, False) == ("ok", None)
+        problems += differences(
+            blank_times(events_form(substitute(away["notifications"], mapping))), blank_times(events_form(notifications_of(back))), "finished while away: events", float_tolerance=DOGMA_TOLERANCE)
+        problems += view_problems(away["after"], training_view(back), "finished while away: after")
+    assert problems == [], "\n".join(problems[:30])
+

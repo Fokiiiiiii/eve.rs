@@ -55,13 +55,15 @@ not exist is the scene: which balls a system has, who is where, how commands cha
    | `Leave` | 4 | host -> sim | `u64 sessionId`, `u8 why` (0 docked, 1 logged off, 2 jumped) |
    | `Bind` | 5 | host -> sim | `u64 sessionId`: the client bound the solar system's ballpark, send it the scene |
    | `UpdateState` | 6 | host -> sim | `u64 sessionId`: `UpdateStateRequest` |
-   | `Command` | 7 | host -> sim | `u64 sessionId`, `u8 command` (1 speed fraction, 2 go in a direction, 3 stop, 4 dock, 5 follow a body `(id, range)`, 6 orbit a body `(id, distance)`, 7 align to a body `(id)`, 8 warp to a body `(id, range)`), `u8 argc`, `f64 args[argc]` (ids travel as `f64` up to 2^53) |
+   | `Command` | 7 | host -> sim | `u64 sessionId`, `u8 command` (1 speed fraction, 2 go in a direction, 3 stop, 4 dock, 5 follow a body `(id, range)`, 6 orbit a body `(id, distance)`, 7 align to a body `(id)`, 8 warp to a body `(id, range)`, 9 jump through a stargate `(gateId, leadsToGateId)`, the second 0 when the client does not say), `u8 argc`, `f64 args[argc]` (ids travel as `f64` up to 2^53) |
    | `ShipSpec` | 8 | host -> sim | `u64 sessionId`, the ship's spec: new numbers for a ship in space |
    | `Notify` | 9 | sim -> host | `u64 sessionId`, text `name`, text `idType`, bytes `marshalledArgs` (a marshalled tuple of the arguments) |
    | `Docked` | 10 | sim -> host | `u64 sessionId`, `i64 stationId`: the ship has arrived and the docking is done in space; the host moves the character |
    | `Refused` | 11 | sim -> host | `u64 sessionId`, `u8 command`, text `reason`: a command the scene cannot do (the host answers the client with the reason) |
    | `Accepted` | 12 | sim -> host | `u64 sessionId`, `u8 command`, `i64 filetime`: a command was accepted, sent after the update it made (a `Dock` is answered with the time) |
    | `Approaching` | 14 | sim -> host | `u64 sessionId`, `u8 command`, `f64 distance`: a `Dock` could not be done from here, the ship now follows the station; the host answers the call with `DockingApproach` (the distance is metres off the station's surface) |
+   | `Jumping` | 15 | sim -> host | `u64 sessionId`, `u8 command`, `i32 destinationSystem`, `i64 destinationGate`: a `Jump` was accepted (the jump-out effect was sent, sent after that update); the host queues the pilot for the system and answers the call |
+   | `Jumped` | 16 | sim -> host | `u64 sessionId`, `i32 fromSystem`, `i64 fromGate`, `i32 toSystem`, `i64 toGate`: the ship has left the scene it was in and is in that of the other system, in front of `toGate`; the host moves the ship and the character and tells the client |
 
    The ship's spec is `i64 shipId`, `i64 characterId`, `i32 typeId`, `i32 groupId`, `i32 categoryId`, text `name`,
    `i64 ownerId`, `i32 corporationId`, `i32 allianceId`, `i32 warFactionId`, `f64 securityStatus`, `f64 radius`,
@@ -108,6 +110,17 @@ not exist is the scene: which balls a system has, who is where, how commands cha
   the front).
 
 ## Amendments
+
+- 2026-09-29, stargate jumps: command 9 and the messages `Jumping` (15) and `Jumped` (16). The sim owns the crossing: a `Jump` checks the gate
+  (in this system, leading where the client says, within 2.5 km of the ship's surface), stops the ship and sends the jump-out effect with the `Stop`
+  in one update; four seconds later (or three after the effect's stamp, if that is later) the scene gives the ship up (`Scene::due_jumps`) and the
+  sim puts it in the scene of the other system (made when it has none, `Scene::arrive`) at a point in the 45° cone in front of the gate it comes out
+  of, at rest, and says `Jumped`. The host then does what is the host's: the ship's item and the character's place in PostgreSQL
+  (`CharacterShips.JumpAsync`), the notifications and the session change, in the reference's order. `Leave` with `why` 2 is not needed for a jump
+  (the sim moves the ship itself); a ship that cannot be put in the other system stays where it was and the sim says `Refused` with
+  `DESTINATION_UNAVAILABLE`. The ship binds the ballpark of the new system as any ship does; one that came through a gate is sent the ship, the
+  state and the numbers (no undock priming). The queue of a system (`OnJumpQueueUpdate`) is made of characters, so it is the host's.
+  `docs/compat/DEVIATIONS.md` #23 to #26 say what differs from the reference.
 
 - 2026-09-29, warp: command 8 (warp to a body). A warp is answered to the caller (the host awaits `Accepted` or `Refused` with `TARGET_NOT_FOUND`,
   `WARP_DISTANCE_TOO_CLOSE` or `IN_WARP`), and the ship's motion in warp is the sim's own: it aligns, enters warp, drops out and comes to rest,

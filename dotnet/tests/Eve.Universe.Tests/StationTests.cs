@@ -112,3 +112,25 @@ public class StationCatalogTests
         Assert.Null(catalog.Get(0));
     }
 }
+
+public class SolarSystemCatalogTests
+{
+    [PgFact]
+    public async Task The_systems_of_the_static_data_say_where_they_are_in_the_universe()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+        var reader = new SdeReader(source);
+        Assert.True(await reader.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
+        var systems = await SolarSystemCatalog.LoadAsync(reader);
+
+        Assert.True(systems.Count > 8000, $"{systems.Count} systems");
+        // the two systems of the recorded jump (jump.json): the second is in the next constellation of the same region
+        var from = systems.Get(30100032)!;
+        var to = systems.Get(30100034)!;
+        Assert.Equal((20010001, 20010002), (from.ConstellationId, to.ConstellationId));
+        Assert.Equal(from.RegionId, to.RegionId);
+        Assert.Equal(30000142, systems.Get(30000142)!.Id);
+        Assert.Equal("Jita", systems.Get(30000142)!.Name);
+        Assert.Null(systems.Get(42));
+    }
+}

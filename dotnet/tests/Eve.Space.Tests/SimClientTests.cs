@@ -102,6 +102,32 @@ public class SimClientTests
     }
 
     [Fact]
+    public async Task A_jump_is_answered_with_where_the_ship_is_going_and_the_arrival_is_handed_on()
+    {
+        var (sim, client) = await ConnectedAsync(message => message switch
+        {
+            SimCommand { Code: SimCommands.Jump, SessionId: 7 } c => [new SimJumping(c.SessionId, c.Code, 30100034, 50016839)],
+            SimCommand { Code: SimCommands.Jump } c => [new SimRefused(c.SessionId, c.Code, "TOO_FAR_FROM_STARGATE")],
+            _ => [],
+        });
+        await using var _ = sim;
+        await using var __ = client;
+        var heard = new List<SimMessage>();
+        client.Received += heard.Add;
+
+        Assert.Equal(new CommandReply(true, 0, null, null, 30100034, 50016839), await Within(client.CommandAsync(7, SimCommands.Jump, [50016630, 50016839])));
+        Assert.Equal(new CommandReply(false, 0, "TOO_FAR_FROM_STARGATE"), await Within(client.CommandAsync(8, SimCommands.Jump, [50016630, 0])));
+        Assert.Equal([50016630d, 50016839d], sim.HeardNow().OfType<SimCommand>().First().Args);
+        Assert.Empty(heard);
+
+        // the arrival is nobody's answer: it reaches the listener, and so does a jump nobody waits for
+        await sim.SayAsync(new SimJumped(7, 30100032, 50016630, 30100034, 50016839));
+        await sim.SayAsync(new SimJumping(9, SimCommands.Jump, 30100034, 50016839));
+        await Until(() => heard.Count == 1);
+        Assert.Equal(new SimJumped(7, 30100032, 50016630, 30100034, 50016839), heard.Single());
+    }
+
+    [Fact]
     public async Task What_the_simulation_says_on_its_own_is_handed_on_and_what_answers_a_request_is_not()
     {
         var (sim, client) = await ConnectedAsync(message => message is SimEnter e ? [new SimEnterReply(e.SessionId, null)] : []);

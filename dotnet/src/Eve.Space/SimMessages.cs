@@ -58,6 +58,7 @@ public static class SimCommands
     public const byte Orbit = 6;
     public const byte AlignTo = 7;
     public const byte WarpTo = 8;
+    public const byte Jump = 9;
 }
 
 public sealed record SimCommand(ulong SessionId, byte Code, IReadOnlyList<double> Args) : SimMessage;
@@ -79,3 +80,9 @@ public sealed record SimAccepted(ulong SessionId, byte Command, long At) : SimMe
 
 /// <summary>A <c>Dock</c> could not be done from where the ship is: it now approaches the station, <paramref name="Distance"/> metres off its surface.</summary>
 public sealed record SimApproaching(ulong SessionId, byte Command, double Distance) : SimMessage;
+
+/// <summary>A <c>Jump</c> was accepted: the jump-out effect has begun, and the ship leaves for <paramref name="DestinationSystem"/> a few seconds on.</summary>
+public sealed record SimJumping(ulong SessionId, byte Command, int DestinationSystem, long DestinationGate) : SimMessage;
+
+/// <summary>The ship has left its system through a gate and is in the scene of the other one, in front of <paramref name="ToGate"/>: the host moves the character.</summary>
+public sealed record SimJumped(ulong SessionId, int FromSystem, long FromGate, int ToSystem, long ToGate) : SimMessage;

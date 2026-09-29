@@ -12,7 +12,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "..", "..", "oracle", "fixtures", "simlink", "messages.json")
 
 KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateState": 6, "Command": 7,
-         "ShipSpec": 8, "Notify": 9, "Docked": 10, "Refused": 11, "Accepted": 12, "EnterReply": 13, "Approaching": 14}
+         "ShipSpec": 8, "Notify": 9, "Docked": 10, "Refused": 11, "Accepted": 12, "EnterReply": 13, "Approaching": 14,
+         "Jumping": 15, "Jumped": 16}
 
 
 def s(text):  # u16 length + UTF-8
@@ -78,6 +79,12 @@ def build(m):
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + i64(m["at"]))
     if k == "Approaching":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<d", m["distance"]))
+    if k == "Jumping":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<i", m["destinationSystem"])
+                     + i64(m["destinationGate"]))
+    if k == "Jumped":
+        return frame(k, u64(m["sessionId"]) + struct.pack("<i", m["fromSystem"]) + i64(m["fromGate"])
+                     + struct.pack("<i", m["toSystem"]) + i64(m["toGate"]))
     raise ValueError(k)
 
 
@@ -117,6 +124,8 @@ valid = [
      "args": [60015249.0]},
     {"name": "warp command", "kind": "Command", "sessionId": "1790646377000015", "command": 8,
      "args": [40491233.0, 30000.0]},
+    {"name": "jump command", "kind": "Command", "sessionId": "1790646377000015", "command": 9,
+     "args": [50016630.0, 50016839.0]},
     {"name": "new ship numbers", "kind": "ShipSpec", "sessionId": "1790646377000015", "ship": IBIS},
     {"name": "notification", "kind": "Notify", "sessionId": "1790646377000015", "notification": "OnSetTimeDilation",
      "idType": "clientID", "args": "7e0000000004010100"},
@@ -131,6 +140,10 @@ valid = [
      "at": "134351527136350000"},
     {"name": "approaching", "kind": "Approaching", "sessionId": "1790646377000015", "command": 4,
      "distance": 15975.3},
+    {"name": "jumping", "kind": "Jumping", "sessionId": "1790646377000015", "command": 9,
+     "destinationSystem": 30100034, "destinationGate": "50016839"},
+    {"name": "jumped", "kind": "Jumped", "sessionId": "1790646377000015", "fromSystem": 30100032,
+     "fromGate": "50016630", "toSystem": 30100034, "toGate": "50016839"},
 ]
 for case in valid:
     case["hex"] = build(case).hex()

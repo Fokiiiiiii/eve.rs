@@ -50,6 +50,8 @@ public static class SimCodec
         public const byte Accepted = 12;
         public const byte EnterReply = 13;
         public const byte Approaching = 14;
+        public const byte Jumping = 15;
+        public const byte Jumped = 16;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)
@@ -234,6 +236,12 @@ public static class SimCodec
             case Kind.Approaching:
                 message = new SimApproaching(r.U64(), r.U8(), r.F64());
                 break;
+            case Kind.Jumping:
+                message = new SimJumping(r.U64(), r.U8(), r.I32(), r.I64());
+                break;
+            case Kind.Jumped:
+                message = new SimJumped(r.U64(), r.I32(), r.I64(), r.I32(), r.I64());
+                break;
             case var other:
                 throw new SimLinkException(SimLinkError.UnknownKind, $"unknown message kind {other}");
         }
@@ -397,6 +405,21 @@ public static class SimCodec
                 w.U64(m.SessionId);
                 w.U8(m.Command);
                 w.F64(m.Distance);
+                break;
+            case SimJumping m:
+                w.U8(Kind.Jumping);
+                w.U64(m.SessionId);
+                w.U8(m.Command);
+                w.I32(m.DestinationSystem);
+                w.I64(m.DestinationGate);
+                break;
+            case SimJumped m:
+                w.U8(Kind.Jumped);
+                w.U64(m.SessionId);
+                w.I32(m.FromSystem);
+                w.I64(m.FromGate);
+                w.I32(m.ToSystem);
+                w.I64(m.ToGate);
                 break;
             default:
                 throw new ArgumentException($"cannot encode {message.GetType().Name}", nameof(message));

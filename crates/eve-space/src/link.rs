@@ -25,6 +25,8 @@ pub mod kind {
     pub const ACCEPTED: u8 = 12;
     pub const ENTER_REPLY: u8 = 13;
     pub const APPROACHING: u8 = 14;
+    pub const JUMPING: u8 = 15;
+    pub const JUMPED: u8 = 16;
 }
 
 /// How a ship comes into space.
@@ -106,6 +108,21 @@ pub enum Message {
         session_id: u64,
         command: u8,
         distance: f64,
+    },
+    /// A `Jump` was accepted: the jump-out effect has begun, and the ship leaves for `destination_system` a few seconds on.
+    Jumping {
+        session_id: u64,
+        command: u8,
+        destination_system: i32,
+        destination_gate: i64,
+    },
+    /// The ship has left its system through a gate and is in the scene of the other one, in front of `to_gate`: the host moves the character.
+    Jumped {
+        session_id: u64,
+        from_system: i32,
+        from_gate: i64,
+        to_system: i32,
+        to_gate: i64,
     },
 }
 
@@ -304,6 +321,8 @@ impl Message {
             Self::Refused { .. } => kind::REFUSED,
             Self::Accepted { .. } => kind::ACCEPTED,
             Self::Approaching { .. } => kind::APPROACHING,
+            Self::Jumping { .. } => kind::JUMPING,
+            Self::Jumped { .. } => kind::JUMPED,
         }
     }
 
@@ -383,6 +402,19 @@ impl Message {
                 out.push(*command);
                 out.extend_from_slice(&distance.to_le_bytes());
             }
+            Self::Jumping { session_id, command, destination_system, destination_gate } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.push(*command);
+                out.extend_from_slice(&destination_system.to_le_bytes());
+                out.extend_from_slice(&destination_gate.to_le_bytes());
+            }
+            Self::Jumped { session_id, from_system, from_gate, to_system, to_gate } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&from_system.to_le_bytes());
+                out.extend_from_slice(&from_gate.to_le_bytes());
+                out.extend_from_slice(&to_system.to_le_bytes());
+                out.extend_from_slice(&to_gate.to_le_bytes());
+            }
         }
         out
     }
@@ -452,6 +484,19 @@ impl Message {
             kind::APPROACHING => {
                 Message::Approaching { session_id: r.u64()?, command: r.u8()?, distance: r.f64()? }
             }
+            kind::JUMPING => Message::Jumping {
+                session_id: r.u64()?,
+                command: r.u8()?,
+                destination_system: r.i32()?,
+                destination_gate: r.i64()?,
+            },
+            kind::JUMPED => Message::Jumped {
+                session_id: r.u64()?,
+                from_system: r.i32()?,
+                from_gate: r.i64()?,
+                to_system: r.i32()?,
+                to_gate: r.i64()?,
+            },
             other => return Err(DecodeError::UnknownKind(other)),
         };
         r.finish()?;

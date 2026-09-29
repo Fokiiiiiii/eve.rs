@@ -35,7 +35,10 @@ pub enum Detail {
         destination_faction: Option<i64>,
         /// Whether the jump leads to less safe space (the client warns before it).
         hazardous: bool,
+        /// The gate's rotation as the slim item carries it (yaw, pitch, roll).
         facing: Option<[f64; 3]>,
+        /// The way the gate faces: the unit vector from its system to the one it leads to (what ships that jump appear in front of).
+        heading: Option<Vec3>,
     },
 }
 
@@ -66,6 +69,13 @@ pub struct SolarSystem {
     pub security: f64,
     /// The bodies in the order the client is sent them: stations, then the celestials (planets, moons, belts and the star) by id, then the stargates.
     pub bodies: Vec<Body>,
+}
+
+/// The unit vector from one system's position to another's (plain double arithmetic, as the reference's `normalizeVector` does it).
+fn heading(from: Vec3, to: Vec3) -> Option<Vec3> {
+    let (x, y, z) = (to.x - from.x, to.y - from.y, to.z - from.z);
+    let length = (x * x + y * y + z * z).sqrt();
+    (length.is_finite() && length > 0.0).then(|| Vec3::new(x / length, y / length, z / length))
 }
 
 impl SolarSystem {
@@ -301,6 +311,7 @@ impl World {
                         .is_some_and(|d| security::hazardous_transition(info.security, d.security)),
                     facing: destination_info
                         .and_then(|d| crate::geo::stargate_facing(info.position, d.position)),
+                    heading: destination_info.and_then(|d| heading(info.position, d.position)),
                 },
             });
         })?;

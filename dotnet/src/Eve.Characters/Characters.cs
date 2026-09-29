@@ -193,6 +193,16 @@ public sealed class PgCharacterStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>Records the solar system a character is in (with its constellation and region), inside the caller's transaction.</summary>
+    public async Task SetLocationAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, int solarSystemId, int constellationId, int regionId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"UPDATE {_schema}.characters SET solar_system_id = $1, constellation_id = $2, region_id = $3 WHERE id = $4", connection, transaction)
+        {
+            Parameters = { new() { Value = solarSystemId }, new() { Value = constellationId }, new() { Value = regionId }, new() { Value = characterId } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>What the client sent for the paper doll and the portrait, as it was sent.</summary>
     public async Task<(byte[]? Doll, byte[]? Portrait)> AppearanceAsync(long id, CancellationToken cancellationToken = default)
     {

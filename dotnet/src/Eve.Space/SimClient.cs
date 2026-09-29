@@ -184,6 +184,11 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 break;
             case SimApproaching:
                 break; // nobody is waiting for it
+            case SimJumping jumping when _answered.TryRemove((jumping.SessionId, jumping.Command), out var jump):
+                jump.TrySetResult(new CommandReply(true, 0, null, null, jumping.DestinationSystem, jumping.DestinationGate));
+                break;
+            case SimJumping:
+                break; // nobody is waiting for it
             default:
                 Received?.Invoke(message);
                 break;

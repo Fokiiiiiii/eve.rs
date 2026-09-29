@@ -199,7 +199,6 @@ pub fn stop_distance(body: &Body, ship_radius: f64, range: f64) -> f64 {
     let ship = ship_radius * 2.0;
     match body.kind {
         BodyKind::Station => radius + range + ship,
-        BodyKind::Stargate => (2_500.0f64.max(radius * 0.3)).max(range) + ship,
         BodyKind::Belt => 2_500.0f64.max(range) + ship,
         _ => match body.group_id {
             GROUP_PLANET | 8 => (radius + 1_000_000.0).max(range) + ship,
@@ -408,12 +407,10 @@ mod tests {
         assert_eq!(warp_in_point(&station), None, "too small for a point of the client's");
         assert_eq!(stop_distance(&station, 47.0, 0.0), 1_000.0 + 94.0);
         assert_eq!(stop_distance(&station, 47.0, 5_000.0), 1_000.0 + 5_000.0 + 94.0);
-        let mut gate = station.clone();
-        gate.kind = BodyKind::Stargate;
-        gate.radius = 10_000.0;
-        assert_eq!(stop_distance(&gate, 47.0, 0.0), 3_000.0 + 94.0);
-        gate.radius = 100.0;
-        assert_eq!(stop_distance(&gate, 47.0, 0.0), 2_500.0 + 94.0);
+        let mut belt = station.clone();
+        belt.kind = BodyKind::Belt;
+        assert_eq!(stop_distance(&belt, 47.0, 0.0), 2_500.0 + 94.0);
+        assert_eq!(stop_distance(&belt, 47.0, 9_000.0), 9_000.0 + 94.0);
     }
 
     #[test]

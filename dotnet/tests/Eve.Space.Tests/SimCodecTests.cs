@@ -48,6 +48,8 @@ public class SimCodecTests
             "Refused" => new SimRefused(Session(), (byte)(int)c["command"]!, (string)c["reason"]!),
             "Accepted" => new SimAccepted(Session(), (byte)(int)c["command"]!, Wide(c, "at")),
             "Approaching" => new SimApproaching(Session(), (byte)(int)c["command"]!, (double)c["distance"]!),
+            "Jumping" => new SimJumping(Session(), (byte)(int)c["command"]!, (int)c["destinationSystem"]!, Wide(c, "destinationGate")),
+            "Jumped" => new SimJumped(Session(), (int)c["fromSystem"]!, Wide(c, "fromGate"), (int)c["toSystem"]!, Wide(c, "toGate")),
             var other => throw new InvalidOperationException(other),
         };
     }
@@ -56,7 +58,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-        Assert.Equal(["Accepted", "Approaching", "Bind", "Command", "Docked", "Enter", "EnterReply", "Hello", "HelloAck", "Leave", "Notify", "Refused", "ShipSpec", "UpdateState"], kinds);
+        Assert.Equal(["Accepted", "Approaching", "Bind", "Command", "Docked", "Enter", "EnterReply", "Hello", "HelloAck", "Jumped", "Jumping", "Leave", "Notify", "Refused", "ShipSpec", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);
     }
 

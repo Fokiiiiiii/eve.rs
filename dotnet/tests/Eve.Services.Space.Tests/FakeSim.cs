@@ -21,6 +21,9 @@ internal sealed class FakeSim : ISimulation
     /// <summary>What a warp is answered with.</summary>
     public CommandReply WarpAnswer { get; set; } = new(true, 134351527136350000, null);
 
+    /// <summary>What a jump is answered with.</summary>
+    public CommandReply JumpAnswer { get; set; } = new(true, 0, null, null, 30100034, 50016839);
+
     public Task<string?> EnterAsync(SimEnter enter, CancellationToken cancellationToken = default)
     {
         if (!IsConnected)
@@ -34,7 +37,7 @@ internal sealed class FakeSim : ISimulation
     public Task<CommandReply> CommandAsync(ulong sessionId, byte code, double[] args, CancellationToken cancellationToken = default)
     {
         Heard.Add(new SimCommand(sessionId, code, args));
-        return Task.FromResult(code == SimCommands.WarpTo ? WarpAnswer : DockAnswer);
+        return Task.FromResult(code switch { SimCommands.WarpTo => WarpAnswer, SimCommands.Jump => JumpAnswer, _ => DockAnswer });
     }
 
     public void Leave(ulong sessionId, LeaveWhy why) => Heard.Add(new SimLeave(sessionId, why));

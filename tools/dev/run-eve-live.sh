@@ -76,5 +76,5 @@ if [ -n "${EVE_RUN:-}" ]; then
   cd "$HERE" && bash -c "$EVE_RUN"
 else
   cd "$HERE/tools/headless-client"
-  EVE_LIVE_SERVER=eve.rs EVE_LIVE_STRICT_PASSWORDS=1 .venv/bin/python -m pytest -q tests/test_live.py tests/test_login_to_character.py tests/test_undock.py tests/test_movement.py -rs
+  EVE_LIVE_SERVER=eve.rs EVE_LIVE_STRICT_PASSWORDS=1 .venv/bin/python -m pytest -q tests/test_live.py tests/test_login_to_character.py tests/test_undock.py tests/test_movement.py tests/test_warp.py tests/test_jump.py -rs
 fi

@@ -66,10 +66,44 @@ public sealed partial class CharacterShips
     }
 
     /// <summary>
+    /// The character's active ship, in space, has gone through a stargate: it is in space in the other solar system, and so is the character.
+    /// </summary>
+    public async Task<SpaceTransition> JumpAsync(long characterId, int solarSystemId, int constellationId, int regionId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+
+        if (await characters.GetAsync(characterId, cancellationToken) is not { ShipId: { } shipId } character
+            || await items.GetAsync(shipId, cancellationToken) is not { } ship || ship.OwnerId != characterId)
+        {
+            return SpaceTransition.Refused("NO_SHIP");
+        }
+        if (ship.LocationId != character.SolarSystemId || ship.Flag != InSpaceFlag)
+        {
+            return SpaceTransition.Refused("NOT_IN_SPACE");
+        }
+        await items.MoveAsync(connection, transaction, ship.Id, solarSystemId, InSpaceFlag, cancellationToken);
+        await characters.SetLocationAsync(connection, transaction, characterId, solarSystemId, constellationId, regionId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return SpaceTransition.Done(new SpaceMove(
+            ship with { LocationId = solarSystemId },
+            ship.LocationId,
+            ship.Flag,
+            character with { SolarSystemId = solarSystemId, ConstellationId = constellationId, RegionId = regionId }));
+    }
+
+    /// <summary>
     /// A ship left in space (the simulation was lost, the host restarted) is put back in the hangar of the station the character last was at,
     /// so that a character never wakes up in a ship the simulation does not have. Returns whether anything was moved.
     /// </summary>
-    public async Task<bool> RecoverFromSpaceAsync(long characterId, CancellationToken cancellationToken = default)
+    public Task<bool> RecoverFromSpaceAsync(long characterId, CancellationToken cancellationToken = default) => RecoverFromSpaceAsync(characterId, null, cancellationToken);
+
+    /// <summary>
+    /// As <see cref="RecoverFromSpaceAsync(long, CancellationToken)"/>, and the character is put in the solar system of that station too when
+    /// <paramref name="placeOf"/> says where it is (a ship that has jumped left the system its character docked in last).
+    /// </summary>
+    public async Task<bool> RecoverFromSpaceAsync(long characterId, Func<long, (int SolarSystemId, int ConstellationId, int RegionId)?>? placeOf, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -82,6 +116,10 @@ public sealed partial class CharacterShips
             return false;
         }
         await items.MoveAsync(connection, transaction, ship.Id, character.StationId, ItemFlags.Hangar, cancellationToken);
+        if (placeOf?.Invoke(character.StationId) is { } place && place.SolarSystemId != character.SolarSystemId)
+        {
+            await characters.SetLocationAsync(connection, transaction, characterId, place.SolarSystemId, place.ConstellationId, place.RegionId, cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
         return true;
     }

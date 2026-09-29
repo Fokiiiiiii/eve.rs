@@ -191,6 +191,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     var wallets = new PgWalletStore(source, walletSchema);
     var modules = new PgModuleStateStore(source, fittingSchema);
     var stations = await StationCatalog.LoadAsync(sde);
+    var solarSystems = await SolarSystemCatalog.LoadAsync(sde);
     var dogma = await DogmaStatic.LoadAsync(sde);
     var omega = new OmegaLicenses(new SubscriptionSettings(), new NoOmegaAccounts(), now);
     var training = new CharacterTraining(
@@ -218,7 +219,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         var socket = Env("EVE_SIM_SOCKET", "/tmp/eve-sim.sock");
         sim = SimClient.ToUnixSocket(socket, message => Console.Error.WriteLine($"eve-host: {message}"));
         sim.Start();
-        spaceSessions = new SpaceSessions(sim, ships, dogma, stations, now, message => Console.Error.WriteLine($"eve-host: space: {message}"));
+        spaceSessions = new SpaceSessions(sim, ships, dogma, stations, solarSystems, now, message => Console.Error.WriteLine($"eve-host: space: {message}"));
         Console.Error.WriteLine($"eve-host: the space simulation is expected at {socket}");
     }
     IReadOnlyList<IService> services =

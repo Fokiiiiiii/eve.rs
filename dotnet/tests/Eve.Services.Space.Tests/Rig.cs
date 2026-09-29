@@ -44,7 +44,7 @@ internal sealed class Rig : IAsyncDisposable
 
     private readonly string[] _schemas;
 
-    private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, StationCatalog stations, PgModuleStateStore modules, TimeSpan protection)
+    private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, StationCatalog stations, SolarSystemCatalog systems, PgModuleStateStore modules, TimeSpan protection, TimeSpan jumpCloak)
     {
         Source = source;
         _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}"];
@@ -54,8 +54,9 @@ internal sealed class Rig : IAsyncDisposable
         Statics = statics;
         Creation = creation;
         Modules = modules;
+        Stations = stations;
         Ships = new CharacterShips(source, statics, Characters, Items, Skills, modules);
-        Space = new SpaceSessions(Sim, Ships, statics, stations, () => ClockMs, Log.Add, protection) { Registry = Registry };
+        Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => ClockMs, Log.Add, protection, jumpCloak) { Registry = Registry };
         Ship = new ShipService(Space, () => ClockMs);
         Beyonce = new BeyonceService(Space, () => ClockMs);
         Registry.Register(Ship);
@@ -63,6 +64,8 @@ internal sealed class Rig : IAsyncDisposable
     }
 
     public FakeSim Sim { get; } = new();
+
+    public StationCatalog Stations { get; private set; } = null!;
 
     public ServiceRegistry Registry { get; } = new();
 
@@ -91,7 +94,7 @@ internal sealed class Rig : IAsyncDisposable
     public BeyonceService Beyonce { get; }
 
     /// <param name="protection">How long a ship is protected after it undocks (never, unless a test wants the end of it).</param>
-    public static async Task<Rig> CreateAsync(TimeSpan? protection = null)
+    public static async Task<Rig> CreateAsync(TimeSpan? protection = null, TimeSpan? jumpCloak = null)
     {
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
@@ -110,7 +113,7 @@ internal sealed class Rig : IAsyncDisposable
         await PgModuleStateStore.MigrateAsync(source, $"pf_{suffix}");
         var creation = new CharacterCreation(
             source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), await CreationCatalog.LoadAsync(sde, Station), modules);
-        return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation, await StationCatalog.LoadAsync(sde), modules, protection ?? Timeout.InfiniteTimeSpan);
+        return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation, await StationCatalog.LoadAsync(sde), await SolarSystemCatalog.LoadAsync(sde), modules, protection ?? Timeout.InfiniteTimeSpan, jumpCloak ?? Timeout.InfiniteTimeSpan);
     }
 
     /// <summary>A new character (Caldari), in its rookie ship in the station.</summary>
@@ -129,6 +132,8 @@ internal sealed class Rig : IAsyncDisposable
         session.Set("stationid", new PyInt(character.StationId));
         session.Set("stationid2", new PyInt(character.StationId));
         session.Set("solarsystemid2", new PyInt(character.SolarSystemId));
+        session.Set("constellationid", new PyInt(character.ConstellationId));
+        session.Set("regionid", new PyInt(character.RegionId));
         session.Set("locationid", new PyInt(character.StationId));
         session.Set("shipid", new PyLong(created.ShipId));
         return session;

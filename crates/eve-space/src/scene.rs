@@ -10,12 +10,13 @@ use eve_destiny::Vec3;
 use eve_marshal::Value;
 
 use crate::flight::{Flight, Milestone};
+use crate::gate;
 use crate::motion::{self, Target};
 use crate::payload;
 use crate::ship::{Course, Ship, ShipSpec};
-use crate::warp;
-use crate::wire::{filetime, id, int, real, tuple, vector};
-use crate::world::{BodyKind, SolarSystem};
+use crate::warp::{self, PythonRandom};
+use crate::wire::{filetime, id, int, real, text, tuple, vector};
+use crate::world::{BodyKind, Detail, SolarSystem};
 
 /// The host's name for a player's connection.
 pub type SessionId = u64;
@@ -28,6 +29,9 @@ const UNIX_EPOCH_SECONDS: i64 = 11_644_473_600;
 const DOCKING_DELAY: i64 = 4 * TICKS_PER_SECOND;
 /// How close (from surface to surface) a ship has to be to dock.
 const DOCKING_RANGE: f64 = 2_500.0;
+/// How long after a jump was accepted the ship leaves for the other system at the soonest, and how long after the jump-out effect begins.
+const JUMP_DELAY: i64 = 4 * TICKS_PER_SECOND;
+const JUMP_EFFECT_DELAY: i64 = 3 * TICKS_PER_SECOND;
 /// How far ahead of the clock a stamp may be sent (the client holds updates until their stamp).
 const MAX_STAMP_LEAD: u32 = 2;
 /// How far from the station's centre a ship is put when the table of undock points does not know the station's type, as a share of the
@@ -63,6 +67,11 @@ pub enum Command {
         target_id: i64,
         range: f64,
     },
+    /// Jump through a stargate; `destination_gate` is the gate the client says it leads to (0 when it does not say).
+    Jump {
+        gate_id: i64,
+        destination_gate: i64,
+    },
 }
 
 impl Command {
@@ -77,6 +86,7 @@ impl Command {
             Self::Orbit { .. } => 6,
             Self::AlignTo { .. } => 7,
             Self::WarpTo { .. } => 8,
+            Self::Jump { .. } => 9,
         }
     }
 }
@@ -98,6 +108,9 @@ pub enum Out {
     Accepted { session: SessionId, command: u8, at: i64 },
     /// A `Dock` could not be done from here: the ship now approaches the station, `distance` metres off its surface.
     Approaching { session: SessionId, command: u8, distance: f64 },
+    /// A `Jump` was accepted: the ship's jump-out effect has begun and it will be in `destination_system` a few seconds on (the host is then told
+    /// with a `Jumped`).
+    Jumping { session: SessionId, command: u8, destination_system: i32, destination_gate: i64 },
     /// The ship has docked: the host moves the character into the station.
     Docked { session: SessionId, station_id: i64 },
     /// A command the scene cannot do.
@@ -125,6 +138,29 @@ struct Pilot {
     docking: Option<PendingDock>,
     /// The warp the ship is in, from the command until it is at rest again.
     flight: Option<Flight>,
+    /// The jump the ship has begun, until it leaves for the other system.
+    jump: Option<PendingJump>,
+    /// The ship came through a gate (it is bound differently from one that undocked).
+    jumped_in: bool,
+}
+
+#[derive(Debug, Clone)]
+struct PendingJump {
+    gate_id: i64,
+    destination_system: i32,
+    destination_gate: i64,
+    leaves_at: i64,
+}
+
+/// A ship whose jump is due: it has left the scene it was in and is to appear at the gate it leads to.
+#[derive(Debug, Clone)]
+pub struct Traveller {
+    pub session: SessionId,
+    pub from_system: i32,
+    pub from_gate: i64,
+    pub to_system: i32,
+    pub to_gate: i64,
+    pilot: Pilot,
 }
 
 /// One solar system with the ships in it.
@@ -205,7 +241,10 @@ impl Scene {
             course: Course::Goto,
             spec,
         };
-        self.pilots.insert(session, Pilot { ship, settled_at: now, docking: None, flight: None });
+        self.pilots.insert(
+            session,
+            Pilot { ship, settled_at: now, docking: None, flight: None, jump: None, jumped_in: false },
+        );
         Ok(())
     }
 
@@ -235,46 +274,42 @@ impl Scene {
 
         let Ok(added) = payload::add_ship(first, ship, now) else { return Vec::new() };
         let Ok(state) = payload::set_state(second, &system, ship, now) else { return Vec::new() };
-        let told = vec![
+        let update = |actions: Vec<Value>| {
+            Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false))
+        };
+        let mut told = vec![
             Self::notify(session, "OnSetTimeDilation", vec![int(1), int(1), int(100_000_000)]),
             Self::notify(session, "DoSimClockRebase", vec![tuple([filetime(now), filetime(now)])]),
-            Self::notify(session, "DoDestinyUpdate", payload::destiny_update([added], true)),
-            Self::notify(
-                session,
-                "DoDestinyUpdate",
-                payload::destiny_update(
-                    [
-                        payload::uncloak(first, ship.spec.ship_id),
-                        payload::action(
-                            first,
-                            "SetBallPosition",
-                            with_id(&ship_id, vector(ship.position.x, ship.position.y, ship.position.z)),
-                        ),
-                        payload::action(first, "SetBallMassive", [ship_id.clone(), int(0)]),
-                        payload::action(first, "SetBallMass", [ship_id.clone(), real(ship.spec.mass)]),
-                        payload::action(
-                            first,
-                            "SetBallVelocity",
-                            with_id(&ship_id, vector(ship.velocity.x, ship.velocity.y, ship.velocity.z)),
-                        ),
-                        heading(first),
-                    ],
-                    false,
-                ),
-            ),
-            Self::notify(session, "DoDestinyUpdate", payload::destiny_update([state], false)),
-            Self::notify(
-                session,
-                "DoDestinyUpdate",
-                payload::destiny_update(
-                    [
-                        payload::action(second, "SetBallAgility", [ship_id.clone(), real(ship.spec.agility)]),
-                        payload::action(second, "SetMaxSpeed", [ship_id, real(ship.spec.max_velocity)]),
-                    ],
-                    false,
-                ),
-            ),
+            // the client waits for the ship of an undock; a ship that came through a gate is not waited for
+            Self::notify(session, "DoDestinyUpdate", payload::destiny_update([added], !pilot.jumped_in)),
         ];
+        if !pilot.jumped_in {
+            // a ship that undocked is put in motion as it is bound; one that came through a gate arrives at rest
+            told.push(update(vec![
+                payload::uncloak(first, ship.spec.ship_id),
+                payload::action(
+                    first,
+                    "SetBallPosition",
+                    with_id(&ship_id, vector(ship.position.x, ship.position.y, ship.position.z)),
+                ),
+                payload::action(first, "SetBallMassive", [ship_id.clone(), int(0)]),
+                payload::action(first, "SetBallMass", [ship_id.clone(), real(ship.spec.mass)]),
+                payload::action(
+                    first,
+                    "SetBallVelocity",
+                    with_id(&ship_id, vector(ship.velocity.x, ship.velocity.y, ship.velocity.z)),
+                ),
+                heading(first),
+            ]));
+        }
+        told.push(update(vec![state]));
+        let mut numbers =
+            vec![payload::action(second, "SetBallAgility", [ship_id.clone(), real(ship.spec.agility)])];
+        if pilot.jumped_in {
+            numbers.push(payload::action(second, "SetBallMass", [ship_id.clone(), real(ship.spec.mass)]));
+        }
+        numbers.push(payload::action(second, "SetMaxSpeed", [ship_id, real(ship.spec.max_velocity)]));
+        told.push(update(numbers));
         self.with_backlog(told)
     }
 
@@ -307,6 +342,7 @@ impl Scene {
         let told = match command {
             Command::Dock { station_id } => self.dock(session, station_id, now),
             Command::WarpTo { target_id, range } => self.warp_to(session, target_id, range, now),
+            Command::Jump { gate_id, destination_gate } => self.jump(session, gate_id, destination_gate, now),
             other => self.steer_pilot(session, other, now),
         };
         self.with_backlog(told)
@@ -375,6 +411,9 @@ impl Scene {
         if pilot.docking.is_some() {
             return refused("DOCKING");
         }
+        if pilot.jump.is_some() {
+            return refused("JUMPING");
+        }
         if pilot.flight.is_some() {
             return refused("IN_WARP");
         }
@@ -382,6 +421,10 @@ impl Scene {
         let ship = &pilot.ship;
         let (raw, stop) = match warp::warp_in_point(body) {
             Some(point) => (point, range.max(0.0)),
+            None if body.kind == BodyKind::Stargate => {
+                let mut random = PythonRandom::new(seed_of(ship.spec.ship_id, target_id, now));
+                gate::warp_landing(body, ship.position, ship.direction, range, &mut random)
+            }
             None => (body.position, warp::stop_distance(body, ship.spec.radius, range)),
         };
         let toward = motion::unit(Vec3::new(
@@ -459,6 +502,10 @@ impl Scene {
             // a ship that is docking follows no orders
             return vec![Out::Refused { session, command: code, reason: "DOCKING" }];
         }
+        if pilot.jump.is_some() {
+            // nor does one that has gone into a gate
+            return vec![Out::Refused { session, command: code, reason: "JUMPING" }];
+        }
         if pilot.flight.is_some() {
             // a ship in warp, or lining up for it, follows none either
             return vec![Out::Refused { session, command: code, reason: "IN_WARP" }];
@@ -491,6 +538,9 @@ impl Scene {
         let pilot = self.pilots.get(&session).expect("the caller checked");
         if let Some(pending) = pilot.docking.as_ref().filter(|p| p.station_id == station_id) {
             return vec![Out::Accepted { session, command: code, at: pending.accepted_at }];
+        }
+        if pilot.jump.is_some() {
+            return vec![Out::Refused { session, command: code, reason: "JUMPING" }];
         }
         if pilot.flight.is_some() {
             return vec![Out::Refused { session, command: code, reason: "IN_WARP" }];
@@ -538,6 +588,149 @@ impl Scene {
         out.retain(|o| !matches!(o, Out::Accepted { .. }));
         out.push(Out::Approaching { session, command: code, distance });
         out
+    }
+
+    /// `CmdStargateJump`: the ship stops where it is and the jump-out effect begins. The ship leaves for the other system a few seconds on
+    /// (the later of four seconds from now and three from the effect's stamp, the reference's rule), which [`Scene::due_jumps`] finds.
+    fn jump(&mut self, session: SessionId, gate_id: i64, destination_gate: i64, now: i64) -> Vec<Out> {
+        let code = Command::Jump { gate_id, destination_gate }.code();
+        let refused = |reason: &'static str| vec![Out::Refused { session, command: code, reason }];
+        let system = Arc::clone(&self.system);
+        let Some(pilot) = self.pilots.get(&session) else { return refused("NO_SHIP_IN_SPACE") };
+        if pilot.jump.is_some() {
+            return refused("STARGATE_JUMP_IN_PROGRESS");
+        }
+        if pilot.docking.is_some() {
+            return refused("DOCKING");
+        }
+        if pilot.flight.is_some() {
+            return refused("IN_WARP");
+        }
+        let Some((gate, Detail::Stargate { destination_system, destination_gate: leads_to, .. })) =
+            system.body(gate_id).filter(|b| b.kind == BodyKind::Stargate).map(|b| (b, &b.detail))
+        else {
+            return refused("STARGATE_NOT_FOUND");
+        };
+        if destination_gate != 0 && destination_gate != *leads_to {
+            return refused("STARGATE_DESTINATION_MISMATCH");
+        }
+        if gate::surface_distance(gate, pilot.ship.position, pilot.ship.spec.radius) > gate::JUMP_RANGE {
+            return refused("TOO_FAR_FROM_STARGATE");
+        }
+
+        let stamp = self.next_stamp(now);
+        let boundary = if stamp > stamp_at(now) {
+            (i64::from(stamp) + UNIX_EPOCH_SECONDS) * TICKS_PER_SECOND
+        } else {
+            now
+        };
+        let leaves_at = (now + JUMP_DELAY).max(boundary + JUMP_EFFECT_DELAY);
+        let pilot = self.pilots.get_mut(&session).expect("checked above");
+        let ship = &mut pilot.ship;
+        if !matches!(ship.course, Course::Stop) || ship.speed_fraction > 0.0 || speed_of(ship.velocity) > 0.5
+        {
+            ship.course = Course::Stop;
+            ship.speed_fraction = 0.0;
+            ship.velocity = Vec3::ZERO;
+        }
+        pilot.jump = Some(PendingJump {
+            gate_id,
+            destination_system: *destination_system,
+            destination_gate: *leads_to,
+            leaves_at,
+        });
+        let ship_id = id(ship.spec.ship_id);
+        let actions = [
+            payload::action(
+                stamp,
+                "OnSpecialFX",
+                [
+                    ship_id.clone(),
+                    Value::None,
+                    Value::None,
+                    id(gate_id),
+                    Value::None,
+                    text("effects.JumpOut"),
+                    int(0),
+                    int(1),
+                    int(0),
+                    int(-1),
+                    Value::None,
+                    Value::None,
+                    int(0),
+                    tuple([int(i64::from(*destination_system)), Value::None]),
+                ],
+            ),
+            payload::action(stamp, "Stop", [ship_id]),
+        ];
+        vec![
+            Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false)),
+            Out::Jumping {
+                session,
+                command: code,
+                destination_system: *destination_system,
+                destination_gate: *leads_to,
+            },
+        ]
+    }
+
+    /// The ships whose jump is due at `now`. Each has left this scene; the caller puts it in the scene of the system it is going to
+    /// ([`Scene::arrive`]), or back ([`Scene::restore`]) when that cannot be done.
+    pub fn due_jumps(&mut self, now: i64) -> Vec<Traveller> {
+        let due: Vec<SessionId> = self
+            .pilots
+            .iter()
+            .filter(|(_, pilot)| pilot.jump.as_ref().is_some_and(|jump| now >= jump.leaves_at))
+            .map(|(session, _)| *session)
+            .collect();
+        let mut travellers = Vec::new();
+        for session in due {
+            self.settle_pilot(session, now);
+            let Some(mut pilot) = self.pilots.remove(&session) else { continue };
+            let Some(jump) = pilot.jump.take() else { continue };
+            travellers.push(Traveller {
+                session,
+                from_system: self.system.id,
+                from_gate: jump.gate_id,
+                to_system: jump.destination_system,
+                to_gate: jump.destination_gate,
+                pilot,
+            });
+        }
+        travellers
+    }
+
+    /// A ship that has jumped appears in front of the gate it came out of, at rest, and is bound like any ship that arrives (the client binds
+    /// the ballpark of the new system when its session has changed). Gives the ship back when this system has no such gate.
+    pub fn arrive(&mut self, traveller: Traveller, now: i64) -> Result<(), Box<Traveller>> {
+        let system = Arc::clone(&self.system);
+        let Some(gate) = system.body(traveller.to_gate).filter(|b| b.kind == BodyKind::Stargate) else {
+            return Err(Box::new(traveller));
+        };
+        if self.pilots.contains_key(&traveller.session) {
+            return Err(Box::new(traveller));
+        }
+        let Traveller { session, mut pilot, .. } = traveller;
+        let mut random = PythonRandom::new(seed_of(pilot.ship.spec.ship_id, gate.id, now));
+        let (position, direction) = gate::arrival(gate, pilot.ship.spec.radius, &mut random);
+        pilot.ship.position = position;
+        pilot.ship.direction = direction;
+        pilot.ship.velocity = Vec3::ZERO;
+        pilot.ship.speed_fraction = 0.0;
+        pilot.ship.course = Course::Stop;
+        pilot.settled_at = now;
+        pilot.docking = None;
+        pilot.flight = None;
+        pilot.jump = None;
+        pilot.jumped_in = true;
+        self.pilots.insert(session, pilot);
+        Ok(())
+    }
+
+    /// A ship whose jump could not be finished goes on in the scene it left.
+    pub fn restore(&mut self, traveller: Traveller) {
+        let Traveller { session, pilot, .. } = traveller;
+        self.pilots.insert(session, pilot);
     }
 
     fn notify_charid(session: SessionId, name: &'static str, args: Vec<Value>) -> Out {
@@ -604,6 +797,12 @@ impl Scene {
             .collect();
         self.with_backlog(docked)
     }
+}
+
+/// The seed of the draws that pick a point for a ship at a gate: what and where and when, so the same calls at the same times give the same
+/// points (the reference draws them from the clock).
+fn seed_of(ship_id: i64, gate_id: i64, now: i64) -> u64 {
+    (ship_id as u64).rotate_left(11) ^ (gate_id as u64).rotate_left(37) ^ (now as u64)
 }
 
 fn with_id(ship_id: &Value, rest: [Value; 3]) -> Vec<Value> {
@@ -771,7 +970,9 @@ fn steer(ship: &mut Ship, system: &SolarSystem, command: Command) -> Steering {
             Steering::Actions(actions)
         }
         Command::Stop => stop(ship),
-        Command::Dock { .. } | Command::WarpTo { .. } => Steering::Refused("NOT_A_MOVEMENT"),
+        Command::Dock { .. } | Command::WarpTo { .. } | Command::Jump { .. } => {
+            Steering::Refused("NOT_A_MOVEMENT")
+        }
         Command::FollowBall { target_id, range } => {
             if !range.is_finite() {
                 return Steering::Refused("BAD_RANGE");
@@ -1655,5 +1856,372 @@ pub(crate) mod tests {
             out
         };
         assert_eq!(run(), run());
+    }
+
+    // ── stargates ────────────────────────────────────────────────────────────
+
+    pub(crate) const NEAR_GATE: i64 = 50_000_001;
+    pub(crate) const FAR_GATE: i64 = 50_000_003;
+    pub(crate) const ARRIVAL_GATE: i64 = 50_000_002;
+    pub(crate) const OTHER_SYSTEM: i32 = 30_000_002;
+
+    fn gate(id: i64, position: Vec3, radius: f64, to: (i32, i64), facing: Option<[f64; 3]>) -> Body {
+        Body {
+            id,
+            type_id: 16_922,
+            group_id: 10,
+            category_id: 2,
+            owner_id: 500_006,
+            name: format!("Stargate ({})", to.0),
+            kind: BodyKind::Stargate,
+            position,
+            radius,
+            graphic_id: None,
+            detail: Detail::Stargate {
+                destination_system: to.0,
+                destination_gate: to.1,
+                destination_name: "Elsewhere".to_string(),
+                destination_security: 0.5,
+                destination_faction: None,
+                hazardous: false,
+                facing,
+                heading: facing.map(|_| Vec3::new(0.0, 0.0, -1.0)),
+            },
+        }
+    }
+
+    /// The test system with a gate a few kilometres from the station and another a very long way off, and the system they lead to.
+    pub(crate) fn gated_systems() -> (SolarSystem, SolarSystem) {
+        let mut here = (*system()).clone();
+        // a few kilometres from where a ship comes out of the station
+        let mut undocked = Scene::new(system());
+        undocked.undock(SESSION, spec(), STATION, NOON).unwrap();
+        let out = undocked.ship(SESSION, NOON).unwrap().position;
+        here.bodies.push(gate(
+            NEAR_GATE,
+            Vec3::new(out.x + 8_000.0, out.y, out.z),
+            6_000.0,
+            (OTHER_SYSTEM, ARRIVAL_GATE),
+            None,
+        ));
+        here.bodies.push(gate(
+            FAR_GATE,
+            Vec3::new(9.0e9, 0.0, 2.0e9),
+            12_000.0,
+            (OTHER_SYSTEM, 50_000_004),
+            None,
+        ));
+        let mut there = (*system()).clone();
+        there.id = OTHER_SYSTEM;
+        there.name = "Elsewhere".to_string();
+        there.bodies = vec![
+            gate(
+                ARRIVAL_GATE,
+                Vec3::new(2.0e9, 1.0e8, 5.0e8),
+                10_000.0,
+                (30_000_001, NEAR_GATE),
+                Some([180.0, 0.0, 0.0]),
+            ),
+            gate(50_000_004, Vec3::new(-3.0e9, 0.0, 4.0e9), 10_000.0, (30_000_001, FAR_GATE), None),
+        ];
+        (here, there)
+    }
+
+    fn scene_by_a_gate() -> Scene {
+        let mut scene = Scene::new(Arc::new(gated_systems().0));
+        scene.undock(SESSION, spec(), STATION, NOON).unwrap();
+        scene
+    }
+
+    fn jump(gate_id: i64, leads_to: i64) -> Command {
+        Command::Jump { gate_id, destination_gate: leads_to }
+    }
+
+    fn refusal(out: &[Out]) -> &'static str {
+        match out {
+            [Out::Refused { command: 9, reason, .. }] => reason,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_jump_needs_a_gate_that_leads_where_the_client_says_and_a_ship_within_reach_of_it() {
+        let mut scene = scene_by_a_gate();
+        assert_eq!(refusal(&scene.command(SESSION, jump(42, 0), NOON)), "STARGATE_NOT_FOUND");
+        assert_eq!(
+            refusal(&scene.command(SESSION, jump(STATION, 0), NOON)),
+            "STARGATE_NOT_FOUND",
+            "a station is not a gate"
+        );
+        assert_eq!(
+            refusal(&scene.command(SESSION, jump(NEAR_GATE, 50_000_009), NOON)),
+            "STARGATE_DESTINATION_MISMATCH"
+        );
+        assert_eq!(refusal(&scene.command(SESSION, jump(FAR_GATE, 0), NOON)), "TOO_FAR_FROM_STARGATE");
+        assert_eq!(
+            refusal(&Scene::new(system()).command(SESSION, jump(NEAR_GATE, 0), NOON)),
+            "NO_SHIP_IN_SPACE"
+        );
+        // none of it touched the ship
+        assert!(matches!(scene.ship(SESSION, NOON).unwrap().course, Course::Goto));
+    }
+
+    #[test]
+    fn a_ship_may_jump_from_two_and_a_half_kilometres_off_the_gates_surface_and_not_from_further() {
+        let at = |gap: f64| {
+            let mut scene = scene_by_a_gate();
+            let gate = scene.system().body(NEAR_GATE).unwrap().clone();
+            let pilot = scene.pilots.get_mut(&SESSION).unwrap();
+            let offset = gate.radius + pilot.ship.spec.radius + gap;
+            pilot.ship.position = Vec3::new(gate.position.x, gate.position.y + offset, gate.position.z);
+            scene.command(SESSION, jump(NEAR_GATE, 0), NOON)
+        };
+        assert!(matches!(at(2_499.0)[1], Out::Jumping { .. }));
+        assert!(matches!(at(2_500.0)[1], Out::Jumping { .. }), "the range itself is in");
+        assert_eq!(refusal(&at(2_501.0)), "TOO_FAR_FROM_STARGATE");
+    }
+
+    #[test]
+    fn a_jump_stops_the_ship_and_tells_the_client_the_jump_out_effect_and_the_stop_in_one_update() {
+        let mut scene = scene_by_a_gate();
+        let out = scene.command(SESSION, jump(NEAR_GATE, ARRIVAL_GATE), NOON);
+        assert_eq!(out.len(), 2);
+        assert_eq!(action_names(&out[0]), ["OnSpecialFX", "Stop"]);
+        let stamps = stamps(&out[0]);
+        assert_eq!(stamps[0], stamps[1], "at one stamp, as the reference sends them");
+        let (_, fx) = &actions_of(&out[0])[0];
+        assert_eq!(
+            fx[..],
+            [
+                Value::None,
+                Value::None,
+                Value::Int(NEAR_GATE),
+                Value::None,
+                Value::Str("effects.JumpOut".into()),
+                Value::Int(0),
+                Value::Int(1),
+                Value::Int(0),
+                Value::Int(-1),
+                Value::None,
+                Value::None,
+                Value::Int(0),
+                Value::Tuple(vec![Value::Int(i64::from(OTHER_SYSTEM)), Value::None]),
+            ]
+        );
+        assert_eq!(
+            out[1],
+            Out::Jumping {
+                session: SESSION,
+                command: 9,
+                destination_system: OTHER_SYSTEM,
+                destination_gate: ARRIVAL_GATE
+            }
+        );
+        let ship = scene.ship(SESSION, NOON + seconds(1)).unwrap();
+        assert_eq!(
+            (ship.course, speed(ship)),
+            (Course::Stop, 0.0),
+            "a ship that went in flying stands still"
+        );
+    }
+
+    #[test]
+    fn a_ship_that_is_told_the_gate_only_is_taken_too() {
+        let mut scene = scene_by_a_gate();
+        let out = scene.command(SESSION, jump(NEAR_GATE, 0), NOON);
+        assert!(matches!(out[1], Out::Jumping { destination_gate: ARRIVAL_GATE, .. }));
+    }
+
+    #[test]
+    fn the_ship_leaves_four_seconds_after_the_command_and_not_before() {
+        let mut scene = scene_by_a_gate();
+        scene.command(SESSION, jump(NEAR_GATE, 0), NOON);
+        assert!(scene.due_jumps(NOON + seconds(3)).is_empty());
+        assert!(scene.due_jumps(NOON + seconds(4) - 1).is_empty());
+        let gone = scene.due_jumps(NOON + seconds(4));
+        assert_eq!(gone.len(), 1);
+        let traveller = &gone[0];
+        assert_eq!(
+            (
+                traveller.session,
+                traveller.from_system,
+                traveller.from_gate,
+                traveller.to_system,
+                traveller.to_gate
+            ),
+            (SESSION, 30_000_001, NEAR_GATE, OTHER_SYSTEM, ARRIVAL_GATE)
+        );
+        assert!(scene.is_empty(), "it is no longer here");
+        assert!(scene.due_jumps(NOON + seconds(9)).is_empty(), "and goes once");
+    }
+
+    #[test]
+    fn the_effects_stamp_can_hold_the_ship_back_beyond_the_four_seconds() {
+        // stamps run at most two ahead of the clock: when the effect is stamped ahead, the ship leaves three seconds after that stamp begins
+        let mut scene = scene_by_a_gate();
+        scene.next_stamp = stamp_at(NOON) + 2; // the update for the effect will be the last that may be sent ahead of the clock
+        let out = scene.command(SESSION, jump(NEAR_GATE, 0), NOON);
+        let stamp = stamps(&out[0])[0];
+        assert_eq!(stamp, i64::from(stamp_at(NOON)) + 2);
+        let leaves = (stamp + UNIX_EPOCH_SECONDS + 3) * TICKS_PER_SECOND;
+        assert!(leaves > NOON + seconds(4), "a later moment than the four seconds");
+        assert!(scene.due_jumps(leaves - 1).is_empty());
+        assert_eq!(scene.due_jumps(leaves).len(), 1);
+    }
+
+    #[test]
+    fn a_ship_that_has_gone_into_a_gate_takes_no_orders_and_cannot_jump_again() {
+        let mut scene = scene_by_a_gate();
+        scene.command(SESSION, jump(NEAR_GATE, 0), NOON);
+        assert_eq!(
+            refusal(&scene.command(SESSION, jump(NEAR_GATE, 0), NOON + seconds(1))),
+            "STARGATE_JUMP_IN_PROGRESS"
+        );
+        for command in [
+            Command::SetSpeedFraction(1.0),
+            Command::Stop,
+            Command::Dock { station_id: STATION },
+            Command::WarpTo { target_id: FAR_GATE, range: 0.0 },
+        ] {
+            let out = scene.command(SESSION, command, NOON + seconds(1));
+            assert_eq!(
+                out,
+                [Out::Refused { session: SESSION, command: command.code(), reason: "JUMPING" }],
+                "{command:?}"
+            );
+        }
+    }
+
+    fn other_scene() -> Scene {
+        Scene::new(Arc::new(gated_systems().1))
+    }
+
+    fn jumped(scene: &mut Scene) -> Traveller {
+        scene.command(SESSION, jump(NEAR_GATE, 0), NOON);
+        scene.due_jumps(NOON + seconds(4)).pop().unwrap()
+    }
+
+    #[test]
+    fn a_ship_appears_in_front_of_the_gate_it_comes_out_of_at_rest() {
+        let mut scene = scene_by_a_gate();
+        let traveller = jumped(&mut scene);
+        let mut there = other_scene();
+        there.arrive(traveller, NOON + seconds(5)).unwrap();
+        let gate = there.system().body(ARRIVAL_GATE).unwrap().clone();
+        let ship = there.ship(SESSION, NOON + seconds(5)).unwrap().clone();
+        assert_eq!((ship.course, ship.velocity, ship.speed_fraction), (Course::Stop, Vec3::ZERO, 0.0));
+        let apart = ((ship.position.x - gate.position.x).powi(2)
+            + (ship.position.y - gate.position.y).powi(2)
+            + (ship.position.z - gate.position.z).powi(2))
+        .sqrt();
+        assert!((apart - (10_000.0 + 47.0 + 12_000.0)).abs() < 1e-6, "{apart} m from the gate's centre");
+        let facing = crate::gate::forward(&gate);
+        let along = ((ship.position.x - gate.position.x) * facing.x
+            + (ship.position.y - gate.position.y) * facing.y
+            + (ship.position.z - gate.position.z) * facing.z)
+            / apart;
+        assert!(
+            along >= (std::f64::consts::PI / 4.0).cos() - 1e-9,
+            "in the cone in front of the gate: {along}"
+        );
+        let away = motion::unit(Vec3::new(
+            ship.position.x - gate.position.x,
+            ship.position.y - gate.position.y,
+            ship.position.z - gate.position.z,
+        ))
+        .unwrap();
+        let alike = ship.direction.x * away.x + ship.direction.y * away.y + ship.direction.z * away.z;
+        assert!(alike > 1.0 - 1e-9, "the ship faces away from the gate: {alike}");
+    }
+
+    #[test]
+    fn binding_a_ship_that_came_through_a_gate_sends_the_ship_the_state_and_the_numbers_and_no_undock_priming()
+     {
+        let mut scene = scene_by_a_gate();
+        let traveller = jumped(&mut scene);
+        let mut there = other_scene();
+        there.arrive(traveller, NOON + seconds(5)).unwrap();
+        let bound = there.bind(SESSION, NOON + seconds(6));
+        let names: Vec<Vec<String>> = bound.iter().map(action_names).collect();
+        let notifications: Vec<&str> = bound
+            .iter()
+            .map(|o| match o {
+                Out::Notify { name, .. } => *name,
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            notifications,
+            [
+                "OnSetTimeDilation",
+                "DoSimClockRebase",
+                "DoDestinyUpdate",
+                "DoDestinyUpdate",
+                "DoDestinyUpdate"
+            ]
+        );
+        assert_eq!(names[2], ["AddBalls2"]);
+        assert_eq!(names[3], ["SetState"]);
+        assert_eq!(names[4], ["SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
+        // the ship's own ball says it is stopped
+        assert_eq!(there.ship(SESSION, NOON + seconds(6)).unwrap().course, Course::Stop);
+    }
+
+    #[test]
+    fn a_ship_sent_to_a_system_without_the_gate_is_given_back_and_goes_on_where_it_was() {
+        let mut scene = scene_by_a_gate();
+        let traveller = jumped(&mut scene);
+        // a system that has no gate with that id
+        let mut wrong = Scene::new(system());
+        let back = wrong.arrive(traveller, NOON + seconds(5)).unwrap_err();
+        assert!(wrong.is_empty());
+        scene.restore(*back);
+        let told = scene.command(SESSION, Command::SetSpeedFraction(1.0), NOON + seconds(6));
+        assert!(matches!(told[0], Out::Notify { .. }), "it takes orders again: {told:?}");
+        // and it can try the jump again
+        assert!(matches!(
+            scene.command(SESSION, jump(NEAR_GATE, 0), NOON + seconds(7))[1],
+            Out::Jumping { .. }
+        ));
+    }
+
+    #[test]
+    fn a_warp_to_a_gate_ends_within_jump_range_of_it_and_the_jump_is_accepted() {
+        let mut scene = scene_by_a_gate();
+        scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON);
+        let told =
+            scene.command(SESSION, Command::WarpTo { target_id: FAR_GATE, range: 0.0 }, NOON + seconds(1));
+        assert_eq!(
+            action_names(&told[0]),
+            ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"],
+            "{told:?}"
+        );
+        let mut t = NOON + seconds(1);
+        while t < NOON + seconds(300) {
+            t += 2_500_000;
+            scene.poll(t);
+        }
+        let ship = scene.ship(SESSION, t).unwrap().clone();
+        assert_eq!(ship.course, Course::Stop, "the warp is over");
+        let gate = scene.system().body(FAR_GATE).unwrap();
+        let surface = crate::gate::surface_distance(gate, ship.position, ship.spec.radius);
+        assert!(surface <= crate::gate::JUMP_RANGE, "{surface} m off the gate's surface");
+        let out = scene.command(SESSION, jump(FAR_GATE, 0), t + seconds(1));
+        assert!(matches!(out[1], Out::Jumping { .. }), "{out:?}");
+    }
+
+    #[test]
+    fn a_warp_to_a_gate_with_the_same_calls_ends_at_the_same_point() {
+        let land = || {
+            let mut scene = scene_by_a_gate();
+            scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON);
+            let told = scene.command(
+                SESSION,
+                Command::WarpTo { target_id: FAR_GATE, range: 0.0 },
+                NOON + seconds(1),
+            );
+            actions_of(&told[0])[1].1.clone()
+        };
+        assert_eq!(land(), land());
     }
 }

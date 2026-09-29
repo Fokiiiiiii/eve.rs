@@ -19,10 +19,17 @@ public sealed class SpaceSessions : IDisposable
     /// <summary>How long a ship that has undocked cannot be hurt (the reference's: 30 seconds).</summary>
     public const long UndockInvulnerabilityTicks = 300_000_000;
 
-    /// <summary>How long after an undock the client is told the session change is over (the reference's: 10 seconds).</summary>
+    /// <summary>How long a ship that has come through a stargate is cloaked and cannot be hurt (the reference's: 60 seconds).</summary>
+    public const long JumpCloakTicks = 600_000_000;
+
+    /// <summary>How long after an undock or a jump the client is told the session change is over (the reference's: 10 seconds).</summary>
     private const long SessionChangeCooldownMs = 10_000;
 
-    private sealed class Pilot(ClientSession session, long characterId, long shipId, int solarSystemId, long invulnerableUntil)
+    /// <summary>The queue of a system the client is told of when its pilot jumps there: how many entries it can hold and how long one is kept.</summary>
+    private const int JumpQueueSpace = 1000;
+    private const int JumpQueueTimeoutSeconds = 180;
+
+    private sealed class Pilot(ClientSession session, long characterId, long shipId, int solarSystemId, long invulnerableUntil, long undockedFrom = 0, bool jumpCloak = false)
     {
         public ClientSession Session { get; } = session;
 
@@ -34,6 +41,12 @@ public sealed class SpaceSessions : IDisposable
 
         /// <summary>A FILETIME: until when the ship cannot be hurt, unless a command of its pilot breaks it first.</summary>
         public long InvulnerableUntil { get; } = invulnerableUntil;
+
+        /// <summary>The station the ship undocked from (the reference keeps saying so in the custom info of the ship's item).</summary>
+        public long UndockedFrom { get; } = undockedFrom;
+
+        /// <summary>Whether the protection is the cloak of a ship that has come through a stargate (its end is told with one more notification).</summary>
+        public bool JumpCloak { get; } = jumpCloak;
 
         private int _ended;
 
@@ -52,19 +65,25 @@ public sealed class SpaceSessions : IDisposable
     private readonly CharacterShips _ships;
     private readonly DogmaStatic _statics;
     private readonly StationCatalog _stations;
+    private readonly SolarSystemCatalog _systems;
     private readonly Func<long> _nowUnixMs;
     private readonly Action<string>? _log;
     private readonly ConcurrentDictionary<ulong, Pilot> _pilots = new();
     private readonly TimeSpan _protection;
+    private readonly TimeSpan _jumpCloak;
+    private readonly ConcurrentDictionary<int, ConcurrentDictionary<long, (long FileTime, long ExpiresAtMs)>> _queues = new();
 
     /// <param name="protection">How long a ship that has just undocked is protected if its pilot does not fly it first (the client is told when it ends); <see cref="Timeout.InfiniteTimeSpan"/> for never.</param>
-    public SpaceSessions(ISimulation sim, CharacterShips ships, DogmaStatic statics, StationCatalog stations, Func<long> nowUnixMs, Action<string>? log = null, TimeSpan? protection = null)
+    /// <param name="jumpCloak">How long a ship that has come through a stargate stays cloaked if its pilot does not fly it first.</param>
+    public SpaceSessions(ISimulation sim, CharacterShips ships, DogmaStatic statics, StationCatalog stations, SolarSystemCatalog systems, Func<long> nowUnixMs, Action<string>? log = null, TimeSpan? protection = null, TimeSpan? jumpCloak = null)
     {
         _protection = protection ?? TimeSpan.FromTicks(UndockInvulnerabilityTicks);
+        _jumpCloak = jumpCloak ?? TimeSpan.FromTicks(JumpCloakTicks);
         _sim = sim;
         _ships = ships;
         _statics = statics;
         _stations = stations;
+        _systems = systems;
         _nowUnixMs = nowUnixMs;
         _log = log;
         _sim.Received += OnReceived;
@@ -140,9 +159,9 @@ public sealed class SpaceSessions : IDisposable
         }
 
         var now = FileTimeNow();
-        var pilot = new Pilot(session, characterId, moved.Ship.Id, systemId, now + UndockInvulnerabilityTicks);
+        var pilot = new Pilot(session, characterId, moved.Ship.Id, systemId, now + UndockInvulnerabilityTicks, stationId);
         _pilots[(ulong)session.SessionId] = pilot;
-        session.Closed += () => OnSessionClosed(pilot);
+        session.Closed += () => OnSessionClosed(session);
         pilot.Expiry = new Timer(_ => ProtectionRanOut(pilot), null, _protection, Timeout.InfiniteTimeSpan);
 
         var type = _statics.Type(moved.Ship.TypeId);
@@ -216,6 +235,10 @@ public sealed class SpaceSessions : IDisposable
     {
         if (pilot.End())
         {
+            if (pilot.JumpCloak)
+            {
+                pilot.Session.SendNotification("OnJumpCloakCancelled", "shipid", InventoryWire.Id(pilot.ShipId));
+            }
             pilot.Session.SendNotification("OnInvulnCancelled", "shipid", InventoryWire.Id(pilot.ShipId));
         }
     }
@@ -299,6 +322,79 @@ public sealed class SpaceSessions : IDisposable
         throw Notify("You cannot warp there right now.");
     }
 
+    // ── jumping ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// <c>CmdStargateJump(fromGate, toGate, shipID)</c>: the ship goes into the gate. The client is told the jump-out effect (the simulation's update),
+    /// the queue of the system it goes to, and answers with the bound object and the time it can be used from again; the ship is in the other
+    /// system a few seconds on (<see cref="FinishJumpAsync"/>). What cannot be done is one of the messages the reference tells.
+    /// </summary>
+    public async Task<PyValue> JumpAsync(ClientSession session, long gateId, long toGateId, long shipId, string? boundObjectId, CancellationToken cancellationToken)
+    {
+        if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
+        {
+            throw JumpRefused("NOT_IN_SPACE");
+        }
+        if (shipId > 0 && shipId != pilot.ShipId)
+        {
+            throw JumpRefused("SHIP_ID_MISMATCH");
+        }
+        CommandReply reply;
+        try
+        {
+            reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.Jump, [gateId, toGateId], cancellationToken);
+        }
+        catch (SimUnavailableException error)
+        {
+            _log?.Invoke($"jump of session {session.SessionId}: {error.Message}");
+            throw JumpRefused("SCENE_NOT_FOUND");
+        }
+        if (!reply.Accepted || reply.DestinationSystem is not { } destination)
+        {
+            _log?.Invoke($"jump of session {session.SessionId} through {gateId} refused: {reply.Reason}");
+            throw JumpRefused(reply.Reason);
+        }
+        SendJumpQueueUpdate(session, pilot.CharacterId, destination);
+        return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId), new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + SessionChangeCooldownMs)));
+    }
+
+    /// <summary>The message the client shows for a jump that cannot be done (the reference's mapping of what went wrong).</summary>
+    private static MachoWrappedException JumpRefused(string? reason) => reason switch
+    {
+        "NOT_IN_SPACE" or "NO_SHIP_IN_SPACE" or "SHIP_NOT_FOUND" or "SHIP_ID_MISMATCH" or "WRONG_SOLAR_SYSTEM" => MachoErrors.ThrowUserError("DeniedShipChanged"),
+        "STARGATE_NOT_FOUND" or "STARGATE_DESTINATION_MISMATCH" => MachoErrors.ThrowUserError("TargetingAttemptCancelled"),
+        "TOO_FAR_FROM_STARGATE" => MachoErrors.ThrowUserError("CustomInfo", ("info", Py.Tuple(new PyInt(101), new PyStr("UI/Menusvc/MenuHints/NotWithingMaxJumpDist")))),
+        "STARGATE_NOT_ACTIVE" => MachoErrors.ThrowUserError("CustomInfo", ("info", Py.Tuple(new PyInt(101), new PyStr("UI/GateIcons/GateClosed")))),
+        "STARGATE_JUMP_IN_PROGRESS" => MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Stargate jump already in progress."))),
+        _ => MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("The stargate jump could not be completed."))),
+    };
+
+    /// <summary>
+    /// Tells the client who is queued to jump into a system: the pilots that jumped there in the last three minutes, this one included. The
+    /// queue is the host's, not the simulation's (it is made of characters).
+    /// </summary>
+    private void SendJumpQueueUpdate(ClientSession session, long characterId, int destination)
+    {
+        var nowMs = _nowUnixMs();
+        var queue = _queues.GetOrAdd(destination, _ => new());
+        foreach (var (queued, entry) in queue.ToArray())
+        {
+            if (entry.ExpiresAtMs <= nowMs)
+            {
+                queue.TryRemove(queued, out _);
+            }
+        }
+        queue[characterId] = (FileTimeNow(), nowMs + JumpQueueTimeoutSeconds * 1000L);
+        var entries = queue.ToArray().OrderBy(e => e.Value.FileTime).ThenBy(e => e.Key).ToArray();
+        session.SendNotification(
+            "OnJumpQueueUpdate", "clientID",
+            new PyInt(destination),
+            new PyInt(JumpQueueSpace),
+            Py.Tuple([.. entries.Select(e => InventoryWire.Id(e.Key))]),
+            new PyDict([.. entries.Select(e => new KeyValuePair<PyValue, PyValue>(InventoryWire.Id(e.Key), new PyLong(e.Value.FileTime)))]),
+            new PyInt(JumpQueueTimeoutSeconds));
+    }
+
     /// <summary>The message the client shows when it gives an order to a ship that is in warp.</summary>
     private static void TellShipInWarp(ClientSession session) => session.SendNotification("OnRemoteMessage", "clientID", new PyStr("ShipInWarp"), None);
 
@@ -319,6 +415,9 @@ public sealed class SpaceSessions : IDisposable
                 case SimDocked docked when _pilots.TryGetValue(docked.SessionId, out var pilot):
                     _ = Task.Run(() => FinishDockingAsync(pilot, docked.StationId));
                     break;
+                case SimJumped jumped when _pilots.TryGetValue(jumped.SessionId, out var jumper):
+                    _ = Task.Run(() => FinishJumpAsync(jumper, jumped));
+                    break;
                 case SimRefused { Command: SimCommands.Stop, Reason: "IN_WARP" } inWarp when _pilots.TryGetValue(inWarp.SessionId, out var warping):
                     TellShipInWarp(warping.Session);
                     break;
@@ -337,6 +436,56 @@ public sealed class SpaceSessions : IDisposable
     {
         var args = MarshalCodec.Decode(notify.Args.ToArray()) is PyTuple tuple ? tuple.Items : [];
         session.SendNotification(notify.Name, notify.IdType, [.. args]);
+    }
+
+    // ── the end of a jump ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The ship has come out of the gate in the other system: the ship and the character are moved there and the client is told in the reference's
+    /// order (the objects bound to the old system let go, the ship's item, the jump cloak, the session change). The client then binds the ballpark
+    /// of the new system, and the simulation sends it the scene.
+    /// </summary>
+    private async Task FinishJumpAsync(Pilot pilot, SimJumped jumped)
+    {
+        try
+        {
+            var session = pilot.Session;
+            var place = _systems.Get(jumped.ToSystem);
+            var transition = await _ships.JumpAsync(pilot.CharacterId, jumped.ToSystem, place?.ConstellationId ?? 0, place?.RegionId ?? 0);
+            if (transition.Moved is not { } moved)
+            {
+                _log?.Invoke($"jump of character {pilot.CharacterId} to system {jumped.ToSystem} failed: {transition.Refusal}");
+                return;
+            }
+            var now = FileTimeNow();
+            var arrived = new Pilot(session, pilot.CharacterId, pilot.ShipId, jumped.ToSystem, now + JumpCloakTicks, pilot.UndockedFrom, jumpCloak: true);
+            if (!_pilots.TryUpdate((ulong)session.SessionId, arrived, pilot))
+            {
+                return; // the pilot went away meanwhile
+            }
+            pilot.End();
+            arrived.Expiry = new Timer(_ => ProtectionRanOut(arrived), null, _jumpCloak, Timeout.InfiniteTimeSpan);
+
+            ReleaseBoundObjects(session);
+            var type = _statics.Type(moved.Ship.TypeId);
+            session.SendNotification(
+                "OnItemChange", "clientID",
+                InventoryWire.PackedRow(ShipRow(moved.Ship, type), new PyStr($"Undocking:{pilot.UndockedFrom}")),
+                new PyDict([new(new PyInt(3), InventoryWire.Id(moved.PreviousLocationId))]),
+                None);
+            session.SendNotification("OnJumpCloakUpdated", "shipid", InventoryWire.Id(pilot.ShipId), new PyLong(now + JumpCloakTicks), new PyLong(JumpCloakTicks));
+            var system = new PyInt(jumped.ToSystem);
+            session.Change(
+                ("solarsystemid", system),
+                ("solarsystemid2", system),
+                ("constellationid", new PyInt(moved.Character.ConstellationId)),
+                ("regionid", new PyInt(moved.Character.RegionId)),
+                ("locationid", system));
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"jump of character {pilot.CharacterId} to system {jumped.ToSystem} failed: {error}");
+        }
     }
 
     // ── docking ──────────────────────────────────────────────────────────────
@@ -396,17 +545,21 @@ public sealed class SpaceSessions : IDisposable
         }
     }
 
-    private void OnSessionClosed(Pilot pilot)
+    /// <summary>Where a station is (its solar system, constellation and region), for putting a character back in the system of its station.</summary>
+    private (int SolarSystemId, int ConstellationId, int RegionId)? PlaceOfStation(long stationId) =>
+        _stations.Get(stationId) is { } station ? (station.SolarSystemId, station.ConstellationId, station.RegionId) : null;
+
+    private void OnSessionClosed(ClientSession session)
     {
-        if (_pilots.TryRemove((ulong)pilot.Session.SessionId, out _))
+        if (_pilots.TryRemove((ulong)session.SessionId, out var pilot))
         {
             pilot.End();
-            _sim.Leave((ulong)pilot.Session.SessionId, LeaveWhy.LoggedOff);
+            _sim.Leave((ulong)session.SessionId, LeaveWhy.LoggedOff);
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await _ships.RecoverFromSpaceAsync(pilot.CharacterId);
+                    await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation);
                 }
                 catch (Exception error)
                 {

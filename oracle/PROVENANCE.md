@@ -55,7 +55,11 @@ again in range; the file also holds the ship's distance from the station's surfa
 with no other player in the system: another ship would appear in the balls.
 `warp.json` a ship warping to a planet two AU away (the update that starts the warp, every event until the ship is at rest with the seconds each arrived
 at, the ship's distance to the warp's end every three seconds, and the messages for a warp that cannot be done).
-`--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp` records one and leaves the others as they are.
+`jump.json` a ship warping to the stargate of its system (11.7 AU away) and jumping: the update that starts the warp, every event until it is at rest with
+the seconds each arrived at, `CmdStargateJump` and everything the client is sent for twelve seconds (the effect and the stop, `OnJumpQueueUpdate`, the objects
+let go, `OnItemChange`, `OnJumpCloakUpdated`, the session change), then the ballpark of the next system bound and its state asked for. The reference draws
+where the ship lands and where it appears at random, so those are bounds, not values (`crates/eve-space/tests/jump_matches_reference.rs`).
+`--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump` records one and leaves the others as they are.
 
 `fixtures/simlink/messages.json` is not from the reference: it is what `tools/dev/gen-simlink-fixtures.py` writes, the golden
 frames of the link between the service host and the simulation (`docs/adr/0007`), a third writer of the format that the Rust

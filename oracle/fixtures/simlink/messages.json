@@ -208,6 +208,17 @@
    "hex": "1b000000074f2c3859955c0600080200000008c74e834100000000004cdd40"
   },
   {
+   "name": "jump command",
+   "kind": "Command",
+   "sessionId": "1790646377000015",
+   "command": 9,
+   "args": [
+    50016630.0,
+    50016839.0
+   ],
+   "hex": "1b000000074f2c3859955c06000902000000b08bd987410000003892d98741"
+  },
+  {
    "name": "new ship numbers",
    "kind": "ShipSpec",
    "sessionId": "1790646377000015",
@@ -300,6 +311,25 @@
    "command": 4,
    "distance": 15975.3,
    "hex": "120000000e4f2c3859955c06000466666666a633cf40"
+  },
+  {
+   "name": "jumping",
+   "kind": "Jumping",
+   "sessionId": "1790646377000015",
+   "command": 9,
+   "destinationSystem": 30100034,
+   "destinationGate": "50016839",
+   "hex": "160000000f4f2c3859955c060009424acb014732fb0200000000"
+  },
+  {
+   "name": "jumped",
+   "kind": "Jumped",
+   "sessionId": "1790646377000015",
+   "fromSystem": 30100032,
+   "fromGate": "50016630",
+   "toSystem": 30100034,
+   "toGate": "50016839",
+   "hex": "21000000104f2c3859955c0600404acb017631fb0200000000424acb014732fb0200000000"
   }
  ],
  "invalid": [

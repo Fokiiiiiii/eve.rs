@@ -106,6 +106,19 @@ fn message_of(case: &Value) -> Message {
             command: number("command") as u8,
             distance: case["distance"].as_f64().unwrap(),
         },
+        "Jumping" => Message::Jumping {
+            session_id: session_id(),
+            command: number("command") as u8,
+            destination_system: number("destinationSystem") as i32,
+            destination_gate: wide(case, "destinationGate"),
+        },
+        "Jumped" => Message::Jumped {
+            session_id: session_id(),
+            from_system: number("fromSystem") as i32,
+            from_gate: wide(case, "fromGate"),
+            to_system: number("toSystem") as i32,
+            to_gate: wide(case, "toGate"),
+        },
         other => panic!("unknown kind {other}"),
     }
 }

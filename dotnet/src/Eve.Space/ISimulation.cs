@@ -2,9 +2,10 @@ namespace Eve.Space;
 
 /// <summary>
 /// The answer to a command the caller waits for (a <c>Dock</c>, a warp): accepted (with the time it was), refused (with why), or, for a dock from
-/// too far, not possible from here: the ship approaches the station and <paramref name="ApproachDistance"/> is how far off it was.
+/// too far, not possible from here: the ship approaches the station and <paramref name="ApproachDistance"/> is how far off it was. A jump that
+/// was accepted says where the ship is going (<paramref name="DestinationSystem"/>, <paramref name="DestinationGate"/>).
 /// </summary>
-public sealed record CommandReply(bool Accepted, long At, string? Reason, double? ApproachDistance = null);
+public sealed record CommandReply(bool Accepted, long At, string? Reason, double? ApproachDistance = null, int? DestinationSystem = null, long DestinationGate = 0);
 
 /// <summary>The simulation cannot be reached (it is not running, or the link broke).</summary>
 public sealed class SimUnavailableException(string message, Exception? inner = null) : Exception(message, inner);

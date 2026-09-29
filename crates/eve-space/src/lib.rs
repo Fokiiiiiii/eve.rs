@@ -6,6 +6,7 @@
 //! of the destiny stream; `scene` is the running system (`docs/adr/0007-space-simulation-process.md`).
 
 pub mod flight;
+pub mod gate;
 pub mod geo;
 pub mod link;
 pub mod locators;

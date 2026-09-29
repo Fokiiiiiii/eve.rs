@@ -414,6 +414,253 @@ public class SpaceServiceTests
         Assert.Empty(Events.Of(session));
     }
 
+    // ── jumps ────────────────────────────────────────────────────────────────
+
+    private const long Gate = 50016630;
+    private const long NextGate = 50016839;
+    private const int NextSystem = 30100034;
+
+    private static Task<PyValue> JumpAsync(Rig rig, ClientSession session, string oid, long ship) =>
+        rig.BeyonceCallAsync(session, "CmdStargateJump", oid, new PyInt((int)Gate), new PyInt((int)NextGate), new PyLong(ship));
+
+    [PgFact]
+    public async Task A_jump_is_given_to_the_simulation_the_client_is_told_the_queue_and_the_answer_is_the_object_and_the_time()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        Events.Of(session);
+        var before = rig.Sim.Heard.Count;
+
+        var answer = (PyTuple)await JumpAsync(rig, session, oid, character.ShipId);
+        Assert.Equal(oid, JsSemantics.StringValue(answer.Items[0]));
+        Assert.Equal(Py.FileTimeFromUnixMs(Rig.ClockMs + 10_000), Id(answer.Items[1]));
+        Assert.Equal(
+            [Describe(new SimCommand((ulong)session.SessionId, SimCommands.Jump, [Gate, NextGate]))],
+            rig.Sim.Heard.Skip(before).Select(Describe));
+
+        var told = Events.Of(session);
+        var queue = Assert.Single(told, e => e.Name == "OnJumpQueueUpdate");
+        Assert.Equal("clientID", queue.IdType);
+        Assert.Equal(NextSystem, Id(queue.Args[0]));
+        Assert.Equal(1000, Id(queue.Args[1]));
+        Assert.Equal([character.CharacterId], ((PyTuple)queue.Args[2]).Items.Select(Id));
+        var stamps = ((PyDict)queue.Args[3]).Entries.Select(e => (Id(e.Key), Id(e.Value))).ToArray();
+        Assert.Equal([(character.CharacterId, Py.FileTimeFromUnixMs(Rig.ClockMs))], stamps);
+        Assert.Equal(180, Id(queue.Args[4]));
+        Assert.True(rig.Space.IsInSpace(session), "the ship has not left yet");
+
+        // asking again does not queue the pilot twice
+        await JumpAsync(rig, session, oid, character.ShipId);
+        var again = Events.Of(session).Single(e => e.Name == "OnJumpQueueUpdate");
+        Assert.Equal([character.CharacterId], ((PyTuple)again.Args[2]).Items.Select(Id));
+    }
+
+    [PgFact]
+    public async Task A_jump_that_cannot_be_done_is_the_message_the_reference_tells()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        Events.Of(session);
+
+        async Task<MachoWrappedException> Asked(string reason, long? ship = null)
+        {
+            rig.Sim.JumpAnswer = new CommandReply(false, 0, reason);
+            return await Assert.ThrowsAsync<MachoWrappedException>(() => JumpAsync(rig, session, oid, ship ?? character.ShipId));
+        }
+
+        static string Info(MachoWrappedException error)
+        {
+            var values = (PyDict)((PyTuple)((PyTuple)((PyObjectEx)error.Error.Payload).Header).Items[1]).Items[1];
+            var info = Assert.Single(values.Entries, e => JsSemantics.StringValue(e.Key) == "info").Value;
+            return info is PyTuple label ? $"{Id(label.Items[0])}:{JsSemantics.StringValue(label.Items[1])}" : JsSemantics.StringValue(info)!;
+        }
+
+        Assert.Equal("TargetingAttemptCancelled", (await Asked("STARGATE_NOT_FOUND")).Error.UserErrorMessage);
+        Assert.Equal("TargetingAttemptCancelled", (await Asked("STARGATE_DESTINATION_MISMATCH")).Error.UserErrorMessage);
+        Assert.Equal("DeniedShipChanged", (await Asked("NO_SHIP_IN_SPACE")).Error.UserErrorMessage);
+        Assert.Equal("DeniedShipChanged", (await Asked("WRONG_SOLAR_SYSTEM")).Error.UserErrorMessage);
+        var far = await Asked("TOO_FAR_FROM_STARGATE");
+        Assert.Equal(("CustomInfo", "101:UI/Menusvc/MenuHints/NotWithingMaxJumpDist"), (far.Error.UserErrorMessage, Info(far)));
+        Assert.Equal("101:UI/GateIcons/GateClosed", Info(await Asked("STARGATE_NOT_ACTIVE")));
+        Assert.Equal("Stargate jump already in progress.", Info(await Asked("STARGATE_JUMP_IN_PROGRESS")));
+        Assert.Equal("The stargate jump could not be completed.", Info(await Asked("IN_WARP")));
+        // a ship that is not the one flown is refused before the simulation hears of it
+        var before = rig.Sim.Heard.Count;
+        Assert.Equal("DeniedShipChanged", (await Asked("STARGATE_NOT_FOUND", character.ShipId + 1)).Error.UserErrorMessage);
+        Assert.Equal(before, rig.Sim.Heard.Count);
+        Assert.DoesNotContain(Events.Of(session), e => e.Name == "OnJumpQueueUpdate");
+        Assert.True(rig.Space.IsInSpace(session));
+    }
+
+    [PgFact]
+    public async Task A_jump_asked_of_a_ship_that_is_not_in_space_or_on_an_object_the_session_was_not_given_does_nothing_or_is_denied()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        // docked: the call is to nothing the session was given
+        Assert.Equal(PyNone.Instance, await JumpAsync(rig, session, "N=1:1", character.ShipId));
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        Assert.Equal(PyNone.Instance, await JumpAsync(rig, session, "N=1:999", character.ShipId));
+        Assert.DoesNotContain(rig.Sim.Heard, m => m is SimCommand { Code: SimCommands.Jump });
+        Assert.NotEmpty(oid);
+    }
+
+    [PgFact]
+    public async Task When_the_simulation_says_the_ship_has_jumped_the_client_is_told_in_the_reference_order_and_the_ship_and_the_character_are_in_the_other_system()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        var from = (int)session.GetInt("solarsystemid2")!.Value;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        await JumpAsync(rig, session, oid, character.ShipId);
+        Events.Of(session, clear: false);
+        ((Sink)session.Sink!).Sent.Clear();
+
+        rig.Sim.Say(new SimJumped((ulong)session.SessionId, from, Gate, NextSystem, NextGate));
+        await Rig.UntilAsync(() => session.GetInt("solarsystemid") == NextSystem);
+
+        Assert.Equal(["OnMachoObjectDisconnect", "OnItemChange", "OnJumpCloakUpdated", "$sessionchange"], Sequence.Of(session, clear: false));
+        Assert.Equal(
+            [
+                ("solarsystemid", new PyInt(from), new PyInt(NextSystem)),
+                ("solarsystemid2", new PyInt(from), new PyInt(NextSystem)),
+                ("constellationid", new PyInt(20010001), new PyInt(20010002)),
+                ("locationid", new PyInt(from), new PyInt(NextSystem)),
+            ],
+            Sequence.LastChange(session));
+
+        var events = Events.Of(session);
+        Assert.Equal(("OnMachoObjectDisconnect", "+clientID"), (events[0].Name, events[0].IdType));
+        Assert.Equal(oid, JsSemantics.StringValue(events[0].Args[0]));
+        var item = events[1];
+        Assert.Equal(("OnItemChange", "clientID"), (item.Name, item.IdType));
+        var row = (PyPackedRow)item.Args[0];
+        Assert.Equal((character.ShipId, (long)NextSystem, 0L), (Id(row.Values[0]), Id(row.Values[3]), Id(row.Values[4])));
+        Assert.Equal($"Undocking:{Rig.Station}", JsSemantics.StringValue(row.Values[8]));
+        Assert.Equal([(3L, (long)from)], ((PyDict)item.Args[1]).Entries.Select(e => (Id(e.Key), Id(e.Value))));
+        Assert.Equal(PyNone.Instance, item.Args[2]);
+        var cloak = events[2];
+        Assert.Equal(("OnJumpCloakUpdated", "shipid"), (cloak.Name, cloak.IdType));
+        Assert.Equal((character.ShipId, Py.FileTimeFromUnixMs(Rig.ClockMs) + Eve.Services.Space.SpaceSessions.JumpCloakTicks, Eve.Services.Space.SpaceSessions.JumpCloakTicks), (Id(cloak.Args[0]), Id(cloak.Args[1]), Id(cloak.Args[2])));
+
+        var ship = (await rig.Items.GetAsync(character.ShipId))!;
+        Assert.Equal((NextSystem, 0), (ship.LocationId, ship.Flag));
+        var record = (await rig.Characters.GetAsync(character.CharacterId))!;
+        Assert.Equal((NextSystem, 20010002), (record.SolarSystemId, record.ConstellationId));
+        Assert.Equal(NextSystem, rig.Space.SolarSystemOf(session));
+
+        // the client binds the ballpark of the new system, and the simulation is asked to send the scene
+        var before = rig.Sim.Heard.Count;
+        await rig.BindBeyonceAsync(session);
+        session.RunAfterResponse();
+        Assert.Contains(rig.Sim.Heard.Skip(before), m => m is SimBind);
+    }
+
+    [PgFact]
+    public async Task A_jump_that_is_reported_twice_is_finished_once()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        var from = (int)session.GetInt("solarsystemid2")!.Value;
+        await InSpaceAsync(rig, session);
+        ((Sink)session.Sink!).Sent.Clear();
+
+        var jumped = new SimJumped((ulong)session.SessionId, from, Gate, NextSystem, NextGate);
+        rig.Sim.Say(jumped);
+        rig.Sim.Say(jumped);
+        await Rig.UntilAsync(() => session.GetInt("solarsystemid") == NextSystem);
+        await Task.Delay(200);
+
+        Assert.Single(Sequence.Of(session), "$sessionchange");
+        var ship = (await rig.Items.GetAsync(character.ShipId))!;
+        Assert.Equal(NextSystem, ship.LocationId);
+    }
+
+    [PgFact]
+    public async Task The_cloak_of_a_ship_that_has_jumped_ends_with_the_first_movement_and_the_client_is_told_once_in_the_reference_order()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        var from = (int)session.GetInt("solarsystemid2")!.Value;
+        await InSpaceAsync(rig, session);
+        rig.Sim.Say(new SimJumped((ulong)session.SessionId, from, Gate, NextSystem, NextGate));
+        await Rig.UntilAsync(() => session.GetInt("solarsystemid") == NextSystem);
+        Events.Of(session);
+
+        rig.Sim.Say(new SimAccepted((ulong)session.SessionId, SimCommands.SetSpeedFraction, 0));
+        rig.Sim.Say(new SimAccepted((ulong)session.SessionId, SimCommands.Stop, 0));
+        var told = Events.Of(session);
+        Assert.Equal(["OnJumpCloakCancelled", "OnInvulnCancelled"], told.Select(e => e.Name));
+        Assert.All(told, e => Assert.Equal(("shipid", character.ShipId), (e.IdType, Id(e.Args[0]))));
+    }
+
+    [PgFact]
+    public async Task The_cloak_of_a_ship_that_has_jumped_ends_when_its_time_is_up_if_the_pilot_has_not_flown()
+    {
+        var rig = await Rig.CreateAsync(jumpCloak: TimeSpan.FromMilliseconds(150));
+        await using var _ = rig;
+        var character = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(character);
+        var from = (int)session.GetInt("solarsystemid2")!.Value;
+        await InSpaceAsync(rig, session);
+        rig.Sim.Say(new SimJumped((ulong)session.SessionId, from, Gate, NextSystem, NextGate));
+        await Rig.UntilAsync(() => session.GetInt("solarsystemid") == NextSystem);
+        Events.Of(session);
+
+        await Rig.UntilAsync(() => ((Sink)session.Sink!).Sent.Count >= 2);
+        Assert.Equal(["OnJumpCloakCancelled", "OnInvulnCancelled"], Events.Of(session).Select(e => e.Name));
+        // and it is not told again by a movement
+        rig.Sim.Say(new SimAccepted((ulong)session.SessionId, SimCommands.Stop, 0));
+        Assert.Empty(Events.Of(session));
+    }
+
+    [PgFact]
+    public async Task A_ship_that_docks_in_the_other_system_is_in_the_hangar_of_a_station_there()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        var from = (int)session.GetInt("solarsystemid2")!.Value;
+        await InSpaceAsync(rig, session);
+        rig.Sim.Say(new SimJumped((ulong)session.SessionId, from, Gate, NextSystem, NextGate));
+        await Rig.UntilAsync(() => session.GetInt("solarsystemid") == NextSystem);
+        Events.Of(session);
+
+        var station = rig.Stations.All.First(s => s.SolarSystemId == NextSystem);
+        rig.Sim.Say(new SimDocked((ulong)session.SessionId, station.Id));
+        await Rig.UntilAsync(() => session.GetInt("stationid") == station.Id);
+
+        var ship = (await rig.Items.GetAsync(character.ShipId))!;
+        Assert.Equal((station.Id, ItemFlags.Hangar), (ship.LocationId, ship.Flag));
+        var record = (await rig.Characters.GetAsync(character.CharacterId))!;
+        Assert.Equal((station.Id, NextSystem), (record.StationId, record.SolarSystemId));
+    }
+
+    [PgFact]
+    public async Task When_a_session_ends_after_a_jump_the_ship_is_put_back_in_the_hangar_of_the_station_it_left_and_the_character_is_in_its_system()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        var from = (int)session.GetInt("solarsystemid2")!.Value;
+        await InSpaceAsync(rig, session);
+        rig.Sim.Say(new SimJumped((ulong)session.SessionId, from, Gate, NextSystem, NextGate));
+        await Rig.UntilAsync(() => session.GetInt("solarsystemid") == NextSystem);
+
+        session.Close();
+        await Rig.UntilAsync(() => rig.Items.GetAsync(character.ShipId).GetAwaiter().GetResult()!.Flag == ItemFlags.Hangar);
+
+        var ship = (await rig.Items.GetAsync(character.ShipId))!;
+        Assert.Equal(Rig.Station, ship.LocationId);
+        var record = (await rig.Characters.GetAsync(character.CharacterId))!;
+        Assert.Equal((from, Rig.Station), (record.SolarSystemId, record.StationId));
+        Assert.Contains(rig.Sim.Heard, m => m is SimLeave { Why: LeaveWhy.LoggedOff });
+    }
+
     [PgFact]
     public async Task The_formations_are_kept_by_the_client_for_the_length_of_the_session()
     {

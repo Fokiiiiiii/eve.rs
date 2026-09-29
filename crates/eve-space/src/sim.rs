@@ -10,7 +10,7 @@ use eve_destiny::Vec3;
 use eve_marshal::Value;
 
 use crate::link::{Enter, How, Message, PROTOCOL_VERSION};
-use crate::scene::{Command, Departure, Out, Scene, SceneError, SessionId};
+use crate::scene::{Command, Departure, Out, Scene, SceneError, SessionId, Traveller};
 use crate::world::{SolarSystem, World};
 
 /// How often the host's clock is polled for what is due (dockings); the link says it in `HelloAck`.
@@ -80,6 +80,10 @@ fn command_of(code: u8, args: &[f64]) -> Option<Command> {
         (8, [target, range]) if is_id(*target) && range.is_finite() => {
             Some(Command::WarpTo { target_id: *target as i64, range: *range })
         }
+        (9, [gate]) if is_id(*gate) => Some(Command::Jump { gate_id: *gate as i64, destination_gate: 0 }),
+        (9, [gate, leads_to]) if is_id(*gate) && is_id(*leads_to) => {
+            Some(Command::Jump { gate_id: *gate as i64, destination_gate: *leads_to as i64 })
+        }
         _ => None,
     }
 }
@@ -113,6 +117,9 @@ impl Sim {
             Out::Accepted { session, command, at } => Message::Accepted { session_id: session, command, at },
             Out::Approaching { session, command, distance } => {
                 Message::Approaching { session_id: session, command, distance }
+            }
+            Out::Jumping { session, command, destination_system, destination_gate } => {
+                Message::Jumping { session_id: session, command, destination_system, destination_gate }
             }
             Out::Docked { session, station_id } => Message::Docked { session_id: session, station_id },
             Out::Refused { session, command, reason } => {
@@ -208,7 +215,7 @@ impl Sim {
         Ok(outs.into_iter().map(Self::out_message).collect())
     }
 
-    /// What is due at `now`: ships that finished docking leave their scenes.
+    /// What is due at `now`: ships that finished docking leave their scenes, and ships whose jump is due arrive in the scene of the other system.
     pub fn poll(&mut self, now: i64) -> Vec<Message> {
         let outs: Vec<Out> = self.scenes.values_mut().flat_map(|scene| scene.poll(now)).collect();
         for out in &outs {
@@ -216,8 +223,50 @@ impl Sim {
                 self.forget(*session);
             }
         }
+        let mut messages: Vec<Message> = outs.into_iter().map(Self::out_message).collect();
+        let travellers: Vec<Traveller> =
+            self.scenes.values_mut().flat_map(|scene| scene.due_jumps(now)).collect();
+        for traveller in travellers {
+            messages.push(self.arrive(traveller, now));
+        }
         self.scenes.retain(|_, scene| !scene.is_empty());
-        outs.into_iter().map(Self::out_message).collect()
+        messages
+    }
+
+    /// A ship whose jump is due appears at the gate it leads to (the scene of that system is made when it has none): the host is told it has
+    /// gone. A jump that cannot be finished leaves the ship where it was, and the host is told the command was refused.
+    fn arrive(&mut self, traveller: Traveller, now: i64) -> Message {
+        let (session, from_system, from_gate, to_system, to_gate) = (
+            traveller.session,
+            traveller.from_system,
+            traveller.from_gate,
+            traveller.to_system,
+            traveller.to_gate,
+        );
+        let failed = |sim: &mut Self, traveller: Traveller| {
+            if let Some(scene) = sim.scenes.get_mut(&traveller.from_system) {
+                scene.restore(traveller);
+            }
+            Message::Refused {
+                session_id: session,
+                command: 9,
+                reason: "DESTINATION_UNAVAILABLE".to_string(),
+            }
+        };
+        let Ok(system) = self.universe.system(to_system) else { return failed(self, traveller) };
+        let scene = self.scenes.entry(to_system).or_insert_with(|| Scene::new(system));
+        match scene.arrive(traveller, now) {
+            Ok(()) => {
+                self.sessions.insert(session, to_system);
+                Message::Jumped { session_id: session, from_system, from_gate, to_system, to_gate }
+            }
+            Err(traveller) => {
+                if scene.is_empty() {
+                    self.scenes.remove(&to_system);
+                }
+                failed(self, *traveller)
+            }
+        }
     }
 }
 
@@ -328,6 +377,15 @@ mod tests {
         assert_eq!(command_of(2, &[1.0, 0.0, 0.0]), Some(Command::GotoDirection(Vec3::new(1.0, 0.0, 0.0))));
         assert_eq!(command_of(3, &[]), Some(Command::Stop));
         assert_eq!(command_of(4, &[60_015_249.0]), Some(Command::Dock { station_id: 60_015_249 }));
+        assert_eq!(
+            command_of(9, &[50_016_630.0, 50_016_839.0]),
+            Some(Command::Jump { gate_id: 50_016_630, destination_gate: 50_016_839 })
+        );
+        assert_eq!(
+            command_of(9, &[50_016_630.0]),
+            Some(Command::Jump { gate_id: 50_016_630, destination_gate: 0 }),
+            "the gate alone is enough"
+        );
         for (code, args) in [
             (1, vec![]),
             (1, vec![1.0, 2.0]),
@@ -337,6 +395,10 @@ mod tests {
             (4, vec![f64::NAN]),
             (4, vec![1e300]),
             (9, vec![]),
+            (9, vec![1.5]),
+            (9, vec![50_016_630.0, f64::NAN]),
+            (9, vec![1.0, 2.0, 3.0]),
+            (10, vec![]),
         ] {
             assert_eq!(command_of(code, &args), None, "{code} {args:?}");
         }
@@ -350,8 +412,8 @@ mod tests {
             other => panic!("{other:?}"),
         };
         let out =
-            sim.handle(Message::Command { session_id: SESSION, command: 9, args: vec![] }, NOON).unwrap();
-        assert_eq!(refused(out[0].clone()), (9, "UNKNOWN_COMMAND".to_string()));
+            sim.handle(Message::Command { session_id: SESSION, command: 10, args: vec![] }, NOON).unwrap();
+        assert_eq!(refused(out[0].clone()), (10, "UNKNOWN_COMMAND".to_string()));
         let out = sim.handle(Message::Command { session_id: 99, command: 3, args: vec![] }, NOON).unwrap();
         assert_eq!(refused(out[0].clone()), (3, "NO_SHIP_IN_SPACE".to_string()));
         let out =
@@ -422,6 +484,123 @@ mod tests {
                 .unwrap(),
             );
             out.extend(sim.handle(Message::UpdateState { session_id: SESSION }, NOON + 6 * SECOND).unwrap());
+            out.iter().flat_map(Message::encode).collect::<Vec<u8>>()
+        };
+        assert_eq!(run(), run());
+    }
+
+    // ── jumps ────────────────────────────────────────────────────────────────
+
+    fn gated_sim() -> Sim {
+        let (here, there) = crate::scene::tests::gated_systems();
+        Sim::new(Arc::new(Universe::with_systems([here, there])))
+    }
+
+    fn jump_command(gate: i64, leads_to: i64) -> Message {
+        Message::Command { session_id: SESSION, command: 9, args: vec![gate as f64, leads_to as f64] }
+    }
+
+    #[test]
+    fn a_jump_takes_the_ship_to_the_scene_of_the_other_system_when_it_is_due() {
+        use crate::scene::tests::{ARRIVAL_GATE, NEAR_GATE, OTHER_SYSTEM};
+        let mut sim = gated_sim();
+        sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
+        let out = sim.handle(jump_command(NEAR_GATE, ARRIVAL_GATE), NOON).unwrap();
+        assert_eq!(names(&out[..1]), ["DoDestinyUpdate"]);
+        assert_eq!(
+            out[1],
+            Message::Jumping {
+                session_id: SESSION,
+                command: 9,
+                destination_system: OTHER_SYSTEM,
+                destination_gate: ARRIVAL_GATE
+            }
+        );
+        assert!(sim.poll(NOON + 3 * SECOND).is_empty(), "the ship is still where it was");
+        assert_eq!(sim.scenes.keys().copied().collect::<Vec<_>>(), [SYSTEM]);
+
+        let gone = sim.poll(NOON + 4 * SECOND);
+        assert_eq!(
+            gone,
+            [Message::Jumped {
+                session_id: SESSION,
+                from_system: SYSTEM,
+                from_gate: NEAR_GATE,
+                to_system: OTHER_SYSTEM,
+                to_gate: ARRIVAL_GATE
+            }]
+        );
+        assert_eq!(sim.ships(), 1);
+        assert_eq!(
+            sim.scenes.keys().copied().collect::<Vec<_>>(),
+            [OTHER_SYSTEM],
+            "the scene it left has no one in it and is dropped"
+        );
+        assert!(sim.poll(NOON + 9 * SECOND).is_empty(), "it goes once");
+
+        // the client binds the ballpark of the new system and is sent it
+        let bound = sim.handle(Message::Bind { session_id: SESSION }, NOON + 5 * SECOND).unwrap();
+        assert_eq!(bound.len(), 5);
+        // and orders go to the ship where it is
+        let out = sim
+            .handle(Message::Command { session_id: SESSION, command: 1, args: vec![1.0] }, NOON + 6 * SECOND)
+            .unwrap();
+        assert_eq!(names(&out[..1]), ["DoDestinyUpdate"]);
+        // it is far from the gate it came out of, so it cannot go back at once
+        let out = sim.handle(jump_command(ARRIVAL_GATE, NEAR_GATE), NOON + 6 * SECOND).unwrap();
+        assert_eq!(
+            out,
+            [Message::Refused {
+                session_id: SESSION,
+                command: 9,
+                reason: "TOO_FAR_FROM_STARGATE".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_ship_that_is_asked_to_leave_while_it_jumps_leaves_from_the_scene_it_is_in() {
+        use crate::scene::tests::{ARRIVAL_GATE, NEAR_GATE};
+        let mut sim = gated_sim();
+        sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
+        sim.handle(jump_command(NEAR_GATE, ARRIVAL_GATE), NOON).unwrap();
+        sim.poll(NOON + 4 * SECOND);
+        assert!(
+            sim.handle(Message::Leave { session_id: SESSION, why: 1 }, NOON + 5 * SECOND).unwrap().is_empty()
+        );
+        assert_eq!((sim.ships(), sim.scenes.len()), (0, 0));
+    }
+
+    #[test]
+    fn a_jump_to_a_system_that_cannot_be_built_leaves_the_ship_where_it_was_and_says_so() {
+        use crate::scene::tests::{ARRIVAL_GATE, NEAR_GATE};
+        let (here, _) = crate::scene::tests::gated_systems();
+        let mut sim = Sim::new(Arc::new(Universe::with_systems([here])));
+        sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
+        sim.handle(jump_command(NEAR_GATE, ARRIVAL_GATE), NOON).unwrap();
+        assert_eq!(
+            sim.poll(NOON + 4 * SECOND),
+            [Message::Refused {
+                session_id: SESSION,
+                command: 9,
+                reason: "DESTINATION_UNAVAILABLE".to_string()
+            }]
+        );
+        assert_eq!((sim.ships(), sim.scenes.keys().copied().collect::<Vec<_>>()), (1, vec![SYSTEM]));
+        // the ship takes orders and may try again
+        let out = sim.handle(jump_command(NEAR_GATE, ARRIVAL_GATE), NOON + 5 * SECOND).unwrap();
+        assert!(matches!(out[1], Message::Jumping { .. }), "{out:?}");
+    }
+
+    #[test]
+    fn two_simulations_given_the_same_jump_send_the_same_bytes() {
+        use crate::scene::tests::{ARRIVAL_GATE, NEAR_GATE};
+        let run = || {
+            let mut sim = gated_sim();
+            sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
+            let mut out = sim.handle(jump_command(NEAR_GATE, ARRIVAL_GATE), NOON).unwrap();
+            out.extend(sim.poll(NOON + 4 * SECOND));
+            out.extend(sim.handle(Message::Bind { session_id: SESSION }, NOON + 5 * SECOND).unwrap());
             out.iter().flat_map(Message::encode).collect::<Vec<u8>>()
         };
         assert_eq!(run(), run());

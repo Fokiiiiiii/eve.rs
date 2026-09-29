@@ -84,6 +84,30 @@ class Client:
         self.conn.send(request)
         return packet.result_of(self._await(packet.CALL_RSP, call_id))
 
+    @staticmethod
+    def bound_object(handle: Any) -> Any:
+        """The `(oid, time)` a bind answer carries (`substruct(substream((oid, time)))`)."""
+        while hasattr(handle, "value"):
+            handle = handle.value
+        return handle
+
+    def call_bound(self, handle: Any, method: str, *args: Any, **kwargs: Any) -> Any:
+        """Call a method of a bound object: `handle` is what a service returned to hand it out. The object is named in the
+        first element of the call body instead of in the address."""
+        assert self.conn is not None and self.session is not None, "not logged in"
+        call_id = self._next_call_id()
+        keywords = m.Dict(list(kwargs.items())) if kwargs else None
+        body = (self.bound_object(handle), method, tuple(args), keywords)
+        request = packet.build_packet(
+            packet.CALL_REQ,
+            self._source(call_id),
+            packet.any_address(None),
+            self.session.user_id,
+            ((0, m.SubStream(value=body)),),
+        )
+        self.conn.send(request)
+        return packet.result_of(self._await(packet.CALL_RSP, call_id))
+
     def ping(self) -> float:
         """Round-trip time of a PingReq, in seconds."""
         assert self.conn is not None and self.session is not None, "not logged in"

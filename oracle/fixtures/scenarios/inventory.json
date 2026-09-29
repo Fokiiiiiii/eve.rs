@@ -1,0 +1,3984 @@
+{
+ "reference": "EVE.js",
+ "referenceCommit": "b637d2a55469ee23d24411ed5a7646391de314d9",
+ "recordedAt": "2026-09-29T04:56:21Z",
+ "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py",
+ "races": [
+  {
+   "bloodlineID": 1,
+   "raceID": 1,
+   "create": {
+    "call": [
+     "charUnboundMgr",
+     "CreateCharacterWithDoll",
+     [
+      "Stocked 1 1790657781",
+      1,
+      1,
+      1,
+      10,
+      {
+       "$dict": [
+        [
+         "recorded",
+         1
+        ]
+       ]
+      },
+      {
+       "$dict": [
+        [
+         "recorded",
+         2
+        ]
+       ]
+      },
+      35,
+      null,
+      null
+     ]
+    ],
+    "ok": 140000142
+   },
+   "shipID": 9988400000662,
+   "descriptor": {
+    "call": [
+     "invbroker",
+     "GetItemDescriptor",
+     []
+    ],
+    "ok": {
+     "$objectex": {
+      "$tuple": [
+       {
+        "$token": "blue.DBRowDescriptor"
+       },
+       {
+        "$tuple": [
+         {
+          "$tuple": [
+           {
+            "$tuple": [
+             "itemID",
+             20
+            ]
+           },
+           {
+            "$tuple": [
+             "typeID",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "ownerID",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "locationID",
+             20
+            ]
+           },
+           {
+            "$tuple": [
+             "flagID",
+             2
+            ]
+           },
+           {
+            "$tuple": [
+             "quantity",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "groupID",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "categoryID",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "customInfo",
+             129
+            ]
+           }
+          ]
+         }
+        ]
+       },
+       [
+        {
+         "$tuple": [
+          "stacksize",
+          {
+           "$token": "eve.common.script.sys.eveCfg.StackSize"
+          }
+         ]
+        },
+        {
+         "$tuple": [
+          "singleton",
+          {
+           "$token": "eve.common.script.sys.eveCfg.Singleton"
+          }
+         ]
+        }
+       ]
+      ]
+     },
+     "list": [],
+     "dict": []
+    }
+   },
+   "inventories": {
+    "hangar": {
+     "open": {
+      "call": [
+       "invbroker",
+       "GetInventory",
+       [
+        10004
+       ]
+      ],
+      "ok": {
+       "$substruct": {
+        "$substream": {
+         "$tuple": [
+          "N=65450:30",
+          {
+           "$long": 134351313816830000
+          }
+         ]
+        }
+       }
+      }
+     },
+     "calls": [
+      {
+       "call": [
+        "hangar",
+        "List",
+        []
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000662,
+          "typeID": 601,
+          "ownerID": 140000142,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "hangar",
+        "List",
+        [
+         4
+        ]
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000662,
+          "typeID": 601,
+          "ownerID": 140000142,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "hangar",
+        "List",
+        [
+         5
+        ]
+       ],
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "ListByFlags",
+        [
+         {
+          "$tuple": [
+           4,
+           5
+          ]
+         }
+        ]
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000662,
+          "typeID": 601,
+          "ownerID": 140000142,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "hangar",
+        "GetItem",
+        []
+       ],
+       "ok": {
+        "$object": "util.Row",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           {
+            "$tuple": [
+             "itemID",
+             "typeID",
+             "ownerID",
+             "locationID",
+             "flagID",
+             "quantity",
+             "groupID",
+             "categoryID",
+             "customInfo",
+             "stacksize",
+             "singleton"
+            ]
+           }
+          ],
+          [
+           "line",
+           {
+            "$tuple": [
+             60015249,
+             92885,
+             1000413,
+             60015249,
+             0,
+             1,
+             15,
+             3,
+             "",
+             1,
+             1
+            ]
+           }
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "GetSelfInvItem",
+        []
+       ],
+       "ok": {
+        "$row": {
+         "itemID": 60015249,
+         "typeID": 92885,
+         "ownerID": 1000413,
+         "locationID": 60015249,
+         "flagID": 0,
+         "quantity": 1,
+         "groupID": 15,
+         "categoryID": 3,
+         "customInfo": "",
+         "stacksize": 1,
+         "singleton": 0
+        }
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "GetCapacity",
+        []
+       ],
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           1000000
+          ],
+          [
+           "used",
+           15000
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "GetCapacity",
+        [
+         5
+        ]
+       ],
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           5000
+          ],
+          [
+           "used",
+           0
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "GetItems",
+        []
+       ],
+       "ok": []
+      },
+      {
+       "call": [
+        "hangar",
+        "GetContainerContents",
+        []
+       ],
+       "ok": {
+        "$object": "eve.common.script.sys.rowset.Rowset",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           [
+            "itemID",
+            "typeID",
+            "ownerID",
+            "locationID",
+            "flagID",
+            "quantity",
+            "groupID",
+            "categoryID",
+            "customInfo",
+            "stacksize",
+            "singleton"
+           ]
+          ],
+          [
+           "RowClass",
+           {
+            "$token": "util.Row"
+           }
+          ],
+          [
+           "lines",
+           [
+            {
+             "$tuple": [
+              {
+               "$long": 9988400000662
+              },
+              601,
+              140000142,
+              60015249,
+              4,
+              -1,
+              237,
+              6,
+              "",
+              1,
+              1
+             ]
+            }
+           ]
+          ]
+         ]
+        }
+       }
+      }
+     ]
+    },
+    "station": {
+     "open": {
+      "call": [
+       "invbroker",
+       "GetInventoryFromId",
+       [
+        60015249
+       ]
+      ],
+      "ok": {
+       "$substruct": {
+        "$substream": {
+         "$tuple": [
+          "N=65450:31",
+          {
+           "$long": 134351313817020000
+          }
+         ]
+        }
+       }
+      }
+     },
+     "calls": [
+      {
+       "call": [
+        "station",
+        "List",
+        []
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000662,
+          "typeID": 601,
+          "ownerID": 140000142,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "station",
+        "List",
+        [
+         4
+        ]
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000662,
+          "typeID": 601,
+          "ownerID": 140000142,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "station",
+        "List",
+        [
+         5
+        ]
+       ],
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
+      },
+      {
+       "call": [
+        "station",
+        "ListByFlags",
+        [
+         {
+          "$tuple": [
+           4,
+           5
+          ]
+         }
+        ]
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000662,
+          "typeID": 601,
+          "ownerID": 140000142,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "station",
+        "GetItem",
+        []
+       ],
+       "ok": {
+        "$object": "util.Row",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           {
+            "$tuple": [
+             "itemID",
+             "typeID",
+             "ownerID",
+             "locationID",
+             "flagID",
+             "quantity",
+             "groupID",
+             "categoryID",
+             "customInfo",
+             "stacksize",
+             "singleton"
+            ]
+           }
+          ],
+          [
+           "line",
+           {
+            "$tuple": [
+             60015249,
+             92885,
+             1000413,
+             60015249,
+             0,
+             1,
+             15,
+             3,
+             "",
+             1,
+             1
+            ]
+           }
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "station",
+        "GetSelfInvItem",
+        []
+       ],
+       "ok": {
+        "$row": {
+         "itemID": 60015249,
+         "typeID": 92885,
+         "ownerID": 1000413,
+         "locationID": 60015249,
+         "flagID": 0,
+         "quantity": 1,
+         "groupID": 15,
+         "categoryID": 3,
+         "customInfo": "",
+         "stacksize": 1,
+         "singleton": 0
+        }
+       }
+      },
+      {
+       "call": [
+        "station",
+        "GetCapacity",
+        []
+       ],
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           1000000
+          ],
+          [
+           "used",
+           15000
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "station",
+        "GetCapacity",
+        [
+         5
+        ]
+       ],
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           5000
+          ],
+          [
+           "used",
+           0
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "station",
+        "GetItems",
+        []
+       ],
+       "ok": []
+      },
+      {
+       "call": [
+        "station",
+        "GetContainerContents",
+        []
+       ],
+       "ok": {
+        "$object": "eve.common.script.sys.rowset.Rowset",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           [
+            "itemID",
+            "typeID",
+            "ownerID",
+            "locationID",
+            "flagID",
+            "quantity",
+            "groupID",
+            "categoryID",
+            "customInfo",
+            "stacksize",
+            "singleton"
+           ]
+          ],
+          [
+           "RowClass",
+           {
+            "$token": "util.Row"
+           }
+          ],
+          [
+           "lines",
+           [
+            {
+             "$tuple": [
+              {
+               "$long": 9988400000662
+              },
+              601,
+              140000142,
+              60015249,
+              4,
+              -1,
+              237,
+              6,
+              "",
+              1,
+              1
+             ]
+            }
+           ]
+          ]
+         ]
+        }
+       }
+      }
+     ]
+    },
+    "ship": {
+     "open": {
+      "call": [
+       "invbroker",
+       "GetInventoryFromId",
+       [
+        9988400000662
+       ]
+      ],
+      "ok": {
+       "$substruct": {
+        "$substream": {
+         "$tuple": [
+          "N=65450:32",
+          {
+           "$long": 134351313817300000
+          }
+         ]
+        }
+       }
+      }
+     },
+     "calls": [
+      {
+       "call": [
+        "ship",
+        "List",
+        []
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "List",
+        [
+         4
+        ]
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "List",
+        [
+         5
+        ]
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "ListByFlags",
+        [
+         {
+          "$tuple": [
+           4,
+           5
+          ]
+         }
+        ]
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "GetItem",
+        []
+       ],
+       "ok": {
+        "$object": "util.Row",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           {
+            "$tuple": [
+             "itemID",
+             "typeID",
+             "ownerID",
+             "locationID",
+             "flagID",
+             "quantity",
+             "groupID",
+             "categoryID",
+             "customInfo",
+             "stacksize",
+             "singleton"
+            ]
+           }
+          ],
+          [
+           "line",
+           {
+            "$tuple": [
+             {
+              "$long": 9988400000662
+             },
+             601,
+             140000142,
+             60015249,
+             4,
+             -1,
+             237,
+             6,
+             "",
+             1,
+             1
+            ]
+           }
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "ship",
+        "GetSelfInvItem",
+        []
+       ],
+       "ok": {
+        "$row": {
+         "itemID": 9988400000662,
+         "typeID": 601,
+         "ownerID": 140000142,
+         "locationID": 60015249,
+         "flagID": 4,
+         "quantity": -1,
+         "groupID": 237,
+         "categoryID": 6,
+         "customInfo": "",
+         "stacksize": 1,
+         "singleton": 1
+        }
+       }
+      },
+      {
+       "call": [
+        "ship",
+        "GetCapacity",
+        []
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "GetCapacity",
+        [
+         5
+        ]
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "GetItems",
+        []
+       ],
+       "ok": []
+      },
+      {
+       "call": [
+        "ship",
+        "GetContainerContents",
+        []
+       ],
+       "ok": {
+        "$object": "eve.common.script.sys.rowset.Rowset",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           [
+            "itemID",
+            "typeID",
+            "ownerID",
+            "locationID",
+            "flagID",
+            "quantity",
+            "groupID",
+            "categoryID",
+            "customInfo",
+            "stacksize",
+            "singleton"
+           ]
+          ],
+          [
+           "RowClass",
+           {
+            "$token": "util.Row"
+           }
+          ],
+          [
+           "lines",
+           [
+            {
+             "$tuple": [
+              {
+               "$long": 9988400000662
+              },
+              601,
+              140000142,
+              60015249,
+              4,
+              -1,
+              237,
+              6,
+              "",
+              1,
+              1
+             ]
+            }
+           ]
+          ]
+         ]
+        }
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "bloodlineID": 3,
+   "raceID": 2,
+   "create": {
+    "call": [
+     "charUnboundMgr",
+     "CreateCharacterWithDoll",
+     [
+      "Stocked 3 1790657781",
+      2,
+      3,
+      1,
+      19,
+      {
+       "$dict": [
+        [
+         "recorded",
+         1
+        ]
+       ]
+      },
+      {
+       "$dict": [
+        [
+         "recorded",
+         2
+        ]
+       ]
+      },
+      33,
+      null,
+      null
+     ]
+    ],
+    "ok": 140000143
+   },
+   "shipID": 9988400000666,
+   "descriptor": {
+    "call": [
+     "invbroker",
+     "GetItemDescriptor",
+     []
+    ],
+    "ok": {
+     "$objectex": {
+      "$tuple": [
+       {
+        "$token": "blue.DBRowDescriptor"
+       },
+       {
+        "$tuple": [
+         {
+          "$tuple": [
+           {
+            "$tuple": [
+             "itemID",
+             20
+            ]
+           },
+           {
+            "$tuple": [
+             "typeID",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "ownerID",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "locationID",
+             20
+            ]
+           },
+           {
+            "$tuple": [
+             "flagID",
+             2
+            ]
+           },
+           {
+            "$tuple": [
+             "quantity",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "groupID",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "categoryID",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "customInfo",
+             129
+            ]
+           }
+          ]
+         }
+        ]
+       },
+       [
+        {
+         "$tuple": [
+          "stacksize",
+          {
+           "$token": "eve.common.script.sys.eveCfg.StackSize"
+          }
+         ]
+        },
+        {
+         "$tuple": [
+          "singleton",
+          {
+           "$token": "eve.common.script.sys.eveCfg.Singleton"
+          }
+         ]
+        }
+       ]
+      ]
+     },
+     "list": [],
+     "dict": []
+    }
+   },
+   "inventories": {
+    "hangar": {
+     "open": {
+      "call": [
+       "invbroker",
+       "GetInventory",
+       [
+        10004
+       ]
+      ],
+      "ok": {
+       "$substruct": {
+        "$substream": {
+         "$tuple": [
+          "N=65450:34",
+          {
+           "$long": 134351313833960000
+          }
+         ]
+        }
+       }
+      }
+     },
+     "calls": [
+      {
+       "call": [
+        "hangar",
+        "List",
+        []
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000666,
+          "typeID": 588,
+          "ownerID": 140000143,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "hangar",
+        "List",
+        [
+         4
+        ]
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000666,
+          "typeID": 588,
+          "ownerID": 140000143,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "hangar",
+        "List",
+        [
+         5
+        ]
+       ],
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "ListByFlags",
+        [
+         {
+          "$tuple": [
+           4,
+           5
+          ]
+         }
+        ]
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000666,
+          "typeID": 588,
+          "ownerID": 140000143,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "hangar",
+        "GetItem",
+        []
+       ],
+       "ok": {
+        "$object": "util.Row",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           {
+            "$tuple": [
+             "itemID",
+             "typeID",
+             "ownerID",
+             "locationID",
+             "flagID",
+             "quantity",
+             "groupID",
+             "categoryID",
+             "customInfo",
+             "stacksize",
+             "singleton"
+            ]
+           }
+          ],
+          [
+           "line",
+           {
+            "$tuple": [
+             60015249,
+             92885,
+             1000413,
+             60015249,
+             0,
+             1,
+             15,
+             3,
+             "",
+             1,
+             1
+            ]
+           }
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "GetSelfInvItem",
+        []
+       ],
+       "ok": {
+        "$row": {
+         "itemID": 60015249,
+         "typeID": 92885,
+         "ownerID": 1000413,
+         "locationID": 60015249,
+         "flagID": 0,
+         "quantity": 1,
+         "groupID": 15,
+         "categoryID": 3,
+         "customInfo": "",
+         "stacksize": 1,
+         "singleton": 0
+        }
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "GetCapacity",
+        []
+       ],
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           1000000
+          ],
+          [
+           "used",
+           15800
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "GetCapacity",
+        [
+         5
+        ]
+       ],
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           5000
+          ],
+          [
+           "used",
+           0
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "GetItems",
+        []
+       ],
+       "ok": []
+      },
+      {
+       "call": [
+        "hangar",
+        "GetContainerContents",
+        []
+       ],
+       "ok": {
+        "$object": "eve.common.script.sys.rowset.Rowset",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           [
+            "itemID",
+            "typeID",
+            "ownerID",
+            "locationID",
+            "flagID",
+            "quantity",
+            "groupID",
+            "categoryID",
+            "customInfo",
+            "stacksize",
+            "singleton"
+           ]
+          ],
+          [
+           "RowClass",
+           {
+            "$token": "util.Row"
+           }
+          ],
+          [
+           "lines",
+           [
+            {
+             "$tuple": [
+              {
+               "$long": 9988400000666
+              },
+              588,
+              140000143,
+              60015249,
+              4,
+              -1,
+              237,
+              6,
+              "",
+              1,
+              1
+             ]
+            }
+           ]
+          ]
+         ]
+        }
+       }
+      }
+     ]
+    },
+    "station": {
+     "open": {
+      "call": [
+       "invbroker",
+       "GetInventoryFromId",
+       [
+        60015249
+       ]
+      ],
+      "ok": {
+       "$substruct": {
+        "$substream": {
+         "$tuple": [
+          "N=65450:35",
+          {
+           "$long": 134351313834260000
+          }
+         ]
+        }
+       }
+      }
+     },
+     "calls": [
+      {
+       "call": [
+        "station",
+        "List",
+        []
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000666,
+          "typeID": 588,
+          "ownerID": 140000143,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "station",
+        "List",
+        [
+         4
+        ]
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000666,
+          "typeID": 588,
+          "ownerID": 140000143,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "station",
+        "List",
+        [
+         5
+        ]
+       ],
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
+      },
+      {
+       "call": [
+        "station",
+        "ListByFlags",
+        [
+         {
+          "$tuple": [
+           4,
+           5
+          ]
+         }
+        ]
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000666,
+          "typeID": 588,
+          "ownerID": 140000143,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "station",
+        "GetItem",
+        []
+       ],
+       "ok": {
+        "$object": "util.Row",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           {
+            "$tuple": [
+             "itemID",
+             "typeID",
+             "ownerID",
+             "locationID",
+             "flagID",
+             "quantity",
+             "groupID",
+             "categoryID",
+             "customInfo",
+             "stacksize",
+             "singleton"
+            ]
+           }
+          ],
+          [
+           "line",
+           {
+            "$tuple": [
+             60015249,
+             92885,
+             1000413,
+             60015249,
+             0,
+             1,
+             15,
+             3,
+             "",
+             1,
+             1
+            ]
+           }
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "station",
+        "GetSelfInvItem",
+        []
+       ],
+       "ok": {
+        "$row": {
+         "itemID": 60015249,
+         "typeID": 92885,
+         "ownerID": 1000413,
+         "locationID": 60015249,
+         "flagID": 0,
+         "quantity": 1,
+         "groupID": 15,
+         "categoryID": 3,
+         "customInfo": "",
+         "stacksize": 1,
+         "singleton": 0
+        }
+       }
+      },
+      {
+       "call": [
+        "station",
+        "GetCapacity",
+        []
+       ],
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           1000000
+          ],
+          [
+           "used",
+           15800
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "station",
+        "GetCapacity",
+        [
+         5
+        ]
+       ],
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           5000
+          ],
+          [
+           "used",
+           0
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "station",
+        "GetItems",
+        []
+       ],
+       "ok": []
+      },
+      {
+       "call": [
+        "station",
+        "GetContainerContents",
+        []
+       ],
+       "ok": {
+        "$object": "eve.common.script.sys.rowset.Rowset",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           [
+            "itemID",
+            "typeID",
+            "ownerID",
+            "locationID",
+            "flagID",
+            "quantity",
+            "groupID",
+            "categoryID",
+            "customInfo",
+            "stacksize",
+            "singleton"
+           ]
+          ],
+          [
+           "RowClass",
+           {
+            "$token": "util.Row"
+           }
+          ],
+          [
+           "lines",
+           [
+            {
+             "$tuple": [
+              {
+               "$long": 9988400000666
+              },
+              588,
+              140000143,
+              60015249,
+              4,
+              -1,
+              237,
+              6,
+              "",
+              1,
+              1
+             ]
+            }
+           ]
+          ]
+         ]
+        }
+       }
+      }
+     ]
+    },
+    "ship": {
+     "open": {
+      "call": [
+       "invbroker",
+       "GetInventoryFromId",
+       [
+        9988400000666
+       ]
+      ],
+      "ok": {
+       "$substruct": {
+        "$substream": {
+         "$tuple": [
+          "N=65450:36",
+          {
+           "$long": 134351313834450000
+          }
+         ]
+        }
+       }
+      }
+     },
+     "calls": [
+      {
+       "call": [
+        "ship",
+        "List",
+        []
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "List",
+        [
+         4
+        ]
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "List",
+        [
+         5
+        ]
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "ListByFlags",
+        [
+         {
+          "$tuple": [
+           4,
+           5
+          ]
+         }
+        ]
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "GetItem",
+        []
+       ],
+       "ok": {
+        "$object": "util.Row",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           {
+            "$tuple": [
+             "itemID",
+             "typeID",
+             "ownerID",
+             "locationID",
+             "flagID",
+             "quantity",
+             "groupID",
+             "categoryID",
+             "customInfo",
+             "stacksize",
+             "singleton"
+            ]
+           }
+          ],
+          [
+           "line",
+           {
+            "$tuple": [
+             {
+              "$long": 9988400000666
+             },
+             588,
+             140000143,
+             60015249,
+             4,
+             -1,
+             237,
+             6,
+             "",
+             1,
+             1
+            ]
+           }
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "ship",
+        "GetSelfInvItem",
+        []
+       ],
+       "ok": {
+        "$row": {
+         "itemID": 9988400000666,
+         "typeID": 588,
+         "ownerID": 140000143,
+         "locationID": 60015249,
+         "flagID": 4,
+         "quantity": -1,
+         "groupID": 237,
+         "categoryID": 6,
+         "customInfo": "",
+         "stacksize": 1,
+         "singleton": 1
+        }
+       }
+      },
+      {
+       "call": [
+        "ship",
+        "GetCapacity",
+        []
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "GetCapacity",
+        [
+         5
+        ]
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "GetItems",
+        []
+       ],
+       "ok": []
+      },
+      {
+       "call": [
+        "ship",
+        "GetContainerContents",
+        []
+       ],
+       "ok": {
+        "$object": "eve.common.script.sys.rowset.Rowset",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           [
+            "itemID",
+            "typeID",
+            "ownerID",
+            "locationID",
+            "flagID",
+            "quantity",
+            "groupID",
+            "categoryID",
+            "customInfo",
+            "stacksize",
+            "singleton"
+           ]
+          ],
+          [
+           "RowClass",
+           {
+            "$token": "util.Row"
+           }
+          ],
+          [
+           "lines",
+           [
+            {
+             "$tuple": [
+              {
+               "$long": 9988400000666
+              },
+              588,
+              140000143,
+              60015249,
+              4,
+              -1,
+              237,
+              6,
+              "",
+              1,
+              1
+             ]
+            }
+           ]
+          ]
+         ]
+        }
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "bloodlineID": 5,
+   "raceID": 4,
+   "create": {
+    "call": [
+     "charUnboundMgr",
+     "CreateCharacterWithDoll",
+     [
+      "Stocked 5 1790657781",
+      4,
+      5,
+      1,
+      1,
+      {
+       "$dict": [
+        [
+         "recorded",
+         1
+        ]
+       ]
+      },
+      {
+       "$dict": [
+        [
+         "recorded",
+         2
+        ]
+       ]
+      },
+      31,
+      null,
+      null
+     ]
+    ],
+    "ok": 140000144
+   },
+   "shipID": 9988400000670,
+   "descriptor": {
+    "call": [
+     "invbroker",
+     "GetItemDescriptor",
+     []
+    ],
+    "ok": {
+     "$objectex": {
+      "$tuple": [
+       {
+        "$token": "blue.DBRowDescriptor"
+       },
+       {
+        "$tuple": [
+         {
+          "$tuple": [
+           {
+            "$tuple": [
+             "itemID",
+             20
+            ]
+           },
+           {
+            "$tuple": [
+             "typeID",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "ownerID",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "locationID",
+             20
+            ]
+           },
+           {
+            "$tuple": [
+             "flagID",
+             2
+            ]
+           },
+           {
+            "$tuple": [
+             "quantity",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "groupID",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "categoryID",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "customInfo",
+             129
+            ]
+           }
+          ]
+         }
+        ]
+       },
+       [
+        {
+         "$tuple": [
+          "stacksize",
+          {
+           "$token": "eve.common.script.sys.eveCfg.StackSize"
+          }
+         ]
+        },
+        {
+         "$tuple": [
+          "singleton",
+          {
+           "$token": "eve.common.script.sys.eveCfg.Singleton"
+          }
+         ]
+        }
+       ]
+      ]
+     },
+     "list": [],
+     "dict": []
+    }
+   },
+   "inventories": {
+    "hangar": {
+     "open": {
+      "call": [
+       "invbroker",
+       "GetInventory",
+       [
+        10004
+       ]
+      ],
+      "ok": {
+       "$substruct": {
+        "$substream": {
+         "$tuple": [
+          "N=65450:38",
+          {
+           "$long": 134351313850780000
+          }
+         ]
+        }
+       }
+      }
+     },
+     "calls": [
+      {
+       "call": [
+        "hangar",
+        "List",
+        []
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000670,
+          "typeID": 596,
+          "ownerID": 140000144,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "hangar",
+        "List",
+        [
+         4
+        ]
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000670,
+          "typeID": 596,
+          "ownerID": 140000144,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "hangar",
+        "List",
+        [
+         5
+        ]
+       ],
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "ListByFlags",
+        [
+         {
+          "$tuple": [
+           4,
+           5
+          ]
+         }
+        ]
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000670,
+          "typeID": 596,
+          "ownerID": 140000144,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "hangar",
+        "GetItem",
+        []
+       ],
+       "ok": {
+        "$object": "util.Row",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           {
+            "$tuple": [
+             "itemID",
+             "typeID",
+             "ownerID",
+             "locationID",
+             "flagID",
+             "quantity",
+             "groupID",
+             "categoryID",
+             "customInfo",
+             "stacksize",
+             "singleton"
+            ]
+           }
+          ],
+          [
+           "line",
+           {
+            "$tuple": [
+             60015249,
+             92885,
+             1000413,
+             60015249,
+             0,
+             1,
+             15,
+             3,
+             "",
+             1,
+             1
+            ]
+           }
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "GetSelfInvItem",
+        []
+       ],
+       "ok": {
+        "$row": {
+         "itemID": 60015249,
+         "typeID": 92885,
+         "ownerID": 1000413,
+         "locationID": 60015249,
+         "flagID": 0,
+         "quantity": 1,
+         "groupID": 15,
+         "categoryID": 3,
+         "customInfo": "",
+         "stacksize": 1,
+         "singleton": 0
+        }
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "GetCapacity",
+        []
+       ],
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           1000000
+          ],
+          [
+           "used",
+           28100
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "GetCapacity",
+        [
+         5
+        ]
+       ],
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           5000
+          ],
+          [
+           "used",
+           0
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "GetItems",
+        []
+       ],
+       "ok": []
+      },
+      {
+       "call": [
+        "hangar",
+        "GetContainerContents",
+        []
+       ],
+       "ok": {
+        "$object": "eve.common.script.sys.rowset.Rowset",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           [
+            "itemID",
+            "typeID",
+            "ownerID",
+            "locationID",
+            "flagID",
+            "quantity",
+            "groupID",
+            "categoryID",
+            "customInfo",
+            "stacksize",
+            "singleton"
+           ]
+          ],
+          [
+           "RowClass",
+           {
+            "$token": "util.Row"
+           }
+          ],
+          [
+           "lines",
+           [
+            {
+             "$tuple": [
+              {
+               "$long": 9988400000670
+              },
+              596,
+              140000144,
+              60015249,
+              4,
+              -1,
+              237,
+              6,
+              "",
+              1,
+              1
+             ]
+            }
+           ]
+          ]
+         ]
+        }
+       }
+      }
+     ]
+    },
+    "station": {
+     "open": {
+      "call": [
+       "invbroker",
+       "GetInventoryFromId",
+       [
+        60015249
+       ]
+      ],
+      "ok": {
+       "$substruct": {
+        "$substream": {
+         "$tuple": [
+          "N=65450:39",
+          {
+           "$long": 134351313850960000
+          }
+         ]
+        }
+       }
+      }
+     },
+     "calls": [
+      {
+       "call": [
+        "station",
+        "List",
+        []
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000670,
+          "typeID": 596,
+          "ownerID": 140000144,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "station",
+        "List",
+        [
+         4
+        ]
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000670,
+          "typeID": 596,
+          "ownerID": 140000144,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "station",
+        "List",
+        [
+         5
+        ]
+       ],
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
+      },
+      {
+       "call": [
+        "station",
+        "ListByFlags",
+        [
+         {
+          "$tuple": [
+           4,
+           5
+          ]
+         }
+        ]
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000670,
+          "typeID": 596,
+          "ownerID": 140000144,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "station",
+        "GetItem",
+        []
+       ],
+       "ok": {
+        "$object": "util.Row",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           {
+            "$tuple": [
+             "itemID",
+             "typeID",
+             "ownerID",
+             "locationID",
+             "flagID",
+             "quantity",
+             "groupID",
+             "categoryID",
+             "customInfo",
+             "stacksize",
+             "singleton"
+            ]
+           }
+          ],
+          [
+           "line",
+           {
+            "$tuple": [
+             60015249,
+             92885,
+             1000413,
+             60015249,
+             0,
+             1,
+             15,
+             3,
+             "",
+             1,
+             1
+            ]
+           }
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "station",
+        "GetSelfInvItem",
+        []
+       ],
+       "ok": {
+        "$row": {
+         "itemID": 60015249,
+         "typeID": 92885,
+         "ownerID": 1000413,
+         "locationID": 60015249,
+         "flagID": 0,
+         "quantity": 1,
+         "groupID": 15,
+         "categoryID": 3,
+         "customInfo": "",
+         "stacksize": 1,
+         "singleton": 0
+        }
+       }
+      },
+      {
+       "call": [
+        "station",
+        "GetCapacity",
+        []
+       ],
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           1000000
+          ],
+          [
+           "used",
+           28100
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "station",
+        "GetCapacity",
+        [
+         5
+        ]
+       ],
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           5000
+          ],
+          [
+           "used",
+           0
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "station",
+        "GetItems",
+        []
+       ],
+       "ok": []
+      },
+      {
+       "call": [
+        "station",
+        "GetContainerContents",
+        []
+       ],
+       "ok": {
+        "$object": "eve.common.script.sys.rowset.Rowset",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           [
+            "itemID",
+            "typeID",
+            "ownerID",
+            "locationID",
+            "flagID",
+            "quantity",
+            "groupID",
+            "categoryID",
+            "customInfo",
+            "stacksize",
+            "singleton"
+           ]
+          ],
+          [
+           "RowClass",
+           {
+            "$token": "util.Row"
+           }
+          ],
+          [
+           "lines",
+           [
+            {
+             "$tuple": [
+              {
+               "$long": 9988400000670
+              },
+              596,
+              140000144,
+              60015249,
+              4,
+              -1,
+              237,
+              6,
+              "",
+              1,
+              1
+             ]
+            }
+           ]
+          ]
+         ]
+        }
+       }
+      }
+     ]
+    },
+    "ship": {
+     "open": {
+      "call": [
+       "invbroker",
+       "GetInventoryFromId",
+       [
+        9988400000670
+       ]
+      ],
+      "ok": {
+       "$substruct": {
+        "$substream": {
+         "$tuple": [
+          "N=65450:40",
+          {
+           "$long": 134351313851200000
+          }
+         ]
+        }
+       }
+      }
+     },
+     "calls": [
+      {
+       "call": [
+        "ship",
+        "List",
+        []
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "List",
+        [
+         4
+        ]
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "List",
+        [
+         5
+        ]
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "ListByFlags",
+        [
+         {
+          "$tuple": [
+           4,
+           5
+          ]
+         }
+        ]
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "GetItem",
+        []
+       ],
+       "ok": {
+        "$object": "util.Row",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           {
+            "$tuple": [
+             "itemID",
+             "typeID",
+             "ownerID",
+             "locationID",
+             "flagID",
+             "quantity",
+             "groupID",
+             "categoryID",
+             "customInfo",
+             "stacksize",
+             "singleton"
+            ]
+           }
+          ],
+          [
+           "line",
+           {
+            "$tuple": [
+             {
+              "$long": 9988400000670
+             },
+             596,
+             140000144,
+             60015249,
+             4,
+             -1,
+             237,
+             6,
+             "",
+             1,
+             1
+            ]
+           }
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "ship",
+        "GetSelfInvItem",
+        []
+       ],
+       "ok": {
+        "$row": {
+         "itemID": 9988400000670,
+         "typeID": 596,
+         "ownerID": 140000144,
+         "locationID": 60015249,
+         "flagID": 4,
+         "quantity": -1,
+         "groupID": 237,
+         "categoryID": 6,
+         "customInfo": "",
+         "stacksize": 1,
+         "singleton": 1
+        }
+       }
+      },
+      {
+       "call": [
+        "ship",
+        "GetCapacity",
+        []
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "GetCapacity",
+        [
+         5
+        ]
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "GetItems",
+        []
+       ],
+       "ok": []
+      },
+      {
+       "call": [
+        "ship",
+        "GetContainerContents",
+        []
+       ],
+       "ok": {
+        "$object": "eve.common.script.sys.rowset.Rowset",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           [
+            "itemID",
+            "typeID",
+            "ownerID",
+            "locationID",
+            "flagID",
+            "quantity",
+            "groupID",
+            "categoryID",
+            "customInfo",
+            "stacksize",
+            "singleton"
+           ]
+          ],
+          [
+           "RowClass",
+           {
+            "$token": "util.Row"
+           }
+          ],
+          [
+           "lines",
+           [
+            {
+             "$tuple": [
+              {
+               "$long": 9988400000670
+              },
+              596,
+              140000144,
+              60015249,
+              4,
+              -1,
+              237,
+              6,
+              "",
+              1,
+              1
+             ]
+            }
+           ]
+          ]
+         ]
+        }
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "bloodlineID": 7,
+   "raceID": 8,
+   "create": {
+    "call": [
+     "charUnboundMgr",
+     "CreateCharacterWithDoll",
+     [
+      "Stocked 7 1790657781",
+      8,
+      7,
+      1,
+      13,
+      {
+       "$dict": [
+        [
+         "recorded",
+         1
+        ]
+       ]
+      },
+      {
+       "$dict": [
+        [
+         "recorded",
+         2
+        ]
+       ]
+      },
+      37,
+      null,
+      null
+     ]
+    ],
+    "ok": 140000145
+   },
+   "shipID": 9988400000674,
+   "descriptor": {
+    "call": [
+     "invbroker",
+     "GetItemDescriptor",
+     []
+    ],
+    "ok": {
+     "$objectex": {
+      "$tuple": [
+       {
+        "$token": "blue.DBRowDescriptor"
+       },
+       {
+        "$tuple": [
+         {
+          "$tuple": [
+           {
+            "$tuple": [
+             "itemID",
+             20
+            ]
+           },
+           {
+            "$tuple": [
+             "typeID",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "ownerID",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "locationID",
+             20
+            ]
+           },
+           {
+            "$tuple": [
+             "flagID",
+             2
+            ]
+           },
+           {
+            "$tuple": [
+             "quantity",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "groupID",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "categoryID",
+             3
+            ]
+           },
+           {
+            "$tuple": [
+             "customInfo",
+             129
+            ]
+           }
+          ]
+         }
+        ]
+       },
+       [
+        {
+         "$tuple": [
+          "stacksize",
+          {
+           "$token": "eve.common.script.sys.eveCfg.StackSize"
+          }
+         ]
+        },
+        {
+         "$tuple": [
+          "singleton",
+          {
+           "$token": "eve.common.script.sys.eveCfg.Singleton"
+          }
+         ]
+        }
+       ]
+      ]
+     },
+     "list": [],
+     "dict": []
+    }
+   },
+   "inventories": {
+    "hangar": {
+     "open": {
+      "call": [
+       "invbroker",
+       "GetInventory",
+       [
+        10004
+       ]
+      ],
+      "ok": {
+       "$substruct": {
+        "$substream": {
+         "$tuple": [
+          "N=65450:42",
+          {
+           "$long": 134351313867510000
+          }
+         ]
+        }
+       }
+      }
+     },
+     "calls": [
+      {
+       "call": [
+        "hangar",
+        "List",
+        []
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000674,
+          "typeID": 606,
+          "ownerID": 140000145,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "hangar",
+        "List",
+        [
+         4
+        ]
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000674,
+          "typeID": 606,
+          "ownerID": 140000145,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "hangar",
+        "List",
+        [
+         5
+        ]
+       ],
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "ListByFlags",
+        [
+         {
+          "$tuple": [
+           4,
+           5
+          ]
+         }
+        ]
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000674,
+          "typeID": 606,
+          "ownerID": 140000145,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "hangar",
+        "GetItem",
+        []
+       ],
+       "ok": {
+        "$object": "util.Row",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           {
+            "$tuple": [
+             "itemID",
+             "typeID",
+             "ownerID",
+             "locationID",
+             "flagID",
+             "quantity",
+             "groupID",
+             "categoryID",
+             "customInfo",
+             "stacksize",
+             "singleton"
+            ]
+           }
+          ],
+          [
+           "line",
+           {
+            "$tuple": [
+             60015249,
+             92885,
+             1000413,
+             60015249,
+             0,
+             1,
+             15,
+             3,
+             "",
+             1,
+             1
+            ]
+           }
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "GetSelfInvItem",
+        []
+       ],
+       "ok": {
+        "$row": {
+         "itemID": 60015249,
+         "typeID": 92885,
+         "ownerID": 1000413,
+         "locationID": 60015249,
+         "flagID": 0,
+         "quantity": 1,
+         "groupID": 15,
+         "categoryID": 3,
+         "customInfo": "",
+         "stacksize": 1,
+         "singleton": 0
+        }
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "GetCapacity",
+        []
+       ],
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           1000000
+          ],
+          [
+           "used",
+           24500
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "GetCapacity",
+        [
+         5
+        ]
+       ],
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           5000
+          ],
+          [
+           "used",
+           0
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "hangar",
+        "GetItems",
+        []
+       ],
+       "ok": []
+      },
+      {
+       "call": [
+        "hangar",
+        "GetContainerContents",
+        []
+       ],
+       "ok": {
+        "$object": "eve.common.script.sys.rowset.Rowset",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           [
+            "itemID",
+            "typeID",
+            "ownerID",
+            "locationID",
+            "flagID",
+            "quantity",
+            "groupID",
+            "categoryID",
+            "customInfo",
+            "stacksize",
+            "singleton"
+           ]
+          ],
+          [
+           "RowClass",
+           {
+            "$token": "util.Row"
+           }
+          ],
+          [
+           "lines",
+           [
+            {
+             "$tuple": [
+              {
+               "$long": 9988400000674
+              },
+              606,
+              140000145,
+              60015249,
+              4,
+              -1,
+              237,
+              6,
+              "",
+              1,
+              1
+             ]
+            }
+           ]
+          ]
+         ]
+        }
+       }
+      }
+     ]
+    },
+    "station": {
+     "open": {
+      "call": [
+       "invbroker",
+       "GetInventoryFromId",
+       [
+        60015249
+       ]
+      ],
+      "ok": {
+       "$substruct": {
+        "$substream": {
+         "$tuple": [
+          "N=65450:43",
+          {
+           "$long": 134351313867680000
+          }
+         ]
+        }
+       }
+      }
+     },
+     "calls": [
+      {
+       "call": [
+        "station",
+        "List",
+        []
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000674,
+          "typeID": 606,
+          "ownerID": 140000145,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "station",
+        "List",
+        [
+         4
+        ]
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000674,
+          "typeID": 606,
+          "ownerID": 140000145,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "station",
+        "List",
+        [
+         5
+        ]
+       ],
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
+      },
+      {
+       "call": [
+        "station",
+        "ListByFlags",
+        [
+         {
+          "$tuple": [
+           4,
+           5
+          ]
+         }
+        ]
+       ],
+       "ok": [
+        {
+         "$row": {
+          "itemID": 9988400000674,
+          "typeID": 606,
+          "ownerID": 140000145,
+          "locationID": 60015249,
+          "flagID": 4,
+          "quantity": -1,
+          "groupID": 237,
+          "categoryID": 6,
+          "customInfo": "",
+          "stacksize": 1,
+          "singleton": 1
+         }
+        }
+       ]
+      },
+      {
+       "call": [
+        "station",
+        "GetItem",
+        []
+       ],
+       "ok": {
+        "$object": "util.Row",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           {
+            "$tuple": [
+             "itemID",
+             "typeID",
+             "ownerID",
+             "locationID",
+             "flagID",
+             "quantity",
+             "groupID",
+             "categoryID",
+             "customInfo",
+             "stacksize",
+             "singleton"
+            ]
+           }
+          ],
+          [
+           "line",
+           {
+            "$tuple": [
+             60015249,
+             92885,
+             1000413,
+             60015249,
+             0,
+             1,
+             15,
+             3,
+             "",
+             1,
+             1
+            ]
+           }
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "station",
+        "GetSelfInvItem",
+        []
+       ],
+       "ok": {
+        "$row": {
+         "itemID": 60015249,
+         "typeID": 92885,
+         "ownerID": 1000413,
+         "locationID": 60015249,
+         "flagID": 0,
+         "quantity": 1,
+         "groupID": 15,
+         "categoryID": 3,
+         "customInfo": "",
+         "stacksize": 1,
+         "singleton": 0
+        }
+       }
+      },
+      {
+       "call": [
+        "station",
+        "GetCapacity",
+        []
+       ],
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           1000000
+          ],
+          [
+           "used",
+           24500
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "station",
+        "GetCapacity",
+        [
+         5
+        ]
+       ],
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           5000
+          ],
+          [
+           "used",
+           0
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "station",
+        "GetItems",
+        []
+       ],
+       "ok": []
+      },
+      {
+       "call": [
+        "station",
+        "GetContainerContents",
+        []
+       ],
+       "ok": {
+        "$object": "eve.common.script.sys.rowset.Rowset",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           [
+            "itemID",
+            "typeID",
+            "ownerID",
+            "locationID",
+            "flagID",
+            "quantity",
+            "groupID",
+            "categoryID",
+            "customInfo",
+            "stacksize",
+            "singleton"
+           ]
+          ],
+          [
+           "RowClass",
+           {
+            "$token": "util.Row"
+           }
+          ],
+          [
+           "lines",
+           [
+            {
+             "$tuple": [
+              {
+               "$long": 9988400000674
+              },
+              606,
+              140000145,
+              60015249,
+              4,
+              -1,
+              237,
+              6,
+              "",
+              1,
+              1
+             ]
+            }
+           ]
+          ]
+         ]
+        }
+       }
+      }
+     ]
+    },
+    "ship": {
+     "open": {
+      "call": [
+       "invbroker",
+       "GetInventoryFromId",
+       [
+        9988400000674
+       ]
+      ],
+      "ok": {
+       "$substruct": {
+        "$substream": {
+         "$tuple": [
+          "N=65450:44",
+          {
+           "$long": 134351313867910000
+          }
+         ]
+        }
+       }
+      }
+     },
+     "calls": [
+      {
+       "call": [
+        "ship",
+        "List",
+        []
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "List",
+        [
+         4
+        ]
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "List",
+        [
+         5
+        ]
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "ListByFlags",
+        [
+         {
+          "$tuple": [
+           4,
+           5
+          ]
+         }
+        ]
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "GetItem",
+        []
+       ],
+       "ok": {
+        "$object": "util.Row",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           {
+            "$tuple": [
+             "itemID",
+             "typeID",
+             "ownerID",
+             "locationID",
+             "flagID",
+             "quantity",
+             "groupID",
+             "categoryID",
+             "customInfo",
+             "stacksize",
+             "singleton"
+            ]
+           }
+          ],
+          [
+           "line",
+           {
+            "$tuple": [
+             {
+              "$long": 9988400000674
+             },
+             606,
+             140000145,
+             60015249,
+             4,
+             -1,
+             237,
+             6,
+             "",
+             1,
+             1
+            ]
+           }
+          ]
+         ]
+        }
+       }
+      },
+      {
+       "call": [
+        "ship",
+        "GetSelfInvItem",
+        []
+       ],
+       "ok": {
+        "$row": {
+         "itemID": 9988400000674,
+         "typeID": 606,
+         "ownerID": 140000145,
+         "locationID": 60015249,
+         "flagID": 4,
+         "quantity": -1,
+         "groupID": 237,
+         "categoryID": 6,
+         "customInfo": "",
+         "stacksize": 1,
+         "singleton": 1
+        }
+       }
+      },
+      {
+       "call": [
+        "ship",
+        "GetCapacity",
+        []
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "GetCapacity",
+        [
+         5
+        ]
+       ],
+       "ok": null
+      },
+      {
+       "call": [
+        "ship",
+        "GetItems",
+        []
+       ],
+       "ok": []
+      },
+      {
+       "call": [
+        "ship",
+        "GetContainerContents",
+        []
+       ],
+       "ok": {
+        "$object": "eve.common.script.sys.rowset.Rowset",
+        "args": {
+         "$dict": [
+          [
+           "header",
+           [
+            "itemID",
+            "typeID",
+            "ownerID",
+            "locationID",
+            "flagID",
+            "quantity",
+            "groupID",
+            "categoryID",
+            "customInfo",
+            "stacksize",
+            "singleton"
+           ]
+          ],
+          [
+           "RowClass",
+           {
+            "$token": "util.Row"
+           }
+          ],
+          [
+           "lines",
+           [
+            {
+             "$tuple": [
+              {
+               "$long": 9988400000674
+              },
+              606,
+              140000145,
+              60015249,
+              4,
+              -1,
+              237,
+              6,
+              "",
+              1,
+              1
+             ]
+            }
+           ]
+          ]
+         ]
+        }
+       }
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

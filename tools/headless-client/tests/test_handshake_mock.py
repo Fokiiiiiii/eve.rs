@@ -104,3 +104,27 @@ def test_call_request_wire_shape():
     assert is_bound == 0 and isinstance(stream, m.SubStream)
     remote_object, method, args, kwargs = stream.value
     assert (remote_object, args) == (1, ()) and bytes(method).decode() == "GetTime"
+
+
+def test_a_bound_call_names_its_object_in_the_body_and_no_service_in_the_address():
+    """The call to a bound object: the destination has no service and the body's first element is the object."""
+    oid = ("N=65450:1", m.Long(134351313110300000))
+    with MockServer() as server:
+        server.add_account("pilot", "hunter2")
+        with Client("127.0.0.1", server.port) as client:
+            client.login("pilot", "hunter2")
+            with pytest.raises(packet.MachoError):
+                client.call_bound(m.SubStruct(value=m.SubStream(value=oid)), "List", 4, flags=1)
+    request = next(v for k, v in server.received if k == "packet" and v.command == packet.CALL_REQ)
+    assert request.destination.kind == packet.ADDR_ANY and request.destination.service is None
+    is_bound, stream = request.payload[0]
+    remote_object, method, args, kwargs = stream.value
+    assert m.plain(remote_object) == ("N=65450:1", 134351313110300000)
+    assert bytes(method).decode() == "List" and args == (4,)
+    assert m.plain(kwargs) == {"flags": 1}
+
+
+def test_the_object_of_a_bind_answer_is_found_through_its_wrappers():
+    oid = ("N=65450:1", 5)
+    assert Client.bound_object(m.SubStruct(value=m.SubStream(value=oid))) == oid
+    assert Client.bound_object(oid) == oid

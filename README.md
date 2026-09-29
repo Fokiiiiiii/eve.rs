@@ -42,7 +42,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 tools/dev/pg18.sh start                                  # a local PostgreSQL 18 for the database tests
 EVE_PG_URL=$(tools/dev/pg18.sh url) cargo test --workspace
 (cd tools/headless-client && .venv/bin/python -m pytest -q)
-(cd dotnet && EVE_PG_URL=$(../tools/dev/pg18.sh url) dotnet test EveRs.slnx)      # 1,880 tests; the database ones are skipped without EVE_PG_URL
+(cd dotnet && EVE_PG_URL=$(../tools/dev/pg18.sh url) dotnet test EveRs.slnx)      # 1,902 tests; the database ones are skipped without EVE_PG_URL
 cargo run --release -p eve-bench -- --compare
 ```
 

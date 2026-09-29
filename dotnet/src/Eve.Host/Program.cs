@@ -14,6 +14,7 @@ using Npgsql;
 using Eve.Services;
 using Eve.Services.CharacterSelect;
 using Eve.Services.Core;
+using Eve.Services.Inventory;
 using Eve.Services.CharacterInfo;
 using Eve.Services.Skills;
 using Eve.Services.Station;
@@ -179,6 +180,7 @@ static async Task<IReadOnlyList<IService>> CharacterServicesAsync(NpgsqlDataSour
         new SkillHandlerService(skills, skillCatalog, now),
         new CharMgrService(characters, stations),
         new StationService(stations, characters, online, now),
+        new InvBrokerService(items, new ItemTypeCatalog(sde), stations, now),
         new AccountService(wallets),
     ];
 }

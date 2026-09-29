@@ -83,7 +83,7 @@ domain module.
 | `crates/eve-marshal`, `dotnet/src/Eve.Marshal` | Kept: the wire contract |
 | `crates/eve-destiny` | Kept: the destiny wire encoding and the motion maths S4 uses |
 | `crates/eve-net`, `dotnet/src/Eve.Host` | New in S1: the front and the service host (ADR 0002). The host keeps accounts in the identity module (PostgreSQL) since S2; the in-memory directory is for tests and for running without a database |
-| `dotnet/src/Eve.{Identity,Characters,Inventory,Skills,Wallet,Universe,Sde,Data}`, `Eve.Services.{CharacterSelect,Skills,CharacterInfo,Wallet,Station}` | New in S2 and S3: domain modules with their own PostgreSQL schemas and migrations (`Eve.Universe` is read-only static data), and the protocol adapters for the character screen, the skill handler, `charMgr`, `account` and the station service |
+| `dotnet/src/Eve.{Identity,Characters,Inventory,Skills,Wallet,Universe,Sde,Data}`, `Eve.Services.{CharacterSelect,Skills,CharacterInfo,Wallet,Station,Inventory}` | New in S2 and S3: domain modules with their own PostgreSQL schemas and migrations (`Eve.Universe` is read-only static data), and the protocol adapters for the character screen, the skill handler, `charMgr`, `account`, the station service and the inventory broker |
 | `dotnet/src/Eve.Macho`, `Eve.Services`, `Eve.Services.Generator` | Kept as the protocol-adapter layer of the service host. The reference's behaviour on failure (a `None` reply) and its number and truthiness rules are candidates in `docs/compat/DEVIATIONS.md` |
 | `dotnet/src/Eve.Services.Core` | Kept: three services as adapters. `subscriptionMgr` reads Omega expiry through `IOmegaAccountStore`, which the subscription module will implement |
 | `dotnet/src/Eve.GameStore` and its importer | **Legacy bridge (ADR 0003).** It mirrors EVE.js's store; no module builds on it. It stays for the legacy import in S6, and its owner-lease and outbox ideas may be reused where a module needs a single writer |
@@ -97,9 +97,10 @@ domain module.
    caches it downloads). The real client cannot be run here, so the order of its calls has to come from its source:
    pick a service at a time, record the reference's answers with the headless client (as `record_character_scenarios.py`
    does for skills) and replay them in `tests/test_login_to_character.py`.
-2. **S3, next**: the hangar and the inventory the client opens (`invbroker`, bound inventories), then dogma for a
-   fitted ship and skill training, each as a module that owns its data (ADR 0003). The station view (`stationSvc`,
-   the object-cache result of `GetStation`) is done. Mail replaces the last constant the selection screen
+2. **S3, next**: dogma for the ship the character sits in (`dogmaIM`: the ship's attributes and the character's, which
+   need the skills and the type attributes of the static data), then moving items in the hangar and skill training,
+   each as a module that owns its data (ADR 0003). The station view (`stationSvc`) and the reads of the hangar
+   (`invbroker`) are done. The next ADR is where dogma lives. Mail replaces the last constant the selection screen
    carries (`docs/compat/DEVIATIONS.md`, "Not yet matched"). The next ADR is where dogma lives.
 3. Tag the fixtures by tier and record the next deviations with evidence from the client source.
 4. Measure before tuning the S1 path (frame copies, per-packet allocation, ping in the front).

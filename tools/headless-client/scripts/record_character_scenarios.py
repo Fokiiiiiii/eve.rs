@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record what the EVE.js reference does from login to a session with a character.
 
-    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations]
+    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory]
 
 The recording is the contract for the same path in eve.rs: `tests/test_login_to_character.py` replays the calls
 against any server and compares each answer with what is stored here, by shape, treating per-run values
@@ -12,7 +12,9 @@ It writes login_to_character.json (one account walked through creation and selec
 errors and limits), starters.json (a character per playable bloodline: what the reference gives each) and
 skills.json (what the skill handler answers for a new character of each race) and character_info.json (what the
 character manager and the wallet answer for one) and stations.json (the reference's record of a sample of stations,
-for their names and places). `--only` records one of them and leaves the others as they are.
+for their names and places) and inventory.json (what the inventory broker and the bound inventories of the station
+hangar, the station and the ship answer for a new character). `--only` records one of them and leaves the others as
+they are.
 """
 
 from __future__ import annotations
@@ -283,6 +285,58 @@ def record_stations(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
         handle.write("\n")
 
 
+# What the client asks a bound inventory. The three inventories are the character's hangar in its station, the station
+# itself and the ship in the hangar.
+INVENTORY_CALLS = [
+    ("List", ()),
+    ("List", (4,)),
+    ("List", (5,)),
+    ("ListByFlags", ((4, 5),)),
+    ("GetItem", ()),
+    ("GetSelfInvItem", ()),
+    ("GetCapacity", ()),
+    ("GetCapacity", (5,)),
+    ("GetItems", ()),
+    ("GetContainerContents", ()),
+]
+
+
+def record_inventory(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """One new character per playable race, chosen; then its hangar, its station and its ship opened as inventories and
+    asked the calls of INVENTORY_CALLS. A bound object is handed out by `GetInventory` / `GetInventoryFromId`; the
+    handle differs on every run and is kept only as a marker."""
+    races = []
+    for bloodline in (1, 3, 5, 7):
+        who = rec.login(f"inventory{bloodline}")
+        created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Stocked {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
+        char_id = int(created["ok"])
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        descriptor = rec.call(who, "invbroker", "GetItemDescriptor")
+
+        hangar = who.call("invbroker", "GetInventory", 10004)
+        ship_id = who.call_bound(hangar, "List")[0].fields()["itemID"]
+        inventories = {}
+        for label, opener, argument in (("hangar", "GetInventory", 10004), ("station", "GetInventoryFromId", 60015249), ("ship", "GetInventoryFromId", int(ship_id))):
+            handle = who.call(("invbroker"), opener, argument)
+            opened = {"call": ["invbroker", opener, [describe(argument)]], "ok": describe(handle)}
+            calls = []
+            for method, args in INVENTORY_CALLS:
+                step = {"call": [label, method, [describe(a) for a in args]]}
+                try:
+                    step["ok"] = describe(who.call_bound(handle, method, *args))
+                except p.MachoError as error:
+                    step["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+                calls.append(step)
+            inventories[label] = {"open": opened, "calls": calls}
+        races.append({"bloodlineID": bloodline, "raceID": RACE_OF_BLOODLINE[bloodline], "create": created, "shipID": int(ship_id),
+                      "descriptor": descriptor, "inventories": inventories})
+        who.close()
+        time.sleep(1.5)
+    with open(os.path.join(out, "inventory.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": races}, handle, indent=1, ensure_ascii=False)
+        handle.write("\n")
+
+
 def main() -> int:
     if len(sys.argv) < 4:
         print(__doc__)
@@ -295,7 +349,7 @@ def main() -> int:
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory}
     try:
         for name, record in parts.items():
             if only in (None, name):

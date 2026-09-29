@@ -34,5 +34,6 @@ deliberately differs, `docs/compat/DEVIATIONS.md` says so. `login_to_character.j
 each bloodline is given, and `skills.json` what the skill handler answers for a new character of each race (the three
 calls that return the whole skill list share one copy, marked `{"$same": "GetSkills"}`), `character_info.json` what
 `charMgr` and `account` answer for a new character of each race, and `stations.json` the reference's station record for
-a sample of 62 stations (every 87th of the static data and two more), which the station names are checked against.
-`--only walk|starters|skills|info|stations` records one and leaves the others as they are.
+a sample of 62 stations (every 87th of the static data and two more), which the station names are checked against, and
+`inventory.json` what the inventory broker and the bound inventories of a new character's hangar, station and ship
+answer. `--only walk|starters|skills|info|stations|inventory` records one and leaves the others as they are.

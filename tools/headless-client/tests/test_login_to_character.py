@@ -431,3 +431,92 @@ def test_a_station_that_does_not_exist_is_not_made_up():
     with connect(f"walk-nostation-{uuid.uuid4().hex[:8]}") as client:
         assert client.call("stationSvc", "GetStation", 1) is None
         assert client.call("stationSvc", "GetStation", 60003759) is None
+
+
+# ── the inventories of a docked character ───────────────────────────────────
+
+INVENTORY = load("inventory.json")
+RECORDED_INVENTORY_RUN = re.search(r"(\d{6,})$", INVENTORY["races"][0]["create"]["call"][2][0]).group(1)
+
+
+def unwrap_longs(described):
+    """The same description with `{"$long": n}` as `n`: an item id is a long or an int by its size, and the client reads both alike."""
+    if isinstance(described, dict):
+        if set(described) == {"$long"}:
+            return described["$long"]
+        return {key: unwrap_longs(value) for key, value in described.items()}
+    if isinstance(described, list):
+        return [unwrap_longs(item) for item in described]
+    return described
+
+
+def as_rows(described):
+    """`util.Row` and `Rowset` answers as the packed rows they hold, so that they compare with the same rules."""
+    if isinstance(described, list):
+        return [as_rows(item) for item in described]
+    if isinstance(described, dict) and described.get("$object") == "util.Row":
+        parts = {key: value for key, value in described["args"]["$dict"]}
+        return {"$row": dict(zip(parts["header"]["$tuple"], parts["line"]["$tuple"]))}
+    if isinstance(described, dict) and described.get("$object", "").endswith("rowset.Rowset"):
+        parts = {key: value for key, value in described["args"]["$dict"]}
+        header = parts["header"]
+        return {"$tuple": [{"$row": dict(zip(header, line["$tuple"]))} for line in parts["lines"]]}
+    return described
+
+
+def inventory_form(described):
+    return unwrap_longs(as_rows(described))
+
+
+@pytest.mark.parametrize("race", INVENTORY["races"], ids=lambda r: f"race-{r['raceID']}")
+def test_a_new_characters_inventories_are_those_of_the_reference(race):
+    run = uuid.uuid4().hex[:10]
+    ids: dict[int, int] = {}
+    with connect(f"walk-inventory-{run}") as client:
+        service, method, *args = [race["create"]["call"][0], race["create"]["call"][1], *[revive(a, run, ids, RECORDED_INVENTORY_RUN) for a in race["create"]["call"][2]]]
+        kind, made = attempt(client, service, method, *args)
+        assert kind == "ok", brief(made)
+        ids[int(race["create"]["ok"])] = int(made)
+        assert attempt(client, "charUnboundMgr", "SelectCharacterID", int(made), None, False) == ("ok", None)
+
+        problems = []
+        kind, descriptor = attempt(client, "invbroker", "GetItemDescriptor")
+        problems += same_way(race["descriptor"]["ok"], descriptor, "GetItemDescriptor") if kind == "ok" else [f"GetItemDescriptor: {brief(descriptor)}"]
+
+        hangar = client.call("invbroker", "GetInventory", 10004)
+        ship_id = client.call_bound(hangar, "List")[0].fields()["itemID"]
+        ids[race["shipID"]] = int(ship_id)
+        for label, inventory in race["inventories"].items():
+            opener, argument = inventory["open"]["call"][1], revive(inventory["open"]["call"][2][0], run, ids, RECORDED_INVENTORY_RUN)
+            handle = client.call("invbroker", opener, argument)
+            opened = describe(handle)
+            problems += same_way(
+                blank(inventory["open"]["ok"], "$substruct", "$substream", "$tuple"), blank(opened, "$substruct", "$substream", "$tuple"), f"{label}: {opener}")
+            for step in inventory["calls"]:
+                _, method, described = step["call"]
+                where = f"race {race['raceID']} {label}.{method}{json.dumps(described)}"
+                args = [tuple(a["$tuple"]) if isinstance(a, dict) else a for a in described]
+                try:
+                    outcome = describe(client.call_bound(handle, method, *args))
+                except p.MachoError as error:
+                    problems.append(f"{where}: error {brief(describe(error.payload))}")
+                    continue
+                expected = step["ok"]
+                if not REFERENCE:
+                    # GAP (capacity): the inventory's capacity and volume come with dogma; eve.rs has no answer yet
+                    if method == "GetCapacity":
+                        if outcome is not None:
+                            problems.append(f"{where}: eve.rs has no capacity yet, got {brief(outcome)}")
+                        continue
+                    if label == "ship":
+                        # DEVIATION (ship contents): the reference answers null for what is in a ship and lists the ship among
+                        # its own contents; eve.rs answers an empty list (the client iterates the answer) and an empty rowset
+                        if method in ("List", "ListByFlags") and expected is None:
+                            expected = []
+                        if method == "GetContainerContents":
+                            expected = json.loads(json.dumps(expected))
+                            for pair in expected["args"]["$dict"]:
+                                if pair[0] == "lines":
+                                    pair[1] = []
+                problems += same_way(inventory_form(expected), inventory_form(outcome), where, volatile=VOLATILE | ITEM_FIELDS)
+    assert problems == [], "\n".join(problems[:20])

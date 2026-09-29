@@ -71,6 +71,21 @@ public sealed class PgItemStore
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
 
+    /// <summary>The items an owner has at a location (a station), oldest first.</summary>
+    public async Task<IReadOnlyList<Item>> InLocationAsync(long locationId, long ownerId, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.items WHERE location_id = $1 AND owner_id = $2 ORDER BY id");
+        command.Parameters.Add(new NpgsqlParameter { Value = locationId });
+        command.Parameters.Add(new NpgsqlParameter { Value = ownerId });
+        var list = new List<Item>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            list.Add(Read(reader));
+        }
+        return list;
+    }
+
     public async Task<IReadOnlyList<Item>> OwnedByAsync(long ownerId, CancellationToken cancellationToken = default)
     {
         await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.items WHERE owner_id = $1 ORDER BY id");

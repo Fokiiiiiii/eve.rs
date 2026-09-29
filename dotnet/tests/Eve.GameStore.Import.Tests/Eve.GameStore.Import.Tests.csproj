@@ -12,6 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/Eve.GameStore/Eve.GameStore.csproj" />
     <ProjectReference Include="../../src/Eve.GameStore.Import/Eve.GameStore.Import.csproj" />
+    <ProjectReference Include="../../src/Eve.Services.Core/Eve.Services.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

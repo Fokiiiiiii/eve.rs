@@ -12,11 +12,9 @@
     <ProjectReference Include="../../src/Eve.Services.Core/Eve.Services.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="../Eve.GameStore.Tests/Support/*.cs" Link="Support/%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />
     <None Include="../../../oracle/fixtures/services/wave1.json" Link="fixtures/services/wave1.json" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="../../../oracle/fixtures/gamestore/*.json" Link="fixtures/gamestore/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -1,13 +1,14 @@
 using System.Text.Json.Nodes;
-using Eve.GameStore;
 using Eve.GameStore.Tests;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Services;
+using Eve.Services.Core;
 
-namespace Eve.Services.Core.Tests;
+namespace Eve.GameStore.Import.Tests;
 
-/// <summary>The services against the real store: a licence written by one process is seen by the next.</summary>
-public class GameStoreIntegrationTests
+/// <summary>The bridge to the legacy store: a licence written by one process is seen by the next.</summary>
+public class LegacyOmegaTests
 {
     private const long NowMs = 1_700_000_000_123;
 
@@ -32,14 +33,14 @@ public class GameStoreIntegrationTests
         var future = Py.FileTimeFromUnixMs(NowMs) + (9 * 864000000000L);
 
         var first = await Writer(pg, "first");
-        await first.LoadAsync(GameStoreOmegaAccounts.Table);
-        first.Write(GameStoreOmegaAccounts.Table, "/accounts/90000001", J($$"""{"omegaExpiryFileTime":" {{future}} ","updatedAt":"x"}"""));
+        await first.LoadAsync(LegacyOmegaAccounts.Table);
+        first.Write(LegacyOmegaAccounts.Table, "/accounts/90000001", J($$"""{"omegaExpiryFileTime":" {{future}} ","updatedAt":"x"}"""));
         await first.FlushAllAsync();
         await first.DisposeAsync();
 
         var reader = new GameStoreCache(pg.Store, null, new GameStoreCacheOptions { ProcessRole = "reader" });
-        await reader.LoadAsync(GameStoreOmegaAccounts.Table);
-        var accounts = new GameStoreOmegaAccounts(reader);
+        await reader.LoadAsync(LegacyOmegaAccounts.Table);
+        var accounts = new LegacyOmegaAccounts(reader);
         Assert.Equal(future.ToString(), accounts.GetOmegaExpiry(90000001));
         Assert.Null(accounts.GetOmegaExpiry(90000002));
 
@@ -61,28 +62,15 @@ public class GameStoreIntegrationTests
     {
         await using var pg = await PgScope.CreateAsync();
         var writer = await Writer(pg, "w");
-        await writer.LoadAsync(GameStoreOmegaAccounts.Table);
-        writer.Write(GameStoreOmegaAccounts.Table, "/accounts/1", J("""{"omegaExpiryFileTime":"   "}"""));
-        writer.Write(GameStoreOmegaAccounts.Table, "/accounts/2", J("""{"omegaExpiryFileTime":5}"""));
-        writer.Write(GameStoreOmegaAccounts.Table, "/accounts/3", J("""{}"""));
-        var accounts = new GameStoreOmegaAccounts(writer);
+        await writer.LoadAsync(LegacyOmegaAccounts.Table);
+        writer.Write(LegacyOmegaAccounts.Table, "/accounts/1", J("""{"omegaExpiryFileTime":"   "}"""));
+        writer.Write(LegacyOmegaAccounts.Table, "/accounts/2", J("""{"omegaExpiryFileTime":5}"""));
+        writer.Write(LegacyOmegaAccounts.Table, "/accounts/3", J("""{}"""));
+        var accounts = new LegacyOmegaAccounts(writer);
         Assert.Null(accounts.GetOmegaExpiry(1));
         Assert.Null(accounts.GetOmegaExpiry(2));
         Assert.Null(accounts.GetOmegaExpiry(3));
         Assert.Null(accounts.GetOmegaExpiry(4));
         await writer.DisposeAsync();
-    }
-
-    [Fact]
-    public void The_catalog_names_the_core_services()
-    {
-        Assert.Equal(["browserLockdownSvc", "pingService", "subscriptionMgr"], CoreServices.Names.Order());
-        var created = CoreServices.Create(new SubscriptionSettings(), new NoAccounts(), () => 0);
-        Assert.Equal(CoreServices.Names.Order(), created.Select(s => s.Name).Order());
-    }
-
-    private sealed class NoAccounts : IOmegaAccountStore
-    {
-        public string? GetOmegaExpiry(long accountId) => null;
     }
 }

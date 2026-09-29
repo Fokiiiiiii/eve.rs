@@ -85,8 +85,8 @@ domain module.
 | `crates/eve-net`, `dotnet/src/Eve.Host` | New in S1: the front and the service host (ADR 0002). The host keeps accounts in the identity module (PostgreSQL) since S2; the in-memory directory is for tests and for running without a database |
 | `dotnet/src/Eve.{Identity,Characters,Inventory,Sde,Data}`, `Eve.Services.CharacterSelect` | New in S2: domain modules with their own PostgreSQL schemas and migrations, and the protocol adapter for the character screen |
 | `dotnet/src/Eve.Macho`, `Eve.Services`, `Eve.Services.Generator` | Kept as the protocol-adapter layer of the service host. The reference's behaviour on failure (a `None` reply) and its number and truthiness rules are candidates in `docs/compat/DEVIATIONS.md` |
-| `dotnet/src/Eve.Services.Core` | Kept: three services as adapters. `subscriptionMgr` moves into the identity module when that exists |
-| `dotnet/src/Eve.GameStore` and its importer | **Transitional.** It mirrors EVE.js's store to make a direct port possible. Domain modules will not build on it; it stays for the legacy import until S6, and its owner-lease and outbox ideas are reused where a module needs them. Decided in an ADR at the start of S2 |
+| `dotnet/src/Eve.Services.Core` | Kept: three services as adapters. `subscriptionMgr` reads Omega expiry through `IOmegaAccountStore`, which the subscription module will implement |
+| `dotnet/src/Eve.GameStore` and its importer | **Legacy bridge (ADR 0003).** It mirrors EVE.js's store; no module builds on it. It stays for the legacy import in S6, and its owner-lease and outbox ideas may be reused where a module needs a single writer |
 | `oracle/` fixtures | Kept as contract tests. Each fixture set is to be tagged contract, tolerated or internal; internal ones are dropped |
 | `crates/eve-sde` | Kept: static data, fetched on first start; typed models are added as slices need them |
 | `tools/headless-client` | Becomes the conformance driver for both servers |
@@ -96,8 +96,8 @@ domain module.
 1. **Finish S2**: what the client asks for after `SelectCharacterID` (the session attributes it reads, the caches it
    downloads, `OnServerSkillsChanged` and the other login notifications); record the reference's next stretch of the
    login with the headless client and replay it the way `tests/test_login_to_character.py` does.
-2. **S3 design**: decide in an ADR what `Eve.GameStore` is kept for (the legacy import only, if the modules do not
-   build on it), then station, inventory, skills and dogma for a fitted ship. Wallet, skills and mail replace the
-   constants the selection screen carries now (`docs/compat/DEVIATIONS.md`, "Not yet matched").
+2. **S3**: station, inventory, skills and dogma for a fitted ship, as modules that own their data (ADR 0003, decided
+   in S2). Wallet, skills and mail replace the constants the selection screen carries now
+   (`docs/compat/DEVIATIONS.md`, "Not yet matched"). The next ADR is where dogma lives.
 3. Tag the fixtures by tier and record the next deviations with evidence from the client source.
 4. Measure before tuning the S1 path (frame copies, per-packet allocation, ping in the front).

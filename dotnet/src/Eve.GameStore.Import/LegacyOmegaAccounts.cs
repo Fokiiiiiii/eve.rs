@@ -1,13 +1,13 @@
 using System.Text.Json.Nodes;
-using Eve.GameStore;
+using Eve.Services.Core;
 
-namespace Eve.Services.Core;
+namespace Eve.GameStore.Import;
 
 /// <summary>
-/// Reads an account's Omega expiry from the game store's <c>newEdenStoreRuntime</c> table
+/// A bridge for the legacy store: reads an account's Omega expiry from the game store's <c>newEdenStoreRuntime</c> table
 /// (<c>accounts[id].omegaExpiryFileTime</c>). The table must have been loaded into the cache.
 /// </summary>
-public sealed class GameStoreOmegaAccounts(GameStoreCache cache) : IOmegaAccountStore
+public sealed class LegacyOmegaAccounts(GameStoreCache cache) : IOmegaAccountStore
 {
     public const string Table = "newEdenStoreRuntime";
 

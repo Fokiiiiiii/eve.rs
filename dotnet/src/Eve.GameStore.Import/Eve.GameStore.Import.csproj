@@ -9,6 +9,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../Eve.GameStore/Eve.GameStore.csproj" />
+    <ProjectReference Include="../Eve.Services.Core/Eve.Services.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Eve.GameStore.Import.Tests" />

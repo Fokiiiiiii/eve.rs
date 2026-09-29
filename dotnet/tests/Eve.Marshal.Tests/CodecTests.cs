@@ -9,7 +9,7 @@ public class CodecTests
 
     private static byte[] Stream(params byte[] body) => [.. Header, .. body];
 
-    private static PyValue Decode(params byte[] body) => Marshal.Decode(Stream(body));
+    private static PyValue Decode(params byte[] body) => MarshalCodec.Decode(Stream(body));
 
     [Fact]
     public void A_char_string_of_any_byte_decodes_to_that_byte()
@@ -65,26 +65,26 @@ public class CodecTests
         }
 
         // The root is depth 1, so 255 tuples around a leaf reach depth 256.
-        var accepted = Marshal.Encode(Nest(Marshal.MaxDepth - 1));
-        Assert.NotNull(Marshal.Decode(accepted));
-        Assert.Equal(MarshalErrorKind.TooDeep, Assert.Throws<MarshalException>(() => Marshal.Encode(Nest(Marshal.MaxDepth))).Kind);
+        var accepted = MarshalCodec.Encode(Nest(MarshalCodec.MaxDepth - 1));
+        Assert.NotNull(MarshalCodec.Decode(accepted));
+        Assert.Equal(MarshalErrorKind.TooDeep, Assert.Throws<MarshalException>(() => MarshalCodec.Encode(Nest(MarshalCodec.MaxDepth))).Kind);
 
-        var tooDeep = Stream([.. Enumerable.Repeat((byte)0x25, Marshal.MaxDepth), 0x01]);
-        Assert.Equal(MarshalErrorKind.TooDeep, Assert.Throws<MarshalException>(() => Marshal.Decode(tooDeep)).Kind);
+        var tooDeep = Stream([.. Enumerable.Repeat((byte)0x25, MarshalCodec.MaxDepth), 0x01]);
+        Assert.Equal(MarshalErrorKind.TooDeep, Assert.Throws<MarshalException>(() => MarshalCodec.Decode(tooDeep)).Kind);
     }
 
     [Fact]
     public void A_hundred_thousand_levels_are_refused_without_exhausting_the_stack()
     {
         var hostile = Stream([.. Enumerable.Repeat((byte)0x25, 100_000)]);
-        Assert.Equal(MarshalErrorKind.TooDeep, Assert.Throws<MarshalException>(() => Marshal.Decode(hostile)).Kind);
+        Assert.Equal(MarshalErrorKind.TooDeep, Assert.Throws<MarshalException>(() => MarshalCodec.Decode(hostile)).Kind);
 
         PyValue value = PyNone.Instance;
         for (var i = 0; i < 100_000; i++)
         {
             value = new PyList([value]);
         }
-        Assert.Equal(MarshalErrorKind.TooDeep, Assert.Throws<MarshalException>(() => Marshal.Encode(value)).Kind);
+        Assert.Equal(MarshalErrorKind.TooDeep, Assert.Throws<MarshalException>(() => MarshalCodec.Encode(value)).Kind);
     }
 
     [Fact]
@@ -98,7 +98,7 @@ public class CodecTests
             var size = inner.Length < 0xff ? new[] { (byte)inner.Length } : [0xff, .. BitConverter.GetBytes((uint)inner.Length)];
             inner = Stream([0x2b, .. size, .. inner]);
         }
-        var value = Marshal.Decode(inner);
+        var value = MarshalCodec.Decode(inner);
 
         var depth = 0;
         var current = value;
@@ -107,7 +107,7 @@ public class CodecTests
             depth++;
             current = next;
         }
-        Assert.True(depth < Marshal.MaxDepth, $"decoded {depth} nested streams");
+        Assert.True(depth < MarshalCodec.MaxDepth, $"decoded {depth} nested streams");
         Assert.True(current is PySubStream { Decoded: null }, "the chain ends in raw bytes once the limit is reached");
     }
 
@@ -118,7 +118,7 @@ public class CodecTests
     public void A_nested_stream_length_uses_one_byte_below_255_and_five_above(int payloadBytes, int innerLength)
     {
         var inner = new PySubStream(new PyBytes(new byte[payloadBytes]));
-        var encoded = Marshal.Encode(inner);
+        var encoded = MarshalCodec.Encode(inner);
         // 7e 00000000 | 2b <size> <stream>
         Assert.Equal(0x2b, encoded[5]);
         if (innerLength < 255)
@@ -130,7 +130,7 @@ public class CodecTests
             Assert.Equal(0xff, encoded[6]);
             Assert.Equal((uint)(innerLength), BitConverter.ToUInt32(encoded, 7));
         }
-        var decoded = Assert.IsType<PySubStream>(Marshal.DecodeExact(encoded));
+        var decoded = Assert.IsType<PySubStream>(MarshalCodec.DecodeExact(encoded));
         Assert.Equal(new PyBytes(new byte[payloadBytes]), decoded.Decoded);
     }
 
@@ -141,7 +141,7 @@ public class CodecTests
         foreach (var opcode in new byte[] { 0x14, 0x15, 0x16 })
         {
             var hostile = Stream(opcode, 0xff, 0xff, 0xff, 0xff, 0xff);
-            Assert.Equal(MarshalErrorKind.UnexpectedEnd, Assert.Throws<MarshalException>(() => Marshal.Decode(hostile)).Kind);
+            Assert.Equal(MarshalErrorKind.UnexpectedEnd, Assert.Throws<MarshalException>(() => MarshalCodec.Decode(hostile)).Kind);
         }
     }
 
@@ -149,7 +149,7 @@ public class CodecTests
     public void A_save_table_larger_than_the_stream_is_refused()
     {
         var hostile = new byte[] { 0x7e, 0xff, 0xff, 0xff, 0x7f, 0x01 };
-        Assert.Equal(MarshalErrorKind.SaveTable, Assert.Throws<MarshalException>(() => Marshal.Decode(hostile)).Kind);
+        Assert.Equal(MarshalErrorKind.SaveTable, Assert.Throws<MarshalException>(() => MarshalCodec.Decode(hostile)).Kind);
     }
 
     [Fact]
@@ -169,7 +169,7 @@ public class CodecTests
             {
                 try
                 {
-                    Marshal.Decode(bytes.AsMemory(0, length));
+                    MarshalCodec.Decode(bytes.AsMemory(0, length));
                 }
                 catch (MarshalException)
                 {
@@ -201,9 +201,9 @@ public class CodecTests
             }
             try
             {
-                var value = Marshal.Decode(bytes);
+                var value = MarshalCodec.Decode(bytes);
                 survived++;
-                _ = Marshal.Encode(value); // whatever decoded must be encodable again
+                _ = MarshalCodec.Encode(value); // whatever decoded must be encodable again
             }
             catch (MarshalException)
             {
@@ -215,16 +215,16 @@ public class CodecTests
     [Fact]
     public void A_stream_frame_splits_off_the_front_of_a_buffer()
     {
-        var frame = Marshal.EncodePacket(new PyTuple([new PyInt(7), new PyStr("machoNet")]));
+        var frame = MarshalCodec.EncodePacket(new PyTuple([new PyInt(7), new PyStr("machoNet")]));
         var input = frame.Concat(new byte[] { 1, 2, 3 }).ToArray();
-        Assert.True(Marshal.TrySplitPacket(input, out var payload, out var rest));
+        Assert.True(MarshalCodec.TrySplitPacket(input, out var payload, out var rest));
         Assert.Equal(frame.Length - 4, payload.Length);
         Assert.Equal([1, 2, 3], rest.ToArray());
-        Assert.Equal(new PyTuple([new PyInt(7), new PyBytes("machoNet"u8.ToArray())]).Items.Count, ((PyTuple)Marshal.DecodeExact(payload)).Items.Count);
+        Assert.Equal(new PyTuple([new PyInt(7), new PyBytes("machoNet"u8.ToArray())]).Items.Count, ((PyTuple)MarshalCodec.DecodeExact(payload)).Items.Count);
 
-        Assert.False(Marshal.TrySplitPacket(frame.AsMemory(0, frame.Length - 1), out _, out _));
-        Assert.False(Marshal.TrySplitPacket(frame.AsMemory(0, 3), out _, out _));
-        Assert.False(Marshal.TrySplitPacket(new byte[] { 0xff, 0xff, 0xff, 0xff, 0 }, out _, out _));
+        Assert.False(MarshalCodec.TrySplitPacket(frame.AsMemory(0, frame.Length - 1), out _, out _));
+        Assert.False(MarshalCodec.TrySplitPacket(frame.AsMemory(0, 3), out _, out _));
+        Assert.False(MarshalCodec.TrySplitPacket(new byte[] { 0xff, 0xff, 0xff, 0xff, 0 }, out _, out _));
     }
 
     [Fact]
@@ -240,8 +240,8 @@ public class CodecTests
             {
                 block[i] = random.NextDouble() < zeroBias ? (byte)0 : (byte)random.Next(1, 256);
             }
-            var compressed = Marshal.CompressRle(block);
-            Assert.Equal(block, Marshal.DecompressRle(compressed, length));
+            var compressed = MarshalCodec.CompressRle(block);
+            Assert.Equal(block, MarshalCodec.DecompressRle(compressed, length));
         }
     }
 
@@ -270,7 +270,7 @@ public class CodecTests
             new PyList([PyBool.True]),
             new PyDict([new(new PyStr("k"), PyNone.Instance)]),
         ]);
-        var decoded = Assert.IsType<PyTuple>(Marshal.DecodeExact(Marshal.Encode(value)));
+        var decoded = Assert.IsType<PyTuple>(MarshalCodec.DecodeExact(MarshalCodec.Encode(value)));
         Assert.Equal(new PyInt(-129), decoded.Items[0]);
         Assert.Equal(new PyInt(70_000), decoded.Items[1]);
         Assert.Equal(new PyLong(1), decoded.Items[2]);

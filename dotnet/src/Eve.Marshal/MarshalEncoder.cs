@@ -168,7 +168,7 @@ internal sealed class MarshalEncoder
 
     public void Value(PyValue value)
     {
-        if (_depth >= Marshal.MaxDepth)
+        if (_depth >= MarshalCodec.MaxDepth)
         {
             throw MarshalException.TooDeep();
         }

@@ -8,11 +8,12 @@ repository only carries their output.
 | Item | Source |
 |---|---|
 | Source repository | `Fokiiiiiii/evejs-v0.12.9`, branch `ccr-fd6b2132-4353h1` |
-| Source commit | `d1fd295d5a093fd6a948a4233d27165d99fb4919` |
+| Source commit | `614607982af786ca9a796aecbc93753632708156` |
 | `fixtures/marshal/cases.json` | `node tools/oracle/marshalFixtures.js --write` (543 cases) |
 | `fixtures/destiny/cases.json` | `node tools/oracle/destinyFixtures.js --write` (4758 cases) |
 | `fixtures/gamestore/{tables,roles,rowcodec}.json` | `node tools/oracle/gamestoreFixtures.js --write` (114 runtime tables, 59 row-group tables, 241 row-codec cases) |
 | `fixtures/gamestore/reference.sqlite`, `reference.expected.json` | `node tools/oracle/gamestoreSqliteFixture.js`: a gamestore.sqlite written by the real JS store (not byte-reproducible; committed as is) |
+| `fixtures/services/dispatch.json` | `node tools/oracle/serviceFixtures.js --write`: request packets and the response packets the real dispatcher sends for fixture services (21 scenarios) |
 | `bench/baseline.json` | `node tools/bench/run.js --write` (machine-specific: re-record before comparing) |
 | `crates/eve-marshal/src/string_table.rs` | `node tools/oracle/genStringTable.js --write` |
 

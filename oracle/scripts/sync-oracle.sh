@@ -10,11 +10,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   && node tools/oracle/marshalFixtures.js --write \
   && node tools/oracle/destinyFixtures.js --write \
   && node tools/oracle/gamestoreFixtures.js --write \
+  && node tools/oracle/serviceFixtures.js --write \
   && node tools/oracle/genStringTable.js --write )
 
 cp "$EVEJS/tools/oracle/fixtures/marshal/cases.json" "$HERE/oracle/fixtures/marshal/cases.json"
 cp "$EVEJS/tools/oracle/fixtures/destiny/cases.json" "$HERE/oracle/fixtures/destiny/cases.json"
-mkdir -p "$HERE/oracle/fixtures/gamestore"
+mkdir -p "$HERE/oracle/fixtures/gamestore" "$HERE/oracle/fixtures/services"
+cp "$EVEJS/tools/oracle/fixtures/services/dispatch.json" "$HERE/oracle/fixtures/services/dispatch.json"
 cp "$EVEJS"/tools/oracle/fixtures/gamestore/*.json "$EVEJS"/tools/oracle/fixtures/gamestore/reference.sqlite "$HERE/oracle/fixtures/gamestore/"
 cp "$EVEJS/rust/crates/eve-marshal/src/string_table.rs" "$HERE/crates/eve-marshal/src/string_table.rs"
 

@@ -14,7 +14,7 @@ public enum MarshalErrorKind
     /// <summary>The save-index table at the end of the stream is malformed or missing.</summary>
     SaveTable,
 
-    /// <summary><see cref="Marshal.DecodeExact(ReadOnlyMemory{byte})"/> found bytes left over after the root value.</summary>
+    /// <summary><see cref="MarshalCodec.DecodeExact(ReadOnlyMemory{byte})"/> found bytes left over after the root value.</summary>
     TrailingData,
 
     /// <summary>A fixed-width read ran past the end of a buffer shorter than the read.</summary>
@@ -32,7 +32,7 @@ public enum MarshalErrorKind
     /// <summary>A value the encoder cannot represent.</summary>
     Unencodable,
 
-    /// <summary>Nesting deeper than <see cref="Marshal.MaxDepth"/>.</summary>
+    /// <summary>Nesting deeper than <see cref="MarshalCodec.MaxDepth"/>.</summary>
     TooDeep,
 }
 

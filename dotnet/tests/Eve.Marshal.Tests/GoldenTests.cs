@@ -42,7 +42,7 @@ public class GoldenTests
         MarshalException? error = null;
         try
         {
-            actual = Marshal.Encode(JsAdapter.ToValue(js));
+            actual = MarshalCodec.Encode(JsAdapter.ToValue(js));
         }
         catch (MarshalException ex)
         {
@@ -72,8 +72,8 @@ public class GoldenTests
             return; // an encode-only case that failed to encode
         }
         var bytes = Convert.FromHexString(hex);
-        Check(id, "decode", () => Marshal.Decode(bytes), record["decoded"], (string?)record["decodeError"]);
-        Check(id, "decodeExact", () => Marshal.DecodeExact(bytes), record["decodedExact"], (string?)record["decodeExactError"]);
+        Check(id, "decode", () => MarshalCodec.Decode(bytes), record["decoded"], (string?)record["decodeError"]);
+        Check(id, "decodeExact", () => MarshalCodec.DecodeExact(bytes), record["decodedExact"], (string?)record["decodeExactError"]);
     }
 
     private static void Check(string id, string label, Func<PyValue> decode, JsonNode? expected, string? expectedError)

@@ -5,7 +5,7 @@ namespace Eve.Marshal;
 /// (<c>server/src/network/tcp/utils/marshal.js</c>) and the Rust codec; compatibility is enforced by
 /// the golden fixtures under <c>oracle/fixtures/marshal</c>, which the tests replay.
 /// </summary>
-public static class Marshal
+public static class MarshalCodec
 {
     /// <summary>
     /// Deepest nesting the codec accepts in either direction. The JS reference only stops at the

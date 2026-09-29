@@ -50,7 +50,7 @@ internal sealed class MarshalDecoder
     /// <summary>
     /// <paramref name="depth"/> is the nesting already used by enclosing streams: a nested
     /// PySubStream continues the count, so a chain of substreams cannot get around
-    /// <see cref="Marshal.MaxDepth"/> and exhaust the stack.
+    /// <see cref="MarshalCodec.MaxDepth"/> and exhaust the stack.
     /// </summary>
     public static PyValue DecodeStream(ReadOnlyMemory<byte> input, bool requireExactEnd, int depth)
     {
@@ -171,7 +171,7 @@ internal sealed class MarshalDecoder
 
     public PyValue Value()
     {
-        if (_depth >= Marshal.MaxDepth)
+        if (_depth >= MarshalCodec.MaxDepth)
         {
             throw MarshalException.TooDeep();
         }

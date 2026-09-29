@@ -12,7 +12,7 @@ namespace Eve.Ships;
 /// transaction across the modules that own the parts (ADR 0003): the item moves, the module state is kept, and the answer says what
 /// dogma reports of the change. Only the character's active ship is handled.
 /// </summary>
-public sealed class CharacterShips(
+public sealed partial class CharacterShips(
     NpgsqlDataSource source, DogmaStatic statics, PgCharacterStore characters, PgItemStore items, PgSkillStore skills, PgModuleStateStore modules,
     CharacterTraining? training = null)
 {

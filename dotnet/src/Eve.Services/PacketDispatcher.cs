@@ -116,7 +116,7 @@ public sealed class PacketDispatcher
                 return true;
             }
 
-            RegisterBoundObjects(result, service);
+            RegisterBoundObjects(result, service, session);
             SendCallResponse(packet, result, session, service.Name);
             session.RunAfterResponse();
             return true;
@@ -155,7 +155,7 @@ public sealed class PacketDispatcher
     /// A result that hands out a bound object (<c>[substruct(substream((oid, refID))), callResult]</c>, or the
     /// substruct itself) registers the object so later calls to its OID reach this service.
     /// </summary>
-    private void RegisterBoundObjects(PyValue result, IService service)
+    private void RegisterBoundObjects(PyValue result, IService service, ClientSession session)
     {
         if (!JsSemantics.Truthy(result))
         {
@@ -167,10 +167,10 @@ public sealed class PacketDispatcher
             {
                 foreach (var element in tuple.Items)
                 {
-                    TryRegister(element, service);
+                    TryRegister(element, service, session);
                 }
             }
-            TryRegister(result, service);
+            TryRegister(result, service, session);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -178,11 +178,12 @@ public sealed class PacketDispatcher
         }
     }
 
-    private void TryRegister(PyValue value, IService service)
+    private void TryRegister(PyValue value, IService service, ClientSession session)
     {
         if (value is PySubStruct substruct && BoundObjects.TryRegistration(substruct, out var registration))
         {
             _registry.RegisterBoundObject(registration.Oid, service, registration.RefId);
+            session.RememberBoundObject(registration.Oid);
         }
     }
 

@@ -1,0 +1,181 @@
+using Eve.Characters;
+using Eve.Data;
+using Eve.Dogma;
+using Eve.Fitting;
+using Eve.Inventory;
+using Eve.Macho;
+using Eve.Marshal;
+using Eve.Sde;
+using Eve.Ships;
+using Eve.Skills;
+using Eve.Universe;
+using Eve.Wallet;
+using Npgsql;
+
+namespace Eve.Services.Space.Tests;
+
+/// <summary>Skips a test, loudly, when there is no PostgreSQL with the SDE loaded (see tools/dev/pg18.sh).</summary>
+public sealed class PgFactAttribute : FactAttribute
+{
+    public PgFactAttribute()
+    {
+        if (Rig.Url is null)
+        {
+            Skip = "EVE_PG_URL is not set (see tools/dev/pg18.sh)";
+        }
+    }
+}
+
+/// <summary>Keeps what the server sent, so a test can read the events.</summary>
+internal sealed class Sink : IPacketSink
+{
+    public List<PyValue> Sent { get; } = [];
+
+    public void Send(PyValue packet) => Sent.Add(packet);
+}
+
+/// <summary>Real stores in throwaway schemas, the real static data, a character made the way the game makes one, and a simulation played by the test.</summary>
+internal sealed class Rig : IAsyncDisposable
+{
+    public static readonly string? Url = Environment.GetEnvironmentVariable("EVE_PG_URL");
+
+    public const long ClockMs = 1_700_000_000_123;
+    public const long Station = 60015249;
+
+    private readonly string[] _schemas;
+
+    private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, StationCatalog stations, PgModuleStateStore modules)
+    {
+        Source = source;
+        _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}"];
+        Characters = new PgCharacterStore(source, _schemas[0]);
+        Items = new PgItemStore(source, _schemas[1]);
+        Skills = new PgSkillStore(source, _schemas[2]);
+        Statics = statics;
+        Creation = creation;
+        Modules = modules;
+        Ships = new CharacterShips(source, statics, Characters, Items, Skills, modules);
+        Space = new SpaceSessions(Sim, Ships, statics, stations, () => ClockMs, Log.Add) { Registry = Registry };
+        Ship = new ShipService(Space, () => ClockMs);
+        Beyonce = new BeyonceService(Space, () => ClockMs);
+        Registry.Register(Ship);
+        Registry.Register(Beyonce);
+    }
+
+    public FakeSim Sim { get; } = new();
+
+    public ServiceRegistry Registry { get; } = new();
+
+    public List<string> Log { get; } = [];
+
+    public NpgsqlDataSource Source { get; }
+
+    public PgCharacterStore Characters { get; }
+
+    public PgItemStore Items { get; }
+
+    public PgSkillStore Skills { get; }
+
+    public DogmaStatic Statics { get; }
+
+    public PgModuleStateStore Modules { get; }
+
+    public CharacterShips Ships { get; }
+
+    public CharacterCreation Creation { get; }
+
+    public SpaceSessions Space { get; }
+
+    public ShipService Ship { get; }
+
+    public BeyonceService Beyonce { get; }
+
+    public static async Task<Rig> CreateAsync()
+    {
+        CharacterNames.EnsureUnicodeSupport();
+        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
+        var sde = new SdeReader(source);
+        Assert.True(await sde.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var characters = new PgCharacterStore(source, $"pc_{suffix}");
+        var items = new PgItemStore(source, $"pi_{suffix}");
+        var skills = new PgSkillStore(source, $"ps_{suffix}");
+        var wallets = new PgWalletStore(source, $"pw_{suffix}");
+        var modules = new PgModuleStateStore(source, $"pf_{suffix}");
+        await PgCharacterStore.MigrateAsync(source, $"pc_{suffix}");
+        await PgItemStore.MigrateAsync(source, $"pi_{suffix}");
+        await PgSkillStore.MigrateAsync(source, $"ps_{suffix}");
+        await PgWalletStore.MigrateAsync(source, $"pw_{suffix}");
+        await PgModuleStateStore.MigrateAsync(source, $"pf_{suffix}");
+        var creation = new CharacterCreation(
+            source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), await CreationCatalog.LoadAsync(sde, Station), modules);
+        return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation, await StationCatalog.LoadAsync(sde), modules);
+    }
+
+    /// <summary>A new character (Caldari), in its rookie ship in the station.</summary>
+    public async Task<Created> NewCharacterAsync(string name = "Space Tester", int account = 1)
+    {
+        var made = await Creation.CreateAsync(new CreationRequest(account, name, 1, 1, 1, 10, 35, [1], [2]));
+        return Assert.IsType<Created>(made);
+    }
+
+    /// <summary>A session as choosing the character leaves it: docked at the station.</summary>
+    public async Task<ClientSession> SessionAsync(Created created, long id = 1)
+    {
+        var character = (await Characters.GetAsync(created.CharacterId))!;
+        var session = new ClientSession(new Sink()) { SessionId = id, ClientId = 431065450 + id, UserId = 34, NodeId = 65450 };
+        session.CharacterId = created.CharacterId;
+        session.Set("stationid", new PyInt(character.StationId));
+        session.Set("stationid2", new PyInt(character.StationId));
+        session.Set("solarsystemid2", new PyInt(character.SolarSystemId));
+        session.Set("locationid", new PyInt(character.StationId));
+        session.Set("shipid", new PyLong(created.ShipId));
+        return session;
+    }
+
+    private async Task<PyValue> CallAsync(IService service, ClientSession session, string method, string? bound, PyValue[] args) =>
+        await service.CallAsync(new ServiceCall { Method = method, Args = args, Session = session, CallId = new PyInt(1), BoundObjectId = bound });
+
+    public Task<PyValue> ShipCallAsync(ClientSession session, string method, string? bound = null, params PyValue[] args) => CallAsync(Ship, session, method, bound, args);
+
+    public Task<PyValue> BeyonceCallAsync(ClientSession session, string method, string? bound = null, params PyValue[] args) => CallAsync(Beyonce, session, method, bound, args);
+
+    /// <summary>Binds a service the way the dispatcher does for the client: the answer's bound object is registered and the session is given it.</summary>
+    private async Task<string> BindAsync(IService service, ClientSession session, long place, long group)
+    {
+        var answer = (PyTuple)await CallAsync(service, session, "MachoBindObject", null, [Py.Tuple(new PyInt(place), new PyInt(group)), PyNone.Instance]);
+        var oid = OidOf(answer.Items[0]);
+        Registry.RegisterBoundObject(oid, service);
+        session.RememberBoundObject(oid);
+        return oid;
+    }
+
+    public Task<string> BindShipAsync(ClientSession session) => BindAsync(Ship, session, session.GetInt("stationid")!.Value, 15);
+
+    public Task<string> BindBeyonceAsync(ClientSession session) => BindAsync(Beyonce, session, session.GetInt("solarsystemid")!.Value, 5);
+
+    public static string OidOf(PyValue bound) =>
+        JsSemantics.StringValue(((PyTuple)((PySubStream)((PySubStruct)bound).Value).Decoded!).Items[0])!;
+
+    /// <summary>Waits for what a background task of the host does (a docking is finished off the thread the simulation spoke on).</summary>
+    public static async Task UntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, "gave up waiting");
+            await Task.Delay(10);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Space.Dispose();
+        foreach (var schema in _schemas)
+        {
+            await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await command.ExecuteNonQueryAsync();
+        }
+        await Source.DisposeAsync();
+    }
+}

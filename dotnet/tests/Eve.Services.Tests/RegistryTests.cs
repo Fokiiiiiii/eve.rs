@@ -75,6 +75,25 @@ public class RegistryTests
     }
 
     [Fact]
+    public void A_session_remembers_the_bound_objects_it_was_given_once_each_until_they_are_released()
+    {
+        var registry = new ServiceRegistry();
+        var service = new Stub("a");
+        var session = new ClientSession();
+        registry.RegisterBoundObject("N=1:1", service);
+        registry.RegisterBoundObject("N=1:2", service);
+        session.RememberBoundObject("N=1:1");
+        session.RememberBoundObject("N=1:2");
+        session.RememberBoundObject("N=1:1");
+        Assert.Equal(["N=1:1", "N=1:2"], session.BoundOids);
+
+        registry.UnregisterBoundObject("N=1:1", session);
+        Assert.Equal(["N=1:2"], session.BoundOids);
+        session.ForgetBoundObject("N=1:9"); // not there: nothing happens
+        Assert.Equal(["N=1:2"], session.BoundOids);
+    }
+
+    [Fact]
     public void Releasing_removes_the_object_its_parameters_and_the_sessions_bookkeeping()
     {
         var registry = new ServiceRegistry();

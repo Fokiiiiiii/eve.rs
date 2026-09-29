@@ -183,6 +183,16 @@ public sealed class PgCharacterStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>Records the station a character is docked at (or last was), inside the caller's transaction.</summary>
+    public async Task SetStationAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long stationId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"UPDATE {_schema}.characters SET station_id = $1 WHERE id = $2", connection, transaction)
+        {
+            Parameters = { new() { Value = stationId }, new() { Value = characterId } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>What the client sent for the paper doll and the portrait, as it was sent.</summary>
     public async Task<(byte[]? Doll, byte[]? Portrait)> AppearanceAsync(long id, CancellationToken cancellationToken = default)
     {

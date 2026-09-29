@@ -25,6 +25,7 @@
     <Project Path="src/Eve.Services.Ships/Eve.Services.Ships.csproj" />
     <Project Path="src/Eve.Services.Inventory/Eve.Services.Inventory.csproj" />
     <Project Path="src/Eve.Services.Skills/Eve.Services.Skills.csproj" />
+    <Project Path="src/Eve.Services.Space/Eve.Services.Space.csproj" />
     <Project Path="src/Eve.Services.Station/Eve.Services.Station.csproj" />
     <Project Path="src/Eve.Services.Wallet/Eve.Services.Wallet.csproj" />
     <Project Path="src/Eve.Services/Eve.Services.csproj" />
@@ -50,6 +51,7 @@
     <Project Path="tests/Eve.Services.Dogma.Tests/Eve.Services.Dogma.Tests.csproj" />
     <Project Path="tests/Eve.Services.Inventory.Tests/Eve.Services.Inventory.Tests.csproj" />
     <Project Path="tests/Eve.Services.Skills.Tests/Eve.Services.Skills.Tests.csproj" />
+    <Project Path="tests/Eve.Services.Space.Tests/Eve.Services.Space.Tests.csproj" />
     <Project Path="tests/Eve.Services.Station.Tests/Eve.Services.Station.Tests.csproj" />
     <Project Path="tests/Eve.Services.Tests/Eve.Services.Tests.csproj" />
   </Folder>

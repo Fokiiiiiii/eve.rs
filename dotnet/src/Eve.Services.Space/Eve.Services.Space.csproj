@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Eve.Services/Eve.Services.csproj" />
+    <ProjectReference Include="../Eve.Services.Ships/Eve.Services.Ships.csproj" />
+    <ProjectReference Include="../Eve.Ships/Eve.Ships.csproj" />
+    <ProjectReference Include="../Eve.Inventory/Eve.Inventory.csproj" />
+    <ProjectReference Include="../Eve.Characters/Eve.Characters.csproj" />
+    <ProjectReference Include="../Eve.Space/Eve.Space.csproj" />
+    <ProjectReference Include="../Eve.Dogma/Eve.Dogma.csproj" />
+    <ProjectReference Include="../Eve.Universe/Eve.Universe.csproj" />
+    <ProjectReference Include="../Eve.Services.Generator/Eve.Services.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Eve.Services.Space.Tests" />
+  </ItemGroup>
+</Project>

@@ -124,6 +124,7 @@ public sealed class ServiceRegistry
 
         if (session is not null)
         {
+            session.ForgetBoundObject(oid);
             if (!preserveIdentity)
             {
                 foreach (var name in session.BoundObjectIds.Where(pair => pair.Value == oid).Select(pair => pair.Key).ToList())

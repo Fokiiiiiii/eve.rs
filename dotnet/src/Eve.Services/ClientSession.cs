@@ -44,6 +44,41 @@ public sealed class ClientSession
 
     public Dictionary<string, BoundObjectState> BoundObjectStates { get; } = new(StringComparer.Ordinal);
 
+    private readonly List<string> _boundOids = [];
+
+    /// <summary>Notes that a bound object was handed to this session (the dispatcher does it when a call answers with one).</summary>
+    public void RememberBoundObject(string oid)
+    {
+        lock (_gate)
+        {
+            if (!_boundOids.Contains(oid))
+            {
+                _boundOids.Add(oid);
+            }
+        }
+    }
+
+    /// <summary>Notes that a bound object is gone (released by the client, or dropped by the server).</summary>
+    public void ForgetBoundObject(string oid)
+    {
+        lock (_gate)
+        {
+            _boundOids.Remove(oid);
+        }
+    }
+
+    /// <summary>The bound objects handed to this session that are still there, oldest first.</summary>
+    public IReadOnlyList<string> BoundOids
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return [.. _boundOids];
+            }
+        }
+    }
+
     public PyValue? Get(string name)
     {
         lock (_gate)

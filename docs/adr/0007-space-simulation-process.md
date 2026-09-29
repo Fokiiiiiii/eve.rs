@@ -110,5 +110,5 @@ not exist is the scene: which balls a system has, who is where, how commands cha
   whether an undock worked before it answers the client); `Accepted` answers a `Dock` (the call's answer is the time);
   the ship's spec carries the shield recharge (the damage state shows a fifth of it) and a 64-bit owner; the 1 Hz tick
   became "time comes with each call" plus a poll, because the reference itself sends the state as it is at the moment of
-  the call. The undock place is ours (see `docs/compat/DEVIATIONS.md`): the reference picks a random authored locator
-  of the station's type, which the SDE does not have.
+  the call. The undock place is ours (see `docs/compat/DEVIATIONS.md`): the reference picks the first authored locator
+  of the station's type that suits the ship, which the SDE does not have.

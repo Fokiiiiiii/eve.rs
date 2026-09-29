@@ -31,7 +31,7 @@ public static class MarshalCodec
     /// </summary>
     public static byte[] Encode(PyValue value)
     {
-        var buffer = new ByteBuffer();
+        using var buffer = new ByteBuffer();
         EncodeInto(value, buffer);
         return buffer.ToArray();
     }
@@ -39,7 +39,7 @@ public static class MarshalCodec
     /// <summary>Encodes <paramref name="value"/> and prefixes the 4-byte little-endian payload length.</summary>
     public static byte[] EncodePacket(PyValue value)
     {
-        var buffer = new ByteBuffer();
+        using var buffer = new ByteBuffer();
         buffer.WriteUInt32(0);
         EncodeInto(value, buffer);
         var length = buffer.Length - 4;

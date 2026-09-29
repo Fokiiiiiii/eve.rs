@@ -402,7 +402,7 @@ internal static class PackedRowCodec
         }
 
         var bitmap = new byte[layout.BitmapBytes];
-        var fixedBlock = new ByteBuffer(layout.DataBytes + layout.BitmapBytes);
+        using var fixedBlock = new ByteBuffer(layout.DataBytes + layout.BitmapBytes);
 
         foreach (var (index, size) in layout.Order)
         {

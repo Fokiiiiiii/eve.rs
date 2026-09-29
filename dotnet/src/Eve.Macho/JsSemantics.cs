@@ -118,6 +118,18 @@ public static class JsSemantics
         }
     }
 
+    /// <summary><c>Number(value)</c>: NaN for anything a number cannot be made of; an absent value (undefined) is NaN too.</summary>
+    public static double ToNumber(PyValue? value) => value is null ? double.NaN : JsNumber.ValueToNumber(value);
+
+    /// <summary>The whole-number-above-zero test of <c>toPositiveInteger</c>; the fallback (0) for anything else.</summary>
+    public static long ToPositiveInteger(PyValue? value)
+    {
+        var number = ToNumber(value);
+        return double.IsFinite(number) && Math.Truncate(number) == number && number > 0 && number <= 9_007_199_254_740_991.0
+            ? (long)number
+            : 0;
+    }
+
     /// <summary>The entries of a dict value (<c>extractDictEntries</c>); empty for anything else.</summary>
     public static IReadOnlyList<KeyValuePair<PyValue, PyValue>> DictEntries(PyValue? value) =>
         value is PyDict dict ? dict.Entries : [];

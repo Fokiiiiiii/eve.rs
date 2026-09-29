@@ -4,6 +4,7 @@
     <Project Path="src/Eve.GameStore/Eve.GameStore.csproj" />
     <Project Path="src/Eve.Macho/Eve.Macho.csproj" />
     <Project Path="src/Eve.Marshal/Eve.Marshal.csproj" />
+    <Project Path="src/Eve.Services.Core/Eve.Services.Core.csproj" />
     <Project Path="src/Eve.Services.Generator/Eve.Services.Generator.csproj" />
     <Project Path="src/Eve.Services/Eve.Services.csproj" />
   </Folder>
@@ -11,6 +12,7 @@
     <Project Path="tests/Eve.GameStore.Import.Tests/Eve.GameStore.Import.Tests.csproj" />
     <Project Path="tests/Eve.GameStore.Tests/Eve.GameStore.Tests.csproj" />
     <Project Path="tests/Eve.Marshal.Tests/Eve.Marshal.Tests.csproj" />
+    <Project Path="tests/Eve.Services.Core.Tests/Eve.Services.Core.Tests.csproj" />
     <Project Path="tests/Eve.Services.Generator.Tests/Eve.Services.Generator.Tests.csproj" />
     <Project Path="tests/Eve.Services.Tests/Eve.Services.Tests.csproj" />
   </Folder>

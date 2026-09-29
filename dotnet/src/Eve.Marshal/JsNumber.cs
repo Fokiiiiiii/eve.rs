@@ -9,7 +9,7 @@ namespace Eve.Marshal;
 /// <c>Math.trunc</c>, <c>&gt;&gt;&gt; 0</c> and <c>BigInt(...)</c>; these helpers
 /// reproduce those coercions so the C# codec writes the same bytes.
 /// </summary>
-internal static class JsNumber
+public static class JsNumber
 {
     private const double MaxSafeInteger = 9_007_199_254_740_991.0;
 

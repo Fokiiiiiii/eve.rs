@@ -1,14 +1,30 @@
+using System.Buffers;
 using System.Buffers.Binary;
 
 namespace Eve.Marshal;
 
-/// <summary>A growable byte sink with the little-endian writers the encoder needs.</summary>
-internal sealed class ByteBuffer
+/// <summary>
+/// A growable byte sink with the little-endian writers the encoder needs. Storage comes from the
+/// shared array pool, so encoding a large value does not allocate a chain of ever larger arrays
+/// (which land on the large object heap); only the final <see cref="ToArray"/> allocates.
+/// </summary>
+internal sealed class ByteBuffer : IDisposable
 {
     private byte[] _array;
     private int _length;
 
-    public ByteBuffer(int capacity = 256) => _array = new byte[Math.Max(capacity, 16)];
+    public ByteBuffer(int capacity = 256) => _array = ArrayPool<byte>.Shared.Rent(Math.Max(capacity, 256));
+
+    public void Dispose()
+    {
+        var array = _array;
+        _array = [];
+        _length = 0;
+        if (array.Length > 0)
+        {
+            ArrayPool<byte>.Shared.Return(array);
+        }
+    }
 
     public int Length => _length;
 
@@ -18,7 +34,10 @@ internal sealed class ByteBuffer
     {
         if (_length + count > _array.Length)
         {
-            Array.Resize(ref _array, Math.Max(_array.Length * 2, _length + count));
+            var larger = ArrayPool<byte>.Shared.Rent(Math.Max(_array.Length * 2, _length + count));
+            Buffer.BlockCopy(_array, 0, larger, 0, _length);
+            ArrayPool<byte>.Shared.Return(_array);
+            _array = larger;
         }
         var span = _array.AsSpan(_length, count);
         _length += count;

@@ -19,7 +19,13 @@ component is checked against it through recorded golden fixtures.
 | `oracle/` | Golden fixtures and the JS baseline, generated from EVE.js (see `oracle/PROVENANCE.md`) |
 | `crates/eve-sde` | Reads the static data export (JSONL) and loads it into PostgreSQL 18 (`sde."<table>"(ord, key, doc jsonb)`) |
 | `sde/` | Fetching the static data export: `fetch.sh`, and `lock.json` once fetched (the data itself is never committed) |
-| `dotnet/` | The .NET 10 service layer (not started) |
+| `dotnet/src/Eve.GameStore` | The PostgreSQL 18 persistence layer: per-table `(key, doc jsonb, rev)`, owner leases with epoch fencing, a write-ahead outbox, and the cache-first store the services use |
+| `dotnet/src/Eve.GameStore.Import` | `eve-gamestore-import`: copies a reference-server `gamestore.sqlite` into PostgreSQL and verifies it |
+| `dotnet/src/Eve.Marshal` | The marshal codec in C#, checked against the same golden fixtures as the Rust one |
+| `dotnet/src/Eve.Macho` | MachoNet packets: addresses, call requests, call/error/ping responses |
+| `dotnet/src/Eve.Services` | The service layer: sessions, wrapped-exception errors, service and bound-object registry, packet dispatcher, `[Service]`/`[Method]` |
+| `dotnet/src/Eve.Services.Generator` | A Roslyn source generator that writes each service's dispatch (no reflection on the call path) |
+| `dotnet/src/Eve.Services.Core` | The services ported so far (`pingService`, `browserLockdownSvc`, `subscriptionMgr`) |
 | `tools/headless-client` | A small Python client that speaks the wire protocol (handshake, service calls); replays the same golden fixtures |
 | `tools/dev` | `pg18.sh` (a local PostgreSQL 18), `run-evejs-live.sh` (live tests against the reference server) |
 | `tools/spec-extract` | Scripts that extract facts (names, constants) from a local copy of the client source |
@@ -33,6 +39,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 tools/dev/pg18.sh start                                  # a local PostgreSQL 18 for the database tests
 EVE_PG_URL=$(tools/dev/pg18.sh url) cargo test --workspace
 (cd tools/headless-client && .venv/bin/python -m pytest -q)
+(cd dotnet && EVE_PG_URL=$(../tools/dev/pg18.sh url) dotnet test EveRs.slnx)      # 1,580 tests; the database ones are skipped without EVE_PG_URL
 cargo run --release -p eve-bench -- --compare
 ```
 

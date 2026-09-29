@@ -21,6 +21,10 @@ an oracle.
 | M0 | Golden fixtures recorded from the JS implementation (marshal: 543 cases; destiny: 4758 cases, exact IEEE-754 bits) and a JS baseline benchmark | `oracle/`, `tools/bench`, `server/tests/oracle_*.test.js` |
 | M1a | Rust marshal codec, byte-identical to `marshal.js` on every fixture | `crates/eve-marshal` |
 | M1b | Rust carbon integration and ball wire encoding, bit/byte-identical on every fixture | `crates/eve-destiny` |
+| M2 | PostgreSQL 18 persistence in C#: table store, owner leases with epoch fencing, write-ahead outbox, cache-first store (dirty rows, transient paths, background flush), SQLite importer. Pinned by golden fixtures for the row codec, table sets and roles, by a `gamestore.sqlite` written by the real JS store, and by tests against a real PostgreSQL 18 | `dotnet/src/Eve.GameStore`, `dotnet/src/Eve.GameStore.Import` |
+| M3a | The marshal codec in C#, byte-identical on all 543 marshal fixtures in both directions; corrupt and hostile input only ever fails with a `MarshalException` | `dotnet/src/Eve.Marshal` |
+| M3b | The C# service layer: MachoNet packets, a packet dispatcher, service and bound-object registry, `[Service]`/`[Method]` with a source-generated dispatch. Checked against 21 scenarios (76 requests) recorded from the real JS dispatcher: request bytes in, response bytes and bound-object state out | `dotnet/src/Eve.Macho`, `dotnet/src/Eve.Services`, `dotnet/src/Eve.Services.Generator` |
+| M3c | First service wave: `pingService`, `browserLockdownSvc`, `subscriptionMgr` (the last reads Omega licences from the store). 50 scenarios (197 requests) recorded from the real JS services across environment, config, stored-licence, clock and session variants | `dotnet/src/Eve.Services.Core` |
 
 Run the checks:
 
@@ -46,6 +50,23 @@ Small-message decode is allocation-bound and only modestly faster; at about a
 microsecond per packet it is not what limits the server. The large wins are on
 rowsets (shared row descriptors), encoding, and numeric kernels.
 
+### The C# codec (same machine, .NET 10 release build vs. the recorded Node 22 baseline)
+
+| Workload | JS | C# | Ratio |
+|---|---|---|---|
+| marshal encode, small call | 137k/s | 948k/s | ~6.9x |
+| marshal decode, small call | 663k/s | 1.06M/s | ~1.6x |
+| marshal encode, 200-entry dict | 4.8k/s | 32k/s | ~6.7x |
+| marshal decode, 200-entry dict | 33k/s | 59k/s | ~1.8x |
+| marshal encode, 1000-row rowset | 48/s | 1,155/s | ~24x |
+| marshal decode, 1000-row rowset | 117/s | 1,767/s | ~15x |
+| marshal decode, 64 x 4 KiB buffers | 139k/s | 313k/s | ~2.3x |
+| marshal encode, 64 x 4 KiB buffers | 13.7k/s | 8.2k/s | **~0.6x** |
+
+The Rust codec stays the one for the network front (about 2.6x the C# rowset encode rate and 1.3x the decode rate). The C# codec is
+slower than Node on buffer-heavy encoding (a memory copy the JS `Buffer.concat` path avoids); an
+`IBufferWriter` overload that writes straight into the socket buffer is the fix, not done yet.
+
 ## Findings worth knowing
 
 - **`Math.exp` is not the platform `exp`.** V8 uses its own fdlibm-derived
@@ -63,6 +84,25 @@ rowsets (shared row descriptors), encoding, and numeric kernels.
   whose mode needs it. The Rust port keeps that (`IdRef::Invalid`) so recorded
   failures match by class (`TypeError`, `RangeError`, ...).
 
+- **jsonb does not keep key order.** PostgreSQL orders object keys by length and then bytes, and the JS server
+  iterates integer-like keys first and the rest in insertion order. Nothing in the store depends on the order of
+  keys inside a document, and services ported from JS must not either (the row codec fixtures compare documents
+  order-insensitively for this reason). A JSON string containing the escape `\u0000` cannot be stored in jsonb; the
+  store reports `PERSISTENCE_UNSUPPORTED_JSON` naming the table instead of failing obscurely.
+- **A fence is checked in the transaction that publishes.** Each mutation takes a row share lock on its owner row
+  and re-validates (role, epoch, instance, lease) in the same transaction, so a successor that takes over cannot
+  be raced. The lease clock is the database's, so hosts with skewed clocks agree.
+- **The reference server re-types what it echoes.** Its decoder turns every Python `str` into a `Buffer`, every
+  integral real into a number and every 64-bit integer into a BigInt, so a service that returns received values
+  writes different opcodes than it read (`str` becomes `buffer`). `JsSemantics.AsReceived` reproduces that where a
+  port must stay byte-compatible; the packet fields the dispatcher passes through use it.
+- **A failing handler is answered with None, not an error.** Any exception other than a wrapped exception makes
+  the reference send a `None` result. The C# dispatcher keeps that (with an `OnProblem` callback for logging) so
+  behaviour is identical; changing it is a deliberate decision for later, not an accident of the port.
+- **`||` on decoded values.** `x || null` in the packet code treats a decoded `str` (a `Buffer`, even an empty one)
+  as true and a decoded string-table item as true only when non-empty. `JsSemantics.Truthy` gives the same
+  answers for the typed values.
+
 ## Not done
 
 - **Not wired into the running server.** There is no N-API/FFI layer. Marshal
@@ -73,8 +113,21 @@ rowsets (shared row descriptors), encoding, and numeric kernels.
   which needs the full service graph to load.
 - **The scene tick benchmark** needs the generated SDE tables (not in the
   repository). The login-path latency benchmark needs a running world.
-- **M2 PostgreSQL 18, M3 C# services, M4 Rust network front, M5 Rust tick and
-  visibility, M6 cut-over**: not started beyond the pieces below.
+- **M3 is a foundation plus three services, not the service layer.** The reference has 77 service directories
+  (205 services); three are ported. Waves that need the SDE (account/character/skills, inventory/dogma/fitting,
+  ship/station, market, then the long tail) cannot start until the SDE is fetched (`developers.eveonline.com` is
+  denied by this environment's network policy). Not yet ported from the dispatcher: the object-cache
+  (`CacheOK`) short-circuit for cached method calls, `afterCallResponse` hooks, packet types other than
+  call/ping/release-notification (session change notifications are only acknowledged), and the tracing hooks.
+  Method names are matched exactly and only the `[Method]` names are reachable, unlike the reference where a
+  call can reach any method of the class by name.
+- **The cache-first store's API is synchronous on an in-memory copy** (`Read` returns a copy; tables must be
+  preloaded), which keeps the ~415 call sites' shape but not their aliasing: code that mutated a value returned
+  by `read` and never called `write` (which the JS store tolerates) must be found and fixed during the port.
+  Static (SDE and hand-curated) tables are not part of this store yet.
+- **M4 Rust network front, M5 Rust tick and visibility, M6 cut-over**: not started beyond the pieces below. The
+  dispatcher fixtures are the conformance suite the Rust front will be checked against (they include the
+  response packet bytes the front must produce).
 
 ## Added since the first import
 

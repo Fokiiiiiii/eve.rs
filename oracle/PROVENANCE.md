@@ -59,3 +59,6 @@ with no other player in the system: another ship would appear in the balls.
 frames of the link between the service host and the simulation (`docs/adr/0007`), a third writer of the format that the Rust
 simulation (`crates/eve-space/tests/simlink_fixtures.rs`) and the C# host replay.
 
+`crates/eve-space/data/undock_points.json` is not a recording: it is the reference's table of where a ship comes out of each type of station
+(its `stationGraphicLocators`, made from the client's graphics), reduced to the undock points by `tools/dev/extract-undock-points.py`. The SDE
+does not have it. It is used as data; none of the reference's code is copied.

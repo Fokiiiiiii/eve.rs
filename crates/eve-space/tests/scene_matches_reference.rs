@@ -103,6 +103,35 @@ fn binding_says_what_the_reference_said() {
     assert_eq!(out_args(&out[5]), event_args(events[5]));
 }
 
+#[test]
+fn the_ship_comes_out_where_the_reference_put_its_ship() {
+    // the reference's table of undock points is ours too: the recorded ship stands on the line that leaves our undock point along the way both face
+    // (the reference's had been flying for about a second when it was first seen), and faces the same way to the last digits
+    let Some((mut scene, recorded)) = scene_at(SIM_TIME) else { return };
+    let race = recorded.race();
+    let (_, _, placed) = destiny_actions(step(race, "bind the ballpark"))
+        .into_iter()
+        .find(|(_, name, _)| name == "SetBallPosition")
+        .expect("the bind places the ship");
+    let at = |i: usize| placed["$tuple"][i].as_f64().unwrap();
+    let seen = Vec3::new(at(1), at(2), at(3));
+    let facing = recorded_direction(race);
+    let ship = scene.ship(SESSION, SIM_TIME).unwrap().clone();
+
+    for (ours, theirs) in
+        [(ship.direction.x, facing.x), (ship.direction.y, facing.y), (ship.direction.z, facing.z)]
+    {
+        assert!((ours - theirs).abs() < 1e-9, "the way it faces: {ours} against {theirs}");
+    }
+    let apart = Vec3::new(seen.x - ship.position.x, seen.y - ship.position.y, seen.z - ship.position.z);
+    let along = apart.x * facing.x + apart.y * facing.y + apart.z * facing.z;
+    let across =
+        Vec3::new(apart.x - along * facing.x, apart.y - along * facing.y, apart.z - along * facing.z);
+    let sideways = (across.x * across.x + across.y * across.y + across.z * across.z).sqrt();
+    assert!(sideways < 1.0, "the recorded ship is {sideways} m off the line out of our undock point");
+    assert!((0.0..1_000.0).contains(&along), "and {along} m along it");
+}
+
 /// The recorded update a command was answered with and the command it must have been.
 fn recorded_command(recorded: &Recorded, label: &str) -> (i64, Command, Value) {
     let step = step(recorded.race(), label);

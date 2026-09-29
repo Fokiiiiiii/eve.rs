@@ -28,8 +28,8 @@ const DOCKING_DELAY: i64 = 4 * TICKS_PER_SECOND;
 const DOCKING_RANGE: f64 = 2_500.0;
 /// How far ahead of the clock a stamp may be sent (the client holds updates until their stamp).
 const MAX_STAMP_LEAD: u32 = 2;
-/// How far from the station's centre a ship is put, as a share of the station's radius (the reference's recorded ship left the station
-/// at 0.34 of it, inside the sphere the station's docking range is measured from), and the least it is put from it.
+/// How far from the station's centre a ship is put when the table of undock points does not know the station's type, as a share of the
+/// station's radius (the recorded ship left its station at 0.34 of it, inside the sphere the docking range is measured from), and the least.
 const UNDOCK_RADIUS_SHARE: f64 = 0.34;
 const UNDOCK_MIN_DISTANCE: f64 = 2_000.0;
 
@@ -183,13 +183,7 @@ impl Scene {
             .body(station_id)
             .filter(|b| b.kind == BodyKind::Station)
             .ok_or(SceneError::UnknownStation(station_id))?;
-        let direction = undock_direction(station.id, station.position);
-        let distance = UNDOCK_MIN_DISTANCE.max(station.radius * UNDOCK_RADIUS_SHARE);
-        let position = Vec3::new(
-            station.position.x + direction.x * distance,
-            station.position.y + direction.y * distance,
-            station.position.z + direction.z * distance,
-        );
+        let (position, direction) = undock_place(station, spec.group_id);
         let speed = spec.max_velocity;
         let ship = Ship {
             position,
@@ -438,7 +432,30 @@ fn with_id(ship_id: &Value, rest: [Value; 3]) -> Vec<Value> {
     args
 }
 
-/// Which way a ship leaves a station: the station's own orientation when it has one, otherwise away from the star.
+/// Where a ship comes out of a station and which way it faces: the station type's undock point that suits the ship, turned by the station's
+/// orientation (the reference's own table); a type it does not know puts the ship a third of the station's radius from it, out along the
+/// station's orientation or away from the star.
+fn undock_place(station: &crate::world::Body, ship_group: i32) -> (Vec3, Vec3) {
+    let rotation = crate::slim::station_rotation(station.id).unwrap_or([0.0; 3]);
+    if let Some(point) = crate::locators::undock_point(station.type_id, ship_group, rotation) {
+        let at = Vec3::new(
+            station.position.x + point.offset.x,
+            station.position.y + point.offset.y,
+            station.position.z + point.offset.z,
+        );
+        return (at, motion::unit(point.direction).unwrap_or(point.direction));
+    }
+    let direction = undock_direction(station.id, station.position);
+    let distance = UNDOCK_MIN_DISTANCE.max(station.radius * UNDOCK_RADIUS_SHARE);
+    let at = Vec3::new(
+        station.position.x + direction.x * distance,
+        station.position.y + direction.y * distance,
+        station.position.z + direction.z * distance,
+    );
+    (at, direction)
+}
+
+/// Which way a ship leaves a station with no known undock point: the station's own orientation when it has one, otherwise away from the star.
 fn undock_direction(station_id: i64, position: Vec3) -> Vec3 {
     if let Some(angles) = crate::slim::station_rotation(station_id) {
         let (yaw, pitch) = (angles[0].to_radians(), angles[1].to_radians());
@@ -736,16 +753,70 @@ pub(crate) mod tests {
         assert_eq!(stamp_at(134_351_527_024_310_000), 1_790_679_102);
     }
 
+    /// The scene of `system()` with the station of the given type.
+    fn scene_with_station_type(station_type: i32, radius: f64) -> Scene {
+        let mut world = (*system()).clone();
+        world.bodies[0].type_id = station_type;
+        world.bodies[0].radius = radius;
+        let mut scene = Scene::new(Arc::new(world));
+        scene.undock(SESSION, spec(), STATION, NOON).unwrap();
+        scene
+    }
+
     #[test]
-    fn an_undocked_ship_is_put_off_the_station_and_moves_away_at_top_speed() {
-        let mut scene = scene();
+    fn an_undocked_ship_comes_out_at_the_undock_point_of_its_stations_type_and_moves_away_at_top_speed() {
+        let mut scene = scene(); // a Caldari Trading Station (1531), a ship of the rookie group
+        let ship = scene.ship(SESSION, NOON).unwrap().clone();
+        let point = crate::locators::undock_point(1531, spec().group_id, [0.0; 3]).unwrap();
+        assert_eq!(
+            (ship.position.x, ship.position.y, ship.position.z),
+            (1_000_000.0 + point.offset.x, point.offset.y, point.offset.z)
+        );
+        // it faces the point's direction (normalized: the table's has five decimals)
+        let facing = motion::unit(point.direction).unwrap();
+        assert_eq!((ship.direction.x, ship.direction.y, ship.direction.z), (facing.x, facing.y, facing.z));
+        assert!((speed(&ship) - 339.25).abs() < 1e-9);
+        assert_eq!((ship.course, ship.speed_fraction), (Course::Goto, 1.0));
+    }
+
+    #[test]
+    fn a_ship_of_a_big_hull_comes_out_at_a_point_for_big_hulls_and_a_station_turned_by_its_rotation_turns_the_point()
+     {
+        let mut big = spec();
+        big.group_id = 27; // a battleship
+        let mut world = (*system()).clone();
+        world.bodies[0].type_id = 92_885; // a station type with points of more than one size
+        let mut scene = Scene::new(Arc::new(world));
+        scene.undock(SESSION, big, STATION, NOON).unwrap();
+        let large = crate::locators::undock_point(92_885, 27, [0.0; 3]).unwrap();
+        let small = crate::locators::undock_point(92_885, 237, [0.0; 3]).unwrap();
+        assert_ne!(large.offset, small.offset, "the table has points of more than one size for this type");
+        let ship = scene.ship(SESSION, NOON).unwrap();
+        assert_eq!(ship.position.y, large.offset.y);
+
+        // the station the reference authors an orientation for (the recorded one, 305 degrees of yaw) turns the point
+        let mut turned = (*system()).clone();
+        turned.bodies[0].id = 60_015_249;
+        turned.bodies[0].type_id = 92_885;
+        let mut scene = Scene::new(Arc::new(turned));
+        scene.undock(SESSION, spec(), 60_015_249, NOON).unwrap();
+        let ship = scene.ship(SESSION, NOON).unwrap();
+        assert!(
+            (ship.direction.x + 0.8191520442889917).abs() < 1e-9
+                && (ship.direction.z - 0.5735764363510462).abs() < 1e-9
+        );
+        assert!((ship.position.x - (1_000_000.0 - 19_613.851392826436)).abs() < 1e-6, "{}", ship.position.x);
+    }
+
+    #[test]
+    fn a_ship_leaves_a_station_of_a_type_the_table_does_not_know_a_third_of_its_radius_out_along_the_star_line()
+     {
+        let mut scene = scene_with_station_type(1, 1_000.0);
         let ship = scene.ship(SESSION, NOON).unwrap().clone();
         let gap =
             ((ship.position.x - 1_000_000.0).powi(2) + ship.position.y.powi(2) + ship.position.z.powi(2))
                 .sqrt();
         assert!((gap - 2_000.0).abs() < 1e-6, "{gap}");
-        assert!((speed(&ship) - 339.25).abs() < 1e-9);
-        assert_eq!((ship.course, ship.speed_fraction), (Course::Goto, 1.0));
         // away from the star at the origin: the station is on +x, so the ship is further out
         assert!(ship.direction.x > 0.99);
     }
@@ -942,19 +1013,13 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_ship_leaves_a_big_station_at_a_third_of_its_radius_and_is_within_docking_range() {
-        let mut big = (*system()).clone();
-        big.bodies[0].radius = 70_000.0;
-        let mut scene = Scene::new(Arc::new(big));
-        scene.undock(SESSION, spec(), STATION, NOON).unwrap();
-        let ship = scene.ship(SESSION, NOON).unwrap();
-        let gap =
-            ((ship.position.x - 1_000_000.0).powi(2) + ship.position.y.powi(2) + ship.position.z.powi(2))
-                .sqrt();
-        assert!((gap - 23_800.0).abs() < 1e-6, "{gap}");
-        // and is at once within docking range of it, as the reference's ship was
-        let out = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
-        assert!(matches!(out.last(), Some(Out::Accepted { .. })));
+    fn a_ship_comes_out_of_a_big_station_within_docking_range_of_it_as_the_reference_ships_did() {
+        // the docking range is measured from a sphere of the station's radius, and the undock points are inside it
+        for station_type in [1531, 92_885, 1, 54] {
+            let mut scene = scene_with_station_type(station_type, 70_000.0);
+            let out = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
+            assert!(matches!(out.last(), Some(Out::Accepted { .. })), "type {station_type}: {out:?}");
+        }
     }
 
     /// The arguments (without the ship's id) of the actions in an update, by name.

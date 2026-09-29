@@ -100,9 +100,9 @@ domain module.
 1. **Finish S3**: partial stacks and charges in the inventory broker (`Add` with a quantity, `MultiAdd`, `StackAll`,
    `LoadAmmo`), as far as the reference can be recorded; buying and injecting skill books.
 2. **Continue S4, space**: a ship undocks, is sent the system, flies (speed, direction, stop, align, orbit, follow) and
-   docks, also from beyond the range, where it follows the station and is told `DockingApproach` (`adr/0007`). Next: the
-   reference's authored undock points (its static tables carry them: `stationGraphicLocators`, `stationDockingPlacements`),
-   warp and stargate jumps, then other ships in the same system and the tick benchmark. Where the SDE has no value, the
+   docks, also from beyond the range, where it follows the station and is told `DockingApproach` (`adr/0007`). Ships come out
+   at the reference's authored undock points (its static table `stationGraphicLocators`, kept in `crates/eve-space/data`).
+   Next: warp and stargate jumps, then other ships in the same system and the tick benchmark. Where the SDE has no value, the
    reference's own static tables and the parts of its server that the client extraction carries are trusted as sources
    (with their provenance recorded), and the code is never copied.
 3. Tag the fixtures by tier and record the next deviations with evidence from the client source.

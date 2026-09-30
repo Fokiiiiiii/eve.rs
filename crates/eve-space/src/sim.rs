@@ -413,6 +413,7 @@ mod tests {
             capacitor_need: 5.0,
             repeat: 1000,
             target_id: 0,
+            turret: None,
             on: None,
             off: None,
             on_changes: Vec::new(),

@@ -10,6 +10,7 @@ use eve_marshal::Value;
 
 use crate::payload;
 use crate::scene::{Out, Scene, SessionId, TICKS_PER_SECOND};
+use crate::weapons::Turret;
 use crate::wire::{filetime, id, int, real, tuple, word};
 
 /// The attribute of a ship that holds the capacitor's charge.
@@ -52,6 +53,8 @@ pub struct Effect {
     /// How many cycles the pilot asked for.
     pub repeat: i32,
     pub target_id: i64,
+    /// A turret's numbers when the effect is a weapon that shoots at the target each cycle (`crate::weapons`).
+    pub turret: Option<Turret>,
     /// The ship's numbers while the effect runs and when it does not (nothing changes when the effect does not touch them).
     pub on: Option<Numbers>,
     pub off: Option<Numbers>,
@@ -152,6 +155,12 @@ impl Modules {
     /// The modules of a ship whose capacitor holds `ratio` of what it can.
     pub(crate) fn with_charge(capacity: f64, recharge_s: f64, ratio: f64, now: i64) -> Self {
         Self { capacitor: Some(Capacitor::filled(capacity, recharge_s, ratio, now)), running: Vec::new() }
+    }
+
+    /// How many effects run.
+    #[cfg(test)]
+    pub(crate) fn running_count(&self) -> usize {
+        self.running.len()
     }
 
     pub(crate) fn is_idle(&self) -> bool {
@@ -278,11 +287,11 @@ impl Scene {
                 if effect.target_id > 0 { id(effect.target_id) } else { Value::None },
                 Value::None,
                 crate::wire::text(effect.fx.clone()),
-                int(0),
+                int(i64::from(effect.turret.is_some())),
                 int(i64::from(on)),
                 int(i64::from(on)),
                 number(effect.duration_ms),
-                Value::None,
+                if effect.turret.is_some() { int(i64::from(effect.repeat)) } else { Value::None },
                 Value::None,
                 int(0),
                 Value::None,
@@ -322,6 +331,15 @@ impl Scene {
         if pilot.modules.running.iter().any(|r| r.effect.module_id == effect.module_id) {
             return vec![Out::Refused { session, command: CODE, reason: "ALREADY_ACTIVE" }];
         }
+        if effect.turret.is_some() {
+            if effect.target_id <= 0 {
+                return vec![Out::Refused { session, command: CODE, reason: "NO_TARGET" }];
+            }
+            if !self.turret_target_ok(session, &effect) {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_LOCKED" }];
+            }
+        }
+        let pilot = &self.pilots[&session];
         let Some(capacitor) = pilot.modules.capacitor.as_ref() else {
             return vec![Out::Refused { session, command: CODE, reason: "NO_CAPACITOR" }];
         };
@@ -350,9 +368,11 @@ impl Scene {
         out.extend(Self::changes_told(session, owner, &run.effect.on_changes, now));
         out.extend(self.tell_all(session, vec![Self::fx_action(stamp, &ship, &run.effect, true)]));
         out.push(Self::effect_told(session, owner, ship_id, &run, now, true, now));
+        let effect = run.effect.clone();
         if let Some(pilot) = self.pilots.get_mut(&session) {
             pilot.modules.running.push(run);
         }
+        out.extend(self.fire_turret(session, &effect, now));
         out
     }
 
@@ -439,13 +459,16 @@ impl Scene {
 
     /// A cycle ends: the next begins (and costs capacitor), or, when the pilot asked to stop or the capacitor cannot pay, the effect ends.
     fn end_cycle(&mut self, session: SessionId, index: usize, at: i64) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
+        let run = pilot.modules.running[index].clone();
+        // a weapon goes on while its target is there and locked
+        let target_ok = run.effect.turret.is_none() || self.turret_target_ok(session, &run.effect);
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
-        let run = pilot.modules.running[index].clone();
         let affordable =
             pilot.modules.capacitor.as_ref().is_some_and(|c| c.charge_at(at) >= run.effect.capacitor_need);
         let more = run.cycles < run.effect.repeat;
-        if run.stopping || !more || !affordable {
+        if run.stopping || !more || !affordable || !target_ok {
             pilot.modules.running.remove(index);
             return self.effect_ended(session, run, owner, ship_id, at);
         }
@@ -457,10 +480,12 @@ impl Scene {
         next.cycle_start = at;
         next.cycles += 1;
         let next = next.clone();
-        vec![
+        let mut out = vec![
             Self::charge_told(session, owner, ship_id, at, after, before),
             Self::effect_told(session, owner, ship_id, &next, at, true, at),
-        ]
+        ];
+        out.extend(self.fire_turret(session, &next.effect, at));
+        out
     }
 
     /// An effect is over: the client is told the values it gave back, that it is off, and the ship's numbers and the effect are taken off in one update.
@@ -517,6 +542,7 @@ pub(crate) mod tests {
             capacitor_need: 5.0,
             repeat: 1000,
             target_id: 0,
+            turret: None,
             on: Some(Numbers { mass: 1_663_000.0, max_velocity: 522.848918, signature_radius: 28.0 }),
             off: Some(Numbers { mass: 1_163_000.0, max_velocity: 339.25, signature_radius: 28.0 }),
             on_changes: vec![

@@ -124,6 +124,7 @@ fn effect_of(case: &Value) -> Effect {
         capacitor_need: number(case, "capacitorNeed"),
         repeat: case["repeat"].as_i64().unwrap() as i32,
         target_id: wide(case, "targetId"),
+        turret: None,
         on: numbers(&case["on"]),
         off: numbers(&case["off"]),
         on_changes: changes(&case["onChanges"]),

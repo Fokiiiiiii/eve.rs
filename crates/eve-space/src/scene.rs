@@ -251,6 +251,8 @@ pub struct Scene {
     pub(crate) npc_sequence: u64,
     /// How many entity groups have been made in this scene.
     pub(crate) group_sequence: u64,
+    /// The dice a shot is rolled with (`crate::weapons`).
+    pub(crate) rng: PythonRandom,
     /// The trees of the NPCs (`crate::brains`).
     pub(crate) brains: Option<crate::brains::Brains>,
 }
@@ -273,6 +275,7 @@ impl Scene {
             target_sequence: 0,
             npc_sequence: 0,
             group_sequence: 0,
+            rng: PythonRandom::new(0x5348_4f54),
             brains: None,
         }
     }

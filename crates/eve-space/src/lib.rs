@@ -27,5 +27,6 @@ pub mod slim;
 pub mod targeting;
 pub mod visibility;
 pub mod warp;
+pub mod weapons;
 pub mod wire;
 pub mod world;

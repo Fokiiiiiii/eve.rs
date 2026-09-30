@@ -389,6 +389,7 @@ fn read_effect(reader: &mut Reader) -> Result<Effect, DecodeError> {
         capacitor_need,
         repeat,
         target_id,
+        turret: None,
         on,
         off,
         on_changes,

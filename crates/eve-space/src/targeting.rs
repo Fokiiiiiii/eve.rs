@@ -236,7 +236,7 @@ impl Scene {
     }
 
     /// What a ship has locked, in the order it locked them.
-    fn locked_by(&self, session: SessionId) -> Vec<i64> {
+    pub(crate) fn locked_by(&self, session: SessionId) -> Vec<i64> {
         self.pilots.get(&session).map(|p| p.targeting.targets()).unwrap_or_default()
     }
 

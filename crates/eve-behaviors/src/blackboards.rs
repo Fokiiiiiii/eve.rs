@@ -129,6 +129,18 @@ pub struct Address {
     pub name: String,
 }
 
+impl From<Address> for Value {
+    fn from(address: Address) -> Value {
+        address.to_value()
+    }
+}
+
+impl From<&Address> for Value {
+    fn from(address: &Address) -> Value {
+        address.to_value()
+    }
+}
+
 impl Address {
     pub fn new(scope_type: ScopeType, name: &str) -> Self {
         Self { scope_type, name: name.to_string() }

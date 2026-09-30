@@ -8,8 +8,8 @@ use crate::tree::{BehaviorError, Task, TaskCtx};
 use crate::utility::dogmatic::get_my_attribute_value;
 use crate::value::Value;
 
-const DEFAULT_COMBAT_ORBIT_RANGE: f64 = 10_000.0;
-const DEFAULT_COMBAT_ATTACK_RANGE: f64 = 30_000.0;
+pub const DEFAULT_COMBAT_ORBIT_RANGE: f64 = 10_000.0;
+pub const DEFAULT_COMBAT_ATTACK_RANGE: f64 = 30_000.0;
 const COMBAT_ATTACK_RANGE_FACTOR: f64 = 3.0;
 const DEFAULT_MAXIMUM_ORBIT_RANGE: f64 = 100_000.0;
 const FALLOFF_ORBIT_DISTANCE_FACTOR: f64 = 0.25;

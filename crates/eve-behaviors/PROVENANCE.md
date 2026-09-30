@@ -21,10 +21,16 @@ A port, as it is, of the `behaviors` package of the EVE client V24.01 (decompile
 | `src/conditions/*` | `conditions/*` (all seventeen files) |
 | `src/monitors/*` | `monitors/*` (all nineteen files); `monitors/mod.rs` holds `MonitorTask` of `tasks.py` |
 | `src/macros.rs` | (none: `enter_task!` makes a class with an `OnEnter`) |
-| `src/actions/*` (in part) | `actions/__init__.py`, `awareness`, `ballparks` (`ballparks/{movement,selection,locations,slim}.rs`), `battlefield`, `blackboards`, `combat`, `combatmodules`, `combatnavigation`, `combattargets`, `damage`, `drones`, `dungeon`, `effects`, `entities`, `entityspawning`, `eventlogger`, `fighterabilities`, `fleet`, `group`, `guard`, `hauling`, `logistics`, `map`, `mathtasks`, `objectspawning`, `operations`, `randomized`, `reinforcements`, `resourcewars`, `rewards`, `structures`, `tale`, `tanking`, `timer` and `reference_subtree` (the rest follows) |
+| `src/actions/*` | `actions/__init__.py`, `awareness`, `ballparks` (`ballparks/{movement,selection,locations,slim}.rs`), `battlefield`, `blackboards`, `combat`, `combatmodules`, `combatnavigation`, `combattargets`, `damage`, `drones`, `dungeon`, `effects`, `entities`, `entityspawning`, `eventlogger`, `fighterabilities`, `fleet`, `group`, `guard`, `hauling`, `logistics`, `map`, `mathtasks`, `objectspawning`, `operations`, `randomized`, `reinforcements`, `resourcewars`, `rewards`, `structures`, `tale`, `tanking`, `timer` and `reference_subtree` (the rest follows) |
 | `src/env/spawning.rs` | the server's spawning machinery that `entityspawning` and `utility/spawning` call (`spawndataforentities`, `npcspawning`, `spawnlists`, the managers of `entityLocation`): the `Spawning` trait, no client module |
 | `src/utility/spawning.rs` | `utility/spawning.py` |
 | `src/target_evaluation.rs` | `targetEvaluation/*` |
+| `src/registry/*` | `registry/*` (`__init__`, `registrator`, `taskregistry`, and the five tables `actions`, `conditions`, `composites`, `decorators`, `monitors`, whose entries are generated one to one from the client's `register_*` calls: class name, kind, descriptions, attributes with their index, default and optionality); a class is made by a function instead of being imported by its name; the attribute kinds are `fsd/attributes.py` |
+| `src/loaders/*` | `loaders/*` (`fsd_behavior_loader.py` over a `BehaviorTreeStorage` trait, `scripted_behavior_loader.py`); `storage.py` is that trait: the client's `fsdlite` storage reads `behaviortrees.static`, which is not in the extract |
+| `src/trees/*` | `trees/*` (all forty-six files: the scripted trees, built by `trees::builder::Node` out of registry class names) |
+
+Server-side pieces that a tree names and the client's files do not have (`npcs.server.tags.DRIFTER_TAG`) are constants of `trees/mod.rs` with the name they are
+agreed under.
 
 Also read for facts, not ported: `npcs/common/standings.py` (`classify_standings`), `eveuniverse/security.py` (`SecurityClassFromLevel`),
 `dogma/attributes/health.py` (the ratios), `crimewatch/util.py` (`GetAggressorId`), `evemath/__init__.py` (`env`/`evemath`).

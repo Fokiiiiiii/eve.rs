@@ -156,6 +156,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "eve-behaviors"
+version = "0.1.0"
+
+[[package]]
 name = "eve-bench"
 version = "0.1.0"
 dependencies = [

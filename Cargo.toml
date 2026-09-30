@@ -9,6 +9,7 @@ members = [
     "crates/eve-sde",
     "crates/eve-net",
     "crates/eve-bench",
+    "crates/eve-behaviors",
 ]
 
 [workspace.package]

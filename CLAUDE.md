@@ -45,7 +45,9 @@ Details: `docs/adr/0001-external-compatibility-only.md`, `docs/PLAN.md`, `docs/c
   first start (pinned build in `sde/lock.json`). The development environment cannot reach
   `developers.eveonline.com`; pass `--archive FILE` with a zip obtained elsewhere.
 - The decompiled client (`Fokiiiiiii/eve-logic`) is CCP's property. Read it for facts (`tools/spec-extract`);
-  never copy its files or schemas into this repository.
+  never copy its files or schemas into this repository. One exception, by the owner's direction (2026-09-30,
+  ADR 0008): its `behaviors` package (NPC behavior trees) is ported to Rust as it is, in `crates/eve-behaviors`,
+  with each file naming its source. The rest stays facts-only.
 
 ## Working here
 

@@ -9,7 +9,7 @@
 mod ballpark;
 mod dogma;
 #[cfg(test)]
-mod rat_tests;
+pub(crate) mod rat_tests;
 mod rats;
 mod world;
 #[cfg(test)]

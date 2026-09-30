@@ -14,15 +14,15 @@ use crate::ship::{NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::Turret;
 use crate::world::{Body, BodyKind, Detail, SolarSystem};
 
-pub(super) const PLAYER: SessionId = 7;
-pub(super) const SECOND: i64 = TICKS_PER_SECOND;
-pub(super) const RAT_SHIP: i64 = 980_050_000_077;
+pub(crate) const PLAYER: SessionId = 7;
+pub(crate) const SECOND: i64 = TICKS_PER_SECOND;
+pub(crate) const RAT_SHIP: i64 = 980_050_000_077;
 /// The moment the rat comes: the player has left the station and is no longer under its undock protection (30 s).
-pub(super) const LATER: i64 = NOON + 31 * SECOND;
+pub(crate) const LATER: i64 = NOON + 31 * SECOND;
 
 /// A system whose station is in the middle of a box of the grid, so that the ships that fight beside it stay in each other's view (the boxes of the
 /// grid are the bubbles, DEVIATIONS #44; the test system of the other modules has its station on the edge of eight of them).
-pub(super) fn system() -> Arc<SolarSystem> {
+pub(crate) fn system() -> Arc<SolarSystem> {
     Arc::new(SolarSystem {
         id: 30_000_001,
         name: "Testing".to_string(),
@@ -46,7 +46,7 @@ pub(super) fn system() -> Arc<SolarSystem> {
     })
 }
 
-pub(super) fn rat_spec() -> ShipSpec {
+pub(crate) fn rat_spec() -> ShipSpec {
     let mut rat = spec();
     rat.ship_id = RAT_SHIP;
     rat.character_id = 0;
@@ -63,7 +63,7 @@ pub(super) fn rat_spec() -> ShipSpec {
     rat
 }
 
-pub(super) fn rat_identity(aggression_range: f64) -> NpcIdentity {
+pub(crate) fn rat_identity(aggression_range: f64) -> NpcIdentity {
     NpcIdentity {
         combat: NpcCombat {
             aggression_range,
@@ -87,20 +87,20 @@ pub(super) fn rat_identity(aggression_range: f64) -> NpcIdentity {
     }
 }
 
-pub(super) fn scene_with_a_player() -> Scene {
+pub(crate) fn scene_with_a_player() -> Scene {
     let mut scene = Scene::new(system());
     scene.undock(PLAYER, spec(), STATION, NOON).unwrap();
     scene.bind(PLAYER, NOON);
     scene
 }
 
-pub(super) fn place_near(scene: &mut Scene, metres: f64) -> NpcPlace {
+pub(crate) fn place_near(scene: &mut Scene, metres: f64) -> NpcPlace {
     let position = scene.ship(PLAYER, NOON).unwrap().position;
     NpcPlace::at_rest(Vec3::new(position.x + metres, position.y, position.z))
 }
 
 /// Polls every quarter of a second and gives what the player was told.
-pub(super) fn run(scene: &mut Scene, from: i64, seconds: i64) -> Vec<Out> {
+pub(crate) fn run(scene: &mut Scene, from: i64, seconds: i64) -> Vec<Out> {
     let mut told = Vec::new();
     let mut now = from;
     while now <= from + seconds * SECOND {
@@ -110,7 +110,7 @@ pub(super) fn run(scene: &mut Scene, from: i64, seconds: i64) -> Vec<Out> {
     told
 }
 
-pub(super) fn notified<'a>(told: &'a [Out], name: &str) -> Vec<&'a Vec<Value>> {
+pub(crate) fn notified<'a>(told: &'a [Out], name: &str) -> Vec<&'a Vec<Value>> {
     told.iter()
         .filter_map(|out| match out {
             Out::Notify { name: n, args, .. } if *n == name => Some(args),
@@ -120,7 +120,7 @@ pub(super) fn notified<'a>(told: &'a [Out], name: &str) -> Vec<&'a Vec<Value>> {
 }
 
 /// The arguments of the destiny actions of that name that the player was told.
-pub(super) fn actions_named(told: &[Out], wanted: &str) -> Vec<Vec<Value>> {
+pub(crate) fn actions_named(told: &[Out], wanted: &str) -> Vec<Vec<Value>> {
     let mut found = Vec::new();
     for args in notified(told, "DoDestinyUpdate") {
         let Some(Value::List(actions)) = args.first() else { continue };
@@ -242,4 +242,49 @@ fn a_rat_locks_and_shoots_a_player_who_came_near_and_the_player_is_told_what_the
     // the player's ship is the worse for it
     let shield = scene.pilots[&PLAYER].ship.health.layers_at(LATER + 40 * SECOND).shield;
     assert!(shield < spec().vitals.shield_capacity, "shield {shield}");
+}
+
+/// A player whose ship has next to nothing to lose: one hit takes the last of its hull.
+fn fragile_scene() -> Scene {
+    let mut ship = spec();
+    ship.vitals.shield_capacity = 0.0;
+    ship.vitals.armor_hp = 0.0;
+    ship.vitals.structure_hp = 5.0;
+    let mut scene = Scene::new(system());
+    scene.undock(PLAYER, ship, STATION, NOON).unwrap();
+    scene.bind(PLAYER, NOON);
+    scene
+}
+
+#[test]
+fn a_rat_that_takes_the_last_of_a_pilots_hull_destroys_the_ship_and_leaves_it_alone_after() {
+    let mut scene = fragile_scene();
+    let place = place_near(&mut scene, 8_000.0);
+    let (rat, _) =
+        scene.spawn_npc_with_behavior(rat_spec(), rat_identity(15_000.0), place, BELT_RAT, LATER).unwrap();
+    let told = run(&mut scene, LATER, 40);
+    assert_eq!(scene.brains().unwrap().faults(rat), []);
+    let destroyed: Vec<&Out> = told.iter().filter(|out| matches!(out, Out::Destroyed { .. })).collect();
+    assert_eq!(destroyed.len(), 1, "{told:?}");
+    let Out::Destroyed { session, ship_id, killer_ship, .. } = destroyed[0] else { unreachable!() };
+    assert_eq!((*session, *ship_id, *killer_ship), (PLAYER, spec().ship_id, Some(RAT_SHIP)));
+    assert!(!scene.contains(PLAYER));
+    // the shot is told before the ship goes, and the rat shoots no more
+    let last_hit =
+        told.iter().rposition(|out| matches!(out, Out::Notify { name: "OnDamageMessage", .. })).unwrap();
+    let gone = told.iter().position(|out| matches!(out, Out::Destroyed { .. })).unwrap();
+    assert!(last_hit < gone, "the damage message comes first");
+    let after = run(&mut scene, LATER + 60 * SECOND, 20);
+    assert!(after.is_empty(), "{after:?}");
+    assert_eq!(scene.brains().unwrap().faults(rat), []);
+}
+
+#[test]
+fn a_ship_that_is_not_destroyed_by_a_shot_that_leaves_hull() {
+    let mut scene = scene_with_a_player();
+    let place = place_near(&mut scene, 8_000.0);
+    scene.spawn_npc_with_behavior(rat_spec(), rat_identity(15_000.0), place, BELT_RAT, LATER).unwrap();
+    let told = run(&mut scene, LATER, 40);
+    assert!(!told.iter().any(|out| matches!(out, Out::Destroyed { .. })));
+    assert!(scene.contains(PLAYER));
 }

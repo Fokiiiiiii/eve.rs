@@ -20,6 +20,7 @@ use crate::targeting::{Targeting, UNDOCK_PROTECTION};
 use crate::warp::{self, PythonRandom};
 use crate::wire::{filetime, id, int, real, text, tuple, vector};
 use crate::world::{BodyKind, Detail, SolarSystem};
+use crate::wreck::Wreck;
 
 /// The host's name for a player's connection.
 pub type SessionId = u64;
@@ -124,6 +125,17 @@ pub enum Out {
     Refused { session: SessionId, command: u8, reason: &'static str },
     /// The answer to a targeting order: whether a lock is going, and the ships and bodies locked (or, to `GetTargeters`, the ships that lock this one).
     Targets { session: SessionId, command: u8, pending: bool, targets: Vec<i64> },
+    /// The ship of this session was destroyed (its hull was gone): it is no longer in the scene. `wreck` is the wreck the scene made of it, when it
+    /// did (an NPC's; for a player's ship the host makes the wreck, and the pod).
+    Destroyed {
+        session: SessionId,
+        ship_id: i64,
+        wreck: Option<i64>,
+        position: Vec3,
+        direction: Vec3,
+        radius: f64,
+        killer_ship: Option<i64>,
+    },
     /// A targeting order the scene refused, with what the client is told about the target.
     TargetRefused {
         session: SessionId,
@@ -144,6 +156,7 @@ impl Out {
             | Out::Approaching { session, .. }
             | Out::Jumping { session, .. }
             | Out::Docked { session, .. }
+            | Out::Destroyed { session, .. }
             | Out::Condition { session, .. }
             | Out::Refused { session, .. }
             | Out::Targets { session, .. }
@@ -183,6 +196,8 @@ pub(crate) struct Pilot {
     pub(crate) entered: u64,
     /// The other ships this pilot has been told of and not told to forget: those in its ballpark.
     pub(crate) sees: BTreeSet<SessionId>,
+    /// The wrecks this pilot has been told of and not told to forget.
+    pub(crate) sees_wrecks: BTreeSet<i64>,
     /// What the ship has locked and is locking.
     pub(crate) targeting: Targeting,
     /// The capacitor and the effects of the ship's modules that run.
@@ -205,6 +220,7 @@ impl Pilot {
             bound: false,
             entered,
             sees: BTreeSet::new(),
+            sees_wrecks: BTreeSet::new(),
             targeting: Targeting::default(),
             modules,
             protected_until,
@@ -257,6 +273,12 @@ pub struct Scene {
     pub(crate) aggressions: Vec<crate::weapons::Aggression>,
     /// The trees of the NPCs (`crate::brains`).
     pub(crate) brains: Option<crate::brains::Brains>,
+    /// The wrecks in the scene, by item id (`crate::wreck`).
+    pub(crate) wrecks: BTreeMap<i64, Wreck>,
+    /// How many wrecks of ships that died in this scene have been given an id by it (`crate::wreck::TRANSIENT_ID_BASE`).
+    pub(crate) wreck_sequence: u64,
+    /// The ships destroyed since the brains last looked (`crate::brains` tells the trees that watched them).
+    pub(crate) destroyed: Vec<i64>,
 }
 
 /// The destiny stamp of a moment: whole seconds of the Unix clock.
@@ -280,6 +302,9 @@ impl Scene {
             rng: PythonRandom::new(0x5348_4f54),
             aggressions: Vec::new(),
             brains: None,
+            wrecks: BTreeMap::new(),
+            wreck_sequence: 0,
+            destroyed: Vec::new(),
         }
     }
 
@@ -381,7 +406,10 @@ impl Scene {
             |action_stamp: u32| payload::action(action_stamp, heading_name(ship), heading_args(ship));
 
         let Ok(added) = payload::add_ships(first, &ships, now) else { return Vec::new() };
-        let Ok(state) = payload::set_state(second, &system, ship, &ships, now) else { return Vec::new() };
+        let wrecks = self.wrecks_in_view(session);
+        let Ok(state) = payload::set_state(second, &system, ship, &ships, &wrecks, now) else {
+            return Vec::new();
+        };
         let update = |actions: Vec<Value>| {
             Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false))
         };
@@ -440,7 +468,8 @@ impl Scene {
         let system = Arc::clone(&self.system);
         let ships = self.ships_in_view(session);
         let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
-        let told = match payload::set_state(stamp, &system, &pilot.ship, &ships, now) {
+        let wrecks = self.wrecks_in_view(session);
+        let told = match payload::set_state(stamp, &system, &pilot.ship, &ships, &wrecks, now) {
             Ok(state) => {
                 vec![Self::notify(session, "DoDestinyUpdate", payload::destiny_update([state], false))]
             }
@@ -480,7 +509,7 @@ impl Scene {
     }
 
     /// Brings a ship's motion to `now`; what happens to it on the way (a warp's dropout, coming to rest) is told with the next call.
-    fn settle_pilot(&mut self, session: SessionId, now: i64) {
+    pub(crate) fn settle_pilot(&mut self, session: SessionId, now: i64) {
         self.settle_pilot_after(session, now, 0);
     }
 
@@ -957,6 +986,8 @@ impl Scene {
         told.extend(self.settle_targets(now));
         told.extend(self.settle_modules(now));
         told.extend(self.reconcile(now));
+        told.extend(self.reconcile_wrecks(now));
+        told.extend(self.expire_wrecks(now));
         self.with_backlog(told)
     }
 }

@@ -2,9 +2,11 @@
 //! file): every valid frame encodes to its bytes and decodes back, every invalid one is refused for the stated reason.
 
 use eve_space::health::{Condition, Resonances, Vitals};
-use eve_space::link::{DecodeError, Enter, How, Message};
+use eve_space::link::{DecodeError, Enter, How, Message, Spawn};
 use eve_space::modules::{Change, Effect, Numbers};
-use eve_space::ship::{ModuleSpec, ShipSpec};
+use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
+use eve_space::weapons::Turret;
+use eve_space::wreck::WreckKind;
 use serde_json::Value;
 
 fn fixtures() -> Value {
@@ -132,6 +134,54 @@ fn effect_of(case: &Value) -> Effect {
     }
 }
 
+fn vector_of(case: &Value, field: &str) -> [f64; 3] {
+    let list = case[field].as_array().unwrap_or_else(|| panic!("{field} in {case}"));
+    [list[0].as_f64().unwrap(), list[1].as_f64().unwrap(), list[2].as_f64().unwrap()]
+}
+
+fn identity_of(case: &Value) -> NpcIdentity {
+    let number = |v: &Value, field: &str| v[field].as_f64().unwrap_or_else(|| panic!("{field} in {v}"));
+    let weapons = case["weapons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| {
+            let damage = w["rawDamage"].as_array().unwrap();
+            NpcWeapon {
+                module_id: wide(w, "moduleId"),
+                effect_id: w["effectId"].as_i64().unwrap() as i32,
+                cycle_ms: number(w, "cycleMs"),
+                capacitor_need: number(w, "capacitorNeed"),
+                turret: Turret {
+                    weapon_type_id: w["weaponTypeId"].as_i64().unwrap() as i32,
+                    fx: text(w, "fx"),
+                    raw_damage: [
+                        damage[0].as_f64().unwrap(),
+                        damage[1].as_f64().unwrap(),
+                        damage[2].as_f64().unwrap(),
+                        damage[3].as_f64().unwrap(),
+                    ],
+                    optimal_range: number(w, "optimalRange"),
+                    falloff: number(w, "falloff"),
+                    tracking_speed: number(w, "trackingSpeed"),
+                    signature_resolution: number(w, "signatureResolution"),
+                },
+            }
+        })
+        .collect();
+    let wreck = case.get("wreck").filter(|w| !w.is_null()).map(|w| WreckKind {
+        type_id: w["typeId"].as_i64().unwrap() as i32,
+        name: text(w, "name"),
+        graphic_id: Some(w["graphicId"].as_i64().unwrap() as i32).filter(|g| *g != 0),
+    });
+    NpcIdentity {
+        hostile_response_threshold: case["hostileResponseThreshold"].as_i64().unwrap(),
+        friendly_response_threshold: case["friendlyResponseThreshold"].as_i64().unwrap(),
+        combat: NpcCombat { weapons, aggression_range: number(case, "aggressionRange") },
+        wreck,
+    }
+}
+
 fn message_of(case: &Value) -> Message {
     let number = |field: &str| case[field].as_u64().unwrap_or_else(|| panic!("{field} in {case}"));
     let session_id = || wide(case, "sessionId") as u64;
@@ -226,6 +276,34 @@ fn message_of(case: &Value) -> Message {
             desired_range: case["desiredRange"].as_f64().unwrap(),
             actual_distance: case["actualDistance"].as_f64().unwrap(),
         },
+        "Destroyed" => Message::Destroyed {
+            session_id: session_id(),
+            ship_id: wide(case, "shipId"),
+            wreck_id: wide(case, "wreckId"),
+            position: vector_of(case, "position"),
+            direction: vector_of(case, "direction"),
+            radius: case["radius"].as_f64().unwrap(),
+            killer_ship_id: wide(case, "killerShipId"),
+        },
+        "Spawn" => Message::Spawn(Box::new(Spawn {
+            request_id: wide(case, "requestId") as u64,
+            solar_system_id: number("solarSystemId") as i32,
+            ship: ship_of(&case["ship"]),
+            position: vector_of(case, "position"),
+            velocity: vector_of(case, "velocity"),
+            direction: vector_of(case, "direction"),
+            behavior: text(case, "behavior"),
+            identity: identity_of(&case["identity"]),
+        })),
+        "SpawnReply" => Message::SpawnReply {
+            request_id: wide(case, "requestId") as u64,
+            outcome: if case["ok"].as_bool().unwrap() {
+                Ok(wide(case, "session") as u64)
+            } else {
+                Err(text(case, "reason"))
+            },
+        },
+        "Destroy" => Message::Destroy { ship_id: wide(case, "shipId") },
         other => panic!("unknown kind {other}"),
     }
 }

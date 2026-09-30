@@ -13,7 +13,8 @@ OUT = os.path.join(HERE, "..", "..", "oracle", "fixtures", "simlink", "messages.
 
 KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateState": 6, "Command": 7,
          "ShipSpec": 8, "Notify": 9, "Docked": 10, "Refused": 11, "Accepted": 12, "EnterReply": 13, "Approaching": 14,
-         "Jumping": 15, "Jumped": 16, "Targets": 17, "TargetRefused": 18, "Activate": 19, "Condition": 20}
+         "Jumping": 15, "Jumped": 16, "Targets": 17, "TargetRefused": 18, "Activate": 19, "Condition": 20,
+         "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24}
 
 
 def s(text):  # u16 length + UTF-8
@@ -81,6 +82,21 @@ def effect(e):
     return body + changes(e["onChanges"]) + changes(e["offChanges"])
 
 
+def identity(i):
+    body = struct.pack("<qqd", i["hostileResponseThreshold"], i["friendlyResponseThreshold"], i["aggressionRange"])
+    body += struct.pack("<I", len(i["weapons"]))
+    for w in i["weapons"]:
+        body += i64(w["moduleId"]) + struct.pack("<idd", w["effectId"], w["cycleMs"], w["capacitorNeed"])
+        body += struct.pack("<i", w["weaponTypeId"]) + s(w["fx"])
+        body += struct.pack("<8d", *w["rawDamage"], w["optimalRange"], w["falloff"], w["trackingSpeed"], w["signatureResolution"])
+    wreck = i.get("wreck")
+    if wreck:
+        body += bytes([1]) + struct.pack("<i", wreck["typeId"]) + s(wreck["name"]) + struct.pack("<i", wreck["graphicId"])
+    else:
+        body += bytes([0])
+    return body
+
+
 def build(m):
     k = m["kind"]
     if k == "Hello":
@@ -127,6 +143,16 @@ def build(m):
     if k == "Jumped":
         return frame(k, u64(m["sessionId"]) + struct.pack("<i", m["fromSystem"]) + i64(m["fromGate"])
                      + struct.pack("<i", m["toSystem"]) + i64(m["toGate"]))
+    if k == "Destroyed":
+        return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + i64(m["wreckId"]) + struct.pack("<7d", *m["position"], *m["direction"], m["radius"])
+                     + i64(m["killerShipId"]))
+    if k == "Spawn":
+        return frame(k, u64(m["requestId"]) + struct.pack("<i", m["solarSystemId"]) + ship(m["ship"])
+                     + struct.pack("<9d", *m["position"], *m["velocity"], *m["direction"]) + s(m["behavior"]) + identity(m["identity"]))
+    if k == "SpawnReply":
+        return frame(k, u64(m["requestId"]) + (bytes([0]) + u64(m["session"]) if m["ok"] else bytes([1]) + s(m["reason"])))
+    if k == "Destroy":
+        return frame(k, i64(m["shipId"]))
     raise ValueError(k)
 
 
@@ -231,6 +257,27 @@ valid = [
      "reason": "TARGET_SELF", "targetType": 0, "desiredRange": 0.0, "actualDistance": 0.0},
     {"name": "jumped", "kind": "Jumped", "sessionId": "1790646377000015", "fromSystem": 30100032,
      "fromGate": "50016630", "toSystem": 30100034, "toGate": "50016839"},
+    {"name": "destroyed with a wreck of the scene's own", "kind": "Destroyed", "sessionId": "4611686018427387905",
+     "shipId": "980050000077", "wreckId": "4300000000000001", "position": [311989835983.1308, -13069154020.916222, 156646308895.76187],
+     "direction": [0.6159, 0.01306, 0.78769], "radius": 47.0, "killerShipId": "9988400001939"},
+    {"name": "destroyed player's ship, nobody to blame, no wreck", "kind": "Destroyed", "sessionId": "1790646377000015",
+     "shipId": "9988400001939", "wreckId": "0", "position": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0],
+     "radius": 47.0, "killerShipId": "0"},
+    {"name": "spawn of an NPC with a laser, a wreck and a tree", "kind": "Spawn", "requestId": "7", "solarSystemId": 30100032,
+     "ship": dict(BARE, shipId="980050000077", characterId="0", ownerId="1000125", categoryId=11, groupId=25, typeId=597),
+     "position": [1000500.0, 100.0, 100.0], "velocity": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0], "behavior": "belt rat",
+     "identity": {"hostileResponseThreshold": -11, "friendlyResponseThreshold": 11, "aggressionRange": 15000.0,
+                  "weapons": [{"moduleId": "980050000077", "effectId": 10, "cycleMs": 4000.0, "capacitorNeed": 0.0,
+                               "weaponTypeId": 5678, "fx": "effects.Laser", "rawDamage": [0.0, 0.0, 6.0, 4.0],
+                               "optimalRange": 20000.0, "falloff": 10000.0, "trackingSpeed": 0.4, "signatureResolution": 40.0}],
+                  "wreck": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117}}},
+    {"name": "spawn of a bare NPC: no tree, no weapons, no wreck", "kind": "Spawn", "requestId": "8", "solarSystemId": 30000142,
+     "ship": dict(BARE, shipId="980050000078", characterId="0"), "position": [1.0, 2.0, 3.0], "velocity": [4.0, 5.0, 6.0],
+     "direction": [0.0, 0.0, 1.0], "behavior": "",
+     "identity": {"hostileResponseThreshold": -11, "friendlyResponseThreshold": 11, "aggressionRange": 0.0, "weapons": []}},
+    {"name": "spawn done", "kind": "SpawnReply", "requestId": "7", "ok": True, "session": "4611686018427387905"},
+    {"name": "spawn refused", "kind": "SpawnReply", "requestId": "8", "ok": False, "reason": "NO_SCENE 30000142"},
+    {"name": "destroy", "kind": "Destroy", "shipId": "980050000077"},
 ]
 for case in valid:
     case["hex"] = build(case).hex()

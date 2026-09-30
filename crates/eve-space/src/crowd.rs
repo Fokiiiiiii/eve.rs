@@ -14,6 +14,7 @@ use crate::scene::{Out, Scene, SessionId};
 use crate::ship::Ship;
 use crate::visibility::{Presence, can_see, grid_of};
 use crate::wire::{id, real};
+use crate::wreck::Wreck;
 
 impl Scene {
     pub(crate) fn next_entry(&mut self) -> u64 {
@@ -205,14 +206,109 @@ impl Scene {
         out
     }
 
+    /// Whether `observer` can see a wreck: it is in the same box of the grid (a wreck does not warp).
+    fn sees_place_of(&self, observer: SessionId, wreck: &Wreck) -> bool {
+        self.presence(observer)
+            .is_some_and(|o| can_see(o, Presence { position: wreck.position, warping: false }))
+    }
+
+    /// The wrecks in the ballpark of a pilot, in the order of their ids.
+    pub(crate) fn wrecks_in_view(&self, session: SessionId) -> Vec<&Wreck> {
+        let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
+        self.wrecks.values().filter(|wreck| pilot.sees_wrecks.contains(&wreck.id)).collect()
+    }
+
+    /// A wreck comes into the scene: whoever has bound the ballpark and can see the place is sent it.
+    pub fn place_wreck(&mut self, wreck: Wreck, now: i64) -> Vec<Out> {
+        let id = wreck.id;
+        self.wrecks.insert(id, wreck);
+        let stamp = self.next_stamp(now);
+        let Some(wreck) = self.wrecks.get(&id) else { return Vec::new() };
+        let Ok(added) = payload::add_wreck(stamp, wreck, now) else { return Vec::new() };
+        let watchers: Vec<SessionId> = self
+            .in_entry_order()
+            .into_iter()
+            .filter(|s| self.pilots[s].bound && self.sees_place_of(*s, wreck))
+            .collect();
+        let mut out = Vec::new();
+        for watcher in watchers {
+            if let Some(pilot) = self.pilots.get_mut(&watcher) {
+                pilot.sees_wrecks.insert(id);
+            }
+            out.push(Self::update(watcher, vec![added.clone()]));
+        }
+        out
+    }
+
+    /// The wrecks that were due to go by `now` go: whoever had one in view is told.
+    pub(crate) fn expire_wrecks(&mut self, now: i64) -> Vec<Out> {
+        let gone: Vec<i64> = self.wrecks.values().filter(|w| w.expires_at <= now).map(|w| w.id).collect();
+        if gone.is_empty() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for id in gone {
+            self.wrecks.remove(&id);
+            let watchers: Vec<SessionId> = self
+                .in_entry_order()
+                .into_iter()
+                .filter(|s| self.pilots[s].bound && self.pilots[s].sees_wrecks.contains(&id))
+                .collect();
+            for pilot in self.pilots.values_mut() {
+                pilot.sees_wrecks.remove(&id);
+            }
+            if !watchers.is_empty() {
+                let removal = payload::remove_ships(self.next_stamp(now), [id]);
+                out.extend(watchers.into_iter().map(|w| Self::update(w, vec![removal.clone()])));
+            }
+        }
+        out
+    }
+
+    /// A pilot that moved into a box of the grid is sent the wrecks there and one that moved out is told they are gone.
+    pub(crate) fn reconcile_wrecks(&mut self, now: i64) -> Vec<Out> {
+        if self.wrecks.is_empty() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for observer in self.in_entry_order() {
+            if !self.pilots[&observer].bound {
+                continue;
+            }
+            let seen = self.pilots[&observer].sees_wrecks.clone();
+            let should: std::collections::BTreeSet<i64> =
+                self.wrecks.values().filter(|w| self.sees_place_of(observer, w)).map(|w| w.id).collect();
+            let gone: Vec<i64> = seen.difference(&should).copied().collect();
+            let coming: Vec<i64> = should.difference(&seen).copied().collect();
+            if !gone.is_empty() {
+                let stamp = self.next_stamp(now);
+                out.push(Self::update(observer, vec![payload::remove_ships(stamp, gone.iter().copied())]));
+            }
+            for id in coming {
+                let stamp = self.next_stamp(now);
+                let Some(wreck) = self.wrecks.get(&id) else { continue };
+                if let Ok(added) = payload::add_wreck(stamp, wreck, now) {
+                    out.push(Self::update(observer, vec![added]));
+                }
+            }
+            if let Some(pilot) = self.pilots.get_mut(&observer) {
+                pilot.sees_wrecks = should;
+            }
+        }
+        out
+    }
+
     /// Sets what a pilot has in view when it binds the ballpark: every ship the rule lets it see.
     pub(crate) fn take_in_view(&mut self, session: SessionId) {
         let order = self.in_entry_order();
         let seen: BTreeSet<SessionId> =
             order.into_iter().filter(|s| *s != session && self.visible_to(session, *s)).collect();
+        let wrecks: BTreeSet<i64> =
+            self.wrecks.values().filter(|w| self.sees_place_of(session, w)).map(|w| w.id).collect();
         if let Some(pilot) = self.pilots.get_mut(&session) {
             pilot.bound = true;
             pilot.sees = seen;
+            pilot.sees_wrecks = wrecks;
         }
     }
 

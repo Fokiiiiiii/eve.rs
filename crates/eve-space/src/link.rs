@@ -7,7 +7,9 @@
 
 use crate::health::{Condition, Resonances, Vitals};
 use crate::modules::{Change, Effect, Numbers};
-use crate::ship::{ModuleSpec, ShipSpec};
+use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
+use crate::weapons::Turret;
+use crate::wreck::WreckKind;
 
 pub const PROTOCOL_VERSION: u16 = 1;
 
@@ -33,6 +35,10 @@ pub mod kind {
     pub const TARGET_REFUSED: u8 = 18;
     pub const ACTIVATE: u8 = 19;
     pub const CONDITION: u8 = 20;
+    pub const DESTROYED: u8 = 21;
+    pub const SPAWN: u8 = 22;
+    pub const SPAWN_REPLY: u8 = 23;
+    pub const DESTROY: u8 = 24;
 }
 
 /// How a ship comes into space.
@@ -42,6 +48,20 @@ pub enum How {
     Undock,
     /// It is already in space (a login in space, a jump arrival).
     InSpace,
+}
+
+/// An NPC the host asks a scene to spawn: the ship, where it comes into space and how it is moving, what it does (`behavior`: a scripted tree, or
+/// none) and what it is (its reactions, its weapons, what it leaves).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Spawn {
+    pub request_id: u64,
+    pub solar_system_id: i32,
+    pub ship: ShipSpec,
+    pub position: [f64; 3],
+    pub velocity: [f64; 3],
+    pub direction: [f64; 3],
+    pub behavior: String,
+    pub identity: NpcIdentity,
 }
 
 /// A ship enters a solar system.
@@ -150,6 +170,28 @@ pub enum Message {
     Activate {
         session_id: u64,
         effect: Box<Effect>,
+    },
+    /// The ship of this session was destroyed (its hull was gone): where it was and how it faced, the wreck the scene made of it (0 when it made
+    /// none: a player's wreck is the host's to make), and the ship that took the last of the hull (0 when nobody did).
+    Destroyed {
+        session_id: u64,
+        ship_id: i64,
+        wreck_id: i64,
+        position: [f64; 3],
+        direction: [f64; 3],
+        radius: f64,
+        killer_ship_id: i64,
+    },
+    /// The host asks a scene to spawn an NPC (answered with `SpawnReply`).
+    Spawn(Box<Spawn>),
+    /// Whether a `Spawn` was done: the session the NPC is known by, or why not.
+    SpawnReply {
+        request_id: u64,
+        outcome: Result<u64, String>,
+    },
+    /// The host asks for the ship to be destroyed: its pilot's session is told of it (`Destroyed`) and the ship's wreck is made.
+    Destroy {
+        ship_id: i64,
     },
     /// A targeting command the scene refused, with what the client is told of the target: its type, the range the ship can lock at and how far
     /// away the target is (both 0 unless the target was out of range; for `TARGET_LOCK_LIMIT_REACHED` the range is the number of targets the ship
@@ -327,6 +369,89 @@ fn put_changes(out: &mut Vec<u8>, changes: &[Change]) {
         out.extend_from_slice(&change.attribute_id.to_le_bytes());
         out.extend_from_slice(&change.value.to_le_bytes());
     }
+}
+
+fn put_identity(out: &mut Vec<u8>, identity: &NpcIdentity) {
+    out.extend_from_slice(&identity.hostile_response_threshold.to_le_bytes());
+    out.extend_from_slice(&identity.friendly_response_threshold.to_le_bytes());
+    out.extend_from_slice(&identity.combat.aggression_range.to_le_bytes());
+    out.extend_from_slice(&(identity.combat.weapons.len() as u32).to_le_bytes());
+    for weapon in &identity.combat.weapons {
+        out.extend_from_slice(&weapon.module_id.to_le_bytes());
+        out.extend_from_slice(&weapon.effect_id.to_le_bytes());
+        out.extend_from_slice(&weapon.cycle_ms.to_le_bytes());
+        out.extend_from_slice(&weapon.capacitor_need.to_le_bytes());
+        let turret = &weapon.turret;
+        out.extend_from_slice(&turret.weapon_type_id.to_le_bytes());
+        put_text(out, &turret.fx);
+        for number in turret.raw_damage.iter().chain(&[
+            turret.optimal_range,
+            turret.falloff,
+            turret.tracking_speed,
+            turret.signature_resolution,
+        ]) {
+            out.extend_from_slice(&number.to_le_bytes());
+        }
+    }
+    match &identity.wreck {
+        None => out.push(0),
+        Some(wreck) => {
+            out.push(1);
+            out.extend_from_slice(&wreck.type_id.to_le_bytes());
+            put_text(out, &wreck.name);
+            out.extend_from_slice(&wreck.graphic_id.unwrap_or(0).to_le_bytes());
+        }
+    }
+}
+
+fn read_identity(reader: &mut Reader) -> Result<NpcIdentity, DecodeError> {
+    let hostile_response_threshold = reader.i64()?;
+    let friendly_response_threshold = reader.i64()?;
+    let aggression_range = reader.f64()?;
+    let count = reader.u32()? as usize;
+    // a weapon takes at least 100 bytes, so a count the frame cannot hold is refused before anything is allocated for it
+    if count > reader.data.len() / 100 {
+        return Err(DecodeError::Truncated);
+    }
+    let mut weapons = Vec::with_capacity(count);
+    for _ in 0..count {
+        let (module_id, effect_id, cycle_ms, capacitor_need) =
+            (reader.i64()?, reader.i32()?, reader.f64()?, reader.f64()?);
+        let weapon_type_id = reader.i32()?;
+        let fx = reader.text()?;
+        let raw_damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+        let (optimal_range, falloff, tracking_speed, signature_resolution) =
+            (reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?);
+        weapons.push(NpcWeapon {
+            module_id,
+            effect_id,
+            cycle_ms,
+            capacitor_need,
+            turret: Turret {
+                weapon_type_id,
+                fx,
+                raw_damage,
+                optimal_range,
+                falloff,
+                tracking_speed,
+                signature_resolution,
+            },
+        });
+    }
+    let wreck = match reader.u8()? {
+        0 => None,
+        1 => {
+            let (type_id, name, graphic) = (reader.i32()?, reader.text()?, reader.i32()?);
+            Some(WreckKind { type_id, name, graphic_id: (graphic != 0).then_some(graphic) })
+        }
+        _ => return Err(DecodeError::BadValue("wreck")),
+    };
+    Ok(NpcIdentity {
+        hostile_response_threshold,
+        friendly_response_threshold,
+        combat: NpcCombat { weapons, aggression_range },
+        wreck,
+    })
 }
 
 fn put_effect(out: &mut Vec<u8>, effect: &Effect) {
@@ -527,6 +652,10 @@ impl Message {
             Self::TargetRefused { .. } => kind::TARGET_REFUSED,
             Self::Activate { .. } => kind::ACTIVATE,
             Self::Condition { .. } => kind::CONDITION,
+            Self::Destroyed { .. } => kind::DESTROYED,
+            Self::Spawn(_) => kind::SPAWN,
+            Self::SpawnReply { .. } => kind::SPAWN_REPLY,
+            Self::Destroy { .. } => kind::DESTROY,
         }
     }
 
@@ -638,6 +767,47 @@ impl Message {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 put_effect(&mut out, effect);
             }
+            Self::Destroyed {
+                session_id,
+                ship_id,
+                wreck_id,
+                position,
+                direction,
+                radius,
+                killer_ship_id,
+            } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                out.extend_from_slice(&wreck_id.to_le_bytes());
+                for number in position.iter().chain(direction).chain([radius]) {
+                    out.extend_from_slice(&number.to_le_bytes());
+                }
+                out.extend_from_slice(&killer_ship_id.to_le_bytes());
+            }
+            Self::Spawn(spawn) => {
+                out.extend_from_slice(&spawn.request_id.to_le_bytes());
+                out.extend_from_slice(&spawn.solar_system_id.to_le_bytes());
+                put_ship(&mut out, &spawn.ship);
+                for number in spawn.position.iter().chain(&spawn.velocity).chain(&spawn.direction) {
+                    out.extend_from_slice(&number.to_le_bytes());
+                }
+                put_text(&mut out, &spawn.behavior);
+                put_identity(&mut out, &spawn.identity);
+            }
+            Self::SpawnReply { request_id, outcome } => {
+                out.extend_from_slice(&request_id.to_le_bytes());
+                match outcome {
+                    Ok(session) => {
+                        out.push(0);
+                        out.extend_from_slice(&session.to_le_bytes());
+                    }
+                    Err(reason) => {
+                        out.push(1);
+                        put_text(&mut out, reason);
+                    }
+                }
+            }
+            Self::Destroy { ship_id } => out.extend_from_slice(&ship_id.to_le_bytes()),
             Self::TargetRefused {
                 session_id,
                 command,
@@ -766,6 +936,46 @@ impl Message {
             kind::ACTIVATE => {
                 Message::Activate { session_id: r.u64()?, effect: Box::new(read_effect(&mut r)?) }
             }
+            kind::DESTROYED => Message::Destroyed {
+                session_id: r.u64()?,
+                ship_id: r.i64()?,
+                wreck_id: r.i64()?,
+                position: [r.f64()?, r.f64()?, r.f64()?],
+                direction: [r.f64()?, r.f64()?, r.f64()?],
+                radius: r.f64()?,
+                killer_ship_id: r.i64()?,
+            },
+            kind::SPAWN => {
+                let request_id = r.u64()?;
+                let solar_system_id = r.i32()?;
+                let ship = read_ship(&mut r)?;
+                let mut vectors = [[0.0; 3]; 3];
+                for vector in &mut vectors {
+                    *vector = [r.f64()?, r.f64()?, r.f64()?];
+                }
+                let behavior = r.text()?;
+                let identity = read_identity(&mut r)?;
+                Message::Spawn(Box::new(Spawn {
+                    request_id,
+                    solar_system_id,
+                    ship,
+                    position: vectors[0],
+                    velocity: vectors[1],
+                    direction: vectors[2],
+                    behavior,
+                    identity,
+                }))
+            }
+            kind::SPAWN_REPLY => {
+                let request_id = r.u64()?;
+                let outcome = match r.u8()? {
+                    0 => Ok(r.u64()?),
+                    1 => Err(r.text()?),
+                    _ => return Err(DecodeError::BadValue("status")),
+                };
+                Message::SpawnReply { request_id, outcome }
+            }
+            kind::DESTROY => Message::Destroy { ship_id: r.i64()? },
             kind::TARGET_REFUSED => Message::TargetRefused {
                 session_id: r.u64()?,
                 command: r.u8()?,

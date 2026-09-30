@@ -102,6 +102,8 @@ pub struct NpcIdentity {
     pub hostile_response_threshold: i64,
     pub friendly_response_threshold: i64,
     pub combat: NpcCombat,
+    /// What the ship leaves when it is destroyed (`None`: nothing).
+    pub wreck: Option<crate::wreck::WreckKind>,
 }
 
 impl Default for NpcIdentity {
@@ -112,6 +114,7 @@ impl Default for NpcIdentity {
             hostile_response_threshold: -11,
             friendly_response_threshold: 11,
             combat: NpcCombat::default(),
+            wreck: None,
         }
     }
 }

@@ -343,3 +343,21 @@ fn offensive_acts_that_no_tree_is_there_to_hear_are_not_kept() {
     scene.poll(LATER + SECOND);
     assert!(scene.aggressions.is_empty());
 }
+
+#[test]
+fn the_trees_that_watch_a_ship_are_told_when_it_is_destroyed_once() {
+    let (mut scene, rat) = scene_with_a_rat();
+    scene.destroy(rat, None, LATER);
+    with_world(&mut scene, LATER, |world, brains| {
+        brains.shared.events.subscribe_item(RAT_SHIP, message::ON_BALLPARK_ITEM_DESTROY, WATCHER);
+        brains.shared.events.subscribe_item(
+            PLAYER_SHIP,
+            message::ON_BALLPARK_ITEM_DESTROY,
+            Observer { tree: 9, ..WATCHER },
+        );
+        world.tell_what_happened(&mut brains.shared);
+        assert_eq!(heard(brains), [vec![Value::Int(RAT_SHIP)]]);
+        world.tell_what_happened(&mut brains.shared);
+        assert!(heard(brains).is_empty());
+    });
+}

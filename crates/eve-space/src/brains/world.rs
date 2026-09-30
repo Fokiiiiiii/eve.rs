@@ -53,6 +53,18 @@ impl<'a> SceneWorld<'a> {
         self.tell_proximity(shared);
         self.tell_aggressions(shared);
         self.tell_protection(shared);
+        self.tell_destroyed(shared);
+    }
+
+    /// `ON_BALLPARK_ITEM_DESTROY(item)` about every ship that was destroyed since the trees were last told.
+    fn tell_destroyed(&mut self, shared: &mut Shared) {
+        for ship_id in std::mem::take(&mut self.scene.destroyed) {
+            shared.tell_subscribers(
+                Subject::Item(ship_id),
+                message::ON_BALLPARK_ITEM_DESTROY,
+                &[Value::Int(ship_id)],
+            );
+        }
     }
 
     /// `INVULNERABILITY_CANCELED(item, isCompleted, reason)` to the bubble of every ship whose undock protection ended since the trees were last told:

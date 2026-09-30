@@ -178,11 +178,13 @@ impl Scene {
     pub(crate) fn tick_brains(&mut self, now: i64) -> Vec<Out> {
         let Some(mut brains) = self.brains.take() else {
             self.aggressions.clear();
+            self.destroyed.clear();
             return Vec::new();
         };
         if brains.is_empty() {
-            // no tree to hear of the offensive acts since the last poll: they are of no use to anyone
+            // no tree to hear of the offensive acts and the ships lost since the last poll: they are of no use to anyone
             self.aggressions.clear();
+            self.destroyed.clear();
             self.brains = Some(brains);
             return Vec::new();
         }

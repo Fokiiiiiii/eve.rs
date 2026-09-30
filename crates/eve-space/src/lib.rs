@@ -7,6 +7,7 @@
 
 pub mod brains;
 pub mod crowd;
+pub mod death;
 pub mod flight;
 pub mod gate;
 pub mod geo;
@@ -30,3 +31,4 @@ pub mod warp;
 pub mod weapons;
 pub mod wire;
 pub mod world;
+pub mod wreck;

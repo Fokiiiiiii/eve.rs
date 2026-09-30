@@ -145,6 +145,15 @@ not exist is the scene: which balls a system has, who is where, how commands cha
   `Scene::damage` is what they will call. The shield's charge is told to its pilot every half second while it recharges, as the capacitor's is
   (`docs/compat/DEVIATIONS.md` #37).
 
+  **Deaths and NPCs (S5c-3d).** A ship whose hull is gone is destroyed by the scene (`crates/eve-space/src/death.rs`): whoever has it in view is told to
+  play the explosion and let go of the ball in one stamp (`TerminalPlayDestructionEffect` with effect 3, `RemoveBalls`, as recorded in
+  `oracle/fixtures/scenarios/death.json`), it stops being a pilot, and it leaves a wreck (`wreck.rs`: a ball of kind wreck with the reference's slim
+  item, in the ballpark of whoever can see the place, gone after two hours) that the scene makes itself for an NPC and the host makes for a player. New
+  messages: `Destroyed` (kind 21, sim to host: the session, the ship, the wreck the scene made (0 for none), where and how the ship was, the ship that
+  did it), `Spawn` (22, host to sim: an NPC with its ship, place, tree, reactions, weapons and wreck, answered with `SpawnReply`, 23) and `Destroy`
+  (24, host to sim: destroy this ship). An NPC that dies is not told to the host (nobody is there to hear it); a player's death is, and the session
+  is no longer in space until the host brings it back.
+
 - 2026-09-29, stargate jumps: command 9 and the messages `Jumping` (15) and `Jumped` (16). The sim owns the crossing: a `Jump` checks the gate
   (in this system, leading where the client says, within 2.5 km of the ship's surface), stops the ship and sends the jump-out effect with the `Stop`
   in one update; four seconds later (or three after the effect's stamp, if that is later) the scene gives the ship up (`Scene::due_jumps`) and the

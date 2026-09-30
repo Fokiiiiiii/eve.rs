@@ -47,6 +47,15 @@ public class SimCodecTests
         Wide(e, "moduleId"), (int)e["moduleType"]!, (int)e["effectId"]!, (string)e["fx"]!, (double)e["durationMs"]!, (double)e["capacitorNeed"]!, (int)e["repeat"]!, Wide(e, "targetId"),
         NumbersOf(e["on"]), NumbersOf(e["off"]), ChangesOf(e["onChanges"]!), ChangesOf(e["offChanges"]!));
 
+    private static double[] VectorOf(JsonNode n) => [.. ((JsonArray)n).Select(x => (double)x!)];
+
+    private static SimNpcIdentity IdentityOf(JsonNode i) => new(
+        (long)i["hostileResponseThreshold"]!, (long)i["friendlyResponseThreshold"]!, (double)i["aggressionRange"]!,
+        [.. ((JsonArray)i["weapons"]!).Select(w => new SimNpcWeapon(
+            Wide(w!, "moduleId"), (int)w!["effectId"]!, (double)w["cycleMs"]!, (double)w["capacitorNeed"]!, (int)w["weaponTypeId"]!, (string)w["fx"]!,
+            VectorOf(w["rawDamage"]!), (double)w["optimalRange"]!, (double)w["falloff"]!, (double)w["trackingSpeed"]!, (double)w["signatureResolution"]!))],
+        i["wreck"] is { } w2 ? new SimWreckKind((int)w2["typeId"]!, (string)w2["name"]!, (int)w2["graphicId"]!) : null);
+
     private static SimMessage MessageOf(JsonObject c)
     {
         ulong Session() => (ulong)Wide(c, "sessionId");
@@ -72,6 +81,12 @@ public class SimCodecTests
             "Activate" => new SimActivate(Session(), EffectOf(c["effect"]!)),
             "Targets" => new SimTargets(Session(), (byte)(int)c["command"]!, (bool)c["pending"]!, [.. ((JsonArray)c["targets"]!).Select(x => long.Parse((string)x!, CultureInfo.InvariantCulture))]),
             "TargetRefused" => new SimTargetRefused(Session(), (byte)(int)c["command"]!, (string)c["reason"]!, (int)c["targetType"]!, (double)c["desiredRange"]!, (double)c["actualDistance"]!),
+            "Destroyed" => new SimDestroyed(Session(), Wide(c, "shipId"), Wide(c, "wreckId"), VectorOf(c["position"]!), VectorOf(c["direction"]!), (double)c["radius"]!, Wide(c, "killerShipId")),
+            "Spawn" => new SimSpawn(
+                (ulong)Wide(c, "requestId"), (int)c["solarSystemId"]!, ShipOf(c["ship"]!), VectorOf(c["position"]!), VectorOf(c["velocity"]!), VectorOf(c["direction"]!),
+                (string)c["behavior"]!, IdentityOf(c["identity"]!)),
+            "SpawnReply" => (bool)c["ok"]! ? new SimSpawnReply((ulong)Wide(c, "requestId"), (ulong)Wide(c, "session"), null) : new SimSpawnReply((ulong)Wide(c, "requestId"), null, (string)c["reason"]!),
+            "Destroy" => new SimDestroy(Wide(c, "shipId")),
             var other => throw new InvalidOperationException(other),
         };
     }
@@ -80,7 +95,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-        Assert.Equal(["Accepted", "Activate", "Approaching", "Bind", "Command", "Condition", "Docked", "Enter", "EnterReply", "Hello", "HelloAck", "Jumped", "Jumping", "Leave", "Notify", "Refused", "ShipSpec", "TargetRefused", "Targets", "UpdateState"], kinds);
+        Assert.Equal(["Accepted", "Activate", "Approaching", "Bind", "Command", "Condition", "Destroy", "Destroyed", "Docked", "Enter", "EnterReply", "Hello", "HelloAck", "Jumped", "Jumping", "Leave", "Notify", "Refused", "ShipSpec", "Spawn", "SpawnReply", "TargetRefused", "Targets", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);
     }
 

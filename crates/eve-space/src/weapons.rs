@@ -257,10 +257,12 @@ impl Scene {
         let shot = resolve_shot(turret, &attacker, &target, roll);
         let mut out = Vec::new();
         let mut applied = 0.0;
+        let mut destroyed = false;
         if shot.hit {
             let (told, hit) = self.damage(effect.target_id, shot.damage, at);
             out.extend(told);
             applied = hit.map_or(0.0, |hit| hit.taken.shield + hit.taken.armor + hit.taken.structure);
+            destroyed = hit.is_some_and(|hit| hit.destroyed);
         }
         let owner = self.combat_owner(session);
         let target_type_id = self.pilots.get(&target_session).map_or(0, |pilot| pilot.ship.spec.type_id);
@@ -297,6 +299,10 @@ impl Scene {
                 id_type: "clientID",
                 args: vec![message(false)],
             });
+        }
+        // the shot that took the last of the hull is told first, then the ship is gone
+        if destroyed {
+            out.extend(self.destroy(target_session, Some(session), at));
         }
         out
     }

@@ -651,6 +651,264 @@
    "toSystem": 30100034,
    "toGate": "50016839",
    "hex": "21000000104f2c3859955c0600404acb017631fb0200000000424acb014732fb0200000000"
+  },
+  {
+   "name": "destroyed with a wreck of the scene's own",
+   "kind": "Destroyed",
+   "sessionId": "4611686018427387905",
+   "shipId": "980050000077",
+   "wreckId": "4300000000000001",
+   "position": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "direction": [
+    0.6159,
+    0.01306,
+    0.78769
+   ],
+   "radius": 47.0,
+   "killerShipId": "9988400001939",
+   "hex": "59000000150100000000000040cd38882fe400000001c088c4d3460f005fc833c6022952426c5427b7db5708c285e10f7e6c3c4242a167b3ea73b5e33f5709168733bf8a3f145caca8c134e93f000000000080474093b3089b15090000"
+  },
+  {
+   "name": "destroyed player's ship, nobody to blame, no wreck",
+   "kind": "Destroyed",
+   "sessionId": "1790646377000015",
+   "shipId": "9988400001939",
+   "wreckId": "0",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "direction": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "radius": 47.0,
+   "killerShipId": "0",
+   "hex": "59000000154f2c3859955c060093b3089b150900000000000000000000000000000000000000000000000000000000000000000000000000000000f03f0000000000000000000000000000000000000000008047400000000000000000"
+  },
+  {
+   "name": "spawn of an NPC with a laser, a wreck and a tree",
+   "kind": "Spawn",
+   "requestId": "7",
+   "solarSystemId": 30100032,
+   "ship": {
+    "shipId": "980050000077",
+    "characterId": "0",
+    "typeId": 597,
+    "groupId": 25,
+    "categoryId": 11,
+    "name": "",
+    "ownerId": "1000125",
+    "corporationId": 1000006,
+    "allianceId": 99000001,
+    "warFactionId": 0,
+    "securityStatus": -2.5,
+    "radius": 47.0,
+    "mass": 1163000.0,
+    "maxVelocity": 339.25,
+    "agility": 4.0185,
+    "warpSpeedAu": 3.0,
+    "shieldRechargeMs": 860000.0,
+    "maxTargetRange": 29700.0,
+    "scanResolution": 660.0,
+    "signatureRadius": 28.0,
+    "maxLockedTargets": 4,
+    "capacitorCapacity": 149.5,
+    "capacitorRechargeS": 55.25,
+    "vitals": {
+     "shieldCapacity": 0.0,
+     "armorHp": 0.0,
+     "structureHp": 0.0,
+     "resonances": {
+      "shield": [
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      "armor": [
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      "structure": [
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    },
+    "condition": {
+     "damage": 0.0,
+     "armorDamage": 0.0,
+     "shieldCharge": 1.0,
+     "charge": 1.0
+    },
+    "modules": []
+   },
+   "position": [
+    1000500.0,
+    100.0,
+    100.0
+   ],
+   "velocity": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "direction": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "behavior": "belt rat",
+   "identity": {
+    "hostileResponseThreshold": -11,
+    "friendlyResponseThreshold": 11,
+    "aggressionRange": 15000.0,
+    "weapons": [
+     {
+      "moduleId": "980050000077",
+      "effectId": 10,
+      "cycleMs": 4000.0,
+      "capacitorNeed": 0.0,
+      "weaponTypeId": 5678,
+      "fx": "effects.Laser",
+      "rawDamage": [
+       0.0,
+       0.0,
+       6.0,
+       4.0
+      ],
+      "optimalRange": 20000.0,
+      "falloff": 10000.0,
+      "trackingSpeed": 0.4,
+      "signatureResolution": 40.0
+     }
+    ],
+    "wreck": {
+     "typeId": 26506,
+     "name": "Caldari Frigate Wreck",
+     "graphicId": 3117
+    }
+   },
+   "hex": "3c020000160700000000000000404acb01cd38882fe4000000000000000000000055020000190000000b0000000000bd420f000000000046420f00c19ee6050000000000000000000004c0000000000080474000000000f8be314100000000003475406de7fba9f1121040000000000000084000000000c03e2a41000000000001dd400000000000a084400000000000003c400000000000b062400000000000a04b4004000000000000000000000000000000000000000000000000000000000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f00000000000000000000000000000000000000000000f03f000000000000f03f000000000000000068882e4100000000000059400000000000005940000000000000000000000000000000000000000000000000000000000000f03f00000000000000000000000000000000080062656c7420726174f5ffffffffffffff0b0000000000000000000000004ccd4001000000cd38882fe40000000a000000000000000040af4000000000000000002e1600000d00656666656374732e4c617365720000000000000000000000000000000000000000000018400000000000001040000000000088d340000000000088c3409a9999999999d93f0000000000004440018a670000150043616c64617269204672696761746520577265636b2d0c0000"
+  },
+  {
+   "name": "spawn of a bare NPC: no tree, no weapons, no wreck",
+   "kind": "Spawn",
+   "requestId": "8",
+   "solarSystemId": 30000142,
+   "ship": {
+    "shipId": "980050000078",
+    "characterId": "0",
+    "typeId": 601,
+    "groupId": 237,
+    "categoryId": 6,
+    "name": "",
+    "ownerId": "140000342",
+    "corporationId": 1000006,
+    "allianceId": 99000001,
+    "warFactionId": 0,
+    "securityStatus": -2.5,
+    "radius": 47.0,
+    "mass": 1163000.0,
+    "maxVelocity": 339.25,
+    "agility": 4.0185,
+    "warpSpeedAu": 3.0,
+    "shieldRechargeMs": 860000.0,
+    "maxTargetRange": 29700.0,
+    "scanResolution": 660.0,
+    "signatureRadius": 28.0,
+    "maxLockedTargets": 4,
+    "capacitorCapacity": 149.5,
+    "capacitorRechargeS": 55.25,
+    "vitals": {
+     "shieldCapacity": 0.0,
+     "armorHp": 0.0,
+     "structureHp": 0.0,
+     "resonances": {
+      "shield": [
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      "armor": [
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      "structure": [
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    },
+    "condition": {
+     "damage": 0.0,
+     "armorDamage": 0.0,
+     "shieldCharge": 1.0,
+     "charge": 1.0
+    },
+    "modules": []
+   },
+   "position": [
+    1.0,
+    2.0,
+    3.0
+   ],
+   "velocity": [
+    4.0,
+    5.0,
+    6.0
+   ],
+   "direction": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "behavior": "",
+   "identity": {
+    "hostileResponseThreshold": -11,
+    "friendlyResponseThreshold": 11,
+    "aggressionRange": 0.0,
+    "weapons": []
+   },
+   "hex": "a60100001608000000000000000ec4c901ce38882fe4000000000000000000000059020000ed000000060000000000563c58080000000046420f00c19ee6050000000000000000000004c0000000000080474000000000f8be314100000000003475406de7fba9f1121040000000000000084000000000c03e2a41000000000001dd400000000000a084400000000000003c400000000000b062400000000000a04b4004000000000000000000000000000000000000000000000000000000000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f00000000000000000000000000000000000000000000f03f000000000000f03f00000000000000000000f03f0000000000000040000000000000084000000000000010400000000000001440000000000000184000000000000000000000000000000000000000000000f03f0000f5ffffffffffffff0b0000000000000000000000000000000000000000"
+  },
+  {
+   "name": "spawn done",
+   "kind": "SpawnReply",
+   "requestId": "7",
+   "ok": true,
+   "session": "4611686018427387905",
+   "hex": "12000000170700000000000000000100000000000040"
+  },
+  {
+   "name": "spawn refused",
+   "kind": "SpawnReply",
+   "requestId": "8",
+   "ok": false,
+   "reason": "NO_SCENE 30000142",
+   "hex": "1d0000001708000000000000000111004e4f5f5343454e45203330303030313432"
+  },
+  {
+   "name": "destroy",
+   "kind": "Destroy",
+   "shipId": "980050000077",
+   "hex": "0900000018cd38882fe4000000"
   }
  ],
  "invalid": [

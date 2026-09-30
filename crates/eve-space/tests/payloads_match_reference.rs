@@ -56,7 +56,8 @@ fn the_state_is_what_the_reference_sent_apart_from_what_only_it_adds() {
     let ship = recorded_ship(race, tail, recorded_direction(race));
 
     let mine =
-        payload::set_state(stamp as u32, &world.system(SYSTEM).unwrap(), &ship, &[&ship], SIM_TIME).unwrap();
+        payload::set_state(stamp as u32, &world.system(SYSTEM).unwrap(), &ship, &[&ship], &[], SIM_TIME)
+            .unwrap();
     let mine = describe(&mine);
     let mine_state = &mine["$tuple"][1]["$tuple"][1]["$tuple"][0]["args"]["$dict"];
 

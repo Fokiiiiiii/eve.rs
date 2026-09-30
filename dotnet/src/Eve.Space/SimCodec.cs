@@ -56,6 +56,10 @@ public static class SimCodec
         public const byte TargetRefused = 18;
         public const byte Activate = 19;
         public const byte Condition = 20;
+        public const byte Destroyed = 21;
+        public const byte Spawn = 22;
+        public const byte SpawnReply = 23;
+        public const byte Destroy = 24;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)
@@ -122,6 +126,40 @@ public static class SimCodec
                 throw new SimLinkException(SimLinkError.Trailing, "bytes follow the end of the message");
             }
         }
+    }
+
+    private static double[] ReadVector(ref Reader r) => [r.F64(), r.F64(), r.F64()];
+
+    private static SimNpcIdentity ReadIdentity(ref Reader r)
+    {
+        var hostile = r.I64();
+        var friendly = r.I64();
+        var aggression = r.F64();
+        var count = r.U32();
+        // a weapon takes at least 100 bytes, so a count the frame cannot hold is refused before anything is allocated for it
+        if (count > r.Remaining / 100)
+        {
+            throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");
+        }
+        var weapons = new SimNpcWeapon[count];
+        for (var i = 0; i < weapons.Length; i++)
+        {
+            var moduleId = r.I64();
+            var effectId = r.I32();
+            var cycleMs = r.F64();
+            var capacitorNeed = r.F64();
+            var weaponType = r.I32();
+            var fx = r.Text();
+            double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+            weapons[i] = new SimNpcWeapon(moduleId, effectId, cycleMs, capacitorNeed, weaponType, fx, damage, r.F64(), r.F64(), r.F64(), r.F64());
+        }
+        SimWreckKind? wreck = r.U8() switch
+        {
+            0 => null,
+            1 => new SimWreckKind(r.I32(), r.Text(), r.I32()),
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad wreck"),
+        };
+        return new SimNpcIdentity(hostile, friendly, aggression, weapons, wreck);
     }
 
     private static SimShip ReadShip(ref Reader r)
@@ -309,6 +347,35 @@ public static class SimCodec
             case Kind.Jumped:
                 message = new SimJumped(r.U64(), r.I32(), r.I64(), r.I32(), r.I64());
                 break;
+            case Kind.Destroyed:
+                message = new SimDestroyed(r.U64(), r.I64(), r.I64(), ReadVector(ref r), ReadVector(ref r), r.F64(), r.I64());
+                break;
+            case Kind.Spawn:
+                {
+                    var requestId = r.U64();
+                    var solarSystemId = r.I32();
+                    var ship = ReadShip(ref r);
+                    var position = ReadVector(ref r);
+                    var velocity = ReadVector(ref r);
+                    var direction = ReadVector(ref r);
+                    var behavior = r.Text();
+                    message = new SimSpawn(requestId, solarSystemId, ship, position, velocity, direction, behavior, ReadIdentity(ref r));
+                    break;
+                }
+            case Kind.SpawnReply:
+                {
+                    var requestId = r.U64();
+                    message = r.U8() switch
+                    {
+                        0 => new SimSpawnReply(requestId, r.U64(), null),
+                        1 => new SimSpawnReply(requestId, null, r.Text()),
+                        _ => throw new SimLinkException(SimLinkError.BadValue, "bad status"),
+                    };
+                    break;
+                }
+            case Kind.Destroy:
+                message = new SimDestroy(r.I64());
+                break;
             case Kind.Targets:
                 {
                     var session = r.U64();
@@ -389,6 +456,47 @@ public static class SimCodec
         }
 
         public byte[] ToArray() => _out.ToArray();
+    }
+
+    private static void WriteVector(Writer w, IReadOnlyList<double> v)
+    {
+        foreach (var number in v)
+        {
+            w.F64(number);
+        }
+    }
+
+    private static void WriteIdentity(Writer w, SimNpcIdentity i)
+    {
+        w.I64(i.HostileResponseThreshold);
+        w.I64(i.FriendlyResponseThreshold);
+        w.F64(i.AggressionRange);
+        w.U32((uint)i.Weapons.Count);
+        foreach (var weapon in i.Weapons)
+        {
+            w.I64(weapon.ModuleId);
+            w.I32(weapon.EffectId);
+            w.F64(weapon.CycleMs);
+            w.F64(weapon.CapacitorNeed);
+            w.I32(weapon.WeaponTypeId);
+            w.Text(weapon.Fx);
+            WriteVector(w, weapon.RawDamage);
+            w.F64(weapon.OptimalRange);
+            w.F64(weapon.Falloff);
+            w.F64(weapon.TrackingSpeed);
+            w.F64(weapon.SignatureResolution);
+        }
+        if (i.Wreck is { } wreck)
+        {
+            w.U8(1);
+            w.I32(wreck.TypeId);
+            w.Text(wreck.Name);
+            w.I32(wreck.GraphicId);
+        }
+        else
+        {
+            w.U8(0);
+        }
     }
 
     private static void WriteNumbers(Writer w, SimNumbers n)
@@ -595,6 +703,45 @@ public static class SimCodec
                 w.I64(m.FromGate);
                 w.I32(m.ToSystem);
                 w.I64(m.ToGate);
+                break;
+            case SimDestroyed m:
+                w.U8(Kind.Destroyed);
+                w.U64(m.SessionId);
+                w.I64(m.ShipId);
+                w.I64(m.WreckId);
+                WriteVector(w, m.Position);
+                WriteVector(w, m.Direction);
+                w.F64(m.Radius);
+                w.I64(m.KillerShipId);
+                break;
+            case SimSpawn m:
+                w.U8(Kind.Spawn);
+                w.U64(m.RequestId);
+                w.I32(m.SolarSystemId);
+                WriteShip(w, m.Ship);
+                WriteVector(w, m.Position);
+                WriteVector(w, m.Velocity);
+                WriteVector(w, m.Direction);
+                w.Text(m.Behavior);
+                WriteIdentity(w, m.Identity);
+                break;
+            case SimSpawnReply m:
+                w.U8(Kind.SpawnReply);
+                w.U64(m.RequestId);
+                if (m.Session is { } session)
+                {
+                    w.U8(0);
+                    w.U64(session);
+                }
+                else
+                {
+                    w.U8(1);
+                    w.Text(m.Error ?? "");
+                }
+                break;
+            case SimDestroy m:
+                w.U8(Kind.Destroy);
+                w.I64(m.ShipId);
                 break;
             case SimTargets m:
                 w.U8(Kind.Targets);

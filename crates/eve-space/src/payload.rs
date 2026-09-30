@@ -8,6 +8,7 @@ use crate::ship::Ship;
 use crate::slim;
 use crate::wire::{filetime, id, int, key_val, list, real, slim_object, text, tuple, word};
 use crate::world::{BodyKind, SolarSystem};
+use crate::wreck::{DESTRUCTION_EFFECT_EXPLOSION, Wreck};
 
 /// The kind byte of a state buffer: 0 for `SetState`, 1 for `AddBalls2`.
 const SET_STATE: u8 = 0;
@@ -63,6 +64,26 @@ pub fn add_ships(stamp: u32, ships: &[&Ship], now: i64) -> Result<Value, BallErr
     Ok(action(stamp, "AddBalls2", [tuple([buffer, list(extras)])]))
 }
 
+/// What the client is told of a wreck's damage: nothing to hurt, so no shield, no armor, a whole hull.
+fn wreck_damage_state(now: i64) -> Value {
+    damage_state(&DamageState { shield: 0.0, shield_tau_ms: 0.0, armor: 0.0, structure: 1.0 }, now)
+}
+
+/// `AddBalls2` for a wreck: the buffer with its ball, and its slim item with the damage state.
+pub fn add_wreck(stamp: u32, wreck: &Wreck, now: i64) -> Result<Value, BallError> {
+    let buffer = state_buffer(ADD_BALLS, stamp, &[wreck.ball()])?;
+    let slim = slim_object(wreck.slim_entries());
+    Ok(action(stamp, "AddBalls2", [tuple([buffer, list([tuple([slim, wreck_damage_state(now)])])])]))
+}
+
+/// A ship is destroyed: the client plays the explosion where it was, and the ball goes (`TerminalPlayDestructionEffect`, `RemoveBalls`, one stamp).
+pub fn destruction(stamp: u32, ship_id: i64) -> Vec<Value> {
+    vec![
+        action(stamp, "TerminalPlayDestructionEffect", [id(ship_id), int(DESTRUCTION_EFFECT_EXPLOSION)]),
+        remove_ships(stamp, [ship_id]),
+    ]
+}
+
 /// `RemoveBalls`: the balls of these ships are gone.
 pub fn remove_ships(stamp: u32, ship_ids: impl IntoIterator<Item = i64>) -> Value {
     action(stamp, "RemoveBalls", [list(ship_ids.into_iter().map(id))])
@@ -104,10 +125,12 @@ pub fn set_state(
     system: &SolarSystem,
     ego: &Ship,
     ships: &[&Ship],
+    wrecks: &[&Wreck],
     now: i64,
 ) -> Result<Value, BallError> {
     let mut balls: Vec<BallEntity> = (0..system.bodies.len()).map(|i| rigid_ball(system, i)).collect();
     balls.extend(ships.iter().map(|ship| ship.ball()));
+    balls.extend(wrecks.iter().map(|wreck| wreck.ball()));
 
     let mut damage: Vec<(Value, Value)> = system
         .bodies
@@ -118,10 +141,12 @@ pub fn set_state(
     damage.extend(
         ships.iter().map(|ship| (id(ship.spec.ship_id), damage_state(&ship.health.state_at(now), now))),
     );
+    damage.extend(wrecks.iter().map(|wreck| (id(wreck.id), wreck_damage_state(now))));
 
     let mut slims: Vec<Value> =
         system.bodies.iter().map(|b| slim_object(slim::body_entries(system, b))).collect();
     slims.extend(ships.iter().map(|ship| slim_object(slim::ship_entries(ship))));
+    slims.extend(wrecks.iter().map(|wreck| slim_object(wreck.slim_entries())));
 
     let state = key_val([
         ("stamp", id(i64::from(stamp))),

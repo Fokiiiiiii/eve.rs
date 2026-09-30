@@ -168,3 +168,40 @@ public sealed record SimEffect(
 
 /// <summary>Run an effect. Answered under <see cref="SimCommands.Activate"/>: <see cref="SimAccepted"/> or <see cref="SimRefused"/>.</summary>
 public sealed record SimActivate(ulong SessionId, SimEffect Effect) : SimMessage;
+
+/// <summary>
+/// The ship of a session was destroyed (its hull was gone): where it was and how it faced, the wreck the simulation made of it (0 for none: a player's
+/// wreck is the host's to make) and the ship that took the last of the hull (0 when nobody did). The session is no longer in space.
+/// </summary>
+public sealed record SimDestroyed(
+    ulong SessionId, long ShipId, long WreckId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction, double Radius, long KillerShipId) : SimMessage;
+
+/// <summary>A weapon of an NPC: an effect of the NPC's own ship, so the module is the ship.</summary>
+public sealed record SimNpcWeapon(
+    long ModuleId, int EffectId, double CycleMs, double CapacitorNeed, int WeaponTypeId, string Fx, IReadOnlyList<double> RawDamage, double OptimalRange, double Falloff,
+    double TrackingSpeed, double SignatureResolution);
+
+/// <summary>What a ship leaves when it is destroyed.</summary>
+public sealed record SimWreckKind(int TypeId, string Name, int GraphicId);
+
+/// <summary>What sets an NPC apart: the standings at which it treats others as enemies or friends, what it attacks at and with, and what it leaves.</summary>
+public sealed record SimNpcIdentity(
+    long HostileResponseThreshold, long FriendlyResponseThreshold, double AggressionRange, IReadOnlyList<SimNpcWeapon> Weapons, SimWreckKind? Wreck)
+{
+    /// <summary>The limits the reference gives every NPC, and nothing else.</summary>
+    public static readonly SimNpcIdentity Default = new(-11, 11, 0, [], null);
+}
+
+/// <summary>
+/// Spawn an NPC in the scene of a system (there is one while somebody is in the system): its ship, where it comes into space and how it moves, the
+/// scripted tree it runs (empty for none) and what it is. Answered with <see cref="SimSpawnReply"/>.
+/// </summary>
+public sealed record SimSpawn(
+    ulong RequestId, int SolarSystemId, SimShip Ship, IReadOnlyList<double> Position, IReadOnlyList<double> Velocity, IReadOnlyList<double> Direction, string Behavior,
+    SimNpcIdentity Identity) : SimMessage;
+
+/// <summary>Whether a <see cref="SimSpawn"/> was done: the session the NPC is known by, or why not.</summary>
+public sealed record SimSpawnReply(ulong RequestId, ulong? Session, string? Error) : SimMessage;
+
+/// <summary>Destroy this ship: the explosion, the wreck, and (for a player's ship) a <see cref="SimDestroyed"/> for the host.</summary>
+public sealed record SimDestroy(long ShipId) : SimMessage;

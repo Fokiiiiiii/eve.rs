@@ -86,3 +86,12 @@ does not have it. It is used as data; none of the reference's code is copied.
 `fixtures/wrecks/ship_wrecks.json`: the wreck the reference's `resolveShipWreckType` (`server/src/space/wreckUtils.js`) gives the published ships of the
 static data and a sample of the NPC ships (424 types), made by `tools/dev/gen-ship-wrecks-fixture.js` (it loads the reference from `EVEJS`, see its
 header). The Rust port `crates/eve-space/src/wreck_types.rs` (ADR 0009) is held to it by `crates/eve-space/tests/wreck_types_match_reference.rs`.
+
+## NPC hull weapons
+
+`fixtures/npc/hull_weapons.json`: what the reference's `npcEquipment` (`getNpcWeaponModules`, `buildNpcWeaponModuleSnapshot`: `server/src/space/npc/npcEquipment.js`,
+`server/src/space/combat/weaponDogma.js`) makes of the weapon of every NPC ship type of the static data that has one (4446 of 4687 types) and of one in twelve of
+those that have none, with the attributes and effects of the type that it worked from (the reference's `getTypeAttributeMap`, `getTypeDogmaEffects`), made by
+`tools/dev/gen-npc-armament-fixture.js`. The C# port `dotnet/src/Eve.Npc/NpcArmament.cs` (ADR 0009) is held to it by `HullWeaponFixtureTests`. The simulation
+knows one weapon to an NPC ship (its module is the ship), so 117 types that the reference gives two turrets (`targetAttack` and `targetDisintegratorAttack`) are
+compared on the first, and the 18 types of the chain-lightning vorton projector have none.

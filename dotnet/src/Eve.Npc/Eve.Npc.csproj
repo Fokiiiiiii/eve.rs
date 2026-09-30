@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Eve.Dogma/Eve.Dogma.csproj" />
+    <ProjectReference Include="../Eve.Space/Eve.Space.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Eve.Npc.Tests" />
+  </ItemGroup>
+</Project>

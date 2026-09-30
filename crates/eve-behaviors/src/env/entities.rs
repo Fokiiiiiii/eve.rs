@@ -2,6 +2,7 @@
 //! dungeon keeper.
 
 use super::{WorldError, WorldResult};
+use crate::value::Value;
 
 /// The id `FindGroupIDForItemID` answers for an item that is in no group (`ballpark.entities.entitygroup.INVALID_ID`).
 pub const INVALID_GROUP_ID: i64 = -1;
@@ -35,6 +36,34 @@ pub struct DungeonObject {
     pub yaw: Option<f64>,
     pub pitch: Option<f64>,
     pub roll: Option<f64>,
+}
+
+/// What the player fleet reporter says of one type of fleet (`fleet_by_type[fleet_type]`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FleetReport {
+    pub fleet_cost: f64,
+    pub item_ids: Vec<i64>,
+}
+
+/// What `GetPlayerFleetReporter().generate(spawnPoolId)` gives: the players' fleets by type, what they cost, and the report as a dictionary
+/// (`convert_report_to_dict`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PlayerFleetReport {
+    pub fleet_by_type: Vec<(Value, FleetReport)>,
+    pub total_fleet_cost: f64,
+    pub as_dict: Value,
+}
+
+/// What a structure ball says of its health.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StructureState {
+    pub is_damaged: bool,
+    pub is_shield_vulnerable: bool,
+    pub is_armor_vulnerable: bool,
+    pub is_hull_vulnerable: bool,
+    pub shield: f64,
+    pub armor: f64,
+    pub hull: f64,
 }
 
 /// The groups of entities and their managers.
@@ -229,5 +258,121 @@ pub trait Entities {
         _channel: crate::tree::ChannelRef,
         _value: crate::value::Value,
     ) {
+    }
+    /// `AssignAdditionalLootToGroupEntities(entityLocation, groupId)`.
+    fn assign_additional_loot_to_group_entities(&mut self, _group_id: Option<i64>) {}
+
+    /// `entityLocation.UnspawnBehaviorEntityGroupWithRespawnEnabled(groupId)`.
+    fn unspawn_behavior_entity_group_with_respawn_enabled(&mut self, _group_id: Option<i64>) {}
+
+    /// `entityLocation.GetBehaviorTreeManager().GetEntryByKey(itemId).ResetTree()`: false for an item that has no tree.
+    fn reset_behavior_tree(&mut self, _item_id: i64) -> bool {
+        false
+    }
+    /// `myBall.AddTypeAndAmountToAdditionalLoot(typeId, amount, allowOverload)`.
+    fn add_type_and_amount_to_additional_loot(
+        &mut self,
+        _ball_id: i64,
+        _type_id: i64,
+        _amount: &Value,
+        _allow_overload: Option<&Value>,
+    ) {
+    }
+
+    /// `myBall.RemoveTypeFromAdditionalLoot(typeId)`.
+    fn remove_type_from_additional_loot(&mut self, _ball_id: i64, _type_id: i64) {}
+
+    /// `ball.RemoveAdditionalLoot()`: the types and amounts that were taken off it.
+    fn remove_additional_loot(&mut self, _ball_id: i64) -> Vec<(i64, Value)> {
+        Vec::new()
+    }
+
+    /// `behaviorTreeManager.GetAllBehaviorEntriesByKey()`: the item ids of the trees that run in the system.
+    fn behavior_entry_keys(&self) -> Vec<i64> {
+        Vec::new()
+    }
+
+    /// `ballpark.UnspawnEntityBall(itemId)`.
+    fn unspawn_entity_ball(&mut self, _item_id: i64) {}
+
+    /// `GetGroupAwarenessManager().is_registered(memberCollectionId)`.
+    fn is_awareness_registered(&self, _member_collection_id: &Value) -> bool {
+        false
+    }
+
+    /// `GetGroupAwarenessManager().register_group_awareness(memberCollectionId, config)`.
+    fn register_group_awareness(
+        &mut self,
+        _member_collection_id: &Value,
+        _config: crate::utility::awareness::GroupAwarenessConfig,
+    ) {
+    }
+
+    /// `GetGroupAwarenessManager().register_spawn_pool_fleet_awareness(spawnPoolId, ownerId, blackboardId, behaviorId, config)`.
+    fn register_spawn_pool_fleet_awareness(
+        &mut self,
+        _spawn_pool_id: &Value,
+        _owner_id: Option<i64>,
+        _blackboard_id: Option<i64>,
+        _behavior_id: &Value,
+        _config: crate::utility::awareness::GroupAwarenessConfig,
+    ) {
+    }
+
+    /// `get_spawn_pool_fleet_awareness(spawnPoolId).get_member_collection().add_item_id(itemId)`: false when the pool has no fleet awareness.
+    fn add_item_to_spawn_pool_fleet_awareness(&mut self, _spawn_pool_id: &Value, _item_id: i64) -> bool {
+        false
+    }
+
+    /// `get_fleet_awareness(spawnPoolId).get_enemy_cluster_generator() is None`: nothing when the pool has no fleet awareness.
+    fn fleet_awareness_lacks_enemy_cluster_generator(&self, _spawn_pool_id: &Value) -> Option<bool> {
+        None
+    }
+
+    /// `get_fleet_awareness(spawnPoolId).enable_enemy_cluster_generator(dogmaLM, damageTracker, updateIntervalSeconds, channel)`.
+    fn enable_enemy_cluster_generator(
+        &mut self,
+        _spawn_pool_id: &Value,
+        _update_interval_seconds: &Value,
+        _channel: crate::tree::ChannelRef,
+    ) {
+    }
+
+    /// `THREAT_TIME_WINDOW_SECONDS` of the server's enemy cluster generator (not in the client's files).
+    fn threat_time_window_seconds(&self) -> f64 {
+        0.0
+    }
+    /// `GetPlayerFleetReporter().generate(spawnPoolId)`.
+    fn generate_player_fleet_report(&mut self, _spawn_pool_id: &Value) -> WorldResult<PlayerFleetReport> {
+        Err(WorldError::Runtime("no player fleet report".to_string()))
+    }
+
+    /// `GetNpcFleetReporter().get_total_fleet_points(awareness, spawnTableId, spawnPoolId)`.
+    fn total_npc_fleet_points(
+        &mut self,
+        _spawn_pool_id: &Value,
+        _spawn_table_id: &Value,
+    ) -> WorldResult<f64> {
+        Ok(0.0)
+    }
+
+    /// `ballpark.fleets.fleet_types.FLEET_TYPE_SUPPORT` (not in the client's files).
+    fn fleet_type_support(&self) -> Value {
+        Value::None
+    }
+
+    /// `SUPPORTED_FLEET_TYPES`.
+    fn supported_fleet_types(&self) -> Vec<Value> {
+        Vec::new()
+    }
+
+    /// `FLEET_TYPES_TO_COUNTER`.
+    fn fleet_types_to_counter(&self) -> Vec<Value> {
+        Vec::new()
+    }
+
+    /// `myBall`, a structure: what `IsDamaged()`, the `IsState...Vulnerable()` and `GetShield()`, `GetArmor()` and `GetHull()` answer.
+    fn structure_state(&self, _ball_id: i64) -> Option<StructureState> {
+        None
     }
 }

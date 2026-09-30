@@ -55,4 +55,15 @@ pub trait Logging {
         _members: &[i64],
     ) {
     }
+    /// `eventLogger.log_adding_spawn_points(ownerId, spawnPoolId, requested, min, max, actual, extraContext)`.
+    fn log_adding_spawn_points(
+        &mut self,
+        _owner_id: Option<i64>,
+        _spawn_pool_id: &crate::value::Value,
+        _requested: f64,
+        _min: &crate::value::Value,
+        _max: &crate::value::Value,
+        _actual: f64,
+    ) {
+    }
 }

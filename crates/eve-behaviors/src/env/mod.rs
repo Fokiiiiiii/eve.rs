@@ -16,7 +16,10 @@ pub mod universe;
 
 pub use ballpark::{Ball, Ballpark, Formation, FormationSettings, ProximitySensor, SlimItem};
 pub use dogma::{Dogma, EffectInfo};
-pub use entities::{DungeonObject, Entities, INVALID_GROUP_ID, ReinforcementWave, ResponseThresholds};
+pub use entities::{
+    DungeonObject, Entities, FleetReport, INVALID_GROUP_ID, PlayerFleetReport, ReinforcementWave,
+    ResponseThresholds, StructureState,
+};
 pub use inventory::{CargoCapacity, CustomInfo, FakeLocation, Inventory, InventoryItem};
 pub use logging::Logging;
 pub use spawning::{Deployed, Deployment, EntitySpawnData, ReactiveSpawnConfig, SpawnPick, Spawning};

@@ -32,6 +32,10 @@ pub struct GroupAwarenessConfig {
     pub owner_id: Option<i64>,
     pub context: ExtraContext,
     pub tracked_type_list_id: Option<Value>,
+    /// What the tasks that register the awareness set on it.
+    pub standings_enabled: Value,
+    pub react_to_disapproval: Value,
+    pub fw_attack_method: Value,
 }
 
 /// `get_awareness_config(task)`, given what the task's `get_member_collection_id()` answers and what its `get_spawn_pool_id()` and

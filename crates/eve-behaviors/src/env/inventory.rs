@@ -66,4 +66,8 @@ pub trait Inventory {
 
     /// `inventory2.EveInsertLocation(...)`: a space object that is kept in the database.
     fn insert_location(&mut self, _location: FakeLocation) {}
+    /// `spacecomponents.common.helper.HasCargoBayComponent(typeId)`.
+    fn has_cargo_bay_component(&self, _type_id: i64) -> bool {
+        false
+    }
 }

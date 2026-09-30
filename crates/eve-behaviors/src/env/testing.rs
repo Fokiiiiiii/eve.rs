@@ -8,8 +8,8 @@ use crate::value::Value;
 use super::{
     Ball, Ballpark, CargoCapacity, DamageTotals, Deployed, Deployment, Dogma, DungeonObject, EffectInfo,
     Entities, EntitySpawnData, FakeLocation, Formation, FormationSettings, Inventory, InventoryItem, Logging,
-    ProximitySensor, Random, ReactiveSpawnConfig, ReinforcementWave, ResponseThresholds, SlimItem, SpawnPick,
-    Spawning, Universe, WorldError, WorldResult,
+    PlayerFleetReport, ProximitySensor, Random, ReactiveSpawnConfig, ReinforcementWave, ResponseThresholds,
+    SlimItem, SpawnPick, Spawning, StructureState, Universe, WorldError, WorldResult,
 };
 
 /// What `GetClosestDisruptorAndIntersectionInWarpPath` answers.
@@ -21,6 +21,15 @@ pub struct TestGroup {
     pub members: Vec<i64>,
     pub owner_id: Option<i64>,
     pub initial_spawning_complete: bool,
+}
+
+/// A number as the calls of the test world write it.
+fn plain(value: &Value) -> String {
+    match value {
+        Value::Int(i) => i.to_string(),
+        Value::Float(f) => f.to_string(),
+        other => format!("{other:?}"),
+    }
 }
 
 /// A spawn point of an operation site: two ids and three coordinates.
@@ -132,6 +141,20 @@ pub struct TestWorld {
     pub formation: Option<Formation>,
     pub group_removal_handlers: Vec<(i64, crate::tree::ChannelRef, Value)>,
     pub pre_inv64_characters: HashSet<i64>,
+    pub behavior_trees: HashSet<i64>,
+    pub removed_additional_loot: HashMap<i64, Vec<(i64, Value)>>,
+    pub behavior_entries: Vec<i64>,
+    pub registered_awareness: Vec<(Value, crate::utility::awareness::GroupAwarenessConfig)>,
+    pub fleet_awareness: Vec<(Value, crate::utility::awareness::GroupAwarenessConfig, Vec<i64>, bool)>,
+    pub threat_window: f64,
+    pub cargo_bay_types: HashSet<i64>,
+    pub player_fleet_report: Option<PlayerFleetReport>,
+    pub total_npc_points: f64,
+    pub structure_states: HashMap<i64, StructureState>,
+    pub armor_ratios: HashMap<i64, f64>,
+    pub shield_ratios: HashMap<i64, f64>,
+    pub exploding: HashSet<i64>,
+    pub exploding_error: Option<WorldError>,
 }
 
 impl TestWorld {
@@ -171,6 +194,43 @@ impl Random for TestWorld {
 }
 
 impl Ballpark for TestWorld {
+    fn update_slim_item_field(&mut self, item_id: i64, name: &str, value: Value) {
+        self.calls.push(format!("update_slim_item_field({item_id}, {name}, {value:?})"));
+    }
+
+    fn update_slim_item_field_multi(&mut self, item_id: i64, fields: &[(&str, Value)]) {
+        self.calls.push(format!("update_slim_item_field_multi({item_id}, {fields:?})"));
+    }
+
+    fn start_stretch_effect(
+        &mut self,
+        source_id: i64,
+        target_id: i64,
+        effect_name: &str,
+        duration: &Value,
+        repeat: &Value,
+        module_id: Option<i64>,
+        graphic_info: Option<&Value>,
+    ) {
+        let graphic = graphic_info.map_or(String::new(), |info| format!(", {info:?}"));
+        self.calls.push(format!(
+            "start_stretch_effect({source_id}, {target_id}, {effect_name}, {}, {}, {module_id:?}{graphic})",
+            plain(duration),
+            plain(repeat)
+        ));
+    }
+
+    fn stop_stretch_effect(
+        &mut self,
+        source_id: i64,
+        target_id: i64,
+        effect_name: &str,
+        module_id: Option<i64>,
+    ) {
+        self.calls
+            .push(format!("stop_stretch_effect({source_id}, {target_id}, {effect_name}, {module_id:?})"));
+    }
+
     fn cancel_if_doing_stuff(&mut self, ship_id: i64) -> bool {
         self.calls.push(format!("cancel_if_doing_stuff({ship_id})"));
         self.busy_ships.contains(&ship_id)
@@ -236,11 +296,15 @@ impl Ballpark for TestWorld {
         &mut self,
         ship_id: i64,
         effect_name: &str,
-        duration_milliseconds: i64,
+        duration: &Value,
         repeat: i64,
+        graphic_info: Option<&Value>,
     ) {
-        self.calls
-            .push(format!("start_ship_effect({ship_id}, {effect_name}, {duration_milliseconds}, {repeat})"));
+        let graphic = graphic_info.map_or(String::new(), |info| format!(", {info:?}"));
+        self.calls.push(format!(
+            "start_ship_effect({ship_id}, {effect_name}, {}, {repeat}{graphic})",
+            plain(duration)
+        ));
     }
 
     fn approach_object(&mut self, ball_id: i64, target_id: i64, approach_range: f64, cruise: bool) {
@@ -479,6 +543,25 @@ impl Ballpark for TestWorld {
 }
 
 impl Dogma for TestWorld {
+    fn current_armor_ratio(&self, item_id: i64) -> f64 {
+        self.armor_ratios.get(&item_id).copied().unwrap_or(1.0)
+    }
+
+    fn current_shield_ratio(&self, item_id: i64) -> f64 {
+        self.shield_ratios.get(&item_id).copied().unwrap_or(1.0)
+    }
+
+    fn is_exploding(&self, item_id: i64) -> WorldResult<bool> {
+        if self.exploding_error.is_some() {
+            return Err(self.exploding_error.clone().unwrap_or(WorldError::Runtime(String::new())));
+        }
+        Ok(self.exploding.contains(&item_id))
+    }
+
+    fn set_attribute_value(&mut self, item_id: i64, attribute_id: i64, value: &Value) {
+        self.calls.push(format!("set_attribute_value({item_id}, {attribute_id}, {})", plain(value)));
+    }
+
     fn set_armor_ratio(&mut self, item_id: i64, ratio: &Value) {
         self.calls.push(format!("set_armor_ratio({item_id}, {ratio:?})"));
     }
@@ -639,6 +722,18 @@ impl Dogma for TestWorld {
 }
 
 impl Logging for TestWorld {
+    fn log_adding_spawn_points(
+        &mut self,
+        owner_id: Option<i64>,
+        spawn_pool_id: &Value,
+        requested: f64,
+        min: &Value,
+        max: &Value,
+        actual: f64,
+    ) {
+        self.calls.push(format!("log_adding_spawn_points({owner_id:?}, {spawn_pool_id:?}, {requested}, {min:?}, {max:?}, {actual})"));
+    }
+
     fn log_killed_and_fled_players(
         &mut self,
         owner_id: Option<i64>,
@@ -699,6 +794,136 @@ impl Logging for TestWorld {
 }
 
 impl Entities for TestWorld {
+    fn generate_player_fleet_report(&mut self, _spawn_pool_id: &Value) -> WorldResult<PlayerFleetReport> {
+        self.player_fleet_report
+            .clone()
+            .ok_or_else(|| WorldError::Runtime("no player fleet report".to_string()))
+    }
+
+    fn total_npc_fleet_points(
+        &mut self,
+        _spawn_pool_id: &Value,
+        _spawn_table_id: &Value,
+    ) -> WorldResult<f64> {
+        Ok(self.total_npc_points)
+    }
+
+    fn fleet_type_support(&self) -> Value {
+        Value::Str("support".into())
+    }
+
+    fn supported_fleet_types(&self) -> Vec<Value> {
+        vec![Value::Str("dps".into()), Value::Str("tackle".into())]
+    }
+
+    fn fleet_types_to_counter(&self) -> Vec<Value> {
+        vec![Value::Str("dps".into()), Value::Str("tackle".into()), Value::Str("support".into())]
+    }
+
+    fn structure_state(&self, ball_id: i64) -> Option<StructureState> {
+        self.structure_states.get(&ball_id).copied()
+    }
+
+    fn add_type_and_amount_to_additional_loot(
+        &mut self,
+        ball_id: i64,
+        type_id: i64,
+        amount: &Value,
+        allow_overload: Option<&Value>,
+    ) {
+        self.calls.push(format!("add_additional_loot({ball_id}, {type_id}, {amount:?}, {allow_overload:?})"));
+    }
+
+    fn remove_type_from_additional_loot(&mut self, ball_id: i64, type_id: i64) {
+        self.calls.push(format!("remove_additional_loot_type({ball_id}, {type_id})"));
+    }
+
+    fn remove_additional_loot(&mut self, ball_id: i64) -> Vec<(i64, Value)> {
+        self.calls.push(format!("remove_additional_loot({ball_id})"));
+        self.removed_additional_loot.get(&ball_id).cloned().unwrap_or_default()
+    }
+
+    fn behavior_entry_keys(&self) -> Vec<i64> {
+        self.behavior_entries.clone()
+    }
+
+    fn unspawn_entity_ball(&mut self, item_id: i64) {
+        self.calls.push(format!("unspawn_entity_ball({item_id})"));
+    }
+
+    fn is_awareness_registered(&self, member_collection_id: &Value) -> bool {
+        self.registered_awareness.iter().any(|(id, _)| id.py_eq(member_collection_id))
+    }
+
+    fn register_group_awareness(
+        &mut self,
+        member_collection_id: &Value,
+        config: crate::utility::awareness::GroupAwarenessConfig,
+    ) {
+        self.registered_awareness.push((member_collection_id.clone(), config));
+    }
+
+    fn register_spawn_pool_fleet_awareness(
+        &mut self,
+        spawn_pool_id: &Value,
+        owner_id: Option<i64>,
+        blackboard_id: Option<i64>,
+        behavior_id: &Value,
+        config: crate::utility::awareness::GroupAwarenessConfig,
+    ) {
+        self.calls.push(format!("register_spawn_pool_fleet_awareness({spawn_pool_id:?}, {owner_id:?}, {blackboard_id:?}, {behavior_id:?})"));
+        self.fleet_awareness.push((spawn_pool_id.clone(), config, Vec::new(), false));
+    }
+
+    fn add_item_to_spawn_pool_fleet_awareness(&mut self, spawn_pool_id: &Value, item_id: i64) -> bool {
+        match self.fleet_awareness.iter_mut().find(|(id, _, _, _)| id.py_eq(spawn_pool_id)) {
+            Some((_, _, members, _)) => {
+                members.push(item_id);
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn fleet_awareness_lacks_enemy_cluster_generator(&self, spawn_pool_id: &Value) -> Option<bool> {
+        self.fleet_awareness
+            .iter()
+            .find(|(id, _, _, _)| id.py_eq(spawn_pool_id))
+            .map(|(_, _, _, enabled)| !enabled)
+    }
+
+    fn enable_enemy_cluster_generator(
+        &mut self,
+        spawn_pool_id: &Value,
+        update_interval_seconds: &Value,
+        channel: crate::tree::ChannelRef,
+    ) {
+        if let Some(entry) = self.fleet_awareness.iter_mut().find(|(id, _, _, _)| id.py_eq(spawn_pool_id)) {
+            entry.3 = true;
+        }
+        self.calls.push(format!(
+            "enable_enemy_cluster_generator({spawn_pool_id:?}, {update_interval_seconds:?}, {})",
+            channel.name
+        ));
+    }
+
+    fn threat_time_window_seconds(&self) -> f64 {
+        self.threat_window
+    }
+
+    fn assign_additional_loot_to_group_entities(&mut self, group_id: Option<i64>) {
+        self.calls.push(format!("assign_additional_loot({group_id:?})"));
+    }
+
+    fn unspawn_behavior_entity_group_with_respawn_enabled(&mut self, group_id: Option<i64>) {
+        self.calls.push(format!("unspawn_group({group_id:?})"));
+    }
+
+    fn reset_behavior_tree(&mut self, item_id: i64) -> bool {
+        self.calls.push(format!("reset_behavior_tree({item_id})"));
+        self.behavior_trees.contains(&item_id)
+    }
+
     fn add_group_removal_handler(
         &mut self,
         group_id: Option<i64>,
@@ -1051,6 +1276,10 @@ impl Spawning for TestWorld {
 }
 
 impl Inventory for TestWorld {
+    fn has_cargo_bay_component(&self, type_id: i64) -> bool {
+        self.cargo_bay_types.contains(&type_id)
+    }
+
     fn add_fake_location(&mut self, location: FakeLocation) {
         self.calls.push(format!(
             "add_fake_location({}, {:?}, {}, {:?}, {:?})",
@@ -1094,6 +1323,10 @@ impl Inventory for TestWorld {
 }
 
 impl Universe for TestWorld {
+    fn singlecast_by_char_id(&mut self, char_id: Option<i64>, notification: &str, args: &[Value]) {
+        self.calls.push(format!("singlecast_by_char_id({char_id:?}, {notification}, {args:?})"));
+    }
+
     fn is_pre_inv64_player_character(&self, owner_id: i64) -> bool {
         self.pre_inv64_characters.contains(&owner_id)
     }

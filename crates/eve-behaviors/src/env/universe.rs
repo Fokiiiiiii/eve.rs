@@ -84,4 +84,12 @@ pub trait Universe {
     fn is_pre_inv64_player_character(&self, _owner_id: i64) -> bool {
         false
     }
+    /// `sm.GetService('machoNet').SinglecastByCharID(charId, notification, *args)`.
+    fn singlecast_by_char_id(
+        &mut self,
+        _char_id: Option<i64>,
+        _notification: &str,
+        _args: &[crate::value::Value],
+    ) {
+    }
 }

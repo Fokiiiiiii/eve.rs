@@ -182,6 +182,22 @@ pub trait Dogma {
     fn fitted_item_keys(&self, _item_id: i64) -> Option<Vec<Value>> {
         None
     }
+    /// `dogmaLM.SetAttributeValue(itemId, attributeId, value)`.
+    fn set_attribute_value(&mut self, _item_id: i64, _attribute_id: i64, _value: &Value) {}
+    /// `GetCurrentArmorRatio(dogmaLM, itemId)` of `dogma.attributes.health`.
+    fn current_armor_ratio(&self, _item_id: i64) -> f64 {
+        1.0
+    }
+
+    /// `GetCurrentShieldRatio(dogmaLM, itemId)`.
+    fn current_shield_ratio(&self, _item_id: i64) -> f64 {
+        1.0
+    }
+
+    /// `dogmaLM.ballpark.IsExploding(itemId)`.
+    fn is_exploding(&self, _item_id: i64) -> WorldResult<bool> {
+        Ok(false)
+    }
 }
 
 /// `dogma.attributes.health`: the ratios of what a ship has left, from the dogma engine's numbers.

@@ -140,7 +140,7 @@ enter_task!(
                 t.world().apply_damage_with_multiplier(me, ship_id, damage_multiplier, &damage_by_type);
             }
             // `_show_damage_effect_on_ship`
-            t.world().start_ship_effect(ship_id, "effects.DrifterControlled", 5000, 0);
+            t.world().start_ship_effect(ship_id, "effects.DrifterControlled", &Value::Int(5000), 0, None);
         }
     }
 );

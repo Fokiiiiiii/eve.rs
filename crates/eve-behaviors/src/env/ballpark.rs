@@ -281,15 +281,17 @@ pub trait Ballpark {
         Vec::new()
     }
 
-    /// `ballpark.specialEffects.StartShipEffect(shipId, effectName, durationMilliseconds, repeat)`.
+    /// `ballpark.specialEffects.StartShipEffect(shipId, effectName, duration, repeat, graphicInfo=)`.
     fn start_ship_effect(
         &mut self,
         _ship_id: i64,
         _effect_name: &str,
-        _duration_milliseconds: i64,
+        _duration: &Value,
         _repeat: i64,
+        _graphic_info: Option<&Value>,
     ) {
     }
+
     /// `ballpark.CancelIfDoingStuff(shipId)`: true when the ship is still busy.
     fn cancel_if_doing_stuff(&mut self, _ship_id: i64) -> bool {
         false
@@ -339,4 +341,32 @@ pub trait Ballpark {
     ) -> Formation {
         Formation::default()
     }
+    /// `ballpark.specialEffects.StartStretchEffect(sourceId, targetId, effectName, duration, repeat, moduleId, graphicInfo=)`.
+    #[allow(clippy::too_many_arguments)]
+    fn start_stretch_effect(
+        &mut self,
+        _source_id: i64,
+        _target_id: i64,
+        _effect_name: &str,
+        _duration: &Value,
+        _repeat: &Value,
+        _module_id: Option<i64>,
+        _graphic_info: Option<&Value>,
+    ) {
+    }
+
+    /// `ballpark.specialEffects.StopStretchEffect(sourceId, targetId, effectName, moduleId)`.
+    fn stop_stretch_effect(
+        &mut self,
+        _source_id: i64,
+        _target_id: i64,
+        _effect_name: &str,
+        _module_id: Option<i64>,
+    ) {
+    }
+    /// `ballpark.UpdateSlimItemField(itemId, name, value)`.
+    fn update_slim_item_field(&mut self, _item_id: i64, _name: &str, _value: Value) {}
+
+    /// `ballpark.UpdateSlimItemFieldMulti(itemId, **fields)`.
+    fn update_slim_item_field_multi(&mut self, _item_id: i64, _fields: &[(&str, Value)]) {}
 }

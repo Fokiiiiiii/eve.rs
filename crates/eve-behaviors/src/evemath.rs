@@ -63,36 +63,36 @@ pub fn farthest_distance_from_point(reference: [f64; 3], points: &[[f64; 3]]) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::env::RecordingWorld;
+    use crate::env::TestWorld;
 
     #[test]
     fn a_weighted_choice_picks_by_the_accumulated_weight() {
         let choices = [('a', 1.0), ('b', 3.0), ('c', 6.0)];
         // total 10: r = 10 * number
-        assert_eq!(weighted_choice(&choices, &mut RecordingWorld::with_numbers(&[0.0])), Some('a'));
+        assert_eq!(weighted_choice(&choices, &mut TestWorld::with_numbers(&[0.0])), Some('a'));
         assert_eq!(
-            weighted_choice(&choices, &mut RecordingWorld::with_numbers(&[0.1])),
+            weighted_choice(&choices, &mut TestWorld::with_numbers(&[0.1])),
             Some('a'),
             "a weight reaches its own end"
         );
-        assert_eq!(weighted_choice(&choices, &mut RecordingWorld::with_numbers(&[0.11])), Some('b'));
-        assert_eq!(weighted_choice(&choices, &mut RecordingWorld::with_numbers(&[0.4])), Some('b'));
-        assert_eq!(weighted_choice(&choices, &mut RecordingWorld::with_numbers(&[0.41])), Some('c'));
-        assert_eq!(weighted_choice(&choices, &mut RecordingWorld::with_numbers(&[0.999])), Some('c'));
+        assert_eq!(weighted_choice(&choices, &mut TestWorld::with_numbers(&[0.11])), Some('b'));
+        assert_eq!(weighted_choice(&choices, &mut TestWorld::with_numbers(&[0.4])), Some('b'));
+        assert_eq!(weighted_choice(&choices, &mut TestWorld::with_numbers(&[0.41])), Some('c'));
+        assert_eq!(weighted_choice(&choices, &mut TestWorld::with_numbers(&[0.999])), Some('c'));
     }
 
     #[test]
     fn weights_of_nothing_choose_any_and_draw_two_numbers() {
         let choices = [('a', 0.0), ('b', 0.0), ('c', 0.0)];
-        let mut world = RecordingWorld::with_numbers(&[0.5, 0.7]);
+        let mut world = TestWorld::with_numbers(&[0.5, 0.7]);
         assert_eq!(weighted_choice(&choices, &mut world), Some('c'), "the second number picks: 0.7 of three");
-        assert_eq!(weighted_choice::<char>(&[], &mut RecordingWorld::default()), None);
+        assert_eq!(weighted_choice::<char>(&[], &mut TestWorld::default()), None);
     }
 
     #[test]
     fn a_stochastic_round_rounds_up_with_the_chance_of_the_fraction() {
-        assert_eq!(stochastic_round(2.3, &mut RecordingWorld::with_numbers(&[0.6])), 2);
-        assert_eq!(stochastic_round(2.3, &mut RecordingWorld::with_numbers(&[0.8])), 3);
+        assert_eq!(stochastic_round(2.3, &mut TestWorld::with_numbers(&[0.6])), 2);
+        assert_eq!(stochastic_round(2.3, &mut TestWorld::with_numbers(&[0.8])), 3);
     }
 
     #[test]

@@ -156,7 +156,7 @@ impl Task for WeightedSelector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::env::RecordingWorld;
+    use crate::env::TestWorld;
     use crate::tree::tests::Rig;
     use crate::tree::{Attrs, TaskCtx};
     use crate::value::Value;
@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn a_weighted_selector_runs_the_task_its_weights_and_the_dice_choose_and_ends_as_it_does() {
         let mut rig = Rig::new();
-        rig.world = RecordingWorld::with_numbers(&[0.6]);
+        rig.world = TestWorld::with_numbers(&[0.6]);
         let (a, b) = (rig.leaf("a", Status::Success, 0), rig.leaf("b", Status::Failure, 0));
         let root = rig.tree.add_task(
             Box::new(WeightedSelector),

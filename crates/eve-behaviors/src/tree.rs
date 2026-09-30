@@ -14,7 +14,7 @@ use std::collections::{HashMap, VecDeque};
 use crate::blackboards::{
     Address, BlackboardError, BlackboardManager, MessageData, Observer, Scope, ScopeType, TaskId, TreeId,
 };
-use crate::env::{World, seconds_to_ticks};
+use crate::env::{SlimItem, World, WorldError, WorldResult, seconds_to_ticks};
 use crate::events::{EventKey, EventMessenger};
 use crate::timers::TimerManager;
 use crate::value::Value;
@@ -52,8 +52,16 @@ pub enum BehaviorError {
     TooManyWeights,
     /// A tree or task that is built wrong (`BehaviorAuthoringException`).
     Authoring(String),
+    /// What a call to the server raised (`UserError`, `RuntimeError`, `ReferenceError`, `KeyError`) and no task caught.
+    World(WorldError),
     /// Anything else a task raises.
     Task(String),
+}
+
+impl From<WorldError> for BehaviorError {
+    fn from(error: WorldError) -> Self {
+        BehaviorError::World(error)
+    }
 }
 
 impl From<BlackboardError> for BehaviorError {
@@ -124,6 +132,13 @@ impl Attrs {
     }
 }
 
+/// A channel of the blackboard of some scope: what `GetMessageChannelForItemId(itemId, name)` and `GetMessageChannelForGroupId(groupId, name)` answer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChannelRef {
+    pub scope: Scope,
+    pub name: String,
+}
+
 /// A task: the behaviors a node type gives. The base behaviors (`Task`, `Composite`, `Decorator`, `BlockingTask`, `MonitorTask`) are the default
 /// methods and the helpers of `composites`, `decorators` and `monitors`; a node that overrides one and calls `super()` in the client calls the
 /// helper.
@@ -150,6 +165,10 @@ pub trait Task {
 
     /// A message about an item this task subscribed to (`SubscribeItem`): `handler` is the number the task gave when it subscribed.
     fn on_event(&mut self, _t: &mut TaskCtx<'_, '_>, _handler: u16, _args: &[Value]) {}
+
+    /// A call this task asked for at a later time (`Shared::schedule_call`, the client's tasklet that sleeps and then does something for the
+    /// task): `handler` is the number the task gave.
+    fn on_call(&mut self, _t: &mut TaskCtx<'_, '_>, _handler: u16, _args: &[Value]) {}
 
     /// A message on a blackboard channel this task subscribed to (`SubscribeToBlackboard`, `channel.AddObserver`).
     fn on_blackboard_message(
@@ -178,16 +197,39 @@ pub struct BehaviorContext {
     pub my_entity_group_id: Option<i64>,
     pub my_dungeon_spawn_id: Option<i64>,
     pub my_dungeon_spawn_scenario_id: Option<i64>,
+    pub my_dungeon_id: Option<i64>,
+    pub my_spawn_table_id: Option<i64>,
     pub my_tale_id: Option<i64>,
     pub my_spawn_point_pool_id: Option<i64>,
     pub my_node_graph_instance_id: Option<i64>,
     pub solar_system_id: Option<i64>,
+    /// `context.mySlimItem`: the slim item of the entity the behavior is of, as it was when the behavior started.
+    pub my_slim_item: Option<SlimItem>,
     /// Anything else the context carries.
     pub extra: HashMap<String, Value>,
     pub statistics: Statistics,
 }
 
 impl BehaviorContext {
+    /// `context.get(name)`, `getattr(context, name, None)` and `name in context` (a name the context has no value for is `None`): the context by the
+    /// names the client gives its fields.
+    pub fn get(&self, name: &str) -> Option<Value> {
+        let id = |v: Option<i64>| v.map(Value::Int);
+        match name {
+            "myItemId" => id(self.my_item_id),
+            "myEntityGroupId" => id(self.my_entity_group_id),
+            "myDungeonSpawnId" => id(self.my_dungeon_spawn_id),
+            "myDungeonSpawnScenarioId" => id(self.my_dungeon_spawn_scenario_id),
+            "myDungeonId" => id(self.my_dungeon_id),
+            "mySpawnTableId" => id(self.my_spawn_table_id),
+            "myTaleId" => id(self.my_tale_id),
+            "mySpawnPointPoolId" => id(self.my_spawn_point_pool_id),
+            "myNodeGraphInstanceId" => id(self.my_node_graph_instance_id),
+            "solarSystemId" => id(self.solar_system_id),
+            other => self.extra.get(other).cloned(),
+        }
+    }
+
     /// The id the context has for a kind of blackboard (`CONTEXT_ID_BY_SCOPE`).
     pub fn id_for_scope(&self, scope_type: ScopeType) -> Option<i64> {
         match scope_type {
@@ -212,6 +254,18 @@ pub struct Shared {
     pub timers: TimerManager,
     /// Blackboard messages and item messages for observers in another tree, to be delivered by the system that owns the trees.
     pub pending: Vec<Delivery>,
+    /// Calls that tasks asked for at a later time.
+    calls: Vec<ScheduledCall>,
+    next_call: u64,
+}
+
+/// A call a task asked for at a later time.
+#[derive(Debug, Clone, PartialEq)]
+struct ScheduledCall {
+    due: i64,
+    seq: u64,
+    observer: Observer,
+    args: Vec<Value>,
 }
 
 impl Shared {
@@ -222,11 +276,36 @@ impl Shared {
             events: EventMessenger::new(),
             timers: TimerManager::new(),
             pending: Vec::new(),
+            calls: Vec::new(),
+            next_call: 0,
         }
     }
 }
 
 impl Shared {
+    /// What a tasklet that sleeps `seconds` (`uthread2.SleepSim`) and then calls a task's method is here: the call is told to the task when the
+    /// time comes (`fire_due_calls`, and then the system delivers it).
+    pub fn schedule_call(&mut self, seconds: f64, observer: Observer, args: Vec<Value>) {
+        let due = self.now + seconds_to_ticks(seconds);
+        self.calls.push(ScheduledCall { due, seq: self.next_call, observer, args });
+        self.next_call += 1;
+    }
+
+    /// The calls that are due at `now`, in the order they were due (then the order they were asked for), are queued for delivery.
+    pub fn fire_due_calls(&mut self) {
+        let now = self.now;
+        let mut due: Vec<ScheduledCall> = self.calls.iter().filter(|c| c.due <= now).cloned().collect();
+        due.sort_by_key(|c| (c.due, c.seq));
+        self.calls.retain(|c| c.due > now);
+        for call in due {
+            self.pending.push(Delivery::Call { observer: call.observer, args: call.args });
+        }
+    }
+
+    pub fn scheduled_call_count(&self) -> usize {
+        self.calls.len()
+    }
+
     /// The timers that have run out: each tells its channel `None` (`Timer.ClearTimer`). The observers are told by the system that owns the trees
     /// (`pending`), whichever tree they are in.
     pub fn fire_due_timers(&mut self) {
@@ -263,6 +342,7 @@ impl Shared {
 pub enum Delivery {
     Blackboard { observer: Observer, channel: String, message: Option<MessageData> },
     Event { observer: Observer, args: Vec<Value> },
+    Call { observer: Observer, args: Vec<Value> },
 }
 
 /// What a tree tells whoever watches it (`MESSAGE_*`).
@@ -440,6 +520,7 @@ impl BehaviorTree {
                 cx.dispatch_blackboard(*observer, channel, message.as_ref())
             }
             Delivery::Event { observer, args } => cx.dispatch_event(*observer, args),
+            Delivery::Call { observer, args } => cx.dispatch_call(*observer, args),
         }
         match cx.core.fault.take() {
             Some(error) => Err(error),
@@ -690,16 +771,32 @@ impl Cx<'_> {
 
     /// `SendBlackboardValue`: keeps the message and tells the observers.
     pub fn send_blackboard_value(&mut self, address: &Address, value: Value) {
-        let now = self.shared.now;
         let Some(scope) = self.scope_of(address) else { return };
+        self.send_to_channel(scope, &address.name, value);
+    }
+
+    /// `blackboardManager.GetBlackboard(scope).GetMessageChannel(name).SendMessage(value)`.
+    pub fn send_to_channel(&mut self, scope: Scope, name: &str, value: Value) {
+        let now = self.shared.now;
         let sent = match self.shared.blackboards.get_blackboard(scope) {
-            Ok(board) => board.send_message(&address.name, now, value),
+            Ok(board) => board.send_message(name, now, value),
             Err(error) => {
                 self.raise(error.into());
                 return;
             }
         };
-        self.tell_blackboard_observers(&address.name, sent.0, sent.1);
+        self.tell_blackboard_observers(name, sent.0, sent.1);
+    }
+
+    /// `blackboardManager.GetBlackboard(scope).GetMessageChannel(name).GetLastMessageValue()`.
+    pub fn last_value_of_channel(&mut self, scope: Scope, name: &str) -> Value {
+        match self.shared.blackboards.message_channel(scope, name) {
+            Ok(channel) => channel.last_message_value(),
+            Err(error) => {
+                self.raise(error.into());
+                Value::None
+            }
+        }
     }
 
     /// Tells the observers of a channel of a message: the tasks of this tree at once, the others through the system.
@@ -731,6 +828,13 @@ impl Cx<'_> {
         });
     }
 
+    pub fn dispatch_call(&mut self, observer: Observer, args: &[Value]) {
+        if observer.task >= self.core.slots.len() {
+            return;
+        }
+        self.with_node(observer.task, |node, t| node.on_call(t, observer.handler, args));
+    }
+
     pub fn dispatch_event(&mut self, observer: Observer, args: &[Value]) {
         if observer.task >= self.core.slots.len() {
             return;
@@ -753,6 +857,17 @@ impl Cx<'_> {
 impl TaskCtx<'_, '_> {
     pub fn raise(&mut self, error: BehaviorError) {
         self.cx.raise(error);
+    }
+
+    /// The answer of a call to the server: what it raised is raised here, and the tick stops.
+    pub fn ok<T>(&mut self, result: WorldResult<T>) -> Option<T> {
+        match result {
+            Ok(value) => Some(value),
+            Err(error) => {
+                self.raise(error.into());
+                None
+            }
+        }
     }
 
     /// An error was raised in this tick: what the client does after it does not run (its exception unwinds the tick).
@@ -1015,6 +1130,12 @@ impl TaskCtx<'_, '_> {
         self.cx.start_timer(seconds, address);
     }
 
+    /// A tasklet that sleeps for `seconds` of simulation time and then calls `on_call(handler, args)` of this task.
+    pub fn schedule_call(&mut self, seconds: f64, handler: u16, args: Vec<Value>) {
+        let observer = self.observer(handler);
+        self.cx.shared.schedule_call(seconds, observer, args);
+    }
+
     pub fn subscribe_to_blackboard(&mut self, address: &Address, handler: u16) {
         let observer = self.observer(handler);
         let Some(scope) = self.cx.scope_of(address) else { return };
@@ -1030,6 +1151,35 @@ impl TaskCtx<'_, '_> {
         let Some(scope) = self.cx.scope_of(address) else { return };
         if let Ok(channel) = self.cx.shared.blackboards.message_channel(scope, &address.name) {
             channel.remove_observer(&observer);
+        }
+    }
+
+    /// `GetMessageChannelForItemId(itemId, name)`.
+    pub fn channel_for_item(&self, item_id: i64, name: &str) -> ChannelRef {
+        ChannelRef { scope: crate::blackboards::item_scope(item_id), name: name.to_string() }
+    }
+
+    /// `GetMessageChannelForGroupId(groupId, name)`.
+    pub fn channel_for_group(&self, group_id: i64, name: &str) -> ChannelRef {
+        ChannelRef { scope: crate::blackboards::entity_group_scope(group_id), name: name.to_string() }
+    }
+
+    /// `channel.GetLastMessageValue()`.
+    pub fn channel_last_value(&mut self, channel: &ChannelRef) -> Value {
+        self.cx.last_value_of_channel(channel.scope, &channel.name)
+    }
+
+    /// `channel.SendMessage(value)`.
+    pub fn channel_send(&mut self, channel: &ChannelRef, value: Value) {
+        self.cx.send_to_channel(channel.scope, &channel.name, value);
+    }
+
+    /// `channel.AddObserver(handler)`.
+    pub fn channel_add_observer(&mut self, channel: &ChannelRef, handler: u16) {
+        let observer = self.observer(handler);
+        match self.cx.shared.blackboards.message_channel(channel.scope, &channel.name) {
+            Ok(c) => c.add_observer(observer),
+            Err(error) => self.cx.raise(error.into()),
         }
     }
 
@@ -1086,7 +1236,7 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::composites::{PrioritySelector, Sequence};
-    use crate::env::RecordingWorld;
+    use crate::env::TestWorld;
 
     /// A leaf that ends in the status it is given, after `ticks` ticks of running, and writes what it did in a log.
     pub struct Leaf {
@@ -1141,8 +1291,10 @@ pub(crate) mod tests {
         pub tree: BehaviorTree,
         pub ctx: BehaviorContext,
         pub shared: Shared,
-        pub world: RecordingWorld,
+        pub world: TestWorld,
         pub log: Rc<RefCell<Vec<String>>>,
+        /// What the last tick raised, for `with_task`.
+        pub last_error: Option<BehaviorError>,
     }
 
     impl Rig {
@@ -1151,7 +1303,14 @@ pub(crate) mod tests {
                 BehaviorContext { my_item_id: Some(1), my_entity_group_id: Some(10), ..Default::default() };
             let mut tree = BehaviorTree::new(1, None, None);
             tree.core.record_messages = true;
-            Self { tree, ctx, shared: Shared::new(10), world: RecordingWorld::default(), log: Rc::default() }
+            Self {
+                tree,
+                ctx,
+                shared: Shared::new(10),
+                world: TestWorld::default(),
+                log: Rc::default(),
+                last_error: None,
+            }
         }
 
         pub fn tick(&mut self) -> Result<(), BehaviorError> {
@@ -1183,6 +1342,40 @@ pub(crate) mod tests {
             }
             id
         }
+    }
+
+    /// Runs `body` as the first update of a task in a rig set up by `setup`, and gives back the rig (with what the tick raised in `last_error`) and
+    /// what `body` answered.
+    pub fn with_task<R: 'static>(
+        setup: impl FnOnce(&mut Rig),
+        body: impl FnOnce(&mut TaskCtx<'_, '_>) -> R + 'static,
+    ) -> (Rig, Option<R>) {
+        type Body<R> = Box<dyn FnOnce(&mut TaskCtx<'_, '_>) -> R>;
+        struct Probe<R> {
+            body: Option<Body<R>>,
+            out: Rc<RefCell<Option<R>>>,
+        }
+        impl<R> Task for Probe<R> {
+            fn type_name(&self) -> &'static str {
+                "Probe"
+            }
+            fn on_enter(&mut self, t: &mut TaskCtx<'_, '_>) {
+                if let Some(body) = self.body.take() {
+                    *self.out.borrow_mut() = Some(body(t));
+                }
+                t.set_status(Status::Success);
+            }
+        }
+        let mut rig = Rig::new();
+        setup(&mut rig);
+        let out = Rc::new(RefCell::new(None));
+        let probe = rig
+            .tree
+            .add_task(Box::new(Probe { body: Some(Box::new(body)), out: Rc::clone(&out) }), Attrs::new());
+        rig.tree.start_root_task(probe);
+        rig.last_error = rig.tick().err();
+        let answer = out.borrow_mut().take();
+        (rig, answer)
     }
 
     #[test]

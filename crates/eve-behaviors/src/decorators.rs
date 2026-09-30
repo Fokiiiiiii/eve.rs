@@ -397,7 +397,7 @@ impl Task for RandomCooldownTimer {
 mod tests {
     use super::*;
     use crate::blackboards::{Address, ScopeType};
-    use crate::env::{RecordingWorld, SECOND};
+    use crate::env::{SECOND, TestWorld};
     use crate::tree::Attrs;
     use crate::tree::tests::Rig;
 
@@ -632,7 +632,7 @@ mod tests {
     #[test]
     fn a_random_cooldown_timer_takes_its_time_from_the_dice() {
         let mut rig = Rig::new();
-        rig.world = RecordingWorld::with_numbers(&[0.999_999]);
+        rig.world = TestWorld::with_numbers(&[0.999_999]);
         let attributes = Attrs::new()
             .with("timerAddress", timer().to_value())
             .with("minTimeoutSeconds", 10i64)

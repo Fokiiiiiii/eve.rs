@@ -27,6 +27,9 @@ A port, as it is, of the `behaviors` package of the EVE client V24.01 (decompile
 | `src/target_evaluation.rs` | `targetEvaluation/*` |
 | `src/registry/*` | `registry/*` (`__init__`, `registrator`, `taskregistry`, and the five tables `actions`, `conditions`, `composites`, `decorators`, `monitors`, whose entries are generated one to one from the client's `register_*` calls: class name, kind, descriptions, attributes with their index, default and optionality); a class is made by a function instead of being imported by its name; the attribute kinds are `fsd/attributes.py` |
 | `src/loaders/*` | `loaders/*` (`fsd_behavior_loader.py` over a `BehaviorTreeStorage` trait, `scripted_behavior_loader.py`); `storage.py` is that trait: the client's `fsdlite` storage reads `behaviortrees.static`, which is not in the extract |
+| `src/entity.rs` | `entity.py` (`BehaviorEntity`: the additional loot, `NPCWarpTo`/`NPCEndWarp`, `OnExplode`, `OnUnspawn`, `DoModeChange`; the server's `EntityWrapper`, ballpark, inventory and loot service it leans on are the `EntityHost` trait) |
+| `src/storage.rs` | `storage.py` (the data class `BehaviorTree`; the storage itself is the `BehaviorTreeStorage` trait of `loaders/fsd.rs`) |
+| `src/debugging.rs` | `debugging/behaviortreemonitor.py` (the monitor, `DumpTree`, `GetBlackboards`); `debugging/tools.py` is not in the extract, its `DepthFirstTaskIterator` is `depth_first_tasks` |
 | `src/trees/*` | `trees/*` (all forty-six files: the scripted trees, built by `trees::builder::Node` out of registry class names) |
 
 Server-side pieces that a tree names and the client's files do not have (`npcs.server.tags.DRIFTER_TAG`) are constants of `trees/mod.rs` with the name they are

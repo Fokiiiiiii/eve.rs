@@ -433,6 +433,8 @@ pub struct TreeCore {
     deferred_exits: Vec<TaskId>,
     /// The messages the tree sent (kept when `record_messages` is set).
     pub messages: Vec<TreeMessage>,
+    /// The simulation time each of `messages` was sent at (`gametime.GetSimTime()`, which is what a watcher stamps them with).
+    pub message_times: Vec<i64>,
     pub record_messages: bool,
 }
 
@@ -456,6 +458,7 @@ impl BehaviorTree {
                 fault: None,
                 deferred_exits: Vec::new(),
                 messages: Vec::new(),
+                message_times: Vec::new(),
                 record_messages: false,
             },
         }
@@ -575,6 +578,14 @@ impl BehaviorTree {
         }
     }
 
+    /// The messages the tree sent since they were last taken, with the time each was sent at (what a watcher of the tree, subscribed to its
+    /// messenger in the client, is told as it happens).
+    pub fn take_messages(&mut self) -> Vec<(i64, TreeMessage)> {
+        let times = std::mem::take(&mut self.core.message_times);
+        let messages = std::mem::take(&mut self.core.messages);
+        times.into_iter().zip(messages).collect()
+    }
+
     /// The first error a task raised since the last tick, if any (a delivery can raise one outside a tick).
     pub fn take_fault(&mut self) -> Option<BehaviorError> {
         self.core.fault.take()
@@ -610,6 +621,7 @@ impl Cx<'_> {
     fn send_tree_message(&mut self, message: TreeMessage) {
         if self.core.record_messages {
             self.core.messages.push(message);
+            self.core.message_times.push(self.shared.now);
         }
     }
 

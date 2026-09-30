@@ -23,8 +23,10 @@ Details: `docs/adr/0001-external-compatibility-only.md`, `docs/PLAN.md`, `docs/c
    behave as EVE.js does. A deliberate difference needs evidence and a row in `docs/compat/DEVIATIONS.md`.
 3. **Vertical slices that run.** Prefer a slice a client can use (see `docs/PLAN.md`) over finishing a layer in
    isolation. As soon as something can be executed, execute it, fix what breaks, then go on.
-4. **Read EVE.js for behaviour, write new code for structure.** Idiomatic Rust and C#. Reproducing a JavaScript
-   quirk is justified only if the client can see it.
+4. **Where EVE.js or the client already does a thing better, port it as it is** (owner, 2026-09-30, `docs/adr/0009`):
+   rewrite it in Rust or C# with the same rules, order and numbers, naming its source at the top of the file.
+   Redesign only what is worse or does not fit. The structure around a port (modules, persistence, the Rust/C#
+   split) is still ours; a JavaScript quirk is kept only if it is part of the rule.
 5. **Tests must bite.** Add or change tests with the code, run the smallest relevant set, and mutation-check the
    logic that matters. Report files changed, tests run, and risks.
 6. **Keep the record current.** A decision goes in an ADR (`docs/adr/`), a deviation in the register, status in
@@ -45,9 +47,10 @@ Details: `docs/adr/0001-external-compatibility-only.md`, `docs/PLAN.md`, `docs/c
   first start (pinned build in `sde/lock.json`). The development environment cannot reach
   `developers.eveonline.com`; pass `--archive FILE` with a zip obtained elsewhere.
 - The decompiled client (`Fokiiiiiii/eve-logic`) is CCP's property. Read it for facts (`tools/spec-extract`);
-  never copy its files or schemas into this repository. One exception, by the owner's direction (2026-09-30,
-  ADR 0008): its `behaviors` package (NPC behavior trees) is ported to Rust as it is, in `crates/eve-behaviors`,
-  with each file naming its source. The rest stays facts-only.
+  never copy its files or schemas into this repository. Exceptions, by the owner's direction: its `behaviors`
+  package (NPC behavior trees) is ported to Rust as it is, in `crates/eve-behaviors` (ADR 0008); and, since
+  2026-09-30 (ADR 0009), any client or EVE.js processing that is better than what would be written fresh is
+  ported as it is, each file naming its source. Nothing is vendored as text, and none of it may be made public.
 
 ## Working here
 

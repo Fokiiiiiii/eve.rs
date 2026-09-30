@@ -21,7 +21,7 @@ A port, as it is, of the `behaviors` package of the EVE client V24.01 (decompile
 | `src/conditions/*` | `conditions/*` (all seventeen files) |
 | `src/monitors/*` | `monitors/*` (all nineteen files); `monitors/mod.rs` holds `MonitorTask` of `tasks.py` |
 | `src/macros.rs` | (none: `enter_task!` makes a class with an `OnEnter`) |
-| `src/actions/*` (in part) | `actions/__init__.py`, `combattargets`, `drones`, `dungeon`, `entityspawning`, `eventlogger`, `guard`, `hauling`, `map`, `mathtasks`, `objectspawning`, `operations`, `randomized`, `reinforcements`, `resourcewars`, `rewards`, `structures`, `tale` and `reference_subtree` (the rest follows) |
+| `src/actions/*` (in part) | `actions/__init__.py`, `combat`, `combatmodules`, `combatnavigation`, `combattargets`, `damage`, `drones`, `dungeon`, `entityspawning`, `eventlogger`, `guard`, `hauling`, `map`, `mathtasks`, `objectspawning`, `operations`, `randomized`, `reinforcements`, `resourcewars`, `rewards`, `structures`, `tale` and `reference_subtree` (the rest follows) |
 | `src/env/spawning.rs` | the server's spawning machinery that `entityspawning` and `utility/spawning` call (`spawndataforentities`, `npcspawning`, `spawnlists`, the managers of `entityLocation`): the `Spawning` trait, no client module |
 | `src/utility/spawning.rs` | `utility/spawning.py` |
 | `src/target_evaluation.rs` | `targetEvaluation/*` |

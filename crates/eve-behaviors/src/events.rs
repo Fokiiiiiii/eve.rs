@@ -59,6 +59,7 @@ pub mod message {
         ON_DUNGEON_TRIGGER,
         ON_DUNGEON_TRIGGER_EVENT,
         TURBO_SHIELD_STATE_CHANGED,
+        ENTITY_SUPER_WEAPON_STOPPED,
     );
 }
 

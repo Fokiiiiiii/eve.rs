@@ -220,4 +220,50 @@ pub trait Ballpark {
     fn ball_source_id(&self, _ball_id: i64) -> Option<i64> {
         None
     }
+    /// `myBall.ApproachObject(targetId, approachRange=, cruise=)`.
+    fn approach_object(&mut self, _ball_id: i64, _target_id: i64, _approach_range: f64, _cruise: bool) {}
+
+    /// `ballpark.SetTargetTracking(itemId, targetId, notifyRange)`.
+    fn set_target_tracking(&mut self, _item_id: i64, _target_id: i64, _notify_range: f64) {}
+
+    /// What the ball calls (`myBall.DoTargetTracking = ...`, `myBall.DoCollision = ...`): the observers of the task that wants them, or none when the
+    /// task put a function that does nothing there.
+    fn set_ball_callbacks(
+        &mut self,
+        _ball_id: i64,
+        _do_target_tracking: Option<crate::blackboards::Observer>,
+        _do_collision: Option<crate::blackboards::Observer>,
+    ) {
+    }
+
+    /// `ballpark.StopEx(itemId)`.
+    fn stop_ex(&mut self, _item_id: i64) {}
+
+    /// `ballpark.ExplodeEx(ballId)`.
+    fn explode_ex(&mut self, _ball_id: i64) {}
+
+    /// `ballpark.MissileFollow(fighterId, targetId, controllerId)`.
+    fn missile_follow(&mut self, _fighter_id: i64, _target_id: i64, _controller_id: i64) {}
+
+    /// `ballpark.SetBallMassive(ballId, massive)`.
+    fn set_ball_massive(&mut self, _ball_id: i64, _massive: bool) {}
+
+    /// `GetControlledFighterRegistryForSolarsystem(solarsystemId).GetControllerForFighter(fighterId)`.
+    fn controller_for_fighter(&self, _fighter_id: i64) -> Option<i64> {
+        None
+    }
+    /// `ballpark.GetShipsInSameBubble(itemId)`.
+    fn ships_in_same_bubble(&self, _item_id: i64) -> Vec<i64> {
+        Vec::new()
+    }
+
+    /// `ballpark.specialEffects.StartShipEffect(shipId, effectName, durationMilliseconds, repeat)`.
+    fn start_ship_effect(
+        &mut self,
+        _ship_id: i64,
+        _effect_name: &str,
+        _duration_milliseconds: i64,
+        _repeat: i64,
+    ) {
+    }
 }

@@ -1,6 +1,10 @@
 //! `behaviors/actions/*`: tasks that do something to the world or to the blackboards.
 
+pub mod combat;
+pub mod combatmodules;
+pub mod combatnavigation;
 pub mod combattargets;
+pub mod damage;
 pub mod drones;
 pub mod dungeon;
 pub mod entityspawning;

@@ -98,7 +98,7 @@ pub fn get_my_locked_targets(t: &mut TaskCtx<'_, '_>) -> Vec<i64> {
 fn activation_args(
     owner_id: i64,
     module_id: i64,
-    effect_id: i64,
+    effect_id: Option<i64>,
     target_id: Option<i64>,
     repeats: i64,
     context: &Value,
@@ -106,7 +106,7 @@ fn activation_args(
     vec![
         Value::Int(owner_id),
         Value::Int(module_id),
-        Value::Int(effect_id),
+        effect_id.map_or(Value::None, Value::Int),
         target_id.map_or(Value::None, Value::Int),
         Value::Int(repeats),
         context.clone(),
@@ -143,7 +143,6 @@ pub fn try_activate_effect(
     }
     if delay > 0.0 {
         // the reference's tasklet sleeps here, and activates when it wakes
-        let Some(effect_id) = effect_id else { return };
         t.schedule_call(
             delay,
             CALL_ACTIVATE_EFFECT,
@@ -151,7 +150,6 @@ pub fn try_activate_effect(
         );
         return;
     }
-    let Some(effect_id) = effect_id else { return };
     activate_now(t, owner_id, module_id, effect_id, target_id, repeats, context);
 }
 
@@ -159,7 +157,7 @@ fn activate_now(
     t: &mut TaskCtx<'_, '_>,
     owner_id: i64,
     module_id: i64,
-    effect_id: i64,
+    effect_id: Option<i64>,
     target_id: Option<i64>,
     repeats: i64,
     context: &Value,
@@ -221,13 +219,13 @@ pub fn on_call(t: &mut TaskCtx<'_, '_>, handler: u16, args: &[Value]) -> bool {
         }
         CALL_ACTIVATE_EFFECT => {
             let ints: Vec<Option<i64>> = args.iter().map(Value::as_int).collect();
-            if let (Some(owner_id), Some(module_id), Some(effect_id), Some(repeats), Some(context)) = (
+            if let (Some(owner_id), Some(module_id), Some(repeats), Some(context)) = (
                 ints.first().copied().flatten(),
                 ints.get(1).copied().flatten(),
-                ints.get(2).copied().flatten(),
                 ints.get(4).copied().flatten(),
                 args.get(5),
             ) {
+                let effect_id = ints.get(2).copied().flatten();
                 let target = ints.get(3).copied().flatten();
                 activate_now(t, owner_id, module_id, effect_id, target, repeats, context);
             }

@@ -312,6 +312,11 @@ impl Shared {
         self.calls.len()
     }
 
+    /// When the next scheduled call is due, in ticks of the clock.
+    pub fn next_call_due(&self) -> Option<i64> {
+        self.calls.iter().map(|c| c.due).min()
+    }
+
     /// The timers that have run out: each tells its channel `None` (`Timer.ClearTimer`). The observers are told by the system that owns the trees
     /// (`pending`), whichever tree they are in.
     pub fn fire_due_timers(&mut self) {
@@ -1465,6 +1470,42 @@ pub(crate) mod tests {
         pub fn tick(&mut self) -> Result<(), BehaviorError> {
             self.shared.now += 1_000_000;
             self.tree.tick(&mut self.ctx, &mut self.shared, &mut self.world)
+        }
+
+        /// Lets the time pass without a tick.
+        pub fn advance_seconds(&mut self, seconds: f64) {
+            self.shared.now += seconds_to_ticks(seconds);
+        }
+
+        /// The calls that are due are delivered to their tasks (what they raise is in `last_error`).
+        pub fn deliver_scheduled(&mut self) {
+            self.shared.fire_due_calls();
+            for delivery in std::mem::take(&mut self.shared.pending) {
+                if let Err(error) =
+                    self.tree.deliver(&mut self.ctx, &mut self.shared, &mut self.world, &delivery)
+                {
+                    self.last_error.get_or_insert(error);
+                }
+            }
+        }
+
+        /// A message about an item is sent (`SendMessage` of the ballpark's messenger).
+        pub fn send_event(&mut self, item_id: i64, key: impl Into<EventKey>, args: &[Value]) {
+            let mut cx = Cx {
+                core: &mut self.tree.core,
+                ctx: &mut self.ctx,
+                shared: &mut self.shared,
+                world: &mut self.world,
+            };
+            cx.send_event(item_id, key, args);
+        }
+
+        /// How many messages a channel of the blackboard of my item holds.
+        pub fn messages_on(&mut self, channel: &str) -> usize {
+            match self.shared.blackboards.message_channel(crate::blackboards::item_scope(1), channel) {
+                Ok(channel) => channel.messages().len(),
+                Err(_) => 0,
+            }
         }
 
         pub fn take_log(&self) -> Vec<String> {

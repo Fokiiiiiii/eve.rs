@@ -93,12 +93,12 @@ pub trait Dogma {
         1.0
     }
 
-    /// `dogmaLM.ActivateWithContext(ownerId, moduleId, effectId, targetid=, repeat=, context=)`.
+    /// `dogmaLM.ActivateWithContext(ownerId, moduleId, effectId, targetid=, repeat=, context=)`: an effect that is `None` is the module's default.
     fn activate_with_context(
         &mut self,
         _owner_id: i64,
         _module_id: i64,
-        _effect_id: i64,
+        _effect_id: Option<i64>,
         _target_id: Option<i64>,
         _repeat: i64,
         _context: &Value,
@@ -141,6 +141,46 @@ pub trait Dogma {
     /// `dogmaLM.IsShipPiloted(shipId)`.
     fn is_ship_piloted(&self, _ship_id: i64) -> bool {
         false
+    }
+    /// `dogmaLM.GetCloudFactor(targetId, cloudSize)`.
+    fn cloud_factor(&self, _target_id: i64, _cloud_size: f64) -> f64 {
+        1.0
+    }
+
+    /// `sm.GetService('dogma').ApplyDamage(None, sourceItemId, targetId, amount, indirectDogmaLM=, splash=False, damageShieldOnly=False,
+    /// sourceID=, weaponDamages=)`: the damage of each kind (attribute id and amount).
+    fn apply_damage(
+        &mut self,
+        _source_item_id: i64,
+        _target_id: i64,
+        _damage_amount: f64,
+        _source_id: i64,
+        _weapon_damages: &[(i64, f64)],
+    ) {
+    }
+    /// `health.SetArmorRatio(dogmaLM, itemId, ratio)`.
+    fn set_armor_ratio(&mut self, _item_id: i64, _ratio: &Value) {}
+
+    /// `health.SetShieldRatio(dogmaLM, itemId, ratio)`.
+    fn set_shield_ratio(&mut self, _item_id: i64, _ratio: &Value) {}
+
+    /// `health.SetStructureRatio(dogmaLM, itemId, ratio)`.
+    fn set_structure_ratio(&mut self, _item_id: i64, _ratio: &Value) {}
+
+    /// `sm.GetService('dogma').ApplyDamage(None, sourceItemId, targetId, damageMultiplier=, indirectDogmaLM=, weaponDamages=)`.
+    fn apply_damage_with_multiplier(
+        &mut self,
+        _source_item_id: i64,
+        _target_id: i64,
+        _damage_multiplier: f64,
+        _weapon_damages: &[(i64, f64)],
+    ) {
+    }
+
+    /// `dogmaLM.dogmaItems.get(itemId).GetFittedItems()`: the keys of what is fitted (an item id, or a tuple that starts with it); nothing for an
+    /// item the dogma engine does not have.
+    fn fitted_item_keys(&self, _item_id: i64) -> Option<Vec<Value>> {
+        None
     }
 }
 

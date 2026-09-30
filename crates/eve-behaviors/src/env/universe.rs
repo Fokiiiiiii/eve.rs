@@ -71,4 +71,12 @@ pub trait Universe {
     fn solar_system_faction_id(&self, _solar_system_id: i64) -> Option<i64> {
         None
     }
+    /// `sm.GetService('machoNet').SinglecastBySolarSystemID(solarSystemId, notification, *args)`.
+    fn singlecast_by_solar_system_id(
+        &mut self,
+        _solar_system_id: Option<i64>,
+        _notification: &str,
+        _args: &[crate::value::Value],
+    ) {
+    }
 }

@@ -119,6 +119,12 @@ pub struct TestWorld {
     pub reactive_spawners: Vec<ReactiveSpawnConfig>,
     pub respawns: Vec<(Option<i64>, Option<i64>, Vec<EntitySpawnData>)>,
     pub deep_space_location: [f64; 3],
+    pub ball_callbacks:
+        HashMap<i64, (Option<crate::blackboards::Observer>, Option<crate::blackboards::Observer>)>,
+    pub fighter_controllers: HashMap<i64, i64>,
+    pub cloud_factors: HashMap<(i64, u64), f64>,
+    pub fitted_keys: HashMap<i64, Vec<Value>>,
+    pub same_bubble_ships: HashMap<i64, Vec<i64>>,
 }
 
 impl TestWorld {
@@ -158,6 +164,63 @@ impl Random for TestWorld {
 }
 
 impl Ballpark for TestWorld {
+    fn ships_in_same_bubble(&self, item_id: i64) -> Vec<i64> {
+        self.same_bubble_ships.get(&item_id).cloned().unwrap_or_default()
+    }
+
+    fn start_ship_effect(
+        &mut self,
+        ship_id: i64,
+        effect_name: &str,
+        duration_milliseconds: i64,
+        repeat: i64,
+    ) {
+        self.calls
+            .push(format!("start_ship_effect({ship_id}, {effect_name}, {duration_milliseconds}, {repeat})"));
+    }
+
+    fn approach_object(&mut self, ball_id: i64, target_id: i64, approach_range: f64, cruise: bool) {
+        self.calls.push(format!("approach_object({ball_id}, {target_id}, {approach_range}, {cruise})"));
+    }
+
+    fn set_target_tracking(&mut self, item_id: i64, target_id: i64, notify_range: f64) {
+        self.calls.push(format!("set_target_tracking({item_id}, {target_id}, {notify_range})"));
+    }
+
+    fn set_ball_callbacks(
+        &mut self,
+        ball_id: i64,
+        do_target_tracking: Option<crate::blackboards::Observer>,
+        do_collision: Option<crate::blackboards::Observer>,
+    ) {
+        self.calls.push(format!(
+            "set_ball_callbacks({ball_id}, {}, {})",
+            do_target_tracking.is_some(),
+            do_collision.is_some()
+        ));
+        self.ball_callbacks.insert(ball_id, (do_target_tracking, do_collision));
+    }
+
+    fn stop_ex(&mut self, item_id: i64) {
+        self.calls.push(format!("stop_ex({item_id})"));
+    }
+
+    fn explode_ex(&mut self, ball_id: i64) {
+        self.calls.push(format!("explode_ex({ball_id})"));
+    }
+
+    fn missile_follow(&mut self, fighter_id: i64, target_id: i64, controller_id: i64) {
+        self.calls.push(format!("missile_follow({fighter_id}, {target_id}, {controller_id})"));
+    }
+
+    fn set_ball_massive(&mut self, ball_id: i64, massive: bool) {
+        self.calls.push(format!("set_ball_massive({ball_id}, {massive})"));
+    }
+
+    fn controller_for_fighter(&self, fighter_id: i64) -> Option<i64> {
+        self.fighter_controllers.get(&fighter_id).copied()
+    }
+
     fn has_pending_cloak(&self, ball_id: i64) -> bool {
         self.pending_cloak.contains(&ball_id)
     }
@@ -352,6 +415,51 @@ impl Ballpark for TestWorld {
 }
 
 impl Dogma for TestWorld {
+    fn set_armor_ratio(&mut self, item_id: i64, ratio: &Value) {
+        self.calls.push(format!("set_armor_ratio({item_id}, {ratio:?})"));
+    }
+
+    fn set_shield_ratio(&mut self, item_id: i64, ratio: &Value) {
+        self.calls.push(format!("set_shield_ratio({item_id}, {ratio:?})"));
+    }
+
+    fn set_structure_ratio(&mut self, item_id: i64, ratio: &Value) {
+        self.calls.push(format!("set_structure_ratio({item_id}, {ratio:?})"));
+    }
+
+    fn apply_damage_with_multiplier(
+        &mut self,
+        source_item_id: i64,
+        target_id: i64,
+        damage_multiplier: f64,
+        weapon_damages: &[(i64, f64)],
+    ) {
+        self.calls.push(format!(
+            "apply_damage_with_multiplier({source_item_id}, {target_id}, {damage_multiplier:.4}, {weapon_damages:?})"
+        ));
+    }
+
+    fn fitted_item_keys(&self, item_id: i64) -> Option<Vec<Value>> {
+        self.fitted_keys.get(&item_id).cloned()
+    }
+
+    fn cloud_factor(&self, target_id: i64, cloud_size: f64) -> f64 {
+        self.cloud_factors.get(&(target_id, cloud_size.to_bits())).copied().unwrap_or(1.0)
+    }
+
+    fn apply_damage(
+        &mut self,
+        source_item_id: i64,
+        target_id: i64,
+        damage_amount: f64,
+        source_id: i64,
+        weapon_damages: &[(i64, f64)],
+    ) {
+        self.calls.push(format!(
+            "apply_damage({source_item_id}, {target_id}, {damage_amount}, {source_id}, {weapon_damages:?})"
+        ));
+    }
+
     fn effect_range_with_falloff_multiplier(&self, effect_id: i64, item_id: i64, factor: f64) -> f64 {
         self.effect_ranges
             .get(&(item_id, effect_id))
@@ -438,7 +546,7 @@ impl Dogma for TestWorld {
         &mut self,
         owner_id: i64,
         module_id: i64,
-        effect_id: i64,
+        effect_id: Option<i64>,
         target_id: Option<i64>,
         repeat: i64,
         _context: &crate::value::Value,
@@ -446,7 +554,8 @@ impl Dogma for TestWorld {
         if let Some(error) = self.activation_error.clone() {
             return Err(error);
         }
-        self.calls.push(format!("activate({owner_id}, {module_id}, {effect_id}, {target_id:?}, {repeat})"));
+        let effect = effect_id.map_or("None".to_string(), |effect| effect.to_string());
+        self.calls.push(format!("activate({owner_id}, {module_id}, {effect}, {target_id:?}, {repeat})"));
         Ok(())
     }
 
@@ -910,6 +1019,15 @@ impl Inventory for TestWorld {
 }
 
 impl Universe for TestWorld {
+    fn singlecast_by_solar_system_id(
+        &mut self,
+        solar_system_id: Option<i64>,
+        notification: &str,
+        args: &[Value],
+    ) {
+        self.calls.push(format!("singlecast({solar_system_id:?}, {notification}, {args:?})"));
+    }
+
     fn solar_system_faction_id(&self, solar_system_id: i64) -> Option<i64> {
         self.system_factions.get(&solar_system_id).copied()
     }

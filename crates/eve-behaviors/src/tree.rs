@@ -1613,7 +1613,7 @@ pub(crate) mod tests {
             cx.send_event(item_id, key, args);
         }
 
-        /// The values of the messages a channel of the blackboard of my item holds, oldest first.
+        /// The values of the messages a channel of the blackboard of my item holds, newest first.
         pub fn history(&mut self, channel: &str) -> Vec<Value> {
             match self.shared.blackboards.message_channel(crate::blackboards::item_scope(1), channel) {
                 Ok(channel) => channel.messages().into_iter().map(|m| m.value).collect(),

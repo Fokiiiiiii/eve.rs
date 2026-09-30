@@ -41,6 +41,10 @@ pub enum WorldError {
     ReinforcedGroupNotFound,
     /// `ZeroDivisionError`.
     ZeroDivision,
+    /// `inventorycommon.WrongInventoryLocation`: an item that is not where the call looked for it.
+    WrongInventoryLocation,
+    /// `inventorycommon.FakeItemNotHere`: a fake item (an NPC's) that is not in this system.
+    FakeItemNotHere,
 }
 
 pub type WorldResult<T> = Result<T, WorldError>;

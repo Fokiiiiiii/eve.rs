@@ -19,6 +19,7 @@ pub mod fleet;
 pub mod group;
 pub mod guard;
 pub mod hauling;
+pub mod logistics;
 pub mod map;
 pub mod mathtasks;
 pub mod objectspawning;

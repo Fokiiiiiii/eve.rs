@@ -66,6 +66,10 @@ pub struct TestWorld {
     pub default_effects: HashMap<i64, i64>,
     pub activation_error: Option<WorldError>,
     pub attributes: HashMap<(i64, i64), f64>,
+    /// What reading an attribute of an item raises (`WrongInventoryLocation` and the like).
+    pub attribute_errors: HashMap<(i64, i64), WorldError>,
+    /// `get_effect_range_falloff_modifier_at_distance`, by the distance in whole metres (1 where it is not said).
+    pub falloff_at_distance: HashMap<i64, f64>,
     pub type_attributes: HashMap<(i64, i64), f64>,
     pub type_effects: HashSet<(i64, i64)>,
     pub active_effects: HashSet<(i64, i64)>,
@@ -557,6 +561,10 @@ impl Dogma for TestWorld {
         self.max_effective_ranges.get(&effect_id).copied().unwrap_or(0.0)
     }
 
+    fn range_falloff_modifier_at_distance(&self, _effect_id: i64, _source_id: i64, distance: f64) -> f64 {
+        self.falloff_at_distance.get(&(distance as i64)).copied().unwrap_or(1.0)
+    }
+
     fn locked_targets(&self, item_id: i64) -> Vec<i64> {
         self.targets(item_id)
     }
@@ -628,6 +636,9 @@ impl Dogma for TestWorld {
     }
 
     fn attribute_value(&self, item_id: i64, attribute_id: i64) -> WorldResult<f64> {
+        if let Some(error) = self.attribute_errors.get(&(item_id, attribute_id)) {
+            return Err(error.clone());
+        }
         Ok(self.attributes.get(&(item_id, attribute_id)).copied().unwrap_or(0.0))
     }
 

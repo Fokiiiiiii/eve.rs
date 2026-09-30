@@ -85,13 +85,21 @@ pub fn get_damage_state_modifier(
     Some(1.0 - t.ok(ratio)?)
 }
 
-/// `get_logistics_priority`.
+/// `get_logistics_priority`. An effect that is no repair effect has no damage state function, and the client calls it all the same once it has
+/// the base priority.
 pub fn get_logistics_priority(
     t: &mut TaskCtx<'_, '_>,
     item_id: i64,
-    damage_state: DamageState,
+    damage_state: Option<DamageState>,
 ) -> Option<f64> {
     let base_priority = get_base_logistics_priority(t, item_id);
+    if t.faulted() {
+        return None;
+    }
+    let Some(damage_state) = damage_state else {
+        t.raise(crate::tree::BehaviorError::Task("TypeError: 'NoneType' object is not callable".to_string()));
+        return None;
+    };
     let damage_modifier = get_damage_state_modifier(t, item_id, damage_state)?;
     let remote_repair_impedance = get_remote_repair_impedance(t, item_id)?;
     Some((base_priority + damage_modifier) * remote_repair_impedance)
@@ -140,7 +148,7 @@ mod tests {
             },
             |t| {
                 let state = get_damage_state_function(t);
-                (state, get_remote_repair_effect_id(t), state.and_then(|s| get_logistics_priority(t, 7, s)))
+                (state, get_remote_repair_effect_id(t), get_logistics_priority(t, 7, state))
             },
         );
         assert_eq!(

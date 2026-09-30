@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record what the EVE.js reference does from login to a session with a character.
 
-    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others|target|module]
+    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others|target|module|health|death]
 
 The recording is the contract for the same path in eve.rs: `tests/test_login_to_character.py` replays the calls
 against any server and compares each answer with what is stored here, by shape, treating per-run values
@@ -1192,6 +1192,70 @@ def record_health(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     who.close()
 
 
+def record_death(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """Two characters in space by the same station: what both are sent when a hull that nobody flies is detonated beside them (`/deathtest`, the
+    reference's way to make a ship die on demand: the explosion, the ball that goes, the wreck that comes) and when the one of them (the victim,
+    B) destroys its own ship (`/suicide`: the same, and the capsule the pilot is left in). Each step holds what B is sent (`events`) and what A
+    is sent (`seen`), with the seconds each arrived at."""
+    system, station = 30100032, 60015249
+
+    def character(name: str):
+        who = rec.login(name)
+        created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"{name} {run}", 1, 1, ancestry[1]))
+        char_id = int(created["ok"])
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
+        hangar = who.call_bound(manager, "GetInventory", 10004)
+        ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+        who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
+        events_of(who)
+        return who, created, char_id, ship_id
+
+    a, a_created, a_char, a_ship = character("Watcher")
+    b, b_created, b_char, b_ship = character("Victim")
+    both = {"events": b, "seen": a}
+    steps: list = []
+
+    def step(label, call, seconds=2.0, until=None):
+        entry = {"label": label}
+        try:
+            entry["ok"] = describe(call())
+        except p.MachoError as error:
+            entry["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+        entry.update(watch(both, seconds, until))
+        steps.append(entry)
+        return entry
+
+    a_service = a.call("ship", "MachoBindObject", (station, 15), None)
+    b_service = b.call("ship", "MachoBindObject", (station, 15), None)
+    watch(both, 0.5)
+    step("the watcher undocks", lambda: a.call_bound(a_service[0], "Undock", a_ship, False), 2.0)
+    a_ballpark = a.call("beyonce", "MachoBindObject", system, None)
+    step("the watcher binds the ballpark", lambda: a_ballpark, 2.5)
+    step("the victim undocks", lambda: b.call_bound(b_service[0], "Undock", b_ship, False), 2.5)
+    b_ballpark = b.call("beyonce", "MachoBindObject", system, None)
+    step("the victim binds the ballpark", lambda: b_ballpark, 3.0)
+    a_dogma = a.call("dogmaIM", "MachoBindObject", (system, 5), None)
+    b_dogma = b.call("dogmaIM", "MachoBindObject", (system, 5), None)
+    steps.append({"label": "both bind dogma in space", "ok": describe([a_dogma, b_dogma]), **watch(both, 1.0)})
+    steps.append({"label": "both wait for the protection to end", **watch(both, 40.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))})
+    slash_a = lambda command: (lambda: a.call("slash", "SlashCmd", command))  # noqa: E731
+    slash_b = lambda command: (lambda: b.call("slash", "SlashCmd", command))  # noqa: E731
+    gone = lambda seen: sum(1 for e in seen["events"] + seen["seen"] if e["name"] == "DoDestinyUpdate" and "RemoveBalls" in json.dumps(e)) >= 2  # noqa: E731
+    step("the watcher detonates a hull beside both", slash_a("/deathtest 1"), 40.0, until=gone)
+    step("both are quiet again", lambda: None, 5.0)
+    step("the victim destroys its ship", slash_b("/suicide"), 30.0)
+    step("both are quiet again after the suicide", lambda: None, 5.0)
+    race = {"bloodlineID": 1, "raceID": 1, "solarSystemID": system, "stationID": station,
+            "watcher": {"create": a_created, "characterID": a_char, "shipID": a_ship}, "victim": {"create": b_created, "characterID": b_char, "shipID": b_ship},
+            "steps": steps}
+    with open(os.path.join(out, "death.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [race]}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+    a.close()
+    b.close()
+
+
 def args_of_effect(event: dict) -> list:
     """The arguments of an `OnGodmaShipEffect`: `(itemID, effectID, when, isStart, isActive, environment, startTime, duration, repeat, error)`."""
     try:
@@ -1212,10 +1276,10 @@ def main() -> int:
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others, "target": record_target, "module": record_module, "health": record_health}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others, "target": record_target, "module": record_module, "health": record_health, "death": record_death}
     try:
         for name, record in parts.items():
-            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others", "target", "module", "health")):  # the fast one needs a reference started for it
+            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others", "target", "module", "health", "death")):  # the fast one needs a reference started for it
                 record(rec, out, meta, ancestry, run)
         if only in (None, "stations"):
             record_stations(rec, out, meta, ancestry, run, sde)

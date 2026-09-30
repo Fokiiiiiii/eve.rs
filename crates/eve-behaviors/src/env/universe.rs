@@ -79,4 +79,9 @@ pub trait Universe {
         _args: &[crate::value::Value],
     ) {
     }
+    /// What `IsEvePlayerCharacter` asks the server for an owner of the ids that are not clearly a player's: `cfg.eveowners.Get(id).IsCharacter()`
+    /// (and not a player corporation).
+    fn is_pre_inv64_player_character(&self, _owner_id: i64) -> bool {
+        false
+    }
 }

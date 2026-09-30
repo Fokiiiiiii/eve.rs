@@ -1,5 +1,6 @@
 //! `behaviors/actions/*`: tasks that do something to the world or to the blackboards.
 
+pub mod blackboards;
 pub mod combat;
 pub mod combatmodules;
 pub mod combatnavigation;
@@ -9,6 +10,7 @@ pub mod drones;
 pub mod dungeon;
 pub mod entityspawning;
 pub mod eventlogger;
+pub mod fleet;
 pub mod guard;
 pub mod hauling;
 pub mod map;
@@ -22,6 +24,7 @@ pub mod resourcewars;
 pub mod rewards;
 pub mod structures;
 pub mod tale;
+pub mod timer;
 
 use crate::tree::Status;
 

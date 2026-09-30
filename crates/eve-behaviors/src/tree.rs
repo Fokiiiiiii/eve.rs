@@ -263,6 +263,7 @@ pub struct Shared {
     /// Calls that tasks asked for at a later time.
     calls: Vec<ScheduledCall>,
     next_call: u64,
+    next_tasklet: i64,
 }
 
 /// A call a task asked for at a later time.
@@ -272,6 +273,8 @@ struct ScheduledCall {
     seq: u64,
     observer: Observer,
     args: Vec<Value>,
+    /// The tasklet the call is a part of, which can be killed.
+    tasklet: Option<i64>,
 }
 
 impl Shared {
@@ -284,6 +287,7 @@ impl Shared {
             pending: Vec::new(),
             calls: Vec::new(),
             next_call: 0,
+            next_tasklet: 1,
         }
     }
 }
@@ -292,9 +296,37 @@ impl Shared {
     /// What a tasklet that sleeps `seconds` (`uthread2.SleepSim`) and then calls a task's method is here: the call is told to the task when the
     /// time comes (`fire_due_calls`, and then the system delivers it).
     pub fn schedule_call(&mut self, seconds: f64, observer: Observer, args: Vec<Value>) {
+        self.push_call(None, seconds, observer, args);
+    }
+
+    fn push_call(&mut self, tasklet: Option<i64>, seconds: f64, observer: Observer, args: Vec<Value>) {
         let due = self.now + seconds_to_ticks(seconds);
-        self.calls.push(ScheduledCall { due, seq: self.next_call, observer, args });
+        self.calls.push(ScheduledCall { due, seq: self.next_call, observer, args, tasklet });
         self.next_call += 1;
+    }
+
+    /// A tasklet that can be killed (`uthread2.StartTasklet`, whose result `.kill()` is called on): its number. The calls it makes are
+    /// `schedule_tasklet_call`s.
+    pub fn new_tasklet(&mut self) -> i64 {
+        let id = self.next_tasklet;
+        self.next_tasklet += 1;
+        id
+    }
+
+    /// The next step of a tasklet: a call after `seconds`, that goes with the tasklet.
+    pub fn schedule_tasklet_call(
+        &mut self,
+        tasklet: i64,
+        seconds: f64,
+        observer: Observer,
+        args: Vec<Value>,
+    ) {
+        self.push_call(Some(tasklet), seconds, observer, args);
+    }
+
+    /// `tasklet.kill()`: what it had still to do is not done.
+    pub fn kill_tasklet(&mut self, tasklet: i64) {
+        self.calls.retain(|call| call.tasklet != Some(tasklet));
     }
 
     /// The calls that are due at `now`, in the order they were due (then the order they were asked for), are queued for delivery.
@@ -397,6 +429,8 @@ pub struct TreeCore {
     reset_requested: bool,
     reset_blocked: bool,
     fault: Option<BehaviorError>,
+    /// Tasks that ended from one of their own handlers: their `OnExit` runs when the handler is done.
+    deferred_exits: Vec<TaskId>,
     /// The messages the tree sent (kept when `record_messages` is set).
     pub messages: Vec<TreeMessage>,
     pub record_messages: bool,
@@ -420,6 +454,7 @@ impl BehaviorTree {
                 reset_requested: false,
                 reset_blocked: false,
                 fault: None,
+                deferred_exits: Vec::new(),
                 messages: Vec::new(),
                 record_messages: false,
             },
@@ -606,7 +641,22 @@ impl Cx<'_> {
             f(node.as_mut(), &mut t)
         };
         self.core.slots[id].node = Some(node);
+        // a task that ended from one of its own handlers has its `OnExit` now
+        if let Some(at) = self.core.deferred_exits.iter().position(|d| *d == id) {
+            self.core.deferred_exits.remove(at);
+            self.run_on_exit(id);
+        }
         Some(result)
+    }
+
+    /// `task.OnExit()`.
+    fn run_on_exit(&mut self, id: TaskId) {
+        let Some(mut node) = self.core.slots[id].node.take() else { return };
+        {
+            let mut t = TaskCtx { cx: self, id };
+            node.on_exit(&mut t);
+        }
+        self.core.slots[id].node = Some(node);
     }
 
     /// `Task.CleanUp` of a task.
@@ -649,7 +699,12 @@ impl Cx<'_> {
         if self.faulted() {
             return;
         }
-        self.with_node(id, |node, t| node.on_exit(t));
+        if self.core.slots[id].node.is_none() {
+            // the task is in one of its handlers: its `OnExit` follows the handler
+            self.core.deferred_exits.push(id);
+            return;
+        }
+        self.run_on_exit(id);
     }
 
     /// `Composite.OnSubTaskCompleted`.
@@ -1225,6 +1280,54 @@ impl TaskCtx<'_, '_> {
         self.cx.shared.schedule_call(seconds, observer, args);
     }
 
+    /// `uthread2.StartTasklet(...)` of something that is to be killed: the number of a new tasklet, whose steps are `schedule_tasklet_call`s.
+    pub fn new_tasklet(&mut self) -> i64 {
+        self.cx.shared.new_tasklet()
+    }
+
+    /// The next step of a tasklet: `on_call(handler, args)` of this task after `seconds` of simulation time, unless the tasklet is killed.
+    pub fn schedule_tasklet_call(&mut self, tasklet: i64, seconds: f64, handler: u16, args: Vec<Value>) {
+        let observer = self.observer(handler);
+        self.cx.shared.schedule_tasklet_call(tasklet, seconds, observer, args);
+    }
+
+    /// `tasklet.kill()`.
+    pub fn kill_tasklet(&mut self, tasklet: i64) {
+        self.cx.shared.kill_tasklet(tasklet);
+    }
+
+    /// This task's number in its tree, for the calls that name a task (`StartTaskNextTick(self)`).
+    pub fn task_id(&self) -> TaskId {
+        self.id
+    }
+
+    /// `self.behaviorTree.StartTaskNextTick(self)`.
+    pub fn start_self_next_tick(&mut self) {
+        let id = self.id;
+        self.cx.start_task_next_tick(id);
+    }
+
+    /// `GetChannelFromAddress(address)`: the channel of the blackboard the address means for this task.
+    pub fn channel_from_address(&mut self, address: &Address) -> Option<ChannelRef> {
+        let scope = self.cx.scope_of(address)?;
+        Some(ChannelRef { scope, name: address.name.clone() })
+    }
+
+    /// `blackboardManager.HasBlackboard(scope)`.
+    pub fn has_blackboard(&self, scope: Scope) -> bool {
+        self.cx.shared.blackboards.has_blackboard(&scope)
+    }
+
+    /// `blackboardManager.GetBlackboard(scope).SendMessage(channel, value)`.
+    pub fn send_to_blackboard(&mut self, scope: Scope, channel: &str, value: Value) {
+        self.cx.send_to_channel(scope, channel, value);
+    }
+
+    /// `timerManager.ClearTimer(timer_id)`.
+    pub fn clear_timer(&mut self, timer_id: i64) {
+        self.cx.shared.clear_timer(timer_id);
+    }
+
     pub fn subscribe_to_blackboard(&mut self, address: &Address, handler: u16) {
         let observer = self.observer(handler);
         let Some(scope) = self.cx.scope_of(address) else { return };
@@ -1498,6 +1601,14 @@ pub(crate) mod tests {
                 world: &mut self.world,
             };
             cx.send_event(item_id, key, args);
+        }
+
+        /// The values of the messages a channel of the blackboard of my item holds, oldest first.
+        pub fn history(&mut self, channel: &str) -> Vec<Value> {
+            match self.shared.blackboards.message_channel(crate::blackboards::item_scope(1), channel) {
+                Ok(channel) => channel.messages().into_iter().map(|m| m.value).collect(),
+                Err(_) => Vec::new(),
+            }
         }
 
         /// How many messages a channel of the blackboard of my item holds.

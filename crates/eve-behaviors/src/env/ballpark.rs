@@ -3,6 +3,7 @@
 //! case. What the client's calls raise is `WorldError`.
 
 use super::{WorldError, WorldResult};
+use crate::value::Value;
 
 /// A ball of the ballpark: what the tasks read of it (`ball.x`, `ball.mode`, `ball.newBubbleId`, ...).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -40,6 +41,29 @@ pub struct ProximitySensor {
     pub bubble_id: i64,
     /// `GetBallIdsInRange()`.
     pub ball_ids_in_range: Vec<i64>,
+}
+
+/// The settings of a fleet warp formation (`fleet_formation_settings`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FormationSettings {
+    pub formation_type: Value,
+    pub formation_spacing: Value,
+    pub formation_size: Value,
+}
+
+/// What a formation picker answers.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Formation {
+    /// `GetDestinationVectors()`: where each ship goes.
+    pub destination_coordinates: Vec<(i64, [f64; 3])>,
+    /// `GetJitterRadius()`.
+    pub jitter_radius: f64,
+    /// `GetMinimumRange()`.
+    pub minimum_range: f64,
+    /// `GetMinWarpSpeed()`.
+    pub min_warp_speed: f64,
+    /// `GetFleetCandidates()`: the ships that warp and the characters that fly them.
+    pub fleet_candidates: Vec<(i64, Option<i64>)>,
 }
 
 /// The ballpark's answers and what it is asked to do. The default of every method is the answer of a ballpark with nothing in it.
@@ -265,5 +289,54 @@ pub trait Ballpark {
         _duration_milliseconds: i64,
         _repeat: i64,
     ) {
+    }
+    /// `ballpark.CancelIfDoingStuff(shipId)`: true when the ship is still busy.
+    fn cancel_if_doing_stuff(&mut self, _ship_id: i64) -> bool {
+        false
+    }
+
+    /// `ballpark.WarpTo(shipId, destination, minRange=, cheatWarp=False, warpSpeed=, jitterRadius=)`.
+    fn warp_to(
+        &mut self,
+        _ship_id: i64,
+        _destination: [f64; 3],
+        _min_range: f64,
+        _warp_speed: f64,
+        _jitter_radius: f64,
+    ) {
+    }
+
+    /// `ball.NPCWarpTo(destination, jitterRadius=, warpAtRange=, warpSpeed=)`: nothing for a ball that has no such method, and what the method
+    /// raises otherwise.
+    fn npc_warp_to(
+        &mut self,
+        _ball_id: i64,
+        _destination: [f64; 3],
+        _jitter_radius: f64,
+        _warp_at_range: f64,
+        _warp_speed: f64,
+    ) -> Option<WorldResult<()>> {
+        None
+    }
+
+    /// `ballpark.GotoPoint(ballId, x, y, z)`.
+    fn goto_point(&mut self, _ball_id: i64, _position: [f64; 3]) -> WorldResult<()> {
+        Ok(())
+    }
+
+    /// `ballpark.SetSpeedFraction(ballId, fraction)`.
+    fn set_speed_fraction(&mut self, _ball_id: i64, _fraction: f64) -> WorldResult<()> {
+        Ok(())
+    }
+
+    /// `FormationPicker(ballpark, first ship, None, destination, candidates, 0.0, None, settings, applySkills=False)` and what it answers: where each
+    /// ship goes and how the warp is done.
+    fn pick_formation(
+        &mut self,
+        _candidates: &[(i64, Option<i64>)],
+        _destination_coordinates: &Value,
+        _settings: &FormationSettings,
+    ) -> Formation {
+        Formation::default()
     }
 }

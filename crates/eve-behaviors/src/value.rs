@@ -240,6 +240,39 @@ impl Value {
     }
 
     /// `self < other` in Python 2.
+    /// `self + other` for numbers (a `bool` is a number to Python); anything else is a `TypeError` here (`None`).
+    pub fn py_add(&self, other: &Value) -> Option<Value> {
+        self.numeric_op(other, |a, b| a + b, |a, b| a + b)
+    }
+
+    /// `self - other` for numbers.
+    pub fn py_sub(&self, other: &Value) -> Option<Value> {
+        self.numeric_op(other, |a, b| a - b, |a, b| a - b)
+    }
+
+    fn numeric_op(
+        &self,
+        other: &Value,
+        int_op: fn(i64, i64) -> i64,
+        float_op: fn(f64, f64) -> f64,
+    ) -> Option<Value> {
+        let as_int = |v: &Value| match v {
+            Value::Int(i) => Some(*i),
+            Value::Bool(b) => Some(i64::from(*b)),
+            _ => None,
+        };
+        match (as_int(self), as_int(other)) {
+            (Some(a), Some(b)) => Some(Value::Int(int_op(a, b))),
+            _ => {
+                let float = |v: &Value| match v {
+                    Value::Float(f) => Some(*f),
+                    other => as_int(other).map(|i| i as f64),
+                };
+                Some(Value::Float(float_op(float(self)?, float(other)?)))
+            }
+        }
+    }
+
     pub fn py_lt(&self, other: &Value) -> bool {
         self.py_cmp(other) == Ordering::Less
     }

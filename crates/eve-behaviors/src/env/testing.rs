@@ -7,9 +7,9 @@ use crate::value::Value;
 
 use super::{
     Ball, Ballpark, CargoCapacity, DamageTotals, Deployed, Deployment, Dogma, DungeonObject, EffectInfo,
-    Entities, EntitySpawnData, FakeLocation, Inventory, InventoryItem, Logging, ProximitySensor, Random,
-    ReactiveSpawnConfig, ReinforcementWave, ResponseThresholds, SlimItem, SpawnPick, Spawning, Universe,
-    WorldError, WorldResult,
+    Entities, EntitySpawnData, FakeLocation, Formation, FormationSettings, Inventory, InventoryItem, Logging,
+    ProximitySensor, Random, ReactiveSpawnConfig, ReinforcementWave, ResponseThresholds, SlimItem, SpawnPick,
+    Spawning, Universe, WorldError, WorldResult,
 };
 
 /// What `GetClosestDisruptorAndIntersectionInWarpPath` answers.
@@ -125,6 +125,13 @@ pub struct TestWorld {
     pub cloud_factors: HashMap<(i64, u64), f64>,
     pub fitted_keys: HashMap<i64, Vec<Value>>,
     pub same_bubble_ships: HashMap<i64, Vec<i64>>,
+    pub busy_ships: HashSet<i64>,
+    pub npc_warpers: HashSet<i64>,
+    pub npc_warp_error: Option<WorldError>,
+    pub failing_balls: HashSet<i64>,
+    pub formation: Option<Formation>,
+    pub group_removal_handlers: Vec<(i64, crate::tree::ChannelRef, Value)>,
+    pub pre_inv64_characters: HashSet<i64>,
 }
 
 impl TestWorld {
@@ -164,6 +171,63 @@ impl Random for TestWorld {
 }
 
 impl Ballpark for TestWorld {
+    fn cancel_if_doing_stuff(&mut self, ship_id: i64) -> bool {
+        self.calls.push(format!("cancel_if_doing_stuff({ship_id})"));
+        self.busy_ships.contains(&ship_id)
+    }
+
+    fn warp_to(
+        &mut self,
+        ship_id: i64,
+        destination: [f64; 3],
+        min_range: f64,
+        warp_speed: f64,
+        jitter_radius: f64,
+    ) {
+        self.calls
+            .push(format!("warp_to({ship_id}, {destination:?}, {min_range}, {warp_speed}, {jitter_radius})"));
+    }
+
+    fn npc_warp_to(
+        &mut self,
+        ball_id: i64,
+        destination: [f64; 3],
+        jitter_radius: f64,
+        warp_at_range: f64,
+        warp_speed: f64,
+    ) -> Option<WorldResult<()>> {
+        if !self.npc_warpers.contains(&ball_id) {
+            return None;
+        }
+        self.calls.push(format!(
+            "npc_warp_to({ball_id}, {destination:?}, {jitter_radius}, {warp_at_range}, {warp_speed})"
+        ));
+        Some(self.npc_warp_error.clone().map_or(Ok(()), Err))
+    }
+
+    fn goto_point(&mut self, ball_id: i64, position: [f64; 3]) -> WorldResult<()> {
+        self.calls.push(format!("goto_point({ball_id}, {position:?})"));
+        if self.failing_balls.contains(&ball_id) {
+            return Err(WorldError::Runtime("no".into()));
+        }
+        Ok(())
+    }
+
+    fn set_speed_fraction(&mut self, ball_id: i64, fraction: f64) -> WorldResult<()> {
+        self.calls.push(format!("set_speed_fraction({ball_id}, {fraction})"));
+        Ok(())
+    }
+
+    fn pick_formation(
+        &mut self,
+        candidates: &[(i64, Option<i64>)],
+        destination_coordinates: &Value,
+        settings: &FormationSettings,
+    ) -> Formation {
+        self.calls.push(format!("pick_formation({candidates:?}, {destination_coordinates:?}, {settings:?})"));
+        self.formation.clone().unwrap_or_default()
+    }
+
     fn ships_in_same_bubble(&self, item_id: i64) -> Vec<i64> {
         self.same_bubble_ships.get(&item_id).cloned().unwrap_or_default()
     }
@@ -635,6 +699,17 @@ impl Logging for TestWorld {
 }
 
 impl Entities for TestWorld {
+    fn add_group_removal_handler(
+        &mut self,
+        group_id: Option<i64>,
+        channel: crate::tree::ChannelRef,
+        value: Value,
+    ) {
+        if let Some(group_id) = group_id {
+            self.group_removal_handlers.push((group_id, channel, value));
+        }
+    }
+
     fn dungeon_spawn_entry_pos(&self, spawn_id: i64) -> Option<[f64; 3]> {
         self.dungeon_entries.get(&spawn_id).copied()
     }
@@ -1019,6 +1094,10 @@ impl Inventory for TestWorld {
 }
 
 impl Universe for TestWorld {
+    fn is_pre_inv64_player_character(&self, owner_id: i64) -> bool {
+        self.pre_inv64_characters.contains(&owner_id)
+    }
+
     fn singlecast_by_solar_system_id(
         &mut self,
         solar_system_id: Option<i64>,

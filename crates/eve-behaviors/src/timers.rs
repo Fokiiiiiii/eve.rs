@@ -55,6 +55,11 @@ impl TimerManager {
         due
     }
 
+    /// When the first timer to run out does.
+    pub fn next_due(&self) -> Option<i64> {
+        self.active.values().map(|t| t.due).min()
+    }
+
     pub fn active_count(&self) -> usize {
         self.active.len()
     }

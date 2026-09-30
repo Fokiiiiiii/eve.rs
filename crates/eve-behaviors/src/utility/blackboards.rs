@@ -88,6 +88,17 @@ pub fn add_to_set_on_channel(
     SetAdd::Added
 }
 
+/// A task that changes the value it got from a channel, and sends it again: what it changed is what the channel holds already (the client's object
+/// is one). `value` is what the object is after the change.
+pub fn update_stored_value(t: &mut TaskCtx<'_, '_>, address: &Address, value: &Value) {
+    let in_place = value.clone();
+    t.with_channel(address, |channel| {
+        if let Some(last) = channel.last_value_mut() {
+            *last = in_place;
+        }
+    });
+}
+
 /// `get_response_thresholds(task)`: the server works them out for the entity from its blackboards (`npcs.server.components`), `None` when it has none.
 pub fn get_response_thresholds(t: &mut TaskCtx<'_, '_>) -> Option<ResponseThresholds> {
     let item = t.my_item_id()?;

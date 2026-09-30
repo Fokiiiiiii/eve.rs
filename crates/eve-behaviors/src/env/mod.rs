@@ -14,7 +14,7 @@ pub mod spawning;
 pub mod testing;
 pub mod universe;
 
-pub use ballpark::{Ball, Ballpark, ProximitySensor, SlimItem};
+pub use ballpark::{Ball, Ballpark, Formation, FormationSettings, ProximitySensor, SlimItem};
 pub use dogma::{Dogma, EffectInfo};
 pub use entities::{DungeonObject, Entities, INVALID_GROUP_ID, ReinforcementWave, ResponseThresholds};
 pub use inventory::{CargoCapacity, CustomInfo, FakeLocation, Inventory, InventoryItem};

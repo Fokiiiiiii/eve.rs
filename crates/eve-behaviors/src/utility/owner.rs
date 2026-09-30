@@ -15,6 +15,18 @@ pub fn get_owner_id(t: &mut TaskCtx<'_, '_>) -> Option<i64> {
     slim.and_then(|s| s.owner_id)
 }
 
+/// `idCheckers.IsEvePlayerCharacter`: the ids of the characters of the newer generations are, and for the ids in between the server knows.
+pub fn is_eve_player_character(t: &mut TaskCtx<'_, '_>, owner_id: Option<i64>) -> bool {
+    let Some(owner_id) = owner_id else { return false };
+    if (2_100_000_000..=2_129_999_999).contains(&owner_id) || (90_000_000..=97_999_999).contains(&owner_id) {
+        return true;
+    }
+    if (100_000_000..=2_099_999_999).contains(&owner_id) {
+        return t.world().is_pre_inv64_player_character(owner_id);
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

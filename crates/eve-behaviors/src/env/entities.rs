@@ -222,4 +222,12 @@ pub trait Entities {
 
     /// `reinforcementManager.RemoveActiveReinforcedEntityIds(groupId)`.
     fn remove_active_reinforced_entity_ids(&mut self, _group_id: i64) {}
+    /// `groupManager.AddGroupRemovalHandler(groupId, channel.SendMessage, (value,))`: when the group is removed the channel is told `value`.
+    fn add_group_removal_handler(
+        &mut self,
+        _group_id: Option<i64>,
+        _channel: crate::tree::ChannelRef,
+        _value: crate::value::Value,
+    ) {
+    }
 }

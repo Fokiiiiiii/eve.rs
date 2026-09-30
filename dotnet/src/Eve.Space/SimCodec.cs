@@ -369,6 +369,7 @@ public static class SimCodec
                 {
                     var system = r.I32();
                     var wreckId = r.I64();
+                    var group = r.I32();
                     var kind = ReadWreckKind(ref r) ?? throw new SimLinkException(SimLinkError.BadValue, "bad wreck");
                     var position = ReadVector(ref r);
                     var direction = ReadVector(ref r);
@@ -381,7 +382,7 @@ public static class SimCodec
                         1 => true,
                         _ => throw new SimLinkException(SimLinkError.BadValue, "bad is_empty"),
                     };
-                    message = new SimPlaceWreck(system, wreckId, kind, position, direction, radius, launcher, credit, empty);
+                    message = new SimPlaceWreck(system, wreckId, group, kind, position, direction, radius, launcher, credit, empty);
                     break;
                 }
             case Kind.Spawn:
@@ -775,6 +776,7 @@ public static class SimCodec
                 w.U8(Kind.PlaceWreck);
                 w.I32(m.SolarSystemId);
                 w.I64(m.WreckId);
+                w.I32(m.GroupId);
                 WriteWreckKind(w, m.Kind);
                 WriteVector(w, m.Position);
                 WriteVector(w, m.Direction);

@@ -382,6 +382,7 @@ impl Sim {
                     let placement = *placement;
                     let wreck = Wreck {
                         id: placement.wreck_id,
+                        group_id: placement.group_id,
                         kind: placement.kind,
                         position: Vec3::new(
                             placement.position[0],
@@ -830,6 +831,7 @@ mod tests {
         Message::PlaceWreck(Box::new(crate::link::WreckPlacement {
             solar_system_id: system,
             wreck_id: id,
+            group_id: crate::wreck::WRECK_GROUP,
             kind: crate::wreck::WreckKind {
                 type_id: 26_506,
                 name: "Caldari Frigate Wreck".into(),

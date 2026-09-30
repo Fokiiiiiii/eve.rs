@@ -150,7 +150,7 @@ def build(m):
     if k == "Respawn":
         return frame(k, u64(m["sessionId"]) + ship(m["ship"]) + struct.pack("<6d", *m["position"], *m["direction"]))
     if k == "PlaceWreck":
-        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["wreckId"]) + wreck_kind(m["wreck"])
+        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["wreckId"]) + struct.pack("<i", m["groupId"]) + wreck_kind(m["wreck"])
                      + struct.pack("<7d", *m["position"], *m["direction"], m["radius"]) + i64(m["launcherId"])
                      + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"])
                      + bytes([1 if m["isEmpty"] else 0]))
@@ -295,12 +295,12 @@ valid = [
      "ship": dict(IBIS, shipId="9988400002416", typeId=670, groupId=29, name="Capsule", modules=[]),
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "direction": [0.6159, 0.01306, 0.78769]},
     {"name": "wreck the host made, to put in space", "kind": "PlaceWreck", "solarSystemId": 30100032,
-     "wreckId": "9988400002417", "wreck": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117},
+     "wreckId": "9988400002417", "groupId": 186, "wreck": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117},
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "direction": [0.6159, 0.01306, 0.78769],
      "radius": 47.0, "launcherId": "9988400002411", "characterId": "140000394", "corporationId": "1000006",
      "allianceId": "0", "warFactionId": "500001", "isEmpty": False},
     {"name": "wreck of no kind of the reference's graphic", "kind": "PlaceWreck", "solarSystemId": 30000142,
-     "wreckId": "9988400002420", "wreck": {"typeId": 26507, "name": "Amarr Frigate Wreck", "graphicId": 0},
+     "wreckId": "9988400002420", "groupId": 14, "wreck": {"typeId": 26507, "name": "Amarr Frigate Wreck", "graphicId": 0},
      "position": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0], "radius": 30.0, "launcherId": "9988400002400",
      "characterId": "0", "corporationId": "0", "allianceId": "0", "warFactionId": "0", "isEmpty": True},
     {"name": "destroy for nobody", "kind": "Destroy", "shipId": "4200000000000001", "characterId": "0",

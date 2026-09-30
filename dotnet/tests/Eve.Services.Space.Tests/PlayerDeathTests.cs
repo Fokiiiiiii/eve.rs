@@ -1,4 +1,5 @@
 using Eve.Inventory;
+using Eve.Macho;
 using Eve.Marshal;
 using Eve.Space;
 
@@ -226,22 +227,111 @@ public class PlayerDeathTests
 
         var done = (await asked)!;
         Assert.Equal(c.ShipId, done.ShipId);
-        Assert.Equal(("Capsule", session.GetInt("shipid")), (done.CapsuleName, done.CapsuleId));
-        Assert.Equal(("Caldari Frigate Wreck", rig.Sim.Heard.OfType<SimPlaceWreck>().Single().WreckId), (done.WreckName, done.WreckId));
+        Assert.Equal(new SelfDestructPart("Capsule", "Capsule", session.GetInt("shipid")), done.Now);
+        Assert.Equal(new SelfDestructPart("Wreck", "Caldari Frigate Wreck", rig.Sim.Heard.OfType<SimPlaceWreck>().Single().WreckId), done.Left);
     }
 
     [PgFact]
-    public async Task A_pilot_in_a_capsule_or_not_in_space_cannot_self_destruct()
+    public async Task A_pilot_who_is_not_in_space_cannot_self_destruct()
     {
-        var (rig, c, session) = await InSpaceAsync();
+        var rig = await Rig.CreateAsync();
         await using var _ = rig;
-        rig.Sim.Say(Destroyed(session, c.ShipId, FrigateWreck));
-        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimPlaceWreck>().Any());
-        rig.Sim.Heard.Clear();
-        Assert.Null(await rig.Space.SelfDestructAsync(session, CancellationToken.None));
-        Assert.Empty(rig.Sim.Heard.OfType<SimDestroy>());
-
         var docked = await rig.SessionAsync(await rig.NewCharacterAsync("Docked One", 2), 2);
         Assert.Null(await rig.Space.SelfDestructAsync(docked, CancellationToken.None));
+        Assert.Empty(rig.Sim.Heard.OfType<SimDestroy>());
+    }
+
+    // ── a capsule ────────────────────────────────────────────────────────────
+
+    private static async Task<(Rig Rig, Eve.Characters.Created Character, ClientSession Session, long CapsuleId)> InCapsuleAsync()
+    {
+        var (rig, c, session) = await InSpaceAsync();
+        rig.Sim.Say(Destroyed(session, c.ShipId, FrigateWreck));
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimPlaceWreck>().Any());
+        var capsule = session.GetInt("shipid")!.Value;
+        rig.Sim.Heard.Clear();
+        Sequence.Of(session);
+        return (rig, c, session, capsule);
+    }
+
+    [PgFact]
+    public async Task A_pilot_whose_capsule_is_destroyed_wakes_at_its_home_station_in_a_rookie_ship_told_as_the_reference_tells_it_and_the_corpse_is_put_in_space()
+    {
+        var (rig, c, session, capsule) = await InCapsuleAsync();
+        await using var _ = rig;
+        var system = session.GetInt("solarsystemid")!.Value;
+        var character = (await rig.Characters.GetAsync(c.CharacterId))!;
+
+        rig.Sim.Say(Destroyed(session, capsule, null));
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimPlaceWreck>().Any());
+
+        Assert.Equal(["$sessionchange", "OnItemChange", "OnItemChange", "OnCfgDataChanged"], Sequence.Of(session, clear: false));
+        var woke = (await rig.Characters.GetAsync(c.CharacterId))!;
+        var ship = (await rig.Items.GetAsync(woke.ShipId!.Value))!;
+        Assert.Equal((601, Rig.Station, ItemFlags.Hangar), (ship.TypeId, ship.LocationId, ship.Flag));
+        Assert.Equal((Rig.Station, ship.Id), (session.GetInt("stationid"), session.GetInt("shipid")));
+        Assert.Equal(Rig.Station, session.GetInt("locationid"));
+        Assert.Null(session.GetInt("solarsystemid"));
+        Assert.False(rig.Space.IsInSpace(session));
+        Assert.Null(await rig.Items.GetAsync(capsule));
+
+        var changes = Sequence.LastChange(session);
+        Assert.Contains(changes, change => change.Name == "shipid" && Equals(change.New, new PyLong(ship.Id)) && Equals(change.Old, new PyLong(capsule)));
+
+        var events = Events.Of(session);
+        var corpseRow = (PyPackedRow)events[0].Args[0];
+        Assert.Equal((25L, (long)c.CharacterId, (long)system, 0L, 14L, 2L), (Events.Number(corpseRow.Values[1]), Events.Number(corpseRow.Values[2]), Events.Number(corpseRow.Values[3]), Events.Number(corpseRow.Values[4]), Events.Number(corpseRow.Values[6]), Events.Number(corpseRow.Values[7])));
+        Assert.Equal([(3L, 0L)], ((PyDict)events[0].Args[1]).Entries.Select(e => (Events.Number(e.Key), Events.Number(e.Value))));
+        var capsuleRow = (PyPackedRow)events[1].Args[0];
+        Assert.Equal((capsule, 6L), (Events.Number(capsuleRow.Values[0]), Events.Number(capsuleRow.Values[3])));
+        Assert.Equal([(3L, (long)system)], ((PyDict)events[1].Args[1]).Entries.Select(e => (Events.Number(e.Key), Events.Number(e.Value))));
+        Assert.Equal(("charid", "evelocations"), (events[2].IdType, JsSemantics.StringValue(events[2].Args[0])));
+        var location = ((PyList)events[2].Args[1]).Items;
+        Assert.Equal((capsule, "Capsule", (long)system), (Events.Number(location[0]), JsSemantics.StringValue(location[1]), Events.Number(location[2])));
+
+        // the simulation is told to let go of the session and to put the corpse where the capsule was
+        Assert.Contains(rig.Sim.Heard.OfType<SimLeave>(), leave => leave.SessionId == (ulong)session.SessionId);
+        var corpse = rig.Sim.Heard.OfType<SimPlaceWreck>().Single();
+        Assert.Equal((14, 25, character.Name, system), (corpse.GroupId, corpse.Kind.TypeId, corpse.Kind.Name, corpse.SolarSystemId));
+        Assert.Equal(Place, corpse.Position);
+        Assert.Equal(Facing, corpse.Direction);
+        Assert.Equal(new SimCredit(c.CharacterId, 0, 0, 0), corpse.Credit);
+        Assert.Equal(1.0, corpse.Radius);
+        Assert.True(corpse.Kind.GraphicId > 0, "the corpse has the graphic of its type");
+        var item = (await rig.Items.GetAsync(corpse.WreckId))!;
+        Assert.Equal((25, character.Name), (item.TypeId, item.CustomName));
+    }
+
+    [PgFact]
+    public async Task Self_destruction_in_a_capsule_answers_with_the_corpse_and_the_new_ship()
+    {
+        var (rig, c, session, capsule) = await InCapsuleAsync();
+        await using var _ = rig;
+
+        var asked = rig.Space.SelfDestructAsync(session, CancellationToken.None);
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimDestroy>().Any());
+        Assert.Equal(capsule, rig.Sim.Heard.OfType<SimDestroy>().Single().ShipId);
+        rig.Sim.Say(Destroyed(session, capsule, null));
+
+        var done = (await asked)!;
+        var woke = (await rig.Characters.GetAsync(c.CharacterId))!;
+        var name = woke.Name;
+        Assert.Equal(capsule, done.ShipId);
+        Assert.Equal(new SelfDestructPart("Corpse", name, rig.Sim.Heard.OfType<SimPlaceWreck>().Single().WreckId), done.Left);
+        Assert.Equal(new SelfDestructPart("Ship", "Ibis", woke.ShipId), done.Now);
+    }
+
+    [PgFact]
+    public async Task A_capsule_the_clone_of_which_has_no_rookie_ship_leaves_the_pilot_out_of_space_with_what_happened_said_in_the_log()
+    {
+        var (rig, c, session, capsule) = await InCapsuleAsync();
+        await using var _ = rig;
+        rig.Space.RookieShipOfRace = _ => null;
+
+        rig.Sim.Say(Destroyed(session, capsule, null));
+        await Rig.UntilAsync(() => !rig.Space.IsInSpace(session));
+        Assert.Contains(rig.Log, line => line.Contains("no rookie ship"));
+        Assert.Contains(rig.Sim.Heard.OfType<SimLeave>(), leave => leave.SessionId == (ulong)session.SessionId);
+        Assert.Empty(rig.Sim.Heard.OfType<SimPlaceWreck>());
     }
 }

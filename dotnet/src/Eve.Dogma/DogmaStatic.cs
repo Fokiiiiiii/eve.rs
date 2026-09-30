@@ -88,7 +88,8 @@ public sealed class DogmaStatic
                 }
             }
             var name = row.Doc.TryGetProperty("name", out var names) ? SdeReader.English(names) : "";
-            _types[(int)row.Key] = new TypeDef((int)row.Key, group, _categoryOfGroup.GetValueOrDefault(group), attributes, effects, name);
+            var graphic = row.Doc.TryGetProperty("graphicID", out var graphicId) && graphicId.ValueKind == JsonValueKind.Number ? graphicId.GetInt32() : 0;
+            _types[(int)row.Key] = new TypeDef((int)row.Key, group, _categoryOfGroup.GetValueOrDefault(group), attributes, effects, name, graphic);
         }
     }
 

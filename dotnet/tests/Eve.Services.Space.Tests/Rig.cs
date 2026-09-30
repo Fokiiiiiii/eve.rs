@@ -44,7 +44,7 @@ internal sealed class Rig : IAsyncDisposable
 
     private readonly string[] _schemas;
 
-    private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, StationCatalog stations, SolarSystemCatalog systems, PgModuleStateStore modules, TimeSpan protection, TimeSpan jumpCloak)
+    private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, CreationCatalog catalog, StationCatalog stations, SolarSystemCatalog systems, PgModuleStateStore modules, TimeSpan protection, TimeSpan jumpCloak)
     {
         Source = source;
         _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}"];
@@ -56,7 +56,7 @@ internal sealed class Rig : IAsyncDisposable
         Modules = modules;
         Stations = stations;
         Ships = new CharacterShips(source, statics, Characters, Items, Skills, modules);
-        Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => ClockMs, Log.Add, protection, jumpCloak) { Registry = Registry };
+        Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => ClockMs, Log.Add, protection, jumpCloak) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId };
         Ship = new ShipService(Space, () => ClockMs);
         Beyonce = new BeyonceService(Space, () => ClockMs);
         Registry.Register(Ship);
@@ -111,9 +111,10 @@ internal sealed class Rig : IAsyncDisposable
         await PgSkillStore.MigrateAsync(source, $"ps_{suffix}");
         await PgWalletStore.MigrateAsync(source, $"pw_{suffix}");
         await PgModuleStateStore.MigrateAsync(source, $"pf_{suffix}");
+        var catalog = await CreationCatalog.LoadAsync(sde, Station);
         var creation = new CharacterCreation(
-            source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), await CreationCatalog.LoadAsync(sde, Station), modules);
-        return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation, await StationCatalog.LoadAsync(sde), await SolarSystemCatalog.LoadAsync(sde), modules, protection ?? Timeout.InfiniteTimeSpan, jumpCloak ?? Timeout.InfiniteTimeSpan);
+            source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), catalog, modules);
+        return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation, catalog, await StationCatalog.LoadAsync(sde), await SolarSystemCatalog.LoadAsync(sde), modules, protection ?? Timeout.InfiniteTimeSpan, jumpCloak ?? Timeout.InfiniteTimeSpan);
     }
 
     /// <summary>A new character (Caldari), in its rookie ship in the station.</summary>

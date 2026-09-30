@@ -16,6 +16,9 @@ use crate::wreck::{LootRights, WRECK_LIFETIME, Wreck};
 /// the host's items are far below it).
 pub const TRANSIENT_ID_BASE: i64 = 4_300_000_000_000_000;
 
+/// The group of the capsules (`Capsule`): the ships a pilot is left in when its ship is destroyed.
+pub const CAPSULE_GROUP: i32 = 29;
+
 /// Who may take what a destroyed ship leaves: the pilot and the corporation, the alliance and the faction they are in.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Credit {
@@ -48,7 +51,10 @@ impl Scene {
         }
         self.settle_pilot(session, now);
         let mut told_of_it = self.observers_of(session);
-        if self.pilots[&session].bound && !is_npc_session(session) {
+        // a pilot is told of its own ship's explosion, but not of its capsule's: it is already on its way to the station of its clone (the reference's
+        // `destroySessionCapsuleToHomeStation` takes the session out of the ballpark before the capsule goes)
+        let pilot = &self.pilots[&session];
+        if pilot.bound && !is_npc_session(session) && pilot.ship.spec.group_id != CAPSULE_GROUP {
             told_of_it.insert(0, session);
         }
         let Some(pilot) = self.pilots.remove(&session) else { return Vec::new() };
@@ -88,6 +94,7 @@ impl Scene {
             self.wreck_sequence += 1;
             Wreck {
                 id: TRANSIENT_ID_BASE + self.wreck_sequence as i64,
+                group_id: crate::wreck::WRECK_GROUP,
                 kind,
                 position: ship.position,
                 direction: ship.direction,
@@ -337,6 +344,24 @@ mod tests {
     fn action_names(told: &[Out], session: SessionId) -> Vec<String> {
         let told: Vec<Out> = told.iter().filter(|out| out.session() == session).cloned().collect();
         told_actions(&told).into_iter().map(|(_, name)| name).collect()
+    }
+
+    #[test]
+    fn the_pilot_of_a_capsule_is_not_told_of_its_explosion_and_the_pilot_of_a_ship_is() {
+        let mut scene = scene_with_a_player();
+        let ship = scene.destroy(PLAYER, None, LATER);
+        assert_eq!(told_actions(&for_player(ship)).len(), 2, "the explosion and the ball that goes");
+
+        let mut scene = scene_with_a_player();
+        let place = scene.ship(PLAYER, LATER).unwrap().position;
+        scene.destroy(PLAYER, None, LATER);
+        scene.respawn(PLAYER, capsule_spec(), place, Vec3::new(1.0, 0.0, 0.0), LATER + SECOND).unwrap();
+        let capsule = scene.destroy(PLAYER, None, LATER + 2 * SECOND);
+        assert_eq!(told_actions(&for_player(capsule.clone())), Vec::new());
+        assert!(
+            capsule.iter().any(|out| matches!(out, Out::Destroyed { ship_id: 9_988_400_002_416, .. })),
+            "the host is told all the same"
+        );
     }
 
     #[test]

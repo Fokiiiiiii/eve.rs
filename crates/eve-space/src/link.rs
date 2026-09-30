@@ -74,6 +74,8 @@ pub struct Spawn {
 pub struct WreckPlacement {
     pub solar_system_id: i32,
     pub wreck_id: i64,
+    /// `WRECK_GROUP` for a ship's wreck, `CORPSE_GROUP` for the corpse of a pilot whose capsule was destroyed.
+    pub group_id: i32,
     pub kind: WreckKind,
     pub position: [f64; 3],
     pub direction: [f64; 3],
@@ -871,6 +873,7 @@ impl Message {
             Self::PlaceWreck(placement) => {
                 out.extend_from_slice(&placement.solar_system_id.to_le_bytes());
                 out.extend_from_slice(&placement.wreck_id.to_le_bytes());
+                out.extend_from_slice(&placement.group_id.to_le_bytes());
                 put_wreck_kind(&mut out, Some(&placement.kind));
                 put_vector(&mut out, &placement.position);
                 put_vector(&mut out, &placement.direction);
@@ -1054,6 +1057,7 @@ impl Message {
             kind::PLACE_WRECK => {
                 let solar_system_id = r.i32()?;
                 let wreck_id = r.i64()?;
+                let group_id = r.i32()?;
                 let Some(kind) = read_wreck_kind(&mut r)? else { return Err(DecodeError::BadValue("wreck")) };
                 let position = read_vector(&mut r)?;
                 let direction = read_vector(&mut r)?;
@@ -1068,6 +1072,7 @@ impl Message {
                 Message::PlaceWreck(Box::new(WreckPlacement {
                     solar_system_id,
                     wreck_id,
+                    group_id,
                     kind,
                     position,
                     direction,

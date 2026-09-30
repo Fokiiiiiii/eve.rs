@@ -10,6 +10,8 @@ use crate::wire::{id, int, list, real, text, tuple};
 
 /// The group of the wrecks, and their category (`Celestial`).
 pub const WRECK_GROUP: i32 = 186;
+/// The group of what a pilot whose capsule is destroyed leaves (`Biomass`: the corpse), also of the category `Celestial`.
+pub const CORPSE_GROUP: i32 = 14;
 pub const WRECK_CATEGORY: i32 = 2;
 
 /// How long a wreck stays in space: the reference's `spaceDebrisLifetimeMs`, two hours.
@@ -37,6 +39,8 @@ pub struct LootRights {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Wreck {
     pub id: i64,
+    /// `WRECK_GROUP` for a ship's wreck, `CORPSE_GROUP` for a corpse (which has a slim item of its own, and nobody's rights).
+    pub group_id: i32,
     pub kind: WreckKind,
     pub position: Vec3,
     pub direction: Vec3,
@@ -82,11 +86,16 @@ impl Wreck {
             ("typeID", int(i64::from(self.kind.type_id))),
             ("ownerID", id(self.owner_id)),
             ("name", text(self.kind.name.clone())),
-            ("groupID", int(i64::from(WRECK_GROUP))),
+            ("groupID", int(i64::from(self.group_id))),
             ("categoryID", int(i64::from(WRECK_CATEGORY))),
         ];
         if let Some(graphic) = self.kind.graphic_id {
             entries.push(("graphicID", int(i64::from(graphic))));
+        }
+        if self.group_id == CORPSE_GROUP {
+            // a corpse is a plain space item: no rights, no corporation, only the way it lies
+            entries.push(("dunRotation", tuple(turn_of(self.direction).map(number))));
+            return entries;
         }
         entries.extend([
             ("corpID", id(self.corporation_id)),
@@ -151,6 +160,7 @@ mod tests {
         let (yaw, pitch) = ((-38.03078_f64).to_radians(), (-0.748281_f64).to_radians());
         Wreck {
             id: 9_988_400_002_415,
+            group_id: WRECK_GROUP,
             kind: WreckKind {
                 type_id: 26_506,
                 name: "Caldari Frigate Wreck".to_string(),
@@ -168,6 +178,57 @@ mod tests {
             is_empty: true,
             expires_at: 0,
         }
+    }
+
+    /// What the reference sent for the corpse of a pilot whose capsule was destroyed (`death.json`, the step "the victim destroys its capsule", the watcher's
+    /// second update): the ball in the `AddBalls2` buffer, without its header.
+    const RECORDED_CORPSE_BALL: &str = "f2b5089b15090000020000803f41af97ae02295242a0d32176db5708c2740473936c3c424209000000000088c34000ffffffffffffffffffffffffffffffff000000000000000000000000000000000000000000000000000000000000803f00000000ff";
+
+    fn recorded_corpse() -> Wreck {
+        let yaw = (-55.0_f64).to_radians();
+        Wreck {
+            id: 9_988_400_002_546,
+            group_id: CORPSE_GROUP,
+            kind: WreckKind { type_id: 25, name: "Victim 1790793928".to_string(), graphic_id: Some(20_373) },
+            position: Vec3::new(311_989_811_806.738_34, -13_069_151_940.228_333, 156_646_319_846.034_8),
+            direction: Vec3::new(yaw.sin(), 0.0, yaw.cos()),
+            radius: 1.0,
+            owner_id: 140_000_402,
+            corporation_id: 0,
+            alliance_id: 0,
+            war_faction_id: 0,
+            rights: LootRights::default(),
+            launcher_id: 0,
+            is_empty: true,
+            expires_at: 0,
+        }
+    }
+
+    #[test]
+    fn the_ball_of_a_corpse_is_the_one_the_reference_sent() {
+        let sent = encode_entity_ball(&recorded_corpse().ball()).unwrap();
+        assert_eq!(
+            sent,
+            hex(RECORDED_CORPSE_BALL),
+            "{}",
+            sent.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        );
+    }
+
+    #[test]
+    fn the_slim_item_of_a_corpse_is_a_plain_space_item_with_the_name_of_the_pilot() {
+        let entries = recorded_corpse().slim_entries();
+        let names: Vec<&str> = entries.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            names,
+            ["itemID", "typeID", "ownerID", "name", "groupID", "categoryID", "graphicID", "dunRotation"]
+        );
+        let value =
+            |key: &str| entries.iter().find(|(name, _)| *name == key).map(|(_, v)| v.clone()).unwrap();
+        assert_eq!(value("name"), text("Victim 1790793928".to_string()));
+        assert_eq!(value("groupID"), int(14));
+        assert_eq!(value("categoryID"), int(2));
+        assert_eq!(value("dunRotation"), tuple([int(-55), int(0), int(0)]));
     }
 
     #[test]

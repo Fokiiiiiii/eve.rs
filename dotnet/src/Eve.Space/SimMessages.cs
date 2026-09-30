@@ -210,9 +210,12 @@ public sealed record SimSpawnReply(ulong RequestId, ulong? Session, string? Erro
 /// </summary>
 public sealed record SimRespawn(ulong SessionId, SimShip Ship, IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage;
 
-/// <summary>A wreck the host made (an item with contents) of a ship that was destroyed, to be put in space where the ship was, for <see cref="Credit"/> to loot.</summary>
+/// <summary>
+/// A wreck the host made (an item with contents) of a ship that was destroyed, to be put in space where the ship was, for <see cref="Credit"/> to loot; or the
+/// corpse of a pilot whose capsule was destroyed (<see cref="GroupId"/> 14: a plain space item that has the pilot's name).
+/// </summary>
 public sealed record SimPlaceWreck(
-    int SolarSystemId, long WreckId, SimWreckKind Kind, IReadOnlyList<double> Position, IReadOnlyList<double> Direction, double Radius, long LauncherId, SimCredit Credit,
+    int SolarSystemId, long WreckId, int GroupId, SimWreckKind Kind, IReadOnlyList<double> Position, IReadOnlyList<double> Direction, double Radius, long LauncherId, SimCredit Credit,
     bool IsEmpty) : SimMessage;
 
 /// <summary>Who may take what a destroyed ship leaves: the pilot and the corporation, the alliance and the faction they are in (0 for none).</summary>

@@ -301,6 +301,7 @@ fn message_of(case: &Value) -> Message {
         "PlaceWreck" => Message::PlaceWreck(Box::new(WreckPlacement {
             solar_system_id: number("solarSystemId") as i32,
             wreck_id: wide(case, "wreckId"),
+            group_id: number("groupId") as i32,
             kind: wreck_kind_of(case.get("wreck")).unwrap(),
             position: vector_of(case, "position"),
             direction: vector_of(case, "direction"),

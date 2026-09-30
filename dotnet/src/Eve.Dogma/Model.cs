@@ -93,7 +93,7 @@ public sealed record EffectDef(int Id, string Name, int Category, IReadOnlyList<
 public sealed record AttributeDef(int Id, string Name, double DefaultValue, bool Stackable, bool HighIsGood, int DataType, int MaxAttributeId = 0, int MinAttributeId = 0);
 
 /// <summary>A type as dogma sees it: its attributes and the effects it has.</summary>
-public sealed record TypeDef(int TypeId, int GroupId, int CategoryId, IReadOnlyDictionary<int, double> Attributes, IReadOnlyList<int> EffectIds, string Name = "")
+public sealed record TypeDef(int TypeId, int GroupId, int CategoryId, IReadOnlyDictionary<int, double> Attributes, IReadOnlyList<int> EffectIds, string Name = "", int GraphicId = 0)
 {
     /// <summary>The attributes that name the skills a type needs (requiredSkill1 to requiredSkill6).</summary>
     public static readonly int[] RequiredSkillAttributes = [182, 183, 184, 1285, 1289, 1290];

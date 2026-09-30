@@ -1195,7 +1195,7 @@ def record_health(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
 def record_death(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """Two characters in space by the same station: what both are sent when a hull that nobody flies is detonated beside them (`/deathtest`, the
     reference's way to make a ship die on demand: the explosion, the ball that goes, the wreck that comes) and when the one of them (the victim,
-    B) destroys its own ship (`/suicide`: the same, and the capsule the pilot is left in). Each step holds what B is sent (`events`) and what A
+    B) destroys its own ship (`/suicide`: the same, and the capsule the pilot is left in) and then the capsule (the pilot wakes in its station). Each step holds what B is sent (`events`) and what A
     is sent (`seen`), with the seconds each arrived at."""
     system, station = 30100032, 60015249
 
@@ -1246,6 +1246,8 @@ def record_death(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) 
     step("both are quiet again", lambda: None, 5.0)
     step("the victim destroys its ship", slash_b("/suicide"), 30.0)
     step("both are quiet again after the suicide", lambda: None, 5.0)
+    step("the victim destroys its capsule", slash_b("/suicide"), 40.0)
+    step("both are quiet again after the capsule", lambda: None, 5.0)
     race = {"bloodlineID": 1, "raceID": 1, "solarSystemID": system, "stationID": station,
             "watcher": {"create": a_created, "characterID": a_char, "shipID": a_ship}, "victim": {"create": b_created, "characterID": b_char, "shipID": b_ship},
             "steps": steps}

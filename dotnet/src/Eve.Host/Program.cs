@@ -220,7 +220,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         var socket = Env("EVE_SIM_SOCKET", "/tmp/eve-sim.sock");
         sim = SimClient.ToUnixSocket(socket, message => Console.Error.WriteLine($"eve-host: {message}"));
         sim.Start();
-        spaceSessions = new SpaceSessions(sim, ships, dogma, stations, solarSystems, now, message => Console.Error.WriteLine($"eve-host: space: {message}"));
+        spaceSessions = new SpaceSessions(sim, ships, dogma, stations, solarSystems, now, message => Console.Error.WriteLine($"eve-host: space: {message}")) { RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId };
         Console.Error.WriteLine($"eve-host: the space simulation is expected at {socket}");
     }
     IReadOnlyList<IService> services =

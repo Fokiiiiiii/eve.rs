@@ -16,7 +16,7 @@ public sealed class SuicideCommands(ISpaceDeath space)
         {
             return "Self-destruct failed: no destructible ship is in space.";
         }
-        var wreck = done.WreckName is { } name ? $"{name} ({done.WreckId})" : "none";
-        return $"Self-destructed ship {done.ShipId}. Wreck: {wreck}. Capsule: {done.CapsuleName} ({done.CapsuleId}).";
+        static string Part(SelfDestructPart part) => $"{part.Label}: {(part.Name is { } name ? $"{name} ({part.Id})" : "none")}";
+        return $"Self-destructed ship {done.ShipId}. {Part(done.Left)}. {Part(done.Now)}.";
     }
 }

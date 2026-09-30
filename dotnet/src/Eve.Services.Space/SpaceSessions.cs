@@ -74,7 +74,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// <summary>The sessions whose ship's destruction is being told (each is told once).</summary>
     private readonly ConcurrentDictionary<ulong, byte> _dying = new();
     /// <summary>Who waits to hear what became of a ship they had destroyed (<c>/suicide</c>), by ship.</summary>
-    private readonly ConcurrentDictionary<long, TaskCompletionSource<ShipDeath?>> _deaths = new();
+    private readonly ConcurrentDictionary<long, TaskCompletionSource<SelfDestruct?>> _deaths = new();
     private readonly TimeSpan _protection;
     private readonly TimeSpan _jumpCloak;
     private readonly ConcurrentDictionary<int, ConcurrentDictionary<long, (long FileTime, long ExpiresAtMs)>> _queues = new();
@@ -672,7 +672,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                 case SimJumped jumped when _pilots.TryGetValue(jumped.SessionId, out var jumper):
                     _ = Task.Run(() => FinishJumpAsync(jumper, jumped));
                     break;
-                case SimDestroyed destroyed when _pilots.TryGetValue(destroyed.SessionId, out var victim):
+                case SimDestroyed destroyed when _pilots.TryGetValue(destroyed.SessionId, out var victim) && victim.ShipId == destroyed.ShipId:
                     _ = Task.Run(() => FinishDeathAsync(victim, destroyed));
                     break;
                 case SimRefused { Command: SimCommands.Stop, Reason: "IN_WARP" } inWarp when _pilots.TryGetValue(inWarp.SessionId, out var warping):
@@ -800,11 +800,11 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         {
             return null;
         }
-        if (await _ships.LoadAsync(pilot.CharacterId, cancellationToken) is not { } flown || flown.Ship.Id != pilot.ShipId || flown.Ship.TypeId == CharacterShips.CapsuleTypeId)
+        if (await _ships.LoadAsync(pilot.CharacterId, cancellationToken) is not { } flown || flown.Ship.Id != pilot.ShipId)
         {
-            return null; // what becomes of a pilot whose capsule is destroyed is not done yet
+            return null;
         }
-        var waiting = new TaskCompletionSource<ShipDeath?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var waiting = new TaskCompletionSource<SelfDestruct?>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (!_deaths.TryAdd(pilot.ShipId, waiting))
         {
             return null; // it is being destroyed already
@@ -813,15 +813,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         {
             // the wreck is the pilot's own to loot (the host makes it when the simulation says the ship is gone), so nobody else is credited
             _sim.Destroy(pilot.ShipId, SimCredit.Nobody);
-            var death = await waiting.Task.WaitAsync(SelfDestructWait, cancellationToken);
-            if (death is null)
-            {
-                return null;
-            }
-            var wreck = death.Wreck;
-            return new SelfDestruct(
-                death.Ship.Id, wreck is null ? null : _statics.Type(wreck.TypeId)?.Name, wreck?.Id,
-                _statics.Type(death.Capsule.TypeId)?.Name ?? "Capsule", death.Capsule.Id);
+            return await waiting.Task.WaitAsync(SelfDestructWait, cancellationToken);
         }
         catch (TimeoutException)
         {
@@ -835,6 +827,10 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
 
     /// <summary>The place an item that is destroyed is said to go to (the client's junkyard).</summary>
     private const long Junkyard = 6;
+
+    /// <summary>The group of a ship's wreck, and of a corpse (<c>Biomass</c>).</summary>
+    private const int WreckGroup = 186;
+    private const int CorpseGroup = 14;
 
     private static ItemRow RowOf(Item item, TypeDef? type) =>
         new(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, item.Singleton ? -1 : (int)Math.Min(item.Quantity, int.MaxValue), type?.GroupId ?? 0, type?.CategoryId ?? 0);
@@ -853,10 +849,17 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         }
         pilot.End();
         ShipDeath? death = null;
+        SelfDestruct? done = null;
         var handedOver = false;
         try
         {
             var session = pilot.Session;
+            if (await _ships.LoadAsync(pilot.CharacterId) is { } held && held.Ship.Id == pilot.ShipId && held.Ship.TypeId == CharacterShips.CapsuleTypeId)
+            {
+                done = await FinishPodDeathAsync(pilot, destroyed);
+                handedOver = done is not null;
+                return;
+            }
             var seed = string.Create(System.Globalization.CultureInfo.InvariantCulture, $"ship:{pilot.ShipId}:{_nowUnixMs()}");
             death = await _ships.DestroyShipAsync(pilot.CharacterId, pilot.ShipId, destroyed.WreckKind?.TypeId, seed);
             if (death is null)
@@ -913,6 +916,10 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                 }
                 handedOver = true;
             }
+            done = new SelfDestruct(
+                death.Ship.Id,
+                new SelfDestructPart("Wreck", death.Wreck is { } left ? _statics.Type(left.TypeId)?.Name : null, death.Wreck?.Id),
+                new SelfDestructPart("Capsule", _statics.Type(capsule.TypeId)?.Name ?? "Capsule", capsule.Id));
 
             if (death.Wreck is { } wreck && destroyed.WreckKind is { } kind)
             {
@@ -922,7 +929,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                     InventoryWire.PackedRow(RowOf(wreck, wreckType), new PyStr("")),
                     new PyDict([new(new PyInt(3), new PyInt(0))]), None);
                 _sim.PlaceWreck(new SimPlaceWreck(
-                    pilot.SolarSystemId, wreck.Id, kind, destroyed.Position, destroyed.Direction, destroyed.Radius, pilot.ShipId,
+                    pilot.SolarSystemId, wreck.Id, WreckGroup, kind, destroyed.Position, destroyed.Direction, destroyed.Radius, pilot.ShipId,
                     new SimCredit(character.Id, character.CorporationId, character.AllianceId ?? 0, character.FactionId ?? 0), death.Changes.All(c => c.Destroyed)));
             }
         }
@@ -940,9 +947,81 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             _dying.TryRemove(id, out _);
             if (_deaths.TryRemove(pilot.ShipId, out var waiting))
             {
-                waiting.TrySetResult(death);
+                waiting.TrySetResult(done);
             }
         }
+    }
+
+    /// <summary>The corpse of a pilot whose capsule was destroyed: <c>resolveCorpseTypeID</c> of EVE.js (the client's <c>genderFemale = 0</c>; anything else leaves the male one).</summary>
+    private const int CorpseTypeMale = 25;
+    private const int CorpseTypeFemale = 29148;
+
+    /// <summary>The rookie ship type of a race (what a pilot wakes in after its capsule is destroyed), set by the host that knows the races.</summary>
+    public Func<int, int?>? RookieShipOfRace { get; set; }
+
+    /// <summary>
+    /// The capsule of a pilot was destroyed (the simulation has told the clients that watched it): the pilot wakes in the clone at its home station in a rookie
+    /// ship, and its corpse is put in space where the capsule was. The client is told in the reference's order: the session change into the station, the corpse
+    /// and the capsule as items, the capsule's place.
+    /// </summary>
+    private async Task<SelfDestruct?> FinishPodDeathAsync(Pilot pilot, SimDestroyed destroyed)
+    {
+        var id = (ulong)pilot.Session.SessionId;
+        var session = pilot.Session;
+        if (await _ships.CharacterAsync(pilot.CharacterId) is not { } character || RookieShipOfRace?.Invoke(character.RaceId) is not { } rookie)
+        {
+            _log?.Invoke($"the capsule of character {pilot.CharacterId} was destroyed but there is no rookie ship to wake the pilot in");
+            return null;
+        }
+        var stationId = character.HomeStationId > 0 && _stations.Get(character.HomeStationId) is not null ? character.HomeStationId : character.StationId;
+        if (_stations.Get(stationId) is not { } station)
+        {
+            _log?.Invoke($"the capsule of character {pilot.CharacterId} was destroyed but its clone's station {stationId} is not known");
+            return null;
+        }
+        var corpseType = character.Gender == 0 ? CorpseTypeFemale : CorpseTypeMale;
+        await _statics.EnsureTypesAsync([CharacterShips.CapsuleTypeId, corpseType, rookie]);
+        var pod = await _ships.DestroyCapsuleAsync(
+            pilot.CharacterId, pilot.ShipId, corpseType, character.Name, rookie, new HomePlace(station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId));
+        if (pod is null)
+        {
+            _log?.Invoke($"the capsule {pilot.ShipId} of character {pilot.CharacterId} was destroyed in space but is not the character's capsule in space any more");
+            return null;
+        }
+
+        // the pilot is out of space: the ballpark of the simulation is let go
+        _pilots.TryRemove(id, out _);
+        _sim.Leave(id, LeaveWhy.Docked);
+        ReleaseBoundObjects(session);
+        var system = new PyInt(station.SolarSystemId);
+        session.Change(
+            ("stationid", new PyInt(station.Id)), ("stationid2", new PyInt(station.Id)), ("solarsystemid", None), ("solarsystemid2", system),
+            ("constellationid", new PyInt(station.ConstellationId)), ("regionid", new PyInt(station.RegionId)), ("shipid", new PyLong(pod.Ship.Id)), ("locationid", new PyInt(station.Id)));
+        if (pod.Corpse is { } corpse)
+        {
+            session.SendNotification(
+                "OnItemChange", "clientID", InventoryWire.PackedRow(RowOf(corpse, _statics.Type(corpse.TypeId)), new PyStr("")), new PyDict([new(new PyInt(3), new PyInt(0))]), None);
+        }
+        session.SendNotification(
+            "OnItemChange", "clientID", InventoryWire.PackedRow(RowOf(pod.Capsule with { LocationId = Junkyard }, _statics.Type(pod.Capsule.TypeId)), new PyStr("")),
+            new PyDict([new(new PyInt(3), InventoryWire.Id(pod.Capsule.LocationId))]), None);
+        session.SendNotification(
+            "OnCfgDataChanged", "charid", new PyStr("evelocations"),
+            new PyList([InventoryWire.Id(pod.Capsule.Id), new PyStr(_statics.Type(pod.Capsule.TypeId)?.Name ?? "Capsule"), new PyInt(pod.Capsule.LocationId), new PyInt(0), new PyInt(0), new PyInt(0), None]));
+
+        if (pod.Corpse is { } left)
+        {
+            var type = _statics.Type(left.TypeId);
+            var kind = new SimWreckKind(left.TypeId, left.CustomName ?? character.Name, type?.GraphicId ?? 0);
+            var radius = type?.Attributes.GetValueOrDefault(162) ?? 0; // the type's radius; a corpse has none in the static data and is one metre
+            _sim.PlaceWreck(new SimPlaceWreck(
+                pilot.SolarSystemId, left.Id, CorpseGroup, kind, destroyed.Position, destroyed.Direction, radius > 0 ? radius : 1.0, 0,
+                new SimCredit(character.Id, 0, 0, 0), true));
+        }
+        return new SelfDestruct(
+            pod.Capsule.Id,
+            new SelfDestructPart("Corpse", pod.Corpse?.CustomName, pod.Corpse?.Id),
+            new SelfDestructPart("Ship", _statics.Type(pod.Ship.TypeId)?.Name, pod.Ship.Id));
     }
 
     /// <summary>The simulation was lost: every ship it held is gone, so each is brought home to the station its character last was at.</summary>

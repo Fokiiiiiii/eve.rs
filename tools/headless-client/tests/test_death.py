@@ -191,4 +191,52 @@ def test_a_pilot_who_destroys_its_own_ship_is_left_in_a_capsule_as_in_the_refere
         mine, theirs = victim_view(got["events"]), victim_view(step["events"])
         if mine != theirs:
             problems.append(f"{label}: the victim was told {mine} in place of {theirs}")
+
+        # the pilot is in a capsule: destroying that wakes it in its station, in a rookie ship, and leaves its corpse where the capsule was
+        pod_label = "the victim destroys its capsule"
+        pod_step = {s["label"]: s for s in race["steps"]}[pod_label]
+        raw, error = outcome(lambda: b.call("slash", "SlashCmd", "/suicide"))
+        if error is not None:
+            problems.append(f"{pod_label}: an error {error}")
+        else:
+            text = re.sub(r"\d+", "#", str(m_text(raw)))
+            recorded_text = re.sub(r"\d+", "#", str(pod_step["ok"]))
+            # the pilot's name is per run (and has digits in both): the words around it are what is compared
+            if re.sub(r"Corpse: .*? \(#\)", "Corpse: NAME (#)", text) != re.sub(r"Corpse: .*? \(#\)", "Corpse: NAME (#)", recorded_text):
+                problems.append(f"{pod_label}: answered {m_text(raw)!r} in place of {pod_step['ok']!r}")
+        pod = watch(both, 8.0, until=lambda seen: len(seen["seen"]) >= 2 and len(seen["events"]) >= 4)
+        watch(both, 1.0)
+        mine, theirs = pod_view(pod["events"]), pod_view(pod_step["events"])
+        if mine != theirs:
+            problems.append(f"{pod_label}: the victim was told {mine} in place of {theirs}")
+        mine, theirs = [names(e) for e in pod["seen"]], [names(e) for e in pod_step["seen"]]
+        if mine != theirs:
+            problems.append(f"{pod_label}: the watcher was sent {mine} in place of {theirs}")
     assert problems == [], "\n".join(problems[:40])
+
+
+def _row(event: dict) -> dict:
+    """The fields of the item row of an `OnItemChange`, and what they changed from."""
+    row, changed, _ = event["args"]["$tuple"][1]["$tuple"][1]["$tuple"]
+    return row["$row"], dict(tuple(pair) for pair in changed["$dict"])
+
+
+def pod_view(events: list) -> list:
+    """What a pilot whose capsule is destroyed was told, with what is per run made the same: the session change by the names it changes, the items by what they
+    are (the type, the group, the place as `space`, the junkyard or a number) and where they came from."""
+    view = []
+    for event in events:
+        name = event["name"]
+        if name == "$sessionchange":
+            # DEVIATION #51: the reference announces `stationid2` (from nothing to the station); eve.rs kept it since the pilot chose the character
+            view.append((name, tuple(key for key, _ in event["args"]["$tuple"][4]["$tuple"][1]["$tuple"][1]["$dict"] if key != "stationid2")))
+        elif name == "OnItemChange":
+            row, changed = _row(event)
+            place = lambda value: "junkyard" if value == 6 else ("space" if value == SYSTEM else value)  # noqa: E731
+            view.append((name, row["typeID"], row["groupID"], row["categoryID"], row["flagID"], place(row["locationID"]), tuple((k, place(v)) for k, v in changed.items())))
+        elif name == "OnCfgDataChanged":
+            table, values = event["args"]["$tuple"][1]["$tuple"][1]["$tuple"]
+            view.append((name, table, values[1], "space" if values[2] == SYSTEM else values[2], tuple(values[3:])))
+        else:
+            view.append((name, event["idType"]))
+    return view

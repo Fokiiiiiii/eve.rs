@@ -6,10 +6,11 @@ use std::collections::{HashMap, HashSet};
 use crate::value::Value;
 
 use super::{
-    Ball, Ballpark, CargoCapacity, DamageTotals, Deployed, Deployment, Dogma, DungeonObject, EffectInfo,
-    Entities, EntitySpawnData, FakeLocation, Formation, FormationSettings, Inventory, InventoryItem, Logging,
-    PlayerFleetReport, ProximitySensor, Random, ReactiveSpawnConfig, ReinforcementWave, ResponseThresholds,
-    SlimItem, SpawnPick, Spawning, StructureState, Universe, WorldError, WorldResult,
+    Ball, Ballpark, CargoCapacity, DamageTotals, Deployed, Deployment, Dogma, DungeonObject, EffectCycle,
+    EffectInfo, Entities, EntitySpawnData, FakeLocation, Formation, FormationSettings, Inventory,
+    InventoryItem, Logging, PlayerFleetReport, ProximitySensor, Random, ReactiveSpawnConfig,
+    ReinforcementWave, ResponseThresholds, SlimItem, SpawnPick, Spawning, StructureState, Universe,
+    WorldError, WorldResult,
 };
 
 /// What `GetClosestDisruptorAndIntersectionInWarpPath` answers.
@@ -151,10 +152,15 @@ pub struct TestWorld {
     pub player_fleet_report: Option<PlayerFleetReport>,
     pub total_npc_points: f64,
     pub structure_states: HashMap<i64, StructureState>,
-    pub armor_ratios: HashMap<i64, f64>,
-    pub shield_ratios: HashMap<i64, f64>,
     pub exploding: HashSet<i64>,
     pub exploding_error: Option<WorldError>,
+    pub effect_cycles: HashMap<(i64, i64), EffectCycle>,
+    pub max_effective_ranges: HashMap<i64, f64>,
+    pub ability_events: Vec<String>,
+    pub ability_contexts: HashMap<(i64, i64), Value>,
+    pub ability_error: Option<WorldError>,
+    /// What `stop_effect` fails with.
+    pub stop_effect_error: Option<WorldError>,
 }
 
 impl TestWorld {
@@ -543,12 +549,16 @@ impl Ballpark for TestWorld {
 }
 
 impl Dogma for TestWorld {
-    fn current_armor_ratio(&self, item_id: i64) -> f64 {
-        self.armor_ratios.get(&item_id).copied().unwrap_or(1.0)
+    fn active_effect_data(&self, item_id: i64, effect_id: i64) -> Option<EffectCycle> {
+        self.effect_cycles.get(&(item_id, effect_id)).copied()
     }
 
-    fn current_shield_ratio(&self, item_id: i64) -> f64 {
-        self.shield_ratios.get(&item_id).copied().unwrap_or(1.0)
+    fn effect_max_effective_range_with_falloff(&self, effect_id: i64, _item_id: i64) -> f64 {
+        self.max_effective_ranges.get(&effect_id).copied().unwrap_or(0.0)
+    }
+
+    fn locked_targets(&self, item_id: i64) -> Vec<i64> {
+        self.targets(item_id)
     }
 
     fn is_exploding(&self, item_id: i64) -> WorldResult<bool> {
@@ -560,18 +570,6 @@ impl Dogma for TestWorld {
 
     fn set_attribute_value(&mut self, item_id: i64, attribute_id: i64, value: &Value) {
         self.calls.push(format!("set_attribute_value({item_id}, {attribute_id}, {})", plain(value)));
-    }
-
-    fn set_armor_ratio(&mut self, item_id: i64, ratio: &Value) {
-        self.calls.push(format!("set_armor_ratio({item_id}, {ratio:?})"));
-    }
-
-    fn set_shield_ratio(&mut self, item_id: i64, ratio: &Value) {
-        self.calls.push(format!("set_shield_ratio({item_id}, {ratio:?})"));
-    }
-
-    fn set_structure_ratio(&mut self, item_id: i64, ratio: &Value) {
-        self.calls.push(format!("set_structure_ratio({item_id}, {ratio:?})"));
     }
 
     fn apply_damage_with_multiplier(
@@ -713,7 +711,7 @@ impl Dogma for TestWorld {
 
     fn stop_effect(&mut self, effect_id: i64, item_id: i64, forced: bool) -> WorldResult<()> {
         self.calls.push(format!("stop_effect({effect_id}, {item_id}, {forced})"));
-        Ok(())
+        self.stop_effect_error.clone().map_or(Ok(()), Err)
     }
 
     fn remove_target(&mut self, item_id: i64, target_id: i64) {
@@ -794,6 +792,41 @@ impl Logging for TestWorld {
 }
 
 impl Entities for TestWorld {
+    fn ability_activation_succeeded(
+        &mut self,
+        item_id: i64,
+        slot: &Value,
+        start_time: i64,
+        duration_ms: f64,
+    ) {
+        self.ability_events.push(format!("succeeded({item_id}, {slot:?}, {start_time}, {duration_ms})"));
+    }
+
+    fn ability_activation_context(&self, item_id: i64, slot: &Value) -> Option<Value> {
+        self.ability_contexts.get(&(item_id, slot.as_int().unwrap_or(-1))).cloned()
+    }
+
+    fn start_fighter_ability_dogma_effect(
+        &mut self,
+        effect_id: i64,
+        context: &Value,
+        target_id: Option<i64>,
+    ) -> WorldResult<()> {
+        if let Some(error) = self.ability_error.clone() {
+            return Err(error);
+        }
+        self.ability_events.push(format!("started({effect_id}, {context:?}, {target_id:?})"));
+        Ok(())
+    }
+
+    fn ability_deactivated(&mut self, item_id: i64, slot: &Value, failure_reason: &Value) {
+        self.ability_events.push(format!("deactivated({item_id}, {slot:?}, {failure_reason:?})"));
+    }
+
+    fn ability_activation_failed(&mut self, item_id: i64, slot: &Value) {
+        self.ability_events.push(format!("failed({item_id}, {slot:?})"));
+    }
+
     fn generate_player_fleet_report(&mut self, _spawn_pool_id: &Value) -> WorldResult<PlayerFleetReport> {
         self.player_fleet_report
             .clone()

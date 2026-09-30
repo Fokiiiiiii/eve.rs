@@ -14,6 +14,7 @@ pub mod effects;
 pub mod entities;
 pub mod entityspawning;
 pub mod eventlogger;
+pub mod fighterabilities;
 pub mod fleet;
 pub mod group;
 pub mod guard;

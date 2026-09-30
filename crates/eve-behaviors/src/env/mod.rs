@@ -15,7 +15,7 @@ pub mod testing;
 pub mod universe;
 
 pub use ballpark::{Ball, Ballpark, Formation, FormationSettings, ProximitySensor, SlimItem};
-pub use dogma::{Dogma, EffectInfo};
+pub use dogma::{Dogma, EffectCycle, EffectInfo};
 pub use entities::{
     DungeonObject, Entities, FleetReport, INVALID_GROUP_ID, PlayerFleetReport, ReinforcementWave,
     ResponseThresholds, StructureState,
@@ -39,6 +39,8 @@ pub enum WorldError {
     Key(String),
     /// `ReinforcedEntityGroupNotFoundError`.
     ReinforcedGroupNotFound,
+    /// `ZeroDivisionError`.
+    ZeroDivision,
 }
 
 pub type WorldResult<T> = Result<T, WorldError>;

@@ -3,9 +3,26 @@
 use crate::consts::{
     ATTRIBUTE_EM_DAMAGE, ATTRIBUTE_EXPLOSIVE_DAMAGE, ATTRIBUTE_KINETIC_DAMAGE, ATTRIBUTE_THERMAL_DAMAGE,
 };
+use crate::env::dogma::health;
+use crate::env::{Dogma, WorldResult};
 use crate::tree::{BehaviorError, TaskCtx};
 use crate::utility::ballparks::get_distance_between;
 use crate::value::Value;
+
+/// `health.SetArmorRatio` and its kin: false when the ratio is no number or the dogma engine raised.
+fn set_health_ratio(
+    t: &mut TaskCtx<'_, '_>,
+    item_id: i64,
+    ratio: &Value,
+    setter: fn(&mut dyn Dogma, i64, f64) -> WorldResult<()>,
+) -> bool {
+    let Some(ratio) = ratio.as_float() else {
+        t.raise(BehaviorError::Task("TypeError: a ratio that is no number".to_string()));
+        return false;
+    };
+    let result = setter(t.world(), item_id, ratio);
+    t.ok(result).is_some()
+}
 
 enter_task!(
     /// Sets the armor of my entity to a ratio of what it can have.
@@ -13,7 +30,9 @@ enter_task!(
     |t| {
         let Some(me) = t.my_item_id() else { return };
         let Some(ratio) = t.required("armorRatio") else { return };
-        t.world().set_armor_ratio(me, &ratio);
+        if !set_health_ratio(t, me, &ratio, health::set_armor_ratio) {
+            return;
+        }
         t.set_status_to_success();
     }
 );
@@ -24,7 +43,9 @@ enter_task!(
     |t| {
         let Some(me) = t.my_item_id() else { return };
         let Some(ratio) = t.required("shieldRatio") else { return };
-        t.world().set_shield_ratio(me, &ratio);
+        if !set_health_ratio(t, me, &ratio, health::set_shield_ratio) {
+            return;
+        }
         t.set_status_to_success();
     }
 );
@@ -35,7 +56,9 @@ enter_task!(
     |t| {
         let Some(me) = t.my_item_id() else { return };
         let Some(ratio) = t.required("structureRatio") else { return };
-        t.world().set_structure_ratio(me, &ratio);
+        if !set_health_ratio(t, me, &ratio, health::set_structure_ratio) {
+            return;
+        }
         t.set_status_to_success();
     }
 );
@@ -54,7 +77,9 @@ enter_task!(
         let Some(item_id) = item_for_ratio(t) else { return };
         if let Some(item_id) = item_id {
             let Some(ratio) = t.required("armorRatio") else { return };
-            t.world().set_armor_ratio(item_id, &ratio);
+            if !set_health_ratio(t, item_id, &ratio, health::set_armor_ratio) {
+                return;
+            }
         }
         t.set_status_to_success();
     }
@@ -67,7 +92,9 @@ enter_task!(
         let Some(item_id) = item_for_ratio(t) else { return };
         if let Some(item_id) = item_id {
             let Some(ratio) = t.required("shieldRatio") else { return };
-            t.world().set_shield_ratio(item_id, &ratio);
+            if !set_health_ratio(t, item_id, &ratio, health::set_shield_ratio) {
+                return;
+            }
         }
         t.set_status_to_success();
     }
@@ -80,7 +107,9 @@ enter_task!(
         let Some(item_id) = item_for_ratio(t) else { return };
         if let Some(item_id) = item_id {
             let Some(ratio) = t.required("structureRatio") else { return };
-            t.world().set_structure_ratio(item_id, &ratio);
+            if !set_health_ratio(t, item_id, &ratio, health::set_structure_ratio) {
+                return;
+            }
         }
         t.set_status_to_success();
     }
@@ -174,14 +203,20 @@ mod tests {
         Address::new(ScopeType::Item, name).to_value()
     }
 
+    fn hit_points(rig: &mut Rig, item: i64) {
+        use crate::consts::{ATTRIBUTE_ARMOR_HP, ATTRIBUTE_HP, ATTRIBUTE_SHIELD_CAPACITY};
+        rig.world.attributes.insert((item, ATTRIBUTE_ARMOR_HP), 1000.0);
+        rig.world.attributes.insert((item, ATTRIBUTE_SHIELD_CAPACITY), 400.0);
+        rig.world.attributes.insert((item, ATTRIBUTE_HP), 200.0);
+    }
+
     #[test]
-    fn the_health_of_my_entity_and_of_an_item_on_the_blackboard_is_set_to_a_ratio() {
+    fn the_health_of_my_entity_is_set_to_a_ratio_the_way_the_client_does_it() {
+        use crate::consts::{ATTRIBUTE_ARMOR_DAMAGE, ATTRIBUTE_DAMAGE, ATTRIBUTE_SHIELD_CAPACITY};
         let mut rig = Rig::new();
-        assert_eq!(rig.run(Box::new(SetArmorRatio), Attrs::new().with("armorRatio", 0.5)), Status::Success);
-        assert_eq!(
-            rig.run(Box::new(SetShieldRatio), Attrs::new().with("shieldRatio", 0.25)),
-            Status::Success
-        );
+        hit_points(&mut rig, 1);
+        assert_eq!(rig.run(Box::new(SetArmorRatio), Attrs::new().with("armorRatio", 0.25)), Status::Success);
+        assert_eq!(rig.run(Box::new(SetShieldRatio), Attrs::new().with("shieldRatio", 0.5)), Status::Success);
         assert_eq!(
             rig.run(Box::new(SetStructureRatio), Attrs::new().with("structureRatio", 1i64)),
             Status::Success
@@ -189,16 +224,30 @@ mod tests {
         assert_eq!(
             rig.world.take_calls(),
             [
-                "set_armor_ratio(1, Float(0.5))",
-                "set_shield_ratio(1, Float(0.25))",
-                "set_structure_ratio(1, Int(1))"
+                // the armor damage is what the ratio leaves; the client sets the shield capacity (not the charge) to the ratio of it
+                format!("set_attribute_value(1, {ATTRIBUTE_ARMOR_DAMAGE}, 750)"),
+                format!("set_attribute_value(1, {ATTRIBUTE_SHIELD_CAPACITY}, 200)"),
+                format!("set_attribute_value(1, {ATTRIBUTE_DAMAGE}, 0)"),
             ]
         );
     }
 
     #[test]
-    fn the_health_of_the_item_on_the_blackboard_is_set_only_when_there_is_one() {
+    fn a_ratio_that_is_no_number_raises_and_the_task_does_not_succeed() {
         let mut rig = Rig::new();
+        hit_points(&mut rig, 1);
+        assert_ne!(
+            rig.run(Box::new(SetArmorRatio), Attrs::new().with("armorRatio", Value::None)),
+            Status::Success
+        );
+        assert!(matches!(&rig.last_error, Some(BehaviorError::Task(m)) if m.starts_with("TypeError")));
+    }
+
+    #[test]
+    fn the_health_of_the_item_on_the_blackboard_is_set_only_when_there_is_one() {
+        use crate::consts::{ATTRIBUTE_ARMOR_DAMAGE, ATTRIBUTE_DAMAGE, ATTRIBUTE_SHIELD_CAPACITY};
+        let mut rig = Rig::new();
+        hit_points(&mut rig, 77);
         let attrs = |ratio: &str| Attrs::new().with("itemIdAddress", item("Item")).with(ratio, 0.5);
         assert_eq!(rig.run(Box::new(SetArmorRatioForItem), attrs("armorRatio")), Status::Success);
         assert!(rig.world.take_calls().is_empty(), "no item");
@@ -212,9 +261,9 @@ mod tests {
         assert_eq!(
             rig.world.take_calls(),
             [
-                "set_armor_ratio(77, Float(0.5))",
-                "set_shield_ratio(77, Float(0.5))",
-                "set_structure_ratio(77, Float(0.5))"
+                format!("set_attribute_value(77, {ATTRIBUTE_ARMOR_DAMAGE}, 500)"),
+                format!("set_attribute_value(77, {ATTRIBUTE_SHIELD_CAPACITY}, 200)"),
+                format!("set_attribute_value(77, {ATTRIBUTE_DAMAGE}, 100)"),
             ]
         );
     }

@@ -957,6 +957,16 @@ impl TaskCtx<'_, '_> {
         self.cx.raise(error);
     }
 
+    /// `try: ... except (SomeErrors)`: what `f` raised is given back (and is not raised) for the task to say which of it it catches; what it
+    /// raised before stays.
+    pub fn catch_exceptions(&mut self, f: impl FnOnce(&mut TaskCtx<'_, '_>)) -> Option<BehaviorError> {
+        let earlier = self.cx.core.fault.take();
+        f(self);
+        let caught = self.cx.core.fault.take();
+        self.cx.core.fault = earlier;
+        caught
+    }
+
     /// `with ExceptionEater(...)`: what is raised in `f` is dropped.
     pub fn eat_exceptions(&mut self, f: impl FnOnce(&mut TaskCtx<'_, '_>)) {
         let had_fault = self.cx.faulted();

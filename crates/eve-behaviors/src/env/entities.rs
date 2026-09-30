@@ -375,4 +375,34 @@ pub trait Entities {
     fn structure_state(&self, _ball_id: i64) -> Option<StructureState> {
         None
     }
+    /// `GetAbilityRegistryForSolarsystem(system).OnAbilityActivationSucceeded(itemId, slot, startTime, durationMs)`.
+    fn ability_activation_succeeded(
+        &mut self,
+        _item_id: i64,
+        _slot: &Value,
+        _start_time: i64,
+        _duration_ms: f64,
+    ) {
+    }
+
+    /// `.GetActivationContext(itemId, slot)`.
+    fn ability_activation_context(&self, _item_id: i64, _slot: &Value) -> Option<Value> {
+        None
+    }
+
+    /// `StartFighterAbilityDogmaEffect(effectId, activationContext, targetId)`.
+    fn start_fighter_ability_dogma_effect(
+        &mut self,
+        _effect_id: i64,
+        _context: &Value,
+        _target_id: Option<i64>,
+    ) -> WorldResult<()> {
+        Ok(())
+    }
+
+    /// `.OnAbilityDeactivated(itemId, slot, failureReason)`.
+    fn ability_deactivated(&mut self, _item_id: i64, _slot: &Value, _failure_reason: &Value) {}
+
+    /// `.OnAbilityActivationFailed(itemId, slot)`.
+    fn ability_activation_failed(&mut self, _item_id: i64, _slot: &Value) {}
 }

@@ -11,6 +11,13 @@ pub struct EffectInfo {
     pub falloff_attribute_id: Option<i64>,
 }
 
+/// A running effect's cycle (`GetActiveEffectData`): when it started (the clock's ticks) and how long it is (milliseconds).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct EffectCycle {
+    pub start_time: i64,
+    pub duration_ms: f64,
+}
+
 /// The dogma engine's answers and what it is asked to do.
 pub trait Dogma {
     /// `dogmaLM.GetAttributeValue(itemId, attributeId)`.
@@ -158,15 +165,6 @@ pub trait Dogma {
         _weapon_damages: &[(i64, f64)],
     ) {
     }
-    /// `health.SetArmorRatio(dogmaLM, itemId, ratio)`.
-    fn set_armor_ratio(&mut self, _item_id: i64, _ratio: &Value) {}
-
-    /// `health.SetShieldRatio(dogmaLM, itemId, ratio)`.
-    fn set_shield_ratio(&mut self, _item_id: i64, _ratio: &Value) {}
-
-    /// `health.SetStructureRatio(dogmaLM, itemId, ratio)`.
-    fn set_structure_ratio(&mut self, _item_id: i64, _ratio: &Value) {}
-
     /// `sm.GetService('dogma').ApplyDamage(None, sourceItemId, targetId, damageMultiplier=, indirectDogmaLM=, weaponDamages=)`.
     fn apply_damage_with_multiplier(
         &mut self,
@@ -184,19 +182,23 @@ pub trait Dogma {
     }
     /// `dogmaLM.SetAttributeValue(itemId, attributeId, value)`.
     fn set_attribute_value(&mut self, _item_id: i64, _attribute_id: i64, _value: &Value) {}
-    /// `GetCurrentArmorRatio(dogmaLM, itemId)` of `dogma.attributes.health`.
-    fn current_armor_ratio(&self, _item_id: i64) -> f64 {
-        1.0
-    }
-
-    /// `GetCurrentShieldRatio(dogmaLM, itemId)`.
-    fn current_shield_ratio(&self, _item_id: i64) -> f64 {
-        1.0
-    }
-
     /// `dogmaLM.ballpark.IsExploding(itemId)`.
     fn is_exploding(&self, _item_id: i64) -> WorldResult<bool> {
         Ok(false)
+    }
+    /// `dogmaLM.GetActiveEffectData(itemId, effectId)`: when the cycle started and how long it is; nothing for an effect that is not active.
+    fn active_effect_data(&self, _item_id: i64, _effect_id: i64) -> Option<EffectCycle> {
+        None
+    }
+
+    /// `get_effect_max_effective_range_with_falloff(dogmaLM, effectId, itemId)` of `dogma.effects.restricted.util` (not in the client's files).
+    fn effect_max_effective_range_with_falloff(&self, _effect_id: i64, _item_id: i64) -> f64 {
+        0.0
+    }
+
+    /// `dogmaLM.GetTargets(itemId)`.
+    fn locked_targets(&self, _item_id: i64) -> Vec<i64> {
+        Vec::new()
     }
 }
 
@@ -204,18 +206,26 @@ pub trait Dogma {
 pub mod health {
     use super::{Dogma, WorldResult};
     use crate::consts::*;
+    use crate::value::Value;
 
     /// `GetCurrentArmorRatio`.
     pub fn current_armor_ratio(dogma: &dyn Dogma, item_id: i64) -> WorldResult<f64> {
         let max_armor_hp = dogma.attribute_value(item_id, ATTRIBUTE_ARMOR_HP)?;
         let current_armor_damage = dogma.attribute_value(item_id, ATTRIBUTE_ARMOR_DAMAGE)?;
+        if max_armor_hp == 0.0 {
+            return Err(crate::env::WorldError::ZeroDivision);
+        }
         Ok((max_armor_hp - current_armor_damage) / max_armor_hp)
     }
 
     /// `GetCurrentShieldRatio`.
     pub fn current_shield_ratio(dogma: &dyn Dogma, item_id: i64) -> WorldResult<f64> {
-        Ok(dogma.attribute_value(item_id, ATTRIBUTE_SHIELD_CHARGE)?
-            / dogma.attribute_value(item_id, ATTRIBUTE_SHIELD_CAPACITY)?)
+        let charge = dogma.attribute_value(item_id, ATTRIBUTE_SHIELD_CHARGE)?;
+        let capacity = dogma.attribute_value(item_id, ATTRIBUTE_SHIELD_CAPACITY)?;
+        if capacity == 0.0 {
+            return Err(crate::env::WorldError::ZeroDivision);
+        }
+        Ok(charge / capacity)
     }
 
     /// `GetCurrentStructureDamage`.
@@ -226,5 +236,30 @@ pub mod health {
     /// `GetMaxStructureAmount`.
     pub fn max_structure_amount(dogma: &dyn Dogma, item_id: i64) -> WorldResult<f64> {
         dogma.attribute_value(item_id, ATTRIBUTE_HP)
+    }
+
+    /// `SetArmorRatio`: the armor damage is what the ratio leaves of the maximum.
+    pub fn set_armor_ratio(dogma: &mut dyn Dogma, item_id: i64, ratio: f64) -> WorldResult<()> {
+        let max_armor_hp = dogma.attribute_value(item_id, ATTRIBUTE_ARMOR_HP)?;
+        dogma.set_attribute_value(
+            item_id,
+            ATTRIBUTE_ARMOR_DAMAGE,
+            &Value::Float(max_armor_hp * (1.0 - ratio)),
+        );
+        Ok(())
+    }
+
+    /// `SetShieldRatio`: the client sets the shield capacity (not the charge) to the ratio of the capacity.
+    pub fn set_shield_ratio(dogma: &mut dyn Dogma, item_id: i64, ratio: f64) -> WorldResult<()> {
+        let max_shield_hp = dogma.attribute_value(item_id, ATTRIBUTE_SHIELD_CAPACITY)?;
+        dogma.set_attribute_value(item_id, ATTRIBUTE_SHIELD_CAPACITY, &Value::Float(max_shield_hp * ratio));
+        Ok(())
+    }
+
+    /// `SetStructureRatio`: the damage is what the ratio leaves of the hit points.
+    pub fn set_structure_ratio(dogma: &mut dyn Dogma, item_id: i64, ratio: f64) -> WorldResult<()> {
+        let max_structure_hp = dogma.attribute_value(item_id, ATTRIBUTE_HP)?;
+        dogma.set_attribute_value(item_id, ATTRIBUTE_DAMAGE, &Value::Float(max_structure_hp * (1.0 - ratio)));
+        Ok(())
     }
 }

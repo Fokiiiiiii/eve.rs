@@ -7,6 +7,7 @@ use crate::consts::{
     EFFECT_NPC_BEHAVIOR_ARMOR_REPAIRER, EFFECT_NPC_BEHAVIOR_SHIELD_BOOSTER,
 };
 use crate::env::WorldError;
+use crate::env::dogma::health;
 use crate::events::{EventKey, message};
 use crate::tree::{Task, TaskCtx};
 use crate::utility::dogmatic::type_has_effect;
@@ -92,17 +93,17 @@ impl EntityTank {
     }
 
     /// `GetTankStatus`: the ratio of the layer that is left.
-    fn tank_status(&self, t: &mut TaskCtx<'_, '_>) -> f64 {
+    fn tank_status(&self, t: &mut TaskCtx<'_, '_>) -> Result<f64, WorldError> {
         let item_id = self.item_id.unwrap_or_default();
         match self.kind {
-            TankKind::Armor => t.world().current_armor_ratio(item_id),
-            TankKind::Shield => t.world().current_shield_ratio(item_id),
+            TankKind::Armor => health::current_armor_ratio(&*t.world(), item_id),
+            TankKind::Shield => health::current_shield_ratio(&*t.world(), item_id),
         }
     }
 
     /// `IsAtFullHealth`.
-    fn is_at_full_health(&self, t: &mut TaskCtx<'_, '_>) -> bool {
-        self.tank_status(t) >= 1.0
+    fn is_at_full_health(&self, t: &mut TaskCtx<'_, '_>) -> Result<bool, WorldError> {
+        Ok(self.tank_status(t)? >= 1.0)
     }
 
     /// `ActivateTankIfDamaged`.
@@ -110,7 +111,7 @@ impl EntityTank {
         if !self.can_active_tank(t)? {
             return Ok(());
         }
-        if !self.is_at_full_health(t) {
+        if !self.is_at_full_health(t)? {
             self.start_tanking(t);
         }
         Ok(())
@@ -151,8 +152,10 @@ impl EntityTank {
         if !self.is_tanking {
             return;
         }
-        if self.is_at_full_health(t) {
-            self.try_stop_tanking(t);
+        match self.is_at_full_health(t) {
+            Ok(true) => self.try_stop_tanking(t),
+            Ok(false) => {}
+            Err(error) => t.raise(error.into()),
         }
     }
 
@@ -239,9 +242,14 @@ impl Task for ActiveTank {
             HANDLER_ON_DAMAGE_RECEIVED => {
                 // `_OnDamageReceived`
                 for tank in self.tanks() {
-                    match tank.can_active_tank(t) {
-                        Ok(true) if !tank.is_tanking && !tank.is_at_full_health(t) => t.request_reset(),
-                        Ok(_) => {}
+                    let hurt = match tank.can_active_tank(t) {
+                        Ok(true) if !tank.is_tanking => tank.is_at_full_health(t).map(|whole| !whole),
+                        Ok(_) => Ok(false),
+                        Err(error) => Err(error),
+                    };
+                    match hurt {
+                        Ok(true) => t.request_reset(),
+                        Ok(false) => {}
                         Err(error) => {
                             t.raise(error.into());
                             return;
@@ -272,12 +280,24 @@ mod tests {
     use crate::tree::tests::Rig;
     use crate::tree::{Attrs, Status};
 
+    /// The shield and the armor of the entity, as ratios of what it can have.
+    fn set_health(rig: &mut Rig, shield: f64, armor: f64) {
+        use crate::consts::{
+            ATTRIBUTE_ARMOR_DAMAGE, ATTRIBUTE_ARMOR_HP, ATTRIBUTE_SHIELD_CAPACITY, ATTRIBUTE_SHIELD_CHARGE,
+        };
+        rig.world.attributes.insert((1, ATTRIBUTE_SHIELD_CAPACITY), 1000.0);
+        rig.world.attributes.insert((1, ATTRIBUTE_SHIELD_CHARGE), 1000.0 * shield);
+        rig.world.attributes.insert((1, ATTRIBUTE_ARMOR_HP), 1000.0);
+        rig.world.attributes.insert((1, ATTRIBUTE_ARMOR_DAMAGE), 1000.0 * (1.0 - armor));
+    }
+
     fn rig() -> Rig {
         let mut rig = Rig::new();
         rig.ctx.my_slim_item =
             Some(SlimItem { item_id: 1, type_id: 700, owner_id: Some(7), ..Default::default() });
         rig.world.type_effects.insert((700, EFFECT_ENTITY_SHIELD_BOOSTING_MEDIUM));
         rig.world.type_effects.insert((700, EFFECT_ENTITY_ARMOR_REPAIRING_LARGE));
+        set_health(&mut rig, 1.0, 1.0);
         rig
     }
 
@@ -294,7 +314,7 @@ mod tests {
     #[test]
     fn a_hurt_entity_starts_the_repairs_of_the_layers_that_are_hurt_and_the_task_fails_all_the_same() {
         let mut rig = rig();
-        rig.world.shield_ratios.insert(1, 0.5);
+        set_health(&mut rig, 0.5, 1.0);
         let task = start(&mut rig);
         assert_eq!(rig.last_error, None);
         assert_eq!(rig.tree.status_of(task), Status::Failure);
@@ -308,7 +328,7 @@ mod tests {
     #[test]
     fn an_effect_that_is_running_is_not_started_again() {
         let mut rig = rig();
-        rig.world.shield_ratios.insert(1, 0.5);
+        set_health(&mut rig, 0.5, 1.0);
         rig.world.active_effect_targets.insert((1, EFFECT_ENTITY_SHIELD_BOOSTING_MEDIUM), None);
         start(&mut rig);
         assert!(rig.world.take_calls().is_empty());
@@ -322,7 +342,7 @@ mod tests {
         assert!(!rig.tree.has_reset_request());
         rig.send_event(1, message::ON_DAMAGE_CHANGED, &[]);
         assert!(!rig.tree.has_reset_request(), "nothing is hurt");
-        rig.world.armor_ratios.insert(1, 0.9);
+        set_health(&mut rig, 1.0, 0.9);
         rig.send_event(1, message::ON_DAMAGE_CHANGED, &[]);
         assert!(rig.tree.has_reset_request());
     }
@@ -330,7 +350,7 @@ mod tests {
     #[test]
     fn an_entity_that_is_exploding_is_not_repaired() {
         let mut rig = rig();
-        rig.world.shield_ratios.insert(1, 0.5);
+        set_health(&mut rig, 0.5, 1.0);
         rig.world.exploding.insert(1);
         start(&mut rig);
         assert!(rig.world.take_calls().is_empty());
@@ -352,7 +372,7 @@ mod tests {
         let mut rig = Rig::new();
         rig.ctx.my_slim_item =
             Some(SlimItem { item_id: 1, type_id: 700, owner_id: Some(7), ..Default::default() });
-        rig.world.shield_ratios.insert(1, 0.1);
+        set_health(&mut rig, 0.1, 1.0);
         start(&mut rig);
         assert!(rig.world.take_calls().is_empty());
     }
@@ -360,13 +380,13 @@ mod tests {
     #[test]
     fn the_effect_is_stopped_when_the_layer_is_whole_again_unless_it_cannot_be() {
         let mut rig = rig();
-        rig.world.shield_ratios.insert(1, 0.5);
+        set_health(&mut rig, 0.5, 1.0);
         start(&mut rig);
         rig.world.take_calls();
         let key = EventKey::with(message::ON_EFFECT_STARTED, EFFECT_ENTITY_SHIELD_BOOSTING_MEDIUM);
         rig.send_event(1, key, &[]);
         assert!(rig.world.take_calls().is_empty(), "the shield is still hurt");
-        rig.world.shield_ratios.insert(1, 1.0);
+        set_health(&mut rig, 1.0, 1.0);
         rig.send_event(1, key, &[]);
         assert_eq!(
             rig.world.take_calls(),
@@ -383,7 +403,7 @@ mod tests {
         start(&mut rig);
         rig.tree.release(&mut rig.ctx, &mut rig.shared, &mut rig.world);
         rig.send_event(1, message::ON_DAMAGE_CHANGED, &[]);
-        rig.world.armor_ratios.insert(1, 0.5);
+        set_health(&mut rig, 1.0, 0.5);
         rig.send_event(1, message::ON_DAMAGE_CHANGED, &[]);
         assert!(!rig.tree.has_reset_request());
     }

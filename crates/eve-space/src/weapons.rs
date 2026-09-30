@@ -47,6 +47,17 @@ pub struct Kinematics {
     pub signature_radius: f64,
 }
 
+/// An offensive act: a weapon of `attacker` was fired at `target` (what the crimewatch tells a tree that waits for aggression).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Aggression {
+    pub attacker_ship: i64,
+    pub target_ship: i64,
+    pub module_type_id: i32,
+    /// The character that flies the attacker, or its owner.
+    pub source_owner_id: i64,
+    pub target_type_id: i32,
+}
+
 /// What came of a shot.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shot {
@@ -252,6 +263,14 @@ impl Scene {
             applied = hit.map_or(0.0, |hit| hit.taken.shield + hit.taken.armor + hit.taken.structure);
         }
         let owner = self.combat_owner(session);
+        let target_type_id = self.pilots.get(&target_session).map_or(0, |pilot| pilot.ship.spec.type_id);
+        self.aggressions.push(Aggression {
+            attacker_ship: attacker_id,
+            target_ship: effect.target_id,
+            module_type_id: turret.weapon_type_id,
+            source_owner_id: owner,
+            target_type_id,
+        });
         let message = |for_the_attacker| {
             damage_message(
                 for_the_attacker,
@@ -727,9 +746,23 @@ mod tests {
             started.iter().any(|o| o.session() == PLAYER
                 && matches!(o, Out::Notify { name: "OnModuleAttributeChanges", .. }))
         );
+        // the shot is an offensive act, which the crimewatch tells those who wait for one
+        assert_eq!(
+            scene.aggressions,
+            [Aggression {
+                attacker_ship: NPC_SHIP,
+                target_ship: spec().ship_id,
+                module_type_id: 23_312,
+                source_owner_id: 1_000_127,
+                target_type_id: spec().type_id,
+            }]
+        );
         // one more cycle, one more shot
         let cycle = scene.poll(now + 2_500 * SECOND / 1_000 + 1);
         assert_eq!(messages(&cycle, PLAYER, "OnDamageMessage").len(), 1);
+        assert_eq!(scene.aggressions.len(), 1, "the act of this poll waits for the next one to be told");
+        scene.poll(now + 2_500 * SECOND / 1_000 + 2);
+        assert!(scene.aggressions.is_empty(), "no tree hears of the acts, so a poll does not keep them");
         // the shield has taken what the shots did
         let condition = scene.ship(PLAYER, now + 3 * SECOND).unwrap().health.condition_at(now + 3 * SECOND);
         assert!(condition.shield_charge < 1.0, "{condition:?}");

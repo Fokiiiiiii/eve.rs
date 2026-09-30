@@ -7,9 +7,15 @@
 //! client's package does not say how often, and the reference's own NPC loop is not a behavior tree).
 
 mod ballpark;
+mod dogma;
+#[cfg(test)]
+mod rat_tests;
+mod rats;
 mod world;
+#[cfg(test)]
+mod world_tests;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
 use eve_behaviors::blackboards::{Observer, ScopeType, TreeId};
@@ -22,6 +28,7 @@ use crate::scene::{Out, Scene, SessionId, TICKS_PER_SECOND};
 use crate::ship::Ship;
 use crate::warp::PythonRandom;
 
+pub use rats::{BELT_RAT, RAT_TAG};
 pub use world::SceneWorld;
 
 /// How often the trees are ticked, in FILETIME ticks.
@@ -32,6 +39,10 @@ const HISTORY: usize = 10;
 
 /// How many rounds of messages between trees are delivered in one go: a message can make a task send another, and a cycle must not spin.
 const DELIVERY_ROUNDS: usize = 16;
+
+/// The type of the proximity sensor an NPC that attacks what comes near has (the item type of the component the reference's spawner registers; the trees
+/// only pass it on).
+const PROXIMITY_SENSOR_TYPE: i64 = 0;
 
 /// How many faults a brain remembers.
 const FAULTS_KEPT: usize = 8;
@@ -52,6 +63,24 @@ pub(crate) struct RangeNotification {
     pub observer: Observer,
 }
 
+impl WorldState {
+    fn new() -> Self {
+        Self {
+            rng: PythonRandom::new(0x4e50_4353),
+            notifications: Vec::new(),
+            groups: BTreeMap::new(),
+            sensors: BTreeMap::new(),
+            locks_seen: BTreeMap::new(),
+            protected: BTreeMap::new(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self { rng: PythonRandom::new(1), ..Self::new() }
+    }
+}
+
 /// One NPC's tree and what it runs in.
 struct Brain {
     tree: BehaviorTree,
@@ -69,6 +98,22 @@ pub(crate) struct WorldState {
     pub(crate) notifications: Vec<RangeNotification>,
     /// The entity groups: the ships that belong to each, in the order they joined (`groupManager`).
     pub(crate) groups: BTreeMap<i64, Vec<i64>>,
+    /// The proximity sensors (`componentRegistry`): what sees which ships, by the item that has one.
+    pub(crate) sensors: BTreeMap<i64, Sensor>,
+    /// What each NPC had locked when the trees were last told (the locks that came or went since are told to them).
+    pub(crate) locks_seen: BTreeMap<i64, Vec<i64>>,
+    /// Which ships were under their undock protection when the trees were last told (the end of it is told to the bubble).
+    pub(crate) protected: BTreeMap<i64, bool>,
+}
+
+/// A proximity sensor component: an item that sees the ships within a range.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Sensor {
+    pub type_id: i64,
+    pub detection_range: f64,
+    pub tags: Vec<String>,
+    /// The ships it saw when the trees were last told.
+    pub in_range: BTreeSet<i64>,
 }
 
 /// The brains of a scene and what they share.
@@ -90,11 +135,7 @@ impl Default for Brains {
             trees: HashMap::new(),
             next_tree: 1,
             next_tick: 0,
-            state: WorldState {
-                rng: PythonRandom::new(0x4e50_4353),
-                notifications: Vec::new(),
-                groups: BTreeMap::new(),
-            },
+            state: WorldState::new(),
             loader: ScriptedBehaviorLoader::new(),
         }
     }
@@ -157,10 +198,14 @@ impl Brains {
         behavior: &str,
         group_id: i64,
     ) -> Result<(), GiveError> {
-        let tree = self.loader.load(behavior, Some(ScopeType::Item)).map_err(|error| match error {
-            LoaderError::BehaviorDoesNotExist => GiveError::Unknown(behavior.to_string()),
-            other => GiveError::Loader(other),
-        })?;
+        let tree = if behavior == BELT_RAT {
+            rats::create_belt_rat_behavior_tree()
+        } else {
+            self.loader.load(behavior, Some(ScopeType::Item)).map_err(|error| match error {
+                LoaderError::BehaviorDoesNotExist => GiveError::Unknown(behavior.to_string()),
+                other => GiveError::Loader(other),
+            })?
+        };
         let ctx = BehaviorContext {
             my_item_id: Some(ship.spec.ship_id),
             my_entity_group_id: Some(group_id),
@@ -176,6 +221,17 @@ impl Brains {
             ..BehaviorContext::default()
         };
         self.insert(session, tree, ctx);
+        if let Some(npc) = ship.npc.as_ref().filter(|npc| npc.combat.aggression_range > 0.0) {
+            self.state.sensors.insert(
+                ship.spec.ship_id,
+                Sensor {
+                    type_id: PROXIMITY_SENSOR_TYPE,
+                    detection_range: npc.combat.aggression_range,
+                    tags: vec![RAT_TAG.to_string()],
+                    in_range: BTreeSet::new(),
+                },
+            );
+        }
         Ok(())
     }
 
@@ -199,6 +255,8 @@ impl Brains {
             self.trees.remove(&tree);
             self.shared.events.forget_tree(tree);
             self.state.notifications.retain(|n| n.observer.tree != tree);
+            self.state.sensors.remove(&brain.ship_id);
+            self.state.locks_seen.remove(&brain.ship_id);
             if let Some(members) = self.state.groups.get_mut(&brain.group_id) {
                 members.retain(|member| *member != brain.ship_id);
                 if members.is_empty() {
@@ -232,6 +290,7 @@ impl Brains {
         for notification in world.take_due_notifications() {
             shared.pending.push(Delivery::Call { observer: notification.observer, args: Vec::new() });
         }
+        world.tell_what_happened(shared);
         deliver_pending(shared, brains, trees, &mut world);
         if now >= *next_tick {
             *next_tick = now + TICK;
@@ -850,8 +909,7 @@ mod tests {
         let mut scene = scene_with_a_player();
         let draws = |scene: &mut Scene| -> Vec<f64> {
             let mut out = Vec::new();
-            let mut state =
-                WorldState { rng: PythonRandom::new(1), notifications: Vec::new(), groups: BTreeMap::new() };
+            let mut state = WorldState::for_test();
             let mut world = SceneWorld::new(scene, NOON, &mut out, &mut state);
             (0..3).map(|_| world.random()).collect()
         };

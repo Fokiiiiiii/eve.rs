@@ -253,6 +253,8 @@ pub struct Scene {
     pub(crate) group_sequence: u64,
     /// The dice a shot is rolled with (`crate::weapons`).
     pub(crate) rng: PythonRandom,
+    /// The offensive acts since the brains last looked (`crate::brains` tells the NPCs that were their targets).
+    pub(crate) aggressions: Vec<crate::weapons::Aggression>,
     /// The trees of the NPCs (`crate::brains`).
     pub(crate) brains: Option<crate::brains::Brains>,
 }
@@ -276,6 +278,7 @@ impl Scene {
             npc_sequence: 0,
             group_sequence: 0,
             rng: PythonRandom::new(0x5348_4f54),
+            aggressions: Vec::new(),
             brains: None,
         }
     }

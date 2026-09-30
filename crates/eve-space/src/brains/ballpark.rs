@@ -6,11 +6,13 @@ use eve_behaviors::consts::{
     DESTINY_MODE_FOLLOW, DESTINY_MODE_GOTO, DESTINY_MODE_ORBIT, DESTINY_MODE_STOP, DESTINY_MODE_WARP,
     SHIP_NOT_WARPING,
 };
-use eve_behaviors::env::{Ball, Ballpark, SlimItem, WorldError, WorldResult};
+use eve_behaviors::env::{Ball, Ballpark, ProximitySensor, SlimItem, WorldError, WorldResult};
 use eve_destiny::Vec3;
 
 use super::world::{SceneWorld, distance};
-use super::{NotifyTarget, RangeNotification};
+use std::collections::BTreeSet;
+
+use super::{NotifyTarget, RangeNotification, Sensor};
 use crate::scene::Command;
 use crate::ship::Course;
 use crate::visibility::grid_of;
@@ -48,6 +50,30 @@ impl SceneWorld<'_> {
     pub(crate) fn surface_distance(&self, a: i64, b: i64) -> Option<f64> {
         let (pa, pb) = (self.ball_position(a)?, self.ball_position(b)?);
         Some(distance(pa, pb) - self.ball_radius(a)? - self.ball_radius(b)?)
+    }
+
+    /// The ships within the range of a sensor (never the ship the sensor is of).
+    pub(crate) fn ships_in_sensor_range(&self, item_id: i64) -> BTreeSet<i64> {
+        let Some(sensor) = self.state.sensors.get(&item_id) else { return BTreeSet::new() };
+        let Some(from) = self.ball_position(item_id) else { return BTreeSet::new() };
+        self.scene
+            .in_entry_order_ships()
+            .into_iter()
+            .filter(|ship| *ship != item_id)
+            .filter(|ship| {
+                self.ball_position(*ship).is_some_and(|at| distance(from, at) <= sensor.detection_range)
+            })
+            .collect()
+    }
+
+    fn sensor_of(&self, item_id: i64) -> Option<ProximitySensor> {
+        self.state.sensors.get(&item_id)?;
+        let position = self.ball_position(item_id)?;
+        Some(ProximitySensor {
+            item_id,
+            bubble_id: bubble_of(position),
+            ball_ids_in_range: self.ships_in_sensor_range(item_id).into_iter().collect(),
+        })
     }
 
     /// The ids of every ball of the scene: the ships, then the bodies.
@@ -294,6 +320,51 @@ impl Ballpark for SceneWorld<'_> {
             });
         }
         Ok(())
+    }
+
+    fn proximity_sensor(&self, item_id: i64) -> Option<ProximitySensor> {
+        self.sensor_of(item_id)
+    }
+
+    fn proximity_sensors(&self, tags: &[String]) -> Vec<ProximitySensor> {
+        self.state
+            .sensors
+            .iter()
+            .filter(|(_, sensor)| tags.iter().all(|tag| sensor.tags.contains(tag)))
+            .filter_map(|(item, _)| self.sensor_of(*item))
+            .collect()
+    }
+
+    fn add_proximity_sensor(
+        &mut self,
+        item_id: i64,
+        type_id: i64,
+        detection_range: f64,
+    ) -> Option<ProximitySensor> {
+        self.state.sensors.insert(
+            item_id,
+            Sensor { type_id, detection_range, tags: Vec::new(), in_range: BTreeSet::new() },
+        );
+        self.sensor_of(item_id)
+    }
+
+    fn add_proximity_sensor_tag(&mut self, item_id: i64, tag: &str) {
+        if let Some(sensor) = self.state.sensors.get_mut(&item_id)
+            && !sensor.tags.iter().any(|t| t == tag)
+        {
+            sensor.tags.push(tag.to_string());
+        }
+    }
+
+    fn register_proximity_sensor(&mut self, item_id: i64) -> Option<i64> {
+        self.state.sensors.contains_key(&item_id).then_some(item_id)
+    }
+
+    /// The sensor starts seeing afresh: what it saw is seen again.
+    fn replace_proximity_sensor(&mut self, item_id: i64) {
+        if let Some(sensor) = self.state.sensors.get_mut(&item_id) {
+            sensor.in_range.clear();
+        }
     }
 
     fn stop_movement(&mut self, ball_id: i64) {

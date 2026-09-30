@@ -4,6 +4,7 @@ use eve_destiny::ball::{LegacyMode, WarpState};
 use eve_destiny::{BallEntity, IdRef, Kind, Vec3};
 
 use crate::health::{Condition, Health, Vitals};
+use crate::weapons::Turret;
 
 /// A fitted module, as the ship's slim item lists it.
 #[derive(Debug, Clone, PartialEq)]
@@ -73,20 +74,45 @@ pub enum Course {
     },
 }
 
-/// What sets an NPC's ship apart from a player's: nobody flies it (its ball has no session and is not interactive) and its slim item has no name and
+/// A weapon an NPC fights with. An NPC's weapons are effects of the ship itself (the client's `targetAttack`: the ship's own attributes are the
+/// weapon's), so the module of the effect is the ship.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NpcWeapon {
+    pub module_id: i64,
+    pub effect_id: i32,
+    /// The length of a cycle, milliseconds.
+    pub cycle_ms: f64,
+    pub capacitor_need: f64,
+    pub turret: Turret,
+}
+
+/// What an NPC fights with and when it starts to.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct NpcCombat {
+    pub weapons: Vec<NpcWeapon>,
+    /// How near a ship has to come for the NPC to attack it, metres (`entityAttackRange`); 0 for an NPC that only answers.
+    pub aggression_range: f64,
+}
+
+/// What sets an NPC's ship apart from a player's: nobody flies it (its ball has no session and is not interactive), its slim item has no name and
 /// carries the limits the NPC's owner reacts to (`hostile_response_threshold`, `friendly_response_threshold`: the standings at which it treats others
-/// as enemies or friends).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// as enemies or friends), and it fights with what `combat` says.
+#[derive(Debug, Clone, PartialEq)]
 pub struct NpcIdentity {
     pub hostile_response_threshold: i64,
     pub friendly_response_threshold: i64,
+    pub combat: NpcCombat,
 }
 
 impl Default for NpcIdentity {
     /// The limits the reference gives every NPC it spawns (`-11` and `11`: no standing reaches them, so the NPC is hostile to whoever the
-    /// aggression rules say and to nobody else).
+    /// aggression rules say and to nobody else), and no weapons.
     fn default() -> Self {
-        Self { hostile_response_threshold: -11, friendly_response_threshold: 11 }
+        Self {
+            hostile_response_threshold: -11,
+            friendly_response_threshold: 11,
+            combat: NpcCombat::default(),
+        }
     }
 }
 

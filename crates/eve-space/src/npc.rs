@@ -176,8 +176,13 @@ impl Scene {
 
     /// Runs the brains (`Brains::run`): what they order is done to the ships, and what the host has to hear is given back.
     pub(crate) fn tick_brains(&mut self, now: i64) -> Vec<Out> {
-        let Some(mut brains) = self.brains.take() else { return Vec::new() };
+        let Some(mut brains) = self.brains.take() else {
+            self.aggressions.clear();
+            return Vec::new();
+        };
         if brains.is_empty() {
+            // no tree to hear of the offensive acts since the last poll: they are of no use to anyone
+            self.aggressions.clear();
             self.brains = Some(brains);
             return Vec::new();
         }

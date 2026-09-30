@@ -163,6 +163,11 @@ impl Modules {
         self.running.len()
     }
 
+    /// The effects that run, with the moment the cycle each is in began.
+    pub(crate) fn running_effects(&self) -> impl Iterator<Item = (&Effect, i64)> {
+        self.running.iter().map(|run| (&run.effect, run.cycle_start))
+    }
+
     pub(crate) fn is_idle(&self) -> bool {
         self.running.is_empty() && self.capacitor.as_ref().is_none_or(|c| c.next_sample.is_none())
     }

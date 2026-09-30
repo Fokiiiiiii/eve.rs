@@ -125,14 +125,14 @@ pub fn body_entries(system: &SolarSystem, body: &Body) -> Entries {
 
 /// The entries of a ship's slim item: a player's, or an NPC's (which has no name and ends with the limits of its owner's reactions).
 pub fn ship_entries(ship: &Ship) -> Entries {
-    match ship.npc {
+    match &ship.npc {
         None => pilot_ship_entries(&ship.spec),
         Some(npc) => npc_ship_entries(&ship.spec, npc),
     }
 }
 
 /// The entries of the slim item of an NPC's ship, in the order the reference gives them (`oracle/fixtures/scenarios/jump.json`).
-fn npc_ship_entries(spec: &ShipSpec, npc: NpcIdentity) -> Entries {
+fn npc_ship_entries(spec: &ShipSpec, npc: &NpcIdentity) -> Entries {
     let modules = spec
         .modules
         .iter()

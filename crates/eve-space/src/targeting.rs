@@ -78,6 +78,11 @@ impl Targeting {
         self.pending.is_empty() && self.locked.is_empty()
     }
 
+    /// The targets being locked, in the order they were asked for.
+    pub(crate) fn pending_targets(&self) -> Vec<i64> {
+        self.pending.iter().map(|p| p.target).collect()
+    }
+
     fn targets(&self) -> Vec<i64> {
         let mut locked: Vec<&Locked> = self.locked.iter().collect();
         locked.sort_by_key(|l| (l.sequence, l.target));

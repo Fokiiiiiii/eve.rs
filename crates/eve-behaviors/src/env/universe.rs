@@ -92,4 +92,9 @@ pub trait Universe {
         _args: &[crate::value::Value],
     ) {
     }
+
+    /// `evetypes.GetGroupID(typeId)`.
+    fn type_group_id(&self, _type_id: i64) -> Option<i64> {
+        None
+    }
 }

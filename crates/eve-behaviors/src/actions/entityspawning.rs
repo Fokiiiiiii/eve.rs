@@ -50,7 +50,7 @@ pub fn get_spawn_position(t: &mut TaskCtx<'_, '_>, drones: bool) -> Option<[f64;
         return t.get_last_blackboard_value(&address).as_vec3();
     }
     let system = t.ctx().solar_system_id;
-    Some(t.world().random_deep_space_location(system))
+    Some(t.world().random_deep_space_location(system, None))
 }
 
 /// Registers a new spawn point pool and puts its id on the blackboard.

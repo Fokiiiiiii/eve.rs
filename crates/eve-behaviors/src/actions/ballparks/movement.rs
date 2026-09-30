@@ -23,45 +23,11 @@ use crate::utility::dogmatic::{get_my_attribute_value, get_type_attribute_value}
 use crate::utility::roles::{has_combat_role, is_commander};
 use crate::value::Value;
 
+use super::util::{attribute_error, attribute_or, number_of, position_of, type_error};
+
 /// `ALIGN_START_TIME`.
 fn align_start_time() -> Address {
     Address::new(ScopeType::Item, "ALIGN_START_TIME")
-}
-
-fn type_error(t: &mut TaskCtx<'_, '_>, what: &str) {
-    t.raise(BehaviorError::Task(format!("TypeError: {what}")));
-}
-
-fn attribute_error(t: &mut TaskCtx<'_, '_>, what: &str) {
-    t.raise(BehaviorError::Task(format!("AttributeError: 'NoneType' object has no attribute '{what}'")));
-}
-
-/// A position that a blackboard holds, as `*position` and the vector maths take it.
-fn position_of(t: &mut TaskCtx<'_, '_>, value: &Value) -> Option<[f64; 3]> {
-    let position = value.as_vec3();
-    if position.is_none() {
-        type_error(t, "a position of three numbers is required");
-    }
-    position
-}
-
-/// A number that a task attribute holds (a float that is not there raises where the client uses it).
-fn number_of(t: &mut TaskCtx<'_, '_>, value: &Value) -> Option<f64> {
-    let number = value.as_float();
-    if number.is_none() {
-        type_error(t, "a number is required");
-    }
-    number
-}
-
-/// `getattr(self.attributes, name, default)` of a number.
-fn attribute_or(t: &mut TaskCtx<'_, '_>, name: &str, default: f64) -> Option<f64> {
-    if t.has_attribute(name) {
-        let value = t.attribute(name);
-        number_of(t, &value)
-    } else {
-        Some(default)
-    }
 }
 
 // ---- WarpToNewLocation, WarpToItem ----

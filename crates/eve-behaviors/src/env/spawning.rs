@@ -159,8 +159,12 @@ pub trait Spawning {
     /// `RegisterBountyPayOutMultiplierForEntities(entity_item_ids, multiplier)`.
     fn register_bounty_pay_out_multiplier(&mut self, _entity_item_ids: &[i64], _multiplier: &Value) {}
 
-    /// `GetRandomDeepSpaceLocation(solarsystem_id)`.
-    fn random_deep_space_location(&mut self, _solar_system_id: Option<i64>) -> [f64; 3] {
+    /// `GetRandomDeepSpaceLocation(solarsystem_id, minPlacementDistance=)`; what is not given is the generator's default.
+    fn random_deep_space_location(
+        &mut self,
+        _solar_system_id: Option<i64>,
+        _min_placement_distance: Option<f64>,
+    ) -> [f64; 3] {
         [0.0, 0.0, 0.0]
     }
 

@@ -269,12 +269,12 @@ pub trait Entities {
     fn reset_behavior_tree(&mut self, _item_id: i64) -> bool {
         false
     }
-    /// `myBall.AddTypeAndAmountToAdditionalLoot(typeId, amount, allowOverload)`.
+    /// `myBall.AddTypeAndAmountToAdditionalLoot(typeId, amount, allowOverload)`; what is not given is the server's default.
     fn add_type_and_amount_to_additional_loot(
         &mut self,
         _ball_id: i64,
         _type_id: i64,
-        _amount: &Value,
+        _amount: Option<&Value>,
         _allow_overload: Option<&Value>,
     ) {
     }

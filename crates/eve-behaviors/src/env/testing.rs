@@ -186,6 +186,8 @@ pub struct TestWorld {
     pub archetype_entries: [Vec<i64>; 2],
     /// The same by dungeon id.
     pub dungeon_id_entries: [Vec<i64>; 2],
+
+    pub type_groups: HashMap<i64, i64>,
 }
 
 impl TestWorld {
@@ -1050,10 +1052,11 @@ impl Entities for TestWorld {
         &mut self,
         ball_id: i64,
         type_id: i64,
-        amount: &Value,
+        amount: Option<&Value>,
         allow_overload: Option<&Value>,
     ) {
-        self.calls.push(format!("add_additional_loot({ball_id}, {type_id}, {amount:?}, {allow_overload:?})"));
+        let amount = amount.map_or("-".to_string(), |amount| format!("{amount:?}"));
+        self.calls.push(format!("add_additional_loot({ball_id}, {type_id}, {amount}, {allow_overload:?})"));
     }
 
     fn remove_type_from_additional_loot(&mut self, ball_id: i64, type_id: i64) {
@@ -1452,7 +1455,13 @@ impl Spawning for TestWorld {
         self.calls.push(format!("register_bounty_pay_out_multiplier({entity_item_ids:?}, {multiplier:?})"));
     }
 
-    fn random_deep_space_location(&mut self, _solar_system_id: Option<i64>) -> [f64; 3] {
+    fn random_deep_space_location(
+        &mut self,
+        solar_system_id: Option<i64>,
+        min_placement_distance: Option<f64>,
+    ) -> [f64; 3] {
+        self.calls
+            .push(format!("random_deep_space_location({solar_system_id:?}, {min_placement_distance:?})"));
         self.deep_space_location
     }
 
@@ -1545,6 +1554,10 @@ impl Inventory for TestWorld {
 }
 
 impl Universe for TestWorld {
+    fn type_group_id(&self, type_id: i64) -> Option<i64> {
+        self.type_groups.get(&type_id).copied()
+    }
+
     fn singlecast_by_char_id(&mut self, char_id: Option<i64>, notification: &str, args: &[Value]) {
         self.calls.push(format!("singlecast_by_char_id({char_id:?}, {notification}, {args:?})"));
     }

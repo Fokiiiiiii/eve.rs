@@ -32,7 +32,7 @@ enter_task!(
         if let Some(type_id) = type_id.as_int() {
             let Some(ball) = get_my_ball(t) else { return };
             let (Some(amount), Some(allow_overload)) = (t.required("amount"), t.required("allowOverload")) else { return };
-            t.world().add_type_and_amount_to_additional_loot(ball.id, type_id, &amount, Some(&allow_overload));
+            t.world().add_type_and_amount_to_additional_loot(ball.id, type_id, Some(&amount), Some(&allow_overload));
         }
         t.set_status_to_success();
     }
@@ -51,7 +51,7 @@ enter_task!(
         if let (Some(type_id), false) = (type_id.as_int(), amount.is_none()) {
             let Some(ball) = get_my_ball(t) else { return };
             let Some(allow_overload) = t.required("allowOverload") else { return };
-            t.world().add_type_and_amount_to_additional_loot(ball.id, type_id, &amount, Some(&allow_overload));
+            t.world().add_type_and_amount_to_additional_loot(ball.id, type_id, Some(&amount), Some(&allow_overload));
         }
         t.set_status_to_success();
     }
@@ -90,7 +90,7 @@ enter_task!(
         let additional_loot = t.world().remove_additional_loot(target_entity_ball.id);
         let Some(my_ball) = get_my_ball(t) else { return };
         for (type_id, amount) in additional_loot {
-            t.world().add_type_and_amount_to_additional_loot(my_ball.id, type_id, &amount, None);
+            t.world().add_type_and_amount_to_additional_loot(my_ball.id, type_id, Some(&amount), None);
         }
         t.set_status_to_success();
     }

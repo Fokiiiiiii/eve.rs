@@ -57,4 +57,10 @@ public interface ISimulation
     Task<CommandReply> ActivateAsync(ulong sessionId, SimEffect effect, CancellationToken cancellationToken = default);
 
     void ShipChanged(ulong sessionId, SimShip ship);
+
+    /// <summary>Spawns an NPC in the scene of a system and waits for the answer (the session it is known by, or why it could not be done).</summary>
+    Task<SimSpawnReply> SpawnAsync(SimSpawn spawn, CancellationToken cancellationToken = default);
+
+    /// <summary>Destroys a ship: the explosion, the wreck (for <paramref name="credit"/> to loot), and (for a player's ship) a <see cref="SimDestroyed"/> that comes back through <see cref="Received"/>.</summary>
+    void Destroy(long shipId, SimCredit credit);
 }

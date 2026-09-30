@@ -12,10 +12,33 @@ use crate::wreck::{LootRights, WRECK_LIFETIME, Wreck};
 /// the host's items are far below it).
 pub const TRANSIENT_ID_BASE: i64 = 4_300_000_000_000_000;
 
+/// Who may take what a destroyed ship leaves: the pilot and the corporation, the alliance and the faction they are in.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Credit {
+    pub character_id: i64,
+    pub corporation_id: i64,
+    pub alliance_id: i64,
+    pub war_faction_id: i64,
+}
+
 impl Scene {
     /// The ship of `session` is destroyed at `now` by the ship of `killer` (`None` when nobody did it): those who see it are told, it leaves the
     /// scene, and an NPC's wreck comes into it. The host is told of the destruction with [`Out::Destroyed`].
     pub fn destroy(&mut self, session: SessionId, killer: Option<SessionId>, now: i64) -> Vec<Out> {
+        let credit = self.credit_of(killer);
+        let killer_ship =
+            killer.and_then(|session| self.pilots.get(&session)).map(|pilot| pilot.ship.spec.ship_id);
+        self.destroy_credited(session, credit, killer_ship, now)
+    }
+
+    /// As [`Scene::destroy`], the wreck to be looted by `credit` (the host says who: the pilot who asked for the destruction).
+    pub fn destroy_credited(
+        &mut self,
+        session: SessionId,
+        credit: Credit,
+        killer_ship: Option<i64>,
+        now: i64,
+    ) -> Vec<Out> {
         if !self.pilots.contains_key(&session) {
             return Vec::new();
         }
@@ -24,9 +47,6 @@ impl Scene {
         if self.pilots[&session].bound && !is_npc_session(session) {
             told_of_it.insert(0, session);
         }
-        let rights = self.loot_rights_of(killer);
-        let killer_ship =
-            killer.and_then(|session| self.pilots.get(&session)).map(|pilot| pilot.ship.spec.ship_id);
         let Some(pilot) = self.pilots.remove(&session) else { return Vec::new() };
         if let Some(brains) = self.brains.as_mut() {
             brains.forget(session);
@@ -42,7 +62,12 @@ impl Scene {
         for watcher in told_of_it {
             out.push(Self::update(watcher, payload::destruction(stamp, ship_id)));
         }
-        let wreck = ship.npc.as_ref().and_then(|npc| npc.wreck.clone()).map(|kind| {
+        // an NPC that says what it leaves leaves that; else the wreck of the ship's type, as the reference's rules have it
+        let kind = ship.npc.as_ref().and_then(|npc| npc.wreck.clone()).or_else(|| {
+            let catalog = self.wreck_catalog.as_ref()?;
+            ship.npc.as_ref().and_then(|_| catalog.resolve_ship_wreck_type(i64::from(ship.spec.type_id)))
+        });
+        let wreck = kind.map(|kind| {
             self.wreck_sequence += 1;
             Wreck {
                 id: TRANSIENT_ID_BASE + self.wreck_sequence as i64,
@@ -50,11 +75,14 @@ impl Scene {
                 position: ship.position,
                 direction: ship.direction,
                 radius: ship.spec.radius,
-                owner_id: rights.owner_id,
-                corporation_id: rights.rights.corporation_id,
-                alliance_id: rights.alliance_id,
-                war_faction_id: rights.war_faction_id,
-                rights: rights.rights.clone(),
+                owner_id: credit.character_id,
+                corporation_id: credit.corporation_id,
+                alliance_id: credit.alliance_id,
+                war_faction_id: credit.war_faction_id,
+                rights: LootRights {
+                    character_id: credit.character_id,
+                    corporation_id: credit.corporation_id,
+                },
                 launcher_id: ship_id,
                 is_empty: true,
                 expires_at: now + WRECK_LIFETIME,
@@ -76,29 +104,19 @@ impl Scene {
         out
     }
 
-    /// What a wreck made by `killer`'s ship is owned by, and who may loot it: the killer's pilot and corporation (nobody's when nobody did it).
-    fn loot_rights_of(&self, killer: Option<SessionId>) -> WreckOwner {
+    /// Who a wreck made by `killer`'s ship is credited to: the killer's pilot and corporation (nobody when nobody did it).
+    fn credit_of(&self, killer: Option<SessionId>) -> Credit {
         let Some(pilot) = killer.and_then(|session| self.pilots.get(&session)) else {
-            return WreckOwner::default();
+            return Credit::default();
         };
         let spec = &pilot.ship.spec;
-        let character = if spec.character_id > 0 { spec.character_id } else { spec.owner_id };
-        WreckOwner {
-            owner_id: character,
+        Credit {
+            character_id: if spec.character_id > 0 { spec.character_id } else { spec.owner_id },
+            corporation_id: i64::from(spec.corporation_id),
             alliance_id: i64::from(spec.alliance_id),
             war_faction_id: i64::from(spec.war_faction_id),
-            rights: LootRights { character_id: character, corporation_id: i64::from(spec.corporation_id) },
         }
     }
-}
-
-/// The owner of a wreck, as its slim item says.
-#[derive(Debug, Clone, Default)]
-struct WreckOwner {
-    owner_id: i64,
-    alliance_id: i64,
-    war_faction_id: i64,
-    rights: LootRights,
 }
 
 #[cfg(test)]
@@ -183,8 +201,7 @@ mod tests {
         let Value::Tuple(payload) = &added[0][0] else { panic!("{added:?}") };
         let Value::List(extras) = &payload[1] else { panic!() };
         let Value::Tuple(extra) = &extras[0] else { panic!() };
-        let Value::Object { args, .. } = &extra[0] else { panic!("{extra:?}") };
-        let Value::Dict(entries) = args.as_ref() else { panic!() };
+        let Value::Dict(entries) = &extra[0] else { panic!("{extra:?}") };
         let entry = |key: &str| {
             entries.iter().find(|(k, _)| matches!(k, Value::Str(n) if n == key)).map(|(_, v)| v.clone())
         };
@@ -196,6 +213,38 @@ mod tests {
         let wreck = scene.wrecks.values().next().unwrap();
         assert_eq!((wreck.position, wreck.radius, wreck.id), (was_at, 47.0, TRANSIENT_ID_BASE + 1));
         assert_eq!(wreck.expires_at, LATER + SECOND + WRECK_LIFETIME);
+    }
+
+    #[test]
+    fn an_npc_that_does_not_say_what_it_leaves_leaves_the_wreck_the_rules_give_its_type_and_one_that_does_leaves_that()
+     {
+        use crate::wreck_types::WreckCatalog;
+        let catalog = std::sync::Arc::new(WreckCatalog::of([
+            (601, "Ibis", "Frigate", 1, 312),
+            (26_506, "Caldari Frigate Wreck", "Wreck", 0, 3117),
+        ]));
+        let mut scene = scene_with_a_player();
+        scene.set_wreck_catalog(std::sync::Arc::clone(&catalog));
+        let place = place_near(&mut scene, 8_000.0);
+        let (rat, _) = scene.spawn_npc(rat_spec(), rat_identity(0.0), place, LATER);
+        scene.destroy(rat, None, LATER);
+        let wreck = scene.wrecks.values().next().unwrap();
+        assert_eq!(
+            (wreck.kind.type_id, wreck.kind.name.as_str(), wreck.kind.graphic_id),
+            (26_506, "Caldari Frigate Wreck", Some(3117))
+        );
+
+        // a wreck an NPC names is the one it leaves; a player's ship leaves none of the scene's making (the host makes it)
+        let mut scene = scene_with_a_player();
+        scene.set_wreck_catalog(catalog);
+        let place = place_near(&mut scene, 8_000.0);
+        let named = WreckKind { type_id: 1, name: "Named".to_string(), graphic_id: None };
+        let identity = NpcIdentity { wreck: Some(named.clone()), ..rat_identity(0.0) };
+        let (rat, _) = scene.spawn_npc(rat_spec(), identity, place, LATER);
+        scene.destroy(rat, None, LATER);
+        assert_eq!(scene.wrecks.values().next().unwrap().kind, named);
+        scene.destroy(PLAYER, None, LATER);
+        assert_eq!(scene.wrecks.len(), 1);
     }
 
     #[test]
@@ -279,6 +328,24 @@ mod tests {
         assert_eq!((wreck.rights.character_id, wreck.rights.corporation_id), (140_000_342, 1_000_006));
         assert_eq!(wreck.launcher_id, RAT_SHIP);
         assert_eq!(spec().character_id, 140_000_342);
+    }
+
+    #[test]
+    fn a_wreck_is_the_loot_of_whoever_the_host_says_and_the_ship_that_did_it_is_none() {
+        let (mut scene, rat) = scene_with_a_mortal_rat();
+        let credit = Credit {
+            character_id: 140_000_001,
+            corporation_id: 1_000_006,
+            alliance_id: 99_000_001,
+            war_faction_id: 500_001,
+        };
+        scene.destroy_credited(rat, credit, None, LATER);
+        let wreck = scene.wrecks.values().next().unwrap();
+        assert_eq!(
+            (wreck.owner_id, wreck.corporation_id, wreck.alliance_id, wreck.war_faction_id),
+            (140_000_001, 1_000_006, 99_000_001, 500_001)
+        );
+        assert_eq!((wreck.rights.character_id, wreck.rights.corporation_id), (140_000_001, 1_000_006));
     }
 
     #[test]

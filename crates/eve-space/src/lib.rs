@@ -32,3 +32,4 @@ pub mod weapons;
 pub mod wire;
 pub mod world;
 pub mod wreck;
+pub mod wreck_types;

@@ -186,7 +186,7 @@ public sealed record SimWreckKind(int TypeId, string Name, int GraphicId);
 
 /// <summary>What sets an NPC apart: the standings at which it treats others as enemies or friends, what it attacks at and with, and what it leaves.</summary>
 public sealed record SimNpcIdentity(
-    long HostileResponseThreshold, long FriendlyResponseThreshold, double AggressionRange, IReadOnlyList<SimNpcWeapon> Weapons, SimWreckKind? Wreck)
+    long HostileResponseThreshold, long FriendlyResponseThreshold, double AggressionRange, IReadOnlyList<SimNpcWeapon> Weapons, SimWreckKind? Wreck, bool Hull = false)
 {
     /// <summary>The limits the reference gives every NPC, and nothing else.</summary>
     public static readonly SimNpcIdentity Default = new(-11, 11, 0, [], null);
@@ -197,11 +197,17 @@ public sealed record SimNpcIdentity(
 /// scripted tree it runs (empty for none) and what it is. Answered with <see cref="SimSpawnReply"/>.
 /// </summary>
 public sealed record SimSpawn(
-    ulong RequestId, int SolarSystemId, SimShip Ship, IReadOnlyList<double> Position, IReadOnlyList<double> Velocity, IReadOnlyList<double> Direction, string Behavior,
-    SimNpcIdentity Identity) : SimMessage;
+    ulong RequestId, int SolarSystemId, SimShip Ship, long AnchorShipId, IReadOnlyList<double> Position, IReadOnlyList<double> Velocity, IReadOnlyList<double> Direction,
+    string Behavior, SimNpcIdentity Identity) : SimMessage;
 
 /// <summary>Whether a <see cref="SimSpawn"/> was done: the session the NPC is known by, or why not.</summary>
 public sealed record SimSpawnReply(ulong RequestId, ulong? Session, string? Error) : SimMessage;
 
-/// <summary>Destroy this ship: the explosion, the wreck, and (for a player's ship) a <see cref="SimDestroyed"/> for the host.</summary>
-public sealed record SimDestroy(long ShipId) : SimMessage;
+/// <summary>Who may take what a destroyed ship leaves: the pilot and the corporation, the alliance and the faction they are in (0 for none).</summary>
+public sealed record SimCredit(long CharacterId, long CorporationId, long AllianceId, long WarFactionId)
+{
+    public static SimCredit Nobody { get; } = new(0, 0, 0, 0);
+}
+
+/// <summary>Destroy this ship: the explosion, the wreck (for <see cref="Credit"/> to loot), and (for a player's ship) a <see cref="SimDestroyed"/> for the host.</summary>
+public sealed record SimDestroy(long ShipId, SimCredit Credit) : SimMessage;

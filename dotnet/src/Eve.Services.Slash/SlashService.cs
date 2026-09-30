@@ -5,10 +5,10 @@ namespace Eve.Services.Slash;
 
 /// <summary>
 /// The game master's commands the client sends over RPC (<c>slash</c>): <c>SlashCmd("/name arguments")</c> runs one and answers with what it says. Only the
-/// commands the modules that exist can carry out are here: <c>/dmg</c> and <c>/heal</c> (<see cref="ShipHealthCommands"/>); any other is answered as unknown.
+/// commands the modules that exist can carry out are here: <c>/dmg</c> and <c>/heal</c> (<see cref="ShipHealthCommands"/>) and <c>/deathtest</c> (<see cref="DeathTestCommands"/>); any other is answered as unknown.
 /// </summary>
 [Service("slash")]
-public sealed partial class SlashService(ShipHealthCommands health)
+public sealed partial class SlashService(ShipHealthCommands health, DeathTestCommands? death = null)
 {
     /// <summary><c>ReportSlashCommandUsage(command)</c>: the client says a command was used; nothing is kept.</summary>
     [Method("ReportSlashCommandUsage")]
@@ -26,6 +26,7 @@ public sealed partial class SlashService(ShipHealthCommands health)
         {
             "/dmg" => await health.DamageAsync(call.Session, argument, call.Cancellation),
             "/heal" => await health.HealAsync(call.Session, call.Cancellation),
+            "/deathtest" when death is not null => await death.RunAsync(call.Session, argument, call.Cancellation),
             _ => $"Unknown command: {text}. Use /help.",
         };
         return new PyStr(message);

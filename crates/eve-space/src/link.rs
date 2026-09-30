@@ -5,6 +5,7 @@
 //! [`Message::decode`] reads a frame's payload (the kind and the body), so the same functions serve any framing layer.
 //! `oracle/fixtures/simlink/messages.json` pins the layout for both sides.
 
+use crate::death::Credit;
 use crate::health::{Condition, Resonances, Vitals};
 use crate::modules::{Change, Effect, Numbers};
 use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
@@ -57,6 +58,8 @@ pub struct Spawn {
     pub request_id: u64,
     pub solar_system_id: i32,
     pub ship: ShipSpec,
+    /// The ship the place is measured from (0: the place is where it is): the NPC comes into space at that ship's position plus `position`.
+    pub anchor_ship_id: i64,
     pub position: [f64; 3],
     pub velocity: [f64; 3],
     pub direction: [f64; 3],
@@ -189,9 +192,10 @@ pub enum Message {
         request_id: u64,
         outcome: Result<u64, String>,
     },
-    /// The host asks for the ship to be destroyed: its pilot's session is told of it (`Destroyed`) and the ship's wreck is made.
+    /// The host asks for the ship to be destroyed: its pilot's session is told of it (`Destroyed`) and the ship's wreck is made, for `credit` to loot.
     Destroy {
         ship_id: i64,
+        credit: Credit,
     },
     /// A targeting command the scene refused, with what the client is told of the target: its type, the range the ship can lock at and how far
     /// away the target is (both 0 unless the target was out of range; for `TARGET_LOCK_LIMIT_REACHED` the range is the number of targets the ship
@@ -402,6 +406,7 @@ fn put_identity(out: &mut Vec<u8>, identity: &NpcIdentity) {
             out.extend_from_slice(&wreck.graphic_id.unwrap_or(0).to_le_bytes());
         }
     }
+    out.push(u8::from(identity.hull));
 }
 
 fn read_identity(reader: &mut Reader) -> Result<NpcIdentity, DecodeError> {
@@ -446,11 +451,17 @@ fn read_identity(reader: &mut Reader) -> Result<NpcIdentity, DecodeError> {
         }
         _ => return Err(DecodeError::BadValue("wreck")),
     };
+    let hull = match reader.u8()? {
+        0 => false,
+        1 => true,
+        _ => return Err(DecodeError::BadValue("hull")),
+    };
     Ok(NpcIdentity {
         hostile_response_threshold,
         friendly_response_threshold,
         combat: NpcCombat { weapons, aggression_range },
         wreck,
+        hull,
     })
 }
 
@@ -788,6 +799,7 @@ impl Message {
                 out.extend_from_slice(&spawn.request_id.to_le_bytes());
                 out.extend_from_slice(&spawn.solar_system_id.to_le_bytes());
                 put_ship(&mut out, &spawn.ship);
+                out.extend_from_slice(&spawn.anchor_ship_id.to_le_bytes());
                 for number in spawn.position.iter().chain(&spawn.velocity).chain(&spawn.direction) {
                     out.extend_from_slice(&number.to_le_bytes());
                 }
@@ -807,7 +819,13 @@ impl Message {
                     }
                 }
             }
-            Self::Destroy { ship_id } => out.extend_from_slice(&ship_id.to_le_bytes()),
+            Self::Destroy { ship_id, credit } => {
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                out.extend_from_slice(&credit.character_id.to_le_bytes());
+                out.extend_from_slice(&credit.corporation_id.to_le_bytes());
+                out.extend_from_slice(&credit.alliance_id.to_le_bytes());
+                out.extend_from_slice(&credit.war_faction_id.to_le_bytes());
+            }
             Self::TargetRefused {
                 session_id,
                 command,
@@ -949,6 +967,7 @@ impl Message {
                 let request_id = r.u64()?;
                 let solar_system_id = r.i32()?;
                 let ship = read_ship(&mut r)?;
+                let anchor_ship_id = r.i64()?;
                 let mut vectors = [[0.0; 3]; 3];
                 for vector in &mut vectors {
                     *vector = [r.f64()?, r.f64()?, r.f64()?];
@@ -959,6 +978,7 @@ impl Message {
                     request_id,
                     solar_system_id,
                     ship,
+                    anchor_ship_id,
                     position: vectors[0],
                     velocity: vectors[1],
                     direction: vectors[2],
@@ -975,7 +995,15 @@ impl Message {
                 };
                 Message::SpawnReply { request_id, outcome }
             }
-            kind::DESTROY => Message::Destroy { ship_id: r.i64()? },
+            kind::DESTROY => Message::Destroy {
+                ship_id: r.i64()?,
+                credit: Credit {
+                    character_id: r.i64()?,
+                    corporation_id: r.i64()?,
+                    alliance_id: r.i64()?,
+                    war_faction_id: r.i64()?,
+                },
+            },
             kind::TARGET_REFUSED => Message::TargetRefused {
                 session_id: r.u64()?,
                 command: r.u8()?,

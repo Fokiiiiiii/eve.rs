@@ -15,7 +15,7 @@ namespace Eve.Services.Space;
 /// the notifications), forwarding what the simulation says to the client that plays the ship, and bringing the ship home when it docks, or
 /// when the simulation is lost. What happens in space itself (motion, the balls, the stamps) is the simulation's (ADR 0007).
 /// </summary>
-public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules, ISpaceHealth
+public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules, ISpaceHealth, ISpaceHulls
 {
     /// <summary>How long a ship that has undocked cannot be hurt (the reference's: 30 seconds).</summary>
     public const long UndockInvulnerabilityTicks = 300_000_000;
@@ -369,6 +369,117 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         }
         var reply = await AskSimAsync(id, () => _sim.CommandAsync(id, SimCommands.Heal, [], cancellationToken), session);
         return reply.Accepted;
+    }
+
+    // ── hulls nobody flies ───────────────────────────────────────────────────
+
+    /// <summary>The item id of the first hull of <c>/deathtest</c>: the reference numbers its transient ships from about here (the ids of the items in the database are far below).</summary>
+    private const long HullIdBase = 4_200_000_000_000_000;
+
+    /// <summary>How far from the pilot the hulls of <c>/deathtest</c> come, how soon they blow up, how many there are when the pilot does not say (the reference's).</summary>
+    public const double DeathTestRadiusMeters = 20_000;
+    public const double DeathTestDelaySeconds = 2.0;
+
+    private long _hulls;
+    private ulong _spawnRequests;
+
+    /// <summary>
+    /// <c>buildRandomDirection</c> of the reference's <c>shipDestruction.js</c> (a direction near the base direction, turned by a random angle and lifted a little),
+    /// with the base direction along x: the simulation, not the host, knows which way the pilot's ship faces, and where the hulls come is random anyway.
+    /// </summary>
+    private static double[] RandomDirection()
+    {
+        var angle = Random.Shared.NextDouble() * Math.PI * 2;
+        var vertical = (Random.Shared.NextDouble() - 0.5) * 0.3;
+        double[] direction = [1 + Math.Cos(angle), vertical, Math.Sin(angle)];
+        var length = Math.Sqrt(direction.Sum(x => x * x));
+        return length > 0 && double.IsFinite(length) ? [.. direction.Select(x => x / length)] : [1, 0, 0];
+    }
+
+    /// <summary><c>buildShipDeathPositions</c>: places 3 km to <paramref name="radius"/> from the anchor, no two within 1.5 km (48 tries each).</summary>
+    private static List<double[]> HullPlaces(int count, double radius)
+    {
+        var places = new List<double[]>();
+        var reach = Math.Max(3_000, radius);
+        for (var index = 0; index < count; index++)
+        {
+            double[]? accepted = null;
+            for (var attempt = 0; attempt < 48 && accepted is null; attempt++)
+            {
+                var direction = RandomDirection();
+                var offset = 3_000 + Random.Shared.NextDouble() * Math.Max(0, reach - 3_000);
+                double[] candidate = [direction[0] * offset, direction[1] * offset, direction[2] * offset];
+                var collides = places.Any(other => Math.Sqrt(Enumerable.Range(0, 3).Sum(i => Math.Pow(other[i] - candidate[i], 2))) < 1_500);
+                if (!collides)
+                {
+                    accepted = candidate;
+                }
+            }
+            if (accepted is null)
+            {
+                break;
+            }
+            places.Add(accepted);
+        }
+        return places;
+    }
+
+    public async Task<HullField?> DeathTestAsync(ClientSession session, int? shipTypeId, int count, CancellationToken cancellationToken)
+    {
+        if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
+        {
+            return null;
+        }
+        var snapshot = await _ships.LoadAsync(pilot.CharacterId, cancellationToken);
+        var typeId = shipTypeId ?? snapshot?.Ship.TypeId ?? 0;
+        // the wreck is the caller's to loot, as the reference has it
+        var credit = snapshot is { } flown
+            ? new SimCredit(flown.Character.Id, flown.Character.CorporationId, flown.Character.AllianceId ?? 0, flown.Character.FactionId ?? 0)
+            : new SimCredit(pilot.CharacterId, 0, 0, 0);
+        await _statics.EnsureTypesAsync([typeId], cancellationToken);
+        if (_statics.Type(typeId) is not { } type)
+        {
+            return null;
+        }
+        var spawned = new List<long>();
+        foreach (var place in HullPlaces(count, DeathTestRadiusMeters))
+        {
+            var shipId = HullIdBase + Interlocked.Increment(ref _hulls);
+            var request = Interlocked.Increment(ref _spawnRequests);
+            var spawn = new SimSpawn(
+                request, pilot.SolarSystemId, SimShips.OfType(shipId, type), pilot.ShipId, place, [0, 0, 0], RandomDirection(), "",
+                SimNpcIdentity.Default with { Hull = true });
+            try
+            {
+                var reply = await _sim.SpawnAsync(spawn, cancellationToken);
+                if (reply.Session is not null)
+                {
+                    spawned.Add(shipId);
+                }
+                else
+                {
+                    _log?.Invoke($"deathtest: the hull was refused: {reply.Error}");
+                }
+            }
+            catch (SimUnavailableException error)
+            {
+                _log?.Invoke($"deathtest: {error.Message}");
+                throw Notify("Space is not available right now. Try again in a moment.");
+            }
+        }
+        if (spawned.Count == 0)
+        {
+            return null;
+        }
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(DeathTestDelaySeconds));
+            foreach (var shipId in spawned)
+            {
+                _sim.Destroy(shipId, credit);
+            }
+        }, CancellationToken.None);
+        return new HullField(type.Name, spawned.Count, DeathTestRadiusMeters, DeathTestDelaySeconds);
     }
 
     /// <summary>One order about a pilot's modules or targets is asked of the simulation at a time (the answers are matched by what was asked); an unreachable simulation is a message the client shows.</summary>

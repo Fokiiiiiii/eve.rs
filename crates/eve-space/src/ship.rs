@@ -102,8 +102,10 @@ pub struct NpcIdentity {
     pub hostile_response_threshold: i64,
     pub friendly_response_threshold: i64,
     pub combat: NpcCombat,
-    /// What the ship leaves when it is destroyed (`None`: nothing).
+    /// What the ship leaves when it is destroyed (`None`: what the rules give its type, when the scene has them).
     pub wreck: Option<crate::wreck::WreckKind>,
+    /// A hull nobody flies rather than an NPC (`/deathtest`): its slim item is a player's ship's, with the ship's name.
+    pub hull: bool,
 }
 
 impl Default for NpcIdentity {
@@ -115,6 +117,7 @@ impl Default for NpcIdentity {
             friendly_response_threshold: 11,
             combat: NpcCombat::default(),
             wreck: None,
+            hull: false,
         }
     }
 }

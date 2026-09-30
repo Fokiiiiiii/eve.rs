@@ -1,0 +1,119 @@
+"""Ships that die beside a pilot, compared with what the reference was recorded doing.
+
+    EVE_LIVE_SLOW=1 EVE_LIVE_HOST=host:port [EVE_LIVE_SERVER=reference|eve.rs] pytest tests/test_death.py
+
+`oracle/fixtures/scenarios/death.json` (scripts/record_character_scenarios.py --only death) holds two characters by the same station: the watcher undocks
+and binds, then the victim does, both bind dogma and wait out their undocking protection. The watcher detonates a hull beside both (`/deathtest 1`: a hull
+nobody flies comes into space, and two seconds on it blows up and leaves a wreck) and, at the end, the victim destroys its own ship (`/suicide`). Each step
+holds what the victim was sent (`events`) and what the watcher was sent (`seen`), with the seconds each arrived at. The replay does the same on any server
+and compares the answers, the events and their order, and the moments. What a server may do differently is in docs/compat/DEVIATIONS.md. The hull is a
+transient ship and its wreck an item the reference makes in its database: the ids of both are per run and compared by type only.
+It waits out the undocking protection first, so it runs only with EVE_LIVE_SLOW=1.
+"""
+
+from __future__ import annotations
+
+import os
+import uuid
+
+import pytest
+
+from evecli.describe import shape
+from tests import test_login_to_character as base
+from tests.test_others import watch
+from tests.test_target import plain_race, timing
+from tests.test_undock import STATION, SYSTEM, arrive, compare_events, outcome
+
+DEATH = base.load("death.json")
+pytestmark = [
+    pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server"),
+    pytest.mark.skipif(os.environ.get("EVE_LIVE_SLOW") != "1", reason="a minute: set EVE_LIVE_SLOW=1"),
+]
+
+# the moment a ball goes may differ from the recording's by this much: the reference blows a hull up about 3.7 s after it comes (its own two seconds of
+# simulation time and the way its scene delivers them), eve.rs two seconds on (docs/compat/DEVIATIONS.md #49)
+TOLERANCE = 1.6
+
+
+def without_protection(events: list) -> list:
+    return [e for e in events if e["name"] != "OnInvulnCancelled"]
+
+
+HULL = 4_200_000_000_000_000
+WRECK_ITEM = 9_988_400_002_415
+
+
+def canonical(node):
+    """The events with what is per run made the same: the id of a transient hull (the reference numbers them from 4.2e15, eve.rs from one past), the item id of
+    the wreck (a row of the reference's database, a number of the simulation's in eve.rs), and where the hull happened to face (the random part of the
+    wreck's `dunRotation`)."""
+    if isinstance(node, list):
+        return [canonical(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+    if "$long" in node and 4_200_000_000_000_000 <= int(node["$long"]) < 4_400_000_000_000_000:
+        return {"$long": HULL}
+    if "$dict" in node:
+        pairs = node["$dict"]
+        is_wreck = any(k == "groupID" and v == 186 for k, v in pairs)
+        out = []
+        for key, value in pairs:
+            if is_wreck and key == "itemID":
+                value = {"$long": WRECK_ITEM}
+            elif is_wreck and key == "dunRotation":
+                value = {"$tuple": [0, 0, 0]}
+            out.append([key, canonical(value)])
+        return {"$dict": out}
+    return {k: canonical(v) for k, v in node.items()}
+
+
+def test_a_hull_that_blows_up_beside_two_pilots_is_seen_as_it_was_in_the_reference():
+    race = DEATH["races"][0]
+    run = uuid.uuid4().hex[:10]
+    problems: list[str] = []
+    steps = {step["label"]: step for step in race["steps"]}
+    with base.connect(f"walk-death-a-{run}") as a, base.connect(f"walk-death-b-{run}") as b:
+        _, a_ship, _, a_mapping = arrive(a, plain_race(race, "watcher"), run)
+        _, b_ship, _, b_mapping = arrive(b, plain_race(race, "victim"), run)
+        mapping = {**a_mapping, **b_mapping}
+        both = {"events": b, "seen": a}
+        a_service = a.call("ship", "MachoBindObject", (STATION, 15), None)
+        b_service = b.call("ship", "MachoBindObject", (STATION, 15), None)
+        watch(both, 0.5)
+        a.call_bound(a_service[0], "Undock", a_ship, False)
+        a.call("beyonce", "MachoBindObject", SYSTEM, None)
+        watch(both, 2.5)
+        b.call_bound(b_service[0], "Undock", b_ship, False)
+        b.call("beyonce", "MachoBindObject", SYSTEM, None)
+        watch(both, 3.0)
+        a.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
+        b.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
+        watch(both, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))
+
+        label = "the watcher detonates a hull beside both"
+        raw, error = outcome(lambda: a.call("slash", "SlashCmd", "/deathtest 1"))
+        if error is not None:
+            problems.append(f"{label}: an error {error}")
+        elif shape(steps[label]["ok"]) != shape(m_text(raw)):
+            problems.append(f"{label}: answered {raw!r} in place of the recording's text")
+        got = watch(both, 40.0, until=lambda seen: sum(1 for e in seen["events"] + seen["seen"] if _names(e) & {"RemoveBalls"}) >= 2)
+        for who, key in (("the victim", "events"), ("the watcher", "seen")):
+            theirs, ours = canonical(without_protection(steps[label][key])), canonical(without_protection(got[key]))
+            problems.extend(compare_events(theirs, ours, f"{label} ({who})", mapping))
+            problems.extend(timing(theirs, ours, f"{label} ({who})", TOLERANCE, ("DoDestinyUpdate",)))
+    assert problems == [], "\n".join(problems[:40])
+
+
+def m_text(raw):
+    from evecli.describe import describe
+
+    return describe(raw)
+
+
+def _names(event: dict) -> set:
+    """The names of the destiny actions of an event."""
+    try:
+        actions = event["args"]["$tuple"][1]["$tuple"][1]["$tuple"][0]
+    except (KeyError, TypeError):
+        return set()
+    return {a["$tuple"][1]["$tuple"][0] for a in actions}

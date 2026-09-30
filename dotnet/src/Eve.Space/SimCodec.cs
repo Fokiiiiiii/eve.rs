@@ -159,7 +159,13 @@ public static class SimCodec
             1 => new SimWreckKind(r.I32(), r.Text(), r.I32()),
             _ => throw new SimLinkException(SimLinkError.BadValue, "bad wreck"),
         };
-        return new SimNpcIdentity(hostile, friendly, aggression, weapons, wreck);
+        var hull = r.U8() switch
+        {
+            0 => false,
+            1 => true,
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad hull"),
+        };
+        return new SimNpcIdentity(hostile, friendly, aggression, weapons, wreck, hull);
     }
 
     private static SimShip ReadShip(ref Reader r)
@@ -355,11 +361,12 @@ public static class SimCodec
                     var requestId = r.U64();
                     var solarSystemId = r.I32();
                     var ship = ReadShip(ref r);
+                    var anchor = r.I64();
                     var position = ReadVector(ref r);
                     var velocity = ReadVector(ref r);
                     var direction = ReadVector(ref r);
                     var behavior = r.Text();
-                    message = new SimSpawn(requestId, solarSystemId, ship, position, velocity, direction, behavior, ReadIdentity(ref r));
+                    message = new SimSpawn(requestId, solarSystemId, ship, anchor, position, velocity, direction, behavior, ReadIdentity(ref r));
                     break;
                 }
             case Kind.SpawnReply:
@@ -374,7 +381,7 @@ public static class SimCodec
                     break;
                 }
             case Kind.Destroy:
-                message = new SimDestroy(r.I64());
+                message = new SimDestroy(r.I64(), new SimCredit(r.I64(), r.I64(), r.I64(), r.I64()));
                 break;
             case Kind.Targets:
                 {
@@ -497,6 +504,7 @@ public static class SimCodec
         {
             w.U8(0);
         }
+        w.U8((byte)(i.Hull ? 1 : 0));
     }
 
     private static void WriteNumbers(Writer w, SimNumbers n)
@@ -719,6 +727,7 @@ public static class SimCodec
                 w.U64(m.RequestId);
                 w.I32(m.SolarSystemId);
                 WriteShip(w, m.Ship);
+                w.I64(m.AnchorShipId);
                 WriteVector(w, m.Position);
                 WriteVector(w, m.Velocity);
                 WriteVector(w, m.Direction);
@@ -742,6 +751,10 @@ public static class SimCodec
             case SimDestroy m:
                 w.U8(Kind.Destroy);
                 w.I64(m.ShipId);
+                w.I64(m.Credit.CharacterId);
+                w.I64(m.Credit.CorporationId);
+                w.I64(m.Credit.AllianceId);
+                w.I64(m.Credit.WarFactionId);
                 break;
             case SimTargets m:
                 w.U8(Kind.Targets);

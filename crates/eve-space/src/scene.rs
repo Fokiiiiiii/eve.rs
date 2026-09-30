@@ -279,6 +279,8 @@ pub struct Scene {
     pub(crate) wreck_sequence: u64,
     /// The ships destroyed since the brains last looked (`crate::brains` tells the trees that watched them).
     pub(crate) destroyed: Vec<i64>,
+    /// Which wreck a ship of some type leaves (`crate::wreck_types`), when the static data is there to say.
+    pub(crate) wreck_catalog: Option<Arc<crate::wreck_types::WreckCatalog>>,
 }
 
 /// The destiny stamp of a moment: whole seconds of the Unix clock.
@@ -305,7 +307,13 @@ impl Scene {
             wrecks: BTreeMap::new(),
             wreck_sequence: 0,
             destroyed: Vec::new(),
+            wreck_catalog: None,
         }
+    }
+
+    /// Gives the scene the item types the wreck rules look up, so that a ship that is destroyed leaves the wreck of its type.
+    pub fn set_wreck_catalog(&mut self, catalog: Arc<crate::wreck_types::WreckCatalog>) {
+        self.wreck_catalog = Some(catalog);
     }
 
     pub fn system(&self) -> &SolarSystem {

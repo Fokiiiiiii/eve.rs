@@ -35,6 +35,15 @@ impl Universe {
         Self { world: None, systems: Mutex::new(systems.into_iter().map(|s| (s.id, Arc::new(s))).collect()) }
     }
 
+    /// A scene for a system: it knows which wreck each ship leaves when the universe has the static data to say.
+    fn scene_of(&self, system: Arc<SolarSystem>) -> Scene {
+        let mut scene = Scene::new(system);
+        if let Some(world) = &self.world {
+            scene.set_wreck_catalog(world.wreck_catalog());
+        }
+        scene
+    }
+
     pub fn system(&self, id: i32) -> Result<Arc<SolarSystem>, String> {
         let mut cache = self.systems.lock().expect("the cache lock is never held across a panic");
         if let Some(system) = cache.get(&id) {
@@ -199,7 +208,7 @@ impl Sim {
             Ok(system) => system,
             Err(reason) => return reply(Err(reason)),
         };
-        let scene = self.scenes.entry(solar_system_id).or_insert_with(|| Scene::new(system));
+        let scene = self.scenes.entry(solar_system_id).or_insert_with(|| self.universe.scene_of(system));
         match scene.undock(session_id, ship, station_id, now) {
             Ok(told) => {
                 self.sessions.insert(session_id, solar_system_id);
@@ -301,13 +310,13 @@ impl Sim {
                 }
             }
             Message::Spawn(spawn) => return Ok(self.spawn(*spawn, now)),
-            Message::Destroy { ship_id } => {
+            Message::Destroy { ship_id, credit } => {
                 let target = self
                     .scenes
                     .values_mut()
                     .find_map(|scene| scene.session_of(ship_id).map(|session| (scene, session)));
                 match target {
-                    Some((scene, session)) => scene.destroy(session, None, now),
+                    Some((scene, session)) => scene.destroy_credited(session, credit, None, now),
                     None => Vec::new(),
                 }
             }
@@ -338,14 +347,34 @@ impl Sim {
 
     /// The host asks for an NPC: it comes into the scene of the system if there is one (a system has a scene while somebody is in it).
     fn spawn(&mut self, spawn: Spawn, now: i64) -> Vec<Message> {
-        let Spawn { request_id, solar_system_id, ship, position, velocity, direction, behavior, identity } =
-            spawn;
+        let Spawn {
+            request_id,
+            solar_system_id,
+            ship,
+            anchor_ship_id,
+            position,
+            velocity,
+            direction,
+            behavior,
+            identity,
+        } = spawn;
         let reply = |outcome| Message::SpawnReply { request_id, outcome };
         let Some(scene) = self.scenes.get_mut(&solar_system_id) else {
             return vec![reply(Err(format!("NO_SCENE {solar_system_id}")))];
         };
+        let mut position = Vec3::new(position[0], position[1], position[2]);
+        if anchor_ship_id != 0 {
+            let Some(anchor) = scene
+                .session_of(anchor_ship_id)
+                .and_then(|session| scene.ship(session, now))
+                .map(|anchor| anchor.position)
+            else {
+                return vec![reply(Err(format!("NO_SHIP {anchor_ship_id}")))];
+            };
+            position = Vec3::new(anchor.x + position.x, anchor.y + position.y, anchor.z + position.z);
+        }
         let place = NpcPlace {
-            position: Vec3::new(position[0], position[1], position[2]),
+            position,
             velocity: Vec3::new(velocity[0], velocity[1], velocity[2]),
             direction: Vec3::new(direction[0], direction[1], direction[2]),
             speed_fraction: 0.0,
@@ -412,7 +441,7 @@ impl Sim {
             messages
         };
         let Ok(system) = self.universe.system(to_system) else { return failed(self, traveller) };
-        let scene = self.scenes.entry(to_system).or_insert_with(|| Scene::new(system));
+        let scene = self.scenes.entry(to_system).or_insert_with(|| self.universe.scene_of(system));
         match scene.arrive(traveller, now) {
             Ok(told) => {
                 self.sessions.insert(session, to_system);
@@ -498,6 +527,7 @@ mod tests {
             request_id,
             solar_system_id: system,
             ship,
+            anchor_ship_id: 0,
             position: at,
             velocity: [0.0; 3],
             direction: [1.0, 0.0, 0.0],
@@ -539,6 +569,29 @@ mod tests {
     }
 
     #[test]
+    fn an_npc_the_host_places_from_a_ship_comes_that_far_from_where_the_ship_is_and_one_placed_from_a_ship_that_is_not_there_is_refused()
+     {
+        let mut sim = undocked();
+        let there = sim.scenes.get_mut(&SYSTEM).unwrap().ship(SESSION, NOON).unwrap().position;
+        let Message::Spawn(mut request) = spawn(9, SYSTEM, 980_050_000_005, [0.0; 3]) else { unreachable!() };
+        request.anchor_ship_id = spec().ship_id;
+        request.position = [3_000.0, -200.0, 50.0];
+        let reply = sim.handle(Message::Spawn(request.clone()), NOON).unwrap();
+        assert!(
+            matches!(reply[0], Message::SpawnReply { outcome: Ok(session), .. } if is_npc_session(session)),
+            "{reply:?}"
+        );
+        let scene = sim.scenes.get_mut(&SYSTEM).unwrap();
+        let npc = scene.session_of(980_050_000_005).unwrap();
+        let at = scene.ship(npc, NOON).unwrap().position;
+        assert_eq!((at.x - there.x, at.y - there.y, at.z - there.z), (3_000.0, -200.0, 50.0));
+        request.anchor_ship_id = 12;
+        request.ship.ship_id = 980_050_000_006;
+        let refused = sim.handle(Message::Spawn(request), NOON).unwrap();
+        assert_eq!(refused, [Message::SpawnReply { request_id: 9, outcome: Err("NO_SHIP 12".to_string()) }]);
+    }
+
+    #[test]
     fn an_npc_is_refused_in_a_system_where_nobody_is_and_a_scripted_behavior_that_is_not_there_makes_none() {
         let mut sim = sim();
         let none = sim.handle(spawn(6, SYSTEM, 980_050_000_002, [0.0; 3]), NOON).unwrap();
@@ -560,16 +613,28 @@ mod tests {
         let at = beside_the_player(&mut sim);
         let reply = sim.handle(spawn(8, SYSTEM, 980_050_000_004, at), NOON + 60 * SECOND).unwrap();
         assert!(matches!(reply[0], Message::SpawnReply { outcome: Ok(_), .. }));
-        let told = sim.handle(Message::Destroy { ship_id: 980_050_000_004 }, NOON + 61 * SECOND).unwrap();
+        let told = sim
+            .handle(
+                Message::Destroy { ship_id: 980_050_000_004, credit: Default::default() },
+                NOON + 61 * SECOND,
+            )
+            .unwrap();
         assert_eq!(names(&told), ["DoDestinyUpdate", "DoDestinyUpdate"], "the explosion and the wreck");
         // a player's ship: the host is told with `Destroyed`, and the session is no longer in space
-        let told = sim.handle(Message::Destroy { ship_id: spec().ship_id }, NOON + 62 * SECOND).unwrap();
+        let told = sim
+            .handle(
+                Message::Destroy { ship_id: spec().ship_id, credit: Default::default() },
+                NOON + 62 * SECOND,
+            )
+            .unwrap();
         assert!(
             told.iter().any(|m| matches!(m, Message::Destroyed { session_id: SESSION, ship_id, wreck_id: 0, killer_ship_id: 0, .. } if *ship_id == spec().ship_id)),
             "{told:?}"
         );
         assert_eq!(sim.ships(), 0);
-        let none = sim.handle(Message::Destroy { ship_id: 12 }, NOON + 63 * SECOND).unwrap();
+        let none = sim
+            .handle(Message::Destroy { ship_id: 12, credit: Default::default() }, NOON + 63 * SECOND)
+            .unwrap();
         assert_eq!(none, []);
     }
 

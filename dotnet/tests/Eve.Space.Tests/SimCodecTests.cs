@@ -54,7 +54,8 @@ public class SimCodecTests
         [.. ((JsonArray)i["weapons"]!).Select(w => new SimNpcWeapon(
             Wide(w!, "moduleId"), (int)w!["effectId"]!, (double)w["cycleMs"]!, (double)w["capacitorNeed"]!, (int)w["weaponTypeId"]!, (string)w["fx"]!,
             VectorOf(w["rawDamage"]!), (double)w["optimalRange"]!, (double)w["falloff"]!, (double)w["trackingSpeed"]!, (double)w["signatureResolution"]!))],
-        i["wreck"] is { } w2 ? new SimWreckKind((int)w2["typeId"]!, (string)w2["name"]!, (int)w2["graphicId"]!) : null);
+        i["wreck"] is { } w2 ? new SimWreckKind((int)w2["typeId"]!, (string)w2["name"]!, (int)w2["graphicId"]!) : null,
+        i["hull"] is { } hull && (bool)hull);
 
     private static SimMessage MessageOf(JsonObject c)
     {
@@ -83,10 +84,10 @@ public class SimCodecTests
             "TargetRefused" => new SimTargetRefused(Session(), (byte)(int)c["command"]!, (string)c["reason"]!, (int)c["targetType"]!, (double)c["desiredRange"]!, (double)c["actualDistance"]!),
             "Destroyed" => new SimDestroyed(Session(), Wide(c, "shipId"), Wide(c, "wreckId"), VectorOf(c["position"]!), VectorOf(c["direction"]!), (double)c["radius"]!, Wide(c, "killerShipId")),
             "Spawn" => new SimSpawn(
-                (ulong)Wide(c, "requestId"), (int)c["solarSystemId"]!, ShipOf(c["ship"]!), VectorOf(c["position"]!), VectorOf(c["velocity"]!), VectorOf(c["direction"]!),
+                (ulong)Wide(c, "requestId"), (int)c["solarSystemId"]!, ShipOf(c["ship"]!), Wide(c, "anchorShipId"), VectorOf(c["position"]!), VectorOf(c["velocity"]!), VectorOf(c["direction"]!),
                 (string)c["behavior"]!, IdentityOf(c["identity"]!)),
             "SpawnReply" => (bool)c["ok"]! ? new SimSpawnReply((ulong)Wide(c, "requestId"), (ulong)Wide(c, "session"), null) : new SimSpawnReply((ulong)Wide(c, "requestId"), null, (string)c["reason"]!),
-            "Destroy" => new SimDestroy(Wide(c, "shipId")),
+            "Destroy" => new SimDestroy(Wide(c, "shipId"), new SimCredit(Wide(c, "characterId"), Wide(c, "corporationId"), Wide(c, "allianceId"), Wide(c, "warFactionId"))),
             var other => throw new InvalidOperationException(other),
         };
     }

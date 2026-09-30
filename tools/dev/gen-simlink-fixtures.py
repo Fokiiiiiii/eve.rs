@@ -94,7 +94,7 @@ def identity(i):
         body += bytes([1]) + struct.pack("<i", wreck["typeId"]) + s(wreck["name"]) + struct.pack("<i", wreck["graphicId"])
     else:
         body += bytes([0])
-    return body
+    return body + bytes([1 if i.get("hull") else 0])
 
 
 def build(m):
@@ -147,12 +147,12 @@ def build(m):
         return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + i64(m["wreckId"]) + struct.pack("<7d", *m["position"], *m["direction"], m["radius"])
                      + i64(m["killerShipId"]))
     if k == "Spawn":
-        return frame(k, u64(m["requestId"]) + struct.pack("<i", m["solarSystemId"]) + ship(m["ship"])
+        return frame(k, u64(m["requestId"]) + struct.pack("<i", m["solarSystemId"]) + ship(m["ship"]) + i64(m["anchorShipId"])
                      + struct.pack("<9d", *m["position"], *m["velocity"], *m["direction"]) + s(m["behavior"]) + identity(m["identity"]))
     if k == "SpawnReply":
         return frame(k, u64(m["requestId"]) + (bytes([0]) + u64(m["session"]) if m["ok"] else bytes([1]) + s(m["reason"])))
     if k == "Destroy":
-        return frame(k, i64(m["shipId"]))
+        return frame(k, i64(m["shipId"]) + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"]))
     raise ValueError(k)
 
 
@@ -265,19 +265,22 @@ valid = [
      "radius": 47.0, "killerShipId": "0"},
     {"name": "spawn of an NPC with a laser, a wreck and a tree", "kind": "Spawn", "requestId": "7", "solarSystemId": 30100032,
      "ship": dict(BARE, shipId="980050000077", characterId="0", ownerId="1000125", categoryId=11, groupId=25, typeId=597),
-     "position": [1000500.0, 100.0, 100.0], "velocity": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0], "behavior": "belt rat",
+     "anchorShipId": "0", "position": [1000500.0, 100.0, 100.0], "velocity": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0], "behavior": "belt rat",
      "identity": {"hostileResponseThreshold": -11, "friendlyResponseThreshold": 11, "aggressionRange": 15000.0,
                   "weapons": [{"moduleId": "980050000077", "effectId": 10, "cycleMs": 4000.0, "capacitorNeed": 0.0,
                                "weaponTypeId": 5678, "fx": "effects.Laser", "rawDamage": [0.0, 0.0, 6.0, 4.0],
                                "optimalRange": 20000.0, "falloff": 10000.0, "trackingSpeed": 0.4, "signatureResolution": 40.0}],
                   "wreck": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117}}},
     {"name": "spawn of a bare NPC: no tree, no weapons, no wreck", "kind": "Spawn", "requestId": "8", "solarSystemId": 30000142,
-     "ship": dict(BARE, shipId="980050000078", characterId="0"), "position": [1.0, 2.0, 3.0], "velocity": [4.0, 5.0, 6.0],
+     "ship": dict(BARE, shipId="980050000078", characterId="0"), "anchorShipId": "9988400001939", "position": [1.0, 2.0, 3.0], "velocity": [4.0, 5.0, 6.0],
      "direction": [0.0, 0.0, 1.0], "behavior": "",
-     "identity": {"hostileResponseThreshold": -11, "friendlyResponseThreshold": 11, "aggressionRange": 0.0, "weapons": []}},
+     "identity": {"hostileResponseThreshold": -11, "friendlyResponseThreshold": 11, "aggressionRange": 0.0, "weapons": [], "hull": True}},
     {"name": "spawn done", "kind": "SpawnReply", "requestId": "7", "ok": True, "session": "4611686018427387905"},
     {"name": "spawn refused", "kind": "SpawnReply", "requestId": "8", "ok": False, "reason": "NO_SCENE 30000142"},
-    {"name": "destroy", "kind": "Destroy", "shipId": "980050000077"},
+    {"name": "destroy for a pilot to loot", "kind": "Destroy", "shipId": "980050000077", "characterId": "140000001",
+     "corporationId": "1000006", "allianceId": "0", "warFactionId": "500001"},
+    {"name": "destroy for nobody", "kind": "Destroy", "shipId": "4200000000000001", "characterId": "0",
+     "corporationId": "0", "allianceId": "0", "warFactionId": "0"},
 ]
 for case in valid:
     case["hex"] = build(case).hex()

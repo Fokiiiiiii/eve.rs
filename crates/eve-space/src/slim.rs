@@ -126,8 +126,8 @@ pub fn body_entries(system: &SolarSystem, body: &Body) -> Entries {
 /// The entries of a ship's slim item: a player's, or an NPC's (which has no name and ends with the limits of its owner's reactions).
 pub fn ship_entries(ship: &Ship) -> Entries {
     match &ship.npc {
-        None => pilot_ship_entries(&ship.spec),
-        Some(npc) => npc_ship_entries(&ship.spec, npc),
+        Some(npc) if !npc.hull => npc_ship_entries(&ship.spec, npc),
+        _ => pilot_ship_entries(&ship.spec),
     }
 }
 
@@ -227,4 +227,63 @@ pub fn system_row(system: &SolarSystem) -> Value {
         ],
         rle: None,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scene::tests::spec;
+    use eve_destiny::Vec3;
+
+    fn ship_of(identity: NpcIdentity) -> Ship {
+        let mut ship = spec();
+        ship.ship_id = 4_200_000_000_000_000;
+        ship.character_id = 0;
+        ship.owner_id = 0;
+        ship.corporation_id = 0;
+        ship.name = "Ibis".to_string();
+        ship.modules.clear();
+        Ship::new(ship, Vec3::ZERO, Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), 0.0, crate::ship::Course::Stop, 0)
+            .as_npc(identity)
+    }
+
+    /// The hull `/deathtest` spawned in `oracle/fixtures/scenarios/death.json`: a player's ship's slim item, with the ship's name and nobody's ids.
+    #[test]
+    fn a_hull_nobody_flies_has_the_slim_item_of_a_players_ship_as_the_reference_gave_it() {
+        let entries = ship_entries(&ship_of(NpcIdentity { hull: true, ..NpcIdentity::default() }));
+        let names: Vec<&str> = entries.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            names,
+            [
+                "itemID",
+                "typeID",
+                "ownerID",
+                "name",
+                "groupID",
+                "categoryID",
+                "corpID",
+                "allianceID",
+                "warFactionID",
+                "charID",
+                "kills",
+                "skinMaterialSetID",
+                "modules",
+                "securityStatus",
+                "bounty"
+            ]
+        );
+        let value = |key: &str| entries.iter().find(|(name, _)| *name == key).unwrap().1.clone();
+        assert_eq!(value("itemID"), id(4_200_000_000_000_000));
+        assert_eq!((value("ownerID"), value("corpID"), value("charID")), (id(0), id(0), id(0)));
+        assert_eq!(value("name"), text("Ibis"));
+        assert_eq!(value("modules"), list([]));
+    }
+
+    #[test]
+    fn an_npc_that_is_not_a_hull_keeps_its_slim_item_without_a_name_and_with_the_limits_of_its_reactions() {
+        let entries = ship_entries(&ship_of(NpcIdentity::default()));
+        let names: Vec<&str> = entries.iter().map(|(name, _)| *name).collect();
+        assert!(!names.contains(&"name"));
+        assert_eq!(&names[names.len() - 2..], ["hostile_response_threshold", "friendly_response_threshold"]);
+    }
 }

@@ -24,6 +24,17 @@ internal sealed class FakeSim : ISimulation
     /// <summary>What a jump is answered with.</summary>
     public CommandReply JumpAnswer { get; set; } = new(true, 0, null, null, 30100034, 50016839);
 
+    /// <summary>What a spawn is answered with: the session of the NPC, or a reason.</summary>
+    public SimSpawnReply? SpawnAnswer { get; set; }
+
+    public Task<SimSpawnReply> SpawnAsync(SimSpawn spawn, CancellationToken cancellationToken = default)
+    {
+        Heard.Add(spawn);
+        return Task.FromResult(SpawnAnswer is { } answer ? answer with { RequestId = spawn.RequestId } : new SimSpawnReply(spawn.RequestId, (ulong)Heard.Count + (1UL << 62), null));
+    }
+
+    public void Destroy(long shipId, SimCredit credit) => Heard.Add(new SimDestroy(shipId, credit));
+
     public Task<string?> EnterAsync(SimEnter enter, CancellationToken cancellationToken = default)
     {
         if (!IsConnected)

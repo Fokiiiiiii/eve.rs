@@ -58,6 +58,21 @@ internal static class SimShips
             VitalsOf(snapshot), ConditionOf(snapshot.Condition));
     }
 
+    /// <summary>A ship as its type has it and nobody flies it (a hull spawned for <c>/deathtest</c>): the type's own numbers, no pilot, no modules.</summary>
+    public static SimShip OfType(long shipId, TypeDef type)
+    {
+        double Attribute(int id, double fallback = 0) => type.Attributes.GetValueOrDefault(id, fallback);
+        double[] Layer(int[] ids) => [.. ids.Select(id => Math.Max(0, Attribute(id, 1.0)))];
+        var vitals = new SimVitals(
+            Math.Max(0, Attribute(ShieldCapacity)), Math.Max(0, Attribute(ArmorHitPoints)), Math.Max(0, Attribute(HullPoints)),
+            new SimResonances(Layer(ShieldResonances), Layer(ArmorResonances), Layer(HullResonances)));
+        return new SimShip(
+            shipId, 0, type.TypeId, type.GroupId, type.CategoryId, type.Name, 0, 0, 0, 0, 0,
+            Attribute(Radius), Attribute(Mass), Attribute(MaxVelocity), Attribute(Agility), WarpSpeedAu(Attribute(BaseWarpSpeed), Attribute(WarpSpeedMultiplier)), Attribute(ShieldRechargeRate),
+            Attribute(MaxTargetRange), Attribute(ScanResolution), Attribute(SignatureRadius), LockLimit(Attribute(MaxLockedTargets), 0),
+            Attribute(CapacitorCapacity), Attribute(RechargeRate) / 1000.0, [], vitals, SimCondition.Full);
+    }
+
     /// <summary>What the ship can take and how it resists, as dogma has it (a resonance the ship has none of lets everything through).</summary>
     public static SimVitals VitalsOf(ShipSnapshot snapshot)
     {

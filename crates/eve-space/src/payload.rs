@@ -72,7 +72,8 @@ fn wreck_damage_state(now: i64) -> Value {
 /// `AddBalls2` for a wreck: the buffer with its ball, and its slim item with the damage state.
 pub fn add_wreck(stamp: u32, wreck: &Wreck, now: i64) -> Result<Value, BallError> {
     let buffer = state_buffer(ADD_BALLS, stamp, &[wreck.ball()])?;
-    let slim = slim_object(wreck.slim_entries());
+    // as a ship's, the slim item of an `AddBalls2` is a plain dictionary (a `SetState` sends objects)
+    let slim = Value::Dict(wreck.slim_entries().into_iter().map(|(k, v)| (word(k), v)).collect());
     Ok(action(stamp, "AddBalls2", [tuple([buffer, list([tuple([slim, wreck_damage_state(now)])])])]))
 }
 

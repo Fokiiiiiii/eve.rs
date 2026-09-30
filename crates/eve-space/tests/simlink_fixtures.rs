@@ -1,6 +1,7 @@
 //! Replays oracle/fixtures/simlink/messages.json, the golden frames of docs/adr/0007 (the C# host replays the same
 //! file): every valid frame encodes to its bytes and decodes back, every invalid one is refused for the stated reason.
 
+use eve_space::death::Credit;
 use eve_space::health::{Condition, Resonances, Vitals};
 use eve_space::link::{DecodeError, Enter, How, Message, Spawn};
 use eve_space::modules::{Change, Effect, Numbers};
@@ -179,6 +180,7 @@ fn identity_of(case: &Value) -> NpcIdentity {
         friendly_response_threshold: case["friendlyResponseThreshold"].as_i64().unwrap(),
         combat: NpcCombat { weapons, aggression_range: number(case, "aggressionRange") },
         wreck,
+        hull: case.get("hull").and_then(Value::as_bool).unwrap_or(false),
     }
 }
 
@@ -289,6 +291,7 @@ fn message_of(case: &Value) -> Message {
             request_id: wide(case, "requestId") as u64,
             solar_system_id: number("solarSystemId") as i32,
             ship: ship_of(&case["ship"]),
+            anchor_ship_id: wide(case, "anchorShipId"),
             position: vector_of(case, "position"),
             velocity: vector_of(case, "velocity"),
             direction: vector_of(case, "direction"),
@@ -303,7 +306,15 @@ fn message_of(case: &Value) -> Message {
                 Err(text(case, "reason"))
             },
         },
-        "Destroy" => Message::Destroy { ship_id: wide(case, "shipId") },
+        "Destroy" => Message::Destroy {
+            ship_id: wide(case, "shipId"),
+            credit: Credit {
+                character_id: wide(case, "characterId"),
+                corporation_id: wide(case, "corporationId"),
+                alliance_id: wide(case, "allianceId"),
+                war_faction_id: wide(case, "warFactionId"),
+            },
+        },
         other => panic!("unknown kind {other}"),
     }
 }

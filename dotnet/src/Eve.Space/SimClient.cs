@@ -20,6 +20,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     private readonly Channel<byte[]> _outbox = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<string?>> _entering = new();
     private readonly ConcurrentDictionary<(ulong Session, byte Code), TaskCompletionSource<CommandReply>> _answered = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimSpawnReply>> _spawning = new();
     private Task? _run;
     private volatile bool _connected;
     private TimeSpan _retryDelay = RetryDelay;
@@ -173,6 +174,12 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                     entering.TrySetResult(reply.Error);
                 }
                 break;
+            case SimSpawnReply spawned:
+                if (_spawning.TryRemove(spawned.RequestId, out var spawning))
+                {
+                    spawning.TrySetResult(spawned);
+                }
+                break;
             case SimAccepted accepted when _answered.TryRemove((accepted.SessionId, accepted.Command), out var accepting):
                 accepting.TrySetResult(new CommandReply(true, accepted.At, null));
                 break;
@@ -215,6 +222,13 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         foreach (var session in _entering.Keys)
         {
             if (_entering.TryRemove(session, out var pending))
+            {
+                pending.TrySetException(new SimUnavailableException("the link to the simulation broke"));
+            }
+        }
+        foreach (var request in _spawning.Keys)
+        {
+            if (_spawning.TryRemove(request, out var pending))
             {
                 pending.TrySetException(new SimUnavailableException("the link to the simulation broke"));
             }
@@ -266,6 +280,11 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public Task<CommandReply> ActivateAsync(ulong sessionId, SimEffect effect, CancellationToken cancellationToken = default) =>
         AwaitAsync(_answered, (sessionId, SimCommands.Activate), new SimActivate(sessionId, effect), cancellationToken);
+
+    public Task<SimSpawnReply> SpawnAsync(SimSpawn spawn, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_spawning, spawn.RequestId, spawn, cancellationToken);
+
+    public void Destroy(long shipId, SimCredit credit) => Send(new SimDestroy(shipId, credit));
 
     public void Leave(ulong sessionId, LeaveWhy why) => Send(new SimLeave(sessionId, why));
 

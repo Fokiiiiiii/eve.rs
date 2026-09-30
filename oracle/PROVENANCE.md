@@ -80,3 +80,9 @@ simulation (`crates/eve-space/tests/simlink_fixtures.rs`) and the C# host replay
 `crates/eve-space/data/undock_points.json` is not a recording: it is the reference's table of where a ship comes out of each type of station
 (its `stationGraphicLocators`, made from the client's graphics), reduced to the undock points by `tools/dev/extract-undock-points.py`. The SDE
 does not have it. It is used as data; none of the reference's code is copied.
+
+## Wreck types
+
+`fixtures/wrecks/ship_wrecks.json`: the wreck the reference's `resolveShipWreckType` (`server/src/space/wreckUtils.js`) gives the published ships of the
+static data and a sample of the NPC ships (424 types), made by `tools/dev/gen-ship-wrecks-fixture.js` (it loads the reference from `EVEJS`, see its
+header). The Rust port `crates/eve-space/src/wreck_types.rs` (ADR 0009) is held to it by `crates/eve-space/tests/wreck_types_match_reference.rs`.

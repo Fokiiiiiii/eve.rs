@@ -107,7 +107,7 @@ domain module.
    docks, also from beyond the range, where it follows the station and is told `DockingApproach` (`adr/0007`). Ships come out
    at the reference's authored undock points (its static table `stationGraphicLocators`, kept in `crates/eve-space/data`).
    Warp to a stargate and the jump into the next system (`tests/test_jump.py`) and ships seeing one another (`tests/test_others.py`) and locking one another (`tests/test_target.py`)
-   are done. The tick benchmark is done. Targeting (S5a), the afterburner (S5b) and a ship's health (S5c-1) are done. The client's NPC behavior trees are ported (S5c-2) and run in the simulation (S5c-3a to c): an NPC locks a player and shoots them. Next: death (explosion, wreck, loot, pod) and spawning from the host (S5c-3d), weapons for players, repairers (S5c). Where the SDE has no value, the
+   are done. The tick benchmark is done. Targeting (S5a), the afterburner (S5b) and a ship's health (S5c-1) are done. The client's NPC behavior trees are ported (S5c-2) and run in the simulation (S5c-3a to c): an NPC locks a player and shoots them. Death is in the simulation and `/deathtest` runs from the host (S5c-3d-2/3, the wreck type is EVE.js's rule ported as it is: `adr/0009`). Next: `/suicide` (the pod, the items), spawning NPCs from the host, weapons for players, repairers (S5c). Where the SDE has no value, the
    reference's own static tables and the parts of its server that the client extraction carries are trusted as sources
    (with their provenance recorded), and the code is never copied.
 3. Tag the fixtures by tier and record the next deviations with evidence from the client source.

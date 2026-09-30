@@ -233,7 +233,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         new InvBrokerService(items, new ItemTypeCatalog(sde), stations, ships, dogma, now),
         new DogmaIMService(dogma, ships, now, dogmaSync, spaceSessions, spaceSessions, spaceSessions),
         new AccountService(wallets),
-        new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions)),
+        new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde))),
         .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now), new BeyonceService(spaceSessions, now) },
     ];
     return (services, spaceSessions, sim);

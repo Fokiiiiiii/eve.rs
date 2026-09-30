@@ -113,6 +113,7 @@ pub struct World {
     systems: HashMap<i64, SystemInfo>,
     corporations: HashMap<i64, String>,
     operations: HashMap<i64, String>,
+    wrecks: std::sync::Arc<crate::wreck_types::WreckCatalog>,
 }
 
 impl World {
@@ -177,7 +178,13 @@ impl World {
         sde.scan("stationOperations", None, |key, record| {
             operations.insert(key, record.get("operationName").map(english).unwrap_or_default());
         })?;
-        Ok(Self { sde, types, category_of_group, systems, corporations, operations })
+        let wrecks = std::sync::Arc::new(crate::wreck_types::WreckCatalog::from_sde(&sde)?);
+        Ok(Self { sde, types, category_of_group, systems, corporations, operations, wrecks })
+    }
+
+    /// The item types the wreck rules look up (`crate::wreck_types`).
+    pub fn wreck_catalog(&self) -> std::sync::Arc<crate::wreck_types::WreckCatalog> {
+        std::sync::Arc::clone(&self.wrecks)
     }
 
     fn type_info(&self, type_id: i64) -> Option<&TypeInfo> {

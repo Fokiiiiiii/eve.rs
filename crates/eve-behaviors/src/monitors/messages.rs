@@ -50,6 +50,8 @@ impl Monitor for SendMessageOnMessageMonitor {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use super::*;
     use crate::env::CargoCapacity;
     use crate::monitors::MonitorTask;
@@ -57,7 +59,7 @@ mod tests {
     use crate::tree::{Attrs, Status, Task, TaskCtx as Ctx};
 
     /// Hears the notified message and keeps its arguments.
-    struct Ear(std::rc::Rc<std::cell::RefCell<Vec<Vec<Value>>>>);
+    struct Ear(Arc<Mutex<Vec<Vec<Value>>>>);
 
     impl Task for Ear {
         fn type_name(&self) -> &'static str {
@@ -68,13 +70,13 @@ mod tests {
             t.set_status_to_suspended();
         }
         fn on_event(&mut self, _t: &mut Ctx<'_, '_>, _handler: u16, args: &[Value]) {
-            self.0.borrow_mut().push(args.to_vec());
+            self.0.lock().unwrap().push(args.to_vec());
         }
     }
 
-    fn setup(rig: &mut Rig, full: bool) -> std::rc::Rc<std::cell::RefCell<Vec<Vec<Value>>>> {
-        let heard = std::rc::Rc::default();
-        let ear = rig.tree.add_task(Box::new(Ear(std::rc::Rc::clone(&heard))), Attrs::new());
+    fn setup(rig: &mut Rig, full: bool) -> Arc<Mutex<Vec<Vec<Value>>>> {
+        let heard = Arc::default();
+        let ear = rig.tree.add_task(Box::new(Ear(Arc::clone(&heard))), Attrs::new());
         let monitor = rig.tree.add_task(
             Box::new(MonitorTask(if full {
                 SendMessageOnMessageMonitor::when_cargo_is_full()
@@ -112,7 +114,7 @@ mod tests {
             world: &mut rig.world,
         };
         cx.send_event(1, MessageId::Number(10), &[Value::Int(5), Value::Int(6)]);
-        assert_eq!(*heard.borrow(), [vec![Value::Int(5), Value::Int(6)]]);
+        assert_eq!(*heard.lock().unwrap(), [vec![Value::Int(5), Value::Int(6)]]);
     }
 
     #[test]
@@ -128,7 +130,7 @@ mod tests {
                 world: &mut rig.world,
             };
             cx.send_event(1, MessageId::Number(10), &[]);
-            assert_eq!(heard.borrow().len(), sent);
+            assert_eq!(heard.lock().unwrap().len(), sent);
         }
     }
 }

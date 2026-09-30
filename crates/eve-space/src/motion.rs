@@ -11,11 +11,20 @@ use crate::ship::{Course, Ship};
 /// The longest step a course that depends on the ship's place is worked out in one go.
 const MAX_STEP: f64 = 0.25;
 
-/// What a ship follows or orbits: where it is and how big it is.
+/// What a ship follows or orbits: where it is, how it moves and how big it is.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Target {
     pub position: Vec3,
     pub radius: f64,
+    /// Zero for a body; a ship that is followed is followed as it moves (the follower keeps up instead of lagging by the time it takes to ease in).
+    pub velocity: Vec3,
+}
+
+impl Target {
+    /// Something that does not move.
+    pub fn at_rest(position: Vec3, radius: f64) -> Self {
+        Self { position, radius, velocity: Vec3::ZERO }
+    }
 }
 
 fn sub(a: Vec3, b: Vec3) -> Vec3 {
@@ -105,8 +114,16 @@ fn follow_step(ship: &mut Ship, range: f64, target: Target, seconds: f64) {
         return;
     };
     ship.direction = direction;
-    let speed = cruise(ship).min(distance / (APPROACH_EASE * agility_seconds(ship)));
-    integrate(ship, direction, speed, seconds);
+    let closing = cruise(ship).min(distance / (APPROACH_EASE * agility_seconds(ship)));
+    // a target that moves is kept up with: the ship flies at the speed it closes at plus the target's own
+    let wanted = add(scale(direction, closing), target.velocity);
+    let speed = length(wanted).min(cruise(ship));
+    let Some(course) = unit(wanted) else {
+        integrate(ship, direction, 0.0, seconds);
+        return;
+    };
+    ship.direction = course;
+    integrate(ship, course, speed, seconds);
 }
 
 /// One step of orbiting: along the tangent of the circle about the target at the orbit's radius, drawn in or out to it.
@@ -121,13 +138,19 @@ fn orbit_step(ship: &mut Ship, distance: f64, target: Target, seconds: f64) {
     let speed = cruise(ship);
     let radial_error = radius - length(away);
     let pull = scale(outward, radial_error.clamp(-speed, speed));
-    let wanted = add(scale(tangent, speed), pull);
+    let wanted = add(add(scale(tangent, speed), pull), target.velocity);
     let Some(direction) = unit(wanted) else {
         integrate(ship, ship.direction, 0.0, seconds);
         return;
     };
     ship.direction = direction;
     integrate(ship, direction, length(wanted).min(speed), seconds);
+}
+
+/// Where a target that moves was `remaining` seconds before the place it is given at (a step steers by the positions at its start, as the ship
+/// and the target then are the same time apart).
+fn target_at_start(target: Target, remaining: f64) -> Target {
+    Target { position: sub(target.position, scale(target.velocity, remaining)), ..target }
 }
 
 /// Moves `ship` for `seconds`. `target` is what the ship follows or orbits, when its course has one and the scene knows it.
@@ -141,14 +164,14 @@ pub fn advance(ship: &mut Ship, seconds: f64, target: Option<Target>) {
         (Course::Follow { range, .. }, Some(target)) => {
             while remaining > 1e-9 {
                 let step = remaining.min(MAX_STEP);
-                follow_step(ship, range, target, step);
+                follow_step(ship, range, target_at_start(target, remaining), step);
                 remaining -= step;
             }
         }
         (Course::Orbit { distance, .. }, Some(target)) => {
             while remaining > 1e-9 {
                 let step = remaining.min(MAX_STEP);
-                orbit_step(ship, distance, target, step);
+                orbit_step(ship, distance, target_at_start(target, remaining), step);
                 remaining -= step;
             }
         }
@@ -187,7 +210,7 @@ mod tests {
 
     #[test]
     fn a_ship_following_a_target_closes_to_the_standoff_and_stays_there() {
-        let target = Target { position: Vec3::new(50_000.0, 0.0, 0.0), radius: 1_000.0 };
+        let target = Target::at_rest(Vec3::new(50_000.0, 0.0, 0.0), 1_000.0);
         let mut s = ship(Course::Follow { target: 7, range: 2_500.0 });
         advance(&mut s, 200.0, Some(target));
         let standoff = 2_500.0 + 47.0 + 1_000.0;
@@ -200,7 +223,7 @@ mod tests {
 
     #[test]
     fn a_ship_following_heads_for_its_target() {
-        let target = Target { position: Vec3::new(0.0, 0.0, 90_000.0), radius: 0.0 };
+        let target = Target::at_rest(Vec3::new(0.0, 0.0, 90_000.0), 0.0);
         let mut s = ship(Course::Follow { target: 7, range: 0.0 });
         advance(&mut s, 1.0, Some(target));
         assert!(s.direction.z > 0.999, "{:?}", s.direction);
@@ -208,7 +231,7 @@ mod tests {
 
     #[test]
     fn a_ship_orbiting_keeps_the_radius_it_was_asked_for() {
-        let target = Target { position: Vec3::ZERO, radius: 500.0 };
+        let target = Target::at_rest(Vec3::ZERO, 500.0);
         let radius = 5_000.0 + 47.0 + 500.0;
         let mut s = ship(Course::Orbit { target: 7, distance: 5_000.0 });
         s.position = Vec3::new(radius, 0.0, 0.0);
@@ -222,6 +245,42 @@ mod tests {
         assert!(
             sub(s.position, Vec3::new(radius, 0.0, 0.0)).z.abs() > 100.0 || s.position.x < radius - 100.0
         );
+    }
+
+    #[test]
+    fn a_ship_following_a_target_that_moves_keeps_up_instead_of_lagging_behind_it() {
+        let mut s = ship(Course::Follow { target: 7, range: 500.0 });
+        s.spec.max_velocity = 500.0;
+        let mut target = Target {
+            position: Vec3::new(3_000.0, 0.0, 0.0),
+            radius: 30.0,
+            velocity: Vec3::new(339.0, 0.0, 0.0),
+        };
+        for _ in 0..960 {
+            target.position.x += 339.0 * 0.25;
+            advance(&mut s, 0.25, Some(target));
+        }
+        let gap = distance(&s, target);
+        let standoff = 500.0 * FOLLOW_STANDOFF_SHARE + 47.0 + 30.0;
+        assert!((gap - standoff).abs() < 50.0, "it holds its range: {gap} for {standoff}");
+        assert!((s.velocity.x - 339.0).abs() < 5.0, "at the target's speed: {:?}", s.velocity);
+    }
+
+    #[test]
+    fn a_ship_that_is_slower_than_the_target_it_follows_falls_behind() {
+        let mut s = ship(Course::Follow { target: 7, range: 500.0 });
+        s.spec.max_velocity = 200.0;
+        let mut target = Target {
+            position: Vec3::new(1_000.0, 0.0, 0.0),
+            radius: 30.0,
+            velocity: Vec3::new(339.0, 0.0, 0.0),
+        };
+        for _ in 0..240 {
+            target.position.x += 339.0 * 0.25;
+            advance(&mut s, 0.25, Some(target));
+        }
+        assert!(distance(&s, target) > 10_000.0);
+        assert!(length(s.velocity) <= 200.0 + 1.0);
     }
 
     #[test]

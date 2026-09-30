@@ -35,6 +35,8 @@ const DOCKING_RANGE: f64 = 2_500.0;
 /// How long after a jump was accepted the ship leaves for the other system at the soonest, and how long after the jump-out effect begins.
 const JUMP_DELAY: i64 = 4 * TICKS_PER_SECOND;
 const JUMP_EFFECT_DELAY: i64 = 3 * TICKS_PER_SECOND;
+/// How many ships deep a ship that follows a ship that follows a ship is moved after the one it follows.
+const MAX_FOLLOW_CHAIN: u8 = 4;
 /// How far ahead of the clock a stamp may be sent (the client holds updates until their stamp).
 const MAX_STAMP_LEAD: u32 = 2;
 /// How far from the station's centre a ship is put when the table of undock points does not know the station's type, as a share of the
@@ -247,6 +249,10 @@ pub struct Scene {
     pub(crate) target_sequence: u64,
     /// How many NPC ships have been made in this scene (the sessions they are known by are numbered from it, `crate::npc`).
     pub(crate) npc_sequence: u64,
+    /// How many entity groups have been made in this scene.
+    pub(crate) group_sequence: u64,
+    /// The trees of the NPCs (`crate::brains`).
+    pub(crate) brains: Option<crate::brains::Brains>,
 }
 
 /// The destiny stamp of a moment: whole seconds of the Unix clock.
@@ -266,6 +272,8 @@ impl Scene {
             backlog: Vec::new(),
             target_sequence: 0,
             npc_sequence: 0,
+            group_sequence: 0,
+            brains: None,
         }
     }
 
@@ -336,6 +344,9 @@ impl Scene {
     /// The ship leaves the scene (docked, gone offline, jumped): the ones who had it in view are told. None when it was not here.
     pub fn leave(&mut self, session: SessionId, _why: Departure, now: i64) -> Option<Vec<Out>> {
         let pilot = self.pilots.remove(&session)?;
+        if let Some(brains) = self.brains.as_mut() {
+            brains.forget(session);
+        }
         let mut out = self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting);
         out.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
         Some(out)
@@ -464,9 +475,30 @@ impl Scene {
 
     /// Brings a ship's motion to `now`; what happens to it on the way (a warp's dropout, coming to rest) is told with the next call.
     fn settle_pilot(&mut self, session: SessionId, now: i64) {
+        self.settle_pilot_after(session, now, 0);
+    }
+
+    /// As [`Scene::settle_pilot`]; a ship that follows or orbits another ship is moved after the ship it follows (`depth` stops a ring of ships
+    /// that follow one another).
+    fn settle_pilot_after(&mut self, session: SessionId, now: i64, depth: u8) {
         let system = Arc::clone(&self.system);
+        let followed = match self.pilots.get(&session).map(|pilot| pilot.ship.course) {
+            Some(Course::Follow { target, .. } | Course::Orbit { target, .. })
+                if system.body(target).is_none() =>
+            {
+                self.session_of(target).filter(|other| *other != session)
+            }
+            _ => None,
+        };
+        let mut ship_target = None;
+        if let Some(other) = followed {
+            if depth < MAX_FOLLOW_CHAIN {
+                self.settle_pilot_after(other, now, depth + 1);
+            }
+            ship_target = self.target_of_ship(other);
+        }
         let Some(pilot) = self.pilots.get_mut(&session) else { return };
-        let milestones = settle(pilot, &system, now);
+        let milestones = settle(pilot, &system, ship_target, now);
         for milestone in milestones {
             let told = self.tell(session, milestone);
             self.backlog.extend(told);
@@ -614,7 +646,12 @@ impl Scene {
     /// A movement command of a ship that is in the scene (settled first, at `now`).
     fn steer_pilot(&mut self, session: SessionId, command: Command, now: i64) -> Vec<Out> {
         let code = command.code();
-        let system = Arc::clone(&self.system);
+        let target = match command {
+            Command::FollowBall { target_id, .. }
+            | Command::Orbit { target_id, .. }
+            | Command::AlignTo { target_id } => self.target_of(target_id, session),
+            _ => None,
+        };
         let pilot = self.pilots.get_mut(&session).expect("the caller checked");
         if pilot.docking.is_some() {
             // a ship that is docking follows no orders
@@ -629,7 +666,7 @@ impl Scene {
             return vec![Out::Refused { session, command: code, reason: "IN_WARP" }];
         }
         let ship_id = id(pilot.ship.spec.ship_id);
-        match steer(&mut pilot.ship, &system, command) {
+        match steer(&mut pilot.ship, target, command) {
             Steering::Refused(reason) => vec![Out::Refused { session, command: code, reason }],
             Steering::Nothing => vec![Out::Accepted { session, command: code, at: now }],
             Steering::Actions(actions) => {
@@ -910,6 +947,7 @@ impl Scene {
                 told.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
             }
         }
+        told.extend(self.tick_brains(now));
         told.extend(self.settle_targets(now));
         told.extend(self.settle_modules(now));
         told.extend(self.reconcile(now));
@@ -993,7 +1031,7 @@ fn surface_distance(ship: &Ship, station: Vec3, station_radius: f64) -> f64 {
 
 /// Brings a ship's position and velocity to `now`: it eases towards the speed it is asked for, the way the client integrates it, and a ship
 /// that follows or orbits a body is steered by where the body is.
-fn settle(pilot: &mut Pilot, system: &SolarSystem, now: i64) -> Vec<Milestone> {
+fn settle(pilot: &mut Pilot, system: &SolarSystem, ship_target: Option<Target>, now: i64) -> Vec<Milestone> {
     let from = pilot.settled_at;
     pilot.settled_at = now;
     let seconds = (now - from) as f64 / TICKS_PER_SECOND as f64;
@@ -1012,9 +1050,8 @@ fn settle(pilot: &mut Pilot, system: &SolarSystem, now: i64) -> Vec<Milestone> {
         return advance.milestones;
     }
     let target = match pilot.ship.course {
-        Course::Follow { target, .. } | Course::Orbit { target, .. } => {
-            system.body(target).map(|body| Target { position: body.position, radius: body.radius })
-        }
+        Course::Follow { target, .. } | Course::Orbit { target, .. } => ship_target
+            .or_else(|| system.body(target).map(|body| Target::at_rest(body.position, body.radius))),
         Course::Goto | Course::Stop | Course::Warp { .. } => None,
     };
     motion::advance(&mut pilot.ship, seconds, target);
@@ -1080,7 +1117,8 @@ fn speed_action(ship: &Ship, changed: bool, actions: &mut Vec<(&'static str, Vec
 }
 
 /// Puts a movement command into effect on a ship whose motion is settled, and says what the client is to be told.
-fn steer(ship: &mut Ship, system: &SolarSystem, command: Command) -> Steering {
+/// `target` is what the command's target is (a body or another ship), when the scene has it.
+fn steer(ship: &mut Ship, target: Option<Target>, command: Command) -> Steering {
     match command {
         Command::SetSpeedFraction(fraction) => {
             let fraction = if fraction.is_finite() { fraction.clamp(0.0, 1.0) } else { 0.0 };
@@ -1119,7 +1157,7 @@ fn steer(ship: &mut Ship, system: &SolarSystem, command: Command) -> Steering {
             if !range.is_finite() {
                 return Steering::Refused("BAD_RANGE");
             }
-            if system.body(target_id).is_none() {
+            if target.is_none() {
                 return Steering::Refused("UNKNOWN_TARGET");
             }
             let range = range.max(0.0);
@@ -1138,7 +1176,7 @@ fn steer(ship: &mut Ship, system: &SolarSystem, command: Command) -> Steering {
             if !distance.is_finite() {
                 return Steering::Refused("BAD_RANGE");
             }
-            if system.body(target_id).is_none() {
+            if target.is_none() {
                 return Steering::Refused("UNKNOWN_TARGET");
             }
             let distance = distance.max(0.0);
@@ -1154,12 +1192,12 @@ fn steer(ship: &mut Ship, system: &SolarSystem, command: Command) -> Steering {
             speed_action(ship, changed, &mut actions);
             Steering::Actions(actions)
         }
-        Command::AlignTo { target_id } => {
-            let Some(body) = system.body(target_id) else { return Steering::Refused("UNKNOWN_TARGET") };
+        Command::AlignTo { .. } => {
+            let Some(target) = target else { return Steering::Refused("UNKNOWN_TARGET") };
             let towards = Vec3::new(
-                body.position.x - ship.position.x,
-                body.position.y - ship.position.y,
-                body.position.z - ship.position.z,
+                target.position.x - ship.position.x,
+                target.position.y - ship.position.y,
+                target.position.z - ship.position.z,
             );
             let direction = motion::unit(towards).unwrap_or(ship.direction);
             let (speed, changed) = resumed_speed(ship, 0.75);

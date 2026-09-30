@@ -148,7 +148,7 @@ pub struct ChannelRef {
 /// A task: the behaviors a node type gives. The base behaviors (`Task`, `Composite`, `Decorator`, `BlockingTask`, `MonitorTask`) are the default
 /// methods and the helpers of `composites`, `decorators` and `monitors`; a node that overrides one and calls `super()` in the client calls the
 /// helper.
-pub trait Task {
+pub trait Task: Send {
     /// The class name (`GetTaskName`).
     fn type_name(&self) -> &'static str;
 
@@ -337,6 +337,14 @@ impl Shared {
         self.calls.retain(|c| c.due > now);
         for call in due {
             self.pending.push(Delivery::Call { observer: call.observer, args: call.args });
+        }
+    }
+
+    /// A message the world sends about a subject (`ballpark.eventMessenger.SendMessage`, a notify event of the service manager): every subscriber, in
+    /// whichever tree, is told through `pending` (the system that owns the trees delivers it).
+    pub fn tell_subscribers(&mut self, subject: Subject, key: impl Into<EventKey>, args: &[Value]) {
+        for observer in self.events.subscribers_of(subject, key) {
+            self.pending.push(Delivery::Event { observer, args: args.to_vec() });
         }
     }
 
@@ -1510,8 +1518,7 @@ pub mod blocking {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
+    use std::sync::{Arc, Mutex};
 
     use super::*;
     use crate::composites::{PrioritySelector, Sequence};
@@ -1522,7 +1529,7 @@ pub(crate) mod tests {
         pub name: &'static str,
         pub result: Status,
         pub ticks: u32,
-        pub log: Rc<RefCell<Vec<String>>>,
+        pub log: Arc<Mutex<Vec<String>>>,
         seen: u32,
     }
 
@@ -1531,9 +1538,9 @@ pub(crate) mod tests {
             name: &'static str,
             result: Status,
             ticks: u32,
-            log: &Rc<RefCell<Vec<String>>>,
+            log: &Arc<Mutex<Vec<String>>>,
         ) -> Box<Self> {
-            Box::new(Self { name, result, ticks, log: Rc::clone(log), seen: 0 })
+            Box::new(Self { name, result, ticks, log: Arc::clone(log), seen: 0 })
         }
     }
 
@@ -1543,13 +1550,13 @@ pub(crate) mod tests {
         }
 
         fn on_enter(&mut self, t: &mut TaskCtx<'_, '_>) {
-            self.log.borrow_mut().push(format!("{}:enter", self.name));
+            self.log.lock().unwrap().push(format!("{}:enter", self.name));
             self.seen = 0;
             t.set_status_to_running();
         }
 
         fn update(&mut self, t: &mut TaskCtx<'_, '_>) {
-            self.log.borrow_mut().push(format!("{}:update", self.name));
+            self.log.lock().unwrap().push(format!("{}:update", self.name));
             self.seen += 1;
             if self.seen > self.ticks {
                 t.set_status(self.result);
@@ -1557,11 +1564,11 @@ pub(crate) mod tests {
         }
 
         fn on_exit(&mut self, _t: &mut TaskCtx<'_, '_>) {
-            self.log.borrow_mut().push(format!("{}:exit", self.name));
+            self.log.lock().unwrap().push(format!("{}:exit", self.name));
         }
 
         fn clean_up(&mut self, t: &mut TaskCtx<'_, '_>) {
-            self.log.borrow_mut().push(format!("{}:cleanup", self.name));
+            self.log.lock().unwrap().push(format!("{}:cleanup", self.name));
             t.set_status_to_invalid();
         }
     }
@@ -1571,7 +1578,7 @@ pub(crate) mod tests {
         pub ctx: BehaviorContext,
         pub shared: Shared,
         pub world: TestWorld,
-        pub log: Rc<RefCell<Vec<String>>>,
+        pub log: Arc<Mutex<Vec<String>>>,
         /// What the last tick raised, for `with_task`.
         pub last_error: Option<BehaviorError>,
         /// The task `run` made the root last.
@@ -1589,7 +1596,7 @@ pub(crate) mod tests {
                 ctx,
                 shared: Shared::new(10),
                 world: TestWorld::default(),
-                log: Rc::default(),
+                log: Arc::default(),
                 last_error: None,
                 task: 0,
             }
@@ -1670,7 +1677,7 @@ pub(crate) mod tests {
         }
 
         pub fn take_log(&self) -> Vec<String> {
-            std::mem::take(&mut *self.log.borrow_mut())
+            std::mem::take(&mut *self.log.lock().unwrap())
         }
 
         pub fn leaf(&mut self, name: &'static str, result: Status, ticks: u32) -> TaskId {
@@ -1739,35 +1746,35 @@ pub(crate) mod tests {
 
     /// Runs `body` as the first update of a task in a rig set up by `setup`, and gives back the rig (with what the tick raised in `last_error`) and
     /// what `body` answered.
-    pub fn with_task<R: 'static>(
+    pub fn with_task<R: Send + 'static>(
         setup: impl FnOnce(&mut Rig),
-        body: impl FnOnce(&mut TaskCtx<'_, '_>) -> R + 'static,
+        body: impl FnOnce(&mut TaskCtx<'_, '_>) -> R + Send + 'static,
     ) -> (Rig, Option<R>) {
-        type Body<R> = Box<dyn FnOnce(&mut TaskCtx<'_, '_>) -> R>;
+        type Body<R> = Box<dyn FnOnce(&mut TaskCtx<'_, '_>) -> R + Send>;
         struct Probe<R> {
             body: Option<Body<R>>,
-            out: Rc<RefCell<Option<R>>>,
+            out: Arc<Mutex<Option<R>>>,
         }
-        impl<R> Task for Probe<R> {
+        impl<R: Send> Task for Probe<R> {
             fn type_name(&self) -> &'static str {
                 "Probe"
             }
             fn on_enter(&mut self, t: &mut TaskCtx<'_, '_>) {
                 if let Some(body) = self.body.take() {
-                    *self.out.borrow_mut() = Some(body(t));
+                    *self.out.lock().unwrap() = Some(body(t));
                 }
                 t.set_status(Status::Success);
             }
         }
         let mut rig = Rig::new();
         setup(&mut rig);
-        let out = Rc::new(RefCell::new(None));
+        let out = Arc::new(Mutex::new(None));
         let probe = rig
             .tree
-            .add_task(Box::new(Probe { body: Some(Box::new(body)), out: Rc::clone(&out) }), Attrs::new());
+            .add_task(Box::new(Probe { body: Some(Box::new(body)), out: Arc::clone(&out) }), Attrs::new());
         rig.tree.start_root_task(probe);
         rig.last_error = rig.tick().err();
-        let answer = out.borrow_mut().take();
+        let answer = out.lock().unwrap().take();
         (rig, answer)
     }
 
@@ -1903,6 +1910,29 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_world_tells_every_subscriber_of_a_subject_through_the_pending_queue() {
+        use crate::events::message;
+        let mut shared = Shared::new(10);
+        let first = Observer { tree: 1, task: 2, handler: 0 };
+        let second = Observer { tree: 2, task: 5, handler: 3 };
+        shared.events.subscribe(Subject::Item(7), message::ON_PROXIMITY, first);
+        shared.events.subscribe(Subject::Item(7), message::ON_PROXIMITY, second);
+        shared.events.subscribe(Subject::Item(8), message::ON_PROXIMITY, first);
+        shared.events.subscribe(Subject::Item(7), message::TARGET_ADDED, first);
+        shared.tell_subscribers(Subject::Item(7), message::ON_PROXIMITY, &[Value::Int(1)]);
+        assert_eq!(
+            shared.pending,
+            [
+                Delivery::Event { observer: first, args: vec![Value::Int(1)] },
+                Delivery::Event { observer: second, args: vec![Value::Int(1)] },
+            ]
+        );
+        shared.pending.clear();
+        shared.tell_subscribers(Subject::Item(9), message::ON_PROXIMITY, &[]);
+        assert!(shared.pending.is_empty(), "nobody asked to hear of item 9");
+    }
+
+    #[test]
     fn the_tree_tells_what_it_does_to_whoever_watches() {
         let mut rig = Rig::new();
         let leaf = rig.leaf("a", Status::Success, 0);
@@ -1947,7 +1977,7 @@ pub(crate) mod tests {
     fn a_task_hears_of_a_message_on_a_channel_it_subscribed_to_and_a_task_of_another_tree_is_told_through_the_system()
      {
         struct Listener {
-            heard: Rc<RefCell<Vec<Value>>>,
+            heard: Arc<Mutex<Vec<Value>>>,
         }
         impl Task for Listener {
             fn type_name(&self) -> &'static str {
@@ -1965,12 +1995,12 @@ pub(crate) mod tests {
                 message: Option<&MessageData>,
             ) {
                 assert_eq!((handler, channel), (3, "CH"));
-                self.heard.borrow_mut().push(message.map(|m| m.value.clone()).unwrap_or(Value::None));
+                self.heard.lock().unwrap().push(message.map(|m| m.value.clone()).unwrap_or(Value::None));
             }
         }
-        let heard = Rc::new(RefCell::new(Vec::new()));
+        let heard = Arc::new(Mutex::new(Vec::new()));
         let mut rig = Rig::new();
-        let listener = rig.tree.add_task(Box::new(Listener { heard: Rc::clone(&heard) }), Attrs::new());
+        let listener = rig.tree.add_task(Box::new(Listener { heard: Arc::clone(&heard) }), Attrs::new());
         rig.tree.start_root_task(listener);
         rig.tick().unwrap();
         // the same tree posts to it
@@ -1981,7 +2011,7 @@ pub(crate) mod tests {
             world: &mut rig.world,
         };
         cx.send_blackboard_value(&Address::new(ScopeType::EntityGroup, "CH"), Value::Int(5));
-        assert_eq!(*heard.borrow(), [Value::Int(5)]);
+        assert_eq!(*heard.lock().unwrap(), [Value::Int(5)]);
         // a listener of another tree: the message waits in the system
         cx.shared
             .blackboards

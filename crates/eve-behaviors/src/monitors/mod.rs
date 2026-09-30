@@ -28,7 +28,7 @@ pub mod timers;
 pub const HANDLER_MESSAGE: u16 = 0;
 
 /// What a class built on the client's `MonitorTask` says: whose messages it listens to, which, and when one is to reset the tree.
-pub trait Monitor {
+pub trait Monitor: Send {
     /// The class name.
     fn type_name(&self) -> &'static str;
 

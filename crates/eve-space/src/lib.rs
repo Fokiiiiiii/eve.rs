@@ -5,6 +5,7 @@
 //! `world` builds a system's stations and celestials from the static data; `slim` and `payload` put them in the shapes
 //! of the destiny stream; `scene` is the running system (`docs/adr/0007-space-simulation-process.md`).
 
+pub mod brains;
 pub mod crowd;
 pub mod flight;
 pub mod gate;

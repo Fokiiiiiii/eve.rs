@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+eve-behaviors = { path = "../eve-behaviors" }
 eve-destiny = { path = "../eve-destiny" }
 eve-marshal = { path = "../eve-marshal" }
 eve-sde = { path = "../eve-sde" }

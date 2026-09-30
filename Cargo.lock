@@ -224,6 +224,7 @@ dependencies = [
 name = "eve-space"
 version = "0.1.0"
 dependencies = [
+ "eve-behaviors",
  "eve-destiny",
  "eve-marshal",
  "eve-sde",

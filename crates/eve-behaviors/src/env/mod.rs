@@ -10,6 +10,7 @@ pub mod dogma;
 pub mod entities;
 pub mod inventory;
 pub mod logging;
+pub mod spawning;
 pub mod testing;
 pub mod universe;
 
@@ -18,6 +19,7 @@ pub use dogma::{Dogma, EffectInfo};
 pub use entities::{DungeonObject, Entities, INVALID_GROUP_ID, ReinforcementWave, ResponseThresholds};
 pub use inventory::{CargoCapacity, CustomInfo, FakeLocation, Inventory, InventoryItem};
 pub use logging::Logging;
+pub use spawning::{Deployed, Deployment, EntitySpawnData, ReactiveSpawnConfig, SpawnPick, Spawning};
 pub use testing::TestWorld;
 pub use universe::{DamageTotals, Universe};
 
@@ -71,9 +73,9 @@ pub trait Random {
 }
 
 /// The world a behavior tree acts in.
-pub trait World: Random + Ballpark + Dogma + Entities + Inventory + Universe + Logging {}
+pub trait World: Random + Ballpark + Dogma + Entities + Inventory + Universe + Logging + Spawning {}
 
-impl<T: Random + Ballpark + Dogma + Entities + Inventory + Universe + Logging> World for T {}
+impl<T: Random + Ballpark + Dogma + Entities + Inventory + Universe + Logging + Spawning> World for T {}
 
 /// A world with nothing in it: its numbers are a fixed sequence, and it does nothing.
 #[derive(Debug, Default)]
@@ -105,6 +107,7 @@ impl Entities for NullWorld {}
 impl Inventory for NullWorld {}
 impl Universe for NullWorld {}
 impl Logging for NullWorld {}
+impl Spawning for NullWorld {}
 
 #[cfg(test)]
 mod tests {

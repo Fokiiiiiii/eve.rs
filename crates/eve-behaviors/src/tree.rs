@@ -1274,6 +1274,17 @@ impl TaskCtx<'_, '_> {
         self.cx.last_value_of_channel(channel.scope, &channel.name)
     }
 
+    /// `channel.GetLastMessage() is not None`: whether a message was ever sent on the channel (one whose value is `None` counts).
+    pub fn channel_has_message(&mut self, channel: &ChannelRef) -> bool {
+        match self.cx.shared.blackboards.message_channel(channel.scope, &channel.name) {
+            Ok(c) => c.last_message().is_some(),
+            Err(error) => {
+                self.cx.raise(error.into());
+                false
+            }
+        }
+    }
+
     /// `channel.GetLastMessageValue()` of a task that catches `BlackboardDeletedError`.
     pub fn get_channel_last_value_unless_deleted(
         &mut self,
@@ -1485,6 +1496,17 @@ pub(crate) mod tests {
                 world: &mut self.world,
             };
             cx.last_blackboard_value(&Address::new(scope_type, channel))
+        }
+
+        /// The last value of a channel of any blackboard.
+        pub fn last_in(&mut self, scope: crate::blackboards::Scope, channel: &str) -> Value {
+            let mut cx = Cx {
+                core: &mut self.tree.core,
+                ctx: &mut self.ctx,
+                shared: &mut self.shared,
+                world: &mut self.world,
+            };
+            cx.last_value_of_channel(scope, channel)
         }
 
         /// Makes a task the root, ticks once, and gives back the status it ended in (what the tick raised is in `last_error`).

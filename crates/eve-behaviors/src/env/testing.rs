@@ -3,10 +3,13 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::value::Value;
+
 use super::{
-    Ball, Ballpark, CargoCapacity, DamageTotals, Dogma, DungeonObject, EffectInfo, Entities, FakeLocation,
-    Inventory, InventoryItem, Logging, ProximitySensor, Random, ReinforcementWave, ResponseThresholds,
-    SlimItem, Universe, WorldError, WorldResult,
+    Ball, Ballpark, CargoCapacity, DamageTotals, Deployed, Deployment, Dogma, DungeonObject, EffectInfo,
+    Entities, EntitySpawnData, FakeLocation, Inventory, InventoryItem, Logging, ProximitySensor, Random,
+    ReactiveSpawnConfig, ReinforcementWave, ResponseThresholds, SlimItem, SpawnPick, Spawning, Universe,
+    WorldError, WorldResult,
 };
 
 /// What `GetClosestDisruptorAndIntersectionInWarpPath` answers.
@@ -102,6 +105,20 @@ pub struct TestWorld {
     pub pending_cloak: HashSet<i64>,
     pub protected: HashSet<i64>,
     pub ball_sources: HashMap<i64, i64>,
+    /// `spawn_data_for_entities` answers one spawn data per unit of each type it is asked for.
+    pub next_spawn_pool_id: i64,
+    pub spawn_lists: HashMap<i64, Vec<(i64, f64)>>,
+    pub groupings: HashMap<i64, Vec<(i64, i64)>>,
+    pub spawn_pick: Option<SpawnPick>,
+    pub spawn_table_owners: HashMap<i64, i64>,
+    pub deployments: Vec<Deployment>,
+    pub next_group_id: i64,
+    pub next_deployed_item_id: i64,
+    pub undock_vectors: HashMap<(i64, i64), ([f64; 3], [f64; 3])>,
+    pub reinforced_full_strength: HashMap<i64, i64>,
+    pub reactive_spawners: Vec<ReactiveSpawnConfig>,
+    pub respawns: Vec<(Option<i64>, Option<i64>, Vec<EntitySpawnData>)>,
+    pub deep_space_location: [f64; 3],
 }
 
 impl TestWorld {
@@ -672,6 +689,180 @@ impl Entities for TestWorld {
 
     fn does_spawn_exist(&self, dungeon_spawn_id: i64) -> bool {
         self.dungeon_spawns.contains(&dungeon_spawn_id)
+    }
+}
+
+impl Spawning for TestWorld {
+    fn spawn_data_for_entities(
+        &mut self,
+        types_and_counts: &[(i64, i64)],
+        position: Option<[f64; 3]>,
+        deployment_range: f64,
+        behavior_override_id: Option<&Value>,
+    ) -> Vec<EntitySpawnData> {
+        self.calls.push(format!(
+            "spawn_data_for_entities({types_and_counts:?}, {position:?}, {deployment_range}, {behavior_override_id:?})"
+        ));
+        let mut data = Vec::new();
+        for (type_id, count) in types_and_counts {
+            for _ in 0..*count {
+                data.push(EntitySpawnData {
+                    entity_type_id: *type_id,
+                    spawn_position: position,
+                    direction: None,
+                    behavior_override_id: behavior_override_id.cloned(),
+                });
+            }
+        }
+        data
+    }
+
+    fn spawn_data_for_entities_with_custom_behavior_overrides(
+        &mut self,
+        types_and_counts: &[(i64, i64)],
+        position: Option<[f64; 3]>,
+        deployment_range: f64,
+    ) -> Vec<EntitySpawnData> {
+        self.calls.push(format!(
+            "spawn_data_with_custom_overrides({types_and_counts:?}, {position:?}, {deployment_range})"
+        ));
+        types_and_counts
+            .iter()
+            .flat_map(|(type_id, count)| {
+                (0..*count).map(move |_| EntitySpawnData {
+                    entity_type_id: *type_id,
+                    spawn_position: position,
+                    ..Default::default()
+                })
+            })
+            .collect()
+    }
+
+    fn select_probability_items(&mut self, spawn_list_id: i64) -> Vec<(i64, f64)> {
+        self.spawn_lists.get(&spawn_list_id).cloned().unwrap_or_default()
+    }
+
+    fn generate_grouping(&mut self, entity_group_id: i64) -> Vec<(i64, i64)> {
+        self.groupings.get(&entity_group_id).cloned().unwrap_or_default()
+    }
+
+    fn register_new_spawn_point_pool(
+        &mut self,
+        max_spawn_points: &Value,
+        initial_spawn_points: &Value,
+    ) -> i64 {
+        self.next_spawn_pool_id += 1;
+        let id = self.next_spawn_pool_id;
+        let initial = initial_spawn_points.as_float().or_else(|| max_spawn_points.as_float()).unwrap_or(0.0);
+        self.spawn_points.insert(id, initial);
+        self.calls.push(format!(
+            "register_new_spawn_point_pool({max_spawn_points:?}, {initial_spawn_points:?}) = {id}"
+        ));
+        id
+    }
+
+    fn consume_spawn_points(&mut self, spawn_pool_id: i64, amount: f64) {
+        *self.spawn_points.entry(spawn_pool_id).or_insert(0.0) -= amount;
+        self.calls.push(format!("consume_spawn_points({spawn_pool_id}, {amount})"));
+    }
+
+    fn set_spawn_points(&mut self, spawn_pool_id: Option<i64>, amount: &Value) {
+        if let (Some(pool), Some(amount)) = (spawn_pool_id, amount.as_float()) {
+            self.spawn_points.insert(pool, amount);
+        }
+        self.calls.push(format!("set_spawn_points({spawn_pool_id:?}, {amount:?})"));
+    }
+
+    fn add_spawn_points(&mut self, spawn_pool_id: Option<i64>, amount: f64) {
+        if let Some(pool) = spawn_pool_id {
+            *self.spawn_points.entry(pool).or_insert(0.0) += amount;
+        }
+        self.calls.push(format!("add_spawn_points({spawn_pool_id:?}, {amount})"));
+    }
+
+    fn pick_npcs_from_table_by_points_and_tags(
+        &mut self,
+        spawn_table_id: Option<i64>,
+        spawn_points: f64,
+        required_npc_tags: &Value,
+        max_npc_count: Option<i64>,
+    ) -> Option<SpawnPick> {
+        self.calls.push(format!(
+            "pick_npcs({spawn_table_id:?}, {spawn_points}, {required_npc_tags:?}, {max_npc_count:?})"
+        ));
+        self.spawn_pick.clone()
+    }
+
+    fn on_entity_group_spawn(&mut self, spawn_pool_id: Option<i64>, entity_group_id: i64) {
+        self.calls.push(format!("on_entity_group_spawn({spawn_pool_id:?}, {entity_group_id})"));
+    }
+
+    fn spawn_table_owner(&self, spawn_table_id: Option<i64>) -> WorldResult<i64> {
+        spawn_table_id
+            .and_then(|id| self.spawn_table_owners.get(&id).copied())
+            .ok_or_else(|| WorldError::Key(format!("spawn table {spawn_table_id:?}")))
+    }
+
+    fn deploy_behavior_entities(&mut self, deployment: Deployment) -> WorldResult<Deployed> {
+        let group_id = deployment.group_id.unwrap_or_else(|| {
+            self.next_group_id += 1;
+            9_000 + self.next_group_id
+        });
+        let mut ids = Vec::new();
+        for _ in &deployment.spawn_data {
+            self.next_deployed_item_id += 1;
+            ids.push(9_000_000_000_000_000_000 + self.next_deployed_item_id);
+        }
+        self.deployments.push(deployment);
+        Ok(Deployed { group_id, entity_item_ids: ids })
+    }
+
+    fn register_bounty_pay_out_multiplier(&mut self, entity_item_ids: &[i64], multiplier: &Value) {
+        self.calls.push(format!("register_bounty_pay_out_multiplier({entity_item_ids:?}, {multiplier:?})"));
+    }
+
+    fn random_deep_space_location(&mut self, _solar_system_id: Option<i64>) -> [f64; 3] {
+        self.deep_space_location
+    }
+
+    fn undock_vector(&mut self, structure_id: i64, type_id: i64) -> ([f64; 3], [f64; 3]) {
+        self.undock_vectors
+            .get(&(structure_id, type_id))
+            .copied()
+            .unwrap_or(([0.0, 0.0, 0.0], [0.0, 0.0, 1.0]))
+    }
+
+    fn reinforced_group_full_strength_count(&self, group_id: i64) -> Option<i64> {
+        self.reinforced_full_strength.get(&group_id).copied()
+    }
+
+    fn set_reinforced_group_entity_unit_count(&mut self, group_id: i64, count: i64) {
+        self.reinforced_full_strength.insert(group_id, count);
+        self.calls.push(format!("set_entity_unit_count({group_id}, {count})"));
+    }
+
+    fn set_real_item_respawn(
+        &mut self,
+        group_id: Option<i64>,
+        owner_id: Option<i64>,
+        spawn_data: Vec<EntitySpawnData>,
+        min_delay_seconds: &Value,
+        max_delay_seconds: &Value,
+    ) {
+        self.calls.push(format!(
+            "set_real_item_respawn({group_id:?}, {owner_id:?}, {min_delay_seconds:?}, {max_delay_seconds:?})"
+        ));
+        self.respawns.push((group_id, owner_id, spawn_data));
+    }
+
+    fn remove_respawn_group(&mut self, group_id: Option<i64>) {
+        self.calls.push(format!("remove_respawn_group({group_id:?})"));
+    }
+
+    fn start_reactive_spawner(&mut self, config: ReactiveSpawnConfig) -> i64 {
+        self.next_spawn_pool_id += 1;
+        self.reactive_spawners.push(config);
+        self.next_spawn_pool_id
     }
 }
 

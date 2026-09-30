@@ -17,6 +17,7 @@ pub mod math;
 pub mod owner;
 pub mod roles;
 pub mod security;
+pub mod spawning;
 pub mod standings;
 pub mod structure;
 pub mod threat;

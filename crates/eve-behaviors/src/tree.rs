@@ -976,6 +976,24 @@ impl TaskCtx<'_, '_> {
         text
     }
 
+    /// `self.GetLastBlackboardValue(self.attributes.<attribute>)`: the last value on the channel the attribute addresses (raises when the attribute is
+    /// missing or is no address).
+    pub fn value_at(&mut self, attribute: &str) -> Option<Value> {
+        let address = self.required_address(attribute)?;
+        let value = self.get_last_blackboard_value(&address);
+        if self.faulted() { None } else { Some(value) }
+    }
+
+    /// A value the task uses as an id (an item, a ball, a group): what a blackboard holds where the client passes it on to the server. Anything that
+    /// is not a whole number raises as the server's lookup would.
+    pub fn expect_id(&mut self, value: &Value) -> Option<i64> {
+        let id = value.as_int();
+        if id.is_none() {
+            self.raise(BehaviorError::World(WorldError::Key(value.to_string())));
+        }
+        id
+    }
+
     /// `context.myItemId`.
     pub fn my_item_id(&mut self) -> Option<i64> {
         let id = self.cx.ctx.my_item_id;
@@ -1325,6 +1343,25 @@ pub(crate) mod tests {
         pub fn leaf(&mut self, name: &'static str, result: Status, ticks: u32) -> TaskId {
             let node = Leaf::new(name, result, ticks, &self.log);
             self.tree.add_task(node, Attrs::new().with("name", name))
+        }
+
+        /// Puts a value on a channel of the rig's blackboards (`address` names the scope; the ids are the rig's context's).
+        pub fn post(&mut self, scope_type: ScopeType, channel: &str, value: Value) {
+            let mut cx = Cx {
+                core: &mut self.tree.core,
+                ctx: &mut self.ctx,
+                shared: &mut self.shared,
+                world: &mut self.world,
+            };
+            cx.send_blackboard_value(&Address::new(scope_type, channel), value);
+        }
+
+        /// Makes a task the root, ticks once, and gives back the status it ended in (what the tick raised is in `last_error`).
+        pub fn run(&mut self, node: Box<dyn Task>, attributes: Attrs) -> Status {
+            let task = self.tree.add_task(node, attributes);
+            self.tree.start_root_task(task);
+            self.last_error = self.tick().err();
+            self.tree.status_of(task)
         }
 
         pub fn sequence(&mut self, children: &[TaskId]) -> TaskId {

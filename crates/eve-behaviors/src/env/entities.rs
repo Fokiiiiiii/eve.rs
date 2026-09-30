@@ -78,4 +78,41 @@ pub trait Entities {
     fn does_spawn_exist(&self, _dungeon_spawn_id: i64) -> bool {
         false
     }
+
+    /// `awarenessManager.get_spawn_pool_fleet_awareness(spawnPoolId).get_member_ids()`.
+    fn fleet_awareness_member_ids(&self, _spawn_pool_id: Option<i64>) -> Vec<i64> {
+        Vec::new()
+    }
+
+    /// `npcFleetReporter.get_fleet_cost_for_item_ids(spawnTableId, itemIds)`.
+    fn npc_fleet_cost_for_item_ids(&self, _spawn_table_id: Option<i64>, _item_ids: &[i64]) -> f64 {
+        0.0
+    }
+
+    /// `sum(playerFleetReporter.get_fleet_cost_by_item_ids(itemIds).values())`.
+    fn player_fleet_cost_for_item_ids(&self, _item_ids: &[i64]) -> f64 {
+        0.0
+    }
+
+    // ---- what an NPC entity carries that is not in its cargo bay (`BehaviorEntity.additionalLoot`) ----
+
+    /// `ball.HasTypeInAdditionalLoot(typeId)` of an entity.
+    fn has_type_in_additional_loot(&self, _item_id: i64, _type_id: i64) -> bool {
+        false
+    }
+
+    /// `ball.HasEnoughAdditionalCargoCapacityForType(typeId, quantity)`.
+    fn has_enough_additional_cargo_capacity_for_type(
+        &self,
+        _item_id: i64,
+        _type_id: i64,
+        _quantity: i64,
+    ) -> bool {
+        false
+    }
+
+    /// `ball.GetAvailableAdditionalCargoCapacity()`.
+    fn available_additional_cargo_capacity(&self, _item_id: i64) -> f64 {
+        0.0
+    }
 }

@@ -87,7 +87,7 @@ impl Value {
     pub fn set(values: impl IntoIterator<Item = Value>) -> Value {
         let mut out: Vec<Value> = Vec::new();
         for v in values {
-            if !out.contains(&v) {
+            if !out.iter().any(|x| x.py_eq(&v)) {
                 out.push(v);
             }
         }
@@ -97,8 +97,8 @@ impl Value {
     /// `entry in self` for a set, list, tuple or the keys of a dict.
     pub fn contains(&self, entry: &Value) -> bool {
         match self {
-            Value::Tuple(v) | Value::List(v) | Value::Set(v) => v.contains(entry),
-            Value::Dict(d) => d.iter().any(|(k, _)| k == entry),
+            Value::Tuple(v) | Value::List(v) | Value::Set(v) => v.iter().any(|x| x.py_eq(entry)),
+            Value::Dict(d) => d.iter().any(|(k, _)| k.py_eq(entry)),
             _ => false,
         }
     }
@@ -106,7 +106,7 @@ impl Value {
     /// `set.add(entry)`; false when it was there.
     pub fn set_add(&mut self, entry: Value) -> bool {
         match self {
-            Value::Set(v) if !v.contains(&entry) => {
+            Value::Set(v) if !v.iter().any(|x| x.py_eq(&entry)) => {
                 v.push(entry);
                 true
             }
@@ -117,7 +117,7 @@ impl Value {
     /// `set.discard(entry)`; whether it was there.
     pub fn set_discard(&mut self, entry: &Value) -> bool {
         match self {
-            Value::Set(v) => match v.iter().position(|x| x == entry) {
+            Value::Set(v) => match v.iter().position(|x| x.py_eq(entry)) {
                 Some(at) => {
                     v.remove(at);
                     true
@@ -126,6 +126,20 @@ impl Value {
             },
             _ => false,
         }
+    }
+
+    /// `len(value)` of a string, tuple, list, set or dict.
+    pub fn len(&self) -> Option<usize> {
+        match self {
+            Value::Str(s) => Some(s.chars().count()),
+            Value::Tuple(v) | Value::List(v) | Value::Set(v) => Some(v.len()),
+            Value::Dict(d) => Some(d.len()),
+            _ => None,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == Some(0)
     }
 
     /// `dict.get(key)` of a dict, by Python equality of the keys.

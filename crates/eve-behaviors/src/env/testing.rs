@@ -69,6 +69,11 @@ pub struct TestWorld {
     pub warp_paths: HashMap<[i64; 3], WarpPath>,
     pub warp_bubbles: (Vec<i64>, Vec<i64>),
     pub thresholds: Option<ResponseThresholds>,
+    pub fleet_members: HashMap<i64, Vec<i64>>,
+    pub npc_fleet_costs: HashMap<i64, f64>,
+    pub player_fleet_costs: HashMap<i64, f64>,
+    pub additional_loot: HashMap<i64, Vec<i64>>,
+    pub additional_capacity: HashMap<i64, f64>,
     pub damage: HashMap<i64, DamageTotals>,
     pub can_dock: HashSet<(i64, i64)>,
 }
@@ -293,6 +298,37 @@ impl Dogma for TestWorld {
 }
 
 impl Entities for TestWorld {
+    fn fleet_awareness_member_ids(&self, spawn_pool_id: Option<i64>) -> Vec<i64> {
+        spawn_pool_id.and_then(|p| self.fleet_members.get(&p).cloned()).unwrap_or_default()
+    }
+
+    fn npc_fleet_cost_for_item_ids(&self, spawn_table_id: Option<i64>, _item_ids: &[i64]) -> f64 {
+        spawn_table_id.and_then(|t| self.npc_fleet_costs.get(&t).copied()).unwrap_or(0.0)
+    }
+
+    fn player_fleet_cost_for_item_ids(&self, item_ids: &[i64]) -> f64 {
+        item_ids.iter().filter_map(|id| self.player_fleet_costs.get(id)).sum()
+    }
+
+    fn has_type_in_additional_loot(&self, item_id: i64, type_id: i64) -> bool {
+        self.additional_loot.get(&item_id).is_some_and(|types| types.contains(&type_id))
+    }
+
+    fn has_enough_additional_cargo_capacity_for_type(
+        &self,
+        item_id: i64,
+        type_id: i64,
+        quantity: i64,
+    ) -> bool {
+        let volume =
+            self.type_attributes_by_name.get(&(type_id, "volume".to_string())).copied().unwrap_or(0.0);
+        self.additional_capacity.get(&item_id).copied().unwrap_or(0.0) - volume * quantity as f64 >= 0.0
+    }
+
+    fn available_additional_cargo_capacity(&self, item_id: i64) -> f64 {
+        self.additional_capacity.get(&item_id).copied().unwrap_or(0.0)
+    }
+
     fn response_thresholds(
         &self,
         _item_id: i64,

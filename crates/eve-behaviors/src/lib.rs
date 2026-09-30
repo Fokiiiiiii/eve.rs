@@ -3,8 +3,12 @@
 //! trees built on them. What the tasks ask of the server (the client's package calls the server's `ballpark` and the like) is the `env::World`
 //! trait.
 
+#[macro_use]
+mod macros;
+
 pub mod blackboards;
 pub mod composites;
+pub mod conditions;
 pub mod constants;
 pub mod consts;
 pub mod decorators;

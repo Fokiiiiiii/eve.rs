@@ -1,6 +1,8 @@
 //! `behaviors/utility/*`: the helpers the tasks share. Each takes the task's view of everything (`TaskCtx`) where the client's takes `task`.
 
+pub mod awareness;
 pub mod ballparks;
+pub mod battlefield;
 pub mod blackboards;
 pub mod context;
 pub mod dogmatic;

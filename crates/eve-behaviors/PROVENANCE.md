@@ -14,3 +14,14 @@ A port, as it is, of the `behaviors` package of the EVE client V24.01 (decompile
 | `src/decorators.rs` | `decorators/__init__.py`, `decorators/modifiers.py`, `decorators/repeaters.py`, `decorators/timers.py` |
 | `src/evemath.rs` | `evemath/__init__.py` (the functions the tasks use) |
 | `src/env.rs` | the server-side calls the tasks make (`ballpark`, `dogmaLM`, ...): the `World` trait, no client module |
+| `src/consts.rs` | the constants the tasks read of `dogma.const`, `inventorycommon.const`, `eve.common.lib.appConst`, `carbon.common.lib.const`, and the ids of `idCheckers` |
+| `src/constants/*` | `const/behaviorroles.py`, `const/blackboardchannels.py`, `const/combat.py`, `const/loot.py` |
+| `src/utility/*` | `utility/*` (`awareness`, `ballparks`, `battlefield`, `blackboards`, `components`, `context`, `dogmatic`, `dungeons`, `entity_groups`, `groups`, `inventory`, `item_modules`, `logistics`, `math`, `owner`, `roles`, `security`, `standings`, `structure`, `threat`); `spawning` follows with the actions that use it |
+| `src/groups/*` | `groups/__init__.py`, `groups/mixin.py` |
+| `src/conditions/*` | `conditions/*` (all seventeen files) |
+| `src/monitors/*` | `monitors/*` (all nineteen files); `monitors/mod.rs` holds `MonitorTask` of `tasks.py` |
+| `src/macros.rs` | (none: `enter_task!` makes a class with an `OnEnter`) |
+
+Also read for facts, not ported: `npcs/common/standings.py` (`classify_standings`), `eveuniverse/security.py` (`SecurityClassFromLevel`),
+`dogma/attributes/health.py` (the ratios), `crimewatch/util.py` (`GetAggressorId`), `evemath/__init__.py` (`env`/`evemath`).
+

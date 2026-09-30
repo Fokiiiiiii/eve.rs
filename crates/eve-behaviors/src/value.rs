@@ -128,6 +128,19 @@ impl Value {
         }
     }
 
+    /// A field of a record a message carries (`effectInfo.isAssistance`): the value under a string key of a dict.
+    pub fn field(&self, name: &str) -> Option<&Value> {
+        match self {
+            Value::Dict(entries) => entries.iter().find(|(k, _)| k.as_str() == Some(name)).map(|(_, v)| v),
+            _ => None,
+        }
+    }
+
+    /// A record made of fields.
+    pub fn record(fields: &[(&str, Value)]) -> Value {
+        Value::Dict(fields.iter().map(|(k, v)| (Value::Str((*k).to_string()), v.clone())).collect())
+    }
+
     /// `len(value)` of a string, tuple, list, set or dict.
     pub fn len(&self) -> Option<usize> {
         match self {

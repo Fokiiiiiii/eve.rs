@@ -23,6 +23,8 @@ pub const SHIP_NOT_WARPING: i64 = 0;
 // ---- inventorycommon.const ----
 
 pub const CATEGORY_SHIP: i64 = 6;
+pub const CATEGORY_DRONE: i64 = 18;
+pub const CATEGORY_FIGHTER: i64 = 87;
 pub const CATEGORY_STRUCTURE: i64 = 65;
 pub const FLAG_CARGO: i64 = 5;
 pub const GROUP_SOLAR_SYSTEM: i64 = 5;
@@ -30,7 +32,13 @@ pub const OWNER_NONE: i64 = 0;
 pub const OWNER_UNKNOWN: i64 = 3006;
 pub const MAX_SYSTEM_ITEM: i64 = 9_999;
 pub const MIN_PLAYER_OWNER: i64 = 90_000_000;
+pub const MAX_PLAYER_OWNER: i64 = 2_147_483_647;
 pub const MIN_PLAYER_ITEM: i64 = 100_000_000;
+
+/// `idCheckers.IsPlayerOwner`.
+pub fn is_player_owner(owner_id: i64) -> bool {
+    (MIN_PLAYER_OWNER..=MAX_PLAYER_OWNER).contains(&owner_id)
+}
 
 /// `idCheckers.IsNPC`: an owner that is neither the system nor a player.
 pub fn is_npc(owner_id: i64) -> bool {
@@ -45,6 +53,7 @@ pub const ATTRIBUTE_ARMOR_HP: i64 = 265;
 pub const ATTRIBUTE_ARMOR_DAMAGE: i64 = 266;
 pub const ATTRIBUTE_SHIELD_CHARGE: i64 = 264;
 pub const ATTRIBUTE_SHIELD_CAPACITY: i64 = 263;
+pub const ATTRIBUTE_MAX_RANGE: i64 = 54;
 pub const ATTRIBUTE_SIGNATURE_RADIUS: i64 = 552;
 pub const ATTRIBUTE_MAX_VELOCITY: i64 = 37;
 pub const ATTRIBUTE_MAX_LOCKED_TARGETS: i64 = 192;

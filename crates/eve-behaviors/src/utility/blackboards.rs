@@ -45,6 +45,49 @@ pub fn update_blackboard_set_if_changed(
     true
 }
 
+/// What `add_to_set_on_channel` did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetAdd {
+    Added,
+    AlreadyThere,
+    /// The blackboard is gone (only for a task that catches it).
+    Deleted,
+}
+
+/// The pattern of `combatSet = GetLastBlackboardValue(address) or set(); if id not in combatSet: combatSet.add(id); SendBlackboardValue(address,
+/// combatSet)`: the set on the channel is changed in place (every holder of it sees the change) and sent again. A task that catches
+/// `BlackboardDeletedError` says so with `catch_deleted`.
+pub fn add_to_set_on_channel(
+    t: &mut TaskCtx<'_, '_>,
+    address: &Address,
+    id: Value,
+    catch_deleted: bool,
+) -> SetAdd {
+    let last = if catch_deleted {
+        match t.get_last_blackboard_value_unless_deleted(address) {
+            Ok(value) => value,
+            Err(_) => return SetAdd::Deleted,
+        }
+    } else {
+        t.get_last_blackboard_value(address)
+    };
+    let stored = last.truthy();
+    let mut set = if stored { last } else { Value::set(std::iter::empty()) };
+    if set.contains(&id) {
+        return SetAdd::AlreadyThere;
+    }
+    set.set_add(id);
+    if stored {
+        t.with_channel(address, |channel| {
+            if let Some(last) = channel.last_value_mut() {
+                *last = set.clone();
+            }
+        });
+    }
+    t.send_blackboard_value(address, set);
+    SetAdd::Added
+}
+
 /// `get_response_thresholds(task)`: the server works them out for the entity from its blackboards (`npcs.server.components`), `None` when it has none.
 pub fn get_response_thresholds(t: &mut TaskCtx<'_, '_>) -> Option<ResponseThresholds> {
     let item = t.my_item_id()?;

@@ -15,7 +15,7 @@ use crate::blackboards::{
     Address, BlackboardError, BlackboardManager, MessageData, Observer, Scope, ScopeType, TaskId, TreeId,
 };
 use crate::env::{SlimItem, World, WorldError, WorldResult, seconds_to_ticks};
-use crate::events::{EventKey, EventMessenger};
+use crate::events::{EventKey, EventMessenger, Subject};
 use crate::timers::TimerManager;
 use crate::value::Value;
 
@@ -52,6 +52,8 @@ pub enum BehaviorError {
     TooManyWeights,
     /// A tree or task that is built wrong (`BehaviorAuthoringException`).
     Authoring(String),
+    /// A behavior that cannot go on (`UnrecoverableBehaviorError`): the system that owns the trees is to take it down.
+    Unrecoverable(String),
     /// What a call to the server raised (`UserError`, `RuntimeError`, `ReferenceError`, `KeyError`) and no task caught.
     World(WorldError),
     /// Anything else a task raises.
@@ -131,6 +133,10 @@ impl Attrs {
         self.0.iter()
     }
 }
+
+/// What `BlackboardDeletedError` is for a task that catches it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlackboardDeleted;
 
 /// A channel of the blackboard of some scope: what `GetMessageChannelForItemId(itemId, name)` and `GetMessageChannelForGroupId(groupId, name)` answer.
 #[derive(Debug, Clone, PartialEq)]
@@ -377,7 +383,8 @@ struct Slot {
 /// The arena of a tree's tasks, its queue and its flags.
 pub struct TreeCore {
     pub id: TreeId,
-    pub behavior_id: Option<i64>,
+    /// The id the behavior was loaded by: a number for an authored tree, a name for a scripted one.
+    pub behavior_id: Option<Value>,
     pub scope_type: Option<ScopeType>,
     slots: Vec<Slot>,
     queue: VecDeque<Option<TaskId>>,
@@ -396,7 +403,7 @@ pub struct BehaviorTree {
 }
 
 impl BehaviorTree {
-    pub fn new(id: TreeId, behavior_id: Option<i64>, scope_type: Option<ScopeType>) -> Self {
+    pub fn new(id: TreeId, behavior_id: Option<Value>, scope_type: Option<ScopeType>) -> Self {
         Self {
             core: TreeCore {
                 id,
@@ -734,6 +741,31 @@ impl Cx<'_> {
 
     // ---- blackboards ----
 
+    /// What an `ExceptionEater` does: what was raised while `f` ran is dropped (what was raised before it stays).
+    pub fn eat_exceptions(&mut self, f: impl FnOnce(&mut Self)) {
+        let had_fault = self.core.fault.is_some();
+        f(self);
+        if !had_fault {
+            self.core.fault = None;
+        }
+    }
+
+    /// The last value of a channel for a task that catches `BlackboardDeletedError`: `Err(BlackboardDeleted)` for a blackboard that is gone.
+    pub fn last_blackboard_value_unless_deleted(
+        &mut self,
+        address: &Address,
+    ) -> Result<Value, BlackboardDeleted> {
+        let Some(scope) = self.scope_of(address) else { return Ok(Value::None) };
+        match self.shared.blackboards.message_channel(scope, &address.name) {
+            Ok(channel) => Ok(channel.last_message_value()),
+            Err(BlackboardError::Deleted) => Err(BlackboardDeleted),
+            Err(error) => {
+                self.raise(error.into());
+                Ok(Value::None)
+            }
+        }
+    }
+
     /// `scopes.GetChannelFromAddress`: the scope of an address in this behavior's context.
     pub fn scope_of(&mut self, address: &Address) -> Option<Scope> {
         match self.ctx.id_for_scope(address.scope_type) {
@@ -844,7 +876,13 @@ impl Cx<'_> {
 
     /// A message about an item: its subscribers in this tree are told at once, those in others through the system.
     pub fn send_event(&mut self, item_id: i64, key: impl Into<EventKey>, args: &[Value]) {
-        for observer in self.shared.events.subscribers(item_id, key) {
+        self.send_message_about(Subject::Item(item_id), key, args);
+    }
+
+    /// A message about a subject (an item, a bubble, a group, the world): its subscribers in this tree are told at once, those in others through the
+    /// system.
+    pub fn send_message_about(&mut self, subject: Subject, key: impl Into<EventKey>, args: &[Value]) {
+        for observer in self.shared.events.subscribers_of(subject, key) {
             if observer.tree == self.core.id {
                 self.dispatch_event(observer, args);
             } else {
@@ -857,6 +895,23 @@ impl Cx<'_> {
 impl TaskCtx<'_, '_> {
     pub fn raise(&mut self, error: BehaviorError) {
         self.cx.raise(error);
+    }
+
+    /// `with ExceptionEater(...)`: what is raised in `f` is dropped.
+    pub fn eat_exceptions(&mut self, f: impl FnOnce(&mut TaskCtx<'_, '_>)) {
+        let had_fault = self.cx.faulted();
+        f(self);
+        if !had_fault {
+            self.cx.core.fault = None;
+        }
+    }
+
+    /// `GetLastBlackboardValue` of a task that catches `BlackboardDeletedError`.
+    pub fn get_last_blackboard_value_unless_deleted(
+        &mut self,
+        address: &Address,
+    ) -> Result<Value, BlackboardDeleted> {
+        self.cx.last_blackboard_value_unless_deleted(address)
     }
 
     /// The answer of a call to the server: what it raised is raised here, and the tick stops.
@@ -992,6 +1047,11 @@ impl TaskCtx<'_, '_> {
             self.raise(BehaviorError::World(WorldError::Key(value.to_string())));
         }
         id
+    }
+
+    /// `self.behaviorTree.GetBehaviorId()`.
+    pub fn behavior_id(&self) -> Value {
+        self.cx.core.behavior_id.clone().unwrap_or(Value::None)
     }
 
     /// `context.myItemId`.
@@ -1163,6 +1223,27 @@ impl TaskCtx<'_, '_> {
         }
     }
 
+    /// `SubscribeToBlackboard` of a task that catches `BlackboardDeletedError`.
+    pub fn subscribe_to_blackboard_unless_deleted(
+        &mut self,
+        address: &Address,
+        handler: u16,
+    ) -> Result<(), BlackboardDeleted> {
+        let observer = self.observer(handler);
+        let Some(scope) = self.cx.scope_of(address) else { return Ok(()) };
+        match self.cx.shared.blackboards.message_channel(scope, &address.name) {
+            Ok(channel) => {
+                channel.add_observer(observer);
+                Ok(())
+            }
+            Err(BlackboardError::Deleted) => Err(BlackboardDeleted),
+            Err(error) => {
+                self.cx.raise(error.into());
+                Ok(())
+            }
+        }
+    }
+
     /// `UnsubscribeToBlackboard`: a blackboard that is gone is no error here.
     pub fn unsubscribe_to_blackboard(&mut self, address: &Address, handler: u16) {
         let observer = self.observer(handler);
@@ -1228,6 +1309,24 @@ impl TaskCtx<'_, '_> {
     pub fn unsubscribe_item(&mut self, item_id: i64, key: impl Into<EventKey>, handler: u16) {
         let observer = self.observer(handler);
         self.cx.shared.events.unsubscribe_item(item_id, key, &observer);
+    }
+
+    /// `messenger.SubscribeBubble(bubbleId, message, handler)`, `group.GetMessenger().SubscribeToMessage(message, handler)`,
+    /// `sm.RegisterForNotifyEvent(self, name)`: a subscription to messages about anything.
+    pub fn subscribe(&mut self, subject: Subject, key: impl Into<EventKey>, handler: u16) {
+        let observer = self.observer(handler);
+        self.cx.shared.events.subscribe(subject, key, observer);
+    }
+
+    /// The other way.
+    pub fn unsubscribe(&mut self, subject: Subject, key: impl Into<EventKey>, handler: u16) {
+        let observer = self.observer(handler);
+        self.cx.shared.events.unsubscribe(subject, key, &observer);
+    }
+
+    /// `messenger.SendMessage(itemId, message, *args)`.
+    pub fn send_event(&mut self, item_id: i64, key: impl Into<EventKey>, args: &[Value]) {
+        self.cx.send_event(item_id, key, args);
     }
 }
 
@@ -1354,6 +1453,17 @@ pub(crate) mod tests {
                 world: &mut self.world,
             };
             cx.send_blackboard_value(&Address::new(scope_type, channel), value);
+        }
+
+        /// The last value on a channel.
+        pub fn last(&mut self, scope_type: ScopeType, channel: &str) -> Value {
+            let mut cx = Cx {
+                core: &mut self.tree.core,
+                ctx: &mut self.ctx,
+                shared: &mut self.shared,
+                world: &mut self.world,
+            };
+            cx.last_blackboard_value(&Address::new(scope_type, channel))
         }
 
         /// Makes a task the root, ticks once, and gives back the status it ended in (what the tick raised is in `last_error`).

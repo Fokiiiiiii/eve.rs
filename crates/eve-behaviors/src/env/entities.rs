@@ -1,6 +1,8 @@
 //! The server's `entityLocation` as the tasks see it: the groups of NPCs (and what they remember), their spawning and reinforcement, and the
 //! dungeon keeper.
 
+use super::{WorldError, WorldResult};
+
 /// The id `FindGroupIDForItemID` answers for an item that is in no group (`ballpark.entities.entitygroup.INVALID_ID`).
 pub const INVALID_GROUP_ID: i64 = -1;
 
@@ -114,5 +116,26 @@ pub trait Entities {
     /// `ball.GetAvailableAdditionalCargoCapacity()`.
     fn available_additional_cargo_capacity(&self, _item_id: i64) -> f64 {
         0.0
+    }
+
+    /// `reinforcementManager.IsReinforcementAuthorized(groupId)`: raises for a group that has no reinforcements
+    /// (`ReinforcedEntityGroupNotFoundError`).
+    fn is_reinforcement_authorized(&self, _group_id: i64) -> WorldResult<bool> {
+        Err(WorldError::ReinforcedGroupNotFound)
+    }
+
+    /// `reinforcementManager.AreReinforcementsAvailable(groupId)`.
+    fn are_reinforcements_available(&self, _group_id: i64) -> bool {
+        false
+    }
+
+    /// `get_behavior_sensor_tags(context, tags)` (`npcs.server.tags`).
+    fn behavior_sensor_tags(&self, tags: &[String]) -> Vec<String> {
+        tags.to_vec()
+    }
+
+    /// `entityLocation.GetBehaviorEntityGroup(groupId).GetBehaviorId()`.
+    fn behavior_group_behavior_id(&self, _group_id: i64) -> Option<crate::value::Value> {
+        None
     }
 }

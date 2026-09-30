@@ -32,6 +32,16 @@ pub struct SlimItem {
     pub char_id: Option<i64>,
 }
 
+/// A proximity sensor component of an item (`componentRegistry.GetComponentForItem(id, PROXIMITY_SENSOR_CLASS)`): where it is and what it sees.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ProximitySensor {
+    pub item_id: i64,
+    /// `GetBubbleId()`.
+    pub bubble_id: i64,
+    /// `GetBallIdsInRange()`.
+    pub ball_ids_in_range: Vec<i64>,
+}
+
 /// The ballpark's answers and what it is asked to do. The default of every method is the answer of a ballpark with nothing in it.
 pub trait Ballpark {
     /// `ballpark.HasBall`, and `ball_id in ballpark.balls`.
@@ -127,4 +137,43 @@ pub trait Ballpark {
 
     /// `ballpark.UncloakShip(itemId)`.
     fn uncloak_ship(&mut self, _item_id: i64) {}
+
+    /// `ballpark.DistanceBetween(a, b)`.
+    fn distance_between(&self, _a: i64, _b: i64) -> WorldResult<f64> {
+        Err(WorldError::Runtime("no ballpark".into()))
+    }
+
+    /// `ballpark.solarsystemID`.
+    fn solar_system_id(&self) -> Option<i64> {
+        None
+    }
+
+    /// `ballpark.SetBubbleEvents(bubbleId, on)`: whether the ballpark tells of balls entering and leaving the bubble (`DoBubbleProximity`).
+    fn set_bubble_events(&mut self, _bubble_id: i64, _on: bool) {}
+
+    /// `componentRegistry.GetComponentForItem(itemId, PROXIMITY_SENSOR_CLASS)`.
+    fn proximity_sensor(&self, _item_id: i64) -> Option<ProximitySensor> {
+        None
+    }
+
+    /// `componentRegistry.GetInstancesWithComponentClass(PROXIMITY_SENSOR_CLASS)` of those that `HasTags(*tags)`.
+    fn proximity_sensors(&self, _tags: &[String]) -> Vec<ProximitySensor> {
+        Vec::new()
+    }
+
+    /// `componentRegistry.AddComponentInstanceToItem(PROXIMITY_SENSOR_CLASS, itemId, typeId, Bundle(detectionRange=, tags=None))`.
+    fn add_proximity_sensor(
+        &mut self,
+        _item_id: i64,
+        _type_id: i64,
+        _detection_range: f64,
+    ) -> Option<ProximitySensor> {
+        None
+    }
+
+    /// `componentRegistry.GetComponentForItem(itemId, TURBO_SHIELD_CLASS).IsShieldState(state)`: `None` when the item has no such component
+    /// (`KeyError`).
+    fn turbo_shield_is_state(&self, _item_id: i64, _state: i64) -> Option<bool> {
+        None
+    }
 }

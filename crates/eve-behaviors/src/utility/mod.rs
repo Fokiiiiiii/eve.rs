@@ -4,6 +4,7 @@ pub mod awareness;
 pub mod ballparks;
 pub mod battlefield;
 pub mod blackboards;
+pub mod components;
 pub mod context;
 pub mod dogmatic;
 pub mod dungeons;

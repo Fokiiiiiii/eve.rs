@@ -23,6 +23,11 @@ pub const CAN_SPAWN_SITES_CHANNEL_NAME: &str = "CAN_SPAWN_SITES";
 pub const IS_DUNGEON_INDEPENDENT_CHANNEL_NAME: &str = "IS_DUNGEON_INDEPENDENT";
 pub const EXTRA_FLEET_MEMBERS_CHANNEL_NAME: &str = "Extra Fleet Members";
 
+/// `REINFORCEMENTS_AUTHORIZED` of the server's reinforcement manager (its package is not in the client extract; the name is this crate's).
+pub const REINFORCEMENTS_AUTHORIZED: &str = "REINFORCEMENTS_AUTHORIZED";
+/// `REINFORCEMENT_COOLDOWN`, likewise.
+pub const REINFORCEMENT_COOLDOWN: &str = "REINFORCEMENT_COOLDOWN";
+
 macro_rules! address {
     ($(#[$doc:meta])* $name:ident, $scope:ident, $channel:expr) => {
         $(#[$doc])*
@@ -57,6 +62,8 @@ address!(standings_friendly_threshold_address, EntityGroup, STANDINGS_FRIENDLY_T
 address!(standings_hostile_threshold_address, EntityGroup, STANDINGS_HOSTILE_THRESHOLD_CHANNEL_NAME);
 address!(unspawn_entity, Item, "UNSPAWN_ENTITY");
 address!(warp_scrambled_address, Item, "WARP_SCRAMBLED");
+address!(reinforcements_authorized_address, EntityGroup, REINFORCEMENTS_AUTHORIZED);
+address!(reinforcement_cooldown_address, EntityGroup, REINFORCEMENT_COOLDOWN);
 
 #[cfg(test)]
 mod tests {

@@ -9,13 +9,15 @@ pub mod ballpark;
 pub mod dogma;
 pub mod entities;
 pub mod inventory;
+pub mod logging;
 pub mod testing;
 pub mod universe;
 
-pub use ballpark::{Ball, Ballpark, SlimItem};
+pub use ballpark::{Ball, Ballpark, ProximitySensor, SlimItem};
 pub use dogma::{Dogma, EffectInfo};
 pub use entities::{Entities, INVALID_GROUP_ID, ResponseThresholds};
 pub use inventory::{CargoCapacity, Inventory, InventoryItem};
+pub use logging::Logging;
 pub use testing::TestWorld;
 pub use universe::{DamageTotals, Universe};
 
@@ -30,6 +32,8 @@ pub enum WorldError {
     Reference,
     /// `KeyError`.
     Key(String),
+    /// `ReinforcedEntityGroupNotFoundError`.
+    ReinforcedGroupNotFound,
 }
 
 pub type WorldResult<T> = Result<T, WorldError>;
@@ -67,9 +71,9 @@ pub trait Random {
 }
 
 /// The world a behavior tree acts in.
-pub trait World: Random + Ballpark + Dogma + Entities + Inventory + Universe {}
+pub trait World: Random + Ballpark + Dogma + Entities + Inventory + Universe + Logging {}
 
-impl<T: Random + Ballpark + Dogma + Entities + Inventory + Universe> World for T {}
+impl<T: Random + Ballpark + Dogma + Entities + Inventory + Universe + Logging> World for T {}
 
 /// A world with nothing in it: its numbers are a fixed sequence, and it does nothing.
 #[derive(Debug, Default)]
@@ -100,6 +104,7 @@ impl Dogma for NullWorld {}
 impl Entities for NullWorld {}
 impl Inventory for NullWorld {}
 impl Universe for NullWorld {}
+impl Logging for NullWorld {}
 
 #[cfg(test)]
 mod tests {

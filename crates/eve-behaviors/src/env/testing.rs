@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::{
     Ball, Ballpark, CargoCapacity, DamageTotals, Dogma, EffectInfo, Entities, Inventory, InventoryItem,
-    Random, ResponseThresholds, SlimItem, Universe, WorldError, WorldResult,
+    Logging, ProximitySensor, Random, ResponseThresholds, SlimItem, Universe, WorldError, WorldResult,
 };
 
 /// What `GetClosestDisruptorAndIntersectionInWarpPath` answers.
@@ -68,6 +68,15 @@ pub struct TestWorld {
     pub vulnerable_structures: HashSet<i64>,
     pub warp_paths: HashMap<[i64; 3], WarpPath>,
     pub warp_bubbles: (Vec<i64>, Vec<i64>),
+    pub solar_system: Option<i64>,
+    /// Proximity sensors with their tags.
+    pub sensors: Vec<(ProximitySensor, Vec<String>)>,
+    pub turbo_shield_states: HashMap<i64, i64>,
+    pub reinforcement_authorized: HashMap<i64, WorldResult<bool>>,
+    pub reinforcements_available: HashSet<i64>,
+    pub group_behavior_ids: HashMap<i64, crate::value::Value>,
+    pub type_categories: HashMap<i64, i64>,
+    pub char_ships: HashMap<i64, i64>,
     pub thresholds: Option<ResponseThresholds>,
     pub fleet_members: HashMap<i64, Vec<i64>>,
     pub npc_fleet_costs: HashMap<i64, f64>,
@@ -188,6 +197,46 @@ impl Ballpark for TestWorld {
         self.aggressed.contains(&item_id)
     }
 
+    fn distance_between(&self, a: i64, b: i64) -> WorldResult<f64> {
+        self.surface_dist(a, b)
+    }
+
+    fn solar_system_id(&self) -> Option<i64> {
+        self.solar_system
+    }
+
+    fn set_bubble_events(&mut self, bubble_id: i64, on: bool) {
+        self.calls.push(format!("set_bubble_events({bubble_id}, {on})"));
+    }
+
+    fn proximity_sensor(&self, item_id: i64) -> Option<ProximitySensor> {
+        self.sensors.iter().find(|(sensor, _)| sensor.item_id == item_id).map(|(sensor, _)| sensor.clone())
+    }
+
+    fn proximity_sensors(&self, tags: &[String]) -> Vec<ProximitySensor> {
+        self.sensors
+            .iter()
+            .filter(|(_, own)| tags.iter().all(|tag| own.contains(tag)))
+            .map(|(sensor, _)| sensor.clone())
+            .collect()
+    }
+
+    fn add_proximity_sensor(
+        &mut self,
+        item_id: i64,
+        type_id: i64,
+        detection_range: f64,
+    ) -> Option<ProximitySensor> {
+        self.calls.push(format!("add_proximity_sensor({item_id}, {type_id}, {detection_range})"));
+        let sensor = ProximitySensor { item_id, ..Default::default() };
+        self.sensors.push((sensor.clone(), Vec::new()));
+        Some(sensor)
+    }
+
+    fn turbo_shield_is_state(&self, item_id: i64, state: i64) -> Option<bool> {
+        self.turbo_shield_states.get(&item_id).map(|current| *current == state)
+    }
+
     fn make_invulnerable_permanently(&mut self, ball_id: i64, reason: &str) {
         self.calls.push(format!("make_invulnerable_permanently({ball_id}, {reason})"));
     }
@@ -297,7 +346,50 @@ impl Dogma for TestWorld {
     }
 }
 
+impl Logging for TestWorld {
+    fn log_error(&mut self, message: &str) {
+        self.calls.push(format!("log_error({message})"));
+    }
+
+    fn log_behavior_aggressed(
+        &mut self,
+        owner_id: Option<i64>,
+        behavior_id: &crate::value::Value,
+        group_behavior_id: &crate::value::Value,
+        target_type_id: Option<i64>,
+        aggressor_id: i64,
+    ) {
+        self.calls.push(format!("log_behavior_aggressed({owner_id:?}, {behavior_id}, {group_behavior_id}, {target_type_id:?}, {aggressor_id})"));
+    }
+
+    fn log_monitored_target_aggressed(
+        &mut self,
+        owner_id: Option<i64>,
+        behavior_id: &crate::value::Value,
+        group_behavior_id: &crate::value::Value,
+        target_type_id: Option<i64>,
+        aggressor_id: i64,
+    ) {
+        self.calls.push(format!("log_monitored_target_aggressed({owner_id:?}, {behavior_id}, {group_behavior_id}, {target_type_id:?}, {aggressor_id})"));
+    }
+}
+
 impl Entities for TestWorld {
+    fn is_reinforcement_authorized(&self, group_id: i64) -> WorldResult<bool> {
+        self.reinforcement_authorized
+            .get(&group_id)
+            .cloned()
+            .unwrap_or(Err(WorldError::ReinforcedGroupNotFound))
+    }
+
+    fn are_reinforcements_available(&self, group_id: i64) -> bool {
+        self.reinforcements_available.contains(&group_id)
+    }
+
+    fn behavior_group_behavior_id(&self, group_id: i64) -> Option<crate::value::Value> {
+        self.group_behavior_ids.get(&group_id).cloned()
+    }
+
     fn fleet_awareness_member_ids(&self, spawn_pool_id: Option<i64>) -> Vec<i64> {
         spawn_pool_id.and_then(|p| self.fleet_members.get(&p).cloned()).unwrap_or_default()
     }
@@ -408,6 +500,14 @@ impl Inventory for TestWorld {
 }
 
 impl Universe for TestWorld {
+    fn type_category_id(&self, type_id: i64) -> Option<i64> {
+        self.type_categories.get(&type_id).copied()
+    }
+
+    fn ship_id_for_char_id(&self, char_id: i64) -> Option<i64> {
+        self.char_ships.get(&char_id).copied()
+    }
+
     fn damage_tracker_totals(&self, ship_id: i64, _since: i64) -> DamageTotals {
         self.damage.get(&ship_id).copied().unwrap_or_default()
     }

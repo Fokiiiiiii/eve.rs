@@ -16,6 +16,7 @@ pub mod env;
 pub mod evemath;
 pub mod events;
 pub mod groups;
+pub mod monitors;
 pub mod timers;
 pub mod tree;
 pub mod utility;

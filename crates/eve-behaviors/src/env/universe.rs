@@ -37,6 +37,16 @@ pub trait Universe {
         0.0
     }
 
+    /// `evetypes.GetCategoryID(typeId)`.
+    fn type_category_id(&self, _type_id: i64) -> Option<i64> {
+        None
+    }
+
+    /// `GetShipIDForCharID(charId)`.
+    fn ship_id_for_char_id(&self, _char_id: i64) -> Option<i64> {
+        None
+    }
+
     /// `cfg.mapSystemCache[solarSystemId].securityStatus`.
     fn security_status(&self, _solar_system_id: i64) -> f64 {
         0.0

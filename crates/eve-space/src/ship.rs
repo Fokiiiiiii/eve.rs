@@ -73,10 +73,29 @@ pub enum Course {
     },
 }
 
+/// What sets an NPC's ship apart from a player's: nobody flies it (its ball has no session and is not interactive) and its slim item has no name and
+/// carries the limits the NPC's owner reacts to (`hostile_response_threshold`, `friendly_response_threshold`: the standings at which it treats others
+/// as enemies or friends).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NpcIdentity {
+    pub hostile_response_threshold: i64,
+    pub friendly_response_threshold: i64,
+}
+
+impl Default for NpcIdentity {
+    /// The limits the reference gives every NPC it spawns (`-11` and `11`: no standing reaches them, so the NPC is hostile to whoever the
+    /// aggression rules say and to nobody else).
+    fn default() -> Self {
+        Self { hostile_response_threshold: -11, friendly_response_threshold: 11 }
+    }
+}
+
 /// A ship in a scene: its spec and its motion.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ship {
     pub spec: ShipSpec,
+    /// Set for an NPC's ship.
+    pub npc: Option<NpcIdentity>,
     pub position: Vec3,
     pub velocity: Vec3,
     /// A unit vector.
@@ -99,7 +118,13 @@ impl Ship {
         now: i64,
     ) -> Self {
         let health = Health::new(spec.vitals, spec.shield_recharge_ms, spec.condition, now);
-        Self { spec, position, velocity, direction, speed_fraction, course, health }
+        Self { spec, npc: None, position, velocity, direction, speed_fraction, course, health }
+    }
+
+    /// The same ship as an NPC's.
+    pub fn as_npc(mut self, identity: NpcIdentity) -> Self {
+        self.npc = Some(identity);
+        self
     }
 
     /// The ball the destiny stream describes the ship with.
@@ -153,8 +178,8 @@ impl Ship {
             speed_fraction: self.speed_fraction,
             corporation_id: IdRef::Valid(i64::from(self.spec.corporation_id)),
             alliance_id: IdRef::Valid(i64::from(self.spec.alliance_id)),
-            has_session: true,
-            pilot_positive: self.spec.character_id > 0,
+            has_session: self.npc.is_none(),
+            pilot_positive: self.npc.is_none() && self.spec.character_id > 0,
             owner_positive: self.spec.owner_id > 0,
             ..BallEntity::default()
         }

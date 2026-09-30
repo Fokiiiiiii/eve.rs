@@ -46,7 +46,7 @@ pub fn destiny_update(actions: impl IntoIterator<Item = Value>, wait: bool) -> V
 
 /// The ship's slim item as a plain dictionary (what `AddBalls2` carries).
 fn ship_dict(ship: &Ship) -> Value {
-    Value::Dict(slim::ship_entries(&ship.spec).into_iter().map(|(k, v)| (word(k), v)).collect())
+    Value::Dict(slim::ship_entries(ship).into_iter().map(|(k, v)| (word(k), v)).collect())
 }
 
 /// `AddBalls2` for the ship alone: the buffer with its ball, and the slim item with the damage state.
@@ -121,7 +121,7 @@ pub fn set_state(
 
     let mut slims: Vec<Value> =
         system.bodies.iter().map(|b| slim_object(slim::body_entries(system, b))).collect();
-    slims.extend(ships.iter().map(|ship| slim_object(slim::ship_entries(&ship.spec))));
+    slims.extend(ships.iter().map(|ship| slim_object(slim::ship_entries(ship))));
 
     let state = key_val([
         ("stamp", id(i64::from(stamp))),

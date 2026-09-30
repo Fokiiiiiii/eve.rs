@@ -133,6 +133,23 @@ pub enum Out {
     },
 }
 
+impl Out {
+    /// The session the message is for.
+    pub fn session(&self) -> SessionId {
+        match self {
+            Out::Notify { session, .. }
+            | Out::Accepted { session, .. }
+            | Out::Approaching { session, .. }
+            | Out::Jumping { session, .. }
+            | Out::Docked { session, .. }
+            | Out::Condition { session, .. }
+            | Out::Refused { session, .. }
+            | Out::Targets { session, .. }
+            | Out::TargetRefused { session, .. } => *session,
+        }
+    }
+}
+
 /// Why the scene cannot take a ship.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SceneError {
@@ -172,6 +189,27 @@ pub(crate) struct Pilot {
     pub(crate) protected_until: i64,
 }
 
+impl Pilot {
+    /// A ship that has just come into the scene at `now`, at rest in the order of arrival `entered`, that has not bound the ballpark and holds nothing
+    /// locked.
+    pub(crate) fn new(ship: Ship, modules: Modules, entered: u64, now: i64, protected_until: i64) -> Self {
+        Self {
+            ship,
+            settled_at: now,
+            docking: None,
+            flight: None,
+            jump: None,
+            jumped_in: false,
+            bound: false,
+            entered,
+            sees: BTreeSet::new(),
+            targeting: Targeting::default(),
+            modules,
+            protected_until,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct PendingJump {
     gate_id: i64,
@@ -207,6 +245,8 @@ pub struct Scene {
     backlog: Vec<Out>,
     /// The number the last lock of a ship in this scene was given (locks are listed in the order they were asked for).
     pub(crate) target_sequence: u64,
+    /// How many NPC ships have been made in this scene (the sessions they are known by are numbered from it, `crate::npc`).
+    pub(crate) npc_sequence: u64,
 }
 
 /// The destiny stamp of a moment: whole seconds of the Unix clock.
@@ -225,6 +265,7 @@ impl Scene {
             warped_last: false,
             backlog: Vec::new(),
             target_sequence: 0,
+            npc_sequence: 0,
         }
     }
 
@@ -232,8 +273,9 @@ impl Scene {
         &self.system
     }
 
+    /// Whether no player is in the scene (NPCs do not keep a scene: a system has one while somebody is there to see it).
     pub fn is_empty(&self) -> bool {
-        self.pilots.is_empty()
+        self.pilots.keys().all(|session| crate::npc::is_npc_session(*session))
     }
 
     pub fn contains(&self, session: SessionId) -> bool {
@@ -287,23 +329,7 @@ impl Scene {
         let velocity = Vec3::new(direction.x * speed, direction.y * speed, direction.z * speed);
         let ship = Ship::new(spec, position, velocity, direction, 1.0, Course::Goto, now);
         let entered = self.next_entry();
-        self.pilots.insert(
-            session,
-            Pilot {
-                ship,
-                settled_at: now,
-                docking: None,
-                flight: None,
-                jump: None,
-                jumped_in: false,
-                bound: false,
-                entered,
-                sees: BTreeSet::new(),
-                targeting: Targeting::default(),
-                modules,
-                protected_until: now + UNDOCK_PROTECTION,
-            },
-        );
+        self.pilots.insert(session, Pilot::new(ship, modules, entered, now, now + UNDOCK_PROTECTION));
         Ok(self.announce_arrival(session, now))
     }
 

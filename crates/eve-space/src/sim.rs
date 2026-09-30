@@ -10,6 +10,7 @@ use eve_destiny::Vec3;
 use eve_marshal::Value;
 
 use crate::link::{Enter, How, Message, PROTOCOL_VERSION};
+use crate::npc::is_npc_session;
 use crate::scene::{Command, Departure, Out, Scene, SceneError, SessionId, Traveller};
 use crate::targeting::Order;
 use crate::world::{SolarSystem, World};
@@ -119,6 +120,11 @@ impl Sim {
         self.sessions.len()
     }
 
+    /// What the host is told of what scenes have to say: nothing that is for an NPC (nobody is there to hear it).
+    pub(crate) fn messages(outs: impl IntoIterator<Item = Out>) -> Vec<Message> {
+        outs.into_iter().filter(|out| !is_npc_session(out.session())).map(Self::out_message).collect()
+    }
+
     fn out_message(out: Out) -> Message {
         match out {
             Out::Notify { session, name, id_type, args } => {
@@ -186,7 +192,7 @@ impl Sim {
             Ok(told) => {
                 self.sessions.insert(session_id, solar_system_id);
                 let mut messages = reply(Ok(()));
-                messages.extend(told.into_iter().map(Self::out_message));
+                messages.extend(Self::messages(told));
                 messages
             }
             Err(SceneError::UnknownStation(station)) => {
@@ -292,7 +298,7 @@ impl Sim {
                 )));
             }
         };
-        Ok(outs.into_iter().map(Self::out_message).collect())
+        Ok(Self::messages(outs))
     }
 
     /// What is due at `now`: ships that finished docking leave their scenes, ships whose jump is due arrive in the scene of the other system,
@@ -304,12 +310,12 @@ impl Sim {
                 self.forget(*session);
             }
         }
-        let mut messages: Vec<Message> = outs.into_iter().map(Self::out_message).collect();
+        let mut messages: Vec<Message> = Self::messages(outs);
         let mut travellers: Vec<Traveller> = Vec::new();
         for scene in self.scenes.values_mut() {
             let (gone, told) = scene.due_jumps(now);
             travellers.extend(gone);
-            messages.extend(told.into_iter().map(Self::out_message));
+            messages.extend(Self::messages(told));
         }
         for traveller in travellers {
             messages.extend(self.arrive(traveller, now));
@@ -335,7 +341,7 @@ impl Sim {
                 reason: "DESTINATION_UNAVAILABLE".to_string(),
             }];
             if let Some(scene) = sim.scenes.get_mut(&traveller.from_system) {
-                messages.extend(scene.restore(traveller, now).into_iter().map(Self::out_message));
+                messages.extend(Self::messages(scene.restore(traveller, now)));
             }
             messages
         };
@@ -346,7 +352,7 @@ impl Sim {
                 self.sessions.insert(session, to_system);
                 let mut messages =
                     vec![Message::Jumped { session_id: session, from_system, from_gate, to_system, to_gate }];
-                messages.extend(told.into_iter().map(Self::out_message));
+                messages.extend(Self::messages(told));
                 messages
             }
             Err(traveller) => {

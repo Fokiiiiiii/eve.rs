@@ -3,7 +3,7 @@
 use eve_marshal::{Descriptor, PackedColumn, PackedRow, Value, dbtype};
 
 use crate::security;
-use crate::ship::ShipSpec;
+use crate::ship::{NpcIdentity, Ship, ShipSpec};
 use crate::wire::{id, int, list, real, text, tuple, word};
 use crate::world::{Body, BodyKind, Detail, SolarSystem};
 
@@ -123,8 +123,42 @@ pub fn body_entries(system: &SolarSystem, body: &Body) -> Entries {
     entries
 }
 
-/// The entries of a ship's slim item.
-pub fn ship_entries(spec: &ShipSpec) -> Entries {
+/// The entries of a ship's slim item: a player's, or an NPC's (which has no name and ends with the limits of its owner's reactions).
+pub fn ship_entries(ship: &Ship) -> Entries {
+    match ship.npc {
+        None => pilot_ship_entries(&ship.spec),
+        Some(npc) => npc_ship_entries(&ship.spec, npc),
+    }
+}
+
+/// The entries of the slim item of an NPC's ship, in the order the reference gives them (`oracle/fixtures/scenarios/jump.json`).
+fn npc_ship_entries(spec: &ShipSpec, npc: NpcIdentity) -> Entries {
+    let modules = spec
+        .modules
+        .iter()
+        .map(|m| tuple([id(m.item_id), int(i64::from(m.type_id)), int(i64::from(m.flag))]));
+    vec![
+        ("itemID", id(spec.ship_id)),
+        ("typeID", int(i64::from(spec.type_id))),
+        ("ownerID", id(spec.owner_id)),
+        ("groupID", int(i64::from(spec.group_id))),
+        ("categoryID", int(i64::from(spec.category_id))),
+        ("corpID", id(i64::from(spec.corporation_id))),
+        ("allianceID", id(i64::from(spec.alliance_id))),
+        ("warFactionID", id(i64::from(spec.war_faction_id))),
+        ("charID", id(spec.character_id)),
+        ("kills", int(0)),
+        ("skinMaterialSetID", Value::None),
+        ("modules", list(modules)),
+        ("securityStatus", number(spec.security_status)),
+        ("bounty", int(0)),
+        ("hostile_response_threshold", int(npc.hostile_response_threshold)),
+        ("friendly_response_threshold", int(npc.friendly_response_threshold)),
+    ]
+}
+
+/// The entries of the slim item of a player's ship.
+fn pilot_ship_entries(spec: &ShipSpec) -> Entries {
     let modules = spec
         .modules
         .iter()

@@ -7,6 +7,7 @@
 
 use eve_destiny::Vec3;
 
+use crate::health::DamageState;
 use crate::payload::{self, STATION_SHIELD_TAU_MS};
 use crate::scene::{Out, Scene, SessionId, TICKS_PER_SECOND};
 use crate::wire::{id, text, word};
@@ -86,7 +87,7 @@ impl Targeting {
 
 /// Something a ship can point at: the figures a lock depends on.
 #[derive(Debug, Clone, Copy)]
-struct Subject {
+pub(crate) struct Subject {
     id: i64,
     session: Option<SessionId>,
     position: Vec3,
@@ -94,7 +95,7 @@ struct Subject {
     type_id: i32,
     group_id: i32,
     signature_radius: f64,
-    shield_tau_ms: f64,
+    state: DamageState,
     warping: bool,
     protected: bool,
 }
@@ -139,7 +140,7 @@ fn on_target(session: SessionId, what: &'static str, target: Option<i64>) -> Out
 }
 
 impl Scene {
-    fn subject(&self, target: i64, now: i64) -> Option<Subject> {
+    pub(crate) fn subject(&self, target: i64, now: i64) -> Option<Subject> {
         if let Some((session, pilot)) = self.pilots.iter().find(|(_, p)| p.ship.spec.ship_id == target) {
             let spec = &pilot.ship.spec;
             return Some(Subject {
@@ -150,7 +151,7 @@ impl Scene {
                 type_id: spec.type_id,
                 group_id: spec.group_id,
                 signature_radius: spec.signature_radius,
-                shield_tau_ms: spec.shield_recharge_ms / 5.0,
+                state: pilot.ship.health.state_at(now),
                 warping: pilot.flight.as_ref().is_some_and(|f| f.is_warping()),
                 protected: pilot.protected_until > now,
             });
@@ -164,7 +165,11 @@ impl Scene {
             type_id: body.type_id,
             group_id: body.group_id,
             signature_radius: body.radius,
-            shield_tau_ms: if body.kind == BodyKind::Station { STATION_SHIELD_TAU_MS } else { 0.0 },
+            state: DamageState::whole(if body.kind == BodyKind::Station {
+                STATION_SHIELD_TAU_MS
+            } else {
+                0.0
+            }),
             warping: false,
             protected: false,
         })
@@ -333,7 +338,7 @@ impl Scene {
     }
 
     /// The damage state of a ship or station told to the pilots that can see it, its own, and the ones that have it locked.
-    fn announce_damage_state(&mut self, subject: &Subject, now: i64) -> Vec<Out> {
+    pub(crate) fn announce_damage_state(&mut self, subject: &Subject, now: i64) -> Vec<Out> {
         let recipients: Vec<SessionId> = self
             .in_entry_order()
             .into_iter()
@@ -353,7 +358,7 @@ impl Scene {
         let action = payload::action(
             stamp,
             "OnDamageStateChange",
-            [id(subject.id), payload::damage_state(subject.shield_tau_ms, now)],
+            [id(subject.id), payload::damage_state(&subject.state, now)],
         );
         recipients.into_iter().map(|s| Self::update(s, vec![action.clone()])).collect()
     }

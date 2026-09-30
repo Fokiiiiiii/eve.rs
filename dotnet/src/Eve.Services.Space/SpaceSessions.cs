@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Eve.Inventory;
 using Eve.Dogma;
+using Eve.Fitting;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Ships;
@@ -14,7 +15,7 @@ namespace Eve.Services.Space;
 /// the notifications), forwarding what the simulation says to the client that plays the ship, and bringing the ship home when it docks, or
 /// when the simulation is lost. What happens in space itself (motion, the balls, the stamps) is the simulation's (ADR 0007).
 /// </summary>
-public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules
+public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules, ISpaceHealth
 {
     /// <summary>How long a ship that has undocked cannot be hurt (the reference's: 30 seconds).</summary>
     public const long UndockInvulnerabilityTicks = 300_000_000;
@@ -133,7 +134,9 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules
         {
             return None;
         }
+        // a ship comes out of its station with its shield and capacitor full; what it has lost of its armor and hull it keeps (the reference's)
         var spec = SimShips.Of(snapshot, _statics);
+        spec = spec with { Condition = (spec.Condition ?? SimCondition.Full) with { ShieldCharge = 1, Charge = 1 } };
         var systemId = snapshot.Character.SolarSystemId;
 
         var transition = await _ships.UndockAsync(characterId, cancellationToken);
@@ -344,6 +347,30 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules
         return reply.Accepted ? ModuleResult.Done : ModuleResult.Refusal(reply.Reason == "NOT_ACTIVE" ? "MODULE_NOT_ACTIVE" : reply.Reason ?? "REFUSED", module?.TypeId ?? 0, type?.Name ?? "");
     }
 
+    /// <summary>What the ship in space has taken now, from the simulation.</summary>
+    public async Task<SpaceCondition?> ConditionAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        var id = (ulong)session.SessionId;
+        if (!_pilots.ContainsKey(id))
+        {
+            return null;
+        }
+        var reply = await AskSimAsync(id, () => _sim.CommandAsync(id, SimCommands.GetCondition, [], cancellationToken), session);
+        return reply.Condition is { } condition ? new SpaceCondition(condition.Damage, condition.Charge, condition.ShieldCharge, condition.ArmorDamage) : null;
+    }
+
+    /// <summary>Mends the ship in space: the simulation tells the pilot and those who see it before it answers.</summary>
+    public async Task<bool> HealAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        var id = (ulong)session.SessionId;
+        if (!_pilots.ContainsKey(id))
+        {
+            return false;
+        }
+        var reply = await AskSimAsync(id, () => _sim.CommandAsync(id, SimCommands.Heal, [], cancellationToken), session);
+        return reply.Accepted;
+    }
+
     /// <summary>One order about a pilot's modules or targets is asked of the simulation at a time (the answers are matched by what was asked); an unreachable simulation is a message the client shows.</summary>
     private async Task<CommandReply> AskSimAsync(ulong id, Func<Task<CommandReply>> ask, ClientSession session)
     {
@@ -518,7 +545,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules
                     EndInvulnerability(mover);
                     break;
                 case SimDocked docked when _pilots.TryGetValue(docked.SessionId, out var pilot):
-                    _ = Task.Run(() => FinishDockingAsync(pilot, docked.StationId));
+                    _ = Task.Run(() => FinishDockingAsync(pilot, docked.StationId, docked.Condition));
                     break;
                 case SimJumped jumped when _pilots.TryGetValue(jumped.SessionId, out var jumper):
                     _ = Task.Run(() => FinishJumpAsync(jumper, jumped));
@@ -599,7 +626,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules
     /// The ship has docked (or is being brought home): what the reference tells the client at the end of a docking, in its order, with the
     /// ship in the station's hangar and the session in the station.
     /// </summary>
-    private async Task FinishDockingAsync(Pilot pilot, long stationId)
+    private async Task FinishDockingAsync(Pilot pilot, long stationId, SimCondition? condition)
     {
         if (!_pilots.TryRemove((ulong)pilot.Session.SessionId, out _))
         {
@@ -616,6 +643,11 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules
             {
                 _log?.Invoke($"docking of character {pilot.CharacterId} at {stationId} failed: {transition.Refusal}");
                 return;
+            }
+            if (condition is not null)
+            {
+                // what the ship has taken is kept with it in the hangar
+                await _ships.SetShipConditionAsync(pilot.ShipId, new ShipCondition(condition.Damage, condition.Charge, condition.ShieldCharge, condition.ArmorDamage, false));
             }
             var type = _statics.Type(moved.Ship.TypeId);
             session.SendNotification(
@@ -644,7 +676,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules
                 if (station is { } home)
                 {
                     _log?.Invoke($"the simulation was lost: docking character {character} at station {home}");
-                    await FinishDockingAsync(pilot, home);
+                    await FinishDockingAsync(pilot, home, null);
                 }
             });
         }

@@ -20,11 +20,33 @@ public enum EnterHow : byte
 /// <summary>A fitted module, as the ship's slim item lists it.</summary>
 public sealed record SimModule(long ItemId, int TypeId, int Flag);
 
+/// <summary>How the three layers of a ship resist each kind of damage (em, thermal, kinetic, explosive): the share of a hit that gets through.</summary>
+public sealed record SimResonances(IReadOnlyList<double> Shield, IReadOnlyList<double> Armor, IReadOnlyList<double> Structure)
+{
+    /// <summary>Nothing resisted.</summary>
+    public static readonly SimResonances None = new([1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 1]);
+}
+
+/// <summary>What a ship can take, in points, and how it resists: dogma's numbers for the ship as it is fitted and flown.</summary>
+public sealed record SimVitals(double ShieldCapacity, double ArmorHp, double StructureHp, SimResonances Resonances)
+{
+    /// <summary>Nothing to hurt.</summary>
+    public static readonly SimVitals Unhurtable = new(0, 0, 0, SimResonances.None);
+}
+
+/// <summary>What a ship has taken, as fractions: the hull's damage, the armor's, the shield's charge and how full the capacitor is.</summary>
+public sealed record SimCondition(double Damage, double ArmorDamage, double ShieldCharge, double Charge)
+{
+    /// <summary>A ship that has taken nothing.</summary>
+    public static readonly SimCondition Full = new(0, 0, 1, 1);
+}
+
 /// <summary>What motion and the slim item need to know of a ship: the host works these out (dogma, skills, fitting), the simulation only uses them.</summary>
 public sealed record SimShip(
     long ShipId, long CharacterId, int TypeId, int GroupId, int CategoryId, string Name, long OwnerId, int CorporationId, int AllianceId, int WarFactionId,
     double SecurityStatus, double Radius, double Mass, double MaxVelocity, double Agility, double WarpSpeedAu, double ShieldRechargeMs,
-    double MaxTargetRange, double ScanResolution, double SignatureRadius, int MaxLockedTargets, double CapacitorCapacity, double CapacitorRechargeSeconds, IReadOnlyList<SimModule> Modules);
+    double MaxTargetRange, double ScanResolution, double SignatureRadius, int MaxLockedTargets, double CapacitorCapacity, double CapacitorRechargeSeconds, IReadOnlyList<SimModule> Modules,
+    SimVitals? Vitals = null, SimCondition? Condition = null);
 
 /// <summary>A ship enters a solar system.</summary>
 public sealed record SimEnter(ulong SessionId, int SolarSystemId, EnterHow How, long StationId, SimShip Ship) : SimMessage;
@@ -84,6 +106,12 @@ public static class SimCommands
 
     /// <summary>The code an <see cref="SimActivate"/> is answered under.</summary>
     public const byte Activate = 17;
+
+    /// <summary>Mend the ship: full shield, armor, hull and capacitor. Answered with <see cref="SimAccepted"/> after what the pilot is told.</summary>
+    public const byte Heal = 18;
+
+    /// <summary>What the ship has taken, answered with <see cref="SimConditionReply"/>.</summary>
+    public const byte GetCondition = 19;
 }
 
 public sealed record SimCommand(ulong SessionId, byte Code, IReadOnlyList<double> Args) : SimMessage;
@@ -94,8 +122,11 @@ public sealed record SimShipChanged(ulong SessionId, SimShip Ship) : SimMessage;
 /// <summary>A notification the simulation has for a player's client: the host numbers it and sends it. The arguments are a marshalled tuple.</summary>
 public sealed record SimNotify(ulong SessionId, string Name, string IdType, ReadOnlyMemory<byte> Args) : SimMessage;
 
-/// <summary>The ship has arrived and the docking is done in space: the host moves the character.</summary>
-public sealed record SimDocked(ulong SessionId, long StationId) : SimMessage;
+/// <summary>The ship has arrived and the docking is done in space: the host moves the character and keeps what the ship has taken.</summary>
+public sealed record SimDocked(ulong SessionId, long StationId, SimCondition? Condition = null) : SimMessage;
+
+/// <summary>What the ship has taken and how full its capacitor is (the answer to <see cref="SimCommands.GetCondition"/>).</summary>
+public sealed record SimConditionReply(ulong SessionId, byte Command, SimCondition Condition) : SimMessage;
 
 /// <summary>A command the scene cannot do.</summary>
 public sealed record SimRefused(ulong SessionId, byte Command, string Reason) : SimMessage;

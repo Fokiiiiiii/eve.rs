@@ -3,6 +3,7 @@
 use eve_destiny::{BallEntity, BallError, encode_entity_ball};
 use eve_marshal::Value;
 
+use crate::health::DamageState;
 use crate::ship::Ship;
 use crate::slim;
 use crate::wire::{filetime, id, int, key_val, list, real, slim_object, text, tuple, word};
@@ -13,8 +14,12 @@ const SET_STATE: u8 = 0;
 const ADD_BALLS: u8 = 1;
 
 /// The shield fraction, its recharge and armor and structure fractions of something that can be hurt: `((shield, tau, time), armor, structure)`.
-pub fn damage_state(shield_tau_ms: f64, now: i64) -> Value {
-    tuple([tuple([real(1.0), real(shield_tau_ms), filetime(now)]), real(1.0), real(1.0)])
+pub fn damage_state(state: &DamageState, now: i64) -> Value {
+    tuple([
+        tuple([real(state.shield), real(state.shield_tau_ms), filetime(now)]),
+        real(state.armor),
+        real(state.structure),
+    ])
 }
 
 /// A station always answers with the same recharge, whatever it is.
@@ -53,9 +58,8 @@ pub fn add_ship(stamp: u32, ship: &Ship, now: i64) -> Result<Value, BallError> {
 pub fn add_ships(stamp: u32, ships: &[&Ship], now: i64) -> Result<Value, BallError> {
     let balls: Vec<BallEntity> = ships.iter().map(|ship| ship.ball()).collect();
     let buffer = state_buffer(ADD_BALLS, stamp, &balls)?;
-    let extras = ships
-        .iter()
-        .map(|ship| tuple([ship_dict(ship), damage_state(ship.spec.shield_recharge_ms / 5.0, now)]));
+    let extras =
+        ships.iter().map(|ship| tuple([ship_dict(ship), damage_state(&ship.health.state_at(now), now)]));
     Ok(action(stamp, "AddBalls2", [tuple([buffer, list(extras)])]))
 }
 
@@ -109,12 +113,10 @@ pub fn set_state(
         .bodies
         .iter()
         .filter(|b| b.kind == BodyKind::Station)
-        .map(|b| (id(b.id), damage_state(STATION_SHIELD_TAU_MS, now)))
+        .map(|b| (id(b.id), damage_state(&DamageState::whole(STATION_SHIELD_TAU_MS), now)))
         .collect();
     damage.extend(
-        ships
-            .iter()
-            .map(|ship| (id(ship.spec.ship_id), damage_state(ship.spec.shield_recharge_ms / 5.0, now))),
+        ships.iter().map(|ship| (id(ship.spec.ship_id), damage_state(&ship.health.state_at(now), now))),
     );
 
     let mut slims: Vec<Value> =

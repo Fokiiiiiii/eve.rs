@@ -162,39 +162,15 @@ mod tests {
     use crate::ship::ShipSpec;
 
     fn ship(course: Course) -> Ship {
-        Ship {
-            spec: ShipSpec {
-                ship_id: 1,
-                character_id: 2,
-                type_id: 601,
-                group_id: 237,
-                category_id: 6,
-                name: "Ibis".to_string(),
-                owner_id: 2,
-                corporation_id: 3,
-                alliance_id: 0,
-                war_faction_id: 0,
-                security_status: 0.0,
-                radius: 47.0,
-                mass: 1_163_000.0,
-                max_velocity: 339.25,
-                agility: 4.0185,
-                warp_speed_au: 3.0,
-                shield_recharge_ms: 860_000.0,
-                max_target_range: 29_700.0,
-                max_locked_targets: 4,
-                scan_resolution: 660.0,
-                signature_radius: 28.0,
-                capacitor_capacity: 149.5,
-                capacitor_recharge_s: 55.25,
-                modules: Vec::new(),
-            },
-            position: Vec3::ZERO,
-            velocity: Vec3::ZERO,
-            direction: Vec3::new(1.0, 0.0, 0.0),
-            speed_fraction: 1.0,
-            course,
-        }
+        let spec = ShipSpec {
+            ship_id: 1,
+            character_id: 2,
+            owner_id: 2,
+            corporation_id: 3,
+            modules: Vec::new(),
+            ..crate::scene::tests::spec()
+        };
+        Ship::new(spec, Vec3::ZERO, Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), 1.0, course, 0)
     }
 
     fn distance(ship: &Ship, target: Target) -> f64 {

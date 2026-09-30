@@ -137,7 +137,12 @@ impl Sim {
             Out::Jumping { session, command, destination_system, destination_gate } => {
                 Message::Jumping { session_id: session, command, destination_system, destination_gate }
             }
-            Out::Docked { session, station_id } => Message::Docked { session_id: session, station_id },
+            Out::Docked { session, station_id, condition } => {
+                Message::Docked { session_id: session, station_id, condition }
+            }
+            Out::Condition { session, command, condition } => {
+                Message::Condition { session_id: session, command, condition }
+            }
             Out::Refused { session, command, reason } => {
                 Message::Refused { session_id: session, command, reason: reason.to_string() }
             }
@@ -245,6 +250,14 @@ impl Sim {
                     }
                 }
             }
+            Message::Command { session_id, command: 18, .. } => match self.scene_of(session_id) {
+                Some(scene) => scene.heal(session_id, now),
+                None => vec![Out::Refused { session: session_id, command: 18, reason: "NO_SHIP_IN_SPACE" }],
+            },
+            Message::Command { session_id, command: 19, .. } => match self.scene_of(session_id) {
+                Some(scene) => scene.condition(session_id, now),
+                None => vec![Out::Refused { session: session_id, command: 19, reason: "NO_SHIP_IN_SPACE" }],
+            },
             Message::Command { session_id, command, args } => {
                 if let Some(order) = order_of(command, &args) {
                     match self.scene_of(session_id) {
@@ -270,7 +283,7 @@ impl Sim {
                 }
             }
             Message::ShipSpec { session_id, ship } => {
-                self.scene_of(session_id).map(|s| s.respec(session_id, ship, now)).unwrap_or_default()
+                self.scene_of(session_id).map(|s| s.respec(session_id, *ship, now)).unwrap_or_default()
             }
             other => {
                 return Err(ProtocolError(format!(
@@ -349,6 +362,7 @@ impl Sim {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::health::Condition;
     use crate::scene::tests::{NOON, SESSION, STATION, spec, system};
     use crate::world::SolarSystem;
 
@@ -397,6 +411,31 @@ mod tests {
             off: None,
             on_changes: Vec::new(),
             off_changes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_ship_is_healed_and_asked_what_it_has_taken_by_commands_18_and_19() {
+        let mut sim = undocked();
+        let asked =
+            sim.handle(Message::Command { session_id: SESSION, command: 19, args: vec![] }, NOON).unwrap();
+        assert_eq!(
+            asked,
+            [Message::Condition { session_id: SESSION, command: 19, condition: Condition::FULL }]
+        );
+        let healed =
+            sim.handle(Message::Command { session_id: SESSION, command: 18, args: vec![] }, NOON).unwrap();
+        assert_eq!(
+            healed.last(),
+            Some(&Message::Accepted { session_id: SESSION, command: 18, at: NOON }),
+            "the answer comes after what the pilot is told"
+        );
+        for command in [18, 19] {
+            let none = sim.handle(Message::Command { session_id: 99, command, args: vec![] }, NOON).unwrap();
+            assert_eq!(
+                none,
+                [Message::Refused { session_id: 99, command, reason: "NO_SHIP_IN_SPACE".to_string() }]
+            );
         }
     }
 
@@ -604,7 +643,7 @@ mod tests {
         assert!(sim.poll(NOON + 3 * SECOND).is_empty(), "three seconds are not enough");
         assert_eq!(
             sim.poll(NOON + 4 * SECOND),
-            [Message::Docked { session_id: SESSION, station_id: STATION }]
+            [Message::Docked { session_id: SESSION, station_id: STATION, condition: Condition::FULL }]
         );
         assert_eq!((sim.ships(), sim.scenes.len()), (0, 0), "an empty scene is dropped");
         assert!(sim.poll(NOON + 9 * SECOND).is_empty());
@@ -627,13 +666,16 @@ mod tests {
         let mut sim = undocked();
         let mut faster = spec();
         faster.max_velocity = 500.0;
-        let out = sim.handle(Message::ShipSpec { session_id: SESSION, ship: faster }, NOON).unwrap();
+        let out =
+            sim.handle(Message::ShipSpec { session_id: SESSION, ship: Box::new(faster) }, NOON).unwrap();
         assert_eq!(names(&out), ["DoDestinyUpdate"]);
     }
 
     #[test]
     fn a_message_meant_for_the_host_is_a_protocol_error() {
-        let error = sim().handle(Message::Docked { session_id: 1, station_id: 2 }, NOON).unwrap_err();
+        let error = sim()
+            .handle(Message::Docked { session_id: 1, station_id: 2, condition: Condition::FULL }, NOON)
+            .unwrap_err();
         assert!(error.0.contains("kind 10"), "{error}");
     }
 

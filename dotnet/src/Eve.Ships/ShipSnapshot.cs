@@ -6,13 +6,6 @@ using Eve.Skills;
 
 namespace Eve.Ships;
 
-/// <summary>What a ship has taken and what it has left: the fractions dogma reports next to its attributes.</summary>
-public sealed record ShipCondition(double Damage, double Charge, double ShieldCharge, double ArmorDamage, bool Incapacitated)
-{
-    /// <summary>A ship as it leaves the hangar: nothing damaged, capacitor and shield full.</summary>
-    public static readonly ShipCondition Full = new(0, 1, 1, 0, false);
-}
-
 /// <summary>A character's ship and what is fitted to it, with the skills the character has trained, ready to be worked out.</summary>
 public sealed class ShipSnapshot
 {
@@ -46,6 +39,18 @@ public sealed class ShipSnapshot
 
     public ShipCondition Condition { get; init; } = ShipCondition.Full;
 
+    /// <summary>What each fitted module has taken (a module with nothing in the map has taken nothing and never been mended).</summary>
+    public IReadOnlyDictionary<long, ModuleCondition> ModuleConditions { get; init; } = new Dictionary<long, ModuleCondition>();
+
+    /// <summary>The same ship with what it has taken as told (a ship in space is asked of the simulation, which has it live).</summary>
+    public ShipSnapshot WithCondition(ShipCondition condition) => new()
+    {
+        Character = Character, Ship = Ship, Fitted = Fitted, Skills = Skills, World = World, Condition = condition, ModuleConditions = ModuleConditions,
+    };
+
+    /// <summary>What a fitted module has taken.</summary>
+    public ModuleCondition ConditionOf(long moduleId) => ModuleConditions.TryGetValue(moduleId, out var condition) ? condition : ModuleCondition.Untouched;
+
     public long TotalSkillPoints => Skills.Sum(s => s.SkillPoints);
 
     /// <summary>How far a fitted module is switched on.</summary>
@@ -67,6 +72,8 @@ public sealed class ShipSnapshot
         var contents = await items.InLocationAsync(shipId, characterId, cancellationToken);
         var fitted = contents.Where(i => Slots.IsSlotFlag(i.Flag)).OrderBy(i => i.Flag).ThenBy(i => i.Id).ToList();
         var states = await modules.StatesAsync(fitted.Select(i => i.Id), cancellationToken);
+        var moduleConditions = await modules.ModuleConditionsAsync(fitted.Select(i => i.Id), cancellationToken);
+        var condition = await modules.ShipConditionAsync(shipId, cancellationToken);
         var trained = skillsOverride ?? await skills.ForCharacterAsync(characterId, cancellationToken);
 
         await statics.EnsureTypesAsync([character.TypeId, ship.TypeId, .. contents.Select(i => i.TypeId), .. trained.Select(s => s.TypeId)], cancellationToken);
@@ -89,6 +96,6 @@ public sealed class ShipSnapshot
             world.SetValue(id, DogmaWorld.SkillLevel, skill.Level);
             world.SetValue(id, SkillPointsAttribute, skill.SkillPoints);
         }
-        return new ShipSnapshot { Character = character, Ship = ship, Fitted = fitted, Skills = trained, World = world };
+        return new ShipSnapshot { Character = character, Ship = ship, Fitted = fitted, Skills = trained, World = world, Condition = condition, ModuleConditions = moduleConditions };
     }
 }

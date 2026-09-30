@@ -133,6 +133,18 @@ not exist is the scene: which balls a system has, who is where, how commands cha
   the ships in view in the order they came into the scene, the numbers follow for each. No message of the link changed: a `Notify` names the
   session it is for. `docs/compat/DEVIATIONS.md` #23 (ambient ships), #27 and #28 say what differs from the reference.
 
+- 2026-09-29, health: a ship's spec carries what it can take (`shieldCapacity`, `armorHP`, `structureHP` in points and the twelve resonances, em, thermal,
+  kinetic and explosive for the shield, the armor and the hull, all from dogma) and what it has taken as four fractions (`damage`, `armorDamage`,
+  `shieldCharge` and the capacitor's `charge`), after the locks' numbers and before the modules. The damage state a client is given for a ship
+  (`AddBalls2`, `SetState`, `OnDamageStateChange`) is the ship's own now and no longer the constant of a whole ship. `Docked` carries the four
+  fractions the ship has at that moment (the host keeps them with the ship); a jump moves the ship's health with it, inside the sim. Two commands: `Heal`
+  (18: full shield, armor, hull and capacitor; the pilot is told the attributes that changed, the capacitor and, when something changed, everyone
+  who sees the ship its damage state, and the answer, `Accepted`, comes last so that what the host tells after it is told after) and `GetCondition`
+  (19, answered with the new message `Condition`, kind 20). A ship comes out of its station full-shielded and full-capacitored whatever the host says it
+  had (the host says it so: the reference does). Damage itself has no message: it will be done by the effects the sim runs (weapons, missiles, NPCs), and
+  `Scene::damage` is what they will call. The shield's charge is told to its pilot every half second while it recharges, as the capacitor's is
+  (`docs/compat/DEVIATIONS.md` #37).
+
 - 2026-09-29, stargate jumps: command 9 and the messages `Jumping` (15) and `Jumped` (16). The sim owns the crossing: a `Jump` checks the gate
   (in this system, leading where the client says, within 2.5 km of the ship's surface), stops the ship and sends the jump-out effect with the `Stop`
   in one update; four seconds later (or three after the effect's stamp, if that is later) the scene gives the ship up (`Scene::due_jumps`) and the

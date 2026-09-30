@@ -215,6 +215,17 @@ fn bench_ship(index: u64) -> ShipSpec {
         signature_radius: 28.0,
         capacitor_capacity: 149.5,
         capacitor_recharge_s: 55.25,
+        vitals: eve_space::health::Vitals {
+            shield_capacity: 220.0,
+            armor_hp: 137.5,
+            structure_hp: 201.25,
+            resonances: eve_space::health::Resonances {
+                shield: [0.0, 0.8, 0.6, 0.5],
+                armor: [0.5, 0.35, 0.25, 0.1],
+                structure: [0.33, 0.33, 0.33, 0.33],
+            },
+        },
+        condition: eve_space::health::Condition::FULL,
         modules: Vec::new(),
     }
 }

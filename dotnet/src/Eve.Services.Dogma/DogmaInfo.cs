@@ -26,6 +26,7 @@ public sealed class DogmaInfo(DogmaStatic statics)
     private const int Charge = 18;
     private const int ShieldCharge = 264;
     private const int ArmorDamage = 266;
+    private const int HullPoints = 9;
     private const int ShieldCapacity = 263;
     private const int ArmorHitPoints = 265;
     private const int CapacitorCapacity = 482;
@@ -94,9 +95,11 @@ public sealed class DogmaInfo(DogmaStatic statics)
     {
         var attributes = WithIntrinsics(s, moduleId);
         attributes[IsOnline] = s.World.Item(moduleId)?.State >= ItemState.Online ? 1 : 0;
-        attributes[Damage] = 0;
-        attributes[ShieldCharge] = 0;
-        attributes[ArmorDamage] = 0;
+        // what the module has taken: its hull in points, its shield and armor as the fractions the module keeps them as
+        var condition = s.ConditionOf(moduleId);
+        attributes[Damage] = Round6(s.World.Get(moduleId, HullPoints) * condition.Damage);
+        attributes[ShieldCharge] = condition.ShieldCharge;
+        attributes[ArmorDamage] = condition.ArmorDamage;
         attributes[Quantity] = 1;
         return attributes;
     }
@@ -175,8 +178,15 @@ public sealed class DogmaInfo(DogmaStatic statics)
                 s.Ship.Id, damage: s.Condition.Damage, charge: s.Condition.Charge, armorDamage: s.Condition.ArmorDamage, shieldCharge: s.Condition.ShieldCharge, incapacitated: s.Condition.Incapacitated)),
             new(InventoryWire.Id(s.Character.Id), DogmaWire.InstanceRow(s.Character.Id, online: true, skillPoints: (int)s.TotalSkillPoints)),
         };
-        rows.AddRange(s.Fitted.Select(m => new KeyValuePair<PyValue, PyValue>(
-            InventoryWire.Id(m.Id), DogmaWire.InstanceRow(m.Id, online: s.World.Item(m.Id)?.State >= ItemState.Online))));
+        rows.AddRange(s.Fitted.Select(m =>
+        {
+            var condition = s.ConditionOf(m.Id);
+            return new KeyValuePair<PyValue, PyValue>(
+                InventoryWire.Id(m.Id),
+                DogmaWire.InstanceRow(
+                    m.Id, online: s.World.Item(m.Id)?.State >= ItemState.Online, damage: condition.Damage, armorDamage: condition.ArmorDamage, shieldCharge: condition.ShieldCharge,
+                    incapacitated: condition.Incapacitated));
+        }));
         return Py.Tuple(new PyDict(rows), new PyDict([]), new PyDict([]), DogmaWire.HeatState(now));
     }
 

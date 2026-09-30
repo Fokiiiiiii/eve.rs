@@ -71,6 +71,17 @@ fn ship() -> ShipSpec {
         signature_radius: 28.0,
         capacitor_capacity: 149.5,
         capacitor_recharge_s: 55.25,
+        vitals: eve_space::health::Vitals {
+            shield_capacity: 220.0,
+            armor_hp: 137.5,
+            structure_hp: 201.25,
+            resonances: eve_space::health::Resonances {
+                shield: [0.0, 0.8, 0.6, 0.5],
+                armor: [0.5, 0.35, 0.25, 0.1],
+                structure: [0.33, 0.33, 0.33, 0.33],
+            },
+        },
+        condition: eve_space::health::Condition::FULL,
         modules: Vec::new(),
     }
 }
@@ -151,7 +162,14 @@ async fn a_ship_is_sent_out_bound_told_to_dock_and_reported_docked() {
 
     // the ship is docked once four seconds have gone by, which the simulation notices at its next poll
     host.clock.store(NOON + 5 * SECOND, Ordering::SeqCst);
-    assert_eq!(host.recv().await, Message::Docked { session_id: SESSION, station_id: STATION });
+    assert_eq!(
+        host.recv().await,
+        Message::Docked {
+            session_id: SESSION,
+            station_id: STATION,
+            condition: eve_space::health::Condition::FULL
+        }
+    );
 
     drop(host.stream);
     assert!(host.served.await.unwrap().is_ok(), "a host that closes is a clean end");

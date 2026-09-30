@@ -194,6 +194,11 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 break;
             case SimTargets:
                 break; // nobody is waiting for it
+            case SimConditionReply reply when _answered.TryRemove((reply.SessionId, reply.Command), out var asked):
+                asked.TrySetResult(new CommandReply(true, 0, null) { Condition = reply.Condition });
+                break;
+            case SimConditionReply:
+                break; // nobody is waiting for it
             case SimTargetRefused refused when _answered.TryRemove((refused.SessionId, refused.Command), out var refusing):
                 refusing.TrySetResult(new CommandReply(false, 0, refused.Reason) { TargetType = refused.TargetType, DesiredRange = refused.DesiredRange, ActualDistance = refused.ActualDistance });
                 break;

@@ -55,6 +55,7 @@ public static class SimCodec
         public const byte Targets = 17;
         public const byte TargetRefused = 18;
         public const byte Activate = 19;
+        public const byte Condition = 20;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)
@@ -148,6 +149,8 @@ public static class SimCodec
         var capacitorCapacity = r.F64();
         var capacitorRecharge = r.F64();
         var maxLockedTargets = r.I32();
+        var vitals = ReadVitals(ref r);
+        var condition = ReadCondition(ref r);
         var count = r.U32();
         // a module takes 16 bytes, so a count the frame cannot hold is refused before anything is allocated for it
         if (count > r.Remaining / 16)
@@ -159,7 +162,19 @@ public static class SimCodec
         {
             modules[i] = new SimModule(r.I64(), r.I32(), r.I32());
         }
-        return new SimShip(shipId, characterId, typeId, groupId, categoryId, name, ownerId, corporationId, allianceId, warFactionId, security, radius, mass, maxVelocity, agility, warpSpeed, shieldRecharge, maxTargetRange, scanResolution, signatureRadius, maxLockedTargets, capacitorCapacity, capacitorRecharge, modules);
+        return new SimShip(shipId, characterId, typeId, groupId, categoryId, name, ownerId, corporationId, allianceId, warFactionId, security, radius, mass, maxVelocity, agility, warpSpeed, shieldRecharge, maxTargetRange, scanResolution, signatureRadius, maxLockedTargets, capacitorCapacity, capacitorRecharge, modules, vitals, condition);
+    }
+
+    private static SimCondition ReadCondition(ref Reader r) => new(r.F64(), r.F64(), r.F64(), r.F64());
+
+    private static double[] ReadFour(ref Reader r) => [r.F64(), r.F64(), r.F64(), r.F64()];
+
+    private static SimVitals ReadVitals(ref Reader r)
+    {
+        var shield = r.F64();
+        var armor = r.F64();
+        var structure = r.F64();
+        return new SimVitals(shield, armor, structure, new SimResonances(ReadFour(ref r), ReadFour(ref r), ReadFour(ref r)));
     }
 
     private static SimNumbers ReadNumbers(ref Reader r) => new(r.F64(), r.F64(), r.F64());
@@ -274,7 +289,10 @@ public static class SimCodec
                 message = new SimNotify(r.U64(), r.Text(), r.Text(), r.Bytes());
                 break;
             case Kind.Docked:
-                message = new SimDocked(r.U64(), r.I64());
+                message = new SimDocked(r.U64(), r.I64(), ReadCondition(ref r));
+                break;
+            case Kind.Condition:
+                message = new SimConditionReply(r.U64(), r.U8(), ReadCondition(ref r));
                 break;
             case Kind.Refused:
                 message = new SimRefused(r.U64(), r.U8(), r.Text());
@@ -414,6 +432,33 @@ public static class SimCodec
         WriteChanges(w, e.OffChanges);
     }
 
+    private static void WriteCondition(Writer w, SimCondition c)
+    {
+        foreach (var number in new[] { c.Damage, c.ArmorDamage, c.ShieldCharge, c.Charge })
+        {
+            w.F64(number);
+        }
+    }
+
+    private static void WriteVitals(Writer w, SimVitals v)
+    {
+        foreach (var number in new[] { v.ShieldCapacity, v.ArmorHp, v.StructureHp })
+        {
+            w.F64(number);
+        }
+        foreach (var layer in new[] { v.Resonances.Shield, v.Resonances.Armor, v.Resonances.Structure })
+        {
+            if (layer.Count != 4)
+            {
+                throw new ArgumentException("a layer resists four kinds of damage", nameof(v));
+            }
+            foreach (var resonance in layer)
+            {
+                w.F64(resonance);
+            }
+        }
+    }
+
     private static void WriteShip(Writer w, SimShip s)
     {
         w.I64(s.ShipId);
@@ -431,6 +476,8 @@ public static class SimCodec
             w.F64(number);
         }
         w.I32(s.MaxLockedTargets);
+        WriteVitals(w, s.Vitals ?? SimVitals.Unhurtable);
+        WriteCondition(w, s.Condition ?? SimCondition.Full);
         w.U32((uint)s.Modules.Count);
         foreach (var module in s.Modules)
         {
@@ -508,6 +555,13 @@ public static class SimCodec
                 w.U8(Kind.Docked);
                 w.U64(m.SessionId);
                 w.I64(m.StationId);
+                WriteCondition(w, m.Condition ?? SimCondition.Full);
+                break;
+            case SimConditionReply m:
+                w.U8(Kind.Condition);
+                w.U64(m.SessionId);
+                w.U8(m.Command);
+                WriteCondition(w, m.Condition);
                 break;
             case SimRefused m:
                 w.U8(Kind.Refused);

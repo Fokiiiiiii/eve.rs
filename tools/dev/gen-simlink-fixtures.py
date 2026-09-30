@@ -13,7 +13,7 @@ OUT = os.path.join(HERE, "..", "..", "oracle", "fixtures", "simlink", "messages.
 
 KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateState": 6, "Command": 7,
          "ShipSpec": 8, "Notify": 9, "Docked": 10, "Refused": 11, "Accepted": 12, "EnterReply": 13, "Approaching": 14,
-         "Jumping": 15, "Jumped": 16, "Targets": 17, "TargetRefused": 18, "Activate": 19}
+         "Jumping": 15, "Jumped": 16, "Targets": 17, "TargetRefused": 18, "Activate": 19, "Condition": 20}
 
 
 def s(text):  # u16 length + UTF-8
@@ -45,10 +45,20 @@ def ship(m):
                         m["warpSpeedAu"], m["shieldRechargeMs"], m["maxTargetRange"], m["scanResolution"],
                         m["signatureRadius"], m["capacitorCapacity"], m["capacitorRechargeS"])
     body += struct.pack("<i", m["maxLockedTargets"])
+    body += vitals(m["vitals"]) + condition(m["condition"])
     body += struct.pack("<I", len(m["modules"]))
     for module in m["modules"]:
         body += i64(module["itemId"]) + struct.pack("<ii", module["typeId"], module["flag"])
     return body
+
+
+def vitals(v):
+    r = v["resonances"]
+    return struct.pack("<15d", v["shieldCapacity"], v["armorHp"], v["structureHp"], *r["shield"], *r["armor"], *r["structure"])
+
+
+def condition(c):
+    return struct.pack("<4d", c["damage"], c["armorDamage"], c["shieldCharge"], c["charge"])
 
 
 def numbers(n):
@@ -94,7 +104,9 @@ def build(m):
     if k == "Notify":
         return frame(k, u64(m["sessionId"]) + s(m["notification"]) + s(m["idType"]) + b(bytes.fromhex(m["args"])))
     if k == "Docked":
-        return frame(k, u64(m["sessionId"]) + i64(m["stationId"]))
+        return frame(k, u64(m["sessionId"]) + i64(m["stationId"]) + condition(m["condition"]))
+    if k == "Condition":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + condition(m["condition"]))
     if k == "Refused":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + s(m["reason"]))
     if k == "Accepted":
@@ -123,9 +135,16 @@ IBIS = {"shipId": "9988400001939", "characterId": "140000342", "typeId": 601, "g
         "securityStatus": 0.0, "radius": 47.0, "mass": 1163000.0, "maxVelocity": 339.25, "agility": 4.0185,
         "warpSpeedAu": 3.0, "shieldRechargeMs": 860000.0, "maxTargetRange": 29700.0, "scanResolution": 660.0,
         "signatureRadius": 28.0, "maxLockedTargets": 4, "capacitorCapacity": 149.5, "capacitorRechargeS": 55.25,
+        "vitals": {"shieldCapacity": 220.0, "armorHp": 137.5, "structureHp": 201.25,
+                   "resonances": {"shield": [0.0, 0.8, 0.6, 0.5], "armor": [0.5, 0.35, 0.25, 0.1],
+                                  "structure": [0.33, 0.33, 0.33, 0.33]}},
+        "condition": {"damage": 0.35, "armorDamage": 0.6, "shieldCharge": 1.0, "charge": 1.0},
         "modules": [{"itemId": "9988400001940", "typeId": 21857, "flag": 19},
                     {"itemId": "9988400001941", "typeId": 3638, "flag": 27}]}
-BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5)
+BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
+            vitals={"shieldCapacity": 0.0, "armorHp": 0.0, "structureHp": 0.0,
+                    "resonances": {"shield": [1.0] * 4, "armor": [1.0] * 4, "structure": [1.0] * 4}},
+            condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
     {"name": "hello", "kind": "Hello", "version": 1},
@@ -174,7 +193,12 @@ valid = [
      "idType": "clientID", "args": "7e0000000004010100"},
     {"name": "notification without arguments", "kind": "Notify", "sessionId": "1", "notification": "DoDestinyUpdate",
      "idType": "clientID", "args": ""},
-    {"name": "docked", "kind": "Docked", "sessionId": "1790646377000015", "stationId": "60015249"},
+    {"name": "heal command", "kind": "Command", "sessionId": "1790646377000015", "command": 18, "args": []},
+    {"name": "get condition command", "kind": "Command", "sessionId": "1790646377000015", "command": 19, "args": []},
+    {"name": "docked", "kind": "Docked", "sessionId": "1790646377000015", "stationId": "60015249",
+     "condition": {"damage": 0.35, "armorDamage": 0.6, "shieldCharge": 0.917525, "charge": 0.65}},
+    {"name": "condition", "kind": "Condition", "sessionId": "1790646377000015", "command": 19,
+     "condition": {"damage": 0.0, "armorDamage": 0.18, "shieldCharge": 0.7, "charge": 0.65}},
     {"name": "refused", "kind": "Refused", "sessionId": "1790646377000015", "command": 4,
      "reason": "UNKNOWN_TARGET"},
     {"name": "accepted", "kind": "Accepted", "sessionId": "1790646377000015", "command": 4,

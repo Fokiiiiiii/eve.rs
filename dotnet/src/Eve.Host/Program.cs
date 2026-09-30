@@ -21,6 +21,7 @@ using Eve.Services.Dogma;
 using Eve.Services.Inventory;
 using Eve.Services.CharacterInfo;
 using Eve.Services.Skills;
+using Eve.Services.Slash;
 using Eve.Services.Space;
 using Eve.Space;
 using Eve.Services.Station;
@@ -230,8 +231,9 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         new CharMgrService(characters, stations),
         new StationService(stations, characters, online, now),
         new InvBrokerService(items, new ItemTypeCatalog(sde), stations, ships, dogma, now),
-        new DogmaIMService(dogma, ships, now, dogmaSync, spaceSessions, spaceSessions),
+        new DogmaIMService(dogma, ships, now, dogmaSync, spaceSessions, spaceSessions, spaceSessions),
         new AccountService(wallets),
+        new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions)),
         .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now), new BeyonceService(spaceSessions, now) },
     ];
     return (services, spaceSessions, sim);

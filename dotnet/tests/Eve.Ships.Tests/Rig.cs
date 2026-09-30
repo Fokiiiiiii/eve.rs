@@ -49,6 +49,9 @@ internal sealed class Rig : IAsyncDisposable
 
     public NpgsqlDataSource Source { get; }
 
+    /// <summary>The schema the module states and conditions are kept in.</summary>
+    public string FittingSchema => _schemas[4];
+
     public PgCharacterStore Characters { get; }
 
     public PgItemStore Items { get; }

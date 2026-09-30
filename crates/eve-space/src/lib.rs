@@ -9,6 +9,7 @@ pub mod crowd;
 pub mod flight;
 pub mod gate;
 pub mod geo;
+pub mod health;
 pub mod link;
 pub mod locators;
 pub mod modules;

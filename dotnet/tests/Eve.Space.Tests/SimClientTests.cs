@@ -198,13 +198,13 @@ public class SimClientTests
         await Within(client.EnterAsync(Enter()));
         await sim.SayAsync(new SimNotify(7, "DoDestinyUpdate", "clientID", new byte[] { 1, 2, 3 }));
         await sim.SayAsync(new SimRefused(7, SimCommands.Stop, "NO_SHIP_IN_SPACE"));
-        await sim.SayAsync(new SimDocked(7, 60015249));
+        await sim.SayAsync(new SimDocked(7, 60015249, SimCondition.Full));
         await sim.SayAsync(new SimAccepted(7, SimCommands.FollowBall, 134351527136350000)); // a movement is accepted: nobody waits for that
         await Until(() => heard.Count == 4);
 
         Assert.IsType<SimNotify>(heard[0]);
         Assert.Equal(new SimRefused(7, SimCommands.Stop, "NO_SHIP_IN_SPACE"), heard[1]);
-        Assert.Equal(new SimDocked(7, 60015249), heard[2]);
+        Assert.Equal(new SimDocked(7, 60015249, SimCondition.Full), heard[2]);
         Assert.Equal(new SimAccepted(7, SimCommands.FollowBall, 134351527136350000), heard[3]);
     }
 

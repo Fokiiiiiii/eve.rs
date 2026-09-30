@@ -1,3 +1,4 @@
+using Eve.Fitting;
 using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
@@ -112,6 +113,71 @@ public class SpaceServiceTests
         // the capacitor the reference's ship had (149.5 GJ, told in the recording) and how long it takes to recharge (55 250 ms)
         Assert.Equal((149.5, 55.25), (enter.Ship.CapacitorCapacity, enter.Ship.CapacitorRechargeSeconds));
         Assert.True(rig.Space.IsInSpace(session));
+    }
+
+    [PgFact]
+    public async Task A_ship_leaves_its_station_with_full_shield_and_capacitor_and_the_armor_and_hull_it_had_and_what_it_can_take()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        var hurt = new ShipCondition(0.35, 0.18, 0.22, 0.6, false);
+        await rig.Modules.SetShipConditionAsync(character.ShipId, hurt);
+
+        await UndockAsync(rig, session);
+
+        var enter = Assert.IsType<SimEnter>(Assert.Single(rig.Sim.Heard));
+        Assert.Equal(new SimCondition(0.35, 0.6, 1.0, 1.0), enter.Ship.Condition);
+        // what the Ibis can take (the recording's ship: 220 shield, 137.5 armor, 201.25 hull) and how it resists (dogma's resonances, em first)
+        var vitals = enter.Ship.Vitals!;
+        Assert.Equal((220.0, 137.5, 201.25), (vitals.ShieldCapacity, vitals.ArmorHp, vitals.StructureHp));
+        Assert.All(new[] { vitals.Resonances.Shield, vitals.Resonances.Armor, vitals.Resonances.Structure }, layer => Assert.Equal(4, layer.Count));
+        Assert.All(vitals.Resonances.Shield.Concat(vitals.Resonances.Armor).Concat(vitals.Resonances.Structure), r => Assert.InRange(r, 0.0, 1.0));
+        // the Ibis's own (the client shows them as resistances): a Caldari shield holds against explosive best, its armor against em, and its hull the same against all four
+        AssertResonances([0.92, 0.736, 0.552, 0.46], vitals.Resonances.Shield);
+        AssertResonances([0.5, 0.55, 0.75, 0.9], vitals.Resonances.Armor);
+        AssertResonances([0.67, 0.67, 0.67, 0.67], vitals.Resonances.Structure);
+    }
+
+    private static void AssertResonances(double[] expected, IReadOnlyList<double> actual) =>
+        Assert.Equal(expected, actual.Select(r => Math.Round(r, 6)));
+
+    [PgFact]
+    public async Task A_ship_that_docks_keeps_what_the_simulation_says_it_has_taken()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+
+        rig.Sim.Say(new SimDocked((ulong)session.SessionId, Rig.Station, new SimCondition(0.1, 0.4, 0.75, 0.5)));
+        await Rig.UntilAsync(() => session.GetInt("stationid") == Rig.Station);
+
+        Assert.Equal(new ShipCondition(0.1, 0.5, 0.75, 0.4, false), await rig.Modules.ShipConditionAsync(character.ShipId));
+        // a ship that docks whole leaves no trace
+        await InSpaceAsync(rig, session);
+        rig.Sim.Say(new SimDocked((ulong)session.SessionId, Rig.Station, SimCondition.Full));
+        await Rig.UntilAsync(() => session.GetInt("stationid") == Rig.Station && rig.Modules.ShipConditionAsync(character.ShipId).GetAwaiter().GetResult() == ShipCondition.Full);
+    }
+
+    [PgFact]
+    public async Task The_condition_of_a_ship_in_space_is_asked_of_the_simulation_and_a_heal_is_ordered_of_it()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        Assert.Null(await rig.Space.ConditionAsync(session, CancellationToken.None));
+        Assert.False(await rig.Space.HealAsync(session, CancellationToken.None));
+        Assert.Empty(rig.Sim.Heard);
+
+        await InSpaceAsync(rig, session);
+        rig.Sim.Heard.Clear();
+        rig.Sim.ConditionAnswer = new SimCondition(0.35, 0.6, 0.9, 0.7);
+
+        Assert.Equal(new SpaceCondition(0.35, 0.7, 0.9, 0.6), await rig.Space.ConditionAsync(session, CancellationToken.None));
+        Assert.True(await rig.Space.HealAsync(session, CancellationToken.None));
+        rig.Sim.HealAnswer = new CommandReply(false, 0, "NO_SHIP_IN_SPACE");
+        Assert.False(await rig.Space.HealAsync(session, CancellationToken.None));
+        Assert.Equal([SimCommands.GetCondition, SimCommands.Heal, SimCommands.Heal], rig.Sim.Heard.OfType<SimCommand>().Select(c => c.Code));
+        // a heal does not end the undocking protection: the pilot has not flown
+        Assert.DoesNotContain(Events.Of(session), e => e.Name == "OnInvulnCancelled");
     }
 
     [PgFact]

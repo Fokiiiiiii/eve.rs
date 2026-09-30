@@ -3,6 +3,8 @@
 use eve_destiny::ball::{LegacyMode, WarpState};
 use eve_destiny::{BallEntity, IdRef, Kind, Vec3};
 
+use crate::health::{Condition, Health, Vitals};
+
 /// A fitted module, as the ship's slim item lists it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleSpec {
@@ -43,6 +45,9 @@ pub struct ShipSpec {
     /// The capacitor: how much it holds (GJ) and how long it takes to recharge (seconds).
     pub capacitor_capacity: f64,
     pub capacitor_recharge_s: f64,
+    /// What the ship can take (shield, armor and hull in points, and how each resists) and what it has taken as it comes into space.
+    pub vitals: Vitals,
+    pub condition: Condition,
     pub modules: Vec<ModuleSpec>,
 }
 
@@ -78,9 +83,25 @@ pub struct Ship {
     pub direction: Vec3,
     pub speed_fraction: f64,
     pub course: Course,
+    /// What it can take and has taken.
+    pub health: Health,
 }
 
 impl Ship {
+    /// A ship of this spec in this place, moving so, with the health the spec says at `now`.
+    pub fn new(
+        spec: ShipSpec,
+        position: Vec3,
+        velocity: Vec3,
+        direction: Vec3,
+        speed_fraction: f64,
+        course: Course,
+        now: i64,
+    ) -> Self {
+        let health = Health::new(spec.vitals, spec.shield_recharge_ms, spec.condition, now);
+        Self { spec, position, velocity, direction, speed_fraction, course, health }
+    }
+
     /// The ball the destiny stream describes the ship with.
     pub fn ball(&self) -> BallEntity {
         BallEntity {

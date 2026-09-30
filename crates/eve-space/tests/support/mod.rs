@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 
 use eve_destiny::Vec3;
+use eve_space::health::{Condition, Resonances, Vitals};
 use eve_space::ship::{Course, ModuleSpec, Ship, ShipSpec};
 use serde_json::{Value, json};
 
@@ -225,16 +226,20 @@ pub fn recorded_ship(race: &Value, ball: &[u8], direction: Vec3) -> Ship {
         signature_radius: 28.0,
         capacitor_capacity: 149.5,
         capacitor_recharge_s: 55.25,
+        vitals: Vitals {
+            shield_capacity: 220.0,
+            armor_hp: 137.5,
+            structure_hp: 201.25,
+            resonances: Resonances {
+                shield: [0.92, 0.736, 0.552, 0.46],
+                armor: [0.5, 0.55, 0.75, 0.9],
+                structure: [0.67, 0.67, 0.67, 0.67],
+            },
+        },
+        condition: Condition::FULL,
         modules,
     };
-    Ship {
-        spec,
-        position: vec_at(ball, 13),
-        velocity: vec_at(ball, 67),
-        direction,
-        speed_fraction: f32_at(95),
-        course: Course::Goto,
-    }
+    Ship::new(spec, vec_at(ball, 13), vec_at(ball, 67), direction, f32_at(95), Course::Goto, 0)
 }
 
 pub fn recorded_direction(race: &Value) -> Vec3 {

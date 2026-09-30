@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Eve.Dogma;
+using Eve.Fitting;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services.Ships;
@@ -13,7 +14,7 @@ namespace Eve.Services.Dogma;
 /// of <c>Eve.Dogma</c>; this only loads what a character has, asks, and puts the answer in the shapes the client reads.
 /// </summary>
 [Service("dogmaIM")]
-public sealed partial class DogmaIMService(DogmaStatic statics, CharacterShips ships, Func<long> nowUnixMs, CharacterDogmaSync? sync = null, ISpaceTargeting? space = null, ISpaceModules? modules = null) : IBoundObjectReleaseHandler
+public sealed partial class DogmaIMService(DogmaStatic statics, CharacterShips ships, Func<long> nowUnixMs, CharacterDogmaSync? sync = null, ISpaceTargeting? space = null, ISpaceModules? modules = null, ISpaceHealth? health = null) : IBoundObjectReleaseHandler
 {
     private readonly CharacterDogmaSync _sync = sync ?? new CharacterDogmaSync(statics, ships, nowUnixMs);
 
@@ -100,6 +101,11 @@ public sealed partial class DogmaIMService(DogmaStatic statics, CharacterShips s
         if (BoundContextOf(call) is null || call.Session.CharacterId is not { } character || await ships.LoadAsync(character, call.Cancellation) is not { } snapshot)
         {
             return None;
+        }
+        // a ship in space has taken what the simulation says, not what it had when it left the station
+        if (health is not null && await health.ConditionAsync(call.Session, call.Cancellation) is { } live)
+        {
+            snapshot = snapshot.WithCondition(new ShipCondition(live.Damage, live.Charge, live.ShieldCharge, live.ArmorDamage, snapshot.Condition.Incapacitated));
         }
         var fileTime = Py.FileTimeFromUnixMs(nowUnixMs());
         var wantCharacter = Flag(call.Arg(0), true);

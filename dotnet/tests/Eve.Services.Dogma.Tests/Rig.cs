@@ -7,6 +7,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Sde;
 using Eve.Services.Inventory;
+using Eve.Services.Slash;
 using Eve.Ships;
 using Eve.Skills;
 using Eve.Wallet;
@@ -55,7 +56,8 @@ internal sealed class Rig : IAsyncDisposable
         Creation = creation;
         Modules = modules;
         Ships = new CharacterShips(source, statics, Characters, Items, Skills, modules);
-        Service = new DogmaIMService(statics, Ships, () => ClockMs, null, Targeting, SpaceModules);
+        Service = new DogmaIMService(statics, Ships, () => ClockMs, null, Targeting, SpaceModules, Health);
+        Slash = new SlashService(new ShipHealthCommands(Ships, statics, () => ClockMs, Health));
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(sde), new Eve.Universe.StationCatalog([]), Ships, statics, () => ClockMs);
     }
 
@@ -64,6 +66,12 @@ internal sealed class Rig : IAsyncDisposable
 
     /// <summary>The modules of space as a test plays them.</summary>
     public FakeModules SpaceModules { get; } = new();
+
+    /// <summary>The health of a ship in space as a test plays it.</summary>
+    public FakeHealth Health { get; } = new();
+
+    /// <summary>The game master's commands.</summary>
+    public SlashService Slash { get; }
 
     public NpgsqlDataSource Source { get; }
 
@@ -130,6 +138,10 @@ internal sealed class Rig : IAsyncDisposable
 
     public async Task<PyValue> CallAsync(ClientSession session, string method, string? bound = null, params PyValue[] args) =>
         await ((IService)Service).CallAsync(new ServiceCall { Method = method, Args = args, Session = session, CallId = new PyInt(1), BoundObjectId = bound });
+
+    /// <summary>Runs a slash command and answers with its message.</summary>
+    public async Task<string> SlashAsync(ClientSession session, string command) =>
+        JsSemantics.StringValue(await ((IService)Slash).CallAsync(new ServiceCall { Method = "SlashCmd", Args = [new PyStr(command)], Session = session, CallId = new PyInt(1) }))!;
 
     public async Task<PyValue> InventoryAsync(ClientSession session, string method, string? bound = null, PyValue[]? args = null, PyValue? kwargs = null) =>
         await ((IService)Inventory).CallAsync(new ServiceCall { Method = method, Args = args ?? [], Kwargs = kwargs ?? PyNone.Instance, Session = session, CallId = new PyInt(1), BoundObjectId = bound });

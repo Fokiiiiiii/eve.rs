@@ -11,6 +11,7 @@ use eve_marshal::Value;
 
 use crate::flight::{Flight, Milestone};
 use crate::gate;
+use crate::health::Condition;
 use crate::modules::Modules;
 use crate::motion::{self, Target};
 use crate::payload;
@@ -113,8 +114,10 @@ pub enum Out {
     /// A `Jump` was accepted: the ship's jump-out effect has begun and it will be in `destination_system` a few seconds on (the host is then told
     /// with a `Jumped`).
     Jumping { session: SessionId, command: u8, destination_system: i32, destination_gate: i64 },
-    /// The ship has docked: the host moves the character into the station.
-    Docked { session: SessionId, station_id: i64 },
+    /// The ship has docked: the host moves the character into the station and keeps what the ship has taken.
+    Docked { session: SessionId, station_id: i64, condition: Condition },
+    /// The answer to a question about the ship's condition.
+    Condition { session: SessionId, command: u8, condition: Condition },
     /// A command the scene cannot do.
     Refused { session: SessionId, command: u8, reason: &'static str },
     /// The answer to a targeting order: whether a lock is going, and the ships and bodies locked (or, to `GetTargeters`, the ships that lock this one).
@@ -275,15 +278,14 @@ impl Scene {
             .ok_or(SceneError::UnknownStation(station_id))?;
         let (position, direction) = undock_place(station, spec.group_id);
         let speed = spec.max_velocity;
-        let modules = Modules::new(spec.capacitor_capacity, spec.capacitor_recharge_s, now);
-        let ship = Ship {
-            position,
-            velocity: Vec3::new(direction.x * speed, direction.y * speed, direction.z * speed),
-            direction,
-            speed_fraction: 1.0,
-            course: Course::Goto,
-            spec,
-        };
+        let modules = Modules::with_charge(
+            spec.capacitor_capacity,
+            spec.capacitor_recharge_s,
+            spec.condition.charge,
+            now,
+        );
+        let velocity = Vec3::new(direction.x * speed, direction.y * speed, direction.z * speed);
+        let ship = Ship::new(spec, position, velocity, direction, 1.0, Course::Goto, now);
         let entered = self.next_entry();
         self.pilots.insert(
             session,
@@ -843,6 +845,7 @@ impl Scene {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         let old = std::mem::replace(&mut pilot.ship.spec, spec);
         let new = &pilot.ship.spec;
+        pilot.ship.health.respec(new.vitals, new.shield_recharge_ms, now);
         let ship_id = id(new.ship_id);
         let mut actions = Vec::new();
         if new.mass != old.mass {
@@ -876,7 +879,7 @@ impl Scene {
         let mut told = Vec::new();
         for (session, station_id) in due {
             if let Some(pilot) = self.pilots.remove(&session) {
-                told.push(Out::Docked { session, station_id });
+                told.push(Out::Docked { session, station_id, condition: Self::condition_of(&pilot, now) });
                 told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting));
                 told.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
             }
@@ -1214,6 +1217,18 @@ pub(crate) mod tests {
             signature_radius: 28.0,
             capacitor_capacity: 149.5,
             capacitor_recharge_s: 55.25,
+            // an Ibis's points, with resistances made up so that each kind of damage does something different to each layer
+            vitals: crate::health::Vitals {
+                shield_capacity: 220.0,
+                armor_hp: 137.5,
+                structure_hp: 201.25,
+                resonances: crate::health::Resonances {
+                    shield: [0.0, 0.8, 0.6, 0.5],
+                    armor: [0.5, 0.35, 0.25, 0.1],
+                    structure: [0.33, 0.33, 0.33, 0.33],
+                },
+            },
+            condition: Condition::FULL,
             modules: vec![ModuleSpec { item_id: 9_988_400_001_940, type_id: 21857, flag: 19 }],
         }
     }
@@ -1497,7 +1512,10 @@ pub(crate) mod tests {
 
         assert!(scene.poll(NOON + seconds(3)).is_empty());
         assert!(scene.contains(SESSION));
-        assert_eq!(scene.poll(NOON + seconds(4)), [Out::Docked { session: SESSION, station_id: STATION }]);
+        assert_eq!(
+            scene.poll(NOON + seconds(4)),
+            [Out::Docked { session: SESSION, station_id: STATION, condition: Condition::FULL }]
+        );
         assert!(!scene.contains(SESSION));
         assert!(scene.poll(NOON + seconds(9)).is_empty(), "docked once");
     }

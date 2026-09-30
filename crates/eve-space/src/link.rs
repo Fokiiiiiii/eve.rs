@@ -5,6 +5,7 @@
 //! [`Message::decode`] reads a frame's payload (the kind and the body), so the same functions serve any framing layer.
 //! `oracle/fixtures/simlink/messages.json` pins the layout for both sides.
 
+use crate::health::{Condition, Resonances, Vitals};
 use crate::modules::{Change, Effect, Numbers};
 use crate::ship::{ModuleSpec, ShipSpec};
 
@@ -31,6 +32,7 @@ pub mod kind {
     pub const TARGETS: u8 = 17;
     pub const TARGET_REFUSED: u8 = 18;
     pub const ACTIVATE: u8 = 19;
+    pub const CONDITION: u8 = 20;
 }
 
 /// How a ship comes into space.
@@ -86,7 +88,7 @@ pub enum Message {
     },
     ShipSpec {
         session_id: u64,
-        ship: ShipSpec,
+        ship: Box<ShipSpec>,
     },
     Notify {
         session_id: u64,
@@ -94,9 +96,17 @@ pub enum Message {
         id_type: String,
         args: Vec<u8>,
     },
+    /// The ship docked: the host moves the character in and keeps what the ship has taken.
     Docked {
         session_id: u64,
         station_id: i64,
+        condition: Condition,
+    },
+    /// What the ship has taken and how full its capacitor is (the answer to command 19).
+    Condition {
+        session_id: u64,
+        command: u8,
+        condition: Condition,
     },
     Refused {
         session_id: u64,
@@ -250,6 +260,22 @@ fn put_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
     out.extend_from_slice(bytes);
 }
 
+fn put_condition(out: &mut Vec<u8>, condition: &Condition) {
+    for number in [condition.damage, condition.armor_damage, condition.shield_charge, condition.charge] {
+        out.extend_from_slice(&number.to_le_bytes());
+    }
+}
+
+fn put_vitals(out: &mut Vec<u8>, vitals: &Vitals) {
+    let resonances = &vitals.resonances;
+    let layers = [vitals.shield_capacity, vitals.armor_hp, vitals.structure_hp];
+    for number in
+        layers.iter().chain(&resonances.shield).chain(&resonances.armor).chain(&resonances.structure)
+    {
+        out.extend_from_slice(&number.to_le_bytes());
+    }
+}
+
 fn put_ship(out: &mut Vec<u8>, ship: &ShipSpec) {
     out.extend_from_slice(&ship.ship_id.to_le_bytes());
     out.extend_from_slice(&ship.character_id.to_le_bytes());
@@ -278,6 +304,8 @@ fn put_ship(out: &mut Vec<u8>, ship: &ShipSpec) {
         out.extend_from_slice(&number.to_le_bytes());
     }
     out.extend_from_slice(&ship.max_locked_targets.to_le_bytes());
+    put_vitals(out, &ship.vitals);
+    put_condition(out, &ship.condition);
     out.extend_from_slice(&(ship.modules.len() as u32).to_le_bytes());
     for module in &ship.modules {
         out.extend_from_slice(&module.item_id.to_le_bytes());
@@ -368,6 +396,32 @@ fn read_effect(reader: &mut Reader) -> Result<Effect, DecodeError> {
     })
 }
 
+fn read_condition(reader: &mut Reader) -> Result<Condition, DecodeError> {
+    Ok(Condition {
+        damage: reader.f64()?,
+        armor_damage: reader.f64()?,
+        shield_charge: reader.f64()?,
+        charge: reader.f64()?,
+    })
+}
+
+fn read_damage(reader: &mut Reader) -> Result<[f64; 4], DecodeError> {
+    Ok([reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?])
+}
+
+fn read_vitals(reader: &mut Reader) -> Result<Vitals, DecodeError> {
+    Ok(Vitals {
+        shield_capacity: reader.f64()?,
+        armor_hp: reader.f64()?,
+        structure_hp: reader.f64()?,
+        resonances: Resonances {
+            shield: read_damage(reader)?,
+            armor: read_damage(reader)?,
+            structure: read_damage(reader)?,
+        },
+    })
+}
+
 fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
     let ship_id = reader.i64()?;
     let character_id = reader.i64()?;
@@ -407,6 +461,8 @@ fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
         reader.f64()?,
     ];
     let max_locked_targets = reader.i32()?;
+    let vitals = read_vitals(reader)?;
+    let condition = read_condition(reader)?;
     let count = reader.u32()? as usize;
     // a module takes 16 bytes, so a count the frame cannot hold is refused before anything is allocated for it
     if count > reader.data.len() / 16 {
@@ -440,6 +496,8 @@ fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
         signature_radius,
         capacitor_capacity,
         capacitor_recharge_s,
+        vitals,
+        condition,
         modules,
     })
 }
@@ -467,6 +525,7 @@ impl Message {
             Self::Targets { .. } => kind::TARGETS,
             Self::TargetRefused { .. } => kind::TARGET_REFUSED,
             Self::Activate { .. } => kind::ACTIVATE,
+            Self::Condition { .. } => kind::CONDITION,
         }
     }
 
@@ -527,9 +586,15 @@ impl Message {
                 put_text(&mut out, id_type);
                 put_bytes(&mut out, args);
             }
-            Self::Docked { session_id, station_id } => {
+            Self::Docked { session_id, station_id, condition } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&station_id.to_le_bytes());
+                put_condition(&mut out, condition);
+            }
+            Self::Condition { session_id, command, condition } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.push(*command);
+                put_condition(&mut out, condition);
             }
             Self::Refused { session_id, command, reason } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
@@ -643,14 +708,23 @@ impl Message {
                 }
                 Message::Command { session_id, command, args }
             }
-            kind::SHIP_SPEC => Message::ShipSpec { session_id: r.u64()?, ship: read_ship(&mut r)? },
+            kind::SHIP_SPEC => Message::ShipSpec { session_id: r.u64()?, ship: Box::new(read_ship(&mut r)?) },
             kind::NOTIFY => Message::Notify {
                 session_id: r.u64()?,
                 name: r.text()?,
                 id_type: r.text()?,
                 args: r.bytes()?,
             },
-            kind::DOCKED => Message::Docked { session_id: r.u64()?, station_id: r.i64()? },
+            kind::DOCKED => Message::Docked {
+                session_id: r.u64()?,
+                station_id: r.i64()?,
+                condition: read_condition(&mut r)?,
+            },
+            kind::CONDITION => Message::Condition {
+                session_id: r.u64()?,
+                command: r.u8()?,
+                condition: read_condition(&mut r)?,
+            },
             kind::REFUSED => Message::Refused { session_id: r.u64()?, command: r.u8()?, reason: r.text()? },
             kind::ACCEPTED => Message::Accepted { session_id: r.u64()?, command: r.u8()?, at: r.i64()? },
             kind::APPROACHING => {

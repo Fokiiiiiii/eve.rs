@@ -4,7 +4,7 @@ using Npgsql;
 
 namespace Eve.Fitting;
 
-/// <summary>Whether the modules fitted to ships are online, in PostgreSQL, in the module's own schema (<c>fitting</c> unless told otherwise).</summary>
+/// <summary>Whether the modules fitted to ships are online and what ships and modules have taken, in PostgreSQL, in the module's own schema (<c>fitting</c> unless told otherwise).</summary>
 public sealed class PgModuleStateStore
 {
     public const string DefaultSchema = "fitting";
@@ -57,5 +57,78 @@ public sealed class PgModuleStateStore
             states[reader.GetInt64(0)] = (ItemState)reader.GetInt16(1);
         }
         return states;
+    }
+
+    /// <summary>What a ship has taken (a ship with no row has taken nothing).</summary>
+    public async Task<ShipCondition> ShipConditionAsync(long shipId, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT damage, charge, shield_charge, armor_damage, incapacitated FROM {_schema}.ship_condition WHERE item_id = $1");
+        command.Parameters.Add(new NpgsqlParameter { Value = shipId });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new ShipCondition(reader.GetDouble(0), reader.GetDouble(1), reader.GetDouble(2), reader.GetDouble(3), reader.GetBoolean(4))
+            : ShipCondition.Full;
+    }
+
+    /// <summary>Keeps what a ship has taken. A ship that has taken nothing has no row.</summary>
+    public async Task SetShipConditionAsync(long shipId, ShipCondition condition, CancellationToken cancellationToken = default)
+    {
+        await using var command = condition == ShipCondition.Full
+            ? _source.CreateCommand($"DELETE FROM {_schema}.ship_condition WHERE item_id = $1")
+            : _source.CreateCommand(
+                $"INSERT INTO {_schema}.ship_condition (item_id, damage, charge, shield_charge, armor_damage, incapacitated) VALUES ($1, $2, $3, $4, $5, $6) " +
+                "ON CONFLICT (item_id) DO UPDATE SET damage = EXCLUDED.damage, charge = EXCLUDED.charge, shield_charge = EXCLUDED.shield_charge, armor_damage = EXCLUDED.armor_damage, incapacitated = EXCLUDED.incapacitated");
+        command.Parameters.Add(new NpgsqlParameter { Value = shipId });
+        if (condition != ShipCondition.Full)
+        {
+            foreach (var value in new object[] { Clamp(condition.Damage), Clamp(condition.Charge), Clamp(condition.ShieldCharge), Clamp(condition.ArmorDamage), condition.Incapacitated })
+            {
+                command.Parameters.Add(new NpgsqlParameter { Value = value });
+            }
+        }
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static double Clamp(double fraction) => Math.Clamp(fraction, 0, 1);
+
+    /// <summary>What each of these modules has taken (a module with no row was never damaged or mended).</summary>
+    public async Task<IReadOnlyDictionary<long, ModuleCondition>> ModuleConditionsAsync(IEnumerable<long> itemIds, CancellationToken cancellationToken = default)
+    {
+        var ids = itemIds.Distinct().ToArray();
+        var conditions = new Dictionary<long, ModuleCondition>();
+        if (ids.Length == 0)
+        {
+            return conditions;
+        }
+        await using var command = _source.CreateCommand($"SELECT item_id, damage, armor_damage, shield_charge, incapacitated FROM {_schema}.module_condition WHERE item_id = ANY($1)");
+        command.Parameters.Add(new NpgsqlParameter { Value = ids });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            conditions[reader.GetInt64(0)] = new ModuleCondition(reader.GetDouble(1), reader.GetDouble(2), reader.GetDouble(3), reader.GetBoolean(4));
+        }
+        return conditions;
+    }
+
+    /// <summary>Keeps what modules have taken. A module that is as nobody touched it has no row.</summary>
+    public async Task SetModuleConditionsAsync(IReadOnlyDictionary<long, ModuleCondition> conditions, CancellationToken cancellationToken = default)
+    {
+        foreach (var (itemId, condition) in conditions)
+        {
+            await using var command = condition == ModuleCondition.Untouched
+                ? _source.CreateCommand($"DELETE FROM {_schema}.module_condition WHERE item_id = $1")
+                : _source.CreateCommand(
+                    $"INSERT INTO {_schema}.module_condition (item_id, damage, shield_charge, armor_damage, incapacitated) VALUES ($1, $2, $3, $4, $5) " +
+                    "ON CONFLICT (item_id) DO UPDATE SET damage = EXCLUDED.damage, shield_charge = EXCLUDED.shield_charge, armor_damage = EXCLUDED.armor_damage, incapacitated = EXCLUDED.incapacitated");
+            command.Parameters.Add(new NpgsqlParameter { Value = itemId });
+            if (condition != ModuleCondition.Untouched)
+            {
+                foreach (var value in new object[] { Clamp(condition.Damage), Clamp(condition.ShieldCharge), Clamp(condition.ArmorDamage), condition.Incapacitated })
+                {
+                    command.Parameters.Add(new NpgsqlParameter { Value = value });
+                }
+            }
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 }

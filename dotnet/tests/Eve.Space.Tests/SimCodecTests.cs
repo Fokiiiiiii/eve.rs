@@ -28,7 +28,16 @@ public class SimCodecTests
         (int)s["corporationId"]!, (int)s["allianceId"]!, (int)s["warFactionId"]!, (double)s["securityStatus"]!, (double)s["radius"]!, (double)s["mass"]!,
         (double)s["maxVelocity"]!, (double)s["agility"]!, (double)s["warpSpeedAu"]!, (double)s["shieldRechargeMs"]!,
         (double)s["maxTargetRange"]!, (double)s["scanResolution"]!, (double)s["signatureRadius"]!, (int)s["maxLockedTargets"]!, (double)s["capacitorCapacity"]!, (double)s["capacitorRechargeS"]!,
-        [.. ((JsonArray)s["modules"]!).Select(m => new SimModule(Wide(m!, "itemId"), (int)m!["typeId"]!, (int)m["flag"]!))]);
+        [.. ((JsonArray)s["modules"]!).Select(m => new SimModule(Wide(m!, "itemId"), (int)m!["typeId"]!, (int)m["flag"]!))],
+        VitalsOf(s["vitals"]!), ConditionOf(s["condition"]!));
+
+    private static double[] Four(JsonNode n) => [.. ((JsonArray)n).Select(x => (double)x!)];
+
+    private static SimVitals VitalsOf(JsonNode v) => new(
+        (double)v["shieldCapacity"]!, (double)v["armorHp"]!, (double)v["structureHp"]!,
+        new SimResonances(Four(v["resonances"]!["shield"]!), Four(v["resonances"]!["armor"]!), Four(v["resonances"]!["structure"]!)));
+
+    private static SimCondition ConditionOf(JsonNode c) => new((double)c["damage"]!, (double)c["armorDamage"]!, (double)c["shieldCharge"]!, (double)c["charge"]!);
 
     private static SimNumbers? NumbersOf(JsonNode? n) => n is null ? null : new SimNumbers((double)n["mass"]!, (double)n["maxVelocity"]!, (double)n["signatureRadius"]!);
 
@@ -53,7 +62,8 @@ public class SimCodecTests
             "Command" => new SimCommand(Session(), (byte)(int)c["command"]!, [.. ((JsonArray)c["args"]!).Select(a => (double)a!)]),
             "ShipSpec" => new SimShipChanged(Session(), ShipOf(c["ship"]!)),
             "Notify" => new SimNotify(Session(), (string)c["notification"]!, (string)c["idType"]!, Hex((string)c["args"]!)),
-            "Docked" => new SimDocked(Session(), Wide(c, "stationId")),
+            "Docked" => new SimDocked(Session(), Wide(c, "stationId"), ConditionOf(c["condition"]!)),
+            "Condition" => new SimConditionReply(Session(), (byte)(int)c["command"]!, ConditionOf(c["condition"]!)),
             "Refused" => new SimRefused(Session(), (byte)(int)c["command"]!, (string)c["reason"]!),
             "Accepted" => new SimAccepted(Session(), (byte)(int)c["command"]!, Wide(c, "at")),
             "Approaching" => new SimApproaching(Session(), (byte)(int)c["command"]!, (double)c["distance"]!),
@@ -70,7 +80,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-        Assert.Equal(["Accepted", "Activate", "Approaching", "Bind", "Command", "Docked", "Enter", "EnterReply", "Hello", "HelloAck", "Jumped", "Jumping", "Leave", "Notify", "Refused", "ShipSpec", "TargetRefused", "Targets", "UpdateState"], kinds);
+        Assert.Equal(["Accepted", "Activate", "Approaching", "Bind", "Command", "Condition", "Docked", "Enter", "EnterReply", "Hello", "HelloAck", "Jumped", "Jumping", "Leave", "Notify", "Refused", "ShipSpec", "TargetRefused", "Targets", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);
     }
 
@@ -118,6 +128,11 @@ public class SimCodecTests
         Assert.Equal((1790646377000015UL, 30100032, EnterHow.Undock, 60015249L), (enter.SessionId, enter.SolarSystemId, enter.How, enter.StationId));
         Assert.Equal(("Ibis", 9988400001939L, 339.25), (enter.Ship.Name, enter.Ship.ShipId, enter.Ship.MaxVelocity));
         Assert.Equal([(9988400001940L, 21857, 19), (9988400001941L, 3638, 27)], enter.Ship.Modules.Select(m => (m.ItemId, m.TypeId, m.Flag)));
+        Assert.Equal((220.0, 137.5, 201.25), (enter.Ship.Vitals!.ShieldCapacity, enter.Ship.Vitals.ArmorHp, enter.Ship.Vitals.StructureHp));
+        Assert.Equal([0.0, 0.8, 0.6, 0.5], enter.Ship.Vitals.Resonances.Shield);
+        Assert.Equal([0.5, 0.35, 0.25, 0.1], enter.Ship.Vitals.Resonances.Armor);
+        Assert.Equal([0.33, 0.33, 0.33, 0.33], enter.Ship.Vitals.Resonances.Structure);
+        Assert.Equal(new SimCondition(0.35, 0.6, 1.0, 1.0), enter.Ship.Condition);
     }
 
     [Fact]

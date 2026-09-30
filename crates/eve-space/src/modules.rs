@@ -17,8 +17,8 @@ const CAPACITOR_CHARGE: i32 = 18;
 /// The attribute of a module that holds the length of its cycle (told as a real, whatever its value).
 const DURATION: i32 = 73;
 /// The capacitor's charge is told every half second, worked out at the tick a tenth of a second on from the moment (the reference's ticks).
-const SAMPLE_EVERY: i64 = TICKS_PER_SECOND / 2;
-const TICK: i64 = TICKS_PER_SECOND / 10;
+pub(crate) const SAMPLE_EVERY: i64 = TICKS_PER_SECOND / 2;
+pub(crate) const TICK: i64 = TICKS_PER_SECOND / 10;
 /// A capacitor within this many GJ of full is full (the reference settles it so).
 const FULL_SNAP: f64 = 1.0;
 
@@ -82,8 +82,30 @@ pub(crate) struct Capacitor {
 }
 
 impl Capacitor {
-    pub(crate) fn full(capacity: f64, recharge_s: f64, now: i64) -> Self {
-        Self { capacity, recharge_s, charge: capacity, at: now, next_sample: None }
+    /// A capacitor that holds `ratio` of what it can (its charge is told from the start when it is below full).
+    pub(crate) fn filled(capacity: f64, recharge_s: f64, ratio: f64, now: i64) -> Self {
+        let ratio = ratio.clamp(0.0, 1.0);
+        Self {
+            capacity,
+            recharge_s,
+            charge: capacity * ratio,
+            at: now,
+            next_sample: (ratio < 1.0).then_some(now),
+        }
+    }
+
+    /// How full it is at `now`, as a fraction (a ship with no capacitor is full).
+    pub(crate) fn ratio_at(&self, now: i64) -> f64 {
+        if self.capacity <= 0.0 { 1.0 } else { (self.charge_at(now) / self.capacity).clamp(0.0, 1.0) }
+    }
+
+    /// Fills it at `now` and returns the charge before and after.
+    pub(crate) fn refill(&mut self, now: i64) -> (f64, f64) {
+        let before = self.charge_at(now);
+        self.charge = self.capacity;
+        self.at = now;
+        self.next_sample = None;
+        (before, self.capacity)
     }
 
     pub(crate) fn charge_at(&self, now: i64) -> f64 {
@@ -127,8 +149,9 @@ pub(crate) struct Modules {
 }
 
 impl Modules {
-    pub(crate) fn new(capacity: f64, recharge_s: f64, now: i64) -> Self {
-        Self { capacitor: Some(Capacitor::full(capacity, recharge_s, now)), running: Vec::new() }
+    /// The modules of a ship whose capacitor holds `ratio` of what it can.
+    pub(crate) fn with_charge(capacity: f64, recharge_s: f64, ratio: f64, now: i64) -> Self {
+        Self { capacitor: Some(Capacitor::filled(capacity, recharge_s, ratio, now)), running: Vec::new() }
     }
 
     pub(crate) fn is_idle(&self) -> bool {
@@ -136,12 +159,19 @@ impl Modules {
     }
 }
 
-fn number(value: f64) -> Value {
+pub(crate) fn number(value: f64) -> Value {
     if value.fract() == 0.0 && value.abs() < 9.0e15 { int(value as i64) } else { real(value) }
 }
 
 /// One line of an `OnModuleAttributeChanges`: `(name, owner, item, attribute, when, new value, old value, when)`.
-fn attribute_change(owner: i64, item: i64, attribute: i32, when: i64, value: Value, old: Value) -> Value {
+pub(crate) fn attribute_change(
+    owner: i64,
+    item: i64,
+    attribute: i32,
+    when: i64,
+    value: Value,
+    old: Value,
+) -> Value {
     tuple([
         word("OnModuleAttributeChange"),
         id(owner),
@@ -155,12 +185,19 @@ fn attribute_change(owner: i64, item: i64, attribute: i32, when: i64, value: Val
 }
 
 impl Scene {
-    fn dogma_notify(session: SessionId, name: &'static str, args: Vec<Value>) -> Out {
+    pub(crate) fn dogma_notify(session: SessionId, name: &'static str, args: Vec<Value>) -> Out {
         Out::Notify { session, name, id_type: "clientID", args }
     }
 
     /// The capacitor's charge, told: `(the ship's charge now, and a tenth of a second before)`.
-    fn charge_told(session: SessionId, owner: i64, ship: i64, when: i64, new: f64, old: f64) -> Out {
+    pub(crate) fn charge_told(
+        session: SessionId,
+        owner: i64,
+        ship: i64,
+        when: i64,
+        new: f64,
+        old: f64,
+    ) -> Out {
         Self::dogma_notify(
             session,
             "OnModuleAttributeChanges",
@@ -169,8 +206,8 @@ impl Scene {
                 ship,
                 CAPACITOR_CHARGE,
                 when,
-                real(new),
-                real(old),
+                number(new),
+                number(old),
             )])],
         )
     }
@@ -336,8 +373,11 @@ impl Scene {
 
     /// What the running effects and the capacitors have come to by `now`: cycles that end (the next begins, or the effect stops), and the charge told.
     pub(crate) fn settle_modules(&mut self, now: i64) -> Vec<Out> {
-        let sessions: Vec<SessionId> =
-            self.in_entry_order().into_iter().filter(|s| !self.pilots[s].modules.is_idle()).collect();
+        let sessions: Vec<SessionId> = self
+            .in_entry_order()
+            .into_iter()
+            .filter(|s| !self.pilots[s].modules.is_idle() || self.pilots[s].ship.health.next_sample.is_some())
+            .collect();
         let mut out = Vec::new();
         for session in sessions {
             // a cycle that ends is followed by the charge told at the moments in between, in the order they fall
@@ -366,12 +406,17 @@ impl Scene {
         if let Some(sample) = pilot.modules.capacitor.as_ref().and_then(|c| c.next_sample) {
             consider(sample, Moment::Charge);
         }
+        // the shield's charge follows the capacitor's at the same tick (the reference works them out in that order)
+        if let Some(sample) = pilot.ship.health.next_sample {
+            consider(sample, Moment::Shield);
+        }
         next
     }
 
     fn module_moment(&mut self, session: SessionId, at: i64, moment: Moment) -> Vec<Out> {
         match moment {
             Moment::Charge => self.tell_charge(session, at),
+            Moment::Shield => self.tell_shield(session, at),
             Moment::CycleEnd(index) => self.end_cycle(session, index, at),
         }
     }
@@ -382,12 +427,13 @@ impl Scene {
         let (owner, ship) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
         let Some(capacitor) = pilot.modules.capacitor.as_mut() else { return Vec::new() };
         let (new, old) = (capacitor.charge_at(at), capacitor.charge_at(at - TICK));
-        if new >= capacitor.capacity {
-            // it is full: nothing more is told
+        if old >= capacitor.capacity {
+            // it was full a tick ago: nothing more is told
             capacitor.next_sample = None;
             return Vec::new();
         }
-        capacitor.next_sample = Some(at + SAMPLE_EVERY);
+        // the tick that fills it is told when it is a tick that tells (the reference tells the change on every fifth tick)
+        capacitor.next_sample = (new < capacitor.capacity).then_some(at + SAMPLE_EVERY);
         vec![Self::charge_told(session, owner, ship, at, new, old)]
     }
 
@@ -444,10 +490,11 @@ impl Scene {
 enum Moment {
     CycleEnd(usize),
     Charge,
+    Shield,
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::Arc;
 
     use super::*;
@@ -460,7 +507,7 @@ mod tests {
     const SECOND: i64 = 10_000_000;
     const MODULE: i64 = 9_988_400_001_940;
 
-    fn afterburner() -> Effect {
+    pub(crate) fn afterburner() -> Effect {
         Effect {
             module_id: MODULE,
             module_type: 21857,

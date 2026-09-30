@@ -1,4 +1,5 @@
 using Eve.Dogma;
+using Eve.Fitting;
 using Eve.Ships;
 using Eve.Space;
 
@@ -22,6 +23,15 @@ internal static class SimShips
 
     private const int BaseWarpSpeed = 1281;
 
+    private const int ShieldCapacity = 263;
+    private const int ArmorHitPoints = 265;
+    private const int HullPoints = 9;
+
+    // the resonances of each layer in the order of the link's damage vectors: em, thermal, kinetic, explosive
+    private static readonly int[] ShieldResonances = [271, 274, 273, 272];
+    private static readonly int[] ArmorResonances = [267, 270, 269, 268];
+    private static readonly int[] HullResonances = [113, 110, 109, 111];
+
     /// <summary>A ship's warp speed in AU a second: its base warp speed (1 unless something changed it) times its multiplier (3 for a frigate).</summary>
     public static double WarpSpeedAu(double baseWarpSpeed, double multiplier) => (baseWarpSpeed > 0 ? baseWarpSpeed : 1.0) * Math.Max(1, multiplier);
 
@@ -44,6 +54,19 @@ internal static class SimShips
             Attribute(Radius), Attribute(Mass), Attribute(MaxVelocity), Attribute(Agility), WarpSpeedAu(Attribute(BaseWarpSpeed), Attribute(WarpSpeedMultiplier)), Attribute(ShieldRechargeRate),
             Attribute(MaxTargetRange), Attribute(ScanResolution), Attribute(SignatureRadius), LockLimit(Attribute(MaxLockedTargets), snapshot.World.Get(character.Id, MaxLockedTargets)),
             Attribute(CapacitorCapacity), Attribute(RechargeRate) / 1000.0,
-            [.. snapshot.Fitted.Select(module => new SimModule(module.Id, module.TypeId, module.Flag))]);
+            [.. snapshot.Fitted.Select(module => new SimModule(module.Id, module.TypeId, module.Flag))],
+            VitalsOf(snapshot), ConditionOf(snapshot.Condition));
     }
+
+    /// <summary>What the ship can take and how it resists, as dogma has it (a resonance the ship has none of lets everything through).</summary>
+    public static SimVitals VitalsOf(ShipSnapshot snapshot)
+    {
+        var attributes = snapshot.World.Attributes(snapshot.Ship.Id).ToDictionary(a => a.Key, a => a.Value);
+        double[] Layer(int[] ids) => [.. ids.Select(id => Math.Max(0, attributes.GetValueOrDefault(id, 1.0)))];
+        return new SimVitals(
+            Math.Max(0, attributes.GetValueOrDefault(ShieldCapacity)), Math.Max(0, attributes.GetValueOrDefault(ArmorHitPoints)), Math.Max(0, attributes.GetValueOrDefault(HullPoints)),
+            new SimResonances(Layer(ShieldResonances), Layer(ArmorResonances), Layer(HullResonances)));
+    }
+
+    public static SimCondition ConditionOf(ShipCondition condition) => new(condition.Damage, condition.ArmorDamage, condition.ShieldCharge, condition.Charge);
 }

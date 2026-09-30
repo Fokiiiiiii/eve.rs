@@ -25,6 +25,7 @@
     <Project Path="src/Eve.Services.Ships/Eve.Services.Ships.csproj" />
     <Project Path="src/Eve.Services.Inventory/Eve.Services.Inventory.csproj" />
     <Project Path="src/Eve.Services.Skills/Eve.Services.Skills.csproj" />
+    <Project Path="src/Eve.Services.Slash/Eve.Services.Slash.csproj" />
     <Project Path="src/Eve.Services.Space/Eve.Services.Space.csproj" />
     <Project Path="src/Eve.Services.Station/Eve.Services.Station.csproj" />
     <Project Path="src/Eve.Services.Wallet/Eve.Services.Wallet.csproj" />

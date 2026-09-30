@@ -12,6 +12,9 @@ public sealed record CommandReply(bool Accepted, long At, string? Reason, double
 
     public bool Pending { get; init; }
 
+    /// <summary>What the ship has taken (the answer to <see cref="SimCommands.GetCondition"/>).</summary>
+    public SimCondition? Condition { get; init; }
+
     /// <summary>What a refused targeting order says of the target: its type, and (out of range only) the range and the distance.</summary>
     public int TargetType { get; init; }
 

@@ -5,6 +5,7 @@ mod support;
 use std::sync::Arc;
 
 use eve_destiny::Vec3;
+use eve_space::health::Condition;
 use eve_space::scene::{Command, Out, Scene, stamp_at};
 use eve_space::sde::Sde;
 use eve_space::world::World;
@@ -367,6 +368,9 @@ fn a_docking_is_accepted_and_finished_as_the_reference_did() {
     assert_eq!(out_args(&out[1]), event_args(events_named(&dock, "DoDestinyUpdate")[0]));
     assert_eq!(out[2], Out::Accepted { session: SESSION, command: 4, at: now });
 
-    assert_eq!(scene.poll(now + 40_000_000), [Out::Docked { session: SESSION, station_id: station }]);
+    assert_eq!(
+        scene.poll(now + 40_000_000),
+        [Out::Docked { session: SESSION, station_id: station, condition: Condition::FULL }]
+    );
     assert_eq!(json!(scene.contains(SESSION)), json!(false));
 }

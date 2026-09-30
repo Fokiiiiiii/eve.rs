@@ -54,8 +54,22 @@ internal sealed class FakeSim : ISimulation
             }
             return TargetGate is { } gate ? gate.Task.ContinueWith(_ => TargetAnswer, cancellationToken) : Task.FromResult(TargetAnswer);
         }
+        if (code == SimCommands.GetCondition)
+        {
+            return Task.FromResult(new CommandReply(true, 0, null) { Condition = ConditionAnswer });
+        }
+        if (code == SimCommands.Heal)
+        {
+            return Task.FromResult(HealAnswer);
+        }
         return Task.FromResult(code switch { SimCommands.WarpTo => WarpAnswer, SimCommands.Jump => JumpAnswer, _ => DockAnswer });
     }
+
+    /// <summary>What the ship is said to have taken.</summary>
+    public SimCondition ConditionAnswer { get; set; } = SimCondition.Full;
+
+    /// <summary>What a heal is answered with.</summary>
+    public CommandReply HealAnswer { get; set; } = new(true, 134351527136350000, null);
 
     /// <summary>What an effect that is started is answered with.</summary>
     public CommandReply ActivateAnswer { get; set; } = new(true, 134351527136350000, null);

@@ -1,6 +1,7 @@
 //! Replays oracle/fixtures/simlink/messages.json, the golden frames of docs/adr/0007 (the C# host replays the same
 //! file): every valid frame encodes to its bytes and decodes back, every invalid one is refused for the stated reason.
 
+use eve_space::health::{Condition, Resonances, Vitals};
 use eve_space::link::{DecodeError, Enter, How, Message};
 use eve_space::modules::{Change, Effect, Numbers};
 use eve_space::ship::{ModuleSpec, ShipSpec};
@@ -21,6 +22,35 @@ fn text(case: &Value, field: &str) -> String {
 
 fn wide(case: &Value, field: &str) -> i64 {
     text(case, field).parse().unwrap()
+}
+
+fn condition_of(case: &Value) -> Condition {
+    let number = |field: &str| case[field].as_f64().unwrap_or_else(|| panic!("{field} in {case}"));
+    Condition {
+        damage: number("damage"),
+        armor_damage: number("armorDamage"),
+        shield_charge: number("shieldCharge"),
+        charge: number("charge"),
+    }
+}
+
+fn vitals_of(case: &Value) -> Vitals {
+    let number = |field: &str| case[field].as_f64().unwrap_or_else(|| panic!("{field} in {case}"));
+    let four = |layer: &str| -> [f64; 4] {
+        let list = case["resonances"][layer].as_array().unwrap_or_else(|| panic!("{layer} in {case}"));
+        [
+            list[0].as_f64().unwrap(),
+            list[1].as_f64().unwrap(),
+            list[2].as_f64().unwrap(),
+            list[3].as_f64().unwrap(),
+        ]
+    };
+    Vitals {
+        shield_capacity: number("shieldCapacity"),
+        armor_hp: number("armorHp"),
+        structure_hp: number("structureHp"),
+        resonances: Resonances { shield: four("shield"), armor: four("armor"), structure: four("structure") },
+    }
 }
 
 fn ship_of(case: &Value) -> ShipSpec {
@@ -50,6 +80,8 @@ fn ship_of(case: &Value) -> ShipSpec {
         signature_radius: number("signatureRadius"),
         capacitor_capacity: number("capacitorCapacity"),
         capacitor_recharge_s: number("capacitorRechargeS"),
+        vitals: vitals_of(&case["vitals"]),
+        condition: condition_of(&case["condition"]),
         modules: case["modules"]
             .as_array()
             .unwrap()
@@ -126,14 +158,23 @@ fn message_of(case: &Value) -> Message {
             command: number("command") as u8,
             args: case["args"].as_array().unwrap().iter().map(|a| a.as_f64().unwrap()).collect(),
         },
-        "ShipSpec" => Message::ShipSpec { session_id: session_id(), ship: ship_of(&case["ship"]) },
+        "ShipSpec" => Message::ShipSpec { session_id: session_id(), ship: Box::new(ship_of(&case["ship"])) },
         "Notify" => Message::Notify {
             session_id: session_id(),
             name: text(case, "notification"),
             id_type: text(case, "idType"),
             args: hex(case["args"].as_str().unwrap()),
         },
-        "Docked" => Message::Docked { session_id: session_id(), station_id: wide(case, "stationId") },
+        "Docked" => Message::Docked {
+            session_id: session_id(),
+            station_id: wide(case, "stationId"),
+            condition: condition_of(&case["condition"]),
+        },
+        "Condition" => Message::Condition {
+            session_id: session_id(),
+            command: number("command") as u8,
+            condition: condition_of(&case["condition"]),
+        },
         "Refused" => Message::Refused {
             session_id: session_id(),
             command: number("command") as u8,

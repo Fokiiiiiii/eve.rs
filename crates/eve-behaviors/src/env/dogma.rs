@@ -118,6 +118,30 @@ pub trait Dogma {
 
     /// `dogmaLM.RemoveTarget(itemId, targetId)`.
     fn remove_target(&mut self, _item_id: i64, _target_id: i64) {}
+
+    /// `get_effect_range_with_falloff_multiplier(dogmaLM, effectId, itemId, factor)`.
+    fn effect_range_with_falloff_multiplier(&self, _effect_id: i64, _item_id: i64, _factor: f64) -> f64 {
+        0.0
+    }
+
+    /// `get_effect_range_and_falloff_values_for_item(dogmaLM, itemId, effectId)`: `(optimal, falloff)`.
+    fn effect_range_and_falloff_for_item(
+        &self,
+        _item_id: i64,
+        _effect_id: i64,
+    ) -> (Option<f64>, Option<f64>) {
+        (None, None)
+    }
+
+    /// `dogmaLM.AddTargetEx(itemId, targetId)`.
+    fn add_target_ex(&mut self, _item_id: i64, _target_id: i64) -> WorldResult<()> {
+        Ok(())
+    }
+
+    /// `dogmaLM.IsShipPiloted(shipId)`.
+    fn is_ship_piloted(&self, _ship_id: i64) -> bool {
+        false
+    }
 }
 
 /// `dogma.attributes.health`: the ratios of what a ship has left, from the dogma engine's numbers.

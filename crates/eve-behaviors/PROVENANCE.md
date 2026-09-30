@@ -21,6 +21,8 @@ A port, as it is, of the `behaviors` package of the EVE client V24.01 (decompile
 | `src/conditions/*` | `conditions/*` (all seventeen files) |
 | `src/monitors/*` | `monitors/*` (all nineteen files); `monitors/mod.rs` holds `MonitorTask` of `tasks.py` |
 | `src/macros.rs` | (none: `enter_task!` makes a class with an `OnEnter`) |
+| `src/actions/*` (in part) | `actions/__init__.py`, `combattargets`, `dungeon`, `eventlogger`, `guard`, `hauling`, `map`, `mathtasks`, `objectspawning`, `operations`, `randomized`, `reinforcements`, `resourcewars`, `rewards`, `structures`, `tale` and `reference_subtree` (the rest follows) |
+| `src/target_evaluation.rs` | `targetEvaluation/*` |
 
 Also read for facts, not ported: `npcs/common/standings.py` (`classify_standings`), `eveuniverse/security.py` (`SecurityClassFromLevel`),
 `dogma/attributes/health.py` (the ratios), `crimewatch/util.py` (`GetAggressorId`), `evemath/__init__.py` (`env`/`evemath`).

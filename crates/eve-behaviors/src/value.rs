@@ -128,6 +128,29 @@ impl Value {
         }
     }
 
+    /// The whole numbers among the items of a tuple, list or set.
+    pub fn int_items(&self) -> Vec<i64> {
+        self.items().unwrap_or(&[]).iter().filter_map(Value::as_int).collect()
+    }
+
+    /// The entries of a dict.
+    pub fn dict_entries(&self) -> &[(Value, Value)] {
+        match self {
+            Value::Dict(entries) => entries,
+            _ => &[],
+        }
+    }
+
+    /// `dict[key] = value`: the entry is replaced or added (the position of a replaced entry stays).
+    pub fn dict_insert(&mut self, key: Value, value: Value) {
+        if let Value::Dict(entries) = self {
+            match entries.iter_mut().find(|(k, _)| k.py_eq(&key)) {
+                Some((_, existing)) => *existing = value,
+                None => entries.push((key, value)),
+            }
+        }
+    }
+
     /// A field of a record a message carries (`effectInfo.isAssistance`): the value under a string key of a dict.
     pub fn field(&self, name: &str) -> Option<&Value> {
         match self {

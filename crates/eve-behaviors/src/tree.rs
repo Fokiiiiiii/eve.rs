@@ -1101,6 +1101,12 @@ impl TaskCtx<'_, '_> {
         self.set_status(Status::Blocking);
     }
 
+    /// `self.status.OnUpdated(self)`: what the task's status asks of the tree (a finished task exits, a running one is queued for the next tick).
+    pub fn on_status_updated(&mut self) {
+        let me = self.id;
+        self.cx.on_status_update(me);
+    }
+
     pub fn is_invalid(&self) -> bool {
         self.status() == Status::Invalid
     }
@@ -1266,6 +1272,21 @@ impl TaskCtx<'_, '_> {
     /// `channel.GetLastMessageValue()`.
     pub fn channel_last_value(&mut self, channel: &ChannelRef) -> Value {
         self.cx.last_value_of_channel(channel.scope, &channel.name)
+    }
+
+    /// `channel.GetLastMessageValue()` of a task that catches `BlackboardDeletedError`.
+    pub fn get_channel_last_value_unless_deleted(
+        &mut self,
+        channel: &ChannelRef,
+    ) -> Result<Value, BlackboardDeleted> {
+        match self.cx.shared.blackboards.message_channel(channel.scope, &channel.name) {
+            Ok(c) => Ok(c.last_message_value()),
+            Err(BlackboardError::Deleted) => Err(BlackboardDeleted),
+            Err(error) => {
+                self.cx.raise(error.into());
+                Ok(Value::None)
+            }
+        }
     }
 
     /// `channel.SendMessage(value)`.

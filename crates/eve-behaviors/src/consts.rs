@@ -24,8 +24,12 @@ pub const SHIP_NOT_WARPING: i64 = 0;
 
 pub const CATEGORY_SHIP: i64 = 6;
 pub const CATEGORY_DRONE: i64 = 18;
+pub const GROUP_NPC_INDUSTRIAL_COMMAND: i64 = 1896;
+pub const GROUP_MINING_DRONE: i64 = 101;
 pub const CATEGORY_FIGHTER: i64 = 87;
 pub const CATEGORY_STRUCTURE: i64 = 65;
+pub const CATEGORY_STATION: i64 = 3;
+pub const FLAG_NONE: i64 = 0;
 pub const FLAG_CARGO: i64 = 5;
 pub const GROUP_SOLAR_SYSTEM: i64 = 5;
 pub const OWNER_NONE: i64 = 0;
@@ -34,10 +38,21 @@ pub const MAX_SYSTEM_ITEM: i64 = 9_999;
 pub const MIN_PLAYER_OWNER: i64 = 90_000_000;
 pub const MAX_PLAYER_OWNER: i64 = 2_147_483_647;
 pub const MIN_PLAYER_ITEM: i64 = 100_000_000;
+pub const MIN_FAKE_ITEM: i64 = 9_000_000_000_000_000_000;
 
 /// `idCheckers.IsPlayerOwner`.
 pub fn is_player_owner(owner_id: i64) -> bool {
     (MIN_PLAYER_OWNER..=MAX_PLAYER_OWNER).contains(&owner_id)
+}
+
+/// `idCheckers.IsFakeItem`.
+pub fn is_fake_item(item_id: i64) -> bool {
+    item_id > MIN_FAKE_ITEM
+}
+
+/// `idCheckers.IsNPCCorporation`.
+pub fn is_npc_corporation(owner_id: i64) -> bool {
+    (1_000_000..=1_999_999).contains(&owner_id)
 }
 
 /// `idCheckers.IsNPC`: an owner that is neither the system nor a player.
@@ -54,6 +69,7 @@ pub const ATTRIBUTE_ARMOR_DAMAGE: i64 = 266;
 pub const ATTRIBUTE_SHIELD_CHARGE: i64 = 264;
 pub const ATTRIBUTE_SHIELD_CAPACITY: i64 = 263;
 pub const ATTRIBUTE_MAX_RANGE: i64 = 54;
+pub const ATTRIBUTE_FALLOFF: i64 = 158;
 pub const ATTRIBUTE_SIGNATURE_RADIUS: i64 = 552;
 pub const ATTRIBUTE_MAX_VELOCITY: i64 = 37;
 pub const ATTRIBUTE_MAX_LOCKED_TARGETS: i64 = 192;
@@ -68,6 +84,8 @@ pub const ATTRIBUTE_MISSILE_ENTITY_FLIGHT_TIME_MULTIPLIER: i64 = 646;
 // ---- dogma.const: effects ----
 
 pub const EFFECT_TARGET_ABC_ATTACK: i64 = 6995;
+pub const EFFECT_TARGET_ATTACK: i64 = 10;
+pub const EFFECT_MISSILE_LAUNCHING_FOR_ENTITY: i64 = 569;
 pub const EFFECT_NPC_BEHAVIOR_REMOTE_ARMOR_REPAIRER: i64 = 6741;
 pub const EFFECT_NPC_BEHAVIOR_REMOTE_CAPACITOR_TRANSMITTER: i64 = 12073;
 pub const EFFECT_NPC_BEHAVIOR_REMOTE_SHIELD_BOOSTER: i64 = 6742;

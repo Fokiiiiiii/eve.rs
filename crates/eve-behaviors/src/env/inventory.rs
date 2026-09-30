@@ -18,6 +18,26 @@ pub struct CargoCapacity {
     pub capacity: f64,
 }
 
+/// What `AddFakeLocation` and `EveInsertLocation` are given for a space object.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FakeLocation {
+    pub type_id: i64,
+    pub owner_id: Option<i64>,
+    pub solar_system_id: i64,
+    pub flag: i64,
+    pub position: [f64; 3],
+    pub object_name_id: Option<i64>,
+    pub custom_info: Option<CustomInfo>,
+}
+
+/// The custom info of a dungeon's object (`dunRotation`, `dunObjectID`, `dunObjectNameID`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CustomInfo {
+    pub dun_rotation: Option<[f64; 3]>,
+    pub dun_object_id: Option<i64>,
+    pub dun_object_name_id: Option<i64>,
+}
+
 /// The inventory's answers and what it is asked to do.
 pub trait Inventory {
     /// `inventory2.GetItem(itemId)`: `None` where the client raises (`RuntimeError`, `FakeItemNotHere`).
@@ -40,4 +60,10 @@ pub trait Inventory {
 
     /// `inventoryMgr.ManufactureItemRaw(typeid=, portions=, locationid=, flag=)`.
     fn manufacture_item_raw(&mut self, _type_id: i64, _portions: i64, _location_id: i64, _flag: i64) {}
+
+    /// `inventory2.AddFakeLocation(...)`: a space object that is not kept.
+    fn add_fake_location(&mut self, _location: FakeLocation) {}
+
+    /// `inventory2.EveInsertLocation(...)`: a space object that is kept in the database.
+    fn insert_location(&mut self, _location: FakeLocation) {}
 }

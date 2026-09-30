@@ -14,6 +14,29 @@ pub struct ResponseThresholds {
     pub friendly_response_threshold: f64,
 }
 
+/// A wave of reinforcements (`ReinforcementWave`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReinforcementWave {
+    pub wave_id: crate::value::Value,
+    pub cooldown_seconds: crate::value::Value,
+    pub threshold: crate::value::Value,
+    pub behavior_override_id: Option<crate::value::Value>,
+}
+
+/// An object of a dungeon's room (`dungeon_data.roomObjects`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DungeonObject {
+    pub type_id: i64,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub object_name_id: Option<i64>,
+    pub object_id: Option<i64>,
+    pub yaw: Option<f64>,
+    pub pitch: Option<f64>,
+    pub roll: Option<f64>,
+}
+
 /// The groups of entities and their managers.
 pub trait Entities {
     /// `EntityResponseThresholds(None, None, task)`: the server works them out for the entity from its group's and its type's blackboards
@@ -138,4 +161,65 @@ pub trait Entities {
     fn behavior_group_behavior_id(&self, _group_id: i64) -> Option<crate::value::Value> {
         None
     }
+
+    /// `keeper.GetOperationSpawnpointPosition(characterId, siteId)`: `(solar system id, spawn id, x, y, z)`.
+    fn operation_spawnpoint_position(
+        &self,
+        _character_id: Option<i64>,
+        _site_id: Option<i64>,
+    ) -> WorldResult<(i64, i64, f64, f64, f64)> {
+        Err(WorldError::Runtime("no such operation site".into()))
+    }
+
+    /// `RewardsPayment(...).register_payment_on_explosion()` and `.register_wreck_loot_rights_on_explosion()` for an item in a bubble.
+    fn register_payment_on_explosion(
+        &mut self,
+        _item_id: i64,
+        _bubble_id: i64,
+        _reward_id: Option<i64>,
+        _tale_id: i64,
+        _dungeon_id: i64,
+    ) {
+    }
+
+    /// `taleMgr.GetTaleForPersistedObject(itemId)[0].taleID`.
+    fn tale_id_for_persisted_object(&self, _item_id: i64) -> Option<i64> {
+        None
+    }
+
+    /// `keeper.GetSpawn(spawnId).entryPos`.
+    fn dungeon_spawn_entry_pos(&self, _spawn_id: i64) -> Option<[f64; 3]> {
+        None
+    }
+
+    /// `keeper.GetItemIdForObject(keeper.GetSpawn(spawnId), objectId)`.
+    fn dungeon_item_id_for_object(&self, _spawn_id: i64, _object_id: i64) -> Option<i64> {
+        None
+    }
+
+    /// `keeper.GetDungeonData(dungeonId).roomObjects[first room]`.
+    fn dungeon_room_objects(&self, _dungeon_id: i64) -> Vec<DungeonObject> {
+        Vec::new()
+    }
+
+    /// `reinforcementManager.CallInReinforcements(groupId, thresholds)`.
+    fn call_in_reinforcements(&mut self, _group_id: i64, _thresholds: Option<ResponseThresholds>) {}
+
+    /// `reinforcementManager.GetReinforcedGroup(groupId) is not None`.
+    fn reinforced_group_exists(&self, _group_id: i64) -> bool {
+        false
+    }
+
+    /// `reinforcementManager.AddEntityGroupReinforcement(CreateReinforcedGroup(entityCount, ownerId, wave, None).SetEntityGroupID(groupId))`.
+    fn add_entity_group_reinforcement(
+        &mut self,
+        _group_id: i64,
+        _entity_count: usize,
+        _owner_id: Option<i64>,
+        _wave: ReinforcementWave,
+    ) {
+    }
+
+    /// `reinforcementManager.RemoveActiveReinforcedEntityIds(groupId)`.
+    fn remove_active_reinforced_entity_ids(&mut self, _group_id: i64) {}
 }

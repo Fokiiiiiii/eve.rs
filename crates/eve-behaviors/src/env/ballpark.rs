@@ -176,4 +176,48 @@ pub trait Ballpark {
     fn turbo_shield_is_state(&self, _item_id: i64, _state: i64) -> Option<bool> {
         None
     }
+
+    /// `proximitySensor.GetDistanceTo(itemId)` of an item's sensor: `None` when the item has no sensor (`KeyError`).
+    fn proximity_sensor_distance_to(&self, _item_id: i64) -> Option<f64> {
+        None
+    }
+
+    /// `proximitySensor.ReplaceSensor()`.
+    fn replace_proximity_sensor(&mut self, _item_id: i64) {}
+
+    /// `try_add_behavior_context_tags(proximitySensor, context)`.
+    fn add_behavior_context_tags(&mut self, _item_id: i64) {}
+
+    /// `proximitySensor.AddTag(tag)`.
+    fn add_proximity_sensor_tag(&mut self, _item_id: i64, _tag: &str) {}
+
+    /// `proximitySensor.RegisterSensor(ballpark)`: the ball id of the sensor.
+    fn register_proximity_sensor(&mut self, _item_id: i64) -> Option<i64> {
+        None
+    }
+
+    /// `ballpark.slims.itervalues()`: every slim item of the ballpark.
+    fn slim_items(&self) -> Vec<SlimItem> {
+        Vec::new()
+    }
+
+    /// `ballpark.HasPendingCloak(ballId)`.
+    fn has_pending_cloak(&self, _ball_id: i64) -> bool {
+        false
+    }
+
+    /// `ballpark.IsBallProtected(ballId)`.
+    fn is_ball_protected(&self, _ball_id: i64) -> bool {
+        false
+    }
+
+    /// `ballpark.GetBallIdsAndDistInRange(ballId, range)`: `(distance squared, ball id)`.
+    fn ball_ids_and_dist_in_range(&self, _ball_id: i64, _range: f64) -> Vec<(f64, i64)> {
+        Vec::new()
+    }
+
+    /// `ball.sourceID`: who launched a ball (a drone's, a missile's).
+    fn ball_source_id(&self, _ball_id: i64) -> Option<i64> {
+        None
+    }
 }

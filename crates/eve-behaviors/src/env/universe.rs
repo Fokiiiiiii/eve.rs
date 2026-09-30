@@ -66,4 +66,9 @@ pub trait Universe {
     fn average_price(&self, _type_id: i64) -> Option<f64> {
         None
     }
+
+    /// `cfg.mapSystemCache.get(solarSystemId).factionID`.
+    fn solar_system_faction_id(&self, _solar_system_id: i64) -> Option<i64> {
+        None
+    }
 }

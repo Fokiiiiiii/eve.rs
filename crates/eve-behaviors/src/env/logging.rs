@@ -26,4 +26,33 @@ pub trait Logging {
         _aggressor_id: i64,
     ) {
     }
+
+    /// `eventLogger.log_behavior_task(behaviorEvent, ownerId, behaviorId, typeId)`.
+    fn log_behavior_task(
+        &mut self,
+        _event: &crate::value::Value,
+        _owner_id: Option<i64>,
+        _behavior_id: &crate::value::Value,
+        _type_id: i64,
+    ) {
+    }
+
+    /// `eventLogger.log_behavior_group_destroyed(ownerId, behaviorId, combatTargets)`.
+    fn log_behavior_group_destroyed(
+        &mut self,
+        _owner_id: Option<i64>,
+        _behavior_id: &crate::value::Value,
+        _combat_targets: &crate::value::Value,
+    ) {
+    }
+
+    /// `eventLogger.log_killed_and_fled_players(ownerId, behaviorId, targetSet, entityGroupMembers)`.
+    fn log_killed_and_fled_players(
+        &mut self,
+        _owner_id: Option<i64>,
+        _behavior_id: &crate::value::Value,
+        _target_set: &crate::value::Value,
+        _members: &[i64],
+    ) {
+    }
 }

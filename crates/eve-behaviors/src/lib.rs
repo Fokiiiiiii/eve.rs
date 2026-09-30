@@ -6,6 +6,7 @@
 #[macro_use]
 mod macros;
 
+pub mod actions;
 pub mod blackboards;
 pub mod composites;
 pub mod conditions;
@@ -17,6 +18,7 @@ pub mod evemath;
 pub mod events;
 pub mod groups;
 pub mod monitors;
+pub mod target_evaluation;
 pub mod timers;
 pub mod tree;
 pub mod utility;

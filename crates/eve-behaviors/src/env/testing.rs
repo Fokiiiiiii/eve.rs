@@ -4,8 +4,9 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{
-    Ball, Ballpark, CargoCapacity, DamageTotals, Dogma, EffectInfo, Entities, Inventory, InventoryItem,
-    Logging, ProximitySensor, Random, ResponseThresholds, SlimItem, Universe, WorldError, WorldResult,
+    Ball, Ballpark, CargoCapacity, DamageTotals, Dogma, DungeonObject, EffectInfo, Entities, FakeLocation,
+    Inventory, InventoryItem, Logging, ProximitySensor, Random, ReinforcementWave, ResponseThresholds,
+    SlimItem, Universe, WorldError, WorldResult,
 };
 
 /// What `GetClosestDisruptorAndIntersectionInWarpPath` answers.
@@ -18,6 +19,9 @@ pub struct TestGroup {
     pub owner_id: Option<i64>,
     pub initial_spawning_complete: bool,
 }
+
+/// A spawn point of an operation site: two ids and three coordinates.
+pub type SpawnPointRow = (i64, i64, f64, f64, f64);
 
 /// An in-memory world. Everything is public: a test sets what it needs and reads `calls` for what the tasks did.
 #[derive(Debug, Default)]
@@ -85,11 +89,30 @@ pub struct TestWorld {
     pub additional_capacity: HashMap<i64, f64>,
     pub damage: HashMap<i64, DamageTotals>,
     pub can_dock: HashSet<(i64, i64)>,
+    pub sensor_distances: HashMap<i64, f64>,
+    pub system_factions: HashMap<i64, i64>,
+    pub persisted_tales: HashMap<i64, i64>,
+    pub operation_spawnpoints: HashMap<(i64, i64), SpawnPointRow>,
+    pub dungeon_entries: HashMap<i64, [f64; 3]>,
+    pub dungeon_objects: HashMap<(i64, i64), i64>,
+    pub dungeon_rooms: HashMap<i64, Vec<DungeonObject>>,
+    pub reinforced_groups: HashSet<i64>,
+    pub effect_ranges: HashMap<(i64, i64), (Option<f64>, Option<f64>)>,
+    pub piloted: HashSet<i64>,
+    pub pending_cloak: HashSet<i64>,
+    pub protected: HashSet<i64>,
+    pub ball_sources: HashMap<i64, i64>,
 }
 
 impl TestWorld {
     pub fn with_numbers(numbers: &[f64]) -> Self {
         Self { numbers: numbers.to_vec(), ..Self::default() }
+    }
+
+    /// The numbers the dice answer from, from the start.
+    pub fn set_numbers(&mut self, numbers: &[f64]) {
+        self.numbers = numbers.to_vec();
+        self.next = 0;
     }
 
     pub fn take_calls(&mut self) -> Vec<String> {
@@ -118,6 +141,63 @@ impl Random for TestWorld {
 }
 
 impl Ballpark for TestWorld {
+    fn has_pending_cloak(&self, ball_id: i64) -> bool {
+        self.pending_cloak.contains(&ball_id)
+    }
+
+    fn is_ball_protected(&self, ball_id: i64) -> bool {
+        self.protected.contains(&ball_id)
+    }
+
+    fn ball_ids_and_dist_in_range(&self, ball_id: i64, range: f64) -> Vec<(f64, i64)> {
+        let Some(center) = self.balls.get(&ball_id) else { return Vec::new() };
+        let mut found: Vec<(f64, i64)> = self
+            .balls
+            .values()
+            .filter(|b| b.id != ball_id)
+            .map(|b| {
+                let d = (b.position[0] - center.position[0]).powi(2)
+                    + (b.position[1] - center.position[1]).powi(2)
+                    + (b.position[2] - center.position[2]).powi(2);
+                (d, b.id)
+            })
+            .filter(|(d, _)| *d <= range * range)
+            .collect();
+        found.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        found
+    }
+
+    fn ball_source_id(&self, ball_id: i64) -> Option<i64> {
+        self.ball_sources.get(&ball_id).copied()
+    }
+
+    fn slim_items(&self) -> Vec<SlimItem> {
+        let mut items: Vec<SlimItem> = self.slims.values().cloned().collect();
+        items.sort_by_key(|s| s.item_id);
+        items
+    }
+
+    fn proximity_sensor_distance_to(&self, item_id: i64) -> Option<f64> {
+        self.sensor_distances.get(&item_id).copied()
+    }
+
+    fn replace_proximity_sensor(&mut self, item_id: i64) {
+        self.calls.push(format!("replace_proximity_sensor({item_id})"));
+    }
+
+    fn add_behavior_context_tags(&mut self, item_id: i64) {
+        self.calls.push(format!("add_behavior_context_tags({item_id})"));
+    }
+
+    fn add_proximity_sensor_tag(&mut self, item_id: i64, tag: &str) {
+        self.calls.push(format!("add_proximity_sensor_tag({item_id}, {tag})"));
+    }
+
+    fn register_proximity_sensor(&mut self, item_id: i64) -> Option<i64> {
+        self.calls.push(format!("register_proximity_sensor({item_id})"));
+        Some(item_id)
+    }
+
     fn has_ball(&self, ball_id: i64) -> bool {
         self.balls.contains_key(&ball_id)
     }
@@ -255,6 +335,28 @@ impl Ballpark for TestWorld {
 }
 
 impl Dogma for TestWorld {
+    fn effect_range_with_falloff_multiplier(&self, effect_id: i64, item_id: i64, factor: f64) -> f64 {
+        self.effect_ranges
+            .get(&(item_id, effect_id))
+            .map_or(0.0, |(optimal, falloff)| optimal.unwrap_or(0.0) + falloff.unwrap_or(0.0) * factor)
+    }
+
+    fn effect_range_and_falloff_for_item(&self, item_id: i64, effect_id: i64) -> (Option<f64>, Option<f64>) {
+        self.effect_ranges.get(&(item_id, effect_id)).copied().unwrap_or((None, None))
+    }
+
+    fn add_target_ex(&mut self, item_id: i64, target_id: i64) -> WorldResult<()> {
+        if let Some(error) = self.activation_error.clone() {
+            return Err(error);
+        }
+        self.calls.push(format!("add_target_ex({item_id}, {target_id})"));
+        Ok(())
+    }
+
+    fn is_ship_piloted(&self, ship_id: i64) -> bool {
+        self.piloted.contains(&ship_id)
+    }
+
     fn attribute_value(&self, item_id: i64, attribute_id: i64) -> WorldResult<f64> {
         Ok(self.attributes.get(&(item_id, attribute_id)).copied().unwrap_or(0.0))
     }
@@ -347,6 +449,38 @@ impl Dogma for TestWorld {
 }
 
 impl Logging for TestWorld {
+    fn log_killed_and_fled_players(
+        &mut self,
+        owner_id: Option<i64>,
+        behavior_id: &crate::value::Value,
+        target_set: &crate::value::Value,
+        members: &[i64],
+    ) {
+        self.calls.push(format!(
+            "log_killed_and_fled_players({owner_id:?}, {behavior_id}, {target_set}, {members:?})"
+        ));
+    }
+
+    fn log_behavior_task(
+        &mut self,
+        event: &crate::value::Value,
+        owner_id: Option<i64>,
+        behavior_id: &crate::value::Value,
+        type_id: i64,
+    ) {
+        self.calls.push(format!("log_behavior_task({event}, {owner_id:?}, {behavior_id}, {type_id})"));
+    }
+
+    fn log_behavior_group_destroyed(
+        &mut self,
+        owner_id: Option<i64>,
+        behavior_id: &crate::value::Value,
+        combat_targets: &crate::value::Value,
+    ) {
+        self.calls
+            .push(format!("log_behavior_group_destroyed({owner_id:?}, {behavior_id}, {combat_targets})"));
+    }
+
     fn log_error(&mut self, message: &str) {
         self.calls.push(format!("log_error({message})"));
     }
@@ -375,6 +509,73 @@ impl Logging for TestWorld {
 }
 
 impl Entities for TestWorld {
+    fn dungeon_spawn_entry_pos(&self, spawn_id: i64) -> Option<[f64; 3]> {
+        self.dungeon_entries.get(&spawn_id).copied()
+    }
+
+    fn dungeon_item_id_for_object(&self, spawn_id: i64, object_id: i64) -> Option<i64> {
+        self.dungeon_objects.get(&(spawn_id, object_id)).copied()
+    }
+
+    fn dungeon_room_objects(&self, dungeon_id: i64) -> Vec<DungeonObject> {
+        self.dungeon_rooms.get(&dungeon_id).cloned().unwrap_or_default()
+    }
+
+    fn call_in_reinforcements(&mut self, group_id: i64, thresholds: Option<ResponseThresholds>) {
+        self.calls.push(format!("call_in_reinforcements({group_id}, {})", thresholds.is_some()));
+    }
+
+    fn reinforced_group_exists(&self, group_id: i64) -> bool {
+        self.reinforced_groups.contains(&group_id)
+    }
+
+    fn add_entity_group_reinforcement(
+        &mut self,
+        group_id: i64,
+        entity_count: usize,
+        owner_id: Option<i64>,
+        wave: ReinforcementWave,
+    ) {
+        let override_id = wave.behavior_override_id.map(|v| v.to_string());
+        self.calls.push(format!(
+            "add_entity_group_reinforcement({group_id}, {entity_count}, {owner_id:?}, {}, {}, {}, {override_id:?})",
+            wave.wave_id, wave.cooldown_seconds, wave.threshold
+        ));
+    }
+
+    fn remove_active_reinforced_entity_ids(&mut self, group_id: i64) {
+        self.calls.push(format!("remove_active_reinforced_entity_ids({group_id})"));
+    }
+
+    fn operation_spawnpoint_position(
+        &self,
+        character_id: Option<i64>,
+        site_id: Option<i64>,
+    ) -> WorldResult<(i64, i64, f64, f64, f64)> {
+        let key = (character_id.unwrap_or(0), site_id.unwrap_or(0));
+        self.operation_spawnpoints
+            .get(&key)
+            .copied()
+            .ok_or_else(|| WorldError::Runtime("no such operation site".into()))
+    }
+
+    fn register_payment_on_explosion(
+        &mut self,
+        item_id: i64,
+        bubble_id: i64,
+        reward_id: Option<i64>,
+        tale_id: i64,
+        dungeon_id: i64,
+    ) {
+        self.calls.push(format!(
+            "register_payment_on_explosion({item_id}, {bubble_id}, {reward_id:?}, {tale_id}, {dungeon_id})"
+        ));
+    }
+
+    fn tale_id_for_persisted_object(&self, item_id: i64) -> Option<i64> {
+        self.persisted_tales.get(&item_id).copied()
+    }
+
     fn is_reinforcement_authorized(&self, group_id: i64) -> WorldResult<bool> {
         self.reinforcement_authorized
             .get(&group_id)
@@ -475,6 +676,24 @@ impl Entities for TestWorld {
 }
 
 impl Inventory for TestWorld {
+    fn add_fake_location(&mut self, location: FakeLocation) {
+        self.calls.push(format!(
+            "add_fake_location({}, {:?}, {}, {:?}, {:?})",
+            location.type_id,
+            location.owner_id,
+            location.solar_system_id,
+            location.position,
+            location.object_name_id
+        ));
+    }
+
+    fn insert_location(&mut self, location: FakeLocation) {
+        self.calls.push(format!(
+            "insert_location({}, {:?}, {}, {:?})",
+            location.type_id, location.owner_id, location.solar_system_id, location.position
+        ));
+    }
+
     fn inventory_item(&self, item_id: i64) -> Option<InventoryItem> {
         self.items.get(&item_id).cloned()
     }
@@ -500,6 +719,10 @@ impl Inventory for TestWorld {
 }
 
 impl Universe for TestWorld {
+    fn solar_system_faction_id(&self, solar_system_id: i64) -> Option<i64> {
+        self.system_factions.get(&solar_system_id).copied()
+    }
+
     fn type_category_id(&self, type_id: i64) -> Option<i64> {
         self.type_categories.get(&type_id).copied()
     }

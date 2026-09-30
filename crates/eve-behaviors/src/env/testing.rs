@@ -41,7 +41,7 @@ pub type SpawnPointRow = (i64, i64, f64, f64, f64);
 pub struct TestWorld {
     pub calls: Vec<String>,
     numbers: Vec<f64>,
-    next: usize,
+    pub next: usize,
     pub balls: HashMap<i64, Ball>,
     pub slims: HashMap<i64, SlimItem>,
     pub bubbles: HashMap<i64, Vec<i64>>,
@@ -165,6 +165,27 @@ pub struct TestWorld {
     pub ability_error: Option<WorldError>,
     /// What `stop_effect` fails with.
     pub stop_effect_error: Option<WorldError>,
+
+    pub warp_destination_points: HashMap<(i64, i64), [f64; 3]>,
+    pub sun: Option<i64>,
+    /// What `npc_end_warp` fails with.
+    pub npc_end_warp_error: Option<WorldError>,
+    pub released_balls: HashSet<i64>,
+    /// The observers of the movement that was asked to tell when the ball is in range, in the order they were given.
+    pub notify_observers: Vec<crate::blackboards::Observer>,
+    /// What `orbit_object` fails with.
+    pub orbit_error: Option<WorldError>,
+    pub slim_attributes: HashMap<(i64, String), Value>,
+    pub warp_beacons: Vec<i64>,
+    /// The types that have the persistent slim item component, and the fields they can keep.
+    pub persistent_slim_attributes: HashMap<i64, Vec<String>>,
+    pub random_planet_location: Option<[f64; 3]>,
+    pub location_positions: HashMap<i64, [f64; 3]>,
+
+    /// The entry balls of dungeons by archetype: the spawned ones, then the installed ones (`installed` is the second).
+    pub archetype_entries: [Vec<i64>; 2],
+    /// The same by dungeon id.
+    pub dungeon_id_entries: [Vec<i64>; 2],
 }
 
 impl TestWorld {
@@ -204,6 +225,145 @@ impl Random for TestWorld {
 }
 
 impl Ballpark for TestWorld {
+    fn warp_destination_point(&self, ship_id: i64, target_id: i64) -> [f64; 3] {
+        self.warp_destination_points.get(&(ship_id, target_id)).copied().unwrap_or([0.0; 3])
+    }
+
+    fn change_ball_position(&mut self, ball_id: i64, position: [f64; 3]) {
+        self.calls.push(format!("change_ball_position({ball_id}, {position:?})"));
+    }
+
+    fn remove_item_from_park(&mut self, item_id: i64) {
+        self.calls.push(format!("remove_item_from_park({item_id})"));
+    }
+
+    fn sun_id(&self) -> Option<i64> {
+        self.sun
+    }
+
+    fn npc_end_warp(&mut self, ball_id: i64) -> WorldResult<()> {
+        self.calls.push(format!("npc_end_warp({ball_id})"));
+        self.npc_end_warp_error.clone().map_or(Ok(()), Err)
+    }
+
+    fn check_ball(&self, ball_id: i64) -> WorldResult<()> {
+        if self.balls.contains_key(&ball_id) {
+            Ok(())
+        } else {
+            Err(WorldError::Runtime(format!("no ball {ball_id}")))
+        }
+    }
+
+    fn is_ball_released(&self, ball_id: i64) -> bool {
+        self.released_balls.contains(&ball_id)
+    }
+
+    fn goto_point_notify(
+        &mut self,
+        ball_id: i64,
+        position: [f64; 3],
+        notification_range: f64,
+        observer: crate::blackboards::Observer,
+    ) {
+        self.calls.push(format!("goto_point_notify({ball_id}, {position:?}, {notification_range})"));
+        self.notify_observers.push(observer);
+    }
+
+    fn approach_object_notify(
+        &mut self,
+        ball_id: i64,
+        target_id: i64,
+        notification_range: f64,
+        approach_range: f64,
+        observer: crate::blackboards::Observer,
+    ) {
+        self.calls.push(format!(
+            "approach_object_notify({ball_id}, {target_id}, {notification_range}, {approach_range})"
+        ));
+        self.notify_observers.push(observer);
+    }
+
+    fn orbit_object(
+        &mut self,
+        ball_id: i64,
+        target_id: i64,
+        approach_range: f64,
+        notify: Option<(f64, crate::blackboards::Observer)>,
+    ) -> WorldResult<()> {
+        if let Some(error) = self.orbit_error.clone() {
+            return Err(error);
+        }
+        match notify {
+            Some((range, observer)) => {
+                self.calls.push(format!("orbit_object({ball_id}, {target_id}, {approach_range}, {range})"));
+                self.notify_observers.push(observer);
+            }
+            None => self.calls.push(format!("orbit_object({ball_id}, {target_id}, {approach_range})")),
+        }
+        Ok(())
+    }
+
+    fn stop_movement(&mut self, ball_id: i64) {
+        self.calls.push(format!("stop_movement({ball_id})"));
+    }
+
+    fn stop_movement_events(&mut self, ball_id: i64) {
+        self.calls.push(format!("stop_movement_events({ball_id})"));
+    }
+
+    fn set_movement_speed(&mut self, ball_id: i64, cruise: bool) {
+        self.calls.push(format!("set_movement_speed({ball_id}, {cruise})"));
+    }
+
+    fn goto_direction(&mut self, ball_id: i64, direction: [f64; 3]) -> WorldResult<()> {
+        self.calls.push(format!("goto_direction({ball_id}, {direction:?})"));
+        Ok(())
+    }
+
+    fn set_custom_orbit_velocity(&mut self, ball_id: i64, velocity: Option<f64>) {
+        self.calls.push(format!("set_custom_orbit_velocity({ball_id}, {velocity:?})"));
+    }
+
+    fn remove_custom_orbit_velocity(&mut self, ball_id: i64) {
+        self.calls.push(format!("remove_custom_orbit_velocity({ball_id})"));
+    }
+
+    fn slim_item_attribute(&self, item_id: i64, name: &str) -> Value {
+        self.slim_attributes.get(&(item_id, name.to_string())).cloned().unwrap_or(Value::None)
+    }
+
+    fn npc_warp_beacon_item_ids(&self) -> Vec<i64> {
+        self.warp_beacons.clone()
+    }
+
+    fn has_store_slim_item_field_component(&self, type_id: i64) -> bool {
+        self.persistent_slim_attributes.contains_key(&type_id)
+    }
+
+    fn persistent_slim_item_attributes_for_type(&self, type_id: i64) -> Vec<String> {
+        self.persistent_slim_attributes.get(&type_id).cloned().unwrap_or_default()
+    }
+
+    fn save_slim_item_setting(&mut self, item_id: i64, field: &str, value: &Value) {
+        self.calls.push(format!("save_slim_item_setting({item_id}, {field}, {value:?})"));
+    }
+
+    fn random_placement_near_random_planet(
+        &mut self,
+        solar_system_id: Option<i64>,
+        min_distance: f64,
+        max_distance: f64,
+    ) -> Option<[f64; 3]> {
+        self.calls.push(format!(
+            "random_placement_near_random_planet({solar_system_id:?}, {min_distance}, {max_distance})"
+        ));
+        self.random_planet_location
+    }
+
+    fn location_position(&self, location_id: i64) -> Option<[f64; 3]> {
+        self.location_positions.get(&location_id).copied()
+    }
+
     fn update_slim_item_field(&mut self, item_id: i64, name: &str, value: Value) {
         self.calls.push(format!("update_slim_item_field({item_id}, {name}, {value:?})"));
     }
@@ -803,6 +963,24 @@ impl Logging for TestWorld {
 }
 
 impl Entities for TestWorld {
+    fn dungeon_entry_objects_of_archetype(
+        &self,
+        _solar_system_id: Option<i64>,
+        _archetypes: &Value,
+        installed: bool,
+    ) -> Vec<i64> {
+        self.archetype_entries[usize::from(installed)].clone()
+    }
+
+    fn dungeon_entry_objects_of_dungeon_id(
+        &self,
+        _solar_system_id: Option<i64>,
+        _dungeon_ids: &Value,
+        installed: bool,
+    ) -> Vec<i64> {
+        self.dungeon_id_entries[usize::from(installed)].clone()
+    }
+
     fn ability_activation_succeeded(
         &mut self,
         item_id: i64,

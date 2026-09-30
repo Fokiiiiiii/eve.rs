@@ -405,4 +405,25 @@ pub trait Entities {
 
     /// `.OnAbilityActivationFailed(itemId, slot)`.
     fn ability_activation_failed(&mut self, _item_id: i64, _slot: &Value) {}
+
+    /// `keeper.GetDungeonEntryObjectsOfArchetype(solarSystemId, archetypes)` and, with `installed`, `GetInstalledDungeonEntryObjectsOfArchetype`:
+    /// the balls (ids) that enter such a dungeon.
+    fn dungeon_entry_objects_of_archetype(
+        &self,
+        _solar_system_id: Option<i64>,
+        _archetypes: &Value,
+        _installed: bool,
+    ) -> Vec<i64> {
+        Vec::new()
+    }
+
+    /// `keeper.GetDungeonEntryObjectsOfDungeonID(solarSystemId, dungeonIds)` and, with `installed`, `GetInstalledDungeonEntryObjectsOfDungeonID`.
+    fn dungeon_entry_objects_of_dungeon_id(
+        &self,
+        _solar_system_id: Option<i64>,
+        _dungeon_ids: &Value,
+        _installed: bool,
+    ) -> Vec<i64> {
+        Vec::new()
+    }
 }

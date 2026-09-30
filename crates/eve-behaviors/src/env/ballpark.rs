@@ -20,6 +20,15 @@ pub struct Ball {
     pub radius: f64,
     pub is_cloaked: bool,
     pub is_free: bool,
+    /// `miniBalls`: the spheres a big ball is made of, placed from its centre.
+    pub mini_balls: Vec<MiniBall>,
+}
+
+/// One of the spheres (`ball.miniBalls`) a ball is made of.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MiniBall {
+    pub position: [f64; 3],
+    pub radius: f64,
 }
 
 /// A slim item: what the tasks read of an item of the ballpark.
@@ -369,4 +378,146 @@ pub trait Ballpark {
 
     /// `ballpark.UpdateSlimItemFieldMulti(itemId, **fields)`.
     fn update_slim_item_field_multi(&mut self, _item_id: i64, _fields: &[(&str, Value)]) {}
+
+    /// `ballpark.GetWarpDestinationPoint(shipId, targetId)`: where a warp to the target ends.
+    fn warp_destination_point(&self, _ship_id: i64, _target_id: i64) -> [f64; 3] {
+        [0.0; 3]
+    }
+
+    /// `ballpark.ChangeBallPosition(ballId, x, y, z)`.
+    fn change_ball_position(&mut self, _ball_id: i64, _position: [f64; 3]) {}
+
+    /// `ballpark.RemoveItemFromPark(item)`.
+    fn remove_item_from_park(&mut self, _item_id: i64) {}
+
+    /// `ballpark.sunID`.
+    fn sun_id(&self) -> Option<i64> {
+        None
+    }
+
+    /// `ball.NPCEndWarp()`.
+    fn npc_end_warp(&mut self, _ball_id: i64) -> WorldResult<()> {
+        Ok(())
+    }
+
+    /// `ballpark.CheckBall(ballId)`: what it raises for a ball that is not in the park.
+    fn check_ball(&self, _ball_id: i64) -> WorldResult<()> {
+        Ok(())
+    }
+
+    /// `ball.broker is None`: the ball was released.
+    fn is_ball_released(&self, _ball_id: i64) -> bool {
+        false
+    }
+
+    /// `ball.GotoPoint(position, notificationRange=, callback=(observer, ()))`: the observer is told (`entered`) when the ball is in range.
+    fn goto_point_notify(
+        &mut self,
+        _ball_id: i64,
+        _position: [f64; 3],
+        _notification_range: f64,
+        _observer: crate::blackboards::Observer,
+    ) {
+    }
+
+    /// `ball.ApproachObject(targetId, notificationRange=, approachRange=, callback=(observer, ()))`.
+    fn approach_object_notify(
+        &mut self,
+        _ball_id: i64,
+        _target_id: i64,
+        _notification_range: f64,
+        _approach_range: f64,
+        _observer: crate::blackboards::Observer,
+    ) {
+    }
+
+    /// `ball.OrbitObject(targetId, approachRange=, notificationRange=, callback=(observer, ()))`; what it raises (`UserError`).
+    fn orbit_object(
+        &mut self,
+        _ball_id: i64,
+        _target_id: i64,
+        _approach_range: f64,
+        _notify: Option<(f64, crate::blackboards::Observer)>,
+    ) -> WorldResult<()> {
+        Ok(())
+    }
+
+    /// `ball.StopMovement()`.
+    fn stop_movement(&mut self, _ball_id: i64) {}
+
+    /// `ball.StopMovementEvents()`.
+    fn stop_movement_events(&mut self, _ball_id: i64) {}
+
+    /// `ball.SetMovementSpeed(cruise=)`.
+    fn set_movement_speed(&mut self, _ball_id: i64, _cruise: bool) {}
+
+    /// `ballpark.GotoDirection(ballId, x, y, z)`.
+    fn goto_direction(&mut self, _ball_id: i64, _direction: [f64; 3]) -> WorldResult<()> {
+        Ok(())
+    }
+
+    /// `ball.GetEntityVelocity().set_custom_orbit_velocity(velocity)`.
+    fn set_custom_orbit_velocity(&mut self, _ball_id: i64, _velocity: Option<f64>) {}
+
+    /// `ball.GetEntityVelocity().remove_custom_orbit_velocity()`.
+    fn remove_custom_orbit_velocity(&mut self, _ball_id: i64) {}
+
+    /// `getattr(slimItem, name, None)`: a field of the slim item that the tasks name (`sourceShipID`, whatever a behavior stores).
+    fn slim_item_attribute(&self, _item_id: i64, _name: &str) -> Value {
+        Value::None
+    }
+
+    /// `componentRegistry.GetInstancesWithComponentClass(NPC_WARP_BEACON)`: the items.
+    fn npc_warp_beacon_item_ids(&self) -> Vec<i64> {
+        Vec::new()
+    }
+
+    /// `HasStoreSlimItemFieldInItemSettingsComponent(typeId)`.
+    fn has_store_slim_item_field_component(&self, _type_id: i64) -> bool {
+        false
+    }
+
+    /// `StoreSlimItemFieldInItemSettings.GetPersistentSlimItemAttributesForType(typeId)`.
+    fn persistent_slim_item_attributes_for_type(&self, _type_id: i64) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// `componentRegistry.GetComponentForItem(itemId, STORE_SLIM_ITEM_FIELD_IN_ITEM_SETTINGS).SaveSlimItemSetting(ballpark, field, value)`.
+    fn save_slim_item_setting(&mut self, _item_id: i64, _field: &str, _value: &Value) {}
+
+    /// `GetRandomPlacementNearRandomPlanet(solarsystemId, minDistance, maxDistance)` (`ballpark.locationgenerator`).
+    fn random_placement_near_random_planet(
+        &mut self,
+        _solar_system_id: Option<i64>,
+        _min_distance: f64,
+        _max_distance: f64,
+    ) -> Option<[f64; 3]> {
+        None
+    }
+
+    /// `cfg.evelocations.Get(locationId)`: where it is.
+    fn location_position(&self, _location_id: i64) -> Option<[f64; 3]> {
+        None
+    }
+
+    /// `ballpark.GetItemsInBubble(None, itemID=ballId)`: the balls of the bubble the ball is in.
+    fn items_in_bubble_of(&self, ball_id: i64) -> Vec<i64> {
+        self.ball(ball_id).and_then(|ball| self.ball_ids_in_bubble(ball.new_bubble_id)).unwrap_or_default()
+    }
+
+    /// `GetWarpBubbleItemIdsWithinRangeOfBall(ballpark, ballId)`: `(warp disruption probes, ships with a bubble)` that reach the ball.
+    fn warp_bubble_item_ids_within_range_of_ball(&self, ball_id: i64) -> (Vec<i64>, Vec<i64>) {
+        match self.ball(ball_id) {
+            Some(ball) => self.warp_bubble_item_ids_within_range_of_coordinate(ball.position),
+            None => (Vec::new(), Vec::new()),
+        }
+    }
+
+    /// `ballpark.InSameBubble(itemId, otherId)`.
+    fn in_same_bubble(&self, item_id: i64, other_id: i64) -> bool {
+        match (self.ball(item_id), self.ball(other_id)) {
+            (Some(ball), Some(other)) => ball.new_bubble_id == other.new_bubble_id,
+            _ => false,
+        }
+    }
 }

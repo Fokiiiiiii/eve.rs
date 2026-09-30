@@ -143,3 +143,10 @@ pub const EFFECT_BEHAVIOR_ECM: i64 = 6757;
 pub const EFFECT_NPC_BEHAVIOR_MICRO_JUMP_ATTACK: i64 = 7187;
 pub const EFFECT_NPC_BEHAVIOR_SMART_BOMB: i64 = 7188;
 pub const EFFECT_ENTITY_CHAIN_LIGHTNING: i64 = 8088;
+pub const CATEGORY_CHARGE: i64 = 8;
+pub const GROUP_STARGATE: i64 = 10;
+pub const GROUP_STATION: i64 = 15;
+pub const ATTRIBUTE_ENTITY_CRUISE_SPEED: i64 = 508;
+pub const ATTRIBUTE_WARP_SPEED_MULTIPLIER: i64 = 600;
+/// `appConst.AU`: metres in an astronomical unit.
+pub const AU: f64 = 149_597_870_700.0;

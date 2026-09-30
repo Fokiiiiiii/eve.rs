@@ -1562,6 +1562,8 @@ pub(crate) mod tests {
         pub log: Rc<RefCell<Vec<String>>>,
         /// What the last tick raised, for `with_task`.
         pub last_error: Option<BehaviorError>,
+        /// The task `run` made the root last.
+        pub task: TaskId,
     }
 
     impl Rig {
@@ -1577,7 +1579,24 @@ pub(crate) mod tests {
                 world: TestWorld::default(),
                 log: Rc::default(),
                 last_error: None,
+                task: 0,
             }
+        }
+
+        /// The status of the task `run` made the root last.
+        pub fn task_status(&self) -> Status {
+            self.tree.status_of(self.task)
+        }
+
+        /// `Task.CleanUp` of the task `run` made the root last (what a reset does to every task).
+        pub fn clean_up_task(&mut self) {
+            let mut cx = Cx {
+                core: &mut self.tree.core,
+                ctx: &mut self.ctx,
+                shared: &mut self.shared,
+                world: &mut self.world,
+            };
+            cx.clean_up_task(self.task);
         }
 
         pub fn tick(&mut self) -> Result<(), BehaviorError> {
@@ -1599,6 +1618,15 @@ pub(crate) mod tests {
                 {
                     self.last_error.get_or_insert(error);
                 }
+            }
+        }
+
+        /// A call the world makes of a task (what a ball tells when it is in range): the observer is told with these arguments.
+        pub fn call_observer(&mut self, observer: crate::blackboards::Observer, args: &[Value]) {
+            let delivery = Delivery::Call { observer, args: args.to_vec() };
+            if let Err(error) = self.tree.deliver(&mut self.ctx, &mut self.shared, &mut self.world, &delivery)
+            {
+                self.last_error.get_or_insert(error);
             }
         }
 
@@ -1674,6 +1702,7 @@ pub(crate) mod tests {
         /// Makes a task the root, ticks once, and gives back the status it ended in (what the tick raised is in `last_error`).
         pub fn run(&mut self, node: Box<dyn Task>, attributes: Attrs) -> Status {
             let task = self.tree.add_task(node, attributes);
+            self.task = task;
             self.tree.start_root_task(task);
             self.last_error = self.tick().err();
             self.tree.status_of(task)

@@ -60,6 +60,56 @@ pub fn farthest_distance_from_point(reference: [f64; 3], points: &[[f64; 3]]) ->
         .map(f64::sqrt)
 }
 
+/// `geo2.Vec3AddD`.
+pub fn vec_add(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+/// `geo2.Vec3SubtractD`.
+pub fn vec_sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+/// `geo2.Vec3ScaleD`.
+pub fn vec_scale(v: [f64; 3], factor: f64) -> [f64; 3] {
+    [v[0] * factor, v[1] * factor, v[2] * factor]
+}
+
+/// `geo2.Vec3LengthD`.
+pub fn vec_length(v: [f64; 3]) -> f64 {
+    (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
+}
+
+/// `geo2.Vec3NormalizeD`: the vector of a length of 1 (the zero vector stays what it is).
+pub fn vec_normalize(v: [f64; 3]) -> [f64; 3] {
+    let length = vec_length(v);
+    if length == 0.0 { [0.0; 3] } else { [v[0] / length, v[1] / length, v[2] / length] }
+}
+
+/// `geo2.Vec3DotD`.
+pub fn vec_dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+/// `geo2.Vec3DirectionD(a, b)`: the direction of `a - b`.
+pub fn vec_direction(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    vec_normalize(vec_sub(a, b))
+}
+
+/// `mathCommon.RandomVector(radius, width)`: a point on a sphere of `radius`, or in a shell `width` thick below it. Draws two numbers, and a third
+/// for a shell.
+pub fn random_vector(radius: f64, width: f64, world: &mut dyn World) -> [f64; 3] {
+    let t = world.random() * 2.0 * std::f64::consts::PI;
+    let u = (world.random() - 0.5) * 2.0;
+    let sq = (1.0 - u * u).sqrt();
+    let mut radius = radius;
+    if width > 0.0 {
+        let width = width.min(radius);
+        radius -= world.random() * width;
+    }
+    [radius * sq * t.cos(), radius * sq * t.sin(), radius * u]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,5 +152,35 @@ mod tests {
         assert_eq!(center_point(&[[0.0, 0.0, 0.0], [2.0, 4.0, 6.0]]), Some([1.0, 2.0, 3.0]));
         assert_eq!(farthest_distance_from_point([0.0; 3], &[[3.0, 4.0, 0.0], [1.0, 0.0, 0.0]]), Some(5.0));
         assert_eq!(farthest_distance_from_point([0.0; 3], &[]), None);
+    }
+
+    #[test]
+    fn a_random_vector_is_on_the_sphere_or_in_the_shell_and_draws_what_the_client_draws() {
+        let mut w = TestWorld::with_numbers(&[0.25, 0.75, 0.5]);
+        let v = random_vector(10.0, 0.0, &mut w);
+        // t = pi / 2 * 1 = 0.5 * pi, u = 0.5, sq = sqrt(0.75)
+        assert!(
+            (v[0]).abs() < 1e-9 && (v[1] - 10.0 * 0.75f64.sqrt()).abs() < 1e-9 && (v[2] - 5.0).abs() < 1e-9
+        );
+        assert_eq!(w.next, 2, "two numbers");
+        let mut w = TestWorld::with_numbers(&[0.0, 1.0, 0.5]);
+        let v = random_vector(10.0, 4.0, &mut w);
+        // u = 1: the pole; the radius is 10 - 0.5 * 4
+        assert!((v[2] - 8.0).abs() < 1e-9 && v[0].abs() < 1e-9 && v[1].abs() < 1e-9);
+        assert_eq!(w.next, 3);
+        // a shell wider than the radius is the radius
+        let mut w = TestWorld::with_numbers(&[0.0, 1.0, 1.0]);
+        assert!((random_vector(10.0, 40.0, &mut w)[2]).abs() < 1e-9);
+    }
+
+    #[test]
+    fn vectors_are_added_scaled_and_normalized_and_the_direction_goes_from_the_second_to_the_first() {
+        assert_eq!(vec_add([1.0, 2.0, 3.0], [1.0, 1.0, 1.0]), [2.0, 3.0, 4.0]);
+        assert_eq!(vec_sub([1.0, 2.0, 3.0], [1.0, 1.0, 1.0]), [0.0, 1.0, 2.0]);
+        assert_eq!(vec_scale([1.0, 2.0, 3.0], 2.0), [2.0, 4.0, 6.0]);
+        assert_eq!(vec_normalize([0.0, 3.0, 4.0]), [0.0, 0.6, 0.8]);
+        assert_eq!(vec_normalize([0.0; 3]), [0.0; 3]);
+        assert_eq!(vec_dot([1.0, 2.0, 3.0], [4.0, 5.0, 6.0]), 32.0);
+        assert_eq!(vec_direction([10.0, 0.0, 0.0], [4.0, 0.0, 0.0]), [1.0, 0.0, 0.0]);
     }
 }

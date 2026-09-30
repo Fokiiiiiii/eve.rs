@@ -45,6 +45,21 @@ pub enum WorldError {
     WrongInventoryLocation,
     /// `inventorycommon.FakeItemNotHere`: a fake item (an NPC's) that is not in this system.
     FakeItemNotHere,
+    /// `behaviors.entity.NPCWarpError` and what is derived from it: why the warp of an NPC did not start.
+    NpcWarp(NpcWarpKind),
+}
+
+/// The `NPCWarpError`s (`behaviors/entity.py`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum NpcWarpKind {
+    /// `NpcWarpScrambledError`.
+    Scrambled,
+    /// `NpcWarpBubbledError`.
+    Bubbled,
+    /// `NpcWarpPathBubbledError`.
+    PathBubbled,
+    /// `NPCWarpError` itself.
+    Other(String),
 }
 
 pub type WorldResult<T> = Result<T, WorldError>;

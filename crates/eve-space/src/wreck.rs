@@ -16,7 +16,7 @@ pub const WRECK_CATEGORY: i32 = 2;
 pub const WRECK_LIFETIME: i64 = 2 * 60 * 60 * TICKS_PER_SECOND;
 
 /// The effect the client plays where a ship is destroyed (`DESTRUCTION_EFFECT_EXPLOSION`).
-pub const DESTRUCTION_EFFECT_EXPLOSION: i64 = 3;
+pub const DESTRUCTION_EFFECT_EXPLOSION: i64 = crate::destruction::EXPLOSION;
 
 /// The wreck a ship of some type leaves.
 #[derive(Debug, Clone, PartialEq)]

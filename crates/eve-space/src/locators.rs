@@ -65,14 +65,42 @@ fn table() -> &'static HashMap<i32, Vec<Point>> {
     })
 }
 
-/// The kind of undock point a ship of this group needs: capitals and the big hulls come out of bigger doors.
+/// The kind of undock point a ship of this group needs: capitals and the big hulls come out of bigger doors. `GROUP_MAPPING` of
+/// `ballparkCommon/docking.py` of the client (V24.01, `Fokiiiiiii/eve-logic`), ported as it is.
 pub fn category_of(ship_group: i32) -> &'static str {
     match ship_group {
-        27 | 28 | 380 | 381 | 513 | 898 | 900 | 902 | 941 | 1202 => LARGE,
-        485 | 547 | 883 | 1538 | 4594 => CAPITAL,
+        // freighter, industrial, transport ship, blockade runner, jump freighter, battleship, elite battleship, black ops, marauder, industrial command ship
+        513 | 28 | 380 | 1202 | 902 | 27 | 381 | 898 | 900 | 941 => LARGE,
+        // carrier, command carrier, force auxiliary, dreadnought, lancer dreadnought, capital industrial ship
+        547 | 5120 | 1538 | 485 | 4594 | 883 => CAPITAL,
+        // titan, supercarrier
         30 | 659 => SUPERCAPITAL,
         _ => SMALL,
     }
+}
+
+/// The structures that only let the biggest ships out (they cannot dock there): Raitaru, Azbel, Sotiyo (`ONE_WAY_UNDOCKS_BY_STRUCTURE_TYPE`).
+const ONE_WAY_UNDOCKS: [(i32, &[&str]); 3] =
+    [(35825, &[CAPITAL, SUPERCAPITAL]), (35826, &[CAPITAL, SUPERCAPITAL]), (35827, &[SUPERCAPITAL])];
+
+/// The ship groups a structure does not let dock (`EXCLUDED_DOCKS_BY_STRUCTURE_TYPE`): the Tatara takes no carriers, dreadnoughts or force auxiliaries,
+/// the Insurgency FOBs no freighters.
+const EXCLUDED_DOCKS: [(i32, &[i32]); 3] =
+    [(35836, &[547, 5120, 1538, 485, 4594]), (78260, &[513, 902]), (79172, &[513, 902])];
+
+/// Whether a ship of `ship_group` may dock at a station of `station_type` (`CanDock` of `ballparkCommon/docking.py`): the type needs a door for the ship's size,
+/// does not exclude the group, and is not one that only lets that size out. None when the table does not know the type (the game would then
+/// say no; this table holds only the types the reference knows, and saying no to the rest would shut ships out of stations that have doors).
+pub fn can_dock(station_type: i32, ship_group: i32) -> Option<bool> {
+    let points = table().get(&station_type)?;
+    let wanted = category_of(ship_group);
+    if !points.iter().any(|p| p.category == wanted) {
+        return Some(false);
+    }
+    if EXCLUDED_DOCKS.iter().any(|(t, groups)| *t == station_type && groups.contains(&ship_group)) {
+        return Some(false);
+    }
+    Some(!ONE_WAY_UNDOCKS.iter().any(|(t, categories)| *t == station_type && categories.contains(&wanted)))
 }
 
 /// A vector turned by yaw, pitch and roll in degrees (the orientation the client's `dunRotation` gives).
@@ -133,6 +161,60 @@ mod tests {
         assert_eq!(category_of(27), LARGE, "a battleship");
         assert_eq!(category_of(485), CAPITAL, "a dreadnought");
         assert_eq!(category_of(659), SUPERCAPITAL, "a supercarrier");
+    }
+
+    #[test]
+    fn every_group_the_client_maps_to_a_door_is_mapped_to_the_one_it_says() {
+        // the client's `GROUP_MAPPING`, group by group (the ids are the client's `inventorycommon.const`)
+        for (group, category) in [
+            (513, LARGE),
+            (28, LARGE),
+            (380, LARGE),
+            (1202, LARGE),
+            (902, LARGE),
+            (27, LARGE),
+            (381, LARGE),
+            (898, LARGE),
+            (900, LARGE),
+            (941, LARGE),
+            (547, CAPITAL),
+            (5120, CAPITAL),
+            (1538, CAPITAL),
+            (485, CAPITAL),
+            (4594, CAPITAL),
+            (883, CAPITAL),
+            (30, SUPERCAPITAL),
+            (659, SUPERCAPITAL),
+            (25, SMALL),
+            (237, SMALL),
+        ] {
+            assert_eq!(category_of(group), category, "group {group}");
+        }
+    }
+
+    #[test]
+    fn a_ship_docks_where_the_station_has_a_door_for_its_size_and_the_structure_lets_it() {
+        // a station with a single generic point has no door of a size: the client's rule says none of its own kind is there
+        assert_eq!(can_dock(54, 485), Some(false));
+        // AIR Trade Center has doors of the two smaller sizes
+        assert_eq!(can_dock(92885, 237), Some(true));
+        assert_eq!(can_dock(92885, 27), Some(true));
+        assert_eq!(can_dock(1, 237), None, "a type the table does not know");
+    }
+
+    #[test]
+    fn the_structures_that_turn_ships_away_or_only_let_them_out_do_it_for_the_groups_the_client_names() {
+        // not in the table, so exercised through the lists
+        assert!(
+            EXCLUDED_DOCKS.iter().any(|(t, g)| *t == 35836 && g.contains(&5120)),
+            "a Tatara takes no command carriers"
+        );
+        assert!(
+            ONE_WAY_UNDOCKS
+                .iter()
+                .any(|(t, c)| *t == 35827 && c.contains(&SUPERCAPITAL) && !c.contains(&CAPITAL))
+        );
+        assert!(ONE_WAY_UNDOCKS.iter().any(|(t, c)| *t == 35825 && c.contains(&CAPITAL)));
     }
 
     #[test]

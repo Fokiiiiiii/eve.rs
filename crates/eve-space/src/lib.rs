@@ -8,6 +8,7 @@
 pub mod brains;
 pub mod crowd;
 pub mod death;
+pub mod destruction;
 pub mod flight;
 pub mod gate;
 pub mod geo;

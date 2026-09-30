@@ -322,6 +322,13 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         {
             return null;
         }
+        // where the module may be used (the client's dogmaLM refuses before it works out anything)
+        if (snapshot.Fitted.Any(m => m.Id == moduleId)
+            && _systems.Get(pilot.SolarSystemId) is { } place
+            && ModuleRestrictions.Check(Security.ClassFromLevel(place.Security), attribute => snapshot.World.Get(moduleId, attribute)) is { } forbidden)
+        {
+            throw MachoErrors.ThrowUserError(forbidden);
+        }
         var made = ModulePackages.Of(snapshot, _statics, moduleId, effectName, targetId, repeat);
         if (made.Effect is not { } package)
         {

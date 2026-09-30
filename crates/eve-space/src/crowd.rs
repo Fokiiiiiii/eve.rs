@@ -84,7 +84,7 @@ impl Scene {
     }
 
     /// `AddBalls2` of a ship followed by its numbers, as a watcher is sent a ship that has come into view.
-    fn introduction(&mut self, subject: SessionId, now: i64) -> Option<Vec<Value>> {
+    pub(crate) fn introduction(&mut self, subject: SessionId, now: i64) -> Option<Vec<Value>> {
         let stamp = self.next_stamp(now);
         let ship = &self.pilots.get(&subject)?.ship;
         let ship_id = id(ship.spec.ship_id);

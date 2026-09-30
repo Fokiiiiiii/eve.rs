@@ -40,6 +40,8 @@ pub mod kind {
     pub const SPAWN: u8 = 22;
     pub const SPAWN_REPLY: u8 = 23;
     pub const DESTROY: u8 = 24;
+    pub const RESPAWN: u8 = 25;
+    pub const PLACE_WRECK: u8 = 26;
 }
 
 /// How a ship comes into space.
@@ -65,6 +67,22 @@ pub struct Spawn {
     pub direction: [f64; 3],
     pub behavior: String,
     pub identity: NpcIdentity,
+}
+
+/// A wreck the host made, to be put in space: the item it is (the host's own id), what it is, where, and who may take what is in it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WreckPlacement {
+    pub solar_system_id: i32,
+    pub wreck_id: i64,
+    pub kind: WreckKind,
+    pub position: [f64; 3],
+    pub direction: [f64; 3],
+    pub radius: f64,
+    /// The ship that was destroyed.
+    pub launcher_id: i64,
+    pub credit: Credit,
+    /// Nothing in it to take.
+    pub is_empty: bool,
 }
 
 /// A ship enters a solar system.
@@ -184,6 +202,8 @@ pub enum Message {
         direction: [f64; 3],
         radius: f64,
         killer_ship_id: i64,
+        /// The wreck the ship's type leaves (a player's wreck is made by the host from it).
+        wreck_kind: Option<WreckKind>,
     },
     /// The host asks a scene to spawn an NPC (answered with `SpawnReply`).
     Spawn(Box<Spawn>),
@@ -197,6 +217,15 @@ pub enum Message {
         ship_id: i64,
         credit: Credit,
     },
+    /// The host gives a session whose ship was destroyed another (the capsule it made), at rest at the place (answered with `EnterReply`).
+    Respawn {
+        session_id: u64,
+        ship: Box<ShipSpec>,
+        position: [f64; 3],
+        direction: [f64; 3],
+    },
+    /// The host has made a wreck (an item with contents) of a ship that was destroyed, and asks the scene to put it in space.
+    PlaceWreck(Box<WreckPlacement>),
     /// A targeting command the scene refused, with what the client is told of the target: its type, the range the ship can lock at and how far
     /// away the target is (both 0 unless the target was out of range; for `TARGET_LOCK_LIMIT_REACHED` the range is the number of targets the ship
     /// may hold).
@@ -397,7 +426,13 @@ fn put_identity(out: &mut Vec<u8>, identity: &NpcIdentity) {
             out.extend_from_slice(&number.to_le_bytes());
         }
     }
-    match &identity.wreck {
+    put_wreck_kind(out, identity.wreck.as_ref());
+    out.push(u8::from(identity.hull));
+}
+
+/// A wreck's kind, or none: a flag, the type, the name and the graphic (0 for none).
+fn put_wreck_kind(out: &mut Vec<u8>, kind: Option<&WreckKind>) {
+    match kind {
         None => out.push(0),
         Some(wreck) => {
             out.push(1);
@@ -406,7 +441,42 @@ fn put_identity(out: &mut Vec<u8>, identity: &NpcIdentity) {
             out.extend_from_slice(&wreck.graphic_id.unwrap_or(0).to_le_bytes());
         }
     }
-    out.push(u8::from(identity.hull));
+}
+
+fn read_wreck_kind(reader: &mut Reader) -> Result<Option<WreckKind>, DecodeError> {
+    match reader.u8()? {
+        0 => Ok(None),
+        1 => {
+            let (type_id, name, graphic) = (reader.i32()?, reader.text()?, reader.i32()?);
+            Ok(Some(WreckKind { type_id, name, graphic_id: (graphic != 0).then_some(graphic) }))
+        }
+        _ => Err(DecodeError::BadValue("wreck")),
+    }
+}
+
+fn put_vector(out: &mut Vec<u8>, vector: &[f64; 3]) {
+    for number in vector {
+        out.extend_from_slice(&number.to_le_bytes());
+    }
+}
+
+fn read_vector(reader: &mut Reader) -> Result<[f64; 3], DecodeError> {
+    Ok([reader.f64()?, reader.f64()?, reader.f64()?])
+}
+
+fn put_credit(out: &mut Vec<u8>, credit: &Credit) {
+    for number in [credit.character_id, credit.corporation_id, credit.alliance_id, credit.war_faction_id] {
+        out.extend_from_slice(&number.to_le_bytes());
+    }
+}
+
+fn read_credit(reader: &mut Reader) -> Result<Credit, DecodeError> {
+    Ok(Credit {
+        character_id: reader.i64()?,
+        corporation_id: reader.i64()?,
+        alliance_id: reader.i64()?,
+        war_faction_id: reader.i64()?,
+    })
 }
 
 fn read_identity(reader: &mut Reader) -> Result<NpcIdentity, DecodeError> {
@@ -443,14 +513,7 @@ fn read_identity(reader: &mut Reader) -> Result<NpcIdentity, DecodeError> {
             },
         });
     }
-    let wreck = match reader.u8()? {
-        0 => None,
-        1 => {
-            let (type_id, name, graphic) = (reader.i32()?, reader.text()?, reader.i32()?);
-            Some(WreckKind { type_id, name, graphic_id: (graphic != 0).then_some(graphic) })
-        }
-        _ => return Err(DecodeError::BadValue("wreck")),
-    };
+    let wreck = read_wreck_kind(reader)?;
     let hull = match reader.u8()? {
         0 => false,
         1 => true,
@@ -667,6 +730,8 @@ impl Message {
             Self::Spawn(_) => kind::SPAWN,
             Self::SpawnReply { .. } => kind::SPAWN_REPLY,
             Self::Destroy { .. } => kind::DESTROY,
+            Self::Respawn { .. } => kind::RESPAWN,
+            Self::PlaceWreck(_) => kind::PLACE_WRECK,
         }
     }
 
@@ -786,6 +851,7 @@ impl Message {
                 direction,
                 radius,
                 killer_ship_id,
+                wreck_kind,
             } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&ship_id.to_le_bytes());
@@ -794,6 +860,24 @@ impl Message {
                     out.extend_from_slice(&number.to_le_bytes());
                 }
                 out.extend_from_slice(&killer_ship_id.to_le_bytes());
+                put_wreck_kind(&mut out, wreck_kind.as_ref());
+            }
+            Self::Respawn { session_id, ship, position, direction } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                put_ship(&mut out, ship);
+                put_vector(&mut out, position);
+                put_vector(&mut out, direction);
+            }
+            Self::PlaceWreck(placement) => {
+                out.extend_from_slice(&placement.solar_system_id.to_le_bytes());
+                out.extend_from_slice(&placement.wreck_id.to_le_bytes());
+                put_wreck_kind(&mut out, Some(&placement.kind));
+                put_vector(&mut out, &placement.position);
+                put_vector(&mut out, &placement.direction);
+                out.extend_from_slice(&placement.radius.to_le_bytes());
+                out.extend_from_slice(&placement.launcher_id.to_le_bytes());
+                put_credit(&mut out, &placement.credit);
+                out.push(u8::from(placement.is_empty));
             }
             Self::Spawn(spawn) => {
                 out.extend_from_slice(&spawn.request_id.to_le_bytes());
@@ -821,10 +905,7 @@ impl Message {
             }
             Self::Destroy { ship_id, credit } => {
                 out.extend_from_slice(&ship_id.to_le_bytes());
-                out.extend_from_slice(&credit.character_id.to_le_bytes());
-                out.extend_from_slice(&credit.corporation_id.to_le_bytes());
-                out.extend_from_slice(&credit.alliance_id.to_le_bytes());
-                out.extend_from_slice(&credit.war_faction_id.to_le_bytes());
+                put_credit(&mut out, credit);
             }
             Self::TargetRefused {
                 session_id,
@@ -962,7 +1043,40 @@ impl Message {
                 direction: [r.f64()?, r.f64()?, r.f64()?],
                 radius: r.f64()?,
                 killer_ship_id: r.i64()?,
+                wreck_kind: read_wreck_kind(&mut r)?,
             },
+            kind::RESPAWN => Message::Respawn {
+                session_id: r.u64()?,
+                ship: Box::new(read_ship(&mut r)?),
+                position: read_vector(&mut r)?,
+                direction: read_vector(&mut r)?,
+            },
+            kind::PLACE_WRECK => {
+                let solar_system_id = r.i32()?;
+                let wreck_id = r.i64()?;
+                let Some(kind) = read_wreck_kind(&mut r)? else { return Err(DecodeError::BadValue("wreck")) };
+                let position = read_vector(&mut r)?;
+                let direction = read_vector(&mut r)?;
+                let radius = r.f64()?;
+                let launcher_id = r.i64()?;
+                let credit = read_credit(&mut r)?;
+                let is_empty = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("is_empty")),
+                };
+                Message::PlaceWreck(Box::new(WreckPlacement {
+                    solar_system_id,
+                    wreck_id,
+                    kind,
+                    position,
+                    direction,
+                    radius,
+                    launcher_id,
+                    credit,
+                    is_empty,
+                }))
+            }
             kind::SPAWN => {
                 let request_id = r.u64()?;
                 let solar_system_id = r.i32()?;
@@ -995,15 +1109,7 @@ impl Message {
                 };
                 Message::SpawnReply { request_id, outcome }
             }
-            kind::DESTROY => Message::Destroy {
-                ship_id: r.i64()?,
-                credit: Credit {
-                    character_id: r.i64()?,
-                    corporation_id: r.i64()?,
-                    alliance_id: r.i64()?,
-                    war_faction_id: r.i64()?,
-                },
-            },
+            kind::DESTROY => Message::Destroy { ship_id: r.i64()?, credit: read_credit(&mut r)? },
             kind::TARGET_REFUSED => Message::TargetRefused {
                 session_id: r.u64()?,
                 command: r.u8()?,

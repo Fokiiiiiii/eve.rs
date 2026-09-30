@@ -20,7 +20,7 @@ use crate::targeting::{Targeting, UNDOCK_PROTECTION};
 use crate::warp::{self, PythonRandom};
 use crate::wire::{filetime, id, int, real, text, tuple, vector};
 use crate::world::{BodyKind, Detail, SolarSystem};
-use crate::wreck::Wreck;
+use crate::wreck::{Wreck, WreckKind};
 
 /// The host's name for a player's connection.
 pub type SessionId = u64;
@@ -131,6 +131,8 @@ pub enum Out {
         session: SessionId,
         ship_id: i64,
         wreck: Option<i64>,
+        /// The wreck the ship's type leaves, whether or not the scene made it (the host makes a player's from this).
+        wreck_kind: Option<WreckKind>,
         position: Vec3,
         direction: Vec3,
         radius: f64,
@@ -170,6 +172,8 @@ impl Out {
 pub enum SceneError {
     UnknownStation(i64),
     AlreadyInSpace(SessionId),
+    /// The session's ship was not destroyed (a capsule is only given where a ship was lost).
+    NotDestroyed(SessionId),
 }
 
 #[derive(Debug, Clone)]
@@ -281,6 +285,16 @@ pub struct Scene {
     pub(crate) destroyed: Vec<i64>,
     /// Which wreck a ship of some type leaves (`crate::wreck_types`), when the static data is there to say.
     pub(crate) wreck_catalog: Option<Arc<crate::wreck_types::WreckCatalog>>,
+    /// The sessions whose ship was destroyed and have no other yet (the host gives them a capsule with `respawn`): what they had bound and seen.
+    pub(crate) widowed: BTreeMap<SessionId, Widow>,
+}
+
+/// What the client of a destroyed ship still has of the ballpark: it keeps it when it is given a new ship.
+#[derive(Debug, Default)]
+pub(crate) struct Widow {
+    pub(crate) bound: bool,
+    pub(crate) sees: BTreeSet<SessionId>,
+    pub(crate) sees_wrecks: BTreeSet<i64>,
 }
 
 /// The destiny stamp of a moment: whole seconds of the Unix clock.
@@ -307,6 +321,7 @@ impl Scene {
             wrecks: BTreeMap::new(),
             wreck_sequence: 0,
             destroyed: Vec::new(),
+            widowed: BTreeMap::new(),
             wreck_catalog: None,
         }
     }
@@ -322,7 +337,17 @@ impl Scene {
 
     /// Whether no player is in the scene (NPCs do not keep a scene: a system has one while somebody is there to see it).
     pub fn is_empty(&self) -> bool {
-        self.pilots.keys().all(|session| crate::npc::is_npc_session(*session))
+        self.widowed.is_empty() && self.pilots.keys().all(|session| crate::npc::is_npc_session(*session))
+    }
+
+    /// The wreck with this item id, if it is in the scene.
+    pub fn wreck(&self, id: i64) -> Option<&Wreck> {
+        self.wrecks.get(&id)
+    }
+
+    /// A session whose ship was destroyed will not be given another (it left): its ballpark is not kept.
+    pub fn forget_widow(&mut self, session: SessionId) {
+        self.widowed.remove(&session);
     }
 
     pub fn contains(&self, session: SessionId) -> bool {

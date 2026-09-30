@@ -25,6 +25,9 @@ Details: `docs/adr/0001-external-compatibility-only.md`, `docs/PLAN.md`, `docs/c
    isolation. As soon as something can be executed, execute it, fix what breaks, then go on.
 4. **Where EVE.js or the client already does a thing better, port it as it is** (owner, 2026-09-30, `docs/adr/0009`):
    rewrite it in Rust or C# with the same rules, order and numbers, naming its source at the top of the file.
+   This covers the server logic in `eve-logic` too, not only its `behaviors` (the packages the client shares with the server:
+   `industry`, `missions`, `crimewatch`, `npcs`, `evedungeons`, `inventoryrestrictions`, ... and the `carbon`/`eve` `common`
+   code; owner, 2026-09-30, amendment of ADR 0009): port it when the feature it belongs to comes up, with a `PROVENANCE.md`.
    Redesign only what is worse or does not fit. The structure around a port (modules, persistence, the Rust/C#
    split) is still ours; a JavaScript quirk is kept only if it is part of the rule.
 5. **Tests must bite.** Add or change tests with the code, run the smallest relevant set, and mutation-check the

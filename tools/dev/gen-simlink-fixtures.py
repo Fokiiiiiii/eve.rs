@@ -14,7 +14,7 @@ OUT = os.path.join(HERE, "..", "..", "oracle", "fixtures", "simlink", "messages.
 KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateState": 6, "Command": 7,
          "ShipSpec": 8, "Notify": 9, "Docked": 10, "Refused": 11, "Accepted": 12, "EnterReply": 13, "Approaching": 14,
          "Jumping": 15, "Jumped": 16, "Targets": 17, "TargetRefused": 18, "Activate": 19, "Condition": 20,
-         "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24}
+         "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26}
 
 
 def s(text):  # u16 length + UTF-8
@@ -89,12 +89,13 @@ def identity(i):
         body += i64(w["moduleId"]) + struct.pack("<idd", w["effectId"], w["cycleMs"], w["capacitorNeed"])
         body += struct.pack("<i", w["weaponTypeId"]) + s(w["fx"])
         body += struct.pack("<8d", *w["rawDamage"], w["optimalRange"], w["falloff"], w["trackingSpeed"], w["signatureResolution"])
-    wreck = i.get("wreck")
+    return body + wreck_kind(i.get("wreck")) + bytes([1 if i.get("hull") else 0])
+
+
+def wreck_kind(wreck):
     if wreck:
-        body += bytes([1]) + struct.pack("<i", wreck["typeId"]) + s(wreck["name"]) + struct.pack("<i", wreck["graphicId"])
-    else:
-        body += bytes([0])
-    return body + bytes([1 if i.get("hull") else 0])
+        return bytes([1]) + struct.pack("<i", wreck["typeId"]) + s(wreck["name"]) + struct.pack("<i", wreck["graphicId"])
+    return bytes([0])
 
 
 def build(m):
@@ -145,7 +146,14 @@ def build(m):
                      + struct.pack("<i", m["toSystem"]) + i64(m["toGate"]))
     if k == "Destroyed":
         return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + i64(m["wreckId"]) + struct.pack("<7d", *m["position"], *m["direction"], m["radius"])
-                     + i64(m["killerShipId"]))
+                     + i64(m["killerShipId"]) + wreck_kind(m.get("wreckKind")))
+    if k == "Respawn":
+        return frame(k, u64(m["sessionId"]) + ship(m["ship"]) + struct.pack("<6d", *m["position"], *m["direction"]))
+    if k == "PlaceWreck":
+        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["wreckId"]) + wreck_kind(m["wreck"])
+                     + struct.pack("<7d", *m["position"], *m["direction"], m["radius"]) + i64(m["launcherId"])
+                     + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"])
+                     + bytes([1 if m["isEmpty"] else 0]))
     if k == "Spawn":
         return frame(k, u64(m["requestId"]) + struct.pack("<i", m["solarSystemId"]) + ship(m["ship"]) + i64(m["anchorShipId"])
                      + struct.pack("<9d", *m["position"], *m["velocity"], *m["direction"]) + s(m["behavior"]) + identity(m["identity"]))
@@ -259,10 +267,14 @@ valid = [
      "fromGate": "50016630", "toSystem": 30100034, "toGate": "50016839"},
     {"name": "destroyed with a wreck of the scene's own", "kind": "Destroyed", "sessionId": "4611686018427387905",
      "shipId": "980050000077", "wreckId": "4300000000000001", "position": [311989835983.1308, -13069154020.916222, 156646308895.76187],
-     "direction": [0.6159, 0.01306, 0.78769], "radius": 47.0, "killerShipId": "9988400001939"},
+     "direction": [0.6159, 0.01306, 0.78769], "radius": 47.0, "killerShipId": "9988400001939",
+     "wreckKind": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117}},
     {"name": "destroyed player's ship, nobody to blame, no wreck", "kind": "Destroyed", "sessionId": "1790646377000015",
      "shipId": "9988400001939", "wreckId": "0", "position": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0],
-     "radius": 47.0, "killerShipId": "0"},
+     "radius": 47.0, "killerShipId": "0", "wreckKind": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 0}},
+    {"name": "destroyed with no kind of wreck to leave", "kind": "Destroyed", "sessionId": "1790646377000016",
+     "shipId": "9988400001940", "wreckId": "0", "position": [1.0, 2.0, 3.0], "direction": [0.0, 1.0, 0.0],
+     "radius": 12.5, "killerShipId": "0"},
     {"name": "spawn of an NPC with a laser, a wreck and a tree", "kind": "Spawn", "requestId": "7", "solarSystemId": 30100032,
      "ship": dict(BARE, shipId="980050000077", characterId="0", ownerId="1000125", categoryId=11, groupId=25, typeId=597),
      "anchorShipId": "0", "position": [1000500.0, 100.0, 100.0], "velocity": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0], "behavior": "belt rat",
@@ -279,6 +291,18 @@ valid = [
     {"name": "spawn refused", "kind": "SpawnReply", "requestId": "8", "ok": False, "reason": "NO_SCENE 30000142"},
     {"name": "destroy for a pilot to loot", "kind": "Destroy", "shipId": "980050000077", "characterId": "140000001",
      "corporationId": "1000006", "allianceId": "0", "warFactionId": "500001"},
+    {"name": "respawn of a capsule where the ship was", "kind": "Respawn", "sessionId": "1790646377000015",
+     "ship": dict(IBIS, shipId="9988400002416", typeId=670, groupId=29, name="Capsule", modules=[]),
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "direction": [0.6159, 0.01306, 0.78769]},
+    {"name": "wreck the host made, to put in space", "kind": "PlaceWreck", "solarSystemId": 30100032,
+     "wreckId": "9988400002417", "wreck": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117},
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "direction": [0.6159, 0.01306, 0.78769],
+     "radius": 47.0, "launcherId": "9988400002411", "characterId": "140000394", "corporationId": "1000006",
+     "allianceId": "0", "warFactionId": "500001", "isEmpty": False},
+    {"name": "wreck of no kind of the reference's graphic", "kind": "PlaceWreck", "solarSystemId": 30000142,
+     "wreckId": "9988400002420", "wreck": {"typeId": 26507, "name": "Amarr Frigate Wreck", "graphicId": 0},
+     "position": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0], "radius": 30.0, "launcherId": "9988400002400",
+     "characterId": "0", "corporationId": "0", "allianceId": "0", "warFactionId": "0", "isEmpty": True},
     {"name": "destroy for nobody", "kind": "Destroy", "shipId": "4200000000000001", "characterId": "0",
      "corporationId": "0", "allianceId": "0", "warFactionId": "0"},
 ]

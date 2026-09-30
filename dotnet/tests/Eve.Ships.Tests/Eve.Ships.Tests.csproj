@@ -15,6 +15,9 @@
     <ProjectReference Include="../../src/Eve.Wallet/Eve.Wallet.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="../../../oracle/fixtures/death/drop_counts.json" Link="fixtures/death/drop_counts.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 </Project>

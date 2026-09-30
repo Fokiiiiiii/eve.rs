@@ -60,6 +60,8 @@ public static class SimCodec
         public const byte Spawn = 22;
         public const byte SpawnReply = 23;
         public const byte Destroy = 24;
+        public const byte Respawn = 25;
+        public const byte PlaceWreck = 26;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)
@@ -130,6 +132,15 @@ public static class SimCodec
 
     private static double[] ReadVector(ref Reader r) => [r.F64(), r.F64(), r.F64()];
 
+    private static SimWreckKind? ReadWreckKind(ref Reader r) => r.U8() switch
+    {
+        0 => null,
+        1 => new SimWreckKind(r.I32(), r.Text(), r.I32()),
+        _ => throw new SimLinkException(SimLinkError.BadValue, "bad wreck"),
+    };
+
+    private static SimCredit ReadCredit(ref Reader r) => new(r.I64(), r.I64(), r.I64(), r.I64());
+
     private static SimNpcIdentity ReadIdentity(ref Reader r)
     {
         var hostile = r.I64();
@@ -153,12 +164,7 @@ public static class SimCodec
             double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
             weapons[i] = new SimNpcWeapon(moduleId, effectId, cycleMs, capacitorNeed, weaponType, fx, damage, r.F64(), r.F64(), r.F64(), r.F64());
         }
-        SimWreckKind? wreck = r.U8() switch
-        {
-            0 => null,
-            1 => new SimWreckKind(r.I32(), r.Text(), r.I32()),
-            _ => throw new SimLinkException(SimLinkError.BadValue, "bad wreck"),
-        };
+        var wreck = ReadWreckKind(ref r);
         var hull = r.U8() switch
         {
             0 => false,
@@ -354,8 +360,30 @@ public static class SimCodec
                 message = new SimJumped(r.U64(), r.I32(), r.I64(), r.I32(), r.I64());
                 break;
             case Kind.Destroyed:
-                message = new SimDestroyed(r.U64(), r.I64(), r.I64(), ReadVector(ref r), ReadVector(ref r), r.F64(), r.I64());
+                message = new SimDestroyed(r.U64(), r.I64(), r.I64(), ReadVector(ref r), ReadVector(ref r), r.F64(), r.I64(), ReadWreckKind(ref r));
                 break;
+            case Kind.Respawn:
+                message = new SimRespawn(r.U64(), ReadShip(ref r), ReadVector(ref r), ReadVector(ref r));
+                break;
+            case Kind.PlaceWreck:
+                {
+                    var system = r.I32();
+                    var wreckId = r.I64();
+                    var kind = ReadWreckKind(ref r) ?? throw new SimLinkException(SimLinkError.BadValue, "bad wreck");
+                    var position = ReadVector(ref r);
+                    var direction = ReadVector(ref r);
+                    var radius = r.F64();
+                    var launcher = r.I64();
+                    var credit = ReadCredit(ref r);
+                    var empty = r.U8() switch
+                    {
+                        0 => false,
+                        1 => true,
+                        _ => throw new SimLinkException(SimLinkError.BadValue, "bad is_empty"),
+                    };
+                    message = new SimPlaceWreck(system, wreckId, kind, position, direction, radius, launcher, credit, empty);
+                    break;
+                }
             case Kind.Spawn:
                 {
                     var requestId = r.U64();
@@ -381,7 +409,7 @@ public static class SimCodec
                     break;
                 }
             case Kind.Destroy:
-                message = new SimDestroy(r.I64(), new SimCredit(r.I64(), r.I64(), r.I64(), r.I64()));
+                message = new SimDestroy(r.I64(), ReadCredit(ref r));
                 break;
             case Kind.Targets:
                 {
@@ -493,7 +521,13 @@ public static class SimCodec
             w.F64(weapon.TrackingSpeed);
             w.F64(weapon.SignatureResolution);
         }
-        if (i.Wreck is { } wreck)
+        WriteWreckKind(w, i.Wreck);
+        w.U8((byte)(i.Hull ? 1 : 0));
+    }
+
+    private static void WriteWreckKind(Writer w, SimWreckKind? kind)
+    {
+        if (kind is { } wreck)
         {
             w.U8(1);
             w.I32(wreck.TypeId);
@@ -504,7 +538,14 @@ public static class SimCodec
         {
             w.U8(0);
         }
-        w.U8((byte)(i.Hull ? 1 : 0));
+    }
+
+    private static void WriteCredit(Writer w, SimCredit credit)
+    {
+        w.I64(credit.CharacterId);
+        w.I64(credit.CorporationId);
+        w.I64(credit.AllianceId);
+        w.I64(credit.WarFactionId);
     }
 
     private static void WriteNumbers(Writer w, SimNumbers n)
@@ -721,6 +762,26 @@ public static class SimCodec
                 WriteVector(w, m.Direction);
                 w.F64(m.Radius);
                 w.I64(m.KillerShipId);
+                WriteWreckKind(w, m.WreckKind);
+                break;
+            case SimRespawn m:
+                w.U8(Kind.Respawn);
+                w.U64(m.SessionId);
+                WriteShip(w, m.Ship);
+                WriteVector(w, m.Position);
+                WriteVector(w, m.Direction);
+                break;
+            case SimPlaceWreck m:
+                w.U8(Kind.PlaceWreck);
+                w.I32(m.SolarSystemId);
+                w.I64(m.WreckId);
+                WriteWreckKind(w, m.Kind);
+                WriteVector(w, m.Position);
+                WriteVector(w, m.Direction);
+                w.F64(m.Radius);
+                w.I64(m.LauncherId);
+                WriteCredit(w, m.Credit);
+                w.U8((byte)(m.IsEmpty ? 1 : 0));
                 break;
             case SimSpawn m:
                 w.U8(Kind.Spawn);
@@ -751,10 +812,7 @@ public static class SimCodec
             case SimDestroy m:
                 w.U8(Kind.Destroy);
                 w.I64(m.ShipId);
-                w.I64(m.Credit.CharacterId);
-                w.I64(m.Credit.CorporationId);
-                w.I64(m.Credit.AllianceId);
-                w.I64(m.Credit.WarFactionId);
+                WriteCredit(w, m.Credit);
                 break;
             case SimTargets m:
                 w.U8(Kind.Targets);

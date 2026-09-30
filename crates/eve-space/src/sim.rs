@@ -15,6 +15,7 @@ use crate::scene::{Command, Departure, Out, Scene, SceneError, SessionId, Travel
 use crate::ship::Course;
 use crate::targeting::Order;
 use crate::world::{SolarSystem, World};
+use crate::wreck::{LootRights, WRECK_LIFETIME, Wreck};
 
 /// How often the host's clock is polled for what is due (dockings); the link says it in `HelloAck`.
 pub const POLL_HZ: u32 = 4;
@@ -73,6 +74,8 @@ pub struct Sim {
     universe: Arc<Universe>,
     scenes: BTreeMap<i32, Scene>,
     sessions: HashMap<SessionId, i32>,
+    /// The sessions whose ship was destroyed and have none yet: the system whose scene keeps their ballpark until the host gives them a capsule.
+    widowed: HashMap<SessionId, i32>,
 }
 
 /// The command a code and its arguments say, if they say one.
@@ -122,7 +125,7 @@ fn is_id(value: f64) -> bool {
 
 impl Sim {
     pub fn new(universe: Arc<Universe>) -> Self {
-        Self { universe, scenes: BTreeMap::new(), sessions: HashMap::new() }
+        Self { universe, scenes: BTreeMap::new(), sessions: HashMap::new(), widowed: HashMap::new() }
     }
 
     /// The ships in space.
@@ -162,17 +165,25 @@ impl Sim {
             Out::Refused { session, command, reason } => {
                 Message::Refused { session_id: session, command, reason: reason.to_string() }
             }
-            Out::Destroyed { session, ship_id, wreck, position, direction, radius, killer_ship } => {
-                Message::Destroyed {
-                    session_id: session,
-                    ship_id,
-                    wreck_id: wreck.unwrap_or(0),
-                    position: [position.x, position.y, position.z],
-                    direction: [direction.x, direction.y, direction.z],
-                    radius,
-                    killer_ship_id: killer_ship.unwrap_or(0),
-                }
-            }
+            Out::Destroyed {
+                session,
+                ship_id,
+                wreck,
+                wreck_kind,
+                position,
+                direction,
+                radius,
+                killer_ship,
+            } => Message::Destroyed {
+                session_id: session,
+                ship_id,
+                wreck_id: wreck.unwrap_or(0),
+                wreck_kind,
+                position: [position.x, position.y, position.z],
+                direction: [direction.x, direction.y, direction.z],
+                radius,
+                killer_ship_id: killer_ship.unwrap_or(0),
+            },
             Out::Targets { session, command, pending, targets } => {
                 Message::Targets { session_id: session, command, pending, targets }
             }
@@ -223,11 +234,19 @@ impl Sim {
                 reply(Err(format!("UNKNOWN_STATION {station}")))
             }
             Err(SceneError::AlreadyInSpace(_)) => reply(Err(format!("ALREADY_IN_SPACE {session_id}"))),
+            Err(SceneError::NotDestroyed(_)) => reply(Err(format!("NOT_DESTROYED {session_id}"))),
         }
     }
 
     fn forget(&mut self, session: SessionId) {
-        if let Some(system) = self.sessions.remove(&session)
+        let system = self.sessions.remove(&session).or_else(|| {
+            let system = self.widowed.remove(&session)?;
+            if let Some(scene) = self.scenes.get_mut(&system) {
+                scene.forget_widow(session);
+            }
+            Some(system)
+        });
+        if let Some(system) = system
             && self.scenes.get(&system).is_some_and(Scene::is_empty)
         {
             self.scenes.remove(&system);
@@ -320,6 +339,77 @@ impl Sim {
                     None => Vec::new(),
                 }
             }
+            Message::Respawn { session_id, ship, position, direction } => {
+                let reply = |outcome| vec![Message::EnterReply { session_id, outcome }];
+                let Some(system) = self
+                    .widowed
+                    .get(&session_id)
+                    .copied()
+                    .or_else(|| self.sessions.get(&session_id).copied())
+                else {
+                    return Ok(reply(Err(format!("NOT_DESTROYED {session_id}"))));
+                };
+                let Some(scene) = self.scenes.get_mut(&system) else {
+                    return Ok(reply(Err(format!("NO_SCENE {session_id}"))));
+                };
+                let (position, direction) = (
+                    Vec3::new(position[0], position[1], position[2]),
+                    Vec3::new(direction[0], direction[1], direction[2]),
+                );
+                let respawned = scene.respawn(session_id, *ship, position, direction, now);
+                if respawned.is_ok() {
+                    self.widowed.remove(&session_id);
+                    self.sessions.insert(session_id, system);
+                }
+                return Ok(match respawned {
+                    // the answer comes after what the pilot is told, so that the host goes on when the client has been sent the ball
+                    Ok(told) => {
+                        let mut messages = Self::messages(told);
+                        messages.extend(reply(Ok(())));
+                        messages
+                    }
+                    Err(SceneError::NotDestroyed(_)) => reply(Err(format!("NOT_DESTROYED {session_id}"))),
+                    Err(SceneError::AlreadyInSpace(_)) => {
+                        reply(Err(format!("ALREADY_IN_SPACE {session_id}")))
+                    }
+                    Err(SceneError::UnknownStation(station)) => {
+                        reply(Err(format!("UNKNOWN_STATION {station}")))
+                    }
+                });
+            }
+            Message::PlaceWreck(placement) => match self.scenes.get_mut(&placement.solar_system_id) {
+                Some(scene) => {
+                    let placement = *placement;
+                    let wreck = Wreck {
+                        id: placement.wreck_id,
+                        kind: placement.kind,
+                        position: Vec3::new(
+                            placement.position[0],
+                            placement.position[1],
+                            placement.position[2],
+                        ),
+                        direction: Vec3::new(
+                            placement.direction[0],
+                            placement.direction[1],
+                            placement.direction[2],
+                        ),
+                        radius: placement.radius,
+                        owner_id: placement.credit.character_id,
+                        corporation_id: placement.credit.corporation_id,
+                        alliance_id: placement.credit.alliance_id,
+                        war_faction_id: placement.credit.war_faction_id,
+                        rights: LootRights {
+                            character_id: placement.credit.character_id,
+                            corporation_id: placement.credit.corporation_id,
+                        },
+                        launcher_id: placement.launcher_id,
+                        is_empty: placement.is_empty,
+                        expires_at: now + WRECK_LIFETIME,
+                    };
+                    scene.place_wreck(wreck, now)
+                }
+                None => Vec::new(),
+            },
             Message::ShipSpec { session_id, ship } => {
                 self.scene_of(session_id).map(|s| s.respec(session_id, *ship, now)).unwrap_or_default()
             }
@@ -334,13 +424,14 @@ impl Sim {
         Ok(Self::messages(outs))
     }
 
-    /// A player whose ship was destroyed is not in space any more (the host says how it comes back).
+    /// A player whose ship was destroyed is not in space any more; its scene keeps its ballpark until the host gives it a capsule (`Respawn`) or it leaves.
     fn forget_the_destroyed(&mut self, outs: &[Out]) {
         for out in outs {
             if let Out::Destroyed { session, .. } = out
                 && !is_npc_session(*session)
+                && let Some(system) = self.sessions.remove(session)
             {
-                self.forget(*session);
+                self.widowed.insert(*session, system);
             }
         }
     }
@@ -635,6 +726,146 @@ mod tests {
         let none = sim
             .handle(Message::Destroy { ship_id: 12, credit: Default::default() }, NOON + 63 * SECOND)
             .unwrap();
+        assert_eq!(none, []);
+    }
+
+    fn capsule() -> Box<crate::ship::ShipSpec> {
+        let mut capsule = spec();
+        capsule.ship_id = 9_988_400_002_416;
+        capsule.type_id = 670;
+        capsule.group_id = 29;
+        capsule.name = "Capsule".to_string();
+        Box::new(capsule)
+    }
+
+    fn lose_the_ship(sim: &mut Sim, at: i64) -> Message {
+        let told =
+            sim.handle(Message::Destroy { ship_id: spec().ship_id, credit: Default::default() }, at).unwrap();
+        told.into_iter().find(|m| matches!(m, Message::Destroyed { .. })).expect("the host is told")
+    }
+
+    #[test]
+    fn a_session_that_lost_its_ship_keeps_its_ballpark_and_is_given_a_capsule_by_the_host() {
+        let mut sim = undocked();
+        sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
+        let Message::Destroyed { position, direction, .. } = lose_the_ship(&mut sim, NOON + 61 * SECOND)
+        else {
+            unreachable!()
+        };
+        assert_eq!(sim.ships(), 0, "no ship of it is in space");
+        assert_eq!(sim.scenes.len(), 1, "the scene keeps its ballpark");
+
+        let told = sim
+            .handle(
+                Message::Respawn { session_id: SESSION, ship: capsule(), position, direction },
+                NOON + 62 * SECOND,
+            )
+            .unwrap();
+        assert_eq!(told.last(), Some(&Message::EnterReply { session_id: SESSION, outcome: Ok(()) }));
+        let notified = &told[..told.len() - 1];
+        assert!(
+            notified.iter().all(|m| matches!(m, Message::Notify { session_id: SESSION, .. })),
+            "{told:?}"
+        );
+        assert_eq!(names(notified), ["DoDestinyUpdate"], "the ball of the capsule, before the answer");
+        assert_eq!(sim.ships(), 1);
+
+        // and commands reach the new ship
+        let stop = sim
+            .handle(Message::Command { session_id: SESSION, command: 3, args: vec![] }, NOON + 63 * SECOND)
+            .unwrap();
+        assert!(!stop.iter().any(|m| matches!(m, Message::Refused { .. })), "{stop:?}");
+    }
+
+    #[test]
+    fn a_capsule_is_refused_to_a_session_that_did_not_lose_its_ship_and_one_that_left_loses_the_scene() {
+        let mut sim = undocked();
+        let refused = sim
+            .handle(
+                Message::Respawn {
+                    session_id: SESSION,
+                    ship: capsule(),
+                    position: [0.0; 3],
+                    direction: [1.0, 0.0, 0.0],
+                },
+                NOON,
+            )
+            .unwrap();
+        assert!(
+            matches!(&refused[..], [Message::EnterReply { outcome: Err(reason), .. }] if reason.starts_with("ALREADY_IN_SPACE")),
+            "{refused:?}"
+        );
+        let none = sim
+            .handle(
+                Message::Respawn {
+                    session_id: 99,
+                    ship: capsule(),
+                    position: [0.0; 3],
+                    direction: [1.0, 0.0, 0.0],
+                },
+                NOON,
+            )
+            .unwrap();
+        assert!(matches!(&none[..], [Message::EnterReply { session_id: 99, outcome: Err(_) }]), "{none:?}");
+
+        lose_the_ship(&mut sim, NOON + 61 * SECOND);
+        assert_eq!(sim.scenes.len(), 1);
+        sim.handle(Message::Leave { session_id: SESSION, why: 1 }, NOON + 62 * SECOND).unwrap();
+        assert_eq!(sim.scenes.len(), 0, "nobody is there: no scene");
+        let late = sim
+            .handle(
+                Message::Respawn {
+                    session_id: SESSION,
+                    ship: capsule(),
+                    position: [0.0; 3],
+                    direction: [1.0, 0.0, 0.0],
+                },
+                NOON + 63 * SECOND,
+            )
+            .unwrap();
+        assert!(matches!(&late[..], [Message::EnterReply { outcome: Err(_), .. }]), "{late:?}");
+    }
+
+    fn wreck_placement(system: i32, id: i64, at: [f64; 3]) -> Message {
+        Message::PlaceWreck(Box::new(crate::link::WreckPlacement {
+            solar_system_id: system,
+            wreck_id: id,
+            kind: crate::wreck::WreckKind {
+                type_id: 26_506,
+                name: "Caldari Frigate Wreck".into(),
+                graphic_id: Some(3117),
+            },
+            position: at,
+            direction: [1.0, 0.0, 0.0],
+            radius: 47.0,
+            launcher_id: spec().ship_id,
+            credit: crate::death::Credit {
+                character_id: 140_000_342,
+                corporation_id: 1_000_006,
+                alliance_id: 0,
+                war_faction_id: 500_001,
+            },
+            is_empty: false,
+        }))
+    }
+
+    #[test]
+    fn a_wreck_the_host_made_is_put_in_space_with_its_id_for_whoever_can_see_it_and_kept_for_two_hours() {
+        let mut sim = undocked();
+        sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
+        let at = beside_the_player(&mut sim);
+        let told = sim.handle(wreck_placement(SYSTEM, 9_988_400_002_417, at), NOON + 5 * SECOND).unwrap();
+        assert_eq!(names(&told), ["DoDestinyUpdate"], "{told:?}");
+        assert_eq!(
+            sim.scenes[&SYSTEM].wreck(9_988_400_002_417).map(|w| w.rights.character_id),
+            Some(140_000_342)
+        );
+        assert_eq!(
+            sim.scenes[&SYSTEM].wreck(9_988_400_002_417).map(|w| w.expires_at),
+            Some(NOON + 5 * SECOND + crate::wreck::WRECK_LIFETIME)
+        );
+        // a system nobody is in has no scene to put a wreck in
+        let none = sim.handle(wreck_placement(30_000_142, 9_988_400_002_418, at), NOON + 6 * SECOND).unwrap();
         assert_eq!(none, []);
     }
 

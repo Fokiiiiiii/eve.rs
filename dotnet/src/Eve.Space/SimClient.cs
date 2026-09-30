@@ -284,6 +284,11 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public Task<SimSpawnReply> SpawnAsync(SimSpawn spawn, CancellationToken cancellationToken = default) =>
         AwaitAsync(_spawning, spawn.RequestId, spawn, cancellationToken);
 
+    public Task<string?> RespawnAsync(SimRespawn respawn, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_entering, respawn.SessionId, respawn, cancellationToken);
+
+    public void PlaceWreck(SimPlaceWreck wreck) => Send(wreck);
+
     public void Destroy(long shipId, SimCredit credit) => Send(new SimDestroy(shipId, credit));
 
     public void Leave(ulong sessionId, LeaveWhy why) => Send(new SimLeave(sessionId, why));

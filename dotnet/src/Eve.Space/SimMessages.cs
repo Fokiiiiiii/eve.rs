@@ -174,7 +174,8 @@ public sealed record SimActivate(ulong SessionId, SimEffect Effect) : SimMessage
 /// wreck is the host's to make) and the ship that took the last of the hull (0 when nobody did). The session is no longer in space.
 /// </summary>
 public sealed record SimDestroyed(
-    ulong SessionId, long ShipId, long WreckId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction, double Radius, long KillerShipId) : SimMessage;
+    ulong SessionId, long ShipId, long WreckId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction, double Radius, long KillerShipId,
+    SimWreckKind? WreckKind = null) : SimMessage;
 
 /// <summary>A weapon of an NPC: an effect of the NPC's own ship, so the module is the ship.</summary>
 public sealed record SimNpcWeapon(
@@ -202,6 +203,17 @@ public sealed record SimSpawn(
 
 /// <summary>Whether a <see cref="SimSpawn"/> was done: the session the NPC is known by, or why not.</summary>
 public sealed record SimSpawnReply(ulong RequestId, ulong? Session, string? Error) : SimMessage;
+
+/// <summary>
+/// Gives a session whose ship was destroyed another (the capsule the host made for its pilot): it comes into the scene at rest at the place. Answered as
+/// an <see cref="SimEnter"/> is, with <see cref="SimEnterReply"/>.
+/// </summary>
+public sealed record SimRespawn(ulong SessionId, SimShip Ship, IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage;
+
+/// <summary>A wreck the host made (an item with contents) of a ship that was destroyed, to be put in space where the ship was, for <see cref="Credit"/> to loot.</summary>
+public sealed record SimPlaceWreck(
+    int SolarSystemId, long WreckId, SimWreckKind Kind, IReadOnlyList<double> Position, IReadOnlyList<double> Direction, double Radius, long LauncherId, SimCredit Credit,
+    bool IsEmpty) : SimMessage;
 
 /// <summary>Who may take what a destroyed ship leaves: the pilot and the corporation, the alliance and the faction they are in (0 for none).</summary>
 public sealed record SimCredit(long CharacterId, long CorporationId, long AllianceId, long WarFactionId)

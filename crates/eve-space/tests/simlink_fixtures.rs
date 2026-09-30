@@ -3,7 +3,7 @@
 
 use eve_space::death::Credit;
 use eve_space::health::{Condition, Resonances, Vitals};
-use eve_space::link::{DecodeError, Enter, How, Message, Spawn};
+use eve_space::link::{DecodeError, Enter, How, Message, Spawn, WreckPlacement};
 use eve_space::modules::{Change, Effect, Numbers};
 use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use eve_space::weapons::Turret;
@@ -170,11 +170,7 @@ fn identity_of(case: &Value) -> NpcIdentity {
             }
         })
         .collect();
-    let wreck = case.get("wreck").filter(|w| !w.is_null()).map(|w| WreckKind {
-        type_id: w["typeId"].as_i64().unwrap() as i32,
-        name: text(w, "name"),
-        graphic_id: Some(w["graphicId"].as_i64().unwrap() as i32).filter(|g| *g != 0),
-    });
+    let wreck = wreck_kind_of(case.get("wreck"));
     NpcIdentity {
         hostile_response_threshold: case["hostileResponseThreshold"].as_i64().unwrap(),
         friendly_response_threshold: case["friendlyResponseThreshold"].as_i64().unwrap(),
@@ -182,6 +178,14 @@ fn identity_of(case: &Value) -> NpcIdentity {
         wreck,
         hull: case.get("hull").and_then(Value::as_bool).unwrap_or(false),
     }
+}
+
+fn wreck_kind_of(wreck: Option<&Value>) -> Option<WreckKind> {
+    wreck.filter(|w| !w.is_null()).map(|w| WreckKind {
+        type_id: w["typeId"].as_i64().unwrap() as i32,
+        name: text(w, "name"),
+        graphic_id: Some(w["graphicId"].as_i64().unwrap() as i32).filter(|g| *g != 0),
+    })
 }
 
 fn message_of(case: &Value) -> Message {
@@ -286,7 +290,30 @@ fn message_of(case: &Value) -> Message {
             direction: vector_of(case, "direction"),
             radius: case["radius"].as_f64().unwrap(),
             killer_ship_id: wide(case, "killerShipId"),
+            wreck_kind: wreck_kind_of(case.get("wreckKind")),
         },
+        "Respawn" => Message::Respawn {
+            session_id: session_id(),
+            ship: Box::new(ship_of(&case["ship"])),
+            position: vector_of(case, "position"),
+            direction: vector_of(case, "direction"),
+        },
+        "PlaceWreck" => Message::PlaceWreck(Box::new(WreckPlacement {
+            solar_system_id: number("solarSystemId") as i32,
+            wreck_id: wide(case, "wreckId"),
+            kind: wreck_kind_of(case.get("wreck")).unwrap(),
+            position: vector_of(case, "position"),
+            direction: vector_of(case, "direction"),
+            radius: case["radius"].as_f64().unwrap(),
+            launcher_id: wide(case, "launcherId"),
+            credit: Credit {
+                character_id: wide(case, "characterId"),
+                corporation_id: wide(case, "corporationId"),
+                alliance_id: wide(case, "allianceId"),
+                war_faction_id: wide(case, "warFactionId"),
+            },
+            is_empty: case["isEmpty"].as_bool().unwrap(),
+        })),
         "Spawn" => Message::Spawn(Box::new(Spawn {
             request_id: wide(case, "requestId") as u64,
             solar_system_id: number("solarSystemId") as i32,

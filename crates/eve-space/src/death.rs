@@ -3,9 +3,13 @@
 //! which those who can see the place are sent. What is done to the pilot of a player's ship (a capsule to fly, the ship's items, the wreck's
 //! contents) is the host's: it is told with [`Out::Destroyed`].
 
+use eve_destiny::Vec3;
+
+use crate::modules::Modules;
 use crate::npc::is_npc_session;
 use crate::payload;
-use crate::scene::{Out, Scene, SessionId};
+use crate::scene::{Out, Pilot, Scene, SceneError, SessionId, Widow};
+use crate::ship::{Course, Ship, ShipSpec};
 use crate::wreck::{LootRights, WRECK_LIFETIME, Wreck};
 
 /// The first id the scene gives a wreck of its own making (the reference's transient items are numbered from about the same place; the ids of
@@ -48,6 +52,17 @@ impl Scene {
             told_of_it.insert(0, session);
         }
         let Some(pilot) = self.pilots.remove(&session) else { return Vec::new() };
+        if !is_npc_session(session) {
+            // the client keeps its ballpark: what it is given next (a capsule) is added to it
+            self.widowed.insert(
+                session,
+                Widow {
+                    bound: pilot.bound,
+                    sees: pilot.sees.clone(),
+                    sees_wrecks: pilot.sees_wrecks.clone(),
+                },
+            );
+        }
         if let Some(brains) = self.brains.as_mut() {
             brains.forget(session);
         }
@@ -65,9 +80,11 @@ impl Scene {
         // an NPC that says what it leaves leaves that; else the wreck of the ship's type, as the reference's rules have it
         let kind = ship.npc.as_ref().and_then(|npc| npc.wreck.clone()).or_else(|| {
             let catalog = self.wreck_catalog.as_ref()?;
-            ship.npc.as_ref().and_then(|_| catalog.resolve_ship_wreck_type(i64::from(ship.spec.type_id)))
+            catalog.resolve_ship_wreck_type(i64::from(ship.spec.type_id))
         });
-        let wreck = kind.map(|kind| {
+        let wreck_kind = kind.clone();
+        // the scene makes the wreck of an NPC; a player's is the host's to make (it is an item with contents), and it is told the kind
+        let wreck = kind.clone().filter(|_| ship.npc.is_some()).map(|kind| {
             self.wreck_sequence += 1;
             Wreck {
                 id: TRANSIENT_ID_BASE + self.wreck_sequence as i64,
@@ -96,12 +113,52 @@ impl Scene {
             session,
             ship_id,
             wreck: wreck_id,
+            wreck_kind,
             position: ship.position,
             direction: ship.direction,
             radius: ship.spec.radius,
             killer_ship,
         });
         out
+    }
+
+    /// A session whose ship was destroyed is given another, the capsule the host made for its pilot: it comes into the scene at rest at `position`, and
+    /// the client, which kept its ballpark, is sent the ball of its new ship as it is sent any (as those who see it are).
+    pub fn respawn(
+        &mut self,
+        session: SessionId,
+        spec: ShipSpec,
+        position: Vec3,
+        direction: Vec3,
+        now: i64,
+    ) -> Result<Vec<Out>, SceneError> {
+        if self.pilots.contains_key(&session) {
+            return Err(SceneError::AlreadyInSpace(session));
+        }
+        let Some(widow) = self.widowed.remove(&session) else {
+            return Err(SceneError::NotDestroyed(session));
+        };
+        let modules = Modules::with_charge(
+            spec.capacitor_capacity,
+            spec.capacitor_recharge_s,
+            spec.condition.charge,
+            now,
+        );
+        let ship = Ship::new(spec, position, Vec3::new(0.0, 0.0, 0.0), direction, 0.0, Course::Stop, now);
+        let entered = self.next_entry();
+        let mut pilot = Pilot::new(ship, modules, entered, now, 0);
+        pilot.bound = widow.bound;
+        pilot.sees = widow.sees;
+        pilot.sees_wrecks = widow.sees_wrecks;
+        self.pilots.insert(session, pilot);
+        let mut out = Vec::new();
+        if widow.bound
+            && let Some(actions) = self.introduction(session, now)
+        {
+            out.push(Self::update(session, actions));
+        }
+        out.extend(self.announce_arrival(session, now));
+        Ok(out)
     }
 
     /// Who a wreck made by `killer`'s ship is credited to: the killer's pilot and corporation (nobody when nobody did it).
@@ -129,7 +186,8 @@ mod tests {
         scene_with_a_player,
     };
     use crate::npc::is_npc_session;
-    use crate::scene::tests::{NOON, spec};
+    use crate::scene::Command;
+    use crate::scene::tests::{NOON, STATION, spec};
     use crate::ship::NpcIdentity;
     use crate::wreck::{WRECK_LIFETIME, WreckKind};
 
@@ -245,6 +303,111 @@ mod tests {
         assert_eq!(scene.wrecks.values().next().unwrap().kind, named);
         scene.destroy(PLAYER, None, LATER);
         assert_eq!(scene.wrecks.len(), 1);
+    }
+
+    fn capsule_spec() -> ShipSpec {
+        ShipSpec {
+            ship_id: 9_988_400_002_416,
+            type_id: 670,
+            group_id: 29,
+            name: "Capsule".to_string(),
+            ..spec()
+        }
+    }
+
+    #[test]
+    fn the_host_is_told_what_wreck_a_players_ship_leaves_and_the_scene_makes_none() {
+        use crate::wreck_types::WreckCatalog;
+        let mut scene = scene_with_a_player();
+        scene.set_wreck_catalog(std::sync::Arc::new(WreckCatalog::of([
+            (601, "Ibis", "Frigate", 1, 312),
+            (26_506, "Caldari Frigate Wreck", "Wreck", 0, 3117),
+        ])));
+        let told = scene.destroy(PLAYER, None, LATER);
+        assert!(scene.wrecks.is_empty());
+        let Some(Out::Destroyed { wreck, wreck_kind, .. }) =
+            told.iter().find(|out| matches!(out, Out::Destroyed { .. }))
+        else {
+            panic!("{told:?}")
+        };
+        assert_eq!((*wreck, wreck_kind.as_ref()), (None, Some(&frigate_wreck())));
+    }
+
+    /// The names of the destiny actions a session was told of, in order.
+    fn action_names(told: &[Out], session: SessionId) -> Vec<String> {
+        let told: Vec<Out> = told.iter().filter(|out| out.session() == session).cloned().collect();
+        told_actions(&told).into_iter().map(|(_, name)| name).collect()
+    }
+
+    #[test]
+    fn a_session_that_lost_its_ship_is_given_a_capsule_where_it_was_and_its_client_is_sent_the_ball() {
+        let mut scene = scene_with_a_player();
+        let place = scene.ship(PLAYER, LATER).unwrap().position;
+        scene.destroy(PLAYER, None, LATER);
+        assert!(!scene.contains(PLAYER));
+
+        let told =
+            scene.respawn(PLAYER, capsule_spec(), place, Vec3::new(1.0, 0.0, 0.0), LATER + SECOND).unwrap();
+        assert!(scene.contains(PLAYER));
+        assert_eq!(scene.ship(PLAYER, LATER + SECOND).unwrap().spec.ship_id, 9_988_400_002_416);
+        assert_eq!(scene.ship(PLAYER, LATER + SECOND).unwrap().position, place);
+        let names = action_names(&told, PLAYER);
+        assert_eq!(names.first().map(String::as_str), Some("AddBalls2"), "{names:?}");
+        assert!(scene.locked_by(PLAYER).is_empty());
+        // it is the pilot's ship again: it answers to commands
+        let answered = scene.command(PLAYER, Command::Stop, LATER + 2 * SECOND);
+        assert!(
+            !answered.is_empty() && !answered.iter().any(|out| matches!(out, Out::Refused { .. })),
+            "{answered:?}"
+        );
+    }
+
+    #[test]
+    fn a_client_that_had_not_bound_the_ballpark_is_sent_nothing_of_the_capsule_and_is_given_it_when_it_binds()
+    {
+        let mut scene = Scene::new(crate::brains::rat_tests::system());
+        scene.undock(PLAYER, spec(), STATION, NOON).unwrap();
+        let place = scene.ship(PLAYER, NOON).unwrap().position;
+        scene.destroy(PLAYER, None, LATER);
+        let told =
+            scene.respawn(PLAYER, capsule_spec(), place, Vec3::new(1.0, 0.0, 0.0), LATER + SECOND).unwrap();
+        assert_eq!(told, Vec::new());
+        let bound = scene.bind(PLAYER, LATER + 2 * SECOND);
+        assert!(!bound.is_empty());
+    }
+
+    #[test]
+    fn a_session_that_did_not_lose_its_ship_or_has_one_already_is_given_none() {
+        let mut scene = scene_with_a_player();
+        let place = scene.ship(PLAYER, LATER).unwrap().position;
+        let direction = Vec3::new(1.0, 0.0, 0.0);
+        assert_eq!(
+            scene.respawn(PLAYER, capsule_spec(), place, direction, LATER),
+            Err(SceneError::AlreadyInSpace(PLAYER))
+        );
+        scene.destroy(PLAYER, None, LATER);
+        assert!(scene.respawn(PLAYER, capsule_spec(), place, direction, LATER).is_ok());
+        assert_eq!(
+            scene.respawn(PLAYER, capsule_spec(), place, direction, LATER),
+            Err(SceneError::AlreadyInSpace(PLAYER))
+        );
+        assert_eq!(
+            scene.respawn(PLAYER + 1, capsule_spec(), place, direction, LATER),
+            Err(SceneError::NotDestroyed(PLAYER + 1))
+        );
+    }
+
+    #[test]
+    fn a_capsule_that_comes_after_a_death_is_shown_to_those_who_watch_and_the_watchers_state_is_kept() {
+        let (mut scene, rat) = scene_with_a_mortal_rat();
+        scene.destroy(rat, None, LATER);
+        let wreck = *scene.wrecks.keys().next().unwrap();
+        scene.destroy(PLAYER, None, LATER);
+        let place = Vec3::new(0.0, 0.0, 0.0);
+        scene.respawn(PLAYER, capsule_spec(), place, Vec3::new(1.0, 0.0, 0.0), LATER + SECOND).unwrap();
+        // it still knows the wreck it was sent: it is not sent it again
+        assert!(scene.pilots[&PLAYER].sees_wrecks.contains(&wreck));
+        assert!(scene.pilots[&PLAYER].bound);
     }
 
     #[test]

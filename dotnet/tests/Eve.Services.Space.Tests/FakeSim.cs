@@ -33,6 +33,24 @@ internal sealed class FakeSim : ISimulation
         return Task.FromResult(SpawnAnswer is { } answer ? answer with { RequestId = spawn.RequestId } : new SimSpawnReply(spawn.RequestId, (ulong)Heard.Count + (1UL << 62), null));
     }
 
+    /// <summary>What a respawn is answered with: null (done) or a reason.</summary>
+    public string? RespawnAnswer { get; set; }
+
+    /// <summary>When set, a respawn is not answered until the test completes it.</summary>
+    public TaskCompletionSource? RespawnGate { get; set; }
+
+    public async Task<string?> RespawnAsync(SimRespawn respawn, CancellationToken cancellationToken = default)
+    {
+        Heard.Add(respawn);
+        if (RespawnGate is { } gate)
+        {
+            await gate.Task;
+        }
+        return RespawnAnswer;
+    }
+
+    public void PlaceWreck(SimPlaceWreck wreck) => Heard.Add(wreck);
+
     public void Destroy(long shipId, SimCredit credit) => Heard.Add(new SimDestroy(shipId, credit));
 
     public Task<string?> EnterAsync(SimEnter enter, CancellationToken cancellationToken = default)

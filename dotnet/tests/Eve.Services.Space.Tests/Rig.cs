@@ -117,6 +117,16 @@ internal sealed class Rig : IAsyncDisposable
     }
 
     /// <summary>A new character (Caldari), in its rookie ship in the station.</summary>
+    /// <summary>A unit of something in the cargo hold of a ship (each is an item of its own).</summary>
+    public async Task<long> GiveCargoAsync(long owner, long ship)
+    {
+        await using var connection = await Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var id = await Items.CreateAsync(connection, transaction, new NewItem(3296, owner, ship, 5, 1, true));
+        await transaction.CommitAsync();
+        return id;
+    }
+
     public async Task<Created> NewCharacterAsync(string name = "Space Tester", int account = 1)
     {
         var made = await Creation.CreateAsync(new CreationRequest(account, name, 1, 1, 1, 10, 35, [1], [2]));

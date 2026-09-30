@@ -105,6 +105,27 @@ public sealed class PgItemStore
         return list;
     }
 
+    /// <summary>Everything in a place (a ship, a container, a wreck), whoever owns it, oldest first.</summary>
+    public async Task<IReadOnlyList<Item>> InContainerAsync(long locationId, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.items WHERE location_id = $1 ORDER BY id");
+        command.Parameters.Add(new NpgsqlParameter { Value = locationId });
+        var list = new List<Item>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            list.Add(Read(reader));
+        }
+        return list;
+    }
+
+    /// <summary>Takes an item out of the world, inside the caller's transaction.</summary>
+    public async Task DeleteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"DELETE FROM {_schema}.items WHERE id = $1", connection, transaction) { Parameters = { new() { Value = id } } };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<Item>> OwnedByAsync(long ownerId, CancellationToken cancellationToken = default)
     {
         await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.items WHERE owner_id = $1 ORDER BY id");

@@ -15,7 +15,7 @@ namespace Eve.Services.Space;
 /// the notifications), forwarding what the simulation says to the client that plays the ship, and bringing the ship home when it docks, or
 /// when the simulation is lost. What happens in space itself (motion, the balls, the stamps) is the simulation's (ADR 0007).
 /// </summary>
-public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules, ISpaceHealth, ISpaceHulls
+public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules, ISpaceHealth, ISpaceHulls, ISpaceDeath
 {
     /// <summary>How long a ship that has undocked cannot be hurt (the reference's: 30 seconds).</summary>
     public const long UndockInvulnerabilityTicks = 300_000_000;
@@ -71,6 +71,10 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     private readonly Action<string>? _log;
     private readonly ConcurrentDictionary<ulong, Pilot> _pilots = new();
     private readonly ConcurrentDictionary<ulong, SemaphoreSlim> _targeting = new();
+    /// <summary>The sessions whose ship's destruction is being told (each is told once).</summary>
+    private readonly ConcurrentDictionary<ulong, byte> _dying = new();
+    /// <summary>Who waits to hear what became of a ship they had destroyed (<c>/suicide</c>), by ship.</summary>
+    private readonly ConcurrentDictionary<long, TaskCompletionSource<ShipDeath?>> _deaths = new();
     private readonly TimeSpan _protection;
     private readonly TimeSpan _jumpCloak;
     private readonly ConcurrentDictionary<int, ConcurrentDictionary<long, (long FileTime, long ExpiresAtMs)>> _queues = new();
@@ -661,6 +665,9 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                 case SimJumped jumped when _pilots.TryGetValue(jumped.SessionId, out var jumper):
                     _ = Task.Run(() => FinishJumpAsync(jumper, jumped));
                     break;
+                case SimDestroyed destroyed when _pilots.TryGetValue(destroyed.SessionId, out var victim):
+                    _ = Task.Run(() => FinishDeathAsync(victim, destroyed));
+                    break;
                 case SimRefused { Command: SimCommands.Stop, Reason: "IN_WARP" } inWarp when _pilots.TryGetValue(inWarp.SessionId, out var warping):
                     TellShipInWarp(warping.Session);
                     break;
@@ -772,6 +779,162 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         catch (Exception error)
         {
             _log?.Invoke($"docking of character {pilot.CharacterId} at {stationId} failed: {error}");
+        }
+    }
+
+    // ── death ────────────────────────────────────────────────────────────────
+
+    /// <summary>How long <c>/suicide</c> waits for the simulation and the character's items before it says it failed.</summary>
+    private static readonly TimeSpan SelfDestructWait = TimeSpan.FromSeconds(20);
+
+    public async Task<SelfDestruct?> SelfDestructAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
+        {
+            return null;
+        }
+        if (await _ships.LoadAsync(pilot.CharacterId, cancellationToken) is not { } flown || flown.Ship.Id != pilot.ShipId || flown.Ship.TypeId == CharacterShips.CapsuleTypeId)
+        {
+            return null; // what becomes of a pilot whose capsule is destroyed is not done yet
+        }
+        var waiting = new TaskCompletionSource<ShipDeath?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_deaths.TryAdd(pilot.ShipId, waiting))
+        {
+            return null; // it is being destroyed already
+        }
+        try
+        {
+            // the wreck is the pilot's own to loot (the host makes it when the simulation says the ship is gone), so nobody else is credited
+            _sim.Destroy(pilot.ShipId, SimCredit.Nobody);
+            var death = await waiting.Task.WaitAsync(SelfDestructWait, cancellationToken);
+            if (death is null)
+            {
+                return null;
+            }
+            var wreck = death.Wreck;
+            return new SelfDestruct(
+                death.Ship.Id, wreck is null ? null : _statics.Type(wreck.TypeId)?.Name, wreck?.Id,
+                _statics.Type(death.Capsule.TypeId)?.Name ?? "Capsule", death.Capsule.Id);
+        }
+        catch (TimeoutException)
+        {
+            return null;
+        }
+        finally
+        {
+            _deaths.TryRemove(pilot.ShipId, out _);
+        }
+    }
+
+    /// <summary>The place an item that is destroyed is said to go to (the client's junkyard).</summary>
+    private const long Junkyard = 6;
+
+    private static ItemRow RowOf(Item item, TypeDef? type) =>
+        new(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, item.Singleton ? -1 : (int)Math.Min(item.Quantity, int.MaxValue), type?.GroupId ?? 0, type?.CategoryId ?? 0);
+
+    /// <summary>
+    /// The ship of a pilot was destroyed (the simulation has told the clients that watched it): what it held goes into a wreck or is destroyed, the pilot is in a
+    /// capsule where the ship was, and the client is told, in the reference's order, of the objects that let go, the capsule, the modules that left, the items,
+    /// the session change and the capsule's ball; then the wreck is put in space. What the simulation needs to go on (the capsule) is given to it first.
+    /// </summary>
+    private async Task FinishDeathAsync(Pilot pilot, SimDestroyed destroyed)
+    {
+        var id = (ulong)pilot.Session.SessionId;
+        if (!_dying.TryAdd(id, 0))
+        {
+            return; // being told already
+        }
+        pilot.End();
+        ShipDeath? death = null;
+        var handedOver = false;
+        try
+        {
+            var session = pilot.Session;
+            var seed = string.Create(System.Globalization.CultureInfo.InvariantCulture, $"ship:{pilot.ShipId}:{_nowUnixMs()}");
+            death = await _ships.DestroyShipAsync(pilot.CharacterId, pilot.ShipId, destroyed.WreckKind?.TypeId, seed);
+            if (death is null)
+            {
+                _log?.Invoke($"the ship {pilot.ShipId} of character {pilot.CharacterId} was destroyed in space but is not the character's ship in space any more");
+                return;
+            }
+            await _statics.EnsureTypesAsync([CharacterShips.CapsuleTypeId, .. death.Changes.Select(c => c.Item.TypeId), .. death.Wreck is { } w ? new[] { w.TypeId } : []]);
+            var capsule = death.Capsule;
+            var character = death.Character;
+
+            ReleaseBoundObjects(session);
+            session.SendNotification("OnPodOrCorvetteAssembly", "charid", InventoryWire.Id(capsule.Id), new PyInt(capsule.TypeId));
+            var now = FileTimeNow();
+            if (death.Events.Count > 0)
+            {
+                session.SendNotification("OnMultiEvent", "clientID", Eve.Services.Ships.ShipNotifications.MultiEvent(pilot.CharacterId, pilot.ShipId, death.Events, now));
+            }
+            foreach (var change in death.Changes)
+            {
+                var type = _statics.Type(change.Item.TypeId);
+                var row = change.Destroyed ? change.Item with { LocationId = Junkyard } : change.Item;
+                var from = change.Destroyed
+                    ? new PyDict([new(new PyInt(3), InventoryWire.Id(change.PreviousLocationId))])
+                    : new PyDict([new(new PyInt(3), InventoryWire.Id(change.PreviousLocationId)), new(new PyInt(4), new PyInt(change.PreviousFlag))]);
+                session.SendNotification("OnItemsChanged", "charid", new PyList([InventoryWire.PackedRow(RowOf(row, type))]), from, None);
+            }
+            var shipType = _statics.Type(death.Ship.TypeId);
+            session.SendNotification(
+                "OnItemsChanged", "charid",
+                new PyList([InventoryWire.PackedRow(RowOf(death.Ship with { LocationId = Junkyard }, shipType), new PyStr($"Undocking:{pilot.UndockedFrom}"))]),
+                new PyDict([new(new PyInt(3), InventoryWire.Id(death.Ship.LocationId))]), None);
+            session.Change(("shipid", new PyLong(capsule.Id)));
+            session.SendNotification("OnShipCosmeticsChanged", "clientID", InventoryWire.Id(pilot.ShipId), new PyDict([]));
+            session.SendNotification("OnShipCosmeticsChanged", "clientID", InventoryWire.Id(capsule.Id), new PyDict([]));
+            session.SendNotification("OnCurrentShipSkinChange", "clientID", InventoryWire.Id(capsule.Id), new PyInt(0));
+
+            // the pilot flies the capsule where the ship was: the simulation adds its ball (it answers after the client has been sent it)
+            if (await _ships.LoadAsync(pilot.CharacterId) is { } flown && flown.Ship.Id == capsule.Id)
+            {
+                var flying = new Pilot(session, pilot.CharacterId, capsule.Id, pilot.SolarSystemId, 0);
+                flying.End();
+                if (!_pilots.TryUpdate(id, flying, pilot))
+                {
+                    // the client went away while its ship was being destroyed: the capsule is brought home like any ship left in space
+                    await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation);
+                    return;
+                }
+                var refusal = await _sim.RespawnAsync(new SimRespawn(id, SimShips.Of(flown, _statics), destroyed.Position, destroyed.Direction));
+                if (refusal is not null)
+                {
+                    _log?.Invoke($"the simulation did not take the capsule of character {pilot.CharacterId}: {refusal}");
+                    return;
+                }
+                handedOver = true;
+            }
+
+            if (death.Wreck is { } wreck && destroyed.WreckKind is { } kind)
+            {
+                var wreckType = _statics.Type(wreck.TypeId);
+                session.SendNotification(
+                    "OnItemChange", "clientID",
+                    InventoryWire.PackedRow(RowOf(wreck, wreckType), new PyStr("")),
+                    new PyDict([new(new PyInt(3), new PyInt(0))]), None);
+                _sim.PlaceWreck(new SimPlaceWreck(
+                    pilot.SolarSystemId, wreck.Id, kind, destroyed.Position, destroyed.Direction, destroyed.Radius, pilot.ShipId,
+                    new SimCredit(character.Id, character.CorporationId, character.AllianceId ?? 0, character.FactionId ?? 0), death.Changes.All(c => c.Destroyed)));
+            }
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"the death of the ship {pilot.ShipId} of character {pilot.CharacterId} could not be told: {error}");
+        }
+        finally
+        {
+            if (!handedOver && _pilots.TryRemove(id, out _))
+            {
+                // no ship in space for this session: it is out of the simulation (which keeps its ballpark until it leaves)
+                _sim.Leave(id, LeaveWhy.LoggedOff);
+            }
+            _dying.TryRemove(id, out _);
+            if (_deaths.TryRemove(pilot.ShipId, out var waiting))
+            {
+                waiting.TrySetResult(death);
+            }
         }
     }
 

@@ -5,6 +5,11 @@
 - Decided by: the repository owner. On 2026-09-30, mid-way through the NPC work, they said: without being bound by the
   constraints, if EVE.js or the client has the better processing, rewrite it and port it as it is.
 
+- Amended: 2026-09-30, the owner added: not only EVE.js, also the code in `eve-logic` (the decompiled client) that is
+  server logic, the packages the client shares with the server (`industry`, `missions`, `evemissions`, `crimewatch`,
+  `npcs`, `evedungeons`, `inventoryrestrictions`, `ballparkCommon`, `evefleet`, `evewar`, `factionwarfare`, `mining`, ...)
+  and the `carbon`/`eve` `common` code the server runs. Port it as it is when the feature it belongs to comes up.
+
 ## Context
 
 ADR 0001 kept only external compatibility and asked for the inside to be redesigned; EVE.js was "read for behaviour, never
@@ -30,7 +35,10 @@ Redesigning them from the outside costs time and loses detail.
 4. **The structure around it is still ours.** Module boundaries, persistence, the split between the Rust simulation and
    the C# host, and configuration are designed for speed and maintenance (ADR 0001, 0003, 0007). A port fits into them;
    it does not import EVE.js's global state or its file layout.
-5. The sources are read where they are (`Fokiiiiiii/evejs-v0.12.9`, `Fokiiiiiii/eve-logic`); nothing is vendored as
+5. **Where the two differ, the one the game plays by wins**: a rule in a shared package of the client is what the server
+   enforces too, and EVE.js's version is checked against it, not the other way round, unless the recordings of the
+   reference say the game plays otherwise (then the deviation is recorded with that evidence).
+6. The sources are read where they are (`Fokiiiiiii/evejs-v0.12.9`, `Fokiiiiiii/eve-logic`); nothing is vendored as
    text. The decompiled client is CCP's property: the ports are the owner's call, they stay in this private repository,
    and, as in ADR 0008, they are to be reviewed or rewritten before the repository is ever made public.
 

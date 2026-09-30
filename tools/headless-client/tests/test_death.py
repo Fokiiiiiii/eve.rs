@@ -14,15 +14,16 @@ It waits out the undocking protection first, so it runs only with EVE_LIVE_SLOW=
 from __future__ import annotations
 
 import os
+import re
 import uuid
 
 import pytest
 
 from evecli.describe import shape
 from tests import test_login_to_character as base
-from tests.test_others import watch
+from tests.test_others import names, watch
 from tests.test_target import plain_race, timing
-from tests.test_undock import STATION, SYSTEM, arrive, compare_events, outcome
+from tests.test_undock import STATION, SYSTEM, arrive, collapse, compare_events, outcome
 
 DEATH = base.load("death.json")
 pytestmark = [
@@ -117,3 +118,77 @@ def _names(event: dict) -> set:
     except (KeyError, TypeError):
         return set()
     return {a["$tuple"][1]["$tuple"][0] for a in actions}
+
+
+# ── the pilot destroys its own ship ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+KEEP_ALIVE = {"SetBallPosition", "SetBallVelocity", "SetSpeedFraction", "Stop"}
+
+
+def victim_view(events: list) -> list:
+    """What the pilot was told, as both servers can be compared: the events in order but for what a server may do differently (docs/compat/DEVIATIONS.md
+    #50): the reference lets go of the bound objects and announces the capsule before it sends the explosion, eve.rs after (the explosion goes first
+    in both views); the reference repeats a position of the capsule every few seconds, eve.rs does not."""
+    view = []
+    for event in collapse(without_protection(events)):
+        name = event["name"]
+        if name == "DoDestinyUpdate":
+            acts = names(event)
+            if set(acts) <= KEEP_ALIVE:
+                continue
+            view.append((name, tuple(acts)))
+        else:
+            view.append((name, event["idType"]))
+    explosion = [v for v in view if v[1] and v[1][0] == "TerminalPlayDestructionEffect"]
+    return explosion + [v for v in view if v not in explosion]
+
+
+def item_rows(events: list) -> list:
+    """The rows of the `OnItemsChanged` events (in order) and where each came from."""
+    out = []
+    for event in events:
+        if event["name"] != "OnItemsChanged":
+            continue
+        rows, moved_from, _ = event["args"]["$tuple"][1]["$tuple"][1]["$tuple"]
+        out.append((rows[0]["$row"] if "$row" in rows[0] else rows[0], moved_from))
+    return out
+
+
+def test_a_pilot_who_destroys_its_own_ship_is_left_in_a_capsule_as_in_the_reference():
+    race = DEATH["races"][0]
+    run = uuid.uuid4().hex[:10]
+    problems: list[str] = []
+    label = "the victim destroys its ship"
+    step = {s["label"]: s for s in race["steps"]}[label]
+    with base.connect(f"walk-suicide-a-{run}") as a, base.connect(f"walk-suicide-b-{run}") as b:
+        _, a_ship, _, a_mapping = arrive(a, plain_race(race, "watcher"), run)
+        _, b_ship, b_fitted, b_mapping = arrive(b, plain_race(race, "victim"), run)
+        both = {"events": b, "seen": a}
+        a_service = a.call("ship", "MachoBindObject", (STATION, 15), None)
+        b_service = b.call("ship", "MachoBindObject", (STATION, 15), None)
+        watch(both, 0.5)
+        a.call_bound(a_service[0], "Undock", a_ship, False)
+        a.call("beyonce", "MachoBindObject", SYSTEM, None)
+        watch(both, 2.5)
+        b.call_bound(b_service[0], "Undock", b_ship, False)
+        b.call("beyonce", "MachoBindObject", SYSTEM, None)
+        watch(both, 3.0)
+        a.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
+        b.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
+        watch(both, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))
+
+        raw, error = outcome(lambda: b.call("slash", "SlashCmd", "/suicide"))
+        if error is not None:
+            problems.append(f"{label}: an error {error}")
+        got = watch(both, 30.0, until=lambda seen: sum(1 for e in seen["events"] if e["name"] == "DoDestinyUpdate" and "AddBalls2" in names(e)) >= 2)
+        watch(both, 1.0)
+
+        # the words, but for the ids that are per run
+        text = m_text(raw)
+        if re.sub(r"\d+", "#", str(text)) != re.sub(r"\d+", "#", str(step["ok"])):
+            problems.append(f"{label}: answered {text!r} in place of {step['ok']!r}")
+
+        mine, theirs = victim_view(got["events"]), victim_view(step["events"])
+        if mine != theirs:
+            problems.append(f"{label}: the victim was told {mine} in place of {theirs}")
+    assert problems == [], "\n".join(problems[:40])

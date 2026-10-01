@@ -277,6 +277,13 @@ public sealed record SimPlaceWreck(
 /// </summary>
 public sealed record SimPlaceContainer(ulong SessionId, long ContainerId, SimWreckKind Kind, double Radius, long LauncherId, SimCredit Credit, double Distance) : SimMessage;
 
+/// <summary>
+/// A player's ship came to rest at an asteroid belt after a warp: the belt it warped to, or else the nearest within 250 km of where it stopped.
+/// <c>Position</c> is where the belt is (what the host places what lives there around). The host decides whether anything does (belt rats); the
+/// simulation does not send it for NPC ships.
+/// </summary>
+public sealed record SimArrived(ulong SessionId, long BeltId, IReadOnlyList<double> Position) : SimMessage;
+
 /// <summary>A can the host asked for is in space: where it lies and how it faces.</summary>
 public sealed record SimContainerPlaced(ulong SessionId, long ContainerId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage;
 

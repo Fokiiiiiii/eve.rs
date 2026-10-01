@@ -16,7 +16,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "Jumping": 15, "Jumped": 16, "Targets": 17, "TargetRefused": 18, "Activate": 19, "Condition": 20,
          "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27,
          "PlaceContainer": 28, "ContainerPlaced": 29, "ChangeWreck": 30, "RemoveWreck": 31, "Measured": 32,
-         "AdjustCharge": 33, "ChargeAdjusted": 34}
+         "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35}
 
 
 def s(text):  # u16 length + UTF-8
@@ -178,6 +178,8 @@ def build(m):
                      + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"]) + struct.pack("<d", m["distance"]))
     if k == "ContainerPlaced":
         return frame(k, u64(m["sessionId"]) + i64(m["containerId"]) + struct.pack("<6d", *m["position"], *m["direction"]))
+    if k == "Arrived":
+        return frame(k, u64(m["sessionId"]) + i64(m["beltId"]) + struct.pack("<3d", *m["position"]))
     if k == "ChangeWreck":
         return frame(k, u64(m["sessionId"]) + i64(m["wreckId"]) + bytes([1 if m["isEmpty"] else 0]))
     if k == "RemoveWreck":
@@ -211,8 +213,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 5},
-    {"name": "hello ack", "kind": "HelloAck", "version": 5, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 6},
+    {"name": "hello ack", "kind": "HelloAck", "version": 6, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -375,6 +377,8 @@ valid = [
      "characterId": "140000431", "corporationId": "1000006", "allianceId": "0", "warFactionId": "0", "distance": 275.0},
     {"name": "can that is in space", "kind": "ContainerPlaced", "sessionId": "1790646377000015", "containerId": "9988400002948",
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "direction": [0.6159, 0.01306, 0.78769]},
+    {"name": "player's warp ended at a belt", "kind": "Arrived", "sessionId": "1790646377000015", "beltId": "40009256",
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
     {"name": "wreck with something to take", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002948", "isEmpty": False},
     {"name": "wreck with nothing to take", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002417", "isEmpty": True},
     {"name": "can taken out of space with the destruction effect", "kind": "RemoveWreck", "wreckId": "9988400002948", "effect": 3},

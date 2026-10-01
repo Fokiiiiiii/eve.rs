@@ -104,6 +104,7 @@ public class SimCodecTests
             "PlaceContainer" => new SimPlaceContainer(
                 Session(), Wide(c, "containerId"), WreckKindOf(c["container"])!, (double)c["radius"]!, Wide(c, "launcherId"),
                 new SimCredit(Wide(c, "characterId"), Wide(c, "corporationId"), Wide(c, "allianceId"), Wide(c, "warFactionId")), (double)c["distance"]!),
+            "Arrived" => new SimArrived(Session(), Wide(c, "beltId"), VectorOf(c["position"]!)),
             "ContainerPlaced" => new SimContainerPlaced(Session(), Wide(c, "containerId"), VectorOf(c["position"]!), VectorOf(c["direction"]!)),
             "ChangeWreck" => new SimChangeWreck(Session(), Wide(c, "wreckId"), (bool)c["isEmpty"]!),
             "RemoveWreck" => new SimRemoveWreck(Wide(c, "wreckId"), (int)c["effect"]!),
@@ -121,7 +122,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-        Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Bind", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "Destroy", "Destroyed", "Docked", "Enter", "EnterReply", "Hello", "HelloAck", "Jumped", "Jumping", "Leave", "Measured", "Notify", "PlaceContainer", "PlaceWreck", "Refused", "RemoveWreck", "Respawn", "ShipSpec", "Spawn", "SpawnReply", "TargetRefused", "Targets", "UpdateState"], kinds);
+        Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "Destroy", "Destroyed", "Docked", "Enter", "EnterReply", "Hello", "HelloAck", "Jumped", "Jumping", "Leave", "Measured", "Notify", "PlaceContainer", "PlaceWreck", "Refused", "RemoveWreck", "Respawn", "ShipSpec", "Spawn", "SpawnReply", "TargetRefused", "Targets", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);
     }
 

@@ -163,6 +163,11 @@ impl Sim {
             Out::Docked { session, station_id, condition } => {
                 Message::Docked { session_id: session, station_id, condition }
             }
+            Out::Arrived { session, belt_id, position } => Message::Arrived {
+                session_id: session,
+                belt_id,
+                position: [position.x, position.y, position.z],
+            },
             Out::Condition { session, command, condition } => {
                 Message::Condition { session_id: session, command, condition }
             }
@@ -1329,6 +1334,49 @@ mod tests {
         );
         assert_eq!((sim.ships(), sim.scenes.len()), (0, 0), "an empty scene is dropped");
         assert!(sim.poll(NOON + 9 * SECOND).is_empty());
+    }
+
+    #[test]
+    fn a_players_warp_to_a_belt_is_told_to_the_host_as_an_arrival() {
+        const BELT: i64 = 40_000_101;
+        let mut world = big_station();
+        world.bodies.push(crate::world::Body {
+            id: BELT,
+            type_id: 15,
+            group_id: 9,
+            category_id: 2,
+            owner_id: 0,
+            name: "Testing Belt".to_string(),
+            kind: crate::world::BodyKind::Belt,
+            position: eve_destiny::Vec3::new(20_000_000.0, 0.0, 0.0),
+            radius: 1_000.0,
+            graphic_id: None,
+            detail: crate::world::Detail::None,
+        });
+        let mut sim = Sim::new(Arc::new(Universe::with_systems([world])));
+        sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
+        sim.handle(Message::Command { session_id: SESSION, command: 3, args: vec![0.0] }, NOON).unwrap();
+        let warp = sim
+            .handle(
+                Message::Command { session_id: SESSION, command: 8, args: vec![BELT as f64, 0.0] },
+                NOON + SECOND,
+            )
+            .unwrap();
+        assert!(!warp.iter().any(|m| matches!(m, Message::Refused { .. })), "{warp:?}");
+        let mut arrived = Vec::new();
+        let mut t = NOON + SECOND;
+        while t < NOON + 600 * SECOND {
+            t += SECOND / 4;
+            arrived.extend(sim.poll(t).into_iter().filter(|m| matches!(m, Message::Arrived { .. })));
+        }
+        let [Message::Arrived { session_id, belt_id, position }] = &arrived[..] else {
+            panic!("{arrived:?}")
+        };
+        assert_eq!((*session_id, *belt_id), (SESSION, BELT));
+        assert!(
+            (position[0] - 20_000_000.0).abs() < 4_000.0,
+            "{position:?}: it stops 2.5 km short of the belt"
+        );
     }
 
     #[test]

@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 5;
+    public const ushort ProtocolVersion = 6;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -70,6 +70,7 @@ public static class SimCodec
         public const byte Measured = 32;
         public const byte AdjustCharge = 33;
         public const byte ChargeAdjusted = 34;
+        public const byte Arrived = 35;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)
@@ -511,6 +512,9 @@ public static class SimCodec
                     message = new SimPlaceContainer(session, container, kind, r.F64(), r.I64(), ReadCredit(ref r), r.F64());
                     break;
                 }
+            case Kind.Arrived:
+                message = new SimArrived(r.U64(), r.I64(), ReadVector(ref r));
+                break;
             case Kind.ContainerPlaced:
                 message = new SimContainerPlaced(r.U64(), r.I64(), ReadVector(ref r), ReadVector(ref r));
                 break;
@@ -938,6 +942,12 @@ public static class SimCodec
                 w.I64(m.LauncherId);
                 WriteCredit(w, m.Credit);
                 w.F64(m.Distance);
+                break;
+            case SimArrived m:
+                w.U8(Kind.Arrived);
+                w.U64(m.SessionId);
+                w.I64(m.BeltId);
+                WriteVector(w, m.Position);
                 break;
             case SimContainerPlaced m:
                 w.U8(Kind.ContainerPlaced);

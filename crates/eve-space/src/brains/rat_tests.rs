@@ -147,7 +147,7 @@ fn field<'a>(message: &'a Value, key: &str) -> &'a Value {
 }
 
 #[test]
-fn a_rat_that_was_given_its_tree_runs_it_without_raising_anything_and_has_a_sensor_of_the_range_it_attacks_at()
+fn a_rat_that_was_given_its_tree_runs_it_without_raising_anything_and_has_a_sensor_that_reaches_further_than_it_attacks()
  {
     let mut scene = scene_with_a_player();
     let place = place_near(&mut scene, 60_000.0);
@@ -159,8 +159,16 @@ fn a_rat_that_was_given_its_tree_runs_it_without_raising_anything_and_has_a_sens
     let sensor = &brains.state.sensors[&RAT_SHIP];
     assert_eq!(
         (sensor.detection_range, sensor.tags.as_slice()),
-        (15_000.0, [RAT_TAG.to_string()].as_slice())
+        (50_000.0, [RAT_TAG.to_string()].as_slice())
     );
+}
+
+#[test]
+fn a_rat_that_attacks_from_further_than_the_floor_notices_at_the_range_it_attacks_at() {
+    let mut scene = scene_with_a_player();
+    let place = place_near(&mut scene, 60_000.0);
+    scene.spawn_npc_with_behavior(rat_spec(), rat_identity(80_000.0), place, BELT_RAT, LATER).unwrap();
+    assert_eq!(scene.brains().unwrap().state.sensors[&RAT_SHIP].detection_range, 80_000.0);
 }
 
 #[test]
@@ -177,15 +185,27 @@ fn a_rat_that_does_not_attack_what_comes_near_has_no_sensor() {
 }
 
 #[test]
-fn a_rat_leaves_a_player_alone_who_is_beyond_its_range() {
+fn a_rat_leaves_a_player_alone_who_is_beyond_the_range_it_notices_at() {
     let mut scene = scene_with_a_player();
-    let place = place_near(&mut scene, 40_000.0);
+    // it attacks from 15 km and notices from 50 km (the floor); the player is well beyond it
+    let place = place_near(&mut scene, 120_000.0);
     scene.spawn_npc_with_behavior(rat_spec(), rat_identity(15_000.0), place, BELT_RAT, LATER).unwrap();
     let told = run(&mut scene, LATER, 30);
     assert!(
         notified(&told, "OnTarget").is_empty() && notified(&told, "OnDamageMessage").is_empty(),
         "{told:?}"
     );
+}
+
+#[test]
+fn a_rat_notices_a_player_further_off_than_it_attacks_and_goes_for_the_player() {
+    let mut scene = scene_with_a_player();
+    let place = place_near(&mut scene, 40_000.0);
+    let (rat, _) =
+        scene.spawn_npc_with_behavior(rat_spec(), rat_identity(15_000.0), place, BELT_RAT, LATER).unwrap();
+    let told = run(&mut scene, LATER, 30);
+    assert_eq!(scene.brains().unwrap().faults(rat), []);
+    assert!(!notified(&told, "OnTarget").is_empty(), "{told:?}");
 }
 
 #[test]

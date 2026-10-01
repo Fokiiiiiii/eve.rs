@@ -371,6 +371,11 @@ fn message_of(case: &Value) -> Message {
             position: vector_of(case, "position"),
             direction: vector_of(case, "direction"),
         },
+        "Arrived" => Message::Arrived {
+            session_id: session_id(),
+            belt_id: wide(case, "beltId"),
+            position: vector_of(case, "position"),
+        },
         "ChangeWreck" => Message::ChangeWreck {
             session_id: session_id(),
             wreck_id: wide(case, "wreckId"),

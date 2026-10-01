@@ -11,6 +11,7 @@ game data and are used as data; none of the reference's code is copied (docs/adr
 
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -101,8 +102,14 @@ loot_tables = [
     for t in read("npcLootTables", "lootTables")
 ]
 
+# the pirate faction that rules a region (`PIRATE_FACTION_BY_REGION_ID` of `pirateFactionPolicy.js`): what an asteroid belt's rats are in it
+with open(os.path.join(EVEJS, "server", "src", "space", "npc", "pirateFactionPolicy.js"), encoding="utf-8") as handle:
+    policy = handle.read()
+block = re.search(r"PIRATE_FACTION_BY_REGION_ID = Object\.freeze\(\{(.*?)\}\);", policy, re.S).group(1)
+pirate_regions = {int(region): faction for region, faction in re.findall(r"^\s*(\d+):\s*\"(\w+)\"", block, re.M)}
+
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 with open(OUT, "w", encoding="utf-8") as handle:
-    json.dump({"profiles": profiles, "loadouts": loadouts, "pools": pools, "lootTables": loot_tables}, handle, separators=(",", ":"), ensure_ascii=False)
+    json.dump({"profiles": profiles, "loadouts": loadouts, "pools": pools, "lootTables": loot_tables, "pirateRegions": {str(k): v for k, v in pirate_regions.items()}}, handle, separators=(",", ":"), ensure_ascii=False)
     handle.write("\n")
-print(f"{len(profiles)} profiles, {len(loadouts)} loadouts, {len(pools)} pools, {len(loot_tables)} loot tables -> {OUT}")
+print(f"{len(profiles)} profiles, {len(loadouts)} loadouts, {len(pools)} pools, {len(loot_tables)} loot tables, {len(pirate_regions)} pirate regions -> {OUT}")

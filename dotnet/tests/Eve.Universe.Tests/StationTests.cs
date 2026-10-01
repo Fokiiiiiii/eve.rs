@@ -131,6 +131,9 @@ public class SolarSystemCatalogTests
         Assert.Equal(from.RegionId, to.RegionId);
         Assert.Equal(30000142, systems.Get(30000142)!.Id);
         Assert.Equal("Jita", systems.Get(30000142)!.Name);
+        // the faction a system belongs to is its own (Jita's is CONCORD's), else its constellation's or its region's (Perimeter's is the Caldari State's)
+        Assert.Equal(500006, systems.Get(30000142)!.FactionId);
+        Assert.Equal(500001, systems.Get(30000144)!.FactionId);
         Assert.Null(systems.Get(42));
     }
 }

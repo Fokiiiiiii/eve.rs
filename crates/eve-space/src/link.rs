@@ -12,7 +12,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Charge, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 5;
+pub const PROTOCOL_VERSION: u16 = 6;
 
 /// The message kinds.
 pub mod kind {
@@ -50,6 +50,7 @@ pub mod kind {
     pub const MEASURED: u8 = 32;
     pub const ADJUST_CHARGE: u8 = 33;
     pub const CHARGE_ADJUSTED: u8 = 34;
+    pub const ARRIVED: u8 = 35;
 }
 
 /// What the host changes in the rounds of a gun, in the order the simulation hears it (the host asks for it when a pilot loads or unloads a gun in space).
@@ -177,6 +178,13 @@ pub enum Message {
         session_id: u64,
         station_id: i64,
         condition: Condition,
+    },
+    /// A ship's warp ended at a belt (the one it warped to, or the nearest within 250 km of where it stopped): `belt_id` is the belt body and `position`
+    /// where the belt is (what the host places what lives there around). The host decides whether anything does (belt rats). Sent for player ships only.
+    Arrived {
+        session_id: u64,
+        belt_id: i64,
+        position: [f64; 3],
     },
     /// What the ship has taken and how full its capacitor is (the answer to command 19).
     Condition {
@@ -849,6 +857,7 @@ impl Message {
             Self::ShipSpec { .. } => kind::SHIP_SPEC,
             Self::Notify { .. } => kind::NOTIFY,
             Self::Docked { .. } => kind::DOCKED,
+            Self::Arrived { .. } => kind::ARRIVED,
             Self::Refused { .. } => kind::REFUSED,
             Self::Accepted { .. } => kind::ACCEPTED,
             Self::Approaching { .. } => kind::APPROACHING,
@@ -936,6 +945,11 @@ impl Message {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&station_id.to_le_bytes());
                 put_condition(&mut out, condition);
+            }
+            Self::Arrived { session_id, belt_id, position } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&belt_id.to_le_bytes());
+                put_vector(&mut out, position);
             }
             Self::Condition { session_id, command, condition } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
@@ -1190,6 +1204,9 @@ impl Message {
                 station_id: r.i64()?,
                 condition: read_condition(&mut r)?,
             },
+            kind::ARRIVED => {
+                Message::Arrived { session_id: r.u64()?, belt_id: r.i64()?, position: read_vector(&mut r)? }
+            }
             kind::CONDITION => Message::Condition {
                 session_id: r.u64()?,
                 command: r.u8()?,

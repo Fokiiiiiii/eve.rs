@@ -275,6 +275,10 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
 
         var now = FileTimeNow();
         var pilot = new Pilot(session, characterId, moved.Ship.Id, systemId, now + UndockInvulnerabilityTicks, stationId);
+        if (!_pilots.Values.Any(other => other.SolarSystemId == systemId))
+        {
+            ForgetNpcsOf(systemId);
+        }
         _pilots[(ulong)session.SessionId] = pilot;
         SystemEntered?.Invoke(systemId);
         session.Closed += () => OnSessionClosed(session);
@@ -639,11 +643,23 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// <summary>The NPCs that can be spawned (null when there are none).</summary>
     public NpcSelector? Npcs { get; init; }
 
+    /// <summary>The rats of the asteroid belts a pilot arrives at (null: no belt has any).</summary>
+    public BeltRats? BeltRats { get; init; }
+
+    /// <summary>
+    /// What <c>spreadMeters</c> of a batch of belt rats is in the reference (the chance either way of how far from the belt each comes): not the default one, which grows with the size of the batch.
+    /// </summary>
+    private const double BeltRatSpreadMeters = 8_000;
+
+    private readonly SemaphoreSlim _beltGate = new(1, 1);
+    private Task? _beltHulls;
+    private long _beltGroups;
+
     /// <summary>What an NPC leaves when it is destroyed: the host makes its wreck with what its loot table gave (null: the scene makes an empty wreck).</summary>
     public NpcWrecks? NpcWrecks { get; init; }
 
     /// <summary>What the host knows of an NPC it made: what it was worth, what it was and where (the simulation tells it only that the ship is gone).</summary>
-    private sealed record NpcShip(NpcProfile Profile, int TypeId, int SolarSystemId);
+    private sealed record NpcShip(NpcProfile Profile, int TypeId, int SolarSystemId, long BeltId = 0, long Group = 0);
 
     private readonly ConcurrentDictionary<long, NpcShip> _npcShips = new();
 
@@ -767,12 +783,134 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// <c>buildSpawnStateForDefinition</c>: how far from the anchor the NPC of a batch comes (what its profile says, a random amount either way that grows with the
     /// size of the batch, and a step for each one before it so they are not on top of each other), at least a kilometre.
     /// </summary>
-    internal static double NpcSpawnDistance(NpcProfile profile, int index, int total, double random)
+    internal static double NpcSpawnDistance(NpcProfile profile, int index, int total, double random) =>
+        NpcSpawnDistance(Math.Max(1_000, profile.SpawnDistanceMeters), Math.Min(6_000, 800 + total * 600), NpcFormationSpacing, index, random);
+
+    /// <summary>As above, from the distance, the window of chance either way and the step between ones of a batch that are given.</summary>
+    internal static double NpcSpawnDistance(double baseDistance, double window, double step, int index, double random)
     {
-        var window = Math.Min(6_000, 800 + total * 600);
         var jitter = (random * 2 - 1) * window;
-        var spacing = Math.Min(12_000, index * 1_250);
-        return Math.Max(1_000, Math.Max(1_000, profile.SpawnDistanceMeters) + jitter + spacing);
+        var spacing = Math.Min(12_000, index * step);
+        return Math.Max(1_000, baseDistance + jitter + spacing);
+    }
+
+    /// <summary>The step between the NPCs of a batch (<c>formationSpacingMeters</c> of the reference's default).</summary>
+    private const double NpcFormationSpacing = 1_250;
+
+    /// <summary>
+    /// What a batch of NPCs comes into space around: a ship (the batch is placed from where it is), or a place of the system (a belt). A distance of 0 is the profile's own;
+    /// a window of chance either way that is not given grows with the size of the batch.
+    /// </summary>
+    private sealed record SpawnAnchor(int SolarSystemId, long ShipId, double[] Origin, double BaseDistance = 0, double? Window = null, long BeltId = 0, long Group = 0);
+
+    /// <summary>
+    /// Spawns the NPCs of <paramref name="profiles"/> around <paramref name="anchor"/>, each armed with what its hull carries, and remembers what the host must know of
+    /// them. What came into space is told: a batch that was cut short by the simulation is as long as what it spawned.
+    /// </summary>
+    private async Task<(List<(string Name, int Count)> Composition, int Unarmed)> SpawnGroupAsync(IReadOnlyList<NpcProfile> profiles, SpawnAnchor anchor, CancellationToken cancellationToken)
+    {
+        var composition = new List<(string Name, int Count)>();
+        var unarmed = 0;
+        for (var index = 0; index < profiles.Count; index++)
+        {
+            var profile = profiles[index];
+            var type = _statics.Type(profile.ShipTypeId)!;
+            var shipId = NpcIdBase + Interlocked.Increment(ref _npcs);
+            var weapon = NpcArmament.HullWeapon(type, shipId, _statics);
+            var aggression = NpcArmament.AggressionRange(type, _statics);
+            var identity = new SimNpcIdentity(NpcHostileThreshold, NpcFriendlyThreshold, aggression, weapon is null ? [] : [weapon], null, HostWreck: NpcWrecks is not null);
+            var hull = SimShips.OfType(shipId, type);
+            var ship = hull with
+            {
+                OwnerId = profile.CorporationId, CorporationId = (int)profile.CorporationId, AllianceId = (int)profile.AllianceId, WarFactionId = profile.FactionId,
+                SecurityStatus = profile.SecurityStatus,
+                // an entity type has no lock range (it has `entityAttackRange` instead) and sometimes no lock count: with 0 of either it could never lock what it
+                // attacks, so it locks as far as it attacks and holds at least one (`applyNativeNpcHullCombatOverrides` of the reference)
+                MaxTargetRange = Math.Max(hull.MaxTargetRange, aggression),
+                MaxLockedTargets = Math.Max(NpcMinimumLockSlots, hull.MaxLockedTargets),
+            };
+            var distance = NpcSpawnDistance(anchor.BaseDistance > 0 ? anchor.BaseDistance : Math.Max(1_000, profile.SpawnDistanceMeters), anchor.Window ?? Math.Min(6_000, 800 + profiles.Count * 600), NpcFormationSpacing, index, Random.Shared.NextDouble());
+            var direction = RandomUnitVector();
+            double[] place = [anchor.Origin[0] + direction[0] * distance, anchor.Origin[1] + direction[1] * distance, anchor.Origin[2] + direction[2] * distance];
+            var spawn = new SimSpawn(NextSpawnRequest(), anchor.SolarSystemId, ship, anchor.ShipId, place, [0, 0, 0], RandomUnitVector(), NpcBehavior, identity);
+            if (!await SpawnAsync(spawn, "npc", cancellationToken))
+            {
+                break;
+            }
+            _npcShips[shipId] = new NpcShip(profile, type.TypeId, anchor.SolarSystemId, anchor.BeltId, anchor.Group);
+            unarmed += weapon is null ? 1 : 0;
+            var name = profile.Name.Length > 0 ? profile.Name : profile.Id;
+            var at = composition.FindIndex(part => part.Name == name);
+            if (at < 0)
+            {
+                composition.Add((name, 1));
+            }
+            else
+            {
+                composition[at] = (name, composition[at].Count + 1);
+            }
+        }
+        return (composition, unarmed);
+    }
+
+    /// <summary>
+    /// A pilot's warp ended at a belt (<c>maybeSpawnAsteroidBeltRatsForArrival</c> of the reference): the belt may have a group of rats come to it, by the rolls the director makes. What came of the
+    /// arrival is returned (null when the rats do not apply: there are none, the pilot is not in space or its system is not known). Arrivals are taken one at a time, so that two pilots at the
+    /// same belt cannot both bring a group.
+    /// </summary>
+    internal async Task<BeltDecision?> BeltArrivalAsync(ulong session, long beltId, IReadOnlyList<double> beltPosition, CancellationToken cancellationToken = default)
+    {
+        if (BeltRats is not { } rats || !_pilots.TryGetValue(session, out var pilot) || _systems.Get(pilot.SolarSystemId) is not { } place)
+        {
+            return null;
+        }
+        await _beltGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // the hulls the rats can have are known before one is chosen
+            if (_beltHulls is { IsFaulted: true })
+            {
+                _beltHulls = null;
+            }
+            await (_beltHulls ??= _statics.EnsureTypesAsync(rats.PoolShipTypes(), CancellationToken.None)).ConfigureAwait(false);
+            var system = new BeltSystem(place.Id, place.Security, place.RegionId, place.FactionId);
+            var active = _npcShips.Values.Where(npc => npc.SolarSystemId == system.SolarSystemId && npc.BeltId == beltId && npc.Group != 0).Select(npc => npc.Group).Distinct().Count();
+            var now = _nowUnixMs();
+            var decision = rats.Decide(system, beltId, now, active, Random.Shared.NextDouble);
+            if (decision is not { Outcome: BeltOutcome.Spawn, Plan: { } plan })
+            {
+                if (decision.Outcome == BeltOutcome.PlanFailed)
+                {
+                    _log?.Invoke($"no belt rat could be made for {decision.Faction} in system {system.SolarSystemId}");
+                }
+                return decision;
+            }
+            await _statics.EnsureTypesAsync(plan.Profiles.Select(profile => profile.ShipTypeId), cancellationToken).ConfigureAwait(false);
+            var anchor = new SpawnAnchor(system.SolarSystemId, 0, [.. beltPosition], rats.Config.SpawnDistanceMeters, BeltRatSpreadMeters, beltId, Interlocked.Increment(ref _beltGroups));
+            var (composition, _) = await SpawnGroupAsync(plan.Profiles, anchor, cancellationToken).ConfigureAwait(false);
+            if (composition.Count > 0)
+            {
+                rats.Spawned(system.SolarSystemId, beltId, now);
+                _log?.Invoke($"belt {beltId} of system {system.SolarSystemId}: {plan.Faction} rats ({plan.Band}): {string.Join(", ", composition.Select(part => $"{part.Count} {part.Name}"))}");
+            }
+            return decision;
+        }
+        finally
+        {
+            _beltGate.Release();
+        }
+    }
+
+    /// <summary>A scene has been made for a system (a ship has come into a system nobody was in): the NPCs the host has kept of it were in the one before, which is gone.</summary>
+    private void ForgetNpcsOf(int solarSystemId)
+    {
+        foreach (var (id, npc) in _npcShips)
+        {
+            if (npc.SolarSystemId == solarSystemId)
+            {
+                _npcShips.TryRemove(id, out _);
+            }
+        }
     }
 
     public async Task<NpcSpawnReport> SpawnNpcsAsync(ClientSession session, string query, int amount, CancellationToken cancellationToken)
@@ -797,47 +935,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             return NpcSpawnReport.Failed(plan.Error!, plan.Suggestions);
         }
 
-        var composition = new List<(string Name, int Count)>();
-        var unarmed = 0;
-        for (var index = 0; index < plan.Profiles.Count; index++)
-        {
-            var profile = plan.Profiles[index];
-            var type = _statics.Type(profile.ShipTypeId)!;
-            var shipId = NpcIdBase + Interlocked.Increment(ref _npcs);
-            var weapon = NpcArmament.HullWeapon(type, shipId, _statics);
-            var aggression = NpcArmament.AggressionRange(type, _statics);
-            var identity = new SimNpcIdentity(NpcHostileThreshold, NpcFriendlyThreshold, aggression, weapon is null ? [] : [weapon], null, HostWreck: NpcWrecks is not null);
-            var hull = SimShips.OfType(shipId, type);
-            var ship = hull with
-            {
-                OwnerId = profile.CorporationId, CorporationId = (int)profile.CorporationId, AllianceId = (int)profile.AllianceId, WarFactionId = profile.FactionId,
-                SecurityStatus = profile.SecurityStatus,
-                // an entity type has no lock range (it has `entityAttackRange` instead) and sometimes no lock count: with 0 of either it could never lock what it
-                // attacks, so it locks as far as it attacks and holds at least one (`applyNativeNpcHullCombatOverrides` of the reference)
-                MaxTargetRange = Math.Max(hull.MaxTargetRange, aggression),
-                MaxLockedTargets = Math.Max(NpcMinimumLockSlots, hull.MaxLockedTargets),
-            };
-            var distance = NpcSpawnDistance(profile, index, plan.Profiles.Count, Random.Shared.NextDouble());
-            var direction = RandomUnitVector();
-            double[] place = [direction[0] * distance, direction[1] * distance, direction[2] * distance];
-            var spawn = new SimSpawn(NextSpawnRequest(), pilot.SolarSystemId, ship, pilot.ShipId, place, [0, 0, 0], RandomUnitVector(), NpcBehavior, identity);
-            if (!await SpawnAsync(spawn, "npc", cancellationToken))
-            {
-                break;
-            }
-            _npcShips[shipId] = new NpcShip(profile, type.TypeId, pilot.SolarSystemId);
-            unarmed += weapon is null ? 1 : 0;
-            var name = profile.Name.Length > 0 ? profile.Name : profile.Id;
-            var at = composition.FindIndex(part => part.Name == name);
-            if (at < 0)
-            {
-                composition.Add((name, 1));
-            }
-            else
-            {
-                composition[at] = (name, composition[at].Count + 1);
-            }
-        }
+        var (composition, unarmed) = await SpawnGroupAsync(plan.Profiles, new SpawnAnchor(pilot.SolarSystemId, pilot.ShipId, [0, 0, 0]), cancellationToken);
         return composition.Count == 0
             ? NpcSpawnReport.Failed(NpcSpawnReport.SpawnFailed)
             : new NpcSpawnReport(null, [], selection.Name, composition, plan.Profiles.Count, unarmed);
@@ -1016,6 +1114,19 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                 case SimAccepted { Command: not SimCommands.Dock } accepted when _pilots.TryGetValue(accepted.SessionId, out var mover):
                     EndInvulnerability(mover);
                     break;
+                case SimArrived arrived when _pilots.ContainsKey(arrived.SessionId):
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await BeltArrivalAsync(arrived.SessionId, arrived.BeltId, arrived.Position);
+                        }
+                        catch (Exception error) when (error is not OperationCanceledException)
+                        {
+                            _log?.Invoke($"the arrival of session {arrived.SessionId} at belt {arrived.BeltId} could not be dealt with: {error.Message}");
+                        }
+                    });
+                    break;
                 case SimDocked docked when _pilots.TryGetValue(docked.SessionId, out var pilot):
                     _ = Task.Run(() => FinishDockingAsync(pilot, docked.StationId, docked.Condition));
                     break;
@@ -1072,6 +1183,10 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             }
             var now = FileTimeNow();
             var arrived = new Pilot(session, pilot.CharacterId, pilot.ShipId, jumped.ToSystem, now + JumpCloakTicks, pilot.UndockedFrom, jumpCloak: true);
+            if (!_pilots.Values.Any(other => other.SolarSystemId == jumped.ToSystem))
+            {
+                ForgetNpcsOf(jumped.ToSystem);
+            }
             if (!_pilots.TryUpdate((ulong)session.SessionId, arrived, pilot))
             {
                 return; // the pilot went away meanwhile

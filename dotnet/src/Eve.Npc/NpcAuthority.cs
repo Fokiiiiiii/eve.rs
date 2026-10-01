@@ -60,6 +60,7 @@ public sealed partial class NpcAuthority
     private readonly Index<NpcPool> _pools;
     private readonly Dictionary<string, NpcLoadout> _loadouts;
     private readonly Dictionary<string, LootTable> _lootTables = [];
+    private readonly Dictionary<int, string> _pirateRegions = [];
 
     public NpcAuthority(IEnumerable<NpcProfile> profiles, IEnumerable<NpcLoadout> loadouts, IEnumerable<NpcPool> pools, IEnumerable<LootTable>? lootTables = null)
     {
@@ -92,6 +93,19 @@ public sealed partial class NpcAuthority
     public LootTable? LootTable(string id) => _lootTables.GetValueOrDefault(id.Trim());
 
     public int LootTableCount => _lootTables.Count;
+
+    /// <summary>The pirate faction that holds a region (<c>guristas</c>, <c>angels</c>, <c>blood</c>, <c>sanshas</c>, <c>serpentis</c> or <c>rogue_drones</c>), or null for a region none holds.</summary>
+    public string? PirateOfRegion(int regionId) => _pirateRegions.GetValueOrDefault(regionId);
+
+    /// <summary>Which region holds which pirate faction (what <c>tools/dev/extract-npc-authority.py</c> found).</summary>
+    public NpcAuthority WithPirateRegions(IEnumerable<KeyValuePair<int, string>> regions)
+    {
+        foreach (var (region, faction) in regions)
+        {
+            _pirateRegions[region] = faction;
+        }
+        return this;
+    }
 
     public NpcLookup<NpcProfile> ResolveProfile(string query) => _profiles.Resolve(query);
 
@@ -221,6 +235,11 @@ public sealed partial class NpcAuthority
                 s.TryGetProperty("categoryIDs", out var categories) ? [.. categories.EnumerateArray().Select(c => c.GetInt32())] : [], Whole(s, "weight"),
                 Whole(s, "quantityMin"), Whole(s, "quantityMax")))],
             Flag(t, "hasSelectors"))).ToList();
-        return new NpcAuthority(profiles.ToList(), loadouts.ToList(), pools.ToList(), lootTables);
+        var authority = new NpcAuthority(profiles.ToList(), loadouts.ToList(), pools.ToList(), lootTables);
+        if (root.TryGetProperty("pirateRegions", out var regions))
+        {
+            authority.WithPirateRegions(regions.EnumerateObject().Select(r => new KeyValuePair<int, string>(int.Parse(r.Name, System.Globalization.CultureInfo.InvariantCulture), r.Value.GetString() ?? "")));
+        }
+        return authority;
     }
 }

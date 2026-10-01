@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 5,
-   "hex": "03000000010500"
+   "version": 6,
+   "hex": "03000000010600"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 5,
+   "version": 6,
    "pollHz": 4,
-   "hex": "0700000002050004000000"
+   "hex": "0700000002060004000000"
   },
   {
    "name": "enter by undocking",
@@ -1402,6 +1402,18 @@
     0.78769
    ],
    "hex": "410000001d4f2c3859955c060084b7089b150900005fc833c6022952426c5427b7db5708c285e10f7e6c3c4242a167b3ea73b5e33f5709168733bf8a3f145caca8c134e93f"
+  },
+  {
+   "name": "player's warp ended at a belt",
+   "kind": "Arrived",
+   "sessionId": "1790646377000015",
+   "beltId": "40009256",
+   "position": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "hex": "29000000234f2c3859955c0600287e6202000000005fc833c6022952426c5427b7db5708c285e10f7e6c3c4242"
   },
   {
    "name": "wreck with something to take",

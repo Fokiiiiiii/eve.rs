@@ -44,7 +44,7 @@ internal sealed class Rig : IAsyncDisposable
 
     private readonly string[] _schemas;
 
-    private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, CreationCatalog catalog, StationCatalog stations, SolarSystemCatalog systems, PgModuleStateStore modules, TimeSpan protection, TimeSpan jumpCloak, bool npcLoot)
+    private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, CreationCatalog catalog, StationCatalog stations, SolarSystemCatalog systems, PgModuleStateStore modules, TimeSpan protection, TimeSpan jumpCloak, bool npcLoot, Eve.Npc.BeltRatConfig? beltRats)
     {
         Source = source;
         _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}", $"pp_{suffix}"];
@@ -60,7 +60,7 @@ internal sealed class Rig : IAsyncDisposable
         Wallets = new PgWalletStore(source, _schemas[3]);
         WalletTransactions = new WalletTransactions(source, _schemas[3]);
         Bounties = new Eve.Npc.PgBountyStore(source, WalletTransactions, _schemas[5], Log.Add);
-        Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => Now, Log.Add, protection, jumpCloak) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(Eve.Npc.NpcAuthority.Load()), NpcWrecks = npcLoot ? new NpcWrecks(_ => LootTable, () => Task.FromResult(new Eve.Npc.NpcLoot(LootPool)), Ships, () => 0) : null };
+        Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => Now, Log.Add, protection, jumpCloak) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(Eve.Npc.NpcAuthority.Load()), NpcWrecks = npcLoot ? new NpcWrecks(_ => LootTable, () => Task.FromResult(new Eve.Npc.NpcLoot(LootPool)), Ships, () => 0) : null, BeltRats = beltRats is null ? null : new Eve.Npc.BeltRats(Eve.Npc.NpcAuthority.Load(), beltRats, type => Eve.Npc.NpcHull.HasHitPoints(statics.Type(type))) };
         Space.UseBounties(Bounties);
         Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, statics, Space, () => Now, Log.Add);
         Ship = new ShipService(Space, () => ClockMs, Containers);
@@ -119,7 +119,8 @@ internal sealed class Rig : IAsyncDisposable
 
     /// <param name="protection">How long a ship is protected after it undocks (never, unless a test wants the end of it).</param>
     /// <param name="npcLoot">Whether an NPC that is destroyed leaves a wreck the host makes with <see cref="LootTable"/> in it.</param>
-    public static async Task<Rig> CreateAsync(TimeSpan? protection = null, TimeSpan? jumpCloak = null, bool npcLoot = false)
+    /// <param name="beltRats">How the rats of the belts are rolled (none: the belts have none).</param>
+    public static async Task<Rig> CreateAsync(TimeSpan? protection = null, TimeSpan? jumpCloak = null, bool npcLoot = false, Eve.Npc.BeltRatConfig? beltRats = null)
     {
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
@@ -141,7 +142,7 @@ internal sealed class Rig : IAsyncDisposable
         var catalog = await CreationCatalog.LoadAsync(sde, Station);
         var creation = new CharacterCreation(
             source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), catalog, modules);
-        return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation, catalog, await StationCatalog.LoadAsync(sde), await SolarSystemCatalog.LoadAsync(sde), modules, protection ?? Timeout.InfiniteTimeSpan, jumpCloak ?? Timeout.InfiniteTimeSpan, npcLoot);
+        return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation, catalog, await StationCatalog.LoadAsync(sde), await SolarSystemCatalog.LoadAsync(sde), modules, protection ?? Timeout.InfiniteTimeSpan, jumpCloak ?? Timeout.InfiniteTimeSpan, npcLoot, beltRats);
     }
 
     /// <summary>A new character (Caldari), in its rookie ship in the station.</summary>

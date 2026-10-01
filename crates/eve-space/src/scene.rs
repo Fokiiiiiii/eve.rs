@@ -19,7 +19,7 @@ use crate::ship::{Course, Ship, ShipSpec};
 use crate::targeting::{Targeting, UNDOCK_PROTECTION};
 use crate::warp::{self, PythonRandom};
 use crate::wire::{filetime, id, int, real, text, tuple, vector};
-use crate::world::{BodyKind, Detail, SolarSystem};
+use crate::world::{Body, BodyKind, Detail, SolarSystem};
 use crate::wreck::{Wreck, WreckKind};
 
 /// The host's name for a player's connection.
@@ -44,6 +44,8 @@ const MAX_STAMP_LEAD: u32 = 2;
 /// station's radius (the recorded ship left its station at 0.34 of it, inside the sphere the docking range is measured from), and the least.
 const UNDOCK_RADIUS_SHARE: f64 = 0.34;
 const UNDOCK_MIN_DISTANCE: f64 = 2_000.0;
+/// How far from a belt's surface a warp may end for the ship to count as having arrived at the belt (the reference's `landingRadiusMeters`).
+pub const BELT_LANDING_RADIUS: f64 = 250_000.0;
 
 /// What a player can ask of their ship (the numbers of the client's `CmdXxx` calls).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -119,6 +121,9 @@ pub enum Out {
     Jumping { session: SessionId, command: u8, destination_system: i32, destination_gate: i64 },
     /// The ship has docked: the host moves the character into the station and keeps what the ship has taken.
     Docked { session: SessionId, station_id: i64, condition: Condition },
+    /// A player's ship came to rest at a belt after a warp (the belt it warped to, or the nearest within [`BELT_LANDING_RADIUS`] of it): the host
+    /// decides whether anything lives there. `position` is where the belt is (what the host places what lives there around).
+    Arrived { session: SessionId, belt_id: i64, position: Vec3 },
     /// The answer to a question about the ship's condition.
     Condition { session: SessionId, command: u8, condition: Condition },
     /// A command the scene cannot do.
@@ -166,6 +171,7 @@ impl Out {
             | Out::Approaching { session, .. }
             | Out::Jumping { session, .. }
             | Out::Docked { session, .. }
+            | Out::Arrived { session, .. }
             | Out::Destroyed { session, .. }
             | Out::Condition { session, .. }
             | Out::Refused { session, .. }
@@ -202,6 +208,8 @@ pub(crate) struct Pilot {
     docking: Option<PendingDock>,
     /// The warp the ship is in, from the command until it is at rest again.
     pub(crate) flight: Option<Flight>,
+    /// What the ship's last warp was to (the body), kept until the next warp: where it came to rest is judged against it.
+    warp_target: Option<i64>,
     /// The jump the ship has begun, until it leaves for the other system.
     jump: Option<PendingJump>,
     /// The ship came through a gate (it is bound differently from one that undocked).
@@ -231,6 +239,7 @@ impl Pilot {
             settled_at: now,
             docking: None,
             flight: None,
+            warp_target: None,
             jump: None,
             jumped_in: false,
             bound: false,
@@ -645,9 +654,39 @@ impl Scene {
                     payload::action(stamp, "SetSpeedFraction", [ship_id.clone(), real(0.0)]),
                     payload::action(stamp, "Stop", [ship_id]),
                 ];
-                self.tell_all(session, actions)
+                let mut out = self.tell_all(session, actions);
+                if !crate::npc::is_npc_session(session)
+                    && let Some((belt_id, position)) = self.belt_arrived_at(session, position)
+                {
+                    out.push(Out::Arrived { session, belt_id, position });
+                }
+                out
             }
         }
+    }
+
+    /// The belt a ship that came to rest at `position` has arrived at: the one it warped to, else the nearest within the landing radius (its id and
+    /// where it is).
+    fn belt_arrived_at(&self, session: SessionId, position: Vec3) -> Option<(i64, Vec3)> {
+        let system = &self.system;
+        let warped_to = self.pilots.get(&session).and_then(|pilot| pilot.warp_target);
+        if let Some(belt) =
+            warped_to.and_then(|id| system.body(id)).filter(|body| body.kind == BodyKind::Belt)
+        {
+            return Some((belt.id, belt.position));
+        }
+        let away = |body: &Body| {
+            ((body.position.x - position.x).powi(2)
+                + (body.position.y - position.y).powi(2)
+                + (body.position.z - position.z).powi(2))
+            .sqrt()
+        };
+        system
+            .bodies
+            .iter()
+            .filter(|body| body.kind == BodyKind::Belt && away(body) <= BELT_LANDING_RADIUS + body.radius)
+            .min_by(|a, b| away(a).total_cmp(&away(b)).then(a.id.cmp(&b.id)))
+            .map(|body| (body.id, body.position))
     }
 
     /// `CmdWarpToStuff`: the ship lines up with where it is to end and goes into warp. The client is told at once (`WarpTo` with the point and
@@ -707,6 +746,7 @@ impl Scene {
         pilot.ship.speed_fraction = 1.0;
         pilot.ship.direction = toward;
         pilot.flight = Some(Flight::begin(now, raw, stop));
+        pilot.warp_target = Some(target_id);
         let own = vec![
             payload::action(stamp, "SetMaxSpeed", [ship_id.clone(), real(boosted)]),
             payload::action(
@@ -2230,6 +2270,101 @@ pub(crate) mod tests {
             [Out::Refused { command: 9, reason, .. }] => reason,
             other => panic!("{other:?}"),
         }
+    }
+
+    const BELT_A: i64 = 40_000_101;
+    const BELT_B: i64 = 40_000_102;
+    const MOON_BY_THE_BELTS: i64 = 40_000_201;
+    const MOON_FAR_OFF: i64 = 40_000_202;
+
+    fn celestial(id: i64, kind: BodyKind, group_id: i32, x: f64) -> Body {
+        Body {
+            id,
+            type_id: 15,
+            group_id,
+            category_id: 2,
+            owner_id: 0,
+            name: format!("Body {id}"),
+            kind,
+            position: Vec3::new(x, 0.0, 0.0),
+            radius: 1_000.0,
+            graphic_id: None,
+            detail: Detail::None,
+        }
+    }
+
+    /// Two belts 100 km apart a long way from the station, a moon between them (90 km off the first) and another moon far from both.
+    fn scene_with_belts() -> Scene {
+        let mut world = (*system()).clone();
+        world.bodies.push(celestial(BELT_A, BodyKind::Belt, 9, 20_000_000.0));
+        world.bodies.push(celestial(BELT_B, BodyKind::Belt, 9, 20_100_000.0));
+        // of a kind that has no warp-in point and no wide berth of its own: a ship stops about a kilometre off it
+        world.bodies.push(celestial(MOON_BY_THE_BELTS, BodyKind::Moon, 0, 20_090_000.0));
+        world.bodies.push(celestial(MOON_FAR_OFF, BodyKind::Moon, 0, 60_000_000.0));
+        let mut scene = Scene::new(Arc::new(world));
+        scene.undock(SESSION, spec(), STATION, NOON).unwrap();
+        scene.bind(SESSION, NOON);
+        scene
+    }
+
+    /// Warps to `target` and polls until the ship is at rest again; what the scene told of an arrival on the way.
+    fn arrivals_of_a_warp(scene: &mut Scene, target: i64, from: i64) -> (Vec<Out>, i64) {
+        scene.command(SESSION, Command::SetSpeedFraction(0.0), from);
+        scene.command(SESSION, Command::WarpTo { target_id: target, range: 0.0 }, from + seconds(1));
+        let mut arrived = Vec::new();
+        let mut t = from + seconds(1);
+        while t < from + seconds(600) {
+            t += 2_500_000;
+            arrived.extend(scene.poll(t).into_iter().filter(|out| matches!(out, Out::Arrived { .. })));
+            if scene.ship(SESSION, t).is_some_and(|ship| ship.course == Course::Stop) && !arrived.is_empty() {
+                break;
+            }
+        }
+        (arrived, t)
+    }
+
+    #[test]
+    fn a_warp_to_a_belt_ends_with_an_arrival_at_that_belt_told_where_it_is() {
+        let mut scene = scene_with_belts();
+        let (arrived, _) = arrivals_of_a_warp(&mut scene, BELT_B, NOON);
+        assert_eq!(
+            arrived,
+            [Out::Arrived { session: SESSION, belt_id: BELT_B, position: Vec3::new(20_100_000.0, 0.0, 0.0) }],
+            "the position is the belt's, not where the ship stopped"
+        );
+    }
+
+    #[test]
+    fn a_warp_to_what_lies_by_belts_arrives_at_the_nearest_of_them() {
+        let mut scene = scene_with_belts();
+        let (arrived, _) = arrivals_of_a_warp(&mut scene, MOON_BY_THE_BELTS, NOON);
+        assert!(matches!(arrived[..], [Out::Arrived { belt_id: BELT_B, .. }]), "{arrived:?}");
+    }
+
+    #[test]
+    fn a_warp_that_ends_far_from_every_belt_is_no_arrival() {
+        let mut scene = scene_with_belts();
+        let mut told = Vec::new();
+        scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON);
+        scene.command(SESSION, Command::WarpTo { target_id: MOON_FAR_OFF, range: 0.0 }, NOON + seconds(1));
+        let mut t = NOON + seconds(1);
+        while t < NOON + seconds(600) {
+            t += 2_500_000;
+            told.extend(scene.poll(t));
+        }
+        assert_eq!(scene.ship(SESSION, t).unwrap().course, Course::Stop, "the warp is over");
+        assert!(told.iter().all(|out| !matches!(out, Out::Arrived { .. })), "{told:?}");
+    }
+
+    #[test]
+    fn a_belt_just_out_of_the_landing_radius_is_not_arrived_at_and_one_just_inside_is() {
+        // 250 km (plus the belt's radius) off belt A, on the side away from belt B, is the edge of it
+        let scene = scene_with_belts();
+        let at = |x: f64| Vec3::new(x, 0.0, 0.0);
+        let edge = 20_000_000.0 - BELT_LANDING_RADIUS - 1_000.0;
+        assert_eq!(scene.belt_arrived_at(SESSION, at(edge)).map(|(id, _)| id), Some(BELT_A));
+        assert_eq!(scene.belt_arrived_at(SESSION, at(edge - 1.0)), None);
+        assert_eq!(scene.belt_arrived_at(SESSION, at(60_000_000.0)), None);
     }
 
     #[test]

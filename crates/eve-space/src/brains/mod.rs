@@ -44,6 +44,11 @@ const DELIVERY_ROUNDS: usize = 16;
 /// only pass it on).
 const PROXIMITY_SENSOR_TYPE: i64 = 0;
 
+/// How far from a rat the sensor that makes it notice a ship reaches at the least, whatever the range it attacks at (`NPC_MIN_ACQUISITION_RANGE_METERS` of the
+/// reference's `npcBehaviorLoop.js`: "notice further than you shoot": a rat that came 30 km off a belt would otherwise never see the pilot at it). The lock still has to
+/// pass the ship's own lock range, so the rat closes in to its weapons' range and does not snipe from this one.
+pub const MIN_ACQUISITION_RANGE: f64 = 50_000.0;
+
 /// How many faults a brain remembers.
 const FAULTS_KEPT: usize = 8;
 
@@ -226,7 +231,7 @@ impl Brains {
                 ship.spec.ship_id,
                 Sensor {
                     type_id: PROXIMITY_SENSOR_TYPE,
-                    detection_range: npc.combat.aggression_range,
+                    detection_range: npc.combat.aggression_range.max(MIN_ACQUISITION_RANGE),
                     tags: vec![RAT_TAG.to_string()],
                     in_range: BTreeSet::new(),
                 },

@@ -167,6 +167,33 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// <summary>The host put the wreck of a destroyed ship (or the corpse of a pilot) in space.</summary>
     public event Action<SimPlaceWreck>? WreckPlaced;
 
+    /// <summary>
+    /// An NPC the host spawned was destroyed. Raised on a thread of the host after its wreck and bounty were done, so a handler should be quick (or hand its work on) and must not
+    /// throw: what it throws is logged and nothing else.
+    /// </summary>
+    public event Action<NpcKill>? NpcDestroyed;
+
+    /// <summary>
+    /// A pilot's ship (not its capsule) was destroyed in space, raised once the database has the loss (what the ship held is in its wreck or gone) and before the client is told, on a
+    /// thread of the host: a handler should be quick (or hand its work on) and must not throw: what it throws is logged and nothing else.
+    /// </summary>
+    public event Action<ShipLoss>? ShipLost;
+
+    private void Raise<T>(Action<T>? handlers, T value, string what)
+    {
+        foreach (var handler in handlers?.GetInvocationList().Cast<Action<T>>() ?? [])
+        {
+            try
+            {
+                handler(value);
+            }
+            catch (Exception error)
+            {
+                _log?.Invoke($"a handler of {what} failed: {error.Message}");
+            }
+        }
+    }
+
     private void PlaceWreck(SimPlaceWreck wreck)
     {
         _sim.PlaceWreck(wreck);
@@ -676,6 +703,18 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     {
         var killer = _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == destroyed.KillerShipId);
         await LeaveNpcWreckAsync(npc, destroyed, killer);
+        try
+        {
+            await PayNpcBountyAsync(npc, destroyed, killer);
+        }
+        finally
+        {
+            Raise(NpcDestroyed, new NpcKill(killer?.CharacterId ?? 0, npc.TypeId, npc.Profile, npc.SolarSystemId, destroyed.ShipId), nameof(NpcDestroyed));
+        }
+    }
+
+    private async Task PayNpcBountyAsync(NpcShip npc, SimDestroyed destroyed, Pilot? killer)
+    {
         if (_bounties is not { } store || killer is null || NpcBounty.AmountOf(npc.Profile.Bounty) is not { } amount)
         {
             return;
@@ -1190,6 +1229,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                 return;
             }
             await _statics.EnsureTypesAsync([CharacterShips.CapsuleTypeId, .. death.Changes.Select(c => c.Item.TypeId), .. death.Wreck is { } w ? new[] { w.TypeId } : []]);
+            RaiseShipLost(pilot, death, destroyed);
             var capsule = death.Capsule;
             var character = death.Character;
 
@@ -1274,6 +1314,16 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         }
     }
 
+    private void RaiseShipLost(Pilot pilot, ShipDeath death, SimDestroyed destroyed)
+    {
+        var killer = destroyed.KillerShipId == 0 ? null : _pilots.Values.FirstOrDefault(other => other.ShipId == destroyed.KillerShipId);
+        var cause = _deaths.ContainsKey(pilot.ShipId) ? ShipLossCause.SelfDestruct
+            : killer is not null ? ShipLossCause.Player
+            : destroyed.KillerShipId != 0 && _npcShips.ContainsKey(destroyed.KillerShipId) ? ShipLossCause.Npc
+            : ShipLossCause.Unknown;
+        Raise(ShipLost, new ShipLoss(pilot.CharacterId, death.Ship.Id, death.Ship.TypeId, cause, pilot.SolarSystemId, cause == ShipLossCause.Player ? killer!.CharacterId : 0), nameof(ShipLost));
+    }
+
     /// <summary>The corpse of a pilot whose capsule was destroyed: <c>resolveCorpseTypeID</c> of EVE.js (the client's <c>genderFemale = 0</c>; anything else leaves the male one).</summary>
     private const int CorpseTypeMale = 25;
     private const int CorpseTypeFemale = 29148;
@@ -1344,6 +1394,21 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             pod.Capsule.Id,
             new SelfDestructPart("Corpse", pod.Corpse?.CustomName, pod.Corpse?.Id),
             new SelfDestructPart("Ship", _statics.Type(pod.Ship.TypeId)?.Name, pod.Ship.Id));
+    }
+
+    /// <summary>
+    /// A pilot's corporation, alliance or war faction changed while it flies: the simulation is given its ship again with the affiliation the character has now, so the ship is what
+    /// everybody who looks at it from then on sees and what the rules of aggression read. (Those who already see the ship are not told: the reference's way of telling them is not recorded.)
+    /// Nothing is done for a character that is not flying a ship in space.
+    /// </summary>
+    public async Task AffiliationChangedAsync(long characterId, CancellationToken cancellationToken = default)
+    {
+        var pilot = _pilots.Values.FirstOrDefault(p => p.CharacterId == characterId);
+        if (pilot is null || await _ships.LoadAsync(characterId, cancellationToken) is not { } flown || flown.Ship.Id != pilot.ShipId)
+        {
+            return;
+        }
+        _sim.ShipChanged((ulong)pilot.Session.SessionId, SimShips.Of(flown, _statics));
     }
 
     /// <summary>The simulation was lost: every ship it held is gone, so each is brought home to the station its character last was at.</summary>

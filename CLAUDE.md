@@ -236,3 +236,17 @@ or NPC block changed. Mutation RPCs, after-commit affiliation callbacks into Spa
 of alliance due transitions, departure/closure, bills, wars and sovereignty side effects are still in progress.
 The backend ActivateDueAllianceApplicationsAsync returns committed changed corporations for that integration;
 no alliance group is marked complete and no live client or performance acceptance is claimed.
+
+### Codex market custody and topology update (2026-10-01)
+
+MarketTopology now loads the pinned SDE stargates, computes undirected jump distances, and preserves the
+reference's station/system/constellation/region sentinels (including numeric range 4 being constellation).
+Distance caching is bounded to 4096 unordered system pairs with a simple clear policy.
+PgItemStore adds transaction-bound LockAndGetAsync and MoveStackAsync: packaged-stack splits use one SQL
+statement for decrement and insert, and full-stack moves preserve item ids. A stale expected inventory fact
+cannot consume a stack twice. The market corpus is six passing checks, including concurrent custody,
+rollback, a late destination constraint failure and loading the actual pinned stargate graph.
+
+The existing MoveAsync and combat/NPC callers are unchanged. Market order placement/matching, settlement,
+read adapters, history and NPC seeds are still in progress. These custody helpers transfer items to the acting
+character; a corporate wallet owner must not be substituted for item custody.

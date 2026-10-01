@@ -201,6 +201,62 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
         }
     }
 
+    public async Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long> itemIds, long sourceId, long destinationId, CancellationToken cancellationToken)
+    {
+        if (session.CharacterId is not { } characterId || session.GetInt("shipid") is not { } shipId || !_space.IsInSpace(session) || destinationId != shipId || sourceId == shipId)
+        {
+            return null;
+        }
+        if (await OpenAsync(session, sourceId, cancellationToken) is not { } container)
+        {
+            return null;
+        }
+        if (!await MayTakeFromAsync(characterId, container, cancellationToken))
+        {
+            throw MachoErrors.ThrowUserError("SafetyActivated");
+        }
+        switch (await _ships.MoveAllInSpaceAsync(characterId, itemIds, sourceId, cancellationToken))
+        {
+            case ShipRefused refused:
+                throw ShipErrors.Of(refused, _statics);
+            case ShipChanged { Stacks: { } stacks }:
+                await TellMoveAllAsync(session, shipId, container, stacks, cancellationToken);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// What the client is told of a batch that was taken from a can or a wreck (recorded: <c>loot.json</c>): each stack that moved (<c>OnItemsChanged</c>, to the character, with no place for the
+    /// loot window), the scene's word for each of them of what is in the container now, the single <c>OnClientEvent_MoveFromCargoToHangar</c>, and when nothing is left the single
+    /// <c>OnWreckLootAll</c> with every item that was taken; last a can that is empty goes.
+    /// </summary>
+    private async Task TellMoveAllAsync(ClientSession session, long shipId, Item container, IReadOnlyList<ItemChanged> stacks, CancellationToken cancellationToken)
+    {
+        var ulongSession = (ulong)session.SessionId;
+        foreach (var stack in stacks)
+        {
+            Eve.Services.Ships.ShipNotifications.SendItemsChanged(session, stack, RowOf, idType: "charid");
+        }
+        var empty = (await _items.InContainerAsync(container.Id, cancellationToken)).Count == 0;
+        foreach (var _ in stacks)
+        {
+            await TellChangeAsync(ulongSession, container.Id, empty);
+        }
+        session.SendNotification("OnClientEvent_MoveFromCargoToHangar", "clientID", InventoryWire.Id(container.Id), InventoryWire.Id(shipId), new PyInt(CargoFlag));
+        if (empty)
+        {
+            session.SendNotification(
+                "OnWreckLootAll", "clientID", Py.Tuple(new PyStr("ItemFloatingCargo"), InventoryWire.Id(container.Id)),
+                Py.Tuple([.. stacks.Select(stack => InventoryWire.Tuple(RowOf(stack.After with { LocationId = stack.PreviousLocationId, Flag = stack.PreviousFlag, Quantity = stack.PreviousQuantity })))]));
+        }
+        if (empty && IsCan(container))
+        {
+            await RemoveEmptyCanAsync(session, container, cancellationToken);
+        }
+    }
+
     /// <summary>The scene is told what is in the wreck now; a scene that is not reached is no reason to fail what was moved.</summary>
     private async Task TellChangeAsync(ulong session, long wreckId, bool isEmpty)
     {
@@ -224,7 +280,8 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
         await ForgetAsync(can.Id);
         session.SendNotification(
             "OnItemsChanged", "charid",
-            new PyList([InventoryWire.PackedRow(RowOf(removed with { LocationId = RemovedCanLocation, Flag = 0, Quantity = 1 }))]),
+            // the row of what has gone has no custom info (recorded: `loot.json`)
+            new PyList([InventoryWire.PackedRow(RowOf(removed with { LocationId = RemovedCanLocation, Flag = 0, Quantity = 1 }), PyNone.Instance)]),
             new PyDict([new(new PyInt(3), InventoryWire.Id(can.LocationId))]), PyNone.Instance);
         _sim.RemoveWreck(can.Id, CanDestructionEffect);
     }

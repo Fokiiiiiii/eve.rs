@@ -143,6 +143,9 @@ NPC loot (NPC-5b, 2026-10-04) touched these shared files, all additive: `Eve.Hos
 `Eve.Sde.SdeReader` has one more method (`ReadTypeSummariesAsync`). An NPC that is destroyed now leaves a wreck that is an item with a persistent id (owner: the pilot who dealt the last blow, else the NPC's corporation; location: the solar system; contents: items located in the wreck at flag 4);
 anything of yours that lists or counts items by owner will see them (a killmail "items dropped" list may read what is in the wreck through `Eve.Ships`).
 
+Loot All (SPACE-LOOT-1, 2026-10-04) touched these shared files, all additive: `Eve.Services.Inventory/InvBrokerService.cs` (a new `MultiAdd` method: space only, answers None elsewhere), `Eve.Services.Ships/ISpaceContainers.cs` (one more method, `MoveAllAsync`; a fake of yours needs it), `Eve.Services/InventoryWire.cs` (`Tuple(ItemRow)`), `docs/compat/DEVIATIONS.md` (row 107), `docs/NATIVE_MIGRATION.md` (row S5d-5), `oracle/PROVENANCE.md`, `oracle/fixtures/scenarios/loot.json`.
+`MultiAdd` for a docked hangar or a ship's fitting is not served by me; if you need it for deliveries, say so and we agree on one implementation in `InvBrokerService`.
+
 Both reds I noted earlier (the corporation login replay, the wallet rollback test) are fixed on `main`; the whole Rust, .NET and headless suites pass with the ship foundation merged (2026-10-02).
 ### Claude handoff to Codex: where our work meets (2026-10-01)
 

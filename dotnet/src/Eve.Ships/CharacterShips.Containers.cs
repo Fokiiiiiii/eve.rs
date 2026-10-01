@@ -162,6 +162,70 @@ public sealed partial class CharacterShips
         return new ShipChanged(split?.Id ?? item.Id, ship.Id, [], [], stacks);
     }
 
+    /// <summary>
+    /// "Loot All": everything of <paramref name="itemIds"/> that is in a can or a wreck beside the ship goes into the hold of the ship the character flies, as stacks whole (they are the
+    /// character's from then on). It is all or nothing for room: what the batch takes in all is checked against what is left of the hold, and when it does not fit nothing moves
+    /// (<c>NotEnoughCargoSpace</c> with the room left and the room it takes). An id that is not in the container is left out of the batch; when none is, nothing happens.
+    /// </summary>
+    public async Task<ShipOutcome> MoveAllInSpaceAsync(long characterId, IReadOnlyList<long> itemIds, long containerId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+
+        if (await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Flag != InSpaceFlag
+            || await items.GetAsync(containerId, cancellationToken) is not { } container || container.LocationId != snapshot.Ship.LocationId || container.Id == snapshot.Ship.Id)
+        {
+            return new NothingHappened();
+        }
+        var ship = snapshot.Ship;
+        var batch = new List<Item>();
+        foreach (var id in itemIds.Distinct())
+        {
+            // read under the row lock: what moved or went since the pilot's window was drawn is left out
+            if (id != ship.Id && id != containerId && await items.LockAndGetAsync(connection, transaction, id, cancellationToken) is { } item && item.LocationId == containerId)
+            {
+                batch.Add(item);
+            }
+        }
+        if (batch.Count == 0)
+        {
+            return new NothingHappened();
+        }
+        await statics.EnsureTypesAsync(batch.Select(i => i.TypeId), cancellationToken);
+        if (await RefuseWhatDoesNotFitTogetherAsync(snapshot, batch, CargoFlag, cancellationToken) is { } full)
+        {
+            return full;
+        }
+        foreach (var item in batch)
+        {
+            await items.MoveToOwnerAsync(connection, transaction, item.Id, characterId, ship.Id, CargoFlag, cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return new ShipChanged(
+            batch[0].Id, ship.Id, [], [],
+            [.. batch.Select(item => new ItemChanged(item with { OwnerId = characterId, LocationId = ship.Id, Flag = CargoFlag }, item.LocationId, item.Flag, item.Quantity))]);
+    }
+
+    /// <summary>What a batch takes in all is more than is left of a hold: refused whole, with the room that is left and the room the batch takes.</summary>
+    private async Task<ShipRefused?> RefuseWhatDoesNotFitTogetherAsync(ShipSnapshot snapshot, IReadOnlyList<Item> batch, int flag, CancellationToken cancellationToken)
+    {
+        if (CapacityAttributeOf(flag) is not { } attribute)
+        {
+            return null;
+        }
+        var required = batch.Sum(item => statics.Type(item.TypeId) is { } type
+            ? ItemVolumes.Unit(item.TypeId, type.GroupId, item.Singleton, type.Attributes.GetValueOrDefault(VolumeAttribute, 0)) * Math.Max(1, item.Quantity)
+            : 0);
+        var contents = (await items.InContainerAsync(snapshot.Ship.Id, cancellationToken)).Where(i => i.Flag == flag);
+        var room = new Room(snapshot.World.Get(snapshot.Ship.Id, attribute), await VolumeOfAsync(contents, cancellationToken));
+        if (required <= 0 || required <= room.Free + RoomTolerance)
+        {
+            return null;
+        }
+        return new ShipRefused(ShipRefusal.NotEnoughCargoSpace, ModuleTypeId: batch[0].TypeId, ShipTypeId: snapshot.Ship.TypeId, Available: Math.Round(room.Free, 6), Volume: Math.Round(required, 6));
+    }
+
     /// <summary>A container takes what its capacity allows: what does not fit is refused as the reference does for a container (<c>NoSpaceForThat</c>, with the type and the room).</summary>
     private async Task<ShipRefused?> RefuseWhatDoesNotFitContainerAsync(Item container, Item item, long quantity, CancellationToken cancellationToken)
     {

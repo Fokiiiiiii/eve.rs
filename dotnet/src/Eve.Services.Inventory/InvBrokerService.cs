@@ -378,6 +378,36 @@ public sealed partial class InvBrokerService(
         }
     }
 
+    /// <summary>
+    /// <c>MultiAdd(itemIDs, sourceLocationID, flag=None)</c>: the loot window's "Loot All": what is in a can or a wreck beside the ship goes into its hold at once (room for all of it, or nothing moves).
+    /// Answers True when something moved; a batch of which nothing could be moved is the message the client shows. Only the hold in space is served: elsewhere the answer is None.
+    /// </summary>
+    [Method("MultiAdd")]
+    public async ValueTask<PyValue> MultiAdd(ServiceCall call)
+    {
+        if (ContextOf(call) is not { Kind: Kind.Ship } context || space is null || !space.IsInSpace(call.Session) || IdOf(call.Arg(1)) is not { } source
+            || (call.Kwarg("flag") is { } named && Flag(named) is { } flag && flag != CharacterShips.CargoFlag))
+        {
+            return None;
+        }
+        IReadOnlyList<long> ids = call.Arg(0) switch
+        {
+            PyList list => [.. list.Items.Select(IdOf).OfType<long>()],
+            PyTuple tuple => [.. tuple.Items.Select(IdOf).OfType<long>()],
+            _ => [],
+        };
+        if (ids.Count == 0)
+        {
+            return None;
+        }
+        return await space.MoveAllAsync(call.Session, ids, source, context.ItemId, call.Cancellation) switch
+        {
+            true => PyBool.True,
+            false => throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("None of the selected items could be moved."))),
+            null => None,
+        };
+    }
+
     private ItemRow DogmaRow(Item item) =>
         new(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, item.Singleton ? -1 : item.Quantity, statics.Type(item.TypeId)?.GroupId ?? 0, statics.Type(item.TypeId)?.CategoryId ?? 0);
 

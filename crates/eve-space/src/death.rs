@@ -110,6 +110,7 @@ impl Scene {
                 },
                 launcher_id: ship_id,
                 is_empty: true,
+                rights_known: false,
                 expires_at: now + WRECK_LIFETIME,
             }
         });

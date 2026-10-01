@@ -484,6 +484,73 @@ public class InvBrokerTests
         Assert.Equal(new PyList([]), await rig.CallAsync(docked, "List", hangar));
     }
 
+    /// <summary>The space a pilot flies in as a test plays it: what is asked of a "Loot All" is kept and what it is answered with is the test's.</summary>
+    private sealed class FakeSpace : Eve.Services.Ships.ISpaceContainers
+    {
+        public bool? Answer { get; set; }
+
+        public List<(IReadOnlyList<long> Ids, long Source, long Destination)> Asked { get; } = [];
+
+        public bool IsInSpace(ClientSession session) => true;
+
+        public int? SolarSystemOf(ClientSession session) => 30100032;
+
+        public Task<Item?> OpenAsync(ClientSession session, long containerId, CancellationToken cancellationToken) => Task.FromResult<Item?>(null);
+
+        public Task<long?> MoveAsync(ClientSession session, long itemId, long sourceId, long destinationId, long? quantity, CancellationToken cancellationToken) => Task.FromResult<long?>(null);
+
+        public Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long> itemIds, long sourceId, long destinationId, CancellationToken cancellationToken)
+        {
+            Asked.Add((itemIds, sourceId, destinationId));
+            return Task.FromResult(Answer);
+        }
+
+        public Task<IReadOnlyList<long>> JettisonAsync(ClientSession session, IReadOnlyList<long> itemIds, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<long>>([]);
+    }
+
+    [PgFact]
+    public async Task Loot_all_asks_the_space_for_the_ids_the_pilot_names_from_the_container_it_names_into_the_ship_it_flies_and_answers_what_the_space_says()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var space = new FakeSpace();
+        var service = new InvBrokerService(rig.Items, new ItemTypeCatalog(new SdeReader(rig.Source)), Rig.Stations, Rig.Unused(rig.Source, rig.Items), new DogmaStatic([], [], []), () => 1, space);
+        var ship = 9_988_400_000_001;
+        var session = Rig.Session(station: null);
+        session.Set("shipid", new PyLong(ship));
+        session.Set("solarsystemid", new PyInt(30100032));
+        Task<PyValue> Call(string oid, string method, params PyValue[] args) => CallWith(oid, method, null, args);
+        Task<PyValue> CallWith(string oid, string method, int? flag, params PyValue[] args) =>
+            ((IService)service).CallAsync(new ServiceCall
+            {
+                Method = method, Args = args, Session = session, BoundObjectId = oid,
+                Kwargs = flag is { } f ? new PyDict([new(new PyStr("flag"), new PyInt(f))]) : PyNone.Instance,
+            }).AsTask();
+        var oid = Rig.OidOf(await Call(null!, "GetInventoryFromId", new PyLong(ship)));
+
+        // what moved: True
+        space.Answer = true;
+        Assert.Equal(PyBool.True, await Call(oid, "MultiAdd", new PyList([new PyLong(9_988_400_000_005), new PyInt(77)]), new PyLong(9_988_400_000_009)));
+        Assert.Equal([9_988_400_000_005L, 77], space.Asked[0].Ids);
+        Assert.Equal((9_988_400_000_009L, ship), (space.Asked[0].Source, space.Asked[0].Destination));
+        // the cargo hold named by the flag (the loot window's) and ids as a tuple are the same
+        Assert.Equal(PyBool.True, await CallWith(oid, "MultiAdd", 5, new PyTuple([new PyInt(5)]), new PyInt(9)));
+        Assert.Equal(2, space.Asked.Count);
+        // nothing could be moved: the message the client shows
+        space.Answer = false;
+        var failure = await Assert.ThrowsAsync<MachoWrappedException>(async () => await Call(oid, "MultiAdd", new PyList([new PyInt(5)]), new PyInt(9)));
+        var args = ((PyTuple)((PyTuple)((PyObjectEx)failure.Error.Payload).Header).Items[1]).Items;
+        Assert.Equal("CustomNotify", JsSemantics.StringValue(args[0]));
+        Assert.Equal("None of the selected items could be moved.", JsSemantics.StringValue(((PyDict)args[1]).Entries.Single(e => JsSemantics.StringValue(e.Key) == "notify").Value));
+        // not the sort of move this is: nothing, and the space is not asked
+        space.Answer = null;
+        Assert.Equal(PyNone.Instance, await Call(oid, "MultiAdd", new PyList([new PyInt(5)]), new PyInt(9)));
+        var asked = space.Asked.Count;
+        Assert.Equal(PyNone.Instance, await Call(oid, "MultiAdd", new PyList([]), new PyInt(9)));
+        Assert.Equal(PyNone.Instance, await Call(oid, "MultiAdd", new PyList([new PyInt(5)]), new PyStr("x")));
+        Assert.Equal(PyNone.Instance, await CallWith(oid, "MultiAdd", 87, new PyList([new PyInt(5)]), new PyInt(9))); // the drone bay is not the hold
+        Assert.Equal(asked, space.Asked.Count);
+    }
+
     [Fact]
     public void The_descriptor_call_needs_no_database()
     {

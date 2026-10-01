@@ -27,6 +27,13 @@ public interface ISpaceContainers
     Task<long?> MoveAsync(ClientSession session, long itemId, long sourceId, long destinationId, long? quantity, CancellationToken cancellationToken);
 
     /// <summary>
+    /// "Loot All": takes everything of <paramref name="itemIds"/> that is in a can or a wreck into the ship's hold in one go (all or nothing for room), and tells the pilot's client as the
+    /// reference does for the batch. Answers whether something moved, or null when this is no move of the sort (the ship in space, a container to take from). Throws the client's error
+    /// for what is refused (<c>SafetyActivated</c>, <c>NotEnoughCargoSpace</c>, out of range).
+    /// </summary>
+    Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long> itemIds, long sourceId, long destinationId, CancellationToken cancellationToken);
+
+    /// <summary>
     /// <c>ship.Jettison</c>: the stacks of the hold go into a new can ahead of the ship. Answers the ids that went into a can (none when nothing could be jettisoned); throws the
     /// client's error while the pilot waits for the next can.
     /// </summary>

@@ -230,3 +230,4 @@ not exist is the scene: which balls a system has, who is where, how commands cha
   the scene tells the explosion and takes the ship away, makes no wreck, and `Destroyed` carries wreck id 0 and the kind of wreck the ship leaves (what it does for a player's ship), so the host makes the item with what its loot table gave and puts it in space with `PlaceWreck`.
   A frame of version 4 is not understood by version 5 and the other way round (`Hello`, `HelloAck` carry 5). A ship (or a wreck or can that lies in the scene) can now be the target of `FollowBall`, `Orbit` and `AlignTo`.
   `oracle/fixtures/simlink/messages.json` holds the frames; `docs/compat/DEVIATIONS.md` #106 says what differs from the reference.
+  No frame changed for the loot window: a can's slim item (`OnSlimItemChange` after `ChangeWreck`) keeps `lootRights` once something has been in the can, also when it is emptied again (`loot.json`; `docs/compat/DEVIATIONS.md` #107).

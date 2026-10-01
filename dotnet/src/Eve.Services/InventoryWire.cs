@@ -50,6 +50,9 @@ public static class InventoryWire
         new PyInt(item.GroupId), new PyInt(item.CategoryId), new PyStr(""), Id(StackSize(item)), new PyInt(singleton),
     ];
 
+    /// <summary>One item as a tuple of its columns in order, as the loot window's <c>OnWreckLootAll</c> carries the items that were taken.</summary>
+    public static PyValue Tuple(ItemRow item) => Py.Tuple([.. Line(item, item.Quantity < 0 ? 1 : 0)]);
+
     /// <summary>A <c>util.Row</c>: the header and one line. The reference always says the item is a singleton here.</summary>
     public static PyValue UtilRow(ItemRow item) => new PyObject(
         new PyStr("util.Row"),

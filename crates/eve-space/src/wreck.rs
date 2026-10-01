@@ -56,6 +56,9 @@ pub struct Wreck {
     pub launcher_id: i64,
     /// Nothing in it to take.
     pub is_empty: bool,
+    /// Whether a can has told who may take what is in it: it does once something has been in it, and goes on telling it when it is emptied again (recorded:
+    /// `loot.json`, the can that "Loot All" empties still carries `lootRights`). A can that was just jettisoned has not.
+    pub rights_known: bool,
     /// When it goes.
     pub expires_at: i64,
 }
@@ -123,7 +126,7 @@ impl Wreck {
         if self.is_container() {
             // a can has no turn, and says who may take what is in it only once something is (the reference defers the rights of a can that was just
             // jettisoned until its contents moved in: the slim item of its `AddBalls2` has none, the update after has them)
-            if !self.is_empty {
+            if self.rights_known || !self.is_empty {
                 entries.push(rights);
             }
             entries.push(("launcherID", id(self.launcher_id)));
@@ -192,6 +195,7 @@ mod tests {
             rights: LootRights { character_id: 140_000_393, corporation_id: 1_000_006 },
             launcher_id: 4_200_000_000_000_000,
             is_empty: true,
+            rights_known: false,
             expires_at: 0,
         }
     }
@@ -216,6 +220,7 @@ mod tests {
             rights: LootRights::default(),
             launcher_id: 0,
             is_empty: true,
+            rights_known: false,
             expires_at: 0,
         }
     }

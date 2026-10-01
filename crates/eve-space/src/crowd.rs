@@ -298,6 +298,7 @@ impl Scene {
             },
             launcher_id: can.launcher_id,
             is_empty: true,
+            rights_known: false,
             expires_at: now + crate::wreck::WRECK_LIFETIME,
         };
         let id = wreck.id;
@@ -330,6 +331,7 @@ impl Scene {
     pub fn change_wreck(&mut self, wreck_id: i64, is_empty: bool, now: i64) -> Vec<Out> {
         let Some(wreck) = self.wrecks.get_mut(&wreck_id) else { return Vec::new() };
         wreck.is_empty = is_empty;
+        wreck.rights_known |= !is_empty;
         let stamp = self.next_stamp(now);
         let Some(wreck) = self.wrecks.get(&wreck_id) else { return Vec::new() };
         let changed = payload::slim_item_change(stamp, wreck);
@@ -1084,6 +1086,22 @@ mod tests {
         // a can that is not there is nothing to tell
         assert!(scene.remove_wreck(id, 3, NOON + 3 * SECOND).is_empty());
         assert!(scene.change_wreck(id, true, NOON + 3 * SECOND).is_empty());
+    }
+
+    #[test]
+    fn a_can_that_was_filled_and_is_emptied_again_keeps_telling_who_may_take_what_is_in_it() {
+        // recorded (`loot.json`): "Loot All" empties the can, and the slim item that says so (`isEmpty` 1) still has the rights
+        let mut scene = watcher();
+        let id = 9_988_400_002_948;
+        scene.place_container(A, can_for(A, id, 275.0), NOON);
+        let before = scene.change_wreck(id, true, NOON + SECOND);
+        let slim = slim_of(&before[0], "OnSlimItemChange").expect("the slim item");
+        assert!(!keys(&slim).contains(&"lootRights"), "nothing has been in it yet");
+
+        scene.change_wreck(id, false, NOON + 2 * SECOND);
+        let emptied = scene.change_wreck(id, true, NOON + 3 * SECOND);
+        let slim = slim_of(&emptied[0], "OnSlimItemChange").expect("the slim item");
+        assert!(keys(&slim).contains(&"lootRights"), "{:?}", keys(&slim));
     }
 
     #[test]

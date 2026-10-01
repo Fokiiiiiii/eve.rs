@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record what the EVE.js reference does from login to a session with a character.
 
-    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others|target|module|weapon|ammo|cargo|health|death]
+    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others|target|module|weapon|ammo|cargo|reload|health|death]
 
 The recording is the contract for the same path in eve.rs: `tests/test_login_to_character.py` replays the calls
 against any server and compares each answer with what is stored here, by shape, treating per-run values
@@ -1313,6 +1313,109 @@ def record_ammo(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
     who.close()
 
 
+def record_reload(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """One character with a gun that takes charges (a 125mm Railgun I in the place of the miner), loaded in the station with some more ammunition in the hold, then in
+    space with a rat beside it (`/npc`): the gun unloaded into the hold, loaded again from it (the reference makes the pilot wait the gun's reload time: what it tells
+    the pilot of the wait and of the end of it is what is recorded), loaded when it is full, fired until its rounds are spent (with more in the hold the reference
+    reloads by itself) and asked for after, and fired while a reload runs. Each step holds the answer (or the error) and what the pilot was sent, with the seconds
+    each arrived at."""
+    system, station = 30100032, 60015249
+    who = rec.login("Reloader")
+    created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Reloader {run}", 1, 1, ancestry[1]))
+    char_id = int(created["ok"])
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
+    hangar = who.call_bound(manager, "GetInventory", 10004)
+    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
+    events_of(who)
+    only = {"events": who}
+    steps: list = []
+
+    def step(label, call, seconds=1.5, until=None):
+        entry = {"label": label}
+        try:
+            entry["ok"] = describe(call())
+        except p.MachoError as error:
+            entry["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+        entry["events"] = watch(only, seconds, (lambda seen: until(seen["events"])) if until else None)["events"]
+        steps.append(entry)
+        return entry
+
+    slash = lambda command: (lambda: who.call("slash", "SlashCmd", command))  # noqa: E731
+    step("the pilot is given antimatter", slash("/giveitem Antimatter Charge S 500"))
+    step("the pilot takes the miner out", slash("/unfit me Civilian Miner"))
+    step("the pilot fits a railgun", slash("/fit me 125mm Railgun I"))
+
+    def ids_by_type(handle, flag=None) -> dict:
+        rows = who.call_bound(handle, "List", flag) if flag else who.call_bound(handle, "List")
+        return {int(row.fields()["typeID"]): int(row.fields()["itemID"]) for row in (rows if isinstance(rows, list) else [])}
+
+    docked = who.call("dogmaIM", "MachoBindObject", (station, 15), None)
+    info = who.call_bound(docked[0], "GetAllInfo", True, True, None)
+    described = describe(info)
+    ship_info = {k: v for k, v in described["args"]["$dict"]}["shipInfo"]["$dict"]
+    fitted = {}
+    for key, value in ship_info:
+        if isinstance(key, dict) and "$tuple" in key:
+            continue
+        item = {k: v for k, v in value["args"]["$dict"]}["invItem"]["$row"]
+        fitted[item["typeID"]] = int(key["$long"] if isinstance(key, dict) else key)
+    gun = fitted[10678]
+    antimatter = ids_by_type(hangar)[222]
+    hold_docked = who.call("invbroker", "MachoBindObject", (station, 15), ("GetInventoryFromId", (ship_id, 0), None))[1]
+    load = lambda charge, where: (lambda: who.call_bound(docked[0], "LoadAmmo", ship_id, m.List([gun]), m.List([charge]), where))  # noqa: E731
+    step("the pilot loads the railgun in the station", load(antimatter, station), 2.0)
+    step("the pilot puts more antimatter in the hold", lambda: who.call_bound(hold_docked, "Add", ids_by_type(hangar)[222], station, qty=40, flag=5), 1.5)
+
+    service = who.call("ship", "MachoBindObject", (station, 15), None)
+    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", ship_id, False), 2.5)
+    ballpark = who.call("beyonce", "MachoBindObject", system, None)
+    step("the pilot binds the ballpark", lambda: ballpark, 3.0)
+    space = who.call("dogmaIM", "MachoBindObject", (system, 5), None)
+    step("the pilot binds dogma in space", lambda: space, 1.0)
+    step("the pilot asks for its ship in space", lambda: who.call_bound(space[0], "GetAllInfo", True, True, None), 1.0)
+    steps.append({"label": "the pilot waits for the protection to end", "events": watch(only, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))["events"]})
+    hold = who.call("invbroker", "MachoBindObject", (system, 5), ("GetInventoryFromId", (ship_id, 0), None))[1]
+    spawn = step("the pilot calls a rat", slash("/npc 1 Blood Visionary"), 8.0)
+    rat = next((item for item, kind in slims_in(spawn["events"]) if item != ship_id), 0)
+    if not rat:
+        raise SystemExit("the reference brought no rat into space")
+    step("the pilot locks the rat", lambda: who.call_bound(space[0], "AddTarget", rat), 20.0, until=lambda seen: any(e["name"] == "OnTarget" and "otheradd" not in json.dumps(e) for e in seen))
+    step("the pilot heals", slash("/heal"), 1.0)
+    step("the pilot asks for its hold in space", lambda: who.call_bound(hold, "List", 5), 0.5)
+    step("the pilot unloads the railgun into the hold", lambda: who.call_bound(space[0], "UnloadAmmo", ship_id, m.List([gun]), ship_id, None), 2.0)
+    step("the pilot asks for its hold with the rounds back", lambda: who.call_bound(hold, "List", 5), 0.5)
+    in_hold = ids_by_type(hold, 5)[222]
+    reloaded = lambda seen: sum(1 for e in seen if e["name"] == "OnChargeBeingLoadedToModule") >= 1 and sum(1 for e in seen if e["name"] == "OnModuleAttributeChanges") >= 4  # noqa: E731
+    step("the pilot loads the railgun from the hold", lambda: who.call_bound(space[0], "LoadAmmo", ship_id, m.List([gun]), m.List([in_hold]), ship_id), 12.0)
+    step("the pilot asks for its hold after the reload", lambda: who.call_bound(hold, "List", 5), 0.5)
+    step("the pilot loads the railgun when it is full", lambda: who.call_bound(space[0], "LoadAmmo", ship_id, m.List([gun]), m.List([in_hold]), ship_id), 3.0)
+    stopped = lambda seen: any(e["name"] == "OnGodmaShipEffect" and len(args_of_effect(e)) > 3 and args_of_effect(e)[3] == 0 for e in seen)  # noqa: E731
+    step("the pilot heals again", slash("/heal"), 1.0)
+    step("the pilot unloads most of the rounds", lambda: who.call_bound(space[0], "UnloadAmmo", ship_id, m.List([gun]), ship_id, 75), 2.0)
+    step("the pilot fires the railgun until the rounds are spent", lambda: who.call_bound(space[0], "Activate", gun, "projectileFired", rat, 1000), 45.0, until=stopped)
+    step("the pilot stops the railgun", lambda: who.call_bound(space[0], "Deactivate", gun, "projectileFired"), 3.0)
+    step("the pilot asks for its hold after the fight", lambda: who.call_bound(hold, "List", 5), 0.5)
+    step("the pilot heals once more", slash("/heal"), 1.0)
+    step("the pilot unloads what is left in the railgun", lambda: who.call_bound(space[0], "UnloadAmmo", ship_id, m.List([gun]), ship_id, None), 2.0)
+    in_hold = ids_by_type(hold, 5)[222]
+    step("the pilot loads the railgun again", lambda: who.call_bound(space[0], "LoadAmmo", ship_id, m.List([gun]), m.List([in_hold]), ship_id), 0.8)
+    step("the pilot fires the railgun while it reloads", lambda: who.call_bound(space[0], "Activate", gun, "projectileFired", rat, 1000), 8.0)
+    step("the pilot unloads most of the rounds again", lambda: who.call_bound(space[0], "UnloadAmmo", ship_id, m.List([gun]), ship_id, 75), 2.0)
+    step("the pilot tops the railgun up", lambda: who.call_bound(space[0], "LoadAmmo", ship_id, m.List([gun]), m.List([in_hold]), ship_id), 0.8)
+    step("the pilot fires the railgun while it tops up", lambda: who.call_bound(space[0], "Activate", gun, "projectileFired", rat, 1000), 9.0)
+    step("the pilot stops the railgun after the top up", lambda: who.call_bound(space[0], "Deactivate", gun, "projectileFired"), 4.0)
+    step("the pilot asks for its hold at the end", lambda: who.call_bound(hold, "List", 5), 0.5)
+    race = {"bloodlineID": 1, "raceID": 1, "solarSystemID": system, "stationID": station, "create": created, "characterID": char_id, "shipID": ship_id,
+            "moduleIDs": [ship_id + 1, ship_id + 2, ship_id + 3],
+            "roles": {"gun": gun, "antimatter": antimatter, "rat": rat, "fitted": {str(k): v for k, v in fitted.items()}}, "steps": steps}
+    with open(os.path.join(out, "reload.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [race]}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+    who.close()
+
+
 def record_cargo(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One character and the cargo hold of its ship, as the client uses it: in the station a stack of tritanium given, asked for, moved into the hold (all of it,
     part of it, more than the hold takes), stacked, moved back to the hangar; then in space the hold asked for, a stack jettisoned, the can that comes of it
@@ -1549,10 +1652,10 @@ def main() -> int:
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others, "target": record_target, "module": record_module, "weapon": record_weapon, "ammo": record_ammo, "cargo": record_cargo, "health": record_health, "death": record_death}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others, "target": record_target, "module": record_module, "weapon": record_weapon, "ammo": record_ammo, "cargo": record_cargo, "reload": record_reload, "health": record_health, "death": record_death}
     try:
         for name, record in parts.items():
-            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others", "target", "module", "weapon", "ammo", "cargo", "health", "death")):  # the fast one needs a reference started for it
+            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others", "target", "module", "weapon", "ammo", "cargo", "reload", "health", "death")):  # the fast one needs a reference started for it
                 record(rec, out, meta, ancestry, run)
         if only in (None, "stations"):
             record_stations(rec, out, meta, ancestry, run, sde)

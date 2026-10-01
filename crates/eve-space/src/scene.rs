@@ -140,6 +140,8 @@ pub enum Out {
     },
     /// A turret spent rounds: how many it has left (the host keeps the quantity of the charge item).
     ChargeSpent { session: SessionId, module_id: i64, rounds_left: i64 },
+    /// The answer to `AdjustCharge`: whether the gun runs, the rounds it had and the rounds it has.
+    ChargeAdjusted { session: SessionId, request_id: u64, running: bool, before: i64, after: i64 },
     /// A can the host asked for (`PlaceContainer`) is in space: where, and how it lies.
     ContainerPlaced { session: SessionId, container_id: i64, position: Vec3, direction: Vec3 },
     /// The answer to a question about how far a wreck or can is: metres from the ship's centre to its surface, or `None` when there is no such wreck.
@@ -169,6 +171,7 @@ impl Out {
             | Out::Refused { session, .. }
             | Out::Targets { session, .. }
             | Out::ChargeSpent { session, .. }
+            | Out::ChargeAdjusted { session, .. }
             | Out::ContainerPlaced { session, .. }
             | Out::Measured { session, .. }
             | Out::TargetRefused { session, .. } => *session,

@@ -74,6 +74,12 @@ public interface ISimulation
     /// </summary>
     Task<string?> RespawnAsync(SimRespawn respawn, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Changes the rounds of a gun that runs and waits for what the simulation says they come to. <paramref name="inOrder"/> is called with the answer on the thread that reads the
+    /// link, before anything the simulation told after it is handled: what it does is ordered with every <see cref="SimChargeSpent"/> the simulation told before the answer.
+    /// </summary>
+    Task<SimChargeAdjusted> AdjustChargeAsync(SimAdjustCharge request, Action<SimChargeAdjusted>? inOrder = null, CancellationToken cancellationToken = default);
+
     /// <summary>Puts a wreck the host made in space (where the ship was destroyed), in the scene of its system if there is one.</summary>
     void PlaceWreck(SimPlaceWreck wreck);
 

@@ -37,6 +37,11 @@ public sealed partial class DogmaIMService
             return None;
         }
         var location = IdOf(call.Arg(3)) ?? shipId;
+        if (call.Session.GetInt("stationid") is null && rounds is not null)
+        {
+            await LoadInSpaceAsync(call.Session, character, shipId, [.. IdsOf(call.Arg(1))], [.. IdsOf(call.Arg(2))], location, call.Cancellation);
+            return None;
+        }
         if (IsHangarContainer(location) && call.Session.GetInt("stationid") is { } station)
         {
             location = station;
@@ -74,6 +79,11 @@ public sealed partial class DogmaIMService
             location = station;
         }
         var quantity = IdOf(call.Arg(3)) is { } asked and > 0 ? asked : (long?)null;
+        if (call.Session.GetInt("stationid") is null && rounds is not null)
+        {
+            await UnloadInSpaceAsync(call.Session, character, shipId, [.. IdsOf(call.Arg(1))], location, flag, quantity, call.Cancellation);
+            return None;
+        }
         var outcome = await ships.UnloadAmmoAsync(character, shipId, [.. IdsOf(call.Arg(1))], location, flag, quantity, call.Cancellation);
         TellAmmo(call.Session, character, outcome);
         return None;
@@ -86,15 +96,25 @@ public sealed partial class DogmaIMService
     /// <summary>What the client is told of a change of ammunition, event by event in the order the ship worked it out.</summary>
     private void TellAmmo(ClientSession session, long characterId, ShipOutcome outcome)
     {
+        if (outcome is Reloaded reloaded)
+        {
+            outcome = reloaded.Changed;
+        }
         if (outcome is not AmmoChanged changed)
         {
             return;
         }
         var fileTime = Py.FileTimeFromUnixMs(nowUnixMs());
+        // a ship in space is told what moved in its hold as a batch for the ship (the reference's OnItemsChanged, with the hold named); one in a station as an item that changed
+        var inSpace = session.GetInt("stationid") is null;
+        var cargo = Py.Tuple(new PyStr("Ship"), InventoryWire.Id(changed.ShipId), new PyStr("ShipCargo"));
         foreach (var e in changed.Events)
         {
             switch (e)
             {
+                case ItemChanged item when inSpace:
+                    ShipNotifications.SendItemsChanged(session, item, i => DogmaInfo.RowOf(i, statics.Type(i.TypeId)), cargo, "charid");
+                    break;
                 case ItemChanged item:
                     ShipNotifications.SendItemChange(session, item, i => DogmaInfo.RowOf(i, statics.Type(i.TypeId)));
                     break;

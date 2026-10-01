@@ -15,7 +15,8 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "ShipSpec": 8, "Notify": 9, "Docked": 10, "Refused": 11, "Accepted": 12, "EnterReply": 13, "Approaching": 14,
          "Jumping": 15, "Jumped": 16, "Targets": 17, "TargetRefused": 18, "Activate": 19, "Condition": 20,
          "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27,
-         "PlaceContainer": 28, "ContainerPlaced": 29, "ChangeWreck": 30, "RemoveWreck": 31, "Measured": 32}
+         "PlaceContainer": 28, "ContainerPlaced": 29, "ChangeWreck": 30, "RemoveWreck": 31, "Measured": 32,
+         "AdjustCharge": 33, "ChargeAdjusted": 34}
 
 
 def s(text):  # u16 length + UTF-8
@@ -159,6 +160,12 @@ def build(m):
                      + i64(m["killerShipId"]) + wreck_kind(m.get("wreckKind")))
     if k == "ChargeSpent":
         return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + i64(m["roundsLeft"]))
+    if k == "AdjustCharge":
+        add = m["op"] == "add"
+        return frame(k, u64(m["requestId"]) + u64(m["sessionId"]) + i64(m["moduleId"]) + struct.pack("<i", m["chargeType"])
+                     + bytes([0 if add else 1]) + i64(m["capacity"] if add else m["quantity"]) + i64(m["available"] if add else "0"))
+    if k == "ChargeAdjusted":
+        return frame(k, u64(m["requestId"]) + bytes([1 if m["running"] else 0]) + i64(m["before"]) + i64(m["after"]))
     if k == "Respawn":
         return frame(k, u64(m["sessionId"]) + ship(m["ship"]) + struct.pack("<6d", *m["position"], *m["direction"]))
     if k == "PlaceWreck":
@@ -204,8 +211,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 3},
-    {"name": "hello ack", "kind": "HelloAck", "version": 3, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 4},
+    {"name": "hello ack", "kind": "HelloAck", "version": 4, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -302,6 +309,14 @@ valid = [
                                {"itemId": "9988400002719", "attributeId": 51, "value": 2750.8},
                                {"itemId": "9988400002719", "attributeId": 54, "value": 5940.0}]}},
     {"name": "rounds spent", "kind": "ChargeSpent", "sessionId": "1790646377000015", "moduleId": "9988400002719", "roundsLeft": "79"},
+    {"name": "rounds loaded into a gun that runs", "kind": "AdjustCharge", "requestId": "41", "sessionId": "1790646377000015", "moduleId": "9988400002719",
+     "chargeType": 222, "op": "add", "capacity": "80", "available": "40"},
+    {"name": "rounds taken out of a gun that runs", "kind": "AdjustCharge", "requestId": "42", "sessionId": "1790646377000015", "moduleId": "9988400002719",
+     "chargeType": 0, "op": "remove", "quantity": "75"},
+    {"name": "all the rounds taken out of a gun", "kind": "AdjustCharge", "requestId": "43", "sessionId": "1790646377000015", "moduleId": "9988400002719",
+     "chargeType": 0, "op": "remove", "quantity": "0"},
+    {"name": "rounds of a gun that runs changed", "kind": "ChargeAdjusted", "requestId": "41", "running": True, "before": "3", "after": "80"},
+    {"name": "rounds of a gun that does not run", "kind": "ChargeAdjusted", "requestId": "44", "running": False, "before": "0", "after": "0"},
     {"name": "targets with a lock going", "kind": "Targets", "sessionId": "1790646377000015", "command": 10,
      "pending": True, "targets": ["60015249"]},
     {"name": "targets none", "kind": "Targets", "sessionId": "1790646377000015", "command": 14, "pending": False,

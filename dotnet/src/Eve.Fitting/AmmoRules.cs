@@ -19,6 +19,9 @@ public static class AmmoRules
     /// <summary>The module's reload time in milliseconds: the attribute <c>reloadTime</c>, which dogma may have changed.</summary>
     public const int ReloadTimeAttribute = 1795;
 
+    /// <summary>The moment a module can be used again (nextActivationTime): while a reload runs it is the moment the reload ends, a file time.</summary>
+    public const int NextActivationTimeAttribute = 2729;
+
     /// <summary>The groups of charges the type of a module takes.</summary>
     public static IReadOnlyList<int> ChargeGroups(TypeDef module) =>
         [.. ChargeGroupAttributes.Where(module.Attributes.ContainsKey).Select(a => (int)module.Attributes[a]).Where(g => g > 0).Distinct().Order()];

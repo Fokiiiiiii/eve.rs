@@ -8,6 +8,7 @@
 
 use eve_marshal::Value;
 
+use crate::link::ChargeOp;
 use crate::payload;
 use crate::scene::{Out, Scene, SessionId, TICKS_PER_SECOND};
 use crate::weapons::Turret;
@@ -450,6 +451,42 @@ impl Scene {
         out
     }
 
+    /// The host changes the rounds of a gun of this session's ship (a pilot loaded it or unloaded it in space): a gun that runs keeps its rounds here, so what they
+    /// come to is decided here and the host is told (`ChargeAdjusted`). A gun that does not run is not here: the host has its rounds and is told so. A gun that
+    /// runs a charge of another kind than the one the host loads is left as it is (the rounds it fires are those it began the cycle with). The client is told by
+    /// the host; the next shot tells it the rounds that are in the slot then.
+    pub fn adjust_charge(
+        &mut self,
+        request_id: u64,
+        session: SessionId,
+        module_id: i64,
+        charge_type: i32,
+        op: ChargeOp,
+    ) -> Vec<Out> {
+        let answer = |running, before, after| {
+            vec![Out::ChargeAdjusted { session, request_id, running, before, after }]
+        };
+        let Some(pilot) = self.pilots.get_mut(&session) else { return answer(false, 0, 0) };
+        let Some(run) = pilot.modules.running.iter_mut().find(|r| r.effect.module_id == module_id) else {
+            return answer(false, 0, 0);
+        };
+        let (Some(charge), Some(rounds)) =
+            (run.effect.turret.as_ref().and_then(|t| t.charge), run.rounds.as_mut())
+        else {
+            return answer(false, 0, 0);
+        };
+        let before = *rounds;
+        *rounds = match op {
+            ChargeOp::Add { capacity, available } if charge.type_id == charge_type => {
+                before + (capacity - before).max(0).min(available.max(0))
+            }
+            ChargeOp::Add { .. } => before,
+            ChargeOp::Remove { quantity } if quantity > 0 => (before - quantity).max(0),
+            ChargeOp::Remove { .. } => 0,
+        };
+        answer(true, before, *rounds)
+    }
+
     /// A turret that fires a charge spends the rounds of a cycle: the client is told the rounds in the slot and the host the rounds that are left (it keeps the
     /// quantity of the charge). The second answer says whether the turret has rounds for another cycle.
     fn spend_round(&mut self, session: SessionId, module_id: i64, at: i64) -> (Vec<Out>, bool) {
@@ -577,6 +614,18 @@ impl Scene {
         if run.stopping || !more || !affordable || !target_ok {
             pilot.modules.running.remove(index);
             return self.effect_ended(session, run, owner, ship_id, at, Ending::Done);
+        }
+        // the host took the rounds out while the gun ran (a pilot unloaded it in space): it stops with no shot
+        if run
+            .effect
+            .turret
+            .as_ref()
+            .and_then(|t| t.charge)
+            .zip(run.rounds)
+            .is_some_and(|(charge, rounds)| rounds < charge.per_cycle)
+        {
+            pilot.modules.running.remove(index);
+            return self.effect_ended(session, run, owner, ship_id, at, Ending::NoRounds);
         }
         let (before, after) = match pilot.modules.capacitor.as_mut() {
             Some(capacitor) => capacitor.draw(at, run.effect.capacitor_need),

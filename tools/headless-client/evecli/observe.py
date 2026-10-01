@@ -38,6 +38,10 @@ def events_of(client: Client) -> list[dict]:
             fields = address.args if hasattr(address, "args") else address
             body = n.payload[0][1]
             inner = m.decode(bytes(body.value if hasattr(body, "value") else body))
+            if len(fields) < 4:
+                # an address with no name or no kind of id (the reference sends one now and then): kept, as it is, for a test to see
+                out.append({"name": "$short", "idType": None, "args": {"address": describe(address), "body": open_buffers(describe(inner))}})
+                continue
             out.append({"name": describe(fields[1]), "idType": describe(fields[3]), "args": open_buffers(describe(inner))})
         elif n.command == p.SESSIONCHANGENOTIFICATION:
             out.append({"name": "$sessionchange", "idType": None, "args": describe(n.raw)})

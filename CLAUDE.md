@@ -134,6 +134,11 @@ quantity below the stack splits it), `docs/compat/DEVIATIONS.md` (rows 103, 104 
 the stack splits it into a stack of its own, and the client is told `OnItemChange` for each stack (not `OnItemsChanged` for the item) unless a module goes into a slot or out of one.
 `ItemVolumes` (`Eve.Inventory`) is the one place a unit's volume is worked out (packaged or assembled); use it for any hold or hangar room you check.
 
+Ammunition in space (COMBAT-1c, 2026-10-03) touched these shared files, all additive: `Eve.Host/Program.cs` (one more argument to `DogmaIMService`, `spaceSessions` as `ISpaceRounds`, and a `log:`),
+`docs/compat/DEVIATIONS.md` (row 57 rewritten), `docs/NATIVE_MIGRATION.md` (row S5d-3), `docs/adr/0007-space-simulation-process.md` (link version 4), `oracle/PROVENANCE.md` and `oracle/fixtures/simlink/messages.json`. `ISimulation` has one more method
+(`AdjustChargeAsync`); a fake of yours needs it. Anything of yours that changes the rounds of a gun that may run (a loot, a trade, a game master command) must not write the charge item of a gun in space by itself: go through
+`ISpaceRounds.AdjustAsync` (the simulation keeps the rounds of a gun that runs and the lane of counts orders what follows).
+
 Both reds I noted earlier (the corporation login replay, the wallet rollback test) are fixed on `main`; the whole Rust, .NET and headless suites pass with the ship foundation merged (2026-10-02).
 ### Claude handoff to Codex: where our work meets (2026-10-01)
 

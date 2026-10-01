@@ -184,6 +184,29 @@ public sealed record SimTurret(
 /// </summary>
 public sealed record SimTurretCharge(int TypeId, int Flag, long Rounds, long PerCycle);
 
+/// <summary>What the host changes in the rounds of a gun that runs: rounds go in (up to the capacity, and no more than the hold has) or come out (all of them when the quantity is 0).</summary>
+public abstract record SimChargeOp
+{
+    private SimChargeOp()
+    {
+    }
+
+    /// <summary>Rounds go into the gun: up to <paramref name="Capacity"/> of them in all, and no more than <paramref name="Available"/> more.</summary>
+    public sealed record Add(long Capacity, long Available) : SimChargeOp;
+
+    /// <summary>Rounds come out of the gun: <paramref name="Quantity"/> of them, all of them when it is 0.</summary>
+    public sealed record Remove(long Quantity) : SimChargeOp;
+}
+
+/// <summary>
+/// The host changes the rounds of a gun of this session's ship (a pilot loaded it or unloaded it in space). The simulation keeps the rounds of a gun that runs, so it
+/// says what they come to; it answers with <see cref="SimChargeAdjusted"/>, after every <see cref="SimChargeSpent"/> it told before.
+/// </summary>
+public sealed record SimAdjustCharge(ulong RequestId, ulong SessionId, long ModuleId, int ChargeType, SimChargeOp Op) : SimMessage;
+
+/// <summary>The answer to <see cref="SimAdjustCharge"/>: whether the gun runs (when it does not, the host has its rounds and nothing was changed), the rounds it had and the rounds it has.</summary>
+public sealed record SimChargeAdjusted(ulong RequestId, bool Running, long Before, long After) : SimMessage;
+
 /// <summary>A turret of this session's ship spent rounds: how many it has left (the host keeps the quantity of the charge item).</summary>
 public sealed record SimChargeSpent(ulong SessionId, long ModuleId, long RoundsLeft) : SimMessage;
 

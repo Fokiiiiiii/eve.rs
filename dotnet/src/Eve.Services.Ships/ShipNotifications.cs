@@ -51,10 +51,11 @@ public static class ShipNotifications
 
     /// <summary>
     /// <c>OnItemsChanged</c> for an item that changed in space (the batch the reference sends for what moves between a ship and a can), told to the ship: the row, what it was before
-    /// and, for what a pilot takes out of a can, the place the loot window shows it in (<c>("Ship", shipID, "ShipCargo")</c>).
+    /// and, for what a pilot takes out of a can, the place the loot window shows it in (<c>("Ship", shipID, "ShipCargo")</c>). The reference addresses what a can and a hold
+    /// exchange to the ship (<c>shipid</c>) and what a gun's rounds do to the hold's stacks to the character (<paramref name="idType"/> <c>charid</c>).
     /// </summary>
-    public static void SendItemsChanged(ClientSession session, ItemChanged change, Func<Eve.Inventory.Item, ItemRow> row, PyValue? context = null) =>
-        session.SendNotification("OnItemsChanged", "shipid", new PyList([InventoryWire.PackedRow(row(change.After))]), Differences(change), context ?? PyNone.Instance);
+    public static void SendItemsChanged(ClientSession session, ItemChanged change, Func<Eve.Inventory.Item, ItemRow> row, PyValue? context = null, string idType = "shipid") =>
+        session.SendNotification("OnItemsChanged", idType, new PyList([InventoryWire.PackedRow(row(change.After))]), Differences(change), context ?? PyNone.Instance);
 
     /// <summary>The events of a change as the batch the client is sent: each with the time it happened.</summary>
     public static PyValue MultiEvent(long characterId, long shipId, IEnumerable<DogmaEvent> events, long fileTime) => new PyList([.. events.Select(e => Py.Tuple(

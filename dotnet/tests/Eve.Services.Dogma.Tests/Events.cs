@@ -12,7 +12,8 @@ internal static class Events
     {
         var sink = (Sink)session.Sink!;
         var events = new List<Event>();
-        foreach (var packet in sink.Sent.OfType<PyObject>())
+        var sent = clear ? sink.Take() : sink.Sent;
+        foreach (var packet in sent.OfType<PyObject>())
         {
             var state = ((PyTuple)packet.Args).Items;
             if (state[0] is not PyInt { Value: MachoMessage.Notification })
@@ -24,10 +25,6 @@ internal static class Events
             var inner = (PyTuple)MarshalCodec.Decode(body.Value.ToArray());
             var args = ((PyTuple)((PyTuple)inner.Items[1]).Items[1]).Items;
             events.Add(new Event(JsSemantics.StringValue(address[1])!, JsSemantics.StringValue(address[3])!, [.. args]));
-        }
-        if (clear)
-        {
-            sink.Sent.Clear();
         }
         return events;
     }

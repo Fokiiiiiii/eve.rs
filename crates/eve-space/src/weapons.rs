@@ -905,6 +905,64 @@ mod tests {
         );
     }
 
+    /// What the host is answered when it changes the rounds of a gun: whether it runs, the rounds it had and the rounds it has.
+    fn adjusted(out: &[Out]) -> (bool, i64, i64) {
+        match out {
+            [Out::ChargeAdjusted { running, before, after, .. }] => (*running, *before, *after),
+            other => panic!("one answer was expected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rounds_the_host_adds_to_a_gun_that_runs_are_spent_by_the_shots_that_follow() {
+        use crate::link::ChargeOp;
+        let (mut scene, npc, now) = duel();
+        let started = scene.activate(npc, charged_gun(3), now);
+        assert_eq!(rounds_left(&started), [2]);
+        // a gun that does not run is not here (the host has its rounds), and neither is a session that is not in space
+        assert_eq!(
+            adjusted(&scene.adjust_charge(
+                1,
+                PLAYER,
+                999,
+                222,
+                ChargeOp::Add { capacity: 8, available: 100 }
+            )),
+            (false, 0, 0)
+        );
+        // up to the capacity and no more than the hold has: 2 rounds in it, room for 6, and the hold has 4
+        let topped = scene.adjust_charge(2, npc, NPC_SHIP, 222, ChargeOp::Add { capacity: 8, available: 4 });
+        assert_eq!(adjusted(&topped), (true, 2, 6));
+        // a kind that is not the one it fires is left as it is (it has room: 6 of 8)
+        let other = scene.adjust_charge(4, npc, NPC_SHIP, 223, ChargeOp::Add { capacity: 8, available: 100 });
+        assert_eq!(adjusted(&other), (true, 6, 6));
+        // the hold has more than the gun takes
+        let more = scene.adjust_charge(3, npc, NPC_SHIP, 222, ChargeOp::Add { capacity: 8, available: 100 });
+        assert_eq!(adjusted(&more), (true, 6, 8));
+        // the next shot spends from what it comes to now
+        let next = scene.poll(now + 2_500 * SECOND / 1_000 + 1);
+        assert_eq!(rounds_left(&next), [7], "{next:?}");
+    }
+
+    #[test]
+    fn rounds_the_host_takes_out_of_a_gun_that_runs_leave_it_with_what_is_left_and_stop_it_when_none_is() {
+        use crate::link::ChargeOp;
+        let (mut scene, npc, now) = duel();
+        scene.activate(npc, charged_gun(8), now);
+        let part = scene.adjust_charge(1, npc, NPC_SHIP, 0, ChargeOp::Remove { quantity: 3 });
+        assert_eq!(adjusted(&part), (true, 7, 4));
+        let all = scene.adjust_charge(2, npc, NPC_SHIP, 0, ChargeOp::Remove { quantity: 0 });
+        assert_eq!(adjusted(&all), (true, 4, 0));
+        // the cycle that was on ends, and the gun does not shoot again: it stops with the error the client shows
+        let ended = scene.poll(now + 2_500 * SECOND / 1_000 + 1);
+        assert!(rounds_left(&ended).is_empty(), "no round is spent that was not there: {ended:?}");
+        assert!(
+            !ended.iter().any(|o| matches!(o, Out::Notify { name: "OnDamageMessage", .. })),
+            "no shot: {ended:?}"
+        );
+        assert!(format!("{ended:?}").contains("NoCharges"), "{ended:?}");
+    }
+
     #[test]
     fn a_turret_with_fewer_rounds_than_a_cycle_spends_is_refused_and_one_without_a_charge_is_not() {
         let (mut scene, npc, now) = duel();

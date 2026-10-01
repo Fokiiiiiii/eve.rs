@@ -12,7 +12,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Charge, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 3;
+pub const PROTOCOL_VERSION: u16 = 4;
 
 /// The message kinds.
 pub mod kind {
@@ -48,6 +48,17 @@ pub mod kind {
     pub const CHANGE_WRECK: u8 = 30;
     pub const REMOVE_WRECK: u8 = 31;
     pub const MEASURED: u8 = 32;
+    pub const ADJUST_CHARGE: u8 = 33;
+    pub const CHARGE_ADJUSTED: u8 = 34;
+}
+
+/// What the host changes in the rounds of a gun, in the order the simulation hears it (the host asks for it when a pilot loads or unloads a gun in space).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChargeOp {
+    /// Rounds go into the gun: up to `capacity` of them in all, and no more than `available` more (what the hold has of the kind).
+    Add { capacity: i64, available: i64 },
+    /// Rounds come out of the gun: `quantity` of them, all of them when it is 0.
+    Remove { quantity: i64 },
 }
 
 /// The command that asks how far a wreck or a can is (`args`: its item id); answered with `Measured`.
@@ -282,6 +293,24 @@ pub enum Message {
         session_id: u64,
         command: u8,
         distance: Option<f64>,
+    },
+    /// The host changes the rounds of a gun of this session's ship (a pilot loaded it or unloaded it in space). The simulation keeps the rounds of a gun that
+    /// runs, so it is the one that says what they come to; it answers with `ChargeAdjusted`, after every `ChargeSpent` it told before.
+    AdjustCharge {
+        request_id: u64,
+        session_id: u64,
+        module_id: i64,
+        /// The kind of charge the host loads (a gun that runs a charge of another kind is left as it is).
+        charge_type: i32,
+        op: ChargeOp,
+    },
+    /// The answer to `AdjustCharge`: whether the gun runs (when it does not, the host has the rounds and nothing was changed here), the rounds it had and the
+    /// rounds it has.
+    ChargeAdjusted {
+        request_id: u64,
+        running: bool,
+        before: i64,
+        after: i64,
     },
     /// A targeting command the scene refused, with what the client is told of the target: its type, the range the ship can lock at and how far
     /// away the target is (both 0 unless the target was out of range; for `TARGET_LOCK_LIMIT_REACHED` the range is the number of targets the ship
@@ -833,6 +862,8 @@ impl Message {
             Self::ChangeWreck { .. } => kind::CHANGE_WRECK,
             Self::RemoveWreck { .. } => kind::REMOVE_WRECK,
             Self::Measured { .. } => kind::MEASURED,
+            Self::AdjustCharge { .. } => kind::ADJUST_CHARGE,
+            Self::ChargeAdjusted { .. } => kind::CHARGE_ADJUSTED,
         }
     }
 
@@ -1002,6 +1033,25 @@ impl Message {
                     }
                     None => out.push(0),
                 }
+            }
+            Self::AdjustCharge { request_id, session_id, module_id, charge_type, op } => {
+                out.extend_from_slice(&request_id.to_le_bytes());
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&module_id.to_le_bytes());
+                out.extend_from_slice(&charge_type.to_le_bytes());
+                let (code, first, second) = match *op {
+                    ChargeOp::Add { capacity, available } => (0u8, capacity, available),
+                    ChargeOp::Remove { quantity } => (1u8, quantity, 0),
+                };
+                out.push(code);
+                out.extend_from_slice(&first.to_le_bytes());
+                out.extend_from_slice(&second.to_le_bytes());
+            }
+            Self::ChargeAdjusted { request_id, running, before, after } => {
+                out.extend_from_slice(&request_id.to_le_bytes());
+                out.push(u8::from(*running));
+                out.extend_from_slice(&before.to_le_bytes());
+                out.extend_from_slice(&after.to_le_bytes());
             }
             Self::Respawn { session_id, ship, position, direction } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
@@ -1232,6 +1282,29 @@ impl Message {
                     _ => return Err(DecodeError::BadValue("distance")),
                 };
                 Message::Measured { session_id, command, distance }
+            }
+            kind::ADJUST_CHARGE => {
+                let request_id = r.u64()?;
+                let session_id = r.u64()?;
+                let module_id = r.i64()?;
+                let charge_type = r.i32()?;
+                let code = r.u8()?;
+                let (first, second) = (r.i64()?, r.i64()?);
+                let op = match code {
+                    0 => ChargeOp::Add { capacity: first, available: second },
+                    1 => ChargeOp::Remove { quantity: first },
+                    _ => return Err(DecodeError::BadValue("charge op")),
+                };
+                Message::AdjustCharge { request_id, session_id, module_id, charge_type, op }
+            }
+            kind::CHARGE_ADJUSTED => {
+                let request_id = r.u64()?;
+                let running = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("running")),
+                };
+                Message::ChargeAdjusted { request_id, running, before: r.i64()?, after: r.i64()? }
             }
             kind::RESPAWN => Message::Respawn {
                 session_id: r.u64()?,

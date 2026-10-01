@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 3;
+    public const ushort ProtocolVersion = 4;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -68,6 +68,8 @@ public static class SimCodec
         public const byte ChangeWreck = 30;
         public const byte RemoveWreck = 31;
         public const byte Measured = 32;
+        public const byte AdjustCharge = 33;
+        public const byte ChargeAdjusted = 34;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)
@@ -467,6 +469,34 @@ public static class SimCodec
             case Kind.ChargeSpent:
                 message = new SimChargeSpent(r.U64(), r.I64(), r.I64());
                 break;
+            case Kind.AdjustCharge:
+                {
+                    var request = r.U64();
+                    var session = r.U64();
+                    var module = r.I64();
+                    var type = r.I32();
+                    var op = r.U8();
+                    var (first, second) = (r.I64(), r.I64());
+                    message = new SimAdjustCharge(request, session, module, type, op switch
+                    {
+                        0 => new SimChargeOp.Add(first, second),
+                        1 => new SimChargeOp.Remove(first),
+                        _ => throw new SimLinkException(SimLinkError.BadValue, "charge op"),
+                    });
+                    break;
+                }
+            case Kind.ChargeAdjusted:
+                {
+                    var request = r.U64();
+                    var running = r.U8() switch
+                    {
+                        0 => false,
+                        1 => true,
+                        _ => throw new SimLinkException(SimLinkError.BadValue, "running"),
+                    };
+                    message = new SimChargeAdjusted(request, running, r.I64(), r.I64());
+                    break;
+                }
             case Kind.PlaceContainer:
                 {
                     var session = r.U64();
@@ -855,6 +885,35 @@ public static class SimCodec
                 w.U64(m.SessionId);
                 w.I64(m.ModuleId);
                 w.I64(m.RoundsLeft);
+                break;
+            case SimAdjustCharge m:
+                w.U8(Kind.AdjustCharge);
+                w.U64(m.RequestId);
+                w.U64(m.SessionId);
+                w.I64(m.ModuleId);
+                w.I32(m.ChargeType);
+                switch (m.Op)
+                {
+                    case SimChargeOp.Add add:
+                        w.U8(0);
+                        w.I64(add.Capacity);
+                        w.I64(add.Available);
+                        break;
+                    case SimChargeOp.Remove remove:
+                        w.U8(1);
+                        w.I64(remove.Quantity);
+                        w.I64(0);
+                        break;
+                    default:
+                        throw new ArgumentException($"unknown charge op {m.Op}");
+                }
+                break;
+            case SimChargeAdjusted m:
+                w.U8(Kind.ChargeAdjusted);
+                w.U64(m.RequestId);
+                w.U8(m.Running ? (byte)1 : (byte)0);
+                w.I64(m.Before);
+                w.I64(m.After);
                 break;
             case SimRespawn m:
                 w.U8(Kind.Respawn);

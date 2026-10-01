@@ -21,6 +21,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<string?>> _entering = new();
     private readonly ConcurrentDictionary<(ulong Session, byte Code), TaskCompletionSource<CommandReply>> _answered = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimSpawnReply>> _spawning = new();
+    private readonly ConcurrentDictionary<ulong, (TaskCompletionSource<SimChargeAdjusted> Completion, Action<SimChargeAdjusted>? InOrder)> _adjusting = new();
     private Task? _run;
     private volatile bool _connected;
     private TimeSpan _retryDelay = RetryDelay;
@@ -180,6 +181,13 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                     spawning.TrySetResult(spawned);
                 }
                 break;
+            case SimChargeAdjusted adjusted:
+                if (_adjusting.TryRemove(adjusted.RequestId, out var adjusting))
+                {
+                    adjusting.InOrder?.Invoke(adjusted);
+                    adjusting.Completion.TrySetResult(adjusted);
+                }
+                break;
             case SimAccepted accepted when _answered.TryRemove((accepted.SessionId, accepted.Command), out var accepting):
                 accepting.TrySetResult(new CommandReply(true, accepted.At, null));
                 break;
@@ -250,6 +258,13 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 pending.TrySetException(new SimUnavailableException("the link to the simulation broke"));
             }
         }
+        foreach (var request in _adjusting.Keys)
+        {
+            if (_adjusting.TryRemove(request, out var pending))
+            {
+                pending.Completion.TrySetException(new SimUnavailableException("the link to the simulation broke"));
+            }
+        }
     }
 
     private void Send(SimMessage message)
@@ -290,6 +305,26 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public Task<CommandReply> ActivateAsync(ulong sessionId, SimEffect effect, CancellationToken cancellationToken = default) =>
         AwaitAsync(_answered, (sessionId, SimCommands.Activate), new SimActivate(sessionId, effect), cancellationToken);
+
+    public async Task<SimChargeAdjusted> AdjustChargeAsync(SimAdjustCharge request, Action<SimChargeAdjusted>? inOrder = null, CancellationToken cancellationToken = default)
+    {
+        if (!_connected)
+        {
+            throw new SimUnavailableException("the simulation is not running");
+        }
+        var completion = new TaskCompletionSource<SimChargeAdjusted>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_adjusting.TryAdd(request.RequestId, (completion, inOrder)))
+        {
+            throw new InvalidOperationException($"request {request.RequestId} is already waiting");
+        }
+        using var registration = cancellationToken.Register(() =>
+        {
+            _adjusting.TryRemove(request.RequestId, out _);
+            completion.TrySetCanceled(cancellationToken);
+        });
+        Send(request);
+        return await completion.Task;
+    }
 
     public Task<SimSpawnReply> SpawnAsync(SimSpawn spawn, CancellationToken cancellationToken = default) =>
         AwaitAsync(_spawning, spawn.RequestId, spawn, cancellationToken);

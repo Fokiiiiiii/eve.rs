@@ -3,7 +3,9 @@
 
 use eve_space::death::Credit;
 use eve_space::health::{Condition, Resonances, Vitals};
-use eve_space::link::{ContainerPlacement, DecodeError, Enter, How, Message, Spawn, WreckPlacement};
+use eve_space::link::{
+    ChargeOp, ContainerPlacement, DecodeError, Enter, How, Message, Spawn, WreckPlacement,
+};
 use eve_space::modules::{Change, Effect, Numbers};
 use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use eve_space::weapons::{Charge, Turret};
@@ -295,6 +297,25 @@ fn message_of(case: &Value) -> Message {
             session_id: session_id(),
             module_id: wide(case, "moduleId"),
             rounds_left: wide(case, "roundsLeft"),
+        },
+        "AdjustCharge" => Message::AdjustCharge {
+            request_id: wide(case, "requestId") as u64,
+            session_id: session_id(),
+            module_id: wide(case, "moduleId"),
+            charge_type: number("chargeType") as i32,
+            op: match case["op"].as_str().unwrap() {
+                "add" => {
+                    ChargeOp::Add { capacity: wide(case, "capacity"), available: wide(case, "available") }
+                }
+                "remove" => ChargeOp::Remove { quantity: wide(case, "quantity") },
+                other => panic!("unknown charge op {other}"),
+            },
+        },
+        "ChargeAdjusted" => Message::ChargeAdjusted {
+            request_id: wide(case, "requestId") as u64,
+            running: case["running"].as_bool().unwrap(),
+            before: wide(case, "before"),
+            after: wide(case, "after"),
         },
         "Destroyed" => Message::Destroyed {
             session_id: session_id(),

@@ -191,6 +191,9 @@ impl Sim {
             Out::ChargeSpent { session, module_id, rounds_left } => {
                 Message::ChargeSpent { session_id: session, module_id, rounds_left }
             }
+            Out::ChargeAdjusted { request_id, running, before, after, .. } => {
+                Message::ChargeAdjusted { request_id, running, before, after }
+            }
             Out::ContainerPlaced { session, container_id, position, direction } => Message::ContainerPlaced {
                 session_id: session,
                 container_id,
@@ -486,6 +489,19 @@ impl Sim {
                 .find(|scene| scene.wreck(wreck_id).is_some())
                 .map(|scene| scene.remove_wreck(wreck_id, i64::from(effect), now))
                 .unwrap_or_default(),
+            Message::AdjustCharge { request_id, session_id, module_id, charge_type, op } => {
+                match self.scene_of(session_id) {
+                    Some(scene) => scene.adjust_charge(request_id, session_id, module_id, charge_type, op),
+                    // a session that is not in space has no gun that runs: the host has its rounds
+                    None => vec![Out::ChargeAdjusted {
+                        session: session_id,
+                        request_id,
+                        running: false,
+                        before: 0,
+                        after: 0,
+                    }],
+                }
+            }
             Message::ShipSpec { session_id, ship } => {
                 self.scene_of(session_id).map(|s| s.respec(session_id, *ship, now)).unwrap_or_default()
             }

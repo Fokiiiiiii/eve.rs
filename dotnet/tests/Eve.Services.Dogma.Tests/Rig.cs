@@ -30,9 +30,39 @@ public sealed class PgFactAttribute : FactAttribute
 /// <summary>Keeps what the server sent, so a test can read the events.</summary>
 internal sealed class Sink : IPacketSink
 {
-    public List<PyValue> Sent { get; } = [];
+    private readonly object _gate = new();
+    private readonly List<PyValue> _sent = [];
 
-    public void Send(PyValue packet) => Sent.Add(packet);
+    /// <summary>What was sent, as a copy (a reload that ends in the background sends while a test reads).</summary>
+    public IReadOnlyList<PyValue> Sent
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return [.. _sent];
+            }
+        }
+    }
+
+    /// <summary>What was sent, and forgets it, in one step: nothing sent in between is lost.</summary>
+    public IReadOnlyList<PyValue> Take()
+    {
+        lock (_gate)
+        {
+            var taken = _sent.ToArray();
+            _sent.Clear();
+            return taken;
+        }
+    }
+
+    public void Send(PyValue packet)
+    {
+        lock (_gate)
+        {
+            _sent.Add(packet);
+        }
+    }
 }
 
 /// <summary>Real stores in throwaway schemas, the real static data, and a character made the way the game makes one.</summary>
@@ -56,7 +86,7 @@ internal sealed class Rig : IAsyncDisposable
         Creation = creation;
         Modules = modules;
         Ships = new CharacterShips(source, statics, Characters, Items, Skills, modules);
-        Service = new DogmaIMService(statics, Ships, () => ClockMs, null, Targeting, SpaceModules, Health);
+        Service = new DogmaIMService(statics, Ships, () => ClockMs, null, Targeting, SpaceModules, Health, Rounds, Delay.WaitAsync);
         Slash = new SlashService(new ShipHealthCommands(Ships, statics, () => ClockMs, Health));
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(sde), new Eve.Universe.StationCatalog([]), Ships, statics, () => ClockMs);
     }
@@ -69,6 +99,12 @@ internal sealed class Rig : IAsyncDisposable
 
     /// <summary>The health of a ship in space as a test plays it.</summary>
     public FakeHealth Health { get; } = new();
+
+    /// <summary>The rounds of the guns that run, as a test plays the simulation's answers.</summary>
+    public FakeRounds Rounds { get; } = new();
+
+    /// <summary>The time a reload in space takes, which passes when the test says so.</summary>
+    public ManualDelay Delay { get; } = new();
 
     /// <summary>The game master's commands.</summary>
     public SlashService Slash { get; }

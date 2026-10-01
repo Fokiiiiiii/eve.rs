@@ -5,6 +5,7 @@ using Eve.Fitting;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Npc;
+using Eve.Services.Ships;
 using Eve.Ships;
 using Eve.Space;
 using Eve.Universe;
@@ -16,7 +17,7 @@ namespace Eve.Services.Space;
 /// the notifications), forwarding what the simulation says to the client that plays the ship, and bringing the ship home when it docks, or
 /// when the simulation is lost. What happens in space itself (motion, the balls, the stamps) is the simulation's (ADR 0007).
 /// </summary>
-public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules, ISpaceHealth, ISpaceHulls, ISpaceNpcs, ISpaceDeath
+public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules, ISpaceHealth, ISpaceHulls, ISpaceNpcs, ISpaceDeath, ISpaceRounds
 {
     /// <summary>How long a ship that has undocked cannot be hurt (the reference's: 30 seconds).</summary>
     public const long UndockInvulnerabilityTicks = 300_000_000;
@@ -98,6 +99,61 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         _charges = new ChargeSpentQueue((character, module, rounds) => (ChargeWriter ?? ((c, m, r) => _ships.SpendChargeAsync(c, m, r)))(character, module, rounds), log);
         _sim.Received += OnReceived;
         _sim.Lost += OnLost;
+    }
+
+    private long _adjustRequests;
+
+    /// <summary>
+    /// Changes the rounds of a gun of the pilot's ship (a load that ended, an unload) in the simulation and runs what follows on the pilot's lane of counts, where the answer came in:
+    /// every count of rounds the simulation told before it is written first. A pilot who is not in space has no gun that runs.
+    /// </summary>
+    public async Task<T> AdjustAsync<T>(ClientSession session, long moduleId, int chargeType, RoundsChange change, Func<GunRounds, Task<T>> afterwards, CancellationToken cancellationToken)
+    {
+        var id = (ulong)session.SessionId;
+        if (!_pilots.ContainsKey(id))
+        {
+            await _charges.FlushAsync(id).ConfigureAwait(false);
+            return await afterwards(GunRounds.Idle).ConfigureAwait(false);
+        }
+        var done = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var request = new SimAdjustCharge(
+            (ulong)Interlocked.Increment(ref _adjustRequests), id, moduleId, chargeType,
+            change switch
+            {
+                RoundsChange.Add add => new SimChargeOp.Add(add.Capacity, add.Available),
+                RoundsChange.Remove remove => new SimChargeOp.Remove(remove.Quantity),
+                _ => throw new ArgumentException($"unknown change {change}"),
+            });
+        // the answer is handled where the simulation's link delivers it, in the order of the counts it told: what follows is queued on the lane from there
+        await _sim.AdjustChargeAsync(request, answer => _charges.EnqueueWork(id, async () =>
+        {
+            try
+            {
+                done.SetResult(await afterwards(new GunRounds(answer.Running, answer.Before, answer.After)).ConfigureAwait(false));
+            }
+            catch (Exception error)
+            {
+                done.SetException(error);
+            }
+        }), cancellationToken).ConfigureAwait(false);
+        return await done.Task.ConfigureAwait(false);
+    }
+
+    /// <summary>The inventory could not give a gun that runs all the rounds the simulation added to it: the simulation takes them back (nothing waits for it).</summary>
+    public void GiveBack(ClientSession session, long moduleId, long rounds)
+    {
+        var request = new SimAdjustCharge((ulong)Interlocked.Increment(ref _adjustRequests), (ulong)session.SessionId, moduleId, 0, new SimChargeOp.Remove(rounds));
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _sim.AdjustChargeAsync(request).ConfigureAwait(false);
+            }
+            catch (Exception error)
+            {
+                _log?.Invoke($"the {rounds} rounds that module {moduleId} of session {session.SessionId} was short of could not be taken back: {error.Message}");
+            }
+        });
     }
 
     /// <summary>Where the rounds a gun has spent are written (the ships' store; a test puts its own).</summary>

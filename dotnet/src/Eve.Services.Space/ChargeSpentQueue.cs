@@ -7,7 +7,9 @@ namespace Eve.Services.Space;
 /// Keeps the rounds a turret in space has spent. The simulation tells the host after every shot how many rounds a gun has left; this writes them to the stack of the
 /// charge, for each session on a lane of its own and in the order they were told, so a later count is never overwritten by an earlier one and a message never waits on
 /// the database. What is told in a burst is written once (the last count of each module). A lane is flushed (every count told so far is written) before something reads
-/// or moves what the guns hold: the ship docks, dies or leaves, a gun is started, and the host stops.
+/// or moves what the guns hold: the ship docks, dies or leaves, a gun is started, and the host stops. Work that changes what a gun holds (a pilot loads or unloads it in
+/// space) is queued on the lane too, at the place the simulation's answer came in: it runs after every count that was told before the answer is written, and before any
+/// that is told after it.
 /// </summary>
 internal sealed class ChargeSpentQueue(Func<long, long, long, Task> persist, Action<string>? log)
 {
@@ -16,7 +18,7 @@ internal sealed class ChargeSpentQueue(Func<long, long, long, Task> persist, Act
 
     private const int Attempts = 4;
 
-    private readonly record struct Entry(long CharacterId, long ModuleId, long RoundsLeft, TaskCompletionSource? Flushed);
+    private readonly record struct Entry(long CharacterId, long ModuleId, long RoundsLeft, TaskCompletionSource? Flushed, Func<Task>? Work = null);
 
     private sealed class Lane
     {
@@ -32,6 +34,20 @@ internal sealed class ChargeSpentQueue(Func<long, long, long, Task> persist, Act
     {
         var entry = new Entry(characterId, moduleId, roundsLeft, null);
         // a lane that was closed between the lookup and the write is already out of the table (CloseAsync takes it out first), so the next look makes a new one
+        var spin = new SpinWait();
+        while (!LaneOf(session).Channel.Writer.TryWrite(entry))
+        {
+            spin.SpinOnce();
+        }
+    }
+
+    /// <summary>
+    /// Queues work for the session's lane: it runs when the counts queued before it are written, alone, and the counts queued after it are written after it. Never waits. The work
+    /// must not throw (it is the caller's to see to its own errors).
+    /// </summary>
+    public void EnqueueWork(ulong session, Func<Task> work)
+    {
+        var entry = new Entry(0, 0, 0, null, work);
         var spin = new SpinWait();
         while (!LaneOf(session).Channel.Writer.TryWrite(entry))
         {
@@ -105,7 +121,7 @@ internal sealed class ChargeSpentQueue(Func<long, long, long, Task> persist, Act
             while (reader.TryRead(out var entry))
             {
                 batch.Add(entry);
-                if (entry.Flushed is not null)
+                if (entry.Flushed is not null || entry.Work is not null)
                 {
                     break;
                 }
@@ -113,7 +129,7 @@ internal sealed class ChargeSpentQueue(Func<long, long, long, Task> persist, Act
             // the last count of each module in the order the modules were first told
             var last = new Dictionary<(long, long), long>();
             var order = new List<(long Character, long Module)>();
-            foreach (var entry in batch.Where(e => e.Flushed is null))
+            foreach (var entry in batch.Where(e => e.Flushed is null && e.Work is null))
             {
                 var key = (entry.CharacterId, entry.ModuleId);
                 if (!last.ContainsKey(key))
@@ -128,6 +144,10 @@ internal sealed class ChargeSpentQueue(Func<long, long, long, Task> persist, Act
             }
             foreach (var entry in batch)
             {
+                if (entry.Work is { } work)
+                {
+                    await work().ConfigureAwait(false);
+                }
                 entry.Flushed?.TrySetResult();
             }
         }

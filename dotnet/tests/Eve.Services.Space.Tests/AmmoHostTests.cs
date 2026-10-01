@@ -176,4 +176,79 @@ public class AmmoHostTests
         await stopping.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Contains((gun, 60L), other.Written);
     }
+
+    [PgFact]
+    public async Task A_change_of_the_rounds_of_a_gun_that_runs_is_made_after_the_counts_told_before_the_answer_and_before_those_told_after_it()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, gun) = await ArmedInSpaceAsync(rig, loaded: true);
+        var order = new List<string>();
+        // writing a count takes a while, so what the simulation tells meanwhile is waiting on the lane together
+        rig.Space.ChargeWriter = async (_, _, rounds) =>
+        {
+            await Task.Delay(150);
+            lock (order)
+            {
+                order.Add($"count {rounds}");
+            }
+        };
+        // the simulation told that the gun was down to 2 rounds, answered that it has 80 now, and went on shooting
+        rig.Sim.AdjustAnswer = request =>
+        {
+            rig.Sim.Say(new SimChargeSpent((ulong)session.SessionId, gun, 2));
+            return new SimChargeAdjusted(request.RequestId, true, 2, 80);
+        };
+        rig.Sim.AfterAnswer = _ => rig.Sim.Say(new SimChargeSpent((ulong)session.SessionId, gun, 79));
+
+        var done = await rig.Space.AdjustAsync(
+            session, gun, Antimatter, new Eve.Services.Ships.RoundsChange.Add(80, 100),
+            rounds =>
+            {
+                lock (order)
+                {
+                    order.Add($"adjust {rounds.Before} to {rounds.After}");
+                }
+                return Task.FromResult(7);
+            },
+            CancellationToken.None);
+
+        Assert.Equal(7, done);
+        var request = Assert.IsType<SimAdjustCharge>(rig.Sim.Heard.Last());
+        Assert.Equal((gun, Antimatter, new SimChargeOp.Add(80, 100)), (request.ModuleId, request.ChargeType, request.Op));
+        await Rig.UntilAsync(() => { lock (order) { return order.Count == 3; } });
+        lock (order)
+        {
+            Assert.Equal(["count 2", "adjust 2 to 80", "count 79"], order);
+        }
+    }
+
+    [PgFact]
+    public async Task A_gun_that_does_not_run_is_answered_so_and_a_pilot_who_is_not_in_space_has_no_gun_that_runs()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, gun) = await ArmedInSpaceAsync(rig, loaded: true);
+
+        var idle = await rig.Space.AdjustAsync(session, gun, 0, new Eve.Services.Ships.RoundsChange.Remove(0), rounds => Task.FromResult(rounds), CancellationToken.None);
+        Assert.Equal(Eve.Ships.GunRounds.Idle, idle);
+
+        var heard = rig.Sim.Heard.Count;
+        var stranger = await rig.SessionAsync(await rig.NewCharacterAsync("Space Stranger", 2), 99);
+        var none = await rig.Space.AdjustAsync(stranger, gun, 0, new Eve.Services.Ships.RoundsChange.Remove(5), rounds => Task.FromResult(rounds), CancellationToken.None);
+        Assert.Equal(Eve.Ships.GunRounds.Idle, none);
+        Assert.Equal(heard, rig.Sim.Heard.Count); // the simulation is not asked about a ship it does not have
+    }
+
+    [PgFact]
+    public async Task A_simulation_that_cannot_be_reached_fails_the_change_and_the_rounds_a_hold_was_short_of_are_taken_back()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, gun) = await ArmedInSpaceAsync(rig, loaded: true);
+
+        rig.Space.GiveBack(session, gun, 60);
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimAdjustCharge>().Any(a => a.Op is SimChargeOp.Remove { Quantity: 60 } && a.ModuleId == gun));
+
+        rig.Sim.IsConnected = false;
+        await Assert.ThrowsAsync<SimUnavailableException>(() => rig.Space.AdjustAsync(
+            session, gun, Antimatter, new Eve.Services.Ships.RoundsChange.Add(80, 1), rounds => Task.FromResult(rounds), CancellationToken.None));
+    }
 }

@@ -71,6 +71,25 @@ internal sealed class FakeSim : ISimulation
         return Task.FromResult(PlaceContainerAnswer ?? new CommandReply(true, 0, null) { Position = [1000.0, 2000.0, 3000.0], Direction = [1.0, 0.0, 0.0] });
     }
 
+    /// <summary>What a change of the rounds of a gun is answered with (the default: the gun does not run, the host has its rounds).</summary>
+    public Func<SimAdjustCharge, SimChargeAdjusted> AdjustAnswer { get; set; } = request => new SimChargeAdjusted(request.RequestId, false, 0, 0);
+
+    /// <summary>What the simulation tells right after it has answered a change of rounds (a count of the gun, as it goes on shooting).</summary>
+    public Action<SimAdjustCharge>? AfterAnswer { get; set; }
+
+    public Task<SimChargeAdjusted> AdjustChargeAsync(SimAdjustCharge request, Action<SimChargeAdjusted>? inOrder = null, CancellationToken cancellationToken = default)
+    {
+        if (!IsConnected)
+        {
+            throw new SimUnavailableException("the simulation is not running");
+        }
+        Heard.Add(request);
+        var answer = AdjustAnswer(request) with { RequestId = request.RequestId };
+        inOrder?.Invoke(answer);
+        AfterAnswer?.Invoke(request);
+        return Task.FromResult(answer);
+    }
+
     public Task<CommandReply> ChangeWreckAsync(ulong sessionId, long wreckId, bool isEmpty, CancellationToken cancellationToken = default)
     {
         Heard.Add(new SimChangeWreck(sessionId, wreckId, isEmpty));

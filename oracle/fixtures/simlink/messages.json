@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 3,
-   "hex": "03000000010300"
+   "version": 4,
+   "hex": "03000000010400"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 3,
+   "version": 4,
    "pollHz": 4,
-   "hex": "0700000002030004000000"
+   "hex": "0700000002040004000000"
   },
   {
    "name": "enter by undocking",
@@ -741,6 +741,58 @@
    "moduleId": "9988400002719",
    "roundsLeft": "79",
    "hex": "190000001b4f2c3859955c06009fb6089b150900004f00000000000000"
+  },
+  {
+   "name": "rounds loaded into a gun that runs",
+   "kind": "AdjustCharge",
+   "requestId": "41",
+   "sessionId": "1790646377000015",
+   "moduleId": "9988400002719",
+   "chargeType": 222,
+   "op": "add",
+   "capacity": "80",
+   "available": "40",
+   "hex": "2e0000002129000000000000004f2c3859955c06009fb6089b15090000de0000000050000000000000002800000000000000"
+  },
+  {
+   "name": "rounds taken out of a gun that runs",
+   "kind": "AdjustCharge",
+   "requestId": "42",
+   "sessionId": "1790646377000015",
+   "moduleId": "9988400002719",
+   "chargeType": 0,
+   "op": "remove",
+   "quantity": "75",
+   "hex": "2e000000212a000000000000004f2c3859955c06009fb6089b1509000000000000014b000000000000000000000000000000"
+  },
+  {
+   "name": "all the rounds taken out of a gun",
+   "kind": "AdjustCharge",
+   "requestId": "43",
+   "sessionId": "1790646377000015",
+   "moduleId": "9988400002719",
+   "chargeType": 0,
+   "op": "remove",
+   "quantity": "0",
+   "hex": "2e000000212b000000000000004f2c3859955c06009fb6089b15090000000000000100000000000000000000000000000000"
+  },
+  {
+   "name": "rounds of a gun that runs changed",
+   "kind": "ChargeAdjusted",
+   "requestId": "41",
+   "running": true,
+   "before": "3",
+   "after": "80",
+   "hex": "1a0000002229000000000000000103000000000000005000000000000000"
+  },
+  {
+   "name": "rounds of a gun that does not run",
+   "kind": "ChargeAdjusted",
+   "requestId": "44",
+   "running": false,
+   "before": "0",
+   "after": "0",
+   "hex": "1a000000222c000000000000000000000000000000000000000000000000"
   },
   {
    "name": "targets with a lock going",

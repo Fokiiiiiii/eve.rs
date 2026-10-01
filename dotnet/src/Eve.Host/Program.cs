@@ -248,7 +248,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         new CharMgrService(characters, stations),
         new StationService(stations, characters, online, now),
         new InvBrokerService(items, new ItemTypeCatalog(sde), stations, ships, dogma, now, spaceContainers),
-        new DogmaIMService(dogma, ships, now, dogmaSync, spaceSessions, spaceSessions, spaceSessions),
+        new DogmaIMService(dogma, ships, now, dogmaSync, spaceSessions, spaceSessions, spaceSessions, spaceSessions, log: message => Console.Error.WriteLine($"eve-host: ammo: {message}")),
         new AccountService(wallets, corporations, new WalletTransactions(source, walletSchema)),
         new Eve.Services.Corporations.CorpMgrService(corporations, characters),
         new Eve.Services.Corporations.CorporationService(corporations, characters),

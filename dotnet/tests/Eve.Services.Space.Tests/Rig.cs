@@ -47,7 +47,8 @@ internal sealed class Rig : IAsyncDisposable
     private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, CreationCatalog catalog, StationCatalog stations, SolarSystemCatalog systems, PgModuleStateStore modules, TimeSpan protection, TimeSpan jumpCloak)
     {
         Source = source;
-        _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}"];
+        _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}", $"pp_{suffix}"];
+        SpaceItems = new PgSpaceItemStore(source, _schemas[6]);
         Characters = new PgCharacterStore(source, _schemas[0]);
         Items = new PgItemStore(source, _schemas[1]);
         Skills = new PgSkillStore(source, _schemas[2]);
@@ -61,7 +62,7 @@ internal sealed class Rig : IAsyncDisposable
         Bounties = new Eve.Npc.PgBountyStore(source, WalletTransactions, _schemas[5], Log.Add);
         Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => Now, Log.Add, protection, jumpCloak) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(Eve.Npc.NpcAuthority.Load()) };
         Space.UseBounties(Bounties);
-        Containers = new SpaceContainers(Sim, Ships, Items, statics, Space, () => Now, Log.Add);
+        Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, statics, Space, () => Now, Log.Add);
         Ship = new ShipService(Space, () => ClockMs, Containers);
         Beyonce = new BeyonceService(Space, () => ClockMs);
         Registry.Register(Ship);
@@ -107,6 +108,8 @@ internal sealed class Rig : IAsyncDisposable
 
     public SpaceContainers Containers { get; }
 
+    public PgSpaceItemStore SpaceItems { get; }
+
     public BeyonceService Beyonce { get; }
 
     /// <param name="protection">How long a ship is protected after it undocks (never, unless a test wants the end of it).</param>
@@ -128,6 +131,7 @@ internal sealed class Rig : IAsyncDisposable
         await PgWalletStore.MigrateAsync(source, $"pw_{suffix}");
         await PgModuleStateStore.MigrateAsync(source, $"pf_{suffix}");
         await Eve.Npc.PgBountyStore.MigrateAsync(source, $"pn_{suffix}");
+        await PgSpaceItemStore.MigrateAsync(source, $"pp_{suffix}");
         var catalog = await CreationCatalog.LoadAsync(sde, Station);
         var creation = new CharacterCreation(
             source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), catalog, modules);

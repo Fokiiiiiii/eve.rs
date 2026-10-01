@@ -224,11 +224,16 @@ public class SpaceContainerTests
     }
 
     [PgFact]
-    public async Task The_cans_whose_two_hours_are_up_are_taken_out_of_the_world_with_what_is_in_them_and_out_of_space()
+    public async Task A_jettisoned_can_is_kept_where_it_lies_for_two_hours_and_goes_with_what_is_in_it_when_they_are_up()
     {
         await using var rig = await Rig.CreateAsync();
         var (flying, can) = await WithACanAsync(rig);
-        Assert.True(rig.Containers.Due.ContainsKey(can));
+
+        var kept = (await rig.SpaceItems.GetAsync(can))!;
+        Assert.Equal([1000.0, 2000.0, 3000.0], kept.Position);
+        Assert.Equal([1.0, 0.0, 0.0], kept.Direction);
+        Assert.Equal((12, flying.Character.ShipId), (kept.GroupId, kept.LauncherId));
+        Assert.Equal((flying.Character.CharacterId, Rig.ClockMs + (long)SpaceContainers.CanLifetime.TotalMilliseconds), (kept.CharacterId, kept.ExpiresAtMs));
 
         await rig.Containers.ExpireDueAsync(Rig.ClockMs + (long)SpaceContainers.CanLifetime.TotalMilliseconds - 1);
         Assert.NotNull(await rig.Items.GetAsync(can));
@@ -236,6 +241,78 @@ public class SpaceContainerTests
 
         Assert.Null(await rig.Items.GetAsync(can));
         Assert.Null(await rig.Items.GetAsync(flying.Stack));
+        Assert.Null(await rig.SpaceItems.GetAsync(can));
         Assert.Equal(new SimRemoveWreck(can, 0), rig.Sim.Heard.Last());
+    }
+
+    [PgFact]
+    public async Task A_can_the_simulation_lost_is_put_back_when_a_ship_comes_into_the_scene_of_its_system_and_only_once()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, can) = await WithACanAsync(rig);
+        var system = (int)flying.Session.GetInt("solarsystemid")!.Value;
+        var kept = (await rig.SpaceItems.GetAsync(can))!;
+        var heard = rig.Sim.Heard.Count;
+
+        // the simulation has it: nothing is put back
+        await rig.Containers.RestoreAsync(system);
+        Assert.Equal(heard, rig.Sim.Heard.Count);
+
+        // the simulation is lost and a scene is made again
+        rig.Sim.Lose();
+        await rig.Containers.RestoreAsync(system);
+        var placed = Assert.IsType<SimPlaceWreck>(Assert.Single(rig.Sim.Heard.Skip(heard)));
+        Assert.Equal((system, can, 12, kept.LauncherId, false), (placed.SolarSystemId, placed.WreckId, placed.GroupId, placed.LauncherId, placed.IsEmpty));
+        Assert.Equal(new SimWreckKind(23, "Cargo Container", 1176), placed.Kind);
+        Assert.Equal([1000.0, 2000.0, 3000.0], placed.Position);
+        Assert.Equal(14.0, placed.Radius);
+        Assert.Equal(new SimCredit(flying.Character.CharacterId, kept.CorporationId, kept.AllianceId, 0), placed.Credit);
+        await rig.Containers.RestoreAsync(system);
+        Assert.Single(rig.Sim.Heard.Skip(heard));
+        // another system has nothing to put back
+        await rig.Containers.RestoreAsync(system + 1);
+        Assert.Single(rig.Sim.Heard.Skip(heard));
+    }
+
+    [PgFact]
+    public async Task What_is_put_back_is_empty_when_nothing_is_in_it_and_what_ran_out_of_time_or_is_gone_is_forgotten_instead()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, can) = await WithACanAsync(rig);
+        var system = (int)flying.Session.GetInt("solarsystemid")!.Value;
+        // a record of an item that is not there any more, and the can's contents taken out by the owner outside the host
+        await rig.SpaceItems.SaveAsync(new Eve.Ships.SpaceItem(777_000_001, system, [0, 0, 0], [1, 0, 0], 14, 12, 0, 0, 0, 0, 0, Rig.ClockMs + 1_000_000));
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.DeleteAsync(connection, transaction, flying.Stack);
+            await transaction.CommitAsync();
+        }
+        rig.Sim.Lose();
+        var heard = rig.Sim.Heard.Count;
+
+        await rig.Containers.RestoreAsync(system);
+
+        var placed = Assert.IsType<SimPlaceWreck>(Assert.Single(rig.Sim.Heard.Skip(heard)));
+        Assert.Equal((can, true), (placed.WreckId, placed.IsEmpty));
+        Assert.Null(await rig.SpaceItems.GetAsync(777_000_001));
+        // time runs out while the simulation does not have it: it goes instead of being put back
+        rig.Sim.Lose();
+        rig.Now = Rig.ClockMs + (long)SpaceContainers.CanLifetime.TotalMilliseconds + 1;
+        await rig.Containers.RestoreAsync(system);
+        Assert.Single(rig.Sim.Heard.Skip(heard));
+        Assert.Null(await rig.Items.GetAsync(can));
+        Assert.Null(await rig.SpaceItems.GetAsync(can));
+    }
+
+    [PgFact]
+    public async Task A_can_that_is_emptied_is_forgotten_with_its_place()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, can) = await WithACanAsync(rig, 40);
+
+        await rig.Containers.MoveAsync(flying.Session, flying.Stack, can, flying.Character.ShipId, 40, CancellationToken.None);
+
+        Assert.Null(await rig.SpaceItems.GetAsync(can));
     }
 }

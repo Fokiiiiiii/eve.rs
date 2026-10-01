@@ -130,7 +130,7 @@ Ship foundation (SHIP-F1/F2, 2026-10-02) touched these shared files, all additiv
 passed as the last argument of `InvBrokerService` and `ShipService`), `Eve.Inventory/Items.cs` (`PgItemStore.MoveToOwnerAsync`, a new method), `Eve.Services.Inventory/InvBrokerService.cs`
 (a last constructor parameter `ISpaceContainers? space = null`; `GetCapacity`, `StackAll`, in-space binds and the `Add` of a pilot in space are new; the docked `Add` is unchanged except that a
 quantity below the stack splits it), `docs/compat/DEVIATIONS.md` (rows 103, 104 and 10 narrowed), `docs/NATIVE_MIGRATION.md` (rows S5d-1, S5d-2), `docs/adr/0007-space-simulation-process.md`
-(link version 3). Anything of yours that moves goods between a hangar and a ship's hold now gets what the cargo rules say: a hold has a capacity (dogma's, the ship's own), a move below
+(link version 3), `tools/dev/run-eve-live.sh` (a scratch `EVE_SPACE_SCHEMA`), and `Eve.Host/Program.cs` once more (`EVE_SPACE_SCHEMA` migrated beside the fitting schema, the store passed to `SpaceContainers`). Anything of yours that moves goods between a hangar and a ship's hold now gets what the cargo rules say: a hold has a capacity (dogma's, the ship's own), a move below
 the stack splits it into a stack of its own, and the client is told `OnItemChange` for each stack (not `OnItemsChanged` for the item) unless a module goes into a slot or out of one.
 `ItemVolumes` (`Eve.Inventory`) is the one place a unit's volume is worked out (packaged or assembled); use it for any hold or hangar room you check.
 

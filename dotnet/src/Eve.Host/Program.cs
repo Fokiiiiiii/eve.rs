@@ -40,6 +40,7 @@ using Eve.Services.Wallet;
 //   EVE_SKILLS_SCHEMA      the schema of the skills module                                    (default skills)
 //   EVE_WALLET_SCHEMA      the schema of the wallet module                                    (default wallet)
 //   EVE_FITTING_SCHEMA     the schema of the fitting module (which modules are online)        (default fitting)
+//   EVE_SPACE_SCHEMA       the schema of what lies in space (cans and wrecks: where, until when) (default space)
 //   EVE_SIM_SOCKET         the Unix socket of the space simulation (eve-sim)                  (default /tmp/eve-sim.sock)
 //   EVE_SIM                off runs without the simulation: nobody can undock                 (default on)
 //   EVE_START_ISK / EVE_START_PLEX   what a new character starts with                         (100000 / 2222, the reference's)
@@ -178,6 +179,8 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     var npcSchema = Env("EVE_NPC_SCHEMA", PgBountyStore.DefaultSchema);
     await PgBountyStore.MigrateAsync(source, npcSchema);
     await PgModuleStateStore.MigrateAsync(source, fittingSchema);
+    var spaceSchema = Env("EVE_SPACE_SCHEMA", PgSpaceItemStore.DefaultSchema);
+    await PgSpaceItemStore.MigrateAsync(source, spaceSchema);
 
     var sde = new SdeReader(source);
     if (await sde.BuildAsync() is not { } build)
@@ -234,7 +237,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         spaceSessions.UseBounties(
             new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")),
             TimeSpan.FromSeconds(10));
-        spaceContainers = new SpaceContainers(sim, ships, items, dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), TimeSpan.FromSeconds(30));
+        spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), TimeSpan.FromSeconds(30));
         Console.Error.WriteLine($"eve-host: the space simulation is expected at {socket}");
     }
     IReadOnlyList<IService> services =

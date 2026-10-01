@@ -214,3 +214,8 @@ not exist is the scene: which balls a system has, who is where, how commands cha
   centre of the pilot's ship to the surface of the wreck (what the reference measures the range of a container by), and is answered with `Measured` (32:
   `session u64`, `command u8`, a flag and the distance `f64` when there is a wreck). `Hello` and `HelloAck` carry 3. `oracle/fixtures/simlink/messages.json` holds the
   frames; `docs/compat/DEVIATIONS.md` says what differs from the reference.
+
+- 2026-10-02, what lies in space: the simulation keeps nothing between runs, so the host keeps what the scene is given that is an item of its own (a can, the wreck of a destroyed ship, a pilot's corpse): where it lies,
+  its group, whose it is and until when, in its own schema (`space.space_items`). When a ship comes into a scene (an undock, a jump) the host sends `PlaceWreck` for what lies in that
+  system and the simulation does not have (it remembers what it was given since the link was made, and forgets all of it when the link is lost), with `is_empty` as what is in the item says, and ends
+  what has run out of time with `RemoveWreck`. A wreck made by the simulation for an NPC has no item and is not kept.

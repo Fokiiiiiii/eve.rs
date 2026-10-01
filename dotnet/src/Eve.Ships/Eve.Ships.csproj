@@ -8,6 +8,9 @@
     <ProjectReference Include="../Eve.Characters/Eve.Characters.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <EmbeddedResource Include="Migrations/*.sql" />
+  </ItemGroup>
+  <ItemGroup>
     <InternalsVisibleTo Include="Eve.Ships.Tests" />
   </ItemGroup>
 </Project>

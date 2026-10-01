@@ -64,6 +64,14 @@ public class PlayerDeathTests
         Assert.Equal(new SimCredit(c.CharacterId, character.CorporationId, character.AllianceId ?? 0, character.FactionId ?? 0), wreck.Credit);
         Assert.Equal(rig.Sim.Heard.IndexOf(respawn) + 1, rig.Sim.Heard.IndexOf(wreck));
         Assert.True(rig.Space.IsInSpace(session));
+        // where the wreck lies is kept, for two hours, so that it can be put back when a scene is made again
+        Eve.Ships.SpaceItem? kept = null;
+        for (var i = 0; i < 100 && kept is null; i++)
+        {
+            kept = await rig.SpaceItems.GetAsync(wreck.WreckId);
+            await Task.Delay(20);
+        }
+        Assert.Equal((system, 186, Rig.ClockMs + (long)SpaceContainers.CanLifetime.TotalMilliseconds), (kept!.SolarSystemId, kept.GroupId, kept.ExpiresAtMs));
     }
 
     [PgFact]

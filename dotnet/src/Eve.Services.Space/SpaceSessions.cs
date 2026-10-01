@@ -105,6 +105,18 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
 
     internal void EnqueueForTest(ulong session, long characterId, long moduleId, long roundsLeft) => _charges.Enqueue(session, characterId, moduleId, roundsLeft);
 
+    /// <summary>A ship has come into the scene of a solar system (an undock, a jump): what lies there that the simulation does not have yet can be put in it.</summary>
+    public event Action<int>? SystemEntered;
+
+    /// <summary>The host put the wreck of a destroyed ship (or the corpse of a pilot) in space.</summary>
+    public event Action<SimPlaceWreck>? WreckPlaced;
+
+    private void PlaceWreck(SimPlaceWreck wreck)
+    {
+        _sim.PlaceWreck(wreck);
+        WreckPlaced?.Invoke(wreck);
+    }
+
     /// <summary>The service registry the bound objects of a session are released from when it leaves a place (set once the registry exists).</summary>
     public ServiceRegistry? Registry { get; set; }
 
@@ -181,6 +193,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         var now = FileTimeNow();
         var pilot = new Pilot(session, characterId, moved.Ship.Id, systemId, now + UndockInvulnerabilityTicks, stationId);
         _pilots[(ulong)session.SessionId] = pilot;
+        SystemEntered?.Invoke(systemId);
         session.Closed += () => OnSessionClosed(session);
         pilot.Expiry = new Timer(_ => ProtectionRanOut(pilot), null, _protection, Timeout.InfiniteTimeSpan);
 
@@ -947,6 +960,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             }
             pilot.End();
             arrived.Expiry = new Timer(_ => ProtectionRanOut(arrived), null, _jumpCloak, Timeout.InfiniteTimeSpan);
+            SystemEntered?.Invoke(jumped.ToSystem);
 
             ReleaseBoundObjects(session);
             var type = _statics.Type(moved.Ship.TypeId);
@@ -1157,7 +1171,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                     "OnItemChange", "clientID",
                     InventoryWire.PackedRow(RowOf(wreck, wreckType), new PyStr("")),
                     new PyDict([new(new PyInt(3), new PyInt(0))]), None);
-                _sim.PlaceWreck(new SimPlaceWreck(
+                PlaceWreck(new SimPlaceWreck(
                     pilot.SolarSystemId, wreck.Id, WreckGroup, kind, destroyed.Position, destroyed.Direction, destroyed.Radius, pilot.ShipId,
                     new SimCredit(character.Id, character.CorporationId, character.AllianceId ?? 0, character.FactionId ?? 0), death.Changes.All(c => c.Destroyed)));
             }
@@ -1243,7 +1257,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             var type = _statics.Type(left.TypeId);
             var kind = new SimWreckKind(left.TypeId, left.CustomName ?? character.Name, type?.GraphicId ?? 0);
             var radius = type?.Attributes.GetValueOrDefault(162) ?? 0; // the type's radius; a corpse has none in the static data and is one metre
-            _sim.PlaceWreck(new SimPlaceWreck(
+            PlaceWreck(new SimPlaceWreck(
                 pilot.SolarSystemId, left.Id, CorpseGroup, kind, destroyed.Position, destroyed.Direction, radius > 0 ? radius : 1.0, 0,
                 new SimCredit(character.Id, 0, 0, 0), true));
         }

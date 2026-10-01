@@ -41,24 +41,39 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
     private readonly ISimulation _sim;
     private readonly CharacterShips _ships;
     private readonly PgItemStore _items;
+    private readonly PgSpaceItemStore _spaceItems;
     private readonly DogmaStatic _statics;
     private readonly SpaceSessions _space;
     private readonly Func<long> _nowUnixMs;
     private readonly Action<string>? _log;
-    private readonly ConcurrentDictionary<long, long> _due = new();
+    private readonly ConcurrentDictionary<long, byte> _placed = new();
     private readonly ConcurrentDictionary<ulong, long> _cooldownUntil = new();
     private readonly Timer? _sweeper;
 
-    public SpaceContainers(ISimulation sim, CharacterShips ships, PgItemStore items, DogmaStatic statics, SpaceSessions space, Func<long> nowUnixMs, Action<string>? log = null, TimeSpan? sweepEvery = null)
+    public SpaceContainers(
+        ISimulation sim, CharacterShips ships, PgItemStore items, PgSpaceItemStore spaceItems, DogmaStatic statics, SpaceSessions space, Func<long> nowUnixMs, Action<string>? log = null,
+        TimeSpan? sweepEvery = null)
     {
-        (_sim, _ships, _items, _statics, _space, _nowUnixMs, _log) = (sim, ships, items, statics, space, nowUnixMs, log);
+        (_sim, _ships, _items, _spaceItems, _statics, _space, _nowUnixMs, _log) = (sim, ships, items, spaceItems, statics, space, nowUnixMs, log);
+        // what the simulation held is gone with it; a scene that is made gets what lies in its system, and a wreck the host puts in space is kept
+        _sim.Lost += Forgotten;
+        _space.SystemEntered += SystemEntered;
+        _space.WreckPlaced += WreckPlaced;
         if (sweepEvery is { } every && every > TimeSpan.Zero)
         {
             _sweeper = new Timer(_ => _ = SweepAsync(), null, every, every);
         }
     }
 
-    public void Dispose() => _sweeper?.Dispose();
+    public void Dispose()
+    {
+        _sim.Lost -= Forgotten;
+        _space.SystemEntered -= SystemEntered;
+        _space.WreckPlaced -= WreckPlaced;
+        _sweeper?.Dispose();
+    }
+
+    private void Forgotten() => _placed.Clear();
 
     public bool IsInSpace(ClientSession session) => _space.IsInSpace(session);
 
@@ -206,7 +221,7 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
         {
             return;
         }
-        _due.TryRemove(can.Id, out _);
+        await ForgetAsync(can.Id);
         session.SendNotification(
             "OnItemsChanged", "charid",
             new PyList([InventoryWire.PackedRow(RowOf(removed with { LocationId = RemovedCanLocation, Flag = 0, Quantity = 1 }))]),
@@ -255,6 +270,10 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
             await _ships.RemoveContainerAsync(can.Id, withContents: false, CancellationToken.None);
             return [];
         }
+        var radius = canType?.Attributes.GetValueOrDefault(162, CanRadiusFallback) ?? CanRadiusFallback;
+        await _spaceItems.SaveAsync(new SpaceItem(
+            can.Id, system, placed.Position, placed.Direction, radius, CanGroup, shipId, pilot.Id, pilot.CorporationId, pilot.AllianceId ?? 0, 0, now + (long)CanLifetime.TotalMilliseconds), cancellationToken);
+        _placed[can.Id] = 0;
 
         var moved = await _ships.JettisonIntoAsync(characterId, shipId, can.Id, itemIds, cancellationToken);
         foreach (var stack in moved)
@@ -265,11 +284,11 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
         {
             // nothing could be jettisoned: the can goes as it came
             await _ships.RemoveContainerAsync(can.Id, withContents: false, CancellationToken.None);
+            await ForgetAsync(can.Id);
             _sim.RemoveWreck(can.Id, 0);
             return [];
         }
         await TellChangeAsync(id, can.Id, isEmpty: false);
-        _due[can.Id] = now + (long)CanLifetime.TotalMilliseconds;
         var next = now + (long)JettisonCooldown.TotalMilliseconds;
         if (_cooldownUntil.TryAdd(id, next))
         {
@@ -313,20 +332,86 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
         }
     }
 
-    /// <summary>The cans whose two hours are up are taken out of the world with what is in them and out of space (the scene ends them by its own clock).</summary>
+    /// <summary>What is due to go by <paramref name="nowUnixMs"/> (the cans whose two hours are up, the wrecks) is taken out of the world with what is in it and out of space.</summary>
     internal async Task ExpireDueAsync(long nowUnixMs)
     {
-        foreach (var (canId, due) in _due.ToArray())
+        foreach (var due in await _spaceItems.DueAsync(nowUnixMs))
         {
-            if (due > nowUnixMs || !_due.TryRemove(canId, out _))
-            {
-                continue;
-            }
-            await _ships.RemoveContainerAsync(canId, withContents: true);
-            _sim.RemoveWreck(canId, 0);
+            await _ships.RemoveContainerAsync(due.ItemId, withContents: true);
+            await ForgetAsync(due.ItemId);
+            _sim.RemoveWreck(due.ItemId, 0);
         }
     }
 
-    /// <summary>The cans this host is keeping time for (a test asks what has been scheduled).</summary>
-    internal IReadOnlyDictionary<long, long> Due => _due;
+    /// <summary>An item that is not in space any more is forgotten: its place is not kept and the simulation will not be given it again.</summary>
+    private async Task ForgetAsync(long itemId)
+    {
+        _placed.TryRemove(itemId, out _);
+        await _spaceItems.RemoveAsync(itemId);
+    }
+
+    // ── keeping what lies in space ───────────────────────────────────────────
+
+    /// <summary>The host put the wreck of a destroyed ship (or a corpse) in space: where it lies is kept, for two hours.</summary>
+    private void WreckPlaced(SimPlaceWreck wreck)
+    {
+        _placed[wreck.WreckId] = 0;
+        _ = KeepAsync(wreck);
+    }
+
+    private async Task KeepAsync(SimPlaceWreck wreck)
+    {
+        try
+        {
+            await _spaceItems.SaveAsync(new SpaceItem(
+                wreck.WreckId, wreck.SolarSystemId, wreck.Position, wreck.Direction, wreck.Radius, wreck.GroupId, wreck.LauncherId, wreck.Credit.CharacterId, wreck.Credit.CorporationId,
+                wreck.Credit.AllianceId, wreck.Credit.WarFactionId, _nowUnixMs() + (long)CanLifetime.TotalMilliseconds));
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"where wreck {wreck.WreckId} lies was not kept: {error.Message}");
+        }
+    }
+
+    private void SystemEntered(int system) => _ = RestoreAsync(system);
+
+    /// <summary>
+    /// A ship has come into the scene of a solar system: what lies there (the cans and the wrecks that were put in space before the host last started, or before the
+    /// simulation was last made) and that the simulation does not have is put in it, as it was and with what is in it told. What has run out of time goes instead.
+    /// </summary>
+    internal async Task RestoreAsync(int system)
+    {
+        try
+        {
+            var now = _nowUnixMs();
+            foreach (var item in await _spaceItems.InSystemAsync(system))
+            {
+                if (_placed.ContainsKey(item.ItemId))
+                {
+                    continue;
+                }
+                if (item.ExpiresAtMs <= now || await _items.GetAsync(item.ItemId) is not { } stored)
+                {
+                    // out of time, or the item is gone: the row goes (an expired one with what is in it)
+                    if (item.ExpiresAtMs <= now)
+                    {
+                        await _ships.RemoveContainerAsync(item.ItemId, withContents: true);
+                    }
+                    await ForgetAsync(item.ItemId);
+                    continue;
+                }
+                await _statics.EnsureTypesAsync([stored.TypeId]);
+                var type = _statics.Type(stored.TypeId);
+                var empty = (await _items.InContainerAsync(item.ItemId)).Count == 0;
+                _placed[item.ItemId] = 0;
+                _sim.PlaceWreck(new SimPlaceWreck(
+                    system, item.ItemId, item.GroupId, new SimWreckKind(stored.TypeId, stored.CustomName ?? type?.Name ?? "", type?.GraphicId ?? 0), item.Position, item.Direction, item.Radius,
+                    item.LauncherId, new SimCredit(item.CharacterId, item.CorporationId, item.AllianceId, item.WarFactionId), empty));
+            }
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"what lies in space in system {system} was not put back: {error.Message}");
+        }
+    }
 }

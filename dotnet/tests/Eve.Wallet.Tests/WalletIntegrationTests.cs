@@ -41,4 +41,34 @@ public class WalletIntegrationTests
         }
         Assert.Equal(new WalletBalanceChange(1,1000,100m),Assert.Single(changes));
     }
+
+    [PgFact]
+    public async Task Compound_references_and_replay_status_preserve_legacy_fingerprints_and_decimal_value_equality()
+    {
+        await using var rig=await Rig.CreateAsync();
+        await rig.OpenAsync(1,100m,0);
+        await rig.OpenAsync(2,0m,0);
+        var legacy=System.Text.Json.JsonSerializer.Serialize(new WalletLeg(new(1),-10m,2,2,"Market"));
+        Assert.DoesNotContain("Reference",legacy);
+        await using var connection=await rig.Source.OpenConnectionAsync();
+        await using (var tx=await connection.BeginTransactionAsync())
+        {
+            var locked=await rig.Transfers.LockBalancesAsync(connection,tx,[new(2),new(1),new(2)]);
+            Assert.Equal(2,locked.Count);
+            var first=await rig.Transfers.TransferAsync(connection,tx,new WalletAccount(1),new WalletAccount(2),10m,2,"Market",100,"compound-ref","station",referenceId:60000001,referenceType:3);
+            Assert.False(first.Replayed);
+            await tx.CommitAsync();
+        }
+        await using (var tx=await connection.BeginTransactionAsync())
+        {
+            var replay=await rig.Transfers.TransferAsync(connection,tx,new WalletAccount(1),new WalletAccount(2),10.00m,2,"Market",101,"compound-ref","station",referenceId:60000001,referenceType:3);
+            Assert.True(replay.Replayed);
+            await Assert.ThrowsAsync<WalletOperationConflictException>(() => rig.Transfers.TransferAsync(connection,tx,new WalletAccount(1),new WalletAccount(2),10m,2,"Market",101,"compound-ref","station",referenceId:60000002,referenceType:3));
+            await tx.CommitAsync();
+        }
+        Assert.Equal(90m,(await rig.Store.GetAsync(1))!.Isk);
+        var journal=Assert.Single(await rig.Transfers.JournalAsync(1));
+        Assert.Equal(60000001,journal.ReferenceId);
+        Assert.Equal(3,journal.ReferenceType);
+    }
 }

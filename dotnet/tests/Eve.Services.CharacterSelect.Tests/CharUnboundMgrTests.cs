@@ -17,6 +17,32 @@ public class CharUnboundMgrTests
         return ((PyInt)id).Value;
     }
 
+    [PgFact]
+    public async Task Corporation_login_attributes_are_folded_into_one_session_change_and_npc_hq_stays_none()
+    {
+        await using var h=await Harness.CreateAsync();
+        await h.Corporations.SeedNpcAsync(new Eve.Sde.SdeReader(h.Source));
+        var (session,sink)=await h.LoginAsync("pilot");
+        var id=await CreateAsync(h,session,"Ann Lee");
+        sink.Sent.Clear();
+        await h.CallAsync(session,"SelectCharacterID",new PyInt(id));
+        Assert.Equal(2,sink.Sent.Count); // one session change, then the skills notification
+        Assert.Equal(PyNone.Instance,session.Get("hqID"));
+        session.Close();
+        await using (var c=await h.Source.OpenConnectionAsync())
+        await using (var tx=await c.BeginTransactionAsync())
+        {
+            await h.WalletTransactions.AdjustAsync(c,tx,id,2000000m,1,1,"Seed funds",Harness.ClockUnixMs,"fund");
+            await tx.CommitAsync();
+        }
+        var corp=await h.Corporations.CreateAsync(id,new("Orbital Works","ORBIT","","",0),"found");
+        var (corporateSession,corporateSink)=await h.LoginAsync("pilot");
+        await h.CallAsync(corporateSession,"SelectCharacterID",new PyInt(id));
+        Assert.Equal(2,corporateSink.Sent.Count);
+        Assert.Equal(new PyInt(corp.StationId),corporateSession.Get("hqID"));
+        Assert.Equal(new PyLong(Eve.Corporations.CorporationRoles.All),corporateSession.Get("corprole"));
+    }
+
     private static async Task<MachoError> ErrorOfAsync(Func<ValueTask<PyValue>> call) =>
         (await Assert.ThrowsAsync<MachoWrappedException>(async () => await call())).Error;
 

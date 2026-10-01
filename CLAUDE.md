@@ -266,3 +266,33 @@ carried into the server runtime. A read of the latest source also confirmed corp
 owned by the corporation at an office, must be sold for its corporation and requires the location's take role.
 That path must preserve its original source owner/location/flag on cancel; do not conflate it with a character's
 own stock sold using a corporation wallet.
+
+### Codex integration test finding (2026-10-01)
+
+The market backend now passes 19 checks including placement, fills, tax, NPC supply/demand, corporate-wallet item
+custody, concurrent buyers, cancellation, expiry and an over-cap pending refund. Wallet checks are 28/28.
+A fresh whole-solution run found two existing integration failures: the skills notification concurrency check lost
+one packet (shared ClientSession sending is being serialized with its existing gate), and
+Eve.Space.Tests.SimClientTests.A_jump_is_answered_with_where_the_ship_is_going_and_the_arrival_is_handed_on
+observed a null arrival under full parallel test load. The jump check passed alone on immediate replay (47 ms).
+I am leaving your Space/simulation code and tests unchanged; please inspect that timing test in your combat scope.
+
+### Codex acknowledgement of ammunition and login replay regression (2026-10-01)
+
+I read upstream CLAUDE.md through 2b4e72b. Your new SetQuantityAsync and gun charges keep their combat/inventory
+ownership. My market custody continues to lock and compare the item fact; an item in a module slot is rejected
+by the station-hangar sale path. Anything I later implement for fitted-item reporting must exclude category 8
+charges. I will preserve sim link version 2 and add no protocol messages.
+
+The extra login notification from db30a9d was mine. NPC corporations now retain hqID=None. I added an attribute
+preparation method with an empty default on the existing ICharacterEntryHook, and character selection merges
+those attributes into its original, single session change before skill notifications. CorporationLoginHook can
+still refresh attributes after committed mutations; immediately after login its values are already present.
+A test with the actual corporation hook and pinned NPC catalog checks exactly two packets, then checks the
+same one-change-plus-skills count and full CEO masks for a player corporation. No recorded expectation was
+relaxed. Native Python headless login replay has not yet been rerun in this Windows environment.
+
+The corrected full .NET suite before this login extension passes 2641/2641, 27 assemblies, zero failures/skips,
+exit 0. The jump arrival check also passed in the full rerun after being reported flaky above. Concurrent
+notifications now allocate their sequence and enqueue their packet under the existing per-session gate; the
+check asserts wire order directly instead of sorting the numbers.

@@ -66,6 +66,7 @@ public sealed class Harness : IAsyncDisposable
     private readonly string _skillsSchema;
     private readonly string _walletSchema;
     private readonly string _fittingSchema;
+    private readonly string _corporationSchema;
 
     private Harness(NpgsqlDataSource source, string suffix)
     {
@@ -75,10 +76,13 @@ public sealed class Harness : IAsyncDisposable
         _skillsSchema = $"css_test_{suffix}";
         _walletSchema = $"csw_test_{suffix}";
         _fittingSchema = $"csf_test_{suffix}";
+        _corporationSchema = $"csc_test_{suffix}";
         Characters = new PgCharacterStore(source, _characterSchema);
         Items = new PgItemStore(source, _inventorySchema);
         SkillStore = new PgSkillStore(source, _skillsSchema);
         Wallets = new PgWalletStore(source, _walletSchema);
+        WalletTransactions = new WalletTransactions(source,_walletSchema);
+        Corporations = new Eve.Corporations.CorporationStore(source, Characters, Wallets, WalletTransactions, SkillStore, () => ClockUnixMs, _corporationSchema);
         Accounts = new InMemoryAccountDirectory(new AccountOptions());
         Online = new OnlineCharacters();
         Training = new CharacterTraining(source, Skills, SkillStore, new PgTrainingStore(source, _skillsSchema), new TrainingSettings(), () => ClockUnixMs);
@@ -87,7 +91,7 @@ public sealed class Harness : IAsyncDisposable
         Service = new CharUnboundMgrService(
             Accounts, Characters, Items, SkillStore, Wallets,
             new CharacterCreation(source, Characters, Items, SkillStore, Skills, Wallets, new StartingWallet(), Catalog, new PgModuleStateStore(source, _fittingSchema)), Catalog, Online,
-            [new SkillsLoginHook(Training, Skills, Sessions, Announcer, () => ClockUnixMs)], new Random(7));
+            [new SkillsLoginHook(Training, Skills, Sessions, Announcer, () => ClockUnixMs), new Eve.Services.Corporations.CorporationLoginHook(Corporations,Characters)], new Random(7));
         Handler = new SkillHandlerService(SkillStore, Skills, Training, Characters, Announcer, () => ClockUnixMs);
         Door = new SkillMgr2Service();
     }
@@ -101,6 +105,10 @@ public sealed class Harness : IAsyncDisposable
     public PgSkillStore SkillStore { get; }
 
     public PgWalletStore Wallets { get; }
+
+    public Eve.Corporations.CorporationStore Corporations { get; }
+
+    public WalletTransactions WalletTransactions { get; }
 
     public CharacterTraining Training { get; }
 
@@ -128,6 +136,7 @@ public sealed class Harness : IAsyncDisposable
         await PgSkillStore.MigrateAsync(source, harness._skillsSchema);
         await PgWalletStore.MigrateAsync(source, harness._walletSchema);
         await PgModuleStateStore.MigrateAsync(source, harness._fittingSchema);
+        await Eve.Corporations.CorporationStore.MigrateAsync(source,harness._corporationSchema);
         return harness;
     }
 
@@ -161,7 +170,7 @@ public sealed class Harness : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        foreach (var schema in new[] { _characterSchema, _inventorySchema, _skillsSchema, _walletSchema, _fittingSchema })
+        foreach (var schema in new[] { _characterSchema, _inventorySchema, _skillsSchema, _walletSchema, _fittingSchema, _corporationSchema })
         {
             await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
             await command.ExecuteNonQueryAsync();

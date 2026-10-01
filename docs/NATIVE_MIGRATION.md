@@ -265,3 +265,15 @@ is required for the new integration.
 The fresh solution build/test after this extension finished with exit 0: 27 assemblies, 2624 passed,
 zero failed and zero skipped. Code-memory incremental indexing and a CreateAllianceAsync search also finished
 successfully using the cached model offline; the online model warm-up remains unreliable in this environment.
+
+### S5 native market settlement — in progress, 2026-10-01
+
+Market placement and partial fills now settle wallet debits/credits, tax, reserved ISK, packaged-stack custody,
+order facts, fills and a durable command receipt in one PostgreSQL transaction. Player and NPC supply/demand,
+corporate-wallet/character custody, cancellation and expiry are covered by 19 market checks. An over-cap refund
+remains in escrow for retry; credits are never clipped. A wallet replay without its market command receipt is
+refused as requiring reconciliation. Financial term checks compare decimal values, so 10 and 10.00 replay alike.
+Wallet has 28 checks, including compound references and replay status. The fresh full .NET gate passed 2641/2641
+before the subsequent login-notification correction. Market mutation RPCs/notifications, modification crossing,
+price-history adapters, corporation-office stock, native seed import and live client/performance acceptance
+remain in progress. S5 and its service groups remain unchecked.

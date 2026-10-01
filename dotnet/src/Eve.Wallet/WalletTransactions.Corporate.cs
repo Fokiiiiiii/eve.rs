@@ -5,8 +5,11 @@ namespace Eve.Wallet;
 
 public readonly record struct WalletAccount(long OwnerId, int AccountKey = 1000);
 public sealed record WalletAllocation(WalletAccount Account, decimal Amount);
-public sealed record WalletLeg(WalletAccount Account, decimal Amount, long CounterpartyId, int RefTypeId, string Reason);
-public sealed record WalletSettlement(string OperationKey, IReadOnlyList<JournalEntry> Entries);
+public sealed record WalletLeg(WalletAccount Account, decimal Amount, long CounterpartyId, int RefTypeId, string Reason,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] long? ReferenceId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? ReferenceType = null);
+public sealed record WalletSettlement(string OperationKey, IReadOnlyList<JournalEntry> Entries,
+    [property: System.Text.Json.Serialization.JsonIgnore] bool Replayed = false);
 
 public sealed partial class WalletTransactions
 {
@@ -26,18 +29,23 @@ public sealed partial class WalletTransactions
         return await command.ExecuteScalarAsync(token) is decimal balance ? balance : null;
     }
 
+    /// <summary>Hold all participants in owner/key order before a multi-owner business transaction.</summary>
+    public async Task<IReadOnlyDictionary<WalletAccount,decimal>> LockBalancesAsync(NpgsqlConnection connection,NpgsqlTransaction transaction,
+        IEnumerable<WalletAccount> accounts,CancellationToken token = default) =>
+        await LockAccountsAsync(connection,transaction,accounts,token);
+
     /// <summary>Credit, debit, reserve or refund a specific account; overflow is refused, never clipped.</summary>
     public Task<WalletSettlement> AdjustAsync(NpgsqlConnection connection,NpgsqlTransaction transaction,WalletAccount account,
-        decimal delta,long counterparty,int refTypeId,string reason,long timeMs,string operationKey,string reference,CancellationToken token = default) =>
-        SettleAsync(connection,transaction,[new(account,delta,counterparty,refTypeId,reason)],timeMs,operationKey,"adjustment:" + reference,token,conserve:false);
+        decimal delta,long counterparty,int refTypeId,string reason,long timeMs,string operationKey,string reference,CancellationToken token = default,long? referenceId = null,int? referenceType = null) =>
+        SettleAsync(connection,transaction,[new(account,delta,counterparty,refTypeId,reason,referenceId,referenceType)],timeMs,operationKey,"adjustment:" + reference,token,conserve:false);
 
     public Task<WalletSettlement> TransferAsync(NpgsqlConnection connection,NpgsqlTransaction transaction,WalletAccount from,WalletAccount to,
-        decimal amount,int refTypeId,string reason,long timeMs,string operationKey,string reference,CancellationToken token = default)
+        decimal amount,int refTypeId,string reason,long timeMs,string operationKey,string reference,CancellationToken token = default,long? referenceId = null,int? referenceType = null)
     {
         Positive(amount);
         if (from == to) throw new ArgumentException("a transfer needs two different accounts");
         return SettleAsync(connection,transaction,
-            [new(from,-amount,to.OwnerId,refTypeId,reason),new(to,amount,from.OwnerId,refTypeId,reason)],
+            [new(from,-amount,to.OwnerId,refTypeId,reason,referenceId,referenceType),new(to,amount,from.OwnerId,refTypeId,reason,referenceId,referenceType)],
             timeMs,operationKey,"transfer:" + reference,token);
     }
 
@@ -62,7 +70,7 @@ public sealed partial class WalletTransactions
         if (previous is not null)
         {
             if (previous.Value.Context != context) throw new WalletOperationConflictException(operationKey);
-            return previous.Value.Result;
+            return previous.Value.Result with { Replayed = true };
         }
         var accounts = Enumerable.Range(1000,7).Select(key => new WalletAccount(corporationId,key)).Append(new WalletAccount(characterId)).ToArray();
         var balances = await LockAccountsAsync(connection,transaction,accounts,token);
@@ -128,8 +136,8 @@ public sealed partial class WalletTransactions
         var previous = await ReceiptAsync(connection,transaction,key,token);
         if (previous is not null)
         {
-            if (previous.Value.Context != context || previous.Value.Fingerprint != fingerprint) throw new WalletOperationConflictException(key);
-            return previous.Value.Result;
+            if (previous.Value.Context != context || !(JsonSerializer.Deserialize<WalletLeg[]>(previous.Value.Fingerprint)?.SequenceEqual(legs) ?? false)) throw new WalletOperationConflictException(key);
+            return previous.Value.Result with { Replayed = true };
         }
         var balances = await LockAccountsAsync(connection,transaction,legs.Select(l => l.Account),token);
         // Check the whole request before any write, including multiple allocations to one account.
@@ -158,10 +166,10 @@ public sealed partial class WalletTransactions
             {
                 var leg = legs[i];
                 balances[leg.Account] += leg.Amount;
-                await using var journal = new NpgsqlCommand($"INSERT INTO {_schema}.journal(owner_id,account_key,counterparty_id,ref_type_id,amount,balance,reason,time_ms,operation_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id",connection,transaction);
-                foreach (var value in new object[] { leg.Account.OwnerId,leg.Account.AccountKey,leg.CounterpartyId,leg.RefTypeId,leg.Amount,balances[leg.Account],leg.Reason,timeMs,key + ":" + i })
-                    journal.Parameters.Add(new NpgsqlParameter { Value = value });
-                entries.Add(new JournalEntry((long)(await journal.ExecuteScalarAsync(token))!,leg.Account.OwnerId,leg.CounterpartyId,leg.RefTypeId,leg.Amount,balances[leg.Account],leg.Reason,timeMs,key + ":" + i,leg.Account.AccountKey));
+                await using var journal = new NpgsqlCommand($"INSERT INTO {_schema}.journal(owner_id,account_key,counterparty_id,ref_type_id,amount,balance,reason,time_ms,operation_key,reference_id,reference_type) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id",connection,transaction);
+                foreach (var value in new object?[] { leg.Account.OwnerId,leg.Account.AccountKey,leg.CounterpartyId,leg.RefTypeId,leg.Amount,balances[leg.Account],leg.Reason,timeMs,key + ":" + i,leg.ReferenceId,leg.ReferenceType })
+                    journal.Parameters.Add(new NpgsqlParameter { Value = value ?? DBNull.Value });
+                entries.Add(new JournalEntry((long)(await journal.ExecuteScalarAsync(token))!,leg.Account.OwnerId,leg.CounterpartyId,leg.RefTypeId,leg.Amount,balances[leg.Account],leg.Reason,timeMs,key + ":" + i,leg.Account.AccountKey,leg.ReferenceId,leg.ReferenceType));
             }
             var result = new WalletSettlement(key,entries);
             await using var receipt = new NpgsqlCommand($"INSERT INTO {_schema}.settlements(operation_key,context,fingerprint,time_ms,result) VALUES($1,$2,$3,$4,$5::jsonb)",connection,transaction);

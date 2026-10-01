@@ -54,5 +54,8 @@ public sealed class DeferredContext(Eve.Macho.MachoPacket packet, ClientSession 
 /// </summary>
 public interface ICharacterEntryHook
 {
+    /// <summary>Attributes to merge into character selection's single session change, before any login notification.</summary>
+    ValueTask<IReadOnlyList<(string Name, PyValue Value)>> GetSessionAttributesAsync(ClientSession session,long characterId,CancellationToken cancellationToken) =>
+        ValueTask.FromResult<IReadOnlyList<(string Name,PyValue Value)>>([]);
     ValueTask OnCharacterEnteredAsync(ClientSession session, long characterId, CancellationToken cancellationToken);
 }

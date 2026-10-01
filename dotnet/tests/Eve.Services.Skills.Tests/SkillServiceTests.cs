@@ -181,7 +181,7 @@ public class ClientNotificationTests
     {
         var (session, sink) = Rig.Session(1);
         await Task.WhenAll(Enumerable.Range(0, 200).Select(_ => Task.Run(() => session.SendNotification("OnX", "charid"))));
-        var numbers = sink.Sent.Select(p => ((PyInt)((PyDict)((PyTuple)((PyObject)p).Args).Items[5]).Entries[0].Value).Value).Order().ToArray();
+        var numbers = sink.Sent.Select(p => ((PyInt)((PyDict)((PyTuple)((PyObject)p).Args).Items[5]).Entries[0].Value).Value).ToArray();
         Assert.Equal(Enumerable.Range(0, 200).Select(i => (long)i), numbers);
     }
 }

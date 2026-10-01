@@ -39,7 +39,7 @@ public sealed partial class DeathTestCommands(ISpaceHulls space, ShipTypeNames n
     private static int? PositiveInteger(double value) => value is > 0 and < int.MaxValue && value == Math.Floor(value) ? (int)value : null;
 
     /// <summary><c>parseAmount</c>: a number with an optional k, m, b or t suffix; commas and underscores are ignored.</summary>
-    private static double? ParseAmount(string value)
+    internal static double? ParseAmount(string value)
     {
         var match = Amount().Match(value.Trim().Replace(",", "").Replace("_", ""));
         if (!match.Success)

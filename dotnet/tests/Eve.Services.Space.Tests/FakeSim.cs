@@ -27,8 +27,15 @@ internal sealed class FakeSim : ISimulation
     /// <summary>What a spawn is answered with: the session of the NPC, or a reason.</summary>
     public SimSpawnReply? SpawnAnswer { get; set; }
 
+    /// <summary>When set, a spawn fails as it does when the link to the simulation breaks.</summary>
+    public bool SpawnUnavailable { get; set; }
+
     public Task<SimSpawnReply> SpawnAsync(SimSpawn spawn, CancellationToken cancellationToken = default)
     {
+        if (SpawnUnavailable)
+        {
+            throw new SimUnavailableException("the simulation is not running");
+        }
         Heard.Add(spawn);
         return Task.FromResult(SpawnAnswer is { } answer ? answer with { RequestId = spawn.RequestId } : new SimSpawnReply(spawn.RequestId, (ulong)Heard.Count + (1UL << 62), null));
     }

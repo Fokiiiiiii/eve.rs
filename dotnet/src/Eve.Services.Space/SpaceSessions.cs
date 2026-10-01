@@ -4,6 +4,7 @@ using Eve.Dogma;
 using Eve.Fitting;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Npc;
 using Eve.Ships;
 using Eve.Space;
 using Eve.Universe;
@@ -15,7 +16,7 @@ namespace Eve.Services.Space;
 /// the notifications), forwarding what the simulation says to the client that plays the ship, and bringing the ship home when it docks, or
 /// when the simulation is lost. What happens in space itself (motion, the balls, the stamps) is the simulation's (ADR 0007).
 /// </summary>
-public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules, ISpaceHealth, ISpaceHulls, ISpaceDeath
+public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules, ISpaceHealth, ISpaceHulls, ISpaceNpcs, ISpaceDeath
 {
     /// <summary>How long a ship that has undocked cannot be hurt (the reference's: 30 seconds).</summary>
     public const long UndockInvulnerabilityTicks = 300_000_000;
@@ -456,26 +457,12 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         foreach (var place in HullPlaces(count, DeathTestRadiusMeters))
         {
             var shipId = HullIdBase + Interlocked.Increment(ref _hulls);
-            var request = Interlocked.Increment(ref _spawnRequests);
             var spawn = new SimSpawn(
-                request, pilot.SolarSystemId, SimShips.OfType(shipId, type), pilot.ShipId, place, [0, 0, 0], RandomDirection(), "",
+                NextSpawnRequest(), pilot.SolarSystemId, SimShips.OfType(shipId, type), pilot.ShipId, place, [0, 0, 0], RandomDirection(), "",
                 SimNpcIdentity.Default with { Hull = true });
-            try
+            if (await SpawnAsync(spawn, "deathtest", cancellationToken))
             {
-                var reply = await _sim.SpawnAsync(spawn, cancellationToken);
-                if (reply.Session is not null)
-                {
-                    spawned.Add(shipId);
-                }
-                else
-                {
-                    _log?.Invoke($"deathtest: the hull was refused: {reply.Error}");
-                }
-            }
-            catch (SimUnavailableException error)
-            {
-                _log?.Invoke($"deathtest: {error.Message}");
-                throw Notify("Space is not available right now. Try again in a moment.");
+                spawned.Add(shipId);
             }
         }
         if (spawned.Count == 0)
@@ -491,6 +478,136 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             }
         }, CancellationToken.None);
         return new HullField(type.Name, spawned.Count, DeathTestRadiusMeters, DeathTestDelaySeconds);
+    }
+
+    private ulong NextSpawnRequest() => Interlocked.Increment(ref _spawnRequests);
+
+    /// <summary>Asks the simulation to make a ship that nobody flies; false when it refused (the reason is logged), a message for the client when it cannot be reached.</summary>
+    private async Task<bool> SpawnAsync(SimSpawn spawn, string what, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var reply = await _sim.SpawnAsync(spawn, cancellationToken);
+            if (reply.Session is not null)
+            {
+                return true;
+            }
+            _log?.Invoke($"{what}: the ship was refused: {reply.Error}");
+            return false;
+        }
+        catch (SimUnavailableException error)
+        {
+            _log?.Invoke($"{what}: {error.Message}");
+            throw Notify("Space is not available right now. Try again in a moment.");
+        }
+    }
+
+    // ── NPCs ─────────────────────────────────────────────────────────────────
+
+    /// <summary>The item id of the first NPC ship of <c>/npc</c> (transient, like the hulls of <c>/deathtest</c>, below the ids the simulation gives wrecks).</summary>
+    private const long NpcIdBase = 4_100_000_000_000_000;
+
+    /// <summary>The tree an NPC of <c>/npc</c> runs (the simulation's <c>BELT_RAT</c>, deviation 46): it waits until a ship comes within its range and then fights it.</summary>
+    public const string NpcBehavior = "belt rat";
+
+    /// <summary>The standings at which an NPC treats others as enemies or as friends (the reference gives every NPC these limits).</summary>
+    private const long NpcHostileThreshold = -11;
+    private const long NpcFriendlyThreshold = 11;
+
+    /// <summary>How many ships an NPC can hold locked at least (the reference's <c>MIN_NATIVE_NPC_LOCK_SLOTS</c>).</summary>
+    private const int NpcMinimumLockSlots = 1;
+
+    private long _npcs;
+
+    /// <summary>The NPCs that can be spawned (null when there are none).</summary>
+    public NpcSelector? Npcs { get; init; }
+
+    /// <summary><c>buildRandomUnitVector</c> of the reference's <c>npcAnchors.js</c>: a direction chosen evenly over the sphere.</summary>
+    private static double[] RandomUnitVector()
+    {
+        var theta = Random.Shared.NextDouble() * Math.PI * 2;
+        var u = Random.Shared.NextDouble() * 2 - 1;
+        var planar = Math.Sqrt(Math.Max(0, 1 - u * u));
+        return [Math.Cos(theta) * planar, u, Math.Sin(theta) * planar];
+    }
+
+    /// <summary>
+    /// <c>buildSpawnStateForDefinition</c>: how far from the anchor the NPC of a batch comes (what its profile says, a random amount either way that grows with the
+    /// size of the batch, and a step for each one before it so they are not on top of each other), at least a kilometre.
+    /// </summary>
+    internal static double NpcSpawnDistance(NpcProfile profile, int index, int total, double random)
+    {
+        var window = Math.Min(6_000, 800 + total * 600);
+        var jitter = (random * 2 - 1) * window;
+        var spacing = Math.Min(12_000, index * 1_250);
+        return Math.Max(1_000, Math.Max(1_000, profile.SpawnDistanceMeters) + jitter + spacing);
+    }
+
+    public async Task<NpcSpawnReport> SpawnNpcsAsync(ClientSession session, string query, int amount, CancellationToken cancellationToken)
+    {
+        if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
+        {
+            return NpcSpawnReport.Failed(NpcSpawnReport.NotInSpace);
+        }
+        if (Npcs is not { } selector)
+        {
+            return NpcSpawnReport.Failed(NpcSpawnReport.SpawnFailed);
+        }
+        var (selection, selectionError, suggestions) = selector.Select(query);
+        if (selection is null)
+        {
+            return NpcSpawnReport.Failed(selectionError!, suggestions);
+        }
+        await _statics.EnsureTypesAsync(selection.ShipTypes, cancellationToken);
+        var plan = selector.Roll(selection, amount, type => NpcHull.HasHitPoints(_statics.Type(type)), Random.Shared.NextDouble);
+        if (!plan.Succeeded)
+        {
+            return NpcSpawnReport.Failed(plan.Error!, plan.Suggestions);
+        }
+
+        var composition = new List<(string Name, int Count)>();
+        var unarmed = 0;
+        for (var index = 0; index < plan.Profiles.Count; index++)
+        {
+            var profile = plan.Profiles[index];
+            var type = _statics.Type(profile.ShipTypeId)!;
+            var shipId = NpcIdBase + Interlocked.Increment(ref _npcs);
+            var weapon = NpcArmament.HullWeapon(type, shipId, _statics);
+            var aggression = NpcArmament.AggressionRange(type, _statics);
+            var identity = new SimNpcIdentity(NpcHostileThreshold, NpcFriendlyThreshold, aggression, weapon is null ? [] : [weapon], null);
+            var hull = SimShips.OfType(shipId, type);
+            var ship = hull with
+            {
+                OwnerId = profile.CorporationId, CorporationId = (int)profile.CorporationId, AllianceId = (int)profile.AllianceId, WarFactionId = profile.FactionId,
+                SecurityStatus = profile.SecurityStatus,
+                // an entity type has no lock range (it has `entityAttackRange` instead) and sometimes no lock count: with 0 of either it could never lock what it
+                // attacks, so it locks as far as it attacks and holds at least one (`applyNativeNpcHullCombatOverrides` of the reference)
+                MaxTargetRange = Math.Max(hull.MaxTargetRange, aggression),
+                MaxLockedTargets = Math.Max(NpcMinimumLockSlots, hull.MaxLockedTargets),
+            };
+            var distance = NpcSpawnDistance(profile, index, plan.Profiles.Count, Random.Shared.NextDouble());
+            var direction = RandomUnitVector();
+            double[] place = [direction[0] * distance, direction[1] * distance, direction[2] * distance];
+            var spawn = new SimSpawn(NextSpawnRequest(), pilot.SolarSystemId, ship, pilot.ShipId, place, [0, 0, 0], RandomUnitVector(), NpcBehavior, identity);
+            if (!await SpawnAsync(spawn, "npc", cancellationToken))
+            {
+                break;
+            }
+            unarmed += weapon is null ? 1 : 0;
+            var name = profile.Name.Length > 0 ? profile.Name : profile.Id;
+            var at = composition.FindIndex(part => part.Name == name);
+            if (at < 0)
+            {
+                composition.Add((name, 1));
+            }
+            else
+            {
+                composition[at] = (name, composition[at].Count + 1);
+            }
+        }
+        return composition.Count == 0
+            ? NpcSpawnReport.Failed(NpcSpawnReport.SpawnFailed)
+            : new NpcSpawnReport(null, [], selection.Name, composition, plan.Profiles.Count, unarmed);
     }
 
     /// <summary>One order about a pilot's modules or targets is asked of the simulation at a time (the answers are matched by what was asked); an unreachable simulation is a message the client shows.</summary>

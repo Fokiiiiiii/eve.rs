@@ -56,7 +56,7 @@ internal sealed class Rig : IAsyncDisposable
         Modules = modules;
         Stations = stations;
         Ships = new CharacterShips(source, statics, Characters, Items, Skills, modules);
-        Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => ClockMs, Log.Add, protection, jumpCloak) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId };
+        Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => ClockMs, Log.Add, protection, jumpCloak) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(Eve.Npc.NpcAuthority.Load()) };
         Ship = new ShipService(Space, () => ClockMs);
         Beyonce = new BeyonceService(Space, () => ClockMs);
         Registry.Register(Ship);

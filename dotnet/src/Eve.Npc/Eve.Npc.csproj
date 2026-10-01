@@ -4,6 +4,9 @@
     <ProjectReference Include="../Eve.Space/Eve.Space.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <EmbeddedResource Include="Data/npc_authority.json" LogicalName="npc_authority.json" />
+  </ItemGroup>
+  <ItemGroup>
     <InternalsVisibleTo Include="Eve.Npc.Tests" />
   </ItemGroup>
 </Project>

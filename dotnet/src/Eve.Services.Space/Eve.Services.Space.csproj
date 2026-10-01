@@ -8,6 +8,7 @@
     <ProjectReference Include="../Eve.Space/Eve.Space.csproj" />
     <ProjectReference Include="../Eve.Dogma/Eve.Dogma.csproj" />
     <ProjectReference Include="../Eve.Universe/Eve.Universe.csproj" />
+    <ProjectReference Include="../Eve.Npc/Eve.Npc.csproj" />
     <ProjectReference Include="../Eve.Services.Generator/Eve.Services.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>

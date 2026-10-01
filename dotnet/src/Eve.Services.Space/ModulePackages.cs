@@ -1,4 +1,5 @@
 using Eve.Dogma;
+using Eve.Npc;
 using Eve.Ships;
 using Eve.Space;
 
@@ -18,8 +19,25 @@ internal static class ModulePackages
     private const int SpeedBoostFactor = 567;
     private const int MassAddition = 796;
 
+    private const int CapacitorNeed = 6;
+    private const int Speed = 51;
+    private const int MaxRange = 54;
+    private const int DamageMultiplier = 64;
+    private const int EmDamage = 114;
+    private const int ExplosiveDamage = 116;
+    private const int KineticDamage = 117;
+    private const int ThermalDamage = 118;
+    private const int Falloff = 158;
+    private const int TrackingSpeed = 160;
+    private const int OptimalSigRadius = 620;
+
+    /// <summary>The attributes that name the groups of the charges a module takes (chargeGroup1 to chargeGroup5).</summary>
+    private static readonly int[] ChargeGroups = [604, 605, 606, 609, 610];
+
     private const string Afterburner = "moduleBonusAfterburner";
     private const string Microwarpdrive = "moduleBonusMicrowarpdrive";
+    private const string TargetAttack = "targetAttack";
+    private const string TurretFitted = "turretfitted";
 
     /// <summary>Why a package cannot be made, or the package.</summary>
     public readonly record struct Result(SimEffect? Effect, string? Reason, int ModuleType, string ModuleName);
@@ -40,6 +58,47 @@ internal static class ModulePackages
     /// <summary>The numbers the client is told are kept to six places, as the reference keeps them.</summary>
     private static double Six(double value) => Math.Round(value * 1_000_000, MidpointRounding.AwayFromZero) / 1_000_000;
 
+    private static bool IsTurret(TypeDef type, DogmaStatic statics) =>
+        type.EffectIds.Select(statics.Effect).Any(e => e is not null && e.Name.Trim().Equals(TurretFitted, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// <c>isChargeOptionalTurretWeapon</c>: a turret that takes no charge (it names no group of charges) and has damage of its own (the civilian guns) shoots
+    /// with its own damage.
+    /// </summary>
+    private static bool FiresWithoutCharge(DogmaWorld world, long moduleId)
+    {
+        var attributes = world.Attributes(moduleId);
+        return ChargeGroups.All(a => !attributes.TryGetValue(a, out var group) || (int)group <= 0)
+            && new[] { EmDamage, ThermalDamage, KineticDamage, ExplosiveDamage }.Any(a => attributes.TryGetValue(a, out var damage) && damage > 0);
+    }
+
+    /// <summary>Round3 of the reference's <c>roundNumber</c>: the duration the client is told.</summary>
+    private static double Three(double value) => Math.Round(value * 1_000, MidpointRounding.AwayFromZero) / 1_000;
+
+    /// <summary>
+    /// A turret's package: a port of the turret half of <c>buildWeaponModuleSnapshot</c> (<c>space/combat/weaponDogma.js</c>, ADR 0009) for a gun that needs no charge. The cycle,
+    /// the cost, the range, the falloff, the tracking and the damage are the module's own values after dogma (the skills of the pilot and the bonuses of the ship are in
+    /// them); a shot's damage is the module's damage times its damage multiplier. The client is told the cost, the cycle and the range as it starts and stops
+    /// (<c>notifyGenericDerivedAttributesToSession</c>).
+    /// </summary>
+    private static SimEffect Turret(DogmaWorld world, DogmaStatic statics, int moduleType, TypeDef type, EffectDef effect, long moduleId, long targetId, int repeat)
+    {
+        var attributes = world.Attributes(moduleId);
+        double Value(int attribute, double fallback) => attributes.TryGetValue(attribute, out var value) && double.IsFinite(value) ? value : fallback;
+        var multiplier = Math.Max(0, Value(DamageMultiplier, 1));
+        double Shot(int attribute) => NpcArmament.Round6(Math.Max(0, Value(attribute, 0)) * multiplier);
+        var guid = NpcArmament.ActivationEffect(type, statics)?.Guid.Trim() ?? "";
+        var fx = guid.Equals("none", StringComparison.OrdinalIgnoreCase) ? "" : guid;
+        var duration = Math.Max(1, NpcArmament.Round6(Value(Speed, 1000)));
+        var capacitor = Math.Max(0, NpcArmament.Round6(Value(CapacitorNeed, 0)));
+        var optimal = Math.Max(0, NpcArmament.Round6(Value(MaxRange, 0)));
+        var gun = new SimTurret(
+            moduleType, fx, [Shot(EmDamage), Shot(ThermalDamage), Shot(KineticDamage), Shot(ExplosiveDamage)], optimal, Math.Max(0, NpcArmament.Round6(Value(Falloff, 0))),
+            Math.Max(0, NpcArmament.Round6(Value(TrackingSpeed, 0))), Math.Max(1, NpcArmament.Round6(Value(OptimalSigRadius, 40_000))));
+        SimChange[] told = [new(moduleId, CapacitorNeed, capacitor), new(moduleId, Speed, Three(duration)), new(moduleId, MaxRange, optimal)];
+        return new SimEffect(moduleId, moduleType, effect.Id, fx, duration, capacitor, Math.Max(1, repeat), Math.Max(0, targetId), null, null, told, told, gun);
+    }
+
     public static Result Of(ShipSnapshot snapshot, DogmaStatic statics, long moduleId, string effectName, long targetId, int repeat)
     {
         var module = snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId);
@@ -57,11 +116,21 @@ internal static class ModulePackages
         {
             return new Result(null, "MODULE_NOT_ONLINE", module.TypeId, name);
         }
+        var turret = effect.Name.Equals(TargetAttack, StringComparison.OrdinalIgnoreCase) && IsTurret(type, statics);
+        // a turret with nothing to shoot is refused before it is asked for a target (the reference's order); a charge is not loaded by anything yet
+        if (turret && !FiresWithoutCharge(snapshot.World, moduleId))
+        {
+            return new Result(null, "NO_AMMO", module.TypeId, name);
+        }
         if (effect.Category == EffectDef.Target && targetId <= 0)
         {
             return new Result(null, "TARGET_REQUIRED", module.TypeId, name);
         }
-        // only the effects that change how the ship moves are run so far; the others (repairs, weapons, mining) come with the ship's hit points
+        if (turret)
+        {
+            return new Result(Turret(snapshot.World, statics, module.TypeId, type, effect, moduleId, targetId, repeat), null, module.TypeId, name);
+        }
+        // only the effects that change how the ship moves and the turrets are run so far; the others (repairs, mining) come with what they need
         if (effect.Name is not (Afterburner or Microwarpdrive))
         {
             return new Result(null, "UNSUPPORTED_EFFECT", module.TypeId, name);

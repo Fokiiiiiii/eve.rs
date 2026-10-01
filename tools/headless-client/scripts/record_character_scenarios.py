@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record what the EVE.js reference does from login to a session with a character.
 
-    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others|target|module|health|death]
+    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others|target|module|weapon|health|death]
 
 The recording is the contract for the same path in eve.rs: `tests/test_login_to_character.py` replays the calls
 against any server and compares each answer with what is stored here, by shape, treating per-run values
@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 
@@ -1135,6 +1136,88 @@ def record_module(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     b.close()
 
 
+def slims_in(events: list) -> list[tuple[int, int]]:
+    """The (itemID, typeID) of every slim item an event holds (the balls an `AddBalls2` brings into space), in order."""
+    found: list[tuple[int, int]] = []
+    for event in events:
+        for item, kind in re.findall(r'\["itemID", \{"\$long": (\d+)\}\], \["typeID", (\d+)\]', json.dumps(event)):
+            found.append((int(item), int(kind)))
+    return found
+
+
+def record_weapon(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """One character in space with a rat beside it (`/npc`, the reference's way to make a target that may be shot: a ship of another pilot cannot
+    be, in the empire, with the safety on): what the pilot is sent as it fires its gun (the Civilian Gatling Railgun, which needs no charge: its own
+    damage is the shot's) at a target it has not locked, at one it has, stops the gun, starts it again and lets the lock go while it runs. Each step
+    holds what the pilot is sent (`events`), with the seconds each arrived at."""
+    system, station = 30100032, 60015249
+    who = rec.login("Gunner")
+    created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Gunner {run}", 1, 1, ancestry[1]))
+    char_id = int(created["ok"])
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
+    hangar = who.call_bound(manager, "GetInventory", 10004)
+    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
+    events_of(who)
+    only = {"events": who}
+    steps: list = []
+
+    def step(label, call, seconds=2.0, until=None):
+        entry = {"label": label}
+        try:
+            entry["ok"] = describe(call())
+        except p.MachoError as error:
+            entry["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+        entry["events"] = watch(only, seconds, (lambda seen: until(seen["events"])) if until else None)["events"]
+        steps.append(entry)
+        return entry
+
+    service = who.call("ship", "MachoBindObject", (station, 15), None)
+    watch(only, 0.5)
+    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", ship_id, False), 2.5)
+    ballpark = who.call("beyonce", "MachoBindObject", system, None)
+    step("the pilot binds the ballpark", lambda: ballpark, 3.0)
+    dogma = who.call("dogmaIM", "MachoBindObject", (system, 5), None)
+    step("the pilot binds dogma in space", lambda: dogma, 1.0)
+    info = who.call_bound(dogma[0], "GetAllInfo", True, True, None)
+    described = describe(info)
+    ship_info = {k: v for k, v in described["args"]["$dict"]}["shipInfo"]["$dict"]
+    fitted = {}
+    for key, value in ship_info:
+        item = {k: v for k, v in value["args"]["$dict"]}["invItem"]["$row"]
+        fitted[item["typeID"]] = int(key["$long"] if isinstance(key, dict) else key)
+    gun = fitted[3638]
+    steps.append({"label": "the pilot asks for its ship", "ok": described, "events": watch(only, 1.0)["events"]})
+    steps.append({"label": "the pilot waits for the protection to end", "events": watch(only, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))["events"]})
+
+    slash = lambda command: (lambda: who.call("slash", "SlashCmd", command))  # noqa: E731
+    activate = lambda target=None: (lambda: who.call_bound(dogma[0], "Activate", gun, "targetAttack", target, 1000))  # noqa: E731
+    stopped = lambda seen: any(e["name"] == "OnGodmaShipEffect" and len(args_of_effect(e)) > 3 and args_of_effect(e)[3] == 0 for e in seen)  # noqa: E731
+    got_lock = lambda seen: any(e["name"] == "OnTarget" for e in seen)  # noqa: E731
+    spawn = step("the pilot calls a rat", slash("/npc 1 Blood Visionary"), 8.0)
+    npc = next((item for item, kind in slims_in(spawn["events"]) if item != ship_id), 0)
+    if not npc:
+        raise SystemExit("the reference brought no rat into space")
+    step("the pilot fires the gun at the rat before locking it", activate(npc), 2.0)
+    step("the pilot locks the rat", lambda: who.call_bound(dogma[0], "AddTarget", npc), 20.0, until=got_lock)
+    step("the pilot heals", slash("/heal"), 1.0)
+    step("the pilot fires the gun at the rat", activate(npc), 14.0)
+    step("the pilot fires the gun again", activate(npc), 1.0)
+    step("the pilot stops the gun", lambda: who.call_bound(dogma[0], "Deactivate", gun, "targetAttack"), 6.0, until=stopped)
+    step("the pilot stops the gun again", lambda: who.call_bound(dogma[0], "Deactivate", gun, "targetAttack"), 1.5)
+    step("the pilot heals again", slash("/heal"), 1.0)
+    step("the pilot fires the gun to lose the lock", activate(npc), 4.0)
+    step("the pilot lets the lock go while the gun runs", lambda: who.call_bound(dogma[0], "RemoveTarget", npc), 8.0, until=stopped)
+    step("the pilot asks what it has locked", lambda: who.call_bound(dogma[0], "GetTargets"), 1.0)
+    race = {"bloodlineID": 1, "raceID": 1, "solarSystemID": system, "stationID": station, "create": created, "characterID": char_id, "shipID": ship_id,
+            "modules": {"gun": gun}, "npcID": npc, "steps": steps}
+    with open(os.path.join(out, "weapon.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [race]}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+    who.close()
+
+
 def record_health(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One character damages its ship in the hangar (`/dmg`, the reference's only way to hurt a ship on demand), asks for it, leaves the station
     with the damage, watches its shield and capacitor recharge, heals in space and tries to damage again there. Each step holds the answer (or
@@ -1278,10 +1361,10 @@ def main() -> int:
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others, "target": record_target, "module": record_module, "health": record_health, "death": record_death}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others, "target": record_target, "module": record_module, "weapon": record_weapon, "health": record_health, "death": record_death}
     try:
         for name, record in parts.items():
-            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others", "target", "module", "health", "death")):  # the fast one needs a reference started for it
+            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others", "target", "module", "weapon", "health", "death")):  # the fast one needs a reference started for it
                 record(rec, out, meta, ancestry, run)
         if only in (None, "stations"):
             record_stations(rec, out, meta, ancestry, run, sde)

@@ -336,6 +336,14 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         {
             return ModuleResult.Refusal(made.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
         }
+        // the safety of the pilot: a weapon is not started at the ship of another pilot where that would be a crime
+        if (package.Turret is not null
+            && _pilots.Values.Any(other => other.ShipId == package.TargetId && other.CharacterId != characterId)
+            && _systems.Get(pilot.SolarSystemId) is { } where
+            && WeaponSafety.StopsFire(Security.ClassFromLevel(where.Security)))
+        {
+            return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
+        }
         var reply = await AskSimAsync(id, () => _sim.ActivateAsync(id, package, cancellationToken), session);
         if (!reply.Accepted)
         {

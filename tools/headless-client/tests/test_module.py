@@ -7,8 +7,8 @@ undocks and binds the ballpark, then the actor undocks, binds, is given the dogm
 (twice), stops it (twice) and tries its gun and its miner where they cannot be used. Each step holds what the actor was sent (`events`) and what the
 watcher was sent (`seen`), with the seconds each arrived at. The replay does the same on any server and compares: the answers and the errors, the
 events and their order, the destiny updates, and the moments. What a server may do differently is in docs/compat/DEVIATIONS.md: the capacitor's charge
-is told at the reference's cadence but is compared by its values and not sample by sample; the reference's refusal of a weapon is its safety, and eve.rs
-does not run weapons yet, so those two steps are compared as errors only. It takes a minute, but the ships wait out their undocking protection first,
+is told at the reference's cadence but is compared by its values and not sample by sample; the reference's refusal of the miner is its own (there is no rock
+to work on), so that step is compared as an error only. The refusal of the gun is the pilot's safety, which eve.rs ports (`WeaponSafety`). It takes a minute, but the ships wait out their undocking protection first,
 so it runs only with EVE_LIVE_SLOW=1.
 """
 
@@ -35,8 +35,8 @@ pytestmark = [
 # the moments an event may come after or before the recording's: a cycle is ten seconds long, and this side works in quarters of a second
 TOLERANCE = 0.8
 CAPACITOR = 18
-# the steps whose error is the reference's own (its safety switch, and a miner that has no rock to work on): only that they are refused is compared
-REFUSED_ANYWAY = ("the actor fires the gun at the watcher without a charge", "the actor works the miner on the watcher")
+# the steps whose error is the reference's own (a miner that has no rock to work on): only that they are refused is compared
+REFUSED_ANYWAY = ("the actor works the miner on the watcher",)
 
 
 def changes_of(event: dict):

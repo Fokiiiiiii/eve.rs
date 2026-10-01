@@ -416,17 +416,7 @@ fn put_identity(out: &mut Vec<u8>, identity: &NpcIdentity) {
         out.extend_from_slice(&weapon.effect_id.to_le_bytes());
         out.extend_from_slice(&weapon.cycle_ms.to_le_bytes());
         out.extend_from_slice(&weapon.capacitor_need.to_le_bytes());
-        let turret = &weapon.turret;
-        out.extend_from_slice(&turret.weapon_type_id.to_le_bytes());
-        put_text(out, &turret.fx);
-        for number in turret.raw_damage.iter().chain(&[
-            turret.optimal_range,
-            turret.falloff,
-            turret.tracking_speed,
-            turret.signature_resolution,
-        ]) {
-            out.extend_from_slice(&number.to_le_bytes());
-        }
+        put_turret(out, &weapon.turret);
     }
     put_wreck_kind(out, identity.wreck.as_ref());
     out.push(u8::from(identity.hull));
@@ -481,6 +471,23 @@ fn read_credit(reader: &mut Reader) -> Result<Credit, DecodeError> {
     })
 }
 
+fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
+    let weapon_type_id = reader.i32()?;
+    let fx = reader.text()?;
+    let raw_damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+    let (optimal_range, falloff, tracking_speed, signature_resolution) =
+        (reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?);
+    Ok(Turret {
+        weapon_type_id,
+        fx,
+        raw_damage,
+        optimal_range,
+        falloff,
+        tracking_speed,
+        signature_resolution,
+    })
+}
+
 fn read_identity(reader: &mut Reader) -> Result<NpcIdentity, DecodeError> {
     let hostile_response_threshold = reader.i64()?;
     let friendly_response_threshold = reader.i64()?;
@@ -494,25 +501,12 @@ fn read_identity(reader: &mut Reader) -> Result<NpcIdentity, DecodeError> {
     for _ in 0..count {
         let (module_id, effect_id, cycle_ms, capacitor_need) =
             (reader.i64()?, reader.i32()?, reader.f64()?, reader.f64()?);
-        let weapon_type_id = reader.i32()?;
-        let fx = reader.text()?;
-        let raw_damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
-        let (optimal_range, falloff, tracking_speed, signature_resolution) =
-            (reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?);
         weapons.push(NpcWeapon {
             module_id,
             effect_id,
             cycle_ms,
             capacitor_need,
-            turret: Turret {
-                weapon_type_id,
-                fx,
-                raw_damage,
-                optimal_range,
-                falloff,
-                tracking_speed,
-                signature_resolution,
-            },
+            turret: read_turret(reader)?,
         });
     }
     let wreck = read_wreck_kind(reader)?;
@@ -530,6 +524,21 @@ fn read_identity(reader: &mut Reader) -> Result<NpcIdentity, DecodeError> {
     })
 }
 
+/// A turret's numbers: the type of the weapon, the effect the client plays, the damage of a shot (em, thermal, kinetic, explosive), the range, the falloff,
+/// the tracking and the signature resolution.
+fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
+    out.extend_from_slice(&turret.weapon_type_id.to_le_bytes());
+    put_text(out, &turret.fx);
+    for number in turret.raw_damage.iter().chain(&[
+        turret.optimal_range,
+        turret.falloff,
+        turret.tracking_speed,
+        turret.signature_resolution,
+    ]) {
+        out.extend_from_slice(&number.to_le_bytes());
+    }
+}
+
 fn put_effect(out: &mut Vec<u8>, effect: &Effect) {
     out.extend_from_slice(&effect.module_id.to_le_bytes());
     out.extend_from_slice(&effect.module_type.to_le_bytes());
@@ -539,12 +548,19 @@ fn put_effect(out: &mut Vec<u8>, effect: &Effect) {
     out.extend_from_slice(&effect.capacitor_need.to_le_bytes());
     out.extend_from_slice(&effect.repeat.to_le_bytes());
     out.extend_from_slice(&effect.target_id.to_le_bytes());
-    out.push(u8::from(effect.on.is_some()) | (u8::from(effect.off.is_some()) << 1));
+    out.push(
+        u8::from(effect.on.is_some())
+            | (u8::from(effect.off.is_some()) << 1)
+            | (u8::from(effect.turret.is_some()) << 2),
+    );
     for numbers in [&effect.on, &effect.off].into_iter().flatten() {
         put_numbers(out, numbers);
     }
     put_changes(out, &effect.on_changes);
     put_changes(out, &effect.off_changes);
+    if let Some(turret) = &effect.turret {
+        put_turret(out, turret);
+    }
 }
 
 fn read_numbers(reader: &mut Reader) -> Result<Numbers, DecodeError> {
@@ -574,13 +590,14 @@ fn read_effect(reader: &mut Reader) -> Result<Effect, DecodeError> {
     let repeat = reader.i32()?;
     let target_id = reader.i64()?;
     let flags = reader.u8()?;
-    if flags > 3 {
+    if flags > 7 {
         return Err(DecodeError::BadValue("flags"));
     }
     let on = if flags & 1 != 0 { Some(read_numbers(reader)?) } else { None };
     let off = if flags & 2 != 0 { Some(read_numbers(reader)?) } else { None };
     let on_changes = read_changes(reader)?;
     let off_changes = read_changes(reader)?;
+    let turret = if flags & 4 != 0 { Some(read_turret(reader)?) } else { None };
     Ok(Effect {
         module_id,
         module_type,
@@ -590,7 +607,7 @@ fn read_effect(reader: &mut Reader) -> Result<Effect, DecodeError> {
         capacitor_need,
         repeat,
         target_id,
-        turret: None,
+        turret,
         on,
         off,
         on_changes,

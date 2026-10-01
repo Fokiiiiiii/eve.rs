@@ -296,7 +296,8 @@ impl Scene {
                 int(i64::from(on)),
                 int(i64::from(on)),
                 number(effect.duration_ms),
-                if effect.turret.is_some() { int(i64::from(effect.repeat)) } else { Value::None },
+                // a turret's start says how many cycles were asked for, its stop says nothing (the recording of the reference's gun)
+                if effect.turret.is_some() && on { int(i64::from(effect.repeat)) } else { Value::None },
                 Value::None,
                 int(0),
                 Value::None,
@@ -340,6 +341,10 @@ impl Scene {
             if effect.target_id <= 0 {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_TARGET" }];
             }
+            // a target that is not in the scene is not there (the reference answers `TARGET_NOT_FOUND`), one that is must be locked
+            if self.session_of(effect.target_id).is_none() {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_FOUND" }];
+            }
             if !self.turret_target_ok(session, &effect) {
                 return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_LOCKED" }];
             }
@@ -370,8 +375,15 @@ impl Scene {
                 out.extend(self.tell_all(session, actions));
             }
         }
-        out.extend(Self::changes_told(session, owner, &run.effect.on_changes, now));
-        out.extend(self.tell_all(session, vec![Self::fx_action(stamp, &ship, &run.effect, true)]));
+        // a turret's special effect is played before its numbers are told (the recording of the reference's gun), a propulsion module's after
+        let fx = self.tell_all(session, vec![Self::fx_action(stamp, &ship, &run.effect, true)]);
+        if run.effect.turret.is_some() {
+            out.extend(fx);
+            out.extend(Self::changes_told(session, owner, &run.effect.on_changes, now));
+        } else {
+            out.extend(Self::changes_told(session, owner, &run.effect.on_changes, now));
+            out.extend(fx);
+        }
         out.push(Self::effect_told(session, owner, ship_id, &run, now, true, now));
         let effect = run.effect.clone();
         if let Some(pilot) = self.pilots.get_mut(&session) {
@@ -475,7 +487,7 @@ impl Scene {
         let more = run.cycles < run.effect.repeat;
         if run.stopping || !more || !affordable || !target_ok {
             pilot.modules.running.remove(index);
-            return self.effect_ended(session, run, owner, ship_id, at);
+            return self.effect_ended(session, run, owner, ship_id, at, false);
         }
         let (before, after) = match pilot.modules.capacitor.as_mut() {
             Some(capacitor) => capacitor.draw(at, run.effect.capacitor_need),
@@ -494,6 +506,8 @@ impl Scene {
     }
 
     /// An effect is over: the client is told the values it gave back, that it is off, and the ship's numbers and the effect are taken off in one update.
+    /// An effect cut short by the loss of its target (`target_lost`) is told in the other order: the update first, then the values, then that it is off
+    /// (the recording of the reference's gun).
     fn effect_ended(
         &mut self,
         session: SessionId,
@@ -501,17 +515,43 @@ impl Scene {
         owner: i64,
         ship_id: i64,
         at: i64,
+        target_lost: bool,
     ) -> Vec<Out> {
         let mut out = Vec::new();
-        out.extend(Self::changes_told(session, owner, &run.effect.off_changes, at));
-        out.push(Self::effect_told(session, owner, ship_id, &run, at, false, run.cycle_start));
+        let changes = Self::changes_told(session, owner, &run.effect.off_changes, at);
+        let off = Self::effect_told(session, owner, ship_id, &run, at, false, run.cycle_start);
         let stamp = self.next_stamp(at);
         let mut actions = match run.effect.off {
             Some(numbers) => self.renumber(session, numbers, stamp),
             None => Vec::new(),
         };
         actions.push(Self::fx_action(stamp, &id(ship_id), &run.effect, false));
-        out.extend(self.tell_all(session, actions));
+        let update = self.tell_all(session, actions);
+        if target_lost {
+            out.extend(update);
+            out.extend(changes);
+            out.push(off);
+        } else {
+            out.extend(changes);
+            out.push(off);
+            out.extend(update);
+        }
+        out
+    }
+
+    /// The weapons of a ship that are aimed at ships it no longer has locked stop at once, the cycle they are in unfinished
+    /// (`stopTargetedModuleEffects` of the reference, which `removeLockedTarget` runs before it tells the pilot the lock is lost).
+    pub(crate) fn stop_weapons_at(&mut self, session: SessionId, targets: &[i64], now: i64) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+        let (stopped, kept): (Vec<Running>, Vec<Running>) = std::mem::take(&mut pilot.modules.running)
+            .into_iter()
+            .partition(|run| run.effect.turret.is_some() && targets.contains(&run.effect.target_id));
+        pilot.modules.running = kept;
+        let mut out = Vec::new();
+        for run in stopped {
+            out.extend(self.effect_ended(session, run, owner, ship_id, now, true));
+        }
         out
     }
 }

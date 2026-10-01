@@ -45,7 +45,11 @@ public class SimCodecTests
 
     private static SimEffect EffectOf(JsonNode e) => new(
         Wide(e, "moduleId"), (int)e["moduleType"]!, (int)e["effectId"]!, (string)e["fx"]!, (double)e["durationMs"]!, (double)e["capacitorNeed"]!, (int)e["repeat"]!, Wide(e, "targetId"),
-        NumbersOf(e["on"]), NumbersOf(e["off"]), ChangesOf(e["onChanges"]!), ChangesOf(e["offChanges"]!));
+        NumbersOf(e["on"]), NumbersOf(e["off"]), ChangesOf(e["onChanges"]!), ChangesOf(e["offChanges"]!), e["turret"] is { } turret ? TurretOf(turret) : null);
+
+    private static SimTurret TurretOf(JsonNode t) => new(
+        (int)t["weaponTypeId"]!, (string)t["fx"]!, VectorOf(t["rawDamage"]!), (double)t["optimalRange"]!, (double)t["falloff"]!, (double)t["trackingSpeed"]!,
+        (double)t["signatureResolution"]!);
 
     private static double[] VectorOf(JsonNode n) => [.. ((JsonArray)n).Select(x => (double)x!)];
 

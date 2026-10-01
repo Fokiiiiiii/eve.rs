@@ -530,16 +530,58 @@ public class SpaceServiceTests
         Assert.Equal("MODULE_NOT_FOUND", Why(42, "moduleBonusAfterburner"));
         Assert.Equal("UNSUPPORTED_EFFECT", Why(afterburner, "targetAttack"));
         Assert.Equal("UNSUPPORTED_EFFECT", Why(afterburner, "online")); // an effect that is not the module's to start
-        // a weapon and a miner need a target; with one they are not run yet
+        // a weapon and a miner need a target; the miner is not run yet with one
         Assert.Equal("TARGET_REQUIRED", Why(gun, "targetAttack"));
         Assert.Equal("TARGET_REQUIRED", Why(miner, "miningLaser"));
-        Assert.Equal("UNSUPPORTED_EFFECT", Why(gun, "targetAttack", 9988400002215));
+        Assert.Equal("UNSUPPORTED_EFFECT", Why(miner, "miningLaser", 9988400002215));
+        // a gun that takes a charge, with none loaded (nothing loads one yet), has nothing to shoot, and says so before it asks for a target
+        snapshot.World.SetValue(gun, 604, 86);
+        Assert.Equal("NO_AMMO", Why(gun, "targetAttack"));
+        Assert.Equal("NO_AMMO", Why(gun, "targetAttack", 9988400002215));
+        snapshot.World.SetValue(gun, 604, 0);
         var named = ModulePackages.Of(snapshot, rig.Statics, gun, "targetAttack", 0, 1);
         Assert.Equal((3638, "Civilian Gatling Railgun"), (named.ModuleType, named.ModuleName));
         // a module that is switched off cannot run anything
         snapshot.World.SetState(afterburner, Eve.Dogma.ItemState.Offline);
         Assert.Equal("MODULE_NOT_ONLINE", Why(afterburner, "moduleBonusAfterburner"));
     }
+
+    [PgFact]
+    public async Task A_gun_that_needs_no_charge_shoots_with_its_own_damage_after_the_skills_of_the_pilot()
+    {
+        var (rig, character, _) = await DockedAsync();
+        await using var _ = rig;
+        var (snapshot, _, gun, _) = await ShipAsync(rig, character);
+        var made = ModulePackages.Of(snapshot, rig.Statics, gun, "targetAttack", 980050000105, 1000);
+        var package = Assert.IsType<SimEffect>(made.Effect);
+        var world = snapshot.World;
+        // the cycle, the cost and the range are the module's after dogma, kept to six places
+        double Six(int attribute) => Math.Round(world.Get(gun, attribute), 6, MidpointRounding.AwayFromZero);
+        Assert.Equal((gun, 3638, 10, "effects.Laser", 980050000105, 1000), (package.ModuleId, package.ModuleType, package.EffectId, package.Fx, package.TargetId, package.Repeat));
+        Assert.Equal((Six(51), Six(6)), (package.DurationMs, package.CapacitorNeed));
+        var turret = Assert.IsType<SimTurret>(package.Turret);
+        Assert.Equal((3638, "effects.Laser", Six(54), Six(158), Six(160)), (turret.WeaponTypeId, turret.Fx, turret.OptimalRange, turret.Falloff, turret.TrackingSpeed));
+        // a shot is the damage of the gun times its multiplier: the civilian railgun hurts with heat and motion only
+        var multiplier = world.Get(gun, 64);
+        Assert.Equal(
+            [0.0, Math.Round(world.Get(gun, 118) * multiplier, 6), Math.Round(world.Get(gun, 117) * multiplier, 6), 0.0],
+            turret.RawDamage);
+        Assert.True(turret.RawDamage[1] > 0 && turret.RawDamage[2] > 0);
+        // the client is told the cost, the cycle and the range as it starts and as it stops
+        var told = new[] { (gun, 6, package.CapacitorNeed), (gun, 51, Math.Round(package.DurationMs, 3)), (gun, 54, turret.OptimalRange) };
+        Assert.Equal(told, package.OnChanges.Select(c => (c.ItemId, c.AttributeId, c.Value)));
+        Assert.Equal(told, package.OffChanges.Select(c => (c.ItemId, c.AttributeId, c.Value)));
+        Assert.Null(package.On);
+        Assert.Null(package.Off);
+    }
+
+    [Theory]
+    [InlineData(Eve.Universe.SecurityClass.SafeSec, true)]
+    [InlineData(Eve.Universe.SecurityClass.HighSec, true)]
+    [InlineData(Eve.Universe.SecurityClass.LowSec, true)]
+    [InlineData(Eve.Universe.SecurityClass.ZeroSec, false)]
+    public void The_safety_stops_a_weapon_aimed_at_another_pilot_only_in_empire_space(Eve.Universe.SecurityClass where, bool stops) =>
+        Assert.Equal(stops, WeaponSafety.StopsFire(where));
 
     [PgFact]
     public async Task An_effect_the_simulation_accepts_ends_the_protection_and_the_client_is_told_once_and_only_for_a_ship_in_space()

@@ -71,15 +71,21 @@ def changes(items):
         i64(c["itemId"]) + struct.pack("<id", c["attributeId"], c["value"]) for c in items)
 
 
+def turret(t):
+    body = struct.pack("<i", t["weaponTypeId"]) + s(t["fx"])
+    return body + struct.pack("<8d", *t["rawDamage"], t["optimalRange"], t["falloff"], t["trackingSpeed"], t["signatureResolution"])
+
+
 def effect(e):
     body = i64(e["moduleId"]) + struct.pack("<ii", e["moduleType"], e["effectId"]) + s(e["fx"])
     body += struct.pack("<ddi", e["durationMs"], e["capacitorNeed"], e["repeat"]) + i64(e["targetId"])
-    on, off = e.get("on"), e.get("off")
-    body += bytes([(1 if on else 0) | (2 if off else 0)])
+    on, off, gun = e.get("on"), e.get("off"), e.get("turret")
+    body += bytes([(1 if on else 0) | (2 if off else 0) | (4 if gun else 0)])
     for n in (on, off):
         if n:
             body += numbers(n)
-    return body + changes(e["onChanges"]) + changes(e["offChanges"])
+    body += changes(e["onChanges"]) + changes(e["offChanges"])
+    return body + turret(gun) if gun else body
 
 
 def identity(i):
@@ -87,8 +93,7 @@ def identity(i):
     body += struct.pack("<I", len(i["weapons"]))
     for w in i["weapons"]:
         body += i64(w["moduleId"]) + struct.pack("<idd", w["effectId"], w["cycleMs"], w["capacitorNeed"])
-        body += struct.pack("<i", w["weaponTypeId"]) + s(w["fx"])
-        body += struct.pack("<8d", *w["rawDamage"], w["optimalRange"], w["falloff"], w["trackingSpeed"], w["signatureResolution"])
+        body += turret(w)
     return body + wreck_kind(i.get("wreck")) + bytes([1 if i.get("hull") else 0])
 
 
@@ -255,6 +260,17 @@ valid = [
     {"name": "activate an effect that changes nothing of the ship", "kind": "Activate", "sessionId": "1",
      "effect": {"moduleId": "9988400001941", "moduleType": 3651, "effectId": 67, "fx": "", "durationMs": 3000.0,
                 "capacitorNeed": 0.0, "repeat": 1, "targetId": "9988400002151", "onChanges": [], "offChanges": []}},
+    {"name": "activate a gun at a rat", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002665", "moduleType": 3638, "effectId": 10, "fx": "effects.Laser",
+                "durationMs": 1692.8, "capacitorNeed": 0.9, "repeat": 1000, "targetId": "980050000105",
+                "turret": {"weaponTypeId": 3638, "fx": "effects.Laser", "rawDamage": [0.0, 2.5, 3.75, 0.0],
+                           "optimalRange": 5280.0, "falloff": 2000.0, "trackingSpeed": 0.5, "signatureResolution": 40000.0},
+                "onChanges": [{"itemId": "9988400002665", "attributeId": 6, "value": 0.9},
+                              {"itemId": "9988400002665", "attributeId": 51, "value": 1692.8},
+                              {"itemId": "9988400002665", "attributeId": 54, "value": 5280.0}],
+                "offChanges": [{"itemId": "9988400002665", "attributeId": 6, "value": 0.9},
+                               {"itemId": "9988400002665", "attributeId": 51, "value": 1692.8},
+                               {"itemId": "9988400002665", "attributeId": 54, "value": 5280.0}]}},
     {"name": "targets with a lock going", "kind": "Targets", "sessionId": "1790646377000015", "command": 10,
      "pending": True, "targets": ["60015249"]},
     {"name": "targets none", "kind": "Targets", "sessionId": "1790646377000015", "command": 14, "pending": False,

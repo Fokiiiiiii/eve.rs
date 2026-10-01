@@ -633,6 +633,7 @@ mod tests {
 
     // ---- turrets in a scene ----
 
+    use crate::modules::Change;
     use crate::npc::{NpcPlace, is_npc_session};
     use crate::scene::tests::{NOON, STATION, spec, system};
     use crate::scene::{Command, Scene};
@@ -727,12 +728,86 @@ mod tests {
             })
         };
         assert_eq!(refused(scene.activate(npc, laser_effect(0, laser()), now)), Some("NO_TARGET"));
-        assert_eq!(refused(scene.activate(npc, laser_effect(1, laser()), now)), Some("TARGET_NOT_LOCKED"));
+        // what is not in the scene is not there; a ship that is, is not shot at before it is locked
+        assert_eq!(refused(scene.activate(npc, laser_effect(1, laser()), now)), Some("TARGET_NOT_FOUND"));
         assert_eq!(
             refused(scene.activate(npc, laser_effect(npc_spec().ship_id, laser()), now)),
             Some("TARGET_NOT_LOCKED")
         );
         assert_eq!(refused(scene.activate(npc, laser_effect(spec().ship_id, laser()), now)), None);
+    }
+
+    /// The names of the notifications of these kinds that a ship is sent, in the order they come.
+    fn order(out: &[Out], session: SessionId) -> Vec<&'static str> {
+        out.iter()
+            .filter_map(|o| match o {
+                Out::Notify { session: s, name, .. }
+                    if *s == session
+                        && matches!(
+                            *name,
+                            "DoDestinyUpdate" | "OnModuleAttributeChanges" | "OnGodmaShipEffect" | "OnTarget"
+                        ) =>
+                {
+                    Some(*name)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn gun_told_its_numbers() -> Effect {
+        let mut effect = laser_effect(spec().ship_id, laser());
+        let told = |value| Change { item_id: NPC_SHIP, attribute_id: 54, value };
+        effect.on_changes = vec![told(10_000.0)];
+        effect.off_changes = vec![told(10_000.0)];
+        effect
+    }
+
+    #[test]
+    fn a_turret_plays_its_effect_before_its_numbers_are_told_and_the_effect_is_on() {
+        let (mut scene, npc, now) = duel();
+        let started = order(&scene.activate(npc, gun_told_its_numbers(), now), npc);
+        let at = started.iter().position(|n| *n == "DoDestinyUpdate").expect("the effect is played");
+        assert_eq!(
+            started[at..at + 3],
+            ["DoDestinyUpdate", "OnModuleAttributeChanges", "OnGodmaShipEffect"],
+            "{started:?}"
+        );
+    }
+
+    #[test]
+    fn a_weapon_stops_at_once_when_its_lock_is_given_up_and_the_ship_is_told_after_it_is_off() {
+        let (mut scene, npc, now) = duel();
+        scene.activate(npc, gun_told_its_numbers(), now);
+        let stopped = scene.target_order(npc, Order::Remove(vec![spec().ship_id]), now + SECOND / 2);
+        // the effect is taken off in the order the reference does it for a lock that goes: the update, the numbers, the effect, the lock lost
+        assert_eq!(
+            order(&stopped, npc),
+            ["DoDestinyUpdate", "OnModuleAttributeChanges", "OnGodmaShipEffect", "OnTarget"],
+            "{:?}",
+            order(&stopped, npc)
+        );
+        // and it is not shot again: the cycle that was running is not finished
+        let mut later = Vec::new();
+        let mut at = now + SECOND / 2;
+        for _ in 0..40 {
+            at += SECOND / 4;
+            later.extend(scene.poll(at));
+        }
+        assert!(!order(&later, npc).contains(&"OnGodmaShipEffect"), "{:?}", order(&later, npc));
+        assert!(messages(&later, PLAYER, "OnDamageMessage").is_empty());
+    }
+
+    #[test]
+    fn clearing_the_targets_stops_the_weapons_aimed_at_them_too() {
+        let (mut scene, npc, now) = duel();
+        scene.activate(npc, gun_told_its_numbers(), now);
+        let stopped = order(&scene.target_order(npc, Order::Clear, now + SECOND / 2), npc);
+        assert_eq!(
+            stopped,
+            ["DoDestinyUpdate", "OnModuleAttributeChanges", "OnGodmaShipEffect", "OnTarget"],
+            "{stopped:?}"
+        );
     }
 
     #[test]

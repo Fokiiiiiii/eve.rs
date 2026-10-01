@@ -161,10 +161,20 @@ public sealed record SimNumbers(double Mass, double MaxVelocity, double Signatur
 /// <summary>A value the client is told an item now has.</summary>
 public sealed record SimChange(long ItemId, int AttributeId, double Value);
 
-/// <summary>An effect the host asks the simulation to run, with what the host has worked out for it (dogma): the numbers of the ship with and without it, the cycle and its cost.</summary>
+/// <summary>
+/// What a turret shoots: the type of the weapon (what the combat log calls it), the effect the client plays, the damage of a shot before the quality of the hit
+/// (em, thermal, kinetic, explosive: the damage multiplier is in it), the range, the falloff, the tracking (radians a second) and the signature resolution.
+/// </summary>
+public sealed record SimTurret(
+    int WeaponTypeId, string Fx, IReadOnlyList<double> RawDamage, double OptimalRange, double Falloff, double TrackingSpeed, double SignatureResolution);
+
+/// <summary>
+/// An effect the host asks the simulation to run, with what the host has worked out for it (dogma): the numbers of the ship with and without it, the cycle and
+/// its cost; for a weapon, what it shoots (<paramref name="Turret"/>): the target is hit at the start of each cycle.
+/// </summary>
 public sealed record SimEffect(
     long ModuleId, int ModuleType, int EffectId, string Fx, double DurationMs, double CapacitorNeed, int Repeat, long TargetId, SimNumbers? On, SimNumbers? Off,
-    IReadOnlyList<SimChange> OnChanges, IReadOnlyList<SimChange> OffChanges);
+    IReadOnlyList<SimChange> OnChanges, IReadOnlyList<SimChange> OffChanges, SimTurret? Turret = null);
 
 /// <summary>Run an effect. Answered under <see cref="SimCommands.Activate"/>: <see cref="SimAccepted"/> or <see cref="SimRefused"/>.</summary>
 public sealed record SimActivate(ulong SessionId, SimEffect Effect) : SimMessage;

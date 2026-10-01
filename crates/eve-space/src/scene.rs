@@ -411,7 +411,7 @@ impl Scene {
         if let Some(brains) = self.brains.as_mut() {
             brains.forget(session);
         }
-        let mut out = self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting);
+        let mut out = self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting, now);
         out.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
         Some(out)
     }
@@ -909,7 +909,7 @@ impl Scene {
             let Some(mut pilot) = self.pilots.remove(&session) else { continue };
             let Some(jump) = pilot.jump.take() else { continue };
             let held = std::mem::take(&mut pilot.targeting);
-            told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &held));
+            told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &held, now));
             told.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
             travellers.push(Traveller {
                 session,
@@ -1011,7 +1011,7 @@ impl Scene {
         for (session, station_id) in due {
             if let Some(pilot) = self.pilots.remove(&session) {
                 told.push(Out::Docked { session, station_id, condition: Self::condition_of(&pilot, now) });
-                told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting));
+                told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting, now));
                 told.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
             }
         }

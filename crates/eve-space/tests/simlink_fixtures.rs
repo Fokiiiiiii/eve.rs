@@ -98,6 +98,25 @@ fn ship_of(case: &Value) -> ShipSpec {
     }
 }
 
+fn turret_of(w: &Value) -> Turret {
+    let number = |field: &str| w[field].as_f64().unwrap_or_else(|| panic!("{field} in {w}"));
+    let damage = w["rawDamage"].as_array().unwrap();
+    Turret {
+        weapon_type_id: w["weaponTypeId"].as_i64().unwrap() as i32,
+        fx: text(w, "fx"),
+        raw_damage: [
+            damage[0].as_f64().unwrap(),
+            damage[1].as_f64().unwrap(),
+            damage[2].as_f64().unwrap(),
+            damage[3].as_f64().unwrap(),
+        ],
+        optimal_range: number("optimalRange"),
+        falloff: number("falloff"),
+        tracking_speed: number("trackingSpeed"),
+        signature_resolution: number("signatureResolution"),
+    }
+}
+
 fn effect_of(case: &Value) -> Effect {
     let number = |v: &Value, field: &str| v[field].as_f64().unwrap_or_else(|| panic!("{field} in {v}"));
     let numbers = |v: &Value| {
@@ -127,7 +146,7 @@ fn effect_of(case: &Value) -> Effect {
         capacitor_need: number(case, "capacitorNeed"),
         repeat: case["repeat"].as_i64().unwrap() as i32,
         target_id: wide(case, "targetId"),
-        turret: None,
+        turret: case.get("turret").map(turret_of),
         on: numbers(&case["on"]),
         off: numbers(&case["off"]),
         on_changes: changes(&case["onChanges"]),
@@ -146,28 +165,12 @@ fn identity_of(case: &Value) -> NpcIdentity {
         .as_array()
         .unwrap()
         .iter()
-        .map(|w| {
-            let damage = w["rawDamage"].as_array().unwrap();
-            NpcWeapon {
-                module_id: wide(w, "moduleId"),
-                effect_id: w["effectId"].as_i64().unwrap() as i32,
-                cycle_ms: number(w, "cycleMs"),
-                capacitor_need: number(w, "capacitorNeed"),
-                turret: Turret {
-                    weapon_type_id: w["weaponTypeId"].as_i64().unwrap() as i32,
-                    fx: text(w, "fx"),
-                    raw_damage: [
-                        damage[0].as_f64().unwrap(),
-                        damage[1].as_f64().unwrap(),
-                        damage[2].as_f64().unwrap(),
-                        damage[3].as_f64().unwrap(),
-                    ],
-                    optimal_range: number(w, "optimalRange"),
-                    falloff: number(w, "falloff"),
-                    tracking_speed: number(w, "trackingSpeed"),
-                    signature_resolution: number(w, "signatureResolution"),
-                },
-            }
+        .map(|w| NpcWeapon {
+            module_id: wide(w, "moduleId"),
+            effect_id: w["effectId"].as_i64().unwrap() as i32,
+            cycle_ms: number(w, "cycleMs"),
+            capacitor_need: number(w, "capacitorNeed"),
+            turret: turret_of(w),
         })
         .collect();
     let wreck = wreck_kind_of(case.get("wreck"));

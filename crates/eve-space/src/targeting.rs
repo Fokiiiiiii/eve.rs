@@ -274,13 +274,13 @@ impl Scene {
             Order::Remove(targets) => {
                 let mut out = Vec::new();
                 for target in targets {
-                    out.extend(self.remove_locked(session, *target, None, true));
+                    out.extend(self.remove_locked(session, *target, None, true, now));
                 }
                 out.extend(Self::answer(session, &order, false, self.locked_by(session)));
                 out
             }
             Order::Clear => {
-                let mut out = self.clear_locks(session, true);
+                let mut out = self.clear_locks(session, true, now);
                 out.extend(Self::answer(session, &order, false, Vec::new()));
                 out
             }
@@ -375,6 +375,7 @@ impl Scene {
         target: i64,
         reason: Option<&'static str>,
         notify_target: bool,
+        now: i64,
     ) -> Vec<Out> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         let before = pilot.targeting.locked.len();
@@ -383,7 +384,9 @@ impl Scene {
             return Vec::new();
         }
         let source_id = pilot.ship.spec.ship_id;
-        let mut out = vec![on_target_reason(session, "lost", Some(target), reason)];
+        // what shoots at the target stops before the pilot is told the lock is lost
+        let mut out = self.stop_weapons_at(session, &[target], now);
+        out.push(on_target_reason(session, "lost", Some(target), reason));
         if notify_target
             && let Some(other) = self.session_of_ship(target)
             && other != session
@@ -399,13 +402,13 @@ impl Scene {
 
     /// A ship lets go of everything: what is going is given up, what is held is let go and the ship is told once (`clear`); the ships that were
     /// locked are told they are not.
-    fn clear_locks(&mut self, session: SessionId, notify_target: bool) -> Vec<Out> {
+    fn clear_locks(&mut self, session: SessionId, notify_target: bool, now: i64) -> Vec<Out> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         pilot.targeting.pending.clear();
         let held = pilot.targeting.targets();
         pilot.targeting.locked.clear();
         let source_id = pilot.ship.spec.ship_id;
-        let mut out = Vec::new();
+        let mut out = self.stop_weapons_at(session, &held, now);
         if notify_target {
             for target in &held {
                 if let Some(other) = self.session_of_ship(*target)
@@ -422,7 +425,7 @@ impl Scene {
     }
 
     /// A ship has gone (docked, jumped, logged off; it is out of the scene already): what it had locked is let go, and whoever had it locked is told.
-    pub(crate) fn drop_targeting(&mut self, ship_id: i64, held: &Targeting) -> Vec<Out> {
+    pub(crate) fn drop_targeting(&mut self, ship_id: i64, held: &Targeting, now: i64) -> Vec<Out> {
         let mut out = Vec::new();
         for locked in &held.locked {
             if let Some(other) = self.session_of_ship(locked.target) {
@@ -442,7 +445,7 @@ impl Scene {
             if let Some(pilot) = self.pilots.get_mut(&source) {
                 pilot.targeting.pending.retain(|p| p.target != ship_id);
             }
-            out.extend(self.remove_locked(source, ship_id, None, false));
+            out.extend(self.remove_locked(source, ship_id, None, false, now));
         }
         out
     }
@@ -456,7 +459,7 @@ impl Scene {
         for session in sessions {
             let Some(pilot) = self.pilots.get(&session) else { continue };
             if pilot.flight.as_ref().is_some_and(|f| f.is_warping()) {
-                out.extend(self.clear_locks(session, true));
+                out.extend(self.clear_locks(session, true, now));
                 continue;
             }
             let mut due: Vec<Pending> = pilot.targeting.pending.clone();
@@ -477,13 +480,19 @@ impl Scene {
             let held = self.pilots.get(&session).map(|p| p.targeting.targets()).unwrap_or_default();
             for target in held {
                 let Some(subject) = self.subject(target, now) else {
-                    out.extend(self.remove_locked(session, target, Some("TargetingAttemptCancelled"), true));
+                    out.extend(self.remove_locked(
+                        session,
+                        target,
+                        Some("TargetingAttemptCancelled"),
+                        true,
+                        now,
+                    ));
                     continue;
                 };
                 if let Err(refusal) = self.check_lock(session, &subject, false) {
                     let reason =
                         (refusal.reason == "TARGET_NOT_FOUND").then_some("TargetingAttemptCancelled");
-                    out.extend(self.remove_locked(session, target, reason, true));
+                    out.extend(self.remove_locked(session, target, reason, true, now));
                 }
             }
         }

@@ -601,6 +601,70 @@
    "hex": "4000000013010000000000000095b3089b15090000430e0000430000000000000000000070a74000000000000000000100000067b4089b15090000000000000000000000"
   },
   {
+   "name": "activate a gun at a rat",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002665",
+    "moduleType": 3638,
+    "effectId": 10,
+    "fx": "effects.Laser",
+    "durationMs": 1692.8,
+    "capacitorNeed": 0.9,
+    "repeat": 1000,
+    "targetId": "980050000105",
+    "turret": {
+     "weaponTypeId": 3638,
+     "fx": "effects.Laser",
+     "rawDamage": [
+      0.0,
+      2.5,
+      3.75,
+      0.0
+     ],
+     "optimalRange": 5280.0,
+     "falloff": 2000.0,
+     "trackingSpeed": 0.5,
+     "signatureResolution": 40000.0
+    },
+    "onChanges": [
+     {
+      "itemId": "9988400002665",
+      "attributeId": 6,
+      "value": 0.9
+     },
+     {
+      "itemId": "9988400002665",
+      "attributeId": 51,
+      "value": 1692.8
+     },
+     {
+      "itemId": "9988400002665",
+      "attributeId": 54,
+      "value": 5280.0
+     }
+    ],
+    "offChanges": [
+     {
+      "itemId": "9988400002665",
+      "attributeId": 6,
+      "value": 0.9
+     },
+     {
+      "itemId": "9988400002665",
+      "attributeId": 51,
+      "value": 1692.8
+     },
+     {
+      "itemId": "9988400002665",
+      "attributeId": 54,
+      "value": 5280.0
+     }
+    ]
+   },
+   "hex": "18010000134f2c3859955c060069b6089b15090000360e00000a0000000d00656666656374732e4c617365723333333333739a40cdccccccccccec3fe8030000e938882fe4000000040300000069b6089b1509000006000000cdccccccccccec3f69b6089b15090000330000003333333333739a4069b6089b15090000360000000000000000a0b4400300000069b6089b1509000006000000cdccccccccccec3f69b6089b15090000330000003333333333739a4069b6089b15090000360000000000000000a0b440360e00000d00656666656374732e4c61736572000000000000000000000000000004400000000000000e4000000000000000000000000000a0b4400000000000409f40000000000000e03f000000000088e340"
+  },
+  {
    "name": "targets with a lock going",
    "kind": "Targets",
    "sessionId": "1790646377000015",

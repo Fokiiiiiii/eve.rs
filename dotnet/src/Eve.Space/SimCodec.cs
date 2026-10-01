@@ -159,10 +159,10 @@ public static class SimCodec
             var effectId = r.I32();
             var cycleMs = r.F64();
             var capacitorNeed = r.F64();
-            var weaponType = r.I32();
-            var fx = r.Text();
-            double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
-            weapons[i] = new SimNpcWeapon(moduleId, effectId, cycleMs, capacitorNeed, weaponType, fx, damage, r.F64(), r.F64(), r.F64(), r.F64());
+            var turret = ReadTurret(ref r);
+            weapons[i] = new SimNpcWeapon(
+                moduleId, effectId, cycleMs, capacitorNeed, turret.WeaponTypeId, turret.Fx, turret.RawDamage, turret.OptimalRange, turret.Falloff, turret.TrackingSpeed,
+                turret.SignatureResolution);
         }
         var wreck = ReadWreckKind(ref r);
         var hull = r.U8() switch
@@ -256,7 +256,7 @@ public static class SimCodec
         var repeat = r.I32();
         var target = r.I64();
         var flags = r.U8();
-        if (flags > 3)
+        if (flags > 7)
         {
             throw new SimLinkException(SimLinkError.BadValue, "bad flags");
         }
@@ -264,7 +264,16 @@ public static class SimCodec
         var off = (flags & 2) != 0 ? ReadNumbers(ref r) : null;
         var onChanges = ReadChanges(ref r);
         var offChanges = ReadChanges(ref r);
-        return new SimEffect(module, moduleType, effectId, fx, duration, capacitor, repeat, target, on, off, onChanges, offChanges);
+        var turret = (flags & 4) != 0 ? ReadTurret(ref r) : null;
+        return new SimEffect(module, moduleType, effectId, fx, duration, capacitor, repeat, target, on, off, onChanges, offChanges, turret);
+    }
+
+    private static SimTurret ReadTurret(ref Reader r)
+    {
+        var weaponType = r.I32();
+        var fx = r.Text();
+        double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+        return new SimTurret(weaponType, fx, damage, r.F64(), r.F64(), r.F64(), r.F64());
     }
 
     /// <summary>Decodes a frame's payload: the kind byte and the body (without the length prefix).</summary>
@@ -514,13 +523,8 @@ public static class SimCodec
             w.I32(weapon.EffectId);
             w.F64(weapon.CycleMs);
             w.F64(weapon.CapacitorNeed);
-            w.I32(weapon.WeaponTypeId);
-            w.Text(weapon.Fx);
-            WriteVector(w, weapon.RawDamage);
-            w.F64(weapon.OptimalRange);
-            w.F64(weapon.Falloff);
-            w.F64(weapon.TrackingSpeed);
-            w.F64(weapon.SignatureResolution);
+            WriteTurret(w, new SimTurret(
+                weapon.WeaponTypeId, weapon.Fx, weapon.RawDamage, weapon.OptimalRange, weapon.Falloff, weapon.TrackingSpeed, weapon.SignatureResolution));
         }
         WriteWreckKind(w, i.Wreck);
         w.U8((byte)(i.Hull ? 1 : 0));
@@ -567,6 +571,17 @@ public static class SimCodec
         }
     }
 
+    private static void WriteTurret(Writer w, SimTurret t)
+    {
+        w.I32(t.WeaponTypeId);
+        w.Text(t.Fx);
+        WriteVector(w, t.RawDamage);
+        w.F64(t.OptimalRange);
+        w.F64(t.Falloff);
+        w.F64(t.TrackingSpeed);
+        w.F64(t.SignatureResolution);
+    }
+
     private static void WriteEffect(Writer w, SimEffect e)
     {
         w.I64(e.ModuleId);
@@ -577,7 +592,7 @@ public static class SimCodec
         w.F64(e.CapacitorNeed);
         w.I32(e.Repeat);
         w.I64(e.TargetId);
-        w.U8((byte)((e.On is null ? 0 : 1) | (e.Off is null ? 0 : 2)));
+        w.U8((byte)((e.On is null ? 0 : 1) | (e.Off is null ? 0 : 2) | (e.Turret is null ? 0 : 4)));
         if (e.On is { } on)
         {
             WriteNumbers(w, on);
@@ -588,6 +603,10 @@ public static class SimCodec
         }
         WriteChanges(w, e.OnChanges);
         WriteChanges(w, e.OffChanges);
+        if (e.Turret is { } turret)
+        {
+            WriteTurret(w, turret);
+        }
     }
 
     private static void WriteCondition(Writer w, SimCondition c)

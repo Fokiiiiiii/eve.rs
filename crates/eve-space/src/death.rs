@@ -77,7 +77,7 @@ impl Scene {
         }
         let ship = &pilot.ship;
         let ship_id = ship.spec.ship_id;
-        let mut out = self.drop_targeting(ship_id, &pilot.targeting);
+        let mut out = self.drop_targeting(ship_id, &pilot.targeting, now);
         self.destroyed.push(ship_id);
         let stamp = self.next_stamp(now);
         for watcher in told_of_it {

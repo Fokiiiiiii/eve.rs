@@ -39,7 +39,7 @@ public static class NpcArmament
     /// <c>round6</c>: a number as <c>toFixed(6)</c> gives it, which takes the exact value of the double and, when it lies exactly half way between two
     /// millionths (6.4453125 does), the larger magnitude. The formatter of .NET rounds such a tie to even, so a tie is found and settled here.
     /// </summary>
-    internal static double Round6(double value)
+    public static double Round6(double value)
     {
         if (!double.IsFinite(value))
         {

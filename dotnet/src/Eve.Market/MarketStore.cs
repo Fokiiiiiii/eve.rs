@@ -13,16 +13,18 @@ public sealed partial class MarketStore
     public const string DefaultSchema = "market";
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
-    private const string BookColumns = "id,type_id,bid,price,vol_remaining,vol_entered,min_volume,range_value,station_id,solar_system_id,constellation_id,region_id,issued_ms,duration_days,is_npc";
+    internal const string BookColumns = "id,type_id,bid,price,vol_remaining,vol_entered,min_volume,range_value,station_id,solar_system_id,constellation_id,region_id,issued_ms,duration_days,is_npc";
     public MarketStore(NpgsqlDataSource source,string schema = DefaultSchema)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(schema,"^[a-z_][a-z0-9_]{0,62}$")) throw new ArgumentException("Invalid market schema.",nameof(schema));
         _source=source; _schema=schema;
     }
+
+    internal string Schema => _schema;
     public static IReadOnlyList<Migration> MigrationSet() => Migrations.Embedded(typeof(MarketStore).Assembly,"Migrations");
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source,string schema = DefaultSchema,CancellationToken token = default) =>
         Migrations.ApplyAsync(source,schema,MigrationSet(),token);
-    private static MarketOrder Read(NpgsqlDataReader r) => new(r.GetInt64(0),r.GetInt32(1),r.GetBoolean(2),r.GetDecimal(3),
+    internal static MarketOrder Read(NpgsqlDataReader r) => new(r.GetInt64(0),r.GetInt32(1),r.GetBoolean(2),r.GetDecimal(3),
         r.GetInt64(4),r.GetInt64(5),r.GetInt64(6),r.GetInt32(7),new(r.GetInt64(8),r.GetInt32(9),r.GetInt32(10),r.GetInt32(11)),
         r.GetInt64(12),r.GetInt32(13),r.GetBoolean(14));
 

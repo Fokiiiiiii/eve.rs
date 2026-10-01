@@ -69,6 +69,19 @@ public sealed class PgSkillStore
         return await command.ExecuteScalarAsync(cancellationToken) is short level ? level : 0;
     }
 
+    /// <summary>The skill map in a caller-owned snapshot, used for fees and eligibility without eleven separate reads.</summary>
+    public async Task<IReadOnlyList<CharacterSkill>> ForCharacterAsync(NpgsqlConnection connection,NpgsqlTransaction transaction,long characterId,CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"SELECT type_id,level,skill_points FROM {_schema}.character_skills WHERE character_id=$1 ORDER BY type_id",connection,transaction)
+        {
+            Parameters = { new() { Value=characterId } },
+        };
+        var skills = new List<CharacterSkill>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) skills.Add(new(reader.GetInt32(0),reader.GetInt16(1),reader.GetInt64(2)));
+        return skills;
+    }
+
     /// <summary>The total skill points of each of the characters (0 for one with no skills).</summary>
     public async Task<IReadOnlyDictionary<long, long>> TotalPointsAsync(IEnumerable<long> characterIds, CancellationToken cancellationToken = default)
     {

@@ -115,7 +115,10 @@ public sealed class ClientSession
         set => Set("charid", value is { } id ? new PyInt(id) : PyNone.Instance);
     }
 
-    public void Send(PyValue packet) => Sink?.Send(packet);
+    public void Send(PyValue packet)
+    {
+        lock (_gate) Sink?.Send(packet);
+    }
 
     private readonly List<Action> _afterResponse = [];
 
@@ -161,8 +164,11 @@ public sealed class ClientSession
     /// Sends the client a named event (<c>OnServerSkillsChanged</c>, ...) addressed by <paramref name="idType"/> (<c>charid</c>,
     /// <c>clientID</c>, ...). The session numbers its notifications from 0.
     /// </summary>
-    public void SendNotification(string name, string idType, params PyValue[] args) =>
-        Send(ClientNotification.Build(UserId ?? 0, NodeId, name, idType, args, Interlocked.Increment(ref _notificationSequence)));
+    public void SendNotification(string name, string idType, params PyValue[] args)
+    {
+        lock (_gate)
+            Send(ClientNotification.Build(UserId ?? 0, NodeId, name, idType, args, ++_notificationSequence));
+    }
 
     /// <summary>Raised once, when the connection of this session has ended: modules release what the session held.</summary>
     public event Action? Closed;

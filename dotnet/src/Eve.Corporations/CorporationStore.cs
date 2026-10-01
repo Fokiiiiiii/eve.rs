@@ -140,6 +140,24 @@ public sealed partial class CorporationStore
         return new WalletAccount(corp.Id,accountKey);
     }
 
+    /// <summary>The market's Trader authority, read under the same transaction as custody and wallet settlement.</summary>
+    public async Task<(WalletAccount Wallet,SessionRoles Roles)> MarketAuthorityAsync(NpgsqlConnection connection,NpgsqlTransaction tx,
+        long actor,int? accountKey,long stationId,CancellationToken token = default)
+    {
+        var character = await _characters.LockAndGetAsync(connection,tx,actor,token) ?? throw new CorporationError("CHARACTER_NOT_FOUND");
+        Corporation? corp;
+        await using (var command = Command(connection,tx,$"SELECT {CorpColumns} FROM {_schema}.corporations WHERE id=$1 FOR SHARE",character.CorporationId))
+        await using (var r = await command.ExecuteReaderAsync(token))
+            corp = await r.ReadAsync(token) ? ReadCorporation(r) : null;
+        var member = await MemberAsync(connection,tx,actor,token);
+        if (corp is null || corp.IsNpc || corp.Deleted || member?.CorporationId != corp.Id) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var roles = CorporationRoles.Session(corp,member,stationId,await TitlesAsync(connection,tx,corp.Id,token));
+        if ((roles.AtAll & CorporationRoles.Trader) == 0) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var key = accountKey ?? member.AccountKey;
+        if (key is < 1000 or > 1006) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        return (new WalletAccount(corp.Id,key),roles);
+    }
+
     public Task<Corporation> CreateAsync(long founder,NewCorporation request,string operationKey,CancellationToken token = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(operationKey);

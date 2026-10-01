@@ -172,7 +172,7 @@ public sealed partial class CharUnboundMgrService(
         }
 
         var accountRole = call.Session.Get("accountRole") is PyLong r ? r.Value : 0;
-        var announced = call.Session.Change(
+        (string Name,PyValue Value)[] selected = [
             ("charid", new PyInt(character.Id)),
             ("corpid", new PyInt(character.CorporationId)),
             ("genderID", new PyInt(character.Gender)),
@@ -194,7 +194,12 @@ public sealed partial class CharUnboundMgrService(
             ("rolesAtAll", new PyLong(0)),
             ("rolesAtBase", new PyLong(0)),
             ("rolesAtHQ", new PyLong(0)),
-            ("rolesAtOther", new PyLong(0)));
+            ("rolesAtOther", new PyLong(0))];
+        var attributes = selected.ToDictionary(a => a.Name,a => a.Value,StringComparer.Ordinal);
+        foreach (var hook in entryHooks)
+            foreach (var (name,value) in await hook.GetSessionAttributesAsync(call.Session,character.Id,Token(call)))
+                attributes[name] = value;
+        var announced = call.Session.Change([.. attributes.Select(a => (a.Key,a.Value))]);
         // Whatever else the client needs to learn about the character: the skills module tells it to load its skills.
         // Choosing the character the session already has is not entering it again, as on the reference.
         if (announced.Any(change => change.Name == "charid"))

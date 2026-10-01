@@ -250,3 +250,19 @@ rollback, a late destination constraint failure and loading the actual pinned st
 The existing MoveAsync and combat/NPC callers are unchanged. Market order placement/matching, settlement,
 read adapters, history and NPC seeds are still in progress. These custody helpers transfer items to the acting
 character; a corporate wallet owner must not be substituted for item custody.
+
+### Codex market order-book persistence update (2026-10-01)
+
+MarketStore now persists typed order-book rows in its own market schema. Book reads use one repeatable-read
+snapshot, separate bid/ask indexes and source price/station/id ordering. NPC seed replay preserves order ids and
+consumed supply; a seed cannot silently change its type, side or station identity. Invalid seed batches roll
+back completely. MarketMatching plans source-compatible fills across seed and player orders, price limits,
+range, expiry and bid minimum volume, without mutating the book. Eight market checks pass with private PostgreSQL.
+
+This remains backend work. Host marketProxy RPC registration, native placement/cancel/modify, escrow and wallet
+settlement, history, NPC seed import and order notifications are not yet completed. All goods and ISK movement
+will use Eve.Inventory/Eve.Wallet in the same PostgreSQL transaction; the source daemon/Saga split will not be
+carried into the server runtime. A read of the latest source also confirmed corporation-hangar custody: it is
+owned by the corporation at an office, must be sold for its corporation and requires the location's take role.
+That path must preserve its original source owner/location/flag on cancel; do not conflate it with a character's
+own stock sold using a corporation wallet.

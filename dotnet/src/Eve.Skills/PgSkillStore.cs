@@ -59,6 +59,16 @@ public sealed class PgSkillStore
         return list;
     }
 
+    /// <summary>Read eligibility inside the caller's transaction, without a second snapshot.</summary>
+    public async Task<int> LevelAsync(NpgsqlConnection connection,NpgsqlTransaction transaction,long characterId,int typeId,CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"SELECT level FROM {_schema}.character_skills WHERE character_id=$1 AND type_id=$2",connection,transaction)
+        {
+            Parameters = { new() { Value=characterId },new() { Value=typeId } },
+        };
+        return await command.ExecuteScalarAsync(cancellationToken) is short level ? level : 0;
+    }
+
     /// <summary>The total skill points of each of the characters (0 for one with no skills).</summary>
     public async Task<IReadOnlyDictionary<long, long>> TotalPointsAsync(IEnumerable<long> characterIds, CancellationToken cancellationToken = default)
     {

@@ -24,4 +24,7 @@ public sealed class CharacterSessions
     /// <summary>The sessions of an account that have a character in the game.</summary>
     public IReadOnlyList<ClientSession> OfUser(long userId) =>
         [.. _byCharacter.Values.Where(s => s.UserId == userId).Distinct()];
+
+    public IReadOnlyList<ClientSession> OfCorporation(long corporationId) =>
+        [.. _byCharacter.Values.Where(s => s.CharacterId is not null && s.GetInt("corpid") == corporationId).Distinct()];
 }

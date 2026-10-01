@@ -153,15 +153,14 @@ public class SessionChangeTests
     {
         var (session, sink) = NewSession();
         await Task.WhenAll(Enumerable.Range(1, 50).Select(i => Task.Run(() => session.Change(("shipid", new PyLong(i))))));
-        // every announced change starts from what the previous announced change ended at
         var chain = sink.Sent.SelectMany(p => Changes(p)).ToList();
         Assert.Equal(50, chain.Count);
         var current = (PyValue)PyNone.Instance;
-        foreach (var (_, old, next) in chain.OrderBy(c => 0))
+        foreach (var (_, old, next) in chain)
         {
-            _ = old;
+            Assert.Equal(current, old);
             current = next;
         }
-        Assert.Equal(session.Get("shipid"), chain[^1].New);
+        Assert.Equal(session.Get("shipid"), current);
     }
 }

@@ -7,10 +7,10 @@ public sealed class WalletNotFoundException(long ownerId) : Exception($"wallet {
 public sealed class WalletOperationConflictException(string key) : Exception($"wallet operation {key} has different terms");
 
 public sealed record JournalEntry(long Id, long OwnerId, long CounterpartyId, int RefTypeId, decimal Amount,
-    decimal Balance, string Reason, long TimeMs, string OperationKey);
+    decimal Balance, string Reason, long TimeMs, string OperationKey, int AccountKey = 1000, long? ReferenceId = null, int? ReferenceType = null);
 
 /// <summary>Settles ISK and its append-only journal in the caller's transaction. PLEX is never changed.</summary>
-public sealed class WalletTransactions
+public sealed partial class WalletTransactions
 {
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
@@ -24,6 +24,10 @@ public sealed class WalletTransactions
         _source = source;
         _schema = schema;
     }
+
+    /// <summary>A caller invokes this hook only after its transaction committed successfully.</summary>
+    public event Action<WalletBalanceChange>? BalanceCommitted;
+    public void AnnounceCommitted(WalletBalanceChange change) => BalanceCommitted?.Invoke(change);
 
     /// <summary>Locks in owner order, validates both wallets and the retry key, then journals both sides.</summary>
     public async Task TransferAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long from, long to,
@@ -41,7 +45,7 @@ public sealed class WalletTransactions
         ArgumentNullException.ThrowIfNull(reason);
         var balances = new Dictionary<long, decimal>();
         await using (var command = new NpgsqlCommand(
-            $"SELECT owner_id, isk FROM {_schema}.balances WHERE owner_id = ANY($1) ORDER BY owner_id FOR UPDATE", connection, transaction))
+            $"SELECT owner_id, isk FROM {_schema}.balances WHERE owner_id = ANY($1) AND account_key = 1000 ORDER BY owner_id FOR UPDATE", connection, transaction))
         {
             command.Parameters.Add(new NpgsqlParameter { Value = new[] { from, to } });
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -80,7 +84,8 @@ public sealed class WalletTransactions
 
     /// <summary>Journal a mint, burn, escrow reservation or refund in the same transaction as its owning operation.</summary>
     public async Task<decimal> AdjustAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long owner,
-        decimal delta, long counterparty, int refTypeId, string reason, long timeMs, string operationKey, CancellationToken cancellationToken = default)
+        decimal delta, long counterparty, int refTypeId, string reason, long timeMs, string operationKey, CancellationToken cancellationToken = default,
+        long? referenceId = null, int? referenceType = null)
     {
         if (delta == 0 || decimal.Round(delta, 2) != delta)
         {
@@ -88,7 +93,7 @@ public sealed class WalletTransactions
         }
         ArgumentException.ThrowIfNullOrWhiteSpace(operationKey);
         ArgumentNullException.ThrowIfNull(reason);
-        await using var command = new NpgsqlCommand($"SELECT isk FROM {_schema}.balances WHERE owner_id = $1 FOR UPDATE", connection, transaction)
+        await using var command = new NpgsqlCommand($"SELECT isk FROM {_schema}.balances WHERE owner_id = $1 AND account_key = 1000 FOR UPDATE", connection, transaction)
         {
             Parameters = { new() { Value = owner } },
         };
@@ -100,7 +105,8 @@ public sealed class WalletTransactions
         var previous = await FindAsync(connection, transaction, owner, operationKey, cancellationToken);
         if (previous is not null)
         {
-            if (previous.Amount != delta || previous.CounterpartyId != counterparty || previous.RefTypeId != refTypeId || previous.Reason != reason)
+            if (previous.Amount != delta || previous.CounterpartyId != counterparty || previous.RefTypeId != refTypeId || previous.Reason != reason
+                || previous.ReferenceId != referenceId || previous.ReferenceType != referenceType)
             {
                 throw new WalletOperationConflictException(operationKey);
             }
@@ -111,7 +117,7 @@ public sealed class WalletTransactions
             throw new InsufficientFundsException(owner);
         }
         if (delta > WalletLimits.MaximumIsk - isk) throw new MoneyLimitException();
-        return await ApplyAsync(connection, transaction, owner, counterparty, delta, refTypeId, reason, timeMs, operationKey, cancellationToken);
+        return await ApplyAsync(connection, transaction, owner, counterparty, delta, refTypeId, reason, timeMs, operationKey, cancellationToken, referenceId, referenceType);
     }
 
     /// <summary>Prelocks all wallets involved in a multi-party settlement in the same global owner order.</summary>
@@ -119,7 +125,7 @@ public sealed class WalletTransactions
         CancellationToken cancellationToken = default)
     {
         var ids = owners.Distinct().Order().ToArray();
-        await using var command = new NpgsqlCommand($"SELECT owner_id FROM {_schema}.balances WHERE owner_id = ANY($1) ORDER BY owner_id FOR UPDATE", connection, transaction)
+        await using var command = new NpgsqlCommand($"SELECT owner_id FROM {_schema}.balances WHERE owner_id = ANY($1) AND account_key = 1000 ORDER BY owner_id FOR UPDATE", connection, transaction)
         {
             Parameters = { new() { Value = ids } },
         };
@@ -139,23 +145,25 @@ public sealed class WalletTransactions
     }
 
     private async Task<decimal> ApplyAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long owner, long other,
-        decimal amount, int refTypeId, string reason, long timeMs, string key, CancellationToken cancellationToken)
+        decimal amount, int refTypeId, string reason, long timeMs, string key, CancellationToken cancellationToken,
+        long? referenceId = null, int? referenceType = null)
     {
         // The caller holds the target wallet row. Each balance update and its journal row are one SQL statement.
         await using var command = new NpgsqlCommand($"""
             WITH changed AS (
                 UPDATE {_schema}.balances SET isk = isk + $2
-                WHERE owner_id = $1
+                WHERE owner_id = $1 AND account_key = 1000
                 RETURNING isk
             )
-            INSERT INTO {_schema}.journal (owner_id, counterparty_id, ref_type_id, amount, balance, reason, time_ms, operation_key)
-            SELECT $1, $3, $4, $2, isk, $5, $6, $7 FROM changed RETURNING balance
+            INSERT INTO {_schema}.journal (owner_id, counterparty_id, ref_type_id, amount, balance, reason, time_ms, operation_key, reference_id, reference_type)
+            SELECT $1, $3, $4, $2, isk, $5, $6, $7, $8, $9 FROM changed RETURNING balance
             """, connection, transaction)
         {
             Parameters =
             {
                 new() { Value = owner }, new() { Value = amount }, new() { Value = other }, new() { Value = refTypeId },
                 new() { Value = reason }, new() { Value = timeMs }, new() { Value = key },
+                new() { Value = (object?)referenceId ?? DBNull.Value }, new() { Value = (object?)referenceType ?? DBNull.Value },
             },
         };
         return (decimal)(await command.ExecuteScalarAsync(cancellationToken))!;
@@ -165,7 +173,7 @@ public sealed class WalletTransactions
         long owner, string key, CancellationToken cancellationToken)
     {
         await using var command = new NpgsqlCommand(
-            $"SELECT id, owner_id, counterparty_id, ref_type_id, amount, balance, reason, time_ms, operation_key FROM {_schema}.journal WHERE owner_id = $1 AND operation_key = $2",
+            $"SELECT id, owner_id, counterparty_id, ref_type_id, amount, balance, reason, time_ms, operation_key, account_key, reference_id, reference_type FROM {_schema}.journal WHERE owner_id = $1 AND account_key = 1000 AND operation_key = $2",
             connection, transaction)
         {
             Parameters = { new() { Value = owner }, new() { Value = key } },
@@ -176,7 +184,7 @@ public sealed class WalletTransactions
 
     private static JournalEntry Read(NpgsqlDataReader reader) => new(reader.GetInt64(0), reader.GetInt64(1),
         reader.GetInt64(2), reader.GetInt32(3), reader.GetDecimal(4), reader.GetDecimal(5), reader.GetString(6),
-        reader.GetInt64(7), reader.GetString(8));
+        reader.GetInt64(7), reader.GetString(8),reader.GetInt32(9),reader.IsDBNull(10) ? null : reader.GetInt64(10),reader.IsDBNull(11) ? null : reader.GetInt32(11));
 
     public async Task<IReadOnlyList<JournalEntry>> JournalAsync(long ownerId, long? beforeId = null,
         int limit = 1000, CancellationToken cancellationToken = default)
@@ -186,7 +194,7 @@ public sealed class WalletTransactions
             throw new ArgumentOutOfRangeException(nameof(limit));
         }
         await using var command = _source.CreateCommand(
-            $"SELECT id, owner_id, counterparty_id, ref_type_id, amount, balance, reason, time_ms, operation_key FROM {_schema}.journal WHERE owner_id = $1 AND id < $2 ORDER BY id DESC LIMIT $3");
+            $"SELECT id, owner_id, counterparty_id, ref_type_id, amount, balance, reason, time_ms, operation_key, account_key, reference_id, reference_type FROM {_schema}.journal WHERE owner_id = $1 AND account_key = 1000 AND id < $2 ORDER BY id DESC LIMIT $3");
         command.Parameters.Add(new NpgsqlParameter { Value = ownerId });
         command.Parameters.Add(new NpgsqlParameter { Value = beforeId ?? long.MaxValue });
         command.Parameters.Add(new NpgsqlParameter { Value = limit });

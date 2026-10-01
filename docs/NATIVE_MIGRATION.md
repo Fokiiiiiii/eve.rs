@@ -240,3 +240,29 @@ repository; the Carbon-derived integration keeps its MIT notice.
 
 - **ISK settlement foundation:** `Eve.Wallet/WalletTransactions` transfers money and records both journal entries in the caller's PostgreSQL transaction. Wallet rows are locked in owner order; amounts are positive cents; missing wallets and insufficient funds fail before a debit. The persistent owner/operation-key uniqueness makes a retry a no-op only when both entries have the same terms. PLEX is untouched. Migration `002_journal.sql` adds the journal. On a separate PostgreSQL 18.4 cluster: 15 wallet tests passed, zero skipped, including concurrent debits, opposite transfers, rollback, replay and mismatched replay terms. A mutation of the insufficient-funds guard was caught (one test failed with two debits accepted); restoring the guard restored all 10 passes; after adding the money-limit checks, all 15 passed. This is a domain foundation, not yet a client-visible account/market service; live/native-client acceptance remains unverified.
 - **Owner's ISK ceiling:** exactly `1145141919364364` ISK (`WalletLimits.MaximumIsk`, decimal), enforced by the open/transfer/adjust APIs and migration `003_money_limit.sql`. A recipient at the ceiling refuses another cent before the sender is debited; a reward or direct SQL update cannot exceed it. The exact ceiling and the cent below it round-trip through PostgreSQL without changing PLEX. The market's order-price cap is still the separate reference rule, not a wallet-balance cap.
+
+- **Corporate wallet primitives (2026-10-01):** wallet migration 004 stores all seven divisions under the same typed balance table and keeps legacy personal/master-wallet reads scoped to key 1000. `DistributeAsync`, account-aware `TransferAsync`, `AdjustAsync` and `LiquidateAsync` validate every leg before writing, reject over-cap credits instead of clipping, lock accounts in owner/key order, and keep money, journals and a durable settlement receipt in the caller's transaction. A savepoint restores the entire settlement on a late journal failure even if a caller catches the error and commits other work. Receipts are not evicted; query limits only paginate journals. PostgreSQL 18.4: 27 wallet tests pass, zero skipped, including the owner's clipping examples, duplicate recipients, concurrent distributions, seven-division liquidation, replay after 1026 settlements and a late SQL failure. Replacing rejection with clipping makes the regression test fail; rejection was restored and all tests passed.
+- **Wallet handoff:** `BalanceCommitted` / `AnnounceCommitted(WalletBalanceChange)` are explicit after-commit hooks. `WalletAnnouncer` owns the reference's `OnAccountChange` wire shapes (two packet tests pass); host/bounty hookup is still pending. Journal migration 005 adds `referenceId` / `referenceType`, kept in replay-term validation. Existing bounty callers compile unchanged and all 12 PgBountyStore tests pass. The broken character-creation fault setup now drops the wallet table with CASCADE; all 95 character tests pass after loading the pinned SDE.
+- **Windows validation data:** the official SDE build 3396210 archive matched the compiled-in SHA-256. The production Rust loader was invoked by the small `load_pinned` example (the documented `eve-sde` bin is absent): 61 tables / 668618 rows, then `AlreadyLoaded` on replay. This touched the independent test database only. Real-client acceptance and performance comparisons remain unverified.
+
+### S5 economy work in progress — 2026-10-01
+
+- Corporation persistence, founding fee, seven wallets, membership applications, employment, roles/titles and NPC
+  catalog seeding: implemented backend. Native read adapters and login role restoration are registered in Host;
+  11 domain/protocol checks pass. Mutation RPCs and notifications remain in progress.
+- Market limits/fees: reference replay of 72 contexts / 504 cases passes in 3 C# tests. Order book, matching,
+  inventory custody, price history and seeds remain in progress.
+- Alliance schema and source contract tracing are prepared; lifecycle remains in progress.
+- Private test PostgreSQL has pinned SDE build 3396210: 61 tables / 668618 records, hash verified and replay AlreadyLoaded.
+- Real client acceptance and performance measurements remain unverified. No backlog service group is marked complete.
+
+Alliance founding, accepted-application due transitions and governance backend are now implemented; native
+allianceRegistry reads are registered. Corporate wallet balance reads support all seven divisions with persisted
+roles. The corpus is 18 corporation/alliance checks. Mutation RPCs, scheduled due processing, affiliation/space
+notifications, departure/closure and war/sov/bill integration remain in progress. The earlier full replay
+(27 assemblies, 2617 passed, zero failures/skips, exit 0) preceded this alliance extension; a fresh build/test run
+is required for the new integration.
+
+The fresh solution build/test after this extension finished with exit 0: 27 assemblies, 2624 passed,
+zero failed and zero skipped. Code-memory incremental indexing and a CreateAllianceAsync search also finished
+successfully using the cached model offline; the online model warm-up remains unreliable in this environment.

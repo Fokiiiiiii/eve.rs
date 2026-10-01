@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Eve.Characters/Eve.Characters.csproj" />
+    <Project Path="src/Eve.Corporations/Eve.Corporations.csproj" />
     <Project Path="src/Eve.Data/Eve.Data.csproj" />
     <Project Path="src/Eve.GameStore.Import/Eve.GameStore.Import.csproj" />
     <Project Path="src/Eve.GameStore/Eve.GameStore.csproj" />
@@ -9,6 +10,7 @@
     <Project Path="src/Eve.Inventory/Eve.Inventory.csproj" />
     <Project Path="src/Eve.Npc/Eve.Npc.csproj" />
     <Project Path="src/Eve.Macho/Eve.Macho.csproj" />
+    <Project Path="src/Eve.Market/Eve.Market.csproj" />
     <Project Path="src/Eve.Marshal/Eve.Marshal.csproj" />
     <Project Path="src/Eve.Sde/Eve.Sde.csproj" />
     <Project Path="src/Eve.Dogma/Eve.Dogma.csproj" />
@@ -30,6 +32,7 @@
     <Project Path="src/Eve.Services.Space/Eve.Services.Space.csproj" />
     <Project Path="src/Eve.Services.Station/Eve.Services.Station.csproj" />
     <Project Path="src/Eve.Services.Wallet/Eve.Services.Wallet.csproj" />
+    <Project Path="src/Eve.Services.Corporations/Eve.Services.Corporations.csproj" />
     <Project Path="src/Eve.Services/Eve.Services.csproj" />
   </Folder>
   <Folder Name="/tests/">
@@ -38,12 +41,15 @@
     <Project Path="tests/Eve.GameStore.Tests/Eve.GameStore.Tests.csproj" />
     <Project Path="tests/Eve.Host.Tests/Eve.Host.Tests.csproj" />
     <Project Path="tests/Eve.Identity.Tests/Eve.Identity.Tests.csproj" />
+    <Project Path="tests/Eve.Market.Tests/Eve.Market.Tests.csproj" />
     <Project Path="tests/Eve.Marshal.Tests/Eve.Marshal.Tests.csproj" />
     <Project Path="tests/Eve.Npc.Tests/Eve.Npc.Tests.csproj" />
     <Project Path="tests/Eve.Services.CharacterInfo.Tests/Eve.Services.CharacterInfo.Tests.csproj" />
     <Project Path="tests/Eve.Services.CharacterSelect.Tests/Eve.Services.CharacterSelect.Tests.csproj" />
+    <Project Path="tests/Eve.Corporations.Tests/Eve.Corporations.Tests.csproj" />
     <Project Path="tests/Eve.Dogma.Tests/Eve.Dogma.Tests.csproj" />
     <Project Path="tests/Eve.Fitting.Tests/Eve.Fitting.Tests.csproj" />
+    <Project Path="tests/Eve.Services.Wallet.Tests/Eve.Services.Wallet.Tests.csproj" />
     <Project Path="tests/Eve.Ships.Tests/Eve.Ships.Tests.csproj" />
     <Project Path="tests/Eve.Skills.Tests/Eve.Skills.Tests.csproj" />
     <Project Path="tests/Eve.Space.Tests/Eve.Space.Tests.csproj" />

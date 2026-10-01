@@ -1,0 +1,7 @@
+target/
+**/bin/
+**/obj/
+.cache/
+sde/data/
+.serena/
+code_memory.db*

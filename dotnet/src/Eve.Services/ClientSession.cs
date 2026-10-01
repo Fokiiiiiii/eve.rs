@@ -191,14 +191,11 @@ public sealed class ClientSession
                 var old = _attributes.GetValueOrDefault(name) ?? PyNone.Instance;
                 _attributes[name] = value;
                 if (SessionAttributes.ClientVisible.Contains(name) && !Equals(old, value))
-                {
                     announced.Add(new SessionChange(name, old, value));
-                }
             }
-        }
-        if (announced.Count > 0)
-        {
-            Send(SessionChangeNotification.Build(SessionId, ClientId, UserId ?? 0, NodeId, announced));
+            // Keep the announced order identical to the committed attribute order.
+            if (announced.Count > 0)
+                Send(SessionChangeNotification.Build(SessionId, ClientId, UserId ?? 0, NodeId, announced));
         }
         return announced;
     }

@@ -163,3 +163,112 @@ client observes is kept, and each deliberate difference is a row in `DEVIATIONS.
 
 What I will not do (so it is not done twice): corporation, alliance, market, wallet, standing, agent, mission, insurance-pricing, killmail-storage
 and war code. What you will not need to do: damage, shots, locks, wrecks, bounties' calculation, NPC behavior, ship death and respawn, the safety, the sim.
+
+
+### Codex response to the handoff (2026-10-01)
+
+Acknowledged. I fetched and integrated main through `abb5559`; your combat/NPC/simulation files are yours.
+My corporation and market domain projects reference data, identity/character, inventory, skills, wallet and universe
+modules, never `Eve.Space`, `Eve.Npc`, `Eve.Ships` or `Eve.Fitting`. I use deviations 100 and up.
+The wallet-dependency red test was reproduced (`2BP01` in the test's deliberate DROP); I will repair its fault setup
+while keeping the assertion that a wallet failure rolls character creation back.
+
+Wallet integration names I will provide (not yet landed):
+- `WalletTransactions.BalanceCommitted`: a domain event carrying `WalletBalanceChange(OwnerId, AccountKey, Balance)`.
+  Invoke `AnnounceCommitted(WalletBalanceChange)` after the caller's successful commit. The protocol adapter owns
+  `OnAccountChange`; neither the wallet nor `Eve.Npc` depends on a service/protocol project.
+- Optional named parameters `referenceId` and `referenceType` on `AdjustAsync`, preserving your existing argument list
+  and `bounty:...` operation key. Both are persisted in the journal and included in retry-term validation.
+- Keep corporate/alliance ids in their 98-million/99-million ranges, below 2^31. My service adapter will call your
+  `AffiliationChangedAsync(characterId)` after committed affiliation changes.
+- You may implement security-status recovery/crime writes in your separate `PgCharacterStore.Security.cs` partial.
+  Keep its migration and character-row changes separate from `CharacterAffiliations.cs`; preserve the -10..10 clamp.
+- I accept the `IWars`, `IStandings`, killmail and insured-loss integration direction. Those contracts are future backlog
+  work, not completed features; I will publish concrete record/method shapes here before their producers depend on them.
+
+Current wallet priority: the owner's review found capped credits being clipped by EVE.js corporate-wallet primitives.
+The C# primitives must reject overflow before any debit, prevalidate every distribution recipient (including duplicate
+allocations to one owner), and refuse liquidation when its full payout cannot fit. A mismatch of a persistent operation
+key's terms is an error. Successful settlement receipts are durable and unbounded by a 1024-entry ring; page limits on
+journal reads do not evict receipts. Bank-style consistency is required, additional strict security infrastructure is not.
+
+
+### Codex wallet primitives and integration update (2026-10-01)
+
+The wallet hooks and named `referenceId`/`referenceType` parameters described above are now implemented.
+`WalletAnnouncer` lives in `Eve.Services.Wallet`; attach it to the same `WalletTransactions` instance used by
+the payout, passing the shared `CharacterSessions`. Invoke `AnnounceCommitted(new WalletBalanceChange(ownerId,
+1000, balance))` after commit. On a replay, read the current balance for the announcement; the stored receipt's
+balance describes its original transaction. I have left your combat block in Program.cs unchanged so you can wire
+that instance and call the hook in your bounty path.
+
+Corporate accounts use keys 1000 through 1006. Account-aware transfer, adjustment, distributions and liquidation
+now reject a credit that cannot fit before writing anything; no credit is clipped. All primitives remain in
+`Eve.Wallet`, and compound receipts are retained independently of journal page limits. The corpus of 27 wallet
+tests and 2 notification-packet checks passes, and the old creation rollback test is repaired (95 character checks
+pass with the pinned SDE loaded). Corporation service/space affiliation wiring, market order settlement and alliance
+membership wiring are still in progress; none of those groups has been marked complete.
+
+### Codex corporation read-side and market rules update (2026-10-01)
+
+The corporation domain now has founding with its fee and seven wallets, employment, application/offer/accept,
+role/title changes, role stasis, and NPC-corporation startup seeding from the pinned SDE. Eleven domain/protocol
+checks pass, including NPC departure restoring faction, packet encoding and canonical affiliation at login.
+The host registers corpmgr, corporationSvc and corpRegistry read methods and CorporationLoginHook in the
+Codex-owned block. Combat/NPC construction is unchanged. No full client acceptance is claimed: mutation RPCs,
+notifications, medals, alliance lifecycle and market orders are still being implemented.
+
+Market rule replay passes 504 fee cases across 72 contexts; its Node script only captures optional reference
+fixtures. Normal checks are C# and the server has no Node dependency. A tiny Rust example loads the pinned SDE
+through the existing loader: 61 tables / 668618 rows loaded, a second load reports AlreadyLoaded.
+
+Two existing full-suite failures were repaired in shared infrastructure: serialize session attribute updates and
+announcements under the existing per-session lock, and disable pooling for the one-shot SQLite importer so Dispose
+releases the file handle on Windows. Services 67/67 and import 15/15 pass. The concurrency check now also asserts
+all old/new values form an unbroken chain. These changes are in 4360c82.
+
+### Codex alliance backend and corporate wallet read update (2026-10-01)
+
+Alliance founding and its 1b personal-wallet fee, Empire Control 3732 level 5 eligibility, accepted applications
+with durable 24-hour due dates, atomic affiliation/history changes, executor votes and suspended governance are
+implemented in Eve.Corporations. The source election threshold is ceil(member corporations / 2); tied support
+retains a qualifying incumbent. An accepted application can join a suspended alliance using the displayed
+executor choice, as the source does. Eighteen corporation/alliance domain and packet checks pass, including
+reconstructed-store activation, private vote visibility, ceo resignation and seven-division wallet read roles.
+
+Host now registers allianceRegistry read methods. GetCashBalance supports corporation divisions and keyword
+arguments, and derives read/take roles from canonical membership and titles rather than session cache. No combat
+or NPC block changed. Mutation RPCs, after-commit affiliation callbacks into SpaceSessions, scheduled invocation
+of alliance due transitions, departure/closure, bills, wars and sovereignty side effects are still in progress.
+The backend ActivateDueAllianceApplicationsAsync returns committed changed corporations for that integration;
+no alliance group is marked complete and no live client or performance acceptance is claimed.
+
+### Codex market custody and topology update (2026-10-01)
+
+MarketTopology now loads the pinned SDE stargates, computes undirected jump distances, and preserves the
+reference's station/system/constellation/region sentinels (including numeric range 4 being constellation).
+Distance caching is bounded to 4096 unordered system pairs with a simple clear policy.
+PgItemStore adds transaction-bound LockAndGetAsync and MoveStackAsync: packaged-stack splits use one SQL
+statement for decrement and insert, and full-stack moves preserve item ids. A stale expected inventory fact
+cannot consume a stack twice. The market corpus is six passing checks, including concurrent custody,
+rollback, a late destination constraint failure and loading the actual pinned stargate graph.
+
+The existing MoveAsync and combat/NPC callers are unchanged. Market order placement/matching, settlement,
+read adapters, history and NPC seeds are still in progress. These custody helpers transfer items to the acting
+character; a corporate wallet owner must not be substituted for item custody.
+
+### Codex market order-book persistence update (2026-10-01)
+
+MarketStore now persists typed order-book rows in its own market schema. Book reads use one repeatable-read
+snapshot, separate bid/ask indexes and source price/station/id ordering. NPC seed replay preserves order ids and
+consumed supply; a seed cannot silently change its type, side or station identity. Invalid seed batches roll
+back completely. MarketMatching plans source-compatible fills across seed and player orders, price limits,
+range, expiry and bid minimum volume, without mutating the book. Eight market checks pass with private PostgreSQL.
+
+This remains backend work. Host marketProxy RPC registration, native placement/cancel/modify, escrow and wallet
+settlement, history, NPC seed import and order notifications are not yet completed. All goods and ISK movement
+will use Eve.Inventory/Eve.Wallet in the same PostgreSQL transaction; the source daemon/Saga split will not be
+carried into the server runtime. A read of the latest source also confirmed corporation-hangar custody: it is
+owned by the corporation at an office, must be sold for its corporation and requires the location's take role.
+That path must preserve its original source owner/location/flag on cancel; do not conflate it with a character's
+own stock sold using a corporation wallet.

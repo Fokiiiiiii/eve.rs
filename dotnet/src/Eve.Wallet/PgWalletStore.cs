@@ -52,7 +52,7 @@ public sealed class PgWalletStore
         {
             return balances;
         }
-        await using var command = _source.CreateCommand($"SELECT owner_id, isk, plex FROM {_schema}.balances WHERE owner_id = ANY($1)");
+        await using var command = _source.CreateCommand($"SELECT owner_id, isk, plex FROM {_schema}.balances WHERE owner_id = ANY($1) AND account_key = 1000");
         command.Parameters.Add(new NpgsqlParameter { Value = ids });
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))

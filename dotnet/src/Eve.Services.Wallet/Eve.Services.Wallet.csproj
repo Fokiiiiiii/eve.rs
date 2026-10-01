@@ -2,6 +2,7 @@
   <ItemGroup>
     <ProjectReference Include="../Eve.Services/Eve.Services.csproj" />
     <ProjectReference Include="../Eve.Wallet/Eve.Wallet.csproj" />
+    <ProjectReference Include="../Eve.Corporations/Eve.Corporations.csproj" />
     <ProjectReference Include="../Eve.Services.Generator/Eve.Services.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>

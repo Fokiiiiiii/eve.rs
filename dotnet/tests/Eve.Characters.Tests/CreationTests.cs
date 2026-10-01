@@ -211,7 +211,7 @@ public class CreationTests
     public async Task A_failure_opening_the_wallet_rolls_everything_back()
     {
         await using var s = await PgSchemas.CreateAsync();
-        await using (var drop = s.Source.CreateCommand($"DROP TABLE {s.WalletSchema}.balances"))
+        await using (var drop = s.Source.CreateCommand($"DROP TABLE {s.WalletSchema}.balances CASCADE"))
         {
             await drop.ExecuteNonQueryAsync();
         }

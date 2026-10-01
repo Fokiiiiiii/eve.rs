@@ -92,6 +92,43 @@ public sealed class PgItemStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>Lock an inventory fact in the caller's transaction before deciding custody or quantity.</summary>
+    public async Task<Item?> LockAndGetAsync(NpgsqlConnection connection,NpgsqlTransaction transaction,long id,CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"SELECT {Columns} FROM {_schema}.items WHERE id=$1 FOR UPDATE",connection,transaction)
+        {
+            Parameters = { new() { Value=id } },
+        };
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
+    }
+
+    /// <summary>Move or split a packaged stack atomically. A stale expected fact cannot spend the same items twice.</summary>
+    public async Task<Item> MoveStackAsync(NpgsqlConnection connection,NpgsqlTransaction transaction,Item expected,long quantity,
+        long ownerId,long locationId,int flag,CancellationToken cancellationToken = default)
+    {
+        if (ownerId <= 0 || locationId <= 0 || flag < 0) throw new ArgumentOutOfRangeException(nameof(ownerId));
+        var item = await LockAndGetAsync(connection,transaction,expected.Id,cancellationToken);
+        if (item != expected) throw new InvalidOperationException("ITEM_CHANGED");
+        if (quantity <= 0 || item.Singleton || item.Quantity < quantity) throw new ArgumentOutOfRangeException(nameof(quantity));
+        var sql = item.Quantity == quantity
+            ? $"UPDATE {_schema}.items SET owner_id=$3,location_id=$4,flag=$5 WHERE id=$1 AND quantity=$2 RETURNING {Columns}"
+            : $"""
+              WITH reduced AS (
+                  UPDATE {_schema}.items SET quantity=quantity-$2 WHERE id=$1 RETURNING type_id,custom_name
+              )
+              INSERT INTO {_schema}.items(type_id,owner_id,location_id,flag,quantity,singleton,custom_name)
+              SELECT type_id,$3,$4,$5,$2,false,custom_name FROM reduced RETURNING {Columns}
+              """;
+        await using var command = new NpgsqlCommand(sql,connection,transaction)
+        {
+            Parameters = { new() { Value=item.Id },new() { Value=quantity },new() { Value=ownerId },new() { Value=locationId },new() { Value=flag } },
+        };
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) throw new InvalidOperationException("ITEM_CHANGED");
+        return Read(reader);
+    }
+
     public async Task<Item?> GetAsync(long id, CancellationToken cancellationToken = default)
     {
         await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.items WHERE id = $1");

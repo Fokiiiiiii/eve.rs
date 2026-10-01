@@ -17,11 +17,12 @@ internal sealed class SqliteSource : IDisposable
     public SqliteSource(string path)
     {
         if (!File.Exists(path))
-        {
             throw new FileNotFoundException($"SQLite database not found: {path}", path);
-        }
-        // Read-only: a WAL database still needs its -shm file to be creatable next to it.
-        _connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly }.ConnectionString);
+        // A one-shot import must release its file handle when disposed, including on Windows.
+        _connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false,
+        }.ConnectionString);
         _connection.Open();
     }
 

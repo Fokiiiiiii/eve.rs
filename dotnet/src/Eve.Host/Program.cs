@@ -216,6 +216,12 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         long.Parse(Env("EVE_START_PLEX", "2222"), System.Globalization.CultureInfo.InvariantCulture));
     Console.Error.WriteLine($"eve-host: characters in PostgreSQL, schemas {characterSchema}, {inventorySchema}, {skillsSchema} and {walletSchema}; {stations.Count} stations; dogma of {dogma.AttributeCount} attributes and {dogma.EffectCount} effects; static data build {build}; new characters start at {(startStation is { } id ? $"station {id}" : "their school's headquarters")}");
     var creation = new CharacterCreation(source, characters, items, skills, skillCatalog, wallets, startingWallet, catalog, modules);
+    // Codex-owned corporation registration; keep combat/NPC construction in its own block below.
+    var corporationSchema = Env("EVE_CORPORATIONS_SCHEMA", Eve.Corporations.CorporationStore.DefaultSchema);
+    await Eve.Corporations.CorporationStore.MigrateAsync(source, corporationSchema);
+    var corporations = new Eve.Corporations.CorporationStore(source, characters, wallets, new WalletTransactions(source, walletSchema), skills, now, corporationSchema);
+    await corporations.SeedNpcAsync(sde);
+    var corporationLogin = new Eve.Services.Corporations.CorporationLoginHook(corporations, characters);
     SimClient? sim = null;
     SpaceSessions? spaceSessions = null;
     if (Env("EVE_SIM", "on") is not ("off" or "0" or "false"))
@@ -231,14 +237,18 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     }
     IReadOnlyList<IService> services =
     [
-        new CharUnboundMgrService(accounts, characters, items, skills, wallets, creation, catalog, online, [new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now)], Random.Shared),
+        new CharUnboundMgrService(accounts, characters, items, skills, wallets, creation, catalog, online, [new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now), corporationLogin], Random.Shared),
         new SkillMgr2Service(),
         new SkillHandlerService(skills, skillCatalog, training, characters, announcer, now),
         new CharMgrService(characters, stations),
         new StationService(stations, characters, online, now),
         new InvBrokerService(items, new ItemTypeCatalog(sde), stations, ships, dogma, now),
         new DogmaIMService(dogma, ships, now, dogmaSync, spaceSessions, spaceSessions, spaceSessions),
-        new AccountService(wallets),
+        new AccountService(wallets, corporations, new WalletTransactions(source, walletSchema)),
+        new Eve.Services.Corporations.CorpMgrService(corporations, characters),
+        new Eve.Services.Corporations.CorporationService(corporations, characters),
+        new Eve.Services.Corporations.CorpRegistryService(corporations, characters, now),
+        new Eve.Services.Corporations.AllianceRegistryService(corporations, characters, now),
         new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now)),
         .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now), new BeyonceService(spaceSessions, now) },
     ];

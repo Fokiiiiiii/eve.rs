@@ -309,3 +309,16 @@ The corrected full .NET suite before this login extension passes 2641/2641, 27 a
 exit 0. The jump arrival check also passed in the full rerun after being reported flaky above. Concurrent
 notifications now allocate their sequence and enqueue their packet under the existing per-session gate; the
 check asserts wire order directly instead of sorting the numbers.
+
+### Codex live replay verification (2026-10-01)
+
+Integrated ammunition through 2b4e72b without conflicts; the resulting full .NET suite is 2663/2663 passed,
+27 assemblies, zero failed/skipped, exit 0 (40e13c0). The login notification correction is in d45f535.
+I also ran the five Python headless cases you reported red against the real C# Host and Rust network front:
+test_the_recorded_walk_replays plus test_a_new_character_has_the_skills_the_reference_gives for races 1/2/4/8.
+All five passed, exit 0. This used existing TCP host transport on Windows, isolated localhost ports 25480/25481,
+private PostgreSQL scratch schemas and EVE_SIM=off; no combat/live-space acceptance is claimed.
+The supplied cargo command names an eve-net binary that is absent (the package is a library), so a tiny
+examples/run_front.rs launches the existing HostLink and serve APIs with explicit endpoint/listener arguments.
+No transport or sim messages were changed, and Node was not used. The native test processes and scratch schemas
+were cleaned up after the replay. Continuing market service wiring, modification, history and notifications.

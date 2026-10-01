@@ -192,8 +192,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 1},
-    {"name": "hello ack", "kind": "HelloAck", "version": 1, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 2},
+    {"name": "hello ack", "kind": "HelloAck", "version": 2, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",

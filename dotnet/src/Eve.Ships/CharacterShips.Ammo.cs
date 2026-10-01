@@ -18,6 +18,31 @@ public sealed partial class CharacterShips
 
     private const double AttributeTolerance = 1e-9;
 
+    /// <summary>What a row lock finds when a row is not what the work read (the market's custody says the same).</summary>
+    public const string ItemChanged = "ITEM_CHANGED";
+
+    /// <summary>How many times a load or an unload starts over when the rows it read were changed under it, before it gives up.</summary>
+    private const int AmmoAttempts = 4;
+
+    /// <summary>Runs an operation on the items again, with fresh reads, while it finds the rows changed under it by something else.</summary>
+    private static async Task<ShipOutcome> WithFreshRowsAsync(Func<Task<ShipOutcome>> operation)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await operation();
+            }
+            catch (InvalidOperationException error) when (error.Message == ItemChanged)
+            {
+                if (attempt >= AmmoAttempts)
+                {
+                    return new NothingHappened();
+                }
+            }
+        }
+    }
+
     private sealed class AmmoWork(
         PgItemStore items, NpgsqlConnection connection, NpgsqlTransaction transaction, ShipSnapshot snapshot, Dictionary<long, Item> stacks, CancellationToken cancellationToken)
     {
@@ -34,6 +59,22 @@ public sealed partial class CharacterShips
         public ShipSnapshot Snapshot => snapshot;
 
         public DogmaWorld World => snapshot.World;
+
+        /// <summary>
+        /// Locks the rows the work is about to change, in the order of their ids, and checks that each is what the decisions were made from. This is the convention of
+        /// the market's custody (<c>PgItemStore.LockAndGetAsync</c>, then the expected row against the locked one): a stack that a sale or another load moved or
+        /// resized since it was read is <see cref="ItemChanged"/>, and nothing of the work is kept.
+        /// </summary>
+        public async Task LockAsync(IEnumerable<Item> expected)
+        {
+            foreach (var item in expected.DistinctBy(i => i.Id).OrderBy(i => i.Id))
+            {
+                if (await items.LockAndGetAsync(connection, transaction, item.Id, cancellationToken) != item)
+                {
+                    throw new InvalidOperationException(ItemChanged);
+                }
+            }
+        }
 
         public async Task SetQuantityAsync(Item item, long quantity) =>
             await items.SetQuantityAsync(connection, transaction, item.Id, quantity, cancellationToken);
@@ -160,8 +201,12 @@ public sealed partial class CharacterShips
     /// <c>LoadAmmo(shipID, moduleIDs, chargeItemIDs, ammoLocationID)</c> of a docked ship: each module takes rounds of the kind asked for (that of the first stack named
     /// that is the character's, or what it holds already) from the stacks of the hangar or the cargo hold, up to what it holds; another kind goes back first.
     /// </summary>
-    public async Task<ShipOutcome> LoadAmmoAsync(
-        long characterId, long shipId, IReadOnlyList<long> moduleIds, IReadOnlyList<long> chargeItemIds, long ammoLocationId, CancellationToken cancellationToken = default)
+    public Task<ShipOutcome> LoadAmmoAsync(
+        long characterId, long shipId, IReadOnlyList<long> moduleIds, IReadOnlyList<long> chargeItemIds, long ammoLocationId, CancellationToken cancellationToken = default) =>
+        WithFreshRowsAsync(() => LoadAmmoOnceAsync(characterId, shipId, moduleIds, chargeItemIds, ammoLocationId, cancellationToken));
+
+    private async Task<ShipOutcome> LoadAmmoOnceAsync(
+        long characterId, long shipId, IReadOnlyList<long> moduleIds, IReadOnlyList<long> chargeItemIds, long ammoLocationId, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -179,6 +224,12 @@ public sealed partial class CharacterShips
             }
         }
         await statics.EnsureTypesAsync(requested.Select(i => i.TypeId), cancellationToken);
+
+        // every row the loop can read and change is locked and checked first: the stacks of the kinds that can be taken or sent back, and the charges now in the modules
+        var asked = moduleIds.Distinct().Select(id => work.Snapshot.Fitted.FirstOrDefault(m => m.Id == id)).OfType<Item>().ToList();
+        var inModules = asked.Select(m => work.Charges.GetValueOrDefault(m.Flag)).OfType<Item>().ToList();
+        var kinds = requested.Select(i => i.TypeId).Concat(inModules.Select(c => c.TypeId)).ToHashSet();
+        await work.LockAsync(work.Stacks.Values.Where(s => kinds.Contains(s.TypeId)).Concat(inModules));
 
         foreach (var moduleId in moduleIds.Distinct())
         {
@@ -283,8 +334,12 @@ public sealed partial class CharacterShips
     /// <c>UnloadAmmo(shipID, moduleIDs, destination, quantity)</c> of a docked ship: what the modules hold goes to the hangar or the cargo hold (all of it, or
     /// <paramref name="quantity"/> rounds of each).
     /// </summary>
-    public async Task<ShipOutcome> UnloadAmmoAsync(
-        long characterId, long shipId, IReadOnlyList<long> moduleIds, long destinationLocationId, int? destinationFlag, long? quantity, CancellationToken cancellationToken = default)
+    public Task<ShipOutcome> UnloadAmmoAsync(
+        long characterId, long shipId, IReadOnlyList<long> moduleIds, long destinationLocationId, int? destinationFlag, long? quantity, CancellationToken cancellationToken = default) =>
+        WithFreshRowsAsync(() => UnloadAmmoOnceAsync(characterId, shipId, moduleIds, destinationLocationId, destinationFlag, quantity, cancellationToken));
+
+    private async Task<ShipOutcome> UnloadAmmoOnceAsync(
+        long characterId, long shipId, IReadOnlyList<long> moduleIds, long destinationLocationId, int? destinationFlag, long? quantity, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -294,6 +349,10 @@ public sealed partial class CharacterShips
         }
         var place = PlaceOf(work.Snapshot, destinationLocationId)!.Value;
         var flag = destinationFlag ?? place.Flag;
+        // the charges that go, and the stacks of their kinds where they go (a charge joins the first of them), are locked and checked first
+        var leaving = moduleIds.Distinct().Select(id => work.Snapshot.Fitted.FirstOrDefault(m => m.Id == id)).OfType<Item>()
+            .Select(m => work.Charges.GetValueOrDefault(m.Flag)).OfType<Item>().ToList();
+        await work.LockAsync(leaving.Concat(work.Stacks.Values.Where(s => s.LocationId == place.Location && s.Flag == flag && leaving.Any(c => c.TypeId == s.TypeId))));
         foreach (var moduleId in moduleIds.Distinct())
         {
             if (work.Snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is not { } module || !work.Charges.TryGetValue(module.Flag, out var charge))
@@ -338,8 +397,11 @@ public sealed partial class CharacterShips
                 changes.Add(new ItemChanged(new Item(await items.CreateAsync(connection, transaction, item, cancellationToken), typeId, characterId, station, ItemFlags.Hangar, 1, true, null), 0, 0, 1));
             }
         }
-        else if ((await items.InLocationAsync(station, characterId, cancellationToken)).Where(i => i.Flag == ItemFlags.Hangar && !i.Singleton && i.TypeId == typeId).OrderBy(i => i.Id).FirstOrDefault() is { } stack)
+        else if ((await items.InLocationAsync(station, characterId, cancellationToken)).Where(i => i.Flag == ItemFlags.Hangar && !i.Singleton && i.TypeId == typeId).OrderBy(i => i.Id).FirstOrDefault() is { } read
+            && await items.LockAndGetAsync(connection, transaction, read.Id, cancellationToken) is { } stack
+            && (stack.TypeId, stack.OwnerId, stack.LocationId, stack.Flag, stack.Singleton) == (typeId, characterId, station, ItemFlags.Hangar, false))
         {
+            // the stack is locked and grown from what the lock finds: a sale that took some of it a moment ago is not lost
             var grown = stack with { Quantity = stack.Quantity + quantity };
             await items.SetQuantityAsync(connection, transaction, stack.Id, grown.Quantity, cancellationToken);
             changes.Add(new ItemChanged(grown, stack.LocationId, stack.Flag, stack.Quantity));
@@ -365,7 +427,10 @@ public sealed partial class CharacterShips
         if (await items.GetAsync(moduleId, cancellationToken) is { } module && module.OwnerId == characterId)
         {
             var (_, charges) = await ShipSnapshot.SlotsOfAsync(statics, await items.InLocationAsync(module.LocationId, characterId, cancellationToken), cancellationToken);
-            if (charges.FirstOrDefault(c => c.Flag == module.Flag) is { } charge && roundsLeft < charge.Quantity)
+            // the row is locked and the decision made on what the lock finds (the rounds only go down, and a stack that was taken away is not made again)
+            if (charges.FirstOrDefault(c => c.Flag == module.Flag) is { } found
+                && await items.LockAndGetAsync(connection, transaction, found.Id, cancellationToken) is { } charge
+                && (charge.LocationId, charge.Flag) == (found.LocationId, found.Flag) && roundsLeft < charge.Quantity)
             {
                 if (roundsLeft > 0)
                 {

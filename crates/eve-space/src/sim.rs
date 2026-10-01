@@ -995,7 +995,7 @@ mod tests {
 
     #[test]
     fn hello_is_answered_with_the_version_and_the_poll_rate() {
-        let reply = sim().handle(Message::Hello { version: 1 }, NOON).unwrap();
+        let reply = sim().handle(Message::Hello { version: PROTOCOL_VERSION }, NOON).unwrap();
         assert_eq!(reply, [Message::HelloAck { version: PROTOCOL_VERSION, poll_hz: POLL_HZ }]);
     }
 

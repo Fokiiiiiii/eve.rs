@@ -87,4 +87,93 @@ public class AmmoHostTests
         rig.Sim.Say(new SimChargeSpent((ulong)session.SessionId, gun, 0));
         await WaitForAsync(null);
     }
+
+    /// <summary>The writing of the rounds spent is held until the test lets it go, and what was written is kept.</summary>
+    private sealed class HeldWriter(Rig rig)
+    {
+        public TaskCompletionSource Gate { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public List<(long Module, long Rounds)> Written { get; } = [];
+
+        public async Task WriteAsync(long character, long module, long rounds)
+        {
+            await Gate.Task;
+            lock (Written)
+            {
+                Written.Add((module, rounds));
+            }
+            await rig.Ships.SpendChargeAsync(character, module, rounds);
+        }
+    }
+
+    [PgFact]
+    public async Task A_ship_that_docks_is_not_moved_before_the_rounds_its_guns_spent_are_written()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, gun) = await ArmedInSpaceAsync(rig, loaded: true);
+        var writer = new HeldWriter(rig);
+        rig.Space.ChargeWriter = writer.WriteAsync;
+
+        rig.Sim.Say(new SimChargeSpent((ulong)session.SessionId, gun, 79));
+        rig.Sim.Say(new SimChargeSpent((ulong)session.SessionId, gun, 78));
+        rig.Sim.Say(new SimDocked((ulong)session.SessionId, Rig.Station));
+        await Task.Delay(700);
+        Assert.Null(session.GetInt("stationid")); // the dock waits for the rounds
+        writer.Gate.SetResult();
+        await Rig.UntilAsync(() => session.GetInt("stationid") == Rig.Station);
+
+        // what the hangar shows is the last count, written once and in order
+        Assert.Equal([(gun, 78L)], writer.Written.ToArray());
+        var snapshot = (await rig.Ships.LoadAsync(character.CharacterId, CancellationToken.None))!;
+        Assert.Equal(78, snapshot.Charges.Single().Quantity);
+    }
+
+    [PgFact]
+    public async Task A_gun_is_started_with_the_rounds_it_has_left_and_not_the_rounds_it_had()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, gun) = await ArmedInSpaceAsync(rig, loaded: true);
+        var writer = new HeldWriter(rig);
+        rig.Space.ChargeWriter = writer.WriteAsync;
+        rig.Sim.Say(new SimChargeSpent((ulong)session.SessionId, gun, 3));
+
+        var started = rig.Space.ActivateAsync(session, gun, "projectileFired", 980050000105, 1000, CancellationToken.None);
+        await Task.Delay(700);
+        Assert.False(started.IsCompleted); // the order waits for the count
+        writer.Gate.SetResult();
+        Assert.Equal(ModuleResult.Done, await started);
+
+        var heard = Assert.IsType<SimActivate>(rig.Sim.Heard.Last());
+        Assert.Equal(3, heard.Effect.Turret!.Charge!.Rounds);
+    }
+
+    [PgFact]
+    public async Task A_session_that_ends_has_its_rounds_written_before_its_ship_is_put_back_and_the_host_stopping_waits_for_them()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, gun) = await ArmedInSpaceAsync(rig, loaded: true);
+        var writer = new HeldWriter(rig);
+        rig.Space.ChargeWriter = writer.WriteAsync;
+        rig.Sim.Say(new SimChargeSpent((ulong)session.SessionId, gun, 70));
+
+        session.Close();
+        await Task.Delay(700);
+        Assert.NotEqual(ItemFlags.Hangar, (await rig.Items.GetAsync(character.ShipId))!.Flag); // not put back yet
+        writer.Gate.SetResult();
+        await Rig.UntilAsync(() => rig.Items.GetAsync(character.ShipId).GetAwaiter().GetResult()!.Flag == ItemFlags.Hangar);
+        Assert.Equal(70, (await rig.Ships.LoadAsync(character.CharacterId, CancellationToken.None))!.Charges.Single().Quantity);
+
+        // and when the host stops
+        var other = new HeldWriter(rig);
+        rig.Space.ChargeWriter = other.WriteAsync;
+        var second = await rig.NewCharacterAsync("Space Second", 2);
+        Assert.NotNull(second);
+        rig.Space.EnqueueForTest(777, character.CharacterId, gun, 60);
+        var stopping = Task.Run(rig.Space.Dispose);
+        await Task.Delay(700);
+        Assert.False(stopping.IsCompleted);
+        other.Gate.SetResult();
+        await stopping.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Contains((gun, 60L), other.Written);
+    }
 }

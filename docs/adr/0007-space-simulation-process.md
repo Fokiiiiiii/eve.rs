@@ -43,7 +43,7 @@ not exist is the scene: which balls a system has, who is where, how commands cha
 4. **The host gives the sim numbers, not rules.** A ship enters a scene with what motion needs, worked out by dogma
    (ADR 0004): mass, radius, top speed, inertia (agility), warp speed, and what its slim item shows (names, ids,
    the modules). A change to them (skills, fitting) is another message. The sim does not know skills or modules.
-5. **Messages (version 1).** Every message of the host that has to be answered is answered by one of the simulation's;
+5. **Messages (version 2).** Every message of the host that has to be answered is answered by one of the simulation's;
    the rest are not. `oracle/fixtures/simlink/messages.json` holds the golden frames (`tools/dev/gen-simlink-fixtures.py`).
 
    | Kind | Code | Direction | Body |
@@ -120,6 +120,8 @@ not exist is the scene: which balls a system has, who is where, how commands cha
   `TARGET_NOT_LOCKED`), and a weapon stops at once when the lock on its target goes, however it goes (the pilot lets go, the target leaves or is destroyed, a
   warp): the update, the values, `OnGodmaShipEffect` off and then `OnTarget lost`, the order of the recording of the reference's gun. A turret's `OnSpecialFX` carries
   the cycles asked for at its start and nothing at its stop. `docs/compat/DEVIATIONS.md` #33 and #56 say what differs from the reference.
+
+- 2026-10-01, version 2: the turret block of an effect and of an NPC weapon ends with the charge byte and `ChargeSpent` (27) is a message, so a frame of version 1 is not understood by version 2 and the other way round. `Hello` and `HelloAck` carry 2; a host and a simulation that do not agree on it do not talk (the host refuses a `HelloAck` of another version, the simulation closes a `Hello` of another version).
 
 - 2026-10-01, ammunition: the turret of an effect (and of an NPC weapon) ends with a charge: a byte, and when it is 1 the type of the charge `i32`, the flag of the
   slot it sits in `i32`, the rounds it holds `i64` and the rounds a cycle burns `i64` (a turret that takes no charge has the byte 0). The client knows a loaded charge

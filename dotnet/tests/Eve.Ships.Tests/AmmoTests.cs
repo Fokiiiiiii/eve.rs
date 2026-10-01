@@ -119,3 +119,89 @@ public class AmmoTests
         Assert.Equal(80, after.World.Get(after.Charges.Single().Id, ShipSnapshot.QuantityCharge));
     }
 }
+
+/// <summary>A load and a sale of the same stack at the same moment: the rows are locked as the market's custody locks them, so nothing is spent twice.</summary>
+public class AmmoRaceTests
+{
+    private const int RailgunI = 10678, Antimatter = 222, Slot = 28;
+    private const long Escrow = 9_200_000_001;
+
+    private static async Task<(Created Character, long Gun, Item Stack)> ArmedWithStackAsync(Rig rig, long quantity)
+    {
+        var c = await rig.NewCharacterAsync();
+        Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(c.CharacterId, c.ShipId + 3, c.ShipId, Rig.Station, ItemFlags.Hangar, null));
+        var gun = await rig.GiveAsync(c.CharacterId, RailgunI);
+        Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(c.CharacterId, gun, Rig.Station, c.ShipId, Slot, 1));
+        var stack = (await rig.Items.GetAsync(await rig.GiveAsync(c.CharacterId, Antimatter, singleton: false, quantity: quantity)))!;
+        return (c, gun, stack);
+    }
+
+    /// <summary>A sale that holds the stack's row while it takes some of it into escrow, and lets go when told: the market's way (<c>LockAndGetAsync</c> and <c>MoveStackAsync</c>).</summary>
+    private static async Task<Func<Task>> SaleHoldingAsync(Rig rig, Item stack, long quantity)
+    {
+        var connection = await rig.Source.OpenConnectionAsync();
+        var transaction = await connection.BeginTransactionAsync();
+        await rig.Items.LockAndGetAsync(connection, transaction, stack.Id);
+        return async () =>
+        {
+            await rig.Items.MoveStackAsync(connection, transaction, stack, quantity, stack.OwnerId, Escrow, ItemFlags.Hangar);
+            await transaction.CommitAsync();
+            await transaction.DisposeAsync();
+            await connection.DisposeAsync();
+        };
+    }
+
+    [PgFact]
+    public async Task A_load_that_read_a_stack_a_sale_then_took_from_starts_over_and_loads_what_is_left()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (c, gun, stack) = await ArmedWithStackAsync(rig, 500);
+        var finishSale = await SaleHoldingAsync(rig, stack, 450);
+
+        // the load reads 500 rounds, then waits for the row the sale holds
+        var load = rig.Ships.LoadAmmoAsync(c.CharacterId, c.ShipId, [gun], [stack.Id], Rig.Station);
+        await Task.Delay(700);
+        Assert.False(load.IsCompleted, "the load did not wait for the row the sale holds");
+        await finishSale();
+
+        Assert.IsType<AmmoChanged>(await load);
+        var charge = Assert.Single(await rig.Items.InLocationAsync(c.ShipId, c.CharacterId), i => i.Flag == Slot && i.TypeId == Antimatter);
+        var escrowed = Assert.Single(await rig.Items.InLocationAsync(Escrow, c.CharacterId));
+        var hangar = (await rig.Items.InLocationAsync(Rig.Station, c.CharacterId)).Where(i => i.TypeId == Antimatter).Sum(i => i.Quantity);
+        // 450 are in escrow, the 50 that were left went into the gun, and every one of the 500 is somewhere once
+        Assert.Equal((50L, 450L, 0L), (charge.Quantity, escrowed.Quantity, hangar));
+    }
+
+    [PgFact]
+    public async Task Two_loads_of_the_same_stack_do_not_load_it_twice()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (c, gun, stack) = await ArmedWithStackAsync(rig, 500);
+
+        var loads = await Task.WhenAll(
+            Enumerable.Range(0, 4).Select(_ => rig.Ships.LoadAmmoAsync(c.CharacterId, c.ShipId, [gun], [stack.Id], Rig.Station)));
+
+        Assert.All(loads, outcome => Assert.IsType<AmmoChanged>(outcome));
+        var charge = Assert.Single(await rig.Items.InLocationAsync(c.ShipId, c.CharacterId), i => i.Flag == Slot && i.TypeId == Antimatter);
+        var hangar = (await rig.Items.InLocationAsync(Rig.Station, c.CharacterId)).Where(i => i.TypeId == Antimatter).Sum(i => i.Quantity);
+        Assert.Equal((80L, 420L), (charge.Quantity, hangar));
+    }
+
+    [PgFact]
+    public async Task A_stack_that_is_given_more_of_is_grown_from_what_the_lock_finds_and_not_from_what_was_read()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (c, _, stack) = await ArmedWithStackAsync(rig, 500);
+        var finishSale = await SaleHoldingAsync(rig, stack, 200);
+
+        var granted = rig.Ships.GrantAsync(c.CharacterId, Antimatter, 100, singleton: false);
+        await Task.Delay(700);
+        Assert.False(granted.IsCompleted, "the grant did not wait for the row the sale holds");
+        await finishSale();
+        await granted;
+
+        var hangar = (await rig.Items.InLocationAsync(Rig.Station, c.CharacterId)).Where(i => i.TypeId == Antimatter).Sum(i => i.Quantity);
+        var escrowed = Assert.Single(await rig.Items.InLocationAsync(Escrow, c.CharacterId)).Quantity;
+        Assert.Equal((400L, 200L), (hangar, escrowed)); // 500 + 100 is 600, and none of it twice
+    }
+}

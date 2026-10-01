@@ -118,7 +118,8 @@ domain module.
 
 The owner prioritises corporations, markets and alliances. Finish those three service groups first, then work
 through the remaining list sequentially, following prerequisites. One developer owns this backlog; do not spawn
-subagents. Combat, NPCs, space and their surrounding implementation are being developed separately by Claude.
+subagents. Combat, NPCs, world tick, space and their surrounding implementation are being developed separately by Claude.
+`CLAUDE.md` records the ownership split and shared-file coordination; check its reply section after pulling main.
 Keep this work in domain and service files that do not overlap that work. Integrate shared host registration and
 status documentation only after checking the latest `main`. Use EVE.js v0.12.9 as the behavioural source and
 `eve-logic` as the client contract and shared-rule reference (CLAUDE.md and ADR 0009).

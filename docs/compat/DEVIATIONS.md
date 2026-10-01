@@ -88,6 +88,14 @@ Each is matched to the reference today. None is decided; the evidence needed is 
 | Session and cache objects are sent in the reference's order | The client may not depend on the order | A run of the client with the order changed |
 | One JSON document per legacy table, with a synchronous cache-first API | It is storage and internal structure | Nothing observable; decided by the design of each domain module |
 
+## Owner-directed economic changes (2026-10-01)
+
+| # | Behaviour | Reference does | eve.rs does | Evidence | Status |
+|---|---|---|---|---|---|
+| 100 | Credit capacity and corporate distributions/liquidation | Corporate primitives clip an over-cap credit; a full debit or zeroed corporation wallet can therefore lose value | Rejects the complete operation before writing; every recipient and division shares a PostgreSQL transaction | Owner's explicit reliability direction; clipping examples reproduced as regression tests, with a clipping mutation caught | owner-requested; domain verified, native-client acceptance pending |
+| 101 | ISK balance ceiling | Wallet ceiling is 10000000000000 | Exact decimal ceiling 1145141919364364, enforced in APIs and DB | Owner's explicit value; exact-ceiling and one-cent-over checks | owner-requested; domain verified |
+| 102 | Long-lived settlement receipts | Authority keeps at most 1024 receipts | Durable settlement table has no receipt eviction; changed terms are errors | Replay after 1026 settlements changes no balance | internal persistence change; verified |
+
 ## Not yet matched
 
 Behaviour of the reference that eve.rs does not have yet, and where it will come from. These are gaps, not

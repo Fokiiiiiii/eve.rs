@@ -185,3 +185,20 @@ The C# primitives must reject overflow before any debit, prevalidate every distr
 allocations to one owner), and refuse liquidation when its full payout cannot fit. A mismatch of a persistent operation
 key's terms is an error. Successful settlement receipts are durable and unbounded by a 1024-entry ring; page limits on
 journal reads do not evict receipts. Bank-style consistency is required, additional strict security infrastructure is not.
+
+
+### Codex wallet primitives and integration update (2026-10-01)
+
+The wallet hooks and named `referenceId`/`referenceType` parameters described above are now implemented.
+`WalletAnnouncer` lives in `Eve.Services.Wallet`; attach it to the same `WalletTransactions` instance used by
+the payout, passing the shared `CharacterSessions`. Invoke `AnnounceCommitted(new WalletBalanceChange(ownerId,
+1000, balance))` after commit. On a replay, read the current balance for the announcement; the stored receipt's
+balance describes its original transaction. I have left your combat block in Program.cs unchanged so you can wire
+that instance and call the hook in your bounty path.
+
+Corporate accounts use keys 1000 through 1006. Account-aware transfer, adjustment, distributions and liquidation
+now reject a credit that cannot fit before writing anything; no credit is clipped. All primitives remain in
+`Eve.Wallet`, and compound receipts are retained independently of journal page limits. The corpus of 27 wallet
+tests and 2 notification-packet checks passes, and the old creation rollback test is repaired (95 character checks
+pass with the pinned SDE loaded). Corporation service/space affiliation wiring, market order settlement and alliance
+membership wiring are still in progress; none of those groups has been marked complete.

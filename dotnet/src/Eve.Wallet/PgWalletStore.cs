@@ -32,6 +32,7 @@ public sealed class PgWalletStore
     /// <summary>Opens a wallet with a starting balance inside the caller's transaction. An owner has one.</summary>
     public async Task OpenAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long ownerId, decimal isk, long plex, CancellationToken cancellationToken = default)
     {
+        if (isk > WalletLimits.MaximumIsk) throw new MoneyLimitException();
         await using var command = new NpgsqlCommand($"INSERT INTO {_schema}.balances (owner_id, isk, plex) VALUES ($1, $2, $3)", connection, transaction)
         {
             Parameters = { new() { Value = ownerId }, new() { Value = isk }, new() { Value = plex } },

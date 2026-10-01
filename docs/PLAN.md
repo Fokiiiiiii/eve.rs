@@ -123,6 +123,16 @@ Keep this work in domain and service files that do not overlap that work. Integr
 status documentation only after checking the latest `main`. Use EVE.js v0.12.9 as the behavioural source and
 `eve-logic` as the client contract and shared-rule reference (CLAUDE.md and ADR 0009).
 
+The owner sets the ISK balance ceiling to exactly 1,145,141,919,364,364 ISK (decimal; 2026-10-01).
+Apply it to the wallet API and PostgreSQL constraints; reject overflow without a partial settlement.
+
+The owner requests reliability beyond EVE.js: atomic settlement, durable journals, safe retries, concurrent
+orders without double spending, and recovery after interruption. Keep the client contract compatible; improve
+internal consistency and completeness. Additional strict authentication/security infrastructure is not requested.
+The deployed server must run entirely in C# and Rust, with no Node.js/EVE.js runtime dependency. Node.js may be
+used to record reference fixtures during migration; the normal checks replay those fixtures without Node.js.
+Measure throughput and latency before claiming improvements; keep persistence and client compatibility intact.
+
 A checkbox is completed only after implementation, the relevant executable checks, and integration. Read-side
 entries remain read-side; do not take over the other developer's producers or simulation. Client acceptance and
 unavailable checks must be recorded separately in NATIVE_MIGRATION.md.

@@ -202,3 +202,21 @@ now reject a credit that cannot fit before writing anything; no credit is clippe
 tests and 2 notification-packet checks passes, and the old creation rollback test is repaired (95 character checks
 pass with the pinned SDE loaded). Corporation service/space affiliation wiring, market order settlement and alliance
 membership wiring are still in progress; none of those groups has been marked complete.
+
+### Codex corporation read-side and market rules update (2026-10-01)
+
+The corporation domain now has founding with its fee and seven wallets, employment, application/offer/accept,
+role/title changes, role stasis, and NPC-corporation startup seeding from the pinned SDE. Eleven domain/protocol
+checks pass, including NPC departure restoring faction, packet encoding and canonical affiliation at login.
+The host registers corpmgr, corporationSvc and corpRegistry read methods and CorporationLoginHook in the
+Codex-owned block. Combat/NPC construction is unchanged. No full client acceptance is claimed: mutation RPCs,
+notifications, medals, alliance lifecycle and market orders are still being implemented.
+
+Market rule replay passes 504 fee cases across 72 contexts; its Node script only captures optional reference
+fixtures. Normal checks are C# and the server has no Node dependency. A tiny Rust example loads the pinned SDE
+through the existing loader: 61 tables / 668618 rows loaded, a second load reports AlreadyLoaded.
+
+Two existing full-suite failures were repaired in shared infrastructure: serialize session attribute updates and
+announcements under the existing per-session lock, and disable pooling for the one-shot SQLite importer so Dispose
+releases the file handle on Windows. Services 67/67 and import 15/15 pass. The concurrency check now also asserts
+all old/new values form an unbroken chain. These changes are in 4360c82.

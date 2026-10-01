@@ -243,3 +243,14 @@ repository; the Carbon-derived integration keeps its MIT notice.
 - **Corporate wallet primitives (2026-10-01):** wallet migration 004 stores all seven divisions under the same typed balance table and keeps legacy personal/master-wallet reads scoped to key 1000. `DistributeAsync`, account-aware `TransferAsync`, `AdjustAsync` and `LiquidateAsync` validate every leg before writing, reject over-cap credits instead of clipping, lock accounts in owner/key order, and keep money, journals and a durable settlement receipt in the caller's transaction. A savepoint restores the entire settlement on a late journal failure even if a caller catches the error and commits other work. Receipts are not evicted; query limits only paginate journals. PostgreSQL 18.4: 27 wallet tests pass, zero skipped, including the owner's clipping examples, duplicate recipients, concurrent distributions, seven-division liquidation, replay after 1026 settlements and a late SQL failure. Replacing rejection with clipping makes the regression test fail; rejection was restored and all tests passed.
 - **Wallet handoff:** `BalanceCommitted` / `AnnounceCommitted(WalletBalanceChange)` are explicit after-commit hooks. `WalletAnnouncer` owns the reference's `OnAccountChange` wire shapes (two packet tests pass); host/bounty hookup is still pending. Journal migration 005 adds `referenceId` / `referenceType`, kept in replay-term validation. Existing bounty callers compile unchanged and all 12 PgBountyStore tests pass. The broken character-creation fault setup now drops the wallet table with CASCADE; all 95 character tests pass after loading the pinned SDE.
 - **Windows validation data:** the official SDE build 3396210 archive matched the compiled-in SHA-256. The production Rust loader was invoked by the small `load_pinned` example (the documented `eve-sde` bin is absent): 61 tables / 668618 rows, then `AlreadyLoaded` on replay. This touched the independent test database only. Real-client acceptance and performance comparisons remain unverified.
+
+### S5 economy work in progress — 2026-10-01
+
+- Corporation persistence, founding fee, seven wallets, membership applications, employment, roles/titles and NPC
+  catalog seeding: implemented backend. Native read adapters and login role restoration are registered in Host;
+  11 domain/protocol checks pass. Mutation RPCs and notifications remain in progress.
+- Market limits/fees: reference replay of 72 contexts / 504 cases passes in 3 C# tests. Order book, matching,
+  inventory custody, price history and seeds remain in progress.
+- Alliance schema and source contract tracing are prepared; lifecycle remains in progress.
+- Private test PostgreSQL has pinned SDE build 3396210: 61 tables / 668618 records, hash verified and replay AlreadyLoaded.
+- Real client acceptance and performance measurements remain unverified. No backlog service group is marked complete.

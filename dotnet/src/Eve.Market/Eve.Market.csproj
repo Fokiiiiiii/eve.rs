@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Eve.Data/Eve.Data.csproj" />
+    <ProjectReference Include="../Eve.Inventory/Eve.Inventory.csproj" />
+    <ProjectReference Include="../Eve.Wallet/Eve.Wallet.csproj" />
+    <ProjectReference Include="../Eve.Universe/Eve.Universe.csproj" />
+  </ItemGroup>
+  <ItemGroup><EmbeddedResource Include="Migrations/*.sql" /></ItemGroup>
+</Project>

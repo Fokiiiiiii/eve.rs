@@ -23,6 +23,7 @@
     <ProjectReference Include="../Eve.Services.Skills/Eve.Services.Skills.csproj" />
     <ProjectReference Include="../Eve.Services.CharacterInfo/Eve.Services.CharacterInfo.csproj" />
     <ProjectReference Include="../Eve.Services.Wallet/Eve.Services.Wallet.csproj" />
+    <ProjectReference Include="../Eve.Services.Corporations/Eve.Services.Corporations.csproj" />
     <ProjectReference Include="../Eve.Services.Station/Eve.Services.Station.csproj" />
     <ProjectReference Include="../Eve.Services.Inventory/Eve.Services.Inventory.csproj" />
     <ProjectReference Include="../Eve.Services.Space/Eve.Services.Space.csproj" />

@@ -22,7 +22,7 @@ public sealed record NewCharacter(
 public sealed class NameTakenException(string name) : Exception($"the name {name} is taken");
 
 /// <summary>Characters in PostgreSQL, in the module's own schema (<c>characters</c> unless told otherwise).</summary>
-public sealed class PgCharacterStore
+public sealed partial class PgCharacterStore
 {
     public const string DefaultSchema = "characters";
 

@@ -211,6 +211,16 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 break;
             case SimTargetRefused:
                 break; // nobody is waiting for it
+            case SimContainerPlaced placed when _answered.TryRemove((placed.SessionId, SimCommands.PlaceContainer), out var placing):
+                placing.TrySetResult(new CommandReply(true, 0, null) { Position = placed.Position, Direction = placed.Direction });
+                break;
+            case SimContainerPlaced:
+                break; // nobody is waiting for it
+            case SimMeasured measured when _answered.TryRemove((measured.SessionId, measured.Command), out var measuring):
+                measuring.TrySetResult(new CommandReply(true, 0, null) { Distance = measured.Distance });
+                break;
+            case SimMeasured:
+                break; // nobody is waiting for it
             default:
                 Received?.Invoke(message);
                 break;
@@ -288,6 +298,13 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         AwaitAsync(_entering, respawn.SessionId, respawn, cancellationToken);
 
     public void PlaceWreck(SimPlaceWreck wreck) => Send(wreck);
+
+    public Task<CommandReply> PlaceContainerAsync(SimPlaceContainer can, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_answered, (can.SessionId, SimCommands.PlaceContainer), can, cancellationToken);
+
+    public void ChangeWreck(long wreckId, bool isEmpty) => Send(new SimChangeWreck(wreckId, isEmpty));
+
+    public void RemoveWreck(long wreckId, int effect) => Send(new SimRemoveWreck(wreckId, effect));
 
     public void Destroy(long shipId, SimCredit credit) => Send(new SimDestroy(shipId, credit));
 

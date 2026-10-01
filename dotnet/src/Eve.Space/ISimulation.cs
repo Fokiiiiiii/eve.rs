@@ -21,6 +21,14 @@ public sealed record CommandReply(bool Accepted, long At, string? Reason, double
     public double DesiredRange { get; init; }
 
     public double ActualDistance { get; init; }
+
+    /// <summary>Where a can that was placed lies and how it faces (the answer to a <see cref="SimPlaceContainer"/>).</summary>
+    public IReadOnlyList<double> Position { get; init; } = [];
+
+    public IReadOnlyList<double> Direction { get; init; } = [];
+
+    /// <summary>How far a wreck or can is, measured to its surface (the answer to <see cref="SimCommands.Measure"/>; null: there is no such wreck).</summary>
+    public double? Distance { get; init; }
 }
 
 /// <summary>The simulation cannot be reached (it is not running, or the link broke).</summary>
@@ -68,6 +76,15 @@ public interface ISimulation
 
     /// <summary>Puts a wreck the host made in space (where the ship was destroyed), in the scene of its system if there is one.</summary>
     void PlaceWreck(SimPlaceWreck wreck);
+
+    /// <summary>Puts a can the host made ahead of a pilot's ship and waits for the answer: where it lies (<see cref="CommandReply.Position"/>), or why it could not be done.</summary>
+    Task<CommandReply> PlaceContainerAsync(SimPlaceContainer can, CancellationToken cancellationToken = default);
+
+    /// <summary>Tells the scene that what is in a wreck or a can changed (it has something to take, or nothing).</summary>
+    void ChangeWreck(long wreckId, bool isEmpty);
+
+    /// <summary>Takes a wreck or a can out of space, with the destruction effect <paramref name="effect"/> played first when it is not 0.</summary>
+    void RemoveWreck(long wreckId, int effect);
 
     /// <summary>Destroys a ship: the explosion, the wreck (for <paramref name="credit"/> to loot), and (for a player's ship) a <see cref="SimDestroyed"/> that comes back through <see cref="Received"/>.</summary>
     void Destroy(long shipId, SimCredit credit);

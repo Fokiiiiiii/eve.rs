@@ -112,6 +112,12 @@ public static class SimCommands
 
     /// <summary>What the ship has taken, answered with <see cref="SimConditionReply"/>.</summary>
     public const byte GetCondition = 19;
+
+    /// <summary>How far a wreck or a can is (its id), answered with <see cref="SimMeasured"/>.</summary>
+    public const byte Measure = 20;
+
+    /// <summary>The code a <see cref="SimPlaceContainer"/> is answered under (<see cref="SimContainerPlaced"/>, or <see cref="SimRefused"/>).</summary>
+    public const byte PlaceContainer = 28;
 }
 
 public sealed record SimCommand(ulong SessionId, byte Code, IReadOnlyList<double> Args) : SimMessage;
@@ -237,6 +243,25 @@ public sealed record SimRespawn(ulong SessionId, SimShip Ship, IReadOnlyList<dou
 public sealed record SimPlaceWreck(
     int SolarSystemId, long WreckId, int GroupId, SimWreckKind Kind, IReadOnlyList<double> Position, IReadOnlyList<double> Direction, double Radius, long LauncherId, SimCredit Credit,
     bool IsEmpty) : SimMessage;
+
+/// <summary>
+/// A can the host made (an item of its own) for cargo a pilot jettisons: the scene puts it <see cref="Distance"/> metres ahead of the pilot's ship (never nearer than fifty), tells
+/// those who see it the ball and the effect that plays the jettison, and answers with <see cref="SimContainerPlaced"/> (or <see cref="SimRefused"/> under
+/// <see cref="SimCommands.PlaceContainer"/>).
+/// </summary>
+public sealed record SimPlaceContainer(ulong SessionId, long ContainerId, SimWreckKind Kind, double Radius, long LauncherId, SimCredit Credit, double Distance) : SimMessage;
+
+/// <summary>A can the host asked for is in space: where it lies and how it faces.</summary>
+public sealed record SimContainerPlaced(ulong SessionId, long ContainerId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage;
+
+/// <summary>What is in a wreck or a can changed (it has something to take, or nothing): whoever has it in view is told its slim item again.</summary>
+public sealed record SimChangeWreck(long WreckId, bool IsEmpty) : SimMessage;
+
+/// <summary>Takes a wreck or a can out of space; <see cref="Effect"/> is the destruction effect the client plays first (0: none).</summary>
+public sealed record SimRemoveWreck(long WreckId, int Effect) : SimMessage;
+
+/// <summary>The answer to <see cref="SimCommands.Measure"/>: metres from the centre of the ship to the surface of the wreck or can, or null when there is no such wreck.</summary>
+public sealed record SimMeasured(ulong SessionId, byte Command, double? Distance) : SimMessage;
 
 /// <summary>Who may take what a destroyed ship leaves: the pilot and the corporation, the alliance and the faction they are in (0 for none).</summary>
 public sealed record SimCredit(long CharacterId, long CorporationId, long AllianceId, long WarFactionId)

@@ -12,7 +12,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Charge, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 
 /// The message kinds.
 pub mod kind {
@@ -43,7 +43,15 @@ pub mod kind {
     pub const RESPAWN: u8 = 25;
     pub const PLACE_WRECK: u8 = 26;
     pub const CHARGE_SPENT: u8 = 27;
+    pub const PLACE_CONTAINER: u8 = 28;
+    pub const CONTAINER_PLACED: u8 = 29;
+    pub const CHANGE_WRECK: u8 = 30;
+    pub const REMOVE_WRECK: u8 = 31;
+    pub const MEASURED: u8 = 32;
 }
+
+/// The command that asks how far a wreck or a can is (`args`: its item id); answered with `Measured`.
+pub const COMMAND_MEASURE: u8 = 20;
 
 /// How a ship comes into space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +94,19 @@ pub struct WreckPlacement {
     pub credit: Credit,
     /// Nothing in it to take.
     pub is_empty: bool,
+}
+
+/// A can the host made (an item of its own) for a pilot who jettisons cargo: the scene puts it `distance` metres ahead of the pilot's ship.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContainerPlacement {
+    pub session_id: u64,
+    pub container_id: i64,
+    pub kind: WreckKind,
+    pub radius: f64,
+    /// The ship that jettisoned it.
+    pub launcher_id: i64,
+    pub credit: Credit,
+    pub distance: f64,
 }
 
 /// A ship enters a solar system.
@@ -235,6 +256,31 @@ pub enum Message {
     },
     /// The host has made a wreck (an item with contents) of a ship that was destroyed, and asks the scene to put it in space.
     PlaceWreck(Box<WreckPlacement>),
+    /// The host has made a can for cargo a pilot jettisons, and asks the scene to put it ahead of the pilot's ship (answered with `ContainerPlaced`).
+    PlaceContainer(Box<ContainerPlacement>),
+    /// A can the host asked for is in space: where it is and how it lies.
+    ContainerPlaced {
+        session_id: u64,
+        container_id: i64,
+        position: [f64; 3],
+        direction: [f64; 3],
+    },
+    /// What is in a wreck or a can changed (it has something to take, or nothing): whoever has it in view is told its slim item again.
+    ChangeWreck {
+        wreck_id: i64,
+        is_empty: bool,
+    },
+    /// The host takes a wreck or a can out of space (`effect`: the destruction effect the client plays first, 0 for none).
+    RemoveWreck {
+        wreck_id: i64,
+        effect: i32,
+    },
+    /// The answer to `COMMAND_MEASURE`: metres from the centre of the ship to the surface of the wreck or can, or none when there is no such wreck.
+    Measured {
+        session_id: u64,
+        command: u8,
+        distance: Option<f64>,
+    },
     /// A targeting command the scene refused, with what the client is told of the target: its type, the range the ship can lock at and how far
     /// away the target is (both 0 unless the target was out of range; for `TARGET_LOCK_LIMIT_REACHED` the range is the number of targets the ship
     /// may hold).
@@ -780,6 +826,11 @@ impl Message {
             Self::Respawn { .. } => kind::RESPAWN,
             Self::PlaceWreck(_) => kind::PLACE_WRECK,
             Self::ChargeSpent { .. } => kind::CHARGE_SPENT,
+            Self::PlaceContainer(_) => kind::PLACE_CONTAINER,
+            Self::ContainerPlaced { .. } => kind::CONTAINER_PLACED,
+            Self::ChangeWreck { .. } => kind::CHANGE_WRECK,
+            Self::RemoveWreck { .. } => kind::REMOVE_WRECK,
+            Self::Measured { .. } => kind::MEASURED,
         }
     }
 
@@ -914,6 +965,40 @@ impl Message {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&module_id.to_le_bytes());
                 out.extend_from_slice(&rounds_left.to_le_bytes());
+            }
+            Self::PlaceContainer(can) => {
+                out.extend_from_slice(&can.session_id.to_le_bytes());
+                out.extend_from_slice(&can.container_id.to_le_bytes());
+                put_wreck_kind(&mut out, Some(&can.kind));
+                out.extend_from_slice(&can.radius.to_le_bytes());
+                out.extend_from_slice(&can.launcher_id.to_le_bytes());
+                put_credit(&mut out, &can.credit);
+                out.extend_from_slice(&can.distance.to_le_bytes());
+            }
+            Self::ContainerPlaced { session_id, container_id, position, direction } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&container_id.to_le_bytes());
+                put_vector(&mut out, position);
+                put_vector(&mut out, direction);
+            }
+            Self::ChangeWreck { wreck_id, is_empty } => {
+                out.extend_from_slice(&wreck_id.to_le_bytes());
+                out.push(u8::from(*is_empty));
+            }
+            Self::RemoveWreck { wreck_id, effect } => {
+                out.extend_from_slice(&wreck_id.to_le_bytes());
+                out.extend_from_slice(&effect.to_le_bytes());
+            }
+            Self::Measured { session_id, command, distance } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.push(*command);
+                match distance {
+                    Some(distance) => {
+                        out.push(1);
+                        out.extend_from_slice(&distance.to_le_bytes());
+                    }
+                    None => out.push(0),
+                }
             }
             Self::Respawn { session_id, ship, position, direction } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
@@ -1101,6 +1186,48 @@ impl Message {
             },
             kind::CHARGE_SPENT => {
                 Message::ChargeSpent { session_id: r.u64()?, module_id: r.i64()?, rounds_left: r.i64()? }
+            }
+            kind::PLACE_CONTAINER => {
+                let session_id = r.u64()?;
+                let container_id = r.i64()?;
+                let Some(kind) = read_wreck_kind(&mut r)? else {
+                    return Err(DecodeError::BadValue("container"));
+                };
+                Message::PlaceContainer(Box::new(ContainerPlacement {
+                    session_id,
+                    container_id,
+                    kind,
+                    radius: r.f64()?,
+                    launcher_id: r.i64()?,
+                    credit: read_credit(&mut r)?,
+                    distance: r.f64()?,
+                }))
+            }
+            kind::CONTAINER_PLACED => Message::ContainerPlaced {
+                session_id: r.u64()?,
+                container_id: r.i64()?,
+                position: read_vector(&mut r)?,
+                direction: read_vector(&mut r)?,
+            },
+            kind::CHANGE_WRECK => {
+                let wreck_id = r.i64()?;
+                let is_empty = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("is_empty")),
+                };
+                Message::ChangeWreck { wreck_id, is_empty }
+            }
+            kind::REMOVE_WRECK => Message::RemoveWreck { wreck_id: r.i64()?, effect: r.i32()? },
+            kind::MEASURED => {
+                let session_id = r.u64()?;
+                let command = r.u8()?;
+                let distance = match r.u8()? {
+                    0 => None,
+                    1 => Some(r.f64()?),
+                    _ => return Err(DecodeError::BadValue("distance")),
+                };
+                Message::Measured { session_id, command, distance }
             }
             kind::RESPAWN => Message::Respawn {
                 session_id: r.u64()?,

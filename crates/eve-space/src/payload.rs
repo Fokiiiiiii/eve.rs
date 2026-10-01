@@ -77,6 +77,35 @@ pub fn add_wreck(stamp: u32, wreck: &Wreck, now: i64) -> Result<Value, BallError
     Ok(action(stamp, "AddBalls2", [tuple([buffer, list([tuple([slim, wreck_damage_state(now)])])])]))
 }
 
+/// `OnSlimItemChange`: the slim item of a wreck or a can is told again (what is in it, who may take it), as an object.
+pub fn slim_item_change(stamp: u32, wreck: &Wreck) -> Value {
+    action(stamp, "OnSlimItemChange", [tuple([id(wreck.id), slim_object(wreck.slim_entries())])])
+}
+
+/// The effect the client plays where a pilot jettisons cargo (`effects.Jettison`, played on the can: it has no module, target or charge).
+pub fn jettison_effect(stamp: u32, can_id: i64) -> Value {
+    action(
+        stamp,
+        "OnSpecialFX",
+        [
+            id(can_id),
+            Value::None,
+            Value::None,
+            Value::None,
+            Value::None,
+            text("effects.Jettison"),
+            int(0),
+            int(1),
+            int(0),
+            int(-1),
+            Value::None,
+            Value::None,
+            int(0),
+            Value::None,
+        ],
+    )
+}
+
 /// A ship is destroyed: the client plays the explosion where it was, and the ball goes (`TerminalPlayDestructionEffect`, `RemoveBalls`, one stamp).
 pub fn destruction(stamp: u32, ship_id: i64) -> Vec<Value> {
     vec![

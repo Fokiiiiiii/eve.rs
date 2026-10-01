@@ -14,7 +14,8 @@ OUT = os.path.join(HERE, "..", "..", "oracle", "fixtures", "simlink", "messages.
 KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateState": 6, "Command": 7,
          "ShipSpec": 8, "Notify": 9, "Docked": 10, "Refused": 11, "Accepted": 12, "EnterReply": 13, "Approaching": 14,
          "Jumping": 15, "Jumped": 16, "Targets": 17, "TargetRefused": 18, "Activate": 19, "Condition": 20,
-         "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27}
+         "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27,
+         "PlaceContainer": 28, "ContainerPlaced": 29, "ChangeWreck": 30, "RemoveWreck": 31, "Measured": 32}
 
 
 def s(text):  # u16 length + UTF-8
@@ -165,6 +166,17 @@ def build(m):
                      + struct.pack("<7d", *m["position"], *m["direction"], m["radius"]) + i64(m["launcherId"])
                      + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"])
                      + bytes([1 if m["isEmpty"] else 0]))
+    if k == "PlaceContainer":
+        return frame(k, u64(m["sessionId"]) + i64(m["containerId"]) + wreck_kind(m["container"]) + struct.pack("<d", m["radius"]) + i64(m["launcherId"])
+                     + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"]) + struct.pack("<d", m["distance"]))
+    if k == "ContainerPlaced":
+        return frame(k, u64(m["sessionId"]) + i64(m["containerId"]) + struct.pack("<6d", *m["position"], *m["direction"]))
+    if k == "ChangeWreck":
+        return frame(k, i64(m["wreckId"]) + bytes([1 if m["isEmpty"] else 0]))
+    if k == "RemoveWreck":
+        return frame(k, i64(m["wreckId"]) + struct.pack("<i", m["effect"]))
+    if k == "Measured":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + (bytes([1]) + struct.pack("<d", m["distance"]) if m.get("distance") is not None else bytes([0])))
     if k == "Spawn":
         return frame(k, u64(m["requestId"]) + struct.pack("<i", m["solarSystemId"]) + ship(m["ship"]) + i64(m["anchorShipId"])
                      + struct.pack("<9d", *m["position"], *m["velocity"], *m["direction"]) + s(m["behavior"]) + identity(m["identity"]))
@@ -192,8 +204,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 2},
-    {"name": "hello ack", "kind": "HelloAck", "version": 2, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 3},
+    {"name": "hello ack", "kind": "HelloAck", "version": 3, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -338,6 +350,17 @@ valid = [
      "wreckId": "9988400002420", "groupId": 14, "wreck": {"typeId": 26507, "name": "Amarr Frigate Wreck", "graphicId": 0},
      "position": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0], "radius": 30.0, "launcherId": "9988400002400",
      "characterId": "0", "corporationId": "0", "allianceId": "0", "warFactionId": "0", "isEmpty": True},
+    {"name": "can for cargo a pilot jettisons", "kind": "PlaceContainer", "sessionId": "1790646377000015", "containerId": "9988400002948",
+     "container": {"typeId": 23, "name": "Cargo Container", "graphicId": 1176}, "radius": 14.0, "launcherId": "9988400002940",
+     "characterId": "140000431", "corporationId": "1000006", "allianceId": "0", "warFactionId": "0", "distance": 275.0},
+    {"name": "can that is in space", "kind": "ContainerPlaced", "sessionId": "1790646377000015", "containerId": "9988400002948",
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "direction": [0.6159, 0.01306, 0.78769]},
+    {"name": "wreck with something to take", "kind": "ChangeWreck", "wreckId": "9988400002948", "isEmpty": False},
+    {"name": "wreck with nothing to take", "kind": "ChangeWreck", "wreckId": "9988400002417", "isEmpty": True},
+    {"name": "can taken out of space with the destruction effect", "kind": "RemoveWreck", "wreckId": "9988400002948", "effect": 3},
+    {"name": "wreck taken out of space without one", "kind": "RemoveWreck", "wreckId": "9988400002417", "effect": 0},
+    {"name": "how far a can is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": 261.0},
+    {"name": "how far a can that is not there is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": None},
     {"name": "destroy for nobody", "kind": "Destroy", "shipId": "4200000000000001", "characterId": "0",
      "corporationId": "0", "allianceId": "0", "warFactionId": "0"},
 ]

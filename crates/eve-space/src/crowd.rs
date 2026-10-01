@@ -15,6 +15,10 @@ use crate::ship::Ship;
 use crate::visibility::{Presence, can_see, grid_of};
 use crate::wire::{id, real};
 use crate::wreck::Wreck;
+use eve_destiny::Vec3;
+
+/// The nearest to the ship a jettisoned can is put (the reference's `buildNearbySpawnState`).
+const MIN_JETTISON_DISTANCE: f64 = 50.0;
 
 impl Scene {
     pub(crate) fn next_entry(&mut self) -> u64 {
@@ -238,6 +242,146 @@ impl Scene {
             out.push(Self::update(watcher, vec![added.clone()]));
         }
         out
+    }
+
+    /// The pilots that have bound the ballpark and can see the place of a wreck, in the order they came into the scene.
+    fn watchers_of(&self, wreck: &Wreck) -> Vec<SessionId> {
+        self.in_entry_order()
+            .into_iter()
+            .filter(|s| self.pilots[s].bound && self.sees_place_of(*s, wreck))
+            .collect()
+    }
+
+    /// A pilot jettisons cargo into a can (the host made the can, an item of its own): it comes into the scene `distance` metres ahead of the ship (at
+    /// least fifty), at rest, and whoever has it in view is told in the reference's order: the ball, then the effect that plays the jettison. The place
+    /// it came to is answered to the host (`Out::ContainerPlaced`), after what the watchers are told.
+    pub fn place_container(
+        &mut self,
+        session: SessionId,
+        can: crate::link::ContainerPlacement,
+        now: i64,
+    ) -> Vec<Out> {
+        let Some(ship) = self.ship(session, now) else {
+            return vec![Out::Refused {
+                session,
+                command: crate::link::kind::PLACE_CONTAINER,
+                reason: "NO_SHIP_IN_SPACE",
+            }];
+        };
+        let (origin, facing) = (ship.position, ship.direction);
+        let length = (facing.x * facing.x + facing.y * facing.y + facing.z * facing.z).sqrt();
+        let forward = if length > 0.0 && length.is_finite() {
+            Vec3::new(facing.x / length, facing.y / length, facing.z / length)
+        } else {
+            Vec3::new(1.0, 0.0, 0.0)
+        };
+        let ahead = can.distance.max(MIN_JETTISON_DISTANCE);
+        let position = Vec3::new(
+            origin.x + forward.x * ahead,
+            origin.y + forward.y * ahead,
+            origin.z + forward.z * ahead,
+        );
+        let wreck = Wreck {
+            id: can.container_id,
+            group_id: crate::wreck::CONTAINER_GROUP,
+            kind: can.kind,
+            position,
+            direction: forward,
+            radius: can.radius,
+            owner_id: can.credit.character_id,
+            corporation_id: can.credit.corporation_id,
+            alliance_id: can.credit.alliance_id,
+            war_faction_id: can.credit.war_faction_id,
+            rights: crate::wreck::LootRights {
+                character_id: can.credit.character_id,
+                corporation_id: can.credit.corporation_id,
+            },
+            launcher_id: can.launcher_id,
+            is_empty: true,
+            expires_at: now + crate::wreck::WRECK_LIFETIME,
+        };
+        let id = wreck.id;
+        self.wrecks.insert(id, wreck);
+        let stamp = self.next_stamp(now);
+        let Some(wreck) = self.wrecks.get(&id) else { return Vec::new() };
+        let Ok(added) = payload::add_wreck(stamp, wreck, now) else {
+            self.wrecks.remove(&id);
+            return vec![Out::Refused {
+                session,
+                command: crate::link::kind::PLACE_CONTAINER,
+                reason: "BAD_BALL",
+            }];
+        };
+        let played = payload::jettison_effect(stamp, id);
+        let watchers = self.watchers_of(wreck);
+        let mut out = Vec::new();
+        for watcher in watchers {
+            if let Some(pilot) = self.pilots.get_mut(&watcher) {
+                pilot.sees_wrecks.insert(id);
+            }
+            out.push(Self::update(watcher, vec![added.clone()]));
+            out.push(Self::update(watcher, vec![played.clone()]));
+        }
+        out.push(Out::ContainerPlaced { session, container_id: id, position, direction: forward });
+        out
+    }
+
+    /// What is in a wreck or a can changed: its slim item is told again to whoever has it in view (`OnSlimItemChange`).
+    pub fn change_wreck(&mut self, wreck_id: i64, is_empty: bool, now: i64) -> Vec<Out> {
+        let Some(wreck) = self.wrecks.get_mut(&wreck_id) else { return Vec::new() };
+        wreck.is_empty = is_empty;
+        let stamp = self.next_stamp(now);
+        let Some(wreck) = self.wrecks.get(&wreck_id) else { return Vec::new() };
+        let changed = payload::slim_item_change(stamp, wreck);
+        self.in_entry_order()
+            .into_iter()
+            .filter(|s| self.pilots[s].bound && self.pilots[s].sees_wrecks.contains(&wreck_id))
+            .map(|watcher| Self::update(watcher, vec![changed.clone()]))
+            .collect()
+    }
+
+    /// A wreck or a can is taken out of space by the host (it was emptied, or its time ran out): whoever had it in view is told, with the destruction effect
+    /// `effect` played first when there is one (`0`: none).
+    pub fn remove_wreck(&mut self, wreck_id: i64, effect: i64, now: i64) -> Vec<Out> {
+        if self.wrecks.remove(&wreck_id).is_none() {
+            return Vec::new();
+        }
+        let watchers: Vec<SessionId> = self
+            .in_entry_order()
+            .into_iter()
+            .filter(|s| self.pilots[s].bound && self.pilots[s].sees_wrecks.contains(&wreck_id))
+            .collect();
+        for pilot in self.pilots.values_mut() {
+            pilot.sees_wrecks.remove(&wreck_id);
+        }
+        if watchers.is_empty() {
+            return Vec::new();
+        }
+        let stamp = self.next_stamp(now);
+        let mut actions = Vec::new();
+        if effect != 0 {
+            actions.push(payload::action(
+                stamp,
+                "TerminalPlayDestructionEffect",
+                [id(wreck_id), crate::wire::int(effect)],
+            ));
+        }
+        actions.push(payload::remove_ships(stamp, [wreck_id]));
+        watchers.into_iter().map(|w| Self::update(w, actions.clone())).collect()
+    }
+
+    /// How far the surface of a wreck or a can is from the centre of the pilot's ship (what the reference measures a container's range by), or `None`
+    /// when the pilot has no ship or the wreck is not in the scene.
+    pub fn distance_to_wreck(&mut self, session: SessionId, wreck_id: i64, now: i64) -> Option<f64> {
+        let (position, radius) = {
+            let wreck = self.wrecks.get(&wreck_id)?;
+            (wreck.position, wreck.radius)
+        };
+        let ship = self.ship(session, now)?.position;
+        let centre =
+            ((ship.x - position.x).powi(2) + (ship.y - position.y).powi(2) + (ship.z - position.z).powi(2))
+                .sqrt();
+        Some((centre - radius.max(0.0)).max(0.0))
     }
 
     /// The wrecks that were due to go by `now` go: whoever had one in view is told.
@@ -756,5 +900,202 @@ mod tests {
             out
         };
         assert_eq!(run(), run());
+    }
+
+    fn can_kind() -> crate::wreck::WreckKind {
+        crate::wreck::WreckKind { type_id: 23, name: "Cargo Container".to_string(), graphic_id: Some(1176) }
+    }
+
+    fn credit() -> crate::death::Credit {
+        crate::death::Credit {
+            character_id: 140_000_342,
+            corporation_id: 1_000_006,
+            alliance_id: 0,
+            war_faction_id: 0,
+        }
+    }
+
+    fn can_for(session: SessionId, id: i64, distance: f64) -> crate::link::ContainerPlacement {
+        crate::link::ContainerPlacement {
+            session_id: session,
+            container_id: id,
+            kind: can_kind(),
+            radius: 14.0,
+            launcher_id: spec().ship_id,
+            credit: credit(),
+            distance,
+        }
+    }
+
+    fn slim_of(out: &Out, action_name: &str) -> Option<Vec<(String, Value)>> {
+        let Out::Notify { args, .. } = out else { return None };
+        let Some(Value::List(actions)) = args.first() else { return None };
+        for action in actions {
+            let Value::Tuple(pair) = action else { continue };
+            let Value::Tuple(inner) = &pair[1] else { continue };
+            if !matches!(&inner[0], Value::Str(name) if &**name == action_name) {
+                continue;
+            }
+            let Value::Tuple(arguments) = &inner[1] else { continue };
+            // AddBalls2 holds (buffer, [(slim, damage)]); OnSlimItemChange holds (id, slim)
+            let slim = match (action_name, &arguments[0]) {
+                ("AddBalls2", Value::Tuple(parts)) => match &parts[1] {
+                    Value::List(items) => match &items[0] {
+                        Value::Tuple(pair) => pair[0].clone(),
+                        other => other.clone(),
+                    },
+                    other => other.clone(),
+                },
+                (_, Value::Tuple(parts)) => parts[1].clone(),
+                (_, other) => other.clone(),
+            };
+            let entries = match slim {
+                Value::Dict(entries) => entries,
+                Value::Object { args, .. } => match *args {
+                    Value::Dict(entries) => entries,
+                    _ => return None,
+                },
+                _ => return None,
+            };
+            return Some(
+                entries
+                    .into_iter()
+                    .map(|(k, v)| match k {
+                        Value::Str(name) => (name.to_string(), v),
+                        other => (format!("{other:?}"), v),
+                    })
+                    .collect(),
+            );
+        }
+        None
+    }
+
+    fn keys(entries: &[(String, Value)]) -> Vec<&str> {
+        entries.iter().map(|(k, _)| k.as_str()).collect()
+    }
+
+    #[test]
+    fn a_jettisoned_can_comes_ahead_of_the_ship_and_the_pilot_is_told_the_ball_then_the_effect_and_the_host_where_it_lies()
+     {
+        let mut scene = watcher();
+        let ship = scene.ship(A, NOON + SECOND).unwrap().clone();
+        let out = scene.place_container(A, can_for(A, 9_988_400_002_948, 275.0), NOON + SECOND);
+
+        // the pilot is sent two updates, one stamp, and the host the place
+        assert_eq!(out.len(), 3, "{out:?}");
+        assert_eq!(names(&out[0]), ["AddBalls2"]);
+        assert_eq!(names(&out[1]), ["OnSpecialFX"]);
+        assert_eq!(stamps(&out[0]), stamps(&out[1]));
+        let Out::ContainerPlaced { session, container_id, position, direction } = &out[2] else {
+            panic!("{out:?}")
+        };
+        assert_eq!((*session, *container_id), (A, 9_988_400_002_948));
+        let ahead = ((position.x - ship.position.x).powi(2)
+            + (position.y - ship.position.y).powi(2)
+            + (position.z - ship.position.z).powi(2))
+        .sqrt();
+        assert!((ahead - 275.0).abs() < 1e-6, "{ahead}");
+        assert!(
+            (direction.x * direction.x + direction.y * direction.y + direction.z * direction.z - 1.0).abs()
+                < 1e-9
+        );
+        // the slim item of the ball has no rights and no turn: the reference defers the rights until something is in the can
+        let slim = slim_of(&out[0], "AddBalls2").expect("the slim item");
+        assert_eq!(
+            keys(&slim),
+            [
+                "itemID",
+                "typeID",
+                "ownerID",
+                "name",
+                "groupID",
+                "categoryID",
+                "graphicID",
+                "corpID",
+                "allianceID",
+                "warFactionID",
+                "securityStatus",
+                "isEmpty",
+                "launcherID"
+            ]
+        );
+        assert_eq!(
+            scene.wreck(9_988_400_002_948).map(|w| (w.group_id, w.is_empty)),
+            Some((crate::wreck::CONTAINER_GROUP, true))
+        );
+    }
+
+    #[test]
+    fn a_can_is_never_nearer_than_fifty_metres_and_a_pilot_with_no_ship_gets_none() {
+        let mut scene = watcher();
+        let ship = scene.ship(A, NOON).unwrap().clone();
+        let out = scene.place_container(A, can_for(A, 9_988_400_002_949, 3.0), NOON);
+        let Some(Out::ContainerPlaced { position, .. }) = out.last() else { panic!("{out:?}") };
+        let ahead = ((position.x - ship.position.x).powi(2)
+            + (position.y - ship.position.y).powi(2)
+            + (position.z - ship.position.z).powi(2))
+        .sqrt();
+        assert!((ahead - 50.0).abs() < 1e-6, "{ahead}");
+
+        let none = scene.place_container(99, can_for(99, 9_988_400_002_950, 275.0), NOON);
+        assert!(
+            matches!(&none[..], [Out::Refused { session: 99, reason: "NO_SHIP_IN_SPACE", .. }]),
+            "{none:?}"
+        );
+        assert!(scene.wreck(9_988_400_002_950).is_none());
+    }
+
+    #[test]
+    fn what_is_put_in_a_can_is_told_as_its_slim_item_with_the_rights_and_what_is_taken_out_of_it_ends_with_the_ball_going()
+     {
+        let mut scene = watcher();
+        let id = 9_988_400_002_948;
+        scene.place_container(A, can_for(A, id, 275.0), NOON);
+
+        let filled = scene.change_wreck(id, false, NOON + SECOND);
+        assert_eq!(filled.len(), 1);
+        assert_eq!(names(&filled[0]), ["OnSlimItemChange"]);
+        let slim = slim_of(&filled[0], "OnSlimItemChange").expect("the slim item");
+        assert_eq!(
+            keys(&slim),
+            [
+                "itemID",
+                "typeID",
+                "ownerID",
+                "name",
+                "groupID",
+                "categoryID",
+                "graphicID",
+                "corpID",
+                "allianceID",
+                "warFactionID",
+                "securityStatus",
+                "isEmpty",
+                "lootRights",
+                "launcherID"
+            ]
+        );
+
+        // the host takes the can out when it is empty: the destruction effect plays, then the ball goes, in one stamp
+        let gone = scene.remove_wreck(id, 3, NOON + 2 * SECOND);
+        assert_eq!(gone.len(), 1);
+        assert_eq!(names(&gone[0]), ["TerminalPlayDestructionEffect", "RemoveBalls"]);
+        assert!(scene.wreck(id).is_none());
+        assert!(scene.pilots[&A].sees_wrecks.is_empty());
+        // a can that is not there is nothing to tell
+        assert!(scene.remove_wreck(id, 3, NOON + 3 * SECOND).is_empty());
+        assert!(scene.change_wreck(id, true, NOON + 3 * SECOND).is_empty());
+    }
+
+    #[test]
+    fn how_far_a_can_is_is_measured_from_the_centre_of_the_ship_to_the_surface_of_the_can() {
+        let mut scene = watcher();
+        let id = 9_988_400_002_948;
+        scene.place_container(A, can_for(A, id, 275.0), NOON);
+        let distance = scene.distance_to_wreck(A, id, NOON).expect("the can is there");
+        // 275 ahead, the can's radius is 14
+        assert!((distance - 261.0).abs() < 1e-6, "{distance}");
+        assert_eq!(scene.distance_to_wreck(A, 12, NOON), None);
+        assert_eq!(scene.distance_to_wreck(99, id, NOON), None);
     }
 }

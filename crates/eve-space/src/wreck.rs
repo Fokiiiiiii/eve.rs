@@ -12,6 +12,8 @@ use crate::wire::{id, int, list, real, text, tuple};
 pub const WRECK_GROUP: i32 = 186;
 /// The group of what a pilot whose capsule is destroyed leaves (`Biomass`: the corpse), also of the category `Celestial`.
 pub const CORPSE_GROUP: i32 = 14;
+/// The group of the cans a pilot jettisons cargo into (`Cargo Container`), also of the category `Celestial`.
+pub const CONTAINER_GROUP: i32 = 12;
 pub const WRECK_CATEGORY: i32 = 2;
 
 /// How long a wreck stays in space: the reference's `spaceDebrisLifetimeMs`, two hours.
@@ -59,6 +61,11 @@ pub struct Wreck {
 }
 
 impl Wreck {
+    /// Whether this is a can a pilot jettisoned cargo into (what it holds is the host's, and it is told as a container, not as a ship's wreck).
+    pub fn is_container(&self) -> bool {
+        self.group_id == CONTAINER_GROUP
+    }
+
     /// The ball the destiny stream describes the wreck with.
     pub fn ball(&self) -> BallEntity {
         BallEntity {
@@ -97,23 +104,32 @@ impl Wreck {
             entries.push(("dunRotation", tuple(turn_of(self.direction).map(number))));
             return entries;
         }
+        let rights = (
+            "lootRights",
+            list([
+                id(self.rights.character_id),
+                id(self.rights.corporation_id),
+                Value::None,
+                Value::Bool(false),
+            ]),
+        );
         entries.extend([
             ("corpID", id(self.corporation_id)),
             ("allianceID", id(self.alliance_id)),
             ("warFactionID", id(self.war_faction_id)),
             ("securityStatus", int(0)),
             ("isEmpty", int(i64::from(self.is_empty))),
-            (
-                "lootRights",
-                list([
-                    id(self.rights.character_id),
-                    id(self.rights.corporation_id),
-                    Value::None,
-                    Value::Bool(false),
-                ]),
-            ),
-            ("launcherID", id(self.launcher_id)),
         ]);
+        if self.is_container() {
+            // a can has no turn, and says who may take what is in it only once something is (the reference defers the rights of a can that was just
+            // jettisoned until its contents moved in: the slim item of its `AddBalls2` has none, the update after has them)
+            if !self.is_empty {
+                entries.push(rights);
+            }
+            entries.push(("launcherID", id(self.launcher_id)));
+            return entries;
+        }
+        entries.extend([rights, ("launcherID", id(self.launcher_id))]);
         entries.push(("dunRotation", tuple(turn_of(self.direction).map(number))));
         entries
     }

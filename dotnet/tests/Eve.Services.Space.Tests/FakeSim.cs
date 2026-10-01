@@ -58,6 +58,23 @@ internal sealed class FakeSim : ISimulation
 
     public void PlaceWreck(SimPlaceWreck wreck) => Heard.Add(wreck);
 
+    /// <summary>What a can that is placed is answered with: where it lies (the test's own place when none is set), or why not.</summary>
+    public CommandReply? PlaceContainerAnswer { get; set; }
+
+    public Task<CommandReply> PlaceContainerAsync(SimPlaceContainer can, CancellationToken cancellationToken = default)
+    {
+        if (!IsConnected)
+        {
+            throw new SimUnavailableException("the simulation is not running");
+        }
+        Heard.Add(can);
+        return Task.FromResult(PlaceContainerAnswer ?? new CommandReply(true, 0, null) { Position = [1000.0, 2000.0, 3000.0], Direction = [1.0, 0.0, 0.0] });
+    }
+
+    public void ChangeWreck(long wreckId, bool isEmpty) => Heard.Add(new SimChangeWreck(wreckId, isEmpty));
+
+    public void RemoveWreck(long wreckId, int effect) => Heard.Add(new SimRemoveWreck(wreckId, effect));
+
     public void Destroy(long shipId, SimCredit credit) => Heard.Add(new SimDestroy(shipId, credit));
 
     public Task<string?> EnterAsync(SimEnter enter, CancellationToken cancellationToken = default)
@@ -98,8 +115,15 @@ internal sealed class FakeSim : ISimulation
         {
             return Task.FromResult(HealAnswer);
         }
+        if (code == SimCommands.Measure)
+        {
+            return Task.FromResult(new CommandReply(true, 0, null) { Distance = MeasureAnswer });
+        }
         return Task.FromResult(code switch { SimCommands.WarpTo => WarpAnswer, SimCommands.Jump => JumpAnswer, _ => DockAnswer });
     }
+
+    /// <summary>How far a wreck or can is said to be (null: there is none).</summary>
+    public double? MeasureAnswer { get; set; } = 100;
 
     /// <summary>What the ship is said to have taken.</summary>
     public SimCondition ConditionAnswer { get; set; } = SimCondition.Full;

@@ -202,3 +202,15 @@ not exist is the scene: which balls a system has, who is where, how commands cha
   the call. The undock place was ours at first and is now the reference's: the sim takes the first undock point of the
   station type's table that suits the ship (`crates/eve-space/data/undock_points.json`, from the reference's static tables;
   `docs/compat/DEVIATIONS.md` #15).
+
+- 2026-10-02, version 3, cans: a pilot who jettisons cargo makes a can (an item of the host's) that the scene puts in space. `PlaceContainer` (28: `session u64`, `container_id i64`,
+  the can's kind as a wreck's (`1`, the type `i32`, the name, the graphic `i32`), the radius `f64`, the launcher `i64`, the credit as in `PlaceWreck`, and the distance
+  `f64`) puts the can that far ahead of the pilot's ship (never nearer than fifty metres), at rest, and those who see it are told in the reference's order: the ball
+  (`AddBalls2`; the slim item of a can has no turn, and no `lootRights` until something is in it) and the effect that plays the jettison (`OnSpecialFX`
+  `effects.Jettison`, played on the can), in one stamp; the host is answered with `ContainerPlaced` (29: `session u64`, `container_id i64`, the place and the way it
+  lies as two vectors of `f64`), or `Refused` under the command code 28. `ChangeWreck` (30: `wreck_id i64`, `is_empty u8`) tells whoever has a wreck or a can in
+  view its slim item again (`OnSlimItemChange`, now with the loot rights) and `RemoveWreck` (31: `wreck_id i64`, `effect i32`) takes it out of space, playing the
+  destruction effect first when `effect` is not 0 (the can that is emptied: 3). The command 20 (`Command`, the wreck's id) asks how far a wreck or a can is, from the
+  centre of the pilot's ship to the surface of the wreck (what the reference measures the range of a container by), and is answered with `Measured` (32:
+  `session u64`, `command u8`, a flag and the distance `f64` when there is a wreck). `Hello` and `HelloAck` carry 3. `oracle/fixtures/simlink/messages.json` holds the
+  frames; `docs/compat/DEVIATIONS.md` says what differs from the reference.

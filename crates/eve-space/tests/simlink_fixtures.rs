@@ -3,7 +3,7 @@
 
 use eve_space::death::Credit;
 use eve_space::health::{Condition, Resonances, Vitals};
-use eve_space::link::{DecodeError, Enter, How, Message, Spawn, WreckPlacement};
+use eve_space::link::{ContainerPlacement, DecodeError, Enter, How, Message, Spawn, WreckPlacement};
 use eve_space::modules::{Change, Effect, Numbers};
 use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use eve_space::weapons::{Charge, Turret};
@@ -329,6 +329,38 @@ fn message_of(case: &Value) -> Message {
             },
             is_empty: case["isEmpty"].as_bool().unwrap(),
         })),
+        "PlaceContainer" => Message::PlaceContainer(Box::new(ContainerPlacement {
+            session_id: session_id(),
+            container_id: wide(case, "containerId"),
+            kind: wreck_kind_of(case.get("container")).unwrap(),
+            radius: case["radius"].as_f64().unwrap(),
+            launcher_id: wide(case, "launcherId"),
+            credit: Credit {
+                character_id: wide(case, "characterId"),
+                corporation_id: wide(case, "corporationId"),
+                alliance_id: wide(case, "allianceId"),
+                war_faction_id: wide(case, "warFactionId"),
+            },
+            distance: case["distance"].as_f64().unwrap(),
+        })),
+        "ContainerPlaced" => Message::ContainerPlaced {
+            session_id: session_id(),
+            container_id: wide(case, "containerId"),
+            position: vector_of(case, "position"),
+            direction: vector_of(case, "direction"),
+        },
+        "ChangeWreck" => Message::ChangeWreck {
+            wreck_id: wide(case, "wreckId"),
+            is_empty: case["isEmpty"].as_bool().unwrap(),
+        },
+        "RemoveWreck" => {
+            Message::RemoveWreck { wreck_id: wide(case, "wreckId"), effect: number("effect") as i32 }
+        }
+        "Measured" => Message::Measured {
+            session_id: session_id(),
+            command: number("command") as u8,
+            distance: case["distance"].as_f64(),
+        },
         "Spawn" => Message::Spawn(Box::new(Spawn {
             request_id: wide(case, "requestId") as u64,
             solar_system_id: number("solarSystemId") as i32,

@@ -96,6 +96,13 @@ public class SimCodecTests
             "PlaceWreck" => new SimPlaceWreck(
                 (int)c["solarSystemId"]!, Wide(c, "wreckId"), (int)c["groupId"]!, WreckKindOf(c["wreck"])!, VectorOf(c["position"]!), VectorOf(c["direction"]!), (double)c["radius"]!, Wide(c, "launcherId"),
                 new SimCredit(Wide(c, "characterId"), Wide(c, "corporationId"), Wide(c, "allianceId"), Wide(c, "warFactionId")), (bool)c["isEmpty"]!),
+            "PlaceContainer" => new SimPlaceContainer(
+                Session(), Wide(c, "containerId"), WreckKindOf(c["container"])!, (double)c["radius"]!, Wide(c, "launcherId"),
+                new SimCredit(Wide(c, "characterId"), Wide(c, "corporationId"), Wide(c, "allianceId"), Wide(c, "warFactionId")), (double)c["distance"]!),
+            "ContainerPlaced" => new SimContainerPlaced(Session(), Wide(c, "containerId"), VectorOf(c["position"]!), VectorOf(c["direction"]!)),
+            "ChangeWreck" => new SimChangeWreck(Wide(c, "wreckId"), (bool)c["isEmpty"]!),
+            "RemoveWreck" => new SimRemoveWreck(Wide(c, "wreckId"), (int)c["effect"]!),
+            "Measured" => new SimMeasured(Session(), (byte)(int)c["command"]!, c["distance"] is { } d ? (double)d : null),
             "Spawn" => new SimSpawn(
                 (ulong)Wide(c, "requestId"), (int)c["solarSystemId"]!, ShipOf(c["ship"]!), Wide(c, "anchorShipId"), VectorOf(c["position"]!), VectorOf(c["velocity"]!), VectorOf(c["direction"]!),
                 (string)c["behavior"]!, IdentityOf(c["identity"]!)),
@@ -109,7 +116,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-        Assert.Equal(["Accepted", "Activate", "Approaching", "Bind", "ChargeSpent", "Command", "Condition", "Destroy", "Destroyed", "Docked", "Enter", "EnterReply", "Hello", "HelloAck", "Jumped", "Jumping", "Leave", "Notify", "PlaceWreck", "Refused", "Respawn", "ShipSpec", "Spawn", "SpawnReply", "TargetRefused", "Targets", "UpdateState"], kinds);
+        Assert.Equal(["Accepted", "Activate", "Approaching", "Bind", "ChangeWreck", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "Destroy", "Destroyed", "Docked", "Enter", "EnterReply", "Hello", "HelloAck", "Jumped", "Jumping", "Leave", "Measured", "Notify", "PlaceContainer", "PlaceWreck", "Refused", "RemoveWreck", "Respawn", "ShipSpec", "Spawn", "SpawnReply", "TargetRefused", "Targets", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);
     }
 

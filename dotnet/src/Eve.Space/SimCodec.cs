@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 2;
+    public const ushort ProtocolVersion = 3;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -63,6 +63,11 @@ public static class SimCodec
         public const byte Respawn = 25;
         public const byte PlaceWreck = 26;
         public const byte ChargeSpent = 27;
+        public const byte PlaceContainer = 28;
+        public const byte ContainerPlaced = 29;
+        public const byte ChangeWreck = 30;
+        public const byte RemoveWreck = 31;
+        public const byte Measured = 32;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)
@@ -462,6 +467,43 @@ public static class SimCodec
             case Kind.ChargeSpent:
                 message = new SimChargeSpent(r.U64(), r.I64(), r.I64());
                 break;
+            case Kind.PlaceContainer:
+                {
+                    var session = r.U64();
+                    var container = r.I64();
+                    var kind = ReadWreckKind(ref r) ?? throw new SimLinkException(SimLinkError.BadValue, "bad container");
+                    message = new SimPlaceContainer(session, container, kind, r.F64(), r.I64(), ReadCredit(ref r), r.F64());
+                    break;
+                }
+            case Kind.ContainerPlaced:
+                message = new SimContainerPlaced(r.U64(), r.I64(), ReadVector(ref r), ReadVector(ref r));
+                break;
+            case Kind.ChangeWreck:
+                {
+                    var wreck = r.I64();
+                    message = new SimChangeWreck(wreck, r.U8() switch
+                    {
+                        0 => false,
+                        1 => true,
+                        _ => throw new SimLinkException(SimLinkError.BadValue, "bad is_empty"),
+                    });
+                    break;
+                }
+            case Kind.RemoveWreck:
+                message = new SimRemoveWreck(r.I64(), r.I32());
+                break;
+            case Kind.Measured:
+                {
+                    var session = r.U64();
+                    var command = r.U8();
+                    message = new SimMeasured(session, command, r.U8() switch
+                    {
+                        0 => null,
+                        1 => r.F64(),
+                        _ => throw new SimLinkException(SimLinkError.BadValue, "bad distance"),
+                    });
+                    break;
+                }
             case var other:
                 throw new SimLinkException(SimLinkError.UnknownKind, $"unknown message kind {other}");
         }
@@ -819,6 +861,47 @@ public static class SimCodec
                 WriteShip(w, m.Ship);
                 WriteVector(w, m.Position);
                 WriteVector(w, m.Direction);
+                break;
+            case SimPlaceContainer m:
+                w.U8(Kind.PlaceContainer);
+                w.U64(m.SessionId);
+                w.I64(m.ContainerId);
+                WriteWreckKind(w, m.Kind);
+                w.F64(m.Radius);
+                w.I64(m.LauncherId);
+                WriteCredit(w, m.Credit);
+                w.F64(m.Distance);
+                break;
+            case SimContainerPlaced m:
+                w.U8(Kind.ContainerPlaced);
+                w.U64(m.SessionId);
+                w.I64(m.ContainerId);
+                WriteVector(w, m.Position);
+                WriteVector(w, m.Direction);
+                break;
+            case SimChangeWreck m:
+                w.U8(Kind.ChangeWreck);
+                w.I64(m.WreckId);
+                w.U8((byte)(m.IsEmpty ? 1 : 0));
+                break;
+            case SimRemoveWreck m:
+                w.U8(Kind.RemoveWreck);
+                w.I64(m.WreckId);
+                w.I32(m.Effect);
+                break;
+            case SimMeasured m:
+                w.U8(Kind.Measured);
+                w.U64(m.SessionId);
+                w.U8(m.Command);
+                if (m.Distance is { } distance)
+                {
+                    w.U8(1);
+                    w.F64(distance);
+                }
+                else
+                {
+                    w.U8(0);
+                }
                 break;
             case SimPlaceWreck m:
                 w.U8(Kind.PlaceWreck);

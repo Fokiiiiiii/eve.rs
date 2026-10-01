@@ -191,6 +191,15 @@ impl Sim {
             Out::ChargeSpent { session, module_id, rounds_left } => {
                 Message::ChargeSpent { session_id: session, module_id, rounds_left }
             }
+            Out::ContainerPlaced { session, container_id, position, direction } => Message::ContainerPlaced {
+                session_id: session,
+                container_id,
+                position: [position.x, position.y, position.z],
+                direction: [direction.x, direction.y, direction.z],
+            },
+            Out::Measured { session, command, distance } => {
+                Message::Measured { session_id: session, command, distance }
+            }
             Out::Targets { session, command, pending, targets } => {
                 Message::Targets { session_id: session, command, pending, targets }
             }
@@ -311,6 +320,25 @@ impl Sim {
                 Some(scene) => scene.condition(session_id, now),
                 None => vec![Out::Refused { session: session_id, command: 19, reason: "NO_SHIP_IN_SPACE" }],
             },
+            Message::Command { session_id, command: crate::link::COMMAND_MEASURE, args } => {
+                match (self.scene_of(session_id), args.as_slice()) {
+                    (Some(scene), [wreck]) if is_id(*wreck) => vec![Out::Measured {
+                        session: session_id,
+                        command: crate::link::COMMAND_MEASURE,
+                        distance: scene.distance_to_wreck(session_id, *wreck as i64, now),
+                    }],
+                    (Some(_), _) => vec![Out::Refused {
+                        session: session_id,
+                        command: crate::link::COMMAND_MEASURE,
+                        reason: "UNKNOWN_COMMAND",
+                    }],
+                    (None, _) => vec![Out::Refused {
+                        session: session_id,
+                        command: crate::link::COMMAND_MEASURE,
+                        reason: "NO_SHIP_IN_SPACE",
+                    }],
+                }
+            }
             Message::Command { session_id, command, args } => {
                 if let Some(order) = order_of(command, &args) {
                     match self.scene_of(session_id) {
@@ -418,6 +446,29 @@ impl Sim {
                 }
                 None => Vec::new(),
             },
+            Message::PlaceContainer(can) => {
+                let session_id = can.session_id;
+                match self.scene_of(session_id) {
+                    Some(scene) => scene.place_container(session_id, *can, now),
+                    None => vec![Out::Refused {
+                        session: session_id,
+                        command: crate::link::kind::PLACE_CONTAINER,
+                        reason: "NO_SHIP_IN_SPACE",
+                    }],
+                }
+            }
+            Message::ChangeWreck { wreck_id, is_empty } => self
+                .scenes
+                .values_mut()
+                .find(|scene| scene.wreck(wreck_id).is_some())
+                .map(|scene| scene.change_wreck(wreck_id, is_empty, now))
+                .unwrap_or_default(),
+            Message::RemoveWreck { wreck_id, effect } => self
+                .scenes
+                .values_mut()
+                .find(|scene| scene.wreck(wreck_id).is_some())
+                .map(|scene| scene.remove_wreck(wreck_id, i64::from(effect), now))
+                .unwrap_or_default(),
             Message::ShipSpec { session_id, ship } => {
                 self.scene_of(session_id).map(|s| s.respec(session_id, *ship, now)).unwrap_or_default()
             }

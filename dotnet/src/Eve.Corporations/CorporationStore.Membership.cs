@@ -161,7 +161,7 @@ public sealed partial class CorporationStore
             var corp = await RequireRoleAsync(connection,tx,character.CorporationId,actor,CorporationRoles.Director,token);
             var next = await MemberAsync(connection,tx,successor,token);
             if (corp.CeoId != actor || successor == actor || next?.CorporationId != corp.Id) throw new CorporationError("CORPORATION_ACCESS_DENIED");
-            await using var update = Command(connection,tx,$"UPDATE {_schema}.corporations SET ceo_id=$2 WHERE id=$1; UPDATE {_schema}.members SET roles=roles & ~1 WHERE character_id=$3",corp.Id,successor,actor);
+            await using var update = Command(connection,tx,$"WITH leadership AS (UPDATE {_schema}.corporations SET ceo_id=$2 WHERE id=$1 RETURNING id) UPDATE {_schema}.members SET roles=roles & ~1 WHERE character_id=$3 AND corporation_id IN(SELECT id FROM leadership)",corp.Id,successor,actor);
             await update.ExecuteNonQueryAsync(token);
             return 0;
         },token);

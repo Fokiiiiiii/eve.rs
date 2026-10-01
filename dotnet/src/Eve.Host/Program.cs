@@ -244,10 +244,11 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         new StationService(stations, characters, online, now),
         new InvBrokerService(items, new ItemTypeCatalog(sde), stations, ships, dogma, now),
         new DogmaIMService(dogma, ships, now, dogmaSync, spaceSessions, spaceSessions, spaceSessions),
-        new AccountService(wallets),
+        new AccountService(wallets, corporations, new WalletTransactions(source, walletSchema)),
         new Eve.Services.Corporations.CorpMgrService(corporations, characters),
         new Eve.Services.Corporations.CorporationService(corporations, characters),
         new Eve.Services.Corporations.CorpRegistryService(corporations, characters, now),
+        new Eve.Services.Corporations.AllianceRegistryService(corporations, characters, now),
         new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions)),
         .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now), new BeyonceService(spaceSessions, now) },
     ];

@@ -77,4 +77,41 @@ public class CorporationProtocolTests
         var history = await new CorporationService(rig.Store,rig.Characters).GetEmploymentRecord(Call(session,"GetEmploymentRecord",new PyInt(founder)));
         Assert.Equal(2,Assert.IsType<PyList>(Field(history,"lines")).Items.Count);
     }
+
+    [PgFact]
+    public async Task Corporate_balances_use_the_selected_division_and_persisted_read_and_take_roles()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Founder One");
+        var member = await rig.CharacterAsync("Member One");
+        var corp = await rig.Store.CreateAsync(founder,new("Orbital Works","ORBIT","","",0.05m),"first");
+        var app = await rig.Store.ApplyAsync(member,corp.Id,"Join");
+        await rig.Store.RespondAsync(founder,app,6,"Join","");
+        await rig.Store.RespondAsync(member,app,2,"Join","");
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var tx = await connection.BeginTransactionAsync())
+        {
+            await rig.Transactions.TransferAsync(connection,tx,new Eve.Wallet.WalletAccount(founder),new Eve.Wallet.WalletAccount(corp.Id,1006),
+                123.45m,10,"Deposit",rig.Now,"deposit","test");
+            await tx.CommitAsync();
+        }
+        var service = new Eve.Services.Wallet.AccountService(rig.Wallets,rig.Store,rig.Transactions);
+        var session = new ClientSession();
+        session.Set("charid",new PyInt(founder));
+        Assert.Equal(new PyReal(123.45),await service.GetCashBalance(Call(session,"GetCashBalance",new PyInt(1),new PyInt(1006))));
+        Assert.Equal(new PyReal(0),await service.GetCashBalance(Call(session,"GetCashBalance",new PyInt(1),new PyInt(1000))));
+        session.Set("charid",new PyInt(member));
+        session.Set("corpid",new PyInt(corp.Id));
+        session.Set("corprole",new PyLong(CorporationRoles.All)); // cached masks cannot confer authority
+        await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.GetCashBalance(Call(session,"GetCashBalance",new PyInt(1),new PyInt(1006))));
+        var original = (await rig.Store.MemberAsync(member))!;
+        var junior = await rig.Store.UpdateMemberAsync(founder,original with { Masks=new RoleMasks(CorporationRoles.JuniorAccountant) });
+        Assert.Equal(new PyReal(123.45),await service.GetCashBalance(new ServiceCall { Session=session,Method="GetCashBalance",Args=[],
+            Kwargs=Py.Dict(("isCorpWallet",PyBool.True),("accountKey",new PyInt(1006))) }));
+        await Assert.ThrowsAsync<CorporationError>(() => rig.Store.WalletAccountAsync(member,1006,true));
+        await rig.Store.UpdateMemberAsync(founder,junior with { Masks=new RoleMasks(CorporationRoles.WalletTakeRole(1006)) });
+        Assert.Equal(new Eve.Wallet.WalletAccount(corp.Id,1006),await rig.Store.WalletAccountAsync(member,1006,true));
+        Assert.Equal(new PyReal(123.45),await service.GetCashBalance(Call(session,"GetCashBalance",new PyInt(1),new PyStr("cash7"))));
+        await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.GetCashBalance(Call(session,"GetCashBalance",new PyInt(1),new PyInt(1000))));
+    }
 }

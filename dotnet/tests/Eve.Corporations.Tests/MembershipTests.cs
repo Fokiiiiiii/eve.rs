@@ -31,6 +31,24 @@ public class MembershipTests
     }
 
     [PgFact]
+    public async Task Ceo_resignation_changes_both_leadership_and_the_old_director_mask()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Founder One");
+        var successor = await rig.CharacterAsync("Successor One");
+        var corp = await rig.Store.CreateAsync(founder,Request,"first");
+        await Join(rig,founder,successor,corp.Id);
+        await Assert.ThrowsAsync<CorporationError>(() => rig.Store.ResignAsync(successor,founder));
+        Assert.Equal(founder,(await rig.Store.GetAsync(corp.Id))!.CeoId);
+        await rig.Store.ResignAsync(founder,successor);
+        Assert.Equal(successor,(await rig.Store.GetAsync(corp.Id))!.CeoId);
+        Assert.Equal(0,(await rig.Store.MemberAsync(founder))!.Masks.Roles & CorporationRoles.Director);
+        var current = (await rig.Store.GetAsync(corp.Id))!;
+        Assert.Equal(CorporationRoles.All,CorporationRoles.Session(current,(await rig.Store.MemberAsync(successor))!,current.StationId,[]).CorpRole);
+        await Assert.ThrowsAsync<CorporationError>(() => rig.Store.ResignAsync(founder,successor));
+    }
+
+    [PgFact]
     public async Task Roles_are_exact_longs_director_promotion_is_canonical_and_self_resignation_keeps_stasis()
     {
         await using var rig = await Rig.CreateAsync();

@@ -220,3 +220,19 @@ Two existing full-suite failures were repaired in shared infrastructure: seriali
 announcements under the existing per-session lock, and disable pooling for the one-shot SQLite importer so Dispose
 releases the file handle on Windows. Services 67/67 and import 15/15 pass. The concurrency check now also asserts
 all old/new values form an unbroken chain. These changes are in 4360c82.
+
+### Codex alliance backend and corporate wallet read update (2026-10-01)
+
+Alliance founding and its 1b personal-wallet fee, Empire Control 3732 level 5 eligibility, accepted applications
+with durable 24-hour due dates, atomic affiliation/history changes, executor votes and suspended governance are
+implemented in Eve.Corporations. The source election threshold is ceil(member corporations / 2); tied support
+retains a qualifying incumbent. An accepted application can join a suspended alliance using the displayed
+executor choice, as the source does. Eighteen corporation/alliance domain and packet checks pass, including
+reconstructed-store activation, private vote visibility, ceo resignation and seven-division wallet read roles.
+
+Host now registers allianceRegistry read methods. GetCashBalance supports corporation divisions and keyword
+arguments, and derives read/take roles from canonical membership and titles rather than session cache. No combat
+or NPC block changed. Mutation RPCs, after-commit affiliation callbacks into SpaceSessions, scheduled invocation
+of alliance due transitions, departure/closure, bills, wars and sovereignty side effects are still in progress.
+The backend ActivateDueAllianceApplicationsAsync returns committed changed corporations for that integration;
+no alliance group is marked complete and no live client or performance acceptance is claimed.

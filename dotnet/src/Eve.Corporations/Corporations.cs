@@ -24,8 +24,13 @@ public sealed record Application(long Id, long CorporationId, long CharacterId, 
     long CreatedMs, long UpdatedMs, string Response, bool Archived);
 public sealed record NewAlliance(string Name, string ShortName, string Description, string Url);
 public sealed record Alliance(long Id, string Name, string ShortName, string Description, string Url,
-    long ExecutorCorporationId, long CreatorCorporationId, long CreatorCharacterId, long CreatedMs, bool Deleted);
-public sealed record AllianceMember(long AllianceId, long CorporationId, long StartedMs, long ChosenExecutorId);
+    long? ExecutorCorporationId, long CreatorCorporationId, long CreatorCharacterId, long CreatedMs, bool Deleted,
+    bool Suspended = false, bool Dictatorial = false)
+{
+    public long? ActiveExecutorId => Suspended ? null : ExecutorCorporationId;
+}
+public sealed record AllianceApplication(long Id,long AllianceId,long CorporationId,string Text,int Status,long CreatedMs,long UpdatedMs,bool Archived,long? DueMs);
+public sealed record AllianceMember(long AllianceId, long CorporationId, long StartedMs, long? ChosenExecutorId);
 
 /// <summary>Rules and numeric masks ported from corporationRuntimeState.js. No protocol or database dependency.</summary>
 public static class CorporationRoles

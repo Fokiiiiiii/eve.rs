@@ -42,6 +42,8 @@ internal sealed class Rig : IAsyncDisposable
         await CorporationStore.MigrateAsync(rig.Source,rig._schemas[0]);
         return rig;
     }
+
+    public CorporationStore ReopenStore() => new(Source,Characters,Wallets,new WalletTransactions(Source,_schemas[2]),Skills,() => Now,_schemas[0]);
     public async Task<long> CharacterAsync(string name,decimal isk = 5000000m)
     {
         await using var connection = await Source.OpenConnectionAsync();

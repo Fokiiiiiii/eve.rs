@@ -254,3 +254,14 @@ repository; the Carbon-derived integration keeps its MIT notice.
 - Alliance schema and source contract tracing are prepared; lifecycle remains in progress.
 - Private test PostgreSQL has pinned SDE build 3396210: 61 tables / 668618 records, hash verified and replay AlreadyLoaded.
 - Real client acceptance and performance measurements remain unverified. No backlog service group is marked complete.
+
+Alliance founding, accepted-application due transitions and governance backend are now implemented; native
+allianceRegistry reads are registered. Corporate wallet balance reads support all seven divisions with persisted
+roles. The corpus is 18 corporation/alliance checks. Mutation RPCs, scheduled due processing, affiliation/space
+notifications, departure/closure and war/sov/bill integration remain in progress. The earlier full replay
+(27 assemblies, 2617 passed, zero failures/skips, exit 0) preceded this alliance extension; a fresh build/test run
+is required for the new integration.
+
+The fresh solution build/test after this extension finished with exit 0: 27 assemblies, 2624 passed,
+zero failed and zero skipped. Code-memory incremental indexing and a CreateAllianceAsync search also finished
+successfully using the cached model offline; the online model warm-up remains unreliable in this environment.

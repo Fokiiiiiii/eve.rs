@@ -125,6 +125,21 @@ public sealed partial class CorporationStore
         return result;
     }
 
+    /// <summary>Resolve the wallet from canonical membership, never from caller-supplied owner or cached session masks.</summary>
+    public async Task<WalletAccount> WalletAccountAsync(long characterId,int accountKey,bool requireTake,CancellationToken token = default)
+    {
+        if (accountKey is < 1000 or > 1006) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var character = await _characters.GetAsync(characterId,token);
+        var corp = character is null ? null : await GetAsync(character.CorporationId,token);
+        var member = await MemberAsync(characterId,token);
+        if (corp is null || corp.IsNpc || corp.Deleted || member?.CorporationId != corp.Id) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var roles = CorporationRoles.Session(corp,member,character!.StationId,await TitlesAsync(corp.Id,token)).AtAll;
+        var canTake = (roles & CorporationRoles.Director) != 0 || (roles & CorporationRoles.WalletTakeRole(accountKey)) != 0;
+        if (!canTake && (requireTake || (roles & (CorporationRoles.Accountant | CorporationRoles.JuniorAccountant)) == 0))
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        return new WalletAccount(corp.Id,accountKey);
+    }
+
     public Task<Corporation> CreateAsync(long founder,NewCorporation request,string operationKey,CancellationToken token = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(operationKey);

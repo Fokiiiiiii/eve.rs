@@ -62,7 +62,7 @@ public static class CorporationWire
         return Py.KeyVal([.. keys.Select(key => (key,fields[key]))]);
     }
 
-    private static Descriptor DescriptorOf(params (string Name,int Type)[] columns) => Descriptor.FromHeader(new PyObjectEx(ObjectExKind.Ex1,
+    internal static Descriptor DescriptorOf(params (string Name,int Type)[] columns) => Descriptor.FromHeader(new PyObjectEx(ObjectExKind.Ex1,
         Py.Tuple(new PyToken("blue.DBRowDescriptor"),Py.Tuple(Py.Tuple([.. columns.Select(c => (PyValue)Py.Tuple(new PyStr(c.Name),new PyInt(c.Type)))]))),[],[]));
     private static readonly Descriptor MemberDescriptor = DescriptorOf(
         ("characterID",3),("corporationID",3),("divisionID",3),("squadronID",3),("title",130),("roles",64),("grantableRoles",64),

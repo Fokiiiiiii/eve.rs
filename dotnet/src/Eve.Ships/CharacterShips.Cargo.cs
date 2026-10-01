@@ -10,8 +10,10 @@ namespace Eve.Ships;
 /// </summary>
 public sealed partial class CharacterShips
 {
-    /// <summary>The drone bay of a ship.</summary>
+    /// <summary>The drone bay of a ship: it holds drones (category 18) and nothing else, up to its drone capacity (<c>NotEnoughDroneBaySpace</c> when they do not fit).</summary>
     public const int DroneBayFlag = 87;
+
+    private const int DroneCategory = 18;
 
     private const int CapacityAttribute = 38;
     private const int DroneCapacityAttribute = 283;
@@ -86,7 +88,7 @@ public sealed partial class CharacterShips
         {
             return null;
         }
-        return new ShipRefused(ShipRefusal.NotEnoughCargoSpace, ModuleTypeId: item.TypeId, ShipTypeId: snapshot.Ship.TypeId, Available: Math.Round(room.Free, 6), Volume: Math.Round(required, 6));
+        return new ShipRefused(flag == DroneBayFlag ? ShipRefusal.NotEnoughDroneBaySpace : ShipRefusal.NotEnoughCargoSpace, ModuleTypeId: item.TypeId, ShipTypeId: snapshot.Ship.TypeId, Available: Math.Round(room.Free, 6), Volume: Math.Round(required, 6));
     }
 
     /// <summary>

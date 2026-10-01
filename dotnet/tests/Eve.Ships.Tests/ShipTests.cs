@@ -105,8 +105,9 @@ public class ShipTests
         // no free slot suits a turret
         var none = Assert.IsType<ShipRefused>(await rig.Ships.MoveAsync(c.CharacterId, third, Rig.Station, c.ShipId, null, null));
         Assert.Equal(ShipRefusal.NoSuitableSlot, none.Reason);
-        // the slot is not a slot
-        Assert.IsType<NothingHappened>(await rig.Ships.MoveAsync(c.CharacterId, third, Rig.Station, c.ShipId, 87, 1));
+        // the flag is not a place a ship has, and the drone bay is no place for a module (the reference: `Only drones can be placed in the Drone Bay.`)
+        Assert.IsType<NothingHappened>(await rig.Ships.MoveAsync(c.CharacterId, third, Rig.Station, c.ShipId, 4000, 1));
+        Assert.Equal(ShipRefusal.NotADrone, Assert.IsType<ShipRefused>(await rig.Ships.MoveAsync(c.CharacterId, third, Rig.Station, c.ShipId, 87, 1)).Reason);
 
         Assert.Equal(3, (await rig.InShipAsync(c.CharacterId, c.ShipId)).Count);
         Assert.Equal(Rig.Station, (await rig.Items.GetAsync(third))!.LocationId);

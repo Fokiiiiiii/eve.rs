@@ -150,6 +150,14 @@ public sealed partial class CharacterShips(
             }
             destinationFlag = free;
         }
+        else if (flag == DroneBayFlag && toShip)
+        {
+            if (type?.CategoryId != DroneCategory)
+            {
+                return new ShipRefused(ShipRefusal.NotADrone, ModuleTypeId: item.TypeId, ShipTypeId: ship.TypeId); // checked before the room, as the reference does
+            }
+            destinationFlag = DroneBayFlag;
+        }
         else if (flag is null or 0 || flag == CargoFlag)
         {
             destinationFlag = CargoFlag;
@@ -165,7 +173,7 @@ public sealed partial class CharacterShips(
         {
             return new NothingHappened(); // a stack of modules is not split into a slot
         }
-        if (toShip && destinationFlag == CargoFlag && !(inShip && item.Flag == CargoFlag)
+        if (toShip && destinationFlag is CargoFlag or DroneBayFlag && !(inShip && item.Flag == destinationFlag)
             && await RefuseWhatDoesNotFitAsync(snapshot, item, splits ? quantity!.Value : item.Quantity, destinationFlag, cancellationToken) is { } full)
         {
             return full;

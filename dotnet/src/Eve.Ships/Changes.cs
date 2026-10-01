@@ -40,6 +40,12 @@ public enum ShipRefusal
 
     /// <summary>What was moved does not fit in the can or wreck it was put in (the same room figures).</summary>
     NoSpaceForThat,
+
+    /// <summary>What was moved does not fit in the drone bay (the same room figures: <see cref="ShipRefused.Available"/> and <see cref="ShipRefused.Volume"/>).</summary>
+    NotEnoughDroneBaySpace,
+
+    /// <summary>What was put in the drone bay is not a drone.</summary>
+    NotADrone,
 }
 
 public abstract record ShipOutcome;

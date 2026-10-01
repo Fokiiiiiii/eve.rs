@@ -136,10 +136,11 @@ def test_a_pilot_loads_a_gun_in_space_and_waits_for_the_reload_as_in_the_referen
             except Exception:  # noqa: BLE001
                 return False
 
-        def a_rat_that_is_locked() -> int:
+        def a_rat_that_is_locked(fresh: bool = False) -> int:
             """The rat the gun is fired at. What the rat does is its own (DEVIATIONS #53): the reference's survives the whole recording, ours may be killed or lose the lock
-            by the end of it, and then a new one is called and locked, with the gun fired at that."""
-            if locked(held["rat"]):
+            by the end of it, and then a new one is called and locked, with the gun fired at that (`fresh`: before a step that must not end with the rat killed, a new one
+            even if the rat is alive: it may be about to die)."""
+            if not fresh and locked(held["rat"]):
                 return held["rat"]
             watch(only, 0.5)
             called = who.call("slash", "SlashCmd", "/npc 1 Blood Visionary")
@@ -227,7 +228,7 @@ def test_a_pilot_loads_a_gun_in_space_and_waits_for_the_reload_as_in_the_referen
         in_hold = in_the_hold[ANTIMATTER]
         space_step("the pilot loads the railgun again", load(in_hold), 0.8)
         space_step("the pilot fires the railgun while it reloads", activate, 8.0)
-        a_rat_that_is_locked()  # before the steps whose moments are compared: a rat that is called takes its time
+        a_rat_that_is_locked(fresh=True)  # before the steps whose moments are compared: a rat that is called takes its time
         space_step("the pilot unloads most of the rounds again", unload(75), 2.0)
         space_step("the pilot tops the railgun up", load(in_hold), 0.8)
         space_step("the pilot fires the railgun while it tops up", activate, 9.0)

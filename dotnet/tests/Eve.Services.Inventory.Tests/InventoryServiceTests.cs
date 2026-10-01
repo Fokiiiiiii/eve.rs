@@ -198,6 +198,10 @@ public class InvBrokerTests
 
     private static PyPackedRow[] Rows(PyValue list) => [.. ((PyList)list).Items.Cast<PyPackedRow>()];
 
+    /// <summary>The rows in a Python <c>set</c> (what a docked ship answers when it is asked for everything).</summary>
+    private static PyPackedRow[] SetRows(PyValue set) =>
+        [.. ((PyList)((PyTuple)((PyTuple)((PyObjectEx)set).Header).Items[1]).Items[0]).Items.Cast<PyPackedRow>()];
+
     [PgFact]
     public async Task The_hangar_is_handed_out_as_a_bound_object_for_the_container_the_station_or_nothing()
     {
@@ -361,7 +365,7 @@ public class InvBrokerTests
         var session = Rig.Session();
         var inventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
 
-        Assert.Equal(new PyList([]), await rig.CallAsync(session, "List", inventory));
+        Assert.Equal(InventoryWire.EmptySet(), await rig.CallAsync(session, "List", inventory)); // a docked ship asked for everything answers a set, empty or not
         Assert.Equal(InventoryWire.EmptySet(), await rig.CallAsync(session, "List", inventory, new PyInt(5))); // a flag with nothing in it, as in the hangar
         Assert.Equal(new PyList([]), await rig.CallAsync(session, "ListByFlags", inventory, new PyTuple([new PyInt(5), new PyInt(27)])));
         Assert.Equal(new PyList([]), await rig.CallAsync(session, "GetItems", inventory));
@@ -388,7 +392,10 @@ public class InvBrokerTests
         var inventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
 
         long IdOf(PyPackedRow row) => row.Values[0] is PyLong l ? l.Value : ((PyInt)row.Values[0]).Value;
-        Assert.Equal(new[] { afterburner, weapon, cargo }, Rows(await rig.CallAsync(session, "List", inventory)).Select(IdOf).Order());
+        var everything = SetRows(await rig.CallAsync(session, "List", inventory));
+        Assert.Equal(new[] { afterburner, weapon, cargo }, everything.Select(IdOf).Order());
+        // the rows have no custom info, as in the reference
+        Assert.All(everything, row => Assert.IsType<PyNone>(row.Values[8]));
         Assert.Equal(new[] { weapon }, Rows(await rig.CallAsync(session, "List", inventory, new PyInt(27))).Select(IdOf));
         Assert.Equal(new[] { afterburner, weapon }, Rows(await rig.CallAsync(session, "ListByFlags", inventory, new PyTuple([new PyInt(19), new PyInt(27)]))).Select(IdOf).Order());
         Assert.Equal(new[] { cargo }, Rows(await rig.CallAsync(session, "GetItems", inventory, new PyTuple([new PyLong(cargo), new PyLong(other)]))).Select(IdOf));
@@ -397,6 +404,25 @@ public class InvBrokerTests
         // the hangar still lists the two ships and nothing fitted or carried
         var hangar = await rig.HangarAsync(session);
         Assert.Equal(new[] { ship, other }.Order(), Rows(await rig.CallAsync(session, "List", hangar)).Select(IdOf).Order());
+    }
+
+    [PgFact]
+    public async Task StackAll_joins_what_can_be_joined_and_answers_nothing_when_there_is_nothing()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var ship = await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.Station, singleton: true);
+        var first = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, flag: 5, quantity: 100);
+        var second = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, flag: 5, quantity: 15);
+        var session = Rig.Session();
+        var inventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
+
+        Assert.Equal(PyBool.True, await rig.CallAsync(session, "StackAll", inventory, new PyInt(5)));
+        Assert.Equal(PyNone.Instance, await rig.CallAsync(session, "StackAll", inventory, new PyInt(5)));
+        var rows = Rows(await rig.CallAsync(session, "List", inventory, new PyInt(5)));
+        var only = Assert.Single(rows);
+        Assert.Equal(new PyInt(115), only.Values[5]);
+        Assert.Equal(first, only.Values[0] is PyLong l ? l.Value : ((PyInt)only.Values[0]).Value);
+        Assert.NotEqual(first, second);
     }
 
     [PgFact]

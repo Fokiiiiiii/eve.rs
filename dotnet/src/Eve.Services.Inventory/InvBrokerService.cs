@@ -23,6 +23,14 @@ public sealed partial class InvBrokerService(
 
     private const int ShipCategory = 6;
 
+    /// <summary>The category of characters: the one row the reference gives a custom info.</summary>
+    private const int PlayerCategory = 1;
+
+    /// <summary>The volume that holds what a station keeps for one character, when the hangar is asked how much it holds of a flag the reference gives no ship to.</summary>
+    private const double HangarCapacity = 1_000_000;
+
+    private const double BareCargoCapacity = 5000;
+
     private enum Kind
     {
         /// <summary>The character's hangar in its station (also what the station's own inventory shows).</summary>
@@ -156,7 +164,8 @@ public sealed partial class InvBrokerService(
 
     /// <summary>
     /// <c>List(flag)</c>: everything in the inventory, or what is in one flag. A flag with nothing in it is answered with an empty
-    /// Python <c>set</c>, as the reference does; everything else is a list of rows.
+    /// Python <c>set</c>, as the reference does, and so is a ship in the hangar asked for everything (a set of rows that have no custom info);
+    /// everything else is a list of rows.
     /// </summary>
     [Method("List")]
     public async ValueTask<PyValue> List(ServiceCall call)
@@ -168,6 +177,10 @@ public sealed partial class InvBrokerService(
         var flag = FlagOf(call);
         var contents = await ContentsAsync(context, call.Session, call.Cancellation);
         var chosen = flag is { } f ? contents.Where(r => r.Flag == f).ToList() : [.. contents];
+        if (context.Kind == Kind.Ship && flag is null)
+        {
+            return InventoryWire.Set(chosen.Select(r => InventoryWire.PackedRow(r, r.CategoryId == PlayerCategory ? new PyStr("") : PyNone.Instance)));
+        }
         return chosen.Count == 0 && flag is not null
             ? InventoryWire.EmptySet()
             : new PyList([.. chosen.Select(r => InventoryWire.PackedRow(r))]);
@@ -218,6 +231,59 @@ public sealed partial class InvBrokerService(
             return None;
         }
         return InventoryWire.Rowset(await ContentsAsync(context, call.Session, call.Cancellation));
+    }
+
+    // ── room ─────────────────────────────────────────────────────────────────
+
+    /// <summary>How the client is told the room of a bay: <c>util.KeyVal(capacity, used)</c>.</summary>
+    private static PyValue KeyVal(double capacity, double used) => new PyObject(
+        new PyStr("util.KeyVal"), new PyDict([new(new PyStr("capacity"), Py.Number(capacity)), new(new PyStr("used"), Py.Number(used))]));
+
+    /// <summary>
+    /// <c>GetCapacity(flag)</c>: how big the inventory is and how much is in it. A ship's hold is the ship's own capacity (dogma's); asked of a ship with no flag it is the
+    /// cargo hold. A hangar holds a million cubic metres whatever is in it; asked for the cargo hold it answers what the reference does for an inventory that is no
+    /// ship (5,000).
+    /// </summary>
+    [Method("GetCapacity")]
+    public async ValueTask<PyValue> GetCapacity(ServiceCall call)
+    {
+        if (ContextOf(call) is not { } context || call.Session.CharacterId is not { } character)
+        {
+            return None;
+        }
+        var flag = FlagOf(call);
+        if (context.Kind == Kind.Ship)
+        {
+            return await ships.RoomAsync(character, context.ItemId, flag ?? CharacterShips.CargoFlag, call.Cancellation) is { } room ? KeyVal(room.Capacity, room.Used) : None;
+        }
+        var inHangar = StationOf(call.Session) is { } station ? await items.InLocationAsync(station, character, call.Cancellation) : [];
+        var used = await ships.VolumeOfAsync(inHangar.Where(i => flag is null || i.Flag == flag), call.Cancellation);
+        return KeyVal(flag == CharacterShips.CargoFlag ? BareCargoCapacity : HangarCapacity, used);
+    }
+
+    /// <summary>
+    /// <c>StackAll(flag)</c>: the stacks of one type in the inventory become one. Answers True when something was stacked and None when nothing was; the client
+    /// is told each stack that grew and each that went.
+    /// </summary>
+    [Method("StackAll")]
+    public async ValueTask<PyValue> StackAll(ServiceCall call)
+    {
+        if (ContextOf(call) is not { } context || call.Session.CharacterId is not { } character)
+        {
+            return None;
+        }
+        var container = context.Kind == Kind.Hangar ? StationOf(call.Session) : context.ItemId;
+        if (container is not { } place)
+        {
+            return None;
+        }
+        var flag = FlagOf(call) ?? (context.Kind == Kind.Hangar ? ItemFlags.Hangar : CharacterShips.CargoFlag);
+        var changes = await ships.StackAllAsync(character, place, flag, call.Cancellation);
+        foreach (var change in changes)
+        {
+            ShipNotifications.SendItemChange(call.Session, change, item => DogmaRow(item));
+        }
+        return changes.Count > 0 ? PyBool.True : None;
     }
 
     // ── moving items ─────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 {
  "reference": "EVE.js",
- "referenceCommit": "b637d2a55469ee23d24411ed5a7646391de314d9",
- "recordedAt": "2026-09-29T04:56:21Z",
+ "referenceCommit": "b637d2a",
+ "recordedAt": "2026-10-01T13:48:14Z",
  "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py",
  "races": [
   {
@@ -12,7 +12,7 @@
      "charUnboundMgr",
      "CreateCharacterWithDoll",
      [
-      "Stocked 1 1790657781",
+      "Stocked 1 1790862494",
       1,
       1,
       1,
@@ -38,9 +38,9 @@
       null
      ]
     ],
-    "ok": 140000142
+    "ok": 140000427
    },
-   "shipID": 9988400000662,
+   "shipID": 9988400002924,
    "descriptor": {
     "call": [
      "invbroker",
@@ -153,9 +153,9 @@
        "$substruct": {
         "$substream": {
          "$tuple": [
-          "N=65450:30",
+          "N=65450:9",
           {
-           "$long": 134351313816830000
+           "$long": 134353360964780000
           }
          ]
         }
@@ -172,9 +172,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000662,
+          "itemID": 9988400002924,
           "typeID": 601,
-          "ownerID": 140000142,
+          "ownerID": 140000427,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -198,9 +198,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000662,
+          "itemID": 9988400002924,
           "typeID": 601,
-          "ownerID": 140000142,
+          "ownerID": 140000427,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -254,9 +254,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000662,
+          "itemID": 9988400002924,
           "typeID": 601,
-          "ownerID": 140000142,
+          "ownerID": 140000427,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -433,10 +433,10 @@
             {
              "$tuple": [
               {
-               "$long": 9988400000662
+               "$long": 9988400002924
               },
               601,
-              140000142,
+              140000427,
               60015249,
               4,
               -1,
@@ -468,9 +468,9 @@
        "$substruct": {
         "$substream": {
          "$tuple": [
-          "N=65450:31",
+          "N=65450:10",
           {
-           "$long": 134351313817020000
+           "$long": 134353360965270000
           }
          ]
         }
@@ -487,9 +487,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000662,
+          "itemID": 9988400002924,
           "typeID": 601,
-          "ownerID": 140000142,
+          "ownerID": 140000427,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -513,9 +513,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000662,
+          "itemID": 9988400002924,
           "typeID": 601,
-          "ownerID": 140000142,
+          "ownerID": 140000427,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -569,9 +569,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000662,
+          "itemID": 9988400002924,
           "typeID": 601,
-          "ownerID": 140000142,
+          "ownerID": 140000427,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -748,10 +748,10 @@
             {
              "$tuple": [
               {
-               "$long": 9988400000662
+               "$long": 9988400002924
               },
               601,
-              140000142,
+              140000427,
               60015249,
               4,
               -1,
@@ -776,16 +776,16 @@
        "invbroker",
        "GetInventoryFromId",
        [
-        9988400000662
+        9988400002924
        ]
       ],
       "ok": {
        "$substruct": {
         "$substream": {
          "$tuple": [
-          "N=65450:32",
+          "N=65450:11",
           {
-           "$long": 134351313817300000
+           "$long": 134353360965700000
           }
          ]
         }
@@ -799,7 +799,68 @@
         "List",
         []
        ],
-       "ok": null
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            [
+             {
+              "$row": {
+               "itemID": 9988400002925,
+               "typeID": 21857,
+               "ownerID": 140000427,
+               "locationID": 9988400002924,
+               "flagID": 19,
+               "quantity": -1,
+               "groupID": 46,
+               "categoryID": 7,
+               "customInfo": null,
+               "stacksize": 1,
+               "singleton": 1
+              }
+             },
+             {
+              "$row": {
+               "itemID": 9988400002926,
+               "typeID": 3638,
+               "ownerID": 140000427,
+               "locationID": 9988400002924,
+               "flagID": 27,
+               "quantity": -1,
+               "groupID": 53,
+               "categoryID": 7,
+               "customInfo": null,
+               "stacksize": 1,
+               "singleton": 1
+              }
+             },
+             {
+              "$row": {
+               "itemID": 9988400002927,
+               "typeID": 3651,
+               "ownerID": 140000427,
+               "locationID": 9988400002924,
+               "flagID": 28,
+               "quantity": -1,
+               "groupID": 54,
+               "categoryID": 7,
+               "customInfo": null,
+               "stacksize": 1,
+               "singleton": 1
+              }
+             }
+            ]
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -809,7 +870,22 @@
          4
         ]
        ],
-       "ok": null
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -819,7 +895,22 @@
          5
         ]
        ],
-       "ok": null
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -834,7 +925,7 @@
          }
         ]
        ],
-       "ok": null
+       "ok": []
       },
       {
        "call": [
@@ -869,10 +960,10 @@
            {
             "$tuple": [
              {
-              "$long": 9988400000662
+              "$long": 9988400002924
              },
              601,
-             140000142,
+             140000427,
              60015249,
              4,
              -1,
@@ -896,9 +987,9 @@
        ],
        "ok": {
         "$row": {
-         "itemID": 9988400000662,
+         "itemID": 9988400002924,
          "typeID": 601,
-         "ownerID": 140000142,
+         "ownerID": 140000427,
          "locationID": 60015249,
          "flagID": 4,
          "quantity": -1,
@@ -916,7 +1007,21 @@
         "GetCapacity",
         []
        ],
-       "ok": null
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           125
+          ],
+          [
+           "used",
+           0
+          ]
+         ]
+        }
+       }
       },
       {
        "call": [
@@ -926,7 +1031,21 @@
          5
         ]
        ],
-       "ok": null
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           125
+          ],
+          [
+           "used",
+           0
+          ]
+         ]
+        }
+       }
       },
       {
        "call": [
@@ -974,10 +1093,10 @@
             {
              "$tuple": [
               {
-               "$long": 9988400000662
+               "$long": 9988400002924
               },
               601,
-              140000142,
+              140000427,
               60015249,
               4,
               -1,
@@ -1006,7 +1125,7 @@
      "charUnboundMgr",
      "CreateCharacterWithDoll",
      [
-      "Stocked 3 1790657781",
+      "Stocked 3 1790862494",
       2,
       3,
       1,
@@ -1032,9 +1151,9 @@
       null
      ]
     ],
-    "ok": 140000143
+    "ok": 140000428
    },
-   "shipID": 9988400000666,
+   "shipID": 9988400002928,
    "descriptor": {
     "call": [
      "invbroker",
@@ -1147,9 +1266,9 @@
        "$substruct": {
         "$substream": {
          "$tuple": [
-          "N=65450:34",
+          "N=65450:13",
           {
-           "$long": 134351313833960000
+           "$long": 134353360985960000
           }
          ]
         }
@@ -1166,9 +1285,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000666,
+          "itemID": 9988400002928,
           "typeID": 588,
-          "ownerID": 140000143,
+          "ownerID": 140000428,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -1192,9 +1311,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000666,
+          "itemID": 9988400002928,
           "typeID": 588,
-          "ownerID": 140000143,
+          "ownerID": 140000428,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -1248,9 +1367,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000666,
+          "itemID": 9988400002928,
           "typeID": 588,
-          "ownerID": 140000143,
+          "ownerID": 140000428,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -1427,10 +1546,10 @@
             {
              "$tuple": [
               {
-               "$long": 9988400000666
+               "$long": 9988400002928
               },
               588,
-              140000143,
+              140000428,
               60015249,
               4,
               -1,
@@ -1462,9 +1581,9 @@
        "$substruct": {
         "$substream": {
          "$tuple": [
-          "N=65450:35",
+          "N=65450:14",
           {
-           "$long": 134351313834260000
+           "$long": 134353360986320000
           }
          ]
         }
@@ -1481,9 +1600,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000666,
+          "itemID": 9988400002928,
           "typeID": 588,
-          "ownerID": 140000143,
+          "ownerID": 140000428,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -1507,9 +1626,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000666,
+          "itemID": 9988400002928,
           "typeID": 588,
-          "ownerID": 140000143,
+          "ownerID": 140000428,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -1563,9 +1682,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000666,
+          "itemID": 9988400002928,
           "typeID": 588,
-          "ownerID": 140000143,
+          "ownerID": 140000428,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -1742,10 +1861,10 @@
             {
              "$tuple": [
               {
-               "$long": 9988400000666
+               "$long": 9988400002928
               },
               588,
-              140000143,
+              140000428,
               60015249,
               4,
               -1,
@@ -1770,16 +1889,16 @@
        "invbroker",
        "GetInventoryFromId",
        [
-        9988400000666
+        9988400002928
        ]
       ],
       "ok": {
        "$substruct": {
         "$substream": {
          "$tuple": [
-          "N=65450:36",
+          "N=65450:15",
           {
-           "$long": 134351313834450000
+           "$long": 134353360986710000
           }
          ]
         }
@@ -1793,7 +1912,68 @@
         "List",
         []
        ],
-       "ok": null
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            [
+             {
+              "$row": {
+               "itemID": 9988400002929,
+               "typeID": 21857,
+               "ownerID": 140000428,
+               "locationID": 9988400002928,
+               "flagID": 19,
+               "quantity": -1,
+               "groupID": 46,
+               "categoryID": 7,
+               "customInfo": null,
+               "stacksize": 1,
+               "singleton": 1
+              }
+             },
+             {
+              "$row": {
+               "itemID": 9988400002930,
+               "typeID": 3636,
+               "ownerID": 140000428,
+               "locationID": 9988400002928,
+               "flagID": 27,
+               "quantity": -1,
+               "groupID": 53,
+               "categoryID": 7,
+               "customInfo": null,
+               "stacksize": 1,
+               "singleton": 1
+              }
+             },
+             {
+              "$row": {
+               "itemID": 9988400002931,
+               "typeID": 3651,
+               "ownerID": 140000428,
+               "locationID": 9988400002928,
+               "flagID": 28,
+               "quantity": -1,
+               "groupID": 54,
+               "categoryID": 7,
+               "customInfo": null,
+               "stacksize": 1,
+               "singleton": 1
+              }
+             }
+            ]
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -1803,7 +1983,22 @@
          4
         ]
        ],
-       "ok": null
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -1813,7 +2008,22 @@
          5
         ]
        ],
-       "ok": null
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -1828,7 +2038,7 @@
          }
         ]
        ],
-       "ok": null
+       "ok": []
       },
       {
        "call": [
@@ -1863,10 +2073,10 @@
            {
             "$tuple": [
              {
-              "$long": 9988400000666
+              "$long": 9988400002928
              },
              588,
-             140000143,
+             140000428,
              60015249,
              4,
              -1,
@@ -1890,9 +2100,9 @@
        ],
        "ok": {
         "$row": {
-         "itemID": 9988400000666,
+         "itemID": 9988400002928,
          "typeID": 588,
-         "ownerID": 140000143,
+         "ownerID": 140000428,
          "locationID": 60015249,
          "flagID": 4,
          "quantity": -1,
@@ -1910,7 +2120,21 @@
         "GetCapacity",
         []
        ],
-       "ok": null
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           120
+          ],
+          [
+           "used",
+           0
+          ]
+         ]
+        }
+       }
       },
       {
        "call": [
@@ -1920,7 +2144,21 @@
          5
         ]
        ],
-       "ok": null
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           120
+          ],
+          [
+           "used",
+           0
+          ]
+         ]
+        }
+       }
       },
       {
        "call": [
@@ -1968,10 +2206,10 @@
             {
              "$tuple": [
               {
-               "$long": 9988400000666
+               "$long": 9988400002928
               },
               588,
-              140000143,
+              140000428,
               60015249,
               4,
               -1,
@@ -2000,7 +2238,7 @@
      "charUnboundMgr",
      "CreateCharacterWithDoll",
      [
-      "Stocked 5 1790657781",
+      "Stocked 5 1790862494",
       4,
       5,
       1,
@@ -2026,9 +2264,9 @@
       null
      ]
     ],
-    "ok": 140000144
+    "ok": 140000429
    },
-   "shipID": 9988400000670,
+   "shipID": 9988400002932,
    "descriptor": {
     "call": [
      "invbroker",
@@ -2141,9 +2379,9 @@
        "$substruct": {
         "$substream": {
          "$tuple": [
-          "N=65450:38",
+          "N=65450:17",
           {
-           "$long": 134351313850780000
+           "$long": 134353361006720000
           }
          ]
         }
@@ -2160,9 +2398,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000670,
+          "itemID": 9988400002932,
           "typeID": 596,
-          "ownerID": 140000144,
+          "ownerID": 140000429,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -2186,9 +2424,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000670,
+          "itemID": 9988400002932,
           "typeID": 596,
-          "ownerID": 140000144,
+          "ownerID": 140000429,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -2242,9 +2480,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000670,
+          "itemID": 9988400002932,
           "typeID": 596,
-          "ownerID": 140000144,
+          "ownerID": 140000429,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -2421,10 +2659,10 @@
             {
              "$tuple": [
               {
-               "$long": 9988400000670
+               "$long": 9988400002932
               },
               596,
-              140000144,
+              140000429,
               60015249,
               4,
               -1,
@@ -2456,9 +2694,9 @@
        "$substruct": {
         "$substream": {
          "$tuple": [
-          "N=65450:39",
+          "N=65450:18",
           {
-           "$long": 134351313850960000
+           "$long": 134353361007040000
           }
          ]
         }
@@ -2475,9 +2713,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000670,
+          "itemID": 9988400002932,
           "typeID": 596,
-          "ownerID": 140000144,
+          "ownerID": 140000429,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -2501,9 +2739,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000670,
+          "itemID": 9988400002932,
           "typeID": 596,
-          "ownerID": 140000144,
+          "ownerID": 140000429,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -2557,9 +2795,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000670,
+          "itemID": 9988400002932,
           "typeID": 596,
-          "ownerID": 140000144,
+          "ownerID": 140000429,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -2736,10 +2974,10 @@
             {
              "$tuple": [
               {
-               "$long": 9988400000670
+               "$long": 9988400002932
               },
               596,
-              140000144,
+              140000429,
               60015249,
               4,
               -1,
@@ -2764,16 +3002,16 @@
        "invbroker",
        "GetInventoryFromId",
        [
-        9988400000670
+        9988400002932
        ]
       ],
       "ok": {
        "$substruct": {
         "$substream": {
          "$tuple": [
-          "N=65450:40",
+          "N=65450:19",
           {
-           "$long": 134351313851200000
+           "$long": 134353361007380000
           }
          ]
         }
@@ -2787,7 +3025,68 @@
         "List",
         []
        ],
-       "ok": null
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            [
+             {
+              "$row": {
+               "itemID": 9988400002933,
+               "typeID": 21857,
+               "ownerID": 140000429,
+               "locationID": 9988400002932,
+               "flagID": 19,
+               "quantity": -1,
+               "groupID": 46,
+               "categoryID": 7,
+               "customInfo": null,
+               "stacksize": 1,
+               "singleton": 1
+              }
+             },
+             {
+              "$row": {
+               "itemID": 9988400002934,
+               "typeID": 3634,
+               "ownerID": 140000429,
+               "locationID": 9988400002932,
+               "flagID": 27,
+               "quantity": -1,
+               "groupID": 53,
+               "categoryID": 7,
+               "customInfo": null,
+               "stacksize": 1,
+               "singleton": 1
+              }
+             },
+             {
+              "$row": {
+               "itemID": 9988400002935,
+               "typeID": 3651,
+               "ownerID": 140000429,
+               "locationID": 9988400002932,
+               "flagID": 28,
+               "quantity": -1,
+               "groupID": 54,
+               "categoryID": 7,
+               "customInfo": null,
+               "stacksize": 1,
+               "singleton": 1
+              }
+             }
+            ]
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -2797,7 +3096,22 @@
          4
         ]
        ],
-       "ok": null
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -2807,7 +3121,22 @@
          5
         ]
        ],
-       "ok": null
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -2822,7 +3151,7 @@
          }
         ]
        ],
-       "ok": null
+       "ok": []
       },
       {
        "call": [
@@ -2857,10 +3186,10 @@
            {
             "$tuple": [
              {
-              "$long": 9988400000670
+              "$long": 9988400002932
              },
              596,
-             140000144,
+             140000429,
              60015249,
              4,
              -1,
@@ -2884,9 +3213,9 @@
        ],
        "ok": {
         "$row": {
-         "itemID": 9988400000670,
+         "itemID": 9988400002932,
          "typeID": 596,
-         "ownerID": 140000144,
+         "ownerID": 140000429,
          "locationID": 60015249,
          "flagID": 4,
          "quantity": -1,
@@ -2904,7 +3233,21 @@
         "GetCapacity",
         []
        ],
-       "ok": null
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           115
+          ],
+          [
+           "used",
+           0
+          ]
+         ]
+        }
+       }
       },
       {
        "call": [
@@ -2914,7 +3257,21 @@
          5
         ]
        ],
-       "ok": null
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           115
+          ],
+          [
+           "used",
+           0
+          ]
+         ]
+        }
+       }
       },
       {
        "call": [
@@ -2962,10 +3319,10 @@
             {
              "$tuple": [
               {
-               "$long": 9988400000670
+               "$long": 9988400002932
               },
               596,
-              140000144,
+              140000429,
               60015249,
               4,
               -1,
@@ -2994,7 +3351,7 @@
      "charUnboundMgr",
      "CreateCharacterWithDoll",
      [
-      "Stocked 7 1790657781",
+      "Stocked 7 1790862494",
       8,
       7,
       1,
@@ -3020,9 +3377,9 @@
       null
      ]
     ],
-    "ok": 140000145
+    "ok": 140000430
    },
-   "shipID": 9988400000674,
+   "shipID": 9988400002936,
    "descriptor": {
     "call": [
      "invbroker",
@@ -3135,9 +3492,9 @@
        "$substruct": {
         "$substream": {
          "$tuple": [
-          "N=65450:42",
+          "N=65450:21",
           {
-           "$long": 134351313867510000
+           "$long": 134353361028590000
           }
          ]
         }
@@ -3154,9 +3511,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000674,
+          "itemID": 9988400002936,
           "typeID": 606,
-          "ownerID": 140000145,
+          "ownerID": 140000430,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -3180,9 +3537,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000674,
+          "itemID": 9988400002936,
           "typeID": 606,
-          "ownerID": 140000145,
+          "ownerID": 140000430,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -3236,9 +3593,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000674,
+          "itemID": 9988400002936,
           "typeID": 606,
-          "ownerID": 140000145,
+          "ownerID": 140000430,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -3415,10 +3772,10 @@
             {
              "$tuple": [
               {
-               "$long": 9988400000674
+               "$long": 9988400002936
               },
               606,
-              140000145,
+              140000430,
               60015249,
               4,
               -1,
@@ -3450,9 +3807,9 @@
        "$substruct": {
         "$substream": {
          "$tuple": [
-          "N=65450:43",
+          "N=65450:22",
           {
-           "$long": 134351313867680000
+           "$long": 134353361029010000
           }
          ]
         }
@@ -3469,9 +3826,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000674,
+          "itemID": 9988400002936,
           "typeID": 606,
-          "ownerID": 140000145,
+          "ownerID": 140000430,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -3495,9 +3852,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000674,
+          "itemID": 9988400002936,
           "typeID": 606,
-          "ownerID": 140000145,
+          "ownerID": 140000430,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -3551,9 +3908,9 @@
        "ok": [
         {
          "$row": {
-          "itemID": 9988400000674,
+          "itemID": 9988400002936,
           "typeID": 606,
-          "ownerID": 140000145,
+          "ownerID": 140000430,
           "locationID": 60015249,
           "flagID": 4,
           "quantity": -1,
@@ -3730,10 +4087,10 @@
             {
              "$tuple": [
               {
-               "$long": 9988400000674
+               "$long": 9988400002936
               },
               606,
-              140000145,
+              140000430,
               60015249,
               4,
               -1,
@@ -3758,16 +4115,16 @@
        "invbroker",
        "GetInventoryFromId",
        [
-        9988400000674
+        9988400002936
        ]
       ],
       "ok": {
        "$substruct": {
         "$substream": {
          "$tuple": [
-          "N=65450:44",
+          "N=65450:23",
           {
-           "$long": 134351313867910000
+           "$long": 134353361029400000
           }
          ]
         }
@@ -3781,7 +4138,68 @@
         "List",
         []
        ],
-       "ok": null
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            [
+             {
+              "$row": {
+               "itemID": 9988400002937,
+               "typeID": 21857,
+               "ownerID": 140000430,
+               "locationID": 9988400002936,
+               "flagID": 19,
+               "quantity": -1,
+               "groupID": 46,
+               "categoryID": 7,
+               "customInfo": null,
+               "stacksize": 1,
+               "singleton": 1
+              }
+             },
+             {
+              "$row": {
+               "itemID": 9988400002938,
+               "typeID": 3638,
+               "ownerID": 140000430,
+               "locationID": 9988400002936,
+               "flagID": 27,
+               "quantity": -1,
+               "groupID": 53,
+               "categoryID": 7,
+               "customInfo": null,
+               "stacksize": 1,
+               "singleton": 1
+              }
+             },
+             {
+              "$row": {
+               "itemID": 9988400002939,
+               "typeID": 3651,
+               "ownerID": 140000430,
+               "locationID": 9988400002936,
+               "flagID": 28,
+               "quantity": -1,
+               "groupID": 54,
+               "categoryID": 7,
+               "customInfo": null,
+               "stacksize": 1,
+               "singleton": 1
+              }
+             }
+            ]
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -3791,7 +4209,22 @@
          4
         ]
        ],
-       "ok": null
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -3801,7 +4234,22 @@
          5
         ]
        ],
-       "ok": null
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -3816,7 +4264,7 @@
          }
         ]
        ],
-       "ok": null
+       "ok": []
       },
       {
        "call": [
@@ -3851,10 +4299,10 @@
            {
             "$tuple": [
              {
-              "$long": 9988400000674
+              "$long": 9988400002936
              },
              606,
-             140000145,
+             140000430,
              60015249,
              4,
              -1,
@@ -3878,9 +4326,9 @@
        ],
        "ok": {
         "$row": {
-         "itemID": 9988400000674,
+         "itemID": 9988400002936,
          "typeID": 606,
-         "ownerID": 140000145,
+         "ownerID": 140000430,
          "locationID": 60015249,
          "flagID": 4,
          "quantity": -1,
@@ -3898,7 +4346,21 @@
         "GetCapacity",
         []
        ],
-       "ok": null
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           135
+          ],
+          [
+           "used",
+           0
+          ]
+         ]
+        }
+       }
       },
       {
        "call": [
@@ -3908,7 +4370,21 @@
          5
         ]
        ],
-       "ok": null
+       "ok": {
+        "$object": "util.KeyVal",
+        "args": {
+         "$dict": [
+          [
+           "capacity",
+           135
+          ],
+          [
+           "used",
+           0
+          ]
+         ]
+        }
+       }
       },
       {
        "call": [
@@ -3956,10 +4432,10 @@
             {
              "$tuple": [
               {
-               "$long": 9988400000674
+               "$long": 9988400002936
               },
               606,
-              140000145,
+              140000430,
               60015249,
               4,
               -1,

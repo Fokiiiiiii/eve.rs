@@ -86,7 +86,8 @@ public sealed partial class CharacterShips(
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockAsync(connection, transaction, characterId, cancellationToken);
 
-        if (await LoadAsync(characterId, cancellationToken) is not { } snapshot || await items.GetAsync(itemId, cancellationToken) is not { } item
+        // the item is read under its row lock (as the market does), so what is decided is what is moved
+        if (await LoadAsync(characterId, cancellationToken) is not { } snapshot || await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken) is not { } item
             || item.OwnerId != characterId || item.Id == snapshot.Ship.Id)
         {
             return new NothingHappened();
@@ -102,10 +103,11 @@ public sealed partial class CharacterShips(
         {
             return new NothingHappened();
         }
-        if (quantity is { } asked && !item.Singleton && asked != item.Quantity)
+        if (quantity is { } asked && !item.Singleton && (asked <= 0 || asked > item.Quantity))
         {
-            return new NothingHappened(); // splitting a stack is not done yet
+            return new NothingHappened();
         }
+        var splits = quantity is { } some && !item.Singleton && some < item.Quantity;
         if (inShip && Slots.FamilyOfFlag(item.Flag) == SlotFamily.Rig && !toShip)
         {
             return new NothingHappened(); // a rig cannot be taken out: it has to be destroyed
@@ -159,6 +161,15 @@ public sealed partial class CharacterShips(
 
         // what the ship is once the item is where it goes
         var landsInSlot = toShip && Slots.IsSlotFlag(destinationFlag);
+        if (splits && landsInSlot)
+        {
+            return new NothingHappened(); // a stack of modules is not split into a slot
+        }
+        if (toShip && destinationFlag == CargoFlag && !(inShip && item.Flag == CargoFlag)
+            && await RefuseWhatDoesNotFitAsync(snapshot, item, splits ? quantity!.Value : item.Quantity, destinationFlag, cancellationToken) is { } full)
+        {
+            return full;
+        }
         var newState = wasInSlot && landsInSlot ? state : ItemState.Offline;
         world.Remove(item.Id);
         if (landsInSlot)
@@ -167,7 +178,16 @@ public sealed partial class CharacterShips(
         }
         var shipAfter = world.Attributes(ship.Id);
 
-        await items.MoveAsync(connection, transaction, item.Id, destinationLocationId, destinationFlag, cancellationToken);
+        // part of a stack is split off into a stack of its own where it goes; a whole stack goes as it is
+        Item? split = null;
+        if (splits)
+        {
+            split = await items.MoveStackAsync(connection, transaction, item, quantity!.Value, characterId, destinationLocationId, destinationFlag, cancellationToken);
+        }
+        else
+        {
+            await items.MoveAsync(connection, transaction, item.Id, destinationLocationId, destinationFlag, cancellationToken);
+        }
         if (wasInSlot || landsInSlot)
         {
             await modules.SetAsync(connection, transaction, item.Id, newState, cancellationToken);
@@ -187,6 +207,14 @@ public sealed partial class CharacterShips(
                 // the reference says the online effect stops whether or not it was running
                 events.Add(new EffectChanged(item.Id, BuiltInEffects.Online, Started: false));
             }
+        }
+        if (!wasInSlot && !landsInSlot)
+        {
+            // what is not a fitting move is told as the stacks that changed: the one that gave, then the one that took
+            var stacks = split is { } created
+                ? new List<ItemChanged> { new(item with { Quantity = item.Quantity - created.Quantity }, item.LocationId, item.Flag, item.Quantity), new(created, 0, created.Flag, 0) }
+                : [new ItemChanged(item with { LocationId = destinationLocationId, Flag = destinationFlag }, item.LocationId, item.Flag, item.Quantity)];
+            return new ShipChanged(split?.Id ?? item.Id, ship.Id, [], events, stacks);
         }
         var moved = new ItemMoved(item with { LocationId = destinationLocationId, Flag = destinationFlag }, item.LocationId, item.Flag);
         return new ShipChanged(item.Id, ship.Id, [moved], events);

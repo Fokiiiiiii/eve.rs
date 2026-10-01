@@ -70,5 +70,9 @@ public static class ShipNotifications
                 new PyDict([new(new PyInt(3), InventoryWire.Id(moved.PreviousLocationId)), new(new PyInt(4), new PyInt(moved.PreviousFlag))]),
                 PyNone.Instance);
         }
+        foreach (var stack in changed.Stacks ?? [])
+        {
+            SendItemChange(session, stack, row);
+        }
     }
 }

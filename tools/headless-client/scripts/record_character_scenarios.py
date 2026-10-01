@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record what the EVE.js reference does from login to a session with a character.
 
-    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others|target|module|weapon|ammo|health|death]
+    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others|target|module|weapon|ammo|cargo|health|death]
 
 The recording is the contract for the same path in eve.rs: `tests/test_login_to_character.py` replays the calls
 against any server and compares each answer with what is stored here, by shape, treating per-run values
@@ -1313,6 +1313,99 @@ def record_ammo(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
     who.close()
 
 
+def record_cargo(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """One character and the cargo hold of its ship, as the client uses it: in the station a stack of tritanium given, asked for, moved into the hold (all of it,
+    part of it, more than the hold takes), stacked, moved back to the hangar; then in space the hold asked for, a stack jettisoned, the can that comes of it
+    opened and what is in it taken back. Each step holds the answer (or the error) and what the pilot was sent, with the seconds each arrived at. The inventory
+    is bound the way the client binds it: `invbroker.MachoBindObject((place, group), ("GetInventoryFromId", (itemID, 0)))`, the place being the station (group 15)
+    or the solar system (group 5)."""
+    system, station = 30100032, 60015249
+    who = rec.login("Hauler")
+    created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Hauler {run}", 1, 1, ancestry[1]))
+    char_id = int(created["ok"])
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
+    hangar = who.call_bound(manager, "GetInventory", 10004)
+    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
+    events_of(who)
+    only = {"events": who}
+    steps: list = []
+
+    def step(label, call, seconds=1.0, until=None):
+        entry = {"label": label}
+        try:
+            entry["ok"] = describe(call())
+        except p.MachoError as error:
+            entry["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+        entry["events"] = watch(only, seconds, (lambda seen: until(seen["events"])) if until else None)["events"]
+        steps.append(entry)
+        return entry
+
+    slash = lambda command: (lambda: who.call("slash", "SlashCmd", command))  # noqa: E731
+
+    def cargo_in(place: tuple):
+        return who.call("invbroker", "MachoBindObject", place, ("GetInventoryFromId", (ship_id, 0), None))[1]
+
+    def stacks_of(handle, flag=None) -> dict:
+        rows = who.call_bound(handle, "List", flag) if flag else who.call_bound(handle, "List")
+        found = {}
+        for row in (rows if isinstance(rows, list) else []):
+            fields = row.fields()
+            found.setdefault(int(fields["typeID"]), []).append(int(fields["itemID"]))
+        return found
+
+    docked = cargo_in((station, 15))
+    step("the pilot asks for its empty hold", lambda: who.call_bound(docked, "List", 5))
+    step("the pilot asks for the room in its hold", lambda: who.call_bound(docked, "GetCapacity", 5))
+    step("the pilot is given tritanium", slash("/giveitem Tritanium 100"))
+    trit = stacks_of(hangar)[34][0]
+    step("the pilot puts all the tritanium in the hold", lambda: who.call_bound(docked, "Add", trit, station, qty=100, flag=5), 1.5)
+    step("the pilot asks for its hold", lambda: who.call_bound(docked, "List", 5))
+    step("the pilot asks for the room in its hold again", lambda: who.call_bound(docked, "GetCapacity", 5))
+    step("the pilot is given more tritanium", slash("/giveitem Tritanium 40"))
+    more = [i for i in stacks_of(hangar)[34] if i != trit][0] if len(stacks_of(hangar).get(34, [])) > 1 else stacks_of(hangar)[34][0]
+    step("the pilot puts part of it in the hold", lambda: who.call_bound(docked, "Add", more, station, qty=15, flag=5), 1.5)
+    step("the pilot asks for its hold with two stacks", lambda: who.call_bound(docked, "List", 5))
+    step("the pilot stacks its hold", lambda: who.call_bound(docked, "StackAll", 5), 1.5)
+    step("the pilot asks for its hold stacked", lambda: who.call_bound(docked, "List", 5))
+    step("the pilot is given more than the hold takes", slash("/giveitem Tritanium 20000"))
+    big = max(stacks_of(hangar)[34], key=lambda i: i)
+    step("the pilot puts more than the hold takes in it", lambda: who.call_bound(docked, "Add", big, station, qty=20000, flag=5), 1.5)
+    step("the pilot asks for the room in its hold at the end", lambda: who.call_bound(docked, "GetCapacity", 5))
+    inside = stacks_of(docked, 5)[34][0]
+    step("the pilot takes some back to the hangar", lambda: who.call_bound(hangar, "Add", inside, ship_id, qty=20, flag=4), 1.5)
+    step("the pilot asks for its hold after", lambda: who.call_bound(docked, "List", 5))
+
+    service = who.call("ship", "MachoBindObject", (station, 15), None)
+    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", ship_id, False), 2.5)
+    ballpark = who.call("beyonce", "MachoBindObject", system, None)
+    step("the pilot binds the ballpark", lambda: ballpark, 3.0)
+    space = who.call("dogmaIM", "MachoBindObject", (system, 5), None)
+    step("the pilot binds dogma in space", lambda: space, 1.0)
+    step("the pilot asks for its ship in space", lambda: who.call_bound(space[0], "GetAllInfo", True, True, None), 1.0)
+    steps.append({"label": "the pilot waits for the protection to end", "events": watch(only, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))["events"]})
+    flying = cargo_in((system, 5))
+    step("the pilot asks for its hold in space", lambda: who.call_bound(flying, "List", 5))
+    step("the pilot asks for the room in its hold in space", lambda: who.call_bound(flying, "GetCapacity", 5))
+    held = stacks_of(flying, 5).get(34, [])
+    ship_service = who.call("ship", "MachoBindObject", system, None)
+    jettison = step("the pilot jettisons a stack", lambda: who.call_bound(ship_service[0], "Jettison", m.List(held[:1])), 4.0)
+    can = next((item for item, kind in slims_in(jettison["events"]) if item != ship_id), 0)
+    if can:
+        opened = who.call("invbroker", "MachoBindObject", (system, 5), ("GetInventoryFromId", (can, 0), None))[1]
+        step("the pilot opens the can", lambda: who.call_bound(opened, "List"))
+        step("the pilot asks for the room in the can", lambda: who.call_bound(opened, "GetCapacity"))
+        inside_can = stacks_of(opened).get(34, [0])[0]
+        step("the pilot takes what is in the can back", lambda: who.call_bound(flying, "Add", inside_can, can, qty=25, flag=5), 1.5)
+        step("the pilot asks for its hold after the can", lambda: who.call_bound(flying, "List", 5))
+        step("the pilot asks for the can after", lambda: who.call_bound(opened, "List"))
+    with open(os.path.join(out, "cargo.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [{"bloodlineID": 1, "raceID": 1, "solarSystemID": system, "stationID": station, "create": created, "characterID": char_id, "shipID": ship_id, "canID": can, "steps": steps}]}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+    who.close()
+
+
 def record_health(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One character damages its ship in the hangar (`/dmg`, the reference's only way to hurt a ship on demand), asks for it, leaves the station
     with the damage, watches its shield and capacitor recharge, heals in space and tries to damage again there. Each step holds the answer (or
@@ -1456,10 +1549,10 @@ def main() -> int:
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others, "target": record_target, "module": record_module, "weapon": record_weapon, "ammo": record_ammo, "health": record_health, "death": record_death}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others, "target": record_target, "module": record_module, "weapon": record_weapon, "ammo": record_ammo, "cargo": record_cargo, "health": record_health, "death": record_death}
     try:
         for name, record in parts.items():
-            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others", "target", "module", "weapon", "ammo", "health", "death")):  # the fast one needs a reference started for it
+            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others", "target", "module", "weapon", "ammo", "cargo", "health", "death")):  # the fast one needs a reference started for it
                 record(rec, out, meta, ancestry, run)
         if only in (None, "stations"):
             record_stations(rec, out, meta, ancestry, run, sde)

@@ -469,35 +469,14 @@ def inventory_form(described):
     return unwrap_longs(as_rows(described))
 
 
-def starter_modules(race_id: int) -> list[tuple[int, int]]:
-    """(type, flag) of what a new ship of this race is fitted with, from the dogma recording, in the order of its slots."""
-    race = next(r for r in DOGMA["races"] if r["raceID"] == race_id)
-    info = keyval(race["bind"]["ok"]["$tuple"][1])
-    ship, *modules = pairs(info["shipInfo"])
-    rows = [keyval(item)["invItem"]["$row"] for _, item in modules]
-    return sorted(((row["typeID"], row["flagID"]) for row in rows), key=lambda t: t[1])
+def lines_of(rowset: dict) -> list:
+    """The lines of a described `Rowset`."""
+    return next(v for k, v in rowset["args"]["$dict"] if k == "lines")
 
 
-def ship_contents(race_id: int, method: str, described: list, outcome, where: str) -> list[str]:
-    """What eve.rs answers a ship's List, ListByFlags and GetContainerContents with: the modules fitted to it."""
-    kit = starter_modules(race_id)
-    if method == "GetContainerContents":
-        lines = next(v for k, v in outcome["args"]["$dict"] if k == "lines")
-        got = sorted(((line["$tuple"][1], number(line["$tuple"][4])) for line in lines), key=lambda t: t[1])
-        return [] if got == kit else [f"{where}: fitted {got}, expected {kit}"]
-    flags = None
-    if method == "List" and described and described[0] not in (None, 0):
-        flags = {described[0]}
-    if method == "ListByFlags":
-        flags = set(described[0]["$tuple"])
-    wanted = [(t, f) for t, f in kit if flags is None or f in flags]
-    if not wanted and method == "List":
-        empty_set = {"$objectex": {"$tuple": [{"$token": "__builtin__.set"}, {"$tuple": [[]]}]}, "list": [], "dict": []}
-        return [] if outcome == empty_set else [f"{where}: expected the empty set, got {brief(outcome)}"]
-    if not isinstance(outcome, list):
-        return [f"{where}: expected the modules, got {brief(outcome)}"]
-    got = sorted(((row["$row"]["typeID"], row["$row"]["flagID"]) for row in outcome), key=lambda t: t[1])
-    return [] if got == wanted else [f"{where}: fitted {got}, expected {wanted}"]
+def lines_dropped(rowset: dict) -> dict:
+    """The same described `Rowset` without its lines."""
+    return {**rowset, "args": {"$dict": [[k, [] if k == "lines" else v] for k, v in rowset["args"]["$dict"]]}}
 
 
 @pytest.mark.parametrize("race", INVENTORY["races"], ids=lambda r: f"race-{r['raceID']}")
@@ -534,19 +513,13 @@ def test_a_new_characters_inventories_are_those_of_the_reference(race):
                     problems.append(f"{where}: error {brief(describe(error.payload))}")
                     continue
                 expected = step["ok"]
-                if not REFERENCE:
-                    # GAP (capacity): the inventory's capacity and volume come with dogma; eve.rs has no answer yet
-                    if method == "GetCapacity":
-                        if outcome is not None:
-                            problems.append(f"{where}: eve.rs has no capacity yet, got {brief(outcome)}")
-                        continue
-                    if label == "ship":
-                        # DEVIATION (ship contents): the reference answers null for what is in a ship and lists the ship among its own
-                        # contents. eve.rs lists what is fitted to it (the client iterates the answer): the starter modules of the race,
-                        # each in its slot, and a flag with nothing in it is the empty set a hangar answers with (DEVIATIONS.md #10)
-                        if method in ("List", "ListByFlags", "GetContainerContents"):
-                            problems += ship_contents(race["raceID"], method, described, outcome, where)
-                            continue
+                if not REFERENCE and label == "ship" and method == "GetContainerContents":
+                    # DEVIATION (ship contents): the reference lists the ship itself among the contents of its own inventory; eve.rs lists what is in the ship (the
+                    # starter kit of the race: its three modules). The rowset has the shape the reference's has (DEVIATIONS.md #10).
+                    lines = lines_of(outcome)
+                    if len(lines) != 3:
+                        problems.append(f"{where}: {len(lines)} lines in place of the three fitted modules")
+                    expected, outcome = lines_dropped(expected), lines_dropped(outcome)
                 problems += same_way(inventory_form(expected), inventory_form(outcome), where, volatile=VOLATILE | ITEM_FIELDS)
     assert problems == [], "\n".join(problems[:20])
 

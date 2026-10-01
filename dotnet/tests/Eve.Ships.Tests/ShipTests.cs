@@ -81,7 +81,7 @@ public class ShipTests
         Assert.Equal(19, Changed(await rig.Ships.MoveAsync(c.CharacterId, second, Rig.Station, c.ShipId, null, null)).Items.Single().After.Flag);
         // a module that is no module goes to the cargo hold
         var goods = await rig.GiveAsync(c.CharacterId, 34, singleton: false, quantity: 50);
-        Assert.Equal(CharacterShips.CargoFlag, Changed(await rig.Ships.MoveAsync(c.CharacterId, goods, Rig.Station, c.ShipId, null, 50)).Items.Single().After.Flag);
+        Assert.Equal(CharacterShips.CargoFlag, Changed(await rig.Ships.MoveAsync(c.CharacterId, goods, Rig.Station, c.ShipId, null, 50)).Stacks!.Single().After.Flag);
     }
 
     [PgFact]
@@ -149,18 +149,22 @@ public class ShipTests
     }
 
     [PgFact]
-    public async Task A_stack_is_moved_whole_and_never_in_part_yet()
+    public async Task A_stack_is_moved_whole_or_in_part_and_goods_tell_the_stacks_that_changed()
     {
         await using var rig = await Rig.CreateAsync();
         var c = await rig.NewCharacterAsync();
         var goods = await rig.GiveAsync(c.CharacterId, 34, singleton: false, quantity: 50);
-        Assert.IsType<NothingHappened>(await rig.Ships.MoveAsync(c.CharacterId, goods, Rig.Station, c.ShipId, 5, 20));
+        // part of it: the rest stays where it was, and what goes is a stack of its own (see CargoTests)
+        var part = Changed(await rig.Ships.MoveAsync(c.CharacterId, goods, Rig.Station, c.ShipId, 5, 20));
         Assert.Equal(Rig.Station, (await rig.Items.GetAsync(goods))!.LocationId);
-        var moved = Changed(await rig.Ships.MoveAsync(c.CharacterId, goods, Rig.Station, c.ShipId, 5, 50));
-        Assert.Equal(c.ShipId, moved.Items.Single().After.LocationId);
+        Assert.Equal(30, (await rig.Items.GetAsync(goods))!.Quantity);
+        Assert.Equal(c.ShipId, (await rig.Items.GetAsync(part.ItemId))!.LocationId);
+        var moved = Changed(await rig.Ships.MoveAsync(c.CharacterId, goods, Rig.Station, c.ShipId, 5, 30));
+        Assert.Equal(c.ShipId, moved.Stacks!.Single().After.LocationId);
+        Assert.Empty(moved.Items); // goods are not a fitting move: the client is told the stacks, not the items
         Assert.Empty(moved.Events); // goods change nothing about the ship's numbers
         // and back into the hangar
-        Assert.Equal(Rig.Station, Changed(await rig.Ships.MoveAsync(c.CharacterId, goods, c.ShipId, Rig.Station, 4, null)).Items.Single().After.LocationId);
+        Assert.Equal(Rig.Station, Changed(await rig.Ships.MoveAsync(c.CharacterId, goods, c.ShipId, Rig.Station, 4, null)).Stacks!.Single().After.LocationId);
     }
 
     [PgFact]

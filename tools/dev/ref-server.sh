@@ -40,7 +40,7 @@ case "${1:-}" in
       node "$EVEJS/tools/DatabaseCreator/database-creator.js" --sde-dir "$SDE" --out "$ROOT/gameStore/data" --force >"$ROOT/data.out" 2>&1
     fi
     (cd "$EVEJS/server" && EVEJS_DATA_ROOT="$ROOT" EVEJS_GAMESTORE_DATA_DIR="$ROOT/gameStore/data" \
-      nohup node index.js >"$LOG" 2>&1 & echo $! >"$PIDFILE")
+      NODE_OPTIONS="--require=$HERE/tools/dev/ref-bigint-json.js" nohup node index.js >"$LOG" 2>&1 & echo $! >"$PIDFILE")
     for _ in $(seq 1 1200); do
       listening && { echo "listening on $PORT (pid $(cat "$PIDFILE"))"; exit 0; }
       running || { echo "the reference exited early:"; tail -20 "$LOG"; exit 1; }

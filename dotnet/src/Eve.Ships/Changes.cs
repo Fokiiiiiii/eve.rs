@@ -34,6 +34,9 @@ public enum ShipRefusal
 
     /// <summary>No free slot suits the module.</summary>
     NoSuitableSlot,
+
+    /// <summary>What was moved does not fit in the hold (see <see cref="ShipRefused.Available"/> and <see cref="ShipRefused.Volume"/>).</summary>
+    NotEnoughCargoSpace,
 }
 
 public abstract record ShipOutcome;
@@ -42,7 +45,11 @@ public abstract record ShipOutcome;
 public sealed record NothingHappened : ShipOutcome;
 
 /// <summary>What was asked cannot be done, and why.</summary>
-public sealed record ShipRefused(ShipRefusal Reason, FitFailure? Fit = null, int ModuleTypeId = 0, int ShipTypeId = 0, string? Detail = null) : ShipOutcome;
+public sealed record ShipRefused(
+    ShipRefusal Reason, FitFailure? Fit = null, int ModuleTypeId = 0, int ShipTypeId = 0, string? Detail = null, double Available = 0, double Volume = 0) : ShipOutcome;
 
-/// <summary>What was done: the items that moved, and what dogma reports of it, in the order the client is told.</summary>
-public sealed record ShipChanged(long ItemId, long ShipId, IReadOnlyList<ItemMoved> Items, IReadOnlyList<DogmaEvent> Events) : ShipOutcome;
+/// <summary>
+/// What was done: the items that moved, and what dogma reports of it, in the order the client is told. A move that is not a fitting one (goods into the hold, out of it,
+/// stacks split and stacked) is told as the items it changed, each with what it was before (<paramref name="Stacks"/>).
+/// </summary>
+public sealed record ShipChanged(long ItemId, long ShipId, IReadOnlyList<ItemMoved> Items, IReadOnlyList<DogmaEvent> Events, IReadOnlyList<ItemChanged>? Stacks = null) : ShipOutcome;

@@ -68,5 +68,8 @@ public static class InventoryWire
         ]));
 
     /// <summary>What <c>List</c> answers when a flag was asked for and nothing is in it: an empty Python <c>set</c>.</summary>
-    public static PyValue EmptySet() => new PyObjectEx(ObjectExKind.Ex1, Py.Tuple(new PyToken("__builtin__.set"), Py.Tuple(new PyList([]))), [], []);
+    public static PyValue EmptySet() => Set([]);
+
+    /// <summary>A Python <c>set</c> of values (how the reference answers what is in a docked ship when no flag is asked for).</summary>
+    public static PyValue Set(IEnumerable<PyValue> values) => new PyObjectEx(ObjectExKind.Ex1, Py.Tuple(new PyToken("__builtin__.set"), Py.Tuple(new PyList([.. values]))), [], []);
 }

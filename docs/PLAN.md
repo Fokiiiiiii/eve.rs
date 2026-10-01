@@ -112,3 +112,90 @@ domain module.
    (with their provenance recorded), and the code is never copied.
 3. Tag the fixtures by tier and record the next deviations with evidence from the client source.
 4. Measure before tuning the S1 path (frame copies, per-packet allocation, ping in the front).
+
+
+## 7. S5 service backlog (owner, 2026-10-01)
+
+The owner prioritises corporations, markets and alliances. Finish those three service groups first, then work
+through the remaining list sequentially, following prerequisites. One developer owns this backlog; do not spawn
+subagents. Combat, NPCs, world tick, space and their surrounding implementation are being developed separately by Claude.
+`CLAUDE.md` records the ownership split and shared-file coordination; check its reply section after pulling main.
+Keep this work in domain and service files that do not overlap that work. Integrate shared host registration and
+status documentation only after checking the latest `main`. Use EVE.js v0.12.9 as the behavioural source and
+`eve-logic` as the client contract and shared-rule reference (CLAUDE.md and ADR 0009).
+
+The owner sets the ISK balance ceiling to exactly 1,145,141,919,364,364 ISK (decimal; 2026-10-01).
+Apply it to the wallet API and PostgreSQL constraints; reject overflow without a partial settlement.
+
+The owner requests reliability beyond EVE.js: atomic settlement, durable journals, safe retries, concurrent
+orders without double spending, and recovery after interruption. Keep the client contract compatible; improve
+internal consistency and completeness. Additional strict authentication/security infrastructure is not requested.
+The deployed server must run entirely in C# and Rust, with no Node.js/EVE.js runtime dependency. Node.js may be
+used to record reference fixtures during migration; the normal checks replay those fixtures without Node.js.
+Measure throughput and latency before claiming improvements; keep persistence and client compatibility intact.
+
+A checkbox is completed only after implementation, the relevant executable checks, and integration. Read-side
+entries remain read-side; do not take over the other developer's producers or simulation. Client acceptance and
+unavailable checks must be recorded separately in NATIVE_MIGRATION.md.
+
+- [ ] Map / Universe read-side
+- [ ] Lookup / Search
+- [ ] Social / Contacts
+- [ ] Block list
+- [ ] Character Notes
+- [ ] Online Status
+- [ ] Mail
+- [ ] Mailing Lists
+- [ ] Notifications
+- [ ] Calendar
+- [ ] Shared Settings
+- [ ] Overview Presets
+- [ ] Subscription / Omega
+- [ ] PaperDoll
+- [ ] Portrait / Character Appearance
+- [ ] Banned Words / Name filtering
+- [ ] Character Cosmetics
+- [ ] SKIN license management
+- [ ] Store / Offer catalog read-side
+- [ ] Corporation Core
+- [ ] Corporation Membership
+- [ ] Corporation Public Info
+- [ ] Employment History
+- [ ] Corporation Roles
+- [ ] Corporation Medals
+- [ ] Alliance Core
+- [ ] Alliance Membership
+- [ ] Alliance Public Info
+- [ ] Wars information read-side
+- [ ] Standing
+- [ ] Insurance price and contract information read-side
+- [ ] Market Core
+- [ ] Market Order Book
+- [ ] Market Price History
+- [ ] Market Topology
+- [ ] Market Cache
+- [ ] NPC seeded market orders
+- [ ] Agents read-side
+- [ ] Mission Journal read-side
+- [ ] Industry Job read-side
+- [ ] Industry history / statistics
+- [ ] PI / Planetary management
+- [ ] Bill / Billing
+- [ ] Character Reports / Petitions
+- [ ] Rewards / Login rewards
+- [ ] Achievements
+- [ ] Project Discovery
+- [ ] Localization service
+- [ ] Browser lockdown / configuration
+- [ ] Account / User metadata
+- [ ] Redeem tokens
+- [ ] Character customization data
+- [ ] Killmail read-side
+- [ ] Mining Ledger
+- [ ] Corporation Mining Ledger
+- [ ] Sov / FW information read-side
+- [ ] Incursion / Anomaly information read-side
+- [ ] Structure Directory read-side
+- [ ] Structure Settings
+- [ ] Structure Asset Safety
+- [ ] Structure Deliveries

@@ -231,3 +231,9 @@ independently derived from the pinned Carbon source and not to be relied on by
 live gameplay without a separate reviewed change. `eve-destiny` therefore is
 not loaded by anything. New Rust code is AGPL-3.0-only like the rest of the
 repository; the Carbon-derived integration keeps its MIT notice.
+
+
+## S5 service work in progress (2026-10-01)
+
+- **ISK settlement foundation:** `Eve.Wallet/WalletTransactions` transfers money and records both journal entries in the caller's PostgreSQL transaction. Wallet rows are locked in owner order; amounts are positive cents; missing wallets and insufficient funds fail before a debit. The persistent owner/operation-key uniqueness makes a retry a no-op only when both entries have the same terms. PLEX is untouched. Migration `002_journal.sql` adds the journal. On a separate PostgreSQL 18.4 cluster: 15 wallet tests passed, zero skipped, including concurrent debits, opposite transfers, rollback, replay and mismatched replay terms. A mutation of the insufficient-funds guard was caught (one test failed with two debits accepted); restoring the guard restored all 10 passes; after adding the money-limit checks, all 15 passed. This is a domain foundation, not yet a client-visible account/market service; live/native-client acceptance remains unverified.
+- **Owner's ISK ceiling:** exactly `1145141919364364` ISK (`WalletLimits.MaximumIsk`, decimal), enforced by the open/transfer/adjust APIs and migration `003_money_limit.sql`. A recipient at the ceiling refuses another cent before the sender is debited; a reward or direct SQL update cannot exceed it. The exact ceiling and the cent below it round-trip through PostgreSQL without changing PLEX. The market's order-price cap is still the separate reference rule, not a wallet-balance cap.

@@ -31,6 +31,10 @@ internal sealed class Rig : IAsyncDisposable
 
     public PgWalletStore Store { get; }
 
+    public string Schema => _schema;
+
+    public WalletTransactions Transfers => new(Source, _schema);
+
     public static async Task<Rig> CreateAsync()
     {
         var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));

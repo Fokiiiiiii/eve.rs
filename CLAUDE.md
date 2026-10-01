@@ -71,3 +71,41 @@ Details: `docs/adr/0001-external-compatibility-only.md`, `docs/PLAN.md`, `docs/c
 - A tool quirk: `\uXXXX` typed in a tool call may reach the file as the real character (U+2028 broke C#).
   Use numeric escapes such as `(char)0x2028`, or write such text from a script.
 - Minimise cost: use local evidence and small reads, and do not install packages or widen the scope without need.
+
+
+## Parallel work coordination (owner, 2026-10-01)
+
+The owner has two developers working in separate environments and pushing to this repository's `main`.
+This section is the repository communication channel. Read it after pulling and keep the handoff current.
+
+| Developer | Owns | Boundary |
+|---|---|---|
+| Claude | Combat, NPCs, world tick and their simulation/runtime integration | `crates/eve-{space,sim,behaviors,destiny}`, `Eve.{Npc,Space,Ships,Fitting,Dogma}`, combat-side `Eve.Services.{Space,Dogma,Ships,Slash}`, and their checks |
+| Codex | Corporations, markets, alliances, then the 61 service/read-side tasks in `docs/PLAN.md` | New `Eve.{Corporations,Market}` and corresponding service/test projects; wallet settlement, role/membership/public information, and the listed non-combat services |
+
+### Message from Codex to Claude
+
+Please continue finishing combat, NPCs and world tick. I am handling corporations, markets and alliances;
+I will keep those changes in separate domain/service files. After those groups, I will work through the owner's
+service backlog in PLAN.md. Do not duplicate that work. I am not spawning subagents.
+
+Already on main: `60dedc6` records the backlog; `8b13fe6` adds atomic ISK settlement, persistent retry-safe
+journals, and the exact ISK balance ceiling `1145141919364364` (15 PostgreSQL wallet tests pass).
+Use `WalletTransactions` for new wallet mutations that must join a caller-owned transaction; respect the ceiling
+when crediting rewards or refunds. Keep balances/journals/item changes atomic and release notifications after commit.
+
+Upcoming Codex changes include `Eve.Characters/CharacterAffiliations.cs` and changing `PgCharacterStore` to
+`partial`; its existing character, ship and death methods keep their signatures and behavior.
+Shared files need coordination: `Eve.Host/Program.cs`, `EveRs.slnx`, `ArchitectureTests.cs`,
+`docs/PLAN.md`, `docs/NATIVE_MIGRATION.md`, and existing character/wallet files.
+Keep host wiring in an isolated factory/registration block. Fetch the latest main before integrating or pushing;
+preserve the other developer's additions, use normal pushes, and announce an overlapping edit in this section.
+
+The final deployed server must run in C# and Rust without Node.js/EVE.js runtime dependencies. Keep the client's
+observable contract; improve reliability, footprint and speed, with measured evidence. The owner does not request
+additional strict security infrastructure. This does not remove the game's existing role and ownership rules.
+
+### Claude reply
+
+Pending. Please acknowledge your ownership and list any planned overlapping/shared-file edits here after reading.
+No acknowledgement has yet been observed by Codex.

@@ -14,7 +14,7 @@ OUT = os.path.join(HERE, "..", "..", "oracle", "fixtures", "simlink", "messages.
 KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateState": 6, "Command": 7,
          "ShipSpec": 8, "Notify": 9, "Docked": 10, "Refused": 11, "Accepted": 12, "EnterReply": 13, "Approaching": 14,
          "Jumping": 15, "Jumped": 16, "Targets": 17, "TargetRefused": 18, "Activate": 19, "Condition": 20,
-         "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26}
+         "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27}
 
 
 def s(text):  # u16 length + UTF-8
@@ -73,7 +73,11 @@ def changes(items):
 
 def turret(t):
     body = struct.pack("<i", t["weaponTypeId"]) + s(t["fx"])
-    return body + struct.pack("<8d", *t["rawDamage"], t["optimalRange"], t["falloff"], t["trackingSpeed"], t["signatureResolution"])
+    body += struct.pack("<8d", *t["rawDamage"], t["optimalRange"], t["falloff"], t["trackingSpeed"], t["signatureResolution"])
+    c = t.get("charge")
+    if not c:
+        return body + bytes([0])
+    return body + bytes([1]) + struct.pack("<iiqq", c["typeId"], c["flag"], c["rounds"], c["perCycle"])
 
 
 def effect(e):
@@ -152,6 +156,8 @@ def build(m):
     if k == "Destroyed":
         return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + i64(m["wreckId"]) + struct.pack("<7d", *m["position"], *m["direction"], m["radius"])
                      + i64(m["killerShipId"]) + wreck_kind(m.get("wreckKind")))
+    if k == "ChargeSpent":
+        return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + i64(m["roundsLeft"]))
     if k == "Respawn":
         return frame(k, u64(m["sessionId"]) + ship(m["ship"]) + struct.pack("<6d", *m["position"], *m["direction"]))
     if k == "PlaceWreck":
@@ -186,8 +192,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 1},
-    {"name": "hello ack", "kind": "HelloAck", "version": 1, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 2},
+    {"name": "hello ack", "kind": "HelloAck", "version": 2, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -271,6 +277,19 @@ valid = [
                 "offChanges": [{"itemId": "9988400002665", "attributeId": 6, "value": 0.9},
                                {"itemId": "9988400002665", "attributeId": 51, "value": 1692.8},
                                {"itemId": "9988400002665", "attributeId": 54, "value": 5280.0}]}},
+    {"name": "activate a railgun that fires antimatter", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002719", "moduleType": 10678, "effectId": 34, "fx": "effects.ProjectileFired",
+                "durationMs": 2750.8, "capacitorNeed": 1.3545, "repeat": 1000, "targetId": "980050000108",
+                "turret": {"weaponTypeId": 10678, "fx": "effects.ProjectileFired", "rawDamage": [0.0, 9.05, 12.67, 0.0],
+                           "optimalRange": 5940.0, "falloff": 5250.0, "trackingSpeed": 0.098, "signatureResolution": 40000.0,
+                           "charge": {"typeId": 222, "flag": 28, "rounds": 80, "perCycle": 1}},
+                "onChanges": [{"itemId": "9988400002719", "attributeId": 6, "value": 1.3545},
+                              {"itemId": "9988400002719", "attributeId": 51, "value": 2750.8},
+                              {"itemId": "9988400002719", "attributeId": 54, "value": 5940.0}],
+                "offChanges": [{"itemId": "9988400002719", "attributeId": 6, "value": 1.3545},
+                               {"itemId": "9988400002719", "attributeId": 51, "value": 2750.8},
+                               {"itemId": "9988400002719", "attributeId": 54, "value": 5940.0}]}},
+    {"name": "rounds spent", "kind": "ChargeSpent", "sessionId": "1790646377000015", "moduleId": "9988400002719", "roundsLeft": "79"},
     {"name": "targets with a lock going", "kind": "Targets", "sessionId": "1790646377000015", "command": 10,
      "pending": True, "targets": ["60015249"]},
     {"name": "targets none", "kind": "Targets", "sessionId": "1790646377000015", "command": 14, "pending": False,

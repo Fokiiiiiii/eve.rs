@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 1;
+    public const ushort ProtocolVersion = 2;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -62,6 +62,7 @@ public static class SimCodec
         public const byte Destroy = 24;
         public const byte Respawn = 25;
         public const byte PlaceWreck = 26;
+        public const byte ChargeSpent = 27;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)
@@ -162,7 +163,7 @@ public static class SimCodec
             var turret = ReadTurret(ref r);
             weapons[i] = new SimNpcWeapon(
                 moduleId, effectId, cycleMs, capacitorNeed, turret.WeaponTypeId, turret.Fx, turret.RawDamage, turret.OptimalRange, turret.Falloff, turret.TrackingSpeed,
-                turret.SignatureResolution);
+                turret.SignatureResolution, turret.Charge);
         }
         var wreck = ReadWreckKind(ref r);
         var hull = r.U8() switch
@@ -273,7 +274,14 @@ public static class SimCodec
         var weaponType = r.I32();
         var fx = r.Text();
         double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
-        return new SimTurret(weaponType, fx, damage, r.F64(), r.F64(), r.F64(), r.F64());
+        var (optimal, falloff, tracking, resolution) = (r.F64(), r.F64(), r.F64(), r.F64());
+        var charge = r.U8() switch
+        {
+            0 => null,
+            1 => new SimTurretCharge(r.I32(), r.I32(), r.I64(), r.I64()),
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad charge"),
+        };
+        return new SimTurret(weaponType, fx, damage, optimal, falloff, tracking, resolution, charge);
     }
 
     /// <summary>Decodes a frame's payload: the kind byte and the body (without the length prefix).</summary>
@@ -451,6 +459,9 @@ public static class SimCodec
             case Kind.Activate:
                 message = new SimActivate(r.U64(), ReadEffect(ref r));
                 break;
+            case Kind.ChargeSpent:
+                message = new SimChargeSpent(r.U64(), r.I64(), r.I64());
+                break;
             case var other:
                 throw new SimLinkException(SimLinkError.UnknownKind, $"unknown message kind {other}");
         }
@@ -524,7 +535,7 @@ public static class SimCodec
             w.F64(weapon.CycleMs);
             w.F64(weapon.CapacitorNeed);
             WriteTurret(w, new SimTurret(
-                weapon.WeaponTypeId, weapon.Fx, weapon.RawDamage, weapon.OptimalRange, weapon.Falloff, weapon.TrackingSpeed, weapon.SignatureResolution));
+                weapon.WeaponTypeId, weapon.Fx, weapon.RawDamage, weapon.OptimalRange, weapon.Falloff, weapon.TrackingSpeed, weapon.SignatureResolution, weapon.Charge));
         }
         WriteWreckKind(w, i.Wreck);
         w.U8((byte)(i.Hull ? 1 : 0));
@@ -580,6 +591,18 @@ public static class SimCodec
         w.F64(t.Falloff);
         w.F64(t.TrackingSpeed);
         w.F64(t.SignatureResolution);
+        if (t.Charge is { } charge)
+        {
+            w.U8(1);
+            w.I32(charge.TypeId);
+            w.I32(charge.Flag);
+            w.I64(charge.Rounds);
+            w.I64(charge.PerCycle);
+        }
+        else
+        {
+            w.U8(0);
+        }
     }
 
     private static void WriteEffect(Writer w, SimEffect e)
@@ -783,6 +806,12 @@ public static class SimCodec
                 w.F64(m.Radius);
                 w.I64(m.KillerShipId);
                 WriteWreckKind(w, m.WreckKind);
+                break;
+            case SimChargeSpent m:
+                w.U8(Kind.ChargeSpent);
+                w.U64(m.SessionId);
+                w.I64(m.ModuleId);
+                w.I64(m.RoundsLeft);
                 break;
             case SimRespawn m:
                 w.U8(Kind.Respawn);

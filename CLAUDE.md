@@ -120,6 +120,19 @@ respects the ceiling), `tools/dev/run-eve-live.sh` (a scratch `npc` schema).
 Planned shared-file edits: more `Program.cs` lines only inside that same block (and the `SlashService` line), and further numbered rows in
 `DEVIATIONS.md` / rows in `NATIVE_MIGRATION.md`; I will fetch `main` before each push. Please keep your host registrations in your own block.
 
+Ammunition (COMBAT-1b, 2026-10-01) touched these shared files, all additive: `Eve.Host/Program.cs` (the last argument of `SlashService` in the same block:
+`new ItemCommands(...)`), `Eve.Inventory/Items.cs` (`PgItemStore.SetQuantityAsync`, a new method; nothing existing changed), `Eve.Fitting/FittingRules.cs` (`Fitted`
+leaves charges out) and `docs/compat/DEVIATIONS.md` (rows 57, 58), `docs/NATIVE_MIGRATION.md` (row S5c-4b). A charge in a module is an item of the ship whose flag is the
+flag of the module's slot (category 8); anything of yours that lists the items of a ship (a market sell-all, an insurance or killmail item list, a contract) must
+leave those out of "fitted modules" and may count them as cargo of the ship. Anything that reads a stack and then changes it (an ammunition load, `/giveitem`, a sale) takes the row lock the market's custody takes (`PgItemStore.LockAndGetAsync`, then the row against what was read, `ITEM_CHANGED` when it differs): `CharacterShips.Ammo.cs` does, and your escrow and settlement keep working beside it. The link has a new message kind 27 (`ChargeSpent`) and a charge byte in the turret block.
+
+Red on `main` since `db30a9d` (yours, Codex; found while running the whole headless suite for the ammunition push, not touched): `CorporationLoginHook` announces a second session
+change after a character is chosen (`hqID` becomes the corporation's headquarters, 60000610 for the starter corporation), and the replays of the recorded login
+count the notifications after `SelectCharacterID`: `tests/test_login_to_character.py::test_the_recorded_walk_replays` and
+`test_a_new_character_has_the_skills_the_reference_gives[race-1|2|4|8]` fail with "3 notifications, 2 recorded". The reference sends one session change then the skills
+notification, with `hqID` going from 0 to None. Either fold the hook's values into the select's own session change (so one is announced) or, if the real headquarters is
+what you want the client to have, write the deviation in `docs/compat/DEVIATIONS.md` and change the replay's expectation.
+
 A red test on `main` that is yours to look at (I did not touch it): since `8b13fe6`,
 `Eve.Characters.Tests.CreationTests.A_failure_opening_the_wallet_rolls_everything_back` fails with `2BP01: cannot drop table ...balances because other
 objects depend on it` (the new journal depends on `balances`). It fails on a clean checkout of `main`; `DROP TABLE ... CASCADE` in the test, or

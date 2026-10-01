@@ -35,6 +35,18 @@ pub struct Turret {
     /// Radians a second.
     pub tracking_speed: f64,
     pub signature_resolution: f64,
+    /// The charge the turret fires when it takes one (the host works its damage into `raw_damage`): the scene keeps the rounds and spends them.
+    pub charge: Option<Charge>,
+}
+
+/// The ammunition in a turret: the kind, the slot it sits in (the client knows a loaded charge by the ship, the slot and the kind), the rounds it holds and the
+/// rounds a cycle spends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Charge {
+    pub type_id: i32,
+    pub flag: i32,
+    pub rounds: i64,
+    pub per_cycle: i64,
 }
 
 /// Where and how a ship moves, for the sake of a shot.
@@ -325,6 +337,7 @@ mod tests {
             falloff,
             tracking_speed: tracking,
             signature_resolution: resolution,
+            charge: None,
         }
     }
 
@@ -847,6 +860,69 @@ mod tests {
         // the shield has taken what the shots did
         let condition = scene.ship(PLAYER, now + 3 * SECOND).unwrap().health.condition_at(now + 3 * SECOND);
         assert!(condition.shield_charge < 1.0, "{condition:?}");
+    }
+
+    /// A gun that fires antimatter, with this many rounds in it and a cycle that spends one.
+    fn charged_gun(rounds: i64) -> Effect {
+        let mut gun = laser_effect(spec().ship_id, laser());
+        gun.turret.as_mut().unwrap().charge = Some(Charge { type_id: 222, flag: 28, rounds, per_cycle: 1 });
+        gun
+    }
+
+    /// The rounds the host is told are left, in the order it is told them.
+    fn rounds_left(out: &[Out]) -> Vec<i64> {
+        out.iter()
+            .filter_map(|o| match o {
+                Out::ChargeSpent { rounds_left, .. } => Some(*rounds_left),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_turret_spends_a_round_for_each_shot_and_stops_with_no_charges_when_they_are_gone() {
+        let (mut scene, npc, now) = duel();
+        let mut out = scene.activate(npc, charged_gun(3), now);
+        let mut at = now;
+        for _ in 0..80 {
+            at += SECOND / 4;
+            out.extend(scene.poll(at));
+        }
+        // three rounds, three shots, the host is told each one, and the gun is off with the error the client shows
+        assert_eq!(rounds_left(&out), [2, 1, 0], "{out:?}");
+        let shots = out.iter().filter(|o| matches!(o, Out::Notify { name: "OnDamageMessage", .. })).count();
+        assert_eq!(shots, 3, "{out:?}");
+        assert!(format!("{out:?}").contains("NoCharges"), "{out:?}");
+        // nothing more is fired or spent once it has stopped
+        let mut later = Vec::new();
+        for _ in 0..40 {
+            at += SECOND / 4;
+            later.extend(scene.poll(at));
+        }
+        assert!(
+            rounds_left(&later).is_empty() && !order(&later, npc).contains(&"OnGodmaShipEffect"),
+            "{later:?}"
+        );
+    }
+
+    #[test]
+    fn a_turret_with_fewer_rounds_than_a_cycle_spends_is_refused_and_one_without_a_charge_is_not() {
+        let (mut scene, npc, now) = duel();
+        let mut empty = charged_gun(0);
+        assert!(matches!(
+            scene.activate(npc, empty.clone(), now).as_slice(),
+            [Out::Refused { reason: "NO_AMMO", .. }]
+        ));
+        empty.turret.as_mut().unwrap().charge =
+            Some(Charge { type_id: 222, flag: 28, rounds: 5, per_cycle: 8 });
+        assert!(matches!(
+            scene.activate(npc, empty, now).as_slice(),
+            [Out::Refused { reason: "NO_AMMO", .. }]
+        ));
+        // a gun that takes no charge is never short of rounds
+        let started = scene.activate(npc, laser_effect(spec().ship_id, laser()), now);
+        assert!(!started.iter().any(|o| matches!(o, Out::Refused { .. })), "{started:?}");
+        assert!(rounds_left(&started).is_empty());
     }
 
     /// The arguments of the `OnSpecialFX` actions in the updates.

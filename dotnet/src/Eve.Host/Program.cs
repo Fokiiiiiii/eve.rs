@@ -249,7 +249,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         new Eve.Services.Corporations.CorporationService(corporations, characters),
         new Eve.Services.Corporations.CorpRegistryService(corporations, characters, now),
         new Eve.Services.Corporations.AllianceRegistryService(corporations, characters, now),
-        new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions)),
+        new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now)),
         .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now), new BeyonceService(spaceSessions, now) },
     ];
     return (services, spaceSessions, sim);

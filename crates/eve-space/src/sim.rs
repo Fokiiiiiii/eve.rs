@@ -188,6 +188,9 @@ impl Sim {
                 radius,
                 killer_ship_id: killer_ship.unwrap_or(0),
             },
+            Out::ChargeSpent { session, module_id, rounds_left } => {
+                Message::ChargeSpent { session_id: session, module_id, rounds_left }
+            }
             Out::Targets { session, command, pending, targets } => {
                 Message::Targets { session_id: session, command, pending, targets }
             }
@@ -992,7 +995,7 @@ mod tests {
 
     #[test]
     fn hello_is_answered_with_the_version_and_the_poll_rate() {
-        let reply = sim().handle(Message::Hello { version: 1 }, NOON).unwrap();
+        let reply = sim().handle(Message::Hello { version: PROTOCOL_VERSION }, NOON).unwrap();
         assert_eq!(reply, [Message::HelloAck { version: PROTOCOL_VERSION, poll_hz: POLL_HZ }]);
     }
 

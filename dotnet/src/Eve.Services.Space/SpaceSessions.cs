@@ -79,6 +79,8 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     private readonly TimeSpan _protection;
     private readonly TimeSpan _jumpCloak;
     private readonly ConcurrentDictionary<int, ConcurrentDictionary<long, (long FileTime, long ExpiresAtMs)>> _queues = new();
+    /// <summary>The rounds the guns of the pilots in space have spent, written in the order the simulation tells them, a lane for each session.</summary>
+    private readonly ChargeSpentQueue _charges;
 
     /// <param name="protection">How long a ship that has just undocked is protected if its pilot does not fly it first (the client is told when it ends); <see cref="Timeout.InfiniteTimeSpan"/> for never.</param>
     /// <param name="jumpCloak">How long a ship that has come through a stargate stays cloaked if its pilot does not fly it first.</param>
@@ -93,9 +95,15 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         _systems = systems;
         _nowUnixMs = nowUnixMs;
         _log = log;
+        _charges = new ChargeSpentQueue((character, module, rounds) => (ChargeWriter ?? ((c, m, r) => _ships.SpendChargeAsync(c, m, r)))(character, module, rounds), log);
         _sim.Received += OnReceived;
         _sim.Lost += OnLost;
     }
+
+    /// <summary>Where the rounds a gun has spent are written (the ships' store; a test puts its own).</summary>
+    internal Func<long, long, long, Task>? ChargeWriter { get; set; }
+
+    internal void EnqueueForTest(ulong session, long characterId, long moduleId, long roundsLeft) => _charges.Enqueue(session, characterId, moduleId, roundsLeft);
 
     /// <summary>The service registry the bound objects of a session are released from when it leaves a place (set once the registry exists).</summary>
     public ServiceRegistry? Registry { get; set; }
@@ -105,6 +113,8 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         _bountyTimer?.Dispose();
         _sim.Received -= OnReceived;
         _sim.Lost -= OnLost;
+        // the host stops: the rounds that were spent are written first
+        _charges.CloseAllAsync().GetAwaiter().GetResult();
     }
 
     private static PyValue None => PyNone.Instance;
@@ -320,6 +330,8 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         {
             return null;
         }
+        // a gun is started with the rounds it has left: what was spent a moment ago is written first
+        await _charges.FlushAsync(id).ConfigureAwait(false);
         if (await _ships.LoadAsync(characterId, cancellationToken) is not { } snapshot)
         {
             return null;
@@ -885,6 +897,9 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                 case SimDestroyed destroyed when _npcShips.TryRemove(destroyed.ShipId, out var npc):
                     _ = Task.Run(() => FinishNpcDeathAsync(npc, destroyed));
                     break;
+                case SimChargeSpent spent when _pilots.TryGetValue(spent.SessionId, out var shooter):
+                    _charges.Enqueue(spent.SessionId, shooter.CharacterId, spent.ModuleId, spent.RoundsLeft);
+                    break;
                 case SimRefused { Command: SimCommands.Stop, Reason: "IN_WARP" } inWarp when _pilots.TryGetValue(inWarp.SessionId, out var warping):
                     TellShipInWarp(warping.Session);
                     break;
@@ -971,6 +986,8 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         {
             var session = pilot.Session;
             pilot.End();
+            // the hangar shows what the guns hold: the rounds spent in space are written before the ship is moved
+            await _charges.CloseAsync((ulong)session.SessionId).ConfigureAwait(false);
             pilot.Session.SendNotification("OnInvulnCancelled", "shipid", InventoryWire.Id(pilot.ShipId));
             ReleaseBoundObjects(session);
             var transition = await _ships.DockAsync(pilot.CharacterId, stationId);
@@ -1064,6 +1081,8 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         try
         {
             var session = pilot.Session;
+            // what the ship dropped is what it held when it died: the rounds spent in space are written first
+            await _charges.CloseAsync(id).ConfigureAwait(false);
             if (await _ships.LoadAsync(pilot.CharacterId) is { } held && held.Ship.Id == pilot.ShipId && held.Ship.TypeId == CharacterShips.CapsuleTypeId)
             {
                 done = await FinishPodDeathAsync(pilot, destroyed);
@@ -1267,6 +1286,8 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             {
                 try
                 {
+                    // the ship is put back with what its guns hold: the rounds spent in space are written first
+                    await _charges.CloseAsync((ulong)session.SessionId).ConfigureAwait(false);
                     await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation);
                 }
                 catch (Exception error)

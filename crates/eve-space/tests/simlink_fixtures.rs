@@ -6,7 +6,7 @@ use eve_space::health::{Condition, Resonances, Vitals};
 use eve_space::link::{DecodeError, Enter, How, Message, Spawn, WreckPlacement};
 use eve_space::modules::{Change, Effect, Numbers};
 use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
-use eve_space::weapons::Turret;
+use eve_space::weapons::{Charge, Turret};
 use eve_space::wreck::WreckKind;
 use serde_json::Value;
 
@@ -114,6 +114,12 @@ fn turret_of(w: &Value) -> Turret {
         falloff: number("falloff"),
         tracking_speed: number("trackingSpeed"),
         signature_resolution: number("signatureResolution"),
+        charge: w.get("charge").filter(|c| !c.is_null()).map(|c| Charge {
+            type_id: c["typeId"].as_i64().unwrap() as i32,
+            flag: c["flag"].as_i64().unwrap() as i32,
+            rounds: c["rounds"].as_i64().unwrap(),
+            per_cycle: c["perCycle"].as_i64().unwrap(),
+        }),
     }
 }
 
@@ -284,6 +290,11 @@ fn message_of(case: &Value) -> Message {
             target_type: case["targetType"].as_i64().unwrap() as i32,
             desired_range: case["desiredRange"].as_f64().unwrap(),
             actual_distance: case["actualDistance"].as_f64().unwrap(),
+        },
+        "ChargeSpent" => Message::ChargeSpent {
+            session_id: session_id(),
+            module_id: wide(case, "moduleId"),
+            rounds_left: wide(case, "roundsLeft"),
         },
         "Destroyed" => Message::Destroyed {
             session_id: session_id(),

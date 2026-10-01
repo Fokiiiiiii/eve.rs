@@ -11,7 +11,7 @@ use eve_marshal::Value;
 use crate::payload;
 use crate::scene::{Out, Scene, SessionId, TICKS_PER_SECOND};
 use crate::weapons::Turret;
-use crate::wire::{filetime, id, int, real, tuple, word};
+use crate::wire::{dict, filetime, id, int, real, text, tuple, word};
 
 /// The attribute of a ship that holds the capacitor's charge.
 const CAPACITOR_CHARGE: i32 = 18;
@@ -133,6 +133,17 @@ impl Capacitor {
     }
 }
 
+/// How an effect came to its end.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Ending {
+    /// The pilot asked, or the cycles were done, or the capacitor or the target was not there for another.
+    Done,
+    /// The target was lost: the weapon stops at once.
+    TargetLost,
+    /// The charge is spent: the client is told there is none.
+    NoRounds,
+}
+
 /// An effect that is running.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Running {
@@ -142,6 +153,8 @@ pub(crate) struct Running {
     cycles: i32,
     /// The pilot asked for it to stop: it does when the cycle ends.
     stopping: bool,
+    /// The rounds a turret that fires a charge has left.
+    rounds: Option<i64>,
 }
 
 /// The modules of a ship that run, and its capacitor.
@@ -177,6 +190,16 @@ pub(crate) fn number(value: f64) -> Value {
     if value.fract() == 0.0 && value.abs() < 9.0e15 { int(value as i64) } else { real(value) }
 }
 
+/// How the client knows a charge in a slot: the ship, the slot's flag and the type of the charge.
+fn charge_key(ship: i64, charge: &crate::weapons::Charge) -> Value {
+    tuple([id(ship), int(i64::from(charge.flag)), int(i64::from(charge.type_id))])
+}
+
+/// What the client is told when a turret stops for want of rounds (`NoCharges`, naming the launcher by its type).
+fn no_charges(module_type: i32) -> Value {
+    tuple([text("NoCharges"), dict([("launcher", tuple([int(4), int(i64::from(module_type))]))])])
+}
+
 /// One line of an `OnModuleAttributeChanges`: `(name, owner, item, attribute, when, new value, old value, when)`.
 pub(crate) fn attribute_change(
     owner: i64,
@@ -186,10 +209,22 @@ pub(crate) fn attribute_change(
     value: Value,
     old: Value,
 ) -> Value {
+    attribute_change_of(owner, id(item), attribute, when, value, old)
+}
+
+/// The same for an item the client knows by a key of its own (a charge in a slot: the ship, the slot's flag and the type).
+pub(crate) fn attribute_change_of(
+    owner: i64,
+    item: Value,
+    attribute: i32,
+    when: i64,
+    value: Value,
+    old: Value,
+) -> Value {
     tuple([
         word("OnModuleAttributeChange"),
         id(owner),
-        id(item),
+        item,
         int(i64::from(attribute)),
         filetime(when),
         value,
@@ -242,6 +277,7 @@ impl Scene {
     }
 
     /// `OnGodmaShipEffect`: an effect went on (`start` and `active`) or came to an end, or began another cycle.
+    #[allow(clippy::too_many_arguments)] // the arguments are the fields of the tuple the client reads
     fn effect_told(
         session: SessionId,
         owner: i64,
@@ -250,6 +286,7 @@ impl Scene {
         when: i64,
         on: bool,
         started: i64,
+        error: Option<Value>,
     ) -> Out {
         let effect = &run.effect;
         let environment = tuple([
@@ -257,7 +294,7 @@ impl Scene {
             id(owner),
             id(ship),
             if effect.target_id > 0 { id(effect.target_id) } else { Value::None },
-            Value::None,
+            effect.turret.as_ref().and_then(|t| t.charge).map_or(Value::None, |c| charge_key(ship, &c)),
             tuple([]),
             int(i64::from(effect.effect_id)),
             Value::None,
@@ -274,8 +311,9 @@ impl Scene {
                 environment,
                 filetime(started),
                 real(effect.duration_ms),
-                if on { int(i64::from(run.effect.repeat)) } else { Value::Bool(false) },
-                Value::None,
+                // an effect that ends for want of rounds says so (and says it repeats)
+                if on { int(i64::from(run.effect.repeat)) } else { Value::Bool(error.is_some()) },
+                error.unwrap_or(Value::None),
             ],
         )
     }
@@ -290,7 +328,11 @@ impl Scene {
                 id(effect.module_id),
                 int(i64::from(effect.module_type)),
                 if effect.target_id > 0 { id(effect.target_id) } else { Value::None },
-                Value::None,
+                effect
+                    .turret
+                    .as_ref()
+                    .and_then(|t| t.charge)
+                    .map_or(Value::None, |c| int(i64::from(c.type_id))),
                 crate::wire::text(effect.fx.clone()),
                 int(i64::from(effect.turret.is_some())),
                 int(i64::from(on)),
@@ -348,6 +390,9 @@ impl Scene {
             if !self.turret_target_ok(session, &effect) {
                 return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_LOCKED" }];
             }
+            if effect.turret.as_ref().and_then(|t| t.charge).is_some_and(|c| c.rounds < c.per_cycle) {
+                return vec![Out::Refused { session, command: CODE, reason: "NO_AMMO" }];
+            }
         }
         let pilot = &self.pilots[&session];
         let Some(capacitor) = pilot.modules.capacitor.as_ref() else {
@@ -360,7 +405,8 @@ impl Scene {
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
         let pilot = self.pilots.get_mut(&session).expect("the pilot is in the scene");
         pilot.protected_until = 0;
-        let run = Running { effect, cycle_start: now, cycles: 1, stopping: false };
+        let rounds = effect.turret.as_ref().and_then(|t| t.charge).map(|c| c.rounds);
+        let run = Running { effect, cycle_start: now, cycles: 1, stopping: false, rounds };
         let (before, after) = match pilot.modules.capacitor.as_mut() {
             Some(capacitor) => capacitor.draw(now, run.effect.capacitor_need),
             None => (0.0, 0.0),
@@ -384,13 +430,56 @@ impl Scene {
             out.extend(Self::changes_told(session, owner, &run.effect.on_changes, now));
             out.extend(fx);
         }
-        out.push(Self::effect_told(session, owner, ship_id, &run, now, true, now));
+        out.push(Self::effect_told(session, owner, ship_id, &run, now, true, now, None));
         let effect = run.effect.clone();
         if let Some(pilot) = self.pilots.get_mut(&session) {
             pilot.modules.running.push(run);
         }
         out.extend(self.fire_turret(session, &effect, now));
+        // the round of the first shot is spent after the shot; a turret that has no round for the next cycle stops
+        let (spent, goes_on) = self.spend_round(session, effect.module_id, now);
+        out.extend(spent);
+        if !goes_on
+            && let Some(pilot) = self.pilots.get_mut(&session)
+            && let Some(at) =
+                pilot.modules.running.iter().position(|r| r.effect.module_id == effect.module_id)
+        {
+            let run = pilot.modules.running.remove(at);
+            out.extend(self.effect_ended(session, run, owner, ship_id, now, Ending::NoRounds));
+        }
         out
+    }
+
+    /// A turret that fires a charge spends the rounds of a cycle: the client is told the rounds in the slot and the host the rounds that are left (it keeps the
+    /// quantity of the charge). The second answer says whether the turret has rounds for another cycle.
+    fn spend_round(&mut self, session: SessionId, module_id: i64, at: i64) -> (Vec<Out>, bool) {
+        let Some(pilot) = self.pilots.get_mut(&session) else { return (Vec::new(), false) };
+        let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+        let Some(run) = pilot.modules.running.iter_mut().find(|r| r.effect.module_id == module_id) else {
+            return (Vec::new(), true);
+        };
+        let (Some(charge), Some(rounds)) =
+            (run.effect.turret.as_ref().and_then(|t| t.charge), run.rounds.as_mut())
+        else {
+            return (Vec::new(), true);
+        };
+        let (old, new) = (*rounds, (*rounds - charge.per_cycle).max(0));
+        *rounds = new;
+        let line = attribute_change_of(
+            owner,
+            charge_key(ship_id, &charge),
+            805,
+            at,
+            number(new as f64),
+            number(old as f64),
+        );
+        (
+            vec![
+                Self::dogma_notify(session, "OnModuleAttributeChanges", vec![Value::List(vec![line])]),
+                Out::ChargeSpent { session, module_id, rounds_left: new },
+            ],
+            new >= charge.per_cycle,
+        )
     }
 
     /// The pilot asks for an effect to stop: it does at the end of the cycle it is in. `Refused` (`NOT_ACTIVE`) when it is not running.
@@ -487,7 +576,7 @@ impl Scene {
         let more = run.cycles < run.effect.repeat;
         if run.stopping || !more || !affordable || !target_ok {
             pilot.modules.running.remove(index);
-            return self.effect_ended(session, run, owner, ship_id, at, false);
+            return self.effect_ended(session, run, owner, ship_id, at, Ending::Done);
         }
         let (before, after) = match pilot.modules.capacitor.as_mut() {
             Some(capacitor) => capacitor.draw(at, run.effect.capacitor_need),
@@ -497,11 +586,24 @@ impl Scene {
         next.cycle_start = at;
         next.cycles += 1;
         let next = next.clone();
-        let mut out = vec![
-            Self::charge_told(session, owner, ship_id, at, after, before),
-            Self::effect_told(session, owner, ship_id, &next, at, true, at),
-        ];
+        let mut out = vec![Self::charge_told(session, owner, ship_id, at, after, before)];
+        if next.effect.turret.is_none() {
+            out.push(Self::effect_told(session, owner, ship_id, &next, at, true, at, None));
+            return out;
+        }
+        // a turret shoots, spends its round and then is told to have begun another cycle (the recording of the reference's gun); one that is out of rounds stops
         out.extend(self.fire_turret(session, &next.effect, at));
+        let (spent, goes_on) = self.spend_round(session, next.effect.module_id, at);
+        out.extend(spent);
+        if goes_on {
+            out.push(Self::effect_told(session, owner, ship_id, &next, at, true, at, None));
+        } else if let Some(pilot) = self.pilots.get_mut(&session)
+            && let Some(position) =
+                pilot.modules.running.iter().position(|r| r.effect.module_id == next.effect.module_id)
+        {
+            let run = pilot.modules.running.remove(position);
+            out.extend(self.effect_ended(session, run, owner, ship_id, at, Ending::NoRounds));
+        }
         out
     }
 
@@ -515,11 +617,13 @@ impl Scene {
         owner: i64,
         ship_id: i64,
         at: i64,
-        target_lost: bool,
+        ending: Ending,
     ) -> Vec<Out> {
+        let (target_lost, out_of_rounds) = (ending == Ending::TargetLost, ending == Ending::NoRounds);
         let mut out = Vec::new();
         let changes = Self::changes_told(session, owner, &run.effect.off_changes, at);
-        let off = Self::effect_told(session, owner, ship_id, &run, at, false, run.cycle_start);
+        let error = out_of_rounds.then(|| no_charges(run.effect.module_type));
+        let off = Self::effect_told(session, owner, ship_id, &run, at, false, run.cycle_start, error);
         let stamp = self.next_stamp(at);
         let mut actions = match run.effect.off {
             Some(numbers) => self.renumber(session, numbers, stamp),
@@ -550,7 +654,7 @@ impl Scene {
         pilot.modules.running = kept;
         let mut out = Vec::new();
         for run in stopped {
-            out.extend(self.effect_ended(session, run, owner, ship_id, now, true));
+            out.extend(self.effect_ended(session, run, owner, ship_id, now, Ending::TargetLost));
         }
         out
     }

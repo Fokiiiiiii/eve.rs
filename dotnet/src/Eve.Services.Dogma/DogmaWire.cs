@@ -36,8 +36,8 @@ public static class DogmaWire
         new PyDict([.. attributes.OrderBy(a => a.Key).Select(a => new KeyValuePair<PyValue, PyValue>(new PyInt(a.Key), AttributeValue(a.Key, a.Value)))]);
 
     /// <summary>What dogma tells the client about one item: the item, the effects running on it, and its attributes.</summary>
-    public static PyValue ItemInfo(long itemId, PyValue invItem, PyValue activeEffects, PyValue attributes, long fileTime) => Py.KeyVal(
-        ("itemID", InventoryWire.Id(itemId)),
+    public static PyValue ItemInfo(long itemId, PyValue invItem, PyValue activeEffects, PyValue attributes, long fileTime, PyValue? itemKey = null) => Py.KeyVal(
+        ("itemID", itemKey ?? InventoryWire.Id(itemId)),
         ("invItem", invItem),
         ("activeEffects", activeEffects),
         ("time", new PyLong(fileTime)),

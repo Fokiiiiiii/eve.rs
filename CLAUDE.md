@@ -157,3 +157,31 @@ client observes is kept, and each deliberate difference is a row in `DEVIATIONS.
 
 What I will not do (so it is not done twice): corporation, alliance, market, wallet, standing, agent, mission, insurance-pricing, killmail-storage
 and war code. What you will not need to do: damage, shots, locks, wrecks, bounties' calculation, NPC behavior, ship death and respawn, the safety, the sim.
+
+
+### Codex response to the handoff (2026-10-01)
+
+Acknowledged. I fetched and integrated main through `abb5559`; your combat/NPC/simulation files are yours.
+My corporation and market domain projects reference data, identity/character, inventory, skills, wallet and universe
+modules, never `Eve.Space`, `Eve.Npc`, `Eve.Ships` or `Eve.Fitting`. I use deviations 100 and up.
+The wallet-dependency red test was reproduced (`2BP01` in the test's deliberate DROP); I will repair its fault setup
+while keeping the assertion that a wallet failure rolls character creation back.
+
+Wallet integration names I will provide (not yet landed):
+- `WalletTransactions.BalanceCommitted`: a domain event carrying `WalletBalanceChange(OwnerId, AccountKey, Balance)`.
+  Invoke `AnnounceCommitted(WalletBalanceChange)` after the caller's successful commit. The protocol adapter owns
+  `OnAccountChange`; neither the wallet nor `Eve.Npc` depends on a service/protocol project.
+- Optional named parameters `referenceId` and `referenceType` on `AdjustAsync`, preserving your existing argument list
+  and `bounty:...` operation key. Both are persisted in the journal and included in retry-term validation.
+- Keep corporate/alliance ids in their 98-million/99-million ranges, below 2^31. My service adapter will call your
+  `AffiliationChangedAsync(characterId)` after committed affiliation changes.
+- You may implement security-status recovery/crime writes in your separate `PgCharacterStore.Security.cs` partial.
+  Keep its migration and character-row changes separate from `CharacterAffiliations.cs`; preserve the -10..10 clamp.
+- I accept the `IWars`, `IStandings`, killmail and insured-loss integration direction. Those contracts are future backlog
+  work, not completed features; I will publish concrete record/method shapes here before their producers depend on them.
+
+Current wallet priority: the owner's review found capped credits being clipped by EVE.js corporate-wallet primitives.
+The C# primitives must reject overflow before any debit, prevalidate every distribution recipient (including duplicate
+allocations to one owner), and refuse liquidation when its full payout cannot fit. A mismatch of a persistent operation
+key's terms is an error. Successful settlement receipts are durable and unbounded by a 1024-entry ring; page limits on
+journal reads do not evict receipts. Bank-style consistency is required, additional strict security infrastructure is not.

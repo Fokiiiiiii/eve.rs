@@ -26,12 +26,37 @@ public sealed class ShipSnapshot
 
     private const int SkillPointsAttribute = 276;
 
+    /// <summary>The rounds a loaded charge holds (quantityCharge): the client reads them as an attribute of the charge.</summary>
+    public const int QuantityCharge = 805;
+
     public required Character Character { get; init; }
 
     public required Item Ship { get; init; }
 
-    /// <summary>What is fitted to the ship, in the order of its slots.</summary>
+    /// <summary>What is fitted to the ship, in the order of its slots (the charges loaded in the modules are not fitted: see <see cref="Charges"/>).</summary>
     public required IReadOnlyList<Item> Fitted { get; init; }
+
+    /// <summary>The charges loaded in the modules, in the order of the slots: an item of the ship whose flag is the flag of its module.</summary>
+    public IReadOnlyList<Item> Charges { get; init; } = [];
+
+    /// <summary>The charge loaded in the module, or null when it has none.</summary>
+    public Item? ChargeOf(Item module) => Charges.FirstOrDefault(charge => charge.Flag == module.Flag);
+
+    private const int ChargeCategory = 8;
+
+    /// <summary>
+    /// What a ship holds in its slots, told apart: the modules and the charges loaded in them (both are items of the ship at a slot's flag; the
+    /// category of the type says which is which).
+    /// </summary>
+    internal static async Task<(List<Item> Fitted, List<Item> Charges)> SlotsOfAsync(DogmaStatic statics, IReadOnlyList<Item> contents, CancellationToken cancellationToken)
+    {
+        await statics.EnsureTypesAsync(contents.Select(i => i.TypeId), cancellationToken);
+        var inSlots = contents.Where(i => Slots.IsSlotFlag(i.Flag)).ToList();
+        bool IsCharge(Item item) => statics.Type(item.TypeId)?.CategoryId == ChargeCategory;
+        return (
+            [.. inSlots.Where(i => !IsCharge(i)).OrderBy(i => i.Flag).ThenBy(i => i.Id)],
+            [.. inSlots.Where(IsCharge).OrderBy(i => i.Flag).ThenBy(i => i.Id)]);
+    }
 
     public required IReadOnlyList<CharacterSkill> Skills { get; init; }
 
@@ -45,7 +70,7 @@ public sealed class ShipSnapshot
     /// <summary>The same ship with what it has taken as told (a ship in space is asked of the simulation, which has it live).</summary>
     public ShipSnapshot WithCondition(ShipCondition condition) => new()
     {
-        Character = Character, Ship = Ship, Fitted = Fitted, Skills = Skills, World = World, Condition = condition, ModuleConditions = ModuleConditions,
+        Character = Character, Ship = Ship, Fitted = Fitted, Charges = Charges, Skills = Skills, World = World, Condition = condition, ModuleConditions = ModuleConditions,
     };
 
     /// <summary>What a fitted module has taken.</summary>
@@ -70,7 +95,7 @@ public sealed class ShipSnapshot
             return null;
         }
         var contents = await items.InLocationAsync(shipId, characterId, cancellationToken);
-        var fitted = contents.Where(i => Slots.IsSlotFlag(i.Flag)).OrderBy(i => i.Flag).ThenBy(i => i.Id).ToList();
+        var (fitted, charges) = await SlotsOfAsync(statics, contents, cancellationToken);
         var states = await modules.StatesAsync(fitted.Select(i => i.Id), cancellationToken);
         var moduleConditions = await modules.ModuleConditionsAsync(fitted.Select(i => i.Id), cancellationToken);
         var condition = await modules.ShipConditionAsync(shipId, cancellationToken);
@@ -89,6 +114,11 @@ public sealed class ShipSnapshot
         {
             world.Add(new DogmaItem(module.Id, module.TypeId, characterId, shipId, module.Flag, states[module.Id]));
         }
+        foreach (var charge in charges)
+        {
+            world.Add(new DogmaItem(charge.Id, charge.TypeId, characterId, shipId, charge.Flag));
+            world.SetValue(charge.Id, QuantityCharge, charge.Quantity);
+        }
         foreach (var skill in trained)
         {
             var id = SkillItemId(characterId, skill.TypeId);
@@ -96,6 +126,6 @@ public sealed class ShipSnapshot
             world.SetValue(id, DogmaWorld.SkillLevel, skill.Level);
             world.SetValue(id, SkillPointsAttribute, skill.SkillPoints);
         }
-        return new ShipSnapshot { Character = character, Ship = ship, Fitted = fitted, Skills = trained, World = world, Condition = condition, ModuleConditions = moduleConditions };
+        return new ShipSnapshot { Character = character, Ship = ship, Fitted = fitted, Charges = charges, Skills = trained, World = world, Condition = condition, ModuleConditions = moduleConditions };
     }
 }

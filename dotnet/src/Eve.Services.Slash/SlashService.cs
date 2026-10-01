@@ -5,10 +5,10 @@ namespace Eve.Services.Slash;
 
 /// <summary>
 /// The game master's commands the client sends over RPC (<c>slash</c>): <c>SlashCmd("/name arguments")</c> runs one and answers with what it says. Only the
-/// commands the modules that exist can carry out are here: <c>/dmg</c> and <c>/heal</c> (<see cref="ShipHealthCommands"/>) <c>/deathtest</c> (<see cref="DeathTestCommands"/>), <c>/suicide</c> (<see cref="SuicideCommands"/>) and <c>/npc</c> (<see cref="NpcCommands"/>); any other is answered as unknown.
+/// commands the modules that exist can carry out are here: <c>/dmg</c> and <c>/heal</c> (<see cref="ShipHealthCommands"/>) <c>/deathtest</c> (<see cref="DeathTestCommands"/>), <c>/suicide</c> (<see cref="SuicideCommands"/>), <c>/npc</c> (<see cref="NpcCommands"/>) and the item commands <c>/giveitem</c>, <c>/fit</c> and <c>/unfit</c> (<see cref="ItemCommands"/>); any other is answered as unknown.
 /// </summary>
 [Service("slash")]
-public sealed partial class SlashService(ShipHealthCommands health, DeathTestCommands? death = null, SuicideCommands? suicide = null, NpcCommands? npcs = null)
+public sealed partial class SlashService(ShipHealthCommands health, DeathTestCommands? death = null, SuicideCommands? suicide = null, NpcCommands? npcs = null, ItemCommands? items = null)
 {
     /// <summary><c>ReportSlashCommandUsage(command)</c>: the client says a command was used; nothing is kept.</summary>
     [Method("ReportSlashCommandUsage")]
@@ -29,6 +29,9 @@ public sealed partial class SlashService(ShipHealthCommands health, DeathTestCom
             "/deathtest" when death is not null => await death.RunAsync(call.Session, argument, call.Cancellation),
             "/suicide" when suicide is not null => await suicide.RunAsync(call.Session, call.Cancellation),
             "/npc" when npcs is not null => await npcs.RunAsync(call.Session, argument, call.Cancellation),
+            "/giveitem" when items is not null => await items.GiveAsync(call.Session, argument, call.Cancellation),
+            "/fit" when items is not null => await items.FitAsync(call.Session, argument, call.Cancellation),
+            "/unfit" when items is not null => await items.UnfitAsync(call.Session, argument, call.Cancellation),
             _ => $"Unknown command: {text}. Use /help.",
         };
         return new PyStr(message);

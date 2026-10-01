@@ -885,6 +885,9 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                 case SimDestroyed destroyed when _npcShips.TryRemove(destroyed.ShipId, out var npc):
                     _ = Task.Run(() => FinishNpcDeathAsync(npc, destroyed));
                     break;
+                case SimChargeSpent spent when _pilots.TryGetValue(spent.SessionId, out var shooter):
+                    _ = Task.Run(() => _ships.SpendChargeAsync(shooter.CharacterId, spent.ModuleId, spent.RoundsLeft));
+                    break;
                 case SimRefused { Command: SimCommands.Stop, Reason: "IN_WARP" } inWarp when _pilots.TryGetValue(inWarp.SessionId, out var warping):
                     TellShipInWarp(warping.Session);
                     break;

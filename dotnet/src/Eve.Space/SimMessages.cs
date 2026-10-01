@@ -166,7 +166,17 @@ public sealed record SimChange(long ItemId, int AttributeId, double Value);
 /// (em, thermal, kinetic, explosive: the damage multiplier is in it), the range, the falloff, the tracking (radians a second) and the signature resolution.
 /// </summary>
 public sealed record SimTurret(
-    int WeaponTypeId, string Fx, IReadOnlyList<double> RawDamage, double OptimalRange, double Falloff, double TrackingSpeed, double SignatureResolution);
+    int WeaponTypeId, string Fx, IReadOnlyList<double> RawDamage, double OptimalRange, double Falloff, double TrackingSpeed, double SignatureResolution,
+    SimTurretCharge? Charge = null);
+
+/// <summary>
+/// The charge a turret fires: its type, the flag it sits at in the ship (the slot of the module), the rounds left and the rounds a cycle takes. The simulation
+/// spends them cycle by cycle (<see cref="SimChargeSpent"/>) and stops the weapon when they are gone.
+/// </summary>
+public sealed record SimTurretCharge(int TypeId, int Flag, long Rounds, long PerCycle);
+
+/// <summary>A turret of this session's ship spent rounds: how many it has left (the host keeps the quantity of the charge item).</summary>
+public sealed record SimChargeSpent(ulong SessionId, long ModuleId, long RoundsLeft) : SimMessage;
 
 /// <summary>
 /// An effect the host asks the simulation to run, with what the host has worked out for it (dogma): the numbers of the ship with and without it, the cycle and
@@ -190,7 +200,7 @@ public sealed record SimDestroyed(
 /// <summary>A weapon of an NPC: an effect of the NPC's own ship, so the module is the ship.</summary>
 public sealed record SimNpcWeapon(
     long ModuleId, int EffectId, double CycleMs, double CapacitorNeed, int WeaponTypeId, string Fx, IReadOnlyList<double> RawDamage, double OptimalRange, double Falloff,
-    double TrackingSpeed, double SignatureResolution);
+    double TrackingSpeed, double SignatureResolution, SimTurretCharge? Charge = null);
 
 /// <summary>What a ship leaves when it is destroyed.</summary>
 public sealed record SimWreckKind(int TypeId, string Name, int GraphicId);

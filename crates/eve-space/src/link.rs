@@ -9,7 +9,7 @@ use crate::death::Credit;
 use crate::health::{Condition, Resonances, Vitals};
 use crate::modules::{Change, Effect, Numbers};
 use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
-use crate::weapons::Turret;
+use crate::weapons::{Charge, Turret};
 use crate::wreck::WreckKind;
 
 pub const PROTOCOL_VERSION: u16 = 1;
@@ -42,6 +42,7 @@ pub mod kind {
     pub const DESTROY: u8 = 24;
     pub const RESPAWN: u8 = 25;
     pub const PLACE_WRECK: u8 = 26;
+    pub const CHARGE_SPENT: u8 = 27;
 }
 
 /// How a ship comes into space.
@@ -206,6 +207,12 @@ pub enum Message {
         killer_ship_id: i64,
         /// The wreck the ship's type leaves (a player's wreck is made by the host from it).
         wreck_kind: Option<WreckKind>,
+    },
+    /// A turret of this session's ship spent rounds: how many it has left (the host keeps the quantity of the charge item).
+    ChargeSpent {
+        session_id: u64,
+        module_id: i64,
+        rounds_left: i64,
     },
     /// The host asks a scene to spawn an NPC (answered with `SpawnReply`).
     Spawn(Box<Spawn>),
@@ -477,6 +484,16 @@ fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
     let raw_damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
     let (optimal_range, falloff, tracking_speed, signature_resolution) =
         (reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?);
+    let charge = match reader.u8()? {
+        0 => None,
+        1 => Some(Charge {
+            type_id: reader.i32()?,
+            flag: reader.i32()?,
+            rounds: reader.i64()?,
+            per_cycle: reader.i64()?,
+        }),
+        _ => return Err(DecodeError::BadValue("charge")),
+    };
     Ok(Turret {
         weapon_type_id,
         fx,
@@ -485,6 +502,7 @@ fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
         falloff,
         tracking_speed,
         signature_resolution,
+        charge,
     })
 }
 
@@ -525,7 +543,7 @@ fn read_identity(reader: &mut Reader) -> Result<NpcIdentity, DecodeError> {
 }
 
 /// A turret's numbers: the type of the weapon, the effect the client plays, the damage of a shot (em, thermal, kinetic, explosive), the range, the falloff,
-/// the tracking and the signature resolution.
+/// the tracking and the signature resolution, then the charge it fires (a flag byte, and when set the type, the flag it sits at, the rounds left and the rounds a cycle takes).
 fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
     out.extend_from_slice(&turret.weapon_type_id.to_le_bytes());
     put_text(out, &turret.fx);
@@ -536,6 +554,16 @@ fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
         turret.signature_resolution,
     ]) {
         out.extend_from_slice(&number.to_le_bytes());
+    }
+    match &turret.charge {
+        None => out.push(0),
+        Some(charge) => {
+            out.push(1);
+            out.extend_from_slice(&charge.type_id.to_le_bytes());
+            out.extend_from_slice(&charge.flag.to_le_bytes());
+            out.extend_from_slice(&charge.rounds.to_le_bytes());
+            out.extend_from_slice(&charge.per_cycle.to_le_bytes());
+        }
     }
 }
 
@@ -751,6 +779,7 @@ impl Message {
             Self::Destroy { .. } => kind::DESTROY,
             Self::Respawn { .. } => kind::RESPAWN,
             Self::PlaceWreck(_) => kind::PLACE_WRECK,
+            Self::ChargeSpent { .. } => kind::CHARGE_SPENT,
         }
     }
 
@@ -880,6 +909,11 @@ impl Message {
                 }
                 out.extend_from_slice(&killer_ship_id.to_le_bytes());
                 put_wreck_kind(&mut out, wreck_kind.as_ref());
+            }
+            Self::ChargeSpent { session_id, module_id, rounds_left } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&module_id.to_le_bytes());
+                out.extend_from_slice(&rounds_left.to_le_bytes());
             }
             Self::Respawn { session_id, ship, position, direction } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
@@ -1065,6 +1099,9 @@ impl Message {
                 killer_ship_id: r.i64()?,
                 wreck_kind: read_wreck_kind(&mut r)?,
             },
+            kind::CHARGE_SPENT => {
+                Message::ChargeSpent { session_id: r.u64()?, module_id: r.i64()?, rounds_left: r.i64()? }
+            }
             kind::RESPAWN => Message::Respawn {
                 session_id: r.u64()?,
                 ship: Box::new(read_ship(&mut r)?),

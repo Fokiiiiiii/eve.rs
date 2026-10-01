@@ -82,6 +82,16 @@ public sealed class PgItemStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>Gives a stack another quantity, inside the caller's transaction.</summary>
+    public async Task SetQuantityAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, long quantity, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"UPDATE {_schema}.items SET quantity = $2 WHERE id = $1", connection, transaction)
+        {
+            Parameters = { new() { Value = id }, new() { Value = quantity } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task<Item?> GetAsync(long id, CancellationToken cancellationToken = default)
     {
         await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.items WHERE id = $1");

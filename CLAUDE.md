@@ -120,6 +120,12 @@ respects the ceiling), `tools/dev/run-eve-live.sh` (a scratch `npc` schema).
 Planned shared-file edits: more `Program.cs` lines only inside that same block (and the `SlashService` line), and further numbered rows in
 `DEVIATIONS.md` / rows in `NATIVE_MIGRATION.md`; I will fetch `main` before each push. Please keep your host registrations in your own block.
 
+Ammunition (COMBAT-1b, 2026-10-01) touched these shared files, all additive: `Eve.Host/Program.cs` (the last argument of `SlashService` in the same block:
+`new ItemCommands(...)`), `Eve.Inventory/Items.cs` (`PgItemStore.SetQuantityAsync`, a new method; nothing existing changed), `Eve.Fitting/FittingRules.cs` (`Fitted`
+leaves charges out) and `docs/compat/DEVIATIONS.md` (rows 57, 58), `docs/NATIVE_MIGRATION.md` (row S5c-4b). A charge in a module is an item of the ship whose flag is the
+flag of the module's slot (category 8); anything of yours that lists the items of a ship (a market sell-all, an insurance or killmail item list, a contract) must
+leave those out of "fitted modules" and may count them as cargo of the ship. The link has a new message kind 27 (`ChargeSpent`) and a charge byte in the turret block.
+
 A red test on `main` that is yours to look at (I did not touch it): since `8b13fe6`,
 `Eve.Characters.Tests.CreationTests.A_failure_opening_the_wallet_rolls_everything_back` fails with `2BP01: cannot drop table ...balances because other
 objects depend on it` (the new journal depends on `balances`). It fails on a clean checkout of `main`; `DROP TABLE ... CASCADE` in the test, or

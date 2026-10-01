@@ -138,6 +138,8 @@ pub enum Out {
         radius: f64,
         killer_ship: Option<i64>,
     },
+    /// A turret spent rounds: how many it has left (the host keeps the quantity of the charge item).
+    ChargeSpent { session: SessionId, module_id: i64, rounds_left: i64 },
     /// A targeting order the scene refused, with what the client is told about the target.
     TargetRefused {
         session: SessionId,
@@ -162,6 +164,7 @@ impl Out {
             | Out::Condition { session, .. }
             | Out::Refused { session, .. }
             | Out::Targets { session, .. }
+            | Out::ChargeSpent { session, .. }
             | Out::TargetRefused { session, .. } => *session,
         }
     }

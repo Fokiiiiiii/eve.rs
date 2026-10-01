@@ -45,6 +45,8 @@ public sealed class DogmaWorld
     /// <summary>The level of a skill. The level is given, so no modifier changes it.</summary>
     public const int SkillLevel = 280;
 
+    private const int ChargeCategory = 8;
+
     private const int MaxPenalisedPerOperation = 8;
 
     private static readonly double[] Denominators = [.. Enumerable.Range(0, MaxPenalisedPerOperation).Select(i => Math.Exp(Math.Pow(i / 2.67, 2.0)))];
@@ -256,10 +258,23 @@ public sealed class DogmaWorld
                 }
                 // what the pilot carries (skills, implants) acts on the ship he flies, in the ship or not; a module lying in a hangar does not
                 return CharacterId != 0 && (source.Id == CharacterId || source.LocationId == CharacterId) ? ShipId : -1;
+            case "otherID":
+                // the charge in a module, from the module's side, and the module a charge is loaded in, from the charge's: the item that shares its
+                // location and its slot (a charge is an item of the ship whose flag is the flag of the module it sits in)
+                return Partner(source)?.Id ?? -1;
             default:
                 return -1; // targets, other items, structures: nothing in a station reaches them
         }
     }
+
+    /// <summary>Whether an item is a charge (ammunition, a crystal, a missile: the items that are loaded into a module).</summary>
+    public bool IsCharge(DogmaItem item) => _static.Type(item.TypeId)?.CategoryId == ChargeCategory;
+
+    /// <summary>The item a module has loaded, or the module a charge is loaded in: the other item of the same location and slot; null when there is none.</summary>
+    public DogmaItem? Partner(DogmaItem item) =>
+        item.FlagId <= 0
+            ? null
+            : _items.Values.OrderBy(other => other.Id).FirstOrDefault(other => other.Id != item.Id && other.LocationId == item.LocationId && other.FlagId == item.FlagId && IsCharge(other) != IsCharge(item));
 
     private bool Reaches(in Source s, DogmaItem target)
     {

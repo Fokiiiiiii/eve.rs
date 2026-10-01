@@ -80,6 +80,7 @@ pub(crate) fn rat_identity(aggression_range: f64) -> NpcIdentity {
                     falloff: 10_000.0,
                     tracking_speed: 0.4,
                     signature_resolution: 40.0,
+                    charge: None,
                 },
             }],
         },

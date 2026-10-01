@@ -1,0 +1,395 @@
+using Eve.Dogma;
+using Eve.Fitting;
+using Eve.Inventory;
+using Npgsql;
+
+namespace Eve.Ships;
+
+/// <summary>
+/// Ammunition: the rounds a docked ship's modules hold. A charge in a module is an item of the ship whose flag is the flag of the module's slot; the stack it was
+/// loaded from stays where it was, smaller (or goes, when the module took it whole). The rules and the order of what the client is told are the reference's
+/// (<c>Handle_LoadAmmo</c> and <c>Handle_UnloadAmmo</c> of <c>dogmaService/moduleOperation.js</c>, ADR 0009), checked against the recording
+/// <c>oracle/fixtures/scenarios/ammo.json</c>. A ship in space is not served yet: the reference makes a pilot wait for a reload there (deviation 57).
+/// </summary>
+public sealed partial class CharacterShips
+{
+    /// <summary>Where the client is told a stack that went into a module is gone to (the reference's junk location).</summary>
+    public const long JunkLocation = 6;
+
+    private const double AttributeTolerance = 1e-9;
+
+    private sealed class AmmoWork(
+        PgItemStore items, NpgsqlConnection connection, NpgsqlTransaction transaction, ShipSnapshot snapshot, Dictionary<long, Item> stacks, CancellationToken cancellationToken)
+    {
+        public List<AmmoEvent> Events { get; } = [];
+
+        public bool TouchesFitting { get; set; }
+
+        /// <summary>The stacks of the place the charges come from or go to, as the work has left them.</summary>
+        public Dictionary<long, Item> Stacks { get; } = stacks;
+
+        /// <summary>The charges in the ship's slots, by the slot's flag, as the work has left them.</summary>
+        public Dictionary<int, Item> Charges { get; } = snapshot.Charges.ToDictionary(c => c.Flag);
+
+        public ShipSnapshot Snapshot => snapshot;
+
+        public DogmaWorld World => snapshot.World;
+
+        public async Task SetQuantityAsync(Item item, long quantity) =>
+            await items.SetQuantityAsync(connection, transaction, item.Id, quantity, cancellationToken);
+
+        public async Task<long> CreateAsync(NewItem item) => await items.CreateAsync(connection, transaction, item, cancellationToken);
+
+        public async Task MoveAsync(Item item, long locationId, int flag) => await items.MoveAsync(connection, transaction, item.Id, locationId, flag, cancellationToken);
+
+        public async Task DeleteAsync(Item item) => await items.DeleteAsync(connection, transaction, item.Id, cancellationToken);
+
+        /// <summary>The ship's world now holds this charge in the slot (or none): what dogma reports of the module follows.</summary>
+        public void Hold(Item module, Item? charge)
+        {
+            if (Charges.TryGetValue(module.Flag, out var old))
+            {
+                World.Remove(old.Id);
+                Charges.Remove(module.Flag);
+            }
+            if (charge is not null)
+            {
+                Charges[module.Flag] = charge;
+                World.Add(new DogmaItem(charge.Id, charge.TypeId, charge.OwnerId, charge.LocationId, charge.Flag));
+                World.SetValue(charge.Id, ShipSnapshot.QuantityCharge, charge.Quantity);
+            }
+        }
+    }
+
+    private static (int Type, long Quantity) StateOf(Item? charge) => charge is null ? (0, 0) : (charge.TypeId, charge.Quantity);
+
+    /// <summary>The module's reload time as dogma has it, in whole milliseconds (0 when the module has none).</summary>
+    private static int ReloadMs(DogmaWorld world, long moduleId)
+    {
+        var reload = world.Get(moduleId, AmmoRules.ReloadTimeAttribute);
+        return double.IsFinite(reload) && reload > 0 ? (int)Math.Round(reload, MidpointRounding.AwayFromZero) : 0;
+    }
+
+    private static IReadOnlyList<AttributeChanged> ModuleChanges(long moduleId, IReadOnlyDictionary<int, double> before, IReadOnlyDictionary<int, double> after) =>
+        [.. before.Keys.Union(after.Keys).Order().Select(attribute => (attribute, was: before.GetValueOrDefault(attribute), now: after.GetValueOrDefault(attribute)))
+            .Where(c => Math.Abs(c.now - c.was) > AttributeTolerance).Select(c => new AttributeChanged(moduleId, c.attribute, c.was, c.now))];
+
+    /// <summary>What the client is told when the rounds in a module's slot are another number or another kind (<c>_notifyChargeQuantityTransition</c>).</summary>
+    private static void TellTransition(AmmoWork work, Item module, (int Type, long Quantity) before, (int Type, long Quantity) after, Item? charge, IReadOnlyDictionary<int, double> moduleBefore)
+    {
+        var ship = work.Snapshot.Ship.Id;
+        if (before != after)
+        {
+            if (before.Type > 0)
+            {
+                work.Events.Add(new ChargeQuantityChanged(ship, module.Flag, before.Type, before.Type == after.Type ? after.Quantity : 0, before.Quantity));
+            }
+            if (after.Type > 0 && after.Type != before.Type && charge is not null)
+            {
+                var attributes = new Dictionary<int, double>(work.World.Attributes(charge.Id)) { [ShipSnapshot.QuantityCharge] = 0 };
+                // every item is told its mass, capacity, volume and radius, with these when its type has none
+                foreach (var (attribute, value) in new[] { (4, 0d), (38, 0d), (161, 0d), (162, 1d) })
+                {
+                    attributes.TryAdd(attribute, value);
+                }
+                work.Events.Add(new ChargePrimed(ship, module.Flag, after.Type, attributes));
+                work.Events.Add(new ChargeQuantityChanged(ship, module.Flag, after.Type, after.Quantity, 0));
+            }
+        }
+        if (ModuleChanges(module.Id, moduleBefore, work.World.Attributes(module.Id)) is { Count: > 0 } changes)
+        {
+            work.Events.Add(new ModuleAttributesChanged(changes));
+        }
+    }
+
+    /// <summary>
+    /// A loaded charge goes to a place (<c>_moveLoadedChargeToDestination</c>): into the first stack of its kind there, or, when there is none, into a new stack.
+    /// <paramref name="quantity"/> rounds go (all of them when it is null).
+    /// </summary>
+    private static async Task UnloadAsync(AmmoWork work, Item module, Item charge, long locationId, int flag, long? quantity)
+    {
+        var wanted = quantity is { } asked ? Math.Max(1, Math.Min(charge.Quantity, asked)) : charge.Quantity;
+        var target = work.Stacks.Values.Where(s => s.Id != charge.Id && s.TypeId == charge.TypeId && s.LocationId == locationId && s.Flag == flag).OrderBy(s => s.Id).FirstOrDefault();
+        if (target is not null)
+        {
+            var grown = target with { Quantity = target.Quantity + wanted };
+            await work.SetQuantityAsync(target, grown.Quantity);
+            work.Stacks[target.Id] = grown;
+            work.Events.Add(new ItemChanged(grown, target.LocationId, target.Flag, target.Quantity));
+        }
+        else
+        {
+            var created = charge with { Id = await work.CreateAsync(new NewItem(charge.TypeId, charge.OwnerId, locationId, flag, wanted)), LocationId = locationId, Flag = flag, Quantity = wanted };
+            work.Stacks[created.Id] = created;
+            work.Events.Add(new ItemChanged(created, 0, 0, created.Quantity));
+        }
+        if (wanted >= charge.Quantity)
+        {
+            await work.DeleteAsync(charge);
+            work.Hold(module, null);
+        }
+        else
+        {
+            var left = charge with { Quantity = charge.Quantity - wanted };
+            await work.SetQuantityAsync(charge, left.Quantity);
+            work.Hold(module, left);
+        }
+        work.TouchesFitting = true;
+    }
+
+    /// <summary>The hangar or the cargo hold of the ship the charges come from or go to, as the place and the flag, or null for any other.</summary>
+    private static (long Location, int Flag)? PlaceOf(ShipSnapshot snapshot, long locationId) =>
+        locationId == snapshot.Ship.LocationId ? (locationId, ItemFlags.Hangar) : locationId == snapshot.Ship.Id ? (locationId, CargoFlag) : null;
+
+    private async Task<AmmoWork?> BeginAmmoAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long shipId, long locationId, CancellationToken cancellationToken)
+    {
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        if (await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Id != shipId || snapshot.Ship.Flag != ItemFlags.Hangar)
+        {
+            return null; // a ship in space is not served yet
+        }
+        if (PlaceOf(snapshot, locationId) is not { } place)
+        {
+            return null;
+        }
+        var stacks = (await items.InLocationAsync(place.Location, characterId, cancellationToken)).Where(i => i.Flag == place.Flag && !i.Singleton).ToDictionary(i => i.Id);
+        return new AmmoWork(items, connection, transaction, snapshot, stacks, cancellationToken);
+    }
+
+    /// <summary>
+    /// <c>LoadAmmo(shipID, moduleIDs, chargeItemIDs, ammoLocationID)</c> of a docked ship: each module takes rounds of the kind asked for (that of the first stack named
+    /// that is the character's, or what it holds already) from the stacks of the hangar or the cargo hold, up to what it holds; another kind goes back first.
+    /// </summary>
+    public async Task<ShipOutcome> LoadAmmoAsync(
+        long characterId, long shipId, IReadOnlyList<long> moduleIds, IReadOnlyList<long> chargeItemIds, long ammoLocationId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        if (await BeginAmmoAsync(connection, transaction, characterId, shipId, ammoLocationId, cancellationToken) is not { } work)
+        {
+            return new NothingHappened();
+        }
+        var place = PlaceOf(work.Snapshot, ammoLocationId)!.Value;
+        var requested = new List<Item>();
+        foreach (var id in chargeItemIds.Distinct())
+        {
+            if (await items.GetAsync(id, cancellationToken) is { } item)
+            {
+                requested.Add(item);
+            }
+        }
+        await statics.EnsureTypesAsync(requested.Select(i => i.TypeId), cancellationToken);
+
+        foreach (var moduleId in moduleIds.Distinct())
+        {
+            if (work.Snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is not { } module || statics.Type(module.TypeId) is not { } moduleType)
+            {
+                continue;
+            }
+            work.Charges.TryGetValue(module.Flag, out var charge);
+            var before = StateOf(charge);
+            var moduleBefore = work.World.Attributes(module.Id);
+            try
+            {
+                var typeId = requested.FirstOrDefault(i => i.OwnerId == characterId) is { } first ? first.TypeId : charge?.TypeId ?? 0;
+                if (typeId <= 0 || statics.Type(typeId) is not { } chargeType || AmmoRules.Capacity(moduleType, chargeType) is not (> 0 and var capacity))
+                {
+                    continue;
+                }
+                // the stacks it can take: those named that are of the kind, else every stack of the kind
+                var ofKind = work.Stacks.Values.Where(s => s.TypeId == typeId && s.LocationId == place.Location && s.Flag == place.Flag && s.Quantity > 0).OrderBy(s => s.Id).ToList();
+                var named = ofKind.Where(s => requested.Any(r => r.Id == s.Id)).ToList();
+                var sources = named.Count > 0 ? named : requested.Any(r => r.TypeId != typeId) ? [] : ofKind;
+                var reload = ReloadMs(work.World, module.Id);
+                if (charge is not null && charge.TypeId != typeId)
+                {
+                    await UnloadAsync(work, module, charge, place.Location, place.Flag, null);
+                    charge = null;
+                }
+                var needed = capacity - (charge?.Quantity ?? 0);
+                if (needed <= 0 || sources.Count == 0)
+                {
+                    continue;
+                }
+                // the reload is told before the stack gets smaller
+                work.Events.Add(new ChargeBeingLoaded([module.Id], typeId, reload));
+                foreach (var stack in sources)
+                {
+                    if (needed <= 0)
+                    {
+                        break;
+                    }
+                    var have = work.Stacks[stack.Id];
+                    var take = Math.Min(needed, have.Quantity);
+                    if (charge is not null)
+                    {
+                        charge = charge with { Quantity = charge.Quantity + take };
+                        await work.SetQuantityAsync(charge, charge.Quantity);
+                    }
+                    else if (take == have.Quantity)
+                    {
+                        await work.MoveAsync(have, shipId, module.Flag);
+                        charge = have with { LocationId = shipId, Flag = module.Flag };
+                    }
+                    else
+                    {
+                        charge = have with { Id = await work.CreateAsync(new NewItem(typeId, characterId, shipId, module.Flag, take)), LocationId = shipId, Flag = module.Flag, Quantity = take };
+                    }
+                    if (have.Quantity == take)
+                    {
+                        work.Stacks.Remove(have.Id);
+                        if (charge.Id == have.Id)
+                        {
+                            // the stack itself became the module's charge: the client is told it left the hangar
+                            work.Events.Add(new ItemChanged(have with { LocationId = JunkLocation }, have.LocationId, have.Flag, have.Quantity));
+                        }
+                        else
+                        {
+                            await work.DeleteAsync(have);
+                            work.Events.Add(new ItemChanged(have with { LocationId = JunkLocation }, have.LocationId, have.Flag, have.Quantity));
+                        }
+                    }
+                    else
+                    {
+                        var left = have with { Quantity = have.Quantity - take };
+                        await work.SetQuantityAsync(have, left.Quantity);
+                        work.Stacks[have.Id] = left;
+                        work.Events.Add(new ItemChanged(left, have.LocationId, have.Flag, have.Quantity));
+                    }
+                    needed -= take;
+                    work.Hold(module, charge);
+                    work.TouchesFitting = true;
+                }
+            }
+            finally
+            {
+                TellTransition(work, module, before, StateOf(work.Charges.GetValueOrDefault(module.Flag)), work.Charges.GetValueOrDefault(module.Flag), moduleBefore);
+            }
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return Finish(work);
+    }
+
+    private static AmmoChanged Finish(AmmoWork work)
+    {
+        if (work.TouchesFitting)
+        {
+            work.Events.Add(new FittingRefreshed(work.Snapshot.Fitted));
+        }
+        return new AmmoChanged(work.Snapshot.Ship.Id, work.Events);
+    }
+
+    /// <summary>
+    /// <c>UnloadAmmo(shipID, moduleIDs, destination, quantity)</c> of a docked ship: what the modules hold goes to the hangar or the cargo hold (all of it, or
+    /// <paramref name="quantity"/> rounds of each).
+    /// </summary>
+    public async Task<ShipOutcome> UnloadAmmoAsync(
+        long characterId, long shipId, IReadOnlyList<long> moduleIds, long destinationLocationId, int? destinationFlag, long? quantity, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        if (await BeginAmmoAsync(connection, transaction, characterId, shipId, destinationLocationId, cancellationToken) is not { } work)
+        {
+            return new NothingHappened();
+        }
+        var place = PlaceOf(work.Snapshot, destinationLocationId)!.Value;
+        var flag = destinationFlag ?? place.Flag;
+        foreach (var moduleId in moduleIds.Distinct())
+        {
+            if (work.Snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is not { } module || !work.Charges.TryGetValue(module.Flag, out var charge))
+            {
+                continue;
+            }
+            var before = StateOf(charge);
+            var moduleBefore = work.World.Attributes(module.Id);
+            try
+            {
+                await UnloadAsync(work, module, charge, place.Location, flag, quantity);
+            }
+            finally
+            {
+                TellTransition(work, module, before, StateOf(work.Charges.GetValueOrDefault(module.Flag)), work.Charges.GetValueOrDefault(module.Flag), moduleBefore);
+            }
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return Finish(work);
+    }
+
+    /// <summary>
+    /// Puts items in the character's hangar (what <c>/giveitem</c> does): a stack joins the first stack of its kind there, an item that is a singleton is made
+    /// <paramref name="quantity"/> times. Null when the character is not in a station. The client is told each stack that changed or came.
+    /// </summary>
+    public async Task<IReadOnlyList<ItemChanged>?> GrantAsync(long characterId, int typeId, long quantity, bool singleton, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        if (await characters.GetAsync(characterId, cancellationToken) is not { StationId: > 0 } character)
+        {
+            return null;
+        }
+        var station = character.StationId;
+        var changes = new List<ItemChanged>();
+        if (singleton)
+        {
+            for (var made = 0L; made < quantity; made++)
+            {
+                var item = new NewItem(typeId, characterId, station, ItemFlags.Hangar, 1, Singleton: true);
+                changes.Add(new ItemChanged(new Item(await items.CreateAsync(connection, transaction, item, cancellationToken), typeId, characterId, station, ItemFlags.Hangar, 1, true, null), 0, 0, 1));
+            }
+        }
+        else if ((await items.InLocationAsync(station, characterId, cancellationToken)).Where(i => i.Flag == ItemFlags.Hangar && !i.Singleton && i.TypeId == typeId).OrderBy(i => i.Id).FirstOrDefault() is { } stack)
+        {
+            var grown = stack with { Quantity = stack.Quantity + quantity };
+            await items.SetQuantityAsync(connection, transaction, stack.Id, grown.Quantity, cancellationToken);
+            changes.Add(new ItemChanged(grown, stack.LocationId, stack.Flag, stack.Quantity));
+        }
+        else
+        {
+            var id = await items.CreateAsync(connection, transaction, new NewItem(typeId, characterId, station, ItemFlags.Hangar, quantity), cancellationToken);
+            changes.Add(new ItemChanged(new Item(id, typeId, characterId, station, ItemFlags.Hangar, quantity, false, null), 0, 0, quantity));
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return changes;
+    }
+
+    /// <summary>
+    /// A turret in space spent rounds: the charge in the module has <paramref name="roundsLeft"/> now (a stack that is empty is gone). The simulation tells the client; this keeps
+    /// what the character has. The rounds only go down in space, so a late answer never gives rounds back.
+    /// </summary>
+    public async Task SpendChargeAsync(long characterId, long moduleId, long roundsLeft, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        if (await items.GetAsync(moduleId, cancellationToken) is { } module && module.OwnerId == characterId)
+        {
+            var (_, charges) = await ShipSnapshot.SlotsOfAsync(statics, await items.InLocationAsync(module.LocationId, characterId, cancellationToken), cancellationToken);
+            if (charges.FirstOrDefault(c => c.Flag == module.Flag) is { } charge && roundsLeft < charge.Quantity)
+            {
+                if (roundsLeft > 0)
+                {
+                    await items.SetQuantityAsync(connection, transaction, charge.Id, roundsLeft, cancellationToken);
+                }
+                else
+                {
+                    await items.DeleteAsync(connection, transaction, charge.Id, cancellationToken);
+                }
+            }
+        }
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    /// <summary>Takes an item the character owns out of the world (an item made for a fitting that could not be done).</summary>
+    public async Task DeleteItemAsync(long characterId, long itemId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        if (await items.GetAsync(itemId, cancellationToken) is { } item && item.OwnerId == characterId)
+        {
+            await items.DeleteAsync(connection, transaction, itemId, cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+    }
+}

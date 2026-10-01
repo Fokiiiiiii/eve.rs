@@ -110,7 +110,7 @@ public sealed partial class DogmaIMService(DogmaStatic statics, CharacterShips s
         var fileTime = Py.FileTimeFromUnixMs(nowUnixMs());
         var wantCharacter = Flag(call.Arg(0), true);
         var wantShip = Flag(call.Arg(1), true);
-        var answer = _info.GetAllInfo(snapshot, wantCharacter, wantShip, Flag(call.Arg(2), false), fileTime);
+        var answer = _info.GetAllInfo(snapshot, wantCharacter, wantShip, Flag(call.Arg(2), false), fileTime, docked: call.Session.GetInt("stationid") is not null);
         if (wantCharacter || (wantShip && !wantCharacter))
         {
             // sent after the answer: the client has the character before it is told how the character's attributes came to be

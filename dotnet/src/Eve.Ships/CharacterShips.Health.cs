@@ -34,7 +34,7 @@ public sealed partial class CharacterShips
             return null;
         }
         var contents = await items.InLocationAsync(shipId, characterId, cancellationToken);
-        var fitted = contents.Where(i => Slots.IsSlotFlag(i.Flag)).OrderBy(i => i.Flag).ThenBy(i => i.Id).ToList();
+        var (fitted, _) = await ShipSnapshot.SlotsOfAsync(statics, contents, cancellationToken);
         return (ship, fitted, character);
     }
 

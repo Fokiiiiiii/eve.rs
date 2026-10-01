@@ -188,6 +188,9 @@ impl Sim {
                 radius,
                 killer_ship_id: killer_ship.unwrap_or(0),
             },
+            Out::ChargeSpent { session, module_id, rounds_left } => {
+                Message::ChargeSpent { session_id: session, module_id, rounds_left }
+            }
             Out::Targets { session, command, pending, targets } => {
                 Message::Targets { session_id: session, command, pending, targets }
             }

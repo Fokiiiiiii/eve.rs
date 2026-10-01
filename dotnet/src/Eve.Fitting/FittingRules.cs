@@ -61,7 +61,7 @@ public static class FittingRules
 
     /// <summary>The modules fitted to the ship now (not counting <paramref name="candidate"/>).</summary>
     public static IEnumerable<DogmaItem> Fitted(DogmaWorld world, long shipId) =>
-        world.Items.Where(i => i.LocationId == shipId && Slots.IsSlotFlag(i.FlagId));
+        world.Items.Where(i => i.LocationId == shipId && Slots.IsSlotFlag(i.FlagId) && !world.IsCharge(i));
 
     /// <summary>The skills a type needs with the level of each.</summary>
     public static IEnumerable<(int Skill, int Level)> RequiredSkills(TypeDef type)

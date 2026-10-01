@@ -155,7 +155,22 @@ public sealed class DogmaInfo(DogmaStatic statics)
         return DogmaWire.ItemInfo(module.Id, Row(RowOf(module, statics.Type(module.TypeId)), false), running, DogmaWire.Attributes(ModuleAttributes(s, module.Id)), now);
     }
 
-    private PyValue ShipInfo(ShipSnapshot s, long now)
+    /// <summary>The key the client knows a charge in a slot by: the ship, the slot's flag and the type of the charge.</summary>
+    private static PyValue ChargeKey(ShipSnapshot s, Eve.Inventory.Item charge) => Py.Tuple(InventoryWire.Id(s.Ship.Id), new PyInt(charge.Flag), new PyInt(charge.TypeId));
+
+    /// <summary>
+    /// What the client is told about a charge in a slot: its attributes, with the rounds it holds (805) and, besides, the capacitor need and the range, which are nothing
+    /// of a charge's own (the reference lists them as 0).
+    /// </summary>
+    private PyValue ChargeInfo(ShipSnapshot s, Eve.Inventory.Item charge, PyValue key, PyValue invItem, long now)
+    {
+        var attributes = WithIntrinsics(s, charge.Id);
+        attributes.TryAdd(6, 0);
+        attributes.TryAdd(54, 0);
+        return DogmaWire.ItemInfo(0, invItem, new PyDict([]), DogmaWire.Attributes(attributes), now, key);
+    }
+
+    private PyValue ShipInfo(ShipSnapshot s, long now, bool docked)
     {
         var entries = new List<KeyValuePair<PyValue, PyValue>>
         {
@@ -163,6 +178,13 @@ public sealed class DogmaInfo(DogmaStatic statics)
                 s.Ship.Id, Row(RowOf(s.Ship, statics.Type(s.Ship.TypeId)), false), new PyDict([]), DogmaWire.Attributes(ShipAttributes(s)), now)),
         };
         entries.AddRange(s.Fitted.Select(m => new KeyValuePair<PyValue, PyValue>(InventoryWire.Id(m.Id), ModuleInfo(s, m, now))));
+        // a charge in a slot is known to the client by a key of its own, and, in a station, by its item too (in space the item is not told)
+        if (docked)
+        {
+            entries.AddRange(s.Charges.Select(c => new KeyValuePair<PyValue, PyValue>(
+                InventoryWire.Id(c.Id), ChargeInfo(s, c, InventoryWire.Id(c.Id), Row(RowOf(c, statics.Type(c.TypeId)), true), now))));
+        }
+        entries.AddRange(s.Charges.Select(c => new KeyValuePair<PyValue, PyValue>(ChargeKey(s, c), ChargeInfo(s, c, ChargeKey(s, c), PyNone.Instance, now))));
         return new PyDict(entries);
     }
 
@@ -170,6 +192,13 @@ public sealed class DogmaInfo(DogmaStatic statics)
         DogmaWire.ItemInfo(s.Character.Id, Row(CharacterRow(s), true), new PyDict([]), DogmaWire.Attributes(attributes), now);
 
     /// <summary>The state of everything the client keeps a state for: the ship, the character and each module, and the heat of the slots.</summary>
+    private static PyValue ChargeStateRow(long shipId, Eve.Inventory.Item charge) => new PyObject(
+        new PyStr("util.Row"),
+        new PyDict([
+            new(new PyStr("header"), Py.Tuple(new PyStr("instanceID"), new PyStr("flagID"), new PyStr("typeID"), new PyStr("quantity"))),
+            new(new PyStr("line"), Py.Tuple(InventoryWire.Id(shipId), new PyInt(charge.Flag), new PyInt(charge.TypeId), InventoryWire.Id(charge.Quantity))),
+        ]));
+
     private PyValue ShipState(ShipSnapshot s, long now)
     {
         var rows = new List<KeyValuePair<PyValue, PyValue>>
@@ -187,14 +216,18 @@ public sealed class DogmaInfo(DogmaStatic statics)
                     m.Id, online: s.World.Item(m.Id)?.State >= ItemState.Online, damage: condition.Damage, armorDamage: condition.ArmorDamage, shieldCharge: condition.ShieldCharge,
                     incapacitated: condition.Incapacitated));
         }));
-        return Py.Tuple(new PyDict(rows), new PyDict([]), new PyDict([]), DogmaWire.HeatState(now));
+        // the charges in the slots: the ship, and for each slot a row of the ship, the slot's flag, the type of the charge and its rounds
+        var loaded = s.Charges.Count == 0
+            ? new PyDict([])
+            : new PyDict([new(InventoryWire.Id(s.Ship.Id), new PyDict([.. s.Charges.Select(c => new KeyValuePair<PyValue, PyValue>(new PyInt(c.Flag), ChargeStateRow(s.Ship.Id, c)))]))]);
+        return Py.Tuple(new PyDict(rows), loaded, new PyDict([]), DogmaWire.HeatState(now));
     }
 
     /// <summary>
     /// <c>GetAllInfo</c> for a character in its ship in a station. What is left out follows the reference: the character and
     /// ship info asked for; a docked ship asked for on its own brings the character with it.
     /// </summary>
-    public PyValue GetAllInfo(ShipSnapshot s, bool getCharInfo, bool getShipInfo, bool getStructureInfo, long fileTime)
+    public PyValue GetAllInfo(ShipSnapshot s, bool getCharInfo, bool getShipInfo, bool getStructureInfo, long fileTime, bool docked = true)
     {
         _ = getStructureInfo; // a character docked in a station has no structure to tell about
         var dockedShipOnly = getShipInfo && !getCharInfo;
@@ -205,7 +238,7 @@ public sealed class DogmaInfo(DogmaStatic statics)
             ("shipModifiedCharAttribs", getShipInfo && getCharInfo ? CharacterInfo(s, ShipModifiedCharacterAttributes(s), fileTime) : PyNone.Instance),
             ("structureInfo", new PyDict([])),
             ("locationInfo", new PyDict([])),
-            ("shipInfo", getShipInfo ? ShipInfo(s, fileTime) : new PyDict([])),
+            ("shipInfo", getShipInfo ? ShipInfo(s, fileTime, docked) : new PyDict([])),
             ("activeShipID", InventoryWire.Id(s.Ship.Id)),
             ("shipState", getShipInfo ? ShipState(s, fileTime) : PyNone.Instance),
             ("charInfo", includeCharacter

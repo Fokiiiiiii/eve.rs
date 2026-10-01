@@ -133,9 +133,13 @@ impl Sim {
         self.sessions.len()
     }
 
-    /// What the host is told of what scenes have to say: nothing that is for an NPC (nobody is there to hear it).
+    /// What the host is told of what scenes have to say: nothing that is for an NPC (nobody is there to hear it) but that it was destroyed, and by whom: the
+    /// host made the NPC (it knows what it was worth) and pays the bounty to whoever dealt the last of its hull.
     pub(crate) fn messages(outs: impl IntoIterator<Item = Out>) -> Vec<Message> {
-        outs.into_iter().filter(|out| !is_npc_session(out.session())).map(Self::out_message).collect()
+        outs.into_iter()
+            .filter(|out| !is_npc_session(out.session()) || matches!(out, Out::Destroyed { .. }))
+            .map(Self::out_message)
+            .collect()
     }
 
     fn out_message(out: Out) -> Message {
@@ -711,7 +715,14 @@ mod tests {
                 NOON + 61 * SECOND,
             )
             .unwrap();
-        assert_eq!(names(&told), ["DoDestinyUpdate", "DoDestinyUpdate"], "the explosion and the wreck");
+        // the explosion and the wreck, to the player who sees it; and to the host that it is gone (it made the ship, and the bounty is its to pay)
+        assert_eq!(&names(&told)[..2], ["DoDestinyUpdate", "DoDestinyUpdate"]);
+        let gone: Vec<_> = told.iter().filter(|m| matches!(m, Message::Destroyed { .. })).collect();
+        assert!(
+            matches!(gone[..], [Message::Destroyed { ship_id: 980_050_000_004, wreck_id, killer_ship_id: 0, .. }] if *wreck_id != 0),
+            "{told:?}"
+        );
+        assert_eq!(told.len(), 3);
         // a player's ship: the host is told with `Destroyed`, and the session is no longer in space
         let told = sim
             .handle(

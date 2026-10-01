@@ -102,6 +102,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
 
     public void Dispose()
     {
+        _bountyTimer?.Dispose();
         _sim.Received -= OnReceived;
         _sim.Lost -= OnLost;
     }
@@ -522,6 +523,86 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// <summary>The NPCs that can be spawned (null when there are none).</summary>
     public NpcSelector? Npcs { get; init; }
 
+    /// <summary>What the host knows of an NPC it made: what it was worth, what it was and where (the simulation tells it only that the ship is gone).</summary>
+    private sealed record NpcShip(NpcProfile Profile, int TypeId, int SolarSystemId);
+
+    private readonly ConcurrentDictionary<long, NpcShip> _npcShips = new();
+
+    // ── bounties ─────────────────────────────────────────────────────────────
+
+    private PgBountyStore? _bounties;
+    private Timer? _bountyTimer;
+    private int _paying;
+
+    /// <summary>Raised for each bounty that was paid into a wallet (the wallet's owner is told of its new balance by whoever announces wallets).</summary>
+    public event Action<BountyPaid>? BountyPaidOut;
+
+    /// <summary>
+    /// Keeps the bounties NPCs are worth: a kill whose last blow was a pilot's goes to <paramref name="store"/>, and what has come due is paid every
+    /// <paramref name="payEvery"/> (not at all when null: a test pays by <see cref="PayBountiesAsync"/>).
+    /// </summary>
+    public void UseBounties(PgBountyStore store, TimeSpan? payEvery = null)
+    {
+        _bounties = store;
+        _bountyTimer?.Dispose();
+        _bountyTimer = payEvery is { } every ? new Timer(_ => _ = PayBountiesAsync(), null, TimeSpan.Zero, every) : null;
+    }
+
+    /// <summary>Pays the bounties that are due (one payout at a time); each is raised as <see cref="BountyPaidOut"/>.</summary>
+    public async Task<IReadOnlyList<BountyPaid>> PayBountiesAsync(CancellationToken cancellationToken = default)
+    {
+        if (_bounties is not { } store || Interlocked.Exchange(ref _paying, 1) == 1)
+        {
+            return [];
+        }
+        try
+        {
+            var paid = await store.PayDueAsync(_nowUnixMs(), cancellationToken);
+            foreach (var payment in paid)
+            {
+                _log?.Invoke($"bounty paid: {payment.Amount} ISK for {payment.Kills} kill(s) to character {payment.CharacterId}");
+                BountyPaidOut?.Invoke(payment);
+            }
+            return paid;
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            _log?.Invoke($"the bounties could not be paid: {error.Message}");
+            return [];
+        }
+        finally
+        {
+            Volatile.Write(ref _paying, 0);
+        }
+    }
+
+    /// <summary>
+    /// An NPC of ours was destroyed: when the last blow was a pilot's ship, its bounty goes to that pilot's character and the client is told what was added and
+    /// when it will be paid (<c>OnBountyAddedToPayout</c>).
+    /// </summary>
+    private async Task FinishNpcDeathAsync(NpcShip npc, SimDestroyed destroyed)
+    {
+        if (_bounties is not { } store)
+        {
+            return;
+        }
+        var killer = _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == destroyed.KillerShipId);
+        if (killer is null || NpcBounty.AmountOf(npc.Profile.Bounty) is not { } amount)
+        {
+            return;
+        }
+        var added = await store.RecordAsync(new BountyKill(killer.CharacterId, npc.SolarSystemId, npc.TypeId, destroyed.ShipId, amount), _nowUnixMs());
+        if (!added.AlreadyRecorded)
+        {
+            // `util.KeyVal`; the payout time is a FILETIME, past what a JavaScript number holds, so it goes as a long
+            killer.Session.SendNotification(
+                "OnBountyAddedToPayout", "charid",
+                Py.KeyVal(
+                    ("enemyTypeID", new PyInt(added.EnemyTypeId)), ("amount", new PyInt((int)added.Amount)), ("payoutTime", new PyLong(added.PayoutTime)),
+                    ("isModified", added.IsModified ? PyBool.True : PyBool.False)));
+        }
+    }
+
     /// <summary><c>buildRandomUnitVector</c> of the reference's <c>npcAnchors.js</c>: a direction chosen evenly over the sphere.</summary>
     private static double[] RandomUnitVector()
     {
@@ -593,6 +674,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             {
                 break;
             }
+            _npcShips[shipId] = new NpcShip(profile, type.TypeId, pilot.SolarSystemId);
             unarmed += weapon is null ? 1 : 0;
             var name = profile.Name.Length > 0 ? profile.Name : profile.Id;
             var at = composition.FindIndex(part => part.Name == name);
@@ -791,6 +873,9 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                     break;
                 case SimDestroyed destroyed when _pilots.TryGetValue(destroyed.SessionId, out var victim) && victim.ShipId == destroyed.ShipId:
                     _ = Task.Run(() => FinishDeathAsync(victim, destroyed));
+                    break;
+                case SimDestroyed destroyed when _npcShips.TryRemove(destroyed.ShipId, out var npc):
+                    _ = Task.Run(() => FinishNpcDeathAsync(npc, destroyed));
                     break;
                 case SimRefused { Command: SimCommands.Stop, Reason: "IN_WARP" } inWarp when _pilots.TryGetValue(inWarp.SessionId, out var warping):
                     TellShipInWarp(warping.Session);

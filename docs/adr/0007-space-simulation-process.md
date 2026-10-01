@@ -151,7 +151,8 @@ not exist is the scene: which balls a system has, who is where, how commands cha
   item, in the ballpark of whoever can see the place, gone after two hours) that the scene makes itself for an NPC and the host makes for a player. New
   messages: `Destroyed` (kind 21, sim to host: the session, the ship, the wreck the scene made (0 for none), where and how the ship was, the ship that
   did it), `Spawn` (22, host to sim: an NPC with its ship, place, tree, reactions, weapons and wreck, answered with `SpawnReply`, 23) and `Destroy`
-  (24, host to sim: destroy this ship). An NPC that dies is not told to the host (nobody is there to hear it); a player's death is, and the session
+  (24, host to sim: destroy this ship). Nothing of an NPC is told to the host (nobody is there to hear it) but its destruction: `Destroyed` carries the NPC's session and ship and the ship that dealt the
+  last of its hull, and the host, which made the NPC and knows what it was worth, pays that pilot the bounty (S5c-3d-7). A player's death is told too, and the session
   is no longer in space until the host brings it back.
 
 - 2026-09-29, stargate jumps: command 9 and the messages `Jumping` (15) and `Jumped` (16). The sim owns the crossing: a `Jump` checks the gate

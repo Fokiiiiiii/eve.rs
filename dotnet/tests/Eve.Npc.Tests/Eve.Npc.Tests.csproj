@@ -10,6 +10,8 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Eve.Npc/Eve.Npc.csproj" />
+    <ProjectReference Include="../../src/Eve.Wallet/Eve.Wallet.csproj" />
+    <ProjectReference Include="../../src/Eve.Data/Eve.Data.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

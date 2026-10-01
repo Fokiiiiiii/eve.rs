@@ -175,6 +175,8 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     await PgItemStore.MigrateAsync(source, inventorySchema);
     await PgSkillStore.MigrateAsync(source, skillsSchema);
     await PgWalletStore.MigrateAsync(source, walletSchema);
+    var npcSchema = Env("EVE_NPC_SCHEMA", PgBountyStore.DefaultSchema);
+    await PgBountyStore.MigrateAsync(source, npcSchema);
     await PgModuleStateStore.MigrateAsync(source, fittingSchema);
 
     var sde = new SdeReader(source);
@@ -222,6 +224,9 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         sim = SimClient.ToUnixSocket(socket, message => Console.Error.WriteLine($"eve-host: {message}"));
         sim.Start();
         spaceSessions = new SpaceSessions(sim, ships, dogma, stations, solarSystems, now, message => Console.Error.WriteLine($"eve-host: space: {message}")) { RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new NpcSelector(NpcAuthority.Load()) };
+        spaceSessions.UseBounties(
+            new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")),
+            TimeSpan.FromSeconds(10));
         Console.Error.WriteLine($"eve-host: the space simulation is expected at {socket}");
     }
     IReadOnlyList<IService> services =

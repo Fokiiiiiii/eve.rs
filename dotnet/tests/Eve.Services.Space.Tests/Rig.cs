@@ -47,7 +47,7 @@ internal sealed class Rig : IAsyncDisposable
     private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, CreationCatalog catalog, StationCatalog stations, SolarSystemCatalog systems, PgModuleStateStore modules, TimeSpan protection, TimeSpan jumpCloak)
     {
         Source = source;
-        _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}"];
+        _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}"];
         Characters = new PgCharacterStore(source, _schemas[0]);
         Items = new PgItemStore(source, _schemas[1]);
         Skills = new PgSkillStore(source, _schemas[2]);
@@ -56,12 +56,19 @@ internal sealed class Rig : IAsyncDisposable
         Modules = modules;
         Stations = stations;
         Ships = new CharacterShips(source, statics, Characters, Items, Skills, modules);
-        Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => ClockMs, Log.Add, protection, jumpCloak) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(Eve.Npc.NpcAuthority.Load()) };
+        Wallets = new PgWalletStore(source, _schemas[3]);
+        WalletTransactions = new WalletTransactions(source, _schemas[3]);
+        Bounties = new Eve.Npc.PgBountyStore(source, WalletTransactions, _schemas[5], Log.Add);
+        Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => Now, Log.Add, protection, jumpCloak) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(Eve.Npc.NpcAuthority.Load()) };
+        Space.UseBounties(Bounties);
         Ship = new ShipService(Space, () => ClockMs);
         Beyonce = new BeyonceService(Space, () => ClockMs);
         Registry.Register(Ship);
         Registry.Register(Beyonce);
     }
+
+    /// <summary>The host's clock: <see cref="ClockMs"/> until a test moves it.</summary>
+    public long Now { get; set; } = ClockMs;
 
     public FakeSim Sim { get; } = new();
 
@@ -89,6 +96,12 @@ internal sealed class Rig : IAsyncDisposable
 
     public SpaceSessions Space { get; }
 
+    public PgWalletStore Wallets { get; }
+
+    public WalletTransactions WalletTransactions { get; }
+
+    public Eve.Npc.PgBountyStore Bounties { get; }
+
     public ShipService Ship { get; }
 
     public BeyonceService Beyonce { get; }
@@ -111,6 +124,7 @@ internal sealed class Rig : IAsyncDisposable
         await PgSkillStore.MigrateAsync(source, $"ps_{suffix}");
         await PgWalletStore.MigrateAsync(source, $"pw_{suffix}");
         await PgModuleStateStore.MigrateAsync(source, $"pf_{suffix}");
+        await Eve.Npc.PgBountyStore.MigrateAsync(source, $"pn_{suffix}");
         var catalog = await CreationCatalog.LoadAsync(sde, Station);
         var creation = new CharacterCreation(
             source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), catalog, modules);

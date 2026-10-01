@@ -1,10 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <ProjectReference Include="../Eve.Data/Eve.Data.csproj" />
     <ProjectReference Include="../Eve.Dogma/Eve.Dogma.csproj" />
     <ProjectReference Include="../Eve.Space/Eve.Space.csproj" />
+    <ProjectReference Include="../Eve.Wallet/Eve.Wallet.csproj" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Data/npc_authority.json" LogicalName="npc_authority.json" />
+    <EmbeddedResource Include="Migrations/*.sql" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Eve.Npc.Tests" />

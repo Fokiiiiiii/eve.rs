@@ -447,6 +447,26 @@ mod tests {
     }
 
     #[test]
+    fn the_host_is_told_which_ship_took_the_last_of_an_npcs_hull_and_nothing_else_of_the_npc() {
+        use crate::link::Message;
+        let (mut scene, rat) = scene_with_a_mortal_rat();
+        let told = crate::sim::Sim::messages(scene.destroy(rat, Some(PLAYER), LATER));
+        let gone: Vec<(i64, i64, i64)> = told
+            .iter()
+            .filter_map(|m| match m {
+                Message::Destroyed { ship_id, killer_ship_id, wreck_id, .. } => {
+                    Some((*ship_id, *killer_ship_id, *wreck_id))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(gone, [(RAT_SHIP, PLAYER_SHIP, TRANSIENT_ID_BASE + 1)]);
+        // what the scene says to the NPC itself (and to the player: the player's own client is told by the scene's other messages) is not the host's
+        assert!(told.iter().all(|m| matches!(m, Message::Destroyed { .. })
+            || !matches!(m, Message::Notify { session_id, .. } if crate::npc::is_npc_session(*session_id))));
+    }
+
+    #[test]
     fn the_host_is_told_of_a_destruction_with_the_place_and_what_the_scene_made_of_it() {
         let (mut scene, rat) = scene_with_a_mortal_rat();
         let was_at = scene.ship(rat, LATER).unwrap().position;
@@ -463,7 +483,7 @@ mod tests {
         );
         assert!(
             is_npc_session(*session),
-            "an NPC's destruction is for the scene alone: the host is not told of it"
+            "the destruction is the NPC's, and the host is told of it (`Sim::messages`)"
         );
     }
 

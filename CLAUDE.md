@@ -115,6 +115,8 @@ Shared files I have edited so far, all small and additive: `EveRs.slnx` (`Eve.Np
 construction block: `Npcs = new NpcSelector(NpcAuthority.Load())`, and `new NpcCommands(spaceSessions)` as the last argument of `SlashService`);
 `Eve.Host.Tests/ArchitectureTests.cs` (`"Eve.Npc"` appended to `Modules`: it is a domain module after `Eve.Space`; append yours after it);
 `docs/compat/DEVIATIONS.md` (rows 52 to 54), `docs/NATIVE_MIGRATION.md` (row S5c-3d-6), `oracle/PROVENANCE.md`.
+Also since then: `Eve.Host/Program.cs` (the `EVE_NPC_SCHEMA` migration and `spaceSessions.UseBounties(...)` in the same block; the bounty payout uses `WalletTransactions.AdjustAsync` and
+respects the ceiling), `tools/dev/run-eve-live.sh` (a scratch `npc` schema).
 Planned shared-file edits: more `Program.cs` lines only inside that same block (and the `SlashService` line), and further numbered rows in
 `DEVIATIONS.md` / rows in `NATIVE_MIGRATION.md`; I will fetch `main` before each push. Please keep your host registrations in your own block.
 

@@ -134,18 +134,7 @@ quantity below the stack splits it), `docs/compat/DEVIATIONS.md` (rows 103, 104 
 the stack splits it into a stack of its own, and the client is told `OnItemChange` for each stack (not `OnItemsChanged` for the item) unless a module goes into a slot or out of one.
 `ItemVolumes` (`Eve.Inventory`) is the one place a unit's volume is worked out (packaged or assembled); use it for any hold or hangar room you check.
 
-Red on `main` since `db30a9d` (yours, Codex; found while running the whole headless suite for the ammunition push, not touched): `CorporationLoginHook` announces a second session
-change after a character is chosen (`hqID` becomes the corporation's headquarters, 60000610 for the starter corporation), and the replays of the recorded login
-count the notifications after `SelectCharacterID`: `tests/test_login_to_character.py::test_the_recorded_walk_replays` and
-`test_a_new_character_has_the_skills_the_reference_gives[race-1|2|4|8]` fail with "3 notifications, 2 recorded". The reference sends one session change then the skills
-notification, with `hqID` going from 0 to None. Either fold the hook's values into the select's own session change (so one is announced) or, if the real headquarters is
-what you want the client to have, write the deviation in `docs/compat/DEVIATIONS.md` and change the replay's expectation.
-
-A red test on `main` that is yours to look at (I did not touch it): since `8b13fe6`,
-`Eve.Characters.Tests.CreationTests.A_failure_opening_the_wallet_rolls_everything_back` fails with `2BP01: cannot drop table ...balances because other
-objects depend on it` (the new journal depends on `balances`). It fails on a clean checkout of `main`; `DROP TABLE ... CASCADE` in the test, or
-dropping the journal first, should do. Everything else in `dotnet test EveRs.slnx` passes with my work merged.
-
+Both reds I noted earlier (the corporation login replay, the wallet rollback test) are fixed on `main`; the whole Rust, .NET and headless suites pass with the ship foundation merged (2026-10-02).
 ### Claude handoff to Codex: where our work meets (2026-10-01)
 
 Goal: nothing is left half-implemented where a Codex domain and a Claude domain touch. For every read-side in the `docs/PLAN.md` backlog

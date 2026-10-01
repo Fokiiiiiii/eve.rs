@@ -1,5 +1,6 @@
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Services.Ships;
 
 namespace Eve.Services.Space;
 
@@ -8,7 +9,7 @@ namespace Eve.Services.Space;
 /// character is in space, and the simulation takes over (<see cref="SpaceSessions"/>).
 /// </summary>
 [Service("ship")]
-public sealed partial class ShipService(SpaceSessions space, Func<long> nowUnixMs) : IBoundObjectReleaseHandler
+public sealed partial class ShipService(SpaceSessions space, Func<long> nowUnixMs, ISpaceContainers? containers = null) : IBoundObjectReleaseHandler
 {
     private readonly Binding _binding = new(nowUnixMs);
 
@@ -34,6 +35,29 @@ public sealed partial class ShipService(SpaceSessions space, Func<long> nowUnixM
         }
         var (bound, oid) = _binding.Bind(call.Session);
         return Py.Tuple(bound, await Binding.NestedAsync(this, call, oid));
+    }
+
+    private static long? IdOf(PyValue value) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        _ => null,
+    };
+
+    /// <summary>
+    /// <c>Jettison(itemIDs)</c>: the stacks of the hold go into a can ahead of the ship. Answers <c>(the ids that went into a can, the ids launched as cans of their own)</c>; the client
+    /// counts what is in neither as not jettisoned.
+    /// </summary>
+    [Method("Jettison")]
+    public async ValueTask<PyValue> Jettison(ServiceCall call)
+    {
+        if (containers is null || !_binding.Owns(call))
+        {
+            return None;
+        }
+        var asked = (call.Arg(0) switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] }).Select(IdOf).OfType<long>().ToList();
+        var jettisoned = await containers.JettisonAsync(call.Session, asked, call.Cancellation);
+        return Py.Tuple(Py.Tuple([.. jettisoned.Select(InventoryWire.Id)]), Py.Tuple());
     }
 
     /// <summary><c>Undock(shipID, ignoreContraband, onlineModules=)</c>: answers the bound object and the time it can be used from again.</summary>

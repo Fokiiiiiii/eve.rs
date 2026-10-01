@@ -126,6 +126,14 @@ leaves charges out) and `docs/compat/DEVIATIONS.md` (rows 57, 58), `docs/NATIVE_
 flag of the module's slot (category 8); anything of yours that lists the items of a ship (a market sell-all, an insurance or killmail item list, a contract) must
 leave those out of "fitted modules" and may count them as cargo of the ship. Anything that reads a stack and then changes it (an ammunition load, `/giveitem`, a sale) takes the row lock the market's custody takes (`PgItemStore.LockAndGetAsync`, then the row against what was read, `ITEM_CHANGED` when it differs): `CharacterShips.Ammo.cs` does, and your escrow and settlement keep working beside it. The link has a new message kind 27 (`ChargeSpent`) and a charge byte in the turret block.
 
+Ship foundation (SHIP-F1/F2, 2026-10-02) touched these shared files, all additive: `Eve.Host/Program.cs` (in my `spaceSessions` block: `spaceContainers` is made after it and
+passed as the last argument of `InvBrokerService` and `ShipService`), `Eve.Inventory/Items.cs` (`PgItemStore.MoveToOwnerAsync`, a new method), `Eve.Services.Inventory/InvBrokerService.cs`
+(a last constructor parameter `ISpaceContainers? space = null`; `GetCapacity`, `StackAll`, in-space binds and the `Add` of a pilot in space are new; the docked `Add` is unchanged except that a
+quantity below the stack splits it), `docs/compat/DEVIATIONS.md` (rows 103, 104 and 10 narrowed), `docs/NATIVE_MIGRATION.md` (rows S5d-1, S5d-2), `docs/adr/0007-space-simulation-process.md`
+(link version 3). Anything of yours that moves goods between a hangar and a ship's hold now gets what the cargo rules say: a hold has a capacity (dogma's, the ship's own), a move below
+the stack splits it into a stack of its own, and the client is told `OnItemChange` for each stack (not `OnItemsChanged` for the item) unless a module goes into a slot or out of one.
+`ItemVolumes` (`Eve.Inventory`) is the one place a unit's volume is worked out (packaged or assembled); use it for any hold or hangar room you check.
+
 Red on `main` since `db30a9d` (yours, Codex; found while running the whole headless suite for the ammunition push, not touched): `CorporationLoginHook` announces a second session
 change after a character is chosen (`hqID` becomes the corporation's headquarters, 60000610 for the starter corporation), and the replays of the recorded login
 count the notifications after `SelectCharacterID`: `tests/test_login_to_character.py::test_the_recorded_walk_replays` and

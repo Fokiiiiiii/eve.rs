@@ -27,7 +27,11 @@ public static class ShipNotifications
     /// <c>OnItemChange</c>: the row of an item that changed and, as the reference sends it, only what differs from before: the place it left (3), the flag it left (4) and
     /// the size of the stack it was (9).
     /// </summary>
-    public static void SendItemChange(ClientSession session, ItemChanged change, Func<Eve.Inventory.Item, ItemRow> row)
+    public static void SendItemChange(ClientSession session, ItemChanged change, Func<Eve.Inventory.Item, ItemRow> row) =>
+        session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(row(change.After)), Differences(change), PyNone.Instance);
+
+    /// <summary>What an item was before it changed, as the reference tells it: the place it left (3), the flag it left (4) and the size of the stack it was (9), each only if it differs.</summary>
+    private static PyDict Differences(ItemChanged change)
     {
         var differences = new List<KeyValuePair<PyValue, PyValue>>();
         if (change.After.LocationId != change.PreviousLocationId)
@@ -42,8 +46,15 @@ public static class ShipNotifications
         {
             differences.Add(new(new PyInt(9), InventoryWire.Id(change.PreviousQuantity)));
         }
-        session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(row(change.After)), new PyDict(differences), PyNone.Instance);
+        return new PyDict(differences);
     }
+
+    /// <summary>
+    /// <c>OnItemsChanged</c> for an item that changed in space (the batch the reference sends for what moves between a ship and a can), told to the ship: the row, what it was before
+    /// and, for what a pilot takes out of a can, the place the loot window shows it in (<c>("Ship", shipID, "ShipCargo")</c>).
+    /// </summary>
+    public static void SendItemsChanged(ClientSession session, ItemChanged change, Func<Eve.Inventory.Item, ItemRow> row, PyValue? context = null) =>
+        session.SendNotification("OnItemsChanged", "shipid", new PyList([InventoryWire.PackedRow(row(change.After))]), Differences(change), context ?? PyNone.Instance);
 
     /// <summary>The events of a change as the batch the client is sent: each with the time it happened.</summary>
     public static PyValue MultiEvent(long characterId, long shipId, IEnumerable<DogmaEvent> events, long fileTime) => new PyList([.. events.Select(e => Py.Tuple(

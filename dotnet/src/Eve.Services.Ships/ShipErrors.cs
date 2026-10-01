@@ -25,6 +25,8 @@ public static class ShipErrors
                 return Notify("You do not have enough powergrid to online that module.");
             case ShipRefusal.NotEnoughCargoSpace:
                 return MachoErrors.ThrowUserError("NotEnoughCargoSpace", ("available", Py.Number(refused.Available)), ("volume", Py.Number(refused.Volume)));
+            case ShipRefusal.NoSpaceForThat:
+                return MachoErrors.ThrowUserError("NoSpaceForThat", ("type", new PyInt(refused.ModuleTypeId)), ("free", Py.Number(refused.Available)), ("required", Py.Number(refused.Volume)));
             case ShipRefusal.NoSuitableSlot:
                 return MachoErrors.ThrowUserError("ModuleFitFailed", ("moduleName", new PyInt(refused.ModuleTypeId)), ("reason", new PyStr("No suitable slot available")));
             case ShipRefusal.SkillRequired:

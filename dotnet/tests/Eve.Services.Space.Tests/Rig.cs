@@ -61,7 +61,8 @@ internal sealed class Rig : IAsyncDisposable
         Bounties = new Eve.Npc.PgBountyStore(source, WalletTransactions, _schemas[5], Log.Add);
         Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => Now, Log.Add, protection, jumpCloak) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(Eve.Npc.NpcAuthority.Load()) };
         Space.UseBounties(Bounties);
-        Ship = new ShipService(Space, () => ClockMs);
+        Containers = new SpaceContainers(Sim, Ships, Items, statics, Space, () => Now, Log.Add);
+        Ship = new ShipService(Space, () => ClockMs, Containers);
         Beyonce = new BeyonceService(Space, () => ClockMs);
         Registry.Register(Ship);
         Registry.Register(Beyonce);
@@ -103,6 +104,8 @@ internal sealed class Rig : IAsyncDisposable
     public Eve.Npc.PgBountyStore Bounties { get; }
 
     public ShipService Ship { get; }
+
+    public SpaceContainers Containers { get; }
 
     public BeyonceService Beyonce { get; }
 
@@ -195,6 +198,9 @@ internal sealed class Rig : IAsyncDisposable
 
     public Task<string> BindShipAsync(ClientSession session) => BindAsync(Ship, session, session.GetInt("stationid")!.Value, 15);
 
+    /// <summary>The ship service bound to the solar system the session flies in (what the client does before it jettisons).</summary>
+    public Task<string> BindShipInSpaceAsync(ClientSession session) => BindAsync(Ship, session, session.GetInt("solarsystemid")!.Value, 5);
+
     public Task<string> BindBeyonceAsync(ClientSession session) => BindAsync(Beyonce, session, session.GetInt("solarsystemid")!.Value, 5);
 
     public static string OidOf(PyValue bound) =>
@@ -213,6 +219,7 @@ internal sealed class Rig : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        Containers.Dispose();
         Space.Dispose();
         foreach (var schema in _schemas)
         {

@@ -167,6 +167,121 @@ public class CargoTests
     }
 }
 
+/// <summary>Cans and wrecks beside the ship in space: what goes between them and the hold.</summary>
+public class SpaceCargoTests
+{
+    private const int Tritanium = 34;
+
+    private static async Task<(Created Character, Item Can)> InSpaceWithACanAsync(Rig rig)
+    {
+        var c = await rig.NewCharacterAsync();
+        var moved = await rig.Ships.UndockAsync(c.CharacterId);
+        var system = moved.Moved!.Ship.LocationId;
+        return (c, await rig.Ships.CreateCanAsync(c.CharacterId, (int)system));
+    }
+
+    private static async Task<long> InAsync(Rig rig, long owner, long place, int flag, int type, long quantity)
+    {
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var id = await rig.Items.CreateAsync(connection, transaction, new NewItem(type, owner, place, flag, quantity));
+        await transaction.CommitAsync();
+        return id;
+    }
+
+    [PgFact]
+    public async Task What_a_pilot_takes_out_of_a_can_is_its_own_from_then_on_and_a_stack_it_does_not_take_whole_is_split()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (c, can) = await InSpaceWithACanAsync(rig);
+        var stranger = await InAsync(rig, 140_000_999, can.Id, CharacterShips.ContainerFlag, Tritanium, 50);
+
+        var changed = Assert.IsType<ShipChanged>(await rig.Ships.MoveInSpaceAsync(c.CharacterId, stranger, can.Id, c.ShipId, 20));
+
+        var taken = (await rig.Items.GetAsync(changed.ItemId))!;
+        Assert.Equal((c.CharacterId, c.ShipId, CharacterShips.CargoFlag, 20L), (taken.OwnerId, taken.LocationId, taken.Flag, taken.Quantity));
+        var left = (await rig.Items.GetAsync(stranger))!;
+        Assert.Equal((140_000_999L, can.Id, 30L), (left.OwnerId, left.LocationId, left.Quantity));
+        Assert.Equal(2, changed.Stacks!.Count);
+    }
+
+    [PgFact]
+    public async Task A_whole_stack_taken_out_of_a_can_keeps_its_id_and_changes_hands()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (c, can) = await InSpaceWithACanAsync(rig);
+        var stranger = await InAsync(rig, 140_000_999, can.Id, CharacterShips.ContainerFlag, Tritanium, 50);
+
+        var changed = Assert.IsType<ShipChanged>(await rig.Ships.MoveInSpaceAsync(c.CharacterId, stranger, can.Id, c.ShipId, null));
+
+        Assert.Equal(stranger, changed.ItemId);
+        var taken = (await rig.Items.GetAsync(stranger))!;
+        Assert.Equal((c.CharacterId, c.ShipId, CharacterShips.CargoFlag, 50L), (taken.OwnerId, taken.LocationId, taken.Flag, taken.Quantity));
+        var told = Assert.Single(changed.Stacks!);
+        Assert.Equal((can.Id, CharacterShips.ContainerFlag), (told.PreviousLocationId, told.PreviousFlag));
+    }
+
+    [PgFact]
+    public async Task More_than_the_hold_takes_is_refused_as_for_a_hold_and_nothing_leaves_the_can()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (c, can) = await InSpaceWithACanAsync(rig);
+        var big = await InAsync(rig, c.CharacterId, can.Id, CharacterShips.ContainerFlag, Tritanium, 20_000);
+
+        var refused = Assert.IsType<ShipRefused>(await rig.Ships.MoveInSpaceAsync(c.CharacterId, big, can.Id, c.ShipId, null));
+
+        Assert.Equal((ShipRefusal.NotEnoughCargoSpace, 125d, 200d), (refused.Reason, refused.Available, refused.Volume));
+        Assert.Equal(can.Id, (await rig.Items.GetAsync(big))!.LocationId);
+    }
+
+    [PgFact]
+    public async Task A_can_holds_what_its_type_says_and_what_does_not_fit_is_refused_as_for_a_container()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (c, can) = await InSpaceWithACanAsync(rig);
+        // the can holds 55,000 cubic metres: fill it up to 50 short, then put in a stack of 100 (one cubic metre)
+        var filler = await InAsync(rig, c.CharacterId, can.Id, CharacterShips.ContainerFlag, Tritanium, 5_499_950);
+        var hold = await InAsync(rig, c.CharacterId, c.ShipId, CharacterShips.CargoFlag, Tritanium, 6_000);
+
+        var refused = Assert.IsType<ShipRefused>(await rig.Ships.MoveInSpaceAsync(c.CharacterId, hold, c.ShipId, can.Id, 6_000));
+
+        // 5,499,950 x 0.01 = 54,999.5 of 55,000: 0.5 are left, 6,000 x 0.01 = 60 are asked for
+        Assert.Equal((ShipRefusal.NoSpaceForThat, 0.5, 60d, Tritanium), (refused.Reason, refused.Available, refused.Volume, refused.ModuleTypeId));
+        Assert.Equal(c.ShipId, (await rig.Items.GetAsync(hold))!.LocationId);
+        var room = Assert.NotNull(await rig.Ships.ContainerRoomAsync(can.Id));
+        Assert.Equal((55_000d, 54_999.5), (room.Capacity, Math.Round(room.Used, 6)));
+        Assert.NotNull(await rig.Items.GetAsync(filler));
+    }
+
+    [PgFact]
+    public async Task Goods_go_between_the_ship_and_a_container_only_and_only_from_where_they_are()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (c, can) = await InSpaceWithACanAsync(rig);
+        var inCan = await InAsync(rig, c.CharacterId, can.Id, CharacterShips.ContainerFlag, Tritanium, 5);
+
+        // the ship to itself, the can to itself, an item that is not where it is said to be, a module fitted in a slot
+        Assert.IsType<NothingHappened>(await rig.Ships.MoveInSpaceAsync(c.CharacterId, inCan, can.Id, can.Id, null));
+        Assert.IsType<NothingHappened>(await rig.Ships.MoveInSpaceAsync(c.CharacterId, inCan, c.ShipId, can.Id, null));
+        Assert.IsType<NothingHappened>(await rig.Ships.MoveInSpaceAsync(c.CharacterId, c.ShipId + 1, c.ShipId, can.Id, null));
+        Assert.IsType<NothingHappened>(await rig.Ships.MoveInSpaceAsync(c.CharacterId, inCan, can.Id, c.ShipId, 6)); // more than there is
+        Assert.Equal(can.Id, (await rig.Items.GetAsync(inCan))!.LocationId);
+    }
+
+    [PgFact]
+    public async Task Removing_a_can_takes_what_is_in_it_only_when_asked_to()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (c, can) = await InSpaceWithACanAsync(rig);
+        var inCan = await InAsync(rig, c.CharacterId, can.Id, CharacterShips.ContainerFlag, Tritanium, 5);
+
+        Assert.NotNull(await rig.Ships.RemoveContainerAsync(can.Id, withContents: false));
+        Assert.Null(await rig.Items.GetAsync(can.Id));
+        Assert.NotNull(await rig.Items.GetAsync(inCan)); // left where it was: nothing sees it any more, which is what a can that is emptied has
+        Assert.Null(await rig.Ships.RemoveContainerAsync(can.Id, withContents: true));
+    }
+}
+
 /// <summary>A sale and a move of the same stack at the same moment (the row-lock convention of the market, ADR 0003): every unit is somewhere once.</summary>
 public class CargoRaceTests
 {

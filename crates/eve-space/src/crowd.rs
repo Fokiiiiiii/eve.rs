@@ -937,7 +937,7 @@ mod tests {
                 continue;
             }
             let Value::Tuple(arguments) = &inner[1] else { continue };
-            // AddBalls2 holds (buffer, [(slim, damage)]); OnSlimItemChange holds (id, slim)
+            // AddBalls2 holds (buffer, [(slim, damage)]); OnSlimItemChange holds the id and the slim item
             let slim = match (action_name, &arguments[0]) {
                 ("AddBalls2", Value::Tuple(parts)) => match &parts[1] {
                     Value::List(items) => match &items[0] {
@@ -946,8 +946,7 @@ mod tests {
                     },
                     other => other.clone(),
                 },
-                (_, Value::Tuple(parts)) => parts[1].clone(),
-                (_, other) => other.clone(),
+                _ => arguments[1].clone(),
             };
             let entries = match slim {
                 Value::Dict(entries) => entries,

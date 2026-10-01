@@ -79,7 +79,7 @@ pub fn add_wreck(stamp: u32, wreck: &Wreck, now: i64) -> Result<Value, BallError
 
 /// `OnSlimItemChange`: the slim item of a wreck or a can is told again (what is in it, who may take it), as an object.
 pub fn slim_item_change(stamp: u32, wreck: &Wreck) -> Value {
-    action(stamp, "OnSlimItemChange", [tuple([id(wreck.id), slim_object(wreck.slim_entries())])])
+    action(stamp, "OnSlimItemChange", [id(wreck.id), slim_object(wreck.slim_entries())])
 }
 
 /// The effect the client plays where a pilot jettisons cargo (`effects.Jettison`, played on the can: it has no module, target or charge).

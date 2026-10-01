@@ -90,8 +90,9 @@ def slims_in(events: list) -> list:
     """The `(itemID, typeID)` of every slim item an event holds, in order."""
     found = []
     for event in events:
-        for item, kind in re.findall(r'\["itemID", \{"\$long": (\d+)\}\], \["typeID", (\d+)\]', str(event).replace("'", '"')):
-            found.append((int(item), int(kind)))
+        # an id is a long only where it does not fit 32 bits, which is not the same on every server
+        for long_id, short_id, kind in re.findall(r'\["itemID", (?:\{"\$long": (\d+)\}|(\d+))\], \["typeID", (\d+)\]', str(event).replace("'", '"')):
+            found.append((int(long_id or short_id), int(kind)))
     return found
 
 

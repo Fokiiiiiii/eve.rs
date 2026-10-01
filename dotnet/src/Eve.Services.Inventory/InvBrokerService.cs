@@ -16,7 +16,7 @@ namespace Eve.Services.Inventory;
 /// </summary>
 [Service("invbroker")]
 public sealed partial class InvBrokerService(
-    PgItemStore items, ItemTypeCatalog types, StationCatalog stations, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs) : IBoundObjectReleaseHandler
+    PgItemStore items, ItemTypeCatalog types, StationCatalog stations, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs, ISpaceContainers? space = null) : IBoundObjectReleaseHandler
 {
     /// <summary>The container the client asks for to get the hangar of the station it is docked at.</summary>
     public const int ContainerHangar = 10004;
@@ -36,8 +36,14 @@ public sealed partial class InvBrokerService(
         /// <summary>The character's hangar in its station (also what the station's own inventory shows).</summary>
         Hangar,
 
-        /// <summary>A ship in the hangar: its fitted modules and its cargo.</summary>
+        /// <summary>A ship in the hangar, or the ship the character flies in space: its fitted modules and its cargo.</summary>
         Ship,
+
+        /// <summary>The solar system the character flies in: what the client binds first to reach the inventory of its ship or of a can beside it. It holds nothing itself.</summary>
+        Space,
+
+        /// <summary>A can or a wreck in space beside the ship.</summary>
+        Container,
     }
 
     /// <summary>What a bound inventory is: which kind, whose item it is, and the session that opened it.</summary>
@@ -89,13 +95,14 @@ public sealed partial class InvBrokerService(
             ? await RowsAsync(await items.InLocationAsync(station, character, cancellationToken), cancellationToken)
             : [];
 
-    /// <summary>What is in the bound inventory: the hangar's ships, or a ship's fitted modules and cargo.</summary>
-    private async Task<IReadOnlyList<ItemRow>> ContentsAsync(Context context, ClientSession session, CancellationToken cancellationToken) =>
-        context.Kind == Kind.Hangar
-            ? await HangarAsync(session, cancellationToken)
-            : session.CharacterId is { } character
-                ? await RowsAsync(await items.InLocationAsync(context.ItemId, character, cancellationToken), cancellationToken)
-                : [];
+    /// <summary>What is in the bound inventory: the hangar's ships, a ship's fitted modules and cargo, or what a can or a wreck holds.</summary>
+    private async Task<IReadOnlyList<ItemRow>> ContentsAsync(Context context, ClientSession session, CancellationToken cancellationToken) => context.Kind switch
+    {
+        Kind.Hangar => await HangarAsync(session, cancellationToken),
+        Kind.Container => await RowsAsync(await items.InContainerAsync(context.ItemId, cancellationToken), cancellationToken),
+        Kind.Space => [],
+        _ => session.CharacterId is { } character ? await RowsAsync(await items.InLocationAsync(context.ItemId, character, cancellationToken), cancellationToken) : [],
+    };
 
     /// <summary>The station as an item of its own: the "container" the hangar is in.</summary>
     private async Task<ItemRow?> StationRowAsync(ClientSession session, CancellationToken cancellationToken)
@@ -107,14 +114,18 @@ public sealed partial class InvBrokerService(
         return new ItemRow(station.Id, station.TypeId, station.OwnerId, station.Id, 0, 1, type.GroupId, type.CategoryId);
     }
 
-    /// <summary>The item the bound inventory is of: the station, or the ship.</summary>
+    /// <summary>The item the bound inventory is of: the station, the ship, or the can or wreck.</summary>
     private async Task<ItemRow?> SelfAsync(Context context, ClientSession session, CancellationToken cancellationToken)
     {
         if (context.Kind == Kind.Hangar)
         {
             return await StationRowAsync(session, cancellationToken);
         }
-        return await items.GetAsync(context.ItemId, cancellationToken) is { } ship ? (await RowsAsync([ship], cancellationToken)).FirstOrDefault() : null;
+        if (context.Kind == Kind.Space)
+        {
+            return null;
+        }
+        return await items.GetAsync(context.ItemId, cancellationToken) is { } item ? (await RowsAsync([item], cancellationToken)).FirstOrDefault() : null;
     }
 
     // ── handing out inventories ─────────────────────────────────────────────
@@ -135,13 +146,20 @@ public sealed partial class InvBrokerService(
         return container == ContainerHangar || container == station ? Bind(new Context(Kind.Hangar, station, 0), call.Session) : None;
     }
 
-    /// <summary><c>GetInventoryFromId(itemID)</c>: the station's own inventory (what its hangar shows) or the inventory of a ship of the character in the hangar.</summary>
+    /// <summary>
+    /// <c>GetInventoryFromId(itemID)</c>: the station's own inventory (what its hangar shows) or the inventory of a ship of the character in the hangar; in space the solar system
+    /// (to bind first), the ship the character flies, or a can or wreck the pilot can open (<see cref="ISpaceContainers.OpenAsync"/>).
+    /// </summary>
     [Method("GetInventoryFromId")]
     public async ValueTask<PyValue> GetInventoryFromId(ServiceCall call)
     {
-        if (IdOf(call.Arg(0)) is not { } id || StationOf(call.Session) is not { } station)
+        if (IdOf(call.Arg(0)) is not { } id)
         {
             return None;
+        }
+        if (StationOf(call.Session) is not { } station)
+        {
+            return await OpenInSpaceAsync(call, id);
         }
         if (id == station)
         {
@@ -156,6 +174,24 @@ public sealed partial class InvBrokerService(
         return None;
     }
 
+    /// <summary>The inventories of a pilot in space: the solar system it binds first, then its ship and the cans and wrecks beside it.</summary>
+    private async Task<PyValue> OpenInSpaceAsync(ServiceCall call, long id)
+    {
+        if (space is null || !space.IsInSpace(call.Session) || space.SolarSystemOf(call.Session) is not { } system)
+        {
+            return None;
+        }
+        if (id == system)
+        {
+            return Bind(new Context(Kind.Space, system, 0), call.Session);
+        }
+        if (call.Session.GetInt("shipid") == id)
+        {
+            return Bind(new Context(Kind.Ship, id, 0), call.Session);
+        }
+        return await space.OpenAsync(call.Session, id, call.Cancellation) is { } container ? Bind(new Context(Kind.Container, container.Id, 0), call.Session) : None;
+    }
+
     // ── what the client asks a bound inventory ───────────────────────────────
 
     private static int? FlagOf(ServiceCall call) => call.Kwarg("flag") is { } named ? Flag(named) : call.Args.Count > 0 ? Flag(call.Args[0]) : null;
@@ -164,7 +200,7 @@ public sealed partial class InvBrokerService(
 
     /// <summary>
     /// <c>List(flag)</c>: everything in the inventory, or what is in one flag. A flag with nothing in it is answered with an empty
-    /// Python <c>set</c>, as the reference does, and so is a ship in the hangar asked for everything (a set of rows that have no custom info);
+    /// Python <c>set</c>, as the reference does, and so is a ship in a hangar asked for everything (a set of rows that have no custom info; in space it is a list);
     /// everything else is a list of rows.
     /// </summary>
     [Method("List")]
@@ -177,7 +213,7 @@ public sealed partial class InvBrokerService(
         var flag = FlagOf(call);
         var contents = await ContentsAsync(context, call.Session, call.Cancellation);
         var chosen = flag is { } f ? contents.Where(r => r.Flag == f).ToList() : [.. contents];
-        if (context.Kind == Kind.Ship && flag is null)
+        if (context.Kind == Kind.Ship && flag is null && StationOf(call.Session) is not null)
         {
             return InventoryWire.Set(chosen.Select(r => InventoryWire.PackedRow(r, r.CategoryId == PlayerCategory ? new PyStr("") : PyNone.Instance)));
         }
@@ -256,6 +292,14 @@ public sealed partial class InvBrokerService(
         {
             return await ships.RoomAsync(character, context.ItemId, flag ?? CharacterShips.CargoFlag, call.Cancellation) is { } room ? KeyVal(room.Capacity, room.Used) : None;
         }
+        if (context.Kind == Kind.Space)
+        {
+            return None;
+        }
+        if (context.Kind == Kind.Container)
+        {
+            return await ships.ContainerRoomAsync(context.ItemId, call.Cancellation) is { } inside ? KeyVal(inside.Capacity, inside.Used) : None;
+        }
         var inHangar = StationOf(call.Session) is { } station ? await items.InLocationAsync(station, character, call.Cancellation) : [];
         var used = await ships.VolumeOfAsync(inHangar.Where(i => flag is null || i.Flag == flag), call.Cancellation);
         return KeyVal(flag == CharacterShips.CargoFlag ? BareCargoCapacity : HangarCapacity, used);
@@ -272,12 +316,22 @@ public sealed partial class InvBrokerService(
         {
             return None;
         }
-        var container = context.Kind == Kind.Hangar ? StationOf(call.Session) : context.ItemId;
+        var container = context.Kind switch
+        {
+            Kind.Hangar => StationOf(call.Session),
+            Kind.Space => null,
+            _ => context.ItemId,
+        };
         if (container is not { } place)
         {
             return None;
         }
-        var flag = FlagOf(call) ?? (context.Kind == Kind.Hangar ? ItemFlags.Hangar : CharacterShips.CargoFlag);
+        var flag = FlagOf(call) ?? context.Kind switch
+        {
+            Kind.Hangar => ItemFlags.Hangar,
+            Kind.Container => CharacterShips.ContainerFlag,
+            _ => CharacterShips.CargoFlag,
+        };
         var changes = await ships.StackAllAsync(character, place, flag, call.Cancellation);
         foreach (var change in changes)
         {
@@ -296,9 +350,15 @@ public sealed partial class InvBrokerService(
     [Method("Add")]
     public async ValueTask<PyValue> Add(ServiceCall call)
     {
-        if (ContextOf(call) is not { } context || call.Session.CharacterId is not { } character || IdOf(call.Arg(0)) is not { } itemId)
+        if (ContextOf(call) is not { } context || call.Session.CharacterId is not { } character || IdOf(call.Arg(0)) is not { } itemId || context.Kind == Kind.Space)
         {
             return None;
+        }
+        long? quantity = (call.Kwarg("qty") ?? call.Kwarg("quantity")) is { } asked ? IdOf(asked) : null;
+        if (space is not null && space.IsInSpace(call.Session))
+        {
+            // in space what moves is between the ship's hold and a can or a wreck, and the client is told by the one that knows where they are
+            return await space.MoveAsync(call.Session, itemId, IdOf(call.Arg(1)) ?? 0, context.ItemId, quantity, call.Cancellation) is { } moved ? InventoryWire.Id(moved) : None;
         }
         var destination = context.Kind == Kind.Hangar ? StationOf(call.Session) : context.ItemId;
         if (destination is not { } location)
@@ -306,7 +366,6 @@ public sealed partial class InvBrokerService(
             return None;
         }
         int? flag = call.Kwarg("flag") is { } named ? Flag(named) : null;
-        long? quantity = (call.Kwarg("qty") ?? call.Kwarg("quantity")) is { } asked ? IdOf(asked) : null;
         switch (await ships.MoveAsync(character, itemId, IdOf(call.Arg(1)) ?? 0, location, flag, quantity, call.Cancellation))
         {
             case ShipChanged changed:

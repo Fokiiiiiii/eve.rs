@@ -37,6 +37,9 @@ public enum ShipRefusal
 
     /// <summary>What was moved does not fit in the hold (see <see cref="ShipRefused.Available"/> and <see cref="ShipRefused.Volume"/>).</summary>
     NotEnoughCargoSpace,
+
+    /// <summary>What was moved does not fit in the can or wreck it was put in (the same room figures).</summary>
+    NoSpaceForThat,
 }
 
 public abstract record ShipOutcome;

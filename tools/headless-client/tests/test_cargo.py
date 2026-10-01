@@ -16,12 +16,14 @@ import uuid
 
 import pytest
 
+from evecli import marshal as m
 from evecli.describe import describe, differences
 from tests import test_login_to_character as base
 from tests.test_ammo import canon, canon_events
 from tests.test_others import watch
 from tests.test_target import compare_answer, plain_race
-from tests.test_undock import STATION, arrive, ids, outcome
+from tests.test_undock import STATION, SYSTEM, arrive, compare_events, ids, outcome
+from tests.test_weapon import slims_in
 
 CARGO = base.load("cargo.json")
 pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server")
@@ -41,12 +43,13 @@ def test_a_pilot_fills_and_empties_its_hold_as_in_the_reference():
         _, ship, _, mapping = arrive(who, plain_race({"pilot": race}, "pilot"), run)
         known = dict(mapping)
         only = {"events": who}
+        last: dict = {"events": []}
         manager = who.call("invbroker", "MachoBindObject", (STATION, 15), None)[0]
         hangar = who.call_bound(manager, "GetInventory", 10004)
         docked = who.call("invbroker", "MachoBindObject", (STATION, 15), ("GetInventoryFromId", (ship, 0), None))[1]
         slash = lambda command: (lambda: who.call("slash", "SlashCmd", command))  # noqa: E731
 
-        def step(label: str, call, seconds: float = 1.0):
+        def step(label: str, call, seconds: float = 1.0, until=None):
             """The answer and the events of a step, each against the recording's (what the answer holds is compared by value, with the ids of items by the order
             they appear in; a user error by its name and its values)."""
             recorded = steps[label]
@@ -57,13 +60,12 @@ def test_a_pilot_fills_and_empties_its_hold_as_in_the_reference():
                 theirs = canon(base.blank_times(ids(recorded["ok"], known)), seen_recorded)
                 ours = canon(base.blank_times(describe(raw)), seen_ids)
                 problems.extend(differences(theirs, ours, label))
-            got = watch(only, seconds)["events"]
-            problems.extend(base_events(recorded["events"], got, label))
+            got = watch(only, seconds, (lambda seen: until(seen["events"])) if until else None)["events"]
+            last["events"] = got
+            problems.extend(base_events([e for e in recorded["events"] if e["name"] != "OnInvulnCancelled"], [e for e in got if e["name"] != "OnInvulnCancelled"], label))
             return raw
 
         def base_events(recorded: list, got: list, label: str) -> list[str]:
-            from tests.test_undock import compare_events
-
             return compare_events(canon_events(recorded, seen_recorded, known), canon_events(got, seen_ids), label, {})
 
         def stacks(handle, flag=None) -> dict:
@@ -97,5 +99,36 @@ def test_a_pilot_fills_and_empties_its_hold_as_in_the_reference():
         if os.environ.get("EVE_LIVE_SLOW") != "1":
             assert problems == [], "\n".join(problems[:40])
             return
-        # in space: see test_cargo_in_space below
+
+        # in space: the hold, a stack jettisoned, the can opened and emptied into the hold
+        service = who.call("ship", "MachoBindObject", (STATION, 15), None)
+        who.call_bound(service[0], "Undock", ship, False)
+        watch(only, 2.5)
+        who.call("beyonce", "MachoBindObject", SYSTEM, None)
+        watch(only, 3.0)
+        dogma = who.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
+        who.call_bound(dogma[0], "GetAllInfo", True, True, None)
+        watch(only, 1.0)
+        watch(only, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))
+        # the places the stacks were in before the undock are told again (the ship's own item changed): what is compared starts here
+        flying = who.call("invbroker", "MachoBindObject", (SYSTEM, 5), ("GetInventoryFromId", (ship, 0), None))[1]
+        step("the pilot asks for its hold in space", lambda: who.call_bound(flying, "List", 5))
+        step("the pilot asks for the room in its hold in space", lambda: who.call_bound(flying, "GetCapacity", 5))
+        held = stacks(flying, 5)[TRITANIUM]
+        space_service = who.call("ship", "MachoBindObject", SYSTEM, None)
+        step("the pilot jettisons a stack", lambda: who.call_bound(space_service[0], "Jettison", m.List(held[:1])), 4.0)
+        can = next((item for item, _ in slims_in(last["events"]) if item != ship), 0)
+        assert can, f"the can did not come into space: {[e['name'] for e in last['events']]}\n" + "\n".join(problems[:20])
+        opened = who.call("invbroker", "MachoBindObject", (SYSTEM, 5), ("GetInventoryFromId", (can, 0), None))[1]
+        step("the pilot opens the can", lambda: who.call_bound(opened, "List"))
+        step("the pilot asks for the room in the can", lambda: who.call_bound(opened, "GetCapacity"))
+        inside_can = stacks(opened)[TRITANIUM][0]
+        step("the pilot takes what is in the can back", lambda: who.call_bound(flying, "Add", inside_can, can, qty=25, flag=5), 1.5)
+        step("the pilot asks for its hold after the can", lambda: who.call_bound(flying, "List", 5))
+        # DEVIATION (the can after): the reference answers its bound can inventory with nothing once the pilot has taken part of what is in it (it keeps one bound context for
+        # the session, and the last call moved it to the ship); eve.rs lists what is left in the can: the 70 of the 95 (DEVIATIONS.md #103)
+        left = who.call_bound(opened, "List")
+        rows = [row.fields() for row in left] if isinstance(left, list) else []
+        if [(int(r["quantity"]), int(r["locationID"])) for r in rows] != [(70, can)]:
+            problems.append(f"the pilot asks for the can after: {[(int(r['quantity']), int(r['locationID'])) for r in rows]} in place of the 70 that are left")
     assert problems == [], "\n".join(problems[:40])

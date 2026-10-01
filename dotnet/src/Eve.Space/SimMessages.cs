@@ -118,6 +118,9 @@ public static class SimCommands
 
     /// <summary>The code a <see cref="SimPlaceContainer"/> is answered under (<see cref="SimContainerPlaced"/>, or <see cref="SimRefused"/>).</summary>
     public const byte PlaceContainer = 28;
+
+    /// <summary>The code a <see cref="SimChangeWreck"/> is answered under.</summary>
+    public const byte ChangeWreck = 30;
 }
 
 public sealed record SimCommand(ulong SessionId, byte Code, IReadOnlyList<double> Args) : SimMessage;
@@ -254,8 +257,11 @@ public sealed record SimPlaceContainer(ulong SessionId, long ContainerId, SimWre
 /// <summary>A can the host asked for is in space: where it lies and how it faces.</summary>
 public sealed record SimContainerPlaced(ulong SessionId, long ContainerId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage;
 
-/// <summary>What is in a wreck or a can changed (it has something to take, or nothing): whoever has it in view is told its slim item again.</summary>
-public sealed record SimChangeWreck(long WreckId, bool IsEmpty) : SimMessage;
+/// <summary>
+/// What is in a wreck or a can changed (it has something to take, or nothing): whoever has it in view is told its slim item again, and the pilot who changed it
+/// (<see cref="SessionId"/>) is answered with <see cref="SimAccepted"/> under <see cref="SimCommands.ChangeWreck"/> after that (or <see cref="SimRefused"/> when there is no such wreck).
+/// </summary>
+public sealed record SimChangeWreck(ulong SessionId, long WreckId, bool IsEmpty) : SimMessage;
 
 /// <summary>Takes a wreck or a can out of space; <see cref="Effect"/> is the destruction effect the client plays first (0: none).</summary>
 public sealed record SimRemoveWreck(long WreckId, int Effect) : SimMessage;

@@ -172,7 +172,7 @@ def build(m):
     if k == "ContainerPlaced":
         return frame(k, u64(m["sessionId"]) + i64(m["containerId"]) + struct.pack("<6d", *m["position"], *m["direction"]))
     if k == "ChangeWreck":
-        return frame(k, i64(m["wreckId"]) + bytes([1 if m["isEmpty"] else 0]))
+        return frame(k, u64(m["sessionId"]) + i64(m["wreckId"]) + bytes([1 if m["isEmpty"] else 0]))
     if k == "RemoveWreck":
         return frame(k, i64(m["wreckId"]) + struct.pack("<i", m["effect"]))
     if k == "Measured":
@@ -355,8 +355,8 @@ valid = [
      "characterId": "140000431", "corporationId": "1000006", "allianceId": "0", "warFactionId": "0", "distance": 275.0},
     {"name": "can that is in space", "kind": "ContainerPlaced", "sessionId": "1790646377000015", "containerId": "9988400002948",
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "direction": [0.6159, 0.01306, 0.78769]},
-    {"name": "wreck with something to take", "kind": "ChangeWreck", "wreckId": "9988400002948", "isEmpty": False},
-    {"name": "wreck with nothing to take", "kind": "ChangeWreck", "wreckId": "9988400002417", "isEmpty": True},
+    {"name": "wreck with something to take", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002948", "isEmpty": False},
+    {"name": "wreck with nothing to take", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002417", "isEmpty": True},
     {"name": "can taken out of space with the destruction effect", "kind": "RemoveWreck", "wreckId": "9988400002948", "effect": 3},
     {"name": "wreck taken out of space without one", "kind": "RemoveWreck", "wreckId": "9988400002417", "effect": 0},
     {"name": "how far a can is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": 261.0},

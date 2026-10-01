@@ -1261,16 +1261,18 @@
   {
    "name": "wreck with something to take",
    "kind": "ChangeWreck",
+   "sessionId": "1790646377000015",
    "wreckId": "9988400002948",
    "isEmpty": false,
-   "hex": "0a0000001e84b7089b1509000000"
+   "hex": "120000001e4f2c3859955c060084b7089b1509000000"
   },
   {
    "name": "wreck with nothing to take",
    "kind": "ChangeWreck",
+   "sessionId": "1790646377000015",
    "wreckId": "9988400002417",
    "isEmpty": true,
-   "hex": "0a0000001e71b5089b1509000001"
+   "hex": "120000001e4f2c3859955c060071b5089b1509000001"
   },
   {
    "name": "can taken out of space with the destruction effect",

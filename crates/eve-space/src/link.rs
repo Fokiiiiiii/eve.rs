@@ -265,8 +265,10 @@ pub enum Message {
         position: [f64; 3],
         direction: [f64; 3],
     },
-    /// What is in a wreck or a can changed (it has something to take, or nothing): whoever has it in view is told its slim item again.
+    /// What is in a wreck or a can changed (it has something to take, or nothing): whoever has it in view is told its slim item again, and the host
+    /// (`session_id`: the pilot who changed it) is answered with `Accepted` under the command code `kind::CHANGE_WRECK` after what they are told.
     ChangeWreck {
+        session_id: u64,
         wreck_id: i64,
         is_empty: bool,
     },
@@ -981,7 +983,8 @@ impl Message {
                 put_vector(&mut out, position);
                 put_vector(&mut out, direction);
             }
-            Self::ChangeWreck { wreck_id, is_empty } => {
+            Self::ChangeWreck { session_id, wreck_id, is_empty } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&wreck_id.to_le_bytes());
                 out.push(u8::from(*is_empty));
             }
@@ -1210,13 +1213,14 @@ impl Message {
                 direction: read_vector(&mut r)?,
             },
             kind::CHANGE_WRECK => {
+                let session_id = r.u64()?;
                 let wreck_id = r.i64()?;
                 let is_empty = match r.u8()? {
                     0 => false,
                     1 => true,
                     _ => return Err(DecodeError::BadValue("is_empty")),
                 };
-                Message::ChangeWreck { wreck_id, is_empty }
+                Message::ChangeWreck { session_id, wreck_id, is_empty }
             }
             kind::REMOVE_WRECK => Message::RemoveWreck { wreck_id: r.i64()?, effect: r.i32()? },
             kind::MEASURED => {

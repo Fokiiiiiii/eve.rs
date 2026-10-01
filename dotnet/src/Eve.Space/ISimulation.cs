@@ -80,8 +80,8 @@ public interface ISimulation
     /// <summary>Puts a can the host made ahead of a pilot's ship and waits for the answer: where it lies (<see cref="CommandReply.Position"/>), or why it could not be done.</summary>
     Task<CommandReply> PlaceContainerAsync(SimPlaceContainer can, CancellationToken cancellationToken = default);
 
-    /// <summary>Tells the scene that what is in a wreck or a can changed (it has something to take, or nothing).</summary>
-    void ChangeWreck(long wreckId, bool isEmpty);
+    /// <summary>Tells the scene that what is in a wreck or a can changed (it has something to take, or nothing) and waits until whoever sees it has been told: accepted, or refused when there is no such wreck.</summary>
+    Task<CommandReply> ChangeWreckAsync(ulong sessionId, long wreckId, bool isEmpty, CancellationToken cancellationToken = default);
 
     /// <summary>Takes a wreck or a can out of space, with the destruction effect <paramref name="effect"/> played first when it is not 0.</summary>
     void RemoveWreck(long wreckId, int effect);

@@ -350,6 +350,7 @@ fn message_of(case: &Value) -> Message {
             direction: vector_of(case, "direction"),
         },
         "ChangeWreck" => Message::ChangeWreck {
+            session_id: session_id(),
             wreck_id: wide(case, "wreckId"),
             is_empty: case["isEmpty"].as_bool().unwrap(),
         },

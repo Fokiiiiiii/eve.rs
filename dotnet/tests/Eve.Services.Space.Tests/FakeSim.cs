@@ -71,7 +71,11 @@ internal sealed class FakeSim : ISimulation
         return Task.FromResult(PlaceContainerAnswer ?? new CommandReply(true, 0, null) { Position = [1000.0, 2000.0, 3000.0], Direction = [1.0, 0.0, 0.0] });
     }
 
-    public void ChangeWreck(long wreckId, bool isEmpty) => Heard.Add(new SimChangeWreck(wreckId, isEmpty));
+    public Task<CommandReply> ChangeWreckAsync(ulong sessionId, long wreckId, bool isEmpty, CancellationToken cancellationToken = default)
+    {
+        Heard.Add(new SimChangeWreck(sessionId, wreckId, isEmpty));
+        return Task.FromResult(new CommandReply(true, 0, null));
+    }
 
     public void RemoveWreck(long wreckId, int effect) => Heard.Add(new SimRemoveWreck(wreckId, effect));
 

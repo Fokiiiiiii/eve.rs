@@ -480,8 +480,9 @@ public static class SimCodec
                 break;
             case Kind.ChangeWreck:
                 {
+                    var session = r.U64();
                     var wreck = r.I64();
-                    message = new SimChangeWreck(wreck, r.U8() switch
+                    message = new SimChangeWreck(session, wreck, r.U8() switch
                     {
                         0 => false,
                         1 => true,
@@ -881,6 +882,7 @@ public static class SimCodec
                 break;
             case SimChangeWreck m:
                 w.U8(Kind.ChangeWreck);
+                w.U64(m.SessionId);
                 w.I64(m.WreckId);
                 w.U8((byte)(m.IsEmpty ? 1 : 0));
                 break;

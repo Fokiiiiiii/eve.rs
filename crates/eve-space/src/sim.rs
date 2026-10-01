@@ -457,12 +457,29 @@ impl Sim {
                     }],
                 }
             }
-            Message::ChangeWreck { wreck_id, is_empty } => self
-                .scenes
-                .values_mut()
-                .find(|scene| scene.wreck(wreck_id).is_some())
-                .map(|scene| scene.change_wreck(wreck_id, is_empty, now))
-                .unwrap_or_default(),
+            Message::ChangeWreck { session_id, wreck_id, is_empty } => {
+                let changed = self
+                    .scenes
+                    .values_mut()
+                    .find(|scene| scene.wreck(wreck_id).is_some())
+                    .map(|scene| scene.change_wreck(wreck_id, is_empty, now));
+                // the answer comes after what those who see the wreck are told, so that the host goes on when the clients have been sent it
+                match changed {
+                    Some(mut told) => {
+                        told.push(Out::Accepted {
+                            session: session_id,
+                            command: crate::link::kind::CHANGE_WRECK,
+                            at: now,
+                        });
+                        told
+                    }
+                    None => vec![Out::Refused {
+                        session: session_id,
+                        command: crate::link::kind::CHANGE_WRECK,
+                        reason: "NO_SUCH_WRECK",
+                    }],
+                }
+            }
             Message::RemoveWreck { wreck_id, effect } => self
                 .scenes
                 .values_mut()
@@ -934,6 +951,132 @@ mod tests {
         // a system nobody is in has no scene to put a wreck in
         let none = sim.handle(wreck_placement(30_000_142, 9_988_400_002_418, at), NOON + 6 * SECOND).unwrap();
         assert_eq!(none, []);
+    }
+
+    fn can_placement(id: i64) -> Message {
+        Message::PlaceContainer(Box::new(crate::link::ContainerPlacement {
+            session_id: SESSION,
+            container_id: id,
+            kind: crate::wreck::WreckKind {
+                type_id: 23,
+                name: "Cargo Container".into(),
+                graphic_id: Some(1176),
+            },
+            radius: 14.0,
+            launcher_id: spec().ship_id,
+            credit: crate::death::Credit {
+                character_id: 140_000_342,
+                corporation_id: 1_000_006,
+                alliance_id: 0,
+                war_faction_id: 0,
+            },
+            distance: 275.0,
+        }))
+    }
+
+    #[test]
+    fn a_can_is_put_ahead_of_the_pilot_changed_when_something_is_in_it_measured_and_taken_out_of_space_with_each_answered_to_its_pilot()
+     {
+        let mut sim = undocked();
+        sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
+        let can = 9_988_400_002_948;
+
+        let placed = sim.handle(can_placement(can), NOON + SECOND).unwrap();
+        // the ball and the effect, then where it lies (after what the pilot is told)
+        assert_eq!(names(&placed[..2]), ["DoDestinyUpdate", "DoDestinyUpdate"], "{placed:?}");
+        assert!(
+            matches!(placed[2], Message::ContainerPlaced { session_id: SESSION, container_id, .. } if container_id == can),
+            "{placed:?}"
+        );
+        assert_eq!(placed.len(), 3);
+
+        // a pilot that is not in space cannot jettison
+        let none = sim
+            .handle(
+                Message::PlaceContainer(Box::new(match can_placement(can + 1) {
+                    Message::PlaceContainer(mut other) => {
+                        other.session_id = 99;
+                        *other
+                    }
+                    _ => unreachable!(),
+                })),
+                NOON + SECOND,
+            )
+            .unwrap();
+        assert_eq!(
+            none,
+            [Message::Refused {
+                session_id: 99,
+                command: crate::link::kind::PLACE_CONTAINER,
+                reason: "NO_SHIP_IN_SPACE".to_string()
+            }]
+        );
+
+        let changed = sim
+            .handle(
+                Message::ChangeWreck { session_id: SESSION, wreck_id: can, is_empty: false },
+                NOON + 2 * SECOND,
+            )
+            .unwrap();
+        assert_eq!(names(&changed[..1]), ["DoDestinyUpdate"]);
+        assert_eq!(
+            changed.last(),
+            Some(&Message::Accepted {
+                session_id: SESSION,
+                command: crate::link::kind::CHANGE_WRECK,
+                at: NOON + 2 * SECOND
+            }),
+            "the answer comes after what the pilot is told"
+        );
+        let missing = sim
+            .handle(
+                Message::ChangeWreck { session_id: SESSION, wreck_id: can + 7, is_empty: true },
+                NOON + 2 * SECOND,
+            )
+            .unwrap();
+        assert_eq!(
+            missing,
+            [Message::Refused {
+                session_id: SESSION,
+                command: crate::link::kind::CHANGE_WRECK,
+                reason: "NO_SUCH_WRECK".to_string()
+            }]
+        );
+
+        let measured = sim
+            .handle(
+                Message::Command {
+                    session_id: SESSION,
+                    command: crate::link::COMMAND_MEASURE,
+                    args: vec![can as f64],
+                },
+                NOON + SECOND,
+            )
+            .unwrap();
+        assert!(
+            matches!(&measured[..], [Message::Measured { session_id: SESSION, command: 20, distance: Some(d) }] if (*d - 261.0).abs() < 1e-3),
+            "{measured:?}"
+        );
+        let nothing = sim
+            .handle(
+                Message::Command {
+                    session_id: SESSION,
+                    command: crate::link::COMMAND_MEASURE,
+                    args: vec![12.0],
+                },
+                NOON + SECOND,
+            )
+            .unwrap();
+        assert_eq!(nothing, [Message::Measured { session_id: SESSION, command: 20, distance: None }]);
+
+        let gone = sim.handle(Message::RemoveWreck { wreck_id: can, effect: 3 }, NOON + 3 * SECOND).unwrap();
+        assert_eq!(names(&gone), ["DoDestinyUpdate"]);
+        assert!(
+            sim.handle(Message::RemoveWreck { wreck_id: can, effect: 3 }, NOON + 4 * SECOND)
+                .unwrap()
+                .is_empty(),
+            "nothing is told twice"
+        );
     }
 
     #[test]

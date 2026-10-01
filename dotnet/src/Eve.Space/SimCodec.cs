@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 4;
+    public const ushort ProtocolVersion = 5;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -179,7 +179,13 @@ public static class SimCodec
             1 => true,
             _ => throw new SimLinkException(SimLinkError.BadValue, "bad hull"),
         };
-        return new SimNpcIdentity(hostile, friendly, aggression, weapons, wreck, hull);
+        var hostWreck = r.U8() switch
+        {
+            0 => false,
+            1 => true,
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad host wreck"),
+        };
+        return new SimNpcIdentity(hostile, friendly, aggression, weapons, wreck, hull, hostWreck);
     }
 
     private static SimShip ReadShip(ref Reader r)
@@ -612,6 +618,7 @@ public static class SimCodec
         }
         WriteWreckKind(w, i.Wreck);
         w.U8((byte)(i.Hull ? 1 : 0));
+        w.U8((byte)(i.HostWreck ? 1 : 0));
     }
 
     private static void WriteWreckKind(Writer w, SimWreckKind? kind)

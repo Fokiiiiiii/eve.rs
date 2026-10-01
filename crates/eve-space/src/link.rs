@@ -12,7 +12,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Charge, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 4;
+pub const PROTOCOL_VERSION: u16 = 5;
 
 /// The message kinds.
 pub mod kind {
@@ -228,7 +228,8 @@ pub enum Message {
         effect: Box<Effect>,
     },
     /// The ship of this session was destroyed (its hull was gone): where it was and how it faced, the wreck the scene made of it (0 when it made
-    /// none: a player's wreck is the host's to make), and the ship that took the last of the hull (0 when nobody did).
+    /// none: a player's wreck is the host's to make, and so is that of an NPC that asked for it, `NpcIdentity::host_wreck`), and the ship that took
+    /// the last of the hull (0 when nobody did).
     Destroyed {
         session_id: u64,
         ship_id: i64,
@@ -237,7 +238,7 @@ pub enum Message {
         direction: [f64; 3],
         radius: f64,
         killer_ship_id: i64,
-        /// The wreck the ship's type leaves (a player's wreck is made by the host from it).
+        /// The wreck the ship's type leaves (a wreck the host makes is made from it).
         wreck_kind: Option<WreckKind>,
     },
     /// A turret of this session's ship spent rounds: how many it has left (the host keeps the quantity of the charge item).
@@ -504,6 +505,7 @@ fn put_identity(out: &mut Vec<u8>, identity: &NpcIdentity) {
     }
     put_wreck_kind(out, identity.wreck.as_ref());
     out.push(u8::from(identity.hull));
+    out.push(u8::from(identity.host_wreck));
 }
 
 /// A wreck's kind, or none: a flag, the type, the name and the graphic (0 for none).
@@ -610,12 +612,18 @@ fn read_identity(reader: &mut Reader) -> Result<NpcIdentity, DecodeError> {
         1 => true,
         _ => return Err(DecodeError::BadValue("hull")),
     };
+    let host_wreck = match reader.u8()? {
+        0 => false,
+        1 => true,
+        _ => return Err(DecodeError::BadValue("host wreck")),
+    };
     Ok(NpcIdentity {
         hostile_response_threshold,
         friendly_response_threshold,
         combat: NpcCombat { weapons, aggression_range },
         wreck,
         hull,
+        host_wreck,
     })
 }
 

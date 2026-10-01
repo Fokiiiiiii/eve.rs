@@ -188,6 +188,7 @@ fn identity_of(case: &Value) -> NpcIdentity {
         combat: NpcCombat { weapons, aggression_range: number(case, "aggressionRange") },
         wreck,
         hull: case.get("hull").and_then(Value::as_bool).unwrap_or(false),
+        host_wreck: case.get("hostWreck").and_then(Value::as_bool).unwrap_or(false),
     }
 }
 

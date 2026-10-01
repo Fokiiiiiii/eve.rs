@@ -100,7 +100,7 @@ def identity(i):
     for w in i["weapons"]:
         body += i64(w["moduleId"]) + struct.pack("<idd", w["effectId"], w["cycleMs"], w["capacitorNeed"])
         body += turret(w)
-    return body + wreck_kind(i.get("wreck")) + bytes([1 if i.get("hull") else 0])
+    return body + wreck_kind(i.get("wreck")) + bytes([1 if i.get("hull") else 0, 1 if i.get("hostWreck") else 0])
 
 
 def wreck_kind(wreck):
@@ -211,8 +211,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 4},
-    {"name": "hello ack", "kind": "HelloAck", "version": 4, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 5},
+    {"name": "hello ack", "kind": "HelloAck", "version": 5, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -349,6 +349,11 @@ valid = [
      "ship": dict(BARE, shipId="980050000078", characterId="0"), "anchorShipId": "9988400001939", "position": [1.0, 2.0, 3.0], "velocity": [4.0, 5.0, 6.0],
      "direction": [0.0, 0.0, 1.0], "behavior": "",
      "identity": {"hostileResponseThreshold": -11, "friendlyResponseThreshold": 11, "aggressionRange": 0.0, "weapons": [], "hull": True}},
+    {"name": "spawn of an NPC whose wreck the host makes", "kind": "Spawn", "requestId": "9", "solarSystemId": 30100032,
+     "ship": dict(BARE, shipId="980050000079", characterId="0", ownerId="1000125", categoryId=11, groupId=25, typeId=597),
+     "anchorShipId": "0", "position": [1000500.0, 100.0, 100.0], "velocity": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0], "behavior": "",
+     "identity": {"hostileResponseThreshold": -11, "friendlyResponseThreshold": 11, "aggressionRange": 0.0, "weapons": [],
+                  "wreck": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117}, "hostWreck": True}},
     {"name": "spawn done", "kind": "SpawnReply", "requestId": "7", "ok": True, "session": "4611686018427387905"},
     {"name": "spawn refused", "kind": "SpawnReply", "requestId": "8", "ok": False, "reason": "NO_SCENE 30000142"},
     {"name": "destroy for a pilot to loot", "kind": "Destroy", "shipId": "980050000077", "characterId": "140000001",

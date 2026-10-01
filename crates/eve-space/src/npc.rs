@@ -155,10 +155,13 @@ impl Scene {
         Some(Target { position: ship.position, radius: ship.spec.radius, velocity: ship.velocity })
     }
 
-    /// What a ship of the session may follow, orbit or align to: a body of the system or another ship of the scene.
+    /// What a ship of the session may follow, orbit or align to: a body of the system, a wreck or a can that lies in the scene, or another ship of the scene.
     pub(crate) fn target_of(&self, target_id: i64, session: SessionId) -> Option<Target> {
         if let Some(body) = self.system().body(target_id) {
             return Some(Target::at_rest(body.position, body.radius));
+        }
+        if let Some(wreck) = self.wrecks.get(&target_id) {
+            return Some(Target::at_rest(wreck.position, wreck.radius));
         }
         let other = self.session_of(target_id).filter(|other| *other != session)?;
         self.target_of_ship(other)

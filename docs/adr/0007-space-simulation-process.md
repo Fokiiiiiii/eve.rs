@@ -226,3 +226,7 @@ not exist is the scene: which balls a system has, who is where, how commands cha
   to the capacity and no more than the hold has, and only of the kind it fires; removing takes out what is asked, and a gun left with fewer rounds than a cycle spends stops at the end of its cycle with `NoCharges` and no shot.
   The answer follows every `ChargeSpent` the simulation told before it on the link, so the host orders what it does about the inventory with the counts (`ChargeSpentQueue.EnqueueWork`). `Hello` and `HelloAck` carry 4.
   `oracle/fixtures/simlink/messages.json` holds the frames; `docs/compat/DEVIATIONS.md` #57 says what differs from the reference.
+- 2026-10-04, version 5, the wreck of an NPC: `NpcIdentity` (the block of a spawn) ends with one more byte, `host_wreck` (0 or 1). A scene makes the wreck of an NPC that is destroyed as it did, with a transient id and nothing in it, unless the NPC asks for the host to make it: then
+  the scene tells the explosion and takes the ship away, makes no wreck, and `Destroyed` carries wreck id 0 and the kind of wreck the ship leaves (what it does for a player's ship), so the host makes the item with what its loot table gave and puts it in space with `PlaceWreck`.
+  A frame of version 4 is not understood by version 5 and the other way round (`Hello`, `HelloAck` carry 5). A ship (or a wreck or can that lies in the scene) can now be the target of `FollowBall`, `Orbit` and `AlignTo`.
+  `oracle/fixtures/simlink/messages.json` holds the frames; `docs/compat/DEVIATIONS.md` #106 says what differs from the reference.

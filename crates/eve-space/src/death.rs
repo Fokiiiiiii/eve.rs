@@ -89,8 +89,9 @@ impl Scene {
             catalog.resolve_ship_wreck_type(i64::from(ship.spec.type_id))
         });
         let wreck_kind = kind.clone();
-        // the scene makes the wreck of an NPC; a player's is the host's to make (it is an item with contents), and it is told the kind
-        let wreck = kind.clone().filter(|_| ship.npc.is_some()).map(|kind| {
+        // the scene makes the wreck of an NPC unless the host asks to make it (an item with what the NPC leaves in it); a player's is the host's to make, and it is told the kind
+        let scene_makes_it = ship.npc.as_ref().is_some_and(|npc| !npc.host_wreck);
+        let wreck = kind.clone().filter(|_| scene_makes_it).map(|kind| {
             self.wreck_sequence += 1;
             Wreck {
                 id: TRANSIENT_ID_BASE + self.wreck_sequence as i64,
@@ -484,6 +485,62 @@ mod tests {
         assert!(
             is_npc_session(*session),
             "the destruction is the NPC's, and the host is told of it (`Sim::messages`)"
+        );
+    }
+
+    #[test]
+    fn an_npc_whose_wreck_the_host_makes_leaves_none_in_the_scene_and_the_host_is_told_what_it_leaves() {
+        let mut scene = scene_with_a_player();
+        let place = place_near(&mut scene, 8_000.0);
+        let identity = NpcIdentity { wreck: Some(frigate_wreck()), host_wreck: true, ..rat_identity(0.0) };
+        let (rat, _) = scene.spawn_npc(rat_spec(), identity, place, LATER);
+        let told = scene.destroy(rat, Some(PLAYER), LATER);
+        // the explosion and the ship going, no wreck for those who watch: the host puts it in space (`PlaceWreck`) when it has made it
+        let names: Vec<String> =
+            told_actions(&for_player(told.clone())).into_iter().map(|(_, name)| name).collect();
+        assert_eq!(names, ["TerminalPlayDestructionEffect", "RemoveBalls"]);
+        assert!(scene.wrecks.is_empty());
+        let Some(Out::Destroyed { wreck, wreck_kind, killer_ship, .. }) =
+            told.iter().find(|out| matches!(out, Out::Destroyed { .. }))
+        else {
+            panic!("the host is told")
+        };
+        assert_eq!(
+            (*wreck, wreck_kind.clone(), *killer_ship),
+            (None, Some(frigate_wreck()), Some(PLAYER_SHIP))
+        );
+    }
+
+    #[test]
+    fn a_ship_may_follow_and_orbit_a_wreck_that_lies_in_the_scene_and_comes_to_it() {
+        let (mut scene, rat) = scene_with_a_mortal_rat();
+        scene.destroy(rat, None, LATER);
+        let wreck = scene.wrecks.values().next().unwrap().clone();
+
+        let out = scene.command(PLAYER, Command::FollowBall { target_id: wreck.id, range: 500.0 }, LATER);
+        assert!(out.iter().any(|out| matches!(out, Out::Accepted { .. })), "{out:?}");
+        let there = scene.ship(PLAYER, LATER + 300 * SECOND).unwrap().position;
+        let away = ((there.x - wreck.position.x).powi(2)
+            + (there.y - wreck.position.y).powi(2)
+            + (there.z - wreck.position.z).powi(2))
+        .sqrt();
+        assert!(away < 1_000.0, "the pilot is {away} m from the wreck after five minutes");
+
+        let out = scene.command(
+            PLAYER,
+            Command::Orbit { target_id: wreck.id, distance: 500.0 },
+            LATER + 301 * SECOND,
+        );
+        assert!(out.iter().any(|out| matches!(out, Out::Accepted { .. })), "{out:?}");
+        // what is not in the scene is still no target
+        let out = scene.command(
+            PLAYER,
+            Command::Orbit { target_id: wreck.id + 1, distance: 500.0 },
+            LATER + 302 * SECOND,
+        );
+        assert!(
+            out.iter().any(|out| matches!(out, Out::Refused { reason: "UNKNOWN_TARGET", .. })),
+            "{out:?}"
         );
     }
 

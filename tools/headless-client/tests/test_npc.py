@@ -16,11 +16,13 @@ import uuid
 
 import pytest
 
+from evecli import packet
+
 from tests import test_login_to_character as base
 from tests.test_death import DEATH, _names
 from tests.test_others import watch
 from tests.test_target import plain_race
-from tests.test_weapon import shots_of
+from tests.test_weapon import shots_of, slims_in
 from tests.test_undock import STATION, SYSTEM, arrive
 
 pytestmark = [
@@ -94,3 +96,27 @@ def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
         assert "OnBountyAddedToPayout" in names, (counts, hits[:12], sorted(set().union(*(_names(e) for e in seen if e["name"] == "DoDestinyUpdate"))))
         actions = set().union(*(_names(e) for e in seen if e["name"] == "DoDestinyUpdate"))
         assert "RemoveBalls" in actions, sorted(actions)
+
+        # the wreck the host made comes into space where the rat was (a little after the bounty: it is an item first), the pilot opens it, and what it holds is what its slim item says
+        # it holds (`isEmpty`); what a table gives is a draw, so what is in it is not said here (the unit tests roll known numbers)
+        wrecks = [item for event in seen for item, _ in slims_in([event]) if item not in (ship_id, rat)]
+        if not wrecks:
+            wrecks = [item for event in watch({"events": who}, 6.0)["events"] for item, _ in slims_in([event]) if item not in (ship_id, rat)]
+        assert wrecks, "the wreck of the rat did not come into space"
+        wreck = wrecks[0]
+        # the pilot is where the fight was: it goes to the wreck, and may open it within two and a half kilometres of its surface (`TargetTooFar` before that)
+        who.call_bound(ballpark[0], "CmdOrbit", wreck, 500)
+        opened = None
+        for _ in range(12):
+            watch({"events": who}, 2.5)
+            try:
+                opened = who.call("invbroker", "MachoBindObject", (SYSTEM, 5), ("GetInventoryFromId", (wreck, 0), None))[1]
+                break
+            except packet.MachoError as error:
+                continue
+        assert opened is not None, "the pilot could not open the wreck of the rat after going to it"
+        rows = [row.fields() for row in who.call_bound(opened, "List")]
+        assert all(int(row["locationID"]) == wreck for row in rows), rows
+        shown_empty = re.search(r'\["isEmpty", (True|False|true|false|1|0)\]', str([e for e in seen if wreck in [i for i, _ in slims_in([e])]]).replace("'", '"'))
+        if shown_empty is not None:
+            assert (shown_empty.group(1).lower() in ("true", "1")) == (not rows), (shown_empty.group(1), rows)

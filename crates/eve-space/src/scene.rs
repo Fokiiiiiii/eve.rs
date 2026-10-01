@@ -562,20 +562,25 @@ impl Scene {
     /// that follow one another).
     fn settle_pilot_after(&mut self, session: SessionId, now: i64, depth: u8) {
         let system = Arc::clone(&self.system);
-        let followed = match self.pilots.get(&session).map(|pilot| pilot.ship.course) {
+        let course_target = match self.pilots.get(&session).map(|pilot| pilot.ship.course) {
             Some(Course::Follow { target, .. } | Course::Orbit { target, .. })
                 if system.body(target).is_none() =>
             {
-                self.session_of(target).filter(|other| *other != session)
+                Some(target)
             }
             _ => None,
         };
+        let followed =
+            course_target.and_then(|target| self.session_of(target).filter(|other| *other != session));
         let mut ship_target = None;
         if let Some(other) = followed {
             if depth < MAX_FOLLOW_CHAIN {
                 self.settle_pilot_after(other, now, depth + 1);
             }
             ship_target = self.target_of_ship(other);
+        } else if let Some(wreck) = course_target.and_then(|target| self.wrecks.get(&target)) {
+            // a wreck or a can does not move
+            ship_target = Some(Target::at_rest(wreck.position, wreck.radius));
         }
         let Some(pilot) = self.pilots.get_mut(&session) else { return };
         let milestones = settle(pilot, &system, ship_target, now);

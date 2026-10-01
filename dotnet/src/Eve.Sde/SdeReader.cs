@@ -7,6 +7,9 @@ namespace Eve.Sde;
 /// <summary>One record of an SDE table: its key and its document.</summary>
 public sealed record SdeRow(long Key, JsonElement Doc);
 
+/// <summary>What a choice among all types needs of each: its group, its English name and whether it is published.</summary>
+public sealed record SdeTypeSummary(int TypeId, int GroupId, string Name, bool Published);
+
 /// <summary>
 /// Read access to the static data export as <c>eve-sde</c> loads it: one table per file in the <c>sde</c>
 /// schema, <c>(ord, key, doc jsonb)</c>. The export is loaded once and never written by the server.
@@ -106,6 +109,25 @@ public sealed partial class SdeReader
             }
         }
         return rows;
+    }
+
+    /// <summary>Every type in file order with only what a choice among them needs (the whole documents of the types are large; a type without a published flag is published).</summary>
+    public async Task<IReadOnlyList<SdeTypeSummary>> ReadTypeSummariesAsync(CancellationToken cancellationToken = default)
+    {
+        var types = new List<SdeTypeSummary>();
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            $"SELECT key, doc->>'groupID', doc->'name'->>'en', doc->>'published' FROM {_schema}.\"types\" ORDER BY ord", connection);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (long.TryParse(reader.GetString(0), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var key)
+                && !reader.IsDBNull(1) && int.TryParse(reader.GetString(1), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var group))
+            {
+                types.Add(new SdeTypeSummary((int)key, group, reader.IsDBNull(2) ? "" : reader.GetString(2), reader.IsDBNull(3) || reader.GetString(3) != "false"));
+            }
+        }
+        return types;
     }
 
     /// <summary>A text in the export's English, from a <c>{"en": ..., ...}</c> object.</summary>

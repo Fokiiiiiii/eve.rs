@@ -612,6 +612,9 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// <summary>The NPCs that can be spawned (null when there are none).</summary>
     public NpcSelector? Npcs { get; init; }
 
+    /// <summary>What an NPC leaves when it is destroyed: the host makes its wreck with what its loot table gave (null: the scene makes an empty wreck).</summary>
+    public NpcWrecks? NpcWrecks { get; init; }
+
     /// <summary>What the host knows of an NPC it made: what it was worth, what it was and where (the simulation tells it only that the ship is gone).</summary>
     private sealed record NpcShip(NpcProfile Profile, int TypeId, int SolarSystemId);
 
@@ -671,12 +674,9 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// </summary>
     private async Task FinishNpcDeathAsync(NpcShip npc, SimDestroyed destroyed)
     {
-        if (_bounties is not { } store)
-        {
-            return;
-        }
         var killer = _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == destroyed.KillerShipId);
-        if (killer is null || NpcBounty.AmountOf(npc.Profile.Bounty) is not { } amount)
+        await LeaveNpcWreckAsync(npc, destroyed, killer);
+        if (_bounties is not { } store || killer is null || NpcBounty.AmountOf(npc.Profile.Bounty) is not { } amount)
         {
             return;
         }
@@ -689,6 +689,29 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                 Py.KeyVal(
                     ("enemyTypeID", new PyInt(added.EnemyTypeId)), ("amount", new PyInt((int)added.Amount)), ("payoutTime", new PyLong(added.PayoutTime)),
                     ("isModified", added.IsModified ? PyBool.True : PyBool.False)));
+        }
+    }
+
+    /// <summary>
+    /// The wreck of an NPC that asked the host to make it (<see cref="SimNpcIdentity.HostWreck"/>): an item of the pilot who dealt the last blow (of the NPC's corporation when no pilot did) with what
+    /// its loot table gave, put in space where the ship was for that pilot to loot. A wreck the scene made (its id is told) already has nothing in it, and is left as it is.
+    /// </summary>
+    private async Task LeaveNpcWreckAsync(NpcShip npc, SimDestroyed destroyed, Pilot? killer)
+    {
+        if (NpcWrecks is not { } wrecks || destroyed.WreckId != 0 || destroyed.WreckKind is not { } kind)
+        {
+            return;
+        }
+        try
+        {
+            var character = killer is null ? null : await _ships.CharacterAsync(killer.CharacterId);
+            var made = await wrecks.LeaveAsync(kind.TypeId, npc.Profile.LootTableId, character?.Id ?? npc.Profile.CorporationId, npc.SolarSystemId);
+            var credit = character is null ? new SimCredit(0, 0, 0, 0) : new SimCredit(character.Id, character.CorporationId, character.AllianceId ?? 0, character.FactionId ?? 0);
+            PlaceWreck(new SimPlaceWreck(npc.SolarSystemId, made.Wreck.Id, WreckGroup, kind, destroyed.Position, destroyed.Direction, destroyed.Radius, destroyed.ShipId, credit, made.Contents.Count == 0));
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            _log?.Invoke($"the wreck of NPC ship {destroyed.ShipId} could not be made: {error.Message}");
         }
     }
 
@@ -744,7 +767,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             var shipId = NpcIdBase + Interlocked.Increment(ref _npcs);
             var weapon = NpcArmament.HullWeapon(type, shipId, _statics);
             var aggression = NpcArmament.AggressionRange(type, _statics);
-            var identity = new SimNpcIdentity(NpcHostileThreshold, NpcFriendlyThreshold, aggression, weapon is null ? [] : [weapon], null);
+            var identity = new SimNpcIdentity(NpcHostileThreshold, NpcFriendlyThreshold, aggression, weapon is null ? [] : [weapon], null, HostWreck: NpcWrecks is not null);
             var hull = SimShips.OfType(shipId, type);
             var ship = hull with
             {

@@ -239,7 +239,7 @@ public sealed record SimWreckKind(int TypeId, string Name, int GraphicId);
 
 /// <summary>What sets an NPC apart: the standings at which it treats others as enemies or friends, what it attacks at and with, and what it leaves.</summary>
 public sealed record SimNpcIdentity(
-    long HostileResponseThreshold, long FriendlyResponseThreshold, double AggressionRange, IReadOnlyList<SimNpcWeapon> Weapons, SimWreckKind? Wreck, bool Hull = false)
+    long HostileResponseThreshold, long FriendlyResponseThreshold, double AggressionRange, IReadOnlyList<SimNpcWeapon> Weapons, SimWreckKind? Wreck, bool Hull = false, bool HostWreck = false)
 {
     /// <summary>The limits the reference gives every NPC, and nothing else.</summary>
     public static readonly SimNpcIdentity Default = new(-11, 11, 0, [], null);

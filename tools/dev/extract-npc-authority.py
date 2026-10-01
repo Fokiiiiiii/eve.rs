@@ -5,7 +5,7 @@
 
 The reference keeps its NPCs in static tables (`tools/DatabaseCreator/staticTables/npcProfiles`, `npcLoadouts`, `npcSpawnPools`): a profile names a ship type
 and whose it is, a loadout what is fitted to it (almost nothing: a retail entity type carries its weapon on the type itself), a pool which profiles are
-rolled at what weight. This keeps the fields the host reads, in the reference's order (the first row of a name is the one a query finds). The tables are
+rolled at what weight, a loot table what an NPC leaves in its wreck (`npcLootTables`: rules that pick a kind of item at a weight, or a plain random draw). This keeps the fields the host reads, in the reference's order (the first row of a name is the one a query finds). The tables are
 game data and are used as data; none of the reference's code is copied (docs/adr/0009, oracle/PROVENANCE.md).
 """
 
@@ -63,8 +63,46 @@ pools = [
     for p in read("npcSpawnPools", "spawnPools")
 ]
 
+
+
+def strings(value):
+    return [] if value is None else [str(v) for v in value] if isinstance(value, list) else [str(value)]
+
+
+# only what the reference's roll reads of the authored tables (`rollNpcLootEntries`): the rules of a table, and the bounds of a plain draw
+loot_tables = [
+    {
+        "id": t["lootTableID"],
+        "mode": t.get("mode", ""),
+        "minEntries": t.get("minEntries"),
+        "maxEntries": t.get("maxEntries"),
+        "emptyChance": t.get("emptyChance", 0),
+        "allowDuplicates": t.get("allowDuplicates", False) is True,
+        "disableRandomLoot": t.get("disableRandomLoot", False) is True,
+        "stackableMinQuantity": t.get("stackableMinQuantity"),
+        "stackableMaxQuantity": t.get("stackableMaxQuantity"),
+        "selectors": [
+            {
+                "kind": s.get("kind", "any"),
+                "sizeBand": s.get("sizeBand", ""),
+                "grade": s.get("grade") or s.get("tier") or "",
+                "nameIncludes": strings(s.get("nameIncludes")),
+                "nameExcludes": strings(s.get("nameExcludes")),
+                "groupNames": strings(s.get("groupNames")),
+                "categoryIDs": [int(c) for c in s.get("categoryIDs", [])],
+                "weight": s.get("weight"),
+                "quantityMin": s.get("quantityMin"),
+                "quantityMax": s.get("quantityMax"),
+            }
+            for s in t.get("selectors", [])
+        ],
+        "hasSelectors": "selectors" in t,
+    }
+    for t in read("npcLootTables", "lootTables")
+]
+
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 with open(OUT, "w", encoding="utf-8") as handle:
-    json.dump({"profiles": profiles, "loadouts": loadouts, "pools": pools}, handle, separators=(",", ":"), ensure_ascii=False)
+    json.dump({"profiles": profiles, "loadouts": loadouts, "pools": pools, "lootTables": loot_tables}, handle, separators=(",", ":"), ensure_ascii=False)
     handle.write("\n")
-print(f"{len(profiles)} profiles, {len(loadouts)} loadouts, {len(pools)} pools -> {OUT}")
+print(f"{len(profiles)} profiles, {len(loadouts)} loadouts, {len(pools)} pools, {len(loot_tables)} loot tables -> {OUT}")

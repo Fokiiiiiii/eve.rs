@@ -106,6 +106,9 @@ pub struct NpcIdentity {
     pub wreck: Option<crate::wreck::WreckKind>,
     /// A hull nobody flies rather than an NPC (`/deathtest`): its slim item is a player's ship's, with the ship's name.
     pub hull: bool,
+    /// The host makes the wreck of this NPC when it is destroyed (an item with what the NPC leaves in it), as it does a player's: the scene makes none and
+    /// tells the host what the ship leaves (`Out::Destroyed`).
+    pub host_wreck: bool,
 }
 
 impl Default for NpcIdentity {
@@ -118,6 +121,7 @@ impl Default for NpcIdentity {
             combat: NpcCombat::default(),
             wreck: None,
             hull: false,
+            host_wreck: false,
         }
     }
 }

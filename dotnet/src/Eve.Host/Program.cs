@@ -233,7 +233,10 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         var socket = Env("EVE_SIM_SOCKET", "/tmp/eve-sim.sock");
         sim = SimClient.ToUnixSocket(socket, message => Console.Error.WriteLine($"eve-host: {message}"));
         sim.Start();
-        spaceSessions = new SpaceSessions(sim, ships, dogma, stations, solarSystems, now, message => Console.Error.WriteLine($"eve-host: space: {message}")) { RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new NpcSelector(NpcAuthority.Load()) };
+        var npcAuthority = NpcAuthority.Load();
+        var npcWrecks = new NpcWrecks(npcAuthority, () => NpcLoot.LoadAsync(sde), ships);
+        spaceSessions = new SpaceSessions(sim, ships, dogma, stations, solarSystems, now, message => Console.Error.WriteLine($"eve-host: space: {message}")) { RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new NpcSelector(npcAuthority), NpcWrecks = npcWrecks };
+        npcWrecks.Warm();
         spaceSessions.UseBounties(
             new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")),
             TimeSpan.FromSeconds(10));

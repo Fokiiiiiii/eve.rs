@@ -59,9 +59,14 @@ public sealed partial class NpcAuthority
     private readonly Index<NpcProfile> _profiles;
     private readonly Index<NpcPool> _pools;
     private readonly Dictionary<string, NpcLoadout> _loadouts;
+    private readonly Dictionary<string, LootTable> _lootTables = [];
 
-    public NpcAuthority(IEnumerable<NpcProfile> profiles, IEnumerable<NpcLoadout> loadouts, IEnumerable<NpcPool> pools)
+    public NpcAuthority(IEnumerable<NpcProfile> profiles, IEnumerable<NpcLoadout> loadouts, IEnumerable<NpcPool> pools, IEnumerable<LootTable>? lootTables = null)
     {
+        foreach (var table in lootTables ?? [])
+        {
+            _lootTables[table.Id.Trim()] = table;
+        }
         _profiles = new Index<NpcProfile>([.. profiles], p => p.Id, p => p.Name, p => p.Aliases);
         _loadouts = [];
         foreach (var loadout in loadouts)
@@ -82,6 +87,11 @@ public sealed partial class NpcAuthority
     public NpcLoadout? Loadout(string id) => _loadouts.GetValueOrDefault(id.Trim());
 
     public NpcPool? Pool(string id) => _pools.ById(id);
+
+    /// <summary>What an NPC leaves, by the id its profile names (null for an id the authored data does not have: such an NPC leaves nothing).</summary>
+    public LootTable? LootTable(string id) => _lootTables.GetValueOrDefault(id.Trim());
+
+    public int LootTableCount => _lootTables.Count;
 
     public NpcLookup<NpcProfile> ResolveProfile(string query) => _profiles.Resolve(query);
 
@@ -201,6 +211,16 @@ public sealed partial class NpcAuthority
         var pools = root.GetProperty("pools").EnumerateArray().Select(p => new NpcPool(
             Text(p, "id"), Text(p, "name"), Strings(p, "aliases"), Text(p, "entityType"),
             [.. p.GetProperty("entries").EnumerateArray().Select(entry => new NpcPoolEntry(entry[0].GetString() ?? "", entry[1].GetInt32()))]));
-        return new NpcAuthority(profiles.ToList(), loadouts.ToList(), pools.ToList());
+        int? Whole(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? (int)v.GetDouble() : null;
+        bool Flag(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+        var lootTables = !root.TryGetProperty("lootTables", out var tables) ? [] : tables.EnumerateArray().Select(t => new LootTable(
+            Text(t, "id"), Text(t, "mode"), Whole(t, "minEntries"), Whole(t, "maxEntries"), Real(t, "emptyChance"), Flag(t, "allowDuplicates"), Flag(t, "disableRandomLoot"),
+            Whole(t, "stackableMinQuantity"), Whole(t, "stackableMaxQuantity"),
+            [.. t.GetProperty("selectors").EnumerateArray().Select(s => new LootSelector(
+                Text(s, "kind"), Text(s, "sizeBand"), Text(s, "grade"), Strings(s, "nameIncludes"), Strings(s, "nameExcludes"), Strings(s, "groupNames"),
+                s.TryGetProperty("categoryIDs", out var categories) ? [.. categories.EnumerateArray().Select(c => c.GetInt32())] : [], Whole(s, "weight"),
+                Whole(s, "quantityMin"), Whole(s, "quantityMax")))],
+            Flag(t, "hasSelectors"))).ToList();
+        return new NpcAuthority(profiles.ToList(), loadouts.ToList(), pools.ToList(), lootTables);
     }
 }

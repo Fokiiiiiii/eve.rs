@@ -61,7 +61,8 @@ public class SimCodecTests
             Wide(w!, "moduleId"), (int)w!["effectId"]!, (double)w["cycleMs"]!, (double)w["capacitorNeed"]!, (int)w["weaponTypeId"]!, (string)w["fx"]!,
             VectorOf(w["rawDamage"]!), (double)w["optimalRange"]!, (double)w["falloff"]!, (double)w["trackingSpeed"]!, (double)w["signatureResolution"]!, ChargeOf(w["charge"])))],
         WreckKindOf(i["wreck"]),
-        i["hull"] is { } hull && (bool)hull);
+        i["hull"] is { } hull && (bool)hull,
+        i["hostWreck"] is { } hostWreck && (bool)hostWreck);
 
     private static SimWreckKind? WreckKindOf(JsonNode? w) => w is null ? null : new SimWreckKind((int)w["typeId"]!, (string)w["name"]!, (int)w["graphicId"]!);
 

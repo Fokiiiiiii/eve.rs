@@ -89,6 +89,39 @@ public class AllianceTests
     }
 
     [PgFact]
+    public async Task Alliance_application_responses_update_text_atomically_and_replay_only_matching_payloads()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (executor,_) = await Founder(rig,"Executor","EXE");
+        var (applicant,_) = await Founder(rig,"Applicant","APP");
+        var (rejectedApplicant,_) = await Founder(rig,"Rejected","REJ");
+        var alliance = await rig.Store.CreateAllianceAsync(executor,Request,"response-text");
+        var approvedId = await rig.Store.ApplyToAllianceAsync(applicant,alliance.Id,"Original approved text");
+        var rejectedId = await rig.Store.ApplyToAllianceAsync(rejectedApplicant,alliance.Id,"Original rejected text");
+
+        var approved = await rig.Store.RespondToAllianceAsync(executor,approvedId,"Updated approved text",2);
+        var approvedReplay = await rig.Store.RespondToAllianceAsync(executor,approvedId,"Updated approved text",2);
+        Assert.Equal(approved,approvedReplay);
+        Assert.Equal("Updated approved text",approved.Text);
+        await Assert.ThrowsAsync<CorporationError>(() =>
+            rig.Store.RespondToAllianceAsync(executor,approvedId,"Conflicting approved text",2));
+
+        var rejected = await rig.Store.RespondToAllianceAsync(executor,rejectedId,"Updated rejected text",4);
+        var rejectedReplay = await rig.Store.RespondToAllianceAsync(executor,rejectedId,"Updated rejected text",4);
+        Assert.Equal(rejected,rejectedReplay);
+        Assert.Equal("Updated rejected text",rejected.Text);
+        Assert.True(rejected.Archived);
+        await Assert.ThrowsAsync<CorporationError>(() =>
+            rig.Store.RespondToAllianceAsync(executor,rejectedId,"Conflicting rejected text",4));
+
+        var applications = await rig.Store.AllianceApplicationsAsync(alliance.Id);
+        Assert.Equal(2,applications.Single(item => item.Id == approvedId).Status);
+        Assert.Equal("Updated approved text",applications.Single(item => item.Id == approvedId).Text);
+        Assert.Equal(4,applications.Single(item => item.Id == rejectedId).Status);
+        Assert.Equal("Updated rejected text",applications.Single(item => item.Id == rejectedId).Text);
+    }
+
+    [PgFact]
     public async Task Alliance_public_member_rows_bind_and_private_votes_match_the_client_contract()
     {
         await using var rig = await Rig.CreateAsync();
@@ -128,5 +161,154 @@ public class AllianceTests
         Assert.Throws<CorporationError>(() => AllianceRules.Validate(Request with { Name="----" }));
         Assert.Throws<CorporationError>(() => AllianceRules.Validate(Request with { ShortName="ABCDEF" }));
         Assert.Throws<CorporationError>(() => AllianceRules.Validate(Request with { Url=new string('a',2049) }));
+    }
+
+    [Fact]
+    public void Alliance_and_corporation_registry_expose_application_methods()
+    {
+        var allianceRegistry = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(null!,null!,() => 0);
+        Assert.True(allianceRegistry.HasMethod("GetApplications"));
+        Assert.True(allianceRegistry.HasMethod("UpdateApplication"));
+
+        var corpRegistry = (Eve.Services.IService)new Eve.Services.Corporations.CorpRegistryService(null!,null!,() => 0);
+        Assert.True(corpRegistry.HasMethod("ApplyToJoinAlliance"));
+        Assert.True(corpRegistry.HasMethod("DeleteAllianceApplication"));
+    }
+
+    [PgFact]
+    public async Task Alliance_registry_lists_pending_requests_and_executor_can_accept_or_reject_them()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (executor,_) = await Founder(rig,"Executor","EXE");
+        var (member,memberCorp) = await Founder(rig,"Member","MEM");
+        var (applicant,applicantCorp) = await Founder(rig,"Applicant","APP");
+        var (rejectedApplicant,rejectedCorp) = await Founder(rig,"Rejected","REJ");
+        var alliance = await rig.Store.CreateAllianceAsync(executor,Request,"registry");
+        var memberApplication = await rig.Store.ApplyToAllianceAsync(member,alliance.Id,"Join as member");
+        await rig.Store.RespondToAllianceAsync(executor,memberApplication,2);
+        rig.Now += Eve.Corporations.AllianceRules.ApplicationDelayMs;
+        Assert.Equal([memberCorp.Id],await rig.Store.ActivateDueAllianceApplicationsAsync());
+
+        var application = await rig.Store.ApplyToAllianceAsync(applicant,alliance.Id,"Please accept");
+        var rejected = await rig.Store.ApplyToAllianceAsync(rejectedApplicant,alliance.Id,"Please reject");
+        var service = new Eve.Services.Corporations.AllianceRegistryService(rig.Store,rig.Characters,() => rig.Now);
+        Eve.Services.ClientSession Session(long actor)
+        {
+            var session = new Eve.Services.ClientSession { SessionId=actor };
+            session.Set("charid",new Eve.Marshal.PyInt(actor));
+            return session;
+        }
+        Eve.Services.ServiceCall Call(long actor,string method,params Eve.Marshal.PyValue[] args) =>
+            new() { Session=Session(actor),Method=method,Args=args };
+
+        var executorCall = Call(executor,"GetApplications");
+        var indexed = Assert.IsType<Eve.Marshal.PyObjectEx>(
+            await ((Eve.Services.IService)service).CallAsync(executorCall));
+        var applicantRow = Assert.IsType<Eve.Marshal.PyPackedRow>(
+            indexed.Dict.Single(row => row.Key == new Eve.Marshal.PyInt(applicantCorp.Id)).Value);
+        Assert.Equal(new Eve.Marshal.PyInt(alliance.Id),applicantRow.Values[0]);
+        Assert.Equal(new Eve.Marshal.PyInt(applicantCorp.Id),applicantRow.Values[1]);
+        Assert.Equal(new Eve.Marshal.PyWString("Please accept"),applicantRow.Values[2]);
+        Assert.Equal(new Eve.Marshal.PyInt(1),applicantRow.Values[3]);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => ((Eve.Services.IService)service).CallAsync(
+            Call(member,"GetApplications")).AsTask());
+        await Assert.ThrowsAnyAsync<Exception>(() => ((Eve.Services.IService)service).CallAsync(
+            Call(member,"UpdateApplication",new Eve.Marshal.PyInt(applicantCorp.Id),
+                new Eve.Marshal.PyWString("Please accept"),new Eve.Marshal.PyInt(4))).AsTask());
+
+        var acceptCall = Call(executor,"UpdateApplication",new Eve.Marshal.PyInt(applicantCorp.Id),
+            new Eve.Marshal.PyWString("Updated acceptance text"),new Eve.Marshal.PyInt(2));
+        Assert.IsType<Eve.Marshal.PyNone>(await ((Eve.Services.IService)service).CallAsync(acceptCall));
+        Assert.IsType<Eve.Marshal.PyNone>(await ((Eve.Services.IService)service).CallAsync(acceptCall));
+        await Assert.ThrowsAsync<CorporationError>(() => ((Eve.Services.IService)service).CallAsync(
+            Call(executor,"UpdateApplication",new Eve.Marshal.PyInt(applicantCorp.Id),
+                new Eve.Marshal.PyWString("Conflicting acceptance text"),new Eve.Marshal.PyInt(2))).AsTask());
+
+        var rejectCall = Call(executor,"UpdateApplication",new Eve.Marshal.PyInt(rejectedCorp.Id),
+            new Eve.Marshal.PyWString("Updated rejection text"),new Eve.Marshal.PyInt(4));
+        Assert.IsType<Eve.Marshal.PyNone>(await ((Eve.Services.IService)service).CallAsync(rejectCall));
+        Assert.IsType<Eve.Marshal.PyNone>(await ((Eve.Services.IService)service).CallAsync(rejectCall));
+        await Assert.ThrowsAsync<CorporationError>(() => ((Eve.Services.IService)service).CallAsync(
+            Call(executor,"UpdateApplication",new Eve.Marshal.PyInt(rejectedCorp.Id),
+                new Eve.Marshal.PyWString("Conflicting rejection text"),new Eve.Marshal.PyInt(4))).AsTask());
+
+        var applications = await rig.Store.AllianceApplicationsAsync(alliance.Id);
+        Assert.Equal(2,applications.Single(item => item.Id == application).Status);
+        Assert.Equal("Updated acceptance text",applications.Single(item => item.Id == application).Text);
+        Assert.Equal(rig.Now + Eve.Corporations.AllianceRules.ApplicationDelayMs,
+            applications.Single(item => item.Id == application).DueMs);
+        Assert.Equal(4,applications.Single(item => item.Id == rejected).Status);
+        Assert.Equal("Updated rejection text",applications.Single(item => item.Id == rejected).Text);
+        Assert.True(applications.Single(item => item.Id == rejected).Archived);
+        Assert.Null((await rig.Characters.GetAsync(applicant))!.AllianceId);
+    }
+
+
+    [PgFact]
+    public async Task Corp_registry_application_calls_use_session_corporation_for_create_and_withdrawal()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (executor,executorCorp) = await Founder(rig,"Executor","EXE");
+        var (applicant,applicantCorp) = await Founder(rig,"Applicant","APP");
+        var outsider = await rig.CharacterAsync("Alliance outsider");
+        var alliance = await rig.Store.CreateAllianceAsync(executor,Request,"corp-registry");
+        var service = new Eve.Services.Corporations.CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+
+        Eve.Services.ClientSession Session(long actor)
+        {
+            var session = new Eve.Services.ClientSession { SessionId=actor };
+            session.Set("charid",new Eve.Marshal.PyInt(actor));
+            return session;
+        }
+        Eve.Services.ServiceCall Call(long actor,string method,params Eve.Marshal.PyValue[] args) =>
+            new() { Session=Session(actor),Method=method,Args=args };
+
+        Eve.Marshal.PyValue[] applicationArgs =
+        [
+            new Eve.Marshal.PyInt(alliance.Id),
+            new Eve.Marshal.PyWString("Please join"),
+            new Eve.Marshal.PyInt(executorCorp.Id)
+        ];
+        Assert.IsType<Eve.Marshal.PyNone>(await ((Eve.Services.IService)service).CallAsync(
+            Call(applicant,"ApplyToJoinAlliance",applicationArgs)));
+        var applications = await rig.Store.AllianceApplicationsAsync(alliance.Id);
+        var application = Assert.Single(applications,item => item.CorporationId == applicantCorp.Id);
+        Assert.Equal("Please join",application.Text);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => ((Eve.Services.IService)service).CallAsync(
+            Call(outsider,"ApplyToJoinAlliance",new Eve.Marshal.PyInt(alliance.Id),
+                new Eve.Marshal.PyWString("Impersonated request"))).AsTask());
+        await Assert.ThrowsAnyAsync<Exception>(() => ((Eve.Services.IService)service).CallAsync(
+            Call(applicant,"ApplyToJoinAlliance",new Eve.Marshal.PyInt(alliance.Id),
+                new Eve.Marshal.PyWString("Please join again"))).AsTask());
+        await Assert.ThrowsAnyAsync<Exception>(() => ((Eve.Services.IService)service).CallAsync(
+            Call(outsider,"DeleteAllianceApplication",new Eve.Marshal.PyInt(alliance.Id))).AsTask());
+
+        Assert.IsType<Eve.Marshal.PyNone>(await ((Eve.Services.IService)service).CallAsync(
+            Call(executor,"DeleteAllianceApplication",new Eve.Marshal.PyInt(alliance.Id),
+                new Eve.Marshal.PyInt(applicantCorp.Id))));
+        Assert.Contains(await rig.Store.AllianceApplicationsAsync(alliance.Id),
+            item => item.CorporationId == applicantCorp.Id);
+
+        Assert.IsType<Eve.Marshal.PyNone>(await ((Eve.Services.IService)service).CallAsync(
+            Call(applicant,"DeleteAllianceApplication",new Eve.Marshal.PyInt(alliance.Id))));
+        Assert.DoesNotContain(await rig.Store.AllianceApplicationsAsync(alliance.Id),
+            item => item.CorporationId == applicantCorp.Id);
+        Assert.IsType<Eve.Marshal.PyNone>(await ((Eve.Services.IService)service).CallAsync(
+            Call(applicant,"DeleteAllianceApplication",new Eve.Marshal.PyInt(alliance.Id))));
+
+        Assert.IsType<Eve.Marshal.PyNone>(await ((Eve.Services.IService)service).CallAsync(
+            Call(applicant,"ApplyToJoinAlliance",new Eve.Marshal.PyInt(alliance.Id),
+                new Eve.Marshal.PyWString("Please join again"))));
+        var rejected = Assert.Single(await rig.Store.AllianceApplicationsAsync(alliance.Id),
+            item => item.CorporationId == applicantCorp.Id);
+        await rig.Store.RespondToAllianceAsync(executor,rejected.Id,"Rejected request",4);
+        Assert.True((await rig.Store.AllianceApplicationsAsync(alliance.Id))
+            .Single(item => item.Id == rejected.Id).Archived);
+        Assert.IsType<Eve.Marshal.PyNone>(await ((Eve.Services.IService)service).CallAsync(
+            Call(applicant,"DeleteAllianceApplication",new Eve.Marshal.PyInt(alliance.Id))));
+        Assert.DoesNotContain(await rig.Store.AllianceApplicationsAsync(alliance.Id),
+            item => item.CorporationId == applicantCorp.Id);
     }
 }

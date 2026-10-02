@@ -34,7 +34,19 @@ public sealed partial class CorporationStore
         _source = source; _characters = characters; _walletStore = walletStore; _wallets = wallets; _skills = skills; _now = now; _schema = schema;
     }
 
-    public static IReadOnlyList<Migration> MigrationSet() => Migrations.Embedded(typeof(CorporationStore).Assembly, "Migrations");
+    public static IReadOnlyList<Migration> MigrationSet() =>
+    [
+        .. Migrations.Embedded(typeof(CorporationStore).Assembly, "Migrations"),
+        new Migration("004_invitation_ids", """
+            ALTER TABLE applications ADD COLUMN invitation_id bigint;
+            CREATE SEQUENCE invitation_ids AS bigint START WITH 1;
+            UPDATE applications SET invitation_id=id WHERE status=8 AND NOT archived;
+            SELECT setval('invitation_ids', COALESCE(MAX(id),1), MAX(id) IS NOT NULL) FROM applications;
+            DROP INDEX applications_active;
+            CREATE UNIQUE INDEX applications_active ON applications(corporation_id,character_id) WHERE NOT archived AND status <> 8;
+            CREATE UNIQUE INDEX applications_invitation_id ON applications(invitation_id) WHERE invitation_id IS NOT NULL;
+            """),
+    ];
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
     internal static string Key(string name) => name.Normalize(NormalizationForm.FormC).Trim().ToLowerInvariant();

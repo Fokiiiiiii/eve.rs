@@ -10,4 +10,5 @@
   <ItemGroup>
     <None Include="../../../oracle/fixtures/market/rules.json" Link="rules.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <ItemGroup><ProjectReference Include="../../src/Eve.Services.Market/Eve.Services.Market.csproj" /></ItemGroup>
 </Project>

@@ -222,9 +222,19 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     // Codex-owned corporation registration; keep combat/NPC construction in its own block below.
     var corporationSchema = Env("EVE_CORPORATIONS_SCHEMA", Eve.Corporations.CorporationStore.DefaultSchema);
     await Eve.Corporations.CorporationStore.MigrateAsync(source, corporationSchema);
-    var corporations = new Eve.Corporations.CorporationStore(source, characters, wallets, new WalletTransactions(source, walletSchema), skills, now, corporationSchema);
+    var economyWallets = new WalletTransactions(source, walletSchema);
+    var economyAnnouncer = new WalletAnnouncer(economyWallets, characterSessions);
+    var corporations = new Eve.Corporations.CorporationStore(source, characters, wallets, economyWallets, skills, now, corporationSchema);
     await corporations.SeedNpcAsync(sde);
     var corporationLogin = new Eve.Services.Corporations.CorporationLoginHook(corporations, characters);
+    var marketSchema = Env("EVE_MARKET_SCHEMA", Eve.Market.MarketStore.DefaultSchema);
+    await Eve.Market.MarketStore.MigrateAsync(source, marketSchema);
+    var market = new Eve.Market.MarketStore(source, marketSchema);
+    var marketCatalog = await Eve.Market.MarketCatalog.LoadAsync(sde, stations, now());
+    await market.SeedNpcAsync(marketCatalog.InitialOrders);
+    Console.Error.WriteLine($"eve-host: native market seeded {marketCatalog.InitialOrders.Count} NPC orders");
+    var marketTopology = await Eve.Market.MarketTopology.LoadAsync(sde);
+    var marketTrading = new Eve.Market.MarketTrading(source, market, characters, corporations, skills, items, economyWallets, stations, marketTopology, now);
     SimClient? sim = null;
     SpaceSessions? spaceSessions = null;
     SpaceContainers? spaceContainers = null;
@@ -252,7 +262,8 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         new StationService(stations, characters, online, now),
         new InvBrokerService(items, new ItemTypeCatalog(sde), stations, ships, dogma, now, spaceContainers),
         new DogmaIMService(dogma, ships, now, dogmaSync, spaceSessions, spaceSessions, spaceSessions, spaceSessions, log: message => Console.Error.WriteLine($"eve-host: ammo: {message}")),
-        new AccountService(wallets, corporations, new WalletTransactions(source, walletSchema)),
+        new AccountService(wallets, corporations, economyWallets),
+        new Eve.Services.Market.MarketProxyService(market, marketTrading, marketTopology, characters, economyWallets, marketCatalog, now, characterSessions),
         new Eve.Services.Corporations.CorpMgrService(corporations, characters),
         new Eve.Services.Corporations.CorporationService(corporations, characters),
         new Eve.Services.Corporations.CorpRegistryService(corporations, characters, now),

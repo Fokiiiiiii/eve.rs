@@ -64,6 +64,62 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     [Method("GetCorporation")]
     public async ValueTask<PyValue> GetCorporation(ServiceCall call) => await Current(call) is { } c
         ? CorporationWire.Row(c,(await store.MembersAsync(c.Id,call.Cancellation)).Count) : PyNone.Instance;
+
+    private static long Number(PyValue value) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        PyTuple { Items.Count: > 0 } tuple => Number(tuple.Items[0]),
+        _ => 0
+    };
+
+    private static MachoWrappedException CorporationAccessDenied() =>
+        MachoErrors.ThrowUserError("CrpAccessDenied",
+            ("reason",Py.List(new PyInt(101),new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles"))));
+
+    [Method("ApplyToJoinAlliance")]
+    public async ValueTask<PyValue> ApplyToJoinAlliance(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } actor ||
+            await characters.GetAsync(actor,call.Cancellation) is not { } character ||
+            await store.GetAsync(character.CorporationId,call.Cancellation) is not { IsNpc:false } corporation ||
+            corporation.CeoId != actor)
+            throw CorporationAccessDenied();
+
+        var alliance = Number(call.Arg(0));
+        var applicationText = JsSemantics.StringValue(call.Arg(1)) ?? "";
+        try
+        {
+            await store.ApplyToAllianceAsync(actor,alliance,applicationText,true,true,call.Cancellation);
+        }
+        catch (CorporationError error) when (error.Code is "CORPORATION_ACCESS_DENIED" or "CHARACTER_NOT_FOUND" or "ALLIANCE_NOT_FOUND" or "CORPORATION_ALREADY_IN_ALLIANCE" or "ALLIANCE_APPLICATION_TEXT_TOO_LONG")
+        {
+            throw CorporationAccessDenied();
+        }
+        catch (CorporationError error) when (error.Code == "ALLIANCE_APPLICATION_ALREADY_EXISTS")
+        {
+            throw MachoErrors.ThrowUserError("CantApplyTwiceToAlliance");
+        }
+        return PyNone.Instance;
+    }
+
+    [Method("DeleteAllianceApplication")]
+    public async ValueTask<PyValue> DeleteAllianceApplication(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } actor ||
+            await characters.GetAsync(actor,call.Cancellation) is null)
+            throw CorporationAccessDenied();
+
+        try
+        {
+            await store.WithdrawAllianceApplicationAsync(actor,Number(call.Arg(0)),call.Cancellation);
+        }
+        catch (CorporationError error) when (error.Code is "CORPORATION_ACCESS_DENIED" or "CORPORATION_NOT_FOUND" or "CHARACTER_NOT_FOUND" or "ALLIANCE_APPLICATION_INVALID_STATE")
+        {
+            throw CorporationAccessDenied();
+        }
+        return PyNone.Instance;
+    }
     [Method("GetMember")]
     public async ValueTask<PyValue> GetMember(ServiceCall call) => call.Arg(0) is PyInt id &&
         await Current(call) is { } c && await store.MemberAsync(id.Value,call.Cancellation) is { } m && m.CorporationId == c.Id
@@ -104,6 +160,117 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         var masks = await Current(call) is { } c && call.Session.CharacterId is { } id && await store.MemberAsync(id,call.Cancellation) is { } m
             ? CorporationRoles.GrantableFor(c,m,c.Id,await store.TitlesAsync(c.Id,call.Cancellation)) : new RoleMasks();
         return Py.Tuple(new PyLong(masks.GrantableRoles),new PyLong(masks.GrantableHq),new PyLong(masks.GrantableBase),new PyLong(masks.GrantableOther));
+    }
+
+    private static readonly Descriptor ApplicationDescriptor = CorporationWire.DescriptorOf(
+        ("applicationID",3),("corporationID",3),("characterID",3),("applicationText",130),
+        ("status",3),("applicationDateTime",64),("deleted",11),("responseText",130));
+    private static PyValue ApplicationRow(Application application) => new PyPackedRow(ApplicationDescriptor,
+    [
+        new PyInt(application.Id),new PyInt(application.CorporationId),new PyInt(application.CharacterId),
+        new PyWString(application.Text),new PyInt(application.Status),CorporationWire.Time(application.CreatedMs),
+        PyBool.False,application.Status == 0 ? PyNone.Instance : new PyWString(application.Response),
+    ]);
+    private static PyValue GroupApplications(IReadOnlyList<Application> applications,Func<Application,long> key) =>
+        new PyDict([.. applications.GroupBy(key).Select(group => new KeyValuePair<PyValue,PyValue>(
+            new PyInt(group.Key),new PyList([.. group.Select(ApplicationRow)])))]);
+    private static long? PositiveId(PyValue value) => value switch
+    {
+        PyInt id when id.Value > 0 => id.Value,
+        PyLong id when id.Value > 0 => id.Value,
+        _ => null,
+    };
+    private static string Text(PyValue value) => JsSemantics.StringValue(value) ?? "";
+    private static int Status(PyValue value) => value switch
+    {
+        PyInt n when n.Value is >= int.MinValue and <= int.MaxValue => (int)n.Value,
+        PyLong n when n.Value is >= int.MinValue and <= int.MaxValue => (int)n.Value,
+        _ => 0,
+    };
+    private async Task<Corporation> RecruitmentCorporation(ServiceCall call)
+    {
+        var corporation = await Current(call);
+        if (corporation is null || corporation.Deleted || corporation.IsNpc ||
+            call.Session.CharacterId is not { } actor)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var member = await store.MemberAsync(actor,call.Cancellation);
+        if (member is null || member.CorporationId != corporation.Id ||
+            (CorporationRoles.Session(corporation,member,null,
+                await store.TitlesAsync(corporation.Id,call.Cancellation)).AtAll & CorporationRoles.PersonnelManager) == 0)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        return corporation;
+    }
+
+    [Method("GetMyApplications")]
+    public async ValueTask<PyValue> GetMyApplications(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } character) return new PyDict([]);
+        return GroupApplications(await store.ApplicationsAsync(character:character,token:call.Cancellation),a => a.CorporationId);
+    }
+    [Method("GetMyOldApplications")]
+    public async ValueTask<PyValue> GetMyOldApplications(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } character) return new PyList([]);
+        return new PyList([.. (await store.ApplicationsAsync(character:character,archived:true,token:call.Cancellation)).Select(ApplicationRow)]);
+    }
+    [Method("GetApplications")]
+    public async ValueTask<PyValue> GetApplications(ServiceCall call)
+    {
+        var corporation = await RecruitmentCorporation(call);
+        return GroupApplications(await store.ApplicationsAsync(corporation:corporation.Id,token:call.Cancellation),a => a.CharacterId);
+    }
+    [Method("GetOldApplications")]
+    public async ValueTask<PyValue> GetOldApplications(ServiceCall call)
+    {
+        var corporation = await RecruitmentCorporation(call);
+        return new PyList([.. (await store.ApplicationsAsync(corporation:corporation.Id,archived:true,token:call.Cancellation)).Select(ApplicationRow)]);
+    }
+    [Method("GetMyOpenInvitations")]
+    public async ValueTask<PyValue> GetMyOpenInvitations(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } character) return new PyList([]);
+        var applications = await store.ApplicationsAsync(character:character,token:call.Cancellation);
+        return new PyList([.. applications.Where(a => a.Status is 6 or 8).Select(a => (PyValue)Py.KeyVal(
+            ("invitationID",new PyInt(a.Id)), // EVE.js exposes applicationID in this field.
+            ("corporationID",new PyInt(a.CorporationId)),
+            ("characterID",new PyInt(a.CharacterId)),("status",new PyInt(a.Status)),
+            ("invitationDateTime",CorporationWire.Time(a.CreatedMs))))]);
+    }
+    [Method("InsertApplication")]
+    public async ValueTask<PyValue> InsertApplication(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } character || PositiveId(call.Arg(0)) is not { } corporation)
+            return PyNone.Instance;
+        var id = await store.ApplyAsync(character,corporation,Text(call.Arg(1)),token:call.Cancellation);
+        return new PyInt(id);
+    }
+    [Method("InsertInvitation")]
+    public async ValueTask<PyValue> InsertInvitation(ServiceCall call)
+    {
+        var corporation = await Current(call);
+        if (corporation is null || call.Session.CharacterId is not { } inviter)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        if (PositiveId(call.Arg(0)) is not { } character)
+            throw new CorporationError("CHARACTER_NOT_FOUND");
+        var invitation = await store.CreateInvitationAsync(character,corporation.Id,inviter,call.Cancellation);
+        return new PyInt(invitation.InvitationId);
+    }
+    [Method("UpdateApplicationOffer")]
+    public async ValueTask<PyValue> UpdateApplicationOffer(ServiceCall call)
+    {
+        if (PositiveId(call.Arg(0)) is not { } applicationId || PositiveId(call.Arg(2)) is not { } corporation)
+            return PyNone.Instance;
+        // ponytail: response lookup scans this corporation's open applications; add an ID lookup if that queue grows.
+        var application = (await store.ApplicationsAsync(corporation:corporation,token:call.Cancellation))
+            .FirstOrDefault(a => a.Id == applicationId);
+        if (application is null) return PyNone.Instance;
+        if (PositiveId(call.Arg(1)) is { } character && character != application.CharacterId ||
+            call.Session.CharacterId is not { } actor)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        await store.RespondAsync(actor,applicationId,Status(call.Arg(4)),Text(call.Arg(3)),Text(call.Arg(5)),call.Cancellation);
+        if (Status(call.Arg(4)) == 2)
+            await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
+        return PyNone.Instance;
     }
     private static IReadOnlyList<PyValue> Items(PyValue v) => v switch { PyTuple t => t.Items,PyList l => l.Items,_ => [] };
     [Method("MachoResolveObject")]

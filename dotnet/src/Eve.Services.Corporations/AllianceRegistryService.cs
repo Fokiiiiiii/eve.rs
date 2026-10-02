@@ -58,6 +58,69 @@ public sealed partial class AllianceRegistryService(CorporationStore store,PgCha
             Py.Dict(("header",MemberDescriptor.Header),("idName",new PyStr("corporationID")),("columnName",new PyStr("corporationID")))),[],
             [.. members.Select(m => new KeyValuePair<PyValue,PyValue>(new PyInt(m.CorporationId),new PyPackedRow(MemberDescriptor,Line(m,c.CorporationId))))]);
     }
+
+    private static readonly Descriptor ApplicationDescriptor = CorporationWire.DescriptorOf(
+        ("allianceID",3),("corporationID",3),("applicationText",130),("state",3),("applicationDateTime",64));
+
+    private static Exception AllianceAccessDenied() => MachoErrors.ThrowUserError("CrpAccessDenied",
+        ("reason",Py.List(new PyInt(101),new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles"))));
+
+    private async Task<(long Actor,long Alliance)> RequireAllianceExecutorDirector(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } actor) throw AllianceAccessDenied();
+        if (await characters.GetAsync(actor,call.Cancellation) is not { } character) throw AllianceAccessDenied();
+        var corporation = await store.GetAsync(character.CorporationId,call.Cancellation);
+        if (corporation is null || corporation.IsNpc || corporation.AllianceId is not { } allianceId)
+            throw AllianceAccessDenied();
+
+        var alliance = await store.AllianceAsync(allianceId,call.Cancellation);
+        if (alliance is not { Deleted:false } || alliance.ActiveExecutorId != corporation.Id)
+            throw AllianceAccessDenied();
+
+        if (corporation.CeoId != actor)
+        {
+            var member = await store.MemberAsync(actor,call.Cancellation);
+            if (member is null || member.CorporationId != corporation.Id ||
+                (CorporationRoles.Session(corporation,member,null,await store.TitlesAsync(corporation.Id,call.Cancellation)).AtAll &
+                    CorporationRoles.Director) == 0)
+                throw AllianceAccessDenied();
+        }
+        return (actor,allianceId);
+    }
+
+    [Method("GetApplications")]
+    public async ValueTask<PyValue> GetApplications(ServiceCall call)
+    {
+        var (_,allianceId) = await RequireAllianceExecutorDirector(call);
+        var applications = await store.AllianceApplicationsAsync(allianceId,call.Cancellation);
+        return new PyObjectEx(ObjectExKind.Ex2,
+            Py.Tuple(Py.Tuple(new PyToken("carbon.common.script.sys.crowset.CIndexedRowset")),
+                Py.Dict(("header",ApplicationDescriptor.Header),("idName",new PyStr("corporationID")),
+                    ("columnName",new PyStr("corporationID")))),[],
+            [.. applications.Select(application => new KeyValuePair<PyValue,PyValue>(
+                new PyInt(application.CorporationId),
+                new PyPackedRow(ApplicationDescriptor,[
+                    new PyInt(application.AllianceId),new PyInt(application.CorporationId),new PyWString(application.Text),
+                    new PyInt(application.Status),CorporationWire.Time(application.CreatedMs)])))]);
+    }
+
+    [Method("UpdateApplication")]
+    public async ValueTask<PyValue> UpdateApplication(ServiceCall call)
+    {
+        var (actor,allianceId) = await RequireAllianceExecutorDirector(call);
+        var corporationId = Number(call.Arg(0));
+        var applicationText = JsSemantics.StringValue(call.Arg(1)) ?? "";
+        var state = Number(call.Arg(2));
+        if (corporationId <= 0) throw new CorporationError("ALLIANCE_APPLICATION_NOT_FOUND");
+        if (state is not (2 or 4)) throw new CorporationError("ALLIANCE_APPLICATION_INVALID_STATE");
+
+        var application = (await store.AllianceApplicationsAsync(allianceId,call.Cancellation))
+            .LastOrDefault(item => item.CorporationId == corporationId);
+        if (application is null) throw new CorporationError("ALLIANCE_APPLICATION_NOT_FOUND");
+
+        await store.RespondToAllianceAsync(actor,application.Id,applicationText,(int)state,call.Cancellation);
+        return PyNone.Instance;
+    }
     [Method("MachoResolveObject")]
     public async ValueTask<PyValue> MachoResolveObject(ServiceCall call) =>
         await store.AllianceAsync(await Id(call),call.Cancellation) is not null ? new PyInt(MachoMessage.ProxyNodeId) : PyNone.Instance;

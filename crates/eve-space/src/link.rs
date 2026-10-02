@@ -7,12 +7,12 @@
 
 use crate::death::Credit;
 use crate::health::{Condition, Layer, Resonances, Vitals};
-use crate::modules::{Action, Applies, Change, Effect, Numbers};
+use crate::modules::{Action, Applies, Change, Effect, Numbers, Reach, Remote};
 use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Charge, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 7;
+pub const PROTOCOL_VERSION: u16 = 8;
 
 /// The message kinds.
 pub mod kind {
@@ -688,40 +688,96 @@ fn put_effect(out: &mut Vec<u8>, effect: &Effect) {
     }
 }
 
-/// What a cycle of an effect does: a tag and its numbers (`0`: a repair: the layer, when in the cycle, the points).
+/// What a cycle of an effect does: a tag and its numbers (`0`: a repair of the ship's own: the layer, when in the cycle, the points; `1`: an effect
+/// projected at the target: when in the cycle, the optimal range and the falloff, the name the target's HUD gives it (a text), then a kind and its numbers: `0` a repair of the target's layer and the
+/// points, `1` a capacitor transfer and its GJ, `2` a neutralizer and `3` a nosferatu: the GJ and the signature resolution).
 fn put_action(out: &mut Vec<u8>, action: &Action) {
+    let layer_byte = |layer: &Layer| match layer {
+        Layer::Shield => 0,
+        Layer::Armor => 1,
+        Layer::Structure => 2,
+    };
+    let when_byte = |when: &Applies| match when {
+        Applies::CycleStart => 0,
+        Applies::CycleEnd => 1,
+    };
     match action {
         Action::Repair { layer, amount, when } => {
             out.push(0);
-            out.push(match layer {
-                Layer::Shield => 0,
-                Layer::Armor => 1,
-                Layer::Structure => 2,
-            });
-            out.push(match when {
-                Applies::CycleStart => 0,
-                Applies::CycleEnd => 1,
-            });
+            out.push(layer_byte(layer));
+            out.push(when_byte(when));
             out.extend_from_slice(&amount.to_le_bytes());
         }
+        Action::Remote { what, reach, when, jam } => {
+            out.push(1);
+            out.push(when_byte(when));
+            out.extend_from_slice(&reach.optimal.to_le_bytes());
+            out.extend_from_slice(&reach.falloff.to_le_bytes());
+            put_text(out, jam);
+            match what {
+                Remote::Repair { layer, amount } => {
+                    out.push(0);
+                    out.push(layer_byte(layer));
+                    out.extend_from_slice(&amount.to_le_bytes());
+                }
+                Remote::Transfer { amount } => {
+                    out.push(1);
+                    out.extend_from_slice(&amount.to_le_bytes());
+                }
+                Remote::Neutralize { amount, signature_resolution } => {
+                    out.push(2);
+                    out.extend_from_slice(&amount.to_le_bytes());
+                    out.extend_from_slice(&signature_resolution.to_le_bytes());
+                }
+                Remote::Drain { amount, signature_resolution } => {
+                    out.push(3);
+                    out.extend_from_slice(&amount.to_le_bytes());
+                    out.extend_from_slice(&signature_resolution.to_le_bytes());
+                }
+            }
+        }
+    }
+}
+
+fn read_layer(reader: &mut Reader) -> Result<Layer, DecodeError> {
+    match reader.u8()? {
+        0 => Ok(Layer::Shield),
+        1 => Ok(Layer::Armor),
+        2 => Ok(Layer::Structure),
+        _ => Err(DecodeError::BadValue("layer")),
+    }
+}
+
+fn read_applies(reader: &mut Reader) -> Result<Applies, DecodeError> {
+    match reader.u8()? {
+        0 => Ok(Applies::CycleStart),
+        1 => Ok(Applies::CycleEnd),
+        _ => Err(DecodeError::BadValue("applies")),
     }
 }
 
 fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
     match reader.u8()? {
         0 => {
-            let layer = match reader.u8()? {
-                0 => Layer::Shield,
-                1 => Layer::Armor,
-                2 => Layer::Structure,
-                _ => return Err(DecodeError::BadValue("layer")),
-            };
-            let when = match reader.u8()? {
-                0 => Applies::CycleStart,
-                1 => Applies::CycleEnd,
-                _ => return Err(DecodeError::BadValue("applies")),
-            };
+            let layer = read_layer(reader)?;
+            let when = read_applies(reader)?;
             Ok(Action::Repair { layer, when, amount: reader.f64()? })
+        }
+        1 => {
+            let when = read_applies(reader)?;
+            let reach = Reach { optimal: reader.f64()?, falloff: reader.f64()? };
+            let jam = reader.text()?;
+            let what = match reader.u8()? {
+                0 => {
+                    let layer = read_layer(reader)?;
+                    Remote::Repair { layer, amount: reader.f64()? }
+                }
+                1 => Remote::Transfer { amount: reader.f64()? },
+                2 => Remote::Neutralize { amount: reader.f64()?, signature_resolution: reader.f64()? },
+                3 => Remote::Drain { amount: reader.f64()?, signature_resolution: reader.f64()? },
+                _ => return Err(DecodeError::BadValue("remote")),
+            };
+            Ok(Action::Remote { what, reach, when, jam })
         }
         _ => Err(DecodeError::BadValue("action")),
     }

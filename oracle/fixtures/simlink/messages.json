@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 7,
-   "hex": "03000000010700"
+   "version": 8,
+   "hex": "03000000010800"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 7,
+   "version": 8,
    "pollHz": 4,
-   "hex": "0700000002070004000000"
+   "hex": "0700000002080004000000"
   },
   {
    "name": "enter by undocking",
@@ -733,6 +733,117 @@
     "offChanges": []
    },
    "hex": "61000000134f2c3859955c0600f2b6089b150900008f010000040000001600656666656374732e536869656c64426f6f7374696e670000000000409f400000000000003440e803000000000000000000000800000000000000000000000000000000003a40"
+  },
+  {
+   "name": "activate a remote armor repairer",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002803",
+    "moduleType": 3520,
+    "effectId": 6186,
+    "fx": "effects.RemoteArmorRepair",
+    "durationMs": 5000.0,
+    "capacitorNeed": 12.0,
+    "repeat": 1000,
+    "targetId": "9988400003001",
+    "action": {
+     "kind": "remote",
+     "what": "repair",
+     "layer": "armor",
+     "amount": 66.0,
+     "optimal": 7500.0,
+     "falloff": 5000.0,
+     "when": "end",
+     "jam": "remoteArmorRepair"
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "88000000134f2c3859955c0600f3b6089b15090000c00d00002a1800001900656666656374732e52656d6f746541726d6f72526570616972000000000088b3400000000000002840e8030000b9b7089b15090000080000000000000000010100000000004cbd40000000000088b340110072656d6f746541726d6f7252657061697200010000000000805040"
+  },
+  {
+   "name": "activate an energy neutralizer",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002804",
+    "moduleType": 12076,
+    "effectId": 6187,
+    "fx": "effects.EnergyNeutralizer",
+    "durationMs": 6000.0,
+    "capacitorNeed": 30.0,
+    "repeat": 1000,
+    "targetId": "9988400003001",
+    "action": {
+     "kind": "remote",
+     "what": "neutralize",
+     "amount": 90.0,
+     "signatureResolution": 8000.0,
+     "optimal": 5000.0,
+     "falloff": 3000.0,
+     "when": "start",
+     "jam": "ewEnergyNeut"
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "8a000000134f2c3859955c0600f4b6089b150900002c2f00002b1800001900656666656374732e456e657267794e65757472616c697a6572000000000070b7400000000000003e40e8030000b9b7089b150900000800000000000000000100000000000088b340000000000070a7400c006577456e657267794e657574020000000000805640000000000040bf40"
+  },
+  {
+   "name": "activate an energy nosferatu",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002805",
+    "moduleType": 12263,
+    "effectId": 6188,
+    "fx": "effects.EnergyVampire",
+    "durationMs": 5000.0,
+    "capacitorNeed": 0.0,
+    "repeat": 1000,
+    "targetId": "9988400003001",
+    "action": {
+     "kind": "remote",
+     "what": "drain",
+     "amount": 12.0,
+     "signatureResolution": 0.0,
+     "optimal": 6000.0,
+     "falloff": 2000.0,
+     "when": "end",
+     "jam": "ewEnergyVampire"
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "89000000134f2c3859955c0600f5b6089b15090000e72f00002c1800001500656666656374732e456e6572677956616d70697265000000000088b3400000000000000000e8030000b9b7089b150900000800000000000000000101000000000070b7400000000000409f400f006577456e6572677956616d706972650300000000000028400000000000000000"
+  },
+  {
+   "name": "activate a remote capacitor transmitter",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002806",
+    "moduleType": 6586,
+    "effectId": 6184,
+    "fx": "effects.EnergyTransfer",
+    "durationMs": 5000.0,
+    "capacitorNeed": 28.0,
+    "repeat": 1000,
+    "targetId": "9988400003001",
+    "action": {
+     "kind": "remote",
+     "what": "transfer",
+     "amount": 60.0,
+     "optimal": 7000.0,
+     "falloff": 5000.0,
+     "when": "start",
+     "jam": "energyTransfer"
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "81000000134f2c3859955c0600f6b6089b15090000ba190000281800001600656666656374732e456e657267795472616e73666572000000000088b3400000000000003c40e8030000b9b7089b150900000800000000000000000100000000000058bb40000000000088b3400e00656e657267795472616e73666572010000000000004e40"
   },
   {
    "name": "activate a railgun that fires antimatter",

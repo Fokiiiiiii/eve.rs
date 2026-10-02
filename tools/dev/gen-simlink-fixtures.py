@@ -82,6 +82,9 @@ def turret(t):
     return body + bytes([1]) + struct.pack("<iiqq", c["typeId"], c["flag"], c["rounds"], c["perCycle"])
 
 
+LAYERS = {"shield": 0, "armor": 1, "structure": 2}
+
+
 def effect(e):
     body = i64(e["moduleId"]) + struct.pack("<ii", e["moduleType"], e["effectId"]) + s(e["fx"])
     body += struct.pack("<ddi", e["durationMs"], e["capacitorNeed"], e["repeat"]) + i64(e["targetId"])
@@ -92,8 +95,17 @@ def effect(e):
             body += numbers(n)
     body += changes(e["onChanges"]) + changes(e["offChanges"])
     body = body + turret(gun) if gun else body
-    if act:
-        body += bytes([0, {"shield": 0, "armor": 1, "structure": 2}[act["layer"]], 1 if act["when"] == "end" else 0]) + struct.pack("<d", act["amount"])
+    if act and act["kind"] == "repair":
+        body += bytes([0, LAYERS[act["layer"]], 1 if act["when"] == "end" else 0]) + struct.pack("<d", act["amount"])
+    elif act:
+        what = act["what"]
+        body += bytes([1, 1 if act["when"] == "end" else 0]) + struct.pack("<dd", act["optimal"], act["falloff"]) + s(act["jam"])
+        body += bytes([{"repair": 0, "transfer": 1, "neutralize": 2, "drain": 3}[what]])
+        if what == "repair":
+            body += bytes([LAYERS[act["layer"]]])
+        body += struct.pack("<d", act["amount"])
+        if what in ("neutralize", "drain"):
+            body += struct.pack("<d", act["signatureResolution"])
     return body
 
 
@@ -216,8 +228,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 7},
-    {"name": "hello ack", "kind": "HelloAck", "version": 7, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 8},
+    {"name": "hello ack", "kind": "HelloAck", "version": 8, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -313,6 +325,30 @@ valid = [
      "effect": {"moduleId": "9988400002802", "moduleType": 399, "effectId": 4, "fx": "effects.ShieldBoosting",
                 "durationMs": 2000.0, "capacitorNeed": 20.0, "repeat": 1000, "targetId": "0",
                 "action": {"kind": "repair", "layer": "shield", "amount": 26.0, "when": "start"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a remote armor repairer", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002803", "moduleType": 3520, "effectId": 6186, "fx": "effects.RemoteArmorRepair",
+                "durationMs": 5000.0, "capacitorNeed": 12.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "repair", "layer": "armor", "amount": 66.0, "optimal": 7500.0,
+                           "falloff": 5000.0, "when": "end", "jam": "remoteArmorRepair"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate an energy neutralizer", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002804", "moduleType": 12076, "effectId": 6187, "fx": "effects.EnergyNeutralizer",
+                "durationMs": 6000.0, "capacitorNeed": 30.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "neutralize", "amount": 90.0, "signatureResolution": 8000.0,
+                           "optimal": 5000.0, "falloff": 3000.0, "when": "start", "jam": "ewEnergyNeut"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate an energy nosferatu", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002805", "moduleType": 12263, "effectId": 6188, "fx": "effects.EnergyVampire",
+                "durationMs": 5000.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "drain", "amount": 12.0, "signatureResolution": 0.0,
+                           "optimal": 6000.0, "falloff": 2000.0, "when": "end", "jam": "ewEnergyVampire"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a remote capacitor transmitter", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002806", "moduleType": 6586, "effectId": 6184, "fx": "effects.EnergyTransfer",
+                "durationMs": 5000.0, "capacitorNeed": 28.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "transfer", "amount": 60.0, "optimal": 7000.0,
+                           "falloff": 5000.0, "when": "start", "jam": "energyTransfer"},
                 "onChanges": [], "offChanges": []}},
     {"name": "activate a railgun that fires antimatter", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002719", "moduleType": 10678, "effectId": 34, "fx": "effects.ProjectileFired",

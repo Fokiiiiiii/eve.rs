@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 7;
+    public const ushort ProtocolVersion = 8;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -298,9 +298,38 @@ public static class SimCodec
                     }
                     return new SimAction.Repair((SimLayer)layer, r.F64(), when == 1);
                 }
+            case 1:
+                {
+                    var when = r.U8();
+                    if (when > 1)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad remote");
+                    }
+                    var (optimal, falloff) = (r.F64(), r.F64());
+                    var jam = r.Text();
+                    SimRemote what = r.U8() switch
+                    {
+                        0 => ReadRemoteRepair(ref r),
+                        1 => new SimRemote.Transfer(r.F64()),
+                        2 => new SimRemote.Neutralize(r.F64(), r.F64()),
+                        3 => new SimRemote.Drain(r.F64(), r.F64()),
+                        _ => throw new SimLinkException(SimLinkError.BadValue, "bad remote"),
+                    };
+                    return new SimAction.Remote(what, optimal, falloff, when == 1, jam);
+                }
             default:
                 throw new SimLinkException(SimLinkError.BadValue, "bad action");
         }
+    }
+
+    private static SimRemote ReadRemoteRepair(ref Reader r)
+    {
+        var layer = r.U8();
+        if (layer > 2)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad remote repair");
+        }
+        return new SimRemote.Repair((SimLayer)layer, r.F64());
     }
 
     private static SimTurret ReadTurret(ref Reader r)
@@ -734,12 +763,43 @@ public static class SimCodec
         {
             WriteTurret(w, turret);
         }
-        if (e.Action is SimAction.Repair repair)
+        switch (e.Action)
         {
-            w.U8(0);
-            w.U8((byte)repair.Layer);
-            w.U8(repair.AtCycleEnd ? (byte)1 : (byte)0);
-            w.F64(repair.Amount);
+            case SimAction.Repair repair:
+                w.U8(0);
+                w.U8((byte)repair.Layer);
+                w.U8(repair.AtCycleEnd ? (byte)1 : (byte)0);
+                w.F64(repair.Amount);
+                break;
+            case SimAction.Remote remote:
+                w.U8(1);
+                w.U8(remote.AtCycleEnd ? (byte)1 : (byte)0);
+                w.F64(remote.Optimal);
+                w.F64(remote.Falloff);
+                w.Text(remote.Jam);
+                switch (remote.What)
+                {
+                    case SimRemote.Repair mend:
+                        w.U8(0);
+                        w.U8((byte)mend.Layer);
+                        w.F64(mend.Amount);
+                        break;
+                    case SimRemote.Transfer transfer:
+                        w.U8(1);
+                        w.F64(transfer.Amount);
+                        break;
+                    case SimRemote.Neutralize neutralize:
+                        w.U8(2);
+                        w.F64(neutralize.Amount);
+                        w.F64(neutralize.SignatureResolution);
+                        break;
+                    case SimRemote.Drain drain:
+                        w.U8(3);
+                        w.F64(drain.Amount);
+                        w.F64(drain.SignatureResolution);
+                        break;
+                }
+                break;
         }
     }
 

@@ -247,7 +247,7 @@ impl Scene {
     }
 
     /// The character that owns a ship, or its owner when nobody flies it (what the combat log says the shot was fired by).
-    fn combat_owner(&self, session: SessionId) -> i64 {
+    pub(crate) fn combat_owner(&self, session: SessionId) -> i64 {
         self.pilots.get(&session).map_or(0, |pilot| {
             let spec = &pilot.ship.spec;
             if spec.character_id > 0 { spec.character_id } else { spec.owner_id }

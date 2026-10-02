@@ -39,6 +39,12 @@ public sealed partial class DogmaIMService
             "TARGET_REQUIRED" => Notify("You need an active target to activate that module."),
             "TARGET_NOT_LOCKED" => Notify("That target is not locked."),
             "TARGET_NOT_FOUND" => MachoErrors.ThrowUserError("DeniedActivateTargetNotPresent"),
+            "TARGET_OUT_OF_RANGE" => MachoErrors.ThrowUserError(
+                "TargetNotWithinRangeGeneric",
+                ("desiredRange", Py.Number(Math.Max(0, refusal.DesiredRange))),
+                ("targetName", refusal.TargetType > 0 ? new PyTuple([new PyInt(TypeReference), new PyInt(refusal.TargetType)]) : new PyStr("That target")),
+                ("shipType", refusal.ShipType > 0 ? new PyTuple([new PyInt(TypeReference), new PyInt(refusal.ShipType)]) : new PyInt(0)),
+                ("actualDistance", Py.Number(Math.Max(0, refusal.ActualDistance)))),
             "NO_AMMO" => MachoErrors.ThrowUserError("NoCharges", ("launcher", new PyTuple([new PyInt(TypeReference), new PyInt(refusal.ModuleType)]))),
             "MODULE_NOT_ONLINE" => Notify($"{name} is offline."),
             "NOT_ENOUGH_CAPACITOR" => Notify("You do not have enough capacitor to activate that module."),

@@ -238,6 +238,35 @@ public abstract record SimAction
     /// shield booster).
     /// </summary>
     public sealed record Repair(SimLayer Layer, double Amount, bool AtCycleEnd) : SimAction;
+
+    /// <summary>
+    /// The effect is projected at the locked target (<see cref="SimEffect.TargetId"/>), which must be in reach (<paramref name="Optimal"/> metres from surface to surface, and
+    /// <paramref name="Falloff"/> more over which it weakens); what it does lands as the cycle ends or as it begins. <paramref name="Jam"/> is what the target's HUD calls it (<c>remoteArmorRepair</c>, <c>ewEnergyNeut</c>).
+    /// </summary>
+    public sealed record Remote(SimRemote What, double Optimal, double Falloff, bool AtCycleEnd, string Jam) : SimAction;
+}
+
+/// <summary>What a module that is projected at another ship does to it each cycle.</summary>
+public abstract record SimRemote
+{
+    private SimRemote()
+    {
+    }
+
+    /// <summary>A layer of the target is mended by <paramref name="Amount"/> points (a remote shield booster, armor repairer or hull repairer).</summary>
+    public sealed record Repair(SimLayer Layer, double Amount) : SimRemote;
+
+    /// <summary>The target's capacitor is given <paramref name="Amount"/> GJ (a remote capacitor transmitter).</summary>
+    public sealed record Transfer(double Amount) : SimRemote;
+
+    /// <summary>
+    /// <paramref name="Amount"/> GJ are taken from the target's capacitor (an energy neutralizer); one made for bigger ships is weaker against a target whose signature is smaller than
+    /// <paramref name="SignatureResolution"/> (0 for none).
+    /// </summary>
+    public sealed record Neutralize(double Amount, double SignatureResolution) : SimRemote;
+
+    /// <summary>What can be taken from the target's capacitor, up to <paramref name="Amount"/> GJ, goes into that of the ship that runs the effect (an energy nosferatu).</summary>
+    public sealed record Drain(double Amount, double SignatureResolution) : SimRemote;
 }
 
 /// <summary>Run an effect. Answered under <see cref="SimCommands.Activate"/>: <see cref="SimAccepted"/> or <see cref="SimRefused"/>.</summary>

@@ -6,6 +6,15 @@ namespace Eve.Services;
 /// </summary>
 public sealed record ModuleResult(bool Ok, string? Reason = null, int ModuleType = 0, string ModuleName = "")
 {
+    /// <summary>For <c>TARGET_OUT_OF_RANGE</c>: the type of the target, the type of the ship that runs the module, how far the module reaches and how far the target is (metres, surface to surface).</summary>
+    public int TargetType { get; init; }
+
+    public int ShipType { get; init; }
+
+    public double DesiredRange { get; init; }
+
+    public double ActualDistance { get; init; }
+
     public static ModuleResult Done { get; } = new(true);
 
     public static ModuleResult Refusal(string reason, int moduleType = 0, string moduleName = "") => new(false, reason, moduleType, moduleName);

@@ -6,7 +6,7 @@ use eve_space::health::{Condition, Layer, Resonances, Vitals};
 use eve_space::link::{
     ChargeOp, ContainerPlacement, DecodeError, Enter, How, Message, Spawn, WreckPlacement,
 };
-use eve_space::modules::{Action, Applies, Change, Effect, Numbers};
+use eve_space::modules::{Action, Applies, Change, Effect, Numbers, Reach, Remote};
 use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use eve_space::weapons::{Charge, Turret};
 use eve_space::wreck::WreckKind;
@@ -155,14 +155,33 @@ fn effect_of(case: &Value) -> Effect {
         repeat: case["repeat"].as_i64().unwrap() as i32,
         target_id: wide(case, "targetId"),
         turret: case.get("turret").map(turret_of),
-        action: case.get("action").map(|a| Action::Repair {
-            layer: match a["layer"].as_str().unwrap() {
+        action: case.get("action").map(|a| {
+            let layer = || match a["layer"].as_str().unwrap() {
                 "shield" => Layer::Shield,
                 "armor" => Layer::Armor,
                 _ => Layer::Structure,
-            },
-            amount: a["amount"].as_f64().unwrap(),
-            when: if a["when"] == "end" { Applies::CycleEnd } else { Applies::CycleStart },
+            };
+            let when = if a["when"] == "end" { Applies::CycleEnd } else { Applies::CycleStart };
+            let amount = a["amount"].as_f64().unwrap();
+            if a["kind"] == "repair" {
+                return Action::Repair { layer: layer(), amount, when };
+            }
+            let resolution = || a["signatureResolution"].as_f64().unwrap();
+            let what = match a["what"].as_str().unwrap() {
+                "repair" => Remote::Repair { layer: layer(), amount },
+                "transfer" => Remote::Transfer { amount },
+                "neutralize" => Remote::Neutralize { amount, signature_resolution: resolution() },
+                _ => Remote::Drain { amount, signature_resolution: resolution() },
+            };
+            Action::Remote {
+                what,
+                reach: Reach {
+                    optimal: a["optimal"].as_f64().unwrap(),
+                    falloff: a["falloff"].as_f64().unwrap(),
+                },
+                when,
+                jam: a["jam"].as_str().unwrap().to_string(),
+            }
         }),
         on: numbers(&case["on"]),
         off: numbers(&case["off"]),

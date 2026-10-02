@@ -449,7 +449,8 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             return ModuleResult.Refusal(made.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
         }
         // the safety of the pilot: a weapon is not started at the ship of another pilot where that would be a crime
-        if (package.Turret is not null
+        var attack = package.Turret is not null || package.Action is SimAction.Remote { What: SimRemote.Neutralize or SimRemote.Drain };
+        if (attack
             && _pilots.Values.Any(other => other.ShipId == package.TargetId && other.CharacterId != characterId)
             && _systems.Get(pilot.SolarSystemId) is { } where
             && WeaponSafety.StopsFire(Security.ClassFromLevel(where.Security)))
@@ -459,7 +460,11 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         var reply = await AskSimAsync(id, () => _sim.ActivateAsync(id, package, cancellationToken), session);
         if (!reply.Accepted)
         {
-            return ModuleResult.Refusal(reply.Reason == "ALREADY_ACTIVE" ? "MODULE_ALREADY_ACTIVE" : reply.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
+            var refusal = ModuleResult.Refusal(reply.Reason == "ALREADY_ACTIVE" ? "MODULE_ALREADY_ACTIVE" : reply.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
+            // a target out of reach is told with how far the module reaches and how far the target is
+            return reply.Reason == "TARGET_OUT_OF_RANGE"
+                ? refusal with { TargetType = reply.TargetType, ShipType = snapshot.Ship.TypeId, DesiredRange = reply.DesiredRange, ActualDistance = reply.ActualDistance }
+                : refusal;
         }
         EndInvulnerability(pilot);
         return ModuleResult.Done;

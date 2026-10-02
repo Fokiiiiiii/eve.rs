@@ -480,6 +480,25 @@ impl Scene {
         (out, Some(applied))
     }
 
+    /// `amount` points are given back to a layer of the ship `ship_id` at `now` (a repairer, a booster, a remote repairer): the pilot is told the attributes that
+    /// changed and everyone who can see the ship, has it locked or flies it is told its damage state when it changed. Nothing is told when nothing was
+    /// mended (the layer is whole, or the ship is not here).
+    pub(crate) fn mend(&mut self, ship_id: i64, layer: Layer, amount: f64, now: i64) -> Vec<Out> {
+        let Some(session) = self.session_of(ship_id) else { return Vec::new() };
+        let pilot = self.pilots.get_mut(&session).expect("the pilot is in the scene");
+        let owner = pilot.ship.spec.character_id;
+        let Some(applied) = pilot.ship.health.repair(now, layer, amount) else { return Vec::new() };
+        let mut out: Vec<Out> = Self::health_told(session, owner, ship_id, now, &applied.attribute_changes())
+            .into_iter()
+            .collect();
+        if applied.changed
+            && let Some(subject) = self.subject(ship_id, now)
+        {
+            out.extend(self.announce_damage_state(&subject, now));
+        }
+        out
+    }
+
     /// The host asks for the ship to be mended (`Heal`, command 18): full shield, armor, hull and capacitor. The pilot is told the attributes that
     /// changed and the capacitor, those who can see the ship are told its damage state when it changed, and the command is answered last.
     pub fn heal(&mut self, session: SessionId, now: i64) -> Vec<Out> {

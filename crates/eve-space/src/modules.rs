@@ -49,11 +49,65 @@ pub enum Applies {
     CycleEnd,
 }
 
+/// How far an effect that is projected at a target reaches, from the target's surface to the ship's: whole up to `optimal`, then weaker through `falloff`
+/// (`0.5 ^ (beyond / falloff)^2`, half at one falloff), and out of range past `optimal + falloff` (a module with no falloff reaches `optimal` and no more).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Reach {
+    pub optimal: f64,
+    pub falloff: f64,
+}
+
+impl Reach {
+    /// The share of a cycle's strength that lands on a target `apart` metres off (surface to surface), or None when it is out of range (the reference's
+    /// `resolveAssistanceMultiplier` and `resolveHostileRangeMultiplier`: a metre of slack at each limit).
+    pub fn share(&self, apart: f64) -> Option<f64> {
+        let (optimal, falloff) = (self.optimal.max(0.0), self.falloff.max(0.0));
+        if apart <= optimal + 1.0 {
+            return Some(1.0);
+        }
+        let beyond = apart - optimal;
+        if falloff <= 0.0 || beyond > falloff + 1.0 {
+            return None;
+        }
+        let share = 0.5_f64.powf((beyond / falloff.max(1.0)).powi(2));
+        Some((share * 1e6).round() / 1e6)
+    }
+
+    /// The farthest a target may be for the effect to reach it (what the client is told when a module is asked to reach too far).
+    pub fn farthest(&self) -> f64 {
+        self.optimal.max(0.0) + self.falloff.max(0.0)
+    }
+}
+
+/// What a module that is projected at another ship does to it each cycle.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Remote {
+    /// A layer of the target is mended by `amount` points (a remote shield booster, armor repairer or hull repairer).
+    Repair { layer: Layer, amount: f64 },
+    /// The target's capacitor is given `amount` GJ (a remote capacitor transmitter).
+    Transfer { amount: f64 },
+    /// `amount` GJ are taken from the target's capacitor (an energy neutralizer); one that is built for bigger ships is weaker against a target whose signature
+    /// is smaller than its `signature_resolution` (in proportion, 0 for none).
+    Neutralize { amount: f64, signature_resolution: f64 },
+    /// `amount` GJ are taken from the target's capacitor and given to the ship that runs the effect, which must hold less than the target (an energy nosferatu).
+    Drain { amount: f64, signature_resolution: f64 },
+}
+
+impl Remote {
+    /// Whether the effect is an attack (the client plays it as one, and the target is aggressed).
+    pub fn hostile(&self) -> bool {
+        matches!(self, Self::Neutralize { .. } | Self::Drain { .. })
+    }
+}
+
 /// What a cycle of an effect does to the scene besides what it costs the capacitor and the numbers it changes (the host has worked out the points from dogma).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     /// A layer of the ship that runs the effect is mended: `amount` points a cycle (an armor repairer, a shield booster, a hull repairer).
     Repair { layer: Layer, amount: f64, when: Applies },
+    /// The effect is projected at the locked target: it needs the target in reach, and does what `what` says, weakened by distance, as the cycle begins or ends.
+    /// `jam` is what the target's client calls it on its HUD (`remoteArmorRepair`, `ewEnergyNeut`).
+    Remote { what: Remote, reach: Reach, when: Applies, jam: String },
 }
 
 /// An effect the host asks the scene to run, with everything the host has worked out for it.
@@ -80,6 +134,41 @@ pub struct Effect {
     /// What the client is told when the effect starts, and when it ends.
     pub on_changes: Vec<Change>,
     pub off_changes: Vec<Change>,
+}
+
+impl Effect {
+    /// What the effect does to the ship it is projected at, where it reaches and when in a cycle.
+    pub(crate) fn remote(&self) -> Option<(&Remote, &Reach, Applies)> {
+        match self.action.as_ref()? {
+            Action::Remote { what, reach, when, .. } => Some((what, reach, *when)),
+            Action::Repair { .. } => None,
+        }
+    }
+
+    /// What the target's client calls an effect that is projected at it, on its HUD.
+    pub(crate) fn jam(&self) -> Option<&str> {
+        match self.action.as_ref()? {
+            Action::Remote { jam, .. } if !jam.is_empty() => Some(jam),
+            _ => None,
+        }
+    }
+
+    /// Whether the client plays the effect as an attack (a weapon, a neutralizer, a nosferatu).
+    pub(crate) fn offensive(&self) -> bool {
+        self.turret.is_some() || self.remote().is_some_and(|(what, ..)| what.hostile())
+    }
+
+    /// How many cycles the client is told the effect plays: a turret's are the ones asked for, those of a projected effect last as long as the effect can (the
+    /// reference's `resolvePersistentRepeat`: twelve hours of cycles, so the beam is not drawn for one cycle only).
+    fn fx_repeat(&self) -> Option<i64> {
+        if self.turret.is_some() {
+            Some(i64::from(self.repeat))
+        } else if self.remote().is_some() {
+            Some(((12.0 * 3_600_000.0) / self.duration_ms.max(1.0)).ceil().max(1.0) as i64)
+        } else {
+            None
+        }
+    }
 }
 
 /// The charge of a ship's capacitor as a function of time: `C1 / Cmax = (1 + (sqrt(C0 / Cmax) - 1) * e^(-5 * dt / T))^2`, `T` the recharge time.
@@ -138,6 +227,16 @@ impl Capacitor {
             (now - self.at) as f64 / TICKS_PER_SECOND as f64,
         );
         if self.capacity - charge <= FULL_SNAP { self.capacity } else { charge }
+    }
+
+    /// Adds `amount` at `now` (the charge never goes above the capacity) and returns the charge before and after.
+    fn give(&mut self, now: i64, amount: f64) -> (f64, f64) {
+        let before = self.charge_at(now);
+        let after = (before + amount.max(0.0)).min(self.capacity);
+        self.charge = after;
+        self.at = now;
+        self.next_sample = Some(now + TICK);
+        (before, after)
     }
 
     /// Takes `amount` at `now` and returns the charge before and after.
@@ -353,12 +452,12 @@ impl Scene {
                     .and_then(|t| t.charge)
                     .map_or(Value::None, |c| int(i64::from(c.type_id))),
                 crate::wire::text(effect.fx.clone()),
-                int(i64::from(effect.turret.is_some())),
+                int(i64::from(if on { effect.offensive() } else { effect.turret.is_some() })),
                 int(i64::from(on)),
                 int(i64::from(on)),
                 number(effect.duration_ms),
                 // a turret's start says how many cycles were asked for, its stop says nothing (the recording of the reference's gun)
-                if effect.turret.is_some() && on { int(i64::from(effect.repeat)) } else { Value::None },
+                if on { effect.fx_repeat().map_or(Value::None, int) } else { Value::None },
                 Value::None,
                 int(0),
                 Value::None,
@@ -413,6 +512,29 @@ impl Scene {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_AMMO" }];
             }
         }
+        // an effect that is projected at a ship needs it: there, locked and in reach (what is too far off is told with the range and how far it is)
+        if let Some((_, reach, _)) = effect.remote() {
+            if effect.target_id <= 0 {
+                return vec![Out::Refused { session, command: CODE, reason: "NO_TARGET" }];
+            }
+            let Some(target) = self.session_of(effect.target_id) else {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_FOUND" }];
+            };
+            if !self.locked_by(session).contains(&effect.target_id) {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_LOCKED" }];
+            }
+            let apart = self.apart(session, target).unwrap_or(f64::INFINITY);
+            if reach.share(apart).is_none() {
+                return vec![Out::TargetRefused {
+                    session,
+                    command: CODE,
+                    reason: "TARGET_OUT_OF_RANGE",
+                    target_type: self.pilots[&target].ship.spec.type_id,
+                    desired_range: reach.farthest(),
+                    actual_distance: apart,
+                }];
+            }
+        }
         let pilot = &self.pilots[&session];
         let Some(capacitor) = pilot.modules.capacitor.as_ref() else {
             return vec![Out::Refused { session, command: CODE, reason: "NO_CAPACITOR" }];
@@ -455,6 +577,7 @@ impl Scene {
             pilot.modules.running.push(run);
         }
         out.extend(self.act(session, &effect, Applies::CycleStart, now));
+        out.extend(self.jam_told(session, &effect, now, Jam::Start));
         out.extend(self.fire_turret(session, &effect, now));
         // the round of the first shot is spent after the shot; a turret that has no round for the next cycle stops
         let (spent, goes_on) = self.spend_round(session, effect.module_id, now);
@@ -624,8 +747,18 @@ impl Scene {
     fn end_cycle(&mut self, session: SessionId, index: usize, at: i64) -> Vec<Out> {
         let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
         let run = pilot.modules.running[index].clone();
-        // a weapon goes on while its target is there and locked
-        let target_ok = run.effect.turret.is_none() || self.turret_target_ok(session, &run.effect);
+        // a weapon goes on while its target is there and locked, an effect projected at a ship while the ship is also in reach
+        let target_ok = if run.effect.turret.is_some() {
+            self.turret_target_ok(session, &run.effect)
+        } else if let Some((_, reach, _)) = run.effect.remote() {
+            self.turret_target_ok(session, &run.effect)
+                && self
+                    .session_of(run.effect.target_id)
+                    .and_then(|target| self.apart(session, target))
+                    .is_some_and(|apart| reach.share(apart).is_some())
+        } else {
+            true
+        };
         // what the cycle that ends does at its end is done before the effect goes on or ends
         let mut out = self.act(session, &run.effect, Applies::CycleEnd, at);
         let Some(pilot) = self.pilots.get_mut(&session) else { return out };
@@ -663,6 +796,7 @@ impl Scene {
         if next.effect.turret.is_none() {
             out.push(Self::effect_told(session, owner, ship_id, &next, at, true, at, None));
             out.extend(self.act(session, &next.effect, Applies::CycleStart, at));
+            out.extend(self.jam_told(session, &next.effect, at, Jam::Refresh));
             return out;
         }
         // a turret shoots, spends its round and then is told to have begun another cycle (the recording of the reference's gun); one that is out of rounds stops
@@ -681,25 +815,157 @@ impl Scene {
         out
     }
 
-    /// What a cycle of `effect` does to the scene at this point of the cycle (`when`): a repair mends the layer of the ship that runs it, and the pilot and those who see the
-    /// ship are told what changed.
-    fn act(&mut self, session: SessionId, effect: &Effect, when: Applies, at: i64) -> Vec<Out> {
-        let Some(Action::Repair { layer, amount, when: applies }) = effect.action.as_ref() else {
+    /// What the client of the ship an effect is projected at is told, for its HUD (`hudIconStates.js` of the reference): as the effect goes on `OnJamStart` (who, which module,
+    /// the target, what the HUD calls it, when and for how long: a cycle and a tick over), `OnEwarStart` and the buff bar refreshed; as each cycle begins the timer again; as it ends
+    /// `OnJamEnd`, `OnEwarEnd` and the buff bar. An NPC is told nothing.
+    fn jam_told(&self, source: SessionId, effect: &Effect, at: i64, phase: Jam) -> Vec<Out> {
+        let Some(jam) = effect.jam() else { return Vec::new() };
+        let Some(target) = self.session_of(effect.target_id).filter(|t| !crate::npc::is_npc_session(*t))
+        else {
             return Vec::new();
         };
-        if *applies != when {
+        let Some(source_ship) = self.pilots.get(&source).map(|pilot| pilot.ship.spec.ship_id) else {
+            return Vec::new();
+        };
+        let who = || vec![id(source_ship), id(effect.module_id), id(effect.target_id), text(jam)];
+        let mut out = Vec::new();
+        if phase != Jam::End {
+            let mut args = who();
+            args.push(filetime(at));
+            args.push(int(effect.duration_ms as i64 + 100));
+            out.push(Self::dogma_notify(target, "OnJamStart", args));
+        }
+        match phase {
+            Jam::Start => {
+                out.push(Self::dogma_notify(target, "OnEwarStart", who()));
+                out.push(Self::dogma_notify(target, "OnRefreshBuffBar", Vec::new()));
+            }
+            Jam::Refresh => {}
+            Jam::End => {
+                out.push(Self::dogma_notify(target, "OnJamEnd", who()));
+                out.push(Self::dogma_notify(target, "OnEwarEnd", who()));
+                out.push(Self::dogma_notify(target, "OnRefreshBuffBar", Vec::new()));
+            }
+        }
+        out
+    }
+
+    /// What a cycle of `effect` does to the scene at this point of the cycle (`when`): a repair mends the layer of the ship that runs it, an effect projected at a
+    /// ship does what it does to that ship, and the pilots and those who see the ships are told what changed.
+    fn act(&mut self, session: SessionId, effect: &Effect, when: Applies, at: i64) -> Vec<Out> {
+        match effect.action.as_ref() {
+            Some(Action::Repair { layer, amount, when: applies }) if *applies == when => {
+                let Some(ship_id) = self.pilots.get(&session).map(|pilot| pilot.ship.spec.ship_id) else {
+                    return Vec::new();
+                };
+                self.mend(ship_id, *layer, *amount, at)
+            }
+            Some(Action::Remote { what, reach, when: applies, .. }) if *applies == when => {
+                self.project(session, effect, what, reach, at)
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// How far apart the surfaces of two ships of the scene are (0 when they touch).
+    fn apart(&self, a: SessionId, b: SessionId) -> Option<f64> {
+        let (a, b) = (&self.pilots.get(&a)?.ship, &self.pilots.get(&b)?.ship);
+        let (p, q) = (a.position, b.position);
+        let centres = ((p.x - q.x).powi(2) + (p.y - q.y).powi(2) + (p.z - q.z).powi(2)).sqrt();
+        Some((centres - a.spec.radius - b.spec.radius).max(0.0))
+    }
+
+    /// A cycle of an effect that is projected at a ship: what lands is `what` weakened by how far the target is (nothing when it is out of reach). An attack is
+    /// an aggression of the ship that runs the effect.
+    fn project(
+        &mut self,
+        session: SessionId,
+        effect: &Effect,
+        what: &Remote,
+        reach: &Reach,
+        at: i64,
+    ) -> Vec<Out> {
+        let Some(target) = self.session_of(effect.target_id) else { return Vec::new() };
+        let Some(share) = self.apart(session, target).and_then(|apart| reach.share(apart)) else {
+            return Vec::new();
+        };
+        // a neutralizer made for bigger ships is weaker against a ship that is smaller than it resolves
+        let resolved = |resolution: f64| {
+            let signature = self.pilots.get(&target).map_or(0.0, |pilot| pilot.ship.spec.signature_radius);
+            if resolution > 0.0 && signature > 0.0 { (signature / resolution).min(1.0) } else { 1.0 }
+        };
+        let out = match what {
+            Remote::Repair { layer, amount } => self.mend(effect.target_id, *layer, amount * share, at),
+            Remote::Transfer { amount } => self.give_capacitor(target, amount * share, at),
+            Remote::Neutralize { amount, signature_resolution } => {
+                let strength = amount * share * resolved(*signature_resolution);
+                self.take_capacitor(target, strength, at).0
+            }
+            Remote::Drain { amount, signature_resolution } => {
+                let strength = amount * share * resolved(*signature_resolution);
+                self.drain_capacitor(session, target, strength, at)
+            }
+        };
+        if what.hostile() {
+            let attacker_ship = self.pilots.get(&session).map_or(0, |pilot| pilot.ship.spec.ship_id);
+            let target_type_id = self.pilots.get(&target).map_or(0, |pilot| pilot.ship.spec.type_id);
+            let source_owner_id = self.combat_owner(session);
+            self.aggressions.push(crate::weapons::Aggression {
+                attacker_ship,
+                target_ship: effect.target_id,
+                module_type_id: effect.module_type,
+                source_owner_id,
+                target_type_id,
+            });
+        }
+        out
+    }
+
+    /// `amount` GJ are put into the capacitor of the ship of `target`; its pilot is told the charge. A ship that has none, or is full, gets nothing.
+    fn give_capacitor(&mut self, target: SessionId, amount: f64, at: i64) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get_mut(&target) else { return Vec::new() };
+        let (owner, ship) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+        let Some(capacitor) = pilot.modules.capacitor.as_mut() else { return Vec::new() };
+        if amount <= 0.0 || capacitor.charge_at(at) >= capacitor.capacity {
             return Vec::new();
         }
-        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
-        let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
-        let Some(applied) = pilot.ship.health.repair(at, *layer, *amount) else { return Vec::new() };
-        let mut out: Vec<Out> = Self::health_told(session, owner, ship_id, at, &applied.attribute_changes())
-            .into_iter()
-            .collect();
-        if applied.changed
-            && let Some(subject) = self.subject(ship_id, at)
-        {
-            out.extend(self.announce_damage_state(&subject, at));
+        let (before, after) = capacitor.give(at, amount);
+        vec![Self::charge_told(target, owner, ship, at, after, before)]
+    }
+
+    /// Up to `amount` GJ are taken out of the capacitor of the ship of `target` (never more than it holds); its pilot is told the charge. Answers what was taken.
+    fn take_capacitor(&mut self, target: SessionId, amount: f64, at: i64) -> (Vec<Out>, f64) {
+        let Some(pilot) = self.pilots.get_mut(&target) else { return (Vec::new(), 0.0) };
+        let (owner, ship) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+        let Some(capacitor) = pilot.modules.capacitor.as_mut() else { return (Vec::new(), 0.0) };
+        let taken = capacitor.charge_at(at).min(amount.max(0.0));
+        if taken <= 0.0 {
+            return (Vec::new(), 0.0);
+        }
+        let (before, after) = capacitor.draw(at, taken);
+        (vec![Self::charge_told(target, owner, ship, at, after, before)], taken)
+    }
+
+    /// A nosferatu: what it can take from the capacitor of `target` goes into that of the ship that runs it. It takes nothing from a ship that holds no more than
+    /// it does (by amount, not by share: the reference's `resolveNosTransferAllowed`), and no more than the ship has room for.
+    fn drain_capacitor(&mut self, session: SessionId, target: SessionId, amount: f64, at: i64) -> Vec<Out> {
+        let level = |scene: &Self, who: SessionId| {
+            scene
+                .pilots
+                .get(&who)
+                .and_then(|pilot| pilot.modules.capacitor.as_ref())
+                .map(|c| (c.charge_at(at), c.capacity))
+        };
+        let (Some((own, room)), Some((theirs, _))) = (level(self, session), level(self, target)) else {
+            return Vec::new();
+        };
+        if own + 1e-6 >= theirs {
+            return Vec::new();
+        }
+        let wanted = amount.min(theirs).min((room - own).max(0.0));
+        let (mut out, taken) = self.take_capacitor(target, wanted, at);
+        if taken > 0.0 {
+            out.extend(self.give_capacitor(session, taken, at));
         }
         out
     }
@@ -737,6 +1003,7 @@ impl Scene {
             out.push(off);
             out.extend(update);
         }
+        out.extend(self.jam_told(session, &run.effect, at, Jam::End));
         out
     }
 
@@ -745,9 +1012,11 @@ impl Scene {
     pub(crate) fn stop_weapons_at(&mut self, session: SessionId, targets: &[i64], now: i64) -> Vec<Out> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
-        let (stopped, kept): (Vec<Running>, Vec<Running>) = std::mem::take(&mut pilot.modules.running)
-            .into_iter()
-            .partition(|run| run.effect.turret.is_some() && targets.contains(&run.effect.target_id));
+        let (stopped, kept): (Vec<Running>, Vec<Running>) =
+            std::mem::take(&mut pilot.modules.running).into_iter().partition(|run| {
+                (run.effect.turret.is_some() || run.effect.remote().is_some())
+                    && targets.contains(&run.effect.target_id)
+            });
         pilot.modules.running = kept;
         let mut out = Vec::new();
         for run in stopped {
@@ -755,6 +1024,17 @@ impl Scene {
         }
         out
     }
+}
+
+/// Where an effect projected at a ship is in what the target's client is told of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Jam {
+    /// The effect went on: the timer and the icon.
+    Start,
+    /// Another cycle began: the timer again.
+    Refresh,
+    /// The effect is over.
+    End,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1399,5 +1679,382 @@ pub(crate) mod tests {
         let (_, after) = poll_until(&mut scene, t, 5.1);
         assert!((layers(&scene, after).armor - (before + 30.0)).abs() < 1e-3);
         assert_eq!(scene.pilots[&A].modules.running_count(), 0, "and it has stopped");
+    }
+
+    // ---- effects projected at a ship ----
+
+    fn partner() -> i64 {
+        other_spec().ship_id
+    }
+
+    /// A module that runs `what` on the ship `target`, reaching 10 km and falling off through another 5 km.
+    fn projected(what: Remote, when: Applies, target: i64) -> Effect {
+        Effect {
+            module_id: MODULE,
+            module_type: 3520,
+            effect_id: 6186,
+            fx: "effects.RemoteArmorRepair".to_string(),
+            duration_ms: 5_000.0,
+            capacitor_need: 20.0,
+            repeat: 1000,
+            target_id: target,
+            turret: None,
+            action: Some(Action::Remote {
+                what,
+                reach: Reach { optimal: 10_000.0, falloff: 5_000.0 },
+                when,
+                jam: "remoteArmorRepair".to_string(),
+            }),
+            on: None,
+            off: None,
+            on_changes: Vec::new(),
+            off_changes: Vec::new(),
+        }
+    }
+
+    /// B stands `gap` metres off A's surface and A has it locked: the scene, and the moment.
+    fn reaching(gap: f64) -> (Scene, i64) {
+        let (mut scene, t) = crowd();
+        // both ships are brought to rest so that nothing moves while the effect runs
+        scene.command(A, Command::Stop, t);
+        scene.command(B, Command::Stop, t);
+        let (_, t) = poll_until(&mut scene, t, 40.0);
+        let here = scene.pilots[&A].ship.position;
+        let (ra, rb) = (scene.pilots[&A].ship.spec.radius, scene.pilots[&B].ship.spec.radius);
+        let ship = &mut scene.pilots.get_mut(&B).unwrap().ship;
+        ship.position = eve_destiny::Vec3 { x: here.x + gap + ra + rb, y: here.y, z: here.z };
+        ship.velocity = eve_destiny::Vec3 { x: 0.0, y: 0.0, z: 0.0 };
+        let asked = scene.target_order(A, crate::targeting::Order::Lock(partner()), t);
+        assert!(matches!(asked.first(), Some(Out::Targets { .. })), "{asked:?}");
+        let (_, t) = poll_until(&mut scene, t, 6.0);
+        assert_eq!(scene.locked_by(A), vec![partner()]);
+        (scene, t)
+    }
+
+    fn hurt_partner(scene: &mut Scene, t: i64) {
+        let (_, applied) = scene.damage(partner(), [0.0, 600.0, 0.0, 0.0], t);
+        assert!(applied.is_some());
+    }
+
+    fn partner_layers(scene: &Scene, at: i64) -> crate::health::Layers {
+        scene.pilots[&B].ship.health.layers_at(at)
+    }
+
+    fn charge(scene: &Scene, who: SessionId, at: i64) -> f64 {
+        scene.pilots[&who].modules.capacitor.as_ref().unwrap().charge_at(at)
+    }
+
+    #[test]
+    fn a_projected_effect_is_whole_in_the_optimal_range_half_at_one_falloff_and_out_of_range_beyond_it() {
+        let reach = Reach { optimal: 10_000.0, falloff: 5_000.0 };
+        assert_eq!(reach.share(0.0), Some(1.0));
+        assert_eq!(reach.share(10_001.0), Some(1.0), "a metre of slack");
+        assert_eq!(reach.share(15_000.0), Some(0.5));
+        assert_eq!(reach.share(12_500.0), Some(0.840896));
+        assert_eq!(reach.share(15_002.0), None);
+        assert_eq!(reach.farthest(), 15_000.0);
+        // a module with no falloff reaches its optimal range and no more
+        let sharp = Reach { optimal: 9_000.0, falloff: 0.0 };
+        assert_eq!(sharp.share(9_001.0), Some(1.0));
+        assert_eq!(sharp.share(9_002.0), None);
+    }
+
+    #[test]
+    fn a_remote_armor_repairer_mends_the_target_when_the_cycle_ends_less_for_a_target_in_falloff() {
+        // 12.5 km off: half way through the falloff, a share of 0.840896
+        let (mut scene, t) = reaching(12_500.0);
+        hurt_partner(&mut scene, t);
+        let before = partner_layers(&scene, t).armor;
+        let started = scene.activate(
+            A,
+            projected(Remote::Repair { layer: Layer::Armor, amount: 30.0 }, Applies::CycleEnd, partner()),
+            t,
+        );
+        assert!(matches!(started.first(), Some(Out::Accepted { command: 17, .. })), "{started:?}");
+        assert_eq!(
+            partner_layers(&scene, t + SECOND).armor,
+            before,
+            "nothing is mended while the cycle runs"
+        );
+        let (out, after) = poll_until(&mut scene, t, 5.1);
+        let armor = partner_layers(&scene, after).armor;
+        assert!((armor - (before + 30.0 * 0.840896)).abs() < 1e-3, "{armor} from {before}");
+        // the target's pilot is told the armor that came back, the one who runs the repairer is told nothing of it
+        let told = labels(&out);
+        assert!(told.iter().any(|l| l.starts_with("8:attributes[") && l.contains("266")), "{told:?}");
+        assert!(!told.iter().any(|l| l.starts_with("7:attributes[") && l.contains("266")), "{told:?}");
+        // its own armor is not what is mended
+        assert_eq!(layers(&scene, after).armor, 137.5);
+    }
+
+    #[test]
+    fn a_remote_shield_booster_gives_its_points_as_the_cycle_begins() {
+        let (mut scene, t) = reaching(2_000.0);
+        hurt_partner(&mut scene, t);
+        let before = partner_layers(&scene, t).shield;
+        scene.activate(
+            A,
+            projected(Remote::Repair { layer: Layer::Shield, amount: 40.0 }, Applies::CycleStart, partner()),
+            t,
+        );
+        let shield = partner_layers(&scene, t).shield;
+        assert!(shield >= before + 39.0, "{shield} from {before}");
+    }
+
+    #[test]
+    fn an_effect_projected_at_a_ship_needs_a_target_that_is_there_locked_and_in_reach() {
+        let (mut scene, t) = reaching(2_000.0);
+        let refused = |out: &[Out]| match out.first() {
+            Some(Out::Refused { reason, .. }) => (*reason).to_string(),
+            other => panic!("{other:?}"),
+        };
+        let mend = |target| {
+            projected(Remote::Repair { layer: Layer::Armor, amount: 30.0 }, Applies::CycleEnd, target)
+        };
+        assert_eq!(refused(&scene.activate(A, mend(0), t)), "NO_TARGET");
+        assert_eq!(refused(&scene.activate(A, mend(42), t)), "TARGET_NOT_FOUND");
+        // the ship that is not locked
+        let (mut scene2, t2) = crowd();
+        assert_eq!(refused(&scene2.activate(A, mend(partner()), t2)), "TARGET_NOT_LOCKED");
+        // too far off: told with the farthest it reaches and how far the target is
+        let (mut far, t3) = reaching(16_000.0);
+        match far.activate(A, mend(partner()), t3).first() {
+            Some(Out::TargetRefused {
+                command: 17,
+                reason,
+                target_type,
+                desired_range,
+                actual_distance,
+                ..
+            }) => {
+                assert_eq!(*reason, "TARGET_OUT_OF_RANGE");
+                assert_eq!(*target_type, 601);
+                assert_eq!(*desired_range, 15_000.0);
+                assert!((actual_distance - 16_000.0).abs() < 1.0, "{actual_distance}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(far.pilots[&A].modules.running_count(), 0);
+    }
+
+    #[test]
+    fn a_target_that_drifts_out_of_reach_ends_the_effect_at_the_end_of_the_cycle_and_a_lost_lock_ends_it_at_once()
+     {
+        let (mut scene, t) = reaching(2_000.0);
+        scene.activate(
+            A,
+            projected(Remote::Repair { layer: Layer::Armor, amount: 30.0 }, Applies::CycleEnd, partner()),
+            t,
+        );
+        // the target is pulled out of reach during the cycle
+        scene.pilots.get_mut(&B).unwrap().ship.position.x += 40_000.0;
+        let before = partner_layers(&scene, t).armor;
+        let (_, after) = poll_until(&mut scene, t, 5.1);
+        assert_eq!(partner_layers(&scene, after).armor, before, "nothing lands out of reach");
+        assert_eq!(scene.pilots[&A].modules.running_count(), 0, "and the effect has stopped");
+        // a lock that is given up stops it at once
+        let (mut scene, t) = reaching(2_000.0);
+        scene.activate(
+            A,
+            projected(Remote::Repair { layer: Layer::Armor, amount: 30.0 }, Applies::CycleEnd, partner()),
+            t,
+        );
+        scene.target_order(A, crate::targeting::Order::Remove(vec![partner()]), t + SECOND);
+        assert_eq!(scene.pilots[&A].modules.running_count(), 0);
+    }
+
+    #[test]
+    fn an_energy_neutralizer_takes_capacitor_from_the_target_as_the_cycle_begins_and_is_an_attack() {
+        let (mut scene, t) = reaching(5_000.0);
+        let before = charge(&scene, B, t);
+        let started = scene.activate(
+            A,
+            projected(
+                Remote::Neutralize { amount: 40.0, signature_resolution: 0.0 },
+                Applies::CycleStart,
+                partner(),
+            ),
+            t,
+        );
+        let after = charge(&scene, B, t);
+        assert!((before - after - 40.0).abs() < 1e-6, "{before} -> {after}");
+        // the target's pilot is told its capacitor, and the effect is played as an attack
+        assert!(started.iter().any(|o| o.session() == B && charge_of(o).is_some()), "{started:?}");
+        assert_eq!(scene.aggressions.len(), 1);
+        assert_eq!(
+            (scene.aggressions[0].attacker_ship, scene.aggressions[0].target_ship),
+            (spec().ship_id, partner())
+        );
+        // it takes no more than the target has
+        let weak = scene.pilots[&B].modules.capacitor.as_ref().unwrap().capacity;
+        assert!(weak > 0.0);
+        let (mut scene, t) = reaching(5_000.0);
+        scene.activate(
+            A,
+            projected(
+                Remote::Neutralize { amount: 1.0e6, signature_resolution: 0.0 },
+                Applies::CycleStart,
+                partner(),
+            ),
+            t,
+        );
+        assert_eq!(charge(&scene, B, t), 0.0);
+    }
+
+    #[test]
+    fn a_neutralizer_made_for_bigger_ships_is_weaker_against_a_smaller_target_in_proportion_to_its_signature()
+    {
+        // the Ibis has a signature of 28 m: against a resolution of 56 m it takes half
+        let (mut scene, t) = reaching(1_000.0);
+        let before = charge(&scene, B, t);
+        scene.activate(
+            A,
+            projected(
+                Remote::Neutralize { amount: 40.0, signature_resolution: 56.0 },
+                Applies::CycleStart,
+                partner(),
+            ),
+            t,
+        );
+        assert!((before - charge(&scene, B, t) - 20.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_nosferatu_takes_from_a_ship_that_holds_more_than_it_does_and_nothing_from_one_that_holds_less() {
+        let (mut scene, t) = reaching(5_000.0);
+        // A holds less than B: it drains B and what is taken fills A
+        scene.pilots.get_mut(&A).unwrap().modules.capacitor.as_mut().unwrap().draw(t, 100.0);
+        let (own, theirs) = (charge(&scene, A, t), charge(&scene, B, t));
+        scene.activate(
+            A,
+            projected(
+                Remote::Drain { amount: 25.0, signature_resolution: 0.0 },
+                Applies::CycleEnd,
+                partner(),
+            ),
+            t,
+        );
+        // the cost of the cycle is paid as it starts; what is drained comes at its end
+        let paid = charge(&scene, A, t);
+        let (_, after) = poll_until(&mut scene, t, 5.1);
+        assert!(
+            (charge(&scene, B, after) - (theirs - 25.0)).abs() < 1.0,
+            "{} from {theirs}",
+            charge(&scene, B, after)
+        );
+        assert!(
+            charge(&scene, A, after) > paid + 20.0,
+            "{} from {own} ({paid} after the cost)",
+            charge(&scene, A, after)
+        );
+        // A holds more than B: nothing is drained
+        let (mut scene, t) = reaching(5_000.0);
+        scene.pilots.get_mut(&B).unwrap().modules.capacitor.as_mut().unwrap().draw(t, 100.0);
+        let theirs = charge(&scene, B, t);
+        scene.activate(
+            A,
+            projected(
+                Remote::Drain { amount: 25.0, signature_resolution: 0.0 },
+                Applies::CycleEnd,
+                partner(),
+            ),
+            t,
+        );
+        let (_, after) = poll_until(&mut scene, t, 5.1);
+        // B only recharges
+        assert!(charge(&scene, B, after) >= theirs, "{} from {theirs}", charge(&scene, B, after));
+    }
+
+    #[test]
+    fn a_remote_capacitor_transmitter_gives_the_target_capacitor_up_to_what_it_holds() {
+        let (mut scene, t) = reaching(5_000.0);
+        scene.pilots.get_mut(&B).unwrap().modules.capacitor.as_mut().unwrap().draw(t, 100.0);
+        let before = charge(&scene, B, t);
+        scene.activate(A, projected(Remote::Transfer { amount: 60.0 }, Applies::CycleStart, partner()), t);
+        assert!((charge(&scene, B, t) - (before + 60.0)).abs() < 1e-6);
+        // a full capacitor takes nothing and is told nothing
+        let (mut scene, t) = reaching(5_000.0);
+        let out = scene.activate(
+            A,
+            projected(Remote::Transfer { amount: 60.0 }, Applies::CycleStart, partner()),
+            t,
+        );
+        assert!(!out.iter().any(|o| o.session() == B && charge_of(o).is_some()), "{out:?}");
+    }
+
+    #[test]
+    fn a_projected_effect_plays_to_those_who_look_on_with_its_target_and_for_as_long_as_it_can() {
+        let (mut scene, t) = reaching(5_000.0);
+        let out = scene.activate(
+            A,
+            projected(
+                Remote::Neutralize { amount: 40.0, signature_resolution: 0.0 },
+                Applies::CycleStart,
+                partner(),
+            ),
+            t,
+        );
+        let effect = projected(
+            Remote::Neutralize { amount: 40.0, signature_resolution: 0.0 },
+            Applies::CycleStart,
+            partner(),
+        );
+        assert!(effect.offensive());
+        assert!(!projected(Remote::Transfer { amount: 1.0 }, Applies::CycleStart, partner()).offensive());
+        // twelve hours of 5 s cycles
+        assert_eq!(effect.fx_repeat(), Some(8_640));
+        assert!(
+            labels(&out).iter().any(|l| l.starts_with("8:destiny[")),
+            "the one who looks on sees it: {:?}",
+            labels(&out)
+        );
+    }
+
+    #[test]
+    fn the_target_is_told_of_an_effect_projected_at_it_for_its_hud_when_it_begins_each_cycle_and_ends() {
+        let (mut scene, t) = reaching(5_000.0);
+        let started = scene.activate(
+            A,
+            projected(Remote::Repair { layer: Layer::Armor, amount: 30.0 }, Applies::CycleEnd, partner()),
+            t,
+        );
+        let told = labels(&started);
+        let hud: Vec<&String> = told.iter().filter(|l| l.starts_with("8:On")).collect();
+        assert!(hud.iter().any(|l| l.as_str() == "8:OnJamStart"), "{told:?}");
+        assert!(hud.iter().any(|l| l.as_str() == "8:OnEwarStart"), "{told:?}");
+        assert!(hud.iter().any(|l| l.as_str() == "8:OnRefreshBuffBar"), "{told:?}");
+        // the timer carries who, the module, the target, what the HUD calls it, when, and a cycle and a tick
+        let jam = started
+            .iter()
+            .find_map(|o| match o {
+                Out::Notify { session: 8, name: "OnJamStart", args, .. } => Some(args.clone()),
+                _ => None,
+            })
+            .expect("OnJamStart");
+        assert_eq!(
+            jam,
+            vec![
+                id(spec().ship_id),
+                id(MODULE),
+                id(partner()),
+                text("remoteArmorRepair"),
+                filetime(t),
+                int(5_100)
+            ]
+        );
+        // the one who runs it is not told
+        assert!(!told.iter().any(|l| l.starts_with("7:OnJam") || l.starts_with("7:OnEwar")), "{told:?}");
+        // the next cycle refreshes the timer only
+        let (out, _) = poll_until(&mut scene, t, 5.1);
+        let again = labels(&out);
+        assert_eq!(again.iter().filter(|l| l.as_str() == "8:OnJamStart").count(), 1, "{again:?}");
+        assert!(!again.iter().any(|l| l == "8:OnEwarStart"), "{again:?}");
+        // it ends: the timer, the icon and the bar
+        scene.deactivate(A, MODULE, t + 6 * SECOND);
+        let (out, _) = poll_until(&mut scene, t + 6 * SECOND, 5.0);
+        let ended = labels(&out);
+        for expected in ["8:OnJamEnd", "8:OnEwarEnd", "8:OnRefreshBuffBar"] {
+            assert!(ended.iter().any(|l| l == expected), "{expected} in {ended:?}");
+        }
     }
 }

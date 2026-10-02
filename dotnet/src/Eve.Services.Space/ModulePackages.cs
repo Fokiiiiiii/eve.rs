@@ -35,6 +35,10 @@ internal static class ModulePackages
     private const int ShieldBonus = 68;
     private const int StructureDamageAmount = 83;
     private const int ArmorDamageAmount = 84;
+    private const int PowerTransferAmount = 90;
+    private const int EnergyNeutralizerAmount = 97;
+    private const int FalloffEffectiveness = 2044;
+    private const int NeutralizerSignatureResolution = 2451;
 
     /// <summary>The attributes that name the groups of the charges a module takes (chargeGroup1 to chargeGroup5).</summary>
     private static readonly int[] ChargeGroups = [604, 605, 606, 609, 610];
@@ -45,6 +49,12 @@ internal static class ModulePackages
     private const string ArmorRepair = "armorRepair";
     private const string ShieldBoosting = "shieldBoosting";
     private const string StructureRepair = "structureRepair";
+    private const string RemoteShieldBooster = "shipModuleRemoteShieldBooster";
+    private const string RemoteArmorRepairer = "shipModuleRemoteArmorRepairer";
+    private const string RemoteHullRepairer = "shipModuleRemoteHullRepairer";
+    private const string RemoteCapacitorTransmitter = "shipModuleRemoteCapacitorTransmitter";
+    private const string EnergyNeutralizer = "energyNeutralizerFalloff";
+    private const string EnergyNosferatu = "energyNosferatuFalloff";
     private const string ProjectileFired = "projectileFired";
     private const string TurretFitted = "turretfitted";
 
@@ -139,6 +149,46 @@ internal static class ModulePackages
             moduleId, moduleType, effect.Id, effect.Guid, duration, capacitor, Math.Max(1, repeat), 0, null, null, told, told, null, new SimAction.Repair(repair.Layer, amount, repair.AtEnd));
     }
 
+    /// <summary>
+    /// What a module that is projected at another ship does to it each cycle, and whether it is done as the cycle ends (the remote armor and hull repairers, the nosferatu) or as it
+    /// begins (the shield booster, the capacitor transmitter, the neutralizer): <c>shipModuleRemote*</c> and the falloff energy modules of the reference's
+    /// <c>assistanceModuleRuntime.js</c> and <c>hostileModuleRuntime.js</c>; the timing of a cycle is the game's (EVE University: the armor repairs and the nosferatu come at the end).
+    /// </summary>
+    private static (SimRemote What, bool AtEnd, string Jam)? RemoteOf(string effectName, Func<int, double> value)
+    {
+        double Amount(int attribute) => Math.Max(0, NpcArmament.Round6(value(attribute)));
+        // the last is what the target's client calls the effect on its HUD (the reference's `jammingType` of each module)
+        return effectName switch
+        {
+            RemoteShieldBooster => (new SimRemote.Repair(SimLayer.Shield, Amount(ShieldBonus)), false, "shieldTransfer"),
+            RemoteArmorRepairer => (new SimRemote.Repair(SimLayer.Armor, Amount(ArmorDamageAmount)), true, "remoteArmorRepair"),
+            RemoteHullRepairer => (new SimRemote.Repair(SimLayer.Structure, Amount(StructureDamageAmount)), true, "remoteHullRepair"),
+            RemoteCapacitorTransmitter => (new SimRemote.Transfer(Amount(PowerTransferAmount)), false, "energyTransfer"),
+            EnergyNeutralizer => (new SimRemote.Neutralize(Amount(EnergyNeutralizerAmount), Amount(NeutralizerSignatureResolution)), false, "ewEnergyNeut"),
+            EnergyNosferatu => (new SimRemote.Drain(Amount(PowerTransferAmount), Amount(NeutralizerSignatureResolution)), true, "ewEnergyVampire"),
+            _ => null,
+        };
+    }
+
+    /// <summary>
+    /// A projected module's package: the cycle and its cost are the module's own values after dogma, and each cycle does <paramref name="remote"/> to the locked target, weakened over the
+    /// falloff beyond the module's range. The client is told the cost, the cycle and the range as it starts and stops, as for any generic module.
+    /// </summary>
+    private static SimEffect Projected(DogmaWorld world, int moduleType, EffectDef effect, long moduleId, long targetId, int repeat, (SimRemote What, bool AtEnd, string Jam) remote)
+    {
+        var attributes = world.Attributes(moduleId);
+        double Value(int attribute, double fallback) => attributes.TryGetValue(attribute, out var value) && double.IsFinite(value) ? value : fallback;
+        var durationAttribute = effect.DurationAttributeId > 0 ? effect.DurationAttributeId : Speed;
+        var duration = Math.Max(1, NpcArmament.Round6(Value(durationAttribute, Value(Speed, 1000))));
+        var capacitor = Math.Max(0, NpcArmament.Round6(Value(effect.DischargeAttributeId > 0 ? effect.DischargeAttributeId : CapacitorNeed, 0)));
+        var optimal = Math.Max(0, NpcArmament.Round6(Value(MaxRange, 0)));
+        var falloff = Math.Max(0, NpcArmament.Round6(Value(FalloffEffectiveness, 0)));
+        SimChange[] told = [new(moduleId, CapacitorNeed, capacitor), new(moduleId, durationAttribute, Three(duration)), new(moduleId, MaxRange, optimal)];
+        return new SimEffect(
+            moduleId, moduleType, effect.Id, effect.Guid, duration, capacitor, Math.Max(1, repeat), Math.Max(0, targetId), null, null, told, told, null,
+            new SimAction.Remote(remote.What, optimal, falloff, remote.AtEnd, remote.Jam));
+    }
+
     /// <summary>How many rounds a cycle burns: the module's <c>chargeRate</c>, one when it names none.</summary>
     public static long ChargesPerCycle(IReadOnlyDictionary<int, double> attributes) =>
         attributes.TryGetValue(ChargeRate, out var rate) && double.IsFinite(rate) ? Math.Max(1, (long)rate) : 1;
@@ -179,11 +229,15 @@ internal static class ModulePackages
         {
             return new Result(Turret(snapshot.World, statics, module.TypeId, type, effect, moduleId, targetId, repeat, charge), null, module.TypeId, name);
         }
+        if (RemoteOf(effect.Name, attribute => snapshot.World.Get(moduleId, attribute)) is { } remote)
+        {
+            return new Result(Projected(snapshot.World, module.TypeId, effect, moduleId, targetId, repeat, remote), null, module.TypeId, name);
+        }
         if (RepairOf(effect.Name) is { } repair)
         {
             return new Result(Repairer(snapshot.World, module.TypeId, effect, moduleId, repeat, repair), null, module.TypeId, name);
         }
-        // only the effects that change how the ship moves, the turrets and the repairers are run so far; the others come with what they need
+        // only the effects that change how the ship moves, the turrets, the repairers and the projected modules are run so far; the others come with what they need
         if (effect.Name is not (Afterburner or Microwarpdrive))
         {
             return new Result(null, "UNSUPPORTED_EFFECT", module.TypeId, name);

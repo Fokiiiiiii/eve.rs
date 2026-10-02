@@ -46,7 +46,25 @@ public class SimCodecTests
     private static SimEffect EffectOf(JsonNode e) => new(
         Wide(e, "moduleId"), (int)e["moduleType"]!, (int)e["effectId"]!, (string)e["fx"]!, (double)e["durationMs"]!, (double)e["capacitorNeed"]!, (int)e["repeat"]!, Wide(e, "targetId"),
         NumbersOf(e["on"]), NumbersOf(e["off"]), ChangesOf(e["onChanges"]!), ChangesOf(e["offChanges"]!), e["turret"] is { } turret ? TurretOf(turret) : null,
-        e["action"] is { } action ? new SimAction.Repair(Enum.Parse<SimLayer>((string)action["layer"]!, true), (double)action["amount"]!, (string)action["when"]! == "end") : null);
+        e["action"] is { } action ? ActionOf(action) : null);
+
+    private static SimAction ActionOf(JsonNode a)
+    {
+        var (amount, end) = ((double)a["amount"]!, (string)a["when"]! == "end");
+        SimLayer Layer() => Enum.Parse<SimLayer>((string)a["layer"]!, true);
+        if ((string)a["kind"]! == "repair")
+        {
+            return new SimAction.Repair(Layer(), amount, end);
+        }
+        SimRemote what = (string)a["what"]! switch
+        {
+            "repair" => new SimRemote.Repair(Layer(), amount),
+            "transfer" => new SimRemote.Transfer(amount),
+            "neutralize" => new SimRemote.Neutralize(amount, (double)a["signatureResolution"]!),
+            _ => new SimRemote.Drain(amount, (double)a["signatureResolution"]!),
+        };
+        return new SimAction.Remote(what, (double)a["optimal"]!, (double)a["falloff"]!, end, (string)a["jam"]!);
+    }
 
     private static SimTurret TurretOf(JsonNode t) => new(
         (int)t["weaponTypeId"]!, (string)t["fx"]!, VectorOf(t["rawDamage"]!), (double)t["optimalRange"]!, (double)t["falloff"]!, (double)t["trackingSpeed"]!,

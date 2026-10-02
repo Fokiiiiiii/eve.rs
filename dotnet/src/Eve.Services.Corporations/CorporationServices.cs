@@ -270,6 +270,12 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
 [Service("corpRegistry")]
 public sealed partial class CorpRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,CharacterSessions? characterSessions = null)
 {
+    public Func<System.Data.Common.DbConnection,System.Data.Common.DbTransaction,long,long,CancellationToken,Task>? AllianceAffiliationWriter
+    {
+        get => store.AllianceAffiliationWriter;
+        set => store.AllianceAffiliationWriter = value;
+    }
+
     private async Task<Corporation?> Current(ServiceCall call) =>
         call.Session.CharacterId is { } id && await characters.GetAsync(id,call.Cancellation) is { } c
             ? await store.GetAsync(c.CorporationId,call.Cancellation) : null;

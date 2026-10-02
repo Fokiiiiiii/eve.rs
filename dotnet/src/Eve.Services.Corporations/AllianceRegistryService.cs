@@ -9,7 +9,7 @@ namespace Eve.Services.Corporations;
 // Wire contracts follow EveJS v0.12.9 allianceRegistryRuntime.js and allianceViewState.js (828823a75f211fdecb945b087a26c225f111491f).
 
 [Service("allianceRegistry")]
-public sealed partial class AllianceRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now) : IBoundObjectReleaseHandler
+public sealed partial class AllianceRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,Func<long,CancellationToken,Task>? affiliationChanged = null) : IBoundObjectReleaseHandler
 {
     private readonly ConcurrentDictionary<string,long> _alliancesByObject = new(StringComparer.Ordinal);
 
@@ -19,6 +19,15 @@ public sealed partial class AllianceRegistryService(CorporationStore store,PgCha
         "description","url","startDate","memberCount","dictatorial","allowWar","currentCapital","currentPrimeHour",
         "newPrimeHour","newPrimeHourValidAfter","deleted"
     ];
+
+    private async Task ActivateDueApplicationsAsync(CancellationToken token)
+    {
+        var corporations = await store.ActivateDueAllianceApplicationsAsync(token);
+        if (affiliationChanged is null) return;
+        foreach (var corporationId in corporations)
+            foreach (var character in await characters.ForCorporationAsync(corporationId,token))
+                await affiliationChanged(character.Id,token);
+    }
 
     private static (string Key,PyValue Value)[] AllianceFields(Alliance a,long memberCount) =>
     [
@@ -59,6 +68,7 @@ public sealed partial class AllianceRegistryService(CorporationStore store,PgCha
     [Method("GetAlliance")]
     public async ValueTask<PyValue> GetAlliance(ServiceCall call)
     {
+        await ActivateDueApplicationsAsync(call.Cancellation);
         if (await store.AllianceAsync(await Id(call),call.Cancellation) is not { } alliance) return PyNone.Instance;
         var counts = await store.AllianceCharacterCountsAsync([alliance.Id],call.Cancellation);
         var fields = AllianceFields(alliance,counts.GetValueOrDefault(alliance.Id));
@@ -72,6 +82,7 @@ public sealed partial class AllianceRegistryService(CorporationStore store,PgCha
     [Method("GetRankedAlliances")]
     public async ValueTask<PyValue> GetRankedAlliances(ServiceCall call)
     {
+        await ActivateDueApplicationsAsync(call.Cancellation);
         var maxLength = call.Arg(0) is PyNone ? 100 : Math.Max(0,Number(call.Arg(0)));
         var alliances = await store.RankedAlliancesAsync(maxLength == 0 ? null : maxLength,call.Cancellation);
         var counts = await store.AllianceCharacterCountsAsync(alliances.Select(alliance => alliance.Id).ToArray(),call.Cancellation);
@@ -84,12 +95,16 @@ public sealed partial class AllianceRegistryService(CorporationStore store,PgCha
     private static PyValue[] Line(AllianceMember m,long? viewer) => [new PyInt(m.CorporationId),new PyInt(m.AllianceId),
         m.CorporationId == viewer ? CorporationWire.Id(m.ChosenExecutorId) : PyNone.Instance,CorporationWire.Time(m.StartedMs),new PyInt(0)];
     [Method("GetAllianceMembers")]
-    public async ValueTask<PyValue> GetAllianceMembers(ServiceCall call) =>
-        Py.Rowset(MemberHeader,(await store.AllianceMembersAsync(await Id(call),call.Cancellation)).Select(m => (PyValue)new PyList(Line(m,null))));
+    public async ValueTask<PyValue> GetAllianceMembers(ServiceCall call)
+    {
+        await ActivateDueApplicationsAsync(call.Cancellation);
+        return Py.Rowset(MemberHeader,(await store.AllianceMembersAsync(await Id(call),call.Cancellation)).Select(m => (PyValue)new PyList(Line(m,null))));
+    }
 
     [Method("GetMembers")]
     public async ValueTask<PyValue> GetMembers(ServiceCall call)
     {
+        await ActivateDueApplicationsAsync(call.Cancellation);
         if (call.Session.CharacterId is not { } id || await characters.GetAsync(id,call.Cancellation) is not { AllianceId:not null } c)
             throw MachoErrors.ThrowUserError("CustomInfo",("info",new PyStr("Alliance membership required.")));
         var members = await store.AllianceMembersAsync(c.AllianceId.Value,call.Cancellation);
@@ -101,6 +116,7 @@ public sealed partial class AllianceRegistryService(CorporationStore store,PgCha
     [Method("GetEmploymentRecord")]
     public async ValueTask<PyValue> GetEmploymentRecord(ServiceCall call)
     {
+        await ActivateDueApplicationsAsync(call.Cancellation);
         var requested = Number(call.Arg(0));
         if (requested > 0 && await store.GetAsync(requested,call.Cancellation) is { } corporation)
         {
@@ -132,6 +148,7 @@ public sealed partial class AllianceRegistryService(CorporationStore store,PgCha
     [Method("GetDaysInAlliance")]
     public async ValueTask<PyValue> GetDaysInAlliance(ServiceCall call)
     {
+        await ActivateDueApplicationsAsync(call.Cancellation);
         var alliance = await Id(call);
         var corporationId = Number(call.Arg(1));
         if (alliance <= 0 || corporationId <= 0 || await store.GetAsync(corporationId,call.Cancellation) is not { } corporation || corporation.AllianceId != alliance)
@@ -143,6 +160,7 @@ public sealed partial class AllianceRegistryService(CorporationStore store,PgCha
     [Method("GetAllianceMembersOlderThan")]
     public async ValueTask<PyValue> GetAllianceMembersOlderThan(ServiceCall call)
     {
+        await ActivateDueApplicationsAsync(call.Cancellation);
         var alliance = await Id(call);
         var minimumDays = Math.Max(0,Number(call.Arg(1)));
         var members = await store.AllianceMembersAsync(alliance,call.Cancellation);
@@ -158,6 +176,7 @@ public sealed partial class AllianceRegistryService(CorporationStore store,PgCha
 
     private async Task<(long Actor,long Alliance)> RequireAllianceExecutorDirector(ServiceCall call)
     {
+        await ActivateDueApplicationsAsync(call.Cancellation);
         if (call.Session.CharacterId is not { } actor) throw AllianceAccessDenied();
         if (await characters.GetAsync(actor,call.Cancellation) is not { } character) throw AllianceAccessDenied();
         var corporation = await store.GetAsync(character.CorporationId,call.Cancellation);

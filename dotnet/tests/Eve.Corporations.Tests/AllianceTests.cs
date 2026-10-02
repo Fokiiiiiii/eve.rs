@@ -245,6 +245,50 @@ public class AllianceTests
     }
 
     [PgFact]
+    public async Task Alliance_registry_requests_activate_due_applications_and_notify_after_commit()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (executor,_) = await Founder(rig,"Due Executor","DUEEX");
+        var (applicant,applicantCorp) = await Founder(rig,"Due Applicant","DUEAP");
+        var alliance = await rig.Store.CreateAllianceAsync(executor,Request,"due");
+        var application = await rig.Store.ApplyToAllianceAsync(applicant,alliance.Id,"Join after a day");
+        await rig.Store.RespondToAllianceAsync(executor,application,2);
+
+        var changedCharacters = new List<long>();
+        var service = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
+            rig.Store,rig.Characters,() => rig.Now,async (characterId,token) =>
+            {
+                Assert.Equal(alliance.Id,(await rig.Characters.GetAsync(characterId,token))!.AllianceId);
+                changedCharacters.Add(characterId);
+            });
+        Eve.Services.ServiceCall Call(long actor,string method,params Eve.Marshal.PyValue[] args)
+        {
+            var session = new Eve.Services.ClientSession { SessionId=actor };
+            session.Set("charid",new Eve.Marshal.PyInt(actor));
+            return new() { Session=session,Method=method,Args=args };
+        }
+
+        rig.Now += Eve.Corporations.AllianceRules.ApplicationDelayMs - 1;
+        await service.CallAsync(Call(executor,"GetAllianceMembers",new Eve.Marshal.PyInt(alliance.Id)));
+        Assert.Null((await rig.Characters.GetAsync(applicant))!.AllianceId);
+        Assert.Single(await rig.Store.AllianceMembersAsync(alliance.Id));
+        Assert.Equal(2,(await rig.Store.AllianceApplicationsAsync(alliance.Id)).Single().Status);
+        Assert.Empty(changedCharacters);
+
+        rig.Now++;
+        var applications = Assert.IsType<Eve.Marshal.PyObjectEx>(
+            await service.CallAsync(Call(executor,"GetApplications")));
+        var effectiveApplication = Assert.IsType<Eve.Marshal.PyPackedRow>(
+            applications.Dict.Single(row => row.Key == new Eve.Marshal.PyInt(applicantCorp.Id)).Value);
+        Assert.Equal(new Eve.Marshal.PyInt(3),effectiveApplication.Values[3]);
+        Assert.Equal([applicant],changedCharacters);
+        Assert.Equal(alliance.Id,(await rig.Characters.GetAsync(applicant))!.AllianceId);
+        Assert.Equal(alliance.Id,(await rig.Store.GetAsync(applicantCorp.Id))!.AllianceId);
+        Assert.Equal(3,(await rig.Store.AllianceApplicationsAsync(alliance.Id)).Single().Status);
+        Assert.Equal(2,(await rig.Store.AllianceMembersAsync(alliance.Id)).Count);
+    }
+
+    [PgFact]
     public async Task Corp_registry_application_calls_use_session_corporation_for_create_and_withdrawal()
     {
         await using var rig = await Rig.CreateAsync();

@@ -18,6 +18,7 @@
     <Project Path="src/Eve.Events/Eve.Events.csproj" />
     <Project Path="src/Eve.Fitting/Eve.Fitting.csproj" />
     <Project Path="src/Eve.Ships/Eve.Ships.csproj" />
+    <Project Path="src/Eve.ReadSide/Eve.ReadSide.csproj" />
     <Project Path="src/Eve.Relations/Eve.Relations.csproj" />
     <Project Path="src/Eve.Scheduler/Eve.Scheduler.csproj" />
     <Project Path="src/Eve.Skills/Eve.Skills.csproj" />
@@ -58,6 +59,7 @@
     <Project Path="tests/Eve.Fitting.Tests/Eve.Fitting.Tests.csproj" />
     <Project Path="tests/Eve.Services.Wallet.Tests/Eve.Services.Wallet.Tests.csproj" />
     <Project Path="tests/Eve.Ships.Tests/Eve.Ships.Tests.csproj" />
+    <Project Path="tests/Eve.ReadSide.Tests/Eve.ReadSide.Tests.csproj" />
     <Project Path="tests/Eve.Relations.Tests/Eve.Relations.Tests.csproj" />
     <Project Path="tests/Eve.Scheduler.Tests/Eve.Scheduler.Tests.csproj" />
     <Project Path="tests/Eve.Skills.Tests/Eve.Skills.Tests.csproj" />

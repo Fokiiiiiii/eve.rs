@@ -164,9 +164,9 @@ unavailable checks must be recorded separately in NATIVE_MIGRATION.md.
 - [ ] Corporation Public Info
 - [ ] Employment History
 - [ ] Corporation Roles
-- [ ] Corporation Medals
+- [ ] Corporation Medals (seven RPCs implemented; PG18 store integration pending)
 - [ ] Alliance Core
-- [ ] Alliance Membership
+- [ ] Alliance Membership (due transitions run on Registry requests; durable scheduling/war holds and PG18 integration pending)
 - [ ] Alliance Public Info
 - [ ] Wars information read-side
 - [ ] Standing
@@ -176,7 +176,7 @@ unavailable checks must be recorded separately in NATIVE_MIGRATION.md.
 - [ ] Market Price History
 - [ ] Market Topology
 - [ ] Market Cache
-- [ ] NPC seeded market orders (v4 TQ ESI capture at NPC stations; live seeded-runtime acceptance pending)
+- [ ] NPC seeded market orders (v4 TQ ESI capture at NPC stations; live order validation/capture acceptance pending after PG18)
 - [ ] Agents read-side
 - [ ] Mission Journal read-side
 - [ ] Industry Job read-side

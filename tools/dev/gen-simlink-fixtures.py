@@ -96,7 +96,9 @@ def effect(e):
             body += numbers(n)
     body += changes(e["onChanges"]) + changes(e["offChanges"])
     body = body + turret(gun) if gun else body
-    if act and act["kind"] == "repair":
+    if act and act["kind"] == "smartbomb":
+        body += bytes([2]) + struct.pack("<d", act["range"]) + struct.pack("<4d", *act["damage"]) + bytes([1 if act["hurtsPilots"] else 0])
+    elif act and act["kind"] == "repair":
         body += bytes([0, LAYERS[act["layer"]], 1 if act["when"] == "end" else 0]) + struct.pack("<d", act["amount"])
     elif act:
         what = act["what"]
@@ -241,8 +243,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 11},
-    {"name": "hello ack", "kind": "HelloAck", "version": 11, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 12},
+    {"name": "hello ack", "kind": "HelloAck", "version": 12, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -386,6 +388,11 @@ valid = [
                 "durationMs": 5000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "9988400003001",
                 "action": {"kind": "remote", "what": "scramble", "strength": 2.0, "blocksMwd": True, "optimal": 7500.0,
                            "falloff": 0.0, "when": "start", "jam": "warpScramblerMWD"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a smartbomb", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 1563, "effectId": 38, "fx": "effects.EmpWave",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1000, "targetId": "0",
+                "action": {"kind": "smartbomb", "range": 3000.0, "damage": [50.0, 0.0, 0.0, 0.0], "hurtsPilots": True},
                 "onChanges": [], "offChanges": []}},
     {"name": "activate a tracking disruptor", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002812", "moduleType": 2108, "effectId": 6424, "fx": "effects.TrackingDisruption",

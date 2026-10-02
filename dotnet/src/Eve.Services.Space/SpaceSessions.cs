@@ -457,6 +457,13 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         {
             return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
         }
+        // a smartbomb hurts whoever is in its field: where the safety of the pilot stops fire, the simulation is told not to hurt pilots
+        if (package.Action is SimAction.Smartbomb bomb
+            && _systems.Get(pilot.SolarSystemId) is { } field
+            && WeaponSafety.StopsFire(Security.ClassFromLevel(field.Security)))
+        {
+            package = package with { Action = bomb with { HurtsPilots = false } };
+        }
         var reply = await AskSimAsync(id, () => _sim.ActivateAsync(id, package, cancellationToken), session);
         if (!reply.Accepted)
         {

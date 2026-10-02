@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 11,
-   "hex": "03000000010b00"
+   "version": 12,
+   "hex": "03000000010c00"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 11,
+   "version": 12,
    "pollHz": 4,
-   "hex": "07000000020b0004000000"
+   "hex": "07000000020c0004000000"
   },
   {
    "name": "enter by undocking",
@@ -975,6 +975,35 @@
     "offChanges": []
    },
    "hex": "82000000134f2c3859955c0600fab6089b15090000bf0100002e1700001400656666656374732e57617270536372616d626c65000000000088b3400000000000001440e8030000b9b7089b15090000080000000000000000010000000000004cbd400000000000000000100077617270536372616d626c65724d574407000000000000004001"
+  },
+  {
+   "name": "activate a smartbomb",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 1563,
+    "effectId": 38,
+    "fx": "effects.EmpWave",
+    "durationMs": 10000.0,
+    "capacitorNeed": 30.0,
+    "repeat": 1000,
+    "targetId": "0",
+    "action": {
+     "kind": "smartbomb",
+     "range": 3000.0,
+     "damage": [
+      50.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "hurtsPilots": true
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "79000000134f2c3859955c0600fdb6089b150900001b060000260000000f00656666656374732e456d7057617665000000000088c3400000000000003e40e8030000000000000000000008000000000000000002000000000070a740000000000000494000000000000000000000000000000000000000000000000001"
   },
   {
    "name": "activate a tracking disruptor",

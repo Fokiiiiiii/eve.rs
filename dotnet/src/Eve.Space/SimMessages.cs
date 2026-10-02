@@ -251,6 +251,13 @@ public abstract record SimAction
     /// <paramref name="Falloff"/> more over which it weakens); what it does lands as the cycle ends or as it begins. <paramref name="Jam"/> is what the target's HUD calls it (<c>remoteArmorRepair</c>, <c>ewEnergyNeut</c>).
     /// </summary>
     public sealed record Remote(SimRemote What, double Optimal, double Falloff, bool AtCycleEnd, string Jam) : SimAction;
+
+    /// <summary>
+    /// A smartbomb: as each cycle begins every ship within <paramref name="Range"/> of the surface of the ship that runs it takes <paramref name="Damage"/> (em, thermal, kinetic,
+    /// explosive), with no target and no roll. <paramref name="HurtsPilots"/> is false where the safety of the pilot would stop it: it does not start with another pilot in its range
+    /// (<c>SafetyActivated</c>) and stops when one comes in.
+    /// </summary>
+    public sealed record Smartbomb(double Range, IReadOnlyList<double> Damage, bool HurtsPilots) : SimAction;
 }
 
 /// <summary>What a module that is projected at another ship does to it each cycle.</summary>

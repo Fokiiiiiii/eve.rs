@@ -254,6 +254,87 @@ impl Scene {
         })
     }
 
+    /// The ships of the scene within `range` of the surface of the ship of `session`, not its own and not in warp: `(session, ship id)`, by ship id.
+    pub(crate) fn in_smartbomb_range(&self, session: SessionId, range: f64) -> Vec<(SessionId, i64)> {
+        let mut inside: Vec<(SessionId, i64)> = self
+            .pilots
+            .iter()
+            .filter(|(other, pilot)| {
+                **other != session && !pilot.flight.as_ref().is_some_and(|flight| flight.is_warping())
+            })
+            .filter(|(other, _)| self.apart(session, **other).is_some_and(|apart| apart <= range + 1e-6))
+            .map(|(other, pilot)| (*other, pilot.ship.spec.ship_id))
+            .collect();
+        inside.sort_by_key(|(_, ship_id)| *ship_id);
+        inside
+    }
+
+    /// A smartbomb goes off as a cycle begins: every ship in its range takes the damage whole (a ship in its undock protection does not), and each is aggressed and
+    /// told as a shot is. Where the safety forbids it (`hurts_pilots` false) and a pilot is in range, nothing is hurt and the effect stops at once.
+    pub(crate) fn smartbomb(
+        &mut self,
+        session: SessionId,
+        effect: &Effect,
+        range: f64,
+        damage: Damage,
+        hurts_pilots: bool,
+        at: i64,
+    ) -> Vec<Out> {
+        let Some(attacker_id) = self.pilots.get(&session).map(|pilot| pilot.ship.spec.ship_id) else {
+            return Vec::new();
+        };
+        let in_range = self.in_smartbomb_range(session, range);
+        if !hurts_pilots && in_range.iter().any(|(other, _)| !is_npc_session(*other)) {
+            return self.stop_module(session, effect.module_id, at);
+        }
+        let owner = self.combat_owner(session);
+        let mut out = Vec::new();
+        for (target_session, target_id) in in_range {
+            if self.pilots.get(&target_session).is_none_or(|pilot| pilot.protected_until > at) {
+                continue;
+            }
+            let shot =
+                Shot { hit: true, wrecking: false, quality: 1.0, chance_to_hit: 1.0, roll: 0.0, damage };
+            let (told, hit) = self.damage(target_id, damage, at);
+            out.extend(told);
+            let applied = hit.map_or(0.0, |hit| hit.taken.shield + hit.taken.armor + hit.taken.structure);
+            let destroyed = hit.is_some_and(|hit| hit.destroyed);
+            let target_type_id = self.pilots.get(&target_session).map_or(0, |pilot| pilot.ship.spec.type_id);
+            self.aggressions.push(Aggression {
+                attacker_ship: attacker_id,
+                target_ship: target_id,
+                module_type_id: effect.module_type,
+                source_owner_id: owner,
+                target_type_id,
+            });
+            let message = |for_the_attacker| {
+                damage_message(
+                    for_the_attacker,
+                    attacker_id,
+                    target_id,
+                    effect.module_type,
+                    applied,
+                    &shot,
+                    owner,
+                )
+            };
+            for (who, mine) in [(session, true), (target_session, false)] {
+                if !is_npc_session(who) {
+                    out.push(Out::Notify {
+                        session: who,
+                        name: "OnDamageMessage",
+                        id_type: "clientID",
+                        args: vec![message(mine)],
+                    });
+                }
+            }
+            if destroyed {
+                out.extend(self.destroy(target_session, Some(session), at));
+            }
+        }
+        out
+    }
+
     /// A turret shoots at the start of a cycle: one shot, rolled; a hit hurts the target (whoever sees it is told its damage state, its pilot the
     /// attributes that changed), and the combat log of each pilot is told the shot, hit or miss.
     pub(crate) fn fire_turret(&mut self, session: SessionId, effect: &Effect, at: i64) -> Vec<Out> {

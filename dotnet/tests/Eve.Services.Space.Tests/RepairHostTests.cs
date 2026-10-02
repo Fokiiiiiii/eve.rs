@@ -38,7 +38,7 @@ public class RepairHostTests
     {
         await using var connection = await rig.Source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
-        await rig.Skills.GrantAsync(connection, transaction, character, new[] { 3392, 3393, 3416, 3419, 3413, 3426, 3318, 3422, 3423, 16069, 27902, 3435, 3449, 3433, 19921, 3427, 3434 }.Select(type => new Eve.Skills.CharacterSkill(type, 5, 0)));
+        await rig.Skills.GrantAsync(connection, transaction, character, new[] { 3392, 3393, 3416, 3419, 3413, 3426, 3318, 3422, 3423, 16069, 27902, 3435, 3449, 3433, 19921, 3427, 3434, 3421 }.Select(type => new Eve.Skills.CharacterSkill(type, 5, 0)));
         await transaction.CommitAsync();
     }
 
@@ -189,6 +189,7 @@ public class ProjectedHostTests
     }
 
     private const int MidSlot = 19;
+    private const int SmallEmpSmartbomb = 1563;
     private const int StasisWebifier = 526, WarpScrambler = 447, WarpDisruptor = 3242, TargetPainter = 12709, SensorDampener = 1968, RadarJammer = 1956, MultispectralJammer = 1957, TrackingDisruptorModule = 2108;
 
     private static async Task<(SimAction.Remote Action, SimEffect Effect, Rig Rig, Eve.Characters.Created Character, long Module)> StartedAsync(int typeId, string effectName)
@@ -257,6 +258,27 @@ public class ProjectedHostTests
             Assert.True(jam.Gravimetric == jam.Ladar && jam.Ladar == jam.Magnetometric && jam.Magnetometric == jam.Radar && jam.Radar > 0, $"{jam}");
             Assert.Equal((19_200d, 18_000d), (multi.Optimal, multi.Falloff));
         }
+    }
+
+    [PgFact]
+    public async Task A_smartbomb_is_started_with_its_field_and_its_damage_from_dogma_and_does_not_hurt_pilots_where_the_safety_forbids_it()
+    {
+        var (rig, session, character, module) = await ReadyAsync(SmallEmpSmartbomb, HighSlot);
+        await using var _ = rig;
+        // it needs no target
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, module, "empWave", 0, 1000, CancellationToken.None));
+        var effect = Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect;
+        var bomb = Assert.IsType<SimAction.Smartbomb>(effect.Action);
+        Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 99), 6), bomb.Range);
+        Assert.True(bomb.Range > 0);
+        Assert.Equal(
+            [Math.Round(await ValueAsync(rig, character, module, 114), 6), Math.Round(await ValueAsync(rig, character, module, 118), 6), Math.Round(await ValueAsync(rig, character, module, 117), 6), Math.Round(await ValueAsync(rig, character, module, 116), 6)],
+            bomb.Damage);
+        Assert.True(bomb.Damage.Sum() > 0);
+        Assert.Equal(await ValueAsync(rig, character, module, 73), effect.DurationMs, 3);
+        Assert.Equal(0, effect.TargetId);
+        // the rig's system is not null security: the simulation is told not to hurt pilots with it
+        Assert.False(bomb.HurtsPilots);
     }
 
     [PgFact]

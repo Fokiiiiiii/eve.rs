@@ -12,7 +12,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Charge, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 11;
+pub const PROTOCOL_VERSION: u16 = 12;
 
 /// The message kinds.
 pub mod kind {
@@ -711,6 +711,14 @@ fn put_action(out: &mut Vec<u8>, action: &Action) {
             out.push(when_byte(when));
             out.extend_from_slice(&amount.to_le_bytes());
         }
+        Action::Smartbomb { range, damage, hurts_pilots } => {
+            out.push(2);
+            out.extend_from_slice(&range.to_le_bytes());
+            for number in damage {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
+            out.push(u8::from(*hurts_pilots));
+        }
         Action::Remote { what, reach, when, jam } => {
             out.push(1);
             out.push(when_byte(when));
@@ -828,6 +836,16 @@ fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
                 _ => return Err(DecodeError::BadValue("remote")),
             };
             Ok(Action::Remote { what, reach, when, jam })
+        }
+        2 => {
+            let range = reader.f64()?;
+            let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+            let hurts_pilots = match reader.u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(DecodeError::BadValue("hurts_pilots")),
+            };
+            Ok(Action::Smartbomb { range, damage, hurts_pilots })
         }
         _ => Err(DecodeError::BadValue("action")),
     }

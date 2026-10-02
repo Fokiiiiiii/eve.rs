@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 11;
+    public const ushort ProtocolVersion = 12;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -298,6 +298,17 @@ public static class SimCodec
                         throw new SimLinkException(SimLinkError.BadValue, "bad repair");
                     }
                     return new SimAction.Repair((SimLayer)layer, r.F64(), when == 1);
+                }
+            case 2:
+                {
+                    var range = r.F64();
+                    double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    var hurts = r.U8();
+                    if (hurts > 1)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad smartbomb");
+                    }
+                    return new SimAction.Smartbomb(range, damage, hurts == 1);
                 }
             case 1:
                 {
@@ -788,6 +799,15 @@ public static class SimCodec
                 w.U8((byte)repair.Layer);
                 w.U8(repair.AtCycleEnd ? (byte)1 : (byte)0);
                 w.F64(repair.Amount);
+                break;
+            case SimAction.Smartbomb bomb:
+                w.U8(2);
+                w.F64(bomb.Range);
+                foreach (var number in bomb.Damage)
+                {
+                    w.F64(number);
+                }
+                w.U8(bomb.HurtsPilots ? (byte)1 : (byte)0);
                 break;
             case SimAction.Remote remote:
                 w.U8(1);

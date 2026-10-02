@@ -32,6 +32,7 @@ REMOTE_ARMOR = 11355
 WEBIFIER = 526
 RADAR_JAMMER = 1956
 TRACKING_DISRUPTOR = 2108
+SMALL_SMARTBOMB = 1563
 pytestmark = [
     pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server"),
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SLOW") != "1", reason="a minute: set EVE_LIVE_SLOW=1"),
@@ -229,3 +230,18 @@ def test_a_tracking_disruptor_runs_against_a_rat():
         f.who.call_bound(f.dogma[0], "Deactivate", f.module, "shipModuleTrackingDisruptor")
         ended = watch(f.only, 15.0, until=lambda seen: any(e["name"] == "OnGodmaShipEffect" and number(effect_of(e)[0]) == f.module and not effect_of(e)[3] for e in seen["who"]))
         assert any(e["name"] == "OnGodmaShipEffect" and number(effect_of(e)[0]) == f.module and not effect_of(e)[3] for e in ended["who"]), "the disruptor did not stop"
+
+
+def test_a_smartbomb_hurts_the_rat_that_comes_into_its_field():
+    """A smartbomb needs no lock: the pilot flies at a belt rat, and a cycle that begins with the rat in the field hurts it and tells the pilot (a damage message of its own)."""
+    with fight("bomb", ("Energy Pulse Weapons",), SMALL_SMARTBOMB) as f:
+        outcome(lambda: f.who.call_bound(f.beyonce[0], "CmdFollowBall", f.rat, 1000))
+        _, refused = outcome(lambda: f.who.call_bound(f.dogma[0], "Activate", f.module, "empWave", 0, 1000))
+        assert refused is None, base.brief(refused)
+        deadline = time.monotonic() + 90.0
+        hurt = []
+        while not hurt and time.monotonic() < deadline:
+            f.slash("/heal")
+            seen = watch(f.only, 5.0)["who"]
+            hurt = [e for e in seen if e["name"] == "OnDamageMessage" and "me" in str(e)]
+        assert hurt, "the smartbomb never hurt the rat"

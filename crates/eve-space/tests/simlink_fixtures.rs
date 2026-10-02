@@ -175,6 +175,19 @@ fn effect_of(case: &Value) -> Effect {
             };
             let when = if a["when"] == "end" { Applies::CycleEnd } else { Applies::CycleStart };
             let amount = a["amount"].as_f64().unwrap_or(0.0);
+            if a["kind"] == "smartbomb" {
+                let damage = a["damage"].as_array().unwrap();
+                return Action::Smartbomb {
+                    range: a["range"].as_f64().unwrap(),
+                    damage: [
+                        damage[0].as_f64().unwrap(),
+                        damage[1].as_f64().unwrap(),
+                        damage[2].as_f64().unwrap(),
+                        damage[3].as_f64().unwrap(),
+                    ],
+                    hurts_pilots: a["hurtsPilots"].as_bool().unwrap(),
+                };
+            }
             if a["kind"] == "repair" {
                 return Action::Repair { layer: layer(), amount, when };
             }

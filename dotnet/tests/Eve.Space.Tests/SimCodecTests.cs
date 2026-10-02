@@ -56,6 +56,10 @@ public class SimCodecTests
 
     private static SimAction ActionOf(JsonNode a)
     {
+        if ((string)a["kind"]! == "smartbomb")
+        {
+            return new SimAction.Smartbomb((double)a["range"]!, Four(a["damage"]!), (bool)a["hurtsPilots"]!);
+        }
         var (amount, end) = (a["amount"] is { } given ? (double)given : 0d, (string)a["when"]! == "end");
         SimLayer Layer() => Enum.Parse<SimLayer>((string)a["layer"]!, true);
         if ((string)a["kind"]! == "repair")

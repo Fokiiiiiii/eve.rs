@@ -40,6 +40,7 @@ internal static class ModulePackages
     private const int FalloffEffectiveness = 2044;
     private const int NeutralizerSignatureResolution = 2451;
     private const int WebSpeedFactor = 20;
+    private const int EmpFieldRange = 99;
     private const int RangeDisruption = 351;
     private const int FalloffDisruption = 349;
     private const int TrackingDisruption = 767;
@@ -74,6 +75,7 @@ internal static class ModulePackages
     private const string WarpDisruptor = "warpDisrupt";
     private const string EcmJammer = "remoteECMFalloff";
     private const string TrackingDisruptor = "shipModuleTrackingDisruptor";
+    private const string EmpWave = "empWave";
     private const string ProjectileFired = "projectileFired";
     private const string TurretFitted = "turretfitted";
 
@@ -139,6 +141,27 @@ internal static class ModulePackages
             charge is null ? null : new SimTurretCharge(charge.TypeId, charge.Flag, charge.Quantity, ChargesPerCycle(attributes)));
         SimChange[] told = [new(moduleId, CapacitorNeed, capacitor), new(moduleId, Speed, Three(duration)), new(moduleId, MaxRange, optimal)];
         return new SimEffect(moduleId, moduleType, effect.Id, fx, duration, capacitor, Math.Max(1, repeat), Math.Max(0, targetId), null, null, told, told, gun);
+    }
+
+    /// <summary>
+    /// A smartbomb's package (<c>smartbombRuntime.js</c> of the reference, ADR 0009): the cycle and its cost are the module's own values after dogma, the field is its
+    /// <c>empFieldRange</c> and each cycle does its damage times the damage multiplier to every ship in it. It starts as one that hurts pilots: the host takes that back
+    /// where the safety of the pilot would stop it.
+    /// </summary>
+    private static SimEffect Smartbomb(DogmaWorld world, int moduleType, EffectDef effect, long moduleId, int repeat)
+    {
+        var attributes = world.Attributes(moduleId);
+        double Value(int attribute, double fallback) => attributes.TryGetValue(attribute, out var value) && double.IsFinite(value) ? value : fallback;
+        var durationAttribute = effect.DurationAttributeId > 0 ? effect.DurationAttributeId : Speed;
+        var duration = Math.Max(1, NpcArmament.Round6(Value(durationAttribute, Value(Speed, 1000))));
+        var capacitor = Math.Max(0, NpcArmament.Round6(Value(effect.DischargeAttributeId > 0 ? effect.DischargeAttributeId : CapacitorNeed, 0)));
+        var multiplier = Math.Max(0, Value(DamageMultiplier, 1));
+        double Damage(int attribute) => NpcArmament.Round6(Math.Max(0, Value(attribute, 0)) * multiplier);
+        var range = Math.Max(0, NpcArmament.Round6(Value(EmpFieldRange, 0)));
+        SimChange[] told = [new(moduleId, CapacitorNeed, capacitor), new(moduleId, durationAttribute, Three(duration)), new(moduleId, EmpFieldRange, range)];
+        return new SimEffect(
+            moduleId, moduleType, effect.Id, effect.Guid, duration, capacitor, Math.Max(1, repeat), 0, null, null, told, told, null,
+            new SimAction.Smartbomb(range, [Damage(EmDamage), Damage(ThermalDamage), Damage(KineticDamage), Damage(ExplosiveDamage)], true));
     }
 
     /// <summary>The layer a local repair effect mends, the attribute that holds the points of a cycle and whether they are given as the cycle begins (the reference's <c>START_OF_CYCLE_EFFECTS</c>).</summary>
@@ -261,6 +284,10 @@ internal static class ModulePackages
         if (RemoteOf(effect.Name, attribute => snapshot.World.Get(moduleId, attribute)) is { } remote)
         {
             return new Result(Projected(snapshot.World, module.TypeId, effect, moduleId, targetId, repeat, remote), null, module.TypeId, name);
+        }
+        if (effect.Name == EmpWave)
+        {
+            return new Result(Smartbomb(snapshot.World, module.TypeId, effect, moduleId, repeat), null, module.TypeId, name);
         }
         if (RepairOf(effect.Name) is { } repair)
         {

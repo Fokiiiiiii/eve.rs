@@ -38,58 +38,71 @@ public sealed partial class CorporationStore
         return rows;
     }
 
-    public Task<Alliance> CreateAllianceAsync(long founder,NewAlliance input,string operationKey,CancellationToken token = default)
+    public Task<Alliance> CreateAllianceAsync(long founder, NewAlliance input, string operationKey, CancellationToken token = default) =>
+        CreateAllianceCoreAsync(founder, input, operationKey, null, token);
+
+    public Task<Alliance> CreateAllianceAsync(long founder, NewAlliance input, string operationKey,
+        AllianceAffiliationMutationCallback writeAffiliation, CancellationToken token = default) =>
+        CreateAllianceCoreAsync(founder, input, operationKey, writeAffiliation, token);
+
+    private Task<Alliance> CreateAllianceCoreAsync(long founder, NewAlliance input, string operationKey,
+        AllianceAffiliationMutationCallback? writeAffiliation, CancellationToken token)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(operationKey);
         var request = AllianceRules.Validate(input);
-        return WriteAsync(async (connection,tx) =>
+        return WriteAsync(async (connection, tx) =>
         {
-            var character = await _characters.LockAndGetAsync(connection,tx,founder,token) ?? throw new CorporationError("ALLIANCE_FOUNDER_INVALID");
-            await using (var prior = Command(connection,tx,$"SELECT {AllianceColumns} FROM {_schema}.alliances WHERE founding_key=$1",operationKey))
+            var character = await _characters.LockAndGetAsync(connection, tx, founder, token) ?? throw new CorporationError("ALLIANCE_FOUNDER_INVALID");
+            Alliance? priorAlliance = null;
+            await using (var prior = Command(connection, tx, $"SELECT {AllianceColumns} FROM {_schema}.alliances WHERE founding_key=$1", operationKey))
             await using (var r = await prior.ExecuteReaderAsync(token))
+                if (await r.ReadAsync(token)) priorAlliance = ReadAlliance(r);
+            if (priorAlliance is { } old)
             {
-                if (await r.ReadAsync(token))
-                {
-                    var old = ReadAlliance(r);
-                    if (old.CreatorCharacterId != founder || old.CreatorCorporationId != character.CorporationId || old.Name != request.Name ||
-                        old.ShortName != request.ShortName || old.Description != request.Description || old.Url != request.Url)
-                        throw new CorporationError("ALLIANCE_FOUNDING_OPERATION_MISMATCH");
-                    return old;
-                }
+                if (old.CreatorCharacterId != founder || old.CreatorCorporationId != character.CorporationId || old.Name != request.Name ||
+                    old.ShortName != request.ShortName || old.Description != request.Description || old.Url != request.Url)
+                    throw new CorporationError("ALLIANCE_FOUNDING_OPERATION_MISMATCH");
+                if (writeAffiliation is not null)
+                    await writeAffiliation(connection, tx, old.CreatorCorporationId, old.Id, token);
+                return old;
             }
-            var corp = await RequireRoleAsync(connection,tx,character.CorporationId,founder,CorporationRoles.Director,token);
+
+            var corp = await RequireRoleAsync(connection, tx, character.CorporationId, founder, CorporationRoles.Director, token);
             if (corp.CeoId != founder) throw new CorporationError("ALLIANCE_FOUNDER_INVALID");
             if (corp.AllianceId is not null) throw new CorporationError("CORPORATION_ALREADY_IN_ALLIANCE");
-            if (await _skills.LevelAsync(connection,tx,founder,3732,token) < 5) throw new CorporationError("ALLIANCE_EMPIRE_CONTROL_REQUIRED");
-            await using (var npc = Command(connection,tx,$"SELECT 1 FROM {_schema}.owner_names WHERE ticker_key=$1 AND is_npc AND NOT deleted",Key(request.ShortName)))
+            if (await _skills.LevelAsync(connection, tx, founder, 3732, token) < 5) throw new CorporationError("ALLIANCE_EMPIRE_CONTROL_REQUIRED");
+            await using (var npc = Command(connection, tx, $"SELECT 1 FROM {_schema}.owner_names WHERE ticker_key=$1 AND is_npc AND NOT deleted", Key(request.ShortName)))
                 if (await npc.ExecuteScalarAsync(token) is not null) throw new CorporationError("ALLIANCE_SHORT_NAME_TAKEN");
-            await using var allocate = Command(connection,tx,$"SELECT nextval('{_schema}.alliance_ids')");
+            await using var allocate = Command(connection, tx, $"SELECT nextval('{_schema}.alliance_ids')");
             var id = (long)(await allocate.ExecuteScalarAsync(token))!;
             try
             {
-                await using var owner = Command(connection,tx,$"INSERT INTO {_schema}.owner_names(owner_id,name_key,ticker_key) VALUES($1,$2,$3)",id,Key(request.Name),Key(request.ShortName));
+                await using var owner = Command(connection, tx, $"INSERT INTO {_schema}.owner_names(owner_id,name_key,ticker_key) VALUES($1,$2,$3)",
+                    id, Key(request.Name), Key(request.ShortName));
                 await owner.ExecuteNonQueryAsync(token);
             }
             catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.UniqueViolation)
             {
-                throw new CorporationError(error.ConstraintName?.Contains("ticker",StringComparison.Ordinal) == true ? "ALLIANCE_SHORT_NAME_TAKEN" : "ALLIANCE_NAME_TAKEN");
+                throw new CorporationError(error.ConstraintName?.Contains("ticker", StringComparison.Ordinal) == true
+                    ? "ALLIANCE_SHORT_NAME_TAKEN" : "ALLIANCE_NAME_TAKEN");
             }
             var now = _now();
-            await using (var insert = Command(connection,tx,$"""
+            await using (var insert = Command(connection, tx, $"""
                 INSERT INTO {_schema}.alliances(id,name,short_name,description,url,executor_corporation_id,creator_corporation_id,creator_character_id,created_ms,founding_key)
                 VALUES($1,$2,$3,$4,$5,$6,$6,$7,$8,$9)
-                """,id,request.Name,request.ShortName,request.Description,request.Url,corp.Id,founder,now,operationKey))
+                """, id, request.Name, request.ShortName, request.Description, request.Url, corp.Id, founder, now, operationKey))
                 await insert.ExecuteNonQueryAsync(token);
-            await _wallets.AdjustAsync(connection,tx,founder,-AllianceFoundingCost,1000125,48,"Alliance registration fee",now,operationKey + ":alliance-fee",token,
-                referenceId:id,referenceType:16159);
-            await JoinAllianceAsync(connection,tx,id,corp.Id,corp.Id,now,token);
-            return (await AllianceAsync(connection,tx,id,false,token))!;
-        },token);
+            await _wallets.AdjustAsync(connection, tx, founder, -AllianceFoundingCost, 1000125, 48, "Alliance registration fee", now,
+                operationKey + ":alliance-fee", token, referenceId: id, referenceType: 16159);
+            await JoinAllianceAsync(connection, tx, id, corp.Id, corp.Id, now, writeAffiliation, token);
+            return (await AllianceAsync(connection, tx, id, false, token))!;
+        }, token);
     }
 
-    private async Task JoinAllianceAsync(NpgsqlConnection connection,NpgsqlTransaction tx,long alliance,long corporation,long? executor,long now,CancellationToken token)
+    private async Task JoinAllianceAsync(NpgsqlConnection connection, NpgsqlTransaction tx, long alliance, long corporation,
+        long? executor, long now, AllianceAffiliationMutationCallback? writeAffiliation, CancellationToken token)
     {
-        await using (var command = Command(connection,tx,$"""
+        await using (var command = Command(connection, tx, $"""
             WITH joined AS (
                 INSERT INTO {_schema}.alliance_members(alliance_id,corporation_id,started_ms,chosen_executor_id)
                 VALUES($1,$2,$3,$4) RETURNING corporation_id
@@ -98,9 +111,11 @@ public sealed partial class CorporationStore
                 SELECT corporation_id,$1,$3 FROM joined RETURNING corporation_id
             )
             UPDATE {_schema}.corporations SET alliance_id=$1 WHERE id IN(SELECT corporation_id FROM history)
-            """,alliance,corporation,now,executor))
+            """, alliance, corporation, now, executor))
             await command.ExecuteNonQueryAsync(token);
-        await _characters.SetCorporationAllianceAsync(connection,tx,corporation,alliance,token);
+        await _characters.SetCorporationAllianceAsync(connection, tx, corporation, alliance, token);
+        if (writeAffiliation is not null)
+            await writeAffiliation(connection, tx, corporation, alliance, token);
     }
 
     public Task<long> ApplyToAllianceAsync(long actor,long alliance,string text,CancellationToken token = default) =>
@@ -163,65 +178,160 @@ public sealed partial class CorporationStore
     public Task<AllianceApplication> RespondToAllianceAsync(long actor,long applicationId,int status,CancellationToken token = default) =>
         RespondToAllianceAsync(actor,applicationId,null,status,token);
 
-    public Task<AllianceApplication> RespondToAllianceAsync(long actor,long applicationId,string? applicationText,int status,CancellationToken token = default)
+    public Task<AllianceApplication> RespondToAllianceAsync(long actor, long applicationId, string? applicationText, int status, CancellationToken token = default) =>
+        RespondToAllianceCoreAsync(actor, applicationId, applicationText, status, null, token);
+
+    public Task<AllianceApplication> RespondToAllianceAsync(long actor, long applicationId, string? applicationText, int status,
+        AllianceApplicationScheduleCallback scheduleDue, CancellationToken token = default) =>
+        RespondToAllianceCoreAsync(actor, applicationId, applicationText, status, scheduleDue, token);
+
+    private Task<AllianceApplication> RespondToAllianceCoreAsync(long actor, long applicationId, string? applicationText, int status,
+        AllianceApplicationScheduleCallback? scheduleDue, CancellationToken token)
     {
         if (status is not (2 or 4)) throw new CorporationError("ALLIANCE_APPLICATION_INVALID_STATE");
         if (applicationText is not null && applicationText.Length > 1000)
             throw new CorporationError("ALLIANCE_APPLICATION_TEXT_TOO_LONG");
-        return WriteAsync(async (connection,tx) =>
+        return WriteAsync(async (connection, tx) =>
         {
             AllianceApplication app;
-            await using (var command = Command(connection,tx,$"SELECT {AllianceApplicationColumns} FROM {_schema}.alliance_applications WHERE id=$1 FOR UPDATE",applicationId))
+            await using (var command = Command(connection, tx, $"SELECT {AllianceApplicationColumns} FROM {_schema}.alliance_applications WHERE id=$1 FOR UPDATE", applicationId))
             await using (var r = await command.ExecuteReaderAsync(token))
                 app = await r.ReadAsync(token) ? ReadAllianceApplication(r) : throw new CorporationError("ALLIANCE_APPLICATION_NOT_FOUND");
-            var alliance = await AllianceAsync(connection,tx,app.AllianceId,true,token);
+            var alliance = await AllianceAsync(connection, tx, app.AllianceId, true, token);
             if (alliance?.ActiveExecutorId is not { } executor || alliance.Deleted) throw new CorporationError("ALLIANCE_EXECUTOR_REQUIRED");
-            await RequireRoleAsync(connection,tx,executor,actor,CorporationRoles.Director,token);
+            await RequireRoleAsync(connection, tx, executor, actor, CorporationRoles.Director, token);
+            if (status == 2 && scheduleDue is null) throw new CorporationError("ALLIANCE_DUE_SCHEDULER_UNAVAILABLE");
             if (app.Status == status)
             {
                 if (applicationText is not null && app.Text != applicationText)
                     throw new CorporationError("ALLIANCE_APPLICATION_REPLAY_MISMATCH");
+                if (status == 2 && app.DueMs is { } existingDue && scheduleDue is not null)
+                    await scheduleDue(connection, tx, new(app.Id, app.AllianceId, app.CorporationId, existingDue), token);
                 return app;
             }
             if (app.Archived || app.Status != 1) throw new CorporationError("ALLIANCE_APPLICATION_INVALID_STATE");
-            var corp = await GetAsync(connection,tx,app.CorporationId,true,token);
+            var corp = await GetAsync(connection, tx, app.CorporationId, true, token);
             if (corp is null || corp.Deleted || corp.IsNpc || corp.AllianceId is not null) throw new CorporationError("INVALID_APPLICANT_CORPORATION");
             var now = _now();
             var text = applicationText ?? app.Text;
             long? due = status == 2 ? checked(now + AllianceRules.ApplicationDelayMs) : null;
-            await using var update = Command(connection,tx,$"UPDATE {_schema}.alliance_applications SET text=$2,status=$3,updated_ms=$4,due_ms=$5,archived=$6 WHERE id=$1",
-                app.Id,text,status,now,due,status==4);
+            await using var update = Command(connection, tx,
+                $"UPDATE {_schema}.alliance_applications SET text=$2,status=$3,updated_ms=$4,due_ms=$5,archived=$6 WHERE id=$1",
+                app.Id, text, status, now, due, status == 4);
             await update.ExecuteNonQueryAsync(token);
-            return app with { Text=text,Status=status,UpdatedMs=now,DueMs=due,Archived=status==4 };
-        },token);
+            var updated = app with { Text = text, Status = status, UpdatedMs = now, DueMs = due, Archived = status == 4 };
+            if (status == 2 && due is { } dueAt && scheduleDue is not null)
+                await scheduleDue(connection, tx, new(app.Id, app.AllianceId, app.CorporationId, dueAt), token);
+            return updated;
+        }, token);
     }
 
-    /// <summary>Durable due dates survive restarts. Returns changed corporations for after-commit affiliation notifications.</summary>
-    public Task<IReadOnlyList<long>> ActivateDueAllianceApplicationsAsync(CancellationToken token = default) =>
-        WriteAsync<IReadOnlyList<long>>(async (connection,tx) =>
+    /// <summary>Accepted applications are re-enqueued after restart from their persisted due dates.</summary>
+    public async Task<IReadOnlyList<AllianceApplicationDueJob>> PendingAllianceApplicationJobsAsync(CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT id,alliance_id,corporation_id,due_ms FROM {_schema}.alliance_applications " +
+            "WHERE status=2 AND NOT archived AND due_ms IS NOT NULL ORDER BY due_ms,id";
+        var jobs = new List<AllianceApplicationDueJob>();
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token))
+            jobs.Add(new(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3)));
+        return jobs;
+    }
+
+
+    public async Task<IReadOnlyList<(long CorporationId, long AllianceId)>> CurrentAllianceAffiliationsAsync(CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT id,alliance_id FROM {_schema}.corporations " +
+            "WHERE alliance_id IS NOT NULL AND NOT deleted ORDER BY id";
+        var affiliations = new List<(long CorporationId, long AllianceId)>();
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token))
+            affiliations.Add((reader.GetInt64(0), reader.GetInt64(1)));
+        return affiliations;
+    }
+
+    public Task<AllianceApplicationDueOutcome> ProcessDueAllianceApplicationAsync(
+        AllianceApplicationDueJob job, AllianceWarReadCallback readWars, AllianceAffiliationMutationCallback writeAffiliation,
+        CancellationToken token = default) =>
+        WriteAsync((connection, tx) => ProcessDueAllianceApplicationAsync(connection, tx, job, readWars, writeAffiliation, token), token);
+
+    public async Task<AllianceApplicationDueOutcome> ProcessDueAllianceApplicationAsync(
+        System.Data.Common.DbConnection databaseConnection, System.Data.Common.DbTransaction databaseTransaction,
+        AllianceApplicationDueJob job, AllianceWarReadCallback readWars,
+        AllianceAffiliationMutationCallback writeAffiliation, CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        ArgumentNullException.ThrowIfNull(readWars);
+        ArgumentNullException.ThrowIfNull(writeAffiliation);
+        if (databaseConnection is not NpgsqlConnection connection || databaseTransaction is not NpgsqlTransaction tx ||
+            !ReferenceEquals(databaseTransaction.Connection, databaseConnection))
+            throw new ArgumentException("Alliance due jobs require the scheduler's PostgreSQL transaction.");
+
+        AllianceApplication? application = null;
+        await using (var command = Command(connection, tx,
+            $"SELECT {AllianceApplicationColumns} FROM {_schema}.alliance_applications WHERE id=$1 FOR UPDATE", job.ApplicationId))
+        await using (var reader = await command.ExecuteReaderAsync(token))
+            if (await reader.ReadAsync(token)) application = ReadAllianceApplication(reader);
+
+        if (application is null || application.AllianceId != job.AllianceId || application.CorporationId != job.CorporationId ||
+            application.Status != 2 || application.Archived)
+            return new(false, null);
+
+        var now = _now();
+        if (application.DueMs is not { } dueAt)
         {
-            var due = new List<AllianceApplication>();
-            await using (var command = Command(connection,tx,$"SELECT {AllianceApplicationColumns} FROM {_schema}.alliance_applications WHERE status=2 AND NOT archived AND due_ms <= $1 ORDER BY alliance_id,id FOR UPDATE",_now()))
-            await using (var r = await command.ExecuteReaderAsync(token))
-                while (await r.ReadAsync(token)) due.Add(ReadAllianceApplication(r));
-            var changed = new List<long>();
-            foreach (var app in due)
-            {
-                var alliance = await AllianceAsync(connection,tx,app.AllianceId,true,token);
-                var corp = await GetAsync(connection,tx,app.CorporationId,true,token);
-                var join = alliance is { Deleted:false } && corp is { Deleted:false,IsNpc:false,AllianceId:null };
-                if (join)
-                {
-                    await JoinAllianceAsync(connection,tx,app.AllianceId,app.CorporationId,alliance!.ExecutorCorporationId,_now(),token);
-                    changed.Add(app.CorporationId);
-                }
-                await using var finish = Command(connection,tx,$"UPDATE {_schema}.alliance_applications SET status=$2,archived=true,updated_ms=$3 WHERE id=$1",
-                    app.Id,join ? 3 : 4,_now());
-                await finish.ExecuteNonQueryAsync(token);
-                if (join) await ReelectAsync(connection,tx,alliance!,token);
-            }
-            return changed;
-        },token);
+            await using var repair = Command(connection, tx,
+                $"UPDATE {_schema}.alliance_applications SET due_ms=$2,updated_ms=$2 WHERE id=$1", application.Id, now);
+            await repair.ExecuteNonQueryAsync(token);
+            return new(false, now);
+        }
+        if (dueAt > now) return new(false, dueAt);
+
+        var alliance = await AllianceAsync(connection, tx, application.AllianceId, true, token);
+        var corporation = await GetAsync(connection, tx, application.CorporationId, true, token);
+        if (alliance is not { Deleted: false } || corporation is null || corporation.Deleted || corporation.IsNpc ||
+            (corporation.AllianceId is { } currentAlliance && currentAlliance != application.AllianceId))
+        {
+            await using var reject = Command(connection, tx,
+                $"UPDATE {_schema}.alliance_applications SET status=4,archived=true,due_ms=NULL,updated_ms=$2 WHERE id=$1",
+                application.Id, now);
+            await reject.ExecuteNonQueryAsync(token);
+            return new(false, null);
+        }
+
+        var warReason = AllianceRules.ApplicationWarHoldReason(application.CorporationId, application.AllianceId,
+            await readWars(application.CorporationId, application.AllianceId, token));
+        if (warReason is not null)
+        {
+            var retryAt = checked(now + AllianceRules.ApplicationWarRecheckDelayMs);
+            await using var defer = Command(connection, tx,
+                $"UPDATE {_schema}.alliance_applications SET due_ms=$2,updated_ms=$3 WHERE id=$1",
+                application.Id, retryAt, now);
+            await defer.ExecuteNonQueryAsync(token);
+            return new(false, retryAt);
+        }
+
+        if (corporation.AllianceId == application.AllianceId)
+        {
+            await _characters.SetCorporationAllianceAsync(connection, tx, application.CorporationId, application.AllianceId, token);
+            await writeAffiliation(connection, tx, application.CorporationId, application.AllianceId, token);
+        }
+        else
+        {
+            await JoinAllianceAsync(connection, tx, application.AllianceId, application.CorporationId,
+                alliance.ExecutorCorporationId, now, writeAffiliation, token);
+        }
+        await using (var finish = Command(connection, tx,
+            $"UPDATE {_schema}.alliance_applications SET status=3,archived=true,due_ms=NULL,updated_ms=$2 WHERE id=$1",
+            application.Id, now))
+            await finish.ExecuteNonQueryAsync(token);
+        await ReelectAsync(connection, tx, alliance, token);
+        return new(true, null);
+    }
 
     private async Task ReelectAsync(NpgsqlConnection connection,NpgsqlTransaction tx,Alliance alliance,CancellationToken token)
     {

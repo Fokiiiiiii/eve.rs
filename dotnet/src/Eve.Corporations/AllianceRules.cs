@@ -6,9 +6,22 @@ namespace Eve.Corporations;
 public static class AllianceRules
 {
     public const long ApplicationDelayMs = 86400000;
+    public const long ApplicationWarRecheckDelayMs = 3600000;
     private static string Normalize(string text) => text.Normalize(NormalizationForm.FormC);
     private static bool Substantive(string text) => text.EnumerateRunes().Any(Rune.IsLetterOrDigit);
     private static bool Valid(string text,string punctuation) => text.EnumerateRunes().All(r => Rune.IsLetterOrDigit(r) || r.IsAscii && punctuation.Contains((char)r.Value));
+
+    public static string? ApplicationWarHoldReason(long corporationId,long allianceId,IEnumerable<AllianceApplicationWar> wars)
+    {
+        foreach (var war in wars)
+        {
+            if (war.DeclaredById == corporationId) return "AGGRESSOR_WAR";
+            if (war.Mutual) return "MUTUAL_WAR";
+            if (war.AgainstId != corporationId && war.AgainstId != allianceId) return "FOREIGN_ALLY_WAR";
+        }
+        return null;
+    }
+
     public static NewAlliance Validate(NewAlliance input)
     {
         var name = Normalize(input.Name).Trim();
@@ -40,3 +53,18 @@ public static class AllianceRules
         return current is { } c && tied.Any(v => v.Id == c) ? (current,false) : (current,true);
     }
 }
+
+
+public sealed record AllianceApplicationWar(long DeclaredById, long AgainstId, bool Mutual);
+public sealed record AllianceApplicationDueJob(long ApplicationId, long AllianceId, long CorporationId, long DueAtMs);
+
+public delegate Task<IReadOnlyList<AllianceApplicationWar>> AllianceWarReadCallback(
+    long corporationId, long allianceId, CancellationToken cancellationToken);
+public sealed record AllianceApplicationDueOutcome(bool Effective, long? RescheduleAtMs);
+
+public delegate Task AllianceApplicationScheduleCallback(
+    System.Data.Common.DbConnection connection, System.Data.Common.DbTransaction transaction,
+    AllianceApplicationDueJob job, CancellationToken cancellationToken);
+public delegate Task AllianceAffiliationMutationCallback(
+    System.Data.Common.DbConnection connection, System.Data.Common.DbTransaction transaction,
+    long corporationId, long allianceId, CancellationToken cancellationToken);

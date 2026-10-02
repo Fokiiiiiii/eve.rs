@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 13,
-   "hex": "03000000010d00"
+   "version": 14,
+   "hex": "03000000010e00"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 13,
+   "version": 14,
    "pollHz": 4,
-   "hex": "07000000020d0004000000"
+   "hex": "07000000020e0004000000"
   },
   {
    "name": "enter by undocking",
@@ -1033,6 +1033,36 @@
     "offChanges": []
    },
    "hex": "98000000134f2c3859955c0600fcb6089b150900003c080000181900001a00656666656374732e547261636b696e6744697372757074696f6e000000000088c3400000000000002e40e8030000b9b7089b150900000800000000000000000100000000000088e340000000000088d34011006577547261636b696e6744697372757074099a99999999992ec09a99999999992ec09a99999999992ec0"
+  },
+  {
+   "name": "activate a guidance disruptor",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002810",
+    "moduleType": 5321,
+    "effectId": 6423,
+    "fx": "effects.ElectronicAttributeModifyTarget",
+    "durationMs": 10000.0,
+    "capacitorNeed": 15.0,
+    "repeat": 1000,
+    "targetId": "9988400003001",
+    "action": {
+     "kind": "remote",
+     "what": "guidanceDisrupt",
+     "velocityPercent": -8.5,
+     "delayPercent": -8.5,
+     "aoeVelocityPercent": -11.0,
+     "aoeCloudPercent": 11.0,
+     "optimal": 40000.0,
+     "falloff": 20000.0,
+     "when": "start",
+     "jam": "ewGuidanceDisrupt"
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "ad000000134f2c3859955c0600fab6089b15090000c9140000171900002700656666656374732e456c656374726f6e69634174747269627574654d6f64696679546172676574000000000088c3400000000000002e40e8030000b9b7089b150900000800000000000000000100000000000088e340000000000088d3401100657747756964616e6365446973727570740a00000000000021c000000000000021c000000000000026c00000000000002640"
   },
   {
    "name": "activate an ECM jammer",

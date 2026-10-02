@@ -387,7 +387,12 @@ impl Scene {
     /// launch. A target the missile cannot get to before its time is up is still shot at (the pilot sees the missile stall and fall away).
     pub(crate) fn launch_missile(&mut self, session: SessionId, effect: &Effect, at: i64) -> Vec<Out> {
         let Some(turret) = effect.turret.as_ref() else { return Vec::new() };
-        let Some(spec) = turret.missile.clone() else { return Vec::new() };
+        // a launcher that a guidance disruptor holds fires missiles that are slower, shorter-lived and wider-burst
+        let Some(spec) =
+            turret.missile.as_ref().map(|spec| spec.guided(self.pilots[&session].incoming.missile_factors()))
+        else {
+            return Vec::new();
+        };
         let Some(target_session) = self.session_of(effect.target_id) else { return Vec::new() };
         let (Some(attacker), Some(target)) =
             (self.kinematics_of(session), self.kinematics_of(target_session))

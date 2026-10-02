@@ -308,6 +308,9 @@ public abstract record SimRemote
     /// <summary>The turrets the target fires are changed by these percentages of their optimal range, falloff and tracking speed for as long as the effect lands (a tracking disruptor: negative).</summary>
     public sealed record Disrupt(double RangePercent, double FalloffPercent, double TrackingPercent) : SimRemote;
 
+    /// <summary>The missiles the target launches are changed by these percentages of their speed, flight time, explosion velocity and explosion radius for as long as the effect lands (a guidance disruptor: negative, but for the radius).</summary>
+    public sealed record GuidanceDisrupt(double VelocityPercent, double DelayPercent, double AoeVelocityPercent, double AoeCloudPercent) : SimRemote;
+
     /// <summary>
     /// An ECM jammer: for as long as a cycle the target loses its locks and can lock only the ships that jam it when the jam lands; it lands by the chance of this strength for the
     /// kind of sensor the target has over that sensor's strength (gravimetric, ladar, magnetometric, radar), weakened by the reach and the target's resistance.

@@ -105,6 +105,14 @@ pub enum Remote {
     /// The turrets the target fires are changed by those percentages of their optimal range, falloff and tracking speed for as long as the effect lands (a tracking
     /// disruptor: negative).
     Disrupt { range_percent: f64, falloff_percent: f64, tracking_percent: f64 },
+    /// The missiles the target launches are changed by those percentages of their speed, flight time, explosion velocity and explosion radius for as long as the effect
+    /// lands (a guidance disruptor: negative, but for the radius).
+    GuidanceDisrupt {
+        velocity_percent: f64,
+        delay_percent: f64,
+        aoe_velocity_percent: f64,
+        aoe_cloud_percent: f64,
+    },
     /// The target is held out of warp: `strength` points of scramble (a warp scrambler 2, a warp disruptor 1; the ship's own warp core subtracts). `blocks_mwd`: and out
     /// of its microwarpdrive.
     Scramble { strength: f64, blocks_mwd: bool },
@@ -136,6 +144,17 @@ impl Remote {
                 range_percent: range_percent * share,
                 falloff_percent: falloff_percent * share,
                 tracking_percent: tracking_percent * share,
+            }),
+            Self::GuidanceDisrupt {
+                velocity_percent,
+                delay_percent,
+                aoe_velocity_percent,
+                aoe_cloud_percent,
+            } => Some(Lasting::GuidanceDisrupt {
+                velocity_percent: velocity_percent * share,
+                delay_percent: delay_percent * share,
+                aoe_velocity_percent: aoe_velocity_percent * share,
+                aoe_cloud_percent: aoe_cloud_percent * share,
             }),
             _ => None,
         }
@@ -1011,7 +1030,8 @@ impl Scene {
             | Remote::Paint { .. }
             | Remote::Damp { .. }
             | Remote::Scramble { .. }
-            | Remote::Disrupt { .. } => {
+            | Remote::Disrupt { .. }
+            | Remote::GuidanceDisrupt { .. } => {
                 let lasting = what.lasting(share).expect("these last");
                 self.hold(session, effect, lasting, at)
             }

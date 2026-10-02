@@ -31,6 +31,21 @@ pub struct Missile {
     pub damage_reduction_sensitivity: f64,
 }
 
+/// What a guidance disruptor leaves a launcher's missiles with, as factors of their speed, flight time, explosion velocity and explosion radius (1 for none).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Guidance {
+    pub velocity: f64,
+    pub flight_time: f64,
+    pub explosion_velocity: f64,
+    pub explosion_radius: f64,
+}
+
+impl Guidance {
+    /// Nothing disrupts the launcher.
+    pub const NONE: Self =
+        Self { velocity: 1.0, flight_time: 1.0, explosion_velocity: 1.0, explosion_radius: 1.0 };
+}
+
 /// The sensitivity CCP uses for the damage reduction when a missile names none.
 pub const DEFAULT_REDUCTION_SENSITIVITY: f64 = 5.5;
 
@@ -39,6 +54,17 @@ fn round6(value: f64) -> f64 {
 }
 
 impl Missile {
+    /// The missile as a disrupted launcher fires it: slower, shorter-lived, with a smaller explosion velocity and a bigger explosion radius.
+    pub fn guided(&self, guidance: Guidance) -> Self {
+        Self {
+            max_velocity: round6(self.max_velocity * guidance.velocity.max(0.0)),
+            flight_time_ms: round6(self.flight_time_ms * guidance.flight_time.max(0.0)),
+            explosion_velocity: round6(self.explosion_velocity * guidance.explosion_velocity.max(0.0)),
+            explosion_radius: round6(self.explosion_radius * guidance.explosion_radius.max(0.0)),
+            ..self.clone()
+        }
+    }
+
     /// How far a missile goes: its speed for as long as it flies.
     pub fn effective_range(&self) -> f64 {
         round6(self.max_velocity.max(0.0) * (self.flight_time_ms.max(0.0) / 1000.0))

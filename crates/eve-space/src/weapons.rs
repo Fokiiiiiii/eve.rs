@@ -1381,6 +1381,36 @@ mod tests {
     }
 
     #[test]
+    fn a_launcher_that_a_guidance_disruptor_holds_fires_slower_shorter_and_wider_missiles() {
+        // undisrupted, the rocket flies at 2250 m/s for 2 s and bursts 56 m wide
+        let (mut scene, npc, now) = duel();
+        scene.activate(npc, missile_effect(spec().ship_id, launcher(2_250.0, 2_000.0, 56.0)), now);
+        let free = scene.missiles().next().unwrap().spec.clone();
+        assert_eq!((free.max_velocity, free.flight_time_ms, free.explosion_radius), (2_250.0, 2_000.0, 56.0));
+        // a guidance disruptor on the launcher's ship takes a tenth of the speed and the flight time and a fifth of the explosion velocity, and widens the burst a fifth
+        let (mut scene, npc, now) = duel();
+        scene.pilots.get_mut(&npc).unwrap().incoming.upsert(
+            777,
+            888,
+            crate::ewar::Lasting::GuidanceDisrupt {
+                velocity_percent: -10.0,
+                delay_percent: -10.0,
+                aoe_velocity_percent: -20.0,
+                aoe_cloud_percent: 20.0,
+            },
+            now + 60 * SECOND,
+        );
+        scene.activate(npc, missile_effect(spec().ship_id, launcher(2_250.0, 2_000.0, 56.0)), now);
+        let disrupted = scene.missiles().next().unwrap().spec.clone();
+        assert_eq!(disrupted.max_velocity, 2_025.0);
+        assert_eq!(disrupted.flight_time_ms, 1_800.0);
+        assert_eq!(disrupted.explosion_radius, 67.2);
+        assert_eq!(disrupted.explosion_velocity, 8.0e8);
+        // what the missile is stays what it is
+        assert_eq!((disrupted.charge_type_id, disrupted.hit_points), (free.charge_type_id, free.hit_points));
+    }
+
+    #[test]
     fn nothing_is_told_of_the_damage_while_the_missile_flies_and_a_hit_of_quality_three_when_it_lands() {
         let (mut scene, npc, now) = duel();
         // the player's ship is 28 m across to a missile that explodes at 56: the rocket does half what it carries

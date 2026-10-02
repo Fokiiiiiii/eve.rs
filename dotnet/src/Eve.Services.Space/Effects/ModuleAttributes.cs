@@ -35,6 +35,10 @@ internal static class ModuleAttributes
     public const int RangeDisruption = 351;
     public const int FalloffDisruption = 349;
     public const int TrackingDisruption = 767;
+    public const int MissileVelocityBonus = 547;
+    public const int ExplosionDelayBonus = 596;
+    public const int AoeVelocityBonus = 847;
+    public const int AoeCloudSizeBonus = 848;
     public const int GravimetricJam = 238;
     public const int LadarJam = 239;
     public const int MagnetometricJam = 240;

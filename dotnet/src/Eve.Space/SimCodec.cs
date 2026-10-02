@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 13;
+    public const ushort ProtocolVersion = 14;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -331,6 +331,7 @@ public static class SimCodec
                         7 => ReadScramble(ref r),
                         8 => new SimRemote.Jam(r.F64(), r.F64(), r.F64(), r.F64()),
                         9 => new SimRemote.Disrupt(r.F64(), r.F64(), r.F64()),
+                        10 => new SimRemote.GuidanceDisrupt(r.F64(), r.F64(), r.F64(), r.F64()),
                         _ => throw new SimLinkException(SimLinkError.BadValue, "bad remote"),
                     };
                     return new SimAction.Remote(what, optimal, falloff, when == 1, jam);
@@ -886,6 +887,13 @@ public static class SimCodec
                         w.F64(disrupt.RangePercent);
                         w.F64(disrupt.FalloffPercent);
                         w.F64(disrupt.TrackingPercent);
+                        break;
+                    case SimRemote.GuidanceDisrupt guidance:
+                        w.U8(10);
+                        w.F64(guidance.VelocityPercent);
+                        w.F64(guidance.DelayPercent);
+                        w.F64(guidance.AoeVelocityPercent);
+                        w.F64(guidance.AoeCloudPercent);
                         break;
                     case SimRemote.Jam jam:
                         w.U8(8);

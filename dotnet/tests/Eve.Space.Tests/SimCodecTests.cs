@@ -76,6 +76,7 @@ public class SimCodecTests
             "paint" => new SimRemote.Paint((double)a["percent"]!),
             "damp" => new SimRemote.Damp((double)a["rangePercent"]!, (double)a["resolutionPercent"]!),
             "disrupt" => new SimRemote.Disrupt((double)a["rangePercent"]!, (double)a["falloffPercent"]!, (double)a["trackingPercent"]!),
+            "guidanceDisrupt" => new SimRemote.GuidanceDisrupt((double)a["velocityPercent"]!, (double)a["delayPercent"]!, (double)a["aoeVelocityPercent"]!, (double)a["aoeCloudPercent"]!),
             "jam" => new SimRemote.Jam(Four(a["strength"]!)[0], Four(a["strength"]!)[1], Four(a["strength"]!)[2], Four(a["strength"]!)[3]),
             _ => new SimRemote.Scramble((double)a["strength"]!, (bool)a["blocksMwd"]!),
         };

@@ -13,7 +13,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Charge, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 13;
+pub const PROTOCOL_VERSION: u16 = 14;
 
 /// The message kinds.
 pub mod kind {
@@ -814,6 +814,18 @@ fn put_action(out: &mut Vec<u8>, action: &Action) {
                     out.extend_from_slice(&falloff_percent.to_le_bytes());
                     out.extend_from_slice(&tracking_percent.to_le_bytes());
                 }
+                Remote::GuidanceDisrupt {
+                    velocity_percent,
+                    delay_percent,
+                    aoe_velocity_percent,
+                    aoe_cloud_percent,
+                } => {
+                    out.push(10);
+                    out.extend_from_slice(&velocity_percent.to_le_bytes());
+                    out.extend_from_slice(&delay_percent.to_le_bytes());
+                    out.extend_from_slice(&aoe_velocity_percent.to_le_bytes());
+                    out.extend_from_slice(&aoe_cloud_percent.to_le_bytes());
+                }
                 Remote::Jam { strength } => {
                     out.push(8);
                     for number in strength {
@@ -876,6 +888,12 @@ fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
                     range_percent: reader.f64()?,
                     falloff_percent: reader.f64()?,
                     tracking_percent: reader.f64()?,
+                },
+                10 => Remote::GuidanceDisrupt {
+                    velocity_percent: reader.f64()?,
+                    delay_percent: reader.f64()?,
+                    aoe_velocity_percent: reader.f64()?,
+                    aoe_cloud_percent: reader.f64()?,
                 },
                 8 => Remote::Jam { strength: [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?] },
                 _ => return Err(DecodeError::BadValue("remote")),

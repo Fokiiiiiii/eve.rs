@@ -225,6 +225,12 @@ fn effect_of(case: &Value) -> Effect {
                     falloff_percent: a["falloffPercent"].as_f64().unwrap(),
                     tracking_percent: a["trackingPercent"].as_f64().unwrap(),
                 },
+                "guidanceDisrupt" => Remote::GuidanceDisrupt {
+                    velocity_percent: a["velocityPercent"].as_f64().unwrap(),
+                    delay_percent: a["delayPercent"].as_f64().unwrap(),
+                    aoe_velocity_percent: a["aoeVelocityPercent"].as_f64().unwrap(),
+                    aoe_cloud_percent: a["aoeCloudPercent"].as_f64().unwrap(),
+                },
                 "jam" => Remote::Jam { strength: sensors_of(&a["strength"]) },
                 _ => Remote::Scramble {
                     strength: a["strength"].as_f64().unwrap(),

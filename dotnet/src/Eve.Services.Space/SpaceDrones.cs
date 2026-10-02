@@ -364,6 +364,7 @@ public sealed class SpaceDrones : ISpaceDrones, IDisposable
     {
         "NOT_CONTROLLED" => NotUnderControl,
         "NO_TARGET" when command == SimDroneCommands.Engage => "That target cannot be engaged by drones.",
+        "OUT_OF_RANGE" => "That target is out of drone control range.",
         // an order to engage that named nothing: the drones looked and found no one to attack
         "NO_OPPONENT" => "The drones found nothing to attack.",
         _ => "The drone cannot do that.",

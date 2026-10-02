@@ -380,6 +380,11 @@ impl Scene {
                         results.push((drone_id, Some("NO_TARGET")));
                         continue;
                     }
+                    // a target beyond the range the pilot controls its drones to is refused (the reference's `isTargetBeyondDroneControlRange`; a drone that has the target keeps chasing it)
+                    if self.apart(controller, target_session).is_some_and(|apart| apart > CONTROL_RANGE) {
+                        results.push((drone_id, Some("OUT_OF_RANGE")));
+                        continue;
+                    }
                     out.extend(self.engage(session, target, now));
                 }
                 DroneCommand::ReturnHome => {
@@ -1066,6 +1071,22 @@ mod tests {
         let named =
             scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Engage { target: 12_345 }, LATER);
         assert_eq!(result_of(&named), [(DRONE_SHIP, Some("NO_TARGET"))]);
+    }
+
+    #[test]
+    fn an_order_to_engage_a_target_beyond_the_control_range_is_refused_for_the_drone() {
+        let (mut scene, _, _) = launched();
+        spawn_rat_at(&mut scene, RAT_SHIP, 25_000.0);
+        let sent =
+            scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Engage { target: RAT_SHIP }, LATER);
+        assert_eq!(result_of(&sent), [(DRONE_SHIP, Some("OUT_OF_RANGE"))]);
+        assert!(states(&for_the_player(&sent)).is_empty(), "nothing is told of a drone that took no order");
+        // nearer than 20 km it is taken
+        let (mut scene, _, _) = launched();
+        spawn_rat_at(&mut scene, RAT_SHIP, 15_000.0);
+        let sent =
+            scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Engage { target: RAT_SHIP }, LATER);
+        assert_eq!(result_of(&sent), [(DRONE_SHIP, None)]);
     }
 
     #[test]

@@ -48,6 +48,7 @@ using Eve.Services.Wallet;
 //                          "school" for the headquarters of the character's school corporation
 //                          Characters need EVE_PG_URL and the SDE (`eve-sde ensure`): without them the host runs
 //                          without charUnboundMgr, and a client cannot get past the character screen.
+//   EVE_MARKET_SEED        skip: do not fetch the NPC market's first orders from CCP's ESI (CI, development)  (default auto: fetch once per SDE build)
 //   EVE_DEV_SKIP_PASSWORD  1 accepts any password (development only)                          (default 0)
 //   EVE_DEV_AUTO_CREATE    0 refuses unknown user names                                       (default 1)
 
@@ -231,9 +232,14 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     await Eve.Market.MarketStore.MigrateAsync(source, marketSchema);
     var market = new Eve.Market.MarketStore(source, marketSchema);
     var marketCatalog = await Eve.Market.MarketCatalog.LoadAsync(sde);
-    if (!await market.HasSeedV4Async(build))
+    if (Env("EVE_MARKET_SEED", "auto") is "skip" or "off")
     {
-        var typeIds = (await sde.ReadTypeSummariesAsync()).Select(type => (long)type.TypeId).ToHashSet();
+        // CI and development: no fetch from CCP's ESI (minutes, and a load on it); the market starts with no NPC orders
+        Console.Error.WriteLine("eve-host: native market v4 seed skipped (EVE_MARKET_SEED=skip)");
+    }
+    else if (!await market.HasSeedV4Async(build))
+    {
+        var typeIds = (await sde.ReadTypeSummariesAsync()).Where(type => type.TypeId > 0).Select(type => (long)type.TypeId).ToHashSet();
         var npcStationIds = stations.All.Select(station => station.Id).ToHashSet();
         var regionIds = stations.All.Select(station => (long)station.RegionId).Distinct().ToArray();
         var snapshotPath = Path.Combine(Path.GetTempPath(), $"eve.rs-market-seed-v4-{Guid.NewGuid():N}.jsonl");

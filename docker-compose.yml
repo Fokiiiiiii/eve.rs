@@ -1,0 +1,90 @@
+# The eve.rs server for an EVE client:
+#
+#   docker compose up --build        PostgreSQL 18, the static data (fetched once), eve-sim, eve-host and eve-net
+#   (point the client at <this machine>:26000)
+#
+# The processes talk over Unix sockets in the `run` volume; only eve-net's port is published. EVE_MARKET_SEED is skip
+# here: the host's first-start seed of the NPC market from CCP's ESI is not yet reliable (set it to auto to try it).
+name: eve-rs
+
+x-eve: &eve
+  build: .
+  image: eve-rs:local
+  restart: unless-stopped
+  environment: &environment
+    EVE_PG_URL: postgres://postgres:${EVE_PG_PASSWORD:-postgres}@db:5432/eve
+    EVE_HOST: /run/eve/host.sock
+    EVE_SIM_SOCKET: /run/eve/sim.sock
+    EVE_MARKET_SEED: ${EVE_MARKET_SEED:-skip}
+    EVE_DEV_SKIP_PASSWORD: ${EVE_DEV_SKIP_PASSWORD:-0}
+    EVE_DEV_AUTO_CREATE: ${EVE_DEV_AUTO_CREATE:-1}
+  volumes:
+    - run:/run/eve
+    - sde:/data/.cache/sde
+
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${EVE_PG_PASSWORD:-postgres}
+      POSTGRES_DB: eve
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d eve"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # once: fetch the static data (if the volume does not hold it) and load it into PostgreSQL (if the database does not)
+  init:
+    <<: *eve
+    restart: "no"
+    command: ["eve-sde", "ensure"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  sim:
+    <<: *eve
+    command: ["eve-sim"]
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/eve/sim.sock"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  host:
+    <<: *eve
+    command: ["dotnet", "/opt/eve-host/eve-host.dll"]
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      sim:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/eve/host.sock"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+
+  net:
+    <<: *eve
+    command: ["eve-net"]
+    environment:
+      <<: *environment
+      EVE_NET_LISTEN: 0.0.0.0:26000
+    ports:
+      - "26000:26000"
+    depends_on:
+      host:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  run:
+  sde:

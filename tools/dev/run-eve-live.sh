@@ -8,7 +8,8 @@
 # With EVE_PG_URL set the host keeps its accounts, characters and items in PostgreSQL (in scratch schemas, dropped
 # at the end) and serves the character screen from the loaded static data (`eve-sde ensure`); without it accounts
 # live in memory and there are no characters.
-# EVE_LIVE_PORT (default 26100) is where the front listens. Passwords are checked (an unknown user name
+# EVE_LIVE_PORT (default 26100) is where the front listens. EVE_LIVE_LOG_DIR keeps the logs of the three processes there
+# (with KEEP_LOGS=1), for CI to upload. Passwords are checked (an unknown user name
 # creates the account; the same name needs the same password afterwards), so the wrong-password test runs too.
 set -euo pipefail
 
@@ -16,7 +17,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PORT="${EVE_LIVE_PORT:-26100}"
 SOCK="$(mktemp -u /tmp/eve-host.XXXXXX.sock)"
 SIMSOCK="$(mktemp -u /tmp/eve-sim.XXXXXX.sock)"
-LOG="$(mktemp -d)"
+LOG="${EVE_LIVE_LOG_DIR:-$(mktemp -d)}"
+mkdir -p "$LOG"
 host_pid=""
 net_pid=""
 sim_pid=""
@@ -56,7 +58,8 @@ done
 
 EVE_HOST="$SOCK" EVE_SIM_SOCKET="$SIMSOCK" dotnet "$HERE/dotnet/src/Eve.Host/bin/Release/net10.0/eve-host.dll" >"$LOG/host.out" 2>&1 &
 host_pid=$!
-for _ in $(seq 1 100); do
+# a first start loads the static data catalogs: give a slow machine a minute
+for _ in $(seq 1 600); do
   [ -S "$SOCK" ] && break
   kill -0 "$host_pid" 2>/dev/null || { echo "the host exited early:"; cat "$LOG/host.out"; exit 1; }
   sleep 0.1

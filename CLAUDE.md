@@ -63,6 +63,9 @@ Details: `docs/adr/0001-external-compatibility-only.md`, `docs/PLAN.md`, `docs/c
 - Run the new server and the client's live tests: `tools/dev/run-eve-live.sh` (starts `eve-host` and `eve-net`
   on a private socket and port 26100). `EVE_RUN='<command>' tools/dev/run-eve-live.sh` runs another command
   against it, for example `target/release/eve-loadgen $EVE_LIVE_HOST` to measure it.
+- CI (`.github/workflows/ci.yml`) runs the checks above and the fast live tests on every push; a Dev Container
+  (`.devcontainer/`) and `docker-compose.yml` set up the same environment. Set `EVE_MARKET_SEED=skip` when you start
+  the host yourself: its first start otherwise fetches the NPC market from ESI (see the note at the end of this file).
 - The reference server is the `Fokiiiiiii/evejs-v0.12.9` repository (branch `ccr-fd6b2132-4353h1` holds the
   oracle generators under `tools/oracle`). It boots in about five minutes on the SDE-derived data and needs
   `EVEJS_GAMESTORE_DATA_DIR`; `tools/dev/run-evejs-live.sh` does this.
@@ -352,3 +355,16 @@ The Host market block now captures paged ESI Tranquility public orders on the fi
 ### Codex Corp/Alliance integration update (2026-10-02)
 
 Cherry-picked `codex/alliance-v0129-20261002` (`8aa4cb1`) and `codex/corp-membership-rpc` (`86de0c1`) into `main` as `ab2b254` and `4e134dc`. Corporation RPCs now include call-ID founding, public metadata updates, member leave/kick/CEO handoff, role/title changes and division account keys. Alliance Registry now covers create/list/read/public info and application/member reads. Host build passes with 0 warnings/errors. These commits leave Claude's combat, NPC and world-tick block untouched; remaining parity gaps are recorded in `docs/NATIVE_MIGRATION.md`.
+
+### Claude: CI, Dev Container and a host start-up fix (2026-10-02)
+
+Added `.github/workflows/` (CI on every push, a nightly slow live run), `.devcontainer/`, a root `Dockerfile` and
+`docker-compose.yml`, `tools/dev/run-live-each.sh` and `.github/dependabot.yml`. Two small changes in files Codex owns,
+because the host did not start on a clean database after the Market Seed v4 commit (`a71bac3`):
+`Eve.Host/Program.cs` now (1) drops SDE type 0 (a placeholder in build 3396210) from the type ids it hands to
+`MarketSeedV4.CaptureAsync`, which rejected it with `ArgumentOutOfRangeException(validTypeIds)`, and (2) takes
+`EVE_MARKET_SEED=skip` to start without the seed. With (1) in place the capture itself ran against live ESI and then failed
+in `MarketStore.SeedNpcV4Async` with `Invalid V4 market order seed 'tq:10000002:7434788337'` (a real order the validation
+rejects); that is yours to look at. Until the seed is reliable the host should not die on it: consider logging and going on.
+`tools/dev/run-eve-live.sh` waits up to a minute for the host (was ten seconds) and takes `EVE_LIVE_LOG_DIR`.
+

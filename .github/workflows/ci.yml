@@ -1,0 +1,191 @@
+name: CI
+
+# Every push to any branch: format, lint and test the Rust workspace, test the .NET solution against a
+# PostgreSQL 18 service with the static data loaded, run the Python client's own tests, check that the golden
+# fixtures are what their generators write, and run the fast end-to-end tests (the whole server stack and the
+# headless client). The slow end-to-end tests run nightly (live-slow.yml).
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  # the host seeds the NPC market from CCP's ESI on its first start (minutes, and a load on ESI): not in CI
+  EVE_MARKET_SEED: skip
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - id: sde-build
+        run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
+      - id: sde
+        uses: actions/cache@v4
+        with:
+          path: .cache/sde
+          key: sde-${{ steps.sde-build.outputs.build }}
+      # the tests that compare against the reference need the static data (they skip without it)
+      - name: Fetch the static data
+        if: steps.sde.outputs.cache-hit != 'true'
+        run: cargo run -q -p eve-sde -- ensure
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  dotnet:
+    name: .NET (build, test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: eve
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d eve"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      EVE_PG_URL: postgres://postgres:postgres@127.0.0.1:5432/eve
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/Directory.Packages.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+      # the static data is loaded into PostgreSQL by the Rust tool, as the server does on its first start
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - id: sde-build
+        run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: .cache/sde
+          key: sde-${{ steps.sde-build.outputs.build }}
+      - name: Load the static data into PostgreSQL
+        run: cargo run -q -p eve-sde -- ensure --pg "$EVE_PG_URL"
+      - name: Test
+        working-directory: dotnet
+        run: dotnet test EveRs.slnx -c Release -nologo --verbosity minimal
+
+  python:
+    name: Python client (golden and mock-server tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: tools/headless-client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/headless-client/requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      # the live tests skip without a server; what is left runs on its own (the marshal golden frames, the mock server)
+      - run: python -m pytest -q -rs
+
+  fixtures:
+    name: Fixtures match their generators
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Regenerate the link fixtures
+        run: |
+          python3 tools/dev/gen-simlink-fixtures.py
+          python3 tools/dev/gen-hostlink-fixtures.py
+      - name: Fail if a generator and its committed fixture disagree
+        run: git diff --exit-code -- oracle/
+
+  live:
+    name: End to end (server stack + headless client)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: eve
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d eve"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      EVE_PG_URL: postgres://postgres:postgres@127.0.0.1:5432/eve
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/Directory.Packages.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - id: sde-build
+        run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: .cache/sde
+          key: sde-${{ steps.sde-build.outputs.build }}
+      - name: Load the static data into PostgreSQL
+        run: cargo run -q -p eve-sde -- ensure --pg "$EVE_PG_URL"
+      - name: Install the headless client
+        run: |
+          python3 -m venv tools/headless-client/.venv
+          tools/headless-client/.venv/bin/pip install -q -r tools/headless-client/requirements-dev.txt
+      - name: A PostgreSQL client for the harness (it drops its scratch schemas)
+        run: command -v psql >/dev/null || sudo apt-get install -y --no-install-recommends postgresql-client
+      - name: Run the server stack and the fast live tests
+        env:
+          EVE_LIVE_LOG_DIR: ${{ github.workspace }}/.live-logs
+          KEEP_LOGS: "1"
+        run: tools/dev/run-eve-live.sh
+      - name: Keep the logs of the stack
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-logs
+          path: .live-logs
+          if-no-files-found: ignore

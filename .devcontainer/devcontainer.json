@@ -1,0 +1,53 @@
+// A development environment with everything the project needs: the Rust toolchain, the .NET 10 SDK, Python for the
+// headless client and a PostgreSQL 18 beside it (docker-compose.yml). Open it in GitHub Codespaces ("Code" > "Codespaces")
+// or in VS Code with the Dev Containers extension. The first start fetches the static data (about 85 MB) into PostgreSQL.
+{
+  "name": "eve.rs",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "shutdownAction": "stopCompose",
+
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {},
+    "ghcr.io/devcontainers/features/rust:1": { "profile": "default" },
+    "ghcr.io/devcontainers/features/dotnet:2": { "version": "10.0" },
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.12" },
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+
+  "hostRequirements": { "cpus": 4, "memory": "8gb", "storage": "32gb" },
+
+  // eve-net, the port the EVE client connects to, and the image server the client is told about
+  "forwardPorts": [26000, 26001],
+  "portsAttributes": {
+    "26000": { "label": "EVE client (eve-net)", "onAutoForward": "notify" },
+    "26001": { "label": "image server", "onAutoForward": "silent" }
+  },
+
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  "containerEnv": {
+    "EVE_PG_URL": "postgres://postgres:postgres@db:5432/eve",
+    // the host fetches the NPC market from CCP's ESI on its first start unless told not to
+    "EVE_MARKET_SEED": "skip"
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "ms-dotnettools.csdevkit",
+        "ms-python.python",
+        "github.vscode-github-actions",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "rust-analyzer.check.command": "clippy",
+        "editor.formatOnSave": true,
+        "python.defaultInterpreterPath": "${workspaceFolder}/tools/headless-client/.venv/bin/python"
+      }
+    }
+  }
+}

@@ -15,6 +15,7 @@ public static class MarketRules
     public const int RangeStation = -1;
     public const int RangeSolarSystem = 0;
     public const int RangeConstellation = 4;
+    public const int RangeEsiFourJumps = -4;
     public const int RangeRegion = 32767;
 
     public static bool IsAllowedDuration(int days) => days is 0 or 1 or 3 or 7 or 14 or 30 or 90;
@@ -99,4 +100,7 @@ public static class MarketRules
         grossAmount = RoundIsk(grossAmount);
         return grossAmount > 0 ? RoundIsk(grossAmount * context.Limits.TransactionTaxRate) : 0;
     }
+
+
+    public static int RangeForClient(int range) => range == RangeEsiFourJumps ? 4 : range;
 }

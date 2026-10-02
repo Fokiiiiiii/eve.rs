@@ -31,4 +31,19 @@ public class TopologyTests
         Assert.True(topology.AskInRange(default,here,32767)); // reference fallback when regional metadata is absent
         Assert.False(topology.BidInRange(default,32767,here));
     }
+
+
+    [Fact]
+    public void Esi_four_jump_range_is_distinct_from_the_client_constellation_sentinel()
+    {
+        var topology=new MarketTopology([(1,2),(2,3),(3,4),(4,5),(5,6)]);
+        var origin=new MarketLocation(10,1,100,1000);
+        var fourJumps=new MarketLocation(11,5,200,1000);
+        var fiveJumps=new MarketLocation(12,6,300,1000);
+
+        Assert.False(topology.BidInRange(origin,MarketRules.RangeConstellation,fourJumps));
+        Assert.True(topology.BidInRange(origin,MarketRules.RangeEsiFourJumps,fourJumps));
+        Assert.False(topology.BidInRange(origin,MarketRules.RangeEsiFourJumps,fiveJumps));
+        Assert.Equal(4,MarketRules.RangeForClient(MarketRules.RangeEsiFourJumps));
+    }
 }

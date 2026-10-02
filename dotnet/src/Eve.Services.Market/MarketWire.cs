@@ -16,7 +16,7 @@ public static class MarketWire
             ("header",Header),("columns",new PyList([.. Columns.Select(c => (PyValue)new PyStr(c.Name))])),
             ("RowClass",new PyToken("blue.DBRow")),
             ("lines",new PyList([.. orders.Select(o => (PyValue)Py.Tuple(
-                Py.Number((double)o.Price),new PyInt(o.VolumeRemaining),new PyInt(o.TypeId),new PyInt(o.Range),new PyLong(o.Id),
+                Py.Number((double)o.Price),new PyInt(o.VolumeRemaining),new PyInt(o.TypeId),new PyInt(MarketRules.RangeForClient(o.Range)),new PyLong(o.Id),
                 new PyInt(o.VolumeEntered),new PyInt(o.MinimumVolume),new PyInt(o.Bid ? 1 : 0),new PyLong(Py.FileTimeFromUnixMs(o.IssuedMs)),
                 new PyInt(o.Duration),new PyInt(o.Location.StationId),new PyInt(o.Location.RegionId),new PyInt(o.Location.SolarSystemId),
                 new PyInt(o.Location.ConstellationId),new PyInt(viewer.SolarSystemId>0 ? Math.Max(0,topology.OrderDistance(viewer,o.Location)) : 0)))]))));

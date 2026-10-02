@@ -4,7 +4,7 @@ using Npgsql;
 
 namespace Eve.Market;
 
-public sealed record MarketNpcSeed(string Key,int TypeId,bool Bid,decimal Price,long Volume,int Range,MarketLocation Location,long IssuedMs,int Duration = 3650);
+public sealed record MarketNpcSeed(string Key,int TypeId,bool Bid,decimal Price,long Volume,int Range,MarketLocation Location,long IssuedMs,int Duration = 3650,long MinimumVolume = 1,long? VolumeRemaining = null);
 public sealed record MarketBook(IReadOnlyList<MarketOrder> Asks,IReadOnlyList<MarketOrder> Bids);
 public sealed record MarketOwnedOrder(MarketOrder Order,long ActorId,long WalletOwnerId,int AccountKey,decimal Escrow,int State,long LastStateChangeMs);
 public sealed record MarketHistory(long UnixDay,decimal Low,decimal High,decimal Average,long Volume,long Orders);
@@ -23,9 +23,34 @@ public sealed partial class MarketStore
     }
 
     internal string Schema => _schema;
-    public static IReadOnlyList<Migration> MigrationSet() => Migrations.Embedded(typeof(MarketStore).Assembly,"Migrations");
+    public static IReadOnlyList<Migration> MigrationSet() =>
+    [
+        .. Migrations.Embedded(typeof(MarketStore).Assembly,"Migrations"),
+        new Migration("005_market_seed_v4", """
+            ALTER TABLE orders ADD COLUMN seed_volume_remaining bigint
+                CHECK(seed_volume_remaining IS NULL OR (seed_volume_remaining >= 0 AND seed_volume_remaining <= vol_entered));
+            CREATE TABLE market_seed_state (
+                version integer PRIMARY KEY CHECK(version=4),
+                fingerprint text NOT NULL,
+                sde_build integer NOT NULL CHECK(sde_build > 0),
+                captured_at_ms bigint NOT NULL CHECK(captured_at_ms > 0),
+                imported_at_ms bigint NOT NULL CHECK(imported_at_ms > 0),
+                order_count bigint NOT NULL CHECK(order_count > 0)
+            );
+            """),
+    ];
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source,string schema = DefaultSchema,CancellationToken token = default) =>
         Migrations.ApplyAsync(source,schema,MigrationSet(),token);
+
+
+    public async Task<bool> HasSeedV4Async(long sdeBuild,CancellationToken token = default)
+    {
+        if (sdeBuild<=0) throw new ArgumentOutOfRangeException(nameof(sdeBuild));
+        await using var connection=await _source.OpenConnectionAsync(token);
+        await using var command=new NpgsqlCommand($"SELECT 1 FROM {_schema}.market_seed_state WHERE version=4 AND sde_build=$1",connection);
+        command.Parameters.Add(new(){Value=sdeBuild});
+        return await command.ExecuteScalarAsync(token) is not null;
+    }
     internal static MarketOrder Read(NpgsqlDataReader r) => new(r.GetInt64(0),r.GetInt32(1),r.GetBoolean(2),r.GetDecimal(3),
         r.GetInt64(4),r.GetInt64(5),r.GetInt64(6),r.GetInt32(7),new(r.GetInt64(8),r.GetInt32(9),r.GetInt32(10),r.GetInt32(11)),
         r.GetInt64(12),r.GetInt32(13),r.GetBoolean(14));
@@ -44,20 +69,28 @@ public sealed partial class MarketStore
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(seed.Key);
             if (seed.Price != decimal.Round(seed.Price,2)) throw new ArgumentException("Market prices must be whole cents.");
+            var seedRemaining=seed.VolumeRemaining ?? seed.Volume;
+            if (seed.Volume<=0 || seedRemaining<0 || seedRemaining>seed.Volume || seed.MinimumVolume<=0 || seed.MinimumVolume>seed.Volume)
+                throw new ArgumentOutOfRangeException(nameof(seeds),"Invalid seeded market volumes.");
             await using var command = new NpgsqlCommand($"""
-                INSERT INTO {_schema}.orders(id,type_id,bid,price,vol_remaining,vol_entered,min_volume,range_value,station_id,solar_system_id,constellation_id,region_id,issued_ms,duration_days,is_npc,seed_key)
-                VALUES(COALESCE($13::bigint,nextval('{_schema}.order_ids')),$1,$2,$3,$4,$4,1,$5,$6,$7,$8,$9,$10,$11,true,$12)
+                INSERT INTO {_schema}.orders(id,type_id,bid,price,vol_remaining,vol_entered,min_volume,range_value,station_id,solar_system_id,constellation_id,region_id,issued_ms,duration_days,is_npc,seed_key,seed_volume_remaining)
+                VALUES(COALESCE($13::bigint,nextval('{_schema}.order_ids')),$1,$2,$3,$15,$4,$14,$5,$6,$7,$8,$9,$10,$11,true,$12,$15)
                 ON CONFLICT(seed_key) DO UPDATE SET type_id=$1,bid=$2,price=$3,
-                    vol_remaining=GREATEST(0,$4-(orders.vol_entered-orders.vol_remaining)),vol_entered=$4,
-                    range_value=$5,station_id=$6,solar_system_id=$7,constellation_id=$8,region_id=$9,duration_days=$11
+                    vol_remaining=GREATEST(0,$15-(COALESCE(orders.seed_volume_remaining,orders.vol_entered)-orders.vol_remaining)),
+                    vol_entered=$4,min_volume=$14,range_value=$5,station_id=$6,solar_system_id=$7,
+                    constellation_id=$8,region_id=$9,duration_days=$11,seed_volume_remaining=$15
                 WHERE orders.is_npc AND orders.type_id=$1 AND orders.bid=$2 AND orders.station_id=$6
                 RETURNING {BookColumns}
                 """,connection,tx)
             {
-                Parameters = { new(){Value=seed.TypeId},new(){Value=seed.Bid},new(){Value=seed.Price},new(){Value=seed.Volume},
+                Parameters =
+                {
+                    new(){Value=seed.TypeId},new(){Value=seed.Bid},new(){Value=seed.Price},new(){Value=seed.Volume},
                     new(){Value=seed.Range},new(){Value=seed.Location.StationId},new(){Value=seed.Location.SolarSystemId},
                     new(){Value=seed.Location.ConstellationId},new(){Value=seed.Location.RegionId},new(){Value=seed.IssuedMs},
-                    new(){Value=seed.Duration},new(){Value=seed.Key},new(){Value=existing.TryGetValue(seed.Key,out var id) ? id : DBNull.Value} },
+                    new(){Value=seed.Duration},new(){Value=seed.Key},new(){Value=existing.TryGetValue(seed.Key,out var id) ? id : DBNull.Value},
+                    new(){Value=seed.MinimumVolume},new(){Value=seedRemaining},
+                },
             };
             await using var r = await command.ExecuteReaderAsync(token);
             if (!await r.ReadAsync(token)) throw new InvalidOperationException("MARKET_SEED_IDENTITY_CONFLICT");
@@ -67,6 +100,159 @@ public sealed partial class MarketStore
         }
         await tx.CommitAsync(token);
         return rows;
+    }
+
+
+    public async Task<long> SeedNpcV4Async(
+        IAsyncEnumerable<MarketNpcSeed> seeds,string fingerprint,int sdeBuild,long capturedAtMs,Func<long> now,CancellationToken token = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fingerprint);
+        ArgumentNullException.ThrowIfNull(now);
+        if (sdeBuild<=0) throw new ArgumentOutOfRangeException(nameof(sdeBuild));
+        if (capturedAtMs<=0) throw new ArgumentOutOfRangeException(nameof(capturedAtMs));
+
+        await using var connection=await _source.OpenConnectionAsync(token);
+        await using var tx=await connection.BeginTransactionAsync(token);
+        await using (var gate=new NpgsqlCommand("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",connection,tx))
+        {
+            gate.Parameters.Add(new(){Value=$"market:{_schema}:seed:v4"});
+            await gate.ExecuteNonQueryAsync(token);
+        }
+        await using (var prior=new NpgsqlCommand($"SELECT fingerprint,sde_build FROM {_schema}.market_seed_state WHERE version=4",connection,tx))
+        await using (var reader=await prior.ExecuteReaderAsync(token))
+        {
+            if (await reader.ReadAsync(token) && reader.GetString(0)==fingerprint && reader.GetInt32(1)==sdeBuild)
+            {
+                await reader.DisposeAsync();
+                await tx.CommitAsync(token);
+                return 0;
+            }
+        }
+
+        await using (var create=new NpgsqlCommand("""
+            CREATE TEMP TABLE market_seed_v4_stage(
+                row_no bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                seed_key text NOT NULL UNIQUE,
+                type_id integer NOT NULL,
+                bid boolean NOT NULL,
+                price numeric(20,2) NOT NULL,
+                vol_entered bigint NOT NULL,
+                min_volume bigint NOT NULL,
+                vol_remaining bigint NOT NULL,
+                range_value integer NOT NULL,
+                station_id bigint NOT NULL,
+                solar_system_id integer NOT NULL,
+                constellation_id integer NOT NULL,
+                region_id integer NOT NULL,
+                issued_ms bigint NOT NULL,
+                duration_days integer NOT NULL
+            ) ON COMMIT DROP
+            """,connection,tx))
+            await create.ExecuteNonQueryAsync(token);
+
+        long count=0;
+        await using (var importer=await connection.BeginBinaryImportAsync("""
+            COPY market_seed_v4_stage(
+                seed_key,type_id,bid,price,vol_entered,min_volume,vol_remaining,range_value,
+                station_id,solar_system_id,constellation_id,region_id,issued_ms,duration_days
+            ) FROM STDIN (FORMAT BINARY)
+            """,token))
+        {
+            await foreach (var seed in seeds.WithCancellation(token))
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(seed.Key);
+                var remaining=seed.VolumeRemaining ?? seed.Volume;
+                if (seed.TypeId<=0 || seed.Price<=0 || seed.Price>(decimal)MarketRules.MaximumOrderPrice ||
+                    seed.Price!=decimal.Round(seed.Price,2) || seed.Volume<=0 || remaining<=0 || remaining>seed.Volume ||
+                    seed.MinimumVolume<=0 || seed.MinimumVolume>seed.Volume || seed.Location.StationId<=0 ||
+                    seed.Location.SolarSystemId<=0 || seed.Location.ConstellationId<=0 || seed.Location.RegionId<=0 ||
+                    seed.Duration<=0)
+                    throw new ArgumentException($"Invalid V4 market order seed '{seed.Key}'.");
+                await importer.StartRowAsync(token);
+                await importer.WriteAsync(seed.Key,NpgsqlTypes.NpgsqlDbType.Text,token);
+                await importer.WriteAsync(seed.TypeId,NpgsqlTypes.NpgsqlDbType.Integer,token);
+                await importer.WriteAsync(seed.Bid,NpgsqlTypes.NpgsqlDbType.Boolean,token);
+                await importer.WriteAsync(seed.Price,NpgsqlTypes.NpgsqlDbType.Numeric,token);
+                await importer.WriteAsync(seed.Volume,NpgsqlTypes.NpgsqlDbType.Bigint,token);
+                await importer.WriteAsync(seed.MinimumVolume,NpgsqlTypes.NpgsqlDbType.Bigint,token);
+                await importer.WriteAsync(remaining,NpgsqlTypes.NpgsqlDbType.Bigint,token);
+                await importer.WriteAsync(seed.Range,NpgsqlTypes.NpgsqlDbType.Integer,token);
+                await importer.WriteAsync(seed.Location.StationId,NpgsqlTypes.NpgsqlDbType.Bigint,token);
+                await importer.WriteAsync(seed.Location.SolarSystemId,NpgsqlTypes.NpgsqlDbType.Integer,token);
+                await importer.WriteAsync(seed.Location.ConstellationId,NpgsqlTypes.NpgsqlDbType.Integer,token);
+                await importer.WriteAsync(seed.Location.RegionId,NpgsqlTypes.NpgsqlDbType.Integer,token);
+                await importer.WriteAsync(seed.IssuedMs,NpgsqlTypes.NpgsqlDbType.Bigint,token);
+                await importer.WriteAsync(seed.Duration,NpgsqlTypes.NpgsqlDbType.Integer,token);
+                count++;
+            }
+            await importer.CompleteAsync(token);
+        }
+        if (count==0) throw new InvalidDataException("Market seed v4 is empty; refusing to replace the current seed.");
+        var importedAtMs=now();
+        if (importedAtMs<=0) throw new ArgumentOutOfRangeException(nameof(now));
+
+        await using (var retire=new NpgsqlCommand($"""
+            UPDATE {_schema}.orders AS old SET state=2,vol_remaining=0,
+                seed_volume_remaining=COALESCE(old.seed_volume_remaining,old.vol_entered),
+                last_state_change_ms=$1
+            WHERE old.is_npc AND old.seed_key IS NOT NULL AND old.state=0
+                AND NOT EXISTS(SELECT 1 FROM market_seed_v4_stage AS seed WHERE seed.seed_key=old.seed_key)
+            """,connection,tx))
+        {
+            retire.Parameters.Add(new(){Value=importedAtMs});
+            await retire.ExecuteNonQueryAsync(token);
+        }
+
+        await using (var upsert=new NpgsqlCommand($"""
+            WITH rows AS (
+                INSERT INTO {_schema}.orders AS current_orders(
+                    id,type_id,bid,price,vol_remaining,vol_entered,min_volume,range_value,station_id,
+                    solar_system_id,constellation_id,region_id,issued_ms,duration_days,is_npc,seed_key,seed_volume_remaining
+                )
+                SELECT COALESCE(old.id,nextval('{_schema}.order_ids')),seed.type_id,seed.bid,seed.price,
+                    GREATEST(0,seed.vol_remaining-GREATEST(0,COALESCE(old.seed_volume_remaining,old.vol_entered,0)-COALESCE(old.vol_remaining,0))),
+                    seed.vol_entered,seed.min_volume,seed.range_value,seed.station_id,seed.solar_system_id,
+                    seed.constellation_id,seed.region_id,seed.issued_ms,seed.duration_days,true,seed.seed_key,seed.vol_remaining
+                FROM market_seed_v4_stage AS seed
+                LEFT JOIN {_schema}.orders AS old ON old.seed_key=seed.seed_key AND old.is_npc
+                WHERE true
+                ORDER BY seed.row_no
+                ON CONFLICT(seed_key) DO UPDATE SET
+                    price=EXCLUDED.price,
+                    vol_remaining=GREATEST(0,EXCLUDED.seed_volume_remaining-
+                        (COALESCE(current_orders.seed_volume_remaining,current_orders.vol_entered)-current_orders.vol_remaining)),
+                    vol_entered=EXCLUDED.vol_entered,min_volume=EXCLUDED.min_volume,range_value=EXCLUDED.range_value,
+                    station_id=EXCLUDED.station_id,solar_system_id=EXCLUDED.solar_system_id,
+                    constellation_id=EXCLUDED.constellation_id,region_id=EXCLUDED.region_id,
+                    issued_ms=EXCLUDED.issued_ms,duration_days=EXCLUDED.duration_days,
+                    seed_volume_remaining=EXCLUDED.seed_volume_remaining
+                WHERE current_orders.is_npc AND current_orders.type_id=EXCLUDED.type_id
+                    AND current_orders.bid=EXCLUDED.bid AND current_orders.station_id=EXCLUDED.station_id
+                RETURNING id
+            )
+            SELECT COUNT(*)::bigint FROM rows
+            """,connection,tx))
+        {
+            var imported=(long)(await upsert.ExecuteScalarAsync(token))!;
+            if (imported!=count) throw new InvalidOperationException("MARKET_SEED_IDENTITY_CONFLICT");
+        }
+
+        await using (var state=new NpgsqlCommand($"""
+            INSERT INTO {_schema}.market_seed_state(version,fingerprint,sde_build,captured_at_ms,imported_at_ms,order_count)
+            VALUES(4,$1,$2,$3,$4,$5)
+            ON CONFLICT(version) DO UPDATE SET fingerprint=$1,sde_build=$2,captured_at_ms=$3,
+                imported_at_ms=$4,order_count=$5
+            """,connection,tx))
+        {
+            state.Parameters.Add(new(){Value=fingerprint});
+            state.Parameters.Add(new(){Value=sdeBuild});
+            state.Parameters.Add(new(){Value=capturedAtMs});
+            state.Parameters.Add(new(){Value=importedAtMs});
+            state.Parameters.Add(new(){Value=count});
+            await state.ExecuteNonQueryAsync(token);
+        }
+        await tx.CommitAsync(token);
+        return count;
     }
 
     /// <summary>Both halves use one snapshot and the source's price / station / id ordering.</summary>

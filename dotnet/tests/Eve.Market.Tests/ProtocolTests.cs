@@ -17,7 +17,7 @@ public class ProtocolTests
         var actor=await r.Actor("Trader One");
         var session=new ClientSession { SessionId=101 };
         session.Set("charid",new PyInt(actor));
-        var catalog=await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(r.Source),r.Stations,r.Now);
+        var catalog=await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(r.Source));
         var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Wallets,catalog,() => r.Now);
         var events=new List<Eve.Wallet.WalletBalanceChange>();
         r.Wallets.BalanceCommitted+=events.Add;

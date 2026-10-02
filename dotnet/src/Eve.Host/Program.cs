@@ -230,9 +230,49 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     var marketSchema = Env("EVE_MARKET_SCHEMA", Eve.Market.MarketStore.DefaultSchema);
     await Eve.Market.MarketStore.MigrateAsync(source, marketSchema);
     var market = new Eve.Market.MarketStore(source, marketSchema);
-    var marketCatalog = await Eve.Market.MarketCatalog.LoadAsync(sde, stations, now());
-    await market.SeedNpcAsync(marketCatalog.InitialOrders);
-    Console.Error.WriteLine($"eve-host: native market seeded {marketCatalog.InitialOrders.Count} NPC orders");
+    var marketCatalog = await Eve.Market.MarketCatalog.LoadAsync(sde);
+    if (!await market.HasSeedV4Async(build))
+    {
+        var typeIds = (await sde.ReadTypeSummariesAsync()).Select(type => (long)type.TypeId).ToHashSet();
+        var npcStationIds = stations.All.Select(station => station.Id).ToHashSet();
+        var regionIds = stations.All.Select(station => (long)station.RegionId).Distinct().ToArray();
+        var snapshotPath = Path.Combine(Path.GetTempPath(), $"eve.rs-market-seed-v4-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            await using var snapshotFile = new FileStream(snapshotPath, FileMode.CreateNew, FileAccess.ReadWrite,
+                FileShare.None, 1 << 20, FileOptions.Asynchronous | FileOptions.SequentialScan);
+            using var esi = new HttpClient();
+            var captured = await Eve.Market.MarketSeedV4.CaptureAsync(
+                esi, snapshotFile, regionIds, typeIds, npcStationIds, build, DateTimeOffset.FromUnixTimeMilliseconds(now()));
+            await snapshotFile.FlushAsync();
+            snapshotFile.Position = 0;
+            var fingerprint = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(snapshotFile)).ToLowerInvariant();
+            snapshotFile.Position = 0;
+            var snapshot = Eve.Market.MarketSeedV4.Read(snapshotFile);
+            var imported = await market.SeedNpcV4Async(
+                Eve.Market.MarketSeedV4.ToSeedsAsync(snapshot.Orders, stations),
+                fingerprint, checked((int)build), captured.CapturedAtUtc.ToUnixTimeMilliseconds(), now);
+            if (imported == 0)
+            {
+                Console.Error.WriteLine("eve-host: matching market v4 seed was imported by another host instance");
+            }
+            else
+            {
+                var verified = await snapshot.Completion;
+                if (verified.RetainedOrderCount != captured.RetainedOrderCount || imported != captured.RetainedOrderCount)
+                    throw new InvalidDataException("Market Seed v4 snapshot/import counts do not match.");
+                Console.Error.WriteLine($"eve-host: native market v4 seeded {imported} TQ NPC-station orders");
+            }
+        }
+        finally
+        {
+            if (File.Exists(snapshotPath)) File.Delete(snapshotPath);
+        }
+    }
+    else
+    {
+        Console.Error.WriteLine($"eve-host: native market v4 seed already loaded for SDE build {build}");
+    }
     var marketTopology = await Eve.Market.MarketTopology.LoadAsync(sde);
     var marketTrading = new Eve.Market.MarketTrading(source, market, characters, corporations, skills, items, economyWallets, stations, marketTopology, now);
     SimClient? sim = null;

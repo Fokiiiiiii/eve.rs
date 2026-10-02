@@ -54,6 +54,7 @@ public sealed class MarketTopology
     {
         MarketRules.RangeStation => bid.StationId > 0 && bid.StationId == seller.StationId,
         MarketRules.RangeSolarSystem => bid.SolarSystemId > 0 && bid.SolarSystemId == seller.SolarSystemId,
+        MarketRules.RangeEsiFourJumps => Jumps(bid.SolarSystemId,seller.SolarSystemId) <= 4,
         MarketRules.RangeConstellation => bid.SolarSystemId > 0 && bid.ConstellationId == seller.ConstellationId,
         MarketRules.RangeRegion => bid.RegionId > 0 && bid.RegionId == seller.RegionId,
         > 0 => Jumps(bid.SolarSystemId,seller.SolarSystemId) <= range,

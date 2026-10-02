@@ -517,8 +517,7 @@ pub fn compress_rle(input: &[u8]) -> Vec<u8> {
 
         let start = position;
         let end = (position + 8).min(input.len());
-        let count;
-        if input[position] != 0 {
+        let count = if input[position] != 0 {
             zero_chains = 0;
             loop {
                 out.push(input[position]);
@@ -527,14 +526,14 @@ pub fn compress_rle(input: &[u8]) -> Vec<u8> {
                     break;
                 }
             }
-            count = (8 - (position - start)) as u8;
+            (8 - (position - start)) as u8
         } else {
             zero_chains += 1;
             while position < end && input[position] == 0 {
                 position += 1;
             }
-            count = ((position - start) + 7) as u8;
-        }
+            ((position - start) + 7) as u8
+        };
 
         if second_nibble {
             out[control_index] |= count << 4;

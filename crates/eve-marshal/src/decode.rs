@@ -498,6 +498,6 @@ static SINGLE_BYTES: [u8; 256] = {
 /// Node's `toString("utf16le")`: whole code units only, invalid surrogates
 /// replaced.
 fn utf16_lossy(bytes: &[u8]) -> String {
-    let units: Vec<u16> = bytes.chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect();
+    let units: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|pair| u16::from_le_bytes(*pair)).collect();
     String::from_utf16_lossy(&units)
 }

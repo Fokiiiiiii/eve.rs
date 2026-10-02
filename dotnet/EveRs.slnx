@@ -33,6 +33,7 @@
     <Project Path="src/Eve.Services.Station/Eve.Services.Station.csproj" />
     <Project Path="src/Eve.Services.Wallet/Eve.Services.Wallet.csproj" />
     <Project Path="src/Eve.Services.Corporations/Eve.Services.Corporations.csproj" />
+    <Project Path="src/Eve.Services.Market/Eve.Services.Market.csproj" />
     <Project Path="src/Eve.Services/Eve.Services.csproj" />
   </Folder>
   <Folder Name="/tests/">

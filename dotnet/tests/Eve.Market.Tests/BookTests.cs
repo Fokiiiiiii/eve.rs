@@ -21,6 +21,8 @@ public class BookTests
             Assert.Equal([10m,12m],book.Asks.Select(o => o.Price));
             Assert.Equal([9m,7m],book.Bids.Select(o => o.Price));
             Assert.Equal(rows.Select(o => o.Id), (await store.SeedNpcAsync([Seed("ask-hi",12),Seed("ask-low",10),Seed("bid-low",7,true),Seed("bid-hi",9,true)])).Select(o => o.Id));
+            await using (var sequence=source.CreateCommand($"SELECT last_value FROM {schema}.order_ids"))
+                Assert.Equal(4L,(long)(await sequence.ExecuteScalarAsync())!);
             var low = book.Asks.First();
             await using (var consumed = source.CreateCommand($"UPDATE {schema}.orders SET vol_remaining=20 WHERE id=$1"))
             {
@@ -42,5 +44,21 @@ public class BookTests
             await using var drop = source.CreateCommand($"DROP SCHEMA {schema} CASCADE");
             await drop.ExecuteNonQueryAsync();
         }
+    }
+
+    [PgFact]
+    public async Task Pinned_sde_generates_priced_non_arbitrageable_jita_supply_and_groups()
+    {
+        await using var r=await TradeRig.Create();
+        var catalog=await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(r.Source),r.Stations,r.Now);
+        Assert.Contains(catalog.Groups,g => g.Id==4 && g.Name.Length>0);
+        var ask=Assert.Single(catalog.InitialOrders,o => o.TypeId==34 && !o.Bid);
+        var bid=Assert.Single(catalog.InitialOrders,o => o.TypeId==34 && o.Bid);
+        Assert.Equal(60003760,ask.Location.StationId);
+        Assert.Equal(2.24m,ask.Price);
+        Assert.Equal(1.84m,bid.Price);
+        Assert.True(catalog.InitialOrders.Count>1000);
+        var buyPrices=catalog.InitialOrders.Where(o => o.Bid).ToDictionary(o => o.TypeId,o => o.Price);
+        Assert.All(catalog.InitialOrders.Where(o => !o.Bid),o => Assert.True(o.Price>=buyPrices[o.TypeId]));
     }
 }

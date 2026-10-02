@@ -101,7 +101,10 @@ public sealed partial class CorporationStore
         await _characters.SetCorporationAllianceAsync(connection,tx,corporation,alliance,token);
     }
 
-    public Task<long> ApplyToAllianceAsync(long actor,long alliance,string text,CancellationToken token = default)
+    public Task<long> ApplyToAllianceAsync(long actor,long alliance,string text,CancellationToken token = default) =>
+        ApplyToAllianceAsync(actor,alliance,text,false,false,token);
+
+    public Task<long> ApplyToAllianceAsync(long actor,long alliance,string text,bool requireCeo,bool rejectExisting,CancellationToken token = default)
     {
         if (text.EnumerateRunes().Count() > 1000) throw new CorporationError("ALLIANCE_APPLICATION_TEXT_TOO_LONG");
         return WriteAsync(async (connection,tx) =>
@@ -110,7 +113,14 @@ public sealed partial class CorporationStore
             if (target is null || target.Deleted) throw new CorporationError("ALLIANCE_NOT_FOUND");
             var character = await _characters.LockAndGetAsync(connection,tx,actor,token) ?? throw new CorporationError("CHARACTER_NOT_FOUND");
             var corp = await RequireRoleAsync(connection,tx,character.CorporationId,actor,CorporationRoles.Director,token);
+            if (requireCeo && corp.CeoId != actor) throw new CorporationError("CORPORATION_ACCESS_DENIED");
             if (corp.AllianceId is not null) throw new CorporationError("CORPORATION_ALREADY_IN_ALLIANCE");
+            if (rejectExisting)
+            {
+                await using var existing = Command(connection,tx,$"SELECT 1 FROM {_schema}.alliance_applications WHERE alliance_id=$1 AND corporation_id=$2 AND (NOT archived OR status=4) ORDER BY id DESC LIMIT 1 FOR UPDATE",alliance,corp.Id);
+                if (await existing.ExecuteScalarAsync(token) is not null)
+                    throw new CorporationError("ALLIANCE_APPLICATION_ALREADY_EXISTS");
+            }
             var now = _now();
             await using var command = Command(connection,tx,$"""
                 INSERT INTO {_schema}.alliance_applications(alliance_id,corporation_id,text,status,created_ms,updated_ms)
@@ -132,9 +142,30 @@ public sealed partial class CorporationStore
         return rows;
     }
 
-    public Task<AllianceApplication> RespondToAllianceAsync(long actor,long applicationId,int status,CancellationToken token = default)
+    public Task<bool> WithdrawAllianceApplicationAsync(long actor,long alliance,CancellationToken token = default) =>
+        WriteAsync<bool>(async (connection,tx) =>
+        {
+            var character = await _characters.LockAndGetAsync(connection,tx,actor,token) ?? throw new CorporationError("CHARACTER_NOT_FOUND");
+            var corporation = await RequireRoleAsync(connection,tx,character.CorporationId,actor,CorporationRoles.Director,token);
+            AllianceApplication? application = null;
+            await using (var command = Command(connection,tx,$"SELECT {AllianceApplicationColumns} FROM {_schema}.alliance_applications WHERE alliance_id=$1 AND corporation_id=$2 ORDER BY id DESC LIMIT 1 FOR UPDATE",alliance,corporation.Id))
+            await using (var reader = await command.ExecuteReaderAsync(token))
+                if (await reader.ReadAsync(token)) application = ReadAllianceApplication(reader);
+            if (application is null) return false;
+            if (application.Status is not (1 or 4)) throw new CorporationError("ALLIANCE_APPLICATION_INVALID_STATE");
+            await using var delete = Command(connection,tx,$"DELETE FROM {_schema}.alliance_applications WHERE id=$1",application.Id);
+            await delete.ExecuteNonQueryAsync(token);
+            return true;
+        },token);
+
+    public Task<AllianceApplication> RespondToAllianceAsync(long actor,long applicationId,int status,CancellationToken token = default) =>
+        RespondToAllianceAsync(actor,applicationId,null,status,token);
+
+    public Task<AllianceApplication> RespondToAllianceAsync(long actor,long applicationId,string? applicationText,int status,CancellationToken token = default)
     {
         if (status is not (2 or 4)) throw new CorporationError("ALLIANCE_APPLICATION_INVALID_STATE");
+        if (applicationText is not null && applicationText.EnumerateRunes().Count() > 1000)
+            throw new CorporationError("ALLIANCE_APPLICATION_TEXT_TOO_LONG");
         return WriteAsync(async (connection,tx) =>
         {
             AllianceApplication app;
@@ -144,16 +175,22 @@ public sealed partial class CorporationStore
             var alliance = await AllianceAsync(connection,tx,app.AllianceId,true,token);
             if (alliance?.ActiveExecutorId is not { } executor || alliance.Deleted) throw new CorporationError("ALLIANCE_EXECUTOR_REQUIRED");
             await RequireRoleAsync(connection,tx,executor,actor,CorporationRoles.Director,token);
-            if (app.Status == status || app.Archived) return app;
-            if (app.Status != 1) throw new CorporationError("ALLIANCE_APPLICATION_INVALID_STATE");
+            if (app.Status == status)
+            {
+                if (applicationText is not null && app.Text != applicationText)
+                    throw new CorporationError("ALLIANCE_APPLICATION_REPLAY_MISMATCH");
+                return app;
+            }
+            if (app.Archived || app.Status != 1) throw new CorporationError("ALLIANCE_APPLICATION_INVALID_STATE");
             var corp = await GetAsync(connection,tx,app.CorporationId,true,token);
             if (corp is null || corp.Deleted || corp.IsNpc || corp.AllianceId is not null) throw new CorporationError("INVALID_APPLICANT_CORPORATION");
             var now = _now();
+            var text = applicationText ?? app.Text;
             long? due = status == 2 ? checked(now + AllianceRules.ApplicationDelayMs) : null;
-            await using var update = Command(connection,tx,$"UPDATE {_schema}.alliance_applications SET status=$2,updated_ms=$3,due_ms=$4,archived=$5 WHERE id=$1",
-                app.Id,status,now,due,status==4);
+            await using var update = Command(connection,tx,$"UPDATE {_schema}.alliance_applications SET text=$2,status=$3,updated_ms=$4,due_ms=$5,archived=$6 WHERE id=$1",
+                app.Id,text,status,now,due,status==4);
             await update.ExecuteNonQueryAsync(token);
-            return app with { Status=status,UpdatedMs=now,DueMs=due,Archived=status==4 };
+            return app with { Text=text,Status=status,UpdatedMs=now,DueMs=due,Archived=status==4 };
         },token);
     }
 

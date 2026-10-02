@@ -286,3 +286,9 @@ Wallet has 28 checks, including compound references and replay status. The fresh
 before the subsequent login-notification correction. Market mutation RPCs/notifications, modification crossing,
 price-history adapters, corporation-office stock, native seed import and live client/performance acceptance
 remain in progress. S5 and its service groups remain unchecked.
+
+### S5 corporation, alliance and market integration — 2026-10-02
+
+- Corporation invitation IDs are independent from application IDs; membership offer/accept/reject and alliance application/read/update/withdraw RPCs are wired. Market orders, owner-order reads, history reads and modify/cancel notifications are registered in Host. The market order book and settlement remain transactional; S5 groups are still incomplete.
+- Verification on this checkout: Host build exit 0 (0 warnings/errors); focused Corp/Alliance tests 11/11 pass; the Market tests that do not need SDE 7/7 pass. The full Market project run was 7/21 pass; the other 14 fail during `TradeRig.Create` because the configured PostgreSQL database has no `sde.npcStations`. The broad Corp/Alliance run was 13/14 pass; its remaining NPC catalog test fails before assertions because `sde.npcCorporations` is absent. The full solution suite, live-client replay and performance comparison were not run.
+- Market startup currently synthesizes Jita seed orders from SDE `types.basePrice`; it does not reproduce the EVE.js market seed manifest/NPC overlay. This limitation is recorded as deviation #111. Alliance due-time processing and committed affiliation notifications are not yet wired. Do not claim full EVE.js parity, client acceptance or speedup from these checks.

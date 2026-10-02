@@ -34,8 +34,18 @@ public sealed partial class CorporationStore
         return corp;
     }
 
-    public Task<long> ApplyAsync(long character,long corporation,string text,bool invitation = false,long? inviter = null,CancellationToken token = default) =>
-        WriteAsync(async (connection,tx) =>
+    public async Task<long> ApplyAsync(long character,long corporation,string text,bool invitation = false,long? inviter = null,CancellationToken token = default) =>
+        (await ApplyCoreAsync(character,corporation,text,invitation,inviter,token)).ApplicationId;
+
+    public async Task<(long ApplicationId,long InvitationId)> CreateInvitationAsync(long character,long corporation,long inviter,CancellationToken token = default)
+    {
+        var result = await ApplyCoreAsync(character,corporation,"",true,inviter,token);
+        return (result.ApplicationId,result.InvitationId ?? throw new InvalidOperationException("Invitation ID was not allocated."));
+    }
+
+    private Task<(long ApplicationId,long? InvitationId)> ApplyCoreAsync(
+        long character,long corporation,string text,bool invitation,long? inviter,CancellationToken token) =>
+        WriteAsync<(long ApplicationId,long? InvitationId)>(async (connection,tx) =>
         {
             var corp = await GetAsync(connection,tx,corporation,true,token) ?? throw new CorporationError("CORPORATION_NOT_FOUND");
             if (corp.Deleted || corp.IsNpc) throw new CorporationError("CUSTOM_CORPORATION_REQUIRED");
@@ -49,14 +59,20 @@ public sealed partial class CorporationStore
             var applicant = await _characters.LockAndGetAsync(connection,tx,character,token) ?? throw new CorporationError("CHARACTER_NOT_FOUND");
             if (applicant.CorporationId == corporation) throw new CorporationError("ALREADY_A_MEMBER");
             var now = _now();
-            await using var command = Command(connection,tx,$"""
-                INSERT INTO {_schema}.applications(corporation_id,character_id,text,status,created_ms,updated_ms)
-                VALUES($1,$2,$3,$4,$5,$5)
-                ON CONFLICT(corporation_id,character_id) WHERE NOT archived
+            var invitationIdSql = invitation ? $"nextval('{_schema}.invitation_ids')" : "NULL";
+            var conflictSql = invitation ? "" : """
+                ON CONFLICT(corporation_id,character_id) WHERE NOT archived AND status <> 8
                 DO UPDATE SET text=$3,updated_ms=$5
-                RETURNING id
+                """;
+            await using var command = Command(connection,tx,$"""
+                INSERT INTO {_schema}.applications(corporation_id,character_id,text,status,created_ms,updated_ms,invitation_id)
+                VALUES($1,$2,$3,$4,$5,$5,{invitationIdSql})
+                {conflictSql}
+                RETURNING id,invitation_id
                 """,corporation,character,text,invitation ? 8 : 0,now);
-            return (long)(await command.ExecuteScalarAsync(token))!;
+            await using var reader = await command.ExecuteReaderAsync(token);
+            if (!await reader.ReadAsync(token)) throw new InvalidOperationException("Application insert returned no row.");
+            return (reader.GetInt64(0),reader.IsDBNull(1) ? null : reader.GetInt64(1));
         },token);
 
     public async Task<IReadOnlyList<Application>> ApplicationsAsync(long? corporation = null,long? character = null,bool archived = false,CancellationToken token = default)

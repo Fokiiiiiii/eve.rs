@@ -81,6 +81,7 @@ pub(crate) fn rat_identity(aggression_range: f64) -> NpcIdentity {
                     tracking_speed: 0.4,
                     signature_resolution: 40.0,
                     charge: None,
+                    missile: None,
                 },
             }],
         },

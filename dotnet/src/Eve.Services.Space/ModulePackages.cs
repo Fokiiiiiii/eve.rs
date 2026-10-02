@@ -30,7 +30,8 @@ internal static class ModulePackages
             return new Result(null, "MODULE_NOT_FOUND", 0, "");
         }
         var name = type.Name;
-        var effect = type.EffectIds.Select(statics.Effect).FirstOrDefault(e => e is { } found && found.Name.Equals(effectName, StringComparison.OrdinalIgnoreCase));
+        var effect = type.EffectIds.Select(statics.Effect).FirstOrDefault(e => e is { } found && found.Name.Equals(effectName, StringComparison.OrdinalIgnoreCase))
+            ?? MissileEffect.LauncherEffectFor(type, statics, effectName);   // a launcher is fired with the effect of its charge, and runs its own
         if (effect is null || effect.Category is not (EffectDef.Activation or EffectDef.Target))
         {
             return new Result(null, "UNSUPPORTED_EFFECT", module.TypeId, name);

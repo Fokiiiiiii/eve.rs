@@ -7,12 +7,13 @@
 
 use crate::death::Credit;
 use crate::health::{Condition, Layer, Resonances, Vitals};
+use crate::missiles::Missile;
 use crate::modules::{Action, Applies, Change, Effect, Numbers, Reach, Remote};
 use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Charge, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 12;
+pub const PROTOCOL_VERSION: u16 = 13;
 
 /// The message kinds.
 pub mod kind {
@@ -584,6 +585,25 @@ fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
         }),
         _ => return Err(DecodeError::BadValue("charge")),
     };
+    let missile = match reader.u8()? {
+        0 => None,
+        1 => Some(Missile {
+            charge_type_id: reader.i32()?,
+            group_id: reader.i32()?,
+            name: reader.text()?,
+            radius: reader.f64()?,
+            mass: reader.f64()?,
+            agility: reader.f64()?,
+            hit_points: reader.f64()?,
+            max_velocity: reader.f64()?,
+            flight_time_ms: reader.f64()?,
+            explosion_radius: reader.f64()?,
+            explosion_velocity: reader.f64()?,
+            damage_reduction_factor: reader.f64()?,
+            damage_reduction_sensitivity: reader.f64()?,
+        }),
+        _ => return Err(DecodeError::BadValue("missile")),
+    };
     Ok(Turret {
         weapon_type_id,
         fx,
@@ -593,6 +613,7 @@ fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
         tracking_speed,
         signature_resolution,
         charge,
+        missile,
     })
 }
 
@@ -639,7 +660,8 @@ fn read_identity(reader: &mut Reader) -> Result<NpcIdentity, DecodeError> {
 }
 
 /// A turret's numbers: the type of the weapon, the effect the client plays, the damage of a shot (em, thermal, kinetic, explosive), the range, the falloff,
-/// the tracking and the signature resolution, then the charge it fires (a flag byte, and when set the type, the flag it sits at, the rounds left and the rounds a cycle takes).
+/// the tracking and the signature resolution, then the charge it fires (a flag byte, and when set the type, the flag it sits at, the rounds left and the rounds a cycle takes), then the missile it
+/// flies (a flag byte, and when set the type of the missile, its speed, its flight time in milliseconds, the explosion radius and velocity and the damage reduction factor and sensitivity).
 fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
     out.extend_from_slice(&turret.weapon_type_id.to_le_bytes());
     put_text(out, &turret.fx);
@@ -659,6 +681,29 @@ fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
             out.extend_from_slice(&charge.flag.to_le_bytes());
             out.extend_from_slice(&charge.rounds.to_le_bytes());
             out.extend_from_slice(&charge.per_cycle.to_le_bytes());
+        }
+    }
+    match &turret.missile {
+        None => out.push(0),
+        Some(missile) => {
+            out.push(1);
+            out.extend_from_slice(&missile.charge_type_id.to_le_bytes());
+            out.extend_from_slice(&missile.group_id.to_le_bytes());
+            put_text(out, &missile.name);
+            for number in [
+                missile.radius,
+                missile.mass,
+                missile.agility,
+                missile.hit_points,
+                missile.max_velocity,
+                missile.flight_time_ms,
+                missile.explosion_radius,
+                missile.explosion_velocity,
+                missile.damage_reduction_factor,
+                missile.damage_reduction_sensitivity,
+            ] {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
         }
     }
 }

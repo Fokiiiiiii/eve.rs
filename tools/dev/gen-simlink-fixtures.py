@@ -78,9 +78,13 @@ def turret(t):
     body = struct.pack("<i", t["weaponTypeId"]) + s(t["fx"])
     body += struct.pack("<8d", *t["rawDamage"], t["optimalRange"], t["falloff"], t["trackingSpeed"], t["signatureResolution"])
     c = t.get("charge")
-    if not c:
+    body += bytes([0]) if not c else bytes([1]) + struct.pack("<iiqq", c["typeId"], c["flag"], c["rounds"], c["perCycle"])
+    m = t.get("missile")
+    if not m:
         return body + bytes([0])
-    return body + bytes([1]) + struct.pack("<iiqq", c["typeId"], c["flag"], c["rounds"], c["perCycle"])
+    return (body + bytes([1]) + struct.pack("<ii", m["chargeTypeId"], m["groupId"]) + s(m["name"])
+            + struct.pack("<10d", m["radius"], m["mass"], m["agility"], m["hitPoints"], m["maxVelocity"], m["flightTimeMs"], m["explosionRadius"],
+                          m["explosionVelocity"], m["damageReductionFactor"], m["damageReductionSensitivity"]))
 
 
 LAYERS = {"shield": 0, "armor": 1, "structure": 2}
@@ -243,8 +247,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 12},
-    {"name": "hello ack", "kind": "HelloAck", "version": 12, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 13},
+    {"name": "hello ack", "kind": "HelloAck", "version": 13, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -419,6 +423,18 @@ valid = [
                 "offChanges": [{"itemId": "9988400002719", "attributeId": 6, "value": 1.3545},
                                {"itemId": "9988400002719", "attributeId": 51, "value": 2750.8},
                                {"itemId": "9988400002719", "attributeId": 54, "value": 5940.0}]}},
+    {"name": "activate a rocket launcher that fires scourge rockets", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400003564", "moduleType": 10629, "effectId": 101, "fx": "effects.MissileDeployment",
+                "durationMs": 4900.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "980050000111",
+                "turret": {"weaponTypeId": 10629, "fx": "effects.MissileDeployment", "rawDamage": [0.0, 0.0, 38.115, 0.0],
+                           "optimalRange": 4500.0, "falloff": 0.0, "trackingSpeed": 0.0, "signatureResolution": 40000.0,
+                           "charge": {"typeId": 266, "flag": 28, "rounds": 3, "perCycle": 1},
+                           "missile": {"chargeTypeId": 266, "groupId": 387, "name": "Scourge Rocket", "radius": 300.0, "mass": 100.0,
+                                       "agility": 5.220125693558398, "hitPoints": 90.0, "maxVelocity": 2250.0, "flightTimeMs": 2000.0,
+                                       "explosionRadius": 20.0, "explosionVelocity": 150.0, "damageReductionFactor": 0.644,
+                                       "damageReductionSensitivity": 5.5}},
+                "onChanges": [{"itemId": "9988400003564", "attributeId": 51, "value": 4900.0}],
+                "offChanges": [{"itemId": "9988400003564", "attributeId": 51, "value": 4900.0}]}},
     {"name": "rounds spent", "kind": "ChargeSpent", "sessionId": "1790646377000015", "moduleId": "9988400002719", "roundsLeft": "79"},
     {"name": "rounds loaded into a gun that runs", "kind": "AdjustCharge", "requestId": "41", "sessionId": "1790646377000015", "moduleId": "9988400002719",
      "chargeType": 222, "op": "add", "capacity": "80", "available": "40"},

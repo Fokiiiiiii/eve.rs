@@ -13,6 +13,7 @@ internal static class ModuleEffects
     public static EffectRegistry<ShipSnapshot, SimEffect> Default { get; } = new EffectRegistry<ShipSnapshot, SimEffect>()
         .Register(new PropulsionEffect())
         .Register(new TurretEffect())
+        .Register(new MissileEffect())
         .Register(new RepairEffect())
         .Register(new ProjectedEffect())
         .Register(new SmartbombEffect());

@@ -6,6 +6,7 @@ use eve_space::health::{Condition, Layer, Resonances, Vitals};
 use eve_space::link::{
     ChargeOp, ContainerPlacement, DecodeError, Enter, How, Message, Spawn, WreckPlacement,
 };
+use eve_space::missiles::Missile;
 use eve_space::modules::{Action, Applies, Change, Effect, Numbers, Reach, Remote};
 use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use eve_space::weapons::{Charge, Turret};
@@ -133,6 +134,21 @@ fn turret_of(w: &Value) -> Turret {
             flag: c["flag"].as_i64().unwrap() as i32,
             rounds: c["rounds"].as_i64().unwrap(),
             per_cycle: c["perCycle"].as_i64().unwrap(),
+        }),
+        missile: w.get("missile").filter(|m| !m.is_null()).map(|m| Missile {
+            charge_type_id: m["chargeTypeId"].as_i64().unwrap() as i32,
+            group_id: m["groupId"].as_i64().unwrap() as i32,
+            name: m["name"].as_str().unwrap().to_string(),
+            radius: m["radius"].as_f64().unwrap(),
+            mass: m["mass"].as_f64().unwrap(),
+            agility: m["agility"].as_f64().unwrap(),
+            hit_points: m["hitPoints"].as_f64().unwrap(),
+            max_velocity: m["maxVelocity"].as_f64().unwrap(),
+            flight_time_ms: m["flightTimeMs"].as_f64().unwrap(),
+            explosion_radius: m["explosionRadius"].as_f64().unwrap(),
+            explosion_velocity: m["explosionVelocity"].as_f64().unwrap(),
+            damage_reduction_factor: m["damageReductionFactor"].as_f64().unwrap(),
+            damage_reduction_sensitivity: m["damageReductionSensitivity"].as_f64().unwrap(),
         }),
     }
 }

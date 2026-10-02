@@ -179,11 +179,22 @@ public sealed record SimChange(long ItemId, int AttributeId, double Value);
 
 /// <summary>
 /// What a turret shoots: the type of the weapon (what the combat log calls it), the effect the client plays, the damage of a shot before the quality of the hit
-/// (em, thermal, kinetic, explosive: the damage multiplier is in it), the range, the falloff, the tracking (radians a second) and the signature resolution.
+/// (em, thermal, kinetic, explosive: the damage multiplier is in it), the range, the falloff, the tracking (radians a second) and the signature resolution. A launcher is a turret that
+/// flies a <see cref="SimMissile"/> in place of shooting: its range is what the missile covers, and what reaches the target is what the missile's numbers say.
 /// </summary>
 public sealed record SimTurret(
     int WeaponTypeId, string Fx, IReadOnlyList<double> RawDamage, double OptimalRange, double Falloff, double TrackingSpeed, double SignatureResolution,
-    SimTurretCharge? Charge = null);
+    SimTurretCharge? Charge = null, SimMissile? Missile = null);
+
+/// <summary>
+/// What a launcher flies: the type of the missile it fires and its group, what the client calls it, the radius, mass and agility of its ball, the hit points it has while it flies (what a smartbomb
+/// or a point defense has to do to shoot it down), its speed (metres a second), how long it flies before it explodes (milliseconds) and the numbers that decide how much of its damage a target
+/// takes (the explosion radius and velocity, the damage reduction factor and its sensitivity). The simulation makes an entity of its own of each missile that is fired (<c>eve-space</c>'s
+/// <c>missile_entity</c>), apart from the ships.
+/// </summary>
+public sealed record SimMissile(
+    int ChargeTypeId, int GroupId, string Name, double Radius, double Mass, double Agility, double HitPoints, double MaxVelocity, double FlightTimeMs,
+    double ExplosionRadius, double ExplosionVelocity, double DamageReductionFactor, double DamageReductionSensitivity);
 
 /// <summary>
 /// The charge a turret fires: its type, the flag it sits at in the ship (the slot of the module), the rounds left and the rounds a cycle takes. The simulation

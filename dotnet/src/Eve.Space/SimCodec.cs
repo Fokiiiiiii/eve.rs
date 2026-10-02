@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 12;
+    public const ushort ProtocolVersion = 13;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -373,7 +373,13 @@ public static class SimCodec
             1 => new SimTurretCharge(r.I32(), r.I32(), r.I64(), r.I64()),
             _ => throw new SimLinkException(SimLinkError.BadValue, "bad charge"),
         };
-        return new SimTurret(weaponType, fx, damage, optimal, falloff, tracking, resolution, charge);
+        var missile = r.U8() switch
+        {
+            0 => null,
+            1 => new SimMissile(r.I32(), r.I32(), r.Text(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64()),
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad missile"),
+        };
+        return new SimTurret(weaponType, fx, damage, optimal, falloff, tracking, resolution, charge, missile);
     }
 
     /// <summary>Decodes a frame's payload: the kind byte and the body (without the length prefix).</summary>
@@ -760,6 +766,27 @@ public static class SimCodec
             w.I32(charge.Flag);
             w.I64(charge.Rounds);
             w.I64(charge.PerCycle);
+        }
+        else
+        {
+            w.U8(0);
+        }
+        if (t.Missile is { } missile)
+        {
+            w.U8(1);
+            w.I32(missile.ChargeTypeId);
+            w.I32(missile.GroupId);
+            w.Text(missile.Name);
+            w.F64(missile.Radius);
+            w.F64(missile.Mass);
+            w.F64(missile.Agility);
+            w.F64(missile.HitPoints);
+            w.F64(missile.MaxVelocity);
+            w.F64(missile.FlightTimeMs);
+            w.F64(missile.ExplosionRadius);
+            w.F64(missile.ExplosionVelocity);
+            w.F64(missile.DamageReductionFactor);
+            w.F64(missile.DamageReductionSensitivity);
         }
         else
         {

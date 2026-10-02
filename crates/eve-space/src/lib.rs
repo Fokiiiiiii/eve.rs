@@ -16,6 +16,8 @@ pub mod geo;
 pub mod health;
 pub mod link;
 pub mod locators;
+pub mod missile_entity;
+pub mod missiles;
 pub mod modules;
 pub mod motion;
 pub mod names;

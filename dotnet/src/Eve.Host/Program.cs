@@ -231,6 +231,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     var dogmaSync = new CharacterDogmaSync(dogma, ships, now);
     var characterSessions = new CharacterSessions();
     // the combat timers and flags: kept in crimewatch's schema, told to the clients as they change (Eve.Services.Crimewatch)
+    Func<long, CancellationToken, Task<double>> securityStatusOf = (id, token) => foundations.Relations.ValueAsync(Eve.Relations.RelationKinds.SecurityStatus.Name, id, Eve.Relations.RelationStore.World, 0, null, null, token);
     var crimewatchRuntime = new Eve.Services.Crimewatch.CrimewatchRuntime(crimewatchStore, characterSessions, now, message => Console.Error.WriteLine($"eve-host: crimewatch: {message}"));
     await crimewatchRuntime.ResumeAsync();
     var announcer = new TrainingAnnouncer(training, skillCatalog, characterSessions, dogmaSync, now);
@@ -317,7 +318,12 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")));
         spaceSessions.Events = foundations.Events;   // what happens in space is announced on the bus as well
         spaceSessions.SafetyLevelOf = (character, token) => crimewatchStore.SafetyOfAsync(character, token);   // the ship safety the pilot has set
-        spaceSessions.Aggression = async (attacker, target, system, where, capsule, token) => await crimewatchRuntime.RecordAggressionAsync(attacker, target, where, system, capsule, token);   // what an attack makes of the attacker
+        spaceSessions.Aggression = async (request, token) => await crimewatchRuntime.RecordAggressionAsync(request, token);   // what an attack makes of the attacker
+        spaceSessions.SecurityStatusOf = securityStatusOf;   // the ship in space shows it
+        // a crime costs security status: written to the relation, told to the pilot, shown on the ship in space
+        new Eve.Services.Crimewatch.SecurityStatusPenalties(crimewatchRuntime, characterSessions, securityStatusOf,
+            async (character, value, reason, token) => await foundations.Relations.SetAsync(Eve.Relations.RelationKinds.SecurityStatus.Name, character, Eve.Relations.RelationStore.World, value, reason, token),
+            now, async (character, token) => await spaceSessions.AffiliationChangedAsync(character, token)).Attach();
         var bounties = spaceSessions;
         foundations.Scheduler.Register("space.bounty.pay", async (_, token) => await bounties.PayBountiesAsync(token));
         await foundations.Scheduler.EnsureRecurringAsync("space.bounty.pay", "pay", TimeSpan.FromSeconds(10));
@@ -333,7 +339,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         // security status is the character's relation of that kind (Eve.Relations); crimewatch only asks for it
         new Eve.Services.Crimewatch.CrimewatchService(
             crimewatchStore, now,
-            (id, token) => foundations.Relations.ValueAsync(Eve.Relations.RelationKinds.SecurityStatus.Name, id, Eve.Relations.RelationStore.World, 0, null, null, token)),
+            securityStatusOf),
         new SkillMgr2Service(),
         new SkillHandlerService(skills, skillCatalog, training, characters, announcer, now),
         new CharMgrService(characters, stations),

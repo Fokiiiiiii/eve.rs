@@ -86,10 +86,10 @@ public class WeaponHostTests
         var session = await InSpaceAsync(rig, attacker, 1);
         var other = await InSpaceAsync(rig, victim, 2);
         var gun = await GunOfAsync(rig, attacker);
-        List<(long Attacker, long Target, long System, Eve.Universe.SecurityClass Where, bool Capsule)> told = [];
-        rig.Space.Aggression = (by, at, system, where, capsule, _) =>
+        List<Eve.Crimewatch.AggressionRequest> told = [];
+        rig.Space.Aggression = (request, _) =>
         {
-            told.Add((by, at, system, where, capsule));
+            told.Add(request);
             return Task.CompletedTask;
         };
         var level = 2;
@@ -111,7 +111,8 @@ public class WeaponHostTests
         Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "targetAttack", ship, 1000, CancellationToken.None));
 
         var one = Assert.Single(told);
-        Assert.Equal((attacker.CharacterId, victim.CharacterId, session.GetInt("solarsystemid")!.Value, false), (one.Attacker, one.Target, one.System, one.Capsule));
+        Assert.Equal((attacker.CharacterId, victim.CharacterId, ship, session.GetInt("solarsystemid")!.Value, false), (one.Attacker, one.Target, one.TargetShipId, one.SolarSystemId, one.TargetIsCapsule));
+        Assert.True(one.Security > 0.9, "the system the pilots are in is safe: the security is what the penalty reads");
     }
 
     [PgFact]
@@ -124,7 +125,7 @@ public class WeaponHostTests
         var other = await InSpaceAsync(rig, victim, 2);
         var gun = await GunOfAsync(rig, attacker);
         rig.Space.SafetyLevelOf = (_, _) => Task.FromResult(0);
-        rig.Space.Aggression = (_, _, _, _, _, _) => throw new InvalidOperationException("the database is gone");
+        rig.Space.Aggression = (_, _) => throw new InvalidOperationException("the database is gone");
 
         Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "targetAttack", other.GetInt("shipid")!.Value, 1000, CancellationToken.None));
     }

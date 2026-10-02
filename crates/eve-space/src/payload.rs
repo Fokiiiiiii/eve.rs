@@ -82,6 +82,11 @@ pub fn slim_item_change(stamp: u32, wreck: &Wreck) -> Value {
     action(stamp, "OnSlimItemChange", [id(wreck.id), slim_object(wreck.slim_entries())])
 }
 
+/// `OnSlimItemChange` for a ship: its slim item is told again, as an object, to whoever has the ship in view (a pilot whose security status changed, for one).
+pub fn ship_slim_item_change(stamp: u32, ship: &Ship) -> Value {
+    action(stamp, "OnSlimItemChange", [id(ship.spec.ship_id), slim_object(slim::ship_entries(ship))])
+}
+
 /// The effect the client plays where a pilot jettisons cargo (`effects.Jettison`, played on the can: it has no module, target or charge).
 pub fn jettison_effect(stamp: u32, can_id: i64) -> Value {
     action(

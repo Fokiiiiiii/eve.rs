@@ -2,6 +2,16 @@ using Eve.Universe;
 
 namespace Eve.Crimewatch;
 
+/// <summary>An attack on the ship of another pilot, as the host reports it to crimewatch.</summary>
+/// <param name="Attacker">The character that started the module.</param>
+/// <param name="Target">The character that flies the ship attacked.</param>
+/// <param name="TargetShipId">The ship attacked (a pilot that lost security status for a ship loses no more for it for a minute).</param>
+/// <param name="SolarSystemId">Where it happened.</param>
+/// <param name="Security">The security status of that system (as the game has it, not the class).</param>
+/// <param name="Where">The security class of that system.</param>
+/// <param name="TargetIsCapsule">Whether the ship attacked is a capsule.</param>
+public sealed record AggressionRequest(long Attacker, long Target, long TargetShipId, long SolarSystemId, double Security, SecurityClass Where, bool TargetIsCapsule);
+
 /// <summary>What an attack on another pilot's ship was, to the attacker.</summary>
 public enum AggressionReason
 {

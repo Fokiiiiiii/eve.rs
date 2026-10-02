@@ -7,7 +7,7 @@ using Eve.Universe;
 namespace Eve.Services.Crimewatch;
 
 /// <summary>An attack on the ship of another pilot, and what it made of the attacker (see <see cref="Aggression"/>).</summary>
-public sealed record AggressionResult(long Attacker, long Target, long SolarSystemId, SecurityClass Where, bool TargetIsCapsule, AggressionOutcome Outcome);
+public sealed record AggressionResult(AggressionRequest Request, AggressionOutcome Outcome);
 
 /// <summary>
 /// What crimewatch does as pilots attack one another: it keeps the timers and flags (<see cref="PgCrimewatchStore"/>, by the rules of <see cref="Aggression"/>) and tells the clients what
@@ -27,27 +27,36 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
     /// <summary>Whether the law lets the first pilot attack the second at this time (a war, a limited engagement, a corporation that may shoot its own). Nothing is legal until something says so.</summary>
     public Func<long, long, long, bool>? Legal { get; set; }
 
-    /// <summary>Raised after an attack was recorded and the clients were told the timers: what a crime brings (the security status, a kill right, CONCORD) hangs here.</summary>
+    /// <summary>Raised after an attack was recorded and before the clients are told the timers: what a crime brings (the security status, a kill right, CONCORD) hangs here.</summary>
     public event Func<AggressionResult, Task>? Aggressed;
 
     private static string Key(long characterId) => $"crimewatch.end:{characterId}";
 
-    /// <summary>A pilot attacked the ship of another pilot: its timers run, it may be flagged, and the clients are told.</summary>
-    public async Task<AggressionResult> RecordAggressionAsync(long attacker, long target, SecurityClass where, long solarSystemId, bool targetIsCapsule, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// A pilot attacked the ship of another pilot: its timers run and it may be flagged; what a crime brings (<see cref="Aggressed"/>) is done, and then the clients are told the timers
+    /// (as in the reference, whose security status and kill right come before the timers).
+    /// </summary>
+    public async Task<AggressionResult> RecordAggressionAsync(AggressionRequest request, CancellationToken cancellationToken = default)
     {
         var now = nowUnixMs();
-        var targetState = await store.StateOfAsync(target, cancellationToken);
-        var legal = Legal?.Invoke(attacker, target, now) ?? false;
+        var targetState = await store.StateOfAsync(request.Target, cancellationToken);
+        var legal = Legal?.Invoke(request.Attacker, request.Target, now) ?? false;
         AggressionOutcome? outcome = null;
-        await store.UpdateAsync(attacker, state => (outcome = Aggression.Record(state, targetState, where, solarSystemId, targetIsCapsule, legal, now)).Attacker, now, cancellationToken);
-        await SyncAsync(attacker, cancellationToken);
-        var result = new AggressionResult(attacker, target, solarSystemId, where, targetIsCapsule, outcome!);
-        if (Aggressed is { } handlers)
+        await store.UpdateAsync(request.Attacker, state => (outcome = Aggression.Record(state, targetState, request.Where, request.SolarSystemId, request.TargetIsCapsule, legal, now)).Attacker, now, cancellationToken);
+        var result = new AggressionResult(request, outcome!);
+        try
         {
-            foreach (var handler in handlers.GetInvocationList().Cast<Func<AggressionResult, Task>>())
+            if (Aggressed is { } handlers)
             {
-                await handler(result);
+                foreach (var handler in handlers.GetInvocationList().Cast<Func<AggressionResult, Task>>())
+                {
+                    await handler(result);
+                }
             }
+        }
+        finally
+        {
+            await SyncAsync(request.Attacker, cancellationToken);
         }
         return result;
     }

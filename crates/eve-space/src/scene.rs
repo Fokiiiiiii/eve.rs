@@ -1041,6 +1041,7 @@ impl Scene {
         let old = std::mem::replace(&mut pilot.ship.spec, spec);
         let new = &pilot.ship.spec;
         pilot.ship.health.respec(new.vitals, new.shield_recharge_ms, now);
+        let security_changed = new.security_status != old.security_status;
         let ship_id = id(new.ship_id);
         let mut actions = Vec::new();
         if new.mass != old.mass {
@@ -1052,7 +1053,13 @@ impl Scene {
         if new.max_velocity != old.max_velocity {
             actions.push(payload::action(stamp, "SetMaxSpeed", [ship_id, real(new.max_velocity)]));
         }
-        let told = if actions.is_empty() { Vec::new() } else { self.tell_all(session, actions) };
+        let mut told = if actions.is_empty() { Vec::new() } else { self.tell_all(session, actions) };
+        // a security status that changed is in the slim item: the pilot and whoever sees the ship are shown it again (the reference does, when a crime costs a pilot some)
+        if security_changed {
+            let ship = &self.pilots[&session].ship;
+            let change = payload::ship_slim_item_change(stamp, ship);
+            told.extend(self.tell_all(session, vec![change]));
+        }
         self.with_backlog(told)
     }
 
@@ -2168,6 +2175,23 @@ pub(crate) mod tests {
             action_names(&scene.respec(SESSION, heavier, NOON)[0]),
             ["SetBallMass", "SetBallAgility", "SetMaxSpeed"]
         );
+    }
+
+    #[test]
+    fn a_change_of_the_security_status_shows_the_slim_item_again_to_the_pilot() {
+        let mut scene = scene();
+        let mut penalised = spec();
+        penalised.security_status = -0.25;
+        let out = scene.respec(SESSION, penalised.clone(), NOON);
+        assert_eq!(out.len(), 1, "only the pilot is in the scene");
+        assert_eq!(action_names(&out[0]), ["OnSlimItemChange"]);
+        let told = format!("{:?}", out[0]);
+        assert!(
+            told.contains("foo.SlimItem") && told.contains("Real(-0.25)"),
+            "the slim item with the new status: {told}"
+        );
+        assert!(told.contains(&spec().ship_id.to_string()), "the item is the ship");
+        assert!(scene.respec(SESSION, penalised, NOON).is_empty(), "the same status says nothing more");
     }
 
     #[test]

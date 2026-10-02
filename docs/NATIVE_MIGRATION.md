@@ -349,3 +349,16 @@ a quarter of an hour); mutation-checked (a duration, the in-space filter, the ho
 (EVE University gives the durations but does not say which flag wins: nothing is invented). Not done yet (the rest of CRIME-1): the consequences of a crime the recording shows
 (`OnSecurityStatusUpdate` and the security status penalty with its transactions, `OnKillRightCreated` and the notification, the CONCORD response), `Aggression.Legal` for wars, limited engagements and
 corporations (`CrimewatchRuntime.Legal`), the NPC and disapproval timers, container theft, and the weapons-timer/criminal restriction on docking and jumping.
+
+### CRIME-1d: a crime costs security status — 2026-10-02
+
+The recording of CRIME-1c also shows what the crime costs the attacker, and eve.rs now does it (`Eve.Crimewatch.SecurityPenalty`, a port of `applySecurityStatusPenaltyForAggression`): for a ship
+`next = status + (10 − status) × −0.025 × security × (1 + (target − status) / 100)` (a capsule −0.25), kept between −10 and 10 to four places; nothing in null security, none for the same ship
+within a minute (the reference's window), none at the floor. `SecurityStatusPenalties` (`Eve.Services.Crimewatch`) listens to `CrimewatchRuntime.Aggressed`, writes the character's
+`security_status` relation (with its history, reason `aggression`), tells the pilot as the reference does (`OnModuleAttributeChanges` for attribute 2610 on its ship, then `OnSecurityStatusUpdate`;
+both before the timers) and has the ship given to the simulation again with the new status, whose `respec` shows the slim item to the pilot and to everyone who sees the ship (`OnSlimItemChange`).
+`SpaceSessions.SecurityStatusOf` makes the ship carry the stored status from undock on (the slim item had it as 0). `CrimewatchRuntime` runs what a crime brings before it tells the timers, as the
+reference does. `AggressionRequest` (in `Eve.Crimewatch`) is what the host reports. Replayed on the reference and eve.rs by `tests/test_aggression.py` (the attribute change, `OnSecurityStatusUpdate`,
+the slim item twice over); mutation-checked (the ship refresh wiring). Not done yet: `charMgr` public info, the character-select rows and the dogma character attribute still show 0 (the client's own
+status comes from `crimewatch.GetMySecurityStatus`, which is right), `GetSecurityStatusTransactions` (the reference answers an empty list), the kill right and the CONCORD response.
+

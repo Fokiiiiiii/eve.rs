@@ -5,12 +5,14 @@
 `oracle/fixtures/scenarios/aggression.json` (scripts/record_character_scenarios.py --only aggression) holds two characters in space by the same station: the aggressor locks
 the victim, fires its gun with the safety full (the client is refused), makes the safety none and fires again. The replay does the same on any server and compares what the
 answers and the crimewatch notifications are, step by step: the weapons, PvP and criminal timers (`OnWeaponsTimerUpdate`, `OnPvpTimerUpdate`, `OnCriminalTimerUpdate`) the aggressor is told,
-`OnSystemCriminalFlagUpdates` both are told, and the states each asks for afterwards. What else a crime brings (the security status, a kill right, CONCORD) is not compared yet. It needs the
+`OnSystemCriminalFlagUpdates` both are told, what the crime costs in security status (the attribute change of the pilot's ship, `OnSecurityStatusUpdate`, the slim item shown again to both) and the
+states each asks for afterwards. What else a crime brings (a kill right, CONCORD) is not compared yet. It needs the
 simulation and a minute: EVE_LIVE_SLOW=1.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 
@@ -31,7 +33,34 @@ pytestmark = [
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SLOW") != "1", reason="a minute: set EVE_LIVE_SLOW=1"),
 ]
 
-CRIMEWATCH = only("OnWeaponsTimerUpdate", "OnPvpTimerUpdate", "OnNpcTimerUpdate", "OnCriminalTimerUpdate", "OnDisapprovalTimerUpdate", "OnSystemCriminalFlagUpdates")
+SECURITY_STATUS_ATTRIBUTE = 2610
+NAMED = only("OnWeaponsTimerUpdate", "OnPvpTimerUpdate", "OnNpcTimerUpdate", "OnCriminalTimerUpdate", "OnDisapprovalTimerUpdate", "OnSystemCriminalFlagUpdates", "OnSecurityStatusUpdate")
+
+
+def changes_security_status(event: dict) -> bool:
+    """Whether an `OnModuleAttributeChanges` is about the pilot's security status (the other attributes of a fight are not crimewatch's)."""
+    stack = [event["args"]]
+    while stack:
+        value = stack.pop()
+        if isinstance(value, dict):
+            items = value.get("$tuple")
+            if isinstance(items, list) and len(items) > 3 and items[0] == "OnModuleAttributeChange" and items[3] == SECURITY_STATUS_ATTRIBUTE:
+                return True
+            stack.extend(value.values())
+        elif isinstance(value, list):
+            stack.extend(value)
+    return False
+
+
+def CRIMEWATCH(events: list) -> list:
+    """The crimewatch events of a step: the timers, the flags, the pilot's security status and the attribute that carries it."""
+    named = NAMED(events)
+    return [e for e in events if e in named or (e["name"] == "OnModuleAttributeChanges" and changes_security_status(e))]
+
+
+def slim_changes(events: list) -> int:
+    """How many times the slim item of a ship was told again (what a change of security status does for those who see the ship)."""
+    return sum(1 for e in events if e["name"] == "DoDestinyUpdate" and "OnSlimItemChange" in json.dumps(e["args"]))
 
 
 def mine(described, keep: set):
@@ -88,6 +117,8 @@ def test_an_attack_on_another_pilot_starts_the_timers_and_flags_the_attacker_as_
                 theirs = flags_of(CRIMEWATCH(steps[label][key]), recorded_pilots)
                 ours = flags_of(CRIMEWATCH(got[key]), pilots)
                 problems.extend(compare_events(theirs, ours, f"{label} ({who})", mapping))
+                if slim_changes(steps[label][key]) != slim_changes(got[key]):
+                    problems.append(f"{label} ({who}): the slim item was told {slim_changes(got[key])} times in place of {slim_changes(steps[label][key])}")
 
         def step(label: str, call, seconds: float = 2.0, until=None, exact: bool = False) -> object:
             """A call and what it was sent; the answer is compared by shape, or (the states) value by value with only the times left out."""

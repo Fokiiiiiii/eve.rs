@@ -164,6 +164,16 @@ public sealed class RelationStore
         return change;
     }
 
+    /// <summary><see cref="SetAsync(NpgsqlConnection, NpgsqlTransaction, string, long, long, double, string?, object?, long?, CancellationToken)"/> in a transaction of its own (for a caller that has no write of its own to join).</summary>
+    public async Task<RelationChange?> SetAsync(string kind, long subject, long obj, double value, string? reason = null, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var change = await SetAsync(connection, transaction, kind, subject, obj, value, reason, cancellationToken: cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return change;
+    }
+
     /// <summary>
     /// Adds <paramref name="delta"/> to the relation's value (clamped), starting from <paramref name="start"/> when there is none yet; the attributes and the end time are kept. Standing
     /// gains and losses and security status changes are this.

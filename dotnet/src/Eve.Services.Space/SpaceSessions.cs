@@ -276,7 +276,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             return None;
         }
         // a ship comes out of its station with its shield and capacitor full; what it has lost of its armor and hull it keeps (the reference's)
-        var spec = SimShips.Of(snapshot, _statics);
+        var spec = SimShips.Of(snapshot, _statics, await SecurityStatusAsync(characterId, cancellationToken));
         spec = spec with { Condition = (spec.Condition ?? SimCondition.Full) with { ShieldCharge = 1, Charge = 1 } };
         var systemId = snapshot.Character.SolarSystemId;
 
@@ -521,7 +521,8 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             // what the attack makes of the attacker is crimewatch's; the module runs whatever it keeps
             try
             {
-                await record(characterId, victim.CharacterId, pilot.SolarSystemId, crimeWhere, await IsCapsuleAsync(victim, crimeWhere, cancellationToken), cancellationToken);
+                var security = _systems.Get(pilot.SolarSystemId)?.Security ?? 0;
+                await record(new AggressionRequest(characterId, victim.CharacterId, victim.ShipId, pilot.SolarSystemId, security, crimeWhere, await IsCapsuleAsync(victim, crimeWhere, cancellationToken)), cancellationToken);
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
@@ -532,10 +533,16 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     }
 
     /// <summary>
-    /// Told after a pilot's module was started at the ship of another pilot: the attacker, the pilot attacked, the system, its security class and whether the ship attacked is a capsule.
+    /// Told after a pilot's module was started at the ship of another pilot: who attacked whom, where, and whether the ship attacked is a capsule (<see cref="AggressionRequest"/>).
     /// Crimewatch (timers, flags, what a crime brings) hangs here.
     /// </summary>
-    public Func<long, long, long, SecurityClass, bool, CancellationToken, Task>? Aggression { get; set; }
+    public Func<AggressionRequest, CancellationToken, Task>? Aggression { get; set; }
+
+    /// <summary>The security status of a character (its relation of that kind; 0 when it is not set). The ship in space shows it in its slim item.</summary>
+    public Func<long, CancellationToken, Task<double>>? SecurityStatusOf { get; set; }
+
+    private async Task<double> SecurityStatusAsync(long characterId, CancellationToken cancellationToken) =>
+        SecurityStatusOf is { } ask ? await ask(characterId, cancellationToken) : 0;
 
     /// <summary>The ship safety level of a character (set by the host that keeps them; full when it is not set). See <see cref="WeaponSafety"/>.</summary>
     public Func<long, CancellationToken, Task<int>>? SafetyLevelOf { get; set; }
@@ -1474,7 +1481,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                     await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation);
                     return;
                 }
-                var refusal = await _sim.RespawnAsync(new SimRespawn(id, SimShips.Of(flown, _statics), destroyed.Position, destroyed.Direction));
+                var refusal = await _sim.RespawnAsync(new SimRespawn(id, SimShips.Of(flown, _statics, await SecurityStatusAsync(pilot.CharacterId, CancellationToken.None)), destroyed.Position, destroyed.Direction));
                 if (refusal is not null)
                 {
                     _log?.Invoke($"the simulation did not take the capsule of character {pilot.CharacterId}: {refusal}");
@@ -1603,8 +1610,9 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     }
 
     /// <summary>
-    /// A pilot's corporation, alliance or war faction changed while it flies: the simulation is given its ship again with the affiliation the character has now, so the ship is what
-    /// everybody who looks at it from then on sees and what the rules of aggression read. (Those who already see the ship are not told: the reference's way of telling them is not recorded.)
+    /// A pilot's corporation, alliance, war faction or security status changed while it flies: the simulation is given its ship again with what the character has now, so the ship is what
+    /// everybody who looks at it from then on sees and what the rules of aggression read. A change of the security status is shown to those who see the ship (an `OnSlimItemChange`, as the
+    /// reference does when a crime costs some); the others of an affiliation are not (the reference's way of telling them is not recorded).
     /// Nothing is done for a character that is not flying a ship in space.
     /// </summary>
     public async Task AffiliationChangedAsync(long characterId, CancellationToken cancellationToken = default)
@@ -1614,7 +1622,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         {
             return;
         }
-        _sim.ShipChanged((ulong)pilot.Session.SessionId, SimShips.Of(flown, _statics));
+        _sim.ShipChanged((ulong)pilot.Session.SessionId, SimShips.Of(flown, _statics, await SecurityStatusAsync(characterId, cancellationToken)));
     }
 
     /// <summary>The simulation was lost: every ship it held is gone, so each is brought home to the station its character last was at.</summary>

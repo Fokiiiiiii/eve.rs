@@ -54,7 +54,7 @@ internal static class SimShips
         return new SimSensors(attribute(GravimetricStrength), attribute(LadarStrength), attribute(MagnetometricStrength), attribute(RadarStrength), resistance > 0 ? resistance : 1.0);
     }
 
-    public static SimShip Of(ShipSnapshot snapshot, DogmaStatic statics)
+    public static SimShip Of(ShipSnapshot snapshot, DogmaStatic statics, double securityStatus = 0)
     {
         var ship = snapshot.Ship;
         var type = statics.Type(ship.TypeId);
@@ -62,7 +62,7 @@ internal static class SimShips
         double Attribute(int id) => snapshot.World.Get(ship.Id, id);
         return new SimShip(
             ship.Id, character.Id, ship.TypeId, type?.GroupId ?? 0, type?.CategoryId ?? 0, ship.CustomName ?? type?.Name ?? "", character.Id,
-            (int)character.CorporationId, (int)(character.AllianceId ?? 0), 0, 0,
+            (int)character.CorporationId, (int)(character.AllianceId ?? 0), 0, securityStatus,
             Attribute(Radius), Attribute(Mass), Attribute(MaxVelocity), Attribute(Agility), WarpSpeedAu(Attribute(BaseWarpSpeed), Attribute(WarpSpeedMultiplier)), Attribute(ShieldRechargeRate),
             Attribute(MaxTargetRange), Attribute(ScanResolution), Attribute(SignatureRadius), LockLimit(Attribute(MaxLockedTargets), snapshot.World.Get(character.Id, MaxLockedTargets)),
             Attribute(CapacitorCapacity), Attribute(RechargeRate) / 1000.0,

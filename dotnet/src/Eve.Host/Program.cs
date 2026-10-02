@@ -51,6 +51,7 @@ using Eve.Services.Wallet;
 //   EVE_MARKET_SEED        skip: do not fetch the NPC market's first orders from CCP's ESI (CI, development)  (default auto: fetch once per SDE build)
 //   EVE_SCHEDULER_SCHEMA, EVE_EVENTS_SCHEMA, EVE_RELATIONS_SCHEMA, EVE_CONTENT_SCHEMA   the schemas of the shared foundations (scheduler, event bus, relations, content)
 //                          (defaults scheduler, events, relations, content)
+//   EVE_CRIMEWATCH_SCHEMA  the schema of crimewatch (ship safety levels)                          (default crimewatch)
 //   EVE_DEV_SKIP_PASSWORD  1 accepts any password (development only)                          (default 0)
 //   EVE_DEV_AUTO_CREATE    0 refuses unknown user names                                       (default 1)
 
@@ -193,6 +194,8 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     await PgModuleStateStore.MigrateAsync(source, fittingSchema);
     var spaceSchema = Env("EVE_SPACE_SCHEMA", PgSpaceItemStore.DefaultSchema);
     await PgSpaceItemStore.MigrateAsync(source, spaceSchema);
+    var crimewatchSchema = Env("EVE_CRIMEWATCH_SCHEMA", Eve.Crimewatch.PgCrimewatchStore.DefaultSchema);
+    await Eve.Crimewatch.PgCrimewatchStore.MigrateAsync(source, crimewatchSchema);
 
     var sde = new SdeReader(source);
     if (await sde.BuildAsync() is not { } build)
@@ -319,6 +322,10 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     IReadOnlyList<IService> services =
     [
         new CharUnboundMgrService(accounts, characters, items, skills, wallets, creation, catalog, online, [new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now), corporationLogin], Random.Shared),
+        // security status is the character's relation of that kind (Eve.Relations); crimewatch only asks for it
+        new Eve.Services.Crimewatch.CrimewatchService(
+            new Eve.Crimewatch.PgCrimewatchStore(source, crimewatchSchema), now,
+            (id, token) => foundations.Relations.ValueAsync(Eve.Relations.RelationKinds.SecurityStatus.Name, id, Eve.Relations.RelationStore.World, 0, null, null, token)),
         new SkillMgr2Service(),
         new SkillHandlerService(skills, skillCatalog, training, characters, announcer, now),
         new CharMgrService(characters, stations),

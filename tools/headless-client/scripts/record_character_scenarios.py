@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record what the EVE.js reference does from login to a session with a character.
 
-    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others|target|module|weapon|ammo|cargo|reload|drones|health|death]
+    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others|target|module|weapon|ammo|cargo|crimewatch|reload|drones|health|death]
 
 The recording is the contract for the same path in eve.rs: `tests/test_login_to_character.py` replays the calls
 against any server and compares each answer with what is stored here, by shape, treating per-run values
@@ -1585,6 +1585,61 @@ def record_cargo(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) 
     who.close()
 
 
+def record_crimewatch(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """One character and the crimewatch service the client binds for the place it is in (`crimewatch`, bound by `(locationID, groupID)` like dogma): in the station
+    the client states (the five combat timers, the engagements, who is flagged, the ship safety level), the safety level read, changed and read again, the character's
+    security status and its transactions; then undocked, the client states in space. Each step holds the answer (or the error) and what the pilot was sent."""
+    system, station = 30100032, 60015249
+    who = rec.login("Crimewatcher")
+    created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Crimewatcher {run}", 1, 1, ancestry[1]))
+    char_id = int(created["ok"])
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
+    hangar = who.call_bound(manager, "GetInventory", 10004)
+    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
+    events_of(who)
+    only = {"events": who}
+    steps: list = []
+
+    def step(label, call, seconds=1.0, until=None):
+        entry = {"label": label}
+        try:
+            entry["ok"] = describe(call())
+        except p.MachoError as error:
+            entry["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+        entry["events"] = watch(only, seconds, (lambda seen: until(seen["events"])) if until else None)["events"]
+        steps.append(entry)
+        return entry
+
+    docked = who.call("crimewatch", "MachoBindObject", (station, 15), ("GetClientStates", (), None))
+    steps.append({"label": "the client binds crimewatch in the station and asks for its states", "ok": describe(docked[1]), "events": watch(only, 1.0)["events"]})
+    handle = docked[0]
+    step("the client asks for its safety level", lambda: who.call_bound(handle, "GetSafetyLevel"))
+    step("the client makes its ship safety partial", lambda: who.call_bound(handle, "SetSafetyLevel", 1))
+    step("the client asks for its states with the safety partial", lambda: who.call_bound(handle, "GetClientStates"))
+    step("the client makes its ship safety none", lambda: who.call_bound(handle, "SetSafetyLevel", 0))
+    step("the client asks for its safety level again", lambda: who.call_bound(handle, "GetSafetyLevel"))
+    step("the client makes an unknown safety level", lambda: who.call_bound(handle, "SetSafetyLevel", 7))
+    step("the client asks for its safety level after the unknown one", lambda: who.call_bound(handle, "GetSafetyLevel"))
+    step("the client makes its ship safety full again", lambda: who.call_bound(handle, "SetSafetyLevel", 2))
+    step("the client asks for its own security status", lambda: who.call_bound(handle, "GetMySecurityStatus"))
+    step("the client asks for the security status of a character", lambda: who.call_bound(handle, "GetCharacterSecurityStatus", char_id))
+    step("the client asks for the transactions of its security status", lambda: who.call_bound(handle, "GetSecurityStatusTransactions"))
+
+    service = who.call("ship", "MachoBindObject", (station, 15), None)
+    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", ship_id, False), 2.5)
+    ballpark = who.call("beyonce", "MachoBindObject", system, None)
+    step("the pilot binds the ballpark", lambda: ballpark, 3.0)
+    flying = who.call("crimewatch", "MachoBindObject", (system, 5), ("GetClientStates", (), None))
+    steps.append({"label": "the client binds crimewatch in space and asks for its states", "ok": describe(flying[1]), "events": watch(only, 1.0)["events"]})
+    step("the client asks for its safety level in space", lambda: who.call_bound(flying[0], "GetSafetyLevel"))
+    with open(os.path.join(out, "crimewatch.json"), "w", encoding="utf-8") as handle_out:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [{"bloodlineID": 1, "raceID": 1, "solarSystemID": system, "stationID": station, "create": created, "characterID": char_id, "shipID": ship_id, "steps": steps}]}, handle_out, separators=(",", ":"), ensure_ascii=False)
+        handle_out.write("\n")
+    who.close()
+
+
 def record_loot(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One character in space takes what is in a can with the loot window's "Loot All" (`invbroker` `MultiAdd` on the ship's inventory: the item ids, the can they are
     in, `flag=5`): two stacks (tritanium and pyerite) are put in the hold, jettisoned into one can, the can is opened and everything is taken at once
@@ -1805,10 +1860,10 @@ def main() -> int:
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others, "target": record_target, "module": record_module, "weapon": record_weapon, "ammo": record_ammo, "cargo": record_cargo, "loot": record_loot, "reload": record_reload, "drones": record_drones, "health": record_health, "death": record_death}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others, "target": record_target, "module": record_module, "weapon": record_weapon, "ammo": record_ammo, "cargo": record_cargo, "crimewatch": record_crimewatch, "loot": record_loot, "reload": record_reload, "drones": record_drones, "health": record_health, "death": record_death}
     try:
         for name, record in parts.items():
-            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others", "target", "module", "weapon", "ammo", "cargo", "loot", "reload", "drones", "health", "death")):  # the fast one needs a reference started for it
+            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others", "target", "module", "weapon", "ammo", "cargo", "crimewatch", "loot", "reload", "drones", "health", "death")):  # the fast one needs a reference started for it
                 record(rec, out, meta, ancestry, run)
         if only in (None, "stations"):
             record_stations(rec, out, meta, ancestry, run, sde)

@@ -312,3 +312,16 @@ training announcements), the `SpaceSessions` events (`NpcDestroyed`, `ShipLost`)
 concrete read-side queries for the services. Checks: Scheduler 14, Events 11, Relations 8, Content 8, ReadSide 6, effect registry 4 and the effect coverage test;
 `Eve.Services.Space.Tests` 158/158 and the live module/NPC tests pass with the refactored effects; mutation checks on the outbox visibility rule and on the
 scheduler's sleep query (found by running the host, fixed, with a test that reaches it).
+
+### CRIME-1a: the crimewatch service — 2026-10-02
+
+The client asks `crimewatch` (bound by `(locationID, groupID)` like dogma) for `GetClientStates` every time it enters a place, and for its ship safety level; eve.rs had no such
+service. `Eve.Crimewatch` (PostgreSQL schema `crimewatch`, `EVE_CRIMEWATCH_SCHEMA`) keeps the ship safety level of each character (0 none, 1 partial, 2 full; a level outside is
+brought to the nearest, none stored is full) and `Eve.Services.Crimewatch` serves `GetClientStates` (the five combat timers idle, no engagements, nobody flagged, the safety level),
+`GetSafetyLevel`, `SetSafetyLevel`, `GetMySecurityStatus`, `GetCharacterSecurityStatus` (the character's `security_status` relation of `Eve.Relations`: 0 until something changes it) and
+`GetSecurityStatusTransactions` (empty). One bound object per session is handed again on every bind, as the reference does. Recorded from the reference
+(`oracle/fixtures/scenarios/crimewatch.json`, `scripts/record_character_scenarios.py --only crimewatch`) and replayed by `tests/test_crimewatch.py` on the reference and on eve.rs, in the
+station and (EVE_LIVE_SLOW=1) in space; mutation-checked (an idle state, the clamp). Not done yet (the rest of CRIME-1): the weapons, PvP, NPC, criminal and disapproval timers and their
+events, suspect/criminal flags and `OnSystemCriminalFlagUpdates`, limited engagements and duels, wars, security status penalties and the transactions that explain them, CONCORD, and the
+jump/dock restrictions of a timer.
+

@@ -102,6 +102,20 @@ public sealed class PgItemStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>Who owns something with this flag, once each (what a sweep for items that are in space asks: a ship, a can or a wreck has the flag of no place).</summary>
+    public async Task<IReadOnlyList<long>> OwnersWithFlagAsync(int flag, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT DISTINCT owner_id FROM {_schema}.items WHERE flag = $1 ORDER BY owner_id");
+        command.Parameters.Add(new NpgsqlParameter { Value = flag });
+        var owners = new List<long>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            owners.Add(reader.GetInt64(0));
+        }
+        return owners;
+    }
+
     /// <summary>Lock an inventory fact in the caller's transaction before deciding custody or quantity.</summary>
     public async Task<Item?> LockAndGetAsync(NpgsqlConnection connection,NpgsqlTransaction transaction,long id,CancellationToken cancellationToken = default)
     {

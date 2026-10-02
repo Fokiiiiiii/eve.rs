@@ -228,6 +228,12 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         },
         now);
     var ships = new CharacterShips(source, dogma, characters, items, skills, modules, training);
+    // the simulation starts empty with this host: a ship that a host which stopped without closing its sessions left in space is put back where its character last was
+    var stranded = await ships.RecoverAllFromSpaceAsync(id => stations.Get(id) is { } station ? (station.SolarSystemId, station.ConstellationId, station.RegionId) : null);
+    if (stranded > 0)
+    {
+        Console.Error.WriteLine($"eve-host: {stranded} ship(s) left in space by the last host were put back in their stations");
+    }
     var dogmaSync = new CharacterDogmaSync(dogma, ships, now);
     var characterSessions = new CharacterSessions();
     // the combat timers and flags: kept in crimewatch's schema, told to the clients as they change (Eve.Services.Crimewatch)

@@ -66,10 +66,13 @@ internal sealed class Rig : IAsyncDisposable
         Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => Now, Log.Add, protection, jumpCloak) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(Eve.Npc.NpcAuthority.Load()), NpcWrecks = npcLoot ? new NpcWrecks(_ => LootTable, () => Task.FromResult(new Eve.Npc.NpcLoot(LootPool)), Ships, () => 0) : null, BeltRats = beltRats is null ? null : new Eve.Npc.BeltRats(Eve.Npc.NpcAuthority.Load(), beltRats, type => Eve.Npc.NpcHull.HasHitPoints(statics.Type(type))) };
         Space.UseBounties(Bounties);
         Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, statics, Space, () => Now, Log.Add);
-        Ship = new ShipService(Space, () => ClockMs, Containers);
+        Drones = new SpaceDrones(Sim, Ships, statics, Space, () => Now, Log.Add);
+        Ship = new ShipService(Space, () => ClockMs, Containers, Drones);
         Beyonce = new BeyonceService(Space, () => ClockMs);
+        Entity = new EntityService(Drones, () => ClockMs);
         Registry.Register(Ship);
         Registry.Register(Beyonce);
+        Registry.Register(Entity);
     }
 
     /// <summary>What every NPC leaves when the rig has loot (<c>npcLoot</c>): a stack of seven to nine of the first type of <see cref="LootPool"/>, or nothing when null (the dice always come out 0).</summary>
@@ -119,6 +122,10 @@ internal sealed class Rig : IAsyncDisposable
     public PgSpaceItemStore SpaceItems { get; }
 
     public BeyonceService Beyonce { get; }
+
+    public SpaceDrones Drones { get; }
+
+    public EntityService Entity { get; }
 
     /// <param name="protection">How long a ship is protected after it undocks (never, unless a test wants the end of it).</param>
     /// <param name="npcLoot">Whether an NPC that is destroyed leaves a wreck the host makes with <see cref="LootTable"/> in it.</param>
@@ -214,6 +221,11 @@ internal sealed class Rig : IAsyncDisposable
 
     /// <summary>The ship service bound to the solar system the session flies in (what the client does before it jettisons).</summary>
     public Task<string> BindShipInSpaceAsync(ClientSession session) => BindAsync(Ship, session, session.GetInt("solarsystemid")!.Value, 5);
+
+    public Task<PyValue> EntityCallAsync(ClientSession session, string method, string? bound = null, params PyValue[] args) => CallAsync(Entity, session, method, bound, args);
+
+    /// <summary>The entity service, bound as the client does in space.</summary>
+    public Task<string> BindEntityAsync(ClientSession session) => BindAsync(Entity, session, session.GetInt("solarsystemid")!.Value, 5);
 
     public Task<string> BindBeyonceAsync(ClientSession session) => BindAsync(Beyonce, session, session.GetInt("solarsystemid")!.Value, 5);
 

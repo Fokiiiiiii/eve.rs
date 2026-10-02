@@ -6,7 +6,8 @@ branch to a big switch.** That is what keeps the code small enough to change.
 
 | I need to… | Use | Project |
 |---|---|---|
-| do something **later** (a deadline, a delay, a periodic task) | the **Durable Scheduler** | `Eve.Scheduler` |
+| do something **later** and it must survive a restart (a deadline, a periodic task) | the **Durable Scheduler** | `Eve.Scheduler` |
+| wait a moment for something that lives **in this process only** (a pilot's protection, a module reload) | **LocalTimers** | `Eve.Scheduler` |
 | **tell the rest of the server** that something happened, or react to it | the **Event Bus** (transactional outbox) | `Eve.Events` |
 | store "A has some relation to B" (standing, war, security status, corporation/alliance/faction membership) | the **Relation Store** | `Eve.Relations` |
 | run something with **objectives** and a **deadline** (mission, anomaly, incursion, tutorial) | the **Content Runtime** | `Eve.Content` |
@@ -86,6 +87,21 @@ still in the code are listed under [Migrating existing timers](#migrating-existi
 
 **Test it** with a fake clock and no background loop: `await scheduler.RunDueAsync()` runs everything that is due now.
 See `dotnet/tests/Eve.Scheduler.Tests/Rig.cs`.
+
+### LocalTimers: the in-memory half of the scheduler
+
+Some waits belong to something that exists only in this process: a pilot's undock protection, a module that is reloading, the end of the skill
+queue of a character who is logged in. They need no database row (when the process stops the pilot, the module and the session are gone too),
+so they use `LocalTimers`, the server's one in-memory timer service:
+
+```csharp
+_timers.Set($"space.protection:{pilotId}", TimeSpan.FromSeconds(30), () => EndProtection(pilot));   // replaces a timer of the same key
+_timers.Cancel($"space.protection:{pilotId}");                                                     // the pilot ended it first
+```
+
+An action that throws is logged and does not stop anything; `Dispose()` stops all timers; a test passes a delay it controls
+(`new LocalTimers(delay: fakeDelay)`). **Rule of thumb:** it must survive a restart or be seen by another process → `DurableScheduler`;
+it concerns a live object of this process only → `LocalTimers`. Either way, no `System.Threading.Timer` and no `Task.Delay` loop.
 
 ## 2. Event Bus with a transactional outbox (`Eve.Events`)
 
@@ -252,23 +268,26 @@ you need as a constructor argument. Register handlers and subscribers **before**
 Each project follows the module rules (ADR 0003): its own schema, embedded SQL migrations that are never edited once released, an
 injected clock, and a test project with a scratch schema (`PgFact` skips without `EVE_PG_URL`; look at `Rig.cs` in each test project).
 
-## Migrating existing timers
+## What has been moved, and what stays
 
-Already on the scheduler: the can/wreck sweeper (`space.containers.sweep`) and the NPC bounty payout (`space.bounty.pay`).
-Still private timers, to be moved when their features are next touched (do not add new ones):
+Moved onto the foundations: the can and wreck sweeper (`space.containers.sweep`) and the NPC bounty payout (`space.bounty.pay`) are recurring jobs of the
+scheduler; the undock protection and jump cloak of a pilot (`SpaceSessions`), the skill-queue announcement (`TrainingAnnouncer`) and a module's reload
+(`DogmaIMService`) are `LocalTimers`; the module effects are handlers of the registry; `SpaceSessions` announces `npc.killed`, `ship.lost` and
+`bounty.paid` on the event bus (the C# events `NpcDestroyed`, `ShipLost`, `BountyPaidOut` remain for a synchronous call; new code subscribes to the bus).
 
-| Where | What it does | Move to |
-|---|---|---|
-| `SpaceSessions` (`pilot.Expiry`, jump cloak) | protection ends after undock / arrival | a keyed job `space.protection.end` (`Key = session`), `Replace` on re-undock |
-| `TrainingAnnouncer` | tells a logged-in client its skill finished | a keyed job per character; the announcement stays session-bound, so it is delivered by a subscriber of a `skill.training_finished` event |
-| `GameStoreCache.Flush` | background flush of the game store | stays: it is a cache's own write-behind, not game time |
+Deliberately **not** moved (core processing with its own design): the game store's write-behind flush and lease renewal (`Eve.GameStore`), the
+simulation link's reconnect loop (`SimClient`), the ordered per-session ammunition write queue (`ChargeSpentQueue`), the retry loops of the market and
+corporation transactions (serialisation retries, not game time), and everything in the Rust simulation (tick, destiny, behaviours). The startup
+catalog loads from the SDE (`StationCatalog`, `DogmaStatic`, `CreationCatalog`…) read typed documents into memory once; the read side is for the
+calls that return lists of records to the client.
 
-`SpaceSessions.NpcDestroyed` / `ShipLost` / `AffiliationChangedAsync` hooks: publish `npc.killed`, `ship.lost`, and write
-`affiliation.*` relations instead; new code subscribes to those.
+Still to move when their features are next touched (do not add new ones): the durable Alliance transitions and war holds of the corporation module
+(→ scheduler jobs and `war`/`affiliation.*` relations), and the corporation, alliance and character affiliation tables (→ `affiliation.*` relations, with
+`relation.affiliation.*.changed` events replacing `AffiliationChangedAsync`).
 
 ## Checklist for a pull request
 
-* No `Timer`, `PeriodicTimer`, `Task.Delay` loop or `Task.Run` poll for game time. → scheduler.
+* No `Timer`, `PeriodicTimer`, `Task.Delay` loop or `Task.Run` poll for game time. → `DurableScheduler` (survives a restart) or `LocalTimers` (this process only).
 * No new `event`/callback for another feature to hook. → bus.
 * No new table that is "A and B with a number". → relation kind.
 * No new table of "running things with goals and a deadline". → content definition.

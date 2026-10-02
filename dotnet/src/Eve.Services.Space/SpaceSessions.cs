@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using Eve.Events;
 using Eve.Inventory;
+using Eve.Scheduler;
 using Eve.Dogma;
 using Eve.Fitting;
 using Eve.Macho;
@@ -53,13 +55,13 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
 
         private int _ended;
 
-        /// <summary>The timer that ends the protection when it runs out, if the pilot has not ended it by then.</summary>
-        public Timer? Expiry { get; set; }
+        /// <summary>Stops the timer that ends the protection when it runs out (set when the timer is; the pilot ends it by hand first when a command breaks the protection).</summary>
+        public Action? CancelExpiry { get; set; }
 
         /// <summary>Marks the protection ended; false when it had ended already (each ending is told once).</summary>
         public bool End()
         {
-            Expiry?.Dispose();
+            CancelExpiry?.Invoke();
             return Interlocked.Exchange(ref _ended, 1) == 0;
         }
     }
@@ -87,6 +89,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// <param name="jumpCloak">How long a ship that has come through a stargate stays cloaked if its pilot does not fly it first.</param>
     public SpaceSessions(ISimulation sim, CharacterShips ships, DogmaStatic statics, StationCatalog stations, SolarSystemCatalog systems, Func<long> nowUnixMs, Action<string>? log = null, TimeSpan? protection = null, TimeSpan? jumpCloak = null)
     {
+        _timers = new LocalTimers(log);
         _protection = protection ?? TimeSpan.FromTicks(UndockInvulnerabilityTicks);
         _jumpCloak = jumpCloak ?? TimeSpan.FromTicks(JumpCloakTicks);
         _sim = sim;
@@ -179,6 +182,32 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// </summary>
     public event Action<ShipLoss>? ShipLost;
 
+    /// <summary>
+    /// The domain events bus (set by the host that has one). What happens in space is announced on it as well (<c>npc.killed</c>, <c>ship.lost</c>, <c>bounty.paid</c>) so that
+    /// missions, crimewatch and the rest subscribe instead of hooking this class; the C# events above stay for the code that needs a synchronous call.
+    /// </summary>
+    public EventBus? Events { get; set; }
+
+    /// <summary>Publishes an event on the bus without waiting for it; a failure is logged (the thing it announces has happened already).</summary>
+    private void Announce(string topic, object payload, string key)
+    {
+        if (Events is not { } bus)
+        {
+            return;
+        }
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await bus.PublishAsync(topic, payload, key);
+            }
+            catch (Exception error)
+            {
+                _log?.Invoke($"the event {topic} could not be published: {error.Message}");
+            }
+        });
+    }
+
     private void Raise<T>(Action<T>? handlers, T value, string what)
     {
         foreach (var handler in handlers?.GetInvocationList().Cast<Action<T>>() ?? [])
@@ -205,7 +234,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
 
     public void Dispose()
     {
-        _bountyTimer?.Dispose();
+        _timers.Dispose();
         _sim.Received -= OnReceived;
         _sim.Lost -= OnLost;
         // the host stops: the rounds that were spent are written first
@@ -282,7 +311,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         _pilots[(ulong)session.SessionId] = pilot;
         SystemEntered?.Invoke(systemId);
         session.Closed += () => OnSessionClosed(session);
-        pilot.Expiry = new Timer(_ => ProtectionRanOut(pilot), null, _protection, Timeout.InfiniteTimeSpan);
+        ArmProtection(pilot, _protection);
 
         var type = _statics.Type(moved.Ship.TypeId);
         session.SendNotification(
@@ -364,6 +393,17 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     }
 
     /// <summary>The time is up and the pilot has not flown the ship: the client is told, as when a movement ends it.</summary>
+    private readonly LocalTimers _timers;
+    private long _protectionTimers;
+
+    /// <summary>Ends the pilot's protection after <paramref name="span"/> unless it has ended before (every pilot's timer has a key of its own, so a ship that jumped does not cancel the timer of the one that arrived).</summary>
+    private void ArmProtection(Pilot pilot, TimeSpan span)
+    {
+        var key = $"space.protection:{Interlocked.Increment(ref _protectionTimers)}";
+        pilot.CancelExpiry = () => _timers.Cancel(key);
+        _timers.Set(key, span, () => ProtectionRanOut(pilot));
+    }
+
     private void ProtectionRanOut(Pilot pilot)
     {
         try
@@ -678,22 +718,16 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     // ── bounties ─────────────────────────────────────────────────────────────
 
     private PgBountyStore? _bounties;
-    private Timer? _bountyTimer;
     private int _paying;
 
     /// <summary>Raised for each bounty that was paid into a wallet (the wallet's owner is told of its new balance by whoever announces wallets).</summary>
     public event Action<BountyPaid>? BountyPaidOut;
 
     /// <summary>
-    /// Keeps the bounties NPCs are worth: a kill whose last blow was a pilot's goes to <paramref name="store"/>, and what has come due is paid every
-    /// <paramref name="payEvery"/> (not at all when null: a test pays by <see cref="PayBountiesAsync"/>).
+    /// Keeps the bounties NPCs are worth: a kill whose last blow was a pilot's goes to <paramref name="store"/>. What has come due is paid by <see cref="PayBountiesAsync"/>, which the
+    /// host runs as a recurring job of the durable scheduler (<c>space.bounty.pay</c>); a test calls it.
     /// </summary>
-    public void UseBounties(PgBountyStore store, TimeSpan? payEvery = null)
-    {
-        _bounties = store;
-        _bountyTimer?.Dispose();
-        _bountyTimer = payEvery is { } every ? new Timer(_ => _ = PayBountiesAsync(), null, TimeSpan.Zero, every) : null;
-    }
+    public void UseBounties(PgBountyStore store) => _bounties = store;
 
     /// <summary>Pays the bounties that are due (one payout at a time); each is raised as <see cref="BountyPaidOut"/>.</summary>
     public async Task<IReadOnlyList<BountyPaid>> PayBountiesAsync(CancellationToken cancellationToken = default)
@@ -709,6 +743,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             {
                 _log?.Invoke($"bounty paid: {payment.Amount} ISK for {payment.Kills} kill(s) to character {payment.CharacterId}");
                 BountyPaidOut?.Invoke(payment);
+                Announce("bounty.paid", new { characterId = payment.CharacterId, amount = payment.Amount, kills = payment.Kills }, $"char:{payment.CharacterId}");
             }
             return paid;
         }
@@ -737,7 +772,9 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         }
         finally
         {
-            Raise(NpcDestroyed, new NpcKill(killer?.CharacterId ?? 0, npc.TypeId, npc.Profile, npc.SolarSystemId, destroyed.ShipId), nameof(NpcDestroyed));
+            var kill = new NpcKill(killer?.CharacterId ?? 0, npc.TypeId, npc.Profile, npc.SolarSystemId, destroyed.ShipId);
+            Raise(NpcDestroyed, kill, nameof(NpcDestroyed));
+            Announce("npc.killed", new { characterId = kill.FinalBlowCharacterId, typeId = kill.NpcTypeId, profile = kill.Profile.Id, solarSystemId = kill.SolarSystemId, shipId = kill.ShipId }, $"system:{kill.SolarSystemId}");
         }
     }
 
@@ -1208,7 +1245,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                 return; // the pilot went away meanwhile
             }
             pilot.End();
-            arrived.Expiry = new Timer(_ => ProtectionRanOut(arrived), null, _jumpCloak, Timeout.InfiniteTimeSpan);
+            ArmProtection(arrived, _jumpCloak);
             SystemEntered?.Invoke(jumped.ToSystem);
 
             ReleaseBoundObjects(session);
@@ -1452,7 +1489,9 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             : killer is not null ? ShipLossCause.Player
             : destroyed.KillerShipId != 0 && _npcShips.ContainsKey(destroyed.KillerShipId) ? ShipLossCause.Npc
             : ShipLossCause.Unknown;
-        Raise(ShipLost, new ShipLoss(pilot.CharacterId, death.Ship.Id, death.Ship.TypeId, cause, pilot.SolarSystemId, cause == ShipLossCause.Player ? killer!.CharacterId : 0), nameof(ShipLost));
+        var loss = new ShipLoss(pilot.CharacterId, death.Ship.Id, death.Ship.TypeId, cause, pilot.SolarSystemId, cause == ShipLossCause.Player ? killer!.CharacterId : 0);
+        Raise(ShipLost, loss, nameof(ShipLost));
+        Announce("ship.lost", new { characterId = loss.CharacterId, shipId = loss.ShipId, shipTypeId = loss.ShipTypeId, cause = loss.Cause.ToString(), solarSystemId = loss.SolarSystemId, killerCharacterId = loss.KillerCharacterId }, $"char:{loss.CharacterId}");
     }
 
     /// <summary>The corpse of a pilot whose capsule was destroyed: <c>resolveCorpseTypeID</c> of EVE.js (the client's <c>genderFemale = 0</c>; anything else leaves the male one).</summary>

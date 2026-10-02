@@ -395,7 +395,10 @@ affiliation), `Eve.Content` (missions, anomalies, incursions), the Dogma `Effect
 now) and `Eve.ReadSide` (named SDE/PostgreSQL queries answered as rowsets). Shared files I touched, minimally: `Eve.Host/Program.cs` (a
 `Foundations` object is created before `CharacterServicesAsync`, which takes it as a last parameter, and started after it; shutdown disposes it;
 your Corporation/Market block is unchanged), `Eve.Host.csproj`, `EveRs.slnx` (new projects), `tools/dev/run-eve-live.sh` (scratch schemas for the
-four foundation schemas), `SpaceContainers.SweepAsync` is public, and `SpaceSessions.UseBounties` is called without a timer.
+four foundation schemas), `SpaceContainers.SweepAsync` is public (its `sweepEvery` constructor parameter is gone), `SpaceSessions.UseBounties(store)` has no
+timer parameter any more (the host runs `PayBountiesAsync` as the job `space.bounty.pay`), the pilot protection timers, `TrainingAnnouncer` and the dogma reloads
+use `LocalTimers` (in-memory timers of `Eve.Scheduler`; `DogmaIMService`'s `delay` test hook now feeds it), and `SpaceSessions` has an optional `Events` bus on which
+it announces `npc.killed`, `ship.lost` and `bounty.paid` (the C# events remain).
 For your open items: the durable Alliance transitions, the war holds and the 60-minute recheck are `DurableScheduler` jobs (keyed, replaceable)
 plus `war`/`affiliation.*` relations; membership and role notifications are subscribers of `relation.affiliation.*.changed`. Publish the event in
 the transaction of the change (`bus.PublishAsync(connection, transaction, …)`). The schemas are `scheduler`, `events`, `relations`, `content`

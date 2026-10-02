@@ -306,6 +306,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         npcWrecks.Warm();
         // the periodic work of the space features is jobs of the shared scheduler, not timers of their own
         spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")));
+        spaceSessions.Events = foundations.Events;   // what happens in space is announced on the bus as well
         var bounties = spaceSessions;
         foundations.Scheduler.Register("space.bounty.pay", async (_, token) => await bounties.PayBountiesAsync(token));
         await foundations.Scheduler.EnsureRecurringAsync("space.bounty.pay", "pay", TimeSpan.FromSeconds(10));

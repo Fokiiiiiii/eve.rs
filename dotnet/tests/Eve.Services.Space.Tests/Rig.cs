@@ -43,10 +43,13 @@ internal sealed class Rig : IAsyncDisposable
     public const long Station = 60015249;
 
     private readonly string[] _schemas;
+    private readonly List<string> _extraSchemas = [];
+    private readonly string _suffix;
 
     private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, CreationCatalog catalog, StationCatalog stations, SolarSystemCatalog systems, PgModuleStateStore modules, TimeSpan protection, TimeSpan jumpCloak, bool npcLoot, Eve.Npc.BeltRatConfig? beltRats)
     {
         Source = source;
+        _suffix = suffix;
         _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}", $"pp_{suffix}"];
         SpaceItems = new PgSpaceItemStore(source, _schemas[6]);
         Characters = new PgCharacterStore(source, _schemas[0]);
@@ -228,11 +231,37 @@ internal sealed class Rig : IAsyncDisposable
         }
     }
 
+    /// <summary>The events bus of the foundations, when a test asked for it (<see cref="UseBusAsync"/>); what space announced on it is in <see cref="Announced"/>.</summary>
+    public Eve.Events.EventBus? Bus { get; private set; }
+
+    public List<(string Topic, string Json)> Announced { get; } = [];
+
+    /// <summary>Gives <see cref="Space"/> an events bus on scratch schemas, with a subscriber that records everything announced on it.</summary>
+    public async Task UseBusAsync()
+    {
+        string[] schemas = [$"sc_{_suffix}", $"ev_{_suffix}"];
+        _extraSchemas.AddRange(schemas);
+        await Eve.Scheduler.DurableScheduler.MigrateAsync(Source, schemas[0]);
+        await Eve.Events.EventBus.MigrateAsync(Source, schemas[1]);
+        var scheduler = new Eve.Scheduler.DurableScheduler(Source, () => Now, null, schemas[0]);
+        Bus = new Eve.Events.EventBus(Source, scheduler, null, schemas[1]);
+        Bus.Subscribe("test.record", ["*"], (context, _) =>
+        {
+            lock (Announced)
+            {
+                Announced.Add((context.Event.Topic, context.Event.PayloadJson));
+            }
+            return Task.CompletedTask;
+        });
+        await Bus.PumpAsync();   // the subscriber starts here
+        Space.Events = Bus;
+    }
+
     public async ValueTask DisposeAsync()
     {
         Containers.Dispose();
         Space.Dispose();
-        foreach (var schema in _schemas)
+        foreach (var schema in _schemas.Concat(_extraSchemas))
         {
             await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
             await command.ExecuteNonQueryAsync();

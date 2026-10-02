@@ -48,7 +48,6 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
     private readonly Action<string>? _log;
     private readonly ConcurrentDictionary<long, byte> _placed = new();
     private readonly ConcurrentDictionary<ulong, long> _cooldownUntil = new();
-    private readonly Timer? _sweeper;
 
     public SpaceContainers(
         ISimulation sim, CharacterShips ships, PgItemStore items, PgSpaceItemStore spaceItems, DogmaStatic statics, SpaceSessions space, Func<long> nowUnixMs, Action<string>? log = null,
@@ -59,10 +58,6 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
         _sim.Lost += Forgotten;
         _space.SystemEntered += SystemEntered;
         _space.WreckPlaced += WreckPlaced;
-        if (sweepEvery is { } every && every > TimeSpan.Zero)
-        {
-            _sweeper = new Timer(_ => _ = SweepAsync(), null, every, every);
-        }
     }
 
     public void Dispose()
@@ -70,7 +65,6 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
         _sim.Lost -= Forgotten;
         _space.SystemEntered -= SystemEntered;
         _space.WreckPlaced -= WreckPlaced;
-        _sweeper?.Dispose();
     }
 
     private void Forgotten() => _placed.Clear();

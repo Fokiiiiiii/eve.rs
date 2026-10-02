@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 9;
+    public const ushort ProtocolVersion = 10;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -227,7 +227,8 @@ public static class SimCodec
         {
             modules[i] = new SimModule(r.I64(), r.I32(), r.I32());
         }
-        return new SimShip(shipId, characterId, typeId, groupId, categoryId, name, ownerId, corporationId, allianceId, warFactionId, security, radius, mass, maxVelocity, agility, warpSpeed, shieldRecharge, maxTargetRange, scanResolution, signatureRadius, maxLockedTargets, capacitorCapacity, capacitorRecharge, modules, vitals, condition);
+        var sensors = new SimSensors(r.F64(), r.F64(), r.F64(), r.F64(), r.F64());
+        return new SimShip(shipId, characterId, typeId, groupId, categoryId, name, ownerId, corporationId, allianceId, warFactionId, security, radius, mass, maxVelocity, agility, warpSpeed, shieldRecharge, maxTargetRange, scanResolution, signatureRadius, maxLockedTargets, capacitorCapacity, capacitorRecharge, modules, vitals, condition, sensors);
     }
 
     private static SimCondition ReadCondition(ref Reader r) => new(r.F64(), r.F64(), r.F64(), r.F64());
@@ -317,6 +318,7 @@ public static class SimCodec
                         5 => new SimRemote.Paint(r.F64()),
                         6 => new SimRemote.Damp(r.F64(), r.F64()),
                         7 => ReadScramble(ref r),
+                        8 => new SimRemote.Jam(r.F64(), r.F64(), r.F64(), r.F64()),
                         _ => throw new SimLinkException(SimLinkError.BadValue, "bad remote"),
                     };
                     return new SimAction.Remote(what, optimal, falloff, when == 1, jam);
@@ -831,6 +833,13 @@ public static class SimCodec
                         w.F64(scramble.Strength);
                         w.U8(scramble.BlocksMwd ? (byte)1 : (byte)0);
                         break;
+                    case SimRemote.Jam jam:
+                        w.U8(8);
+                        w.F64(jam.Gravimetric);
+                        w.F64(jam.Ladar);
+                        w.F64(jam.Magnetometric);
+                        w.F64(jam.Radar);
+                        break;
                 }
                 break;
         }
@@ -888,6 +897,11 @@ public static class SimCodec
             w.I64(module.ItemId);
             w.I32(module.TypeId);
             w.I32(module.Flag);
+        }
+        var sensors = s.Sensors ?? SimSensors.Plain;
+        foreach (var number in new[] { sensors.Gravimetric, sensors.Ladar, sensors.Magnetometric, sensors.Radar, sensors.EcmResistance })
+        {
+            w.F64(number);
         }
     }
 

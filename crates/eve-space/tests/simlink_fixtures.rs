@@ -85,6 +85,8 @@ fn ship_of(case: &Value) -> ShipSpec {
         signature_radius: number("signatureRadius"),
         capacitor_capacity: number("capacitorCapacity"),
         capacitor_recharge_s: number("capacitorRechargeS"),
+        sensor_strength: sensors_of(&case["sensorStrength"]),
+        ecm_resistance: number("ecmResistance"),
         vitals: vitals_of(&case["vitals"]),
         condition: condition_of(&case["condition"]),
         modules: case["modules"]
@@ -98,6 +100,16 @@ fn ship_of(case: &Value) -> ShipSpec {
             })
             .collect(),
     }
+}
+
+fn sensors_of(list: &Value) -> [f64; 4] {
+    let list = list.as_array().expect("four sensor strengths");
+    [
+        list[0].as_f64().unwrap(),
+        list[1].as_f64().unwrap(),
+        list[2].as_f64().unwrap(),
+        list[3].as_f64().unwrap(),
+    ]
 }
 
 fn turret_of(w: &Value) -> Turret {
@@ -179,6 +191,7 @@ fn effect_of(case: &Value) -> Effect {
                     range_percent: a["rangePercent"].as_f64().unwrap(),
                     resolution_percent: a["resolutionPercent"].as_f64().unwrap(),
                 },
+                "jam" => Remote::Jam { strength: sensors_of(&a["strength"]) },
                 _ => Remote::Scramble {
                     strength: a["strength"].as_f64().unwrap(),
                     blocks_mwd: a["blocksMwd"].as_bool().unwrap(),

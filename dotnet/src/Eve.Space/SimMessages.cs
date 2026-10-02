@@ -46,7 +46,14 @@ public sealed record SimShip(
     long ShipId, long CharacterId, int TypeId, int GroupId, int CategoryId, string Name, long OwnerId, int CorporationId, int AllianceId, int WarFactionId,
     double SecurityStatus, double Radius, double Mass, double MaxVelocity, double Agility, double WarpSpeedAu, double ShieldRechargeMs,
     double MaxTargetRange, double ScanResolution, double SignatureRadius, int MaxLockedTargets, double CapacitorCapacity, double CapacitorRechargeSeconds, IReadOnlyList<SimModule> Modules,
-    SimVitals? Vitals = null, SimCondition? Condition = null);
+    SimVitals? Vitals = null, SimCondition? Condition = null, SimSensors? Sensors = null);
+
+/// <summary>What a ship holds against a jammer: the strength of its sensors (gravimetric, ladar, magnetometric, radar; the strongest counts) and how much of a jam it takes (<c>ECMResistance</c>: 1 for an ordinary ship, 0 for one that cannot be jammed).</summary>
+public sealed record SimSensors(double Gravimetric, double Ladar, double Magnetometric, double Radar, double EcmResistance)
+{
+    /// <summary>A ship with no sensors that count and no resistance.</summary>
+    public static readonly SimSensors Plain = new(0, 0, 0, 0, 1);
+}
 
 /// <summary>A ship enters a solar system.</summary>
 public sealed record SimEnter(ulong SessionId, int SolarSystemId, EnterHow How, long StationId, SimShip Ship) : SimMessage;
@@ -279,6 +286,12 @@ public abstract record SimRemote
 
     /// <summary>The target is held out of warp: <paramref name="Strength"/> points of scramble (a warp scrambler 2, a warp disruptor 1); <paramref name="BlocksMwd"/>: and out of its microwarpdrive.</summary>
     public sealed record Scramble(double Strength, bool BlocksMwd) : SimRemote;
+
+    /// <summary>
+    /// An ECM jammer: for as long as a cycle the target loses its locks and can lock only the ships that jam it when the jam lands; it lands by the chance of this strength for the
+    /// kind of sensor the target has over that sensor's strength (gravimetric, ladar, magnetometric, radar), weakened by the reach and the target's resistance.
+    /// </summary>
+    public sealed record Jam(double Gravimetric, double Ladar, double Magnetometric, double Radar) : SimRemote;
 }
 
 /// <summary>Run an effect. Answered under <see cref="SimCommands.Activate"/>: <see cref="SimAccepted"/> or <see cref="SimRefused"/>.</summary>

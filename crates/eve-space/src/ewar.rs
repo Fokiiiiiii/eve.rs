@@ -10,6 +10,30 @@ use crate::modules::TICK;
 use crate::scene::{Command, Out, Scene, SessionId, TICKS_PER_SECOND};
 use crate::wire::{id, real};
 
+/// What the client's HUD calls an ECM jam (the reference's `jammingType` of an ECM module).
+const JAMMING: &str = "electronic";
+
+/// The chance that a jammer with `strength` (gravimetric, ladar, magnetometric, radar) jams a ship with `sensor` strengths: its strength for the sensor the ship has the most of
+/// (the first of them when two are alike) over that sensor's strength, weakened by `share` of the reach and by the ship's resistance to ECM (1 for none, 0 for immune).
+pub(crate) fn jam_chance(strength: &[f64; 4], sensor: &[f64; 4], resistance: f64, share: f64) -> f64 {
+    let mut best = None;
+    for (n, s) in sensor.iter().enumerate() {
+        if *s > 0.0 && best.is_none_or(|(_, top)| *s > top) {
+            best = Some((n, *s));
+        }
+    }
+    let Some((kind, held)) = best else { return 0.0 };
+    if strength[kind] <= 0.0 {
+        return 0.0;
+    }
+    (strength[kind] / held.max(1e-6) * share.max(0.0) * resistance.clamp(0.0, 1.0)).clamp(0.0, 1.0)
+}
+
+/// A draw in `[0, 1)` is a jam when it falls under the chance.
+fn rolls_under(roll: f64, chance: f64) -> bool {
+    chance > 0.0 && roll < chance
+}
+
 /// The ship attributes the client is told of as they change.
 const MAX_VELOCITY: i32 = 37;
 const SIGNATURE_RADIUS: i32 = 552;
@@ -27,6 +51,8 @@ pub(crate) enum Lasting {
     Damp { range_percent: f64, resolution_percent: f64 },
     /// Points of warp scramble: more than the ship's own warp core holds it out of warp (`blocks_mwd`: a microwarpdrive too).
     Scramble { strength: f64, blocks_mwd: bool },
+    /// Held by an ECM jammer: the ship's locks are broken and it can lock only the ships that jam it.
+    Jam,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,7 +104,7 @@ impl Incoming {
     }
 
     /// Records or renews what a module does to the ship, until `until`.
-    fn upsert(&mut self, source: i64, module: i64, what: Lasting, until: i64) {
+    pub(crate) fn upsert(&mut self, source: i64, module: i64, what: Lasting, until: i64) {
         let record = Record { source, module, what, until };
         match self.records.iter_mut().find(|r| r.source == source && r.module == module) {
             Some(existing) => *existing = record,
@@ -99,6 +125,19 @@ impl Incoming {
 
     pub(crate) fn scrambled(&self) -> bool {
         self.scramble_points() > 1e-6
+    }
+
+    /// The ships that jam this one (it can lock these and nothing else for as long as any does).
+    pub(crate) fn jammers(&self) -> Vec<i64> {
+        let mut by: Vec<i64> =
+            self.records.iter().filter(|r| r.what == Lasting::Jam).map(|r| r.source).collect();
+        by.sort_unstable();
+        by.dedup();
+        by
+    }
+
+    pub(crate) fn jammed(&self) -> bool {
+        self.records.iter().any(|r| r.what == Lasting::Jam)
     }
 
     fn factor(&self, pick: impl Fn(&Lasting) -> Option<f64>) -> f64 {
@@ -170,22 +209,101 @@ impl Scene {
         let Some(target) = self.session_of(target_ship) else { return Vec::new() };
         let Some(pilot) = self.pilots.get_mut(&target) else { return Vec::new() };
         let before = pilot.incoming.records.len();
-        pilot.incoming.records.retain(|r| !(r.source == source_ship && r.module == module));
+        let (lifted, kept): (Vec<Record>, Vec<Record>) = std::mem::take(&mut pilot.incoming.records)
+            .into_iter()
+            .partition(|r| r.source == source_ship && r.module == module);
+        pilot.incoming.records = kept;
         if pilot.incoming.records.len() == before {
             return Vec::new();
         }
-        self.retune(target, at)
+        let mut out = self.jams_lifted(target, &lifted);
+        out.extend(self.retune(target, at));
+        out
     }
 
     /// What no module renewed lapses (a module whose ship has left the scene lets go of its target by itself).
     pub(crate) fn expire_incoming(&mut self, session: SessionId, now: i64) -> Vec<Out> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         let before = pilot.incoming.records.len();
-        pilot.incoming.records.retain(|r| r.until > now);
+        let (kept, lapsed): (Vec<Record>, Vec<Record>) =
+            std::mem::take(&mut pilot.incoming.records).into_iter().partition(|r| r.until > now);
+        pilot.incoming.records = kept;
         if pilot.incoming.records.len() == before {
             return Vec::new();
         }
-        self.retune(session, now)
+        let mut out = self.jams_lifted(session, &lapsed);
+        out.extend(self.retune(session, now));
+        out
+    }
+
+    /// The pilot of a ship an ECM jam has let go of is told it ended on its HUD (an NPC is told nothing).
+    fn jams_lifted(&self, target: SessionId, lifted: &[Record]) -> Vec<Out> {
+        if crate::npc::is_npc_session(target) {
+            return Vec::new();
+        }
+        let Some(target_ship) = self.pilots.get(&target).map(|pilot| pilot.ship.spec.ship_id) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for record in lifted.iter().filter(|r| r.what == Lasting::Jam) {
+            let who =
+                || vec![id(record.source), id(record.module), id(target_ship), crate::wire::text(JAMMING)];
+            out.push(Self::dogma_notify(target, "OnJamEnd", who()));
+            out.push(Self::dogma_notify(target, "OnEwarEnd", who()));
+            out.push(Self::dogma_notify(target, "OnRefreshBuffBar", Vec::new()));
+        }
+        out
+    }
+
+    /// A cycle of an ECM jammer begins: what the last cycle held is let go, and the target is jammed when the roll is under the chance (the jammer's strength for the kind of
+    /// sensor the target has, over the strength of that sensor, weakened by the distance and by the target's resistance to ECM). A jammed ship loses every lock it has
+    /// or is making but those on the ships that jam it, and is told for its HUD.
+    pub(crate) fn jam(
+        &mut self,
+        source: SessionId,
+        effect: &crate::modules::Effect,
+        strength: &[f64; 4],
+        share: f64,
+        at: i64,
+    ) -> Vec<Out> {
+        let Some(target) = self.session_of(effect.target_id) else { return Vec::new() };
+        let Some(source_ship) = self.pilots.get(&source).map(|pilot| pilot.ship.spec.ship_id) else {
+            return Vec::new();
+        };
+        let Some(chance) = self.pilots.get(&target).map(|pilot| {
+            jam_chance(strength, &pilot.ship.spec.sensor_strength, pilot.ship.spec.ecm_resistance, share)
+        }) else {
+            return Vec::new();
+        };
+        let jammed = rolls_under(self.rng.random(), chance);
+        let until = at + (effect.duration_ms * TICKS_PER_SECOND as f64 / 1000.0) as i64 + TICK;
+        let Some(pilot) = self.pilots.get_mut(&target) else { return Vec::new() };
+        let before = pilot.incoming.records.len();
+        let (previous, kept): (Vec<Record>, Vec<Record>) = std::mem::take(&mut pilot.incoming.records)
+            .into_iter()
+            .partition(|r| r.source == source_ship && r.module == effect.module_id && r.what == Lasting::Jam);
+        pilot.incoming.records = kept;
+        debug_assert!(pilot.incoming.records.len() + previous.len() == before);
+        if !jammed {
+            return self.jams_lifted(target, &previous);
+        }
+        pilot.incoming.upsert(source_ship, effect.module_id, Lasting::Jam, until);
+        let allowed = pilot.incoming.jammers();
+        let mut out = self.break_locks_except(target, &allowed, at);
+        if !crate::npc::is_npc_session(target) {
+            let who = || {
+                vec![id(source_ship), id(effect.module_id), id(effect.target_id), crate::wire::text(JAMMING)]
+            };
+            let mut args = who();
+            args.push(crate::wire::filetime(at));
+            args.push(crate::wire::int(effect.duration_ms as i64 + 100));
+            out.push(Self::dogma_notify(target, "OnJamStart", args));
+            if previous.is_empty() {
+                out.push(Self::dogma_notify(target, "OnEwarStart", who()));
+                out.push(Self::dogma_notify(target, "OnRefreshBuffBar", Vec::new()));
+            }
+        }
+        out
     }
 
     /// The ship's numbers are what its base is with what lands on it worked in; those that changed are told to its pilot and, for the speed, to all who see it.

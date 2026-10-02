@@ -100,6 +100,9 @@ pub enum Remote {
     /// The target is held out of warp: `strength` points of scramble (a warp scrambler 2, a warp disruptor 1; the ship's own warp core subtracts). `blocks_mwd`: and out
     /// of its microwarpdrive.
     Scramble { strength: f64, blocks_mwd: bool },
+    /// The target's locks are broken and it cannot lock anything but the ships that jam it, for as long as a cycle, when `strength` for the kind of sensor the target has
+    /// (gravimetric, ladar, magnetometric, radar) beats the roll against that sensor's strength (an ECM jammer).
+    Jam { strength: [f64; 4] },
 }
 
 impl Remote {
@@ -174,6 +177,8 @@ impl Effect {
     /// What the target's client calls an effect that is projected at it, on its HUD.
     pub(crate) fn jam(&self) -> Option<&str> {
         match self.action.as_ref()? {
+            // an ECM jam is told to the HUD only when it lands (by `Scene::jam`), not as the effect begins
+            Action::Remote { what: Remote::Jam { .. }, .. } => None,
             Action::Remote { jam, .. } if !jam.is_empty() => Some(jam),
             _ => None,
         }
@@ -940,6 +945,7 @@ impl Scene {
                 let lasting = what.lasting(share).expect("these last");
                 self.hold(session, effect, lasting, at)
             }
+            Remote::Jam { strength } => self.jam(session, effect, strength, share, at),
             Remote::Repair { layer, amount } => self.mend(effect.target_id, *layer, amount * share, at),
             Remote::Transfer { amount } => self.give_capacitor(target, amount * share, at),
             Remote::Neutralize { amount, signature_resolution } => {
@@ -1050,7 +1056,11 @@ impl Scene {
         }
         out.extend(self.jam_told(session, &run.effect, at, Jam::End));
         // what it did to its target for as long as it ran is lifted
-        if run.effect.remote().is_some_and(|(what, ..)| what.lasting(1.0).is_some()) {
+        if run
+            .effect
+            .remote()
+            .is_some_and(|(what, ..)| what.lasting(1.0).is_some() || matches!(what, Remote::Jam { .. }))
+        {
             out.extend(self.release(ship_id, run.effect.module_id, run.effect.target_id, at));
         }
         out
@@ -2210,6 +2220,149 @@ pub(crate) mod tests {
         let (_, after) = poll_until(&mut scene, t + 2 * SECOND, 11.0);
         assert!((speed_of(&scene, B) - base * 0.5).abs() < 1e-6, "{}", speed_of(&scene, B));
         assert!(after > t);
+    }
+
+    /// A jammer whose strength is `strength` against radar and which runs at the partner, with the partner's radar strength made `sensor` (and its resistance `resistance`).
+    fn jammer(scene: &mut Scene, strength: f64, sensor: f64, resistance: f64) -> Effect {
+        let spec = &mut scene.pilots.get_mut(&B).unwrap().ship.spec;
+        spec.sensor_strength = [0.0, 0.0, 0.0, sensor];
+        spec.ecm_resistance = resistance;
+        let mut effect =
+            projected(Remote::Jam { strength: [0.0, 0.0, 0.0, strength] }, Applies::CycleStart, partner());
+        effect.fx = "effects.ElectronicAttributeModifyTarget".to_string();
+        effect.duration_ms = 20_000.0;
+        effect.capacitor_need = 5.0;
+        effect
+    }
+
+    fn told_hud(outs: &[Out], session: SessionId, name: &str) -> bool {
+        outs.iter()
+            .any(|o| matches!(o, Out::Notify { session: s, name: n, .. } if *s == session && *n == name))
+    }
+
+    #[test]
+    fn a_jammer_that_beats_the_sensor_breaks_the_locks_of_its_target_and_keeps_it_from_locking_but_the_jammer()
+     {
+        let (mut scene, t) = reaching(5_000.0);
+        let mine = spec().ship_id;
+        // the jammed ship holds a lock on the jammer and on a third party (the jammer's own partner is all there is: a lock on the jammer stays)
+        let asked = scene.target_order(B, crate::targeting::Order::Lock(mine), t);
+        assert!(matches!(asked.first(), Some(Out::Targets { .. })), "{asked:?}");
+        let (_, t) = poll_until(&mut scene, t, 6.0);
+        assert_eq!(scene.locked_by(B), vec![mine]);
+        // a jammer that is twice as strong as the sensor always jams
+        let effect = jammer(&mut scene, 10.0, 5.0, 1.0);
+        let landed = scene.activate(A, effect, t);
+        assert!(
+            told_hud(&landed, B, "OnJamStart") && told_hud(&landed, B, "OnEwarStart"),
+            "{:?}",
+            labels(&landed)
+        );
+        assert!(scene.pilots[&B].incoming.jammed());
+        // the ship that jams is the one it can still lock
+        assert_eq!(scene.locked_by(B), vec![mine]);
+        assert_eq!(scene.pilots[&B].incoming.jammers(), vec![mine]);
+    }
+
+    #[test]
+    fn a_jammed_ship_loses_the_locks_that_are_not_on_its_jammer_and_cannot_make_new_ones() {
+        let (mut scene, t) = reaching(5_000.0);
+        assert_eq!(scene.locked_by(A), vec![partner()]);
+        // a ship that is not the partner jams A (a made-up one: the scene holds two ships)
+        let until = t + 20 * SECOND;
+        scene.pilots.get_mut(&A).unwrap().incoming.upsert(777, 888, crate::ewar::Lasting::Jam, until);
+        let broken = scene.break_locks_except(A, &[777], t);
+        assert!(scene.locked_by(A).is_empty(), "{:?}", labels(&broken));
+        assert!(told_hud(&broken, A, "OnTarget"), "{:?}", labels(&broken));
+        assert!(
+            told_hud(&broken, B, "OnTarget"),
+            "the ship that was locked is told it is not: {:?}",
+            labels(&broken)
+        );
+        // and it cannot lock the partner again until the jam lapses
+        let refused = scene.target_order(A, crate::targeting::Order::Lock(partner()), t + SECOND);
+        assert!(
+            refused.iter().any(|o| matches!(o, Out::TargetRefused { reason: "TARGET_JAMMED", .. })),
+            "{refused:?}"
+        );
+        let (_, t2) = poll_until(&mut scene, t, 22.0);
+        assert!(!scene.pilots[&A].incoming.jammed());
+        let asked = scene.target_order(A, crate::targeting::Order::Lock(partner()), t2);
+        assert!(matches!(asked.first(), Some(Out::Targets { .. })), "{asked:?}");
+    }
+
+    #[test]
+    fn a_jam_that_does_not_beat_the_sensor_does_nothing_and_a_ship_that_resists_it_is_not_jammed() {
+        let (mut scene, t) = reaching(5_000.0);
+        // no strength for the kind of sensor the ship has: no chance
+        let effect = jammer(&mut scene, 0.0, 5.0, 1.0);
+        let landed = scene.activate(A, effect, t);
+        assert!(!scene.pilots[&B].incoming.jammed(), "{:?}", labels(&landed));
+        assert!(!told_hud(&landed, B, "OnJamStart"));
+        // a ship with no resistance to give is immune
+        let (mut scene, t) = reaching(5_000.0);
+        let effect = jammer(&mut scene, 100.0, 5.0, 0.0);
+        scene.activate(A, effect, t);
+        assert!(!scene.pilots[&B].incoming.jammed());
+    }
+
+    #[test]
+    fn a_jam_lapses_when_the_jammer_stops_and_the_ship_is_told_it_ended() {
+        let (mut scene, t) = reaching(5_000.0);
+        let effect = jammer(&mut scene, 10.0, 5.0, 1.0);
+        scene.activate(A, effect, t);
+        assert!(scene.pilots[&B].incoming.jammed());
+        scene.deactivate(A, MODULE, t + SECOND);
+        // the cycle that is going is played out (twenty seconds), and the ship is let go at its end
+        let (told, _) = poll_until(&mut scene, t + SECOND, 25.0);
+        assert!(!scene.pilots[&B].incoming.jammed());
+        assert!(told_hud(&told, B, "OnJamEnd") && told_hud(&told, B, "OnEwarEnd"), "{:?}", labels(&told));
+    }
+
+    #[test]
+    fn the_chance_of_a_jam_is_the_strength_over_the_sensor_weakened_by_the_reach_and_the_resistance() {
+        use crate::ewar::jam_chance;
+        let jam = [0.0, 3.0, 0.0, 0.0];
+        // the ship's strongest sensor is the kind that counts (a ladar ship against a ladar jammer)
+        assert!((jam_chance(&jam, &[0.0, 6.0, 2.0, 0.0], 1.0, 1.0) - 0.5).abs() < 1e-9);
+        // the strongest sensor is another kind than the jammer has: no chance
+        assert_eq!(jam_chance(&jam, &[0.0, 2.0, 6.0, 0.0], 1.0, 1.0), 0.0);
+        // two kinds that are alike: the first counts
+        assert!((jam_chance(&[1.0, 0.0, 0.0, 0.0], &[4.0, 0.0, 0.0, 4.0], 1.0, 1.0) - 0.25).abs() < 1e-9);
+        // out in the falloff and resisting
+        assert!((jam_chance(&jam, &[0.0, 6.0, 0.0, 0.0], 0.5, 0.5) - 0.125).abs() < 1e-9);
+        // a ship with no sensors, a jammer that is stronger than the sensor, a ship that cannot be jammed
+        assert_eq!(jam_chance(&jam, &[0.0; 4], 1.0, 1.0), 0.0);
+        assert_eq!(jam_chance(&jam, &[0.0, 1.0, 0.0, 0.0], 1.0, 1.0), 1.0);
+        assert_eq!(jam_chance(&jam, &[0.0, 1.0, 0.0, 0.0], 0.0, 1.0), 0.0);
+    }
+
+    #[test]
+    fn a_lock_the_dampened_ship_can_no_longer_reach_is_given_up() {
+        let (mut scene, t) = reaching(5_000.0);
+        let mine = spec().ship_id;
+        // the ship that is to be dampened holds a lock on the one that dampens it
+        let asked = scene.target_order(B, crate::targeting::Order::Lock(mine), t);
+        assert!(matches!(asked.first(), Some(Out::Targets { .. })), "{asked:?}");
+        let (_, t) = poll_until(&mut scene, t, 6.0);
+        assert_eq!(scene.locked_by(B), vec![mine]);
+        // a dampener that takes nine tenths of its range leaves it less than the distance between them
+        scene.activate(
+            A,
+            holding(
+                MODULE,
+                Remote::Damp { range_percent: -90.0, resolution_percent: 0.0 },
+                "ewRemoteSensorDamp",
+            ),
+            t,
+        );
+        let (told, _) = poll_until(&mut scene, t, 2.0);
+        assert!(scene.locked_by(B).is_empty(), "the lock is given up: {:?}", scene.locked_by(B));
+        assert!(
+            told.iter().any(|o| matches!(o, Out::Notify { session, name: "OnTarget", .. } if *session == B)),
+            "{:?}",
+            labels(&told)
+        );
     }
 
     #[test]

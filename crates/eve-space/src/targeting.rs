@@ -192,6 +192,10 @@ impl Scene {
         if UNTARGETABLE_GROUPS.contains(&target.group_id) {
             return Err(Refusal::of_type("TARGET_NOT_TARGETABLE", target.type_id));
         }
+        // a jammed ship can lock only the ships that jam it
+        if source.incoming.jammed() && !source.incoming.jammers().contains(&target.id) {
+            return Err(Refusal::of("TARGET_JAMMED"));
+        }
         if source.flight.as_ref().is_some_and(|f| f.is_warping()) {
             return Err(Refusal::of("SOURCE_WARPING"));
         }
@@ -420,6 +424,22 @@ impl Scene {
         }
         if !held.is_empty() {
             out.push(on_target(session, "clear", None));
+        }
+        out
+    }
+
+    /// A ship's locks are broken but those on the ships in `allowed` (the ones that jam it): what is going is given up and what is held is let go, with the reason `target`.
+    pub(crate) fn break_locks_except(&mut self, session: SessionId, allowed: &[i64], now: i64) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        let going: Vec<i64> =
+            pilot.targeting.pending.iter().map(|p| p.target).filter(|t| !allowed.contains(t)).collect();
+        let mut out = Vec::new();
+        for target in going {
+            self.cancel_pending(session, target);
+            out.push(on_target_reason(session, "lost", Some(target), Some("target")));
+        }
+        for target in self.locked_by(session).into_iter().filter(|t| !allowed.contains(t)) {
+            out.extend(self.remove_locked(session, target, Some("target"), true, now));
         }
         out
     }

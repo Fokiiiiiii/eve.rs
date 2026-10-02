@@ -226,6 +226,8 @@ pub fn recorded_ship(race: &Value, ball: &[u8], direction: Vec3) -> Ship {
         signature_radius: 28.0,
         capacitor_capacity: 149.5,
         capacitor_recharge_s: 55.25,
+        sensor_strength: [0.0, 0.0, 0.0, 0.0],
+        ecm_resistance: 1.0,
         vitals: Vitals {
             shield_capacity: 220.0,
             armor_hp: 137.5,

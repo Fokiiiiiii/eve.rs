@@ -52,6 +52,7 @@ def ship(m):
     body += struct.pack("<I", len(m["modules"]))
     for module in m["modules"]:
         body += i64(module["itemId"]) + struct.pack("<ii", module["typeId"], module["flag"])
+    body += struct.pack("<5d", *m["sensorStrength"], m["ecmResistance"])
     return body
 
 
@@ -100,7 +101,7 @@ def effect(e):
     elif act:
         what = act["what"]
         body += bytes([1, 1 if act["when"] == "end" else 0]) + struct.pack("<dd", act["optimal"], act["falloff"]) + s(act["jam"])
-        body += bytes([{"repair": 0, "transfer": 1, "neutralize": 2, "drain": 3, "web": 4, "paint": 5, "damp": 6, "scramble": 7}[what]])
+        body += bytes([{"repair": 0, "transfer": 1, "neutralize": 2, "drain": 3, "web": 4, "paint": 5, "damp": 6, "scramble": 7, "jam": 8}[what]])
         if what == "repair":
             body += bytes([LAYERS[act["layer"]]])
         if what in ("repair", "transfer", "neutralize", "drain"):
@@ -113,6 +114,8 @@ def effect(e):
             body += struct.pack("<dd", act["rangePercent"], act["resolutionPercent"])
         if what == "scramble":
             body += struct.pack("<d", act["strength"]) + bytes([1 if act["blocksMwd"] else 0])
+        if what == "jam":
+            body += struct.pack("<4d", *act["strength"])
     return body
 
 
@@ -223,6 +226,7 @@ IBIS = {"shipId": "9988400001939", "characterId": "140000342", "typeId": 601, "g
         "securityStatus": 0.0, "radius": 47.0, "mass": 1163000.0, "maxVelocity": 339.25, "agility": 4.0185,
         "warpSpeedAu": 3.0, "shieldRechargeMs": 860000.0, "maxTargetRange": 29700.0, "scanResolution": 660.0,
         "signatureRadius": 28.0, "maxLockedTargets": 4, "capacitorCapacity": 149.5, "capacitorRechargeS": 55.25,
+        "sensorStrength": [0.0, 0.0, 0.0, 6.0], "ecmResistance": 1.0,
         "vitals": {"shieldCapacity": 220.0, "armorHp": 137.5, "structureHp": 201.25,
                    "resonances": {"shield": [0.0, 0.8, 0.6, 0.5], "armor": [0.5, 0.35, 0.25, 0.1],
                                   "structure": [0.33, 0.33, 0.33, 0.33]}},
@@ -380,6 +384,12 @@ valid = [
                 "durationMs": 5000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "9988400003001",
                 "action": {"kind": "remote", "what": "scramble", "strength": 2.0, "blocksMwd": True, "optimal": 7500.0,
                            "falloff": 0.0, "when": "start", "jam": "warpScramblerMWD"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate an ECM jammer", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002811", "moduleType": 1957, "effectId": 6470, "fx": "effects.ElectronicAttributeModifyTarget",
+                "durationMs": 20000.0, "capacitorNeed": 40.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "jam", "strength": [3.6, 0.0, 0.0, 0.0], "optimal": 20000.0,
+                           "falloff": 20000.0, "when": "start", "jam": ""},
                 "onChanges": [], "offChanges": []}},
     {"name": "activate a railgun that fires antimatter", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002719", "moduleType": 10678, "effectId": 34, "fx": "effects.ProjectileFired",

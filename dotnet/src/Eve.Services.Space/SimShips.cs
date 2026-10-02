@@ -18,6 +18,11 @@ internal static class SimShips
     private const int MaxLockedTargets = 192;
     private const int SignatureRadius = 552;
     private const int ScanResolution = 564;
+    private const int GravimetricStrength = 211;
+    private const int LadarStrength = 209;
+    private const int MagnetometricStrength = 210;
+    private const int RadarStrength = 208;
+    private const int EcmResistance = 2253;
     private const int CapacitorCapacity = 482;
     private const int RechargeRate = 55;
 
@@ -42,6 +47,13 @@ internal static class SimShips
         return fromShip > 0 && fromPilot > 0 ? Math.Min(fromShip, fromPilot) : Math.Max(fromShip, fromPilot);
     }
 
+    /// <summary>What the ship holds against a jammer, from its attributes (a ship that does not name <c>ECMResistance</c> takes a jam in full).</summary>
+    private static SimSensors SensorsOf(Func<int, double> attribute)
+    {
+        var resistance = attribute(EcmResistance);
+        return new SimSensors(attribute(GravimetricStrength), attribute(LadarStrength), attribute(MagnetometricStrength), attribute(RadarStrength), resistance > 0 ? resistance : 1.0);
+    }
+
     public static SimShip Of(ShipSnapshot snapshot, DogmaStatic statics)
     {
         var ship = snapshot.Ship;
@@ -55,7 +67,7 @@ internal static class SimShips
             Attribute(MaxTargetRange), Attribute(ScanResolution), Attribute(SignatureRadius), LockLimit(Attribute(MaxLockedTargets), snapshot.World.Get(character.Id, MaxLockedTargets)),
             Attribute(CapacitorCapacity), Attribute(RechargeRate) / 1000.0,
             [.. snapshot.Fitted.Select(module => new SimModule(module.Id, module.TypeId, module.Flag))],
-            VitalsOf(snapshot), ConditionOf(snapshot.Condition));
+            VitalsOf(snapshot), ConditionOf(snapshot.Condition), SensorsOf(Attribute));
     }
 
     /// <summary>A ship as its type has it and nobody flies it (a hull spawned for <c>/deathtest</c>): the type's own numbers, no pilot, no modules.</summary>
@@ -70,7 +82,7 @@ internal static class SimShips
             shipId, 0, type.TypeId, type.GroupId, type.CategoryId, type.Name, 0, 0, 0, 0, 0,
             Attribute(Radius), Attribute(Mass), Attribute(MaxVelocity), Attribute(Agility), WarpSpeedAu(Attribute(BaseWarpSpeed), Attribute(WarpSpeedMultiplier)), Attribute(ShieldRechargeRate),
             Attribute(MaxTargetRange), Attribute(ScanResolution), Attribute(SignatureRadius), LockLimit(Attribute(MaxLockedTargets), 0),
-            Attribute(CapacitorCapacity), Attribute(RechargeRate) / 1000.0, [], vitals, SimCondition.Full);
+            Attribute(CapacitorCapacity), Attribute(RechargeRate) / 1000.0, [], vitals, SimCondition.Full, SensorsOf(id => Attribute(id)));
     }
 
     /// <summary>What the ship can take and how it resists, as dogma has it (a resonance the ship has none of lets everything through).</summary>

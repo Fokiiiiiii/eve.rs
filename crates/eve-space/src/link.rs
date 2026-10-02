@@ -12,7 +12,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Charge, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 9;
+pub const PROTOCOL_VERSION: u16 = 10;
 
 /// The message kinds.
 pub mod kind {
@@ -482,6 +482,9 @@ fn put_ship(out: &mut Vec<u8>, ship: &ShipSpec) {
         out.extend_from_slice(&module.type_id.to_le_bytes());
         out.extend_from_slice(&module.flag.to_le_bytes());
     }
+    for number in ship.sensor_strength.iter().chain([&ship.ecm_resistance]) {
+        out.extend_from_slice(&number.to_le_bytes());
+    }
 }
 
 fn put_numbers(out: &mut Vec<u8>, numbers: &Numbers) {
@@ -752,6 +755,12 @@ fn put_action(out: &mut Vec<u8>, action: &Action) {
                     out.extend_from_slice(&strength.to_le_bytes());
                     out.push(u8::from(*blocks_mwd));
                 }
+                Remote::Jam { strength } => {
+                    out.push(8);
+                    for number in strength {
+                        out.extend_from_slice(&number.to_le_bytes());
+                    }
+                }
             }
         }
     }
@@ -804,6 +813,7 @@ fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
                         _ => return Err(DecodeError::BadValue("blocks_mwd")),
                     },
                 },
+                8 => Remote::Jam { strength: [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?] },
                 _ => return Err(DecodeError::BadValue("remote")),
             };
             Ok(Action::Remote { what, reach, when, jam })
@@ -942,6 +952,8 @@ fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
     for _ in 0..count {
         modules.push(ModuleSpec { item_id: reader.i64()?, type_id: reader.i32()?, flag: reader.i32()? });
     }
+    let sensor_strength = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+    let ecm_resistance = reader.f64()?;
     Ok(ShipSpec {
         ship_id,
         character_id,
@@ -969,6 +981,8 @@ fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
         vitals,
         condition,
         modules,
+        sensor_strength,
+        ecm_resistance,
     })
 }
 

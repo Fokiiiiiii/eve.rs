@@ -38,7 +38,7 @@ public class RepairHostTests
     {
         await using var connection = await rig.Source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
-        await rig.Skills.GrantAsync(connection, transaction, character, new[] { 3392, 3393, 3416, 3419, 3413, 3426, 3318, 3422, 3423, 16069, 27902, 3435, 3449, 3433, 19921 }.Select(type => new Eve.Skills.CharacterSkill(type, 5, 0)));
+        await rig.Skills.GrantAsync(connection, transaction, character, new[] { 3392, 3393, 3416, 3419, 3413, 3426, 3318, 3422, 3423, 16069, 27902, 3435, 3449, 3433, 19921, 3427 }.Select(type => new Eve.Skills.CharacterSkill(type, 5, 0)));
         await transaction.CommitAsync();
     }
 
@@ -189,7 +189,7 @@ public class ProjectedHostTests
     }
 
     private const int MidSlot = 19;
-    private const int StasisWebifier = 526, WarpScrambler = 447, WarpDisruptor = 3242, TargetPainter = 12709, SensorDampener = 1968;
+    private const int StasisWebifier = 526, WarpScrambler = 447, WarpDisruptor = 3242, TargetPainter = 12709, SensorDampener = 1968, RadarJammer = 1956, MultispectralJammer = 1957;
 
     private static async Task<(SimAction.Remote Action, SimEffect Effect, Rig Rig, Eve.Characters.Created Character, long Module)> StartedAsync(int typeId, string effectName)
     {
@@ -227,6 +227,48 @@ public class ProjectedHostTests
             Assert.Equal("ewRemoteSensorDamp", damp.Jam);
             Assert.Equal(new SimRemote.Damp(Math.Round(await ValueAsync(rig3, character3, module3, 309), 6), Math.Round(await ValueAsync(rig3, character3, module3, 566), 6)), damp.What);
         }
+    }
+
+    [PgFact]
+    public async Task An_ECM_jammer_is_started_with_its_strength_for_each_kind_of_sensor()
+    {
+        var (radar, effect, rig, character, module) = await StartedAsync(RadarJammer, "remoteECMFalloff");
+        await using (rig)
+        {
+            // told to the HUD of the target when the jam lands (the simulation rolls for it), so the effect itself carries no name
+            Assert.Equal("", radar.Jam);
+            Assert.False(radar.AtCycleEnd);
+            var jam = Assert.IsType<SimRemote.Jam>(radar.What);
+            // the strengths are what dogma gives after skills (gravimetric, ladar, magnetometric, radar = 238, 239, 240, 241); a radar jammer is strong against radar sensors only
+            Assert.Equal(
+                (await ValueAsync(rig, character, module, 238), await ValueAsync(rig, character, module, 239), await ValueAsync(rig, character, module, 240), await ValueAsync(rig, character, module, 241)),
+                (jam.Gravimetric, jam.Ladar, jam.Magnetometric, jam.Radar));
+            Assert.True(jam.Radar > 2.5 * jam.Gravimetric && jam.Gravimetric == jam.Ladar && jam.Ladar == jam.Magnetometric, $"{jam}");
+            Assert.Equal((28_800d, 27_000d), (radar.Optimal, radar.Falloff));
+            Assert.Equal(20_000d, effect.DurationMs);
+            Assert.True(effect.CapacitorNeed > 0);
+        }
+
+        var (multi, _, rig2, _, _) = await StartedAsync(MultispectralJammer, "remoteECMFalloff");
+        await using (rig2)
+        {
+            // a multispectral jammer is as strong against every kind, and weaker than a specialised one against its own
+            var jam = Assert.IsType<SimRemote.Jam>(multi.What);
+            Assert.True(jam.Gravimetric == jam.Ladar && jam.Ladar == jam.Magnetometric && jam.Magnetometric == jam.Radar && jam.Radar > 0, $"{jam}");
+            Assert.Equal((19_200d, 18_000d), (multi.Optimal, multi.Falloff));
+        }
+    }
+
+    [PgFact]
+    public async Task A_ship_tells_the_simulation_the_strength_of_its_sensors_and_how_it_resists_ECM()
+    {
+        var (rig, _, _, _) = await ReadyAsync(RadarJammer, MidSlot);
+        await using var _ = rig;
+        var ship = rig.Sim.Heard.OfType<SimEnter>().Last().Ship;
+        var sensors = Assert.IsType<SimSensors>(ship.Sensors);
+        // an ordinary hull has one kind of sensor that counts, and takes a jam in full
+        Assert.True(new[] { sensors.Gravimetric, sensors.Ladar, sensors.Magnetometric, sensors.Radar }.Max() > 0, $"{sensors}");
+        Assert.Equal(1d, sensors.EcmResistance);
     }
 
     [PgFact]

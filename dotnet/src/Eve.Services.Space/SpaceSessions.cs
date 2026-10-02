@@ -449,7 +449,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             return ModuleResult.Refusal(made.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
         }
         // the safety of the pilot: a weapon is not started at the ship of another pilot where that would be a crime
-        var attack = package.Turret is not null || package.Action is SimAction.Remote { What: SimRemote.Neutralize or SimRemote.Drain or SimRemote.Web or SimRemote.Paint or SimRemote.Damp or SimRemote.Scramble };
+        var attack = package.Turret is not null || package.Action is SimAction.Remote { What: SimRemote.Neutralize or SimRemote.Drain or SimRemote.Web or SimRemote.Paint or SimRemote.Damp or SimRemote.Scramble or SimRemote.Jam };
         if (attack
             && _pilots.Values.Any(other => other.ShipId == package.TargetId && other.CharacterId != characterId)
             && _systems.Get(pilot.SolarSystemId) is { } where

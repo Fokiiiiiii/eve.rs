@@ -41,6 +41,7 @@ public sealed partial class DogmaIMService
             "TARGET_NOT_FOUND" => MachoErrors.ThrowUserError("TargetingAttemptCancelled"),
             // the simulation says how many targets the ship may hold in the range's place
             "TARGET_LOCK_LIMIT_REACHED" => MachoErrors.ThrowUserError("TargetingSystemsAlreadyFullyUtilized", ("limit", new PyInt((long)Math.Max(0, refusal.DesiredRange)))),
+            "TARGET_JAMMED" => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You cannot lock that target while jammed except against the ships currently jamming you."))),
             "TARGET_INVULNERABLE" => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You cannot lock that target while it is still invulnerable after undocking."))),
             _ => MachoErrors.ThrowUserError("DeniedTargetingAttemptFailed", ("target", new PyInt(Math.Max(0, refusal.TargetType)))),
         };

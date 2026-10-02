@@ -29,7 +29,13 @@ public class SimCodecTests
         (double)s["maxVelocity"]!, (double)s["agility"]!, (double)s["warpSpeedAu"]!, (double)s["shieldRechargeMs"]!,
         (double)s["maxTargetRange"]!, (double)s["scanResolution"]!, (double)s["signatureRadius"]!, (int)s["maxLockedTargets"]!, (double)s["capacitorCapacity"]!, (double)s["capacitorRechargeS"]!,
         [.. ((JsonArray)s["modules"]!).Select(m => new SimModule(Wide(m!, "itemId"), (int)m!["typeId"]!, (int)m["flag"]!))],
-        VitalsOf(s["vitals"]!), ConditionOf(s["condition"]!));
+        VitalsOf(s["vitals"]!), ConditionOf(s["condition"]!), SensorsOf(s));
+
+    private static SimSensors SensorsOf(JsonNode s)
+    {
+        var strength = Four(s["sensorStrength"]!);
+        return new SimSensors(strength[0], strength[1], strength[2], strength[3], (double)s["ecmResistance"]!);
+    }
 
     private static double[] Four(JsonNode n) => [.. ((JsonArray)n).Select(x => (double)x!)];
 
@@ -65,6 +71,7 @@ public class SimCodecTests
             "web" => new SimRemote.Web((double)a["percent"]!),
             "paint" => new SimRemote.Paint((double)a["percent"]!),
             "damp" => new SimRemote.Damp((double)a["rangePercent"]!, (double)a["resolutionPercent"]!),
+            "jam" => new SimRemote.Jam(Four(a["strength"]!)[0], Four(a["strength"]!)[1], Four(a["strength"]!)[2], Four(a["strength"]!)[3]),
             _ => new SimRemote.Scramble((double)a["strength"]!, (bool)a["blocksMwd"]!),
         };
         return new SimAction.Remote(what, (double)a["optimal"]!, (double)a["falloff"]!, end, (string)a["jam"]!);
@@ -204,8 +211,8 @@ public class SimCodecTests
     public void A_module_count_the_frame_cannot_hold_is_refused_without_allocating_for_it()
     {
         var good = SimCodec.Encode(MessageOf(Case("valid", "enter by undocking")));
-        // the count is the four bytes before the two 16-byte modules at the end of the frame
-        var at = good.Length - (2 * 16) - 4;
+        // the count is the four bytes before the two 16-byte modules and the five 8-byte sensor numbers at the end of the frame
+        var at = good.Length - (5 * 8) - (2 * 16) - 4;
         var forged = (byte[])good.Clone();
         BitConverter.GetBytes(uint.MaxValue).CopyTo(forged, at);
         var error = Assert.Throws<SimLinkException>(() => SimCodec.Decode(forged.AsMemory(4)));

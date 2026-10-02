@@ -71,6 +71,8 @@ fn ship() -> ShipSpec {
         signature_radius: 28.0,
         capacitor_capacity: 149.5,
         capacitor_recharge_s: 55.25,
+        sensor_strength: [0.0, 0.0, 0.0, 0.0],
+        ecm_resistance: 1.0,
         vitals: eve_space::health::Vitals {
             shield_capacity: 220.0,
             armor_hp: 137.5,

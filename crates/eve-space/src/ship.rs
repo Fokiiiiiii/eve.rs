@@ -50,6 +50,10 @@ pub struct ShipSpec {
     pub vitals: Vitals,
     pub condition: Condition,
     pub modules: Vec<ModuleSpec>,
+    /// How well its sensors hold against a jammer (gravimetric, ladar, magnetometric and radar strength: the strongest counts) and how much of a jam it takes
+    /// (`ECMResistance`: 1 for an ordinary ship, 0 for one that cannot be jammed).
+    pub sensor_strength: [f64; 4],
+    pub ecm_resistance: f64,
 }
 
 /// What the ship is doing.

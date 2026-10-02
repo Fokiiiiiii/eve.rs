@@ -1415,6 +1415,8 @@ pub(crate) mod tests {
             signature_radius: 28.0,
             capacitor_capacity: 149.5,
             capacitor_recharge_s: 55.25,
+            sensor_strength: [0.0, 0.0, 0.0, 0.0],
+            ecm_resistance: 1.0,
             // an Ibis's points, with resistances made up so that each kind of damage does something different to each layer
             vitals: crate::health::Vitals {
                 shield_capacity: 220.0,

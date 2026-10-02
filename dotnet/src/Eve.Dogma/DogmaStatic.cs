@@ -46,6 +46,9 @@ public sealed class DogmaStatic
 
     public int EffectCount => _effects.Count;
 
+    /// <summary>Every effect the static data and the built-in effects define.</summary>
+    public IEnumerable<EffectDef> Effects => _effects.Values;
+
     /// <summary>Makes sure these types are known (reads them from the SDE when they are not).</summary>
     public async Task EnsureTypesAsync(IEnumerable<int> typeIds, CancellationToken cancellationToken = default)
     {

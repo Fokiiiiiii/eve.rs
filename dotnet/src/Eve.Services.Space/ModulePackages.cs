@@ -39,6 +39,11 @@ internal static class ModulePackages
     private const int EnergyNeutralizerAmount = 97;
     private const int FalloffEffectiveness = 2044;
     private const int NeutralizerSignatureResolution = 2451;
+    private const int WebSpeedFactor = 20;
+    private const int PainterSignatureBonus = 554;
+    private const int DampenerRangeBonus = 309;
+    private const int DampenerResolutionBonus = 566;
+    private const int WarpScrambleStrength = 105;
 
     /// <summary>The attributes that name the groups of the charges a module takes (chargeGroup1 to chargeGroup5).</summary>
     private static readonly int[] ChargeGroups = [604, 605, 606, 609, 610];
@@ -55,6 +60,11 @@ internal static class ModulePackages
     private const string RemoteCapacitorTransmitter = "shipModuleRemoteCapacitorTransmitter";
     private const string EnergyNeutralizer = "energyNeutralizerFalloff";
     private const string EnergyNosferatu = "energyNosferatuFalloff";
+    private const string StasisWebifier = "remoteWebifierFalloff";
+    private const string TargetPainter = "remoteTargetPaintFalloff";
+    private const string SensorDampener = "remoteSensorDampFalloff";
+    private const string WarpScrambler = "warpScrambleBlockMWDWithNPCEffect";
+    private const string WarpDisruptor = "warpDisrupt";
     private const string ProjectileFired = "projectileFired";
     private const string TurretFitted = "turretfitted";
 
@@ -166,6 +176,12 @@ internal static class ModulePackages
             RemoteCapacitorTransmitter => (new SimRemote.Transfer(Amount(PowerTransferAmount)), false, "energyTransfer"),
             EnergyNeutralizer => (new SimRemote.Neutralize(Amount(EnergyNeutralizerAmount), Amount(NeutralizerSignatureResolution)), false, "ewEnergyNeut"),
             EnergyNosferatu => (new SimRemote.Drain(Amount(PowerTransferAmount), Amount(NeutralizerSignatureResolution)), true, "ewEnergyVampire"),
+            // what lasts for as long as the effect runs: the percentages are signed as dogma has them (a web is negative), a scrambler holds a microwarpdrive too
+            StasisWebifier => (new SimRemote.Web(NpcArmament.Round6(value(WebSpeedFactor))), false, "webify"),
+            TargetPainter => (new SimRemote.Paint(NpcArmament.Round6(value(PainterSignatureBonus))), false, "ewTargetPaint"),
+            SensorDampener => (new SimRemote.Damp(NpcArmament.Round6(value(DampenerRangeBonus)), NpcArmament.Round6(value(DampenerResolutionBonus))), false, "ewRemoteSensorDamp"),
+            WarpScrambler => (new SimRemote.Scramble(Amount(WarpScrambleStrength), true), false, "warpScramblerMWD"),
+            WarpDisruptor => (new SimRemote.Scramble(Amount(WarpScrambleStrength), false), false, "warpScrambler"),
             _ => null,
         };
     }

@@ -209,7 +209,7 @@ pub(crate) struct Pilot {
     /// The warp the ship is in, from the command until it is at rest again.
     pub(crate) flight: Option<Flight>,
     /// What the ship's last warp was to (the body), kept until the next warp: where it came to rest is judged against it.
-    warp_target: Option<i64>,
+    pub(crate) warp_target: Option<i64>,
     /// The jump the ship has begun, until it leaves for the other system.
     jump: Option<PendingJump>,
     /// The ship came through a gate (it is bound differently from one that undocked).
@@ -228,6 +228,8 @@ pub(crate) struct Pilot {
     pub(crate) modules: Modules,
     /// Until when the ship cannot be locked (the undocking protection; it ends sooner when the ship is flown or locks something).
     pub(crate) protected_until: i64,
+    /// What other ships' modules do to this ship's numbers while they run (webs, painters, dampeners, scramblers).
+    pub(crate) incoming: crate::ewar::Incoming,
 }
 
 impl Pilot {
@@ -249,6 +251,7 @@ impl Pilot {
             targeting: Targeting::default(),
             modules,
             protected_until,
+            incoming: crate::ewar::Incoming::default(),
         }
     }
 }
@@ -704,6 +707,10 @@ impl Scene {
         }
         if pilot.flight.is_some() {
             return refused("IN_WARP");
+        }
+        // a ship that other ships' scramblers or disruptors hold cannot warp
+        if pilot.incoming.scrambled() {
+            return refused("WARP_SCRAMBLED");
         }
         let Some(body) = system.body(target_id) else { return refused("TARGET_NOT_FOUND") };
         let ship = &pilot.ship;

@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 8;
+    public const ushort ProtocolVersion = 9;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -313,6 +313,10 @@ public static class SimCodec
                         1 => new SimRemote.Transfer(r.F64()),
                         2 => new SimRemote.Neutralize(r.F64(), r.F64()),
                         3 => new SimRemote.Drain(r.F64(), r.F64()),
+                        4 => new SimRemote.Web(r.F64()),
+                        5 => new SimRemote.Paint(r.F64()),
+                        6 => new SimRemote.Damp(r.F64(), r.F64()),
+                        7 => ReadScramble(ref r),
                         _ => throw new SimLinkException(SimLinkError.BadValue, "bad remote"),
                     };
                     return new SimAction.Remote(what, optimal, falloff, when == 1, jam);
@@ -320,6 +324,17 @@ public static class SimCodec
             default:
                 throw new SimLinkException(SimLinkError.BadValue, "bad action");
         }
+    }
+
+    private static SimRemote ReadScramble(ref Reader r)
+    {
+        var strength = r.F64();
+        var blocks = r.U8();
+        if (blocks > 1)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad scramble");
+        }
+        return new SimRemote.Scramble(strength, blocks == 1);
     }
 
     private static SimRemote ReadRemoteRepair(ref Reader r)
@@ -797,6 +812,24 @@ public static class SimCodec
                         w.U8(3);
                         w.F64(drain.Amount);
                         w.F64(drain.SignatureResolution);
+                        break;
+                    case SimRemote.Web web:
+                        w.U8(4);
+                        w.F64(web.Percent);
+                        break;
+                    case SimRemote.Paint paint:
+                        w.U8(5);
+                        w.F64(paint.Percent);
+                        break;
+                    case SimRemote.Damp damp:
+                        w.U8(6);
+                        w.F64(damp.RangePercent);
+                        w.F64(damp.ResolutionPercent);
+                        break;
+                    case SimRemote.Scramble scramble:
+                        w.U8(7);
+                        w.F64(scramble.Strength);
+                        w.U8(scramble.BlocksMwd ? (byte)1 : (byte)0);
                         break;
                 }
                 break;

@@ -12,7 +12,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Charge, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 8;
+pub const PROTOCOL_VERSION: u16 = 9;
 
 /// The message kinds.
 pub mod kind {
@@ -690,7 +690,7 @@ fn put_effect(out: &mut Vec<u8>, effect: &Effect) {
 
 /// What a cycle of an effect does: a tag and its numbers (`0`: a repair of the ship's own: the layer, when in the cycle, the points; `1`: an effect
 /// projected at the target: when in the cycle, the optimal range and the falloff, the name the target's HUD gives it (a text), then a kind and its numbers: `0` a repair of the target's layer and the
-/// points, `1` a capacitor transfer and its GJ, `2` a neutralizer and `3` a nosferatu: the GJ and the signature resolution).
+/// points, `1` a capacitor transfer and its GJ, `2` a neutralizer and `3` a nosferatu: the GJ and the signature resolution, `4` a web and `5` a target painter: a percentage, `6` a sensor dampener: the percentages of the lock range and of the scan resolution, `7` a warp scrambler: the points and whether a microwarpdrive is held too).
 fn put_action(out: &mut Vec<u8>, action: &Action) {
     let layer_byte = |layer: &Layer| match layer {
         Layer::Shield => 0,
@@ -734,6 +734,24 @@ fn put_action(out: &mut Vec<u8>, action: &Action) {
                     out.extend_from_slice(&amount.to_le_bytes());
                     out.extend_from_slice(&signature_resolution.to_le_bytes());
                 }
+                Remote::Web { percent } => {
+                    out.push(4);
+                    out.extend_from_slice(&percent.to_le_bytes());
+                }
+                Remote::Paint { percent } => {
+                    out.push(5);
+                    out.extend_from_slice(&percent.to_le_bytes());
+                }
+                Remote::Damp { range_percent, resolution_percent } => {
+                    out.push(6);
+                    out.extend_from_slice(&range_percent.to_le_bytes());
+                    out.extend_from_slice(&resolution_percent.to_le_bytes());
+                }
+                Remote::Scramble { strength, blocks_mwd } => {
+                    out.push(7);
+                    out.extend_from_slice(&strength.to_le_bytes());
+                    out.push(u8::from(*blocks_mwd));
+                }
             }
         }
     }
@@ -775,6 +793,17 @@ fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
                 1 => Remote::Transfer { amount: reader.f64()? },
                 2 => Remote::Neutralize { amount: reader.f64()?, signature_resolution: reader.f64()? },
                 3 => Remote::Drain { amount: reader.f64()?, signature_resolution: reader.f64()? },
+                4 => Remote::Web { percent: reader.f64()? },
+                5 => Remote::Paint { percent: reader.f64()? },
+                6 => Remote::Damp { range_percent: reader.f64()?, resolution_percent: reader.f64()? },
+                7 => Remote::Scramble {
+                    strength: reader.f64()?,
+                    blocks_mwd: match reader.u8()? {
+                        0 => false,
+                        1 => true,
+                        _ => return Err(DecodeError::BadValue("blocks_mwd")),
+                    },
+                },
                 _ => return Err(DecodeError::BadValue("remote")),
             };
             Ok(Action::Remote { what, reach, when, jam })

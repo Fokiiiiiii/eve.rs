@@ -162,16 +162,27 @@ fn effect_of(case: &Value) -> Effect {
                 _ => Layer::Structure,
             };
             let when = if a["when"] == "end" { Applies::CycleEnd } else { Applies::CycleStart };
-            let amount = a["amount"].as_f64().unwrap();
+            let amount = a["amount"].as_f64().unwrap_or(0.0);
             if a["kind"] == "repair" {
                 return Action::Repair { layer: layer(), amount, when };
             }
             let resolution = || a["signatureResolution"].as_f64().unwrap();
+            let percent = || a["percent"].as_f64().unwrap();
             let what = match a["what"].as_str().unwrap() {
                 "repair" => Remote::Repair { layer: layer(), amount },
                 "transfer" => Remote::Transfer { amount },
                 "neutralize" => Remote::Neutralize { amount, signature_resolution: resolution() },
-                _ => Remote::Drain { amount, signature_resolution: resolution() },
+                "drain" => Remote::Drain { amount, signature_resolution: resolution() },
+                "web" => Remote::Web { percent: percent() },
+                "paint" => Remote::Paint { percent: percent() },
+                "damp" => Remote::Damp {
+                    range_percent: a["rangePercent"].as_f64().unwrap(),
+                    resolution_percent: a["resolutionPercent"].as_f64().unwrap(),
+                },
+                _ => Remote::Scramble {
+                    strength: a["strength"].as_f64().unwrap(),
+                    blocks_mwd: a["blocksMwd"].as_bool().unwrap(),
+                },
             };
             Action::Remote {
                 what,

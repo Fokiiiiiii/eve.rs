@@ -38,7 +38,7 @@ public class RepairHostTests
     {
         await using var connection = await rig.Source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
-        await rig.Skills.GrantAsync(connection, transaction, character, new[] { 3392, 3393, 3416, 3419, 3413, 3426, 3318, 3422, 3423, 16069, 27902 }.Select(type => new Eve.Skills.CharacterSkill(type, 5, 0)));
+        await rig.Skills.GrantAsync(connection, transaction, character, new[] { 3392, 3393, 3416, 3419, 3413, 3426, 3318, 3422, 3423, 16069, 27902, 3435, 3449, 3433, 19921 }.Select(type => new Eve.Skills.CharacterSkill(type, 5, 0)));
         await transaction.CommitAsync();
     }
 
@@ -94,10 +94,10 @@ public class ProjectedHostTests
     private const int RemoteArmorRepairer = 11355, RemoteShieldBooster = 3586, EnergyNeutralizer = 533, EnergyNosferatu = 530, CapacitorTransmitter = 529;
     private const long Target = 1_000_000_000_042;
 
-    private static async Task<(Rig Rig, ClientSession Session, Eve.Characters.Created Character, long Module)> ReadyAsync(int typeId)
+    private static async Task<(Rig Rig, ClientSession Session, Eve.Characters.Created Character, long Module)> ReadyAsync(int typeId, int slot = HighSlot)
     {
         var rig = await Rig.CreateAsync();
-        var (session, character, module) = await RepairHostTests.InSpaceWithAsync(rig, typeId, HighSlot);
+        var (session, character, module) = await RepairHostTests.InSpaceWithAsync(rig, typeId, slot);
         return (rig, session, character, module);
     }
 
@@ -186,5 +186,66 @@ public class ProjectedHostTests
         Assert.Equal("TARGET_OUT_OF_RANGE", far!.Reason);
         Assert.Equal((601, 9500d, 12_345.6), (far.TargetType, far.DesiredRange, far.ActualDistance));
         Assert.True(far.ShipType > 0);
+    }
+
+    private const int MidSlot = 19;
+    private const int StasisWebifier = 526, WarpScrambler = 447, WarpDisruptor = 3242, TargetPainter = 12709, SensorDampener = 1968;
+
+    private static async Task<(SimAction.Remote Action, SimEffect Effect, Rig Rig, Eve.Characters.Created Character, long Module)> StartedAsync(int typeId, string effectName)
+    {
+        var (rig, session, character, module) = await ReadyAsync(typeId, MidSlot);
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, module, effectName, Target, 1000, CancellationToken.None));
+        var effect = Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect;
+        return (Assert.IsType<SimAction.Remote>(effect.Action), effect, rig, character, module);
+    }
+
+    [PgFact]
+    public async Task A_web_a_painter_and_a_dampener_hold_their_target_with_the_percentages_dogma_gives_and_the_names_of_the_HUD()
+    {
+        var (web, _, rig, character, module) = await StartedAsync(StasisWebifier, "remoteWebifierFalloff");
+        await using (rig)
+        {
+            // from the start of each cycle, for as long as it runs; the percentage is signed as it is in dogma (a web slows)
+            Assert.False(web.AtCycleEnd);
+            Assert.Equal("webify", web.Jam);
+            Assert.Equal(new SimRemote.Web(Math.Round(await ValueAsync(rig, character, module, 20), 6)), web.What);
+            Assert.True(((SimRemote.Web)web.What).Percent < 0);
+            Assert.Equal(10_000d, web.Optimal);
+        }
+
+        var (paint, _, rig2, character2, module2) = await StartedAsync(TargetPainter, "remoteTargetPaintFalloff");
+        await using (rig2)
+        {
+            Assert.Equal("ewTargetPaint", paint.Jam);
+            Assert.Equal(new SimRemote.Paint(Math.Round(await ValueAsync(rig2, character2, module2, 554), 6)), paint.What);
+            Assert.True(((SimRemote.Paint)paint.What).Percent > 0);
+        }
+
+        var (damp, _, rig3, character3, module3) = await StartedAsync(SensorDampener, "remoteSensorDampFalloff");
+        await using (rig3)
+        {
+            Assert.Equal("ewRemoteSensorDamp", damp.Jam);
+            Assert.Equal(new SimRemote.Damp(Math.Round(await ValueAsync(rig3, character3, module3, 309), 6), Math.Round(await ValueAsync(rig3, character3, module3, 566), 6)), damp.What);
+        }
+    }
+
+    [PgFact]
+    public async Task A_scrambler_holds_a_microwarpdrive_too_and_a_disruptor_does_not()
+    {
+        var (scram, _, rig, character, module) = await StartedAsync(WarpScrambler, "warpScrambleBlockMWDWithNPCEffect");
+        await using (rig)
+        {
+            Assert.Equal("warpScramblerMWD", scram.Jam);
+            Assert.Equal(new SimRemote.Scramble(Math.Round(await ValueAsync(rig, character, module, 105), 6), true), scram.What);
+            Assert.Equal(2d, ((SimRemote.Scramble)scram.What).Strength);
+        }
+
+        var (disrupt, _, rig2, _, _) = await StartedAsync(WarpDisruptor, "warpDisrupt");
+        await using (rig2)
+        {
+            Assert.Equal("warpScrambler", disrupt.Jam);
+            Assert.Equal(new SimRemote.Scramble(1d, false), disrupt.What);
+            Assert.Equal(20_000d, disrupt.Optimal);
+        }
     }
 }

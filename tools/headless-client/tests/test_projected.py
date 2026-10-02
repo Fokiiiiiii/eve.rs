@@ -12,6 +12,7 @@ and in the host. It needs the simulation: EVE_LIVE_SLOW=1.
 from __future__ import annotations
 
 import os
+import time
 import uuid
 
 import pytest
@@ -24,9 +25,10 @@ from tests.test_others import watch
 from tests.test_repair import armors_of, text_of
 from tests.test_target import plain_race
 from tests.test_undock import STATION, SYSTEM, arrive, number, outcome
-from tests.test_weapon import effect_of
+from tests.test_weapon import effect_of, slims_in
 
 REMOTE_ARMOR = 11355
+WEBIFIER = 526
 pytestmark = [
     pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server"),
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SLOW") != "1", reason="a minute: set EVE_LIVE_SLOW=1"),
@@ -102,3 +104,85 @@ def test_a_remote_armor_repairer_mends_the_armor_of_the_ship_it_is_aimed_at():
         a.call_bound(a_dogma[0], "Deactivate", a_modules[REMOTE_ARMOR], "shipModuleRemoteArmorRepairer")
         ended = watch(both, 10.0, until=lambda seen: any(e["name"] == "OnJamEnd" for e in seen["b"]))
         assert any(e["name"] == "OnJamEnd" for e in ended["b"]) and any(e["name"] == "OnEwarEnd" for e in ended["b"]), "the target was not told it ended"
+
+
+def speeds_of(events: list, ball: int) -> list[float]:
+    """The top speeds the stream tells of this ball (`SetMaxSpeed` of its own), in order."""
+    told = []
+    for event in events:
+        if event["name"] != "DoDestinyUpdate":
+            continue
+        try:
+            actions = event["args"]["$tuple"][1]["$tuple"][1]["$tuple"][0]
+        except (KeyError, TypeError):
+            continue
+        for action in actions:
+            name, payload = action["$tuple"][1]["$tuple"][0], action["$tuple"][1]["$tuple"][1]["$tuple"]
+            if name == "SetMaxSpeed" and number(payload[0]) == ball:
+                told.append(float(payload[1]))
+    return told
+
+
+def test_a_stasis_webifier_slows_the_ship_it_is_aimed_at_for_as_long_as_it_runs():
+    race = DEATH["races"][0]
+    run = uuid.uuid4().hex[:10]
+    with base.connect(f"walk-web-{run}") as who:
+        _, ship, _, _ = arrive(who, plain_race(race, "victim"), run)
+        only = {"who": who}
+        slash = lambda command: text_of(who.call("slash", "SlashCmd", command))  # noqa: E731
+
+        for skill in ("Propulsion Jamming",):
+            assert f"{skill}(" in slash(f"/giveskill me {skill} 1")
+        slash("/unfit me all")
+        watch(only, 1.0)
+        fit = slash(f"/fit me {WEBIFIER}")
+        assert fit.startswith("Created and fitted"), fit
+        watch(only, 1.5)
+        dogma = who.call("dogmaIM", "MachoBindObject", (STATION, 15), None)[0]
+        web = fitted(who, dogma)[WEBIFIER]
+
+        service = who.call("ship", "MachoBindObject", (STATION, 15), None)
+        who.call_bound(service[0], "Undock", ship, False)
+        watch(only, 2.5)
+        beyonce = who.call("beyonce", "MachoBindObject", SYSTEM, None)
+        watch(only, 3.0)
+        dogma = who.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
+        who.call_bound(dogma[0], "GetAllInfo", True, True, None)
+        watch(only, 1.0)
+        watch(only, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["who"]))
+
+        # a rat comes into space, the pilot locks it
+        assert slash("/npc 1 Blood Visionary").startswith("Spawned 1 hull from Blood Visionary")
+        spawn = watch(only, 8.0)["who"]
+        rat = next((item for item, _ in slims_in(spawn) if item != ship), 0)
+        assert rat, "the rat did not come into space"
+
+        def locked() -> bool:
+            try:
+                return rat in [number(t) for t in who.call_bound(dogma[0], "GetTargets")]
+            except Exception:  # noqa: BLE001
+                return False
+
+        # the rat is locked and the web reaches ten kilometers: the pilot flies at the rat and tries again until it is in reach
+        outcome(lambda: who.call_bound(beyonce[0], "CmdFollowBall", rat, 2000))
+        deadline = time.monotonic() + 90.0
+        while True:
+            slash("/heal")
+            if not locked():
+                answer, trouble = outcome(lambda: who.call_bound(dogma[0], "AddTarget", rat))
+                watch(only, 3.0, until=lambda seen: locked())
+                assert time.monotonic() < deadline, f"the rat was never locked: {base.brief(trouble) if trouble else base.brief(answer)}"
+                continue
+            _, refused = outcome(lambda: who.call_bound(dogma[0], "Activate", web, "remoteWebifierFalloff", rat, 1000))
+            if refused is None:
+                break
+            assert time.monotonic() < deadline, f"the web was never accepted: {base.brief(refused)}"
+            watch(only, 2.0)
+        slowed = watch(only, 6.0, until=lambda seen: len(speeds_of(seen["who"], rat)) >= 1)
+        speeds = speeds_of(slowed["who"], rat)
+        assert speeds, "the pilot was not told the rat's top speed changing"
+        slash("/heal")
+        who.call_bound(dogma[0], "Deactivate", web, "remoteWebifierFalloff")
+        freed = watch(only, 8.0, until=lambda seen: any(x > min(speeds) for x in speeds_of(seen["who"], rat)))
+        after = speeds_of(freed["who"], rat)
+        assert any(x > min(speeds) for x in after), f"the rat's top speed did not come back: {speeds} then {after}"

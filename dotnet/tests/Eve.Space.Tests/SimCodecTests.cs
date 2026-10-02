@@ -50,7 +50,7 @@ public class SimCodecTests
 
     private static SimAction ActionOf(JsonNode a)
     {
-        var (amount, end) = ((double)a["amount"]!, (string)a["when"]! == "end");
+        var (amount, end) = (a["amount"] is { } given ? (double)given : 0d, (string)a["when"]! == "end");
         SimLayer Layer() => Enum.Parse<SimLayer>((string)a["layer"]!, true);
         if ((string)a["kind"]! == "repair")
         {
@@ -61,7 +61,11 @@ public class SimCodecTests
             "repair" => new SimRemote.Repair(Layer(), amount),
             "transfer" => new SimRemote.Transfer(amount),
             "neutralize" => new SimRemote.Neutralize(amount, (double)a["signatureResolution"]!),
-            _ => new SimRemote.Drain(amount, (double)a["signatureResolution"]!),
+            "drain" => new SimRemote.Drain(amount, (double)a["signatureResolution"]!),
+            "web" => new SimRemote.Web((double)a["percent"]!),
+            "paint" => new SimRemote.Paint((double)a["percent"]!),
+            "damp" => new SimRemote.Damp((double)a["rangePercent"]!, (double)a["resolutionPercent"]!),
+            _ => new SimRemote.Scramble((double)a["strength"]!, (bool)a["blocksMwd"]!),
         };
         return new SimAction.Remote(what, (double)a["optimal"]!, (double)a["falloff"]!, end, (string)a["jam"]!);
     }

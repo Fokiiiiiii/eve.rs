@@ -91,12 +91,38 @@ pub enum Remote {
     Neutralize { amount: f64, signature_resolution: f64 },
     /// `amount` GJ are taken from the target's capacitor and given to the ship that runs the effect, which must hold less than the target (an energy nosferatu).
     Drain { amount: f64, signature_resolution: f64 },
+    /// The target's top speed is changed by `percent` of itself for as long as the effect lands (a stasis webifier: negative).
+    Web { percent: f64 },
+    /// The target's signature radius is changed by `percent` (a target painter: positive).
+    Paint { percent: f64 },
+    /// The range the target locks at and its scan resolution are changed by those percentages (a sensor dampener: negative).
+    Damp { range_percent: f64, resolution_percent: f64 },
+    /// The target is held out of warp: `strength` points of scramble (a warp scrambler 2, a warp disruptor 1; the ship's own warp core subtracts). `blocks_mwd`: and out
+    /// of its microwarpdrive.
+    Scramble { strength: f64, blocks_mwd: bool },
 }
 
 impl Remote {
     /// Whether the effect is an attack (the client plays it as one, and the target is aggressed).
     pub fn hostile(&self) -> bool {
-        matches!(self, Self::Neutralize { .. } | Self::Drain { .. })
+        !matches!(self, Self::Repair { .. } | Self::Transfer { .. })
+    }
+
+    /// What the effect does to the target's numbers for as long as it lands, weakened by `share`: those that last are kept by the target (`crate::ewar`), not done once a cycle.
+    pub(crate) fn lasting(&self, share: f64) -> Option<crate::ewar::Lasting> {
+        use crate::ewar::Lasting;
+        match *self {
+            Self::Web { percent } => Some(Lasting::Web { percent: percent * share }),
+            Self::Paint { percent } => Some(Lasting::Paint { percent: percent * share }),
+            Self::Damp { range_percent, resolution_percent } => Some(Lasting::Damp {
+                range_percent: range_percent * share,
+                resolution_percent: resolution_percent * share,
+            }),
+            Self::Scramble { strength, blocks_mwd } => {
+                Some(Lasting::Scramble { strength: strength * share, blocks_mwd })
+            }
+            _ => None,
+        }
     }
 }
 
@@ -468,6 +494,15 @@ impl Scene {
     /// The ship's numbers become `numbers`; what the client is told: `SetBallMass` and `SetMaxSpeed` (the ones that changed).
     fn renumber(&mut self, session: SessionId, numbers: Numbers, stamp: u32) -> Vec<Value> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        // what other ships' modules do to this ship is worked on the numbers its own effects give it
+        let held = pilot.incoming.base.map(|mut base| {
+            base.max_velocity = numbers.max_velocity;
+            base.signature_radius = numbers.signature_radius;
+            pilot.incoming.base = Some(base);
+            pilot.incoming.worked(&base)
+        });
+        let wanted_velocity = held.map_or(numbers.max_velocity, |worked| worked.max_velocity);
+        let wanted_signature = held.map_or(numbers.signature_radius, |worked| worked.signature_radius);
         let spec = &mut pilot.ship.spec;
         let ship = id(spec.ship_id);
         let mut actions = Vec::new();
@@ -475,11 +510,11 @@ impl Scene {
             spec.mass = numbers.mass;
             actions.push(payload::action(stamp, "SetBallMass", [ship.clone(), real(numbers.mass)]));
         }
-        if numbers.max_velocity != spec.max_velocity {
-            spec.max_velocity = numbers.max_velocity;
-            actions.push(payload::action(stamp, "SetMaxSpeed", [ship, real(numbers.max_velocity)]));
+        if wanted_velocity != spec.max_velocity {
+            spec.max_velocity = wanted_velocity;
+            actions.push(payload::action(stamp, "SetMaxSpeed", [ship, real(wanted_velocity)]));
         }
-        spec.signature_radius = numbers.signature_radius;
+        spec.signature_radius = wanted_signature;
         actions
     }
 
@@ -681,10 +716,16 @@ impl Scene {
         let sessions: Vec<SessionId> = self
             .in_entry_order()
             .into_iter()
-            .filter(|s| !self.pilots[s].modules.is_idle() || self.pilots[s].ship.health.next_sample.is_some())
+            .filter(|s| {
+                !self.pilots[s].modules.is_idle()
+                    || self.pilots[s].ship.health.next_sample.is_some()
+                    || !self.pilots[s].incoming.is_empty()
+            })
             .collect();
         let mut out = Vec::new();
         for session in sessions {
+            // what no module renewed lapses
+            out.extend(self.expire_incoming(session, now));
             // a cycle that ends is followed by the charge told at the moments in between, in the order they fall
             while let Some((at, kind)) = self.next_module_moment(session, now) {
                 out.extend(self.module_moment(session, at, kind));
@@ -895,6 +936,10 @@ impl Scene {
             if resolution > 0.0 && signature > 0.0 { (signature / resolution).min(1.0) } else { 1.0 }
         };
         let out = match what {
+            Remote::Web { .. } | Remote::Paint { .. } | Remote::Damp { .. } | Remote::Scramble { .. } => {
+                let lasting = what.lasting(share).expect("these last");
+                self.hold(session, effect, lasting, at)
+            }
             Remote::Repair { layer, amount } => self.mend(effect.target_id, *layer, amount * share, at),
             Remote::Transfer { amount } => self.give_capacitor(target, amount * share, at),
             Remote::Neutralize { amount, signature_resolution } => {
@@ -1004,6 +1049,10 @@ impl Scene {
             out.extend(update);
         }
         out.extend(self.jam_told(session, &run.effect, at, Jam::End));
+        // what it did to its target for as long as it ran is lifted
+        if run.effect.remote().is_some_and(|(what, ..)| what.lasting(1.0).is_some()) {
+            out.extend(self.release(ship_id, run.effect.module_id, run.effect.target_id, at));
+        }
         out
     }
 
@@ -1057,6 +1106,7 @@ pub(crate) mod tests {
     const B: SessionId = 8;
     const SECOND: i64 = 10_000_000;
     const MODULE: i64 = 9_988_400_001_940;
+    const PLANET: i64 = 40_000_001;
 
     pub(crate) fn afterburner() -> Effect {
         Effect {
@@ -1095,7 +1145,30 @@ pub(crate) mod tests {
 
     /// A ship that has bound the ballpark, and one that looks on, thirty seconds after they undocked.
     fn crowd() -> (Scene, i64) {
-        let mut scene = Scene::new(Arc::new((*system()).clone()));
+        crowd_in((*system()).clone())
+    }
+
+    /// The same, in a system that has a planet (to warp to).
+    fn crowd_with_a_planet() -> (Scene, i64) {
+        let mut world = (*system()).clone();
+        world.bodies.push(crate::world::Body {
+            id: PLANET,
+            type_id: 2015,
+            group_id: 7,
+            category_id: 2,
+            owner_id: 0,
+            name: "Testing III".to_string(),
+            kind: crate::world::BodyKind::Planet,
+            position: eve_destiny::Vec3::new(45_000_000_000.0, 0.0, 20_000_000_000.0),
+            radius: 6_000_000.0,
+            graphic_id: None,
+            detail: crate::world::Detail::None,
+        });
+        crowd_in(world)
+    }
+
+    fn crowd_in(world: crate::world::SolarSystem) -> (Scene, i64) {
+        let mut scene = Scene::new(Arc::new(world));
         scene.undock(A, spec(), STATION, NOON).unwrap();
         scene.bind(A, NOON);
         scene.undock(B, other_spec(), STATION, NOON).unwrap();
@@ -1714,7 +1787,10 @@ pub(crate) mod tests {
 
     /// B stands `gap` metres off A's surface and A has it locked: the scene, and the moment.
     fn reaching(gap: f64) -> (Scene, i64) {
-        let (mut scene, t) = crowd();
+        reaching_in(crowd(), gap)
+    }
+
+    fn reaching_in((mut scene, t): (Scene, i64), gap: f64) -> (Scene, i64) {
         // both ships are brought to rest so that nothing moves while the effect runs
         scene.command(A, Command::Stop, t);
         scene.command(B, Command::Stop, t);
@@ -2056,5 +2132,156 @@ pub(crate) mod tests {
         for expected in ["8:OnJamEnd", "8:OnEwarEnd", "8:OnRefreshBuffBar"] {
             assert!(ended.iter().any(|l| l == expected), "{expected} in {ended:?}");
         }
+    }
+
+    // ---- effects that last: webs, painters, dampeners, scramblers ----
+
+    /// A module (its own id) of A that holds B with `what` for as long as it runs, reaching 10 km over a falloff of 5 km.
+    fn holding(module: i64, what: Remote, jam: &str) -> Effect {
+        let mut effect = projected(what, Applies::CycleStart, partner());
+        effect.module_id = module;
+        effect.fx = "effects.ModifyTargetSpeed".to_string();
+        effect.capacitor_need = 5.0;
+        if let Some(Action::Remote { jam: name, .. }) = effect.action.as_mut() {
+            *name = jam.to_string();
+        }
+        effect
+    }
+
+    fn web(module: i64, percent: f64) -> Effect {
+        holding(module, Remote::Web { percent }, "webify")
+    }
+
+    fn speed_of(scene: &Scene, who: SessionId) -> f64 {
+        scene.pilots[&who].ship.spec.max_velocity
+    }
+
+    #[test]
+    fn a_web_slows_the_ship_it_holds_for_as_long_as_it_runs_and_the_ship_and_those_who_look_on_are_told() {
+        let (mut scene, t) = reaching(5_000.0);
+        let base = speed_of(&scene, B);
+        let started = scene.activate(A, web(MODULE, -60.0), t);
+        assert!((speed_of(&scene, B) - base * 0.4).abs() < 1e-9, "{}", speed_of(&scene, B));
+        let told = labels(&started);
+        assert!(
+            told.iter().any(|l| l == "8:attributes[37]"),
+            "the target's pilot is told its top speed: {told:?}"
+        );
+        assert!(told.iter().any(|l| l == "8:destiny[SetMaxSpeed]"), "{told:?}");
+        assert!(
+            told.iter().any(|l| l == "7:destiny[SetMaxSpeed]")
+                || told.iter().any(|l| l.starts_with("7:destiny")),
+            "those who look on: {told:?}"
+        );
+        // it goes on holding the ship through the cycles, and lets go when the effect stops
+        let (_, t2) = poll_until(&mut scene, t, 6.0);
+        assert!((speed_of(&scene, B) - base * 0.4).abs() < 1e-9);
+        scene.deactivate(A, MODULE, t2);
+        let (out, _) = poll_until(&mut scene, t2, 5.5);
+        assert_eq!(speed_of(&scene, B), base);
+        assert!(labels(&out).iter().any(|l| l == "8:destiny[SetMaxSpeed]"), "{:?}", labels(&out));
+        assert!(scene.pilots[&B].incoming.is_empty() && scene.pilots[&B].incoming.base.is_none());
+    }
+
+    #[test]
+    fn a_web_in_falloff_slows_less_and_two_webs_stack_with_the_penalty() {
+        let (mut scene, t) = reaching(12_500.0);
+        let base = speed_of(&scene, B);
+        scene.activate(A, web(MODULE, -60.0), t);
+        // half way through the falloff: a share of 0.840896
+        // (the ships stand still, to a few centimetres)
+        assert!((speed_of(&scene, B) - base * (1.0 - 0.6 * 0.840896)).abs() < 0.1, "{}", speed_of(&scene, B));
+        let (mut scene, t) = reaching(2_000.0);
+        scene.activate(A, web(MODULE, -60.0), t);
+        scene.activate(A, web(MODULE + 1, -60.0), t);
+        let factor = 0.4 * (1.0 - 0.6 * 0.869_119);
+        assert!((speed_of(&scene, B) / base - factor).abs() < 1e-4, "{}", speed_of(&scene, B) / base);
+    }
+
+    #[test]
+    fn what_a_ship_does_to_its_own_speed_is_worked_on_before_the_web_and_is_still_told_when_it_stops() {
+        let (mut scene, t) = reaching(2_000.0);
+        let base = speed_of(&scene, B);
+        scene.activate(A, web(MODULE, -50.0), t);
+        // the webbed ship starts its afterburner: the speed it gives is halved
+        scene.activate(B, afterburner(), t + SECOND);
+        assert!((speed_of(&scene, B) - 522.848918 * 0.5).abs() < 1e-6, "{}", speed_of(&scene, B));
+        scene.deactivate(B, MODULE, t + 2 * SECOND);
+        let (_, after) = poll_until(&mut scene, t + 2 * SECOND, 11.0);
+        assert!((speed_of(&scene, B) - base * 0.5).abs() < 1e-6, "{}", speed_of(&scene, B));
+        assert!(after > t);
+    }
+
+    #[test]
+    fn a_target_painter_makes_the_ship_bigger_and_a_sensor_dampener_shortens_its_lock_range_and_slows_its_locks()
+     {
+        let (mut scene, t) = reaching(3_000.0);
+        let (signature, range, resolution) = {
+            let spec = &scene.pilots[&B].ship.spec;
+            (spec.signature_radius, spec.max_target_range, spec.scan_resolution)
+        };
+        let painted = scene.activate(A, holding(MODULE, Remote::Paint { percent: 25.0 }, "ewTargetPaint"), t);
+        assert!((scene.pilots[&B].ship.spec.signature_radius - signature * 1.25).abs() < 1e-9);
+        assert!(labels(&painted).iter().any(|l| l == "8:attributes[552]"), "{:?}", labels(&painted));
+        let damped = scene.activate(
+            A,
+            holding(
+                MODULE + 1,
+                Remote::Damp { range_percent: -30.0, resolution_percent: -20.0 },
+                "ewRemoteSensorDamp",
+            ),
+            t,
+        );
+        let spec = &scene.pilots[&B].ship.spec;
+        assert!(
+            (spec.max_target_range - range * 0.7).abs() < 1e-6
+                && (spec.scan_resolution - resolution * 0.8).abs() < 1e-9
+        );
+        assert!(labels(&damped).iter().any(|l| l == "8:attributes[76,564]"), "{:?}", labels(&damped));
+    }
+
+    #[test]
+    fn a_ship_that_is_scrambled_cannot_warp_and_a_scramble_stops_one_that_is_lining_up() {
+        let (mut scene, t) = reaching_in(crowd_with_a_planet(), 3_000.0);
+        scene.activate(
+            A,
+            holding(MODULE, Remote::Scramble { strength: 2.0, blocks_mwd: true }, "warpScramblerMWD"),
+            t,
+        );
+        assert!(scene.pilots[&B].incoming.scrambled());
+        let refused = scene.command(B, Command::WarpTo { target_id: PLANET, range: 0.0 }, t + SECOND);
+        assert!(
+            refused.iter().any(|o| matches!(o, Out::Refused { command: 8, reason: "WARP_SCRAMBLED", .. })),
+            "{refused:?}"
+        );
+        // it is let go when the effect stops, and the ship warps
+        scene.deactivate(A, MODULE, t + 2 * SECOND);
+        let (_, t2) = poll_until(&mut scene, t + 2 * SECOND, 6.0);
+        assert!(!scene.pilots[&B].incoming.scrambled());
+        let accepted = scene.command(B, Command::WarpTo { target_id: PLANET, range: 0.0 }, t2);
+        assert!(!accepted.iter().any(|o| matches!(o, Out::Refused { .. })), "{accepted:?}");
+        assert!(scene.pilots[&B].flight.is_some());
+        // a scramble that lands while it lines up stops it
+        let (mut scene, t) = reaching_in(crowd_with_a_planet(), 3_000.0);
+        scene.command(B, Command::WarpTo { target_id: PLANET, range: 0.0 }, t);
+        assert!(scene.pilots[&B].flight.as_ref().is_some_and(|f| !f.is_warping()));
+        scene.activate(
+            A,
+            holding(MODULE, Remote::Scramble { strength: 1.0, blocks_mwd: false }, "warpScrambler"),
+            t + SECOND / 2,
+        );
+        assert!(scene.pilots[&B].flight.is_none(), "the warp is called off");
+    }
+
+    #[test]
+    fn what_no_module_renews_lapses_by_itself_as_when_the_ship_that_held_it_is_gone() {
+        let (mut scene, t) = reaching(3_000.0);
+        let base = speed_of(&scene, B);
+        scene.activate(A, web(MODULE, -60.0), t);
+        // the ship that runs the web is gone: nothing renews the record
+        scene.pilots.get_mut(&A).unwrap().modules.running.clear();
+        let (out, _) = poll_until(&mut scene, t, 6.0);
+        assert_eq!(speed_of(&scene, B), base, "{:?}", labels(&out));
+        assert!(scene.pilots[&B].incoming.is_empty());
     }
 }

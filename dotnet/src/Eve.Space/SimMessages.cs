@@ -267,6 +267,18 @@ public abstract record SimRemote
 
     /// <summary>What can be taken from the target's capacitor, up to <paramref name="Amount"/> GJ, goes into that of the ship that runs the effect (an energy nosferatu).</summary>
     public sealed record Drain(double Amount, double SignatureResolution) : SimRemote;
+
+    /// <summary>The target's top speed is changed by <paramref name="Percent"/> of itself for as long as the effect lands (a stasis webifier: negative).</summary>
+    public sealed record Web(double Percent) : SimRemote;
+
+    /// <summary>The target's signature radius is changed by <paramref name="Percent"/> (a target painter: positive).</summary>
+    public sealed record Paint(double Percent) : SimRemote;
+
+    /// <summary>The range the target locks at and its scan resolution are changed by those percentages (a sensor dampener: negative).</summary>
+    public sealed record Damp(double RangePercent, double ResolutionPercent) : SimRemote;
+
+    /// <summary>The target is held out of warp: <paramref name="Strength"/> points of scramble (a warp scrambler 2, a warp disruptor 1); <paramref name="BlocksMwd"/>: and out of its microwarpdrive.</summary>
+    public sealed record Scramble(double Strength, bool BlocksMwd) : SimRemote;
 }
 
 /// <summary>Run an effect. Answered under <see cref="SimCommands.Activate"/>: <see cref="SimAccepted"/> or <see cref="SimRefused"/>.</summary>

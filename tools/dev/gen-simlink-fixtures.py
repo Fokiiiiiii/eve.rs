@@ -100,12 +100,19 @@ def effect(e):
     elif act:
         what = act["what"]
         body += bytes([1, 1 if act["when"] == "end" else 0]) + struct.pack("<dd", act["optimal"], act["falloff"]) + s(act["jam"])
-        body += bytes([{"repair": 0, "transfer": 1, "neutralize": 2, "drain": 3}[what]])
+        body += bytes([{"repair": 0, "transfer": 1, "neutralize": 2, "drain": 3, "web": 4, "paint": 5, "damp": 6, "scramble": 7}[what]])
         if what == "repair":
             body += bytes([LAYERS[act["layer"]]])
-        body += struct.pack("<d", act["amount"])
+        if what in ("repair", "transfer", "neutralize", "drain"):
+            body += struct.pack("<d", act["amount"])
         if what in ("neutralize", "drain"):
             body += struct.pack("<d", act["signatureResolution"])
+        if what in ("web", "paint"):
+            body += struct.pack("<d", act["percent"])
+        if what == "damp":
+            body += struct.pack("<dd", act["rangePercent"], act["resolutionPercent"])
+        if what == "scramble":
+            body += struct.pack("<d", act["strength"]) + bytes([1 if act["blocksMwd"] else 0])
     return body
 
 
@@ -228,8 +235,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 8},
-    {"name": "hello ack", "kind": "HelloAck", "version": 8, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 9},
+    {"name": "hello ack", "kind": "HelloAck", "version": 9, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -349,6 +356,30 @@ valid = [
                 "durationMs": 5000.0, "capacitorNeed": 28.0, "repeat": 1000, "targetId": "9988400003001",
                 "action": {"kind": "remote", "what": "transfer", "amount": 60.0, "optimal": 7000.0,
                            "falloff": 5000.0, "when": "start", "jam": "energyTransfer"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a stasis webifier", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002807", "moduleType": 526, "effectId": 6426, "fx": "effects.ModifyTargetSpeed",
+                "durationMs": 5000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "web", "percent": -50.0, "optimal": 10000.0, "falloff": 0.0,
+                           "when": "start", "jam": "webify"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a target painter", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002808", "moduleType": 12709, "effectId": 6425, "fx": "effects.TargetPaint",
+                "durationMs": 5000.0, "capacitorNeed": 10.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "paint", "percent": 25.0, "optimal": 30000.0, "falloff": 75000.0,
+                           "when": "start", "jam": "ewTargetPaint"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a remote sensor dampener", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002809", "moduleType": 1968, "effectId": 6422, "fx": "effects.SensorDampening",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "damp", "rangePercent": -13.7, "resolutionPercent": -13.7,
+                           "optimal": 25000.0, "falloff": 50000.0, "when": "start", "jam": "ewRemoteSensorDamp"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a warp scrambler", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002810", "moduleType": 447, "effectId": 5934, "fx": "effects.WarpScramble",
+                "durationMs": 5000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "scramble", "strength": 2.0, "blocksMwd": True, "optimal": 7500.0,
+                           "falloff": 0.0, "when": "start", "jam": "warpScramblerMWD"},
                 "onChanges": [], "offChanges": []}},
     {"name": "activate a railgun that fires antimatter", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002719", "moduleType": 10678, "effectId": 34, "fx": "effects.ProjectileFired",

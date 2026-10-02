@@ -325,3 +325,12 @@ station and (EVE_LIVE_SLOW=1) in space; mutation-checked (an idle state, the cla
 events, suspect/criminal flags and `OnSystemCriminalFlagUpdates`, limited engagements and duels, wars, security status penalties and the transactions that explain them, CONCORD, and the
 jump/dock restrictions of a timer.
 
+### CRIME-1b: the safety level takes effect — 2026-10-02
+
+`WeaponSafety` assumed every pilot had the safety full. It now follows `evaluateOffensiveAggression` of the reference with the level the pilot has set (`Eve.Crimewatch`,
+`crimewatch.SetSafetyLevel`): attacking another pilot's ship in high or safe security is a crime that needs the safety none (partial and full stop it), in low security a suspect
+offence that needs at most partial (none when the target is a capsule), in null security no crime; a smartbomb is told not to hurt pilots where the same rule stops it.
+`SpaceSessions.SafetyLevelOf` (set by the host to the crimewatch store) supplies the level; without it the level is full, as before. The capsule of the target is looked up only for the one
+case that depends on it (low security at partial). Tests: the rule by class, level and capsule (11 cases), a host test that partial refuses and none accepts in high security
+(mutation-checked), the whole Space (173) and Dogma (113) suites, and the live crimewatch, weapon and projected-module scenarios on eve.rs.
+

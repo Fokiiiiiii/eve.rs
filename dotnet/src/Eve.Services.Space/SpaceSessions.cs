@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Eve.Crimewatch;
 using Eve.Events;
 using Eve.Inventory;
 using Eve.Scheduler;
@@ -488,21 +489,22 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         {
             return ModuleResult.Refusal(made.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
         }
-        // the safety of the pilot: a weapon is not started at the ship of another pilot where that would be a crime
+        // the safety of the pilot: a weapon is not started at the ship of another pilot where that would be a crime the safety the pilot has set does not allow
         var attack = package.Turret is not null || package.Action is SimAction.Remote { What: SimRemote.Neutralize or SimRemote.Drain or SimRemote.Web or SimRemote.Paint or SimRemote.Damp or SimRemote.Scramble or SimRemote.Jam or SimRemote.Disrupt };
-        if (attack
-            && _pilots.Values.Any(other => other.ShipId == package.TargetId && other.CharacterId != characterId)
-            && _systems.Get(pilot.SolarSystemId) is { } where
-            && WeaponSafety.StopsFire(Security.ClassFromLevel(where.Security)))
+        var securityClass = _systems.Get(pilot.SolarSystemId) is { } where ? Security.ClassFromLevel(where.Security) : (SecurityClass?)null;
+        if (securityClass is { } empire && (attack || package.Action is SimAction.Smartbomb))
         {
-            return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
-        }
-        // a smartbomb hurts whoever is in its field: where the safety of the pilot stops fire, the simulation is told not to hurt pilots
-        if (package.Action is SimAction.Smartbomb bomb
-            && _systems.Get(pilot.SolarSystemId) is { } field
-            && WeaponSafety.StopsFire(Security.ClassFromLevel(field.Security)))
-        {
-            package = package with { Action = bomb with { HurtsPilots = false } };
+            var level = SafetyLevelOf is { } ask ? await ask(characterId, cancellationToken) : SafetyLevel.Full;
+            if (attack && _pilots.Values.FirstOrDefault(other => other.ShipId == package.TargetId && other.CharacterId != characterId) is { } victim
+                && WeaponSafety.StopsFire(empire, level, await IsCapsuleAsync(victim, empire, level, cancellationToken)))
+            {
+                return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
+            }
+            // a smartbomb hurts whoever is in its field: where the safety of the pilot stops fire, the simulation is told not to hurt pilots
+            if (package.Action is SimAction.Smartbomb bomb && WeaponSafety.StopsFire(empire, level))
+            {
+                package = package with { Action = bomb with { HurtsPilots = false } };
+            }
         }
         var reply = await AskSimAsync(id, () => _sim.ActivateAsync(id, package, cancellationToken), session);
         if (!reply.Accepted)
@@ -516,6 +518,22 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         EndInvulnerability(pilot);
         return ModuleResult.Done;
     }
+
+    /// <summary>The ship safety level of a character (set by the host that keeps them; full when it is not set). See <see cref="WeaponSafety"/>.</summary>
+    public Func<long, CancellationToken, Task<int>>? SafetyLevelOf { get; set; }
+
+    /// <summary>Whether the pilot's ship is a capsule. Only a low-security attack at the partial safety depends on it, so it is only looked up then.</summary>
+    private async Task<bool> IsCapsuleAsync(Pilot pilot, SecurityClass securityClass, int safetyLevel, CancellationToken cancellationToken)
+    {
+        if (!Security.IsLowSec(securityClass) || safetyLevel != SafetyLevel.Partial)
+        {
+            return false;
+        }
+        var snapshot = await _ships.LoadAsync(pilot.CharacterId, cancellationToken);
+        return snapshot is not null && _statics.Type(snapshot.Ship.TypeId)?.GroupId == CapsuleGroup;
+    }
+
+    private const int CapsuleGroup = 29;
 
     /// <summary>Asks for an effect to stop at the end of the cycle it is in.</summary>
     public async Task<ModuleResult?> DeactivateAsync(ClientSession session, long moduleId, string effectName, CancellationToken cancellationToken)

@@ -196,6 +196,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     await PgSpaceItemStore.MigrateAsync(source, spaceSchema);
     var crimewatchSchema = Env("EVE_CRIMEWATCH_SCHEMA", Eve.Crimewatch.PgCrimewatchStore.DefaultSchema);
     await Eve.Crimewatch.PgCrimewatchStore.MigrateAsync(source, crimewatchSchema);
+    var crimewatchStore = new Eve.Crimewatch.PgCrimewatchStore(source, crimewatchSchema);
 
     var sde = new SdeReader(source);
     if (await sde.BuildAsync() is not { } build)
@@ -310,6 +311,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         // the periodic work of the space features is jobs of the shared scheduler, not timers of their own
         spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")));
         spaceSessions.Events = foundations.Events;   // what happens in space is announced on the bus as well
+        spaceSessions.SafetyLevelOf = (character, token) => crimewatchStore.SafetyOfAsync(character, token);   // the ship safety the pilot has set
         var bounties = spaceSessions;
         foundations.Scheduler.Register("space.bounty.pay", async (_, token) => await bounties.PayBountiesAsync(token));
         await foundations.Scheduler.EnsureRecurringAsync("space.bounty.pay", "pay", TimeSpan.FromSeconds(10));
@@ -324,7 +326,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         new CharUnboundMgrService(accounts, characters, items, skills, wallets, creation, catalog, online, [new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now), corporationLogin], Random.Shared),
         // security status is the character's relation of that kind (Eve.Relations); crimewatch only asks for it
         new Eve.Services.Crimewatch.CrimewatchService(
-            new Eve.Crimewatch.PgCrimewatchStore(source, crimewatchSchema), now,
+            crimewatchStore, now,
             (id, token) => foundations.Relations.ValueAsync(Eve.Relations.RelationKinds.SecurityStatus.Name, id, Eve.Relations.RelationStore.World, 0, null, null, token)),
         new SkillMgr2Service(),
         new SkillHandlerService(skills, skillCatalog, training, characters, announcer, now),

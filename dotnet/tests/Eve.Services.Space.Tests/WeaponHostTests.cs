@@ -57,4 +57,23 @@ public class WeaponHostTests
         Assert.Equal(heard, rig.Sim.Heard.Count);
         Assert.Empty(Events.Of(session));
     }
+
+    [PgFact]
+    public async Task A_gun_is_started_at_the_ship_of_another_pilot_where_the_pilots_safety_allows_the_crime()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var attacker = await rig.NewCharacterAsync("Space Tester", 1);
+        var victim = await rig.NewCharacterAsync("Space Victim", 2);
+        var session = await InSpaceAsync(rig, attacker, 1);
+        var other = await InSpaceAsync(rig, victim, 2);
+        var gun = await GunOfAsync(rig, attacker);
+        var level = 2;
+        rig.Space.SafetyLevelOf = (_, _) => Task.FromResult(level);
+        // in high security the aggression would make the pilot a criminal: only the safety none lets it, partial does not
+        level = 1;
+        Assert.Equal(ModuleResult.Refusal("SafetyActivated", 3638, "Civilian Gatling Railgun"), await rig.Space.ActivateAsync(session, gun, "targetAttack", other.GetInt("shipid")!.Value, 1000, CancellationToken.None));
+        level = 0;
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "targetAttack", other.GetInt("shipid")!.Value, 1000, CancellationToken.None));
+        Assert.IsType<SimActivate>(rig.Sim.Heard.Last());
+    }
 }

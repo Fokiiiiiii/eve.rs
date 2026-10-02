@@ -39,7 +39,7 @@ jobs:
       - id: sde-build
         run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
       - id: sde
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .cache/sde
           key: sde-${{ steps.sde-build.outputs.build }}
@@ -75,7 +75,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/Directory.Packages.props') }}
@@ -85,7 +85,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - id: sde-build
         run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .cache/sde
           key: sde-${{ steps.sde-build.outputs.build }}
@@ -153,7 +153,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/Directory.Packages.props') }}
@@ -165,7 +165,7 @@ jobs:
           python-version: "3.12"
       - id: sde-build
         run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .cache/sde
           key: sde-${{ steps.sde-build.outputs.build }}

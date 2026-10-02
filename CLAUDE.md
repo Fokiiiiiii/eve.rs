@@ -374,3 +374,9 @@ rejects); that is yours to look at. Until the seed is reliable the host should n
 
 Cherry-picked Alliance due-request branch `9ba8347` and Corporation Medals branch `bd41826` into main as `e161c3f` and `5970dfe`. Medals use the existing tables and host clock; repeated grants upsert because the existing primary key is unique per medal/character. Alliance due transitions now run on registry requests and invoke the existing `SpaceSessions.AffiliationChangedAsync` after commit; durable scheduled processing and war hold/recheck are still absent. Latest Host build passes. A prior full TQ capture failed in Store validation on order `tq:10000002:7434788337`; the seed store now accepts zero remaining volume and reports validation field names. Do not rerun full ESI/PG load tests until the owner resumes them; PG18 is the requested test DB.
 
+Update (2026-10-02, later): the four Rust binaries' sources (`crates/*/src/bin/*.rs`: eve-net, eve-loadgen, eve-sim, eve-sde) had
+never been committed, because `.gitignore` ignored every `bin/`; the first CI run found it (`cargo run -p eve-sde` had no bin target).
+They are tracked now and the ignores name `dotnet/`. Also for Codex: on the current `main` (and on `origin/main` alone, without my
+commits) `Eve.Corporations.Tests.CorporationProtocolTests.Corporation_medal_rpcs_preserve_wire_rows_persist_awards_and_follow_reference_authorization`
+fails at `CorporationProtocolTests.cs:477`: the medal title read back is `[object Object]`, not `Service`.
+

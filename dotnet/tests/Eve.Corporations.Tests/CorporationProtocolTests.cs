@@ -10,6 +10,12 @@ public class CorporationProtocolTests
     private static ServiceCall Call(ClientSession session,string method,params PyValue[] args) => new() { Session=session,Method=method,Args=args };
     private static PyValue Field(PyValue value,string key) => Assert.IsType<PyDict>(Assert.IsType<PyObject>(value).Args).Entries.Single(e => e.Key == new PyStr(key)).Value;
 
+    private static IReadOnlyList<PyValue> Lines(PyValue rowset) =>
+        Assert.IsType<PyList>(Field(rowset, "lines")).Items;
+
+    private static PyValue CachedPayload(PyValue value) =>
+        Assert.IsType<PySubStream>(Assert.IsType<PyTuple>(Assert.IsType<PyObject>(value).Args).Items[1]).Decoded!;
+
     [PgFact]
     public async Task Npc_catalog_membership_and_departure_keep_the_character_faction()
     {
@@ -437,5 +443,83 @@ public class CorporationProtocolTests
         var replay = await service.CallAsync(call);
         Assert.Equal(new PyInt(corporationId),RowField(replay,"corporationID"));
         Assert.Single(await rig.Store.MembersAsync(corporationId));
+    }
+
+    [PgFact]
+    public async Task Corporation_medal_rpcs_preserve_wire_rows_persist_awards_and_follow_reference_authorization()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Medal Founder");
+        var member = await rig.CharacterAsync("Medal Member");
+        var corp = await rig.Store.CreateAsync(founder, new("Medal Works", "MEDAL", "", "", 0.05m), "medals");
+        var application = await rig.Store.ApplyAsync(member, corp.Id, "");
+        await rig.Store.RespondAsync(founder, application, 6, "", "");
+        await rig.Store.RespondAsync(member, application, 2, "", "");
+        Assert.Equal(0L, (await rig.Store.MemberAsync(member))!.Masks.Roles);
+
+        var service = (IService)new CorporationService(rig.Store, rig.Characters);
+        var memberSession = new ClientSession();
+        memberSession.CharacterId = member;
+        memberSession.Set("corporationID", new PyInt(corp.Id));
+        var founderSession = new ClientSession();
+        founderSession.CharacterId = founder;
+        founderSession.Set("corpid", new PyInt(corp.Id));
+        ValueTask<PyValue> MemberRpc(string method, params PyValue[] args) => service.CallAsync(Call(memberSession, method, args));
+        ValueTask<PyValue> FounderRpc(string method, params PyValue[] args) => service.CallAsync(Call(founderSession, method, args));
+
+        var graphics = new PyList([Py.Tuple(new PyInt(1), new PyWString("emblem.42"), new PyInt(7))]);
+        var medalId = Assert.IsType<PyInt>(await MemberRpc("CreateMedal",
+            new PyWString("Service"), new PyWString("For service"), graphics)).Value;
+        var all = Assert.IsType<PyTuple>(CachedPayload(await MemberRpc("GetAllCorpMedals", new PyInt(corp.Id))));
+        var medalRow = Assert.IsType<PyList>(Assert.Single(Lines(all.Items[0])));
+        Assert.Equal(new PyInt(medalId), medalRow.Items[0]);
+        Assert.Equal(new PyInt(corp.Id), medalRow.Items[1]);
+        Assert.Equal(new PyWString("Service"), medalRow.Items[3]);
+        Assert.Equal(new PyWString("For service"), medalRow.Items[4]);
+        Assert.IsType<PyLong>(medalRow.Items[5]);
+        Assert.Equal(new PyInt(0), medalRow.Items[6]);
+        var graphicRow = Assert.IsType<PyList>(Assert.Single(Lines(all.Items[1])));
+        Assert.Equal(new PyWString("emblem.42"), graphicRow.Items[2]);
+
+        var status = new PyDict([new(new PyInt(medalId), new PyInt(4))]);
+        Assert.IsType<PyNone>(await MemberRpc("SetMedalStatus", status));
+        Assert.IsType<PyNone>(await MemberRpc("GiveMedalToCharacters",
+            new PyInt(medalId), new PyList([new PyInt(founder)]), new PyWString("Service award")));
+
+        var recipients = Assert.IsType<PyList>(Lines(await MemberRpc("GetRecipientsOfMedal", new PyInt(medalId))).Single());
+        Assert.Equal(new PyInt(founder), recipients.Items[1]);
+        Assert.Equal(new PyInt(member), recipients.Items[2]);
+        Assert.Equal(new PyWString("Service award"), recipients.Items[3]);
+        Assert.IsType<PyLong>(recipients.Items[4]);
+
+        var received = Assert.IsType<PyTuple>(await FounderRpc("GetMedalsReceived"));
+        var receivedInfo = Assert.IsType<PyList>(Lines(received.Items[0]).Single());
+        Assert.Equal(new PyInt(medalId), receivedInfo.Items[0]);
+        Assert.Equal(new PyInt(member), receivedInfo.Items[1]);
+        Assert.Equal(new PyInt(corp.Id), receivedInfo.Items[2]);
+        Assert.Equal(new PyInt(4), receivedInfo.Items[3]);
+        Assert.Equal(new PyWString("Service award"), receivedInfo.Items[4]);
+        Assert.Equal(new PyInt(0), receivedInfo.Items[6]);
+        Assert.Single(Lines(received.Items[1]));
+
+        var details = await MemberRpc("GetMedalDetails", new PyInt(medalId));
+        var detail = Assert.Single(Assert.IsType<PyList>(Field(details, "info")).Items);
+        Assert.Equal(new PyInt(medalId), Field(detail, "medalID"));
+        Assert.Equal(new PyInt(corp.Id), Field(detail, "ownerID"));
+        Assert.Equal(new PyInt(member), Field(detail, "creatorID"));
+        Assert.Equal(new PyInt(1), Field(detail, "numberOfRecipients"));
+        Assert.Single(Lines(Field(details, "graphics")));
+        Assert.Empty(Assert.IsType<PyList>(Field(await MemberRpc("GetMedalDetails", new PyInt(long.MaxValue)), "info")).Items);
+    }
+
+    [Fact]
+    public void Corporation_service_exposes_all_reference_medal_methods()
+    {
+        var service = (IService)new CorporationService(null!, null!);
+        foreach (var method in new[]
+        {
+            "CreateMedal", "SetMedalStatus", "GetAllCorpMedals", "GetRecipientsOfMedal",
+            "GiveMedalToCharacters", "GetMedalDetails", "GetMedalsReceived"
+        }) Assert.True(service.HasMethod(method), method);
     }
 }

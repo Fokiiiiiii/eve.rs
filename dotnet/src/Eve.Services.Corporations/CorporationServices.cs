@@ -18,8 +18,13 @@ public sealed partial class CorpMgrService(CorporationStore store,PgCharacterSto
     public async ValueTask<PyValue> GetCorporations(ServiceCall call) => await Resolve(call) is { } c
         ? CorporationWire.Row(c,(await store.MembersAsync(c.Id,call.Cancellation)).Count) : PyNone.Instance;
     [Method("GetCorporationIDForCharacter")]
-    public async ValueTask<PyValue> GetCorporationIDForCharacter(ServiceCall call) =>
-        call.Arg(0) is PyInt id && await characters.GetAsync(id.Value,call.Cancellation) is { } c ? new PyInt(c.CorporationId) : PyNone.Instance;
+    public async ValueTask<PyValue> GetCorporationIDForCharacter(ServiceCall call)
+    {
+        var id = call.Arg(0) switch { PyInt n => n.Value,PyLong n => n.Value,_ => 0 };
+        if (id > 0 && await characters.GetAsync(id,call.Cancellation) is { CorporationId: > 0 } character)
+            return new PyInt(character.CorporationId);
+        return new PyInt(call.Session.GetInt("corporationID") ?? call.Session.GetInt("corpid") ?? 1000004);
+    }
 }
 
 [Service("corporationSvc")]
@@ -285,4 +290,362 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
                 Kwargs=nested.Items.Count>2 ? nested.Items[2] : PyNone.Instance,Session=call.Session,CallId=call.CallId,Cancellation=call.Cancellation });
         return Py.Tuple(new PySubStruct(new PySubStream(oid)),result);
     }
+
+    [Method("AddCorporation")]
+    public async ValueTask<PyValue> AddCorporation(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } founder) return PyNone.Instance;
+        var settings = new Dictionary<string,object?>
+        {
+            ["shape1"] = SettingValue(call.Arg(5)),["shape2"] = SettingValue(call.Arg(6)),["shape3"] = SettingValue(call.Arg(7)),
+            ["color1"] = SettingValue(call.Arg(8)),["color2"] = SettingValue(call.Arg(9)),["color3"] = SettingValue(call.Arg(10)),
+            ["typeface"] = SettingValue(call.Arg(11)),
+        };
+        using var document = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(settings));
+        var created = await store.CreateAsync(founder,new NewCorporation(Text(call.Arg(0)),Text(call.Arg(1)),Text(call.Arg(2)),Text(call.Arg(3)),
+            DecimalValue(call.Arg(4)),DecimalValue(call.Arg(14)),Truth(call.Arg(12)),Truth(call.Arg(13)),document.RootElement.Clone()),
+            $"corp-found:{founder}:{call.Session.SessionId}:{Number(call.CallId)}",call.Cancellation);
+        await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,founder,call.Cancellation);
+        return CorporationWire.Row(created,(await store.MembersAsync(created.Id,call.Cancellation)).Count);
+    }
+
+    [Method("UpdateCorporation")]
+    public async ValueTask<PyValue> UpdateCorporation(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        await store.UpdateCorporationAsync(actor,corp.Id,Text(call.Arg(0)),Text(call.Arg(1)),DecimalValue(call.Arg(2)),
+            DecimalValue(call.Arg(4)),Truth(call.Arg(3)),call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    [Method("UpdateLogo")]
+    public async ValueTask<PyValue> UpdateLogo(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var patch = new Dictionary<string,long?>
+        {
+            ["shape1"] = PositiveId(call.Arg(0)),["shape2"] = PositiveId(call.Arg(1)),["shape3"] = PositiveId(call.Arg(2)),
+            ["color1"] = PositiveId(call.Arg(3)),["color2"] = PositiveId(call.Arg(4)),["color3"] = PositiveId(call.Arg(5)),
+            ["typeface"] = PositiveId(call.Arg(6))
+        };
+        await store.UpdateSettingsAsync(actor,corp.Id,System.Text.Json.JsonSerializer.Serialize(patch),call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    [Method("UpdateDivisionNames")]
+    public async ValueTask<PyValue> UpdateDivisionNames(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var names = new Dictionary<string,string>();
+        for (var i = 0; i < 14; i++)
+            if (call.Arg(i) is not PyNone) names[(i+1).ToString(System.Globalization.CultureInfo.InvariantCulture)] = Text(call.Arg(i));
+        await store.UpdateDivisionNamesAsync(actor,corp.Id,System.Text.Json.JsonSerializer.Serialize(names),call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    [Method("UpdateCorporationAbilities")]
+    public async ValueTask<PyValue> UpdateCorporationAbilities(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        await store.UpdateSettingsAsync(actor,corp.Id,
+            System.Text.Json.JsonSerializer.Serialize(new { applicationsEnabled = NormalizeBoolean(call.Arg(0),true) }),call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    [Method("SetAccountKey")]
+    public async ValueTask<PyValue> SetAccountKey(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } character) return PyBool.True;
+        var key = CorporationWalletKey(call.Arg(0));
+        await store.SetAccountKeyAsync(character,key,call.Cancellation);
+        call.Session.Set("corpaccountkey",new PyInt(key));
+        await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,character,call.Cancellation);
+        return PyBool.True;
+    }
+
+    [Method("CanLeaveCurrentCorporation")]
+    public async ValueTask<PyValue> CanLeaveCurrentCorporation(ServiceCall call)
+    {
+        var corp = await Current(call);
+        var actor = call.Session.CharacterId;
+        var member = actor is { } id ? await store.MemberAsync(id,call.Cancellation) : null;
+        if (corp is null || actor is null || member is null || member.CorporationId != corp.Id)
+            return Py.Tuple(new PyInt(0),new PyStr("CrpAccessDenied"),new PyDict([]));
+        if (corp.CeoId == actor)
+            return Py.Tuple(new PyInt(0),new PyStr("CrpCEOCanNotQuit"),new PyDict([]));
+        var roles = RoleFields(member);
+        var active = roles.Where(r => r.Value != 0).Select(r => (PyValue)new PyStr(r.Name)).ToList();
+        if (member.TitleMask != 0) active.Add(new PyStr("titleMask"));
+        if (active.Count != 0)
+            return Py.Tuple(new PyInt(0),new PyStr("CrpCantQuitNotInStasis"),Py.Dict(("rolelist",new PyList(active))));
+        return Py.Tuple(new PyInt(1),PyNone.Instance,new PyDict([]));
+    }
+
+    [Method("CanBeKickedOut")]
+    public async ValueTask<PyValue> CanBeKickedOut(ServiceCall call)
+    {
+        var corp = await Current(call);
+        var target = PositiveId(call.Arg(0));
+        if (corp is null || target is null || await store.MemberAsync(target.Value,call.Cancellation) is not { } member ||
+            member.CorporationId != corp.Id || corp.CeoId == target || !Kickable(member))
+            return new PyInt(0);
+        return new PyInt(1);
+    }
+
+    [Method("KickOutMember")]
+    public async ValueTask<PyValue> KickOutMember(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp || PositiveId(call.Arg(0)) is not { } target)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        if (target == actor)
+        {
+            if (!AssertCanLeave(await CanLeaveCurrentCorporation(call))) return PyNone.Instance;
+            var character = await characters.GetAsync(actor,call.Cancellation) ?? throw new CorporationError("CHARACTER_NOT_FOUND");
+            var destination = await store.GetAsync(StarterCorporation(character),call.Cancellation) ?? throw new CorporationError("NPC_CORPORATION_REQUIRED");
+            await store.LeaveAsync(actor,destination.Id,call.Cancellation);
+            await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
+            return MoveResult(actor,destination);
+        }
+        if (await store.MemberAsync(target,call.Cancellation) is not { } member || member.CorporationId != corp.Id || !Kickable(member))
+            return PyNone.Instance;
+        var kicked = await characters.GetAsync(target,call.Cancellation) ?? throw new CorporationError("CHARACTER_NOT_FOUND");
+        var fallback = await store.GetAsync(StarterCorporation(kicked),call.Cancellation) ?? throw new CorporationError("NPC_CORPORATION_REQUIRED");
+        await store.KickAsync(actor,target,fallback.Id,call.Cancellation);
+        return MoveResult(target,fallback);
+    }
+
+    [Method("KickOutMembers")]
+    public async ValueTask<PyValue> KickOutMembers(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } actor || !await CanAdminister(call))
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var kicked = new List<PyValue>();
+        var notKicked = new List<PyValue>();
+        foreach (var raw in Items(call.Arg(0)))
+        {
+            if (PositiveId(raw) is not { } target || target == actor ||
+                await CanBeKickedOut(new ServiceCall { Method="CanBeKickedOut",Args=[new PyInt(target)],Session=call.Session,Cancellation=call.Cancellation }) is not PyInt { Value: 1 })
+            {
+                if (PositiveId(raw) is { } skipped) notKicked.Add(new PyInt(skipped));
+                continue;
+            }
+            var character = await characters.GetAsync(target,call.Cancellation);
+            if (character is null)
+            {
+                notKicked.Add(new PyInt(target));
+                continue;
+            }
+            await store.KickAsync(actor,target,StarterCorporation(character),call.Cancellation);
+            kicked.Add(new PyInt(target));
+        }
+        return Py.Dict(("kicked",new PyList(kicked)),("notKicked",new PyList(notKicked)));
+    }
+
+    private static PyValue MoveResult(long character,Corporation corporation) => Py.Dict(
+        ("success",PyBool.True),
+        ("data",Py.Dict(("characterID",new PyInt(character)),("corporationID",new PyInt(corporation.Id)),
+            ("allianceID",corporation.AllianceId is { } alliance ? new PyInt(alliance) : PyNone.Instance))));
+
+    [Method("ResignFromCEO")]
+    public async ValueTask<PyValue> ResignFromCEO(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } actor || await Current(call) is not { CeoId: var ceo } corp || ceo != actor)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        if (PositiveId(call.Arg(0)) is { } successor)
+        {
+            await store.ResignAsync(actor,successor,call.Cancellation);
+            await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
+            return PyNone.Instance;
+        }
+        var members = await store.MembersAsync(corp.Id,call.Cancellation);
+        if (members.Count <= 1) return PyNone.Instance;
+        return new PyList([.. members.Where(m => m.CharacterId != actor).Select(m => (PyValue)new PyInt(m.CharacterId))]);
+    }
+
+    [Method("UpdateMember")]
+    public async ValueTask<PyValue> UpdateMember(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp ||
+            PositiveId(call.Arg(0)) is not { } target)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var desired = await MemberUpdate(target,call.Args,false,corp.Id,call.Cancellation);
+        await store.UpdateMemberAsync(actor,desired,call.Cancellation);
+        if (target == actor) await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    [Method("UpdateMembers")]
+    public async ValueTask<PyValue> UpdateMembers(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var updates = new List<Member>();
+        foreach (var raw in Items(call.Arg(0)))
+        {
+            var row = Items(raw);
+            if (row.Count == 0 || PositiveId(row[0]) is not { } target)
+                throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            updates.Add(await MemberUpdate(target,row,true,corp.Id,call.Cancellation));
+        }
+        if (updates.Select(m => m.CharacterId).Distinct().Count() != updates.Count)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        await store.UpdateMembersAsync(actor,updates,call.Cancellation);
+        if (updates.Any(m => m.CharacterId == actor))
+            await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    [Method("UpdateTitle")]
+    public async ValueTask<PyValue> UpdateTitle(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        await store.UpdateTitleAsync(actor,corp.Id,Title(call.Args),call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    [Method("UpdateTitles")]
+    public async ValueTask<PyValue> UpdateTitles(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var titles = Items(call.Arg(0)).Select(row => Title(Items(row))).ToArray();
+        await store.UpdateTitlesAsync(actor,corp.Id,titles,call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    [Method("DeleteTitle")]
+    public async ValueTask<PyValue> DeleteTitle(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var titleId = Number(call.Arg(0));
+        if (titleId is < 1 or > 32768) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        await store.DeleteTitleAsync(actor,corp.Id,(int)titleId,call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    private static bool AssertCanLeave(PyValue value) =>
+        value is PyTuple { Items.Count: > 0 } tuple && tuple.Items[0] is PyInt { Value: 1 };
+
+    private bool Kickable(Member member) =>
+        RoleFields(member).All(r => r.Value == 0) && member.TitleMask == 0 &&
+        (member.StasisUntilMs is null || member.StasisUntilMs <= now());
+
+    private static (string Name,long Value)[] RoleFields(Member m) =>
+    [
+        ("roles",m.Masks.Roles),("grantableRoles",m.Masks.GrantableRoles),
+        ("rolesAtHQ",m.Masks.AtHq),("grantableRolesAtHQ",m.Masks.GrantableHq),
+        ("rolesAtBase",m.Masks.AtBase),("grantableRolesAtBase",m.Masks.GrantableBase),
+        ("rolesAtOther",m.Masks.AtOther),("grantableRolesAtOther",m.Masks.GrantableOther),
+    ];
+
+    private async Task<bool> CanAdminister(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } actor || await characters.GetAsync(actor,call.Cancellation) is not { } character ||
+            await store.GetAsync(character.CorporationId,call.Cancellation) is not { IsNpc: false,Deleted: false } corp ||
+            await store.MemberAsync(actor,call.Cancellation) is not { } member || member.CorporationId != corp.Id)
+            return false;
+        if (corp.CeoId == actor) return true;
+        return (CorporationRoles.Session(corp,member,character.StationId,await store.TitlesAsync(corp.Id,call.Cancellation)).AtAll & CorporationRoles.Director) != 0;
+    }
+
+    private static long StarterCorporation(Eve.Characters.Character character) =>
+        Eve.Characters.CreationCatalog.ResolveSchool(character.SchoolId,character.RaceId)?.CorporationId ?? 1000004;
+
+    private async Task<Member> MemberUpdate(long character,IReadOnlyList<PyValue> values,bool bulk,long corporation,CancellationToken token)
+    {
+        var old = await store.MemberAsync(character,token);
+        if (old is null || old.CorporationId != corporation) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        PyValue At(int index) => index < values.Count ? values[index] : PyNone.Instance;
+        long OptionalMask(int index,long current,long allowed) => At(index) is PyNone ? current : RoleMask(At(index),allowed);
+        var masks = new RoleMasks(OptionalMask(4,old.Masks.Roles,CorporationRoles.Administrative),
+            OptionalMask(5,old.Masks.GrantableRoles,CorporationRoles.Grantable),
+            OptionalMask(6,old.Masks.AtHq,CorporationRoles.Locational),OptionalMask(7,old.Masks.GrantableHq,CorporationRoles.Locational),
+            OptionalMask(8,old.Masks.AtBase,CorporationRoles.Locational),OptionalMask(9,old.Masks.GrantableBase,CorporationRoles.Locational),
+            OptionalMask(10,old.Masks.AtOther,CorporationRoles.Locational),OptionalMask(11,old.Masks.GrantableOther,CorporationRoles.Locational));
+        var titleMask = At(13) is PyNone ? old.TitleMask : (int)RoleMask(At(13),65535);
+        var blockRoles = At(14) is PyNone ? old.BlockRoles : BlockRoles(At(14));
+        var baseId = At(12) is PyNone ? old.BaseId : PositiveId(At(12));
+        return old with
+        {
+            Title = bulk || At(1) is PyNone ? old.Title : Text(At(1))[..Math.Min(100,Text(At(1)).Length)],
+            DivisionId = bulk || At(2) is PyNone ? old.DivisionId : (int)Number(At(2)),
+            SquadronId = bulk || At(3) is PyNone ? old.SquadronId : (int)Number(At(3)),
+            Masks = masks,TitleMask = titleMask,BlockRoles = blockRoles,BaseId = baseId
+        };
+    }
+
+    private static CorporationTitle Title(IReadOnlyList<PyValue> values)
+    {
+        if (values.Count == 0 || PositiveId(values[0]) is not { } id || id > 32768 || (id & (id-1)) != 0)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        long At(int index,long allowed) => index < values.Count ? RoleMask(values[index],allowed) : throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        return new CorporationTitle((int)id,values.Count > 1 ? Text(values[1]) : "",new RoleMasks(
+            At(2,CorporationRoles.Grantable),At(3,CorporationRoles.Grantable),
+            At(4,CorporationRoles.Locational),At(5,CorporationRoles.Locational),
+            At(6,CorporationRoles.Locational),At(7,CorporationRoles.Locational),
+            At(8,CorporationRoles.Locational),At(9,CorporationRoles.Locational)));
+    }
+
+    private static long RoleMask(PyValue value,long allowed)
+    {
+        var mask = value switch { PyInt n => n.Value,PyLong n => n.Value,_ => throw new CorporationError("CORPORATION_ACCESS_DENIED") };
+        if (!CorporationRoles.IsKnown(mask,allowed)) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        return mask;
+    }
+
+    private static int CorporationWalletKey(PyValue value)
+    {
+        var number = Number(value);
+        if (number is >= 1000 and <= 1006) return (int)number;
+        var text = Text(value).Trim().ToLowerInvariant();
+        return text switch
+        {
+            "cash2" => 1001,"cash3" => 1002,"cash4" => 1003,"cash5" => 1004,
+            "cash6" => 1005,"cash7" => 1006,_ => 1000
+        };
+    }
+
+    private static bool BlockRoles(PyValue value) => value switch
+    {
+        PyBool boolean => boolean == PyBool.True,
+        PyInt number when number.Value is 0 or 1 => number.Value == 1,
+        PyLong number when number.Value is 0 or 1 => number.Value == 1,
+        _ => throw new CorporationError("CORPORATION_ACCESS_DENIED")
+    };
+
+    private static decimal DecimalValue(PyValue value) => value switch
+    {
+        PyInt n => n.Value,PyLong n => n.Value,PyReal n when double.IsFinite(n.Value) => (decimal)n.Value,_ => 0m
+    };
+
+    private static bool Truth(PyValue value) => value switch
+    {
+        PyNone => false,PyBool boolean => boolean == PyBool.True,PyInt n => n.Value != 0,PyLong n => n.Value != 0,
+        PyReal n => n.Value != 0,PyStr s => s.Value.Length != 0,PyWString => !string.IsNullOrEmpty(JsSemantics.StringValue(value)),_ => true
+    };
+
+    private static bool NormalizeBoolean(PyValue value,bool fallback)
+    {
+        if (value is PyNone) return fallback;
+        if (value is PyStr or PyWString)
+        {
+            var text = JsSemantics.StringValue(value)?.Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(text)) return fallback;
+            if (text is "0" or "false") return false;
+            if (text is "1" or "true") return true;
+        }
+        return Truth(value);
+    }
+
+    private static object? SettingValue(PyValue value) => value switch
+    {
+        PyInt n => n.Value,PyLong n => n.Value,PyReal n => n.Value,PyBool b => b == PyBool.True,
+        PyStr s => s.Value,PyWString => JsSemantics.StringValue(value),_ => null
+    };
 }

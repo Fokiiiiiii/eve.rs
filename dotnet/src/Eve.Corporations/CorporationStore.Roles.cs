@@ -27,19 +27,51 @@ public sealed partial class CorporationStore
         return titles;
     }
     public Task UpdateTitleAsync(long actor,long corporation,CorporationTitle title,CancellationToken token = default) =>
+        UpdateTitlesAsync(actor,corporation,[title],token);
+
+    public Task UpdateTitlesAsync(long actor,long corporation,IReadOnlyList<CorporationTitle> titles,CancellationToken token = default) =>
         WriteAsync(async (connection,tx) =>
         {
             await RequireRoleAsync(connection,tx,corporation,actor,CorporationRoles.Director,token);
-            if (title.Id is < 1 or > 32768 || (title.Id & (title.Id-1)) != 0) throw new CorporationError("INVALID_TITLE");
-            var masks = Masks(title.Masks);
-            for (var i = 0; i < masks.Length; i++)
-                if (!CorporationRoles.IsKnown(masks[i],i == 0 ? CorporationRoles.Grantable : AllowedMasks[i])) throw new CorporationError("CORPORATION_ACCESS_DENIED");
-            await using var command = Command(connection,tx,$"""
-                UPDATE {_schema}.titles SET name=$3,roles=$4,grantable_roles=$5,roles_hq=$6,grantable_hq=$7,
-                    roles_base=$8,grantable_base=$9,roles_other=$10,grantable_other=$11
-                WHERE corporation_id=$1 AND id=$2
-                """,corporation,title.Id,title.Name,masks[0],masks[1],masks[2],masks[3],masks[4],masks[5],masks[6],masks[7]);
-            await command.ExecuteNonQueryAsync(token);
+            if (titles.Select(t => t.Id).Distinct().Count() != titles.Count) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            foreach (var title in titles)
+            {
+                if (title.Id is < 1 or > 32768 || (title.Id & (title.Id-1)) != 0) throw new CorporationError("INVALID_TITLE");
+                var masks = Masks(title.Masks);
+                for (var i = 0; i < masks.Length; i++)
+                    if (!CorporationRoles.IsKnown(masks[i],i == 0 ? CorporationRoles.Grantable : AllowedMasks[i])) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+                var name = title.Name.Length > 100 ? title.Name[..100] : title.Name;
+                await using var update = Command(connection,tx,$"""
+                    INSERT INTO {_schema}.titles(corporation_id,id,name,roles,grantable_roles,roles_hq,grantable_hq,
+                        roles_base,grantable_base,roles_other,grantable_other)
+                    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                    ON CONFLICT(corporation_id,id) DO UPDATE SET name=$3,roles=$4,grantable_roles=$5,roles_hq=$6,
+                        grantable_hq=$7,roles_base=$8,grantable_base=$9,roles_other=$10,grantable_other=$11
+                    """,corporation,title.Id,name,masks[0],masks[1],masks[2],masks[3],masks[4],masks[5],masks[6],masks[7]);
+                await update.ExecuteNonQueryAsync(token);
+            }
+            return 0;
+        },token);
+
+    public Task DeleteTitleAsync(long actor,long corporation,int titleId,CancellationToken token = default) =>
+        WriteAsync(async (connection,tx) =>
+        {
+            await RequireRoleAsync(connection,tx,corporation,actor,CorporationRoles.Director,token);
+            if (titleId is < 1 or > 32768 || (titleId & (titleId-1)) != 0) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            await using (var clear = Command(connection,tx,$"""
+                INSERT INTO {_schema}.titles(corporation_id,id,name)
+                VALUES($1,$2,'')
+                ON CONFLICT(corporation_id,id) DO UPDATE SET name='',roles=0,grantable_roles=0,
+                    roles_hq=0,grantable_hq=0,roles_base=0,grantable_base=0,roles_other=0,grantable_other=0
+                """,corporation,titleId))
+                await clear.ExecuteNonQueryAsync(token);
+            await using (var members = Command(connection,tx,$"""
+                UPDATE {_schema}.members
+                SET title_mask=title_mask & ~$2,
+                    role_stasis_ms=GREATEST(COALESCE(role_stasis_ms,0),$3)
+                WHERE corporation_id=$1 AND (title_mask & $2)<>0
+                """,corporation,titleId,checked(_now()+86400000)))
+                await members.ExecuteNonQueryAsync(token);
             return 0;
         },token);
 

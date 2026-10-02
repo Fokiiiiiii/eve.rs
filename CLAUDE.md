@@ -344,3 +344,11 @@ The supplied cargo command names an eve-net binary that is absent (the package i
 examples/run_front.rs launches the existing HostLink and serve APIs with explicit endpoint/listener arguments.
 No transport or sim messages were changed, and Node was not used. The native test processes and scratch schemas
 were cleaned up after the replay. Continuing market service wiring, modification, history and notifications.
+
+### Codex Market Seed v4 update (2026-10-02)
+
+The Host market block now captures paged ESI Tranquility public orders on the first startup for each SDE build. It filters to type IDs in the loaded SDE `types` table and locations in `npcStations`, excluding Player Structures and unknown types. The SHA-256-fingerprinted JSONL snapshot is temporary and deleted after the transactional import. I changed only the market registration block in `Program.cs`; combat, NPC and world-tick construction remains untouched. Host build and fake-ESI/range tests pass. The PostgreSQL store test is waiting for the user's PostgreSQL 18 replacement; no v4 test database has been retained.
+
+### Codex Corp/Alliance integration update (2026-10-02)
+
+Cherry-picked `codex/alliance-v0129-20261002` (`8aa4cb1`) and `codex/corp-membership-rpc` (`86de0c1`) into `main` as `ab2b254` and `4e134dc`. Corporation RPCs now include call-ID founding, public metadata updates, member leave/kick/CEO handoff, role/title changes and division account keys. Alliance Registry now covers create/list/read/public info and application/member reads. Host build passes with 0 warnings/errors. These commits leave Claude's combat, NPC and world-tick block untouched; remaining parity gaps are recorded in `docs/NATIVE_MIGRATION.md`.

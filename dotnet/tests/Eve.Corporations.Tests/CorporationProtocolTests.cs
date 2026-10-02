@@ -295,4 +295,147 @@ public class CorporationProtocolTests
             await drop.ExecuteNonQueryAsync();
         }
     }
+
+
+    [PgFact]
+    public async Task Corporation_core_and_role_rpcs_preserve_public_fields_and_role_contracts()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Role Founder");
+        var member = await rig.CharacterAsync("Role Member");
+        var corp = await rig.Store.CreateAsync(founder,new("Role Works","ROLE","","",0.05m),"roles");
+        var application = await rig.Store.ApplyAsync(member,corp.Id,"");
+        await rig.Store.RespondAsync(founder,application,6,"","");
+        await rig.Store.RespondAsync(member,application,2,"","");
+        var registry = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+        var manager = (IService)new CorpMgrService(rig.Store,rig.Characters);
+        var founderSession = new ClientSession();
+        founderSession.CharacterId = founder;
+        founderSession.Set("corporationID",new PyInt(corp.Id));
+        var memberSession = new ClientSession();
+        memberSession.CharacterId = member;
+        memberSession.Set("corpid",new PyInt(corp.Id));
+        ValueTask<PyValue> CorpRpc(string method,params PyValue[] args) => registry.CallAsync(Call(founderSession,method,args));
+        ValueTask<PyValue> ManagerRpc(string method,params PyValue[] args) => manager.CallAsync(Call(founderSession,method,args));
+        async Task<PyPackedRow> MemberRow() => Assert.IsType<PyPackedRow>(MarshalCodec.Decode(MarshalCodec.Encode(
+            await ((IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now)).CallAsync(Call(memberSession,"GetMember",new PyInt(member))))));
+
+        var emptyKick = Assert.IsType<PyDict>(await CorpRpc("KickOutMembers",new PyList([])));
+        Assert.Empty(Assert.IsType<PyList>(emptyKick.Entries.Single(e => e.Key == new PyStr("kicked")).Value).Items);
+        Assert.Empty(Assert.IsType<PyList>(emptyKick.Entries.Single(e => e.Key == new PyStr("notKicked")).Value).Items);
+        Assert.Equal(new PyInt(corp.Id),await ManagerRpc("GetCorporationIDForCharacter",new PyLong(long.MaxValue)));
+        Assert.IsType<PyNone>(await CorpRpc("UpdateCorporation",new PyStr("Updated description"),new PyStr("https://corp.example"),
+            Py.Number(0.12),new PyInt(1),Py.Number(0.03)));
+        var publicInfo = await ManagerRpc("GetPublicInfo",new PyInt(corp.Id));
+        Assert.Equal(new PyStr("Updated description"),Field(publicInfo,"description"));
+        Assert.Equal(new PyStr("https://corp.example"),Field(publicInfo,"url"));
+        Assert.Equal(Py.Number(0.12),Field(publicInfo,"taxRate"));
+        Assert.Equal(new PyInt(1),Field(publicInfo,"applicationsEnabled"));
+        Assert.Equal(new PyInt(1),Field(publicInfo,"isRecruiting"));
+        Assert.IsType<PyNone>(await CorpRpc("UpdateLogo",new PyInt(501),new PyInt(502),new PyInt(503),
+            new PyInt(11),new PyInt(12),new PyInt(13),new PyInt(14)));
+        var afterLogo = await rig.Store.GetAsync(corp.Id);
+        Assert.Equal(501,afterLogo!.Settings.GetProperty("shape1").GetInt32());
+        Assert.IsType<PyNone>(await CorpRpc("UpdateDivisionNames",new PyStr("Ship Hangar")));
+        var afterDivisions = await rig.Store.GetAsync(corp.Id);
+        Assert.Equal("Ship Hangar",afterDivisions!.Settings.GetProperty("divisionNames").GetProperty("1").GetString());
+        Assert.IsType<PyNone>(await CorpRpc("UpdateCorporationAbilities",new PyStr("false")));
+        publicInfo = await ManagerRpc("GetPublicInfo",new PyInt(corp.Id));
+        Assert.Equal(new PyInt(0),Field(publicInfo,"applicationsEnabled"));
+        Assert.Equal(new PyInt(0),Field(publicInfo,"isRecruiting"));
+        Assert.Equal(PyBool.True,await CorpRpc("SetAccountKey",new PyStr("cash2")));
+        Assert.Equal(1001,(await rig.Store.MemberAsync(founder))!.AccountKey);
+        Assert.Equal(1001,founderSession.GetInt("corpAccountKey"));
+
+        var memberUpdate = new PyValue[] { new PyInt(member),new PyStr("Quartermaster"),new PyInt(7),new PyInt(8),
+            new PyLong(CorporationRoles.PersonnelManager) };
+        Assert.IsType<PyNone>(await CorpRpc("UpdateMember",memberUpdate));
+        var updated = await MemberRow();
+        Assert.Equal(new PyInt(7),updated.Values[2]);
+        Assert.Equal(new PyInt(8),updated.Values[3]);
+        Assert.Equal(new PyWString("Quartermaster"),updated.Values[4]);
+        Assert.Equal(new PyInt(CorporationRoles.PersonnelManager),updated.Values[5]);
+        var activeLeave = Assert.IsType<PyTuple>(await registry.CallAsync(Call(memberSession,"CanLeaveCurrentCorporation")));
+        Assert.Equal(new PyInt(0),activeLeave.Items[0]);
+        Assert.Equal(new PyInt(0),await CorpRpc("CanBeKickedOut",new PyInt(member)));
+
+        var removeRoles = new PyValue[] { new PyInt(member),PyNone.Instance,PyNone.Instance,PyNone.Instance,new PyLong(0) };
+        Assert.IsType<PyNone>(await CorpRpc("UpdateMember",removeRoles));
+        Assert.True((await rig.Store.MemberAsync(member))!.StasisUntilMs > rig.Now);
+        Assert.Equal(new PyInt(1),Assert.IsType<PyTuple>(await registry.CallAsync(Call(memberSession,"CanLeaveCurrentCorporation"))).Items[0]);
+        Assert.Equal(new PyInt(0),await CorpRpc("CanBeKickedOut",new PyInt(member)));
+        Assert.IsType<PyNone>(await CorpRpc("UpdateMember",memberUpdate));
+
+        var title = new PyValue[] { new PyInt(32768),new PyStr("Recruiter"),new PyLong(0),new PyLong(0),new PyLong(0),
+            new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0) };
+        Assert.IsType<PyNone>(await CorpRpc("UpdateTitle",title));
+        Assert.Contains(await rig.Store.TitlesAsync(corp.Id),t => t.Id == 32768 && t.Name == "Recruiter");
+        var titleMaskUpdate = Enumerable.Repeat<PyValue>(PyNone.Instance,14).ToArray();
+        titleMaskUpdate[0] = new PyInt(member);
+        titleMaskUpdate[13] = new PyInt(32768);
+        Assert.IsType<PyNone>(await CorpRpc("UpdateMember",titleMaskUpdate));
+        Assert.Equal(new PyInt(32768),(await MemberRow()).Values[15]);
+
+        var bulkPlaceholders = new PyList([new PyList([new PyInt(member),new PyInt(0),new PyInt(0),new PyInt(0)])]);
+        Assert.IsType<PyNone>(await CorpRpc("UpdateMembers",bulkPlaceholders));
+        updated = await MemberRow();
+        Assert.Equal(new PyInt(7),updated.Values[2]);
+        Assert.Equal(new PyInt(8),updated.Values[3]);
+        Assert.Equal(new PyWString("Quartermaster"),updated.Values[4]);
+
+        var batchTitles = new PyList([
+            new PyList([new PyInt(2),new PyStr("Operations"),.. Enumerable.Repeat<PyValue>(new PyLong(0),8)]),
+            new PyList([new PyInt(4),new PyStr("Security"),.. Enumerable.Repeat<PyValue>(new PyLong(0),8)])
+        ]);
+        Assert.IsType<PyNone>(await CorpRpc("UpdateTitles",batchTitles));
+        Assert.Contains(await rig.Store.TitlesAsync(corp.Id),t => t.Id == 2 && t.Name == "Operations");
+        Assert.Contains(await rig.Store.TitlesAsync(corp.Id),t => t.Id == 4 && t.Name == "Security");
+        Assert.IsType<PyNone>(await CorpRpc("DeleteTitle",new PyInt(32768)));
+        Assert.Equal(0,(await rig.Store.MemberAsync(member))!.TitleMask);
+        Assert.True((await rig.Store.MemberAsync(member))!.StasisUntilMs > rig.Now);
+        Assert.Contains(await rig.Store.TitlesAsync(corp.Id),t => t.Id == 32768 && t.Name == "");
+
+        var candidates = Assert.IsType<PyList>(await CorpRpc("ResignFromCEO"));
+        Assert.Equal(new PyInt(member),Assert.Single(candidates.Items));
+        Assert.IsType<PyNone>(await CorpRpc("ResignFromCEO",new PyInt(member)));
+        var afterHandover = await rig.Store.MemberAsync(member);
+        Assert.Equal(member,(await rig.Store.GetAsync(corp.Id))!.CeoId);
+        Assert.NotEqual(0,afterHandover!.Masks.Roles & CorporationRoles.Director);
+    }
+
+    [PgFact]
+    public async Task Add_corporation_rpc_uses_the_call_id_as_the_founding_receipt()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("RPC Founder");
+        var session = new ClientSession { SessionId = 2048 };
+        session.CharacterId = founder;
+        var service = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+        var call = new ServiceCall
+        {
+            Method = "AddCorporation",Session = session,CallId = new PyInt(73),
+            Args = [new PyStr("RPC Founded"),new PyStr("RPCFD"),new PyStr("Founded in protocol"),new PyStr("https://rpc.example"),
+                Py.Number(0.05),new PyInt(419),PyNone.Instance,PyNone.Instance,new PyInt(1),new PyInt(2),new PyInt(3),
+                new PyStr("Verdana"),new PyInt(1),PyBool.True,Py.Number(0.02)]
+        };
+        static PyValue RowField(PyValue row,string name)
+        {
+            var header = Assert.IsType<PyTuple>(Field(row,"header")).Items;
+            var values = Assert.IsType<PyTuple>(Field(row,"line")).Items;
+            var index = header.Select((value,i) => (value,i)).Single(pair => pair.value == new PyStr(name)).i;
+            return values[index];
+        }
+
+        var first = await service.CallAsync(call);
+        var corporationId = Assert.IsType<PyInt>(RowField(first,"corporationID")).Value;
+        Assert.Equal(new PyStr("RPC Founded"),RowField(first,"corporationName"));
+        Assert.Equal(corporationId,(await rig.Store.MemberAsync(founder))!.CorporationId);
+        var manager = (IService)new CorpMgrService(rig.Store,rig.Characters);
+        var publicRow = await manager.CallAsync(Call(session,"GetCorporations",new PyInt(corporationId)));
+        Assert.Equal(new PyInt(1),RowField(publicRow,"memberCount"));
+
+        var replay = await service.CallAsync(call);
+        Assert.Equal(new PyInt(corporationId),RowField(replay,"corporationID"));
+        Assert.Single(await rig.Store.MembersAsync(corporationId));
+    }
 }

@@ -218,7 +218,7 @@ public sealed partial class CorporationStore
                 VALUES($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,20,$11,$12,$13::jsonb,$14)
                 """,id,name,ticker,founder,character.StationId,character.SolarSystemId,request.TaxRate,request.LoyaltyPointTaxRate,request.Description,request.Url,request.FriendlyFire,now,settingsText,operationKey))
                 await insert.ExecuteNonQueryAsync(token);
-            await CanLeaveAsync(connection,tx,character,now,token);
+            await CanLeaveAsync(connection,tx,character,token);
             await using (var titles = Command(connection,tx,$"INSERT INTO {_schema}.titles(corporation_id,id,name) SELECT $1,1 << n,'' FROM generate_series(0,15) n",id))
                 await titles.ExecuteNonQueryAsync(token);
             await _wallets.AdjustAsync(connection,tx,founder,-CorporationFoundingCost,1000125,39,"Corporation registration fee",now,operationKey + ":fee",token);
@@ -251,4 +251,40 @@ public sealed partial class CorporationStore
         var destination = await GetAsync(connection,tx,corporation,false,token);
         await _characters.SetAffiliationAsync(connection,tx,character.Id,corporation,alliance,destination is null ? null : Faction(destination),token);
     }
+
+    public Task UpdateCorporationAsync(long actor,long corporation,string description,string url,decimal taxRate,decimal loyaltyPointTaxRate,bool applicationsEnabled,CancellationToken token = default) =>
+        WriteAsync(async (connection,tx) =>
+        {
+            await RequireRoleAsync(connection,tx,corporation,actor,CorporationRoles.Director,token);
+            await using var update = Command(connection,tx,$"""
+                UPDATE {_schema}.corporations
+                SET description=$2,url=$3,tax_rate=$4,lp_tax_rate=$5,
+                    settings=settings || jsonb_build_object('applicationsEnabled',$6)
+                WHERE id=$1
+                """,corporation,description,url,taxRate,loyaltyPointTaxRate,applicationsEnabled);
+            await update.ExecuteNonQueryAsync(token);
+            return 0;
+        },token);
+
+    public Task UpdateSettingsAsync(long actor,long corporation,string jsonPatch,CancellationToken token = default) =>
+        WriteAsync(async (connection,tx) =>
+        {
+            await RequireRoleAsync(connection,tx,corporation,actor,CorporationRoles.Director,token);
+            await using var update = Command(connection,tx,$"UPDATE {_schema}.corporations SET settings=settings || $2::jsonb WHERE id=$1",corporation,jsonPatch);
+            await update.ExecuteNonQueryAsync(token);
+            return 0;
+        },token);
+
+    public Task UpdateDivisionNamesAsync(long actor,long corporation,string jsonPatch,CancellationToken token = default) =>
+        WriteAsync(async (connection,tx) =>
+        {
+            await RequireRoleAsync(connection,tx,corporation,actor,CorporationRoles.Director,token);
+            await using var update = Command(connection,tx,$$"""
+                UPDATE {{_schema}}.corporations
+                SET settings=jsonb_set(settings,'{divisionNames}',COALESCE(settings->'divisionNames','{}'::jsonb) || $2::jsonb,true)
+                WHERE id=$1
+                """,corporation,jsonPatch);
+            await update.ExecuteNonQueryAsync(token);
+            return 0;
+        },token);
 }

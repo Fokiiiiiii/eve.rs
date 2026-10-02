@@ -49,6 +49,8 @@ using Eve.Services.Wallet;
 //                          Characters need EVE_PG_URL and the SDE (`eve-sde ensure`): without them the host runs
 //                          without charUnboundMgr, and a client cannot get past the character screen.
 //   EVE_MARKET_SEED        skip: do not fetch the NPC market's first orders from CCP's ESI (CI, development)  (default auto: fetch once per SDE build)
+//   EVE_SCHEDULER_SCHEMA, EVE_EVENTS_SCHEMA, EVE_RELATIONS_SCHEMA, EVE_CONTENT_SCHEMA   the schemas of the shared foundations (scheduler, event bus, relations, content)
+//                          (defaults scheduler, events, relations, content)
 //   EVE_DEV_SKIP_PASSWORD  1 accepts any password (development only)                          (default 0)
 //   EVE_DEV_AUTO_CREATE    0 refuses unknown user names                                       (default 1)
 
@@ -89,6 +91,7 @@ var accountOptions = new AccountOptions
 };
 IAccountDirectory accounts;
 IReadOnlyList<IService> characterServices = [];
+Foundations? foundations = null;
 SpaceSessions? space = null;
 SimClient? simulation = null;
 var online = new OnlineCharacters();
@@ -100,7 +103,11 @@ if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
     Console.Error.WriteLine($"eve-host: accounts in PostgreSQL, schema {schema}{(applied.Count > 0 ? "; applied " + string.Join(", ", applied) : "")}");
     var directory = new PgAccountDirectory(source, accountOptions, schema);
     accounts = directory;
-    (characterServices, space, simulation) = await CharacterServicesAsync(source, directory, online, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+    Func<long> clock = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+    foundations = await Foundations.CreateAsync(source, clock, Env, message => Console.Error.WriteLine($"eve-host: {message}"));
+    (characterServices, space, simulation) = await CharacterServicesAsync(source, directory, online, clock, foundations);
+    // every feature has registered its job handlers by now: the scheduler may start running jobs
+    await foundations.StartAsync();
 }
 else
 {
@@ -154,6 +161,10 @@ Console.CancelKeyPress += (_, args) =>
 };
 Console.Error.WriteLine($"eve-host: listening on {endpoint}; {registry.Count} services");
 await server.ServeAsync(listener, cancel.Token);
+if (foundations is not null)
+{
+    await foundations.DisposeAsync();
+}
 space?.Dispose();
 if (simulation is not null)
 {
@@ -165,7 +176,7 @@ return 0;
 /// The character-side modules (characters, inventory, skills) and their services, or none (with the reason logged) when
 /// the static data they need is not in the database.
 /// </summary>
-static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation)> CharacterServicesAsync(NpgsqlDataSource source, IAccountLookup accounts, OnlineCharacters online, Func<long> now)
+static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation)> CharacterServicesAsync(NpgsqlDataSource source, IAccountLookup accounts, OnlineCharacters online, Func<long> now, Foundations foundations)
 {
     CharacterNames.EnsureUnicodeSupport();
     var characterSchema = Env("EVE_CHARACTERS_SCHEMA", PgCharacterStore.DefaultSchema);
@@ -293,10 +304,15 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         var npcWrecks = new NpcWrecks(npcAuthority, () => NpcLoot.LoadAsync(sde), ships);
         spaceSessions = new SpaceSessions(sim, ships, dogma, stations, solarSystems, now, message => Console.Error.WriteLine($"eve-host: space: {message}")) { RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new NpcSelector(npcAuthority), NpcWrecks = npcWrecks, BeltRats = new BeltRats(npcAuthority, BeltRatConfig.FromEnvironment(Environment.GetEnvironmentVariable), type => NpcHull.HasHitPoints(dogma.Type(type))) };
         npcWrecks.Warm();
-        spaceSessions.UseBounties(
-            new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")),
-            TimeSpan.FromSeconds(10));
-        spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), TimeSpan.FromSeconds(30));
+        // the periodic work of the space features is jobs of the shared scheduler, not timers of their own
+        spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")));
+        var bounties = spaceSessions;
+        foundations.Scheduler.Register("space.bounty.pay", async (_, token) => await bounties.PayBountiesAsync(token));
+        await foundations.Scheduler.EnsureRecurringAsync("space.bounty.pay", "pay", TimeSpan.FromSeconds(10));
+        spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"));
+        var containers = spaceContainers;
+        foundations.Scheduler.Register("space.containers.sweep", async (_, _) => await containers.SweepAsync());
+        await foundations.Scheduler.EnsureRecurringAsync("space.containers.sweep", "sweep", TimeSpan.FromSeconds(30));
         Console.Error.WriteLine($"eve-host: the space simulation is expected at {socket}");
     }
     IReadOnlyList<IService> services =

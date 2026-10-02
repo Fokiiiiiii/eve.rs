@@ -377,7 +377,8 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
 
     // ── time running out ─────────────────────────────────────────────────────
 
-    private async Task SweepAsync()
+    /// <summary>Takes out of space what has run out of time (a periodic job: the host schedules it on the shared scheduler). A failure is logged, not thrown: the next run tries again.</summary>
+    public async Task SweepAsync()
     {
         try
         {

@@ -321,6 +321,12 @@ public sealed class DurableScheduler : IAsyncDisposable
             _log?.Invoke($"scheduler: job {job.Id} ({job.Kind}{(job.Key is null ? "" : ":" + job.Key)}) failed on try {job.Attempts}/{job.MaxAttempts}: {error.Message}");
             var message = error.Message.Length > 2000 ? error.Message[..2000] : error.Message;
             var exhausted = job.Attempts >= job.MaxAttempts;
+            if (exhausted && job.EveryMs is { } period)
+            {
+                // a periodic task is never parked: it gives up on this run and tries again at its next time
+                await ReleaseAsync(job, "pending", NextOccurrence(job.RunAtMs, period, _now()), null, 0, message);
+                return;
+            }
             var backoff = Math.Min(_options.BackoffMaxMs, _options.BackoffBaseMs << Math.Min(job.Attempts - 1, 20));
             await ReleaseAsync(job, exhausted ? "failed" : "pending", exhausted ? job.RunAtMs : _now() + backoff, null, job.Attempts, message);
             return;
@@ -332,9 +338,7 @@ public sealed class DurableScheduler : IAsyncDisposable
         }
         else if (job.EveryMs is { } every)
         {
-            var now = _now();
-            var next = job.RunAtMs + (Math.Max(now - job.RunAtMs, 0) / every + 1) * every;
-            await FinishAsync(context, job, "pending", next, null, 0);
+            await FinishAsync(context, job, "pending", NextOccurrence(job.RunAtMs, every, _now()), null, 0);
         }
         else
         {
@@ -342,6 +346,9 @@ public sealed class DurableScheduler : IAsyncDisposable
         }
         await transaction.CommitAsync(CancellationToken.None);
     }
+
+    /// <summary>The first time after <paramref name="now"/> that a job due at <paramref name="dueMs"/> and recurring every <paramref name="everyMs"/> is due (the runs that were missed are skipped).</summary>
+    private static long NextOccurrence(long dueMs, long everyMs, long now) => dueMs + (Math.Max(now - dueMs, 0) / everyMs + 1) * everyMs;
 
     /// <summary>Writes the job's next state in the handler's own transaction.</summary>
     private async Task FinishAsync(JobContext context, ClaimedJob job, string state, long runAtMs, string? payloadJson, int attempts) =>
@@ -465,7 +472,7 @@ public sealed class DurableScheduler : IAsyncDisposable
             SELECT LEAST(
                 (SELECT min(run_at_ms) FROM {schema}.jobs WHERE state = 'pending' AND kind = ANY($1)),
                 (SELECT min(lease_until_ms) + 1 FROM {schema}.jobs WHERE state = 'running' AND kind = ANY($1)))
-            """), cancellationToken, kinds);
+            """), cancellationToken, (object?)kinds);   // one array argument: without the cast it would be taken for the whole parameter list
         if (next is not long due)
         {
             return _options.MaxPollMs;

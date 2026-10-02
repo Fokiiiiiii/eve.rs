@@ -292,15 +292,35 @@ public class SchedulerTests
     [PgFact]
     public async Task The_background_runner_picks_up_work_scheduled_in_this_process_and_stops()
     {
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         await using var rig = await Rig.Create(new SchedulerOptions { Concurrency = 2, MaxPollMs = 50 });
         var done = new TaskCompletionSource();
-        var real = new DurableScheduler(rig.Source, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), new SchedulerOptions { MaxPollMs = 50 }, rig.Schema);
+        var real = new DurableScheduler(rig.Source, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), new SchedulerOptions { MaxPollMs = 50 }, rig.Schema, rig.Log.Add);
         real.Register("t.bg", (_, _) => { done.TrySetResult(); return Task.CompletedTask; });
+        real.Register("t.other.kind", (_, _) => Task.CompletedTask);   // the host registers many kinds: the loop's queries take them all
         real.Start();
-        await real.ScheduleAsync(new JobSpec("t.bg", now + 150));
+        await real.ScheduleAsync(new JobSpec("t.bg", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 300));   // not due yet: the loop has to sleep until it is
         await done.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await real.StopAsync();
         Assert.Equal(0, await rig.Count());
+        Assert.True(rig.Log.Count == 0, string.Join(" | ", rig.Log));   // the loop ran without an error of its own
+    }
+
+    [PgFact]
+    public async Task A_recurring_job_that_keeps_failing_is_never_parked_it_waits_for_its_next_time()
+    {
+        await using var rig = await Rig.Create();
+        var tries = 0;
+        rig.Scheduler.Register("t.rf", (_, _) => { tries++; throw new InvalidOperationException("down"); });
+        var t = rig.Now;
+        await rig.Scheduler.ScheduleAsync(new JobSpec("t.rf", t) { Key = "k", EveryMs = 10_000, MaxAttempts = 2 });
+        await rig.Scheduler.RunDueAsync();                     // try 1: back-off
+        rig.Now = t + 1000;
+        await rig.Scheduler.RunDueAsync();                     // try 2: the last one
+        var job = (await rig.Scheduler.FindAsync("t.rf", "k"))!;
+        Assert.Equal(("pending", 0, t + 11_000), (job.State, job.Attempts, job.RunAtMs));   // a period after the retry that was due at t + 1000
+        Assert.Equal("down", job.LastError);
+        rig.Now = t + 11_000;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal(3, tries);
     }
 }

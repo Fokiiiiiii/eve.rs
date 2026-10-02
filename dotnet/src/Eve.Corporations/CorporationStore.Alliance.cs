@@ -2,6 +2,8 @@ using Npgsql;
 
 namespace Eve.Corporations;
 
+// Client-visible Alliance contracts follow EveJS v0.12.9 allianceRegistryRuntime.js and allianceViewState.js (828823a75f211fdecb945b087a26c225f111491f).
+
 public sealed partial class CorporationStore
 {
     private const string AllianceColumns = "id,name,short_name,description,url,executor_corporation_id,creator_corporation_id,creator_character_id,created_ms,deleted,suspended,dictatorial";
@@ -106,7 +108,7 @@ public sealed partial class CorporationStore
 
     public Task<long> ApplyToAllianceAsync(long actor,long alliance,string text,bool requireCeo,bool rejectExisting,CancellationToken token = default)
     {
-        if (text.EnumerateRunes().Count() > 1000) throw new CorporationError("ALLIANCE_APPLICATION_TEXT_TOO_LONG");
+        if (text.Length > 1000) throw new CorporationError("ALLIANCE_APPLICATION_TEXT_TOO_LONG");
         return WriteAsync(async (connection,tx) =>
         {
             var target = await AllianceAsync(connection,tx,alliance,true,token);
@@ -164,7 +166,7 @@ public sealed partial class CorporationStore
     public Task<AllianceApplication> RespondToAllianceAsync(long actor,long applicationId,string? applicationText,int status,CancellationToken token = default)
     {
         if (status is not (2 or 4)) throw new CorporationError("ALLIANCE_APPLICATION_INVALID_STATE");
-        if (applicationText is not null && applicationText.EnumerateRunes().Count() > 1000)
+        if (applicationText is not null && applicationText.Length > 1000)
             throw new CorporationError("ALLIANCE_APPLICATION_TEXT_TOO_LONG");
         return WriteAsync(async (connection,tx) =>
         {
@@ -243,4 +245,79 @@ public sealed partial class CorporationStore
             await ReelectAsync(connection,tx,alliance,token);
             return 0;
         },token);
+
+    public async Task<IReadOnlyList<Alliance>> RankedAlliancesAsync(long? limit,CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        var select = $"SELECT {AllianceColumns} FROM {_schema}.alliances WHERE NOT deleted ORDER BY id";
+        await using var command = limit is > 0
+            ? Command(connection,null,select + " LIMIT $1",limit.Value)
+            : Command(connection,null,select);
+        var rows = new List<Alliance>();
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token)) rows.Add(ReadAlliance(reader));
+        return rows;
+    }
+
+
+    public async Task<IReadOnlyDictionary<long,long>> AllianceCharacterCountsAsync(IReadOnlyList<long> alliances,CancellationToken token = default)
+    {
+        if (alliances.Count == 0) return new Dictionary<long,long>();
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection,null,$"""
+            SELECT am.alliance_id,COUNT(m.character_id)
+            FROM {_schema}.alliance_members am
+            LEFT JOIN {_schema}.members m ON m.corporation_id=am.corporation_id
+            WHERE am.alliance_id=ANY($1)
+            GROUP BY am.alliance_id
+            """,alliances.ToArray());
+        var counts = new Dictionary<long,long>();
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token)) counts.Add(reader.GetInt64(0),reader.GetInt64(1));
+        return counts;
+    }
+
+    public async Task<IReadOnlyList<AllianceApplication>> AllianceApplicationsForCorporationAsync(long corporation,CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection,null,
+            $"SELECT {AllianceApplicationColumns} FROM {_schema}.alliance_applications WHERE corporation_id=$1 ORDER BY alliance_id,id",corporation);
+        var rows = new List<AllianceApplication>();
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token)) rows.Add(ReadAllianceApplication(reader));
+        return rows;
+    }
+
+    public async Task<IReadOnlyList<(long AllianceId,long StartedMs,bool Deleted)>> CorporationAllianceHistoryAsync(long corporation,CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection,null,$"""
+            SELECT e.alliance_id,e.started_ms,COALESCE(a.deleted,false)
+            FROM {_schema}.alliance_employment e
+            LEFT JOIN {_schema}.alliances a ON a.id=e.alliance_id
+            WHERE e.corporation_id=$1
+            ORDER BY e.started_ms DESC,e.alliance_id DESC
+            """,corporation);
+        var rows = new List<(long AllianceId,long StartedMs,bool Deleted)>();
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token)) rows.Add((reader.GetInt64(0),reader.GetInt64(1),reader.GetBoolean(2)));
+        return rows;
+    }
+
+    public Task<Alliance> UpdateAllianceAsync(long actor,long alliance,string description,string url,CancellationToken token = default)
+    {
+        if (description.Length > 5000 || url.Length > 2048) throw new CorporationError("ALLIANCE_PUBLIC_INFO_INVALID_LENGTH");
+        return WriteAsync(async (connection,tx) =>
+        {
+            var character = await _characters.LockAndGetAsync(connection,tx,actor,token) ?? throw new CorporationError("CHARACTER_NOT_FOUND");
+            var corporation = await RequireRoleAsync(connection,tx,character.CorporationId,actor,CorporationRoles.Director,token);
+            if (corporation.AllianceId != alliance) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            var current = await AllianceAsync(connection,tx,alliance,true,token);
+            if (current is not { Deleted:false } || current.ActiveExecutorId != corporation.Id)
+                throw new CorporationError("ALLIANCE_EXECUTOR_REQUIRED");
+            await using var command = Command(connection,tx,$"UPDATE {_schema}.alliances SET description=$2,url=$3 WHERE id=$1",alliance,description,url);
+            await command.ExecuteNonQueryAsync(token);
+            return current with { Description=description,Url=url };
+        },token);
+    }
 }

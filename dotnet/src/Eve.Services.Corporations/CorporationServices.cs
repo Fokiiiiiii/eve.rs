@@ -90,7 +90,7 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
                 ("title", new PyWString(medal.Title)),
                 ("description", new PyWString(medal.Description)),
                 ("createDateTime", CorporationWire.Time(medal.CreatedMs)),
-                ("numberOfRecipients", CorporationWire.Id(medal.RecipientCount))
+                ("numberOfRecipients", new PyInt(medal.RecipientCount))
             ])
         ]);
         return Py.KeyVal([("info", info), ("graphics", graphics)]);
@@ -120,7 +120,7 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
         var medalRows = medals.Select(m => (PyValue)Py.List(
             CorporationWire.Id(m.Id), CorporationWire.Id(m.CorporationId), CorporationWire.Id(m.CreatorId),
             new PyWString(m.Title), new PyWString(m.Description), CorporationWire.Time(m.CreatedMs),
-            CorporationWire.Id(m.RecipientCount)));
+            new PyInt(m.RecipientCount)));
         var payload = Py.Tuple(
             Py.Rowset(["medalID","ownerID","creatorID","title","description","date","noRecepients"], medalRows),
             MedalGraphicsRowset(medals.SelectMany(m => m.Graphics.Select(g => (m.Id, g)))));

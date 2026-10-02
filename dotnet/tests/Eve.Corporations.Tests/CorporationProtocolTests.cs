@@ -480,6 +480,9 @@ public class CorporationProtocolTests
         Assert.Equal(new PyInt(0), medalRow.Items[6]);
         var graphicRow = Assert.IsType<PyList>(Assert.Single(Lines(all.Items[1])));
         Assert.Equal(new PyWString("emblem.42"), graphicRow.Items[2]);
+        var emptyDetails = await MemberRpc("GetMedalDetails", new PyInt(medalId));
+        var emptyDetail = Assert.Single(Assert.IsType<PyList>(Field(emptyDetails, "info")).Items);
+        Assert.Equal(new PyInt(0), Field(emptyDetail, "numberOfRecipients"));
 
         var status = new PyDict([new(new PyInt(medalId), new PyInt(4))]);
         Assert.IsType<PyNone>(await MemberRpc("SetMedalStatus", status));

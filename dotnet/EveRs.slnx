@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Eve.Characters/Eve.Characters.csproj" />
+    <Project Path="src/Eve.Content/Eve.Content.csproj" />
     <Project Path="src/Eve.Corporations/Eve.Corporations.csproj" />
     <Project Path="src/Eve.Data/Eve.Data.csproj" />
     <Project Path="src/Eve.GameStore.Import/Eve.GameStore.Import.csproj" />
@@ -50,6 +51,7 @@
     <Project Path="tests/Eve.Npc.Tests/Eve.Npc.Tests.csproj" />
     <Project Path="tests/Eve.Services.CharacterInfo.Tests/Eve.Services.CharacterInfo.Tests.csproj" />
     <Project Path="tests/Eve.Services.CharacterSelect.Tests/Eve.Services.CharacterSelect.Tests.csproj" />
+    <Project Path="tests/Eve.Content.Tests/Eve.Content.Tests.csproj" />
     <Project Path="tests/Eve.Corporations.Tests/Eve.Corporations.Tests.csproj" />
     <Project Path="tests/Eve.Dogma.Tests/Eve.Dogma.Tests.csproj" />
     <Project Path="tests/Eve.Events.Tests/Eve.Events.Tests.csproj" />

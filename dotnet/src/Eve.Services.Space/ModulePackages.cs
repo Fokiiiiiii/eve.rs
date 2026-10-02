@@ -32,6 +32,9 @@ internal static class ModulePackages
     private const int Falloff = 158;
     private const int TrackingSpeed = 160;
     private const int OptimalSigRadius = 620;
+    private const int ShieldBonus = 68;
+    private const int StructureDamageAmount = 83;
+    private const int ArmorDamageAmount = 84;
 
     /// <summary>The attributes that name the groups of the charges a module takes (chargeGroup1 to chargeGroup5).</summary>
     private static readonly int[] ChargeGroups = [604, 605, 606, 609, 610];
@@ -39,6 +42,9 @@ internal static class ModulePackages
     private const string Afterburner = "moduleBonusAfterburner";
     private const string Microwarpdrive = "moduleBonusMicrowarpdrive";
     private const string TargetAttack = "targetAttack";
+    private const string ArmorRepair = "armorRepair";
+    private const string ShieldBoosting = "shieldBoosting";
+    private const string StructureRepair = "structureRepair";
     private const string ProjectileFired = "projectileFired";
     private const string TurretFitted = "turretfitted";
 
@@ -106,6 +112,33 @@ internal static class ModulePackages
         return new SimEffect(moduleId, moduleType, effect.Id, fx, duration, capacitor, Math.Max(1, repeat), Math.Max(0, targetId), null, null, told, told, gun);
     }
 
+    /// <summary>The layer a local repair effect mends, the attribute that holds the points of a cycle and whether they are given as the cycle begins (the reference's <c>START_OF_CYCLE_EFFECTS</c>).</summary>
+    private static (SimLayer Layer, int Amount, bool AtEnd)? RepairOf(string effectName) => effectName switch
+    {
+        ArmorRepair => (SimLayer.Armor, ArmorDamageAmount, true),
+        ShieldBoosting => (SimLayer.Shield, ShieldBonus, false),
+        StructureRepair => (SimLayer.Structure, StructureDamageAmount, true),
+        _ => null,
+    };
+
+    /// <summary>
+    /// A local repairer's package (<c>localCycleRuntime.js</c> of the reference, ADR 0009): the cycle and its cost are the module's own values after dogma, and each cycle mends
+    /// the layer by the points the module's attribute says (an armor repairer's <c>armorDamageAmount</c>, a shield booster's <c>shieldBonus</c>, a hull repairer's
+    /// <c>structureDamageAmount</c>). The client is told the cost and the cycle as an effect starts and stops, as for a generic module.
+    /// </summary>
+    private static SimEffect Repairer(DogmaWorld world, int moduleType, EffectDef effect, long moduleId, int repeat, (SimLayer Layer, int Amount, bool AtEnd) repair)
+    {
+        var attributes = world.Attributes(moduleId);
+        double Value(int attribute, double fallback) => attributes.TryGetValue(attribute, out var value) && double.IsFinite(value) ? value : fallback;
+        var durationAttribute = effect.DurationAttributeId > 0 ? effect.DurationAttributeId : Speed;
+        var duration = Math.Max(1, NpcArmament.Round6(Value(durationAttribute, Value(Speed, 1000))));
+        var capacitor = Math.Max(0, NpcArmament.Round6(Value(effect.DischargeAttributeId > 0 ? effect.DischargeAttributeId : CapacitorNeed, 0)));
+        var amount = Math.Max(0, NpcArmament.Round6(Value(repair.Amount, 0)));
+        SimChange[] told = [new(moduleId, CapacitorNeed, capacitor), new(moduleId, durationAttribute, Three(duration))];
+        return new SimEffect(
+            moduleId, moduleType, effect.Id, effect.Guid, duration, capacitor, Math.Max(1, repeat), 0, null, null, told, told, null, new SimAction.Repair(repair.Layer, amount, repair.AtEnd));
+    }
+
     /// <summary>How many rounds a cycle burns: the module's <c>chargeRate</c>, one when it names none.</summary>
     public static long ChargesPerCycle(IReadOnlyDictionary<int, double> attributes) =>
         attributes.TryGetValue(ChargeRate, out var rate) && double.IsFinite(rate) ? Math.Max(1, (long)rate) : 1;
@@ -146,7 +179,11 @@ internal static class ModulePackages
         {
             return new Result(Turret(snapshot.World, statics, module.TypeId, type, effect, moduleId, targetId, repeat, charge), null, module.TypeId, name);
         }
-        // only the effects that change how the ship moves and the turrets are run so far; the others (repairs, mining) come with what they need
+        if (RepairOf(effect.Name) is { } repair)
+        {
+            return new Result(Repairer(snapshot.World, module.TypeId, effect, moduleId, repeat, repair), null, module.TypeId, name);
+        }
+        // only the effects that change how the ship moves, the turrets and the repairers are run so far; the others come with what they need
         if (effect.Name is not (Afterburner or Microwarpdrive))
         {
             return new Result(null, "UNSUPPORTED_EFFECT", module.TypeId, name);

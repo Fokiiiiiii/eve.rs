@@ -2,11 +2,11 @@
 //! file): every valid frame encodes to its bytes and decodes back, every invalid one is refused for the stated reason.
 
 use eve_space::death::Credit;
-use eve_space::health::{Condition, Resonances, Vitals};
+use eve_space::health::{Condition, Layer, Resonances, Vitals};
 use eve_space::link::{
     ChargeOp, ContainerPlacement, DecodeError, Enter, How, Message, Spawn, WreckPlacement,
 };
-use eve_space::modules::{Change, Effect, Numbers};
+use eve_space::modules::{Action, Applies, Change, Effect, Numbers};
 use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use eve_space::weapons::{Charge, Turret};
 use eve_space::wreck::WreckKind;
@@ -155,6 +155,15 @@ fn effect_of(case: &Value) -> Effect {
         repeat: case["repeat"].as_i64().unwrap() as i32,
         target_id: wide(case, "targetId"),
         turret: case.get("turret").map(turret_of),
+        action: case.get("action").map(|a| Action::Repair {
+            layer: match a["layer"].as_str().unwrap() {
+                "shield" => Layer::Shield,
+                "armor" => Layer::Armor,
+                _ => Layer::Structure,
+            },
+            amount: a["amount"].as_f64().unwrap(),
+            when: if a["when"] == "end" { Applies::CycleEnd } else { Applies::CycleStart },
+        }),
         on: numbers(&case["on"]),
         off: numbers(&case["off"]),
         on_changes: changes(&case["onChanges"]),

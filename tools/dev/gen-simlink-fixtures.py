@@ -85,13 +85,16 @@ def turret(t):
 def effect(e):
     body = i64(e["moduleId"]) + struct.pack("<ii", e["moduleType"], e["effectId"]) + s(e["fx"])
     body += struct.pack("<ddi", e["durationMs"], e["capacitorNeed"], e["repeat"]) + i64(e["targetId"])
-    on, off, gun = e.get("on"), e.get("off"), e.get("turret")
-    body += bytes([(1 if on else 0) | (2 if off else 0) | (4 if gun else 0)])
+    on, off, gun, act = e.get("on"), e.get("off"), e.get("turret"), e.get("action")
+    body += bytes([(1 if on else 0) | (2 if off else 0) | (4 if gun else 0) | (8 if act else 0)])
     for n in (on, off):
         if n:
             body += numbers(n)
     body += changes(e["onChanges"]) + changes(e["offChanges"])
-    return body + turret(gun) if gun else body
+    body = body + turret(gun) if gun else body
+    if act:
+        body += bytes([0, {"shield": 0, "armor": 1, "structure": 2}[act["layer"]], 1 if act["when"] == "end" else 0]) + struct.pack("<d", act["amount"])
+    return body
 
 
 def identity(i):
@@ -213,8 +216,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 6},
-    {"name": "hello ack", "kind": "HelloAck", "version": 6, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 7},
+    {"name": "hello ack", "kind": "HelloAck", "version": 7, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -298,6 +301,19 @@ valid = [
                 "offChanges": [{"itemId": "9988400002665", "attributeId": 6, "value": 0.9},
                                {"itemId": "9988400002665", "attributeId": 51, "value": 1692.8},
                                {"itemId": "9988400002665", "attributeId": 54, "value": 5280.0}]}},
+    {"name": "activate an armor repairer", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002801", "moduleType": 523, "effectId": 27, "fx": "effects.ArmorRepair",
+                "durationMs": 6000.0, "capacitorNeed": 20.0, "repeat": 1000, "targetId": "0",
+                "action": {"kind": "repair", "layer": "armor", "amount": 69.0, "when": "end"},
+                "onChanges": [{"itemId": "9988400002801", "attributeId": 6, "value": 20.0},
+                              {"itemId": "9988400002801", "attributeId": 73, "value": 6000.0}],
+                "offChanges": [{"itemId": "9988400002801", "attributeId": 6, "value": 20.0},
+                               {"itemId": "9988400002801", "attributeId": 73, "value": 6000.0}]}},
+    {"name": "activate a shield booster", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002802", "moduleType": 399, "effectId": 4, "fx": "effects.ShieldBoosting",
+                "durationMs": 2000.0, "capacitorNeed": 20.0, "repeat": 1000, "targetId": "0",
+                "action": {"kind": "repair", "layer": "shield", "amount": 26.0, "when": "start"},
+                "onChanges": [], "offChanges": []}},
     {"name": "activate a railgun that fires antimatter", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002719", "moduleType": 10678, "effectId": 34, "fx": "effects.ProjectileFired",
                 "durationMs": 2750.8, "capacitorNeed": 1.3545, "repeat": 1000, "targetId": "980050000108",

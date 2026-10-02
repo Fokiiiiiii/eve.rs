@@ -8,6 +8,7 @@
 
 use eve_marshal::Value;
 
+use crate::health::Layer;
 use crate::link::ChargeOp;
 use crate::payload;
 use crate::scene::{Out, Scene, SessionId, TICKS_PER_SECOND};
@@ -40,6 +41,21 @@ pub struct Change {
     pub value: f64,
 }
 
+/// When in a cycle what an effect does to the scene is done: the repair of a shield booster is made as the cycle begins, that of an armor repairer as it ends
+/// (`START_OF_CYCLE_EFFECTS` of the reference's `localCycleRuntime.js`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Applies {
+    CycleStart,
+    CycleEnd,
+}
+
+/// What a cycle of an effect does to the scene besides what it costs the capacitor and the numbers it changes (the host has worked out the points from dogma).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Action {
+    /// A layer of the ship that runs the effect is mended: `amount` points a cycle (an armor repairer, a shield booster, a hull repairer).
+    Repair { layer: Layer, amount: f64, when: Applies },
+}
+
 /// An effect the host asks the scene to run, with everything the host has worked out for it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Effect {
@@ -56,6 +72,8 @@ pub struct Effect {
     pub target_id: i64,
     /// A turret's numbers when the effect is a weapon that shoots at the target each cycle (`crate::weapons`).
     pub turret: Option<Turret>,
+    /// What a cycle does to the scene besides what it costs and the numbers it changes (a repair).
+    pub action: Option<Action>,
     /// The ship's numbers while the effect runs and when it does not (nothing changes when the effect does not touch them).
     pub on: Option<Numbers>,
     pub off: Option<Numbers>,
@@ -436,6 +454,7 @@ impl Scene {
         if let Some(pilot) = self.pilots.get_mut(&session) {
             pilot.modules.running.push(run);
         }
+        out.extend(self.act(session, &effect, Applies::CycleStart, now));
         out.extend(self.fire_turret(session, &effect, now));
         // the round of the first shot is spent after the shot; a turret that has no round for the next cycle stops
         let (spent, goes_on) = self.spend_round(session, effect.module_id, now);
@@ -600,20 +619,24 @@ impl Scene {
         vec![Self::charge_told(session, owner, ship, at, new, old)]
     }
 
-    /// A cycle ends: the next begins (and costs capacitor), or, when the pilot asked to stop or the capacitor cannot pay, the effect ends.
+    /// A cycle ends: what it does at its end is done, then the next begins (and costs capacitor), or, when the pilot asked to stop or the capacitor cannot pay, the
+    /// effect ends.
     fn end_cycle(&mut self, session: SessionId, index: usize, at: i64) -> Vec<Out> {
         let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
         let run = pilot.modules.running[index].clone();
         // a weapon goes on while its target is there and locked
         let target_ok = run.effect.turret.is_none() || self.turret_target_ok(session, &run.effect);
-        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        // what the cycle that ends does at its end is done before the effect goes on or ends
+        let mut out = self.act(session, &run.effect, Applies::CycleEnd, at);
+        let Some(pilot) = self.pilots.get_mut(&session) else { return out };
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
         let affordable =
             pilot.modules.capacitor.as_ref().is_some_and(|c| c.charge_at(at) >= run.effect.capacitor_need);
         let more = run.cycles < run.effect.repeat;
         if run.stopping || !more || !affordable || !target_ok {
             pilot.modules.running.remove(index);
-            return self.effect_ended(session, run, owner, ship_id, at, Ending::Done);
+            out.extend(self.effect_ended(session, run, owner, ship_id, at, Ending::Done));
+            return out;
         }
         // the host took the rounds out while the gun ran (a pilot unloaded it in space): it stops with no shot
         if run
@@ -625,7 +648,8 @@ impl Scene {
             .is_some_and(|(charge, rounds)| rounds < charge.per_cycle)
         {
             pilot.modules.running.remove(index);
-            return self.effect_ended(session, run, owner, ship_id, at, Ending::NoRounds);
+            out.extend(self.effect_ended(session, run, owner, ship_id, at, Ending::NoRounds));
+            return out;
         }
         let (before, after) = match pilot.modules.capacitor.as_mut() {
             Some(capacitor) => capacitor.draw(at, run.effect.capacitor_need),
@@ -635,9 +659,10 @@ impl Scene {
         next.cycle_start = at;
         next.cycles += 1;
         let next = next.clone();
-        let mut out = vec![Self::charge_told(session, owner, ship_id, at, after, before)];
+        out.push(Self::charge_told(session, owner, ship_id, at, after, before));
         if next.effect.turret.is_none() {
             out.push(Self::effect_told(session, owner, ship_id, &next, at, true, at, None));
+            out.extend(self.act(session, &next.effect, Applies::CycleStart, at));
             return out;
         }
         // a turret shoots, spends its round and then is told to have begun another cycle (the recording of the reference's gun); one that is out of rounds stops
@@ -652,6 +677,29 @@ impl Scene {
         {
             let run = pilot.modules.running.remove(position);
             out.extend(self.effect_ended(session, run, owner, ship_id, at, Ending::NoRounds));
+        }
+        out
+    }
+
+    /// What a cycle of `effect` does to the scene at this point of the cycle (`when`): a repair mends the layer of the ship that runs it, and the pilot and those who see the
+    /// ship are told what changed.
+    fn act(&mut self, session: SessionId, effect: &Effect, when: Applies, at: i64) -> Vec<Out> {
+        let Some(Action::Repair { layer, amount, when: applies }) = effect.action.as_ref() else {
+            return Vec::new();
+        };
+        if *applies != when {
+            return Vec::new();
+        }
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+        let Some(applied) = pilot.ship.health.repair(at, *layer, *amount) else { return Vec::new() };
+        let mut out: Vec<Out> = Self::health_told(session, owner, ship_id, at, &applied.attribute_changes())
+            .into_iter()
+            .collect();
+        if applied.changed
+            && let Some(subject) = self.subject(ship_id, at)
+        {
+            out.extend(self.announce_damage_state(&subject, at));
         }
         out
     }
@@ -741,6 +789,7 @@ pub(crate) mod tests {
             repeat: 1000,
             target_id: 0,
             turret: None,
+            action: None,
             on: Some(Numbers { mass: 1_663_000.0, max_velocity: 522.848918, signature_radius: 28.0 }),
             off: Some(Numbers { mass: 1_163_000.0, max_velocity: 339.25, signature_radius: 28.0 }),
             on_changes: vec![
@@ -1255,5 +1304,100 @@ pub(crate) mod tests {
         scene.leave(A, crate::scene::Departure::LoggedOff, t + SECOND);
         let (out, _) = poll_until(&mut scene, t + SECOND, 12.0);
         assert!(out.iter().all(|o| !matches!(o, Out::Notify { session: 7, .. })), "{out:?}");
+    }
+
+    /// An armor repairer of the Ibis: 30 points a cycle of five seconds, applied at the end of the cycle.
+    fn repairer(layer: Layer, amount: f64, when: Applies) -> Effect {
+        Effect {
+            module_id: MODULE,
+            module_type: 3530,
+            effect_id: 27,
+            fx: "effects.ArmorRepair".to_string(),
+            duration_ms: 5_000.0,
+            capacitor_need: 20.0,
+            repeat: 1000,
+            target_id: 0,
+            turret: None,
+            action: Some(Action::Repair { layer, amount, when }),
+            on: None,
+            off: None,
+            on_changes: Vec::new(),
+            off_changes: Vec::new(),
+        }
+    }
+
+    /// A ship that has lost its shield and half its armor.
+    fn hurt() -> (Scene, i64) {
+        let (mut scene, t) = crowd();
+        // raw damage the layers' resistances let through: enough to strip the 220 shield and 68.75 of the armor
+        let raw = [0.0, 600.0, 0.0, 0.0];
+        let (_, applied) = scene.damage(spec().ship_id, raw, t);
+        assert!(applied.is_some());
+        (scene, t)
+    }
+
+    fn layers(scene: &Scene, at: i64) -> crate::health::Layers {
+        scene.pilots[&A].ship.health.layers_at(at)
+    }
+
+    #[test]
+    fn an_armor_repairer_mends_the_armor_when_a_cycle_ends_and_tells_the_pilot_and_those_who_look_on() {
+        let (mut scene, t) = hurt();
+        let armor_before = layers(&scene, t).armor;
+        assert!(armor_before < 137.5, "the armor took some: {armor_before}");
+        let started = scene.activate(A, repairer(Layer::Armor, 30.0, Applies::CycleEnd), t);
+        assert!(matches!(started.first(), Some(Out::Accepted { command: 17, .. })), "{started:?}");
+        // nothing is mended while the cycle runs
+        assert_eq!(layers(&scene, t + SECOND).armor, armor_before);
+        let (out, after) = poll_until(&mut scene, t, 5.1);
+        let armor = layers(&scene, after).armor;
+        assert!((armor - (armor_before + 30.0).min(137.5)).abs() < 1e-3, "{armor} from {armor_before}");
+        // the pilot is told the armor that is gone (attribute 266), those who look on its damage state
+        let told = labels(&out);
+        assert!(told.iter().any(|l| l.starts_with("7:attributes[") && l.contains("266")), "{told:?}");
+        assert!(told.iter().any(|l| l.contains("OnDamageStateChange") || l.contains("destiny")), "{told:?}");
+        assert!(told.iter().any(|l| l.starts_with("8:destiny[")), "the one who looks on is told: {told:?}");
+    }
+
+    #[test]
+    fn a_shield_booster_gives_its_points_as_the_cycle_begins_and_again_at_each_cycle() {
+        let (mut scene, t) = hurt();
+        let before = layers(&scene, t).shield;
+        let out = scene.activate(A, repairer(Layer::Shield, 40.0, Applies::CycleStart), t);
+        // at once, in the answer to the activation
+        let shield = layers(&scene, t).shield;
+        assert!((shield - (before + 40.0)).abs() < 1e-3, "{shield} from {before}");
+        assert!(
+            labels(&out).iter().any(|l| l.starts_with("7:attributes[") && l.contains("264")),
+            "{:?}",
+            labels(&out)
+        );
+        // and again as the next cycle begins
+        let (_, after) = poll_until(&mut scene, t, 5.1);
+        let second = layers(&scene, after).shield;
+        assert!(second >= shield + 39.0, "{second} from {shield}");
+    }
+
+    #[test]
+    fn a_repair_gives_back_no_more_than_the_layer_holds_and_a_whole_ship_is_told_nothing_of_it() {
+        let (mut scene, t) = crowd();
+        scene.activate(A, repairer(Layer::Armor, 30.0, Applies::CycleEnd), t);
+        let (out, after) = poll_until(&mut scene, t, 5.1);
+        assert_eq!(layers(&scene, after).armor, 137.5);
+        let told = labels(&out);
+        assert!(!told.iter().any(|l| l.contains("266") || l.contains("OnDamageStateChange")), "{told:?}");
+        // the capacitor is still drawn for each cycle: a repairer that has nothing to mend still runs
+        assert!(told.iter().any(|l| l == "7:OnGodmaShipEffect"), "{told:?}");
+    }
+
+    #[test]
+    fn a_repairer_the_pilot_stops_still_mends_at_the_end_of_the_cycle_it_is_in() {
+        let (mut scene, t) = hurt();
+        let before = layers(&scene, t).armor;
+        scene.activate(A, repairer(Layer::Armor, 30.0, Applies::CycleEnd), t);
+        scene.deactivate(A, MODULE, t + SECOND);
+        let (_, after) = poll_until(&mut scene, t, 5.1);
+        assert!((layers(&scene, after).armor - (before + 30.0)).abs() < 1e-3);
+        assert_eq!(scene.pilots[&A].modules.running_count(), 0, "and it has stopped");
     }
 }

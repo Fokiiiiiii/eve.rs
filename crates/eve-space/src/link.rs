@@ -6,13 +6,13 @@
 //! `oracle/fixtures/simlink/messages.json` pins the layout for both sides.
 
 use crate::death::Credit;
-use crate::health::{Condition, Resonances, Vitals};
-use crate::modules::{Change, Effect, Numbers};
+use crate::health::{Condition, Layer, Resonances, Vitals};
+use crate::modules::{Action, Applies, Change, Effect, Numbers};
 use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Charge, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 6;
+pub const PROTOCOL_VERSION: u16 = 7;
 
 /// The message kinds.
 pub mod kind {
@@ -672,7 +672,8 @@ fn put_effect(out: &mut Vec<u8>, effect: &Effect) {
     out.push(
         u8::from(effect.on.is_some())
             | (u8::from(effect.off.is_some()) << 1)
-            | (u8::from(effect.turret.is_some()) << 2),
+            | (u8::from(effect.turret.is_some()) << 2)
+            | (u8::from(effect.action.is_some()) << 3),
     );
     for numbers in [&effect.on, &effect.off].into_iter().flatten() {
         put_numbers(out, numbers);
@@ -681,6 +682,48 @@ fn put_effect(out: &mut Vec<u8>, effect: &Effect) {
     put_changes(out, &effect.off_changes);
     if let Some(turret) = &effect.turret {
         put_turret(out, turret);
+    }
+    if let Some(action) = &effect.action {
+        put_action(out, action);
+    }
+}
+
+/// What a cycle of an effect does: a tag and its numbers (`0`: a repair: the layer, when in the cycle, the points).
+fn put_action(out: &mut Vec<u8>, action: &Action) {
+    match action {
+        Action::Repair { layer, amount, when } => {
+            out.push(0);
+            out.push(match layer {
+                Layer::Shield => 0,
+                Layer::Armor => 1,
+                Layer::Structure => 2,
+            });
+            out.push(match when {
+                Applies::CycleStart => 0,
+                Applies::CycleEnd => 1,
+            });
+            out.extend_from_slice(&amount.to_le_bytes());
+        }
+    }
+}
+
+fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
+    match reader.u8()? {
+        0 => {
+            let layer = match reader.u8()? {
+                0 => Layer::Shield,
+                1 => Layer::Armor,
+                2 => Layer::Structure,
+                _ => return Err(DecodeError::BadValue("layer")),
+            };
+            let when = match reader.u8()? {
+                0 => Applies::CycleStart,
+                1 => Applies::CycleEnd,
+                _ => return Err(DecodeError::BadValue("applies")),
+            };
+            Ok(Action::Repair { layer, when, amount: reader.f64()? })
+        }
+        _ => Err(DecodeError::BadValue("action")),
     }
 }
 
@@ -711,7 +754,7 @@ fn read_effect(reader: &mut Reader) -> Result<Effect, DecodeError> {
     let repeat = reader.i32()?;
     let target_id = reader.i64()?;
     let flags = reader.u8()?;
-    if flags > 7 {
+    if flags > 15 {
         return Err(DecodeError::BadValue("flags"));
     }
     let on = if flags & 1 != 0 { Some(read_numbers(reader)?) } else { None };
@@ -719,6 +762,7 @@ fn read_effect(reader: &mut Reader) -> Result<Effect, DecodeError> {
     let on_changes = read_changes(reader)?;
     let off_changes = read_changes(reader)?;
     let turret = if flags & 4 != 0 { Some(read_turret(reader)?) } else { None };
+    let action = if flags & 8 != 0 { Some(read_action(reader)?) } else { None };
     Ok(Effect {
         module_id,
         module_type,
@@ -729,6 +773,7 @@ fn read_effect(reader: &mut Reader) -> Result<Effect, DecodeError> {
         repeat,
         target_id,
         turret,
+        action,
         on,
         off,
         on_changes,

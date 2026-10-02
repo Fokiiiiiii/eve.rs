@@ -698,6 +698,7 @@ mod tests {
             repeat: 1000,
             target_id: 0,
             turret: None,
+            action: None,
             on: None,
             off: None,
             on_changes: Vec::new(),

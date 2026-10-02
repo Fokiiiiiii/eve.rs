@@ -216,7 +216,29 @@ public sealed record SimChargeSpent(ulong SessionId, long ModuleId, long RoundsL
 /// </summary>
 public sealed record SimEffect(
     long ModuleId, int ModuleType, int EffectId, string Fx, double DurationMs, double CapacitorNeed, int Repeat, long TargetId, SimNumbers? On, SimNumbers? Off,
-    IReadOnlyList<SimChange> OnChanges, IReadOnlyList<SimChange> OffChanges, SimTurret? Turret = null);
+    IReadOnlyList<SimChange> OnChanges, IReadOnlyList<SimChange> OffChanges, SimTurret? Turret = null, SimAction? Action = null);
+
+/// <summary>A layer of a ship's health.</summary>
+public enum SimLayer : byte
+{
+    Shield = 0,
+    Armor = 1,
+    Structure = 2,
+}
+
+/// <summary>What a cycle of an effect does to the scene besides what it costs and the numbers it changes (the host has worked out the points from dogma).</summary>
+public abstract record SimAction
+{
+    private SimAction()
+    {
+    }
+
+    /// <summary>
+    /// A layer of the ship that runs the effect is mended, <paramref name="Amount"/> points a cycle: as the cycle ends (an armor repairer, a hull repairer) or as it begins (a
+    /// shield booster).
+    /// </summary>
+    public sealed record Repair(SimLayer Layer, double Amount, bool AtCycleEnd) : SimAction;
+}
 
 /// <summary>Run an effect. Answered under <see cref="SimCommands.Activate"/>: <see cref="SimAccepted"/> or <see cref="SimRefused"/>.</summary>
 public sealed record SimActivate(ulong SessionId, SimEffect Effect) : SimMessage;

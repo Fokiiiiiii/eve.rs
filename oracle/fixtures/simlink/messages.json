@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 6,
-   "hex": "03000000010600"
+   "version": 7,
+   "hex": "03000000010700"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 6,
+   "version": 7,
    "pollHz": 4,
-   "hex": "0700000002060004000000"
+   "hex": "0700000002070004000000"
   },
   {
    "name": "enter by undocking",
@@ -663,6 +663,76 @@
     ]
    },
    "hex": "19010000134f2c3859955c060069b6089b15090000360e00000a0000000d00656666656374732e4c617365723333333333739a40cdccccccccccec3fe8030000e938882fe4000000040300000069b6089b1509000006000000cdccccccccccec3f69b6089b15090000330000003333333333739a4069b6089b15090000360000000000000000a0b4400300000069b6089b1509000006000000cdccccccccccec3f69b6089b15090000330000003333333333739a4069b6089b15090000360000000000000000a0b440360e00000d00656666656374732e4c61736572000000000000000000000000000004400000000000000e4000000000000000000000000000a0b4400000000000409f40000000000000e03f000000000088e34000"
+  },
+  {
+   "name": "activate an armor repairer",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002801",
+    "moduleType": 523,
+    "effectId": 27,
+    "fx": "effects.ArmorRepair",
+    "durationMs": 6000.0,
+    "capacitorNeed": 20.0,
+    "repeat": 1000,
+    "targetId": "0",
+    "action": {
+     "kind": "repair",
+     "layer": "armor",
+     "amount": 69.0,
+     "when": "end"
+    },
+    "onChanges": [
+     {
+      "itemId": "9988400002801",
+      "attributeId": 6,
+      "value": 20.0
+     },
+     {
+      "itemId": "9988400002801",
+      "attributeId": 73,
+      "value": 6000.0
+     }
+    ],
+    "offChanges": [
+     {
+      "itemId": "9988400002801",
+      "attributeId": 6,
+      "value": 20.0
+     },
+     {
+      "itemId": "9988400002801",
+      "attributeId": 73,
+      "value": 6000.0
+     }
+    ]
+   },
+   "hex": "ae000000134f2c3859955c0600f1b6089b150900000b0200001b0000001300656666656374732e41726d6f72526570616972000000000070b7400000000000003440e803000000000000000000000802000000f1b6089b15090000060000000000000000003440f1b6089b1509000049000000000000000070b74002000000f1b6089b15090000060000000000000000003440f1b6089b1509000049000000000000000070b7400001010000000000405140"
+  },
+  {
+   "name": "activate a shield booster",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002802",
+    "moduleType": 399,
+    "effectId": 4,
+    "fx": "effects.ShieldBoosting",
+    "durationMs": 2000.0,
+    "capacitorNeed": 20.0,
+    "repeat": 1000,
+    "targetId": "0",
+    "action": {
+     "kind": "repair",
+     "layer": "shield",
+     "amount": 26.0,
+     "when": "start"
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "61000000134f2c3859955c0600f2b6089b150900008f010000040000001600656666656374732e536869656c64426f6f7374696e670000000000409f400000000000003440e803000000000000000000000800000000000000000000000000000000003a40"
   },
   {
    "name": "activate a railgun that fires antimatter",

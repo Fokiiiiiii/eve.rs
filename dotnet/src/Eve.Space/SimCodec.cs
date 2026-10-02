@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 6;
+    public const ushort ProtocolVersion = 7;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -271,7 +271,7 @@ public static class SimCodec
         var repeat = r.I32();
         var target = r.I64();
         var flags = r.U8();
-        if (flags > 7)
+        if (flags > 15)
         {
             throw new SimLinkException(SimLinkError.BadValue, "bad flags");
         }
@@ -280,7 +280,27 @@ public static class SimCodec
         var onChanges = ReadChanges(ref r);
         var offChanges = ReadChanges(ref r);
         var turret = (flags & 4) != 0 ? ReadTurret(ref r) : null;
-        return new SimEffect(module, moduleType, effectId, fx, duration, capacitor, repeat, target, on, off, onChanges, offChanges, turret);
+        var action = (flags & 8) != 0 ? ReadAction(ref r) : null;
+        return new SimEffect(module, moduleType, effectId, fx, duration, capacitor, repeat, target, on, off, onChanges, offChanges, turret, action);
+    }
+
+    private static SimAction ReadAction(ref Reader r)
+    {
+        switch (r.U8())
+        {
+            case 0:
+                {
+                    var layer = r.U8();
+                    var when = r.U8();
+                    if (layer > 2 || when > 1)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad repair");
+                    }
+                    return new SimAction.Repair((SimLayer)layer, r.F64(), when == 1);
+                }
+            default:
+                throw new SimLinkException(SimLinkError.BadValue, "bad action");
+        }
     }
 
     private static SimTurret ReadTurret(ref Reader r)
@@ -699,7 +719,7 @@ public static class SimCodec
         w.F64(e.CapacitorNeed);
         w.I32(e.Repeat);
         w.I64(e.TargetId);
-        w.U8((byte)((e.On is null ? 0 : 1) | (e.Off is null ? 0 : 2) | (e.Turret is null ? 0 : 4)));
+        w.U8((byte)((e.On is null ? 0 : 1) | (e.Off is null ? 0 : 2) | (e.Turret is null ? 0 : 4) | (e.Action is null ? 0 : 8)));
         if (e.On is { } on)
         {
             WriteNumbers(w, on);
@@ -713,6 +733,13 @@ public static class SimCodec
         if (e.Turret is { } turret)
         {
             WriteTurret(w, turret);
+        }
+        if (e.Action is SimAction.Repair repair)
+        {
+            w.U8(0);
+            w.U8((byte)repair.Layer);
+            w.U8(repair.AtCycleEnd ? (byte)1 : (byte)0);
+            w.F64(repair.Amount);
         }
     }
 

@@ -106,6 +106,14 @@ impl DamageState {
     }
 }
 
+/// A layer of a ship's health.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Layer {
+    Shield,
+    Armor,
+    Structure,
+}
+
 /// What a hit or a repair did: the points before and after, and what the client is told changed.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Applied {
@@ -321,6 +329,57 @@ impl Health {
         })
     }
 
+    /// A repair of `amount` points to one layer at `now` (what a repairer or a booster does each cycle): the layer is given back that many points, up to what it holds. None when
+    /// there is nothing to mend (a thing with no points, no such layer, or nothing to give back).
+    pub fn repair(&mut self, now: i64, layer: Layer, amount: f64) -> Option<Applied> {
+        if !self.vitals.hurtable() || amount.is_nan() || amount <= 0.0 {
+            return None;
+        }
+        let max = self.vitals.layers();
+        let most = match layer {
+            Layer::Shield => max.shield,
+            Layer::Armor => max.armor,
+            Layer::Structure => max.structure,
+        };
+        if most <= 0.0 {
+            return None;
+        }
+        let before = self.layers_at(now);
+        let armor_before = self.armor_gone();
+        let mut after = before;
+        match layer {
+            Layer::Shield => after.shield = (before.shield + amount).min(most),
+            Layer::Armor => after.armor = (before.armor + amount).min(most),
+            Layer::Structure => after.structure = (before.structure + amount).min(most),
+        }
+        let unit = |left: f64, most: f64| (left / most).clamp(0.0, 1.0);
+        self.condition = Condition {
+            damage: if max.structure > 0.0 {
+                round6(1.0 - unit(after.structure, max.structure))
+            } else {
+                1.0
+            },
+            armor_damage: if max.armor > 0.0 { round6(1.0 - unit(after.armor, max.armor)) } else { 0.0 },
+            shield_charge: if max.shield > 0.0 { round6(unit(after.shield, max.shield)) } else { 0.0 },
+            charge: self.condition.charge,
+        };
+        self.at = now;
+        if self.condition.shield_charge < 1.0 && max.shield > 0.0 {
+            self.next_sample.get_or_insert(now + crate::modules::TICK);
+        } else if max.shield > 0.0 {
+            self.next_sample = None;
+        }
+        Some(Applied {
+            before,
+            after,
+            taken: Layers { shield: 0.0, armor: 0.0, structure: 0.0 },
+            armor_damage: (armor_before, self.armor_gone()),
+            max_structure: max.structure,
+            destroyed: false,
+            changed: before != after,
+        })
+    }
+
     /// The ship is mended: full shield, armor and hull.
     pub fn restore(&mut self, now: i64) -> Applied {
         let max = self.vitals.layers();
@@ -372,7 +431,7 @@ use crate::scene::{Out, Pilot, Scene, SessionId};
 
 impl Scene {
     /// The pilot is told which of its ship's attributes changed (one notification for all of them), or nothing when none did.
-    fn health_told(
+    pub(crate) fn health_told(
         session: SessionId,
         owner: i64,
         ship: i64,

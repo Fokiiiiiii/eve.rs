@@ -252,6 +252,7 @@ impl Dogma for SceneWorld<'_> {
             repeat: i32::try_from(repeat.max(1)).unwrap_or(i32::MAX),
             target_id: target_id.unwrap_or(0),
             turret: Some(weapon.turret),
+            action: None,
             on: None,
             off: None,
             on_changes: Vec::new(),

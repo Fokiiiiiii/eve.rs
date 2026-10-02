@@ -171,7 +171,7 @@ public static class SimCodec
             var turret = ReadTurret(ref r);
             weapons[i] = new SimNpcWeapon(
                 moduleId, effectId, cycleMs, capacitorNeed, turret.WeaponTypeId, turret.Fx, turret.RawDamage, turret.OptimalRange, turret.Falloff, turret.TrackingSpeed,
-                turret.SignatureResolution, turret.Charge);
+                turret.SignatureResolution, turret.Charge, turret.Missile);
         }
         var wreck = ReadWreckKind(ref r);
         var hull = r.U8() switch
@@ -702,7 +702,7 @@ public static class SimCodec
             w.F64(weapon.CycleMs);
             w.F64(weapon.CapacitorNeed);
             WriteTurret(w, new SimTurret(
-                weapon.WeaponTypeId, weapon.Fx, weapon.RawDamage, weapon.OptimalRange, weapon.Falloff, weapon.TrackingSpeed, weapon.SignatureResolution, weapon.Charge));
+                weapon.WeaponTypeId, weapon.Fx, weapon.RawDamage, weapon.OptimalRange, weapon.Falloff, weapon.TrackingSpeed, weapon.SignatureResolution, weapon.Charge, weapon.Missile));
         }
         WriteWreckKind(w, i.Wreck);
         w.U8((byte)(i.Hull ? 1 : 0));

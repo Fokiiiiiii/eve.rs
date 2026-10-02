@@ -120,3 +120,49 @@ def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
         shown_empty = re.search(r'\["isEmpty", (True|False|true|false|1|0)\]', str([e for e in seen if wreck in [i for i, _ in slims_in([e])]]).replace("'", '"'))
         if shown_empty is not None:
             assert (shown_empty.group(1).lower() in ("true", "1")) == (not rows), (shown_empty.group(1), rows)
+
+
+def test_a_rat_that_launches_missiles_shows_the_pilot_each_missile_and_the_missiles_hurt_it():
+    """A hull with `missileLaunchingForEntity` (the Guristas Invader: Scourge Rockets) launches missiles of its own: the pilot is shown each as a ball with a launch, and
+    the damage of one that lands is told at the hit quality of a missile (`oracle/fixtures/npc/hull_weapons.json`: the launcher is what the reference makes of the hull)."""
+    race = plain_race(DEATH["races"][0], "victim")
+    run = uuid.uuid4().hex[:10]
+    with base.connect(f"walk-npc-missile-{run}") as who:
+        _, ship_id, _, _ = arrive(who, race, run)
+        service = who.call("ship", "MachoBindObject", (STATION, 15), None)
+        who.call_bound(service[0], "Undock", ship_id, False)
+        ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)
+        watch({"events": who}, 3.0)
+        who.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
+        watch({"events": who}, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))
+
+        reply = who.call("slash", "SlashCmd", "/npc 1 Guristas Invader")
+        text = getattr(reply, "value", reply)
+        text = text.decode() if isinstance(text, bytes) else str(text)
+        assert text.startswith("Spawned 1 hull from Guristas Invader"), text
+        arrived = watch({"events": who}, 6.0)["events"]
+        rats = [int(item) for event in arrived for item, _ in re.findall(r'\["itemID", \{"\$long": (\d+)\}\], \["typeID", (\d+)\]', str(event).replace("'", '"')) if int(item) != ship_id]
+        assert rats, "the rat did not come into space"
+        # the rat attacks what comes within 4,750 m of it and comes out 5 km off: the pilot goes to it
+        who.call_bound(ballpark[0], "CmdOrbit", rats[0], 2000)
+
+        seen = watch({"events": who}, 90.0, until=lambda s: any(e["name"] == "OnDamageMessage" for e in s["events"]))["events"]
+        actions = [name for e in seen if e["name"] == "DoDestinyUpdate" for name in _names(e)]
+        hits = shots_of_others(seen)
+        assert "LaunchMissile" in actions, (text[:500], sorted(set(actions)), sorted({e["name"] for e in seen}), hits[:2])
+        assert "AddBalls2" in actions, sorted(set(actions))
+        assert hits, "no missile landed"
+        assert {h["hitQuality"] for h in hits} == {3}, hits
+
+
+def shots_of_others(events: list) -> list:
+    """The combat-log messages of attacks on the pilot (`attackType` `otherPlayerWeapons`), as `{key: value}`."""
+    from tests.test_undock import args_of
+
+    out = []
+    for event in events:
+        if event["name"] == "OnDamageMessage":
+            message = {k: v for k, v in args_of(event)["$tuple"][0]["$dict"]}
+            if message.get("attackType") == "otherPlayerWeapons":
+                out.append(message)
+    return out

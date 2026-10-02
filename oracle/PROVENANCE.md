@@ -104,7 +104,8 @@ header). The Rust port `crates/eve-space/src/wreck_types.rs` (ADR 0009) is held 
 `fixtures/npc/hull_weapons.json`: what the reference's `npcEquipment` (`getNpcWeaponModules`, `buildNpcWeaponModuleSnapshot`: `server/src/space/npc/npcEquipment.js`,
 `server/src/space/combat/weaponDogma.js`) makes of the weapon of every NPC ship type of the static data that has one (4446 of 4687 types) and of one in twelve of
 those that have none, with the attributes and effects of the type that it worked from (the reference's `getTypeAttributeMap`, `getTypeDogmaEffects`), made by
-`tools/dev/gen-npc-armament-fixture.js`. The C# port `dotnet/src/Eve.Npc/NpcArmament.cs` (ADR 0009) is held to it by `HullWeaponFixtureTests`. The simulation
+`tools/dev/gen-npc-armament-fixture.js`, and, for every NPC type that launches missiles (`missileLaunchingForEntity`: 1878 types, 693 with no turret), the missile the reference makes of it
+(`getNpcEntityMissileWeaponSource`) with the attributes of the missile type it worked from (`missileTypes`). The C# port `dotnet/src/Eve.Npc/NpcArmament.cs` (ADR 0009) is held to it by `HullWeaponFixtureTests`. The simulation
 knows one weapon to an NPC ship (its module is the ship), so 117 types that the reference gives two turrets (`targetAttack` and `targetDisintegratorAttack`) are
 compared on the first, and the 18 types of the chain-lightning vorton projector have none.
 

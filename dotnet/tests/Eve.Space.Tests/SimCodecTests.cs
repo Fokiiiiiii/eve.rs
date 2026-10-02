@@ -98,7 +98,7 @@ public class SimCodecTests
         (long)i["hostileResponseThreshold"]!, (long)i["friendlyResponseThreshold"]!, (double)i["aggressionRange"]!,
         [.. ((JsonArray)i["weapons"]!).Select(w => new SimNpcWeapon(
             Wide(w!, "moduleId"), (int)w!["effectId"]!, (double)w["cycleMs"]!, (double)w["capacitorNeed"]!, (int)w["weaponTypeId"]!, (string)w["fx"]!,
-            VectorOf(w["rawDamage"]!), (double)w["optimalRange"]!, (double)w["falloff"]!, (double)w["trackingSpeed"]!, (double)w["signatureResolution"]!, ChargeOf(w["charge"])))],
+            VectorOf(w["rawDamage"]!), (double)w["optimalRange"]!, (double)w["falloff"]!, (double)w["trackingSpeed"]!, (double)w["signatureResolution"]!, ChargeOf(w["charge"]), MissileOf(w["missile"])))],
         WreckKindOf(i["wreck"]),
         i["hull"] is { } hull && (bool)hull,
         i["hostWreck"] is { } hostWreck && (bool)hostWreck);

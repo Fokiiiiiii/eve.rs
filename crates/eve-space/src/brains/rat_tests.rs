@@ -266,6 +266,85 @@ fn a_rat_locks_and_shoots_a_player_who_came_near_and_the_player_is_told_what_the
     assert!(shield < spec().vitals.shield_capacity, "shield {shield}");
 }
 
+/// A rat that launches missiles of its own (a hull with `missileLaunchingForEntity`): the weapon of its identity flies a missile and has no rounds to spend.
+fn missile_rat_identity(aggression_range: f64) -> NpcIdentity {
+    let mut identity = rat_identity(aggression_range);
+    let weapon = &mut identity.combat.weapons[0];
+    // the effect the host gives the launcher of a hull (`missileLaunchingForEntity`), not the turret's: the brain has to work out the weapon from it
+    weapon.effect_id = 569;
+    weapon.turret = Turret {
+        weapon_type_id: 5_678,
+        fx: "effects.MissileDeployment".to_string(),
+        raw_damage: [0.0, 0.0, 30.0, 0.0],
+        optimal_range: 9_000.0,
+        falloff: 0.0,
+        tracking_speed: 0.0,
+        signature_resolution: 40_000.0,
+        charge: None,
+        missile: Some(crate::missiles::Missile {
+            charge_type_id: 209,
+            group_id: 384,
+            name: "Mjolnir Light Missile".to_string(),
+            radius: 100.0,
+            mass: 50.0,
+            agility: 5.0,
+            hit_points: 60.0,
+            max_velocity: 4_500.0,
+            flight_time_ms: 2_000.0,
+            explosion_radius: 20.0,
+            explosion_velocity: 1.0e9,
+            damage_reduction_factor: 0.5,
+            damage_reduction_sensitivity: 5.5,
+        }),
+    };
+    identity
+}
+
+#[test]
+fn a_rat_that_launches_missiles_shows_the_player_each_missile_as_a_ball_and_the_missile_lands_on_the_player()
+{
+    let mut scene = scene_with_a_player();
+    let place = place_near(&mut scene, 6_000.0);
+    let (rat, _) = scene
+        .spawn_npc_with_behavior(rat_spec(), missile_rat_identity(15_000.0), place, BELT_RAT, LATER)
+        .unwrap();
+    let told = run(&mut scene, LATER, 40);
+    assert_eq!(scene.brains().unwrap().faults(rat), []);
+
+    // the player is shown the missiles the rat fires: a ball and a launch each, in one update
+    let launches = actions_named(&told, "LaunchMissile");
+    assert!(launches.len() >= 3, "{} missiles in 40 s", launches.len());
+    assert_eq!(launches[0][1..3], [Value::Long(spec().ship_id), Value::Long(RAT_SHIP)]);
+    assert!(actions_named(&told, "AddBalls2").len() >= launches.len());
+    // and they land: the damage of a missile reaches the player as that of another player's weapon, at the quality of a missile
+    let hits = notified(&told, "OnDamageMessage");
+    assert!(!hits.is_empty(), "no missile landed in 40 s");
+    let message = &hits[0][0];
+    assert_eq!(field(message, "attackType"), &Value::Str("otherPlayerWeapons".into()));
+    assert_eq!(field(message, "source"), &Value::Long(RAT_SHIP));
+    assert_eq!(field(message, "hitQuality"), &Value::Int(3));
+    assert!(
+        scene.pilots[&PLAYER].ship.health.layers_at(LATER + 40 * SECOND).shield
+            < spec().vitals.shield_capacity
+    );
+    // it needed no round of ammunition: the missiles went on firing
+    assert!(scene.missiles().count() < 3, "what is in flight is a few at most");
+}
+
+#[test]
+fn a_rat_that_launches_missiles_closes_to_the_missiles_reach_when_it_locks_from_further_off() {
+    // the rat locks the player from 13 km (it attacks at 15 km) but its missiles go 9 km: the launcher is refused until the rat is in reach, and then it fires
+    let mut scene = scene_with_a_player();
+    let place = place_near(&mut scene, 13_000.0);
+    let (rat, _) = scene
+        .spawn_npc_with_behavior(rat_spec(), missile_rat_identity(15_000.0), place, BELT_RAT, LATER)
+        .unwrap();
+    let told = run(&mut scene, LATER, 90);
+    assert_eq!(scene.brains().unwrap().faults(rat), []);
+    assert!(!actions_named(&told, "LaunchMissile").is_empty(), "the rat never launched a missile from 13 km");
+    assert!(!notified(&told, "OnDamageMessage").is_empty(), "no missile landed in 90 s");
+}
+
 /// A player whose ship has next to nothing to lose: one hit takes the last of its hull.
 fn fragile_scene() -> Scene {
     let mut ship = spec();

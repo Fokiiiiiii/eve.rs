@@ -25,6 +25,12 @@ pub const SCOOP_DISTANCE: f64 = 2_500.0;
 /// How far ahead of the ship's surface a drone comes into space, metres.
 const LAUNCH_OFFSET: f64 = 75.0;
 
+/// How far from its controller a drone may be sent at a target it finds by itself or takes up on its own (the reference's base drone control range: 20 km).
+const CONTROL_RANGE: f64 = 20_000.0;
+
+/// How long a drone remembers who attacked its controller (the reference's `DRONE_AGGRESSION_THREAT_RETENTION_MS`: 30 s), in ticks.
+const THREAT_MEMORY: i64 = 30 * crate::scene::TICKS_PER_SECOND;
+
 /// The states the client numbers a drone's activity by (`const.entity*`).
 pub const IDLE: i32 = 0;
 pub const COMBAT: i32 = 1;
@@ -90,6 +96,8 @@ pub struct DroneFlight {
     pub graphic_id: i32,
     /// How far off its controller (or its target) it circles, metres.
     pub orbit_distance: f64,
+    /// How far off its target it can shoot, metres: inside it the drone fights (the reference: `entityAttackRange`, at least the weapon's optimal range). 0 for the weapon's optimal.
+    pub attack_range: f64,
     /// The fraction of its top speed it flies at while it only follows its controller.
     pub cruise_fraction: f64,
 }
@@ -116,7 +124,7 @@ impl Scene {
         flight: DroneFlight,
         now: i64,
     ) -> Result<(SessionId, Vec<Out>), &'static str> {
-        let DroneFlight { weapon, graphic_id, orbit_distance, cruise_fraction } = flight;
+        let DroneFlight { weapon, graphic_id, orbit_distance, attack_range, cruise_fraction } = flight;
         self.settle_pilot(controller, now);
         let index = self.drones_of(controller).len();
         let (controller_ship, position, direction, controller_radius) = {
@@ -145,7 +153,12 @@ impl Scene {
         };
         let optimal = weapon.turret.optimal_range;
         let falloff = weapon.turret.falloff;
-        let engagement_range = optimal.max(orbit_distance.min(optimal.max(1.0)));
+        // `resolveDroneEngagementRanges`: the drone fights inside its attack range, circles at the least of that and its orbit, and chases what runs out past the falloff of its weapon
+        let engagement_range = if attack_range > 0.0 {
+            attack_range.max(optimal)
+        } else {
+            optimal.max(orbit_distance.min(optimal.max(1.0)))
+        };
         let identity = NpcIdentity {
             combat: NpcCombat { weapons: vec![weapon], aggression_range: 0.0 },
             drone: Some(DroneLink {
@@ -166,7 +179,7 @@ impl Scene {
                 next_shot: 0,
                 engagement_range,
                 movement_range: orbit_distance.min(engagement_range),
-                chase_range: engagement_range.max(optimal + falloff),
+                chase_range: engagement_range.max(engagement_range + falloff),
             },
         );
 
@@ -334,6 +347,10 @@ impl Scene {
         self.settle_all(now);
         let mut out = Vec::new();
         let mut results = Vec::new();
+        // an order to engage that names nothing (the pilot has locked nothing) sends the drones to look for an opponent themselves
+        let searching = matches!(command, DroneCommand::Engage { target } if target <= 0);
+        let found = if searching { self.opponents_of(controller, now) } else { Vec::new() };
+        let mut asked = 0;
         for &drone_id in drones {
             let session =
                 self.session_of(drone_id).filter(|s| self.controller_of_drone(*s) == Some(controller));
@@ -342,6 +359,15 @@ impl Scene {
                 continue;
             };
             match command {
+                DroneCommand::Engage { .. } if searching => {
+                    // each drone takes the next opponent found (the last for the drones that are more than they): spread over what is there, as the drones of a pilot who does not focus their fire are
+                    let Some(&target) = found.get(asked.min(found.len().saturating_sub(1))) else {
+                        results.push((drone_id, Some("NO_OPPONENT")));
+                        continue;
+                    };
+                    asked += 1;
+                    out.extend(self.engage(session, target, now));
+                }
                 DroneCommand::Engage { target } => {
                     let Some(target_session) = self.session_of(target).filter(|t| *t != session) else {
                         results.push((drone_id, Some("NO_TARGET")));
@@ -374,6 +400,116 @@ impl Scene {
         }
         out.push(Out::DroneResults { session: controller, command: command.code(), results });
         out
+    }
+
+    /// Who the drones of a controller can be sent at when it has chosen nobody, the best first: those that attacked it lately (the newest first), then those that have it or one of its
+    /// drones locked, then the nearest ship that nobody flies and that is not a drone, all within the range the pilot controls its drones to. Only NPCs are found: a drone is not sent
+    /// at a pilot unless the pilot names it.
+    pub(crate) fn opponents_of(&self, controller: SessionId, now: i64) -> Vec<i64> {
+        let Some(controller_ship) = self.pilots.get(&controller).map(|pilot| pilot.ship.spec.ship_id) else {
+            return Vec::new();
+        };
+        let reachable = |scene: &Scene, session: SessionId| {
+            crate::npc::is_npc_session(session)
+                && scene.controller_of_drone(session).is_none()
+                && scene.apart(controller, session).is_some_and(|apart| apart <= CONTROL_RANGE)
+        };
+        let mut found: Vec<i64> = Vec::new();
+        let keep = |ship: i64, found: &mut Vec<i64>| {
+            if !found.contains(&ship) {
+                found.push(ship);
+            }
+        };
+        let mut recent: Vec<(i64, i64)> = self.drone_threats.get(&controller).cloned().unwrap_or_default();
+        recent.retain(|(_, at)| now - at <= THREAT_MEMORY);
+        recent.sort_by_key(|(ship, at)| (std::cmp::Reverse(*at), *ship));
+        for (ship, _) in recent {
+            if self.session_of(ship).is_some_and(|session| reachable(self, session)) {
+                keep(ship, &mut found);
+            }
+        }
+        // those that have the controller or a drone of it locked
+        let mine: Vec<i64> = std::iter::once(controller_ship).chain(self.drones_of(controller)).collect();
+        let mut locking: Vec<i64> = self
+            .pilots
+            .iter()
+            .filter(|(session, pilot)| {
+                reachable(self, **session)
+                    && pilot.targeting.targets().iter().any(|locked| mine.contains(locked))
+            })
+            .map(|(_, pilot)| pilot.ship.spec.ship_id)
+            .collect();
+        locking.sort_unstable();
+        for ship in locking {
+            keep(ship, &mut found);
+        }
+        // then the nearest
+        let mut near: Vec<(f64, i64)> = self
+            .pilots
+            .iter()
+            .filter(|(session, _)| reachable(self, **session))
+            .filter_map(|(session, pilot)| Some((self.apart(controller, *session)?, pilot.ship.spec.ship_id)))
+            .collect();
+        near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        for (_, ship) in near {
+            keep(ship, &mut found);
+        }
+        found
+    }
+
+    /// The idle drones of a pilot that has been attacked take up the fight by themselves (a pilot's drones are aggressive unless it says otherwise: the reference's default): each goes at
+    /// who attacked lately, the newest first, and the last of them for the drones that are more than the attackers. What a pilot sends its drones to do is theirs to do first: only a
+    /// drone with nothing to do is taken. The acts that were done since the last poll are what is read.
+    pub(crate) fn note_drone_threats(&mut self, now: i64) -> Vec<Out> {
+        if self.drones.is_empty() || self.aggressions.is_empty() {
+            return Vec::new();
+        }
+        let acts: Vec<(i64, i64)> =
+            self.aggressions.iter().map(|a| (a.attacker_ship, a.target_ship)).collect();
+        let mut out = Vec::new();
+        for (attacker, target) in acts {
+            // an attack on a pilot's ship (not on a drone, and not a pilot's own act: its drones' shots are told as its own)
+            let Some(controller) = self.session_of(target).filter(|s| !crate::npc::is_npc_session(*s)) else {
+                continue;
+            };
+            if self.drones_of(controller).is_empty() || self.ship_id_of(controller) == attacker {
+                continue;
+            }
+            let Some(attacker_session) = self.session_of(attacker) else { continue };
+            if self.controller_of_drone(attacker_session) == Some(controller)
+                || self.apart(controller, attacker_session).is_none_or(|apart| apart > CONTROL_RANGE)
+            {
+                continue;
+            }
+            let threats = self.drone_threats.entry(controller).or_default();
+            threats.retain(|(ship, at)| *ship != attacker && now - at <= THREAT_MEMORY);
+            threats.push((attacker, now));
+            let idle: Vec<SessionId> = self
+                .drones
+                .iter()
+                .filter(|(session, ai)| {
+                    ai.task == Task::Idle && self.controller_of_drone(**session) == Some(controller)
+                })
+                .map(|(session, _)| *session)
+                .collect();
+            if idle.is_empty() {
+                continue;
+            }
+            let targets = self.threats_of(controller, now);
+            for (index, session) in idle.into_iter().enumerate() {
+                let Some(&ship) = targets.get(index.min(targets.len().saturating_sub(1))) else { break };
+                out.extend(self.engage(session, ship, now));
+            }
+        }
+        out
+    }
+
+    /// Who attacked a controller lately and is still in the scene, the newest first.
+    fn threats_of(&self, controller: SessionId, now: i64) -> Vec<i64> {
+        let mut recent: Vec<(i64, i64)> = self.drone_threats.get(&controller).cloned().unwrap_or_default();
+        recent.retain(|(ship, at)| now - at <= THREAT_MEMORY && self.session_of(*ship).is_some());
+        recent.sort_by_key(|(ship, at)| (std::cmp::Reverse(*at), *ship));
+        recent.into_iter().map(|(ship, _)| ship).collect()
     }
 
     /// The drone is sent at a target: it circles it at full speed and is told as pursuing, approaching or fighting by how far off it is.
@@ -669,6 +805,7 @@ mod tests {
             weapon: laser(),
             graphic_id: 1_099,
             orbit_distance: 700.0,
+            attack_range: 2_800.0,
             cruise_fraction: 660.0 / 2_800.0,
         };
         let (drone, told) = scene.launch_drone(PLAYER, hobgoblin(), flight, LATER).unwrap();
@@ -852,6 +989,179 @@ mod tests {
             LATER,
         );
         assert!(at_itself.iter().any(|o| matches!(o, Out::DroneResults { results, .. } if results == &vec![(DRONE_SHIP, Some("NO_TARGET"))])));
+    }
+
+    fn spawn_rat_at(scene: &mut Scene, ship_id: i64, distance: f64) -> SessionId {
+        let mut rat = rat_spec();
+        rat.ship_id = ship_id;
+        // from where the pilot is when the order is given (the ship is flying: the place the other tests use is where it was at noon)
+        let position = scene.ship(PLAYER, LATER).unwrap().position;
+        let place = NpcPlace::at_rest(Vec3::new(position.x + distance, position.y, position.z));
+        scene.spawn_npc(rat, rat_identity(0.0), place, LATER).0
+    }
+
+    fn result_of(told: &[Out]) -> Vec<(i64, Option<&'static str>)> {
+        told.iter()
+            .find_map(|out| match out {
+                Out::DroneResults { results, .. } => Some(results.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    fn target_of_the_state(told: &[Out]) -> Option<Value> {
+        notified(told, "OnDroneStateChange").last().and_then(|args| args.get(6).cloned())
+    }
+
+    #[test]
+    fn an_order_to_engage_with_nothing_locked_sends_the_drone_at_the_nearest_npc_it_finds_by_itself() {
+        let (mut scene, _, _) = launched();
+        // the farther rat is placed first: it is the nearer that is found
+        spawn_rat_at(&mut scene, RAT_SHIP + 1, 9_000.0);
+        spawn_rat_at(&mut scene, RAT_SHIP, 3_000.0);
+        let sent = scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Engage { target: 0 }, LATER);
+        assert_eq!(result_of(&sent), [(DRONE_SHIP, None)]);
+        let told = for_the_player(&sent);
+        assert_eq!(target_of_the_state(&told), Some(Value::Long(RAT_SHIP)), "{told:?}");
+        // it flies at the rat it found and circles it, as when it is sent at it by name
+        assert_eq!(actions_named(&told, "Orbit")[0][..2], [Value::Long(DRONE_SHIP), Value::Long(RAT_SHIP)]);
+        assert_eq!(
+            scene.drones[&scene.session_of(DRONE_SHIP).unwrap()].task,
+            Task::Engage { target: RAT_SHIP }
+        );
+    }
+
+    #[test]
+    fn the_drones_look_for_those_that_attacked_the_pilot_before_the_nearest_and_never_beyond_their_range() {
+        let (mut scene, _, _) = launched();
+        spawn_rat_at(&mut scene, RAT_SHIP, 3_000.0);
+        spawn_rat_at(&mut scene, RAT_SHIP + 1, 8_000.0);
+        // a rat out of reach is nobody's to find, though it is the one that attacked
+        spawn_rat_at(&mut scene, RAT_SHIP + 2, 45_000.0);
+        let attacker = |ship: i64| crate::weapons::Aggression {
+            attacker_ship: ship,
+            target_ship: crate::scene::tests::spec().ship_id,
+            module_type_id: 1,
+            source_owner_id: 0,
+            target_type_id: 0,
+        };
+        scene.drone_threats.insert(PLAYER, vec![(RAT_SHIP + 1, LATER), (RAT_SHIP + 2, LATER)]);
+        assert_eq!(
+            scene.opponents_of(PLAYER, LATER),
+            [RAT_SHIP + 1, RAT_SHIP],
+            "the one that attacked, then the nearest; not the one out of range"
+        );
+        let _ = attacker;
+        // what was long ago is forgotten
+        assert_eq!(scene.opponents_of(PLAYER, LATER + 31 * SECOND), [RAT_SHIP, RAT_SHIP + 1]);
+    }
+
+    #[test]
+    fn an_order_to_engage_with_nothing_locked_and_nobody_there_is_refused_for_the_drone() {
+        let (mut scene, _, _) = launched();
+        let sent = scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Engage { target: 0 }, LATER);
+        assert_eq!(result_of(&sent), [(DRONE_SHIP, Some("NO_OPPONENT"))]);
+        assert!(states(&for_the_player(&sent)).is_empty(), "nothing is told of a drone that took no order");
+        // a target that is named and not there is the other refusal
+        let named =
+            scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Engage { target: 12_345 }, LATER);
+        assert_eq!(result_of(&named), [(DRONE_SHIP, Some("NO_TARGET"))]);
+    }
+
+    #[test]
+    fn several_drones_sent_without_a_target_are_spread_over_those_found_and_the_last_takes_the_rest() {
+        let mut scene = scene_with_a_player();
+        let drones = [DRONE_SHIP, DRONE_SHIP + 1, DRONE_SHIP + 2];
+        for ship in drones {
+            let mut spec = hobgoblin();
+            spec.ship_id = ship;
+            let flight = DroneFlight {
+                weapon: laser(),
+                graphic_id: 1_099,
+                orbit_distance: 700.0,
+                attack_range: 2_800.0,
+                cruise_fraction: 0.2357,
+            };
+            scene.launch_drone(PLAYER, spec, flight, LATER).unwrap();
+        }
+        spawn_rat_at(&mut scene, RAT_SHIP, 2_000.0);
+        spawn_rat_at(&mut scene, RAT_SHIP + 1, 4_000.0);
+        let sent = scene.drone_command(PLAYER, &drones, DroneCommand::Engage { target: 0 }, LATER);
+        assert_eq!(
+            result_of(&sent).iter().map(|(_, reason)| *reason).collect::<Vec<_>>(),
+            [None, None, None]
+        );
+        let tasks: Vec<Task> =
+            drones.iter().map(|d| scene.drones[&scene.session_of(*d).unwrap()].task).collect();
+        assert_eq!(
+            tasks,
+            [
+                Task::Engage { target: RAT_SHIP },
+                Task::Engage { target: RAT_SHIP + 1 },
+                Task::Engage { target: RAT_SHIP + 1 }
+            ]
+        );
+    }
+
+    #[test]
+    fn an_idle_drone_takes_up_the_fight_when_the_pilot_is_attacked_and_one_that_was_sent_home_does_not() {
+        let (mut scene, drone, _) = launched();
+        let mut other = hobgoblin();
+        other.ship_id = DRONE_SHIP + 1;
+        let flight = DroneFlight {
+            weapon: laser(),
+            graphic_id: 1_099,
+            orbit_distance: 700.0,
+            attack_range: 2_800.0,
+            cruise_fraction: 0.2357,
+        };
+        let (second, _) = scene.launch_drone(PLAYER, other, flight, LATER).unwrap();
+        scene.drone_command(PLAYER, &[DRONE_SHIP + 1], DroneCommand::ReturnHome, LATER);
+        spawn_rat_at(&mut scene, RAT_SHIP, 3_000.0);
+        scene.aggressions.push(crate::weapons::Aggression {
+            attacker_ship: RAT_SHIP,
+            target_ship: crate::scene::tests::spec().ship_id,
+            module_type_id: 1,
+            source_owner_id: 0,
+            target_type_id: 0,
+        });
+        let told = scene.poll(LATER + SECOND);
+        // the idle drone is told it goes at the rat (pursuit: the rat is further than the laser's reach and the drone's chase), and the pilot is not asked
+        assert_eq!(target_of_the_state(&for_the_player(&told)), Some(Value::Long(RAT_SHIP)), "{told:?}");
+        assert_eq!(scene.drones[&drone].task, Task::Engage { target: RAT_SHIP });
+        assert_eq!(scene.drones[&second].task, Task::Home, "a drone that was sent home stays");
+        // an attack on the pilot by its own drone's shot (told as the pilot's own) is not a threat
+        assert_eq!(scene.threats_of(PLAYER, LATER + SECOND), [RAT_SHIP]);
+    }
+
+    #[test]
+    fn a_drone_sent_at_a_rat_far_off_flies_there_and_fights_it() {
+        let (mut scene, drone, _) = launched();
+        let mut rat = rat_spec();
+        rat.vitals = Vitals {
+            shield_capacity: 0.0,
+            armor_hp: 0.0,
+            structure_hp: 15.0,
+            resonances: Resonances { shield: [1.0; 4], armor: [1.0; 4], structure: [1.0; 4] },
+        };
+        let position = scene.ship(PLAYER, LATER).unwrap().position;
+        let place = NpcPlace::at_rest(Vec3::new(position.x + 12_000.0, position.y, position.z));
+        scene.spawn_npc(rat, rat_identity(0.0), place, LATER);
+        let sent =
+            scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Engage { target: RAT_SHIP }, LATER);
+        let mut told = for_the_player(&sent);
+        let mut now = LATER + SECOND / 4;
+        while now <= LATER + 30 * SECOND {
+            told.extend(scene.poll(now).into_iter().filter(|o| o.session() == PLAYER));
+            now += SECOND / 4;
+        }
+        assert_eq!(
+            states(&told),
+            [PURSUIT as i64, APPROACHING as i64, COMBAT as i64, IDLE as i64],
+            "{:?}",
+            states(&told)
+        );
+        let _ = drone;
     }
 
     #[test]

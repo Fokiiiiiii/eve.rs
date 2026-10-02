@@ -311,6 +311,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     SimClient? sim = null;
     SpaceSessions? spaceSessions = null;
     SpaceContainers? spaceContainers = null;
+    SpaceDrones? spaceDrones = null;
     if (Env("EVE_SIM", "on") is not ("off" or "0" or "false"))
     {
         var socket = Env("EVE_SIM_SOCKET", "/tmp/eve-sim.sock");
@@ -335,6 +336,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         await foundations.Scheduler.EnsureRecurringAsync("space.bounty.pay", "pay", TimeSpan.FromSeconds(10));
         spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"));
         var containers = spaceContainers;
+        spaceDrones = new SpaceDrones(sim, ships, dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: {message}"));
         foundations.Scheduler.Register("space.containers.sweep", async (_, _) => await containers.SweepAsync());
         await foundations.Scheduler.EnsureRecurringAsync("space.containers.sweep", "sweep", TimeSpan.FromSeconds(30));
         Console.Error.WriteLine($"eve-host: the space simulation is expected at {socket}");
@@ -359,7 +361,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         new Eve.Services.Corporations.CorpRegistryService(corporations, characters, now),
         new Eve.Services.Corporations.AllianceRegistryService(corporations, characters, now, spaceSessions is null ? null : spaceSessions.AffiliationChangedAsync),
         new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now), new SkillCommands(skillCatalog, skills, source, dogmaSync, now)),
-        .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now, spaceContainers), new BeyonceService(spaceSessions, now) },
+        .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now, spaceContainers, spaceDrones), new BeyonceService(spaceSessions, now), new EntityService(spaceDrones!, now) },
     ];
     return (services, spaceSessions, sim, crimewatchRuntime);
 }

@@ -83,7 +83,7 @@ impl Targeting {
         self.pending.iter().map(|p| p.target).collect()
     }
 
-    fn targets(&self) -> Vec<i64> {
+    pub(crate) fn targets(&self) -> Vec<i64> {
         let mut locked: Vec<&Locked> = self.locked.iter().collect();
         locked.sort_by_key(|l| (l.sequence, l.target));
         locked.into_iter().map(|l| l.target).collect()

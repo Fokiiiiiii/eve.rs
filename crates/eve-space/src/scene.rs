@@ -314,6 +314,8 @@ pub struct Scene {
     pub(crate) missile_sequence: u64,
     /// The drones of the scene, by the session each is known by (they are NPC-session pilots tied to the ship that controls them, `crate::drones`).
     pub(crate) drones: BTreeMap<SessionId, crate::drones::DroneAi>,
+    /// Who attacked each controller lately (ship id and when), for the idle drones that take up a fight by themselves (`crate::drones`).
+    pub(crate) drone_threats: BTreeMap<SessionId, Vec<(i64, i64)>>,
     /// The trees of the NPCs (`crate::brains`).
     pub(crate) brains: Option<crate::brains::Brains>,
     /// The wrecks in the scene, by item id (`crate::wreck`).
@@ -359,6 +361,7 @@ impl Scene {
             missiles: BTreeMap::new(),
             missile_sequence: 0,
             drones: BTreeMap::new(),
+            drone_threats: BTreeMap::new(),
             brains: None,
             wrecks: BTreeMap::new(),
             wreck_sequence: 0,
@@ -1106,6 +1109,7 @@ impl Scene {
                 told.extend(self.release_drones(session, now));
             }
         }
+        told.extend(self.note_drone_threats(now));
         told.extend(self.tick_brains(now));
         told.extend(self.settle_targets(now));
         told.extend(self.settle_modules(now));

@@ -133,6 +133,7 @@ public sealed partial class CharacterShips
         {
             return false;
         }
+        await RecoverDronesAsync(connection, transaction, characterId, character.SolarSystemId, ship.Id, cancellationToken);
         await items.MoveAsync(connection, transaction, ship.Id, character.StationId, ItemFlags.Hangar, cancellationToken);
         if (placeOf?.Invoke(character.StationId) is { } place && place.SolarSystemId != character.SolarSystemId)
         {

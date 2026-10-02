@@ -519,6 +519,7 @@ fn message_of(case: &Value) -> Message {
             weapon: weapon_of(&case["weapon"]),
             graphic_id: number("graphicId") as i32,
             orbit_distance: case["orbitDistance"].as_f64().unwrap(),
+            attack_range: case["attackRange"].as_f64().unwrap(),
             cruise_fraction: case["cruiseFraction"].as_f64().unwrap(),
         })),
         "DroneCommand" => Message::DroneCommand {

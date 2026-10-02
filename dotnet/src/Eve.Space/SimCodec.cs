@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 15;
+    public const ushort ProtocolVersion = 16;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -546,7 +546,7 @@ public static class SimCodec
                     break;
                 }
             case Kind.LaunchDrone:
-                message = new SimLaunchDrone(r.U64(), r.U64(), ReadShip(ref r), ReadWeapon(ref r), r.I32(), r.F64(), r.F64());
+                message = new SimLaunchDrone(r.U64(), r.U64(), ReadShip(ref r), ReadWeapon(ref r), r.I32(), r.F64(), r.F64(), r.F64());
                 break;
             case Kind.DroneCommand:
                 {
@@ -1269,6 +1269,7 @@ public static class SimCodec
                 WriteWeapon(w, m.Weapon);
                 w.I32(m.GraphicId);
                 w.F64(m.OrbitDistance);
+                w.F64(m.AttackRange);
                 w.F64(m.CruiseFraction);
                 break;
             case SimDroneCommand m:

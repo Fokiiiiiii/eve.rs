@@ -232,7 +232,7 @@ def build(m):
         return frame(k, u64(m["requestId"]) + (bytes([0]) + u64(m["session"]) if m["ok"] else bytes([1]) + s(m["reason"])))
     if k == "LaunchDrone":
         return frame(k, u64(m["requestId"]) + u64(m["sessionId"]) + ship(m["ship"]) + weapon(m["weapon"])
-                     + struct.pack("<idd", m["graphicId"], m["orbitDistance"], m["cruiseFraction"]))
+                     + struct.pack("<iddd", m["graphicId"], m["orbitDistance"], m["attackRange"], m["cruiseFraction"]))
     if k == "DroneCommand":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + i64(m["targetId"]) + struct.pack("<I", len(m["droneIds"]))
                      + b"".join(i64(d) for d in m["droneIds"]))
@@ -266,8 +266,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 15},
-    {"name": "hello ack", "kind": "HelloAck", "version": 15, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 16},
+    {"name": "hello ack", "kind": "HelloAck", "version": 16, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -513,7 +513,7 @@ valid = [
      "ship": dict(BARE, shipId="9988400003716", characterId="0", ownerId="140000342", categoryId=18, groupId=100, typeId=2454, name="Hobgoblin I"),
      "weapon": {"moduleId": "9988400003716", "effectId": 10, "cycleMs": 4000.0, "capacitorNeed": 0.0, "weaponTypeId": 2454, "fx": "effects.Laser",
                 "rawDamage": [0.0, 32.0, 0.0, 0.0], "optimalRange": 2100.0, "falloff": 2000.0, "trackingSpeed": 1.815, "signatureResolution": 25.0},
-     "graphicId": 1099, "orbitDistance": 700.0, "cruiseFraction": 0.2357142857142857},
+     "graphicId": 1099, "orbitDistance": 700.0, "attackRange": 2800.0, "cruiseFraction": 0.2357142857142857},
     {"name": "order to engage", "kind": "DroneCommand", "sessionId": "1790646377000015", "command": 1, "targetId": "980050000077",
      "droneIds": ["9988400003716", "9988400003717"]},
     {"name": "order to go home", "kind": "DroneCommand", "sessionId": "1790646377000015", "command": 2, "targetId": "0", "droneIds": ["9988400003716"]},

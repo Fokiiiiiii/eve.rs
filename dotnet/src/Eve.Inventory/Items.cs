@@ -102,6 +102,16 @@ public sealed class PgItemStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>Makes an item a singleton (an assembled one: a drone that was launched from a stack is one), inside the caller's transaction.</summary>
+    public async Task MakeSingletonAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"UPDATE {_schema}.items SET singleton = true, quantity = 1 WHERE id = $1", connection, transaction)
+        {
+            Parameters = { new() { Value = id } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>Who owns something with this flag, once each (what a sweep for items that are in space asks: a ship, a can or a wreck has the flag of no place).</summary>
     public async Task<IReadOnlyList<long>> OwnersWithFlagAsync(int flag, CancellationToken cancellationToken = default)
     {

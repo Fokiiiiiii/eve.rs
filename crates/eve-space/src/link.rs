@@ -13,7 +13,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Charge, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 15;
+pub const PROTOCOL_VERSION: u16 = 16;
 
 /// The message kinds.
 pub mod kind {
@@ -105,6 +105,8 @@ pub struct LaunchDrone {
     pub weapon: NpcWeapon,
     pub graphic_id: i32,
     pub orbit_distance: f64,
+    /// How far off its target the drone can shoot, metres (the type's `entityAttackRange`, at least the weapon's optimal range): inside it the drone fights.
+    pub attack_range: f64,
     pub cruise_fraction: f64,
 }
 
@@ -1412,6 +1414,7 @@ impl Message {
                 put_weapon(&mut out, &launch.weapon);
                 out.extend_from_slice(&launch.graphic_id.to_le_bytes());
                 out.extend_from_slice(&launch.orbit_distance.to_le_bytes());
+                out.extend_from_slice(&launch.attack_range.to_le_bytes());
                 out.extend_from_slice(&launch.cruise_fraction.to_le_bytes());
             }
             Self::DroneCommand { session_id, command, target_id, drone_ids } => {
@@ -1728,6 +1731,7 @@ impl Message {
                 weapon: read_weapon(&mut r)?,
                 graphic_id: r.i32()?,
                 orbit_distance: r.f64()?,
+                attack_range: r.f64()?,
                 cruise_fraction: r.f64()?,
             })),
             kind::DRONE_COMMAND => {

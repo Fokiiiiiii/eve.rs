@@ -619,8 +619,16 @@ impl Sim {
 
     /// A drone comes into the scene of the pilot's ship: the answer carries the session the drone is known by.
     fn launch_drone(&mut self, launch: LaunchDrone, now: i64) -> Vec<Message> {
-        let LaunchDrone { request_id, session_id, ship, weapon, graphic_id, orbit_distance, cruise_fraction } =
-            launch;
+        let LaunchDrone {
+            request_id,
+            session_id,
+            ship,
+            weapon,
+            graphic_id,
+            orbit_distance,
+            attack_range,
+            cruise_fraction,
+        } = launch;
         let reply = |outcome| Message::SpawnReply { request_id, outcome };
         let Some(scene) = self.scene_of(session_id) else {
             return vec![reply(Err(format!("NO_SHIP {session_id}")))];
@@ -628,7 +636,7 @@ impl Sim {
         match scene.launch_drone(
             session_id,
             ship,
-            DroneFlight { weapon, graphic_id, orbit_distance, cruise_fraction },
+            DroneFlight { weapon, graphic_id, orbit_distance, attack_range, cruise_fraction },
             now,
         ) {
             Ok((session, told)) => {

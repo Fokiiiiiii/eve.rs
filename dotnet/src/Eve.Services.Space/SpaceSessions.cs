@@ -492,11 +492,11 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         // the safety of the pilot: a weapon is not started at the ship of another pilot where that would be a crime the safety the pilot has set does not allow
         var attack = package.Turret is not null || package.Action is SimAction.Remote { What: SimRemote.Neutralize or SimRemote.Drain or SimRemote.Web or SimRemote.Paint or SimRemote.Damp or SimRemote.Scramble or SimRemote.Jam or SimRemote.Disrupt };
         var securityClass = _systems.Get(pilot.SolarSystemId) is { } where ? Security.ClassFromLevel(where.Security) : (SecurityClass?)null;
+        var victim = attack ? _pilots.Values.FirstOrDefault(other => other.ShipId == package.TargetId && other.CharacterId != characterId) : null;
         if (securityClass is { } empire && (attack || package.Action is SimAction.Smartbomb))
         {
             var level = SafetyLevelOf is { } ask ? await ask(characterId, cancellationToken) : SafetyLevel.Full;
-            if (attack && _pilots.Values.FirstOrDefault(other => other.ShipId == package.TargetId && other.CharacterId != characterId) is { } victim
-                && WeaponSafety.StopsFire(empire, level, await IsCapsuleAsync(victim, empire, level, cancellationToken)))
+            if (victim is not null && WeaponSafety.StopsFire(empire, level, await IsCapsuleAsync(victim, empire, cancellationToken)))
             {
                 return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
             }
@@ -516,16 +516,34 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                 : refusal;
         }
         EndInvulnerability(pilot);
+        if (victim is not null && securityClass is { } crimeWhere && Aggression is { } record)
+        {
+            // what the attack makes of the attacker is crimewatch's; the module runs whatever it keeps
+            try
+            {
+                await record(characterId, victim.CharacterId, pilot.SolarSystemId, crimeWhere, await IsCapsuleAsync(victim, crimeWhere, cancellationToken), cancellationToken);
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                _log?.Invoke($"crimewatch could not record the attack of {characterId} on {victim.CharacterId}: {error.Message}");
+            }
+        }
         return ModuleResult.Done;
     }
+
+    /// <summary>
+    /// Told after a pilot's module was started at the ship of another pilot: the attacker, the pilot attacked, the system, its security class and whether the ship attacked is a capsule.
+    /// Crimewatch (timers, flags, what a crime brings) hangs here.
+    /// </summary>
+    public Func<long, long, long, SecurityClass, bool, CancellationToken, Task>? Aggression { get; set; }
 
     /// <summary>The ship safety level of a character (set by the host that keeps them; full when it is not set). See <see cref="WeaponSafety"/>.</summary>
     public Func<long, CancellationToken, Task<int>>? SafetyLevelOf { get; set; }
 
-    /// <summary>Whether the pilot's ship is a capsule. Only a low-security attack at the partial safety depends on it, so it is only looked up then.</summary>
-    private async Task<bool> IsCapsuleAsync(Pilot pilot, SecurityClass securityClass, int safetyLevel, CancellationToken cancellationToken)
+    /// <summary>Whether the pilot's ship is a capsule. Only a low-security attack depends on it (a capsule there is a crime of a criminal), so it is only looked up then.</summary>
+    private async Task<bool> IsCapsuleAsync(Pilot pilot, SecurityClass securityClass, CancellationToken cancellationToken)
     {
-        if (!Security.IsLowSec(securityClass) || safetyLevel != SafetyLevel.Partial)
+        if (!Security.IsLowSec(securityClass))
         {
             return false;
         }

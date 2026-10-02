@@ -18,6 +18,7 @@ import pytest
 
 from evecli.describe import describe, differences
 from tests import test_login_to_character as base
+from tests.test_aggression import flags_of, mine
 from tests.test_others import watch
 from tests.test_target import plain_race
 from tests.test_undock import STATION, SYSTEM, arrive, compare_events, outcome
@@ -42,8 +43,8 @@ def test_a_pilot_asks_crimewatch_for_its_states_and_sets_its_safety_as_in_the_re
             if "error" in recorded or error is not None:
                 problems.append(f"{label}: error {base.brief(error)} in place of {base.brief(recorded.get('ok', recorded.get('error')))}")
             else:
-                problems.extend(differences(base.blank_times(recorded["ok"]), base.blank_times(describe(raw)), label))
-            got = watch(only, seconds)["events"]
+                problems.extend(differences(base.blank_times(mine(recorded["ok"], set())), base.blank_times(mine(describe(raw), {character})), label))
+            got = flags_of(watch(only, seconds)["events"], {character})   # a pilot flagged by another run (a flag lasts a quarter of an hour) is no part of this one
             wanted = [e for e in recorded["events"] if e["name"] != "OnInvulnCancelled"]
             problems.extend(compare_events(wanted, [e for e in got if e["name"] != "OnInvulnCancelled"], label, {}))
 
@@ -77,7 +78,7 @@ def test_a_pilot_asks_crimewatch_for_its_states_and_sets_its_safety_as_in_the_re
         watch(only, 3.0)
         flying = who.call("crimewatch", "MachoBindObject", (SYSTEM, 5), ("GetClientStates", (), None))
         recorded = steps["the client binds crimewatch in space and asks for its states"]
-        problems.extend(differences(base.blank_times(recorded["ok"]), base.blank_times(describe(flying[1])), "the client binds crimewatch in space and asks for its states"))
+        problems.extend(differences(base.blank_times(mine(recorded["ok"], set())), base.blank_times(mine(describe(flying[1]), {character})), "the client binds crimewatch in space and asks for its states"))
         step("the client asks for its safety level in space", lambda: who.call_bound(flying[0], "GetSafetyLevel"))
     assert problems == [], "\n".join(problems[:40])
 

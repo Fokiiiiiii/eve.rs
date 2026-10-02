@@ -334,3 +334,18 @@ offence that needs at most partial (none when the target is a capsule), in null 
 case that depends on it (low security at partial). Tests: the rule by class, level and capsule (11 cases), a host test that partial refuses and none accepts in high security
 (mutation-checked), the whole Space (173) and Dogma (113) suites, and the live crimewatch, weapon and projected-module scenarios on eve.rs.
 
+### CRIME-1c: the combat timers and the crime flag — 2026-10-02
+
+Recorded from the reference with two pilots in a high security system (`oracle/fixtures/scenarios/aggression.json`, `scripts/record_character_scenarios.py --only aggression`): the aggressor locks the
+victim, fires with the safety full (`SafetyActivated`), makes the safety none and fires again. What it showed, and what eve.rs now does: the weapons timer runs a minute and the PvP timer a quarter of an
+hour from an attack on another pilot (the longer of the one that runs and a fresh one) in every system; the flag is the crime: a criminal for shooting a ship in high security or a capsule in
+low security, a suspect for a ship in low security, nothing in null security or at a target that is flagged already (`Eve.Crimewatch.Aggression`, a port of `recordHighSecCriminalAggression`). The
+state is in the `crimewatch` schema (`combat_state`, migration 0002); `CrimewatchRuntime` (`Eve.Services.Crimewatch`) tells the aggressor `OnWeaponsTimerUpdate` / `OnPvpTimerUpdate` /
+`OnCriminalTimerUpdate` (`(state, expiry)`, 102/202/303 or 304, only the ones that changed) and everyone in space in the system `OnSystemCriminalFlagUpdates` (idle, new suspects, new criminals), and tells
+each end when it comes (`LocalTimers`: the state is in PostgreSQL, the wait is process-local; `ResumeAsync` takes it up after a restart). `GetClientStates` answers the running timers and who is flagged in
+the pilot's system. The host's hook is `SpaceSessions.Aggression`, called after the simulation accepted a hostile module at the ship of another pilot (no link change: the host already evaluates the
+safety there). Replayed on the reference and eve.rs by `tests/test_aggression.py` (the notifications and the states, durations checked; pilots flagged by another run are left out, a flag lasts
+a quarter of an hour); mutation-checked (a duration, the in-space filter, the host wiring). A criminal that then shoots a ship in low security becomes a suspect, as `setNonTheftPenalty` does
+(EVE University gives the durations but does not say which flag wins: nothing is invented). Not done yet (the rest of CRIME-1): the consequences of a crime the recording shows
+(`OnSecurityStatusUpdate` and the security status penalty with its transactions, `OnKillRightCreated` and the notification, the CONCORD response), `Aggression.Legal` for wars, limited engagements and
+corporations (`CrimewatchRuntime.Legal`), the NPC and disapproval timers, container theft, and the weapons-timer/criminal restriction on docking and jumping.

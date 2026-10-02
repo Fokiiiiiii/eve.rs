@@ -94,6 +94,7 @@ IAccountDirectory accounts;
 IReadOnlyList<IService> characterServices = [];
 Foundations? foundations = null;
 SpaceSessions? space = null;
+Eve.Services.Crimewatch.CrimewatchRuntime? crimewatch = null;
 SimClient? simulation = null;
 var online = new OnlineCharacters();
 if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
@@ -106,7 +107,7 @@ if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
     accounts = directory;
     Func<long> clock = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     foundations = await Foundations.CreateAsync(source, clock, Env, message => Console.Error.WriteLine($"eve-host: {message}"));
-    (characterServices, space, simulation) = await CharacterServicesAsync(source, directory, online, clock, foundations);
+    (characterServices, space, simulation, crimewatch) = await CharacterServicesAsync(source, directory, online, clock, foundations);
     // every feature has registered its job handlers by now: the scheduler may start running jobs
     await foundations.StartAsync();
 }
@@ -167,6 +168,7 @@ if (foundations is not null)
     await foundations.DisposeAsync();
 }
 space?.Dispose();
+crimewatch?.Dispose();
 if (simulation is not null)
 {
     await simulation.DisposeAsync();
@@ -177,7 +179,7 @@ return 0;
 /// The character-side modules (characters, inventory, skills) and their services, or none (with the reason logged) when
 /// the static data they need is not in the database.
 /// </summary>
-static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation)> CharacterServicesAsync(NpgsqlDataSource source, IAccountLookup accounts, OnlineCharacters online, Func<long> now, Foundations foundations)
+static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch)> CharacterServicesAsync(NpgsqlDataSource source, IAccountLookup accounts, OnlineCharacters online, Func<long> now, Foundations foundations)
 {
     CharacterNames.EnsureUnicodeSupport();
     var characterSchema = Env("EVE_CHARACTERS_SCHEMA", PgCharacterStore.DefaultSchema);
@@ -202,7 +204,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     if (await sde.BuildAsync() is not { } build)
     {
         Console.Error.WriteLine("eve-host: the static data is not loaded (run `eve-sde ensure --pg $EVE_PG_URL`): no charUnboundMgr, no skills");
-        return ([], null, null);
+        return ([], null, null, null);
     }
     var startText = Env("EVE_START_STATION", "60015249");
     long? startStation = startText == "school" ? null : long.Parse(startText, System.Globalization.CultureInfo.InvariantCulture);
@@ -228,6 +230,9 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     var ships = new CharacterShips(source, dogma, characters, items, skills, modules, training);
     var dogmaSync = new CharacterDogmaSync(dogma, ships, now);
     var characterSessions = new CharacterSessions();
+    // the combat timers and flags: kept in crimewatch's schema, told to the clients as they change (Eve.Services.Crimewatch)
+    var crimewatchRuntime = new Eve.Services.Crimewatch.CrimewatchRuntime(crimewatchStore, characterSessions, now, message => Console.Error.WriteLine($"eve-host: crimewatch: {message}"));
+    await crimewatchRuntime.ResumeAsync();
     var announcer = new TrainingAnnouncer(training, skillCatalog, characterSessions, dogmaSync, now);
     announcer.Attach();
     var startingWallet = new StartingWallet(
@@ -312,6 +317,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")));
         spaceSessions.Events = foundations.Events;   // what happens in space is announced on the bus as well
         spaceSessions.SafetyLevelOf = (character, token) => crimewatchStore.SafetyOfAsync(character, token);   // the ship safety the pilot has set
+        spaceSessions.Aggression = async (attacker, target, system, where, capsule, token) => await crimewatchRuntime.RecordAggressionAsync(attacker, target, where, system, capsule, token);   // what an attack makes of the attacker
         var bounties = spaceSessions;
         foundations.Scheduler.Register("space.bounty.pay", async (_, token) => await bounties.PayBountiesAsync(token));
         await foundations.Scheduler.EnsureRecurringAsync("space.bounty.pay", "pay", TimeSpan.FromSeconds(10));
@@ -343,7 +349,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now), new SkillCommands(skillCatalog, skills, source, dogmaSync, now)),
         .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now, spaceContainers), new BeyonceService(spaceSessions, now) },
     ];
-    return (services, spaceSessions, sim);
+    return (services, spaceSessions, sim, crimewatchRuntime);
 }
 
 /// <summary>Until accounts live in the database (S2), nobody has a stored Omega expiry.</summary>

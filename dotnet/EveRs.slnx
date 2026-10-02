@@ -56,6 +56,7 @@
     <Project Path="tests/Eve.Services.CharacterSelect.Tests/Eve.Services.CharacterSelect.Tests.csproj" />
     <Project Path="tests/Eve.Content.Tests/Eve.Content.Tests.csproj" />
     <Project Path="tests/Eve.Crimewatch.Tests/Eve.Crimewatch.Tests.csproj" />
+    <Project Path="tests/Eve.Services.Crimewatch.Tests/Eve.Services.Crimewatch.Tests.csproj" />
     <Project Path="tests/Eve.Corporations.Tests/Eve.Corporations.Tests.csproj" />
     <Project Path="tests/Eve.Dogma.Tests/Eve.Dogma.Tests.csproj" />
     <Project Path="tests/Eve.Events.Tests/Eve.Events.Tests.csproj" />

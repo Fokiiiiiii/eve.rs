@@ -76,4 +76,56 @@ public class WeaponHostTests
         Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "targetAttack", other.GetInt("shipid")!.Value, 1000, CancellationToken.None));
         Assert.IsType<SimActivate>(rig.Sim.Heard.Last());
     }
+
+    [PgFact]
+    public async Task A_gun_the_simulation_accepts_at_the_ship_of_another_pilot_is_told_to_crimewatch_once_and_a_refused_one_or_one_at_a_ship_nobody_flies_is_not()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var attacker = await rig.NewCharacterAsync("Space Tester", 1);
+        var victim = await rig.NewCharacterAsync("Space Victim", 2);
+        var session = await InSpaceAsync(rig, attacker, 1);
+        var other = await InSpaceAsync(rig, victim, 2);
+        var gun = await GunOfAsync(rig, attacker);
+        List<(long Attacker, long Target, long System, Eve.Universe.SecurityClass Where, bool Capsule)> told = [];
+        rig.Space.Aggression = (by, at, system, where, capsule, _) =>
+        {
+            told.Add((by, at, system, where, capsule));
+            return Task.CompletedTask;
+        };
+        var level = 2;
+        rig.Space.SafetyLevelOf = (_, _) => Task.FromResult(level);
+        var ship = other.GetInt("shipid")!.Value;
+
+        // the safety stops it: nothing was started, nothing is told
+        Assert.Equal("SafetyActivated", (await rig.Space.ActivateAsync(session, gun, "targetAttack", ship, 1000, CancellationToken.None))!.Reason);
+        // a ship nobody flies may be shot anywhere: no pilot, no crime
+        level = 0;
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "targetAttack", 980050000105, 1000, CancellationToken.None));
+        Assert.Empty(told);
+        // the simulation refuses the gun: it did not start
+        rig.Sim.ActivateAnswer = new CommandReply(false, 0, "TARGET_NOT_LOCKED");
+        Assert.False((await rig.Space.ActivateAsync(session, gun, "targetAttack", ship, 1000, CancellationToken.None))!.Ok);
+        Assert.Empty(told);
+
+        rig.Sim.ActivateAnswer = new CommandReply(true, 0, null);
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "targetAttack", ship, 1000, CancellationToken.None));
+
+        var one = Assert.Single(told);
+        Assert.Equal((attacker.CharacterId, victim.CharacterId, session.GetInt("solarsystemid")!.Value, false), (one.Attacker, one.Target, one.System, one.Capsule));
+    }
+
+    [PgFact]
+    public async Task A_failure_of_crimewatch_does_not_stop_a_gun_the_simulation_started()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var attacker = await rig.NewCharacterAsync("Space Tester", 1);
+        var victim = await rig.NewCharacterAsync("Space Victim", 2);
+        var session = await InSpaceAsync(rig, attacker, 1);
+        var other = await InSpaceAsync(rig, victim, 2);
+        var gun = await GunOfAsync(rig, attacker);
+        rig.Space.SafetyLevelOf = (_, _) => Task.FromResult(0);
+        rig.Space.Aggression = (_, _, _, _, _, _) => throw new InvalidOperationException("the database is gone");
+
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "targetAttack", other.GetInt("shipid")!.Value, 1000, CancellationToken.None));
+    }
 }

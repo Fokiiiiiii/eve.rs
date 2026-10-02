@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record what the EVE.js reference does from login to a session with a character.
 
-    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others|target|module|weapon|ammo|cargo|crimewatch|reload|drones|health|death]
+    scripts/record_character_scenarios.py <host:port> <sde-dir> <out-dir> [--reference-commit SHA] [--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others|target|module|weapon|ammo|cargo|crimewatch|aggression|reload|drones|health|death]
 
 The recording is the contract for the same path in eve.rs: `tests/test_login_to_character.py` replays the calls
 against any server and compares each answer with what is stored here, by shape, treating per-run values
@@ -1640,6 +1640,85 @@ def record_crimewatch(rec: Recorder, out: str, meta: dict, ancestry: dict, run: 
     who.close()
 
 
+def record_aggression(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
+    """Two characters in space by the same station, in a high security system: the one that fires (the aggressor, B) at the other (the victim, A). Crimewatch is
+    bound by both for the place; the aggressor locks the victim, fires with the safety full (refused), makes the safety none and fires again: what each is sent as
+    the timers start (weapons, pvp, criminal), who is flagged, and the states each asks for afterwards. Each step holds what B is sent (`events`) and what A is sent
+    (`seen`), with the seconds each arrived at. What CONCORD does after the crime is in the events too; only the crimewatch notifications are replayed."""
+    system, station = 30100032, 60015249
+
+    def character(name: str):
+        who = rec.login(name)
+        created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"{name} {run}", 1, 1, ancestry[1]))
+        char_id = int(created["ok"])
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
+        hangar = who.call_bound(manager, "GetInventory", 10004)
+        ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+        who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
+        events_of(who)
+        return who, created, char_id, ship_id
+
+    a, a_created, a_char, a_ship = character("Victim")
+    b, b_created, b_char, b_ship = character("Aggressor")
+    both = {"events": b, "seen": a}
+    steps: list = []
+
+    def step(label, call, seconds=2.0, until=None):
+        entry = {"label": label}
+        try:
+            entry["ok"] = describe(call())
+        except p.MachoError as error:
+            entry["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
+        entry.update(watch(both, seconds, until))
+        steps.append(entry)
+        return entry
+
+    a_service = a.call("ship", "MachoBindObject", (station, 15), None)
+    b_service = b.call("ship", "MachoBindObject", (station, 15), None)
+    watch(both, 0.5)
+    step("the victim undocks", lambda: a.call_bound(a_service[0], "Undock", a_ship, False), 2.0)
+    a_ballpark = a.call("beyonce", "MachoBindObject", system, None)
+    step("the victim binds the ballpark", lambda: a_ballpark, 2.5)
+    step("the aggressor undocks", lambda: b.call_bound(b_service[0], "Undock", b_ship, False), 2.5)
+    b_ballpark = b.call("beyonce", "MachoBindObject", system, None)
+    step("the aggressor binds the ballpark", lambda: b_ballpark, 3.0)
+    a_dogma = a.call("dogmaIM", "MachoBindObject", (system, 5), None)
+    b_dogma = b.call("dogmaIM", "MachoBindObject", (system, 5), None)
+    steps.append({"label": "both bind dogma in space", "ok": describe([a_dogma, b_dogma]), **watch(both, 1.0)})
+    a_crime = a.call("crimewatch", "MachoBindObject", (system, 5), ("GetClientStates", (), None))
+    b_crime = b.call("crimewatch", "MachoBindObject", (system, 5), ("GetClientStates", (), None))
+    steps.append({"label": "both bind crimewatch in space and ask for their states", "ok": describe([a_crime[1], b_crime[1]]), **watch(both, 1.0)})
+
+    info = b.call_bound(b_dogma[0], "GetAllInfo", True, True, None)
+    ship_info = {k: v for k, v in describe(info)["args"]["$dict"]}["shipInfo"]["$dict"]
+    fitted = {}
+    for key, value in ship_info:
+        item = {k: v for k, v in value["args"]["$dict"]}["invItem"]["$row"]
+        fitted[item["typeID"]] = int(key["$long"] if isinstance(key, dict) else key)
+    gun = fitted[3638]
+    steps.append({"label": "the protection of the victim ends", **watch(both, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["seen"]))})
+    steps.append({"label": "the protection of the aggressor ends", **watch(both, 8.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))})
+    got_lock = lambda seen: any(e["name"] == "OnTarget" for e in seen["events"])  # noqa: E731
+    step("the aggressor locks the victim", lambda: b.call_bound(b_dogma[0], "AddTarget", a_ship), 20.0, until=got_lock)
+    fire = lambda: b.call_bound(b_dogma[0], "Activate", gun, "targetAttack", a_ship, 1000)  # noqa: E731
+    step("the aggressor fires at the victim with the safety full", fire, 2.0)
+    step("the aggressor asks for its states with nothing started", lambda: b.call_bound(b_crime[0], "GetClientStates"), 1.0)
+    step("the aggressor makes its ship safety none", lambda: b.call_bound(b_crime[0], "SetSafetyLevel", 0), 1.0)
+    step("the aggressor fires at the victim with the safety none", fire, 4.0)
+    step("the aggressor asks for its states with the timers running", lambda: b.call_bound(b_crime[0], "GetClientStates"), 1.0)
+    step("the victim asks for its states while the aggressor is flagged", lambda: a.call_bound(a_crime[0], "GetClientStates"), 8.0)
+    step("the aggressor asks for its states after the response", lambda: b.call_bound(b_crime[0], "GetClientStates"), 1.0)
+    race = {"bloodlineID": 1, "raceID": 1, "solarSystemID": system, "stationID": station,
+            "victim": {"create": a_created, "characterID": a_char, "shipID": a_ship}, "aggressor": {"create": b_created, "characterID": b_char, "shipID": b_ship},
+            "modules": {"gun": gun}, "steps": steps}
+    with open(os.path.join(out, "aggression.json"), "w", encoding="utf-8") as handle:
+        json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [race]}, handle, separators=(",", ":"), ensure_ascii=False)
+        handle.write("\n")
+    a.close()
+    b.close()
+
+
 def record_loot(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One character in space takes what is in a can with the loot window's "Loot All" (`invbroker` `MultiAdd` on the ship's inventory: the item ids, the can they are
     in, `flag=5`): two stacks (tritanium and pyerite) are put in the hold, jettisoned into one can, the can is opened and everything is taken at once
@@ -1860,10 +1939,10 @@ def main() -> int:
     ancestry = first_ancestry(sde)
     rec = Recorder(host, int(port), run)
     meta = {"reference": "EVE.js", "referenceCommit": commit, "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others, "target": record_target, "module": record_module, "weapon": record_weapon, "ammo": record_ammo, "cargo": record_cargo, "crimewatch": record_crimewatch, "loot": record_loot, "reload": record_reload, "drones": record_drones, "health": record_health, "death": record_death}
+    parts = {"walk": record_walk, "starters": record_starters, "skills": record_skills, "info": record_info, "inventory": record_inventory, "dogma": record_dogma, "fitting": record_fitting, "training": record_training, "training_fast": record_training_fast, "undock": record_undock, "approach": record_approach, "movement": record_movement, "warp": record_warp, "jump": record_jump, "others": record_others, "target": record_target, "module": record_module, "weapon": record_weapon, "ammo": record_ammo, "cargo": record_cargo, "crimewatch": record_crimewatch, "aggression": record_aggression, "loot": record_loot, "reload": record_reload, "drones": record_drones, "health": record_health, "death": record_death}
     try:
         for name, record in parts.items():
-            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others", "target", "module", "weapon", "ammo", "cargo", "crimewatch", "loot", "reload", "drones", "health", "death")):  # the fast one needs a reference started for it
+            if only == name or (only is None and name not in ("training_fast", "undock", "approach", "movement", "warp", "jump", "others", "target", "module", "weapon", "ammo", "cargo", "crimewatch", "aggression", "loot", "reload", "drones", "health", "death")):  # the fast one needs a reference started for it
                 record(rec, out, meta, ancestry, run)
         if only in (None, "stations"):
             record_stations(rec, out, meta, ancestry, run, sde)

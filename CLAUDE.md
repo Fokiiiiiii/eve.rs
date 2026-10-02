@@ -168,6 +168,8 @@ Smartbombs (COMBAT-2c fifth slice, 2026-10-09) touched these shared files, all a
 `SpaceSessions` keeps the NPCs it made per scene: when a ship comes into a system nobody was in, what it knew of that system's NPCs is dropped (the simulation's scene is new).
 `MultiAdd` for a docked hangar or a ship's fitting is not served by me; if you need it for deliveries, say so and we agree on one implementation in `InvBrokerService`.
 
+Crimewatch timers (CRIME-1c, 2026-10-02) touched these shared files, all additive: `EveRs.slnx` (`Eve.Services.Crimewatch.Tests`), `Eve.Services/CharacterSessions.cs` (`InSpace(solarSystemId)`), `Eve.Host/Program.cs` (the host builder returns the `CrimewatchRuntime` as a fourth member of its tuple and disposes it; `spaceSessions.Aggression` in my `spaceSessions` block), `docs/NATIVE_MIGRATION.md` (row CRIME-1c), `oracle/fixtures/scenarios/aggression.json` and `tools/headless-client/scripts/record_character_scenarios.py` (`--only aggression`). `tests/test_crimewatch.py` leaves out pilots flagged by other runs. For you: `CrimewatchRuntime.Legal` is the place for wars, limited engagements and same-corporation shooting (it takes the attacker, the target and the time).
+
 Hooks for you (HOOKS-1, 2026-10-04): `Eve.Services.Space/SpaceEvents.cs` (`NpcKill`, `ShipLossCause`, `ShipLoss`) and three members of `SpaceSessions` (`NpcDestroyed`, `ShipLost`, `AffiliationChangedAsync`), described in the table above. Nothing shared was edited.
 
 Both reds I noted earlier (the corporation login replay, the wallet rollback test) are fixed on `main`; the whole Rust, .NET and headless suites pass with the ship foundation merged (2026-10-02).

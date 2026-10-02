@@ -3,7 +3,7 @@ using Npgsql;
 
 namespace Eve.Crimewatch;
 
-/// <summary>What crimewatch keeps in PostgreSQL: the ship safety level of each character (later: the timers and flags that must outlast a session).</summary>
+/// <summary>What crimewatch keeps in PostgreSQL: the ship safety level of each character, and the combat timers and flags that must outlast a session.</summary>
 public sealed class PgCrimewatchStore
 {
     public const string DefaultSchema = "crimewatch";
@@ -30,6 +30,78 @@ public sealed class PgCrimewatchStore
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         var level = await Sql.ScalarAsync(connection, null, Q("SELECT level FROM {schema}.safety WHERE character_id = $1"), cancellationToken, characterId);
         return level is short stored ? stored : SafetyLevel.Full;
+    }
+
+    private const string StateColumns = "weapons_until_ms, pvp_until_ms, npc_until_ms, flag_until_ms, flag, disapproval_until_ms, solar_system_id";
+
+    private static CombatState ReadState(NpgsqlDataReader row) =>
+        new(row.GetInt64(0), row.GetInt64(1), row.GetInt64(2), row.GetInt64(3), (Flag)row.GetInt16(4), row.GetInt64(5), row.GetInt64(6));
+
+    /// <summary>What crimewatch keeps for the character (idle when it keeps nothing).</summary>
+    public async Task<CombatState> StateOfAsync(long characterId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = Sql.Command(connection, null, Q($"SELECT {StateColumns} FROM {{schema}}.combat_state WHERE character_id = $1"), characterId);
+        await using var row = await command.ExecuteReaderAsync(cancellationToken);
+        return await row.ReadAsync(cancellationToken) ? ReadState(row) : CombatState.Idle;
+    }
+
+    /// <summary>
+    /// Changes what crimewatch keeps for the character as one step no other step of the character overlaps (the row is locked while <paramref name="change"/> works on what it was).
+    /// Returns what it was and what it is now.
+    /// </summary>
+    public async Task<(CombatState Before, CombatState After)> UpdateAsync(long characterId, Func<CombatState, CombatState> change, long nowMs, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await Sql.ExecuteAsync(connection, transaction, Q("INSERT INTO {schema}.combat_state (character_id, updated_ms) VALUES ($1, $2) ON CONFLICT (character_id) DO NOTHING"), cancellationToken, characterId, nowMs);
+        CombatState before;
+        await using (var command = Sql.Command(connection, transaction, Q($"SELECT {StateColumns} FROM {{schema}}.combat_state WHERE character_id = $1 FOR UPDATE"), characterId))
+        await using (var row = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            await row.ReadAsync(cancellationToken);
+            before = ReadState(row);
+        }
+        var after = change(before);
+        await Sql.ExecuteAsync(connection, transaction, Q("""
+            UPDATE {schema}.combat_state
+            SET weapons_until_ms = $2, pvp_until_ms = $3, npc_until_ms = $4, flag_until_ms = $5, flag = $6, disapproval_until_ms = $7, solar_system_id = $8, updated_ms = $9
+            WHERE character_id = $1
+            """), cancellationToken, characterId, after.WeaponsUntilMs, after.PvpUntilMs, after.NpcUntilMs, after.FlagUntilMs, (short)after.Flag, after.DisapprovalUntilMs, after.SolarSystemId, nowMs);
+        await transaction.CommitAsync(cancellationToken);
+        return (before, after);
+    }
+
+    /// <summary>Who is flagged in a system at this time: the criminals and the suspects, by character id.</summary>
+    public async Task<(IReadOnlyList<long> Criminals, IReadOnlyList<long> Suspects)> FlaggedInAsync(long solarSystemId, long nowMs, CancellationToken cancellationToken = default)
+    {
+        List<long> criminals = [], suspects = [];
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = Sql.Command(connection, null,
+            Q("SELECT character_id, flag FROM {schema}.combat_state WHERE solar_system_id = $1 AND flag <> 0 AND flag_until_ms > $2 ORDER BY character_id"), solarSystemId, nowMs);
+        await using var row = await command.ExecuteReaderAsync(cancellationToken);
+        while (await row.ReadAsync(cancellationToken))
+        {
+            (row.GetInt16(1) == (short)Flag.Criminal ? criminals : suspects).Add(row.GetInt64(0));
+        }
+        return (criminals, suspects);
+    }
+
+    /// <summary>The characters with something running at this time (what a process that starts must wake up for).</summary>
+    public async Task<IReadOnlyList<(long CharacterId, CombatState State)>> ActiveAsync(long nowMs, CancellationToken cancellationToken = default)
+    {
+        List<(long, CombatState)> active = [];
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = Sql.Command(connection, null, Q("""
+            SELECT character_id, {columns} FROM {schema}.combat_state
+            WHERE GREATEST(weapons_until_ms, pvp_until_ms, npc_until_ms, disapproval_until_ms, flag_until_ms) > $1
+            """).Replace("{columns}", StateColumns), nowMs);
+        await using var row = await command.ExecuteReaderAsync(cancellationToken);
+        while (await row.ReadAsync(cancellationToken))
+        {
+            active.Add((row.GetInt64(0), new CombatState(row.GetInt64(1), row.GetInt64(2), row.GetInt64(3), row.GetInt64(4), (Flag)row.GetInt16(5), row.GetInt64(6), row.GetInt64(7))));
+        }
+        return active;
     }
 
     /// <summary>Sets the level (brought to 0, 1 or 2) and returns what is kept.</summary>

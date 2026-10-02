@@ -15,13 +15,6 @@ namespace Eve.Services.Crimewatch;
 public sealed partial class CrimewatchService(
     PgCrimewatchStore store, Func<long> nowUnixMs, Func<long, CancellationToken, Task<double>>? securityStatusOf = null) : IBoundObjectReleaseHandler
 {
-    // the states of the five combat timers (the client's weaponsTimerState…, in the order of the tuple of GetClientStates)
-    private const int WeaponsIdle = 100;
-    private const int PvpIdle = 200;
-    private const int CriminalIdle = 300;
-    private const int NpcIdle = 400;
-    private const int DisapprovalIdle = 500;
-
     private readonly ConcurrentDictionary<long, string> _boundOfSession = new();
 
     private static PyValue None => PyNone.Instance;
@@ -74,18 +67,23 @@ public sealed partial class CrimewatchService(
 
     /// <summary>
     /// <c>GetClientStates()</c>: <c>((weapons, pvp, npc, criminal, disapproval), engagements, (criminals, suspects), safetyLevel)</c>. Each timer is <c>(state, expiry)</c>, idle with no
-    /// expiry for now; the engagements are a dictionary of the other character to when it ends; the flagged are two sets of character ids.
+    /// expiry while it does not run; the engagements are a dictionary of the other character to when it ends (none yet); the flagged are two sets of the character ids flagged in the
+    /// system the pilot is in.
     /// </summary>
     [Method("GetClientStates")]
     public async ValueTask<PyValue> GetClientStates(ServiceCall call)
     {
-        var safety = call.Session.CharacterId is { } character ? await store.SafetyOfAsync(character, call.Cancellation) : SafetyLevel.Full;
+        var now = nowUnixMs();
+        var character = call.Session.CharacterId;
+        var safety = character is { } id ? await store.SafetyOfAsync(id, call.Cancellation) : SafetyLevel.Full;
+        var timers = (character is { } own ? await store.StateOfAsync(own, call.Cancellation) : CombatState.Idle).TimersAt(now);
+        var system = call.Session.GetInt("solarsystemid") ?? call.Session.GetInt("solarsystemid2") ?? 0;
+        var (criminals, suspects) = system > 0 ? await store.FlaggedInAsync(system, now, call.Cancellation) : ([], []);
+        static PyValue Timer(TimerView timer) => Py.Tuple(new PyInt(timer.State), CrimewatchRuntime.Expiry(timer));
         return Py.Tuple(
-            Py.Tuple(
-                Py.Tuple(new PyInt(WeaponsIdle), None), Py.Tuple(new PyInt(PvpIdle), None), Py.Tuple(new PyInt(NpcIdle), None),
-                Py.Tuple(new PyInt(CriminalIdle), None), Py.Tuple(new PyInt(DisapprovalIdle), None)),
+            Py.Tuple(Timer(timers.Weapons), Timer(timers.Pvp), Timer(timers.Npc), Timer(timers.Criminal), Timer(timers.Disapproval)),
             new PyDict([]),
-            Py.Tuple(InventoryWire.Set([]), InventoryWire.Set([])),
+            Py.Tuple(InventoryWire.Set(criminals.Select(InventoryWire.Id)), InventoryWire.Set(suspects.Select(InventoryWire.Id))),
             new PyInt(safety));
     }
 

@@ -34,6 +34,10 @@ Details: `docs/adr/0001-external-compatibility-only.md`, `docs/PLAN.md`, `docs/c
    logic that matters. Report files changed, tests run, and risks.
 6. **Keep the record current.** A decision goes in an ADR (`docs/adr/`), a deviation in the register, status in
    `docs/NATIVE_MIGRATION.md`, the order of work in `docs/PLAN.md`.
+7. **Build on the shared foundations** (owner, 2026-10-02, `docs/FOUNDATIONS.md`, ADR 0010): a feature does not start its own timer
+   (use the Durable Scheduler), keep its own event hooks (use the Event Bus), store "A and B with a number" (use a Relation kind), keep a table of
+   running things with objectives and a deadline (use the Content Runtime), add a branch for a module effect (use an Effect handler) or build a
+   rowset by hand (use a `RowsetQuery`). Change and announcement are one transaction.
 
 ## Git
 
@@ -382,3 +386,17 @@ They are tracked now and the ignores name `dotnet/`. Also for Codex: on the curr
 commits) `Eve.Corporations.Tests.CorporationProtocolTests.Corporation_medal_rpcs_preserve_wire_rows_persist_awards_and_follow_reference_authorization`
 fails at `CorporationProtocolTests.cs:477`: the medal title read back is `[object Object]`, not `Service`.
 
+
+### Claude: shared foundations (2026-10-02) — please use them
+
+Six shared foundations are on `main` (owner's instruction; guide: `docs/FOUNDATIONS.md`, ADR 0010, rule 7 above): `Eve.Scheduler`
+(durable scheduler and job runner), `Eve.Events` (event bus with a transactional outbox), `Eve.Relations` (standings, wars, security status,
+affiliation), `Eve.Content` (missions, anomalies, incursions), the Dogma `EffectRegistry` (the module effects of `ModulePackages.Of` are handlers
+now) and `Eve.ReadSide` (named SDE/PostgreSQL queries answered as rowsets). Shared files I touched, minimally: `Eve.Host/Program.cs` (a
+`Foundations` object is created before `CharacterServicesAsync`, which takes it as a last parameter, and started after it; shutdown disposes it;
+your Corporation/Market block is unchanged), `Eve.Host.csproj`, `EveRs.slnx` (new projects), `tools/dev/run-eve-live.sh` (scratch schemas for the
+four foundation schemas), `SpaceContainers.SweepAsync` is public, and `SpaceSessions.UseBounties` is called without a timer.
+For your open items: the durable Alliance transitions, the war holds and the 60-minute recheck are `DurableScheduler` jobs (keyed, replaceable)
+plus `war`/`affiliation.*` relations; membership and role notifications are subscribers of `relation.affiliation.*.changed`. Publish the event in
+the transaction of the change (`bus.PublishAsync(connection, transaction, …)`). The schemas are `scheduler`, `events`, `relations`, `content`
+(`EVE_*_SCHEMA`). Nothing existing was changed in behaviour; the foundations only run when `EVE_PG_URL` is set.

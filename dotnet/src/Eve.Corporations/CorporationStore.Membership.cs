@@ -113,7 +113,7 @@ public sealed partial class CorporationStore
                 await using (var count = Command(connection,tx,$"SELECT count(*) FROM {_schema}.members WHERE corporation_id=$1",corp.Id))
                     if ((long)(await count.ExecuteScalarAsync(token))! >= corp.MemberLimit) throw new CorporationError("CORPORATION_FULL");
                 var character = await _characters.LockAndGetAsync(connection,tx,application.CharacterId,token) ?? throw new CorporationError("CHARACTER_NOT_FOUND");
-                await CanLeaveAsync(connection,tx,character,now,token);
+                await CanLeaveAsync(connection,tx,character,token);
                 await MoveAsync(connection,tx,character,corp.Id,corp.AllianceId,now,false,token);
                 await using var others = Command(connection,tx,$"UPDATE {_schema}.applications SET status=7,archived=true,updated_ms=$2 WHERE character_id=$1 AND id<>$3 AND NOT archived",character.Id,now,applicationId);
                 await others.ExecuteNonQueryAsync(token);
@@ -124,23 +124,16 @@ public sealed partial class CorporationStore
             return application with { Text = text,Status = status,Response = response,UpdatedMs = now,Archived = terminal };
         },token);
 
-    private async Task CanLeaveAsync(NpgsqlConnection connection,NpgsqlTransaction tx,Character character,long now,CancellationToken token)
+    private async Task CanLeaveAsync(NpgsqlConnection connection,NpgsqlTransaction tx,Character character,CancellationToken token)
     {
         var member = await MemberAsync(connection,tx,character.Id,token);
-        if (member is not null)
-        {
-            if (member.Masks != new RoleMasks() || member.TitleMask != 0)
-            {
-                var current = await GetAsync(connection,tx,character.CorporationId,true,token);
-                if (current?.CeoId != character.Id) throw new CorporationError("CORPORATION_ROLES_MUST_BE_DROPPED");
-            }
-        }
-        if (member?.StasisUntilMs > now) throw new CorporationError("CORPORATION_ROLE_STASIS");
         var old = await GetAsync(connection,tx,character.CorporationId,true,token);
+        if (old is not null && !old.IsNpc && (member is null || member.CorporationId != old.Id))
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        if (member is not null && (member.Masks != new RoleMasks() || member.TitleMask != 0) && old?.CeoId != character.Id)
+            throw new CorporationError("CORPORATION_ROLES_MUST_BE_DROPPED");
         if (old is not null && !old.IsNpc && old.CeoId == character.Id)
-        {
             throw new CorporationError("CEO_MUST_RESIGN");
-        }
     }
 
     public Task LeaveAsync(long characterId,long npcCorporation,CancellationToken token = default) =>
@@ -151,7 +144,7 @@ public sealed partial class CorporationStore
             if (target is null || !target.IsNpc || target.Deleted) throw new CorporationError("NPC_CORPORATION_REQUIRED");
             if (character.CorporationId == target.Id) return 0;
             var now = _now();
-            await CanLeaveAsync(connection,tx,character,now,token);
+            await CanLeaveAsync(connection,tx,character,token);
             await MoveAsync(connection,tx,character,target.Id,null,now,false,token);
             return 0;
         },token);
@@ -160,12 +153,15 @@ public sealed partial class CorporationStore
         WriteAsync(async (connection,tx) =>
         {
             var character = await _characters.LockAndGetAsync(connection,tx,target,token) ?? throw new CorporationError("CHARACTER_NOT_FOUND");
-            var corp = await RequireRoleAsync(connection,tx,character.CorporationId,actor,CorporationRoles.PersonnelManager,token);
+            var corp = await RequireRoleAsync(connection,tx,character.CorporationId,actor,CorporationRoles.Director,token);
             if (corp.CeoId == target) throw new CorporationError("CEO_MUST_RESIGN");
             var npc = await GetAsync(connection,tx,npcCorporation,true,token);
             if (npc is null || !npc.IsNpc) throw new CorporationError("NPC_CORPORATION_REQUIRED");
             var now = _now();
-            await CanLeaveAsync(connection,tx,character,now,token);
+            await CanLeaveAsync(connection,tx,character,token);
+            var member = await MemberAsync(connection,tx,target,token);
+            if (member?.CorporationId != corp.Id) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            if (member.StasisUntilMs > now) throw new CorporationError("CORPORATION_ROLE_STASIS");
             await MoveAsync(connection,tx,character,npc.Id,null,now,false,token);
             return 0;
         },token);
@@ -175,10 +171,18 @@ public sealed partial class CorporationStore
         {
             var character = await _characters.LockAndGetAsync(connection,tx,actor,token) ?? throw new CorporationError("CHARACTER_NOT_FOUND");
             var corp = await RequireRoleAsync(connection,tx,character.CorporationId,actor,CorporationRoles.Director,token);
+            var nextCharacter = await _characters.LockAndGetAsync(connection,tx,successor,token);
             var next = await MemberAsync(connection,tx,successor,token);
-            if (corp.CeoId != actor || successor == actor || next?.CorporationId != corp.Id) throw new CorporationError("CORPORATION_ACCESS_DENIED");
-            await using var update = Command(connection,tx,$"WITH leadership AS (UPDATE {_schema}.corporations SET ceo_id=$2 WHERE id=$1 RETURNING id) UPDATE {_schema}.members SET roles=roles & ~1 WHERE character_id=$3 AND corporation_id IN(SELECT id FROM leadership)",corp.Id,successor,actor);
-            await update.ExecuteNonQueryAsync(token);
+            if (corp.CeoId != actor || successor == actor || nextCharacter?.CorporationId != corp.Id || next?.CorporationId != corp.Id)
+                throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            await using var update = Command(connection,tx,$"""
+                WITH leadership AS (UPDATE {_schema}.corporations SET ceo_id=$2 WHERE id=$1 AND ceo_id=$3 RETURNING id)
+                UPDATE {_schema}.members
+                SET roles=CASE WHEN character_id=$2 THEN roles | $4 ELSE roles & ~$4 END
+                WHERE corporation_id IN(SELECT id FROM leadership) AND character_id IN($2,$3)
+                """,corp.Id,successor,actor,CorporationRoles.Director);
+            var affected = await update.ExecuteNonQueryAsync(token);
+            if (affected != 2) throw new CorporationError("CORPORATION_ACCESS_DENIED");
             return 0;
         },token);
 }

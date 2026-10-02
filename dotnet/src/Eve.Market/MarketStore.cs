@@ -162,12 +162,15 @@ public sealed partial class MarketStore
             {
                 ArgumentException.ThrowIfNullOrWhiteSpace(seed.Key);
                 var remaining=seed.VolumeRemaining ?? seed.Volume;
-                if (seed.TypeId<=0 || seed.Price<=0 || seed.Price>(decimal)MarketRules.MaximumOrderPrice ||
-                    seed.Price!=decimal.Round(seed.Price,2) || seed.Volume<=0 || remaining<=0 || remaining>seed.Volume ||
-                    seed.MinimumVolume<=0 || seed.MinimumVolume>seed.Volume || seed.Location.StationId<=0 ||
-                    seed.Location.SolarSystemId<=0 || seed.Location.ConstellationId<=0 || seed.Location.RegionId<=0 ||
-                    seed.Duration<=0)
-                    throw new ArgumentException($"Invalid V4 market order seed '{seed.Key}'.");
+                var invalidField = seed.TypeId<=0 ? "type_id" :
+                    seed.Price<=0 || seed.Price>(decimal)MarketRules.MaximumOrderPrice || seed.Price!=decimal.Round(seed.Price,2) ? "price" :
+                    seed.Volume<=0 ? "volume_total" : remaining<0 || remaining>seed.Volume ? "volume_remain" :
+                    seed.MinimumVolume<=0 || seed.MinimumVolume>seed.Volume ? "min_volume" :
+                    seed.Location.StationId<=0 ? "location_id" : seed.Location.SolarSystemId<=0 ? "system_id" :
+                    seed.Location.ConstellationId<=0 ? "constellation_id" : seed.Location.RegionId<=0 ? "region_id" :
+                    seed.Duration<=0 ? "duration" : null;
+                if (invalidField is not null)
+                    throw new ArgumentException($"Invalid V4 market order seed '{seed.Key}': {invalidField}.");
                 await importer.StartRowAsync(token);
                 await importer.WriteAsync(seed.Key,NpgsqlTypes.NpgsqlDbType.Text,token);
                 await importer.WriteAsync(seed.TypeId,NpgsqlTypes.NpgsqlDbType.Integer,token);

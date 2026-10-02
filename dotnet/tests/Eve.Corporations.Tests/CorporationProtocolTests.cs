@@ -7,6 +7,12 @@ namespace Eve.Corporations.Tests;
 
 public class CorporationProtocolTests
 {
+    private sealed class PacketSink : IPacketSink
+    {
+        public List<PyValue> Packets { get; } = [];
+        public void Send(PyValue packet) => Packets.Add(packet);
+    }
+
     private static ServiceCall Call(ClientSession session,string method,params PyValue[] args) => new() { Session=session,Method=method,Args=args };
     private static PyValue Field(PyValue value,string key) => Assert.IsType<PyDict>(Assert.IsType<PyObject>(value).Args).Entries.Single(e => e.Key == new PyStr(key)).Value;
 
@@ -15,6 +21,19 @@ public class CorporationProtocolTests
 
     private static PyValue CachedPayload(PyValue value) =>
         Assert.IsType<PySubStream>(Assert.IsType<PyTuple>(Assert.IsType<PyObject>(value).Args).Items[1]).Decoded!;
+
+    private static Eve.Macho.MachoAddress NotificationAddress(PyValue packet)
+    {
+        var envelope = Assert.IsType<PyObject>(packet);
+        return Eve.Macho.MachoAddress.Decode(Assert.IsType<PyTuple>(envelope.Args).Items[2]);
+    }
+
+    private static string? NotificationName(PyValue packet)
+    {
+        if (packet is not PyObject { Name: PyStr name, Args: PyTuple args } ||
+            !name.Value.EndsWith("Notification",StringComparison.Ordinal)) return null;
+        return Eve.Macho.MachoAddress.Decode(args.Items[2]).BroadcastId;
+    }
 
     [PgFact]
     public async Task Npc_catalog_membership_and_departure_keep_the_character_faction()
@@ -252,7 +271,7 @@ public class CorporationProtocolTests
     }
 
     [PgFact]
-    public async Task Corporation_invitation_migration_backfills_ids_and_advances_the_durable_sequence()
+    public async Task Corporation_migrations_upgrade_invitations_and_medal_awards()
     {
         await using var rig = await Rig.CreateAsync();
         var schema = $"corp_invite_upgrade_{Guid.NewGuid():N}";
@@ -277,10 +296,17 @@ public class CorporationProtocolTests
                     """);
                 await Execute($"CREATE UNIQUE INDEX applications_active ON {schema}.applications(corporation_id,character_id) WHERE NOT archived");
                 await Execute($"INSERT INTO {schema}.applications(id,corporation_id,character_id,text,status,created_ms,updated_ms,response,archived) VALUES (42,1,2,'',8,1,1,'',false),(99,1,3,'',0,1,1,'',false)");
+                await Execute($"""
+                    CREATE TABLE {schema}.medal_awards(
+                        medal_id bigint NOT NULL,character_id bigint NOT NULL,issuer_id bigint NOT NULL,
+                        reason text NOT NULL,created_ms bigint NOT NULL,status integer NOT NULL DEFAULT 2,
+                        PRIMARY KEY(medal_id,character_id))
+                    """);
+                await Execute($"INSERT INTO {schema}.medal_awards(medal_id,character_id,issuer_id,reason,created_ms) VALUES (7,8,9,'legacy',10)");
             }
 
             var applied = await Eve.Data.Migrations.ApplyAsync(rig.Source,schema,CorporationStore.MigrationSet());
-            Assert.Equal(new[] { "004_invitation_ids" },applied);
+            Assert.Equal(new[] { "004_invitation_ids","005_medal_award_occurrences" },applied);
             await using var read = await rig.Source.OpenConnectionAsync();
             await using (var backfill = read.CreateCommand())
             {
@@ -291,6 +317,11 @@ public class CorporationProtocolTests
             {
                 next.CommandText = $"SELECT nextval('{schema}.invitation_ids')";
                 Assert.Equal(100L,(long)(await next.ExecuteScalarAsync())!);
+            }
+            await using (var award = read.CreateCommand())
+            {
+                award.CommandText = $"SELECT award_id FROM {schema}.medal_awards WHERE medal_id=7 AND character_id=8";
+                Assert.True((long)(await award.ExecuteScalarAsync())! > 0);
             }
         }
         finally
@@ -488,21 +519,24 @@ public class CorporationProtocolTests
         Assert.IsType<PyNone>(await MemberRpc("SetMedalStatus", status));
         Assert.IsType<PyNone>(await MemberRpc("GiveMedalToCharacters",
             new PyInt(medalId), new PyList([new PyInt(founder)]), new PyWString("Service award")));
+        Assert.IsType<PyNone>(await MemberRpc("GiveMedalToCharacters",
+            new PyInt(medalId), new PyList([new PyInt(founder)]), new PyWString("Repeat award")));
 
-        var recipients = Assert.IsType<PyList>(Lines(await MemberRpc("GetRecipientsOfMedal", new PyInt(medalId))).Single());
-        Assert.Equal(new PyInt(founder), recipients.Items[1]);
-        Assert.Equal(new PyInt(member), recipients.Items[2]);
-        Assert.Equal(new PyWString("Service award"), recipients.Items[3]);
-        Assert.IsType<PyLong>(recipients.Items[4]);
+        var recipientRows = Lines(await MemberRpc("GetRecipientsOfMedal", new PyInt(medalId)));
+        Assert.Equal(2, recipientRows.Count);
+        var firstRecipient = Assert.IsType<PyList>(recipientRows[0]);
+        Assert.Equal(new PyInt(founder), firstRecipient.Items[1]);
+        Assert.Equal(new PyInt(member), firstRecipient.Items[2]);
+        Assert.Equal(new PyWString("Service award"), firstRecipient.Items[3]);
+        Assert.IsType<PyLong>(firstRecipient.Items[4]);
+        var secondRecipient = Assert.IsType<PyList>(recipientRows[1]);
+        Assert.Equal(new PyWString("Repeat award"), secondRecipient.Items[3]);
 
         var received = Assert.IsType<PyTuple>(await FounderRpc("GetMedalsReceived"));
-        var receivedInfo = Assert.IsType<PyList>(Lines(received.Items[0]).Single());
-        Assert.Equal(new PyInt(medalId), receivedInfo.Items[0]);
-        Assert.Equal(new PyInt(member), receivedInfo.Items[1]);
-        Assert.Equal(new PyInt(corp.Id), receivedInfo.Items[2]);
-        Assert.Equal(new PyInt(4), receivedInfo.Items[3]);
-        Assert.Equal(new PyWString("Service award"), receivedInfo.Items[4]);
-        Assert.Equal(new PyInt(0), receivedInfo.Items[6]);
+        var receivedRows = Lines(received.Items[0]);
+        Assert.Equal(2, receivedRows.Count);
+        Assert.Equal(new PyWString("Service award"), Assert.IsType<PyList>(receivedRows[0]).Items[4]);
+        Assert.Equal(new PyWString("Repeat award"), Assert.IsType<PyList>(receivedRows[1]).Items[4]);
         Assert.Single(Lines(received.Items[1]));
 
         var details = await MemberRpc("GetMedalDetails", new PyInt(medalId));
@@ -510,19 +544,122 @@ public class CorporationProtocolTests
         Assert.Equal(new PyInt(medalId), Field(detail, "medalID"));
         Assert.Equal(new PyInt(corp.Id), Field(detail, "ownerID"));
         Assert.Equal(new PyInt(member), Field(detail, "creatorID"));
-        Assert.Equal(new PyInt(1), Field(detail, "numberOfRecipients"));
+        Assert.Equal(new PyInt(2), Field(detail, "numberOfRecipients"));
         Assert.Single(Lines(Field(details, "graphics")));
         Assert.Empty(Assert.IsType<PyList>(Field(await MemberRpc("GetMedalDetails", new PyInt(long.MaxValue)), "info")).Items);
     }
 
+    [PgFact]
+    public async Task Corp_info_returns_reference_activity_rows_for_existing_corporations()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Corp Info Founder");
+        var corp = await rig.Store.CreateAsync(founder, new("Info Works", "INFO", "", "", 0.05m), "corp-info");
+        var service = (IService)new CorporationService(rig.Store, rig.Characters);
+        var session = new ClientSession();
+        session.CharacterId = founder;
+
+        var activity = await service.CallAsync(Call(session, "GetCorpInfo", new PyInt(corp.Id)));
+        Assert.Empty(Assert.IsType<PyList>(activity).Items);
+        Assert.IsType<PyNone>(await service.CallAsync(Call(session, "GetCorpInfo", new PyInt(long.MaxValue))));
+    }
+
+    [PgFact]
+    public async Task Corporation_membership_role_and_medal_notifications_run_after_commit()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Notice Founder");
+        var member = await rig.CharacterAsync("Notice Member");
+        var corp = await rig.Store.CreateAsync(founder,new("Notice Works","NOTICE","","",0.05m),"notice-corp");
+
+        var sessions = new CharacterSessions();
+        var founderSink = new PacketSink();
+        var founderSession = new ClientSession(founderSink);
+        founderSession.CharacterId = founder;
+        founderSession.Set("corpid",new PyInt(corp.Id));
+        var memberSink = new PacketSink();
+        var memberSession = new ClientSession(memberSink);
+        memberSession.CharacterId = member;
+        memberSession.Set("corpid",new PyInt(1000044));
+        sessions.Enter(founder,founderSession);
+        sessions.Enter(member,memberSession);
+        var registry = new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now,sessions);
+        var medals = new CorporationService(rig.Store,rig.Characters,sessions);
+
+        var application = await rig.Store.ApplyAsync(member,corp.Id,"Join");
+        await registry.UpdateApplicationOffer(Call(founderSession,"UpdateApplicationOffer",new PyInt(application),new PyInt(member),
+            new PyInt(corp.Id),new PyWString("Join"),new PyInt(6),new PyWString("Welcome")));
+        founderSession.RunAfterResponse();
+        var founderApplication = Assert.Single(founderSink.Packets,p => NotificationName(p) == "OnCorporationApplicationChanged");
+        var memberApplication = Assert.Single(memberSink.Packets,p => NotificationName(p) == "OnCorporationApplicationChanged");
+        Assert.Equal("clientID",NotificationAddress(founderApplication).IdType);
+        Assert.Equal("clientID",NotificationAddress(memberApplication).IdType);
+        founderSink.Packets.Clear();
+        memberSink.Packets.Clear();
+        Assert.Equal(1000044,(await rig.Characters.GetAsync(member))!.CorporationId);
+        await registry.UpdateApplicationOffer(Call(memberSession,"UpdateApplicationOffer",new PyInt(application),new PyInt(member),
+            new PyInt(corp.Id),new PyWString("Join"),new PyInt(2),new PyWString("Accepted")));
+        Assert.Equal(corp.Id,(await rig.Characters.GetAsync(member))!.CorporationId);
+        Assert.DoesNotContain(founderSink.Packets,p => NotificationName(p) == "OnCorporationApplicationChanged");
+        Assert.DoesNotContain(memberSink.Packets,p => NotificationName(p) == "OnCorporationApplicationChanged");
+        Assert.DoesNotContain(founderSink.Packets,p => NotificationName(p) == "OnCorporationMemberChanged");
+        Assert.DoesNotContain(memberSink.Packets,p => NotificationName(p) == "OnCorporationMemberChanged");
+        memberSession.RunAfterResponse();
+        var founderApplicationAccepted = Assert.Single(founderSink.Packets,p => NotificationName(p) == "OnCorporationApplicationChanged");
+        var memberApplicationAccepted = Assert.Single(memberSink.Packets,p => NotificationName(p) == "OnCorporationApplicationChanged");
+        Assert.Equal("clientID",NotificationAddress(founderApplicationAccepted).IdType);
+        Assert.Equal("clientID",NotificationAddress(memberApplicationAccepted).IdType);
+        var founderJoin = Assert.Single(founderSink.Packets,p => NotificationName(p) == "OnCorporationMemberChanged");
+        var memberJoin = Assert.Single(memberSink.Packets,p => NotificationName(p) == "OnCorporationMemberChanged");
+        Assert.Equal("corpid",NotificationAddress(founderJoin).IdType);
+        Assert.Equal("corpid",NotificationAddress(memberJoin).IdType);
+
+        founderSink.Packets.Clear();
+        memberSink.Packets.Clear();
+        await registry.UpdateMember(Call(founderSession,"UpdateMember",new PyInt(member),PyNone.Instance,PyNone.Instance,PyNone.Instance,
+            new PyLong(CorporationRoles.JuniorAccountant)));
+        Assert.Equal(CorporationRoles.JuniorAccountant,(await rig.Store.MemberAsync(member))!.Masks.Roles);
+        Assert.DoesNotContain(founderSink.Packets,p => NotificationName(p) == "OnCorporationMemberChanged");
+        Assert.DoesNotContain(memberSink.Packets,p => NotificationName(p) == "OnCorporationMemberChanged");
+        founderSession.RunAfterResponse();
+        var founderRole = Assert.Single(founderSink.Packets,p => NotificationName(p) == "OnCorporationMemberChanged");
+        var memberRole = Assert.Single(memberSink.Packets,p => NotificationName(p) == "OnCorporationMemberChanged");
+        Assert.Equal("corpid",NotificationAddress(founderRole).IdType);
+        Assert.Equal("corpid",NotificationAddress(memberRole).IdType);
+
+        founderSink.Packets.Clear();
+        memberSink.Packets.Clear();
+        await registry.UpdateTitle(Call(founderSession,"UpdateTitle",new PyInt(1),new PyWString("Quartermaster"),
+            new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0)));
+        Assert.DoesNotContain(founderSink.Packets,p => NotificationName(p) == "OnTitleChanged");
+        Assert.DoesNotContain(memberSink.Packets,p => NotificationName(p) == "OnTitleChanged");
+        founderSession.RunAfterResponse();
+        var founderTitle = Assert.Single(founderSink.Packets,p => NotificationName(p) == "OnTitleChanged");
+        var memberTitle = Assert.Single(memberSink.Packets,p => NotificationName(p) == "OnTitleChanged");
+        Assert.Equal("corpid",NotificationAddress(founderTitle).IdType);
+        Assert.Equal("corpid",NotificationAddress(memberTitle).IdType);
+
+        founderSink.Packets.Clear();
+        memberSink.Packets.Clear();
+        var medalId = Assert.IsType<PyInt>(await medals.CreateMedal(Call(founderSession,"CreateMedal",
+            new PyWString("Notice"),new PyWString("Award"),new PyList([])))).Value;
+        await medals.GiveMedalToCharacters(Call(founderSession,"GiveMedalToCharacters",new PyInt(medalId),
+            new PyList([new PyInt(member)]),new PyWString("Awarded")));
+        Assert.DoesNotContain(memberSink.Packets,p => NotificationName(p) == "OnMedalsReceived");
+        founderSession.RunAfterResponse();
+        Assert.DoesNotContain(founderSink.Packets,p => NotificationName(p) == "OnMedalsReceived");
+        var medalNotice = Assert.Single(memberSink.Packets,p => NotificationName(p) == "OnMedalsReceived");
+        Assert.Equal("clientID",NotificationAddress(medalNotice).IdType);
+    }
+
     [Fact]
-    public void Corporation_service_exposes_all_reference_medal_methods()
+    public void Corporation_service_exposes_reference_methods()
     {
         var service = (IService)new CorporationService(null!, null!);
         foreach (var method in new[]
         {
             "CreateMedal", "SetMedalStatus", "GetAllCorpMedals", "GetRecipientsOfMedal",
-            "GiveMedalToCharacters", "GetMedalDetails", "GetMedalsReceived"
+            "GiveMedalToCharacters", "GetMedalDetails", "GetMedalsReceived", "GetCorpInfo"
         }) Assert.True(service.HasMethod(method), method);
     }
 }

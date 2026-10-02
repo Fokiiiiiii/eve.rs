@@ -28,7 +28,7 @@ public sealed partial class CorpMgrService(CorporationStore store,PgCharacterSto
 }
 
 [Service("corporationSvc")]
-public sealed partial class CorporationService(CorporationStore store,PgCharacterStore characters)
+public sealed partial class CorporationService(CorporationStore store,PgCharacterStore characters,CharacterSessions? characterSessions = null)
 {
     [Method("GetEmploymentRecord")]
     public async ValueTask<PyValue> GetEmploymentRecord(ServiceCall call)
@@ -55,6 +55,16 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
             ("header",Py.Tuple(new PyStr("corporationID"),new PyStr("corporationName"),new PyStr("ticker"),new PyStr("ceoID"),new PyStr("membership"))),
             ("row",row),("line",row)]);
     }
+
+    [Method("GetCorpInfo")]
+    public async ValueTask<PyValue> GetCorpInfo(ServiceCall call)
+    {
+        var id = MedalInteger(call.Arg(0));
+        return id > 0 && await store.GetAsync(id,call.Cancellation) is not null
+            ? new PyList([])
+            : PyNone.Instance;
+    }
+
     [Method("GetEmployementRecordAndCharacterTransfers")]
     public async ValueTask<PyValue> GetEmployementRecordAndCharacterTransfers(ServiceCall call) =>
         Py.Tuple(await GetEmploymentRecord(call),new PyList([]));
@@ -69,7 +79,8 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
             CorporationWire.Id(r.Medal.Status), new PyWString(r.Award.Reason),
             CorporationWire.Time(r.Award.CreatedMs != 0 ? r.Award.CreatedMs : r.Medal.CreatedMs),
             new PyInt(r.Medal.IsDeleted ? 1 : 0)));
-        var graphics = received.SelectMany(r => r.Medal.Graphics.Select(g => (r.Medal.Id, g)));
+        var graphics = received.DistinctBy(r => r.Medal.Id)
+            .SelectMany(r => r.Medal.Graphics.Select(g => (r.Medal.Id, g)));
         return Py.Tuple(
             Py.Rowset(["medalID","issuerID","ownerID","status","reason","date","isDeleted"], info),
             MedalGraphicsRowset(graphics));
@@ -144,8 +155,13 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
         var recipients = rawRecipients is PyList or PyTuple
             ? MedalSequence(rawRecipients).Select(MedalInteger).ToArray()
             : [MedalInteger(rawRecipients)];
-        await store.AwardMedalAsync(SessionCorporationId(call.Session), MedalInteger(call.Arg(0)), recipients,
-            SessionIssuerId(call.Session), MedalText(call.Arg(2)), call.Cancellation);
+        var corporationId = SessionCorporationId(call.Session);
+        var medalId = MedalInteger(call.Arg(0));
+        var medal = await store.MedalAsync(medalId,call.Cancellation);
+        await store.AwardMedalAsync(corporationId,medalId,recipients,
+            SessionIssuerId(call.Session),MedalText(call.Arg(2)),call.Cancellation);
+        if (medal?.CorporationId == corporationId)
+            CorporationNotificationAdapter.MedalsReceived(characterSessions,call,medalId,recipients);
         return PyNone.Instance;
     }
 
@@ -252,7 +268,7 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
 }
 
 [Service("corpRegistry")]
-public sealed partial class CorpRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now)
+public sealed partial class CorpRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,CharacterSessions? characterSessions = null)
 {
     private async Task<Corporation?> Current(ServiceCall call) =>
         call.Session.CharacterId is { } id && await characters.GetAsync(id,call.Cancellation) is { } c
@@ -463,8 +479,22 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         if (PositiveId(call.Arg(1)) is { } character && character != application.CharacterId ||
             call.Session.CharacterId is not { } actor)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
-        await store.RespondAsync(actor,applicationId,Status(call.Arg(4)),Text(call.Arg(3)),Text(call.Arg(5)),call.Cancellation);
-        if (Status(call.Arg(4)) == 2)
+        var recipients = new HashSet<long> { application.CharacterId, actor };
+        if (await store.GetAsync(corporation,call.Cancellation) is { } corp) recipients.Add(corp.CeoId);
+        foreach (var member in await store.MembersAsync(corporation,call.Cancellation))
+            if ((member.Masks.Roles & (CorporationRoles.Director | CorporationRoles.PersonnelManager)) != 0)
+                recipients.Add(member.CharacterId);
+        var before = await store.MemberAsync(application.CharacterId,call.Cancellation);
+        var status = Status(call.Arg(4));
+        var updated = await store.RespondAsync(actor,applicationId,status,Text(call.Arg(3)),Text(call.Arg(5)),call.Cancellation);
+        CorporationNotificationAdapter.ApplicationChanged(characterSessions,call,corporation,updated.CharacterId,
+            updated.Id,ApplicationRow(updated),recipients);
+        Member? after = status == 2
+            ? new Member(application.CharacterId,corporation,now(),"",new RoleMasks(),null,0,false,1000)
+            : before;
+        if (before != after)
+            CorporationNotificationAdapter.MemberChanged(characterSessions,call,corporation,application.CharacterId,before,after);
+        if (status == 2)
             await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
         return PyNone.Instance;
     }
@@ -497,7 +527,10 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             DecimalValue(call.Arg(4)),DecimalValue(call.Arg(14)),Truth(call.Arg(12)),Truth(call.Arg(13)),document.RootElement.Clone()),
             $"corp-found:{founder}:{call.Session.SessionId}:{Number(call.CallId)}",call.Cancellation);
         await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,founder,call.Cancellation);
-        return CorporationWire.Row(created,(await store.MembersAsync(created.Id,call.Cancellation)).Count);
+        var members = await store.MembersAsync(created.Id,call.Cancellation);
+        if (members.FirstOrDefault(m => m.CharacterId == founder) is { } member)
+            CorporationNotificationAdapter.MemberChanged(characterSessions,call,created.Id,founder,null,member);
+        return CorporationWire.Row(created,members.Count);
     }
 
     [Method("UpdateCorporation")]
@@ -552,7 +585,10 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     {
         if (call.Session.CharacterId is not { } character) return PyBool.True;
         var key = CorporationWalletKey(call.Arg(0));
+        var before = await store.MemberAsync(character,call.Cancellation);
         await store.SetAccountKeyAsync(character,key,call.Cancellation);
+        if (before is not null)
+            CorporationNotificationAdapter.MemberChanged(characterSessions,call,before.CorporationId,character,before,before with { AccountKey=key });
         call.Session.Set("corpaccountkey",new PyInt(key));
         await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,character,call.Cancellation);
         return PyBool.True;
@@ -597,7 +633,9 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             if (!AssertCanLeave(await CanLeaveCurrentCorporation(call))) return PyNone.Instance;
             var character = await characters.GetAsync(actor,call.Cancellation) ?? throw new CorporationError("CHARACTER_NOT_FOUND");
             var destination = await store.GetAsync(StarterCorporation(character),call.Cancellation) ?? throw new CorporationError("NPC_CORPORATION_REQUIRED");
+            var before = await store.MemberAsync(actor,call.Cancellation);
             await store.LeaveAsync(actor,destination.Id,call.Cancellation);
+            CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,actor,before,null);
             await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
             return MoveResult(actor,destination);
         }
@@ -606,6 +644,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         var kicked = await characters.GetAsync(target,call.Cancellation) ?? throw new CorporationError("CHARACTER_NOT_FOUND");
         var fallback = await store.GetAsync(StarterCorporation(kicked),call.Cancellation) ?? throw new CorporationError("NPC_CORPORATION_REQUIRED");
         await store.KickAsync(actor,target,fallback.Id,call.Cancellation);
+        CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,target,member,null);
         return MoveResult(target,fallback);
     }
 
@@ -630,7 +669,15 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
                 notKicked.Add(new PyInt(target));
                 continue;
             }
+            var before = await store.MemberAsync(target,call.Cancellation);
+            if (before is null)
+            {
+                notKicked.Add(new PyInt(target));
+                continue;
+            }
+            var corporationId = before.CorporationId;
             await store.KickAsync(actor,target,StarterCorporation(character),call.Cancellation);
+            CorporationNotificationAdapter.MemberChanged(characterSessions,call,corporationId,target,before,null);
             kicked.Add(new PyInt(target));
         }
         return Py.Dict(("kicked",new PyList(kicked)),("notKicked",new PyList(notKicked)));
@@ -648,7 +695,19 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
         if (PositiveId(call.Arg(0)) is { } successor)
         {
+            var actorBefore = await store.MemberAsync(actor,call.Cancellation);
+            var successorBefore = await store.MemberAsync(successor,call.Cancellation);
             await store.ResignAsync(actor,successor,call.Cancellation);
+            var actorAfter = actorBefore is null ? null : actorBefore with
+            {
+                Masks = actorBefore.Masks with { Roles=actorBefore.Masks.Roles & ~CorporationRoles.Director }
+            };
+            var successorAfter = successorBefore is null ? null : successorBefore with
+            {
+                Masks = successorBefore.Masks with { Roles=successorBefore.Masks.Roles | CorporationRoles.Director }
+            };
+            CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,actor,actorBefore,actorAfter);
+            CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,successor,successorBefore,successorAfter);
             await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
             return PyNone.Instance;
         }
@@ -663,8 +722,9 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp ||
             PositiveId(call.Arg(0)) is not { } target)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
-        var desired = await MemberUpdate(target,call.Args,false,corp.Id,call.Cancellation);
-        await store.UpdateMemberAsync(actor,desired,call.Cancellation);
+        var (before,desired) = await MemberUpdate(target,call.Args,false,corp.Id,call.Cancellation);
+        var after = await store.UpdateMemberAsync(actor,desired,call.Cancellation);
+        CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,target,before,after);
         if (target == actor) await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
         return PyNone.Instance;
     }
@@ -675,16 +735,21 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
         var updates = new List<Member>();
+        var beforeById = new Dictionary<long,Member>();
         foreach (var raw in Items(call.Arg(0)))
         {
             var row = Items(raw);
             if (row.Count == 0 || PositiveId(row[0]) is not { } target)
                 throw new CorporationError("CORPORATION_ACCESS_DENIED");
-            updates.Add(await MemberUpdate(target,row,true,corp.Id,call.Cancellation));
+            var (before,after) = await MemberUpdate(target,row,true,corp.Id,call.Cancellation);
+            beforeById.Add(target,before);
+            updates.Add(after);
         }
         if (updates.Select(m => m.CharacterId).Distinct().Count() != updates.Count)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
-        await store.UpdateMembersAsync(actor,updates,call.Cancellation);
+        var changed = await store.UpdateMembersAsync(actor,updates,call.Cancellation);
+        foreach (var member in changed)
+            CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,member.CharacterId,beforeById[member.CharacterId],member);
         if (updates.Any(m => m.CharacterId == actor))
             await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
         return PyNone.Instance;
@@ -695,7 +760,11 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     {
         if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
-        await store.UpdateTitleAsync(actor,corp.Id,Title(call.Args),call.Cancellation);
+        var title = Title(call.Args);
+        var before = (await store.TitlesAsync(corp.Id,call.Cancellation)).FirstOrDefault(t => t.Id == title.Id);
+        var updated = title with { Name=title.Name.Length > 100 ? title.Name[..100] : title.Name };
+        await store.UpdateTitleAsync(actor,corp.Id,updated,call.Cancellation);
+        CorporationNotificationAdapter.TitleChanged(characterSessions,call,corp.Id,before,updated);
         return PyNone.Instance;
     }
 
@@ -704,8 +773,13 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     {
         if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
-        var titles = Items(call.Arg(0)).Select(row => Title(Items(row))).ToArray();
+        var titles = Items(call.Arg(0)).Select(row => Title(Items(row)))
+            .Select(title => title with { Name=title.Name.Length > 100 ? title.Name[..100] : title.Name }).ToArray();
+        var before = await store.TitlesAsync(corp.Id,call.Cancellation);
         await store.UpdateTitlesAsync(actor,corp.Id,titles,call.Cancellation);
+        foreach (var title in titles)
+            CorporationNotificationAdapter.TitleChanged(characterSessions,call,corp.Id,
+                before.FirstOrDefault(t => t.Id == title.Id),title);
         return PyNone.Instance;
     }
 
@@ -716,7 +790,10 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
         var titleId = Number(call.Arg(0));
         if (titleId is < 1 or > 32768) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var before = (await store.TitlesAsync(corp.Id,call.Cancellation)).FirstOrDefault(t => t.Id == (int)titleId);
         await store.DeleteTitleAsync(actor,corp.Id,(int)titleId,call.Cancellation);
+        if (before is not null)
+            CorporationNotificationAdapter.TitleChanged(characterSessions,call,corp.Id,before,null);
         return PyNone.Instance;
     }
 
@@ -748,7 +825,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     private static long StarterCorporation(Eve.Characters.Character character) =>
         Eve.Characters.CreationCatalog.ResolveSchool(character.SchoolId,character.RaceId)?.CorporationId ?? 1000004;
 
-    private async Task<Member> MemberUpdate(long character,IReadOnlyList<PyValue> values,bool bulk,long corporation,CancellationToken token)
+    private async Task<(Member Before,Member After)> MemberUpdate(long character,IReadOnlyList<PyValue> values,bool bulk,long corporation,CancellationToken token)
     {
         var old = await store.MemberAsync(character,token);
         if (old is null || old.CorporationId != corporation) throw new CorporationError("CORPORATION_ACCESS_DENIED");
@@ -762,13 +839,14 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         var titleMask = At(13) is PyNone ? old.TitleMask : (int)RoleMask(At(13),65535);
         var blockRoles = At(14) is PyNone ? old.BlockRoles : BlockRoles(At(14));
         var baseId = At(12) is PyNone ? old.BaseId : PositiveId(At(12));
-        return old with
+        var after = old with
         {
             Title = bulk || At(1) is PyNone ? old.Title : Text(At(1))[..Math.Min(100,Text(At(1)).Length)],
             DivisionId = bulk || At(2) is PyNone ? old.DivisionId : (int)Number(At(2)),
             SquadronId = bulk || At(3) is PyNone ? old.SquadronId : (int)Number(At(3)),
             Masks = masks,TitleMask = titleMask,BlockRoles = blockRoles,BaseId = baseId
         };
+        return (old,after);
     }
 
     private static CorporationTitle Title(IReadOnlyList<PyValue> values)
@@ -839,4 +917,152 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         PyInt n => n.Value,PyLong n => n.Value,PyReal n => n.Value,PyBool b => b == PyBool.True,
         PyStr s => s.Value,PyWString => JsSemantics.StringValue(value),_ => null
     };
+}
+
+
+internal static class CorporationNotificationAdapter
+{
+    public static void MemberChanged(CharacterSessions? sessions,ServiceCall call,long corporationId,long characterId,
+        Member? before,Member? after)
+    {
+        if (sessions is null) return;
+        var payload = Py.Tuple(CorporationWire.Id(corporationId),CorporationWire.Id(characterId),MemberChange(before,after));
+        call.Session.AfterResponse(() =>
+        {
+            var sent = new HashSet<ClientSession>();
+            foreach (var session in sessions.OfCorporation(corporationId))
+            {
+                sent.Add(session);
+                Send(session,"OnCorporationMemberChanged","corpid",payload);
+            }
+            if (sessions.Of(characterId) is { } member && sent.Add(member))
+                Send(member,"OnCorporationMemberChanged","clientID",payload);
+        });
+    }
+
+    public static void TitleChanged(CharacterSessions? sessions,ServiceCall call,long corporationId,
+        CorporationTitle? before,CorporationTitle? after)
+    {
+        if (sessions is null) return;
+        var titleId = after?.Id ?? before?.Id ?? 0;
+        var payload = Py.Tuple(CorporationWire.Id(corporationId),new PyInt(titleId),TitleChange(before,after));
+        call.Session.AfterResponse(() =>
+        {
+            foreach (var session in sessions.OfCorporation(corporationId))
+                Send(session,"OnTitleChanged","corpid",payload);
+        });
+    }
+
+public static void ApplicationChanged(CharacterSessions? sessions,ServiceCall call,long corporationId,
+        long applicantId,long applicationId,PyValue applicationRow,IEnumerable<long> recipientIds)
+    {
+        if (sessions is null) return;
+        var ids = recipientIds.Distinct().ToArray();
+        var payload = Py.Tuple(CorporationWire.Id(corporationId),CorporationWire.Id(applicantId),
+            CorporationWire.Id(applicationId),applicationRow);
+        call.Session.AfterResponse(() =>
+        {
+            var targets = new HashSet<ClientSession>();
+            foreach (var id in ids)
+                if (sessions.Of(id) is { } recipient) targets.Add(recipient);
+            if (call.Session.CharacterId is { } actor && ids.Contains(actor)) targets.Add(call.Session);
+            foreach (var recipient in targets)
+                Send(recipient,"OnCorporationApplicationChanged","clientID",payload);
+        });
+    }
+
+    // eve.rs extension: the local EveJS medal service emits no push event on award.
+    public static void MedalsReceived(CharacterSessions? sessions,ServiceCall call,long medalId,
+        IEnumerable<long> recipients)
+    {
+        if (sessions is null) return;
+        var uniqueRecipients = recipients.Distinct().ToArray();
+        call.Session.AfterResponse(() =>
+        {
+            foreach (var id in uniqueRecipients)
+                if (sessions.Of(id) is { } member)
+                    Send(member,"OnMedalsReceived","clientID",Py.Tuple(CorporationWire.Id(medalId)));
+        });
+    }
+
+    private static PyDict MemberChange(Member? before,Member? after)
+    {
+        var changes = new List<KeyValuePair<PyValue,PyValue>>();
+        void Add(string name,PyValue oldValue,PyValue newValue)
+        {
+            if (oldValue.Equals(newValue)) return;
+            changes.Add(new(new PyStr(name),new PyList([oldValue,newValue])));
+        }
+        Add("characterID",CorporationWire.Id(before?.CharacterId),CorporationWire.Id(after?.CharacterId));
+        Add("corporationID",CorporationWire.Id(before?.CorporationId),CorporationWire.Id(after?.CorporationId));
+        Add("startDate",before is null ? PyNone.Instance : CorporationWire.Time(before.StartedMs),
+            after is null ? PyNone.Instance : CorporationWire.Time(after.StartedMs));
+        Add("title",before is null ? PyNone.Instance : new PyWString(before.Title),
+            after is null ? PyNone.Instance : new PyWString(after.Title));
+        Add("divisionID",before is null ? PyNone.Instance : new PyInt(before.DivisionId),
+            after is null ? PyNone.Instance : new PyInt(after.DivisionId));
+        Add("squadronID",before is null ? PyNone.Instance : new PyInt(before.SquadronId),
+            after is null ? PyNone.Instance : new PyInt(after.SquadronId));
+        Add("roles",before is null ? PyNone.Instance : new PyLong(before.Masks.Roles),
+            after is null ? PyNone.Instance : new PyLong(after.Masks.Roles));
+        Add("grantableRoles",before is null ? PyNone.Instance : new PyLong(before.Masks.GrantableRoles),
+            after is null ? PyNone.Instance : new PyLong(after.Masks.GrantableRoles));
+        Add("rolesAtHQ",before is null ? PyNone.Instance : new PyLong(before.Masks.AtHq),
+            after is null ? PyNone.Instance : new PyLong(after.Masks.AtHq));
+        Add("grantableRolesAtHQ",before is null ? PyNone.Instance : new PyLong(before.Masks.GrantableHq),
+            after is null ? PyNone.Instance : new PyLong(after.Masks.GrantableHq));
+        Add("rolesAtBase",before is null ? PyNone.Instance : new PyLong(before.Masks.AtBase),
+            after is null ? PyNone.Instance : new PyLong(after.Masks.AtBase));
+        Add("grantableRolesAtBase",before is null ? PyNone.Instance : new PyLong(before.Masks.GrantableBase),
+            after is null ? PyNone.Instance : new PyLong(after.Masks.GrantableBase));
+        Add("rolesAtOther",before is null ? PyNone.Instance : new PyLong(before.Masks.AtOther),
+            after is null ? PyNone.Instance : new PyLong(after.Masks.AtOther));
+        Add("grantableRolesAtOther",before is null ? PyNone.Instance : new PyLong(before.Masks.GrantableOther),
+            after is null ? PyNone.Instance : new PyLong(after.Masks.GrantableOther));
+        Add("baseID",CorporationWire.Id(before?.BaseId),CorporationWire.Id(after?.BaseId));
+        Add("titleMask",before is null ? PyNone.Instance : new PyInt(before.TitleMask),
+            after is null ? PyNone.Instance : new PyInt(after.TitleMask));
+        Add("blockRoles",before is null || !before.BlockRoles ? PyNone.Instance : new PyLong(1),
+            after is null || !after.BlockRoles ? PyNone.Instance : new PyLong(1));
+        Add("accountKey",before is null ? PyNone.Instance : new PyInt(before.AccountKey),
+            after is null ? PyNone.Instance : new PyInt(after.AccountKey));
+        return new PyDict(changes);
+    }
+
+    private static PyDict TitleChange(CorporationTitle? before,CorporationTitle? after)
+    {
+        var changes = new List<KeyValuePair<PyValue,PyValue>>();
+        void Add(string name,PyValue oldValue,PyValue newValue)
+        {
+            if (oldValue.Equals(newValue)) return;
+            changes.Add(new(new PyStr(name),new PyList([oldValue,newValue])));
+        }
+        Add("titleID",before is null ? PyNone.Instance : new PyInt(before.Id),
+            after is null ? PyNone.Instance : new PyInt(after.Id));
+        Add("titleName",before is null ? PyNone.Instance : new PyWString(before.Name),
+            after is null ? PyNone.Instance : new PyWString(after.Name));
+        Add("roles",before is null ? PyNone.Instance : new PyLong(before.Masks.Roles),
+            after is null ? PyNone.Instance : new PyLong(after.Masks.Roles));
+        Add("grantableRoles",before is null ? PyNone.Instance : new PyLong(before.Masks.GrantableRoles),
+            after is null ? PyNone.Instance : new PyLong(after.Masks.GrantableRoles));
+        Add("rolesAtHQ",before is null ? PyNone.Instance : new PyLong(before.Masks.AtHq),
+            after is null ? PyNone.Instance : new PyLong(after.Masks.AtHq));
+        Add("grantableRolesAtHQ",before is null ? PyNone.Instance : new PyLong(before.Masks.GrantableHq),
+            after is null ? PyNone.Instance : new PyLong(after.Masks.GrantableHq));
+        Add("rolesAtBase",before is null ? PyNone.Instance : new PyLong(before.Masks.AtBase),
+            after is null ? PyNone.Instance : new PyLong(after.Masks.AtBase));
+        Add("grantableRolesAtBase",before is null ? PyNone.Instance : new PyLong(before.Masks.GrantableBase),
+            after is null ? PyNone.Instance : new PyLong(after.Masks.GrantableBase));
+        Add("rolesAtOther",before is null ? PyNone.Instance : new PyLong(before.Masks.AtOther),
+            after is null ? PyNone.Instance : new PyLong(after.Masks.AtOther));
+        Add("grantableRolesAtOther",before is null ? PyNone.Instance : new PyLong(before.Masks.GrantableOther),
+            after is null ? PyNone.Instance : new PyLong(after.Masks.GrantableOther));
+        return new PyDict(changes);
+    }
+
+    private static void Send(ClientSession session,string name,string idType,PyValue payload)
+    {
+        try { session.SendNotification(name,idType,payload); }
+        catch (Exception) { }
+    }
 }

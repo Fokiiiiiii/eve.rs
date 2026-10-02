@@ -46,6 +46,12 @@ public sealed partial class CorporationStore
             CREATE UNIQUE INDEX applications_active ON applications(corporation_id,character_id) WHERE NOT archived AND status <> 8;
             CREATE UNIQUE INDEX applications_invitation_id ON applications(invitation_id) WHERE invitation_id IS NOT NULL;
             """),
+        new Migration("005_medal_award_occurrences", """
+            ALTER TABLE medal_awards DROP CONSTRAINT medal_awards_pkey;
+            ALTER TABLE medal_awards ADD COLUMN award_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY;
+            CREATE INDEX medal_awards_medal_time ON medal_awards(medal_id,created_ms,award_id);
+            CREATE INDEX medal_awards_character_time ON medal_awards(character_id,medal_id,award_id);
+            """),
     ];
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
@@ -362,7 +368,7 @@ public sealed partial class CorporationStore
         await using var command = Command(connection, null,
             $"SELECT a.medal_id,a.character_id,a.issuer_id,a.reason,a.created_ms " +
             $"FROM {_schema}.medal_awards a JOIN {_schema}.medals m ON m.id=a.medal_id " +
-            "WHERE m.corporation_id=$1 AND m.id=$2 ORDER BY a.created_ms,a.character_id",
+            "WHERE m.corporation_id=$1 AND m.id=$2 ORDER BY a.created_ms,a.award_id",
             corporationId, medalId);
         await using var reader = await command.ExecuteReaderAsync(token);
         var recipients = new List<MedalAward>();
@@ -378,7 +384,7 @@ public sealed partial class CorporationStore
             $"SELECT m.id,m.corporation_id,m.creator_id,m.title,m.description,m.created_ms,m.data,0::bigint," +
             "a.medal_id,a.character_id,a.issuer_id,a.reason,a.created_ms " +
             $"FROM {_schema}.medal_awards a JOIN {_schema}.medals m ON m.id=a.medal_id " +
-            "WHERE a.character_id=$1 ORDER BY m.id,a.created_ms", characterId);
+            "WHERE a.character_id=$1 ORDER BY m.id,a.created_ms,a.award_id", characterId);
         await using var reader = await command.ExecuteReaderAsync(token);
         var received = new List<ReceivedMedal>();
         while (await reader.ReadAsync(token))
@@ -397,8 +403,7 @@ public sealed partial class CorporationStore
             {
                 await using var command = Command(connection, tx,
                     $"INSERT INTO {_schema}.medal_awards(medal_id,character_id,issuer_id,reason,created_ms) " +
-                    $"SELECT m.id,$3,$4,$5,$6 FROM {_schema}.medals m WHERE m.id=$1 AND m.corporation_id=$2 " +
-                    "ON CONFLICT(medal_id,character_id) DO UPDATE SET issuer_id=EXCLUDED.issuer_id,reason=EXCLUDED.reason,created_ms=EXCLUDED.created_ms",
+                    $"SELECT m.id,$3,$4,$5,$6 FROM {_schema}.medals m WHERE m.id=$1 AND m.corporation_id=$2",
                     medalId, corporationId, characterId, issuerId, reason, _now());
                 await command.ExecuteNonQueryAsync(token);
             }

@@ -16,7 +16,8 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "Jumping": 15, "Jumped": 16, "Targets": 17, "TargetRefused": 18, "Activate": 19, "Condition": 20,
          "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27,
          "PlaceContainer": 28, "ContainerPlaced": 29, "ChangeWreck": 30, "RemoveWreck": 31, "Measured": 32,
-         "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35}
+         "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35, "LaunchDrone": 36, "DroneCommand": 37, "DroneResults": 38,
+         "DroneScooped": 39, "DroneReleased": 40}
 
 
 def s(text):  # u16 length + UTF-8
@@ -129,12 +130,15 @@ def effect(e):
     return body
 
 
+def weapon(w):
+    return i64(w["moduleId"]) + struct.pack("<idd", w["effectId"], w["cycleMs"], w["capacitorNeed"]) + turret(w)
+
+
 def identity(i):
     body = struct.pack("<qqd", i["hostileResponseThreshold"], i["friendlyResponseThreshold"], i["aggressionRange"])
     body += struct.pack("<I", len(i["weapons"]))
     for w in i["weapons"]:
-        body += i64(w["moduleId"]) + struct.pack("<idd", w["effectId"], w["cycleMs"], w["capacitorNeed"])
-        body += turret(w)
+        body += weapon(w)
     return body + wreck_kind(i.get("wreck")) + bytes([1 if i.get("hull") else 0, 1 if i.get("hostWreck") else 0])
 
 
@@ -226,6 +230,19 @@ def build(m):
                      + struct.pack("<9d", *m["position"], *m["velocity"], *m["direction"]) + s(m["behavior"]) + identity(m["identity"]))
     if k == "SpawnReply":
         return frame(k, u64(m["requestId"]) + (bytes([0]) + u64(m["session"]) if m["ok"] else bytes([1]) + s(m["reason"])))
+    if k == "LaunchDrone":
+        return frame(k, u64(m["requestId"]) + u64(m["sessionId"]) + ship(m["ship"]) + weapon(m["weapon"])
+                     + struct.pack("<idd", m["graphicId"], m["orbitDistance"], m["cruiseFraction"]))
+    if k == "DroneCommand":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + i64(m["targetId"]) + struct.pack("<I", len(m["droneIds"]))
+                     + b"".join(i64(d) for d in m["droneIds"]))
+    if k == "DroneResults":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<I", len(m["results"]))
+                     + b"".join(i64(r["droneId"]) + s(r["reason"]) for r in m["results"]))
+    if k == "DroneScooped":
+        return frame(k, u64(m["sessionId"]) + i64(m["droneId"]))
+    if k == "DroneReleased":
+        return frame(k, u64(m["sessionId"]) + i64(m["droneId"]) + struct.pack("<3d", *m["position"]))
     if k == "Destroy":
         return frame(k, i64(m["shipId"]) + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"]))
     raise ValueError(k)
@@ -249,8 +266,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 14},
-    {"name": "hello ack", "kind": "HelloAck", "version": 14, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 15},
+    {"name": "hello ack", "kind": "HelloAck", "version": 15, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -492,6 +509,19 @@ valid = [
                   "wreck": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117}, "hostWreck": True}},
     {"name": "spawn done", "kind": "SpawnReply", "requestId": "7", "ok": True, "session": "4611686018427387905"},
     {"name": "spawn refused", "kind": "SpawnReply", "requestId": "8", "ok": False, "reason": "NO_SCENE 30000142"},
+    {"name": "launch of a drone", "kind": "LaunchDrone", "requestId": "11", "sessionId": "1790646377000015",
+     "ship": dict(BARE, shipId="9988400003716", characterId="0", ownerId="140000342", categoryId=18, groupId=100, typeId=2454, name="Hobgoblin I"),
+     "weapon": {"moduleId": "9988400003716", "effectId": 10, "cycleMs": 4000.0, "capacitorNeed": 0.0, "weaponTypeId": 2454, "fx": "effects.Laser",
+                "rawDamage": [0.0, 32.0, 0.0, 0.0], "optimalRange": 2100.0, "falloff": 2000.0, "trackingSpeed": 1.815, "signatureResolution": 25.0},
+     "graphicId": 1099, "orbitDistance": 700.0, "cruiseFraction": 0.2357142857142857},
+    {"name": "order to engage", "kind": "DroneCommand", "sessionId": "1790646377000015", "command": 1, "targetId": "980050000077",
+     "droneIds": ["9988400003716", "9988400003717"]},
+    {"name": "order to go home", "kind": "DroneCommand", "sessionId": "1790646377000015", "command": 2, "targetId": "0", "droneIds": ["9988400003716"]},
+    {"name": "what the drones did with an order", "kind": "DroneResults", "sessionId": "1790646377000015", "command": 1,
+     "results": [{"droneId": "9988400003716", "reason": ""}, {"droneId": "9988400003717", "reason": "NOT_CONTROLLED"}]},
+    {"name": "a drone scooped into the bay", "kind": "DroneScooped", "sessionId": "1790646377000015", "droneId": "9988400003716"},
+    {"name": "a drone let go", "kind": "DroneReleased", "sessionId": "1790646377000015", "droneId": "9988400003716",
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
     {"name": "destroy for a pilot to loot", "kind": "Destroy", "shipId": "980050000077", "characterId": "140000001",
      "corporationId": "1000006", "allianceId": "0", "warFactionId": "500001"},
     {"name": "respawn of a capsule where the ship was", "kind": "Respawn", "sessionId": "1790646377000015",

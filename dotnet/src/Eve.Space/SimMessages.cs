@@ -353,6 +353,39 @@ public sealed record SimSpawn(
     ulong RequestId, int SolarSystemId, SimShip Ship, long AnchorShipId, IReadOnlyList<double> Position, IReadOnlyList<double> Velocity, IReadOnlyList<double> Direction,
     string Behavior, SimNpcIdentity Identity) : SimMessage;
 
+/// <summary>
+/// Launches a drone beside the ship of a pilot (<paramref name="SessionId"/>): the drone's ship, the weapon it fights with (its module is the ship), the graphic of its type, how far it
+/// circles (500 to 5,000 m) and the fraction of its top speed it flies at while it only follows its controller. Answered with <see cref="SimSpawnReply"/>.
+/// </summary>
+public sealed record SimLaunchDrone(ulong RequestId, ulong SessionId, SimShip Ship, SimNpcWeapon Weapon, int GraphicId, double OrbitDistance, double CruiseFraction) : SimMessage;
+
+/// <summary>The codes of the orders to drones (<see cref="SimDroneCommand"/>).</summary>
+public static class SimDroneCommands
+{
+    public const byte Engage = 1;
+    public const byte ReturnHome = 2;
+    public const byte ReturnBay = 3;
+    public const byte Abandon = 4;
+
+    /// <summary>The key an order is answered under in <see cref="CommandReply"/>s: an order to drones shares the codes of the commands, so it is told apart by this offset.</summary>
+    public static byte Key(byte command) => (byte)(0xE0 + command);
+}
+
+/// <summary>A pilot gives its drones (their item ids) an order; the answer is <see cref="SimDroneResults"/>.</summary>
+public sealed record SimDroneCommand(ulong SessionId, byte Command, long TargetId, IReadOnlyList<long> DroneIds) : SimMessage;
+
+/// <summary>What one drone did with an order: <paramref name="Reason"/> is empty when it took it.</summary>
+public sealed record SimDroneResult(long DroneId, string Reason);
+
+/// <summary>What each drone did with an order.</summary>
+public sealed record SimDroneResults(ulong SessionId, byte Command, IReadOnlyList<SimDroneResult> Results) : SimMessage;
+
+/// <summary>A drone came within reach of its ship after an order to return to the bay and was taken in: the host moves its item back into the drone bay.</summary>
+public sealed record SimDroneScooped(ulong SessionId, long DroneId) : SimMessage;
+
+/// <summary>A drone is let go (abandoned, or its controller left the scene): it is out of the scene and the host decides what becomes of its item.</summary>
+public sealed record SimDroneReleased(ulong SessionId, long DroneId, IReadOnlyList<double> Position) : SimMessage;
+
 /// <summary>Whether a <see cref="SimSpawn"/> was done: the session the NPC is known by, or why not.</summary>
 public sealed record SimSpawnReply(ulong RequestId, ulong? Session, string? Error) : SimMessage;
 

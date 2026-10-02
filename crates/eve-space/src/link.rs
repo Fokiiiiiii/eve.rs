@@ -13,7 +13,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Charge, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 14;
+pub const PROTOCOL_VERSION: u16 = 15;
 
 /// The message kinds.
 pub mod kind {
@@ -52,6 +52,11 @@ pub mod kind {
     pub const ADJUST_CHARGE: u8 = 33;
     pub const CHARGE_ADJUSTED: u8 = 34;
     pub const ARRIVED: u8 = 35;
+    pub const LAUNCH_DRONE: u8 = 36;
+    pub const DRONE_COMMAND: u8 = 37;
+    pub const DRONE_RESULTS: u8 = 38;
+    pub const DRONE_SCOOPED: u8 = 39;
+    pub const DRONE_RELEASED: u8 = 40;
 }
 
 /// What the host changes in the rounds of a gun, in the order the simulation hears it (the host asks for it when a pilot loads or unloads a gun in space).
@@ -89,6 +94,18 @@ pub struct Spawn {
     pub direction: [f64; 3],
     pub behavior: String,
     pub identity: NpcIdentity,
+}
+
+/// A drone the host launches from the drone bay of the ship of `session_id`: the drone's ship, the weapon it fights with and how it flies (answered with `SpawnReply`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LaunchDrone {
+    pub request_id: u64,
+    pub session_id: u64,
+    pub ship: ShipSpec,
+    pub weapon: NpcWeapon,
+    pub graphic_id: i32,
+    pub orbit_distance: f64,
+    pub cruise_fraction: f64,
 }
 
 /// A wreck the host made, to be put in space: the item it is (the host's own id), what it is, where, and who may take what is in it.
@@ -262,6 +279,32 @@ pub enum Message {
     SpawnReply {
         request_id: u64,
         outcome: Result<u64, String>,
+    },
+    /// The host launches a drone beside the ship of a pilot (answered with `SpawnReply`: the session the drone is known by, or why not).
+    LaunchDrone(Box<LaunchDrone>),
+    /// A pilot gives its drones an order: the command (`DroneCommand::code`), the target of an engage, and the drones (their item ids).
+    DroneCommand {
+        session_id: u64,
+        command: u8,
+        target_id: i64,
+        drone_ids: Vec<i64>,
+    },
+    /// What each drone did with the order: its item id and the reason it did not take it (empty when it did).
+    DroneResults {
+        session_id: u64,
+        command: u8,
+        results: Vec<(i64, String)>,
+    },
+    /// A drone came within reach of its ship after `ReturnBay` and was taken in: the host moves its item back into the drone bay.
+    DroneScooped {
+        session_id: u64,
+        drone_id: i64,
+    },
+    /// A drone was let go (abandoned, or its controller left the scene): it is out of the scene and the host decides what becomes of its item.
+    DroneReleased {
+        session_id: u64,
+        drone_id: i64,
+        position: [f64; 3],
     },
     /// The host asks for the ship to be destroyed: its pilot's session is told of it (`Destroyed`) and the ship's wreck is made, for `credit` to loot.
     Destroy {
@@ -503,17 +546,28 @@ fn put_changes(out: &mut Vec<u8>, changes: &[Change]) {
     }
 }
 
+/// A weapon of an NPC (or a drone): the module (the ship), the effect, the cycle in milliseconds, what a cycle costs the capacitor, and the turret.
+fn put_weapon(out: &mut Vec<u8>, weapon: &NpcWeapon) {
+    out.extend_from_slice(&weapon.module_id.to_le_bytes());
+    out.extend_from_slice(&weapon.effect_id.to_le_bytes());
+    out.extend_from_slice(&weapon.cycle_ms.to_le_bytes());
+    out.extend_from_slice(&weapon.capacitor_need.to_le_bytes());
+    put_turret(out, &weapon.turret);
+}
+
+fn read_weapon(reader: &mut Reader) -> Result<NpcWeapon, DecodeError> {
+    let (module_id, effect_id, cycle_ms, capacitor_need) =
+        (reader.i64()?, reader.i32()?, reader.f64()?, reader.f64()?);
+    Ok(NpcWeapon { module_id, effect_id, cycle_ms, capacitor_need, turret: read_turret(reader)? })
+}
+
 fn put_identity(out: &mut Vec<u8>, identity: &NpcIdentity) {
     out.extend_from_slice(&identity.hostile_response_threshold.to_le_bytes());
     out.extend_from_slice(&identity.friendly_response_threshold.to_le_bytes());
     out.extend_from_slice(&identity.combat.aggression_range.to_le_bytes());
     out.extend_from_slice(&(identity.combat.weapons.len() as u32).to_le_bytes());
     for weapon in &identity.combat.weapons {
-        out.extend_from_slice(&weapon.module_id.to_le_bytes());
-        out.extend_from_slice(&weapon.effect_id.to_le_bytes());
-        out.extend_from_slice(&weapon.cycle_ms.to_le_bytes());
-        out.extend_from_slice(&weapon.capacitor_need.to_le_bytes());
-        put_turret(out, &weapon.turret);
+        put_weapon(out, weapon);
     }
     put_wreck_kind(out, identity.wreck.as_ref());
     out.push(u8::from(identity.hull));
@@ -628,15 +682,7 @@ fn read_identity(reader: &mut Reader) -> Result<NpcIdentity, DecodeError> {
     }
     let mut weapons = Vec::with_capacity(count);
     for _ in 0..count {
-        let (module_id, effect_id, cycle_ms, capacitor_need) =
-            (reader.i64()?, reader.i32()?, reader.f64()?, reader.f64()?);
-        weapons.push(NpcWeapon {
-            module_id,
-            effect_id,
-            cycle_ms,
-            capacitor_need,
-            turret: read_turret(reader)?,
-        });
+        weapons.push(read_weapon(reader)?);
     }
     let wreck = read_wreck_kind(reader)?;
     let hull = match reader.u8()? {
@@ -656,6 +702,7 @@ fn read_identity(reader: &mut Reader) -> Result<NpcIdentity, DecodeError> {
         wreck,
         hull,
         host_wreck,
+        drone: None,
     })
 }
 
@@ -1106,6 +1153,11 @@ impl Message {
             Self::Destroyed { .. } => kind::DESTROYED,
             Self::Spawn(_) => kind::SPAWN,
             Self::SpawnReply { .. } => kind::SPAWN_REPLY,
+            Self::LaunchDrone(_) => kind::LAUNCH_DRONE,
+            Self::DroneCommand { .. } => kind::DRONE_COMMAND,
+            Self::DroneResults { .. } => kind::DRONE_RESULTS,
+            Self::DroneScooped { .. } => kind::DRONE_SCOOPED,
+            Self::DroneReleased { .. } => kind::DRONE_RELEASED,
             Self::Destroy { .. } => kind::DESTROY,
             Self::Respawn { .. } => kind::RESPAWN,
             Self::PlaceWreck(_) => kind::PLACE_WRECK,
@@ -1352,6 +1404,42 @@ impl Message {
                         put_text(&mut out, reason);
                     }
                 }
+            }
+            Self::LaunchDrone(launch) => {
+                out.extend_from_slice(&launch.request_id.to_le_bytes());
+                out.extend_from_slice(&launch.session_id.to_le_bytes());
+                put_ship(&mut out, &launch.ship);
+                put_weapon(&mut out, &launch.weapon);
+                out.extend_from_slice(&launch.graphic_id.to_le_bytes());
+                out.extend_from_slice(&launch.orbit_distance.to_le_bytes());
+                out.extend_from_slice(&launch.cruise_fraction.to_le_bytes());
+            }
+            Self::DroneCommand { session_id, command, target_id, drone_ids } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.push(*command);
+                out.extend_from_slice(&target_id.to_le_bytes());
+                out.extend_from_slice(&(drone_ids.len() as u32).to_le_bytes());
+                for drone in drone_ids {
+                    out.extend_from_slice(&drone.to_le_bytes());
+                }
+            }
+            Self::DroneResults { session_id, command, results } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.push(*command);
+                out.extend_from_slice(&(results.len() as u32).to_le_bytes());
+                for (drone, reason) in results {
+                    out.extend_from_slice(&drone.to_le_bytes());
+                    put_text(&mut out, reason);
+                }
+            }
+            Self::DroneScooped { session_id, drone_id } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&drone_id.to_le_bytes());
+            }
+            Self::DroneReleased { session_id, drone_id, position } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&drone_id.to_le_bytes());
+                put_vector(&mut out, position);
             }
             Self::Destroy { ship_id, credit } => {
                 out.extend_from_slice(&ship_id.to_le_bytes());
@@ -1633,6 +1721,40 @@ impl Message {
                 };
                 Message::SpawnReply { request_id, outcome }
             }
+            kind::LAUNCH_DRONE => Message::LaunchDrone(Box::new(LaunchDrone {
+                request_id: r.u64()?,
+                session_id: r.u64()?,
+                ship: read_ship(&mut r)?,
+                weapon: read_weapon(&mut r)?,
+                graphic_id: r.i32()?,
+                orbit_distance: r.f64()?,
+                cruise_fraction: r.f64()?,
+            })),
+            kind::DRONE_COMMAND => {
+                let (session_id, command, target_id) = (r.u64()?, r.u8()?, r.i64()?);
+                let count = r.u32()? as usize;
+                if count > r.data.len() / 8 {
+                    return Err(DecodeError::Truncated);
+                }
+                let drone_ids = (0..count).map(|_| r.i64()).collect::<Result<Vec<_>, _>>()?;
+                Message::DroneCommand { session_id, command, target_id, drone_ids }
+            }
+            kind::DRONE_RESULTS => {
+                let (session_id, command) = (r.u64()?, r.u8()?);
+                let count = r.u32()? as usize;
+                if count > r.data.len() / 12 {
+                    return Err(DecodeError::Truncated);
+                }
+                let results =
+                    (0..count).map(|_| Ok((r.i64()?, r.text()?))).collect::<Result<Vec<_>, DecodeError>>()?;
+                Message::DroneResults { session_id, command, results }
+            }
+            kind::DRONE_SCOOPED => Message::DroneScooped { session_id: r.u64()?, drone_id: r.i64()? },
+            kind::DRONE_RELEASED => Message::DroneReleased {
+                session_id: r.u64()?,
+                drone_id: r.i64()?,
+                position: read_vector(&mut r)?,
+            },
             kind::DESTROY => Message::Destroy { ship_id: r.i64()?, credit: read_credit(&mut r)? },
             kind::TARGET_REFUSED => Message::TargetRefused {
                 session_id: r.u64()?,

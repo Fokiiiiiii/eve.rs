@@ -4,7 +4,7 @@
 use eve_space::death::Credit;
 use eve_space::health::{Condition, Layer, Resonances, Vitals};
 use eve_space::link::{
-    ChargeOp, ContainerPlacement, DecodeError, Enter, How, Message, Spawn, WreckPlacement,
+    ChargeOp, ContainerPlacement, DecodeError, Enter, How, LaunchDrone, Message, Spawn, WreckPlacement,
 };
 use eve_space::missiles::Missile;
 use eve_space::modules::{Action, Applies, Change, Effect, Numbers, Reach, Remote};
@@ -281,6 +281,18 @@ fn identity_of(case: &Value) -> NpcIdentity {
         wreck,
         hull: case.get("hull").and_then(Value::as_bool).unwrap_or(false),
         host_wreck: case.get("hostWreck").and_then(Value::as_bool).unwrap_or(false),
+        drone: None,
+    }
+}
+
+fn weapon_of(w: &Value) -> NpcWeapon {
+    let number = |field: &str| w[field].as_f64().unwrap_or_else(|| panic!("{field} in {w}"));
+    NpcWeapon {
+        module_id: wide(w, "moduleId"),
+        effect_id: w["effectId"].as_i64().unwrap() as i32,
+        cycle_ms: number("cycleMs"),
+        capacitor_need: number("capacitorNeed"),
+        turret: turret_of(w),
     }
 }
 
@@ -499,6 +511,42 @@ fn message_of(case: &Value) -> Message {
             } else {
                 Err(text(case, "reason"))
             },
+        },
+        "LaunchDrone" => Message::LaunchDrone(Box::new(LaunchDrone {
+            request_id: wide(case, "requestId") as u64,
+            session_id: session_id(),
+            ship: ship_of(&case["ship"]),
+            weapon: weapon_of(&case["weapon"]),
+            graphic_id: number("graphicId") as i32,
+            orbit_distance: case["orbitDistance"].as_f64().unwrap(),
+            cruise_fraction: case["cruiseFraction"].as_f64().unwrap(),
+        })),
+        "DroneCommand" => Message::DroneCommand {
+            session_id: session_id(),
+            command: number("command") as u8,
+            target_id: wide(case, "targetId"),
+            drone_ids: case["droneIds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|d| d.as_str().unwrap().parse().unwrap())
+                .collect(),
+        },
+        "DroneResults" => Message::DroneResults {
+            session_id: session_id(),
+            command: number("command") as u8,
+            results: case["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| (wide(r, "droneId"), text(r, "reason")))
+                .collect(),
+        },
+        "DroneScooped" => Message::DroneScooped { session_id: session_id(), drone_id: wide(case, "droneId") },
+        "DroneReleased" => Message::DroneReleased {
+            session_id: session_id(),
+            drone_id: wide(case, "droneId"),
+            position: vector_of(case, "position"),
         },
         "Destroy" => Message::Destroy {
             ship_id: wide(case, "shipId"),

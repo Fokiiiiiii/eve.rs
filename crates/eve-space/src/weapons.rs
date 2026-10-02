@@ -395,6 +395,9 @@ impl Scene {
             return Vec::new();
         };
         let attacker_id = self.pilots[&session].ship.spec.ship_id;
+        // the combat log, the aggression and the kill of a drone's shot are its controller's
+        let reporter = self.controller_of_drone(session).unwrap_or(session);
+        let aggressor_ship = if reporter == session { attacker_id } else { self.ship_id_of(reporter) };
         // what disrupts the shooter's turrets works on the numbers the shot is rolled with
         let (range, falloff, tracking) = self.pilots[&session].incoming.weapon_factors();
         let disrupted;
@@ -423,7 +426,7 @@ impl Scene {
         let owner = self.combat_owner(session);
         let target_type_id = self.pilots.get(&target_session).map_or(0, |pilot| pilot.ship.spec.type_id);
         self.aggressions.push(Aggression {
-            attacker_ship: attacker_id,
+            attacker_ship: aggressor_ship,
             target_ship: effect.target_id,
             module_type_id: turret.weapon_type_id,
             source_owner_id: owner,
@@ -440,9 +443,9 @@ impl Scene {
                 owner,
             )
         };
-        if !is_npc_session(session) {
+        if !is_npc_session(reporter) {
             out.push(Out::Notify {
-                session,
+                session: reporter,
                 name: "OnDamageMessage",
                 id_type: "clientID",
                 args: vec![message(true)],
@@ -458,7 +461,7 @@ impl Scene {
         }
         // the shot that took the last of the hull is told first, then the ship is gone
         if destroyed {
-            out.extend(self.destroy(target_session, Some(session), at));
+            out.extend(self.destroy(target_session, Some(reporter), at));
         }
         out
     }

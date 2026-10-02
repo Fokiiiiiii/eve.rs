@@ -9,7 +9,8 @@ use std::sync::{Arc, Mutex};
 use eve_destiny::Vec3;
 use eve_marshal::Value;
 
-use crate::link::{Enter, How, Message, PROTOCOL_VERSION, Spawn};
+use crate::drones::{DroneCommand, DroneFlight};
+use crate::link::{Enter, How, LaunchDrone, Message, PROTOCOL_VERSION, Spawn};
 use crate::npc::{NpcPlace, is_npc_session};
 use crate::scene::{Command, Departure, Out, Scene, SceneError, SessionId, Traveller};
 use crate::ship::Course;
@@ -211,6 +212,22 @@ impl Sim {
             Out::Targets { session, command, pending, targets } => {
                 Message::Targets { session_id: session, command, pending, targets }
             }
+            Out::DroneScooped { session, drone_id } => {
+                Message::DroneScooped { session_id: session, drone_id }
+            }
+            Out::DroneReleased { session, drone_id, position } => Message::DroneReleased {
+                session_id: session,
+                drone_id,
+                position: [position.x, position.y, position.z],
+            },
+            Out::DroneResults { session, command, results } => Message::DroneResults {
+                session_id: session,
+                command,
+                results: results
+                    .into_iter()
+                    .map(|(drone, reason)| (drone, reason.unwrap_or("").to_string()))
+                    .collect(),
+            },
             Out::TargetRefused { session, command, reason, target_type, desired_range, actual_distance } => {
                 Message::TargetRefused {
                     session_id: session,
@@ -372,6 +389,22 @@ impl Sim {
                 }
             }
             Message::Spawn(spawn) => return Ok(self.spawn(*spawn, now)),
+            Message::LaunchDrone(launch) => return Ok(self.launch_drone(*launch, now)),
+            Message::DroneCommand { session_id, command, target_id, drone_ids } => {
+                let command = match command {
+                    1 => DroneCommand::Engage { target: target_id },
+                    2 => DroneCommand::ReturnHome,
+                    3 => DroneCommand::ReturnBay,
+                    4 => DroneCommand::Abandon,
+                    other => {
+                        return Err(ProtocolError(format!("unknown drone command {other}")));
+                    }
+                };
+                match self.scene_of(session_id) {
+                    Some(scene) => scene.drone_command(session_id, &drone_ids, command, now),
+                    None => Vec::new(),
+                }
+            }
             Message::Destroy { ship_id, credit } => {
                 let target = self
                     .scenes
@@ -581,6 +614,29 @@ impl Sim {
                 messages
             }
             Err(error) => vec![reply(Err(format!("{error:?}")))],
+        }
+    }
+
+    /// A drone comes into the scene of the pilot's ship: the answer carries the session the drone is known by.
+    fn launch_drone(&mut self, launch: LaunchDrone, now: i64) -> Vec<Message> {
+        let LaunchDrone { request_id, session_id, ship, weapon, graphic_id, orbit_distance, cruise_fraction } =
+            launch;
+        let reply = |outcome| Message::SpawnReply { request_id, outcome };
+        let Some(scene) = self.scene_of(session_id) else {
+            return vec![reply(Err(format!("NO_SHIP {session_id}")))];
+        };
+        match scene.launch_drone(
+            session_id,
+            ship,
+            DroneFlight { weapon, graphic_id, orbit_distance, cruise_fraction },
+            now,
+        ) {
+            Ok((session, told)) => {
+                let mut messages = Self::messages(told);
+                messages.push(reply(Ok(session)));
+                messages
+            }
+            Err(reason) => vec![reply(Err(reason.to_string()))],
         }
     }
 

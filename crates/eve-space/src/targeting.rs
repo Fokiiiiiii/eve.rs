@@ -296,7 +296,7 @@ impl Scene {
         self.with_backlog(told)
     }
 
-    fn ship_id_of(&self, session: SessionId) -> i64 {
+    pub(crate) fn ship_id_of(&self, session: SessionId) -> i64 {
         self.pilots.get(&session).map(|p| p.ship.spec.ship_id).unwrap_or(0)
     }
 

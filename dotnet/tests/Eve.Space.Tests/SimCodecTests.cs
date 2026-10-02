@@ -95,11 +95,13 @@ public class SimCodecTests
 
     private static double[] VectorOf(JsonNode n) => [.. ((JsonArray)n).Select(x => (double)x!)];
 
+    private static SimNpcWeapon WeaponOf(JsonNode w) => new(
+        Wide(w, "moduleId"), (int)w["effectId"]!, (double)w["cycleMs"]!, (double)w["capacitorNeed"]!, (int)w["weaponTypeId"]!, (string)w["fx"]!,
+        VectorOf(w["rawDamage"]!), (double)w["optimalRange"]!, (double)w["falloff"]!, (double)w["trackingSpeed"]!, (double)w["signatureResolution"]!, ChargeOf(w["charge"]), MissileOf(w["missile"]));
+
     private static SimNpcIdentity IdentityOf(JsonNode i) => new(
         (long)i["hostileResponseThreshold"]!, (long)i["friendlyResponseThreshold"]!, (double)i["aggressionRange"]!,
-        [.. ((JsonArray)i["weapons"]!).Select(w => new SimNpcWeapon(
-            Wide(w!, "moduleId"), (int)w!["effectId"]!, (double)w["cycleMs"]!, (double)w["capacitorNeed"]!, (int)w["weaponTypeId"]!, (string)w["fx"]!,
-            VectorOf(w["rawDamage"]!), (double)w["optimalRange"]!, (double)w["falloff"]!, (double)w["trackingSpeed"]!, (double)w["signatureResolution"]!, ChargeOf(w["charge"]), MissileOf(w["missile"])))],
+        [.. ((JsonArray)i["weapons"]!).Select(w => WeaponOf(w!))],
         WreckKindOf(i["wreck"]),
         i["hull"] is { } hull && (bool)hull,
         i["hostWreck"] is { } hostWreck && (bool)hostWreck);
@@ -153,6 +155,12 @@ public class SimCodecTests
                 (ulong)Wide(c, "requestId"), (int)c["solarSystemId"]!, ShipOf(c["ship"]!), Wide(c, "anchorShipId"), VectorOf(c["position"]!), VectorOf(c["velocity"]!), VectorOf(c["direction"]!),
                 (string)c["behavior"]!, IdentityOf(c["identity"]!)),
             "SpawnReply" => (bool)c["ok"]! ? new SimSpawnReply((ulong)Wide(c, "requestId"), (ulong)Wide(c, "session"), null) : new SimSpawnReply((ulong)Wide(c, "requestId"), null, (string)c["reason"]!),
+            "LaunchDrone" => new SimLaunchDrone(
+                (ulong)Wide(c, "requestId"), Session(), ShipOf(c["ship"]!), WeaponOf(c["weapon"]!), (int)c["graphicId"]!, (double)c["orbitDistance"]!, (double)c["cruiseFraction"]!),
+            "DroneCommand" => new SimDroneCommand(Session(), (byte)(int)c["command"]!, Wide(c, "targetId"), [.. ((JsonArray)c["droneIds"]!).Select(d => long.Parse((string)d!))]),
+            "DroneResults" => new SimDroneResults(Session(), (byte)(int)c["command"]!, [.. ((JsonArray)c["results"]!).Select(r => new SimDroneResult(Wide(r!, "droneId"), (string)r!["reason"]!))]),
+            "DroneScooped" => new SimDroneScooped(Session(), Wide(c, "droneId")),
+            "DroneReleased" => new SimDroneReleased(Session(), Wide(c, "droneId"), VectorOf(c["position"]!)),
             "Destroy" => new SimDestroy(Wide(c, "shipId"), new SimCredit(Wide(c, "characterId"), Wide(c, "corporationId"), Wide(c, "allianceId"), Wide(c, "warFactionId"))),
             var other => throw new InvalidOperationException(other),
         };
@@ -162,7 +170,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-        Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "Destroy", "Destroyed", "Docked", "Enter", "EnterReply", "Hello", "HelloAck", "Jumped", "Jumping", "Leave", "Measured", "Notify", "PlaceContainer", "PlaceWreck", "Refused", "RemoveWreck", "Respawn", "ShipSpec", "Spawn", "SpawnReply", "TargetRefused", "Targets", "UpdateState"], kinds);
+        Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "Destroy", "Destroyed", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "Enter", "EnterReply", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "Leave", "Measured", "Notify", "PlaceContainer", "PlaceWreck", "Refused", "RemoveWreck", "Respawn", "ShipSpec", "Spawn", "SpawnReply", "TargetRefused", "Targets", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);
     }
 

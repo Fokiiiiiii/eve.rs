@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 14,
-   "hex": "03000000010e00"
+   "version": 15,
+   "hex": "03000000010f00"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 14,
+   "version": 15,
    "pollHz": 4,
-   "hex": "07000000020e0004000000"
+   "hex": "07000000020f0004000000"
   },
   {
    "name": "enter by undocking",
@@ -1741,6 +1741,157 @@
    "ok": false,
    "reason": "NO_SCENE 30000142",
    "hex": "1d0000001708000000000000000111004e4f5f5343454e45203330303030313432"
+  },
+  {
+   "name": "launch of a drone",
+   "kind": "LaunchDrone",
+   "requestId": "11",
+   "sessionId": "1790646377000015",
+   "ship": {
+    "shipId": "9988400003716",
+    "characterId": "0",
+    "typeId": 2454,
+    "groupId": 100,
+    "categoryId": 18,
+    "name": "Hobgoblin I",
+    "ownerId": "140000342",
+    "corporationId": 1000006,
+    "allianceId": 99000001,
+    "warFactionId": 0,
+    "securityStatus": -2.5,
+    "radius": 47.0,
+    "mass": 1163000.0,
+    "maxVelocity": 339.25,
+    "agility": 4.0185,
+    "warpSpeedAu": 3.0,
+    "shieldRechargeMs": 860000.0,
+    "maxTargetRange": 29700.0,
+    "scanResolution": 660.0,
+    "signatureRadius": 28.0,
+    "maxLockedTargets": 4,
+    "capacitorCapacity": 149.5,
+    "capacitorRechargeS": 55.25,
+    "sensorStrength": [
+     0.0,
+     0.0,
+     0.0,
+     6.0
+    ],
+    "ecmResistance": 1.0,
+    "vitals": {
+     "shieldCapacity": 0.0,
+     "armorHp": 0.0,
+     "structureHp": 0.0,
+     "resonances": {
+      "shield": [
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      "armor": [
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      "structure": [
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    },
+    "condition": {
+     "damage": 0.0,
+     "armorDamage": 0.0,
+     "shieldCharge": 1.0,
+     "charge": 1.0
+    },
+    "modules": []
+   },
+   "weapon": {
+    "moduleId": "9988400003716",
+    "effectId": 10,
+    "cycleMs": 4000.0,
+    "capacitorNeed": 0.0,
+    "weaponTypeId": 2454,
+    "fx": "effects.Laser",
+    "rawDamage": [
+     0.0,
+     32.0,
+     0.0,
+     0.0
+    ],
+    "optimalRange": 2100.0,
+    "falloff": 2000.0,
+    "trackingSpeed": 1.815,
+    "signatureResolution": 25.0
+   },
+   "graphicId": 1099,
+   "orbitDistance": 700.0,
+   "cruiseFraction": 0.2357142857142857,
+   "hex": "fb010000240b000000000000004f2c3859955c060084ba089b1509000000000000000000009609000064000000120000000b00486f62676f626c696e2049563c58080000000046420f00c19ee6050000000000000000000004c0000000000080474000000000f8be314100000000003475406de7fba9f1121040000000000000084000000000c03e2a41000000000001dd400000000000a084400000000000003c400000000000b062400000000000a04b4004000000000000000000000000000000000000000000000000000000000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f000000000000f03f00000000000000000000000000000000000000000000f03f000000000000f03f000000000000000000000000000000000000000000000000000000000000000000001840000000000000f03f84ba089b150900000a000000000000000040af400000000000000000960900000d00656666656374732e4c617365720000000000000000000000000000404000000000000000000000000000000000000000000068a0400000000000409f400ad7a3703d0afd3f000000000000394000004b0400000000000000e08540bee22bbee22bce3f"
+  },
+  {
+   "name": "order to engage",
+   "kind": "DroneCommand",
+   "sessionId": "1790646377000015",
+   "command": 1,
+   "targetId": "980050000077",
+   "droneIds": [
+    "9988400003716",
+    "9988400003717"
+   ],
+   "hex": "26000000254f2c3859955c060001cd38882fe40000000200000084ba089b1509000085ba089b15090000"
+  },
+  {
+   "name": "order to go home",
+   "kind": "DroneCommand",
+   "sessionId": "1790646377000015",
+   "command": 2,
+   "targetId": "0",
+   "droneIds": [
+    "9988400003716"
+   ],
+   "hex": "1e000000254f2c3859955c06000200000000000000000100000084ba089b15090000"
+  },
+  {
+   "name": "what the drones did with an order",
+   "kind": "DroneResults",
+   "sessionId": "1790646377000015",
+   "command": 1,
+   "results": [
+    {
+     "droneId": "9988400003716",
+     "reason": ""
+    },
+    {
+     "droneId": "9988400003717",
+     "reason": "NOT_CONTROLLED"
+    }
+   ],
+   "hex": "30000000264f2c3859955c0600010200000084ba089b15090000000085ba089b150900000e004e4f545f434f4e54524f4c4c4544"
+  },
+  {
+   "name": "a drone scooped into the bay",
+   "kind": "DroneScooped",
+   "sessionId": "1790646377000015",
+   "droneId": "9988400003716",
+   "hex": "11000000274f2c3859955c060084ba089b15090000"
+  },
+  {
+   "name": "a drone let go",
+   "kind": "DroneReleased",
+   "sessionId": "1790646377000015",
+   "droneId": "9988400003716",
+   "position": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "hex": "29000000284f2c3859955c060084ba089b150900005fc833c6022952426c5427b7db5708c285e10f7e6c3c4242"
   },
   {
    "name": "destroy for a pilot to loot",

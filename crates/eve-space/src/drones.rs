@@ -1186,6 +1186,33 @@ mod tests {
     }
 
     #[test]
+    fn a_drone_that_is_destroyed_leaves_no_wreck_and_its_controller_is_told_it_is_gone() {
+        use crate::wreck_types::WreckCatalog;
+        let (mut scene, drone, _) = launched();
+        // even a catalog that names a wreck for the drone's type leaves none: a drone is not a ship
+        scene.set_wreck_catalog(std::sync::Arc::new(WreckCatalog::of([
+            (2_454, "Hobgoblin I", "Frigate", 1, 1_099),
+            (26_506, "Caldari Frigate Wreck", "Wreck", 0, 3_117),
+        ])));
+        let told = scene.destroy(drone, None, LATER + SECOND);
+        assert!(scene.wrecks.is_empty(), "no wreck is made");
+        let destroyed = told.iter().find_map(|o| match o {
+            Out::Destroyed { ship_id, wreck, wreck_kind, .. } if *ship_id == DRONE_SHIP => {
+                Some((*wreck, wreck_kind.clone()))
+            }
+            _ => None,
+        });
+        assert_eq!(destroyed, Some((None, None)), "{told:?}");
+        // the controller's drone list: idle, nobody's
+        let player = for_the_player(&told);
+        let state = notified(&player, "OnDroneStateChange");
+        assert_eq!(state.len(), 1);
+        assert_eq!(state[0][..4], [Value::Long(DRONE_SHIP), Value::Int(0), Value::Int(0), Value::Int(0)]);
+        assert_eq!(notified(&player, "OnDroneActivityChange").len(), 1);
+        assert!(scene.drones_of(PLAYER).is_empty());
+    }
+
+    #[test]
     fn the_drones_of_a_pilot_that_leaves_are_let_go_and_the_host_is_told_of_each() {
         let (mut scene, _, _) = launched();
         let told = scene.leave(PLAYER, Departure::Docked, LATER + SECOND).unwrap();

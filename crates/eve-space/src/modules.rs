@@ -22,6 +22,9 @@ const DURATION: i32 = 73;
 /// The capacitor's charge is told every half second, worked out at the tick a tenth of a second on from the moment (the reference's ticks).
 pub(crate) const SAMPLE_EVERY: i64 = TICKS_PER_SECOND / 2;
 pub(crate) const TICK: i64 = TICKS_PER_SECOND / 10;
+
+/// The dogma effect of a microwarpdrive (`moduleBonusMicrowarpdrive`): what a warp scrambler that blocks one keeps from running.
+pub(crate) const MICROWARPDRIVE: i32 = 6730;
 /// A capacitor within this many GJ of full is full (the reference settles it so).
 const FULL_SNAP: f64 = 1.0;
 
@@ -297,6 +300,8 @@ enum Ending {
     Done,
     /// The target was lost: the weapon stops at once.
     TargetLost,
+    /// Something forbids the effect while it runs (a warp scrambler on a microwarpdrive): it stops at once, as when the target is lost.
+    Forced,
     /// The charge is spent: the client is told there is none.
     NoRounds,
 }
@@ -544,6 +549,10 @@ impl Scene {
         let pilot = &self.pilots[&session];
         if pilot.modules.running.iter().any(|r| r.effect.module_id == effect.module_id) {
             return vec![Out::Refused { session, command: CODE, reason: "ALREADY_ACTIVE" }];
+        }
+        // a warp scrambler that blocks a microwarpdrive keeps one from being started
+        if effect.effect_id == MICROWARPDRIVE && pilot.incoming.mwd_blocked() {
+            return vec![Out::Refused { session, command: CODE, reason: "MICROWARPDRIVE_BLOCKED" }];
         }
         if effect.turret.is_some() {
             if effect.target_id <= 0 {
@@ -1045,7 +1054,8 @@ impl Scene {
         at: i64,
         ending: Ending,
     ) -> Vec<Out> {
-        let (target_lost, out_of_rounds) = (ending == Ending::TargetLost, ending == Ending::NoRounds);
+        let (target_lost, out_of_rounds) =
+            (matches!(ending, Ending::TargetLost | Ending::Forced), ending == Ending::NoRounds);
         let mut out = Vec::new();
         let changes = Self::changes_told(session, owner, &run.effect.off_changes, at);
         let error = out_of_rounds.then(|| no_charges(run.effect.module_type));
@@ -1080,6 +1090,21 @@ impl Scene {
 
     /// The weapons of a ship that are aimed at ships it no longer has locked stop at once, the cycle they are in unfinished
     /// (`stopTargetedModuleEffects` of the reference, which `removeLockedTarget` runs before it tells the pilot the lock is lost).
+    /// A microwarpdrive that runs on the ship is stopped at once (a warp scrambler that blocks it has landed).
+    pub(crate) fn stop_microwarpdrives(&mut self, session: SessionId, now: i64) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+        let (stopped, kept): (Vec<Running>, Vec<Running>) = std::mem::take(&mut pilot.modules.running)
+            .into_iter()
+            .partition(|run| run.effect.effect_id == MICROWARPDRIVE);
+        pilot.modules.running = kept;
+        let mut out = Vec::new();
+        for run in stopped {
+            out.extend(self.effect_ended(session, run, owner, ship_id, now, Ending::Forced));
+        }
+        out
+    }
+
     pub(crate) fn stop_weapons_at(&mut self, session: SessionId, targets: &[i64], now: i64) -> Vec<Out> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
@@ -2403,6 +2428,53 @@ pub(crate) mod tests {
                 && (spec.scan_resolution - resolution * 0.8).abs() < 1e-9
         );
         assert!(labels(&damped).iter().any(|l| l == "8:attributes[76,564]"), "{:?}", labels(&damped));
+    }
+
+    /// The afterburner of the tests, as the dogma effect of a microwarpdrive.
+    fn microwarpdrive() -> Effect {
+        Effect { effect_id: MICROWARPDRIVE, module_id: MODULE + 100, ..afterburner() }
+    }
+
+    #[test]
+    fn a_scrambler_that_blocks_a_microwarpdrive_stops_the_one_that_runs_and_keeps_another_from_starting() {
+        let (mut scene, t) = reaching(3_000.0);
+        let started = scene.activate(B, microwarpdrive(), t);
+        assert!(started.iter().any(|o| matches!(o, Out::Accepted { .. })), "{:?}", labels(&started));
+        assert!(scene.pilots[&B].modules.running.iter().any(|r| r.effect.effect_id == MICROWARPDRIVE));
+        // a disruptor does not block it, a scrambler does: the drive that runs is stopped at once and the ship is told it is off
+        let disrupt = holding(MODULE, Remote::Scramble { strength: 1.0, blocks_mwd: false }, "warpScrambler");
+        let free = scene.activate(A, disrupt, t + SECOND);
+        assert!(
+            scene.pilots[&B].modules.running.iter().any(|r| r.effect.effect_id == MICROWARPDRIVE),
+            "{:?}",
+            labels(&free)
+        );
+        scene.deactivate(A, MODULE, t + 2 * SECOND);
+        let (_, t2) = poll_until(&mut scene, t + 2 * SECOND, 8.0);
+        assert!(!scene.pilots[&B].incoming.scrambled());
+        let scram =
+            holding(MODULE + 1, Remote::Scramble { strength: 2.0, blocks_mwd: true }, "warpScramblerMWD");
+        let stopped = scene.activate(A, scram, t2);
+        assert!(
+            !scene.pilots[&B].modules.running.iter().any(|r| r.effect.effect_id == MICROWARPDRIVE),
+            "{:?}",
+            labels(&stopped)
+        );
+        assert!(
+            told_hud(&stopped, B, "OnGodmaShipEffect"),
+            "the pilot is told the drive is off: {:?}",
+            labels(&stopped)
+        );
+        // and another cannot be started while the scrambler holds the ship; an afterburner can
+        let refused = scene.activate(B, microwarpdrive(), t2 + SECOND);
+        assert!(
+            refused.iter().any(|o| matches!(o, Out::Refused { reason: "MICROWARPDRIVE_BLOCKED", .. })),
+            "{:?}",
+            labels(&refused)
+        );
+        let ab = Effect { module_id: MODULE + 101, ..afterburner() };
+        let accepted = scene.activate(B, ab, t2 + SECOND);
+        assert!(accepted.iter().any(|o| matches!(o, Out::Accepted { .. })), "{:?}", labels(&accepted));
     }
 
     #[test]

@@ -125,6 +125,11 @@ impl Incoming {
             .sum()
     }
 
+    /// Whether a warp scrambler that blocks a microwarpdrive holds the ship.
+    pub(crate) fn mwd_blocked(&self) -> bool {
+        self.records.iter().any(|r| matches!(r.what, Lasting::Scramble { blocks_mwd: true, .. }))
+    }
+
     pub(crate) fn scrambled(&self) -> bool {
         self.scramble_points() > 1e-6
     }
@@ -219,6 +224,10 @@ impl Scene {
         // a ship that is still lining up for a warp it can no longer make is stopped (the reference stops it as the scramble lands)
         if matches!(what, Lasting::Scramble { .. }) {
             out.extend(self.cancel_alignment(target, at));
+        }
+        // and a microwarpdrive that is running on it is stopped when the scrambler blocks one
+        if matches!(what, Lasting::Scramble { blocks_mwd: true, .. }) {
+            out.extend(self.stop_microwarpdrives(target, at));
         }
         out
     }

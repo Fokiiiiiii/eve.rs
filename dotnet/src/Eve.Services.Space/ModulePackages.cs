@@ -40,6 +40,9 @@ internal static class ModulePackages
     private const int FalloffEffectiveness = 2044;
     private const int NeutralizerSignatureResolution = 2451;
     private const int WebSpeedFactor = 20;
+    private const int RangeDisruption = 351;
+    private const int FalloffDisruption = 349;
+    private const int TrackingDisruption = 767;
     private const int GravimetricJam = 238;
     private const int LadarJam = 239;
     private const int MagnetometricJam = 240;
@@ -70,6 +73,7 @@ internal static class ModulePackages
     private const string WarpScrambler = "warpScrambleBlockMWDWithNPCEffect";
     private const string WarpDisruptor = "warpDisrupt";
     private const string EcmJammer = "remoteECMFalloff";
+    private const string TrackingDisruptor = "shipModuleTrackingDisruptor";
     private const string ProjectileFired = "projectileFired";
     private const string TurretFitted = "turretfitted";
 
@@ -187,6 +191,8 @@ internal static class ModulePackages
             SensorDampener => (new SimRemote.Damp(NpcArmament.Round6(value(DampenerRangeBonus)), NpcArmament.Round6(value(DampenerResolutionBonus))), false, "ewRemoteSensorDamp"),
             WarpScrambler => (new SimRemote.Scramble(Amount(WarpScrambleStrength), true), false, "warpScramblerMWD"),
             WarpDisruptor => (new SimRemote.Scramble(Amount(WarpScrambleStrength), false), false, "warpScrambler"),
+            // what the target's turrets lose: percentages of their range, falloff and tracking speed, as dogma gives them (negative)
+            TrackingDisruptor => (new SimRemote.Disrupt(NpcArmament.Round6(value(RangeDisruption)), NpcArmament.Round6(value(FalloffDisruption)), NpcArmament.Round6(value(TrackingDisruption))), false, "ewTrackingDisrupt"),
             // the target's HUD is told when a jam lands (the simulation rolls for it), not as the effect begins
             EcmJammer => (new SimRemote.Jam(Amount(GravimetricJam), Amount(LadarJam), Amount(MagnetometricJam), Amount(RadarJam)), false, ""),
             _ => null,

@@ -12,7 +12,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Charge, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 10;
+pub const PROTOCOL_VERSION: u16 = 11;
 
 /// The message kinds.
 pub mod kind {
@@ -755,6 +755,12 @@ fn put_action(out: &mut Vec<u8>, action: &Action) {
                     out.extend_from_slice(&strength.to_le_bytes());
                     out.push(u8::from(*blocks_mwd));
                 }
+                Remote::Disrupt { range_percent, falloff_percent, tracking_percent } => {
+                    out.push(9);
+                    out.extend_from_slice(&range_percent.to_le_bytes());
+                    out.extend_from_slice(&falloff_percent.to_le_bytes());
+                    out.extend_from_slice(&tracking_percent.to_le_bytes());
+                }
                 Remote::Jam { strength } => {
                     out.push(8);
                     for number in strength {
@@ -812,6 +818,11 @@ fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
                         1 => true,
                         _ => return Err(DecodeError::BadValue("blocks_mwd")),
                     },
+                },
+                9 => Remote::Disrupt {
+                    range_percent: reader.f64()?,
+                    falloff_percent: reader.f64()?,
+                    tracking_percent: reader.f64()?,
                 },
                 8 => Remote::Jam { strength: [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?] },
                 _ => return Err(DecodeError::BadValue("remote")),

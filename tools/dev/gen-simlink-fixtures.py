@@ -101,7 +101,7 @@ def effect(e):
     elif act:
         what = act["what"]
         body += bytes([1, 1 if act["when"] == "end" else 0]) + struct.pack("<dd", act["optimal"], act["falloff"]) + s(act["jam"])
-        body += bytes([{"repair": 0, "transfer": 1, "neutralize": 2, "drain": 3, "web": 4, "paint": 5, "damp": 6, "scramble": 7, "jam": 8}[what]])
+        body += bytes([{"repair": 0, "transfer": 1, "neutralize": 2, "drain": 3, "web": 4, "paint": 5, "damp": 6, "scramble": 7, "jam": 8, "disrupt": 9}[what]])
         if what == "repair":
             body += bytes([LAYERS[act["layer"]]])
         if what in ("repair", "transfer", "neutralize", "drain"):
@@ -116,6 +116,8 @@ def effect(e):
             body += struct.pack("<d", act["strength"]) + bytes([1 if act["blocksMwd"] else 0])
         if what == "jam":
             body += struct.pack("<4d", *act["strength"])
+        if what == "disrupt":
+            body += struct.pack("<ddd", act["rangePercent"], act["falloffPercent"], act["trackingPercent"])
     return body
 
 
@@ -239,8 +241,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 9},
-    {"name": "hello ack", "kind": "HelloAck", "version": 9, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 11},
+    {"name": "hello ack", "kind": "HelloAck", "version": 11, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -384,6 +386,13 @@ valid = [
                 "durationMs": 5000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "9988400003001",
                 "action": {"kind": "remote", "what": "scramble", "strength": 2.0, "blocksMwd": True, "optimal": 7500.0,
                            "falloff": 0.0, "when": "start", "jam": "warpScramblerMWD"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a tracking disruptor", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002812", "moduleType": 2108, "effectId": 6424, "fx": "effects.TrackingDisruption",
+                "durationMs": 10000.0, "capacitorNeed": 15.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "disrupt", "rangePercent": -15.3, "falloffPercent": -15.3,
+                           "trackingPercent": -15.3, "optimal": 40000.0, "falloff": 20000.0, "when": "start",
+                           "jam": "ewTrackingDisrupt"},
                 "onChanges": [], "offChanges": []}},
     {"name": "activate an ECM jammer", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002811", "moduleType": 1957, "effectId": 6470, "fx": "effects.ElectronicAttributeModifyTarget",

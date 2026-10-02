@@ -38,7 +38,7 @@ public class RepairHostTests
     {
         await using var connection = await rig.Source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
-        await rig.Skills.GrantAsync(connection, transaction, character, new[] { 3392, 3393, 3416, 3419, 3413, 3426, 3318, 3422, 3423, 16069, 27902, 3435, 3449, 3433, 19921, 3427 }.Select(type => new Eve.Skills.CharacterSkill(type, 5, 0)));
+        await rig.Skills.GrantAsync(connection, transaction, character, new[] { 3392, 3393, 3416, 3419, 3413, 3426, 3318, 3422, 3423, 16069, 27902, 3435, 3449, 3433, 19921, 3427, 3434 }.Select(type => new Eve.Skills.CharacterSkill(type, 5, 0)));
         await transaction.CommitAsync();
     }
 
@@ -189,7 +189,7 @@ public class ProjectedHostTests
     }
 
     private const int MidSlot = 19;
-    private const int StasisWebifier = 526, WarpScrambler = 447, WarpDisruptor = 3242, TargetPainter = 12709, SensorDampener = 1968, RadarJammer = 1956, MultispectralJammer = 1957;
+    private const int StasisWebifier = 526, WarpScrambler = 447, WarpDisruptor = 3242, TargetPainter = 12709, SensorDampener = 1968, RadarJammer = 1956, MultispectralJammer = 1957, TrackingDisruptorModule = 2108;
 
     private static async Task<(SimAction.Remote Action, SimEffect Effect, Rig Rig, Eve.Characters.Created Character, long Module)> StartedAsync(int typeId, string effectName)
     {
@@ -256,6 +256,23 @@ public class ProjectedHostTests
             var jam = Assert.IsType<SimRemote.Jam>(multi.What);
             Assert.True(jam.Gravimetric == jam.Ladar && jam.Ladar == jam.Magnetometric && jam.Magnetometric == jam.Radar && jam.Radar > 0, $"{jam}");
             Assert.Equal((19_200d, 18_000d), (multi.Optimal, multi.Falloff));
+        }
+    }
+
+    [PgFact]
+    public async Task A_tracking_disruptor_takes_the_percentages_dogma_gives_from_the_range_the_falloff_and_the_tracking_of_its_target()
+    {
+        var (disrupt, effect, rig, character, module) = await StartedAsync(TrackingDisruptorModule, "shipModuleTrackingDisruptor");
+        await using (rig)
+        {
+            Assert.Equal("ewTrackingDisrupt", disrupt.Jam);
+            Assert.False(disrupt.AtCycleEnd);
+            var what = Assert.IsType<SimRemote.Disrupt>(disrupt.What);
+            Assert.Equal(
+                (Math.Round(await ValueAsync(rig, character, module, 351), 6), Math.Round(await ValueAsync(rig, character, module, 349), 6), Math.Round(await ValueAsync(rig, character, module, 767), 6)),
+                (what.RangePercent, what.FalloffPercent, what.TrackingPercent));
+            Assert.True(what.RangePercent < 0 && what.FalloffPercent < 0 && what.TrackingPercent < 0, $"{what}");
+            Assert.True(disrupt.Optimal > 0 && effect.DurationMs > 0);
         }
     }
 

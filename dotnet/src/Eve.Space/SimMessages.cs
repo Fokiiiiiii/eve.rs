@@ -287,6 +287,9 @@ public abstract record SimRemote
     /// <summary>The target is held out of warp: <paramref name="Strength"/> points of scramble (a warp scrambler 2, a warp disruptor 1); <paramref name="BlocksMwd"/>: and out of its microwarpdrive.</summary>
     public sealed record Scramble(double Strength, bool BlocksMwd) : SimRemote;
 
+    /// <summary>The turrets the target fires are changed by these percentages of their optimal range, falloff and tracking speed for as long as the effect lands (a tracking disruptor: negative).</summary>
+    public sealed record Disrupt(double RangePercent, double FalloffPercent, double TrackingPercent) : SimRemote;
+
     /// <summary>
     /// An ECM jammer: for as long as a cycle the target loses its locks and can lock only the ships that jam it when the jam lands; it lands by the chance of this strength for the
     /// kind of sensor the target has over that sensor's strength (gravimetric, ladar, magnetometric, radar), weakened by the reach and the target's resistance.

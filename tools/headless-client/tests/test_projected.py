@@ -31,6 +31,7 @@ from tests.test_weapon import effect_of, slims_in
 REMOTE_ARMOR = 11355
 WEBIFIER = 526
 RADAR_JAMMER = 1956
+TRACKING_DISRUPTOR = 2108
 pytestmark = [
     pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server"),
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SLOW") != "1", reason="a minute: set EVE_LIVE_SLOW=1"),
@@ -215,3 +216,16 @@ def test_an_ecm_jammer_runs_against_a_rat_and_its_cycles_cost_the_pilot_its_capa
         ended = watch(f.only, 30.0, until=lambda seen: any(e["name"] == "OnGodmaShipEffect" and number(effect_of(e)[0]) == f.module and not effect_of(e)[3] for e in seen["who"]))
         stops = [effect_of(e) for e in ended["who"] if e["name"] == "OnGodmaShipEffect" and number(effect_of(e)[0]) == f.module and not effect_of(e)[3]]
         assert stops, "the jammer did not stop at the end of its cycle"
+
+
+def test_a_tracking_disruptor_runs_against_a_rat():
+    """What it does to the rat's guns is rolled into its shots, which the pilot sees only as damage; this holds that the module is accepted at the rat, starts and stops."""
+    with fight("disrupt", ("Weapon Disruption",), TRACKING_DISRUPTOR) as f:
+        f.reach("shipModuleTrackingDisruptor")
+        started = watch(f.only, 4.0)
+        starts = [effect_of(e) for e in started["who"] if e["name"] == "OnGodmaShipEffect" and number(effect_of(e)[0]) == f.module]
+        assert starts and starts[0][3], f"the disruptor did not start: {starts}"
+        f.slash("/heal")
+        f.who.call_bound(f.dogma[0], "Deactivate", f.module, "shipModuleTrackingDisruptor")
+        ended = watch(f.only, 15.0, until=lambda seen: any(e["name"] == "OnGodmaShipEffect" and number(effect_of(e)[0]) == f.module and not effect_of(e)[3] for e in seen["who"]))
+        assert any(e["name"] == "OnGodmaShipEffect" and number(effect_of(e)[0]) == f.module and not effect_of(e)[3] for e in ended["who"]), "the disruptor did not stop"

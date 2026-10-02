@@ -265,6 +265,20 @@ impl Scene {
             return Vec::new();
         };
         let attacker_id = self.pilots[&session].ship.spec.ship_id;
+        // what disrupts the shooter's turrets works on the numbers the shot is rolled with
+        let (range, falloff, tracking) = self.pilots[&session].incoming.weapon_factors();
+        let disrupted;
+        let turret = if (range, falloff, tracking) == (1.0, 1.0, 1.0) {
+            turret
+        } else {
+            disrupted = Turret {
+                optimal_range: turret.optimal_range * range,
+                falloff: turret.falloff * falloff,
+                tracking_speed: turret.tracking_speed * tracking,
+                ..turret.clone()
+            };
+            &disrupted
+        };
         let roll = self.rng.random();
         let shot = resolve_shot(turret, &attacker, &target, roll);
         let mut out = Vec::new();
@@ -822,6 +836,31 @@ mod tests {
             ["DoDestinyUpdate", "OnModuleAttributeChanges", "OnGodmaShipEffect", "OnTarget"],
             "{stopped:?}"
         );
+    }
+
+    #[test]
+    fn a_turret_that_is_disrupted_is_rolled_with_the_numbers_it_is_left_and_the_shot_misses_where_it_hit() {
+        // undisrupted, the laser (10 km and 5 km of falloff) hits the player two kilometres off at the first cycle
+        let (mut scene, npc, now) = duel();
+        let free = scene.activate(npc, laser_effect(spec().ship_id, laser()), now);
+        let free = messages(&free, PLAYER, "OnDamageMessage");
+        assert_ne!(entry(&free[0], "damage"), number6(0.0), "{free:?}");
+        // a tracking disruptor that takes the whole of its range and falloff leaves it nothing to reach with
+        let (mut scene, npc, now) = duel();
+        let until = now + 60 * SECOND;
+        scene.pilots.get_mut(&npc).unwrap().incoming.upsert(
+            777,
+            888,
+            crate::ewar::Lasting::Disrupt {
+                range_percent: -100.0,
+                falloff_percent: -100.0,
+                tracking_percent: 0.0,
+            },
+            until,
+        );
+        let disrupted = scene.activate(npc, laser_effect(spec().ship_id, laser()), now);
+        let disrupted = messages(&disrupted, PLAYER, "OnDamageMessage");
+        assert_eq!(entry(&disrupted[0], "damage"), number6(0.0), "{disrupted:?}");
     }
 
     #[test]

@@ -97,6 +97,9 @@ pub enum Remote {
     Paint { percent: f64 },
     /// The range the target locks at and its scan resolution are changed by those percentages (a sensor dampener: negative).
     Damp { range_percent: f64, resolution_percent: f64 },
+    /// The turrets the target fires are changed by those percentages of their optimal range, falloff and tracking speed for as long as the effect lands (a tracking
+    /// disruptor: negative).
+    Disrupt { range_percent: f64, falloff_percent: f64, tracking_percent: f64 },
     /// The target is held out of warp: `strength` points of scramble (a warp scrambler 2, a warp disruptor 1; the ship's own warp core subtracts). `blocks_mwd`: and out
     /// of its microwarpdrive.
     Scramble { strength: f64, blocks_mwd: bool },
@@ -124,6 +127,11 @@ impl Remote {
             Self::Scramble { strength, blocks_mwd } => {
                 Some(Lasting::Scramble { strength: strength * share, blocks_mwd })
             }
+            Self::Disrupt { range_percent, falloff_percent, tracking_percent } => Some(Lasting::Disrupt {
+                range_percent: range_percent * share,
+                falloff_percent: falloff_percent * share,
+                tracking_percent: tracking_percent * share,
+            }),
             _ => None,
         }
     }
@@ -941,7 +949,11 @@ impl Scene {
             if resolution > 0.0 && signature > 0.0 { (signature / resolution).min(1.0) } else { 1.0 }
         };
         let out = match what {
-            Remote::Web { .. } | Remote::Paint { .. } | Remote::Damp { .. } | Remote::Scramble { .. } => {
+            Remote::Web { .. }
+            | Remote::Paint { .. }
+            | Remote::Damp { .. }
+            | Remote::Scramble { .. }
+            | Remote::Disrupt { .. } => {
                 let lasting = what.lasting(share).expect("these last");
                 self.hold(session, effect, lasting, at)
             }

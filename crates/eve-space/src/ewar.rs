@@ -51,6 +51,8 @@ pub(crate) enum Lasting {
     Damp { range_percent: f64, resolution_percent: f64 },
     /// Points of warp scramble: more than the ship's own warp core holds it out of warp (`blocks_mwd`: a microwarpdrive too).
     Scramble { strength: f64, blocks_mwd: bool },
+    /// Percentages of the optimal range, the falloff and the tracking speed of the turrets the ship fires (negative for a tracking disruptor).
+    Disrupt { range_percent: f64, falloff_percent: f64, tracking_percent: f64 },
     /// Held by an ECM jammer: the ship's locks are broken and it can lock only the ships that jam it.
     Jam,
 }
@@ -134,6 +136,23 @@ impl Incoming {
         by.sort_unstable();
         by.dedup();
         by
+    }
+
+    /// What lands on the ship's turrets: the factors of the optimal range, the falloff and the tracking speed (1 for a ship nothing disrupts), each stacking with the
+    /// game's penalty.
+    pub(crate) fn weapon_factors(&self) -> (f64, f64, f64) {
+        let pick = |choose: fn(&Lasting) -> Option<f64>| self.factor(choose);
+        (
+            pick(
+                |w| if let Lasting::Disrupt { range_percent, .. } = w { Some(*range_percent) } else { None },
+            ),
+            pick(|w| {
+                if let Lasting::Disrupt { falloff_percent, .. } = w { Some(*falloff_percent) } else { None }
+            }),
+            pick(|w| {
+                if let Lasting::Disrupt { tracking_percent, .. } = w { Some(*tracking_percent) } else { None }
+            }),
+        )
     }
 
     pub(crate) fn jammed(&self) -> bool {
@@ -374,6 +393,36 @@ mod tests {
         let mixed = stacked([25.0, -50.0]);
         assert!((mixed - 1.25 * 0.5).abs() < 1e-9, "{mixed}");
         assert_eq!(stacked([]), 1.0);
+    }
+
+    #[test]
+    fn disruptions_of_the_turrets_stack_with_the_penalty_and_lapse_with_their_records() {
+        let mut incoming = Incoming::default();
+        assert_eq!(incoming.weapon_factors(), (1.0, 1.0, 1.0));
+        let disrupt = |range, falloff, tracking| Lasting::Disrupt {
+            range_percent: range,
+            falloff_percent: falloff,
+            tracking_percent: tracking,
+        };
+        incoming.upsert(1, 10, disrupt(-20.0, -10.0, -30.0), 100);
+        let one = incoming.weapon_factors();
+        assert!(
+            (one.0 - 0.8).abs() < 1e-9 && (one.1 - 0.9).abs() < 1e-9 && (one.2 - 0.7).abs() < 1e-9,
+            "{one:?}"
+        );
+        incoming.upsert(2, 11, disrupt(-20.0, -10.0, -30.0), 100);
+        let two = incoming.weapon_factors();
+        // the second of a kind counts for a little less than the first
+        assert!((two.0 - 0.8 * (1.0 - 0.2 * penalty(1))).abs() < 1e-9, "{two:?}");
+        assert!(two.0 < one.0 && two.2 < one.2);
+        // the numbers of a ship's own are not touched by it, only the turrets are
+        let base = Base {
+            max_velocity: 400.0,
+            signature_radius: 40.0,
+            max_target_range: 30_000.0,
+            scan_resolution: 500.0,
+        };
+        assert_eq!(incoming.worked(&base), base);
     }
 
     #[test]

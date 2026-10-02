@@ -191,6 +191,11 @@ fn effect_of(case: &Value) -> Effect {
                     range_percent: a["rangePercent"].as_f64().unwrap(),
                     resolution_percent: a["resolutionPercent"].as_f64().unwrap(),
                 },
+                "disrupt" => Remote::Disrupt {
+                    range_percent: a["rangePercent"].as_f64().unwrap(),
+                    falloff_percent: a["falloffPercent"].as_f64().unwrap(),
+                    tracking_percent: a["trackingPercent"].as_f64().unwrap(),
+                },
                 "jam" => Remote::Jam { strength: sensors_of(&a["strength"]) },
                 _ => Remote::Scramble {
                     strength: a["strength"].as_f64().unwrap(),

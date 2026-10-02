@@ -45,6 +45,26 @@ public sealed partial class EntityService(ISpaceDrones drones, Func<long> nowUni
     public ValueTask<PyValue> CmdEngage(ServiceCall call) =>
         OrderAsync(call, SimDroneCommands.Engage, call.Arg(1) switch { PyInt n => n.Value, PyLong n => n.Value, _ => 0 }, call.Arg(0));
 
+    private const string NotServed = "That drone order is not available yet.";
+
+    /// <summary><c>CmdAssist(characterID, droneIDs)</c> and <c>CmdGuard(characterID, droneIDs)</c> (their subject is a pilot: the arguments are the other way round from the rest): not served yet, each drone refuses.</summary>
+    [Method("CmdAssist")]
+    public ValueTask<PyValue> CmdAssist(ServiceCall call) => new(_binding.Owns(call) ? SpaceDrones.RefuseAll(SpaceDrones.IdsOf(call.Arg(1)), NotServed) : None);
+
+    [Method("CmdGuard")]
+    public ValueTask<PyValue> CmdGuard(ServiceCall call) => new(_binding.Owns(call) ? SpaceDrones.RefuseAll(SpaceDrones.IdsOf(call.Arg(1)), NotServed) : None);
+
+    /// <summary><c>CmdMineRepeatedly(droneIDs, targetID)</c> and <c>CmdSalvage(droneIDs, targetID)</c>: not served yet (only drones that shoot fly), each drone refuses.</summary>
+    [Method("CmdMineRepeatedly")]
+    public ValueTask<PyValue> CmdMineRepeatedly(ServiceCall call) => new(_binding.Owns(call) ? SpaceDrones.RefuseAll(SpaceDrones.IdsOf(call.Arg(0)), NotServed) : None);
+
+    [Method("CmdSalvage")]
+    public ValueTask<PyValue> CmdSalvage(ServiceCall call) => new(_binding.Owns(call) ? SpaceDrones.RefuseAll(SpaceDrones.IdsOf(call.Arg(0)), NotServed) : None);
+
+    /// <summary><c>CmdReconnectToDrones(droneIDs)</c>: drones that were let go and are still in space are taken up again; none are (a drone that is let go leaves the scene), so nothing is refused or done.</summary>
+    [Method("CmdReconnectToDrones")]
+    public ValueTask<PyValue> CmdReconnectToDrones(ServiceCall call) => new(_binding.Owns(call) ? new PyDict([]) : None);
+
     /// <summary><c>CmdAbandonDrone(droneIDs)</c>: the drones are let go.</summary>
     [Method("CmdAbandonDrone")]
     public ValueTask<PyValue> CmdAbandonDrone(ServiceCall call) => OrderAsync(call, SimDroneCommands.Abandon, 0, call.Arg(0));

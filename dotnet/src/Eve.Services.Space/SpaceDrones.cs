@@ -95,6 +95,9 @@ public sealed class SpaceDrones : ISpaceDrones, IDisposable
 
     private static PyValue Dict(IEnumerable<KeyValuePair<PyValue, PyValue>> entries) => new PyDict([.. entries]);
 
+    /// <summary>The answer to an order that is not served: every drone it names refuses it with this text (the client shows each refusal as a message).</summary>
+    internal static PyValue RefuseAll(IEnumerable<long> droneIds, string text) => Dict(droneIds.Select(id => new KeyValuePair<PyValue, PyValue>(InventoryWire.Id(id), Refusal(text))));
+
     private static PyValue Refusal(string text) => Py.Tuple(new PyStr("CustomNotify"), new PyDict([new(new PyStr("notify"), new PyStr(text))]));
 
     private long FileTimeNow() => Py.FileTimeFromUnixMs(_nowUnixMs());

@@ -1,23 +1,20 @@
 -- The transactional outbox: a domain event is a row written in the same transaction as the change it announces, so the event exists exactly when the change does. Subscribers
 -- read the rows in order, each with a cursor of its own; nothing is "sent", so nothing can be lost between a commit and a message.
 CREATE TABLE outbox (
+    -- ids are handed out in the order transactions ASK for them but become visible in the order they COMMIT; a reader therefore takes only the rows up to a horizon at which
+    -- no publishing transaction is open (publishers hold a shared advisory lock until they commit, a reader takes it exclusively for a moment: see EventBus)
     id          bigserial PRIMARY KEY,
-    -- the transaction that wrote the row. Row ids are handed out in the order the transactions ASK for them but become visible in the order they COMMIT, so an id alone is not
-    -- a safe cursor; (tx_id, id) is, because a reader only looks at rows whose transaction is older than every transaction still running (see EventBus)
-    tx_id       bigint    NOT NULL DEFAULT (pg_current_xact_id()::text::bigint),
     topic       text      NOT NULL,
     -- what the event is about ("ship:90000123"); events of one key are delivered in the order they were published (like all events)
     key         text,
     payload     jsonb     NOT NULL DEFAULT '{}',
     occurred_ms bigint    NOT NULL
 );
-CREATE INDEX outbox_order ON outbox (tx_id, id);
 CREATE INDEX outbox_age ON outbox (occurred_ms);
 
 -- One row per subscriber: how far it has read, and how its current event is going.
 CREATE TABLE subscribers (
     name        text      PRIMARY KEY,
-    cursor_tx   bigint    NOT NULL,
     cursor_id   bigint    NOT NULL,
     failures    integer   NOT NULL DEFAULT 0,
     retry_at_ms bigint,

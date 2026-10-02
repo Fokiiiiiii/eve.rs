@@ -54,7 +54,7 @@ public enum StartAt
 public sealed record DeadLetter(long Id, string Subscriber, long EventId, string Topic, string? Key, string PayloadJson, string Error, long FailedMs);
 
 /// <summary>How a subscriber is doing; for tools and tests.</summary>
-public sealed record SubscriberStatus(string Name, long CursorTx, long CursorId, int Failures, long? RetryAtMs, string? LastError);
+public sealed record SubscriberStatus(string Name, long CursorId, int Failures, long? RetryAtMs, string? LastError);
 
 /// <summary>Knobs of the bus.</summary>
 public sealed record EventBusOptions
@@ -64,6 +64,9 @@ public sealed record EventBusOptions
 
     public long BackoffBaseMs { get; init; } = 1_000;
     public long BackoffMaxMs { get; init; } = 300_000;
+
+    /// <summary>How long the pump loop sleeps when nothing is waiting (it wakes sooner for anything published through the bus's own transaction).</summary>
+    public int PollMs { get; init; } = 250;
 
     /// <summary>The most events one pump delivers to one subscriber before it lets the others have a turn.</summary>
     public int BatchPerPump { get; init; } = 500;

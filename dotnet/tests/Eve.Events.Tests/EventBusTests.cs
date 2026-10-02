@@ -26,7 +26,7 @@ public class EventBusTests
     }
 
     [PgFact]
-    public async Task An_event_published_in_a_transaction_that_rolls_back_never_exists_and_neither_does_its_pump_job()
+    public async Task An_event_published_in_a_transaction_that_rolls_back_never_exists()
     {
         await using var rig = await Rig.Create();
         var seen = new List<string>();
@@ -38,13 +38,11 @@ public class EventBusTests
             await rig.Bus.PublishAsync(connection, transaction, "a.b", null, "k");
             await transaction.RollbackAsync();
         }
-        Assert.Equal(0, await rig.JobCount());
         Assert.Equal(0, await rig.Bus.CountAsync());
         Assert.Equal(0, (await rig.Bus.PumpAsync()).Delivered);
 
         await rig.Publish("a.b", null, "k");
-        Assert.Equal(1, await rig.JobCount());   // the pump job came with the event
-        await rig.Scheduler.RunDueAsync();       // and the scheduler runs it
+        Assert.Equal(1, (await rig.Bus.PumpAsync()).Delivered);
         Assert.Equal(["a.b:k"], seen);
     }
 
@@ -161,25 +159,45 @@ public class EventBusTests
     }
 
     [PgFact]
-    public async Task A_transaction_that_commits_late_is_waited_for_and_never_skipped()
+    public async Task A_publisher_that_is_still_open_holds_delivery_back_and_a_late_commit_is_never_skipped()
     {
         await using var rig = await Rig.Create();
         var seen = new List<string>();
         rig.Bus.Subscribe("s", ["*"], Collect(seen));
         await rig.Bus.PumpAsync();
 
-        // slow takes its transaction id first but publishes (and commits) last; fast publishes and commits in between
+        // slow publishes first (so it has the lower id) but commits last; fast publishes and commits in between
         await using var slowConnection = await rig.Source.OpenConnectionAsync();
         await using var slow = await slowConnection.BeginTransactionAsync();
-        await Sql.ScalarAsync(slowConnection, slow, "SELECT pg_current_xact_id()", CancellationToken.None);
-        await rig.Publish("t", null, "fast");
-        Assert.Equal(0, (await rig.Bus.PumpAsync()).Delivered);   // not yet: an older transaction is still running
         await rig.Bus.PublishAsync(slowConnection, slow, "t", null, "slow");
+        await rig.Publish("t", null, "fast");
+        var held = await rig.Bus.PumpAsync();
+        Assert.Equal(0, held.Delivered);            // a publisher is still open: nothing is delivered past it
+        Assert.Equal(rig.Now + 50, held.RetryAtMs); // and the pump says when to look again
+        Assert.Empty(seen);
+
         await slow.CommitAsync();
         Assert.Equal(2, (await rig.Bus.PumpAsync()).Delivered);
-        Assert.Equal(["t:slow", "t:fast"], seen.OrderBy(x => x).Reverse().ToList());   // both arrived; nothing was skipped
-        Assert.Equal(2, seen.Count);
+        Assert.Equal(["t:slow", "t:fast"], seen);   // in the order they were published; the late one was not skipped
         Assert.Equal(0, (await rig.Bus.PumpAsync()).Delivered);
+    }
+
+    [PgFact]
+    public async Task A_long_transaction_elsewhere_in_the_database_does_not_delay_delivery()
+    {
+        await using var rig = await Rig.Create();
+        var seen = new List<string>();
+        rig.Bus.Subscribe("s", ["*"], Collect(seen));
+        await rig.Bus.PumpAsync();
+
+        // some other work holds a transaction open (with a transaction id, which is what holds back a database-wide horizon)
+        await using var other = await rig.Source.OpenConnectionAsync();
+        await using var otherTransaction = await other.BeginTransactionAsync();
+        await Sql.ScalarAsync(other, otherTransaction, "SELECT pg_current_xact_id()", CancellationToken.None);
+
+        await rig.Publish("t", null, "1");
+        Assert.Equal(1, (await rig.Bus.PumpAsync()).Delivered);
+        Assert.Equal(["t:1"], seen);
     }
 
     [PgFact]
@@ -191,7 +209,8 @@ public class EventBusTests
         rig.Bus.Subscribe("second", ["b"], Collect(done));
         await rig.Bus.PumpAsync();
         await rig.Publish("a", null, "k");
-        await rig.Scheduler.RunDueAsync();   // the pump job delivers a, publishing b and its own pump job, which runs next
+        Assert.Equal(1, (await rig.Bus.PumpAsync()).Delivered);   // a is delivered; its handler publishes b
+        Assert.Equal(1, (await rig.Bus.PumpAsync()).Delivered);   // and the next pass delivers b
         Assert.Equal(["b:k"], done);
     }
 
@@ -234,5 +253,19 @@ public class EventBusTests
         await rig.Bus.PumpAsync();
         Assert.Equal(40, count);
         Assert.Equal(40, (await rig.Effects()).Count);
+    }
+
+    [PgFact]
+    public async Task The_pump_loop_delivers_without_being_called_and_stops()
+    {
+        await using var rig = await Rig.Create(new EventBusOptions { PollMs = 20 });
+        var got = new TaskCompletionSource<string>();
+        rig.Bus.Subscribe("s", ["x"], (ctx, _) => { got.TrySetResult(ctx.Event.Key!); return Task.CompletedTask; });
+        await rig.Bus.PumpAsync();   // the subscriber starts here
+        await rig.Bus.StartAsync();
+        await rig.Bus.PublishAsync("x", null, "k");
+        Assert.Equal("k", await got.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+        await rig.Bus.StopAsync();
+        Assert.Empty(rig.Log);
     }
 }

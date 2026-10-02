@@ -27,8 +27,9 @@ see [Where they live](#where-they-live)), so a restart loses nothing.
    make it safe to run twice.
 3. **Throwing means "try again later".** The scheduler and the bus retry with a back-off; after the last try a job is parked as `failed`
    and an event is set aside as a dead letter (the subscriber goes on). Do not catch and swallow an error you want retried.
-4. **Keep transactions short.** The bus only delivers events whose transaction is older than every running transaction, so one
-   transaction that stays open holds everything behind it.
+4. **Keep transactions that publish short.** A publishing transaction holds a shared advisory lock until it commits and the pump does not
+   deliver past an open publisher, so a publishing transaction that stays open holds back every event after it. (Transactions that do not
+   publish, anywhere in the database, delay nothing.)
 5. **Time is injected.** Every foundation takes the clock from `DurableScheduler.Now` (milliseconds since the Unix epoch). Tests move a
    fake clock; nothing calls `DateTime.UtcNow` for game time.
 6. **Names are contracts.** A job *kind* (`space.bounty.pay`), an event *topic* (`npc.killed`), a subscriber *name*, a relation *kind*
@@ -88,8 +89,8 @@ See `dotnet/tests/Eve.Scheduler.Tests/Rig.cs`.
 
 ## 2. Event Bus with a transactional outbox (`Eve.Events`)
 
-An event is a row in the outbox, written in the publisher's transaction. A *pump* (a scheduler job the bus schedules for you) delivers
-each event, in order, to every subscriber whose topics match. Each subscriber has its own cursor.
+An event is a row in the outbox, written in the publisher's transaction. The bus's *pump loop* (started with the foundations) delivers
+each event, in order, to every subscriber whose topics match, within a quarter of a second. Each subscriber has its own cursor.
 
 **Publish** in the same transaction as the change:
 
@@ -118,8 +119,9 @@ a dead letter after `MaxAttempts`, then it goes on); `StartAt.Now` (default) mea
 **Do not** add `event Action<…>` members to a service for another feature to hook (the existing ones in `SpaceSessions` are being moved:
 see [Migrating](#migrating-existing-timers)), and do not keep a list of listeners.
 
-**Test it:** `await bus.PumpAsync()` delivers what is waiting (call it once after creating the subscribers so they start "now"). See
-`dotnet/tests/Eve.Events.Tests`.
+**Test it:** `await bus.PumpAsync()` delivers what is waiting (call it once after creating the subscribers so they start "now"; do not start
+the loop in a test). See `dotnet/tests/Eve.Events.Tests`. If you publish with your own transaction, call `bus.Wake()` after the commit to
+have it delivered at once instead of at the next poll.
 
 ## 3. Relations (`Eve.Relations`)
 

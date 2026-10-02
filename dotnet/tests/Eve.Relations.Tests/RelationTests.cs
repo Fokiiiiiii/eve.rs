@@ -85,7 +85,7 @@ public class RelationTests
         await rig.Set("standing", Pilot, Corp, 1);
         await rig.Set("standing", Pilot, Corp, 2);
         await rig.Commit((c, t) => rig.Relations.EndAsync(c, t, "standing", Pilot, Corp, "reset"));
-        await rig.Scheduler.RunDueAsync();
+        await rig.Bus.PumpAsync();
         Assert.Equal(["relation.standing.changed:standing:90000001", "relation.standing.changed:standing:90000001", "relation.standing.ended:standing:90000001"], seen);
     }
 
@@ -110,7 +110,7 @@ public class RelationTests
         rig.Now = t + 5000;
         await rig.Scheduler.RunDueAsync();
         Assert.False(await rig.Relations.HoldsAsync("war", Corp, Corp2));
-        await rig.Scheduler.RunDueAsync();
+        await rig.Bus.PumpAsync();
         Assert.Equal(["expired"], ended);
         Assert.Contains(await rig.Relations.HistoryAsync("war", Corp), h => h.Reason == "expired" && h.NewValue is null);
     }

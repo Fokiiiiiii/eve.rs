@@ -61,5 +61,9 @@ internal sealed class Foundations : IAsyncDisposable
         Scheduler.Start();
     }
 
-    public ValueTask DisposeAsync() => Scheduler.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        await Events.StopAsync();
+        await Scheduler.DisposeAsync();
+    }
 }

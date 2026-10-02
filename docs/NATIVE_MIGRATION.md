@@ -302,8 +302,8 @@ remain in progress. S5 and its service groups remain unchecked.
 
 Owner's instruction (2026-10-02): six common foundations so that features need no timers, events or state of their own (ADR 0010, guide
 `docs/FOUNDATIONS.md`): `Eve.Scheduler` (PostgreSQL durable scheduler and job runner: keyed/replaceable/recurring jobs, leases, retries with back-off,
-handler writes committed with the job), `Eve.Events` (transactional outbox, per-subscriber cursors over `(transaction, id)` read below the oldest running
-transaction, dead letters), `Eve.Relations` (standing, security status, war, war ally, corporation/alliance/faction affiliation: history, change events,
+handler writes committed with the job), `Eve.Events` (transactional outbox, per-subscriber cursors over the event id, a publisher advisory lock so that a late commit is waited for,
+dead letters, a pump loop of its own), `Eve.Relations` (standing, security status, war, war ally, corporation/alliance/faction affiliation: history, change events,
 expiry), `Eve.Content` (definitions, instances and objectives advanced by events; counter/forbid/manual/timer objectives; deadlines; actions and events at the
 end), the `EffectRegistry` in `Eve.Dogma` with the space host's handlers (`Eve.Services.Space/Effects`) replacing the branch of `ModulePackages.Of`, and
 `Eve.ReadSide` (named queries over the SDE and module tables answered as Rowset, packed rows, CIndexedRowset or KeyVal). The host creates them

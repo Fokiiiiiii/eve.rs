@@ -15,8 +15,9 @@ Six shared foundations, each a module with its own PostgreSQL schema (ADR 0003),
 
 1. `Eve.Scheduler`: a durable scheduler and job runner (jobs are rows; claimed with `FOR UPDATE SKIP LOCKED` and a lease; run in a transaction that
    completes them; retried with a back-off; keyed, recurring, cancellable).
-2. `Eve.Events`: domain events with a transactional outbox (written in the publisher's transaction; per-subscriber cursors over `(transaction, id)` read
-   below the oldest running transaction, so a late commit is waited for, never skipped; handler writes commit with the cursor; dead letters).
+2. `Eve.Events`: domain events with a transactional outbox (written in the publisher's transaction; per-subscriber cursors over the event id; a publisher
+   holds a shared advisory lock until it commits and the pump takes it exclusively for a moment to find a horizon with no open publisher, so a late commit is
+   waited for, never skipped, and a long transaction elsewhere delays nothing; handler writes commit with the cursor; dead letters; a pump loop of its own).
 3. `Eve.Relations`: one store for standings, wars, security status and affiliation (typed directed relations with history, change events, expiry).
 4. `Eve.Content`: a runtime for missions, anomalies, incursions (definitions, instances, objectives advanced by events, deadlines, end actions and events).
 5. `Eve.Dogma` `EffectRegistry` with the space host's handlers in `Eve.Services.Space/Effects` (replacing the branch in `ModulePackages.Of`).
@@ -28,5 +29,5 @@ A new feature uses them and does not build a private timer, event list, running-
 
 * The host creates and starts them (`Eve.Host/Foundations.cs`), after the features have registered their handlers and subscribers.
 * The can sweeper and the bounty payout moved onto the scheduler; the other private timers move when their features are next touched.
-* Event delivery waits for transactions that are older than it: transactions must stay short.
+* Event delivery waits for an open publishing transaction: a transaction that publishes must stay short.
 * The foundations need PostgreSQL; without `EVE_PG_URL` the host starts without them (as without characters).

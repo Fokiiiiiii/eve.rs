@@ -4,8 +4,9 @@
 use eve_space::death::Credit;
 use eve_space::health::{Condition, Layer, Resonances, Vitals};
 use eve_space::link::{
-    ChargeOp, ContainerPlacement, DecodeError, Enter, How, Message, Spawn, WreckPlacement,
+    ChargeOp, ContainerPlacement, DecodeError, Enter, How, LaunchDrone, Message, Spawn, WreckPlacement,
 };
+use eve_space::missiles::Missile;
 use eve_space::modules::{Action, Applies, Change, Effect, Numbers, Reach, Remote};
 use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use eve_space::weapons::{Charge, Turret};
@@ -134,6 +135,21 @@ fn turret_of(w: &Value) -> Turret {
             rounds: c["rounds"].as_i64().unwrap(),
             per_cycle: c["perCycle"].as_i64().unwrap(),
         }),
+        missile: w.get("missile").filter(|m| !m.is_null()).map(|m| Missile {
+            charge_type_id: m["chargeTypeId"].as_i64().unwrap() as i32,
+            group_id: m["groupId"].as_i64().unwrap() as i32,
+            name: m["name"].as_str().unwrap().to_string(),
+            radius: m["radius"].as_f64().unwrap(),
+            mass: m["mass"].as_f64().unwrap(),
+            agility: m["agility"].as_f64().unwrap(),
+            hit_points: m["hitPoints"].as_f64().unwrap(),
+            max_velocity: m["maxVelocity"].as_f64().unwrap(),
+            flight_time_ms: m["flightTimeMs"].as_f64().unwrap(),
+            explosion_radius: m["explosionRadius"].as_f64().unwrap(),
+            explosion_velocity: m["explosionVelocity"].as_f64().unwrap(),
+            damage_reduction_factor: m["damageReductionFactor"].as_f64().unwrap(),
+            damage_reduction_sensitivity: m["damageReductionSensitivity"].as_f64().unwrap(),
+        }),
     }
 }
 
@@ -209,6 +225,12 @@ fn effect_of(case: &Value) -> Effect {
                     falloff_percent: a["falloffPercent"].as_f64().unwrap(),
                     tracking_percent: a["trackingPercent"].as_f64().unwrap(),
                 },
+                "guidanceDisrupt" => Remote::GuidanceDisrupt {
+                    velocity_percent: a["velocityPercent"].as_f64().unwrap(),
+                    delay_percent: a["delayPercent"].as_f64().unwrap(),
+                    aoe_velocity_percent: a["aoeVelocityPercent"].as_f64().unwrap(),
+                    aoe_cloud_percent: a["aoeCloudPercent"].as_f64().unwrap(),
+                },
                 "jam" => Remote::Jam { strength: sensors_of(&a["strength"]) },
                 _ => Remote::Scramble {
                     strength: a["strength"].as_f64().unwrap(),
@@ -259,6 +281,18 @@ fn identity_of(case: &Value) -> NpcIdentity {
         wreck,
         hull: case.get("hull").and_then(Value::as_bool).unwrap_or(false),
         host_wreck: case.get("hostWreck").and_then(Value::as_bool).unwrap_or(false),
+        drone: None,
+    }
+}
+
+fn weapon_of(w: &Value) -> NpcWeapon {
+    let number = |field: &str| w[field].as_f64().unwrap_or_else(|| panic!("{field} in {w}"));
+    NpcWeapon {
+        module_id: wide(w, "moduleId"),
+        effect_id: w["effectId"].as_i64().unwrap() as i32,
+        cycle_ms: number("cycleMs"),
+        capacitor_need: number("capacitorNeed"),
+        turret: turret_of(w),
     }
 }
 
@@ -477,6 +511,43 @@ fn message_of(case: &Value) -> Message {
             } else {
                 Err(text(case, "reason"))
             },
+        },
+        "LaunchDrone" => Message::LaunchDrone(Box::new(LaunchDrone {
+            request_id: wide(case, "requestId") as u64,
+            session_id: session_id(),
+            ship: ship_of(&case["ship"]),
+            weapon: weapon_of(&case["weapon"]),
+            graphic_id: number("graphicId") as i32,
+            orbit_distance: case["orbitDistance"].as_f64().unwrap(),
+            attack_range: case["attackRange"].as_f64().unwrap(),
+            cruise_fraction: case["cruiseFraction"].as_f64().unwrap(),
+        })),
+        "DroneCommand" => Message::DroneCommand {
+            session_id: session_id(),
+            command: number("command") as u8,
+            target_id: wide(case, "targetId"),
+            drone_ids: case["droneIds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|d| d.as_str().unwrap().parse().unwrap())
+                .collect(),
+        },
+        "DroneResults" => Message::DroneResults {
+            session_id: session_id(),
+            command: number("command") as u8,
+            results: case["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| (wide(r, "droneId"), text(r, "reason")))
+                .collect(),
+        },
+        "DroneScooped" => Message::DroneScooped { session_id: session_id(), drone_id: wide(case, "droneId") },
+        "DroneReleased" => Message::DroneReleased {
+            session_id: session_id(),
+            drone_id: wide(case, "droneId"),
+            position: vector_of(case, "position"),
         },
         "Destroy" => Message::Destroy {
             ship_id: wide(case, "shipId"),

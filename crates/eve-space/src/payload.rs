@@ -35,6 +35,11 @@ fn state_buffer(kind: u8, stamp: u32, balls: &[BallEntity]) -> Result<Value, Bal
     Ok(Value::Buffer(bytes.into()))
 }
 
+/// The state buffer of an `AddBalls2` for these balls (the missile that is fired has no slim item of a ship, so it builds its own update).
+pub fn add_balls_buffer(stamp: u32, balls: &[BallEntity]) -> Result<Value, BallError> {
+    state_buffer(ADD_BALLS, stamp, balls)
+}
+
 /// One action of a `DoDestinyUpdate`: what happened at a stamp, `(stamp, (name, args))`.
 pub fn action(stamp: u32, name: &'static str, args: impl IntoIterator<Item = Value>) -> Value {
     tuple([id(i64::from(stamp)), tuple([word(name), tuple(args)])])

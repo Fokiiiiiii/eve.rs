@@ -35,6 +35,8 @@ internal sealed class ProjectedEffect : ShipEffect
         ["warpDisrupt"] = v => (new SimRemote.Scramble(Amount(v, WarpScrambleStrength), false), false, "warpScrambler"),
         // what the target's turrets lose: percentages of their range, falloff and tracking speed, as dogma gives them (negative)
         ["shipModuleTrackingDisruptor"] = v => (new SimRemote.Disrupt(Signed(v, RangeDisruption), Signed(v, FalloffDisruption), Signed(v, TrackingDisruption)), false, "ewTrackingDisrupt"),
+        // what the target's missiles lose: percentages of their speed, flight time and explosion velocity and radius (the radius grows), as dogma gives them
+        ["shipModuleGuidanceDisruptor"] = v => (new SimRemote.GuidanceDisrupt(Signed(v, MissileVelocityBonus), Signed(v, ExplosionDelayBonus), Signed(v, AoeVelocityBonus), Signed(v, AoeCloudSizeBonus)), false, "ewGuidanceDisrupt"),
         // the target's HUD is told when a jam lands (the simulation rolls for it), not as the effect begins
         ["remoteECMFalloff"] = v => (new SimRemote.Jam(Amount(v, GravimetricJam), Amount(v, LadarJam), Amount(v, MagnetometricJam), Amount(v, RadarJam)), false, ""),
     };

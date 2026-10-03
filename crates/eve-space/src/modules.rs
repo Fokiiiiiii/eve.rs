@@ -19,6 +19,8 @@ use crate::wire::{dict, filetime, id, int, real, text, tuple, word};
 const CAPACITOR_CHARGE: i32 = 18;
 /// The attribute of a module that holds the length of its cycle (told as a real, whatever its value).
 const DURATION: i32 = 73;
+/// The attribute of a module that holds the length of its cycle (`speed`).
+const CYCLE: i32 = 51;
 /// The capacitor's charge is told every half second, worked out at the tick a tenth of a second on from the moment (the reference's ticks).
 pub(crate) const SAMPLE_EVERY: i64 = TICKS_PER_SECOND / 2;
 pub(crate) const TICK: i64 = TICKS_PER_SECOND / 10;
@@ -103,6 +105,14 @@ pub enum Remote {
     /// The turrets the target fires are changed by those percentages of their optimal range, falloff and tracking speed for as long as the effect lands (a tracking
     /// disruptor: negative).
     Disrupt { range_percent: f64, falloff_percent: f64, tracking_percent: f64 },
+    /// The missiles the target launches are changed by those percentages of their speed, flight time, explosion velocity and explosion radius for as long as the effect
+    /// lands (a guidance disruptor: negative, but for the radius).
+    GuidanceDisrupt {
+        velocity_percent: f64,
+        delay_percent: f64,
+        aoe_velocity_percent: f64,
+        aoe_cloud_percent: f64,
+    },
     /// The target is held out of warp: `strength` points of scramble (a warp scrambler 2, a warp disruptor 1; the ship's own warp core subtracts). `blocks_mwd`: and out
     /// of its microwarpdrive.
     Scramble { strength: f64, blocks_mwd: bool },
@@ -134,6 +144,17 @@ impl Remote {
                 range_percent: range_percent * share,
                 falloff_percent: falloff_percent * share,
                 tracking_percent: tracking_percent * share,
+            }),
+            Self::GuidanceDisrupt {
+                velocity_percent,
+                delay_percent,
+                aoe_velocity_percent,
+                aoe_cloud_percent,
+            } => Some(Lasting::GuidanceDisrupt {
+                velocity_percent: velocity_percent * share,
+                delay_percent: delay_percent * share,
+                aoe_velocity_percent: aoe_velocity_percent * share,
+                aoe_cloud_percent: aoe_cloud_percent * share,
             }),
             _ => None,
         }
@@ -429,15 +450,26 @@ impl Scene {
         )
     }
 
-    /// The values an effect changes, told to the pilot.
-    fn changes_told(session: SessionId, owner: i64, changes: &[Change], when: i64) -> Option<Out> {
+    /// The values an effect changes, told to the pilot. A launcher's cycle is told as a real whatever its value (the recording of the reference's launcher: `4900.0`).
+    fn changes_told(
+        session: SessionId,
+        owner: i64,
+        effect: &Effect,
+        changes: &[Change],
+        when: i64,
+    ) -> Option<Out> {
+        let launcher = effect.turret.as_ref().is_some_and(|turret| turret.missile.is_some());
         if changes.is_empty() {
             return None;
         }
         let lines: Vec<Value> = changes
             .iter()
             .map(|c| {
-                let value = if c.attribute_id == DURATION { real(c.value) } else { number(c.value) };
+                let value = if c.attribute_id == DURATION || (launcher && c.attribute_id == CYCLE) {
+                    real(c.value)
+                } else {
+                    number(c.value)
+                };
                 attribute_change(owner, c.item_id, c.attribute_id, when, value, Value::None)
             })
             .collect();
@@ -583,6 +615,21 @@ impl Scene {
             if effect.turret.as_ref().and_then(|t| t.charge).is_some_and(|c| c.rounds < c.per_cycle) {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_AMMO" }];
             }
+            // a missile goes only as far as it flies: a target further off is out of reach (the client is told how far the missile goes and how far the target is)
+            if let Some(missile) = effect.turret.as_ref().and_then(|t| t.missile.as_ref())
+                && let Some(target) = self.session_of(effect.target_id)
+                && let Some(apart) = self.apart(session, target)
+                && apart > missile.effective_range() + crate::weapons::MISSILE_RANGE_GRACE
+            {
+                return vec![Out::TargetRefused {
+                    session,
+                    command: CODE,
+                    reason: "TARGET_OUT_OF_RANGE",
+                    target_type: self.pilots[&target].ship.spec.type_id,
+                    desired_range: missile.effective_range(),
+                    actual_distance: apart,
+                }];
+            }
         }
         // an effect that is projected at a ship needs it: there, locked and in reach (what is too far off is told with the range and how far it is)
         if let Some((_, reach, _)) = effect.remote() {
@@ -638,9 +685,9 @@ impl Scene {
         let fx = self.tell_all(session, vec![Self::fx_action(stamp, &ship, &run.effect, true)]);
         if run.effect.turret.is_some() {
             out.extend(fx);
-            out.extend(Self::changes_told(session, owner, &run.effect.on_changes, now));
+            out.extend(Self::changes_told(session, owner, &run.effect, &run.effect.on_changes, now));
         } else {
-            out.extend(Self::changes_told(session, owner, &run.effect.on_changes, now));
+            out.extend(Self::changes_told(session, owner, &run.effect, &run.effect.on_changes, now));
             out.extend(fx);
         }
         out.push(Self::effect_told(session, owner, ship_id, &run, now, true, now, None));
@@ -882,7 +929,10 @@ impl Scene {
         let (spent, goes_on) = self.spend_round(session, next.effect.module_id, at);
         out.extend(spent);
         if goes_on {
-            out.push(Self::effect_told(session, owner, ship_id, &next, at, true, at, None));
+            // a launcher is not told again each cycle: the recording of the reference's launcher has the effect told on at its start and off at its end, with the rounds between
+            if next.effect.turret.as_ref().is_none_or(|turret| turret.missile.is_none()) {
+                out.push(Self::effect_told(session, owner, ship_id, &next, at, true, at, None));
+            }
         } else if let Some(pilot) = self.pilots.get_mut(&session)
             && let Some(position) =
                 pilot.modules.running.iter().position(|r| r.effect.module_id == next.effect.module_id)
@@ -980,7 +1030,8 @@ impl Scene {
             | Remote::Paint { .. }
             | Remote::Damp { .. }
             | Remote::Scramble { .. }
-            | Remote::Disrupt { .. } => {
+            | Remote::Disrupt { .. }
+            | Remote::GuidanceDisrupt { .. } => {
                 let lasting = what.lasting(share).expect("these last");
                 self.hold(session, effect, lasting, at)
             }
@@ -1075,7 +1126,7 @@ impl Scene {
         let (target_lost, out_of_rounds) =
             (matches!(ending, Ending::TargetLost | Ending::Forced), ending == Ending::NoRounds);
         let mut out = Vec::new();
-        let changes = Self::changes_told(session, owner, &run.effect.off_changes, at);
+        let changes = Self::changes_told(session, owner, &run.effect, &run.effect.off_changes, at);
         let error = out_of_rounds.then(|| no_charges(run.effect.module_type));
         let off = Self::effect_told(session, owner, ship_id, &run, at, false, run.cycle_start, error);
         let stamp = self.next_stamp(at);

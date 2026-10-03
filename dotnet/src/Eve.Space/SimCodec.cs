@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 12;
+    public const ushort ProtocolVersion = 16;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -59,6 +59,11 @@ public static class SimCodec
         public const byte Destroyed = 21;
         public const byte Spawn = 22;
         public const byte SpawnReply = 23;
+        public const byte LaunchDrone = 36;
+        public const byte DroneCommand = 37;
+        public const byte DroneResults = 38;
+        public const byte DroneScooped = 39;
+        public const byte DroneReleased = 40;
         public const byte Destroy = 24;
         public const byte Respawn = 25;
         public const byte PlaceWreck = 26;
@@ -150,6 +155,28 @@ public static class SimCodec
 
     private static SimCredit ReadCredit(ref Reader r) => new(r.I64(), r.I64(), r.I64(), r.I64());
 
+    private static SimNpcWeapon ReadWeapon(ref Reader r)
+    {
+        var moduleId = r.I64();
+        var effectId = r.I32();
+        var cycleMs = r.F64();
+        var capacitorNeed = r.F64();
+        var turret = ReadTurret(ref r);
+        return new SimNpcWeapon(
+            moduleId, effectId, cycleMs, capacitorNeed, turret.WeaponTypeId, turret.Fx, turret.RawDamage, turret.OptimalRange, turret.Falloff, turret.TrackingSpeed,
+            turret.SignatureResolution, turret.Charge, turret.Missile);
+    }
+
+    private static void WriteWeapon(Writer w, SimNpcWeapon weapon)
+    {
+        w.I64(weapon.ModuleId);
+        w.I32(weapon.EffectId);
+        w.F64(weapon.CycleMs);
+        w.F64(weapon.CapacitorNeed);
+        WriteTurret(w, new SimTurret(
+            weapon.WeaponTypeId, weapon.Fx, weapon.RawDamage, weapon.OptimalRange, weapon.Falloff, weapon.TrackingSpeed, weapon.SignatureResolution, weapon.Charge, weapon.Missile));
+    }
+
     private static SimNpcIdentity ReadIdentity(ref Reader r)
     {
         var hostile = r.I64();
@@ -164,14 +191,7 @@ public static class SimCodec
         var weapons = new SimNpcWeapon[count];
         for (var i = 0; i < weapons.Length; i++)
         {
-            var moduleId = r.I64();
-            var effectId = r.I32();
-            var cycleMs = r.F64();
-            var capacitorNeed = r.F64();
-            var turret = ReadTurret(ref r);
-            weapons[i] = new SimNpcWeapon(
-                moduleId, effectId, cycleMs, capacitorNeed, turret.WeaponTypeId, turret.Fx, turret.RawDamage, turret.OptimalRange, turret.Falloff, turret.TrackingSpeed,
-                turret.SignatureResolution, turret.Charge);
+            weapons[i] = ReadWeapon(ref r);
         }
         var wreck = ReadWreckKind(ref r);
         var hull = r.U8() switch
@@ -331,6 +351,7 @@ public static class SimCodec
                         7 => ReadScramble(ref r),
                         8 => new SimRemote.Jam(r.F64(), r.F64(), r.F64(), r.F64()),
                         9 => new SimRemote.Disrupt(r.F64(), r.F64(), r.F64()),
+                        10 => new SimRemote.GuidanceDisrupt(r.F64(), r.F64(), r.F64(), r.F64()),
                         _ => throw new SimLinkException(SimLinkError.BadValue, "bad remote"),
                     };
                     return new SimAction.Remote(what, optimal, falloff, when == 1, jam);
@@ -373,7 +394,13 @@ public static class SimCodec
             1 => new SimTurretCharge(r.I32(), r.I32(), r.I64(), r.I64()),
             _ => throw new SimLinkException(SimLinkError.BadValue, "bad charge"),
         };
-        return new SimTurret(weaponType, fx, damage, optimal, falloff, tracking, resolution, charge);
+        var missile = r.U8() switch
+        {
+            0 => null,
+            1 => new SimMissile(r.I32(), r.I32(), r.Text(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64()),
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad missile"),
+        };
+        return new SimTurret(weaponType, fx, damage, optimal, falloff, tracking, resolution, charge, missile);
     }
 
     /// <summary>Decodes a frame's payload: the kind byte and the body (without the length prefix).</summary>
@@ -518,6 +545,50 @@ public static class SimCodec
                     };
                     break;
                 }
+            case Kind.LaunchDrone:
+                message = new SimLaunchDrone(r.U64(), r.U64(), ReadShip(ref r), ReadWeapon(ref r), r.I32(), r.F64(), r.F64(), r.F64());
+                break;
+            case Kind.DroneCommand:
+                {
+                    var session = r.U64();
+                    var command = r.U8();
+                    var target = r.I64();
+                    var count = r.U32();
+                    if (count > r.Remaining / 8)
+                    {
+                        throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");
+                    }
+                    var drones = new long[count];
+                    for (var i = 0; i < drones.Length; i++)
+                    {
+                        drones[i] = r.I64();
+                    }
+                    message = new SimDroneCommand(session, command, target, drones);
+                    break;
+                }
+            case Kind.DroneResults:
+                {
+                    var session = r.U64();
+                    var command = r.U8();
+                    var count = r.U32();
+                    if (count > r.Remaining / 10)
+                    {
+                        throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");
+                    }
+                    var results = new SimDroneResult[count];
+                    for (var i = 0; i < results.Length; i++)
+                    {
+                        results[i] = new SimDroneResult(r.I64(), r.Text());
+                    }
+                    message = new SimDroneResults(session, command, results);
+                    break;
+                }
+            case Kind.DroneScooped:
+                message = new SimDroneScooped(r.U64(), r.I64());
+                break;
+            case Kind.DroneReleased:
+                message = new SimDroneReleased(r.U64(), r.I64(), ReadVector(ref r));
+                break;
             case Kind.Destroy:
                 message = new SimDestroy(r.I64(), ReadCredit(ref r));
                 break;
@@ -691,12 +762,7 @@ public static class SimCodec
         w.U32((uint)i.Weapons.Count);
         foreach (var weapon in i.Weapons)
         {
-            w.I64(weapon.ModuleId);
-            w.I32(weapon.EffectId);
-            w.F64(weapon.CycleMs);
-            w.F64(weapon.CapacitorNeed);
-            WriteTurret(w, new SimTurret(
-                weapon.WeaponTypeId, weapon.Fx, weapon.RawDamage, weapon.OptimalRange, weapon.Falloff, weapon.TrackingSpeed, weapon.SignatureResolution, weapon.Charge));
+            WriteWeapon(w, weapon);
         }
         WriteWreckKind(w, i.Wreck);
         w.U8((byte)(i.Hull ? 1 : 0));
@@ -760,6 +826,27 @@ public static class SimCodec
             w.I32(charge.Flag);
             w.I64(charge.Rounds);
             w.I64(charge.PerCycle);
+        }
+        else
+        {
+            w.U8(0);
+        }
+        if (t.Missile is { } missile)
+        {
+            w.U8(1);
+            w.I32(missile.ChargeTypeId);
+            w.I32(missile.GroupId);
+            w.Text(missile.Name);
+            w.F64(missile.Radius);
+            w.F64(missile.Mass);
+            w.F64(missile.Agility);
+            w.F64(missile.HitPoints);
+            w.F64(missile.MaxVelocity);
+            w.F64(missile.FlightTimeMs);
+            w.F64(missile.ExplosionRadius);
+            w.F64(missile.ExplosionVelocity);
+            w.F64(missile.DamageReductionFactor);
+            w.F64(missile.DamageReductionSensitivity);
         }
         else
         {
@@ -859,6 +946,13 @@ public static class SimCodec
                         w.F64(disrupt.RangePercent);
                         w.F64(disrupt.FalloffPercent);
                         w.F64(disrupt.TrackingPercent);
+                        break;
+                    case SimRemote.GuidanceDisrupt guidance:
+                        w.U8(10);
+                        w.F64(guidance.VelocityPercent);
+                        w.F64(guidance.DelayPercent);
+                        w.F64(guidance.AoeVelocityPercent);
+                        w.F64(guidance.AoeCloudPercent);
                         break;
                     case SimRemote.Jam jam:
                         w.U8(8);
@@ -1166,6 +1260,50 @@ public static class SimCodec
                 WriteVector(w, m.Direction);
                 w.Text(m.Behavior);
                 WriteIdentity(w, m.Identity);
+                break;
+            case SimLaunchDrone m:
+                w.U8(Kind.LaunchDrone);
+                w.U64(m.RequestId);
+                w.U64(m.SessionId);
+                WriteShip(w, m.Ship);
+                WriteWeapon(w, m.Weapon);
+                w.I32(m.GraphicId);
+                w.F64(m.OrbitDistance);
+                w.F64(m.AttackRange);
+                w.F64(m.CruiseFraction);
+                break;
+            case SimDroneCommand m:
+                w.U8(Kind.DroneCommand);
+                w.U64(m.SessionId);
+                w.U8(m.Command);
+                w.I64(m.TargetId);
+                w.U32((uint)m.DroneIds.Count);
+                foreach (var drone in m.DroneIds)
+                {
+                    w.I64(drone);
+                }
+                break;
+            case SimDroneResults m:
+                w.U8(Kind.DroneResults);
+                w.U64(m.SessionId);
+                w.U8(m.Command);
+                w.U32((uint)m.Results.Count);
+                foreach (var result in m.Results)
+                {
+                    w.I64(result.DroneId);
+                    w.Text(result.Reason);
+                }
+                break;
+            case SimDroneScooped m:
+                w.U8(Kind.DroneScooped);
+                w.U64(m.SessionId);
+                w.I64(m.DroneId);
+                break;
+            case SimDroneReleased m:
+                w.U8(Kind.DroneReleased);
+                w.U64(m.SessionId);
+                w.I64(m.DroneId);
+                WriteVector(w, m.Position);
                 break;
             case SimSpawnReply m:
                 w.U8(Kind.SpawnReply);

@@ -228,6 +228,12 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         },
         now);
     var ships = new CharacterShips(source, dogma, characters, items, skills, modules, training);
+    // the simulation starts empty with this host: a ship that a host which stopped without closing its sessions left in space is put back where its character last was
+    var stranded = await ships.RecoverAllFromSpaceAsync(id => stations.Get(id) is { } station ? (station.SolarSystemId, station.ConstellationId, station.RegionId) : null);
+    if (stranded > 0)
+    {
+        Console.Error.WriteLine($"eve-host: {stranded} ship(s) left in space by the last host were put back in their stations");
+    }
     var dogmaSync = new CharacterDogmaSync(dogma, ships, now);
     var characterSessions = new CharacterSessions();
     // the combat timers and flags: kept in crimewatch's schema, told to the clients as they change (Eve.Services.Crimewatch)
@@ -305,6 +311,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     SimClient? sim = null;
     SpaceSessions? spaceSessions = null;
     SpaceContainers? spaceContainers = null;
+    SpaceDrones? spaceDrones = null;
     if (Env("EVE_SIM", "on") is not ("off" or "0" or "false"))
     {
         var socket = Env("EVE_SIM_SOCKET", "/tmp/eve-sim.sock");
@@ -329,6 +336,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         await foundations.Scheduler.EnsureRecurringAsync("space.bounty.pay", "pay", TimeSpan.FromSeconds(10));
         spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"));
         var containers = spaceContainers;
+        spaceDrones = new SpaceDrones(sim, ships, dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: {message}"));
         foundations.Scheduler.Register("space.containers.sweep", async (_, _) => await containers.SweepAsync());
         await foundations.Scheduler.EnsureRecurringAsync("space.containers.sweep", "sweep", TimeSpan.FromSeconds(30));
         Console.Error.WriteLine($"eve-host: the space simulation is expected at {socket}");
@@ -368,7 +376,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         },
         allianceRegistry,
         new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now), new SkillCommands(skillCatalog, skills, source, dogmaSync, now)),
-        .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now, spaceContainers), new BeyonceService(spaceSessions, now) },
+        .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now, spaceContainers, spaceDrones), new BeyonceService(spaceSessions, now), new EntityService(spaceDrones!, now) },
     ];
     return (services, spaceSessions, sim, crimewatchRuntime);
 }

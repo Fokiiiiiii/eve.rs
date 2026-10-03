@@ -4,9 +4,12 @@
 
 use eve_behaviors::consts::{
     ATTRIBUTE_ARMOR_DAMAGE, ATTRIBUTE_ARMOR_HP, ATTRIBUTE_DAMAGE, ATTRIBUTE_EM_DAMAGE,
-    ATTRIBUTE_EXPLOSIVE_DAMAGE, ATTRIBUTE_FALLOFF, ATTRIBUTE_HP, ATTRIBUTE_KINETIC_DAMAGE,
-    ATTRIBUTE_MAX_RANGE, ATTRIBUTE_MAX_TARGET_RANGE, ATTRIBUTE_MAX_VELOCITY, ATTRIBUTE_RATE_OF_FIRE,
-    ATTRIBUTE_SHIELD_CAPACITY, ATTRIBUTE_SHIELD_CHARGE, ATTRIBUTE_SIGNATURE_RADIUS, ATTRIBUTE_THERMAL_DAMAGE,
+    ATTRIBUTE_ENTITY_MISSILE_TYPE_ID, ATTRIBUTE_EXPLOSION_DELAY, ATTRIBUTE_EXPLOSIVE_DAMAGE,
+    ATTRIBUTE_FALLOFF, ATTRIBUTE_HP, ATTRIBUTE_KINETIC_DAMAGE, ATTRIBUTE_MAX_RANGE,
+    ATTRIBUTE_MAX_TARGET_RANGE, ATTRIBUTE_MAX_VELOCITY, ATTRIBUTE_MISSILE_ENTITY_FLIGHT_TIME_MULTIPLIER,
+    ATTRIBUTE_MISSILE_ENTITY_VELOCITY_MULTIPLIER, ATTRIBUTE_RATE_OF_FIRE, ATTRIBUTE_SHIELD_CAPACITY,
+    ATTRIBUTE_SHIELD_CHARGE, ATTRIBUTE_SIGNATURE_RADIUS, ATTRIBUTE_THERMAL_DAMAGE,
+    EFFECT_MISSILE_LAUNCHING_FOR_ENTITY,
 };
 use eve_behaviors::env::{Dogma, EffectCycle, EffectInfo, WorldError, WorldResult};
 use eve_behaviors::value::Value;
@@ -21,6 +24,8 @@ use crate::targeting::Order;
 /// `targetAttack`: the effect an NPC's turret runs.
 pub const EFFECT_TARGET_ATTACK: i64 = 10;
 
+/// `missileLaunchDuration`: the length of a cycle of `missileLaunchingForEntity` (its `durationAttributeID`).
+const ATTRIBUTE_MISSILE_LAUNCH_DURATION: i64 = 506;
 const ATTRIBUTE_MASS: i64 = 4;
 const ATTRIBUTE_MAX_LOCKED_TARGETS: i64 = 192;
 const ATTRIBUTE_SCAN_RESOLUTION: i64 = 564;
@@ -60,7 +65,9 @@ impl SceneWorld<'_> {
             ATTRIBUTE_FALLOFF => turret.falloff,
             ATTRIBUTE_TRACKING_SPEED => turret.tracking_speed,
             ATTRIBUTE_OPTIMAL_SIG_RADIUS => turret.signature_resolution,
-            ATTRIBUTE_RATE_OF_FIRE | ATTRIBUTE_DURATION => weapon.cycle_ms,
+            ATTRIBUTE_RATE_OF_FIRE | ATTRIBUTE_DURATION | ATTRIBUTE_MISSILE_LAUNCH_DURATION => {
+                weapon.cycle_ms
+            }
             ATTRIBUTE_DAMAGE_MULTIPLIER => 1.0,
             ATTRIBUTE_EM_DAMAGE => turret.raw_damage[0],
             ATTRIBUTE_THERMAL_DAMAGE => turret.raw_damage[1],
@@ -109,6 +116,42 @@ impl Dogma for SceneWorld<'_> {
         }
         let session = self.session_of(item_id).ok_or_else(|| WorldError::Key(item_id.to_string()))?;
         Ok(self.ship_attribute(session, attribute_id))
+    }
+
+    /// What the behaviors ask of a type: for a hull that launches missiles, the type of its missile and what that missile flies with. The hull's own
+    /// multipliers are already in the missile of its weapon, so they are 1 here and the range the behaviors work out (speed times flight time) is the weapon's.
+    fn type_attribute(&self, type_id: i64, attribute_id: i64) -> f64 {
+        self.npc_weapons_of_type(type_id)
+            .find_map(|weapon| {
+                let missile = weapon.turret.missile.as_ref()?;
+                Some(match attribute_id {
+                    ATTRIBUTE_ENTITY_MISSILE_TYPE_ID => f64::from(missile.charge_type_id),
+                    ATTRIBUTE_MISSILE_ENTITY_VELOCITY_MULTIPLIER
+                    | ATTRIBUTE_MISSILE_ENTITY_FLIGHT_TIME_MULTIPLIER => 1.0,
+                    _ => return None,
+                })
+            })
+            .or_else(|| {
+                // the missile's own type: the speed and the delay it explodes after, which is how far it goes
+                self.scene
+                    .pilots
+                    .values()
+                    .filter_map(|pilot| pilot.ship.npc.as_ref())
+                    .flat_map(|npc| npc.combat.weapons.iter())
+                    .find_map(|weapon| {
+                        let missile = weapon
+                            .turret
+                            .missile
+                            .as_ref()
+                            .filter(|m| i64::from(m.charge_type_id) == type_id)?;
+                        match attribute_id {
+                            ATTRIBUTE_MAX_VELOCITY => Some(missile.max_velocity),
+                            ATTRIBUTE_EXPLOSION_DELAY => Some(missile.flight_time_ms),
+                            _ => None,
+                        }
+                    })
+            })
+            .unwrap_or(0.0)
     }
 
     /// An NPC's weapons are effects of its ship, so it is the ship's type that has them.
@@ -182,11 +225,20 @@ impl Dogma for SceneWorld<'_> {
     }
 
     fn effect_info(&self, effect_id: i64) -> Option<EffectInfo> {
-        (effect_id == EFFECT_TARGET_ATTACK).then_some(EffectInfo {
-            duration_attribute_id: Some(ATTRIBUTE_RATE_OF_FIRE),
-            range_attribute_id: Some(ATTRIBUTE_MAX_RANGE),
-            falloff_attribute_id: Some(ATTRIBUTE_FALLOFF),
-        })
+        match effect_id {
+            EFFECT_TARGET_ATTACK => Some(EffectInfo {
+                duration_attribute_id: Some(ATTRIBUTE_RATE_OF_FIRE),
+                range_attribute_id: Some(ATTRIBUTE_MAX_RANGE),
+                falloff_attribute_id: Some(ATTRIBUTE_FALLOFF),
+            }),
+            // the effect of a launcher has a cycle and no range of its own: the missile goes as far as it flies
+            EFFECT_MISSILE_LAUNCHING_FOR_ENTITY => Some(EffectInfo {
+                duration_attribute_id: Some(ATTRIBUTE_MISSILE_LAUNCH_DURATION),
+                range_attribute_id: None,
+                falloff_attribute_id: None,
+            }),
+            _ => None,
+        }
     }
 
     fn default_effect_id(&self, type_id: i64) -> Option<i64> {
@@ -259,8 +311,9 @@ impl Dogma for SceneWorld<'_> {
             off_changes: Vec::new(),
         };
         let told = self.scene.activate(session, effect, self.now);
+        // a launcher that is out of reach of its target is refused like any other activation (the tree has to bring the NPC into range)
         let refusal = told.iter().find_map(|out| match out {
-            Out::Refused { reason, .. } => Some((*reason).to_string()),
+            Out::Refused { reason, .. } | Out::TargetRefused { reason, .. } => Some((*reason).to_string()),
             _ => None,
         });
         self.keep(told);

@@ -22,7 +22,7 @@ public class ModuleEffectsTests
         foreach (var name in new[]
         {
             "moduleBonusAfterburner", "moduleBonusMicrowarpdrive", "targetAttack", "projectileFired", "armorRepair", "shieldBoosting", "structureRepair", "empWave", "remoteWebifierFalloff",
-            "remoteTargetPaintFalloff", "remoteSensorDampFalloff", "warpScrambleBlockMWDWithNPCEffect", "warpDisrupt", "shipModuleTrackingDisruptor", "remoteECMFalloff",
+            "remoteTargetPaintFalloff", "remoteSensorDampFalloff", "warpScrambleBlockMWDWithNPCEffect", "warpDisrupt", "shipModuleTrackingDisruptor", "shipModuleGuidanceDisruptor", "remoteECMFalloff",
             "shipModuleRemoteShieldBooster", "shipModuleRemoteArmorRepairer", "shipModuleRemoteHullRepairer", "shipModuleRemoteCapacitorTransmitter", "energyNeutralizerFalloff", "energyNosferatuFalloff",
         })
         {

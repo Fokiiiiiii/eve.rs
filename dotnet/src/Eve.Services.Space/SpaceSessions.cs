@@ -895,6 +895,18 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// </summary>
     private sealed record SpawnAnchor(int SolarSystemId, long ShipId, double[] Origin, double BaseDistance = 0, double? Window = null, long BeltId = 0, long Group = 0);
 
+    /// <summary>The hulls of NPCs are known before they are armed, and the missiles the hulls launch with them.</summary>
+    private async Task EnsureNpcTypesAsync(IEnumerable<int> shipTypes, CancellationToken cancellationToken)
+    {
+        var hulls = shipTypes.Distinct().ToArray();
+        await _statics.EnsureTypesAsync(hulls, cancellationToken).ConfigureAwait(false);
+        var missiles = hulls.Select(hull => _statics.Type(hull)).OfType<TypeDef>().Select(NpcArmament.MissileTypeOf).Where(type => type > 0).Distinct().ToArray();
+        if (missiles.Length > 0)
+        {
+            await _statics.EnsureTypesAsync(missiles, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     /// <summary>
     /// Spawns the NPCs of <paramref name="profiles"/> around <paramref name="anchor"/>, each armed with what its hull carries, and remembers what the host must know of
     /// them. What came into space is told: a batch that was cut short by the simulation is as long as what it spawned.
@@ -964,7 +976,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             {
                 _beltHulls = null;
             }
-            await (_beltHulls ??= _statics.EnsureTypesAsync(rats.PoolShipTypes(), CancellationToken.None)).ConfigureAwait(false);
+            await (_beltHulls ??= EnsureNpcTypesAsync(rats.PoolShipTypes(), CancellationToken.None)).ConfigureAwait(false);
             var system = new BeltSystem(place.Id, place.Security, place.RegionId, place.FactionId);
             var active = _npcShips.Values.Where(npc => npc.SolarSystemId == system.SolarSystemId && npc.BeltId == beltId && npc.Group != 0).Select(npc => npc.Group).Distinct().Count();
             var now = _nowUnixMs();
@@ -977,7 +989,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                 }
                 return decision;
             }
-            await _statics.EnsureTypesAsync(plan.Profiles.Select(profile => profile.ShipTypeId), cancellationToken).ConfigureAwait(false);
+            await EnsureNpcTypesAsync(plan.Profiles.Select(profile => profile.ShipTypeId), cancellationToken).ConfigureAwait(false);
             var anchor = new SpawnAnchor(system.SolarSystemId, 0, [.. beltPosition], rats.Config.SpawnDistanceMeters, BeltRatSpreadMeters, beltId, Interlocked.Increment(ref _beltGroups));
             var (composition, _) = await SpawnGroupAsync(plan.Profiles, anchor, cancellationToken).ConfigureAwait(false);
             if (composition.Count > 0)
@@ -1020,7 +1032,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         {
             return NpcSpawnReport.Failed(selectionError!, suggestions);
         }
-        await _statics.EnsureTypesAsync(selection.ShipTypes, cancellationToken);
+        await EnsureNpcTypesAsync(selection.ShipTypes, cancellationToken);
         var plan = selector.Roll(selection, amount, type => NpcHull.HasHitPoints(_statics.Type(type)), Random.Shared.NextDouble);
         if (!plan.Succeeded)
         {

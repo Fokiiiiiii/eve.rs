@@ -116,15 +116,40 @@ domain module.
 
 ## 7. S5 service backlog (owner, 2026-10-01)
 
-The owner prioritises corporations, markets and alliances. Finish those three service groups first, then work
-through the remaining list sequentially, following prerequisites. One coordinator owns this backlog. When the owner
-explicitly requests delegation, assign direct subagents disjoint implementation and verification scopes; subagents
-must not spawn children or run code-memory indexing. Combat, NPCs, world tick, space and their surrounding
-implementation are being developed separately by Claude.
-`CLAUDE.md` records the ownership split and shared-file coordination; check its reply section after pulling main.
-Keep this work in domain and service files that do not overlap that work. Integrate shared host registration and
-status documentation only after checking the latest `main`. Use EVE.js v0.12.9 as the behavioural source and
-`eve-logic` as the client contract and shared-rule reference (CLAUDE.md and ADR 0009).
+Owner update (2026-10-03): Claude is unavailable. Codex owns completion of S5 Corporations, Alliances and Market,
+and takes over the remaining combat, NPC and world-tick work. Use the `CLAUDE.md` provenance and compatibility
+notes, but follow this current ownership and order. Delegated work starts with a plan-only pass; after plans are
+reconciled, give direct subagents disjoint implementation and verification scopes. Subagents must not spawn
+children or run code-memory indexing.
+
+Prioritise shared foundations by how many unfinished features they unblock:
+
+1. Complete the affiliation graph in `Eve.Relations`: write character-to-corporation relations atomically with
+   corporation membership changes; replace or end corporation-to-alliance relations in the same transaction,
+   including when a corporation has no alliance. Reconcile stale relation rows as well as missing ones. Keep the
+   existing corporation member record for roles/history and use the relation graph for shared affiliation queries;
+   backfill existing memberships during startup reconciliation without a per-character query loop. Do not add a
+   third membership or war table. Deliver both relation-changed and relation-ended notifications.
+2. Connect common war and standing reads to the existing relation graph, then use them from Crimewatch and
+   Alliance war holds. Include active-war expiry and war allies. Use `Eve.Scheduler` for restart-safe due work and
+   `Eve.Events` for committed notifications.
+3. Put the first real service RPC on `Eve.ReadSide`, then use the same typed-query path for the service backlog.
+   `Eve.Content` is the shared path for mission/anomaly objectives when those features are reached.
+4. Finish remaining Corporation and Alliance parity, followed by Market. For Market Seed v4, repair and test the
+   paged ESI validators with a fake first, but defer executing v4 tests because they are load-heavy. After the
+   other active feature work, run the fake-ESI and isolated PostgreSQL 18 gates, discard that test database, and
+   run the full TQ capture/import once. Limit imports to current-SDE item types at NPC stations; exclude Player
+   Structures.
+5. Continue Claude's remaining combat/NPC/world-tick work on those shared foundations: finish Crimewatch's war
+   legality and consequences; connect `npc.killed` to standing changes; add restart-safe NPC population work;
+   then complete drone death/skill/lifecycle behavior and the remaining drone/combat effects. Keep relationship
+   data at the Host boundary unless a versioned sim-link change is shown to be necessary. Keep the Rust simulation
+   tick in Rust; the durable scheduler is for server-side deadlines, not simulation ticks.
+6. Work through the remaining 61 read-side/service items in dependency order after these groups.
+
+The wallet ceiling, preflighted atomic settlements and inventory custody are shared foundations already in use;
+extend them through their existing APIs rather than duplicating their rules. Use EVE.js v0.12.9 as the behavioural
+source and `eve-logic` as the client contract and shared-rule reference (CLAUDE.md and ADR 0009).
 
 The owner sets the ISK balance ceiling to exactly 1,145,141,919,364,364 ISK (decimal; 2026-10-01).
 Apply it to the wallet API and PostgreSQL constraints; reject overflow without a partial settlement.

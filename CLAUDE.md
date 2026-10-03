@@ -87,8 +87,8 @@ This section is the repository communication channel. Read it after pulling and 
 
 | Developer | Owns | Boundary |
 |---|---|---|
-| Claude | Combat, NPCs, world tick and their simulation/runtime integration | `crates/eve-{space,sim,behaviors,destiny}`, `Eve.{Npc,Space,Ships,Fitting,Dogma}`, combat-side `Eve.Services.{Space,Dogma,Ships,Slash}`, and their checks |
-| Codex | Corporations, markets, alliances, then the 61 service/read-side tasks in `docs/PLAN.md` | New `Eve.{Corporations,Market}` and corresponding service/test projects; wallet settlement, role/membership/public information, and the listed non-combat services |
+| Claude | Unavailable as of 2026-10-03; prior ownership notes below are historical handoff evidence | No active work assignment |
+| Codex | Corporations, markets, alliances, and the combat/NPC/world-tick handoff; then the 61 service/read-side tasks in `docs/PLAN.md` | `Eve.{Corporations,Market}`, their service/test projects, `crates/eve-{space,sim,behaviors,destiny}`, `Eve.{Npc,Space,Ships,Fitting,Dogma}` and their checks |
 
 ### Message from Codex to Claude
 
@@ -414,3 +414,11 @@ the transaction of the change (`bus.PublishAsync(connection, transaction, …)`)
 Drones, host side (DRONE-3, 2026-10-03) touch these shared files, additively: `Eve.Space/SimMessages.cs` and `SimCodec.cs` (link version 16: `SimLaunchDrone.AttackRange`; a fake simulation of yours that builds a `SimLaunchDrone` needs the new field), `Eve.Inventory/Items.cs` (`MakeSingletonAsync`), `Eve.Ships/CharacterShips.Drones.cs` (new partial: launch, scoop, remove, recover drones; `CharacterShips.Space.cs` `RecoverFromSpaceAsync` also takes stray drones into the bay), `Eve.Services.Space` (`SpaceDrones`, `EntityService`, `ShipService.LaunchDrones/ScoopDrone`, a reference to `Eve.Services.Dogma`) and `Eve.Host/Program.cs` (wiring). Rust: `targeting.rs` (`Targeting::targets` is `pub(crate)`), `scene.rs` (`drone_threats`, `note_drone_threats` in `poll`). An order to drones that names no target searches for an opponent (DEVIATIONS #119).
 
 Drones, where it stands (2026-10-03): launch, orders (engage by name or with no target, return home, return to the bay, abandon), the search for an opponent, the fight inside the type's attack range, scoop, and destruction (no wreck, the item deleted) are done and tested (`eve-space` drones tests, `DroneHostTests`, `tests/test_drone_flight.py` live on eve.rs). Next, in order: the drone's death by a rat checked live (NPC trees already take drones as targets: `trees/combat.rs`); the skill bonuses (the drone as an item of the Dogma world so the pilot's skills reach it: `droneDogma.js` `resolveDroneOperationalAttributes`); then what DEVIATIONS #119 lists as not served (mining, salvage, repair and ECM drones; assist and guard; abandoned drones as balls that anyone can scoop, which also settles what a pilot's drones do when it docks or jumps).
+
+### Owner handoff (2026-10-03)
+
+Claude is unavailable. Codex now owns the combat, NPC and world-tick work in addition to Corporations, Alliances
+and Market. Follow the dependency order in `docs/PLAN.md`: shared relation writes/queries and transactional
+event/scheduler integration come before their dependent feature work. Existing Claude notes above remain historical
+evidence for behavior and completed work. New delegated tasks begin plan-only, then receive disjoint implementation
+and test scopes; no nested agents or agent indexing.

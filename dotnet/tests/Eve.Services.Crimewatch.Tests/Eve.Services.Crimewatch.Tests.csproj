@@ -10,6 +10,8 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Eve.Services.Crimewatch/Eve.Services.Crimewatch.csproj" />
+    <ProjectReference Include="../../src/Eve.Events/Eve.Events.csproj" />
+    <ProjectReference Include="../../src/Eve.Relations/Eve.Relations.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

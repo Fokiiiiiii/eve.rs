@@ -165,7 +165,7 @@ A checkbox is completed only after implementation, the relevant executable check
 entries remain read-side; do not take over the other developer's producers or simulation. Client acceptance and
 unavailable checks must be recorded separately in NATIVE_MIGRATION.md.
 
-- [ ] Map / Universe read-side
+- [ ] Map / Universe read-side (`map.GetStationInfo` is implemented; remaining RPCs are pending)
 - [ ] Lookup / Search
 - [ ] Social / Contacts
 - [ ] Block list
@@ -189,9 +189,9 @@ unavailable checks must be recorded separately in NATIVE_MIGRATION.md.
 - [ ] Corporation Public Info
 - [ ] Employment History
 - [ ] Corporation Roles
-- [ ] Corporation Medals (seven RPCs implemented; PG18 store integration pending)
+- [ ] Corporation Medals (seven RPCs implemented; PG18 store integration tests pass)
 - [ ] Alliance Core
-- [ ] Alliance Membership (due transitions run on Registry requests; durable scheduling/war holds and PG18 integration pending)
+- [ ] Alliance Membership (durable due transitions and war holds use Scheduler/Relations; remaining parity is pending)
 - [ ] Alliance Public Info
 - [ ] Wars information read-side
 - [ ] Standing
@@ -201,7 +201,7 @@ unavailable checks must be recorded separately in NATIVE_MIGRATION.md.
 - [ ] Market Price History
 - [ ] Market Topology
 - [ ] Market Cache
-- [ ] NPC seeded market orders (v4 TQ ESI capture at NPC stations; live order validation/capture acceptance pending after PG18)
+- [ ] NPC seeded market orders (NPC-station ESI paging changes compile; integration and capture acceptance remain pending)
 - [ ] Agents read-side
 - [ ] Mission Journal read-side
 - [ ] Industry Job read-side

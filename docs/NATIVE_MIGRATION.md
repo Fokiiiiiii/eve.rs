@@ -365,3 +365,23 @@ reference does. `AggressionRequest` (in `Eve.Crimewatch`) is what the host repor
 the slim item twice over); mutation-checked (the ship refresh wiring). Not done yet: `charMgr` public info, the character-select rows and the dogma character attribute still show 0 (the client's own
 status comes from `crimewatch.GetMySecurityStatus`, which is right), `GetSecurityStatusTransactions` (the reference answers an empty list), the kill right and the CONCORD response.
 
+### Shared affiliations, war legality and first Map read-side RPC — 2026-10-03
+
+Corporation moves now update the `affiliation.corporation` relation in the same PostgreSQL transaction as the
+member and character affiliation rows. Alliance relation writes use set/end semantics rather than an ID-0
+sentinel. Startup reconciliation backfills current memberships and removes stale affiliation relations; both
+relation `changed` and `ended` events refresh affected sessions after commit.
+
+`Eve.Services.IWars.AreAtWarAsync` uses character owner chains and `Eve.Relations` war/war-ally relations,
+including expiry at the injected game time. `CrimewatchRuntime.Legal` awaits that query and Host supplies the
+Relations-backed implementation.
+
+`map.GetStationInfo` is the first typed `Eve.ReadSide` service RPC. It returns all SDE NPC stations, sorted by
+stationID, in the client eight-column Rowset with `util.Row` and the shared station service mask. Player
+Structures are not part of this static query; the remaining Map/Universe methods are still pending.
+
+Integrated PG18 checks: Relations 9/9, Corporation/Alliance 43/43, Crimewatch 12/12, Host 65/65, Station/Map
+17/17, ReadSide 6/6; zero skips. Host Release build succeeded with zero warnings/errors. The Market test project
+Release build succeeded with zero warnings/errors; its database-backed tests and full data import are pending.
+No live EVE client replay or performance comparison was run for these new RPCs.
+

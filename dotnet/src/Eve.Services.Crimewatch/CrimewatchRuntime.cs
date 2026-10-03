@@ -9,6 +9,101 @@ namespace Eve.Services.Crimewatch;
 /// <summary>An attack on the ship of another pilot, and what it made of the attacker (see <see cref="Aggression"/>).</summary>
 public sealed record AggressionResult(AggressionRequest Request, AggressionOutcome Outcome);
 
+/// <summary>Resolves active war relations and their accepted allies for crimewatch.</summary>
+public sealed class RelationWars(Eve.Relations.RelationStore relations) : Eve.Services.IWars
+{
+    private enum WarSide { Aggressor, Defender }
+    private sealed record WarAllyAttributes(string? Side);
+
+    public async Task<bool> AreAtWarAsync(long attackerCharacterId, long targetCharacterId, long nowUnixMs, CancellationToken cancellationToken = default)
+    {
+        var attackerOwners = await relations.ChainOfAsync(attackerCharacterId, cancellationToken);
+        var targetOwners = await relations.ChainOfAsync(targetCharacterId, cancellationToken);
+        var directWars = await relations.BetweenAsync(Eve.Relations.RelationKinds.War.Name, attackerOwners, targetOwners, cancellationToken);
+        if (directWars.Any(war => Active(war, nowUnixMs)))
+        {
+            return true;
+        }
+
+        var owners = attackerOwners.Concat(targetOwners).Distinct().ToArray();
+        var allyBatches = await Task.WhenAll(owners.Select(owner =>
+            relations.FromAsync(Eve.Relations.RelationKinds.WarAlly.Name, owner, cancellationToken: cancellationToken)));
+        var allies = allyBatches.SelectMany(rows => rows).Where(ally => Active(ally, nowUnixMs)).DistinctBy(ally => ally.Id).ToArray();
+        if (allies.Length == 0)
+        {
+            return false;
+        }
+
+        var warReads = owners.SelectMany(owner => new[]
+        {
+            relations.FromAsync(Eve.Relations.RelationKinds.War.Name, owner, cancellationToken: cancellationToken),
+            relations.ToAsync(Eve.Relations.RelationKinds.War.Name, owner, cancellationToken: cancellationToken),
+        });
+        var warBatches = await Task.WhenAll(warReads);
+        var wars = warBatches.SelectMany(rows => rows).Concat(directWars).DistinctBy(war => war.Id).ToArray();
+        var knownWarIds = wars.Select(war => war.Id).ToHashSet();
+
+        bool OnSide(IReadOnlyList<long> chain, Eve.Relations.Relation war, WarSide side) =>
+            chain.Contains(side == WarSide.Aggressor ? war.Subject : war.Object) ||
+            allies.Any(ally => chain.Contains(ally.Subject) && ally.Object == war.Id && SideOf(ally) == side);
+
+        foreach (var war in wars)
+        {
+            if (!Active(war, nowUnixMs))
+            {
+                continue;
+            }
+            var attackerIsAggressor = OnSide(attackerOwners, war, WarSide.Aggressor);
+            var attackerIsDefender = OnSide(attackerOwners, war, WarSide.Defender);
+            var targetIsAggressor = OnSide(targetOwners, war, WarSide.Aggressor);
+            var targetIsDefender = OnSide(targetOwners, war, WarSide.Defender);
+            if ((attackerIsAggressor && targetIsDefender) || (attackerIsDefender && targetIsAggressor))
+            {
+                return true;
+            }
+        }
+
+        // When both characters are war allies, their active ally relations are the only rows reachable from their owner chains.
+        foreach (var attackerAlly in allies.Where(ally => attackerOwners.Contains(ally.Subject)))
+        {
+            if (knownWarIds.Contains(attackerAlly.Object) || SideOf(attackerAlly) is not { } attackerSide)
+            {
+                continue;
+            }
+            if (allies.Any(targetAlly =>
+                    targetOwners.Contains(targetAlly.Subject) &&
+                    targetAlly.Object == attackerAlly.Object &&
+                    SideOf(targetAlly) is { } targetSide &&
+                    targetSide != attackerSide))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool Active(Eve.Relations.Relation relation, long nowUnixMs) =>
+        relation.SinceMs <= nowUnixMs && (relation.UntilMs is null || relation.UntilMs > nowUnixMs);
+
+    private static WarSide? SideOf(Eve.Relations.Relation ally)
+    {
+        try
+        {
+            return ally.Attrs<WarAllyAttributes>()?.Side?.ToLowerInvariant() switch
+            {
+                "aggressor" => WarSide.Aggressor,
+                "defender" => WarSide.Defender,
+                _ => null,
+            };
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+}
+
 /// <summary>
 /// What crimewatch does as pilots attack one another: it keeps the timers and flags (<see cref="PgCrimewatchStore"/>, by the rules of <see cref="Aggression"/>) and tells the clients what
 /// changed, as the reference does: the pilot its own timers (<c>OnWeaponsTimerUpdate</c>, <c>OnPvpTimerUpdate</c>, <c>OnNpcTimerUpdate</c>, <c>OnCriminalTimerUpdate</c>,
@@ -25,7 +120,7 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
     private readonly Dictionary<long, (IReadOnlyList<long> Criminals, IReadOnlyList<long> Suspects)> _flagsTold = [];
 
     /// <summary>Whether the law lets the first pilot attack the second at this time (a war, a limited engagement, a corporation that may shoot its own). Nothing is legal until something says so.</summary>
-    public Func<long, long, long, bool>? Legal { get; set; }
+    public Func<long, long, long, CancellationToken, Task<bool>>? Legal { get; set; }
 
     /// <summary>Raised after an attack was recorded and before the clients are told the timers: what a crime brings (the security status, a kill right, CONCORD) hangs here.</summary>
     public event Func<AggressionResult, Task>? Aggressed;
@@ -40,7 +135,7 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
     {
         var now = nowUnixMs();
         var targetState = await store.StateOfAsync(request.Target, cancellationToken);
-        var legal = Legal?.Invoke(request.Attacker, request.Target, now) ?? false;
+        var legal = Legal is { } checkLegal && await checkLegal(request.Attacker, request.Target, now, cancellationToken);
         AggressionOutcome? outcome = null;
         await store.UpdateAsync(request.Attacker, state => (outcome = Aggression.Record(state, targetState, request.Where, request.SolarSystemId, request.TargetIsCapsule, legal, now)).Attacker, now, cancellationToken);
         var result = new AggressionResult(request, outcome!);

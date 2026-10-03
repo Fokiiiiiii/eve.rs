@@ -239,6 +239,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     // the combat timers and flags: kept in crimewatch's schema, told to the clients as they change (Eve.Services.Crimewatch)
     Func<long, CancellationToken, Task<double>> securityStatusOf = (id, token) => foundations.Relations.ValueAsync(Eve.Relations.RelationKinds.SecurityStatus.Name, id, Eve.Relations.RelationStore.World, 0, null, null, token);
     var crimewatchRuntime = new Eve.Services.Crimewatch.CrimewatchRuntime(crimewatchStore, characterSessions, now, message => Console.Error.WriteLine($"eve-host: crimewatch: {message}"));
+    crimewatchRuntime.Legal = new Eve.Services.Crimewatch.RelationWars(foundations.Relations).AreAtWarAsync;
     await crimewatchRuntime.ResumeAsync();
     var announcer = new TrainingAnnouncer(training, skillCatalog, characterSessions, dogmaSync, now);
     announcer.Attach();

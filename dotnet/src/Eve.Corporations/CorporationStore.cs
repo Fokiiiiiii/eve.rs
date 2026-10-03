@@ -24,6 +24,8 @@ public sealed partial class CorporationStore
     private readonly Func<long> _now;
     public AllianceAffiliationMutationCallback? AllianceAffiliationWriter { get; set; }
 
+    public CorporationMemberAffiliationMutationCallback? CorporationMemberAffiliationWriter { get; set; }
+
     private const string CorpColumns = "id,name,ticker,ceo_id,creator_id,alliance_id,station_id,solar_system_id,tax_rate,lp_tax_rate,description,url,member_limit,is_npc,friendly_fire,created_ms,settings,deleted";
     private const string MemberColumns = "character_id,corporation_id,started_ms,title,roles,grantable_roles,roles_hq,grantable_hq,roles_base,grantable_base,roles_other,grantable_other,base_id,title_mask,block_roles,account_key,division_id,squadron_id,role_stasis_ms";
 
@@ -257,8 +259,8 @@ public sealed partial class CorporationStore
             await member.ExecuteNonQueryAsync(token);
         var destination = await GetAsync(connection,tx,corporation,false,token);
         await _characters.SetAffiliationAsync(connection,tx,character.Id,corporation,alliance,destination is null ? null : Faction(destination),token);
-        if (AllianceAffiliationWriter is { } writeAffiliation)
-            await writeAffiliation(connection,tx,corporation,alliance ?? 0,token);
+        if (CorporationMemberAffiliationWriter is { } writeMemberAffiliation)
+            await writeMemberAffiliation(connection,tx,character.Id,corporation,token);
     }
 
     public Task UpdateCorporationAsync(long actor,long corporation,string description,string url,decimal taxRate,decimal loyaltyPointTaxRate,bool applicationsEnabled,CancellationToken token = default) =>

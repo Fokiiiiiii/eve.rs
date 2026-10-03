@@ -95,4 +95,128 @@ public class CorporationTests
         Assert.Equal(8589934592,CorporationRoles.WalletTakeRole(1006));
         Assert.Equal(0,CorporationRoles.WalletTakeRole(1007));
     }
+
+
+    [PgFact]
+    public async Task Corporation_membership_projects_affiliation_without_an_alliance_zero_sentinel()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var schedulerSchema = "corp_aff_sched_" + suffix;
+        var eventsSchema = "corp_aff_events_" + suffix;
+        var relationsSchema = "corp_aff_relations_" + suffix;
+        try
+        {
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(rig.Source, schedulerSchema);
+            await Eve.Events.EventBus.MigrateAsync(rig.Source, eventsSchema);
+            await Eve.Relations.RelationStore.MigrateAsync(rig.Source, relationsSchema);
+            var scheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now, schema: schedulerSchema);
+            var events = new Eve.Events.EventBus(rig.Source, scheduler, schema: eventsSchema);
+            var relations = new Eve.Relations.RelationStore(rig.Source, scheduler, events, relationsSchema);
+            var founder = await rig.CharacterAsync("Affiliation Founder");
+            var notifications = new List<long>();
+            var worker = new Eve.Services.Corporations.AllianceApplicationDueWorker(
+                rig.Store, rig.Characters, scheduler, relations, events,
+                (characterId, _) => { notifications.Add(characterId); return Task.CompletedTask; });
+            rig.Store.AllianceAffiliationWriter = worker.WriteAffiliationAsync;
+            await worker.RegisterAsync();
+            await events.PumpAsync(); // initialize the subscriber cursor before publishing membership changes
+            notifications.Clear();
+
+            var corporation = await rig.Store.CreateAsync(founder, Request(), "affiliation-foundation");
+
+            var membership = Assert.Single(await relations.FromAsync(Eve.Relations.RelationKinds.CorporationMember.Name, founder));
+            Assert.Equal(corporation.Id, membership.Object);
+            Assert.Empty(await relations.FromAsync(Eve.Relations.RelationKinds.AllianceMember.Name, corporation.Id));
+            await events.PumpAsync();
+            Assert.Equal([founder], notifications);
+            await events.PumpAsync();
+            Assert.Single(notifications);
+        }
+        finally
+        {
+            foreach (var schema in new[] { schedulerSchema, eventsSchema, relationsSchema })
+            {
+                await using var command = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
+
+    [PgFact]
+    public async Task Character_affiliation_scan_returns_bounded_npc_and_player_pages()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await rig.SeedNpcCorporationAsync(1000044);
+        var npcCharacter = await rig.CharacterAsync("NPC Page Member");
+        var founder = await rig.CharacterAsync("Player Page Member");
+        var corporation = await rig.Store.CreateAsync(founder, Request(), "affiliation-page");
+
+        var npcPage = await rig.Characters.AffiliationsAfterAsync(0, 1);
+        var npc = Assert.Single(npcPage);
+        Assert.Equal(npcCharacter, npc.CharacterId);
+        Assert.Equal(1000044, npc.CorporationId);
+
+        var playerPage = await rig.Characters.AffiliationsAfterAsync(npc.CharacterId, 1);
+        var player = Assert.Single(playerPage);
+        Assert.Equal(founder, player.CharacterId);
+        Assert.Equal(corporation.Id, player.CorporationId);
+        Assert.Empty(await rig.Characters.AffiliationsAfterAsync(player.CharacterId, 1));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            rig.Characters.AffiliationsAfterAsync(0, Eve.Characters.PgCharacterStore.CorporationAffiliationPageSize + 1));
+    }
+
+
+    [PgFact]
+    public async Task Corporation_membership_and_relation_outbox_roll_back_together()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var schedulerSchema = "corp_rollback_sched_" + suffix;
+        var eventsSchema = "corp_rollback_events_" + suffix;
+        var relationsSchema = "corp_rollback_relations_" + suffix;
+        try
+        {
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(rig.Source, schedulerSchema);
+            await Eve.Events.EventBus.MigrateAsync(rig.Source, eventsSchema);
+            await Eve.Relations.RelationStore.MigrateAsync(rig.Source, relationsSchema);
+            var scheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now, schema: schedulerSchema);
+            var events = new Eve.Events.EventBus(rig.Source, scheduler, schema: eventsSchema);
+            var relations = new Eve.Relations.RelationStore(rig.Source, scheduler, events, relationsSchema);
+            var notifications = new List<long>();
+            var worker = new Eve.Services.Corporations.AllianceApplicationDueWorker(
+                rig.Store, rig.Characters, scheduler, relations, events,
+                (characterId, _) => { notifications.Add(characterId); return Task.CompletedTask; });
+            rig.Store.AllianceAffiliationWriter = worker.WriteAffiliationAsync;
+            await worker.RegisterAsync();
+            await events.PumpAsync();
+
+            var founder = await rig.CharacterAsync("Rollback Founder");
+            rig.Store.CorporationMemberAffiliationWriter = async (connection, transaction, characterId, corporationId, token) =>
+            {
+                await relations.SetAsync((Npgsql.NpgsqlConnection)connection, (Npgsql.NpgsqlTransaction)transaction,
+                    Eve.Relations.RelationKinds.CorporationMember.Name, characterId, corporationId, 1,
+                    "corporation membership", cancellationToken: token);
+                throw new InvalidOperationException("forced failure after relation write");
+            };
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                rig.Store.CreateAsync(founder, Request(), "rollback-affiliation"));
+
+            Assert.Equal(1000044, (await rig.Characters.GetAsync(founder))!.CorporationId);
+            Assert.Equal(5000000m, (await rig.Wallets.GetAsync(founder))!.Isk);
+            Assert.Empty(await relations.FromAsync(Eve.Relations.RelationKinds.CorporationMember.Name, founder));
+            await events.PumpAsync();
+            Assert.Empty(notifications);
+        }
+        finally
+        {
+            foreach (var schema in new[] { schedulerSchema, eventsSchema, relationsSchema })
+            {
+                await using var command = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+    }
 }

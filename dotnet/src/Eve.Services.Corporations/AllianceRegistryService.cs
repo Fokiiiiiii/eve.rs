@@ -286,27 +286,66 @@ public sealed class AllianceApplicationDueWorker(
 
     public async Task RegisterAsync(CancellationToken token = default)
     {
+        store.CorporationMemberAffiliationWriter = WriteCorporationMemberAffiliationAsync;
         scheduler.Register(JobKind, HandleAsync);
-        events.Subscribe(AffiliationSubscriber, ["relation.affiliation.alliance.changed"], NotifyAffiliationChangedAsync);
+        events.Subscribe(AffiliationSubscriber,
+            ["relation.affiliation.corporation.changed", "relation.affiliation.corporation.ended",
+             "relation.affiliation.alliance.changed", "relation.affiliation.alliance.ended"],
+            NotifyAffiliationChangedAsync);
+        await ReconcileCorporationMemberAffiliationsAsync(token);
         await ReconcileAllianceAffiliationsAsync(token);
         foreach (var job in await store.PendingAllianceApplicationJobsAsync(token))
             await scheduler.ScheduleAsync(Spec(job), token);
     }
 
 
+    private async Task ReconcileCorporationMemberAffiliationsAsync(CancellationToken token)
+    {
+        var kind = Eve.Relations.RelationKinds.CorporationMember.Name;
+        var existing = await relations.ListAsync(kind, token);
+        var staleSubjects = existing.Select(relation => relation.Subject).ToHashSet();
+        long afterCharacterId = 0;
+        while (true)
+        {
+            var page = await characters.AffiliationsAfterAsync(
+                afterCharacterId, Eve.Characters.PgCharacterStore.CorporationAffiliationPageSize, token);
+            if (page.Count == 0) break;
+            var desired = new Dictionary<long, long?>(page.Count);
+            foreach (var affiliation in page)
+            {
+                if (affiliation.CorporationId <= 0)
+                    throw new InvalidOperationException($"character {affiliation.CharacterId} has no valid corporation id");
+                desired[affiliation.CharacterId] = affiliation.CorporationId;
+                staleSubjects.Remove(affiliation.CharacterId);
+            }
+            await relations.ReconcileOnePerSubjectBatchAsync(kind, desired,
+                "corporation membership reconciliation", token);
+            afterCharacterId = page[^1].CharacterId;
+        }
+
+        foreach (var batch in staleSubjects.Order().Chunk(Eve.Relations.RelationStore.ReconciliationBatchSize))
+        {
+            var desired = batch.ToDictionary(subject => subject, _ => (long?)null);
+            await relations.ReconcileOnePerSubjectBatchAsync(kind, desired,
+                "stale corporation membership reconciliation", token);
+        }
+    }
+
     private async Task ReconcileAllianceAffiliationsAsync(CancellationToken token)
     {
-        var affiliations = await store.CurrentAllianceAffiliationsAsync(token);
-        if (affiliations.Count == 0) return;
-        var existing = (await relations.BetweenAsync(Eve.Relations.RelationKinds.AllianceMember.Name,
-                affiliations.Select(item => item.CorporationId), affiliations.Select(item => item.AllianceId), token))
-            .Where(relation => relation.Kind == Eve.Relations.RelationKinds.AllianceMember.Name)
-            .Select(relation => (relation.Subject, relation.Object))
-            .ToHashSet();
-        foreach (var (corporationId, allianceId) in affiliations)
-            if (!existing.Contains((corporationId, allianceId)))
-                await relations.SetAsync(Eve.Relations.RelationKinds.AllianceMember.Name, corporationId, allianceId, 1,
-                    "alliance affiliation reconciliation", token);
+        var kind = Eve.Relations.RelationKinds.AllianceMember.Name;
+        var desired = (await store.CorporationAllianceAffiliationsAsync(token))
+            .ToDictionary(affiliation => affiliation.CorporationId,
+                affiliation => affiliation.AllianceId is > 0 ? affiliation.AllianceId : null);
+        foreach (var relation in await relations.ListAsync(kind, token))
+            desired.TryAdd(relation.Subject, null);
+
+        foreach (var batch in desired.OrderBy(pair => pair.Key).Chunk(Eve.Relations.RelationStore.ReconciliationBatchSize))
+        {
+            var changes = batch.ToDictionary(pair => pair.Key, pair => pair.Value);
+            await relations.ReconcileOnePerSubjectBatchAsync(kind, changes,
+                "alliance affiliation reconciliation", token);
+        }
     }
 
     public async Task ScheduleAcceptedAsync(System.Data.Common.DbConnection connection,
@@ -318,12 +357,30 @@ public sealed class AllianceApplicationDueWorker(
 
     public void Wake() => scheduler.Wake();
 
-    public async Task WriteAffiliationAsync(System.Data.Common.DbConnection connection,
-        System.Data.Common.DbTransaction transaction, long corporationId, long allianceId, CancellationToken token)
+    private async Task WriteCorporationMemberAffiliationAsync(System.Data.Common.DbConnection connection,
+        System.Data.Common.DbTransaction transaction, long characterId, long corporationId, CancellationToken token)
     {
         await relations.SetAsync((Npgsql.NpgsqlConnection)connection, (Npgsql.NpgsqlTransaction)transaction,
-            Eve.Relations.RelationKinds.AllianceMember.Name, corporationId, allianceId, 1,
-            "alliance membership", cancellationToken: token);
+            Eve.Relations.RelationKinds.CorporationMember.Name, characterId, corporationId, 1,
+            "corporation membership", cancellationToken: token);
+    }
+
+    public async Task WriteAffiliationAsync(System.Data.Common.DbConnection connection,
+        System.Data.Common.DbTransaction transaction, long corporationId, long? allianceId, CancellationToken token)
+    {
+        var kind = Eve.Relations.RelationKinds.AllianceMember.Name;
+        var pgConnection = (Npgsql.NpgsqlConnection)connection;
+        var pgTransaction = (Npgsql.NpgsqlTransaction)transaction;
+        if (allianceId is > 0)
+        {
+            await relations.SetAsync(pgConnection, pgTransaction, kind, corporationId, allianceId.Value, 1,
+                "alliance membership", cancellationToken: token);
+            return;
+        }
+
+        foreach (var current in await relations.FromAsync(kind, corporationId, pgConnection, pgTransaction, token))
+            await relations.EndAsync(pgConnection, pgTransaction, kind, corporationId, current.Object,
+                "alliance membership ended", token);
     }
 
     private async Task<IReadOnlyList<AllianceApplicationWar>> ReadWarsAsync(
@@ -358,9 +415,25 @@ public sealed class AllianceApplicationDueWorker(
     private async Task NotifyAffiliationChangedAsync(Eve.Events.EventContext context, CancellationToken token)
     {
         var change = context.Event.Payload<Eve.Relations.RelationChange>()
-            ?? throw new InvalidOperationException("alliance affiliation event has no payload");
-        foreach (var character in await characters.ForCorporationAsync(change.Subject, token))
-            await affiliationChanged(character.Id, token);
+            ?? throw new InvalidOperationException("affiliation event has no payload");
+        var current = await relations.FromAsync(change.Kind, change.Subject,
+            (Npgsql.NpgsqlConnection)context.Connection, (Npgsql.NpgsqlTransaction)context.Transaction, token);
+        var ended = context.Event.Topic.EndsWith(".ended", StringComparison.Ordinal);
+        if (ended ? current.Count != 0 : !current.Any(relation => relation.Object == change.Object))
+            return;
+
+        if (change.Kind == Eve.Relations.RelationKinds.CorporationMember.Name)
+        {
+            await affiliationChanged(change.Subject, token);
+            return;
+        }
+        if (change.Kind == Eve.Relations.RelationKinds.AllianceMember.Name)
+        {
+            foreach (var character in await characters.ForCorporationAsync(change.Subject, token))
+                await affiliationChanged(character.Id, token);
+            return;
+        }
+        throw new InvalidOperationException($"unexpected affiliation event kind '{change.Kind}'");
     }
 
     private static Eve.Scheduler.JobSpec Spec(AllianceApplicationDueJob job) =>

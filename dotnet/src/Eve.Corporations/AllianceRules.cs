@@ -67,4 +67,10 @@ public delegate Task AllianceApplicationScheduleCallback(
     AllianceApplicationDueJob job, CancellationToken cancellationToken);
 public delegate Task AllianceAffiliationMutationCallback(
     System.Data.Common.DbConnection connection, System.Data.Common.DbTransaction transaction,
-    long corporationId, long allianceId, CancellationToken cancellationToken);
+    long corporationId, long? allianceId, CancellationToken cancellationToken);
+
+
+
+public delegate Task CorporationMemberAffiliationMutationCallback(
+    System.Data.Common.DbConnection connection, System.Data.Common.DbTransaction transaction,
+    long characterId, long corporationId, CancellationToken cancellationToken);

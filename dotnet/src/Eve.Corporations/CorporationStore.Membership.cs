@@ -183,8 +183,6 @@ public sealed partial class CorporationStore
                 """,corp.Id,successor,actor,CorporationRoles.Director);
             var affected = await update.ExecuteNonQueryAsync(token);
             if (affected != 2) throw new CorporationError("CORPORATION_ACCESS_DENIED");
-            if (AllianceAffiliationWriter is { } writeAffiliation)
-                await writeAffiliation(connection,tx,corp.Id,corp.AllianceId ?? 0,token);
             return 0;
         },token);
 }

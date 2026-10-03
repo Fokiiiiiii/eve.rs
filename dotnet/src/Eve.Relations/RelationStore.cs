@@ -300,6 +300,44 @@ public sealed class RelationStore
             null, null, cancellationToken, kind, a, b);
     }
 
+
+    public const int ReconciliationBatchSize = 256;
+
+    public Task<IReadOnlyList<Relation>> ListAsync(string kind, CancellationToken cancellationToken = default)
+    {
+        _ = Kind(kind);
+        return List(Q($"SELECT {Columns} FROM {{schema}}.relations WHERE kind = $1 ORDER BY subject, object"),
+            null, null, cancellationToken, kind);
+    }
+
+    public async Task ReconcileOnePerSubjectBatchAsync(
+        string kind, IReadOnlyDictionary<long, long?> desiredObjects, string? reason = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(desiredObjects);
+        if (Kind(kind).Cardinality != Cardinality.OnePerSubject)
+            throw new ArgumentException($"relation kind '{kind}' is not one-per-subject", nameof(kind));
+        if (desiredObjects.Count > ReconciliationBatchSize)
+            throw new ArgumentOutOfRangeException(nameof(desiredObjects),
+                $"a reconciliation batch is limited to {ReconciliationBatchSize} subjects");
+
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        foreach (var (subject, desiredObject) in desiredObjects.OrderBy(pair => pair.Key))
+        {
+            if (desiredObject is { } obj)
+            {
+                await SetAsync(connection, transaction, kind, subject, obj, 1, reason,
+                    cancellationToken: cancellationToken);
+                continue;
+            }
+
+            foreach (var current in await FromAsync(kind, subject, connection, transaction, cancellationToken))
+                await EndAsync(connection, transaction, kind, subject, current.Object, reason, cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     private Task<IReadOnlyList<Relation>> List(string text, NpgsqlConnection? connection, NpgsqlTransaction? transaction, CancellationToken cancellationToken, params object?[] values) =>
         WithConnection(connection, async c =>
         {

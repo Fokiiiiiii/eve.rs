@@ -585,7 +585,13 @@ public class CorporationProtocolTests
         sessions.Enter(member,memberSession);
         var registry = new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now,sessions);
         var medals = new CorporationService(rig.Store,rig.Characters,sessions);
-        var affiliationWrites = new List<(long CorporationId,long AllianceId,bool SameTransaction)>();
+        var affiliationWrites = new List<(long CorporationId,long? AllianceId,bool SameTransaction)>();
+        var memberAffiliationWrites = new List<(long CharacterId,long CorporationId,bool SameTransaction)>();
+        rig.Store.CorporationMemberAffiliationWriter = (connection,transaction,characterId,corporationId,token) =>
+        {
+            memberAffiliationWrites.Add((characterId,corporationId,ReferenceEquals(connection,transaction.Connection)));
+            return Task.CompletedTask;
+        };
         registry.AllianceAffiliationWriter = (connection,transaction,corporationId,allianceId,token) =>
         {
             affiliationWrites.Add((corporationId,allianceId,ReferenceEquals(connection,transaction.Connection)));
@@ -607,7 +613,8 @@ public class CorporationProtocolTests
         await registry.UpdateApplicationOffer(Call(memberSession,"UpdateApplicationOffer",new PyInt(application),new PyInt(member),
             new PyInt(corp.Id),new PyWString("Join"),new PyInt(2),new PyWString("Accepted")));
         Assert.Equal(corp.Id,(await rig.Characters.GetAsync(member))!.CorporationId);
-        Assert.Equal((corp.Id,0L,true),Assert.Single(affiliationWrites));
+        Assert.Empty(affiliationWrites);
+        Assert.Equal((member,corp.Id,true),Assert.Single(memberAffiliationWrites));
         Assert.DoesNotContain(founderSink.Packets,p => NotificationName(p) == "OnCorporationApplicationChanged");
         Assert.DoesNotContain(memberSink.Packets,p => NotificationName(p) == "OnCorporationApplicationChanged");
         Assert.DoesNotContain(founderSink.Packets,p => NotificationName(p) == "OnCorporationMemberChanged");
@@ -659,8 +666,8 @@ public class CorporationProtocolTests
         var medalNotice = Assert.Single(memberSink.Packets,p => NotificationName(p) == "OnMedalsReceived");
         Assert.Equal("clientID",NotificationAddress(medalNotice).IdType);
         await registry.ResignFromCEO(Call(founderSession,"ResignFromCEO",new PyInt(member)));
-        Assert.Equal(2,affiliationWrites.Count);
-        Assert.All(affiliationWrites,write => Assert.Equal((corp.Id,0L,true),write));
+        Assert.Empty(affiliationWrites);
+        Assert.Single(memberAffiliationWrites);
         founderSession.RunAfterResponse();
     }
 

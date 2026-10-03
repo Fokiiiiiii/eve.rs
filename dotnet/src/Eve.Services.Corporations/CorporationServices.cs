@@ -270,7 +270,7 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
 [Service("corpRegistry")]
 public sealed partial class CorpRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,CharacterSessions? characterSessions = null)
 {
-    public Func<System.Data.Common.DbConnection,System.Data.Common.DbTransaction,long,long,CancellationToken,Task>? AllianceAffiliationWriter
+    public AllianceAffiliationMutationCallback? AllianceAffiliationWriter
     {
         get => store.AllianceAffiliationWriter;
         set => store.AllianceAffiliationWriter = value;

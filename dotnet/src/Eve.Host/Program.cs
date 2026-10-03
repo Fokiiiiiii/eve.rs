@@ -333,6 +333,18 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         await foundations.Scheduler.EnsureRecurringAsync("space.containers.sweep", "sweep", TimeSpan.FromSeconds(30));
         Console.Error.WriteLine($"eve-host: the space simulation is expected at {socket}");
     }
+    Func<long, CancellationToken, Task> allianceAffiliationNotify = spaceSessions is null
+        ? static (_, _) => Task.CompletedTask
+        : spaceSessions.AffiliationChangedAsync;
+    var allianceDue = new Eve.Services.Corporations.AllianceApplicationDueWorker(
+        corporations, characters, foundations.Scheduler, foundations.Relations, foundations.Events,
+        allianceAffiliationNotify);
+    await allianceDue.RegisterAsync();
+    var allianceRegistry = new Eve.Services.Corporations.AllianceRegistryService(
+        corporations, characters, now,
+        scheduleAllianceApplication: allianceDue.ScheduleAcceptedAsync,
+        wakeAllianceApplicationScheduler: allianceDue.Wake);
+
     IReadOnlyList<IService> services =
     [
         new CharUnboundMgrService(accounts, characters, items, skills, wallets, creation, catalog, online, [new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now), corporationLogin], Random.Shared),
@@ -349,9 +361,12 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         new AccountService(wallets, corporations, economyWallets),
         new Eve.Services.Market.MarketProxyService(market, marketTrading, marketTopology, characters, economyWallets, marketCatalog, now, characterSessions),
         new Eve.Services.Corporations.CorpMgrService(corporations, characters),
-        new Eve.Services.Corporations.CorporationService(corporations, characters),
-        new Eve.Services.Corporations.CorpRegistryService(corporations, characters, now),
-        new Eve.Services.Corporations.AllianceRegistryService(corporations, characters, now, spaceSessions is null ? null : spaceSessions.AffiliationChangedAsync),
+        new Eve.Services.Corporations.CorporationService(corporations, characters, characterSessions),
+        new Eve.Services.Corporations.CorpRegistryService(corporations, characters, now, characterSessions)
+        {
+            AllianceAffiliationWriter = allianceDue.WriteAffiliationAsync
+        },
+        allianceRegistry,
         new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now), new SkillCommands(skillCatalog, skills, source, dogmaSync, now)),
         .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now, spaceContainers), new BeyonceService(spaceSessions, now) },
     ];

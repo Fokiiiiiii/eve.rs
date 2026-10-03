@@ -375,7 +375,6 @@ public sealed class AllianceApplicationDueWorker(
 // CorpRegistry Alliance RPCs follow EveJS v0.12.9 corpRegistryRuntime.js (828823a75f211fdecb945b087a26c225f111491f).
 public sealed partial class CorpRegistryService
 {
-    public AllianceAffiliationMutationCallback? AllianceAffiliationWriter { get; init; }
     private static readonly Descriptor AllianceApplicationDescriptor = CorporationWire.DescriptorOf(
         ("allianceID",3),("corporationID",3),("applicationText",130),("state",3),("applicationDateTime",64));
 
@@ -408,7 +407,7 @@ public sealed partial class CorpRegistryService
             JsSemantics.StringValue(call.Arg(0)) ?? "", JsSemantics.StringValue(call.Arg(1)) ?? "",
             JsSemantics.StringValue(call.Arg(2)) ?? "", JsSemantics.StringValue(call.Arg(3)) ?? "");
         var operationKey = $"alliance-create:{call.Session.SessionId}:{actor}:{Number(call.CallId)}";
-        if (AllianceAffiliationWriter is not { } writer)
+        if (store.AllianceAffiliationWriter is not { } writer)
             throw new CorporationError("ALLIANCE_AFFILIATION_UNAVAILABLE");
         var alliance = await store.CreateAllianceAsync(actor, request, operationKey, writer, call.Cancellation);
         return new PyInt(alliance.Id);

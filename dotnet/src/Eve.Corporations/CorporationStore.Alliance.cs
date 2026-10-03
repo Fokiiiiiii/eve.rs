@@ -254,6 +254,20 @@ public sealed partial class CorporationStore
         return affiliations;
     }
 
+
+    public async Task<IReadOnlyList<(long CorporationId, long? AllianceId)>> CorporationAllianceAffiliationsAsync(
+        CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT id,CASE WHEN deleted THEN NULL ELSE alliance_id END FROM {_schema}.corporations ORDER BY id";
+        var affiliations = new List<(long CorporationId, long? AllianceId)>();
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token))
+            affiliations.Add((reader.GetInt64(0), reader.IsDBNull(1) ? null : reader.GetInt64(1)));
+        return affiliations;
+    }
+
     public Task<AllianceApplicationDueOutcome> ProcessDueAllianceApplicationAsync(
         AllianceApplicationDueJob job, AllianceWarReadCallback readWars, AllianceAffiliationMutationCallback writeAffiliation,
         CancellationToken token = default) =>

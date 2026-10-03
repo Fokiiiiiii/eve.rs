@@ -666,6 +666,19 @@ public class AllianceTests
             Assert.Equal([applicant], changedCharacters);
             await events.PumpAsync();
             Assert.Single(changedCharacters);
+
+            changedCharacters.Clear();
+            await using (var connection = await rig.Source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await relations.EndAsync(connection, transaction, Eve.Relations.RelationKinds.AllianceMember.Name,
+                    applicantCorp.Id, alliance.Id, "alliance membership ended");
+                await transaction.CommitAsync();
+            }
+            await events.PumpAsync();
+            Assert.Equal([applicant], changedCharacters);
+            await events.PumpAsync();
+            Assert.Single(changedCharacters);
         }
         finally
         {
@@ -676,4 +689,56 @@ public class AllianceTests
             }
         }
     }
+
+
+    [PgFact]
+    public async Task Startup_reconciles_npc_and_player_affiliations_and_removes_stale_alliance_edges()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var schedulerSchema = "affiliation_sched_" + suffix;
+        var eventsSchema = "affiliation_events_" + suffix;
+        var relationsSchema = "affiliation_relations_" + suffix;
+        try
+        {
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(rig.Source, schedulerSchema);
+            await Eve.Events.EventBus.MigrateAsync(rig.Source, eventsSchema);
+            await Eve.Relations.RelationStore.MigrateAsync(rig.Source, relationsSchema);
+            var scheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now, schema: schedulerSchema);
+            var events = new Eve.Events.EventBus(rig.Source, scheduler, schema: eventsSchema);
+            var relations = new Eve.Relations.RelationStore(rig.Source, scheduler, events, relationsSchema);
+            await rig.SeedNpcCorporationAsync(1000044);
+            var npcMember = await rig.CharacterAsync("NPC Graph Member");
+            var worker = new Eve.Services.Corporations.AllianceApplicationDueWorker(
+                rig.Store, rig.Characters, scheduler, relations, events, (_, _) => Task.CompletedTask);
+            rig.Store.AllianceAffiliationWriter = worker.WriteAffiliationAsync;
+            var (founder, corporation) = await Founder(rig, "Player Graph", "PGRPH");
+            await relations.SetAsync(Eve.Relations.RelationKinds.CorporationMember.Name,
+                npcMember, corporation.Id, 1, "stale corporation affiliation");
+            await relations.SetAsync(Eve.Relations.RelationKinds.AllianceMember.Name,
+                corporation.Id, 0, 1, "legacy no-alliance sentinel");
+            await relations.SetAsync(Eve.Relations.RelationKinds.AllianceMember.Name,
+                1000044, 99000001, 1, "stale alliance affiliation");
+
+            await worker.RegisterAsync();
+            await events.PumpAsync();
+
+            var npcAffiliation = Assert.Single(await relations.FromAsync(Eve.Relations.RelationKinds.CorporationMember.Name, npcMember));
+            Assert.Equal(1000044, npcAffiliation.Object);
+            var playerAffiliation = Assert.Single(await relations.FromAsync(Eve.Relations.RelationKinds.CorporationMember.Name, founder));
+            Assert.Equal(corporation.Id, playerAffiliation.Object);
+            Assert.Empty(await relations.FromAsync(Eve.Relations.RelationKinds.AllianceMember.Name, 1000044));
+            Assert.Empty(await relations.FromAsync(Eve.Relations.RelationKinds.AllianceMember.Name, corporation.Id));
+        }
+        finally
+        {
+            foreach (var schema in new[] { schedulerSchema, eventsSchema, relationsSchema })
+            {
+                await using var command = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
+
 }

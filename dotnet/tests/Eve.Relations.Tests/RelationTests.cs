@@ -137,4 +137,45 @@ public class RelationTests
         Assert.Equal([1.0, 2.0], (await rig.Relations.FromAsync("standing", Pilot)).Select(r => r.Value));
         Assert.Equal([Pilot, Other], (await rig.Relations.ToAsync("standing", Corp)).Select(r => r.Subject).OrderByDescending(x => x == Pilot));
     }
+
+
+    [PgFact]
+    public async Task Affiliation_reconciliation_batches_are_bounded_idempotent_and_publish_changed_and_ended()
+    {
+        await using var rig = await Rig.Create();
+        var seen = new List<string>();
+        rig.Bus.Subscribe("affiliation-reconcile", ["relation.affiliation.corporation.*"],
+            (ctx, _) => { seen.Add(ctx.Event.Topic); return Task.CompletedTask; });
+        await rig.Bus.PumpAsync();
+
+        var kind = Eve.Relations.RelationKinds.CorporationMember.Name;
+        var initial = new Dictionary<long, long?> { [Pilot] = Corp, [Other] = Corp2 };
+        await rig.Relations.ReconcileOnePerSubjectBatchAsync(kind, initial, "startup affiliation backfill");
+        await rig.Set("standing", Pilot, Faction, 2);
+        var listed = await rig.Relations.ListAsync(kind);
+        Assert.Equal(2, listed.Count);
+        Assert.All(listed, relation => Assert.Equal(kind, relation.Kind));
+        await rig.Bus.PumpAsync();
+        Assert.Equal(["relation.affiliation.corporation.changed", "relation.affiliation.corporation.changed"], seen);
+
+        await rig.Relations.ReconcileOnePerSubjectBatchAsync(kind, initial, "startup affiliation backfill");
+        await rig.Bus.PumpAsync();
+        Assert.Equal(2, seen.Count);
+
+        var updated = new Dictionary<long, long?> { [Pilot] = Corp2, [Other] = null };
+        await rig.Relations.ReconcileOnePerSubjectBatchAsync(kind, updated, "repair affiliation graph");
+        await rig.Bus.PumpAsync();
+        Assert.Equal(
+            ["relation.affiliation.corporation.changed", "relation.affiliation.corporation.changed",
+             "relation.affiliation.corporation.ended", "relation.affiliation.corporation.changed",
+             "relation.affiliation.corporation.ended"], seen);
+        var remaining = Assert.Single(await rig.Relations.ListAsync(kind));
+        Assert.Equal(Pilot, remaining.Subject);
+        Assert.Equal(Corp2, remaining.Object);
+
+        var tooMany = Enumerable.Range(1, Eve.Relations.RelationStore.ReconciliationBatchSize + 1)
+            .ToDictionary(value => (long)value, value => (long?)Corp);
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            rig.Relations.ReconcileOnePerSubjectBatchAsync(kind, tooMany, "over-sized batch"));
+    }
 }

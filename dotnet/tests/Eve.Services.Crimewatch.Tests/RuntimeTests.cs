@@ -240,7 +240,7 @@ public class RuntimeTests : IAsyncLifetime
         Pilot(1, System);
         Pilot(2, System);
         using var runtime = Runtime();
-        runtime.Legal = (attacker, target, _) => attacker == 1 && target == 2;
+        runtime.Legal = (attacker, target, _, _) => Task.FromResult(attacker == 1 && target == 2);
         List<AggressionResult> heard = [];
         runtime.Aggressed += result =>
         {
@@ -254,6 +254,67 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Empty(Told(2));
         var one = Assert.Single(heard);
         Assert.Equal((1L, 2L, AggressionReason.Legal), (one.Request.Attacker, one.Request.Target, one.Outcome.Reason));
+    }
+
+    [PgFact]
+    public async Task Host_wired_wars_use_owner_chains_allies_and_active_expiry()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        Pilot(3, System);
+
+        await using var relations = await RelationsRig.Create(_source!, () => _now);
+        var attackerCorporation = 98_000_101L;
+        var attackerAlliance = 99_000_101L;
+        var defenderCorporation = 98_000_102L;
+        var allyCorporation = 98_000_103L;
+        await relations.Set(Eve.Relations.RelationKinds.CorporationMember.Name, 1, attackerCorporation);
+        await relations.Set(Eve.Relations.RelationKinds.AllianceMember.Name, attackerCorporation, attackerAlliance);
+        await relations.Set(Eve.Relations.RelationKinds.CorporationMember.Name, 2, defenderCorporation);
+        await relations.Set(Eve.Relations.RelationKinds.CorporationMember.Name, 3, allyCorporation);
+
+        var wars = new RelationWars(relations.Relations);
+        Assert.False(await wars.AreAtWarAsync(1, 2, _now));
+
+        await relations.Set(Eve.Relations.RelationKinds.War.Name, attackerAlliance, defenderCorporation);
+        var activeWar = await relations.Relations.GetAsync(Eve.Relations.RelationKinds.War.Name, attackerAlliance, defenderCorporation);
+        Assert.NotNull(activeWar);
+        Assert.True(await wars.AreAtWarAsync(1, 2, _now));
+        await relations.Set(Eve.Relations.RelationKinds.WarAlly.Name, allyCorporation, activeWar.Id, attrs: new { side = "defender" }, until: _now + 1_000);
+        Assert.True(await wars.AreAtWarAsync(1, 3, _now));
+
+        using var runtime = Runtime();
+        runtime.Legal = wars.AreAtWarAsync;
+        var result = await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false));
+        Assert.Equal(AggressionReason.Legal, result.Outcome.Reason);
+        var allyResult = await runtime.RecordAggressionAsync(Attack(1, 3, SecurityClass.HighSec, System, false));
+        Assert.Equal(AggressionReason.Legal, allyResult.Outcome.Reason);
+        _now += 1_000;
+        Assert.False(await wars.AreAtWarAsync(1, 3, _now));
+
+        var allyAttacker = 6L;
+        var allyDefender = 7L;
+        var allyAttackerCorporation = 98_000_106L;
+        var allyDefenderCorporation = 98_000_107L;
+        var warCorporationA = 98_000_108L;
+        var warCorporationB = 98_000_109L;
+        await relations.Set(Eve.Relations.RelationKinds.CorporationMember.Name, allyAttacker, allyAttackerCorporation);
+        await relations.Set(Eve.Relations.RelationKinds.CorporationMember.Name, allyDefender, allyDefenderCorporation);
+        await relations.Set(Eve.Relations.RelationKinds.War.Name, warCorporationA, warCorporationB);
+        var hiddenWar = await relations.Relations.GetAsync(Eve.Relations.RelationKinds.War.Name, warCorporationA, warCorporationB);
+        Assert.NotNull(hiddenWar);
+        await relations.Set(Eve.Relations.RelationKinds.WarAlly.Name, allyAttackerCorporation, hiddenWar.Id, attrs: new { side = "aggressor" }, until: _now + 1_000);
+        await relations.Set(Eve.Relations.RelationKinds.WarAlly.Name, allyDefenderCorporation, hiddenWar.Id, attrs: new { side = "defender" }, until: _now + 1_000);
+        Assert.True(await wars.AreAtWarAsync(allyAttacker, allyDefender, _now));
+
+        var expiredAttacker = 4L;
+        var expiredTarget = 5L;
+        var expiredAttackerCorporation = 98_000_104L;
+        var expiredTargetCorporation = 98_000_105L;
+        await relations.Set(Eve.Relations.RelationKinds.CorporationMember.Name, expiredAttacker, expiredAttackerCorporation);
+        await relations.Set(Eve.Relations.RelationKinds.CorporationMember.Name, expiredTarget, expiredTargetCorporation);
+        await relations.Set(Eve.Relations.RelationKinds.War.Name, expiredAttackerCorporation, expiredTargetCorporation, until: _now);
+        Assert.False(await wars.AreAtWarAsync(expiredAttacker, expiredTarget, _now));
     }
 
     [PgFact]
@@ -425,7 +486,7 @@ public class PenaltyTests : IAsyncLifetime
         Assert.Equal(-2.5, _written.Single().Value);
 
         // the law allows it: the timers run and nothing else
-        runtime.Legal = (_, _, _) => true;
+        runtime.Legal = (_, _, _, _) => Task.FromResult(true);
         _status.Clear();
         _written.Clear();
         await runtime.RecordAggressionAsync(Attack(ship: 42));
@@ -447,5 +508,54 @@ public class PenaltyTests : IAsyncLifetime
         Assert.Empty(_written);
         Assert.Empty(_shipsRefreshed);
         Assert.DoesNotContain(Notes.Of(_attacker), n => n.Name == "OnSecurityStatusUpdate");
+    }
+}
+
+internal sealed class RelationsRig : IAsyncDisposable
+{
+    private readonly NpgsqlDataSource _source;
+    private readonly string[] _schemas;
+    private readonly Eve.Scheduler.DurableScheduler _scheduler;
+
+    private RelationsRig(NpgsqlDataSource source, string[] schemas, Eve.Scheduler.DurableScheduler scheduler, Eve.Relations.RelationStore relations)
+    {
+        _source = source;
+        _schemas = schemas;
+        _scheduler = scheduler;
+        Relations = relations;
+    }
+
+    public Eve.Relations.RelationStore Relations { get; }
+
+    public static async Task<RelationsRig> Create(NpgsqlDataSource source, Func<long> now)
+    {
+        var id = Guid.NewGuid().ToString("N")[..12];
+        string[] schemas = ["warsch_" + id, "warevt_" + id, "warrel_" + id];
+        await Eve.Scheduler.DurableScheduler.MigrateAsync(source, schemas[0]);
+        await Eve.Events.EventBus.MigrateAsync(source, schemas[1]);
+        await Eve.Relations.RelationStore.MigrateAsync(source, schemas[2]);
+        var scheduler = new Eve.Scheduler.DurableScheduler(source, now, new Eve.Scheduler.SchedulerOptions { Concurrency = 1 }, schemas[0]);
+        var events = new Eve.Events.EventBus(source, scheduler, null, schemas[1]);
+        var relations = new Eve.Relations.RelationStore(source, scheduler, events, schemas[2]);
+        return new RelationsRig(source, schemas, scheduler, relations);
+    }
+
+    public async Task Set(string kind, long subject, long obj, object? attrs = null, long? until = null)
+    {
+        await using var connection = await _source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await Relations.SetAsync(connection, transaction, kind, subject, obj, 0, "test", attrs, until);
+        await transaction.CommitAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _scheduler.DisposeAsync();
+        await using var connection = await _source.OpenConnectionAsync();
+        foreach (var schema in _schemas)
+        {
+            await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE", connection);
+            await command.ExecuteNonQueryAsync();
+        }
     }
 }

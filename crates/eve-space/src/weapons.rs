@@ -9,6 +9,7 @@
 use eve_marshal::Value;
 
 use crate::health::Damage;
+use crate::missiles::Missile;
 use crate::modules::Effect;
 use crate::npc::is_npc_session;
 use crate::scene::{Out, Scene, SessionId};
@@ -37,6 +38,8 @@ pub struct Turret {
     pub signature_resolution: f64,
     /// The charge the turret fires when it takes one (the host works its damage into `raw_damage`): the scene keeps the rounds and spends them.
     pub charge: Option<Charge>,
+    /// What a launcher flies (a launcher is a weapon that fires a missile in the place of a shot: its `raw_damage` is the missile's, its `optimal_range` how far the missile goes).
+    pub missile: Option<Missile>,
 }
 
 /// The ammunition in a turret: the kind, the slot it sits in (the client knows a loaded charge by the ship, the slot and the kind), the rounds it holds and the
@@ -195,10 +198,34 @@ pub fn damage_message(
     shot: &Shot,
     owner_id: i64,
 ) -> Value {
+    quality_message(
+        for_the_attacker,
+        attacker_id,
+        target_id,
+        weapon_type_id,
+        applied,
+        shot.damage,
+        hit_quality_tier(shot),
+        owner_id,
+    )
+}
+
+/// The `OnDamageMessage` of whatever damage reached a ship, with the hit quality the combat log is to show (a missile that lands is always `3`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn quality_message(
+    for_the_attacker: bool,
+    attacker_id: i64,
+    target_id: i64,
+    weapon_type_id: i32,
+    applied: f64,
+    damage: Damage,
+    tier: u8,
+    owner_id: i64,
+) -> Value {
     let attributes = Value::Dict(
         DAMAGE_ATTRIBUTES
             .iter()
-            .zip(shot.damage)
+            .zip(damage)
             .map(|(attribute, amount)| (int(*attribute), number6(amount)))
             .collect(),
     );
@@ -210,7 +237,7 @@ pub fn damage_message(
         ("damage", number6(applied)),
         ("damageAttributes", attributes),
         ("splash", text("")),
-        ("hitQuality", int(i64::from(hit_quality_tier(shot)))),
+        ("hitQuality", int(i64::from(tier))),
         ("isBanked", Value::Bool(false)),
     ];
     if owner_id > 0 {
@@ -235,7 +262,7 @@ impl Scene {
     }
 
     /// The kinematics of a ship of the scene, for a shot.
-    fn kinematics_of(&self, session: SessionId) -> Option<Kinematics> {
+    pub(crate) fn kinematics_of(&self, session: SessionId) -> Option<Kinematics> {
         let ship = &self.pilots.get(&session)?.ship;
         let (p, v) = (ship.position, ship.velocity);
         Some(Kinematics {
@@ -254,10 +281,113 @@ impl Scene {
         })
     }
 
+    /// The ships of the scene within `range` of the surface of the ship of `session`, not its own and not in warp: `(session, ship id)`, by ship id.
+    pub(crate) fn in_smartbomb_range(&self, session: SessionId, range: f64) -> Vec<(SessionId, i64)> {
+        let mut inside: Vec<(SessionId, i64)> = self
+            .pilots
+            .iter()
+            .filter(|(other, pilot)| {
+                **other != session && !pilot.flight.as_ref().is_some_and(|flight| flight.is_warping())
+            })
+            .filter(|(other, _)| self.apart(session, **other).is_some_and(|apart| apart <= range + 1e-6))
+            .map(|(other, pilot)| (*other, pilot.ship.spec.ship_id))
+            .collect();
+        inside.sort_by_key(|(_, ship_id)| *ship_id);
+        inside
+    }
+
+    /// A smartbomb goes off as a cycle begins: every ship in its range takes the damage whole (a ship in its undock protection does not), and each is aggressed and
+    /// told as a shot is. Where the safety forbids it (`hurts_pilots` false) and a pilot is in range, nothing is hurt and the effect stops at once. The missiles of others on
+    /// their way within its reach are hurt too, in their own hit points (`Scene::damage_missile`): a bomb of enough damage shoots them down.
+    pub(crate) fn smartbomb(
+        &mut self,
+        session: SessionId,
+        effect: &Effect,
+        range: f64,
+        damage: Damage,
+        hurts_pilots: bool,
+        at: i64,
+    ) -> Vec<Out> {
+        let Some(attacker_id) = self.pilots.get(&session).map(|pilot| pilot.ship.spec.ship_id) else {
+            return Vec::new();
+        };
+        let in_range = self.in_smartbomb_range(session, range);
+        if !hurts_pilots && in_range.iter().any(|(other, _)| !is_npc_session(*other)) {
+            return self.stop_module(session, effect.module_id, at);
+        }
+        let owner = self.combat_owner(session);
+        let mut out = Vec::new();
+        // the missiles on their way within its reach are hurt as well, by the damage the bomb does (their own hit points, not a ship's): the pilot's own are spared
+        let (centre, reach) = {
+            let ship = &self.pilots[&session].ship;
+            (
+                eve_destiny::Vec3::new(ship.position.x, ship.position.y, ship.position.z),
+                range + ship.spec.radius.max(0.0),
+            )
+        };
+        let blast: f64 = damage.iter().sum();
+        for missile_id in self.missiles_within(centre, reach) {
+            if self.missiles.get(&missile_id).is_some_and(|missile| missile.shooter.owner_id != owner) {
+                let by = crate::missile_entity::Interceptor::Smartbomb {
+                    ship_id: attacker_id,
+                    module_id: effect.module_id,
+                };
+                out.extend(self.damage_missile(missile_id, blast, by, at));
+            }
+        }
+        for (target_session, target_id) in in_range {
+            if self.pilots.get(&target_session).is_none_or(|pilot| pilot.protected_until > at) {
+                continue;
+            }
+            let shot =
+                Shot { hit: true, wrecking: false, quality: 1.0, chance_to_hit: 1.0, roll: 0.0, damage };
+            let (told, hit) = self.damage(target_id, damage, at);
+            out.extend(told);
+            let applied = hit.map_or(0.0, |hit| hit.taken.shield + hit.taken.armor + hit.taken.structure);
+            let destroyed = hit.is_some_and(|hit| hit.destroyed);
+            let target_type_id = self.pilots.get(&target_session).map_or(0, |pilot| pilot.ship.spec.type_id);
+            self.aggressions.push(Aggression {
+                attacker_ship: attacker_id,
+                target_ship: target_id,
+                module_type_id: effect.module_type,
+                source_owner_id: owner,
+                target_type_id,
+            });
+            let message = |for_the_attacker| {
+                damage_message(
+                    for_the_attacker,
+                    attacker_id,
+                    target_id,
+                    effect.module_type,
+                    applied,
+                    &shot,
+                    owner,
+                )
+            };
+            for (who, mine) in [(session, true), (target_session, false)] {
+                if !is_npc_session(who) {
+                    out.push(Out::Notify {
+                        session: who,
+                        name: "OnDamageMessage",
+                        id_type: "clientID",
+                        args: vec![message(mine)],
+                    });
+                }
+            }
+            if destroyed {
+                out.extend(self.destroy(target_session, Some(session), at));
+            }
+        }
+        out
+    }
+
     /// A turret shoots at the start of a cycle: one shot, rolled; a hit hurts the target (whoever sees it is told its damage state, its pilot the
     /// attributes that changed), and the combat log of each pilot is told the shot, hit or miss.
     pub(crate) fn fire_turret(&mut self, session: SessionId, effect: &Effect, at: i64) -> Vec<Out> {
         let Some(turret) = effect.turret.as_ref() else { return Vec::new() };
+        if turret.missile.is_some() {
+            return self.launch_missile(session, effect, at);
+        }
         let Some(target_session) = self.session_of(effect.target_id) else { return Vec::new() };
         let (Some(attacker), Some(target)) =
             (self.kinematics_of(session), self.kinematics_of(target_session))
@@ -265,6 +395,23 @@ impl Scene {
             return Vec::new();
         };
         let attacker_id = self.pilots[&session].ship.spec.ship_id;
+        // the combat log, the aggression and the kill of a drone's shot are its controller's
+        let reporter = self.controller_of_drone(session).unwrap_or(session);
+        let aggressor_ship = if reporter == session { attacker_id } else { self.ship_id_of(reporter) };
+        // what disrupts the shooter's turrets works on the numbers the shot is rolled with
+        let (range, falloff, tracking) = self.pilots[&session].incoming.weapon_factors();
+        let disrupted;
+        let turret = if (range, falloff, tracking) == (1.0, 1.0, 1.0) {
+            turret
+        } else {
+            disrupted = Turret {
+                optimal_range: turret.optimal_range * range,
+                falloff: turret.falloff * falloff,
+                tracking_speed: turret.tracking_speed * tracking,
+                ..turret.clone()
+            };
+            &disrupted
+        };
         let roll = self.rng.random();
         let shot = resolve_shot(turret, &attacker, &target, roll);
         let mut out = Vec::new();
@@ -279,7 +426,7 @@ impl Scene {
         let owner = self.combat_owner(session);
         let target_type_id = self.pilots.get(&target_session).map_or(0, |pilot| pilot.ship.spec.type_id);
         self.aggressions.push(Aggression {
-            attacker_ship: attacker_id,
+            attacker_ship: aggressor_ship,
             target_ship: effect.target_id,
             module_type_id: turret.weapon_type_id,
             source_owner_id: owner,
@@ -296,9 +443,9 @@ impl Scene {
                 owner,
             )
         };
-        if !is_npc_session(session) {
+        if !is_npc_session(reporter) {
             out.push(Out::Notify {
-                session,
+                session: reporter,
                 name: "OnDamageMessage",
                 id_type: "clientID",
                 args: vec![message(true)],
@@ -314,11 +461,14 @@ impl Scene {
         }
         // the shot that took the last of the hull is told first, then the ship is gone
         if destroyed {
-            out.extend(self.destroy(target_session, Some(session), at));
+            out.extend(self.destroy(target_session, Some(reporter), at));
         }
         out
     }
 }
+
+/// A missile that is this much further from its target than it can fly (metres) still gets there (the reference's `graceMeters`).
+pub(crate) const MISSILE_RANGE_GRACE: f64 = 1.0;
 
 #[cfg(test)]
 mod tests {
@@ -338,6 +488,7 @@ mod tests {
             tracking_speed: tracking,
             signature_resolution: resolution,
             charge: None,
+            missile: None,
         }
     }
 
@@ -825,6 +976,31 @@ mod tests {
     }
 
     #[test]
+    fn a_turret_that_is_disrupted_is_rolled_with_the_numbers_it_is_left_and_the_shot_misses_where_it_hit() {
+        // undisrupted, the laser (10 km and 5 km of falloff) hits the player two kilometres off at the first cycle
+        let (mut scene, npc, now) = duel();
+        let free = scene.activate(npc, laser_effect(spec().ship_id, laser()), now);
+        let free = messages(&free, PLAYER, "OnDamageMessage");
+        assert_ne!(entry(&free[0], "damage"), number6(0.0), "{free:?}");
+        // a tracking disruptor that takes the whole of its range and falloff leaves it nothing to reach with
+        let (mut scene, npc, now) = duel();
+        let until = now + 60 * SECOND;
+        scene.pilots.get_mut(&npc).unwrap().incoming.upsert(
+            777,
+            888,
+            crate::ewar::Lasting::Disrupt {
+                range_percent: -100.0,
+                falloff_percent: -100.0,
+                tracking_percent: 0.0,
+            },
+            until,
+        );
+        let disrupted = scene.activate(npc, laser_effect(spec().ship_id, laser()), now);
+        let disrupted = messages(&disrupted, PLAYER, "OnDamageMessage");
+        assert_eq!(entry(&disrupted[0], "damage"), number6(0.0), "{disrupted:?}");
+    }
+
+    #[test]
     fn a_turret_shoots_at_the_start_of_each_cycle_and_the_one_shot_at_is_told() {
         let (mut scene, npc, now) = duel();
         let started = scene.activate(npc, laser_effect(spec().ship_id, laser()), now);
@@ -1117,6 +1293,321 @@ mod tests {
         assert!(messages(&later, PLAYER, "OnDamageMessage").is_empty());
         assert_eq!(scene.pilots[&npc].modules.running_count(), 0, "the effect is over");
         assert!(scene.locked_by(npc).is_empty());
+    }
+
+    // ---- launchers in a scene ----
+
+    /// A launcher of rockets: what a pilot fits to fire scourge rockets, with the speed, the flight time and the explosion radius of the missile that suit the test.
+    fn launcher(max_velocity: f64, flight_time_ms: f64, explosion_radius: f64) -> Turret {
+        Turret {
+            weapon_type_id: 10_629,
+            fx: "effects.MissileDeployment".to_string(),
+            raw_damage: [0.0, 0.0, 38.115, 0.0],
+            optimal_range: max_velocity * flight_time_ms / 1000.0,
+            falloff: 0.0,
+            tracking_speed: 0.0,
+            signature_resolution: 40_000.0,
+            charge: None,
+            missile: Some(Missile {
+                charge_type_id: 266,
+                group_id: 387,
+                name: "Scourge Rocket".to_string(),
+                radius: 300.0,
+                mass: 100.0,
+                agility: 5.22,
+                hit_points: 90.0,
+                max_velocity,
+                flight_time_ms,
+                explosion_radius,
+                explosion_velocity: 1.0e9,
+                damage_reduction_factor: 0.5,
+                damage_reduction_sensitivity: crate::missiles::DEFAULT_REDUCTION_SENSITIVITY,
+            }),
+        }
+    }
+
+    /// One cycle of a launcher at a target (what the tests look at is the one missile it fires).
+    fn missile_effect(target_id: i64, turret: Turret) -> Effect {
+        Effect {
+            effect_id: 101,
+            fx: "effects.MissileDeployment".to_string(),
+            repeat: 1,
+            ..laser_effect(target_id, turret)
+        }
+    }
+
+    /// The names of the actions in the destiny updates a ship was sent, in order.
+    fn action_names(out: &[Out], session: SessionId) -> Vec<String> {
+        out.iter()
+            .filter_map(|o| match o {
+                Out::Notify { session: s, name: "DoDestinyUpdate", args, .. } if *s == session => {
+                    Some(args[0].clone())
+                }
+                _ => None,
+            })
+            .flat_map(|actions| {
+                let Value::List(actions) = actions else { return Vec::new() };
+                actions
+                    .into_iter()
+                    .filter_map(|action| {
+                        let Value::Tuple(parts) = action else { return None };
+                        let Some(Value::Tuple(body)) = parts.get(1) else { return None };
+                        Some(format!("{:?}", body[0]))
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_launcher_makes_a_missile_of_its_own_that_the_client_is_given_as_a_ball_and_that_is_no_ship() {
+        let (mut scene, npc, now) = duel();
+        let started =
+            scene.activate(npc, missile_effect(spec().ship_id, launcher(2_250.0, 2_000.0, 56.0)), now);
+        assert_eq!(scene.missiles.len(), 1);
+        let missile = scene.missiles().next().unwrap().clone();
+        assert_eq!(missile.id, crate::missile_entity::MISSILE_ID_BASE);
+        assert_eq!((missile.shooter.ship_id, missile.target), (NPC_SHIP, spec().ship_id));
+        // the player is shown the ball and the launch in one update
+        let names = action_names(&started, PLAYER);
+        assert!(
+            names.iter().any(|n| n.contains("AddBalls2"))
+                && names.iter().any(|n| n.contains("LaunchMissile")),
+            "{names:?}"
+        );
+        // it is not a pilot: it has no place among the ships, and nothing can lock it
+        assert!(scene.session_of(missile.id).is_none());
+        assert!(scene.pilots.values().all(|pilot| pilot.ship.spec.ship_id != missile.id));
+        let refused = scene.target_order(PLAYER, Order::Lock(missile.id), now);
+        assert!(messages(&refused, PLAYER, "OnTarget").is_empty(), "a missile cannot be locked");
+        assert!(scene.locked_by(PLAYER).is_empty());
+    }
+
+    #[test]
+    fn a_launcher_that_a_guidance_disruptor_holds_fires_slower_shorter_and_wider_missiles() {
+        // undisrupted, the rocket flies at 2250 m/s for 2 s and bursts 56 m wide
+        let (mut scene, npc, now) = duel();
+        scene.activate(npc, missile_effect(spec().ship_id, launcher(2_250.0, 2_000.0, 56.0)), now);
+        let free = scene.missiles().next().unwrap().spec.clone();
+        assert_eq!((free.max_velocity, free.flight_time_ms, free.explosion_radius), (2_250.0, 2_000.0, 56.0));
+        // a guidance disruptor on the launcher's ship takes a tenth of the speed and the flight time and a fifth of the explosion velocity, and widens the burst a fifth
+        let (mut scene, npc, now) = duel();
+        scene.pilots.get_mut(&npc).unwrap().incoming.upsert(
+            777,
+            888,
+            crate::ewar::Lasting::GuidanceDisrupt {
+                velocity_percent: -10.0,
+                delay_percent: -10.0,
+                aoe_velocity_percent: -20.0,
+                aoe_cloud_percent: 20.0,
+            },
+            now + 60 * SECOND,
+        );
+        scene.activate(npc, missile_effect(spec().ship_id, launcher(2_250.0, 2_000.0, 56.0)), now);
+        let disrupted = scene.missiles().next().unwrap().spec.clone();
+        assert_eq!(disrupted.max_velocity, 2_025.0);
+        assert_eq!(disrupted.flight_time_ms, 1_800.0);
+        assert_eq!(disrupted.explosion_radius, 67.2);
+        assert_eq!(disrupted.explosion_velocity, 8.0e8);
+        // what the missile is stays what it is
+        assert_eq!((disrupted.charge_type_id, disrupted.hit_points), (free.charge_type_id, free.hit_points));
+    }
+
+    #[test]
+    fn nothing_is_told_of_the_damage_while_the_missile_flies_and_a_hit_of_quality_three_when_it_lands() {
+        let (mut scene, npc, now) = duel();
+        // the player's ship is 28 m across to a missile that explodes at 56: the rocket does half what it carries
+        let started =
+            scene.activate(npc, missile_effect(spec().ship_id, launcher(2_250.0, 2_000.0, 56.0)), now);
+        assert!(messages(&started, PLAYER, "OnDamageMessage").is_empty(), "the missile has only just left");
+        let mut told = Vec::new();
+        let mut landed_at = None;
+        for step in 1..=12 {
+            let at = now + step * SECOND / 10;
+            let out = scene.poll(at);
+            if landed_at.is_none() && !messages(&out, PLAYER, "OnDamageMessage").is_empty() {
+                landed_at = Some(at);
+            }
+            told.extend(out);
+        }
+        let landed = landed_at.expect("the missile gets there");
+        // 600 m of surface at 2250 m/s: a quarter of a second or so
+        assert!(
+            landed - now > SECOND / 10 && landed - now <= SECOND / 2,
+            "{}",
+            (landed - now) as f64 / SECOND as f64
+        );
+        let hits = messages(&told, PLAYER, "OnDamageMessage");
+        assert_eq!(hits.len(), 1, "the one missile hits once: {hits:?}");
+        assert_eq!(entry(&hits[0], "attackType"), text("otherPlayerWeapons"));
+        assert_eq!(entry(&hits[0], "hitQuality"), int(3));
+        assert_eq!(entry(&hits[0], "weapon"), int(10_629));
+        assert_eq!(
+            entry(&hits[0], "damageAttributes"),
+            Value::Dict(vec![
+                (int(114), int(0)),
+                (int(118), int(0)),
+                (int(117), real(19.0575)),
+                (int(116), int(0))
+            ])
+        );
+        // it explodes where it lands, and the ball goes
+        let names = action_names(&told, PLAYER);
+        let explosion = names
+            .iter()
+            .position(|n| n.contains("TerminalPlayDestructionEffect"))
+            .expect("the explosion is played");
+        assert!(names[explosion + 1].contains("RemoveBalls"), "{names:?}");
+        assert!(scene.missiles.is_empty(), "it is spent");
+    }
+
+    #[test]
+    fn a_missile_that_takes_long_to_get_there_spreads_and_its_ball_stays_for_the_warhead_a_while_after_it_lands()
+     {
+        let (mut scene, npc, now) = duel();
+        // 600 m at 300 m/s is two seconds: more than the client flies out straight
+        scene.activate(npc, missile_effect(spec().ship_id, launcher(300.0, 5_000.0, 56.0)), now);
+        assert!(scene.missiles().next().unwrap().spreads);
+        let mut told = Vec::new();
+        let mut hit_at = None;
+        for step in 1..=60 {
+            let at = now + step * SECOND / 10;
+            let out = scene.poll(at);
+            if hit_at.is_none() && !messages(&out, PLAYER, "OnDamageMessage").is_empty() {
+                hit_at = Some(at);
+            }
+            told.extend(out);
+            if scene.missiles.is_empty() {
+                break;
+            }
+        }
+        let hit_at = hit_at.expect("it lands");
+        let names = action_names(&told, PLAYER);
+        assert!(
+            !names.iter().any(|n| n.contains("TerminalPlayDestructionEffect")),
+            "a spread missile plays no explosion: {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n.contains("RemoveBalls")),
+            "and the ball is let go in the end: {names:?}"
+        );
+        assert!(scene.missiles.is_empty());
+        // it stayed at least the grace after it landed (and the rest of its flight)
+        assert!(now + 5 * SECOND >= hit_at);
+    }
+
+    #[test]
+    fn a_target_further_off_than_the_missile_flies_refuses_the_launcher_with_how_far_it_goes() {
+        let (mut scene, npc, now) = duel();
+        // 300 m of flight against the distance between the two ships
+        let apart = scene.apart(npc, PLAYER).unwrap();
+        assert!(apart > 301.0);
+        let refused =
+            scene.activate(npc, missile_effect(spec().ship_id, launcher(1_500.0, 200.0, 56.0)), now);
+        let Some(Out::TargetRefused { reason, desired_range, actual_distance, target_type, .. }) =
+            refused.first()
+        else {
+            panic!("{refused:?}")
+        };
+        assert_eq!(*reason, "TARGET_OUT_OF_RANGE");
+        assert_eq!(*desired_range, 300.0);
+        assert_eq!(*actual_distance, apart);
+        assert_eq!(*target_type, spec().type_id);
+        assert_eq!(scene.pilots[&npc].modules.running_count(), 0, "it never started");
+        assert!(scene.missiles.is_empty());
+    }
+
+    #[test]
+    fn a_missile_whose_target_has_left_is_gone_with_it_and_does_nothing() {
+        let (mut scene, npc, now) = duel();
+        scene.activate(npc, missile_effect(spec().ship_id, launcher(300.0, 5_000.0, 56.0)), now);
+        scene.leave(PLAYER, crate::scene::Departure::LoggedOff, now + SECOND / 10);
+        let later = scene.poll(now + SECOND / 5);
+        assert!(messages(&later, PLAYER, "OnDamageMessage").is_empty());
+        assert!(scene.missiles.is_empty(), "it is gone with its target");
+    }
+
+    #[test]
+    fn a_launcher_aggresses_its_target_when_it_fires_not_when_the_missile_lands() {
+        let (mut scene, npc, now) = duel();
+        scene.activate(npc, missile_effect(spec().ship_id, launcher(2_250.0, 2_000.0, 56.0)), now);
+        assert_eq!(scene.aggressions.len(), 1);
+        assert_eq!(scene.aggressions[0].target_ship, spec().ship_id);
+        assert_eq!(scene.aggressions[0].module_type_id, 10_629);
+    }
+
+    #[test]
+    fn what_shoots_a_missile_down_hurts_the_missile_not_the_ships_and_the_missile_does_nothing_when_it_is_down()
+     {
+        use crate::missile_entity::Interceptor;
+        let (mut scene, npc, now) = duel();
+        scene.activate(npc, missile_effect(spec().ship_id, launcher(300.0, 5_000.0, 56.0)), now);
+        let id = scene.missiles().next().unwrap().id;
+        let player_at = scene.ship(PLAYER, now).unwrap().position;
+        assert_eq!(scene.missiles_within(player_at, 1_000_000.0), [id], "it is in range of anything near it");
+        let by = Interceptor::Smartbomb { ship_id: spec().ship_id, module_id: 1 };
+        // a hit that is not enough leaves it flying, with what it has left
+        assert!(scene.damage_missile(id, 50.0, by, now).is_empty());
+        assert_eq!(scene.missiles().next().unwrap().hit_points, 40.0);
+        // the one that is enough brings it down: the explosion is played and the ball goes, to whoever was told of it
+        let shot_down = scene.damage_missile(id, 40.0, by, now + SECOND / 10);
+        let names = action_names(&shot_down, PLAYER);
+        assert!(
+            names.iter().any(|n| n.contains("TerminalPlayDestructionEffect"))
+                && names.iter().any(|n| n.contains("RemoveBalls")),
+            "{names:?}"
+        );
+        assert!(scene.missiles.is_empty());
+        // nothing lands afterwards, and no ship was hurt by what shot it
+        let mut told = Vec::new();
+        for step in 1..=60 {
+            told.extend(scene.poll(now + SECOND / 10 + step * SECOND / 10));
+        }
+        assert!(messages(&told, PLAYER, "OnDamageMessage").is_empty());
+        assert!(scene.missiles_within(player_at, 1_000_000.0).is_empty());
+    }
+
+    fn smartbomb_effect(module_id: i64, damage: Damage) -> Effect {
+        Effect {
+            module_id,
+            module_type: 3_977,
+            effect_id: 1,
+            fx: String::new(),
+            duration_ms: 3_000.0,
+            capacitor_need: 0.0,
+            repeat: 1,
+            target_id: 0,
+            turret: None,
+            action: Some(crate::modules::Action::Smartbomb { range: 5_000.0, damage, hurts_pilots: true }),
+            on: None,
+            off: None,
+            on_changes: Vec::new(),
+            off_changes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_smartbomb_shoots_down_the_missiles_of_others_in_its_reach_and_spares_its_own_pilot_s() {
+        let (mut scene, npc, now) = duel();
+        scene.activate(npc, missile_effect(spec().ship_id, launcher(300.0, 5_000.0, 56.0)), now);
+        assert_eq!(scene.missiles.len(), 1);
+        // the pilot who fired the missile sets off a bomb of its own: its missile is not hurt
+        scene.activate(npc, smartbomb_effect(NPC_SHIP + 1, [200.0, 0.0, 0.0, 0.0]), now + SECOND / 20);
+        assert_eq!(scene.missiles.len(), 1, "its own missile is spared");
+        assert_eq!(scene.missiles().next().unwrap().hit_points, 90.0);
+        // the target's bomb is enough to bring it down (it has 90 hit points), with the explosion played to whoever saw it launched
+        let out = scene.activate(
+            PLAYER,
+            smartbomb_effect(spec().ship_id + 1, [100.0, 0.0, 0.0, 0.0]),
+            now + SECOND / 10,
+        );
+        assert!(scene.missiles.is_empty(), "shot down");
+        let names = action_names(&out, PLAYER);
+        assert!(
+            names.iter().any(|n| n.contains("TerminalPlayDestructionEffect"))
+                && names.iter().any(|n| n.contains("RemoveBalls")),
+            "{names:?}"
+        );
     }
 
     #[test]

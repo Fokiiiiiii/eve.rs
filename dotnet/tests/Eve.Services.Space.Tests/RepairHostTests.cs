@@ -38,7 +38,7 @@ public class RepairHostTests
     {
         await using var connection = await rig.Source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
-        await rig.Skills.GrantAsync(connection, transaction, character, new[] { 3392, 3393, 3416, 3419, 3413, 3426, 3318, 3422, 3423, 16069, 27902, 3435, 3449, 3433, 19921, 3427 }.Select(type => new Eve.Skills.CharacterSkill(type, 5, 0)));
+        await rig.Skills.GrantAsync(connection, transaction, character, new[] { 3392, 3393, 3416, 3419, 3413, 3426, 3318, 3422, 3423, 16069, 27902, 3435, 3449, 3433, 19921, 3427, 3434, 3421 }.Select(type => new Eve.Skills.CharacterSkill(type, 5, 0)));
         await transaction.CommitAsync();
     }
 
@@ -189,7 +189,8 @@ public class ProjectedHostTests
     }
 
     private const int MidSlot = 19;
-    private const int StasisWebifier = 526, WarpScrambler = 447, WarpDisruptor = 3242, TargetPainter = 12709, SensorDampener = 1968, RadarJammer = 1956, MultispectralJammer = 1957;
+    private const int SmallEmpSmartbomb = 1563;
+    private const int StasisWebifier = 526, WarpScrambler = 447, WarpDisruptor = 3242, TargetPainter = 12709, SensorDampener = 1968, RadarJammer = 1956, MultispectralJammer = 1957, TrackingDisruptorModule = 2108, GuidanceDisruptorModule = 5321;
 
     private static async Task<(SimAction.Remote Action, SimEffect Effect, Rig Rig, Eve.Characters.Created Character, long Module)> StartedAsync(int typeId, string effectName)
     {
@@ -256,6 +257,62 @@ public class ProjectedHostTests
             var jam = Assert.IsType<SimRemote.Jam>(multi.What);
             Assert.True(jam.Gravimetric == jam.Ladar && jam.Ladar == jam.Magnetometric && jam.Magnetometric == jam.Radar && jam.Radar > 0, $"{jam}");
             Assert.Equal((19_200d, 18_000d), (multi.Optimal, multi.Falloff));
+        }
+    }
+
+    [PgFact]
+    public async Task A_smartbomb_is_started_with_its_field_and_its_damage_from_dogma_and_does_not_hurt_pilots_where_the_safety_forbids_it()
+    {
+        var (rig, session, character, module) = await ReadyAsync(SmallEmpSmartbomb, HighSlot);
+        await using var _ = rig;
+        // it needs no target
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, module, "empWave", 0, 1000, CancellationToken.None));
+        var effect = Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect;
+        var bomb = Assert.IsType<SimAction.Smartbomb>(effect.Action);
+        Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 99), 6), bomb.Range);
+        Assert.True(bomb.Range > 0);
+        Assert.Equal(
+            [Math.Round(await ValueAsync(rig, character, module, 114), 6), Math.Round(await ValueAsync(rig, character, module, 118), 6), Math.Round(await ValueAsync(rig, character, module, 117), 6), Math.Round(await ValueAsync(rig, character, module, 116), 6)],
+            bomb.Damage);
+        Assert.True(bomb.Damage.Sum() > 0);
+        Assert.Equal(await ValueAsync(rig, character, module, 73), effect.DurationMs, 3);
+        Assert.Equal(0, effect.TargetId);
+        // the rig's system is not null security: the simulation is told not to hurt pilots with it
+        Assert.False(bomb.HurtsPilots);
+    }
+
+    [PgFact]
+    public async Task A_tracking_disruptor_takes_the_percentages_dogma_gives_from_the_range_the_falloff_and_the_tracking_of_its_target()
+    {
+        var (disrupt, effect, rig, character, module) = await StartedAsync(TrackingDisruptorModule, "shipModuleTrackingDisruptor");
+        await using (rig)
+        {
+            Assert.Equal("ewTrackingDisrupt", disrupt.Jam);
+            Assert.False(disrupt.AtCycleEnd);
+            var what = Assert.IsType<SimRemote.Disrupt>(disrupt.What);
+            Assert.Equal(
+                (Math.Round(await ValueAsync(rig, character, module, 351), 6), Math.Round(await ValueAsync(rig, character, module, 349), 6), Math.Round(await ValueAsync(rig, character, module, 767), 6)),
+                (what.RangePercent, what.FalloffPercent, what.TrackingPercent));
+            Assert.True(what.RangePercent < 0 && what.FalloffPercent < 0 && what.TrackingPercent < 0, $"{what}");
+            Assert.True(disrupt.Optimal > 0 && effect.DurationMs > 0);
+        }
+    }
+
+    [PgFact]
+    public async Task A_guidance_disruptor_takes_the_percentages_dogma_gives_from_the_speed_the_flight_and_the_explosion_of_the_missiles_of_its_target()
+    {
+        var (disrupt, effect, rig, character, module) = await StartedAsync(GuidanceDisruptorModule, "shipModuleGuidanceDisruptor");
+        await using (rig)
+        {
+            Assert.Equal("ewGuidanceDisrupt", disrupt.Jam);
+            Assert.False(disrupt.AtCycleEnd);
+            var what = Assert.IsType<SimRemote.GuidanceDisrupt>(disrupt.What);
+            Assert.Equal(
+                (Math.Round(await ValueAsync(rig, character, module, 547), 6), Math.Round(await ValueAsync(rig, character, module, 596), 6), Math.Round(await ValueAsync(rig, character, module, 847), 6), Math.Round(await ValueAsync(rig, character, module, 848), 6)),
+                (what.VelocityPercent, what.DelayPercent, what.AoeVelocityPercent, what.AoeCloudPercent));
+            // the missiles go slower and not as far, and burst wider and slower
+            Assert.True(what.VelocityPercent < 0 && what.DelayPercent < 0 && what.AoeVelocityPercent < 0 && what.AoeCloudPercent > 0, $"{what}");
+            Assert.True(disrupt.Optimal > 0 && effect.DurationMs > 0);
         }
     }
 

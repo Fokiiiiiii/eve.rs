@@ -20,6 +20,9 @@ public sealed partial class DogmaIMService(
 {
     private readonly CharacterDogmaSync _sync = sync ?? new CharacterDogmaSync(statics, ships, nowUnixMs);
 
+    /// <summary>The waits of this service (a module reloading): the one in-memory timer service of the server.</summary>
+    private readonly Eve.Scheduler.LocalTimers _timers = new(log, delay);
+
     private DogmaInfo _info => _sync.Info;
 
     /// <summary>What a bound dogma object is: the session that opened it and the place it was opened for.</summary>

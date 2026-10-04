@@ -40,6 +40,33 @@ internal sealed class FakeSim : ISimulation
         return Task.FromResult(SpawnAnswer is { } answer ? answer with { RequestId = spawn.RequestId } : new SimSpawnReply(spawn.RequestId, (ulong)Heard.Count + (1UL << 62), null));
     }
 
+    /// <summary>What a launched drone is answered with: the session it is known by, or a reason.</summary>
+    public SimSpawnReply? LaunchAnswer { get; set; }
+
+    public Task<SimSpawnReply> LaunchDroneAsync(SimLaunchDrone launch, CancellationToken cancellationToken = default)
+    {
+        if (!IsConnected)
+        {
+            throw new SimUnavailableException("the simulation is not running");
+        }
+        Heard.Add(launch);
+        return Task.FromResult(LaunchAnswer is { } answer ? answer with { RequestId = launch.RequestId } : new SimSpawnReply(launch.RequestId, (ulong)Heard.Count + (1UL << 62), null));
+    }
+
+    /// <summary>What an order to drones is answered with: every drone takes it, unless the test says otherwise.</summary>
+    public Func<ulong, byte, long, IReadOnlyList<long>, CommandReply>? DroneAnswer { get; set; }
+
+    public Task<CommandReply> DroneCommandAsync(ulong sessionId, byte command, long targetId, IReadOnlyList<long> droneIds, CancellationToken cancellationToken = default)
+    {
+        if (!IsConnected)
+        {
+            throw new SimUnavailableException("the simulation is not running");
+        }
+        Heard.Add(new SimDroneCommand(sessionId, command, targetId, droneIds));
+        return Task.FromResult(DroneAnswer?.Invoke(sessionId, command, targetId, droneIds)
+            ?? new CommandReply(true, 0, null) { Drones = [.. droneIds.Select(id => new SimDroneResult(id, ""))] });
+    }
+
     /// <summary>What a respawn is answered with: null (done) or a reason.</summary>
     public string? RespawnAnswer { get; set; }
 

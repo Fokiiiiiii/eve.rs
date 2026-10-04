@@ -62,11 +62,11 @@ internal sealed class TradeRig : IAsyncDisposable
         await tx.CommitAsync();
         return id;
     }
-    public async Task<long> Stock(long owner,long quantity)
+    public async Task<long> Stock(long owner,long quantity,int flag = ItemFlags.Hangar)
     {
         await using var c=await Source.OpenConnectionAsync();
         await using var tx=await c.BeginTransactionAsync();
-        var id=await Items.CreateAsync(c,tx,new NewItem(34,owner,Station.Id,ItemFlags.Hangar,quantity));
+        var id=await Items.CreateAsync(c,tx,new NewItem(34,owner,Station.Id,flag,quantity));
         await tx.CommitAsync();
         return id;
     }

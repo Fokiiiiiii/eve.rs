@@ -257,6 +257,53 @@ public class StationServiceTests
         Assert.Equal("stationSvc", ((IService)service).Name);
         Assert.True(((IService)service).HasMethod("GetGuests"));
     }
+
+    [PgFact]
+    public async Task Map_station_info_is_a_cached_rowset()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+        var reads = new Eve.ReadSide.ReadSide(source);
+        var service = new MapService(reads, () => Data.ClockMs);
+        Assert.Equal("map", ((IService)service).Name);
+        var (session, _) = Data.Session(null);
+        var answer = await Data.CallAsync(service, session, "GetStationInfo");
+        var cached = Assert.IsType<PyObject>(answer);
+        Assert.Equal(ObjectCaching.ResultClass, JsSemantics.StringValue(cached.Name));
+
+        var args = ((PyTuple)cached.Args).Items;
+        var rowset = Assert.IsType<PyObject>(((PySubStream)args[1]).Decoded);
+        var fields = Data.Fields(rowset);
+        Assert.Equal(
+            ["stationID", "solarSystemID", "operationID", "stationTypeID", "ownerID", "serviceMask", "constellationID", "regionID"],
+            ((PyList)fields["header"]).Items.Select(JsSemantics.StringValue));
+        Assert.Equal("util.Row", JsSemantics.StringValue(fields["RowClass"]));
+
+        var lines = ((PyList)fields["lines"]).Items.Select(value => ((PyList)value).Items).ToArray();
+        Assert.NotEmpty(lines);
+        var stationIds = lines.Select(row => ((PyInt)row[0]).Value).ToArray();
+        Assert.Equal(stationIds.Order().ToArray(), stationIds);
+        Assert.All(lines, row =>
+        {
+            Assert.Equal(8, row.Count);
+            Assert.Equal(StationService.AllServicesMask, ((PyInt)row[5]).Value);
+        });
+
+        var sde = new SdeReader(source);
+        var staticStations = await sde.ReadAsync("npcStations");
+        Assert.Equal(staticStations.Select(station => station.Key).Order().ToArray(), stationIds);
+
+        var station = staticStations.Single(row => row.Key == stationIds[0]);
+        var solarSystemId = station.Doc.GetProperty("solarSystemID").GetInt32();
+        var system = (await sde.ReadAsync("mapSolarSystems", [(long)solarSystemId])).Single().Doc;
+        var first = lines[0];
+        Assert.Equal(station.Key, ((PyInt)first[0]).Value);
+        Assert.Equal(solarSystemId, ((PyInt)first[1]).Value);
+        Assert.Equal(station.Doc.GetProperty("operationID").GetInt32(), ((PyInt)first[2]).Value);
+        Assert.Equal(station.Doc.GetProperty("typeID").GetInt32(), ((PyInt)first[3]).Value);
+        Assert.Equal(station.Doc.GetProperty("ownerID").GetInt64(), ((PyInt)first[4]).Value);
+        Assert.Equal(system.GetProperty("constellationID").GetInt32(), ((PyInt)first[6]).Value);
+        Assert.Equal(system.GetProperty("regionID").GetInt32(), ((PyInt)first[7]).Value);
+    }
 }
 
 public class GuestTests

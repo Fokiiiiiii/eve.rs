@@ -27,6 +27,9 @@ public sealed record CommandReply(bool Accepted, long At, string? Reason, double
 
     public IReadOnlyList<double> Direction { get; init; } = [];
 
+    /// <summary>What each drone did with an order to drones (<see cref="SimDroneResult.Reason"/> is empty for one that took it).</summary>
+    public IReadOnlyList<SimDroneResult> Drones { get; init; } = [];
+
     /// <summary>How far a wreck or can is, measured to its surface (the answer to <see cref="SimCommands.Measure"/>; null: there is no such wreck).</summary>
     public double? Distance { get; init; }
 }
@@ -68,6 +71,12 @@ public interface ISimulation
 
     /// <summary>Spawns an NPC in the scene of a system and waits for the answer (the session it is known by, or why it could not be done).</summary>
     Task<SimSpawnReply> SpawnAsync(SimSpawn spawn, CancellationToken cancellationToken = default);
+
+    /// <summary>Launches a drone beside the ship of a pilot and waits for the answer (the session the drone is known by, or why it could not be done).</summary>
+    Task<SimSpawnReply> LaunchDroneAsync(SimLaunchDrone launch, CancellationToken cancellationToken = default);
+
+    /// <summary>Gives a pilot's drones an order (<see cref="SimDroneCommands"/>) and waits for what each did with it (<see cref="CommandReply.Drones"/>).</summary>
+    Task<CommandReply> DroneCommandAsync(ulong sessionId, byte command, long targetId, IReadOnlyList<long> droneIds, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gives a session whose ship was destroyed another (the capsule the host made), at rest at the place; null when it was done, else why not.

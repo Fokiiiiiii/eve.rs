@@ -576,6 +576,22 @@ public class SpaceServiceTests
     }
 
     [Theory]
+    // (class, safety level, a capsule is the target) -> whether the safety stops the weapon: high security needs none; low security needs partial, and none for a capsule; null security no crime
+    [InlineData(Eve.Universe.SecurityClass.HighSec, 2, false, true)]
+    [InlineData(Eve.Universe.SecurityClass.HighSec, 1, false, true)]
+    [InlineData(Eve.Universe.SecurityClass.HighSec, 0, false, false)]
+    [InlineData(Eve.Universe.SecurityClass.SafeSec, 1, false, true)]
+    [InlineData(Eve.Universe.SecurityClass.SafeSec, 0, false, false)]
+    [InlineData(Eve.Universe.SecurityClass.LowSec, 2, false, true)]
+    [InlineData(Eve.Universe.SecurityClass.LowSec, 1, false, false)]
+    [InlineData(Eve.Universe.SecurityClass.LowSec, 1, true, true)]
+    [InlineData(Eve.Universe.SecurityClass.LowSec, 0, true, false)]
+    [InlineData(Eve.Universe.SecurityClass.ZeroSec, 2, false, false)]
+    [InlineData(Eve.Universe.SecurityClass.ZeroSec, 2, true, false)]
+    public void The_safety_a_pilot_has_set_decides_what_it_may_attack(Eve.Universe.SecurityClass where, int level, bool capsule, bool stops) =>
+        Assert.Equal(stops, WeaponSafety.StopsFire(where, level, capsule));
+
+    [Theory]
     [InlineData(Eve.Universe.SecurityClass.SafeSec, true)]
     [InlineData(Eve.Universe.SecurityClass.HighSec, true)]
     [InlineData(Eve.Universe.SecurityClass.LowSec, true)]

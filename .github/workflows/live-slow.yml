@@ -60,7 +60,7 @@ jobs:
           python-version: "3.12"
       - id: sde-build
         run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .cache/sde
           key: sde-${{ steps.sde-build.outputs.build }}

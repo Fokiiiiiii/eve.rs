@@ -151,6 +151,12 @@ pub enum Out {
     ContainerPlaced { session: SessionId, container_id: i64, position: Vec3, direction: Vec3 },
     /// The answer to a question about how far a wreck or can is: metres from the ship's centre to its surface, or `None` when there is no such wreck.
     Measured { session: SessionId, command: u8, distance: Option<f64> },
+    /// A drone was taken into the drone bay of its controller's ship (it came within reach after `ReturnBay`): the host moves its item back into the bay.
+    DroneScooped { session: SessionId, drone_id: i64 },
+    /// A drone is let go (`Abandon`, or its controller left the scene): it is out of the scene and the host decides what becomes of its item.
+    DroneReleased { session: SessionId, drone_id: i64, position: Vec3 },
+    /// The answer to an order to drones: for each drone `None` when it took the order, the reason when it did not.
+    DroneResults { session: SessionId, command: u8, results: Vec<(i64, Option<&'static str>)> },
     /// A targeting order the scene refused, with what the client is told about the target.
     TargetRefused {
         session: SessionId,
@@ -180,6 +186,9 @@ impl Out {
             | Out::ChargeAdjusted { session, .. }
             | Out::ContainerPlaced { session, .. }
             | Out::Measured { session, .. }
+            | Out::DroneScooped { session, .. }
+            | Out::DroneReleased { session, .. }
+            | Out::DroneResults { session, .. }
             | Out::TargetRefused { session, .. } => *session,
         }
     }
@@ -299,6 +308,14 @@ pub struct Scene {
     pub(crate) rng: PythonRandom,
     /// The offensive acts since the brains last looked (`crate::brains` tells the NPCs that were their targets).
     pub(crate) aggressions: Vec<crate::weapons::Aggression>,
+    /// The missiles that are on their way to a ship, by id: entities of their own, apart from the ships (`crate::missile_entity`).
+    pub(crate) missiles: BTreeMap<i64, crate::missile_entity::MissileEntity>,
+    /// How many missiles have been fired in this scene (their ids are numbered from it).
+    pub(crate) missile_sequence: u64,
+    /// The drones of the scene, by the session each is known by (they are NPC-session pilots tied to the ship that controls them, `crate::drones`).
+    pub(crate) drones: BTreeMap<SessionId, crate::drones::DroneAi>,
+    /// Who attacked each controller lately (ship id and when), for the idle drones that take up a fight by themselves (`crate::drones`).
+    pub(crate) drone_threats: BTreeMap<SessionId, Vec<(i64, i64)>>,
     /// The trees of the NPCs (`crate::brains`).
     pub(crate) brains: Option<crate::brains::Brains>,
     /// The wrecks in the scene, by item id (`crate::wreck`).
@@ -341,6 +358,10 @@ impl Scene {
             group_sequence: 0,
             rng: PythonRandom::new(0x5348_4f54),
             aggressions: Vec::new(),
+            missiles: BTreeMap::new(),
+            missile_sequence: 0,
+            drones: BTreeMap::new(),
+            drone_threats: BTreeMap::new(),
             brains: None,
             wrecks: BTreeMap::new(),
             wreck_sequence: 0,
@@ -437,6 +458,7 @@ impl Scene {
         }
         let mut out = self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting, now);
         out.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
+        out.extend(self.release_drones(session, now));
         Some(out)
     }
 
@@ -1041,6 +1063,7 @@ impl Scene {
         let old = std::mem::replace(&mut pilot.ship.spec, spec);
         let new = &pilot.ship.spec;
         pilot.ship.health.respec(new.vitals, new.shield_recharge_ms, now);
+        let security_changed = new.security_status != old.security_status;
         let ship_id = id(new.ship_id);
         let mut actions = Vec::new();
         if new.mass != old.mass {
@@ -1052,7 +1075,13 @@ impl Scene {
         if new.max_velocity != old.max_velocity {
             actions.push(payload::action(stamp, "SetMaxSpeed", [ship_id, real(new.max_velocity)]));
         }
-        let told = if actions.is_empty() { Vec::new() } else { self.tell_all(session, actions) };
+        let mut told = if actions.is_empty() { Vec::new() } else { self.tell_all(session, actions) };
+        // a security status that changed is in the slim item: the pilot and whoever sees the ship are shown it again (the reference does, when a crime costs a pilot some)
+        if security_changed {
+            let ship = &self.pilots[&session].ship;
+            let change = payload::ship_slim_item_change(stamp, ship);
+            told.extend(self.tell_all(session, vec![change]));
+        }
         self.with_backlog(told)
     }
 
@@ -1077,11 +1106,15 @@ impl Scene {
                 told.push(Out::Docked { session, station_id, condition: Self::condition_of(&pilot, now) });
                 told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting, now));
                 told.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
+                told.extend(self.release_drones(session, now));
             }
         }
+        told.extend(self.note_drone_threats(now));
         told.extend(self.tick_brains(now));
         told.extend(self.settle_targets(now));
         told.extend(self.settle_modules(now));
+        told.extend(self.advance_missiles(now));
+        told.extend(self.advance_drones(now));
         told.extend(self.reconcile(now));
         told.extend(self.reconcile_wrecks(now));
         told.extend(self.expire_wrecks(now));
@@ -2168,6 +2201,23 @@ pub(crate) mod tests {
             action_names(&scene.respec(SESSION, heavier, NOON)[0]),
             ["SetBallMass", "SetBallAgility", "SetMaxSpeed"]
         );
+    }
+
+    #[test]
+    fn a_change_of_the_security_status_shows_the_slim_item_again_to_the_pilot() {
+        let mut scene = scene();
+        let mut penalised = spec();
+        penalised.security_status = -0.25;
+        let out = scene.respec(SESSION, penalised.clone(), NOON);
+        assert_eq!(out.len(), 1, "only the pilot is in the scene");
+        assert_eq!(action_names(&out[0]), ["OnSlimItemChange"]);
+        let told = format!("{:?}", out[0]);
+        assert!(
+            told.contains("foo.SlimItem") && told.contains("Real(-0.25)"),
+            "the slim item with the new status: {told}"
+        );
+        assert!(told.contains(&spec().ship_id.to_string()), "the item is the ship");
+        assert!(scene.respec(SESSION, penalised, NOON).is_empty(), "the same status says nothing more");
     }
 
     #[test]

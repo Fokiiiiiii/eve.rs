@@ -9,7 +9,7 @@ namespace Eve.Services.Space;
 /// character is in space, and the simulation takes over (<see cref="SpaceSessions"/>).
 /// </summary>
 [Service("ship")]
-public sealed partial class ShipService(SpaceSessions space, Func<long> nowUnixMs, ISpaceContainers? containers = null) : IBoundObjectReleaseHandler
+public sealed partial class ShipService(SpaceSessions space, Func<long> nowUnixMs, ISpaceContainers? containers = null, ISpaceDrones? drones = null) : IBoundObjectReleaseHandler
 {
     private readonly Binding _binding = new(nowUnixMs);
 
@@ -59,6 +59,30 @@ public sealed partial class ShipService(SpaceSessions space, Func<long> nowUnixM
         var jettisoned = await containers.JettisonAsync(call.Session, asked, call.Cancellation);
         return Py.Tuple(Py.Tuple([.. jettisoned.Select(InventoryWire.Id)]), Py.Tuple());
     }
+
+    /// <summary>
+    /// <c>LaunchDrones([(itemID, quantity)], ...)</c>: drones go out of the drone bay. Answers a dictionary of item to the ids of the drones that went out and the refusals of the rest
+    /// (<c>("CustomNotify", {notify})</c>); an empty one when the ship is not in space.
+    /// </summary>
+    [Method("LaunchDrones")]
+    public async ValueTask<PyValue> LaunchDrones(ServiceCall call)
+    {
+        if (drones is null || !_binding.Owns(call))
+        {
+            return None;
+        }
+        var asked = (call.Arg(0) switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] })
+            .Select(entry => entry switch { PyTuple t => t.Items, PyList l => l.Items, var other => [other] })
+            .Where(parts => parts.Count > 0 && IdOf(parts[0]) is > 0)
+            .Select(parts => new DroneRequest(IdOf(parts[0])!.Value, parts.Count > 1 && IdOf(parts[1]) is { } quantity ? (int)Math.Clamp(quantity, 1, int.MaxValue) : 1))
+            .ToList();
+        return await drones.LaunchAsync(call.Session, asked, call.Cancellation);
+    }
+
+    /// <summary><c>ScoopDrone(droneIDs)</c>: drones that nobody commands are taken into the drone bay. Answers a dictionary of the drones that could not be.</summary>
+    [Method("ScoopDrone")]
+    public async ValueTask<PyValue> ScoopDrone(ServiceCall call) =>
+        drones is null || !_binding.Owns(call) ? None : await drones.ScoopAsync(call.Session, SpaceDrones.IdsOf(call.Arg(0)), call.Cancellation);
 
     /// <summary><c>Undock(shipID, ignoreContraband, onlineModules=)</c>: answers the bound object and the time it can be used from again.</summary>
     [Method("Undock")]

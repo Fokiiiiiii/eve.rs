@@ -189,4 +189,62 @@ public class SpaceEventsTests
 
         Assert.Empty(rig.Sim.Heard.Skip(heard));
     }
+
+    // ── the same things on the shared events bus ─────────────────────────────
+
+    private static async Task<List<(string Topic, string Json)>> AnnouncedAsync(Rig rig, int count)
+    {
+        for (var i = 0; i < 400; i++)
+        {
+            await rig.Bus!.PumpAsync();
+            lock (rig.Announced)
+            {
+                if (rig.Announced.Count >= count)
+                {
+                    return [.. rig.Announced];
+                }
+            }
+            await Task.Delay(10);
+        }
+        throw new Xunit.Sdk.XunitException("the event never came");
+    }
+
+    [PgFact]
+    public async Task A_kill_is_announced_on_the_events_bus_with_the_pilot_the_type_and_the_place()
+    {
+        var (rig, c, session) = await InSpaceAsync();
+        await using var _ = rig;
+        await rig.UseBusAsync();
+        var spawn = await SpawnAsync(rig, session);
+        var system = (long)session.GetInt("solarsystemid")!.Value;
+
+        rig.Sim.Say(NpcDestroyed(spawn, c.ShipId));
+        var (topic, json) = (await AnnouncedAsync(rig, 1))[0];
+
+        Assert.Equal("npc.killed", topic);
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+        var root = document.RootElement;
+        Assert.Equal(
+            (c.CharacterId, (long)spawn.Ship.TypeId, system, spawn.Ship.ShipId),
+            (root.GetProperty("characterId").GetInt64(), root.GetProperty("typeId").GetInt64(), root.GetProperty("solarSystemId").GetInt64(), root.GetProperty("shipId").GetInt64()));
+        Assert.False(string.IsNullOrEmpty(root.GetProperty("profile").GetString()));
+    }
+
+    [PgFact]
+    public async Task A_lost_ship_is_announced_on_the_events_bus_with_its_cause()
+    {
+        var (rig, c, session) = await InSpaceAsync();
+        await using var _ = rig;
+        await rig.UseBusAsync();
+        var spawn = await SpawnAsync(rig, session);
+        var type = (await rig.Items.GetAsync(c.ShipId))!.TypeId;
+
+        rig.Sim.Say(ShipDestroyed(session, c.ShipId, spawn.Ship.ShipId));
+        var (topic, json) = (await AnnouncedAsync(rig, 1))[0];
+
+        Assert.Equal("ship.lost", topic);
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+        var root = document.RootElement;
+        Assert.Equal((c.CharacterId, c.ShipId, (long)type, "Npc"), (root.GetProperty("characterId").GetInt64(), root.GetProperty("shipId").GetInt64(), root.GetProperty("shipTypeId").GetInt64(), root.GetProperty("cause").GetString()));
+    }
 }

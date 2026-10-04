@@ -94,6 +94,24 @@ public sealed partial class CharacterShips
     }
 
     /// <summary>
+    /// What a host that has just started does before it takes a client: every ship that a host which stopped without closing its sessions left in space is put back
+    /// where its character last was (the simulation starts empty with the host's connection, so no ship of a character is in it). Returns how many were put back.
+    /// </summary>
+    public async Task<int> RecoverAllFromSpaceAsync(Func<long, (int SolarSystemId, int ConstellationId, int RegionId)?>? placeOf, CancellationToken cancellationToken = default)
+    {
+        var recovered = 0;
+        // whoever owns something that is in space: a character's ship is one, the cans and wrecks of NPCs and of players are the others (only a ship of its owner is moved)
+        foreach (var owner in await items.OwnersWithFlagAsync(InSpaceFlag, cancellationToken))
+        {
+            if (await RecoverFromSpaceAsync(owner, placeOf, cancellationToken))
+            {
+                recovered++;
+            }
+        }
+        return recovered;
+    }
+
+    /// <summary>
     /// A ship left in space (the simulation was lost, the host restarted) is put back in the hangar of the station the character last was at,
     /// so that a character never wakes up in a ship the simulation does not have. Returns whether anything was moved.
     /// </summary>
@@ -115,6 +133,7 @@ public sealed partial class CharacterShips
         {
             return false;
         }
+        await RecoverDronesAsync(connection, transaction, characterId, character.SolarSystemId, ship.Id, cancellationToken);
         await items.MoveAsync(connection, transaction, ship.Id, character.StationId, ItemFlags.Hangar, cancellationToken);
         if (placeOf?.Invoke(character.StationId) is { } place && place.SolarSystemId != character.SolarSystemId)
         {

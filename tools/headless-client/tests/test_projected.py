@@ -32,6 +32,7 @@ REMOTE_ARMOR = 11355
 WEBIFIER = 526
 RADAR_JAMMER = 1956
 TRACKING_DISRUPTOR = 2108
+GUIDANCE_DISRUPTOR = 5321
 SMALL_SMARTBOMB = 1563
 pytestmark = [
     pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server"),
@@ -228,6 +229,20 @@ def test_a_tracking_disruptor_runs_against_a_rat():
         assert starts and starts[0][3], f"the disruptor did not start: {starts}"
         f.slash("/heal")
         f.who.call_bound(f.dogma[0], "Deactivate", f.module, "shipModuleTrackingDisruptor")
+        ended = watch(f.only, 15.0, until=lambda seen: any(e["name"] == "OnGodmaShipEffect" and number(effect_of(e)[0]) == f.module and not effect_of(e)[3] for e in seen["who"]))
+        assert any(e["name"] == "OnGodmaShipEffect" and number(effect_of(e)[0]) == f.module and not effect_of(e)[3] for e in ended["who"]), "the disruptor did not stop"
+
+
+def test_a_guidance_disruptor_runs_against_a_rat():
+    """What it does to the rat's missiles is worked into each missile the rat launches (the speed, flight time and explosion of the ball the pilot is shown); this holds that the
+    module is accepted at the rat, starts and stops (the numbers of the missiles are held by the scene's tests: `weapons.rs`, `ewar.rs`)."""
+    with fight("guidance", ("Weapon Disruption",), GUIDANCE_DISRUPTOR) as f:
+        f.reach("shipModuleGuidanceDisruptor")
+        started = watch(f.only, 4.0)
+        starts = [effect_of(e) for e in started["who"] if e["name"] == "OnGodmaShipEffect" and number(effect_of(e)[0]) == f.module]
+        assert starts and starts[0][3], f"the disruptor did not start: {starts}"
+        f.slash("/heal")
+        f.who.call_bound(f.dogma[0], "Deactivate", f.module, "shipModuleGuidanceDisruptor")
         ended = watch(f.only, 15.0, until=lambda seen: any(e["name"] == "OnGodmaShipEffect" and number(effect_of(e)[0]) == f.module and not effect_of(e)[3] for e in seen["who"]))
         assert any(e["name"] == "OnGodmaShipEffect" and number(effect_of(e)[0]) == f.module and not effect_of(e)[3] for e in ended["who"]), "the disruptor did not stop"
 

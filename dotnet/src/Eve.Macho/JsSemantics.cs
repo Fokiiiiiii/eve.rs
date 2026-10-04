@@ -66,6 +66,7 @@ public static class JsSemantics
     {
         null or PyNone => "null",
         PyStr text => text.Value,
+        PyWString text => text.Value,
         PyBytes bytes => Encoding.UTF8.GetString(bytes.Value.Span),
         PyBuffer buffer => Encoding.UTF8.GetString(buffer.Value.Span),
         PyInt number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),

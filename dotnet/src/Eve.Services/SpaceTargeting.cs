@@ -38,3 +38,10 @@ public interface ISpaceTargeting
     /// <summary>Carries out an order for the session's ship; null when the session has no ship in space.</summary>
     Task<TargetingResult?> OrderAsync(ClientSession session, TargetingOrder order, IReadOnlyList<long> targets, CancellationToken cancellationToken);
 }
+
+/// <summary>Answers whether two characters belong to opposite sides of an active war, including accepted war allies.</summary>
+public interface IWars
+{
+    /// <summary>Checks the owners of both characters at the supplied game time.</summary>
+    Task<bool> AreAtWarAsync(long attackerCharacterId, long targetCharacterId, long nowUnixMs, CancellationToken cancellationToken = default);
+}

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Eve.Data/Eve.Data.csproj" />
+    <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />
+    <ProjectReference Include="../Eve.Events/Eve.Events.csproj" />
+  </ItemGroup>
+  <ItemGroup><EmbeddedResource Include="Migrations/*.sql" /></ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Eve.Relations.Tests" />
+  </ItemGroup>
+</Project>

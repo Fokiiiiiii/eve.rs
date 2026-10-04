@@ -7,12 +7,15 @@ public class ChargeSpentQueueTests
     {
         public List<(long Character, long Module, long Rounds)> Written { get; } = [];
 
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public TaskCompletionSource? Gate { get; set; }
 
         public int FailuresLeft { get; set; }
 
         public async Task WriteAsync(long character, long module, long rounds)
         {
+            Started.TrySetResult();
             if (Gate is { } gate)
             {
                 await gate.Task;
@@ -30,22 +33,32 @@ public class ChargeSpentQueueTests
     }
 
     [Fact]
+
     public async Task What_is_told_is_written_in_the_order_it_was_told_and_a_flush_waits_for_it()
     {
-        var store = new Store();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new Store { Gate = gate };
         var queue = new ChargeSpentQueue(store.WriteAsync, null);
-        // three guns spend a round each, twice: told in turns
+
+        queue.Enqueue(1, 10, 400, 90);
+        await store.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // Hold the lane on the first write so both reports for each gun are in the same pending batch.
         for (var round = 79L; round >= 78; round--)
         {
             queue.Enqueue(1, 10, 100, round);
             queue.Enqueue(1, 10, 200, round);
             queue.Enqueue(1, 10, 300, round);
         }
+        var flushed = queue.FlushAsync(1);
+        await Task.Delay(50);
+        Assert.False(flushed.IsCompleted);
 
-        await queue.FlushAsync(1);
+        gate.SetResult();
+        await flushed;
 
-        // the last count of each gun, the guns in the order they were first told, and never a count after a later one of the same gun
-        Assert.Equal([(10L, 100L, 78L), (10L, 200L, 78L), (10L, 300L, 78L)], store.Written.ToArray());
+        Assert.Equal(
+            [(10L, 400L, 90L), (10L, 100L, 78L), (10L, 200L, 78L), (10L, 300L, 78L)],
+            store.Written.ToArray());
     }
 
     [Fact]

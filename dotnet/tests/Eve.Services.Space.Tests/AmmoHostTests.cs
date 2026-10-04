@@ -91,12 +91,15 @@ public class AmmoHostTests
     /// <summary>The writing of the rounds spent is held until the test lets it go, and what was written is kept.</summary>
     private sealed class HeldWriter(Rig rig)
     {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public TaskCompletionSource Gate { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public List<(long Module, long Rounds)> Written { get; } = [];
 
         public async Task WriteAsync(long character, long module, long rounds)
         {
+            Started.TrySetResult();
             await Gate.Task;
             lock (Written)
             {
@@ -107,6 +110,7 @@ public class AmmoHostTests
     }
 
     [PgFact]
+
     public async Task A_ship_that_docks_is_not_moved_before_the_rounds_its_guns_spent_are_written()
     {
         await using var rig = await Rig.CreateAsync();
@@ -115,15 +119,18 @@ public class AmmoHostTests
         rig.Space.ChargeWriter = writer.WriteAsync;
 
         rig.Sim.Say(new SimChargeSpent((ulong)session.SessionId, gun, 79));
+        await writer.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         rig.Sim.Say(new SimChargeSpent((ulong)session.SessionId, gun, 78));
         rig.Sim.Say(new SimDocked((ulong)session.SessionId, Rig.Station));
         await Task.Delay(700);
-        Assert.Null(session.GetInt("stationid")); // the dock waits for the rounds
+        Assert.Null(session.GetInt("stationid")); // the dock waits for all spent rounds to persist
+        Assert.Empty(writer.Written);
+
         writer.Gate.SetResult();
         await Rig.UntilAsync(() => session.GetInt("stationid") == Rig.Station);
 
-        // what the hangar shows is the last count, written once and in order
-        Assert.Equal([(gun, 78L)], writer.Written.ToArray());
+        // Both reported snapshots are persisted in order; the docked ship keeps the final count.
+        Assert.Equal([(gun, 79L), (gun, 78L)], writer.Written.ToArray());
         var snapshot = (await rig.Ships.LoadAsync(character.CharacterId, CancellationToken.None))!;
         Assert.Equal(78, snapshot.Charges.Single().Quantity);
     }

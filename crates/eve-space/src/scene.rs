@@ -1234,7 +1234,7 @@ impl Scene {
         pilot.heat.profile = Some(profile);
         pilot.heat.modules = modules;
         pilot.heat.updated_at.get_or_insert(now);
-        pilot.heat.force_notify = true;
+        pilot.heat.force_notify |= pilot.heat.levels != pilot.heat.notified_levels;
         Ok(())
     }
 
@@ -3489,6 +3489,20 @@ pub(crate) mod tests {
             }],
             ..HeatProfile::default()
         }
+    }
+
+    #[test]
+    fn an_initial_zero_heat_profile_sends_no_module_attribute_change_on_bind() {
+        let mut scene = scene();
+        scene.set_heat_profile(SESSION, heat_profile_for_spec(0), NOON).unwrap();
+        scene.bind(SESSION, NOON);
+
+        let told = scene.poll(NOON + TICKS_PER_SECOND);
+        assert!(
+            !told.iter().any(|out| matches!(out, Out::Notify { name: "OnModuleAttributeChanges", .. })),
+            "{:?}",
+            told
+        );
     }
 
     #[test]

@@ -3,9 +3,9 @@ name: Live (slow)
 # The end-to-end tests that take minutes (a pilot undocks, fights a rat, dies, jumps): every test file of the headless
 # client against the whole server stack, each on its own. Nightly and on request; the fast ones run on every push (ci.yml).
 
+# The nightly schedule is switched off (2026-10-04, the owner's request): run it by hand from the Actions tab, or give `on:` back
+# `schedule: - cron: "17 3 * * *"` to run it every night again.
 on:
-  schedule:
-    - cron: "17 3 * * *"
   workflow_dispatch:
 
 concurrency:

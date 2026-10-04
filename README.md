@@ -61,11 +61,11 @@ read side (`Eve.ReadSide`). Read [`docs/FOUNDATIONS.md`](docs/FOUNDATIONS.md) be
 - **GitHub Codespaces / Dev Container** (`.devcontainer/`): the Rust toolchain, the .NET 10 SDK, Python and a PostgreSQL 18
   service (`docker-compose.yml` beside it). `post-create.sh` sets up the Python client, restores the packages and loads the
   static data into PostgreSQL; `EVE_PG_URL` is set, so `cargo test --workspace` and `dotnet test` run the database tests.
-- **GitHub Actions** (`.github/workflows/`): `ci.yml` runs on every push and pull request: Rust (fmt, clippy, tests), .NET
+- **GitHub Actions** (`.github/workflows/`): `ci.yml` runs when it is started by hand (the automatic run on every push is switched off): Rust (fmt, clippy, tests), .NET
   (tests against a `postgres:18` service with the static data loaded), the Python client's own tests, a check that the golden
   fixtures are what their generators write, and the fast end-to-end tests (the whole server stack and the headless client,
   `tools/dev/run-eve-live.sh`; its logs are kept as an artifact). `live-slow.yml` runs every test file of the client on its
-  own against the stack, nightly and on request (`tools/dev/run-live-each.sh`). The static data is cached by build; Dependabot
+  own against the stack, on request (`tools/dev/run-live-each.sh`; the nightly run is switched off). The static data is cached by build; Dependabot
   keeps Cargo, NuGet, pip, Actions and Docker up to date.
 - **Docker Compose** (`docker-compose.yml`, `Dockerfile`): the server itself for an EVE client, `docker compose up --build`:
   PostgreSQL 18, a one-shot static-data load, `eve-sim`, `eve-host` and `eve-net` (port 26000).

@@ -163,6 +163,10 @@ public class MachoTests
     }
 
     [Fact]
+    public void Wide_strings_convert_to_their_contents() =>
+        Assert.Equal("日本語", JsSemantics.ToJsString(new PyWString("日本語")));
+
+    [Fact]
     public void What_the_reference_sends_back_of_a_received_value_is_normalised()
     {
         Assert.Equal(new PyBuffer(new byte[] { 1 }), JsSemantics.AsReceived(new PyBytes(new byte[] { 1 })));

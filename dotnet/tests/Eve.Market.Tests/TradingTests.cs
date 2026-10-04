@@ -230,4 +230,50 @@ public class TradingTests
         Assert.Equal(WalletLimits.MaximumIsk,(await r.WalletStore.GetAsync(actor))!.Isk);
         Assert.Empty(await r.Trading.ExpireDueAsync());
     }
+
+    [PgFact]
+    public async Task Modifying_a_buy_order_crosses_the_book_and_records_price_history()
+    {
+        await using var r=await TradeRig.Create();
+        var actor=await r.Actor("Trader One");
+        await r.Book.SeedNpcAsync([new("cross-ask",34,false,10m,5,MarketRules.RangeRegion,MarketLocation.From(r.Station),r.Now)]);
+        var placed=await r.Trading.PlaceAsync(new MarketRequest(actor,34,true,9m,5,r.Station.Id,
+            Duration:90,Range:MarketRules.RangeStation),"cross-place");
+        var changed=await r.Trading.ModifyAsync(actor,Assert.IsType<long>(placed.OrderId),12m,"cross-modify");
+        Assert.Equal(5,changed.FilledQuantity);
+        Assert.Equal(50m,changed.GrossAmount);
+        Assert.Equal(5,Assert.Single(await r.Items.InLocationAsync(r.Station.Id,actor)).Quantity);
+        var history=await r.Book.HistoryAsync(r.Station.RegionId,34,r.Now/86_400_000);
+        var row=Assert.Single(history);
+        Assert.Equal(5,row.Volume);
+        Assert.Equal(10m,row.Average);
+    }
+
+    [PgFact]
+    public async Task Corporation_office_stock_is_escrowed_and_cancelled_back_to_its_hangar_division()
+    {
+        await using var r=await TradeRig.Create();
+        var actor=await r.Actor("Corp Trader",10_000_000m);
+        var corp=await r.Corporations.CreateAsync(actor,new("Orbital Works","ORBIT","","",0),"corp-stock");
+        await r.Corporations.SetAccountKeyAsync(actor,1006);
+        await using (var c=await r.Source.OpenConnectionAsync())
+        await using (var tx=await c.BeginTransactionAsync())
+        {
+            await r.Wallets.TransferAsync(c,tx,new WalletAccount(actor),new WalletAccount(corp.Id,1006),
+                1000m,10,"Deposit",r.Now,"corp-stock-deposit","test");
+            await tx.CommitAsync();
+        }
+        const int corporationHangar1=115;
+        var item=await r.Stock(corp.Id,5,corporationHangar1);
+        var placed=await r.Trading.PlaceAsync(r.Sell(actor,item,20m,5,90,corp:true),"corp-stock-sell");
+        var escrow=Assert.Single(await r.Items.OwnedByAsync(corp.Id));
+        Assert.Equal(corp.Id,escrow.OwnerId);
+        Assert.Equal(Eve.Inventory.ItemFlags.Hangar,escrow.Flag);
+        Assert.NotEqual(r.Station.Id,escrow.LocationId);
+        await r.Trading.CancelAsync(actor,Assert.IsType<long>(placed.OrderId),"corp-stock-cancel");
+        var returned=Assert.Single(await r.Items.OwnedByAsync(corp.Id));
+        Assert.Equal(r.Station.Id,returned.LocationId);
+        Assert.Equal(corporationHangar1,returned.Flag);
+        Assert.Equal(5,returned.Quantity);
+    }
 }

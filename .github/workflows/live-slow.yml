@@ -16,6 +16,9 @@ permissions:
   contents: read
 
 env:
+  # the toolchain the project is built and tested with (Cargo.toml's rust-version is 1.94); a newer clippy's new lints are
+  # looked at by the advisory job below, not allowed to break the build
+  RUST_TOOLCHAIN: "1.94.1"
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   DOTNET_NOLOGO: "1"
@@ -48,7 +51,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-python@v5
         with:

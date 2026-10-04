@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Eve.Scheduler;
 using Eve.Fitting;
 using Eve.Macho;
 using Eve.Marshal;
@@ -65,13 +66,11 @@ public sealed partial class DogmaIMService
             session.SendNotification("OnModuleAttributeChanges", "clientID", new PyList([NextActivation(characterId, plan.ModuleId, now, readyAt, 0)]));
             session.SendNotification("OnChargeBeingLoadedToModule", "charid", new PyList([InventoryWire.Id(plan.ModuleId)]), new PyInt(plan.ChargeTypeId), new PyInt(plan.ReloadMs));
         });
-        // the wait starts as the client is told of it, not when a thread is free to start it
-        var waiting = (delay ?? ((time, token) => Task.Delay(time, token)))(TimeSpan.FromMilliseconds(plan.ReloadMs), CancellationToken.None);
-        _ = Task.Run(async () =>
+        // the wait starts as the client is told of it, not when a thread is free to start it (LocalTimers makes the wait in Set)
+        _timers.Set($"dogma.reload:{plan.ModuleId}", TimeSpan.FromMilliseconds(plan.ReloadMs), async () =>
         {
             try
             {
-                await waiting.ConfigureAwait(false);
                 _reloads.TryRemove(plan.ModuleId, out _);
                 await ReloadAsync(session, characterId, plan, readyAt, CancellationToken.None).ConfigureAwait(false);
             }

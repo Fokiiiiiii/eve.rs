@@ -1,5 +1,8 @@
 using System.Collections.Concurrent;
+using Eve.Crimewatch;
+using Eve.Events;
 using Eve.Inventory;
+using Eve.Scheduler;
 using Eve.Dogma;
 using Eve.Fitting;
 using Eve.Macho;
@@ -53,13 +56,13 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
 
         private int _ended;
 
-        /// <summary>The timer that ends the protection when it runs out, if the pilot has not ended it by then.</summary>
-        public Timer? Expiry { get; set; }
+        /// <summary>Stops the timer that ends the protection when it runs out (set when the timer is; the pilot ends it by hand first when a command breaks the protection).</summary>
+        public Action? CancelExpiry { get; set; }
 
         /// <summary>Marks the protection ended; false when it had ended already (each ending is told once).</summary>
         public bool End()
         {
-            Expiry?.Dispose();
+            CancelExpiry?.Invoke();
             return Interlocked.Exchange(ref _ended, 1) == 0;
         }
     }
@@ -87,6 +90,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// <param name="jumpCloak">How long a ship that has come through a stargate stays cloaked if its pilot does not fly it first.</param>
     public SpaceSessions(ISimulation sim, CharacterShips ships, DogmaStatic statics, StationCatalog stations, SolarSystemCatalog systems, Func<long> nowUnixMs, Action<string>? log = null, TimeSpan? protection = null, TimeSpan? jumpCloak = null)
     {
+        _timers = new LocalTimers(log);
         _protection = protection ?? TimeSpan.FromTicks(UndockInvulnerabilityTicks);
         _jumpCloak = jumpCloak ?? TimeSpan.FromTicks(JumpCloakTicks);
         _sim = sim;
@@ -179,6 +183,32 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// </summary>
     public event Action<ShipLoss>? ShipLost;
 
+    /// <summary>
+    /// The domain events bus (set by the host that has one). What happens in space is announced on it as well (<c>npc.killed</c>, <c>ship.lost</c>, <c>bounty.paid</c>) so that
+    /// missions, crimewatch and the rest subscribe instead of hooking this class; the C# events above stay for the code that needs a synchronous call.
+    /// </summary>
+    public EventBus? Events { get; set; }
+
+    /// <summary>Publishes an event on the bus without waiting for it; a failure is logged (the thing it announces has happened already).</summary>
+    private void Announce(string topic, object payload, string key)
+    {
+        if (Events is not { } bus)
+        {
+            return;
+        }
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await bus.PublishAsync(topic, payload, key);
+            }
+            catch (Exception error)
+            {
+                _log?.Invoke($"the event {topic} could not be published: {error.Message}");
+            }
+        });
+    }
+
     private void Raise<T>(Action<T>? handlers, T value, string what)
     {
         foreach (var handler in handlers?.GetInvocationList().Cast<Action<T>>() ?? [])
@@ -205,7 +235,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
 
     public void Dispose()
     {
-        _bountyTimer?.Dispose();
+        _timers.Dispose();
         _sim.Received -= OnReceived;
         _sim.Lost -= OnLost;
         // the host stops: the rounds that were spent are written first
@@ -246,7 +276,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             return None;
         }
         // a ship comes out of its station with its shield and capacitor full; what it has lost of its armor and hull it keeps (the reference's)
-        var spec = SimShips.Of(snapshot, _statics);
+        var spec = SimShips.Of(snapshot, _statics, await SecurityStatusAsync(characterId, cancellationToken));
         spec = spec with { Condition = (spec.Condition ?? SimCondition.Full) with { ShieldCharge = 1, Charge = 1 } };
         var systemId = snapshot.Character.SolarSystemId;
 
@@ -282,7 +312,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         _pilots[(ulong)session.SessionId] = pilot;
         SystemEntered?.Invoke(systemId);
         session.Closed += () => OnSessionClosed(session);
-        pilot.Expiry = new Timer(_ => ProtectionRanOut(pilot), null, _protection, Timeout.InfiniteTimeSpan);
+        ArmProtection(pilot, _protection);
 
         var type = _statics.Type(moved.Ship.TypeId);
         session.SendNotification(
@@ -364,6 +394,17 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     }
 
     /// <summary>The time is up and the pilot has not flown the ship: the client is told, as when a movement ends it.</summary>
+    private readonly LocalTimers _timers;
+    private long _protectionTimers;
+
+    /// <summary>Ends the pilot's protection after <paramref name="span"/> unless it has ended before (every pilot's timer has a key of its own, so a ship that jumped does not cancel the timer of the one that arrived).</summary>
+    private void ArmProtection(Pilot pilot, TimeSpan span)
+    {
+        var key = $"space.protection:{Interlocked.Increment(ref _protectionTimers)}";
+        pilot.CancelExpiry = () => _timers.Cancel(key);
+        _timers.Set(key, span, () => ProtectionRanOut(pilot));
+    }
+
     private void ProtectionRanOut(Pilot pilot)
     {
         try
@@ -448,14 +489,22 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         {
             return ModuleResult.Refusal(made.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
         }
-        // the safety of the pilot: a weapon is not started at the ship of another pilot where that would be a crime
-        var attack = package.Turret is not null || package.Action is SimAction.Remote { What: SimRemote.Neutralize or SimRemote.Drain or SimRemote.Web or SimRemote.Paint or SimRemote.Damp or SimRemote.Scramble or SimRemote.Jam };
-        if (attack
-            && _pilots.Values.Any(other => other.ShipId == package.TargetId && other.CharacterId != characterId)
-            && _systems.Get(pilot.SolarSystemId) is { } where
-            && WeaponSafety.StopsFire(Security.ClassFromLevel(where.Security)))
+        // the safety of the pilot: a weapon is not started at the ship of another pilot where that would be a crime the safety the pilot has set does not allow
+        var attack = package.Turret is not null || package.Action is SimAction.Remote { What: SimRemote.Neutralize or SimRemote.Drain or SimRemote.Web or SimRemote.Paint or SimRemote.Damp or SimRemote.Scramble or SimRemote.Jam or SimRemote.Disrupt };
+        var securityClass = _systems.Get(pilot.SolarSystemId) is { } where ? Security.ClassFromLevel(where.Security) : (SecurityClass?)null;
+        var victim = attack ? _pilots.Values.FirstOrDefault(other => other.ShipId == package.TargetId && other.CharacterId != characterId) : null;
+        if (securityClass is { } empire && (attack || package.Action is SimAction.Smartbomb))
         {
-            return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
+            var level = SafetyLevelOf is { } ask ? await ask(characterId, cancellationToken) : SafetyLevel.Full;
+            if (victim is not null && WeaponSafety.StopsFire(empire, level, await IsCapsuleAsync(victim, empire, cancellationToken)))
+            {
+                return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
+            }
+            // a smartbomb hurts whoever is in its field: where the safety of the pilot stops fire, the simulation is told not to hurt pilots
+            if (package.Action is SimAction.Smartbomb bomb && WeaponSafety.StopsFire(empire, level))
+            {
+                package = package with { Action = bomb with { HurtsPilots = false } };
+            }
         }
         var reply = await AskSimAsync(id, () => _sim.ActivateAsync(id, package, cancellationToken), session);
         if (!reply.Accepted)
@@ -467,8 +516,49 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                 : refusal;
         }
         EndInvulnerability(pilot);
+        if (victim is not null && securityClass is { } crimeWhere && Aggression is { } record)
+        {
+            // what the attack makes of the attacker is crimewatch's; the module runs whatever it keeps
+            try
+            {
+                var security = _systems.Get(pilot.SolarSystemId)?.Security ?? 0;
+                await record(new AggressionRequest(characterId, victim.CharacterId, victim.ShipId, pilot.SolarSystemId, security, crimeWhere, await IsCapsuleAsync(victim, crimeWhere, cancellationToken)), cancellationToken);
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                _log?.Invoke($"crimewatch could not record the attack of {characterId} on {victim.CharacterId}: {error.Message}");
+            }
+        }
         return ModuleResult.Done;
     }
+
+    /// <summary>
+    /// Told after a pilot's module was started at the ship of another pilot: who attacked whom, where, and whether the ship attacked is a capsule (<see cref="AggressionRequest"/>).
+    /// Crimewatch (timers, flags, what a crime brings) hangs here.
+    /// </summary>
+    public Func<AggressionRequest, CancellationToken, Task>? Aggression { get; set; }
+
+    /// <summary>The security status of a character (its relation of that kind; 0 when it is not set). The ship in space shows it in its slim item.</summary>
+    public Func<long, CancellationToken, Task<double>>? SecurityStatusOf { get; set; }
+
+    private async Task<double> SecurityStatusAsync(long characterId, CancellationToken cancellationToken) =>
+        SecurityStatusOf is { } ask ? await ask(characterId, cancellationToken) : 0;
+
+    /// <summary>The ship safety level of a character (set by the host that keeps them; full when it is not set). See <see cref="WeaponSafety"/>.</summary>
+    public Func<long, CancellationToken, Task<int>>? SafetyLevelOf { get; set; }
+
+    /// <summary>Whether the pilot's ship is a capsule. Only a low-security attack depends on it (a capsule there is a crime of a criminal), so it is only looked up then.</summary>
+    private async Task<bool> IsCapsuleAsync(Pilot pilot, SecurityClass securityClass, CancellationToken cancellationToken)
+    {
+        if (!Security.IsLowSec(securityClass))
+        {
+            return false;
+        }
+        var snapshot = await _ships.LoadAsync(pilot.CharacterId, cancellationToken);
+        return snapshot is not null && _statics.Type(snapshot.Ship.TypeId)?.GroupId == CapsuleGroup;
+    }
+
+    private const int CapsuleGroup = 29;
 
     /// <summary>Asks for an effect to stop at the end of the cycle it is in.</summary>
     public async Task<ModuleResult?> DeactivateAsync(ClientSession session, long moduleId, string effectName, CancellationToken cancellationToken)
@@ -671,22 +761,16 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     // ── bounties ─────────────────────────────────────────────────────────────
 
     private PgBountyStore? _bounties;
-    private Timer? _bountyTimer;
     private int _paying;
 
     /// <summary>Raised for each bounty that was paid into a wallet (the wallet's owner is told of its new balance by whoever announces wallets).</summary>
     public event Action<BountyPaid>? BountyPaidOut;
 
     /// <summary>
-    /// Keeps the bounties NPCs are worth: a kill whose last blow was a pilot's goes to <paramref name="store"/>, and what has come due is paid every
-    /// <paramref name="payEvery"/> (not at all when null: a test pays by <see cref="PayBountiesAsync"/>).
+    /// Keeps the bounties NPCs are worth: a kill whose last blow was a pilot's goes to <paramref name="store"/>. What has come due is paid by <see cref="PayBountiesAsync"/>, which the
+    /// host runs as a recurring job of the durable scheduler (<c>space.bounty.pay</c>); a test calls it.
     /// </summary>
-    public void UseBounties(PgBountyStore store, TimeSpan? payEvery = null)
-    {
-        _bounties = store;
-        _bountyTimer?.Dispose();
-        _bountyTimer = payEvery is { } every ? new Timer(_ => _ = PayBountiesAsync(), null, TimeSpan.Zero, every) : null;
-    }
+    public void UseBounties(PgBountyStore store) => _bounties = store;
 
     /// <summary>Pays the bounties that are due (one payout at a time); each is raised as <see cref="BountyPaidOut"/>.</summary>
     public async Task<IReadOnlyList<BountyPaid>> PayBountiesAsync(CancellationToken cancellationToken = default)
@@ -702,6 +786,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             {
                 _log?.Invoke($"bounty paid: {payment.Amount} ISK for {payment.Kills} kill(s) to character {payment.CharacterId}");
                 BountyPaidOut?.Invoke(payment);
+                Announce("bounty.paid", new { characterId = payment.CharacterId, amount = payment.Amount, kills = payment.Kills }, $"char:{payment.CharacterId}");
             }
             return paid;
         }
@@ -730,7 +815,9 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         }
         finally
         {
-            Raise(NpcDestroyed, new NpcKill(killer?.CharacterId ?? 0, npc.TypeId, npc.Profile, npc.SolarSystemId, destroyed.ShipId), nameof(NpcDestroyed));
+            var kill = new NpcKill(killer?.CharacterId ?? 0, npc.TypeId, npc.Profile, npc.SolarSystemId, destroyed.ShipId);
+            Raise(NpcDestroyed, kill, nameof(NpcDestroyed));
+            Announce("npc.killed", new { characterId = kill.FinalBlowCharacterId, typeId = kill.NpcTypeId, profile = kill.Profile.Id, solarSystemId = kill.SolarSystemId, shipId = kill.ShipId }, $"system:{kill.SolarSystemId}");
         }
     }
 
@@ -808,6 +895,18 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// </summary>
     private sealed record SpawnAnchor(int SolarSystemId, long ShipId, double[] Origin, double BaseDistance = 0, double? Window = null, long BeltId = 0, long Group = 0);
 
+    /// <summary>The hulls of NPCs are known before they are armed, and the missiles the hulls launch with them.</summary>
+    private async Task EnsureNpcTypesAsync(IEnumerable<int> shipTypes, CancellationToken cancellationToken)
+    {
+        var hulls = shipTypes.Distinct().ToArray();
+        await _statics.EnsureTypesAsync(hulls, cancellationToken).ConfigureAwait(false);
+        var missiles = hulls.Select(hull => _statics.Type(hull)).OfType<TypeDef>().Select(NpcArmament.MissileTypeOf).Where(type => type > 0).Distinct().ToArray();
+        if (missiles.Length > 0)
+        {
+            await _statics.EnsureTypesAsync(missiles, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     /// <summary>
     /// Spawns the NPCs of <paramref name="profiles"/> around <paramref name="anchor"/>, each armed with what its hull carries, and remembers what the host must know of
     /// them. What came into space is told: a batch that was cut short by the simulation is as long as what it spawned.
@@ -877,7 +976,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             {
                 _beltHulls = null;
             }
-            await (_beltHulls ??= _statics.EnsureTypesAsync(rats.PoolShipTypes(), CancellationToken.None)).ConfigureAwait(false);
+            await (_beltHulls ??= EnsureNpcTypesAsync(rats.PoolShipTypes(), CancellationToken.None)).ConfigureAwait(false);
             var system = new BeltSystem(place.Id, place.Security, place.RegionId, place.FactionId);
             var active = _npcShips.Values.Where(npc => npc.SolarSystemId == system.SolarSystemId && npc.BeltId == beltId && npc.Group != 0).Select(npc => npc.Group).Distinct().Count();
             var now = _nowUnixMs();
@@ -890,7 +989,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                 }
                 return decision;
             }
-            await _statics.EnsureTypesAsync(plan.Profiles.Select(profile => profile.ShipTypeId), cancellationToken).ConfigureAwait(false);
+            await EnsureNpcTypesAsync(plan.Profiles.Select(profile => profile.ShipTypeId), cancellationToken).ConfigureAwait(false);
             var anchor = new SpawnAnchor(system.SolarSystemId, 0, [.. beltPosition], rats.Config.SpawnDistanceMeters, BeltRatSpreadMeters, beltId, Interlocked.Increment(ref _beltGroups));
             var (composition, _) = await SpawnGroupAsync(plan.Profiles, anchor, cancellationToken).ConfigureAwait(false);
             if (composition.Count > 0)
@@ -933,7 +1032,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         {
             return NpcSpawnReport.Failed(selectionError!, suggestions);
         }
-        await _statics.EnsureTypesAsync(selection.ShipTypes, cancellationToken);
+        await EnsureNpcTypesAsync(selection.ShipTypes, cancellationToken);
         var plan = selector.Roll(selection, amount, type => NpcHull.HasHitPoints(_statics.Type(type)), Random.Shared.NextDouble);
         if (!plan.Succeeded)
         {
@@ -1201,7 +1300,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                 return; // the pilot went away meanwhile
             }
             pilot.End();
-            arrived.Expiry = new Timer(_ => ProtectionRanOut(arrived), null, _jumpCloak, Timeout.InfiniteTimeSpan);
+            ArmProtection(arrived, _jumpCloak);
             SystemEntered?.Invoke(jumped.ToSystem);
 
             ReleaseBoundObjects(session);
@@ -1394,7 +1493,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                     await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation);
                     return;
                 }
-                var refusal = await _sim.RespawnAsync(new SimRespawn(id, SimShips.Of(flown, _statics), destroyed.Position, destroyed.Direction));
+                var refusal = await _sim.RespawnAsync(new SimRespawn(id, SimShips.Of(flown, _statics, await SecurityStatusAsync(pilot.CharacterId, CancellationToken.None)), destroyed.Position, destroyed.Direction));
                 if (refusal is not null)
                 {
                     _log?.Invoke($"the simulation did not take the capsule of character {pilot.CharacterId}: {refusal}");
@@ -1445,7 +1544,9 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             : killer is not null ? ShipLossCause.Player
             : destroyed.KillerShipId != 0 && _npcShips.ContainsKey(destroyed.KillerShipId) ? ShipLossCause.Npc
             : ShipLossCause.Unknown;
-        Raise(ShipLost, new ShipLoss(pilot.CharacterId, death.Ship.Id, death.Ship.TypeId, cause, pilot.SolarSystemId, cause == ShipLossCause.Player ? killer!.CharacterId : 0), nameof(ShipLost));
+        var loss = new ShipLoss(pilot.CharacterId, death.Ship.Id, death.Ship.TypeId, cause, pilot.SolarSystemId, cause == ShipLossCause.Player ? killer!.CharacterId : 0);
+        Raise(ShipLost, loss, nameof(ShipLost));
+        Announce("ship.lost", new { characterId = loss.CharacterId, shipId = loss.ShipId, shipTypeId = loss.ShipTypeId, cause = loss.Cause.ToString(), solarSystemId = loss.SolarSystemId, killerCharacterId = loss.KillerCharacterId }, $"char:{loss.CharacterId}");
     }
 
     /// <summary>The corpse of a pilot whose capsule was destroyed: <c>resolveCorpseTypeID</c> of EVE.js (the client's <c>genderFemale = 0</c>; anything else leaves the male one).</summary>
@@ -1521,8 +1622,9 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     }
 
     /// <summary>
-    /// A pilot's corporation, alliance or war faction changed while it flies: the simulation is given its ship again with the affiliation the character has now, so the ship is what
-    /// everybody who looks at it from then on sees and what the rules of aggression read. (Those who already see the ship are not told: the reference's way of telling them is not recorded.)
+    /// A pilot's corporation, alliance, war faction or security status changed while it flies: the simulation is given its ship again with what the character has now, so the ship is what
+    /// everybody who looks at it from then on sees and what the rules of aggression read. A change of the security status is shown to those who see the ship (an `OnSlimItemChange`, as the
+    /// reference does when a crime costs some); the others of an affiliation are not (the reference's way of telling them is not recorded).
     /// Nothing is done for a character that is not flying a ship in space.
     /// </summary>
     public async Task AffiliationChangedAsync(long characterId, CancellationToken cancellationToken = default)
@@ -1532,7 +1634,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         {
             return;
         }
-        _sim.ShipChanged((ulong)pilot.Session.SessionId, SimShips.Of(flown, _statics));
+        _sim.ShipChanged((ulong)pilot.Session.SessionId, SimShips.Of(flown, _statics, await SecurityStatusAsync(characterId, cancellationToken)));
     }
 
     /// <summary>The simulation was lost: every ship it held is gone, so each is brought home to the station its character last was at.</summary>

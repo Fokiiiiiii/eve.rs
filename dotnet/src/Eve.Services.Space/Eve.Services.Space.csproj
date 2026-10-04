@@ -2,6 +2,7 @@
   <ItemGroup>
     <ProjectReference Include="../Eve.Services/Eve.Services.csproj" />
     <ProjectReference Include="../Eve.Services.Ships/Eve.Services.Ships.csproj" />
+    <ProjectReference Include="../Eve.Services.Dogma/Eve.Services.Dogma.csproj" />
     <ProjectReference Include="../Eve.Ships/Eve.Ships.csproj" />
     <ProjectReference Include="../Eve.Inventory/Eve.Inventory.csproj" />
     <ProjectReference Include="../Eve.Characters/Eve.Characters.csproj" />
@@ -9,6 +10,9 @@
     <ProjectReference Include="../Eve.Dogma/Eve.Dogma.csproj" />
     <ProjectReference Include="../Eve.Universe/Eve.Universe.csproj" />
     <ProjectReference Include="../Eve.Npc/Eve.Npc.csproj" />
+    <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />
+    <ProjectReference Include="../Eve.Crimewatch/Eve.Crimewatch.csproj" />
+    <ProjectReference Include="../Eve.Events/Eve.Events.csproj" />
     <ProjectReference Include="../Eve.Services.Generator/Eve.Services.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>

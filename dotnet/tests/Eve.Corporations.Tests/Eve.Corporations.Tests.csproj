@@ -6,6 +6,9 @@
     <PackageReference Include="xunit.runner.visualstudio" />
     <ProjectReference Include="../../src/Eve.Corporations/Eve.Corporations.csproj" />
     <ProjectReference Include="../../src/Eve.Services.Corporations/Eve.Services.Corporations.csproj" />
+    <ProjectReference Include="../../src/Eve.Events/Eve.Events.csproj" />
+    <ProjectReference Include="../../src/Eve.Relations/Eve.Relations.csproj" />
+    <ProjectReference Include="../../src/Eve.Scheduler/Eve.Scheduler.csproj" />
     <ProjectReference Include="../../src/Eve.Services.Wallet/Eve.Services.Wallet.csproj" />
     <Using Include="Xunit" />
   </ItemGroup>

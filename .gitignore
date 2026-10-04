@@ -12,9 +12,9 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# .NET
-bin/
-obj/
+# .NET build output (only under dotnet/: crates/*/src/bin/ holds the Rust binaries' sources)
+/dotnet/**/bin/
+/dotnet/**/obj/
 
 # Editors / OS
 .idea/

@@ -99,6 +99,7 @@ public class ModuleOrderTests
         Assert.Equal("1MN Civilian Afterburner is offline.", await Said("MODULE_NOT_ONLINE"));
         Assert.Equal("You do not have enough capacitor to activate that module.", await Said("NOT_ENOUGH_CAPACITOR"));
         Assert.Equal("1MN Civilian Afterburner cannot be activated.", await Said("UNSUPPORTED_EFFECT"));
+        Assert.Equal("You cannot activate a microwarpdrive while a warp scrambler holds your ship.", await Said("MICROWARPDRIVE_BLOCKED"));
         Assert.Equal("Failed to activate 1MN Civilian Afterburner: SafetyActivated.", await Said("SafetyActivated"));
         Assert.Equal("Failed to activate module: BAD_EFFECT.", await Said("BAD_EFFECT", ""));
         foreach (var reason in new[] { "NOT_IN_SPACE", "NO_SHIP_IN_SPACE", "MODULE_NOT_FOUND" })

@@ -4,12 +4,14 @@
 //! contents) is the host's: it is told with [`Out::Destroyed`].
 
 use eve_destiny::Vec3;
+use eve_marshal::Value;
 
 use crate::modules::Modules;
 use crate::npc::is_npc_session;
 use crate::payload;
 use crate::scene::{Out, Pilot, Scene, SceneError, SessionId, Widow};
 use crate::ship::{Course, Ship, ShipSpec};
+use crate::wire::{id, int};
 use crate::wreck::{LootRights, WRECK_LIFETIME, Wreck};
 
 /// The first id the scene gives a wreck of its own making (the reference's transient items are numbered from about the same place; the ids of
@@ -83,11 +85,39 @@ impl Scene {
         for watcher in told_of_it {
             out.push(Self::update(watcher, payload::destruction(stamp, ship_id)));
         }
+        // a drone that is destroyed is gone: its controller is told what the reference tells (idle, nobody's) and nothing is left of it
+        let drone = ship.npc.as_ref().and_then(|npc| npc.drone.as_ref());
+        if let Some(link) = drone {
+            out.push(Out::Notify {
+                session: link.controller,
+                name: "OnDroneStateChange",
+                id_type: "charid",
+                args: vec![
+                    id(ship_id),
+                    int(0),
+                    int(0),
+                    int(0),
+                    int(i64::from(ship.spec.type_id)),
+                    int(0),
+                    Value::None,
+                ],
+            });
+            out.push(Out::Notify {
+                session: link.controller,
+                name: "OnDroneActivityChange",
+                id_type: "charid",
+                args: vec![id(ship_id), Value::None, Value::None],
+            });
+        }
         // an NPC that says what it leaves leaves that; else the wreck of the ship's type, as the reference's rules have it
-        let kind = ship.npc.as_ref().and_then(|npc| npc.wreck.clone()).or_else(|| {
-            let catalog = self.wreck_catalog.as_ref()?;
-            catalog.resolve_ship_wreck_type(i64::from(ship.spec.type_id))
-        });
+        let kind = if drone.is_some() {
+            None
+        } else {
+            ship.npc.as_ref().and_then(|npc| npc.wreck.clone()).or_else(|| {
+                let catalog = self.wreck_catalog.as_ref()?;
+                catalog.resolve_ship_wreck_type(i64::from(ship.spec.type_id))
+            })
+        };
         let wreck_kind = kind.clone();
         // the scene makes the wreck of an NPC unless the host asks to make it (an item with what the NPC leaves in it); a player's is the host's to make, and it is told the kind
         let scene_makes_it = ship.npc.as_ref().is_some_and(|npc| !npc.host_wreck);

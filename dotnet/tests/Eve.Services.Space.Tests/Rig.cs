@@ -43,10 +43,13 @@ internal sealed class Rig : IAsyncDisposable
     public const long Station = 60015249;
 
     private readonly string[] _schemas;
+    private readonly List<string> _extraSchemas = [];
+    private readonly string _suffix;
 
     private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, CreationCatalog catalog, StationCatalog stations, SolarSystemCatalog systems, PgModuleStateStore modules, TimeSpan protection, TimeSpan jumpCloak, bool npcLoot, Eve.Npc.BeltRatConfig? beltRats)
     {
         Source = source;
+        _suffix = suffix;
         _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}", $"pp_{suffix}"];
         SpaceItems = new PgSpaceItemStore(source, _schemas[6]);
         Characters = new PgCharacterStore(source, _schemas[0]);
@@ -63,10 +66,13 @@ internal sealed class Rig : IAsyncDisposable
         Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => Now, Log.Add, protection, jumpCloak) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(Eve.Npc.NpcAuthority.Load()), NpcWrecks = npcLoot ? new NpcWrecks(_ => LootTable, () => Task.FromResult(new Eve.Npc.NpcLoot(LootPool)), Ships, () => 0) : null, BeltRats = beltRats is null ? null : new Eve.Npc.BeltRats(Eve.Npc.NpcAuthority.Load(), beltRats, type => Eve.Npc.NpcHull.HasHitPoints(statics.Type(type))) };
         Space.UseBounties(Bounties);
         Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, statics, Space, () => Now, Log.Add);
-        Ship = new ShipService(Space, () => ClockMs, Containers);
+        Drones = new SpaceDrones(Sim, Ships, statics, Space, () => Now, Log.Add);
+        Ship = new ShipService(Space, () => ClockMs, Containers, Drones);
         Beyonce = new BeyonceService(Space, () => ClockMs);
+        Entity = new EntityService(Drones, () => ClockMs);
         Registry.Register(Ship);
         Registry.Register(Beyonce);
+        Registry.Register(Entity);
     }
 
     /// <summary>What every NPC leaves when the rig has loot (<c>npcLoot</c>): a stack of seven to nine of the first type of <see cref="LootPool"/>, or nothing when null (the dice always come out 0).</summary>
@@ -116,6 +122,10 @@ internal sealed class Rig : IAsyncDisposable
     public PgSpaceItemStore SpaceItems { get; }
 
     public BeyonceService Beyonce { get; }
+
+    public SpaceDrones Drones { get; }
+
+    public EntityService Entity { get; }
 
     /// <param name="protection">How long a ship is protected after it undocks (never, unless a test wants the end of it).</param>
     /// <param name="npcLoot">Whether an NPC that is destroyed leaves a wreck the host makes with <see cref="LootTable"/> in it.</param>
@@ -212,6 +222,11 @@ internal sealed class Rig : IAsyncDisposable
     /// <summary>The ship service bound to the solar system the session flies in (what the client does before it jettisons).</summary>
     public Task<string> BindShipInSpaceAsync(ClientSession session) => BindAsync(Ship, session, session.GetInt("solarsystemid")!.Value, 5);
 
+    public Task<PyValue> EntityCallAsync(ClientSession session, string method, string? bound = null, params PyValue[] args) => CallAsync(Entity, session, method, bound, args);
+
+    /// <summary>The entity service, bound as the client does in space.</summary>
+    public Task<string> BindEntityAsync(ClientSession session) => BindAsync(Entity, session, session.GetInt("solarsystemid")!.Value, 5);
+
     public Task<string> BindBeyonceAsync(ClientSession session) => BindAsync(Beyonce, session, session.GetInt("solarsystemid")!.Value, 5);
 
     public static string OidOf(PyValue bound) =>
@@ -228,11 +243,37 @@ internal sealed class Rig : IAsyncDisposable
         }
     }
 
+    /// <summary>The events bus of the foundations, when a test asked for it (<see cref="UseBusAsync"/>); what space announced on it is in <see cref="Announced"/>.</summary>
+    public Eve.Events.EventBus? Bus { get; private set; }
+
+    public List<(string Topic, string Json)> Announced { get; } = [];
+
+    /// <summary>Gives <see cref="Space"/> an events bus on scratch schemas, with a subscriber that records everything announced on it.</summary>
+    public async Task UseBusAsync()
+    {
+        string[] schemas = [$"sc_{_suffix}", $"ev_{_suffix}"];
+        _extraSchemas.AddRange(schemas);
+        await Eve.Scheduler.DurableScheduler.MigrateAsync(Source, schemas[0]);
+        await Eve.Events.EventBus.MigrateAsync(Source, schemas[1]);
+        var scheduler = new Eve.Scheduler.DurableScheduler(Source, () => Now, null, schemas[0]);
+        Bus = new Eve.Events.EventBus(Source, scheduler, null, schemas[1]);
+        Bus.Subscribe("test.record", ["*"], (context, _) =>
+        {
+            lock (Announced)
+            {
+                Announced.Add((context.Event.Topic, context.Event.PayloadJson));
+            }
+            return Task.CompletedTask;
+        });
+        await Bus.PumpAsync();   // the subscriber starts here
+        Space.Events = Bus;
+    }
+
     public async ValueTask DisposeAsync()
     {
         Containers.Dispose();
         Space.Dispose();
-        foreach (var schema in _schemas)
+        foreach (var schema in _schemas.Concat(_extraSchemas))
         {
             await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
             await command.ExecuteNonQueryAsync();

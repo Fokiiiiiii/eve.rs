@@ -83,7 +83,7 @@ impl Targeting {
         self.pending.iter().map(|p| p.target).collect()
     }
 
-    fn targets(&self) -> Vec<i64> {
+    pub(crate) fn targets(&self) -> Vec<i64> {
         let mut locked: Vec<&Locked> = self.locked.iter().collect();
         locked.sort_by_key(|l| (l.sequence, l.target));
         locked.into_iter().map(|l| l.target).collect()
@@ -296,7 +296,7 @@ impl Scene {
         self.with_backlog(told)
     }
 
-    fn ship_id_of(&self, session: SessionId) -> i64 {
+    pub(crate) fn ship_id_of(&self, session: SessionId) -> i64 {
         self.pilots.get(&session).map(|p| p.ship.spec.ship_id).unwrap_or(0)
     }
 

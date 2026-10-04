@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Eve.Services/Eve.Services.csproj" />
+    <ProjectReference Include="../Eve.Crimewatch/Eve.Crimewatch.csproj" />
+    <ProjectReference Include="../Eve.Relations/Eve.Relations.csproj" />
+    <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />
+    <ProjectReference Include="../Eve.Universe/Eve.Universe.csproj" />
+    <ProjectReference Include="../Eve.Services.Generator/Eve.Services.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Eve.Services.Crimewatch.Tests" />
+  </ItemGroup>
+</Project>

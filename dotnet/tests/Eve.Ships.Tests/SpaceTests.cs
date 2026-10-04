@@ -87,6 +87,24 @@ public class SpaceTests
     }
 
     [PgFact]
+    public async Task A_host_that_starts_puts_back_every_ship_a_host_that_stopped_left_in_space()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var inSpace = await rig.NewCharacterAsync();
+        var docked = await rig.NewCharacterAsync("Ship Stayer", account: 2);
+        await rig.Ships.UndockAsync(inSpace.CharacterId);
+        Assert.Equal(ItemFlags.Hangar, (await rig.Items.GetAsync(docked.ShipId))!.Flag);
+
+        Assert.Equal(1, await rig.Ships.RecoverAllFromSpaceAsync(null));
+
+        var stored = (await rig.Items.GetAsync(inSpace.ShipId))!;
+        Assert.Equal((Rig.Station, ItemFlags.Hangar), (stored.LocationId, stored.Flag));
+        // the one that was docked stays where it was, and a second sweep has nothing left to do
+        Assert.Equal((Rig.Station, ItemFlags.Hangar), ((await rig.Items.GetAsync(docked.ShipId))!.LocationId, (await rig.Items.GetAsync(docked.ShipId))!.Flag));
+        Assert.Equal(0, await rig.Ships.RecoverAllFromSpaceAsync(null));
+    }
+
+    [PgFact]
     public async Task Two_undocks_at_once_move_the_ship_once()
     {
         await using var rig = await Rig.CreateAsync();

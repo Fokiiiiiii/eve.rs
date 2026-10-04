@@ -119,3 +119,47 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
     [Method("GetSystemsForAlliance")]
     public PyValue GetSystemsForAlliance(ServiceCall call) => new PyList([]);
 }
+
+[Service("map")]
+public sealed partial class MapService
+{
+    private const string StationInfoQuery = "map.stationInfo";
+    private readonly Eve.ReadSide.ReadSide _reads;
+    private readonly Func<long> _nowUnixMs;
+
+    public MapService(Eve.ReadSide.ReadSide reads, Func<long> nowUnixMs)
+    {
+        _reads = reads;
+        _nowUnixMs = nowUnixMs;
+        reads.Register(new Eve.ReadSide.RowsetQuery(
+            StationInfoQuery,
+            """
+            {sde}."npcStations" n
+            JOIN {sde}."mapSolarSystems" s
+              ON n.doc->>'solarSystemID' = s.key
+            """,
+            [
+                Eve.ReadSide.Column.Of("stationID", Eve.ReadSide.ColumnType.Int, "n.key"),
+                Eve.ReadSide.Column.Of("solarSystemID", Eve.ReadSide.ColumnType.Int, "n.doc #>> '{solarSystemID}'"),
+                Eve.ReadSide.Column.Of("operationID", Eve.ReadSide.ColumnType.Int, "n.doc #>> '{operationID}'"),
+                Eve.ReadSide.Column.Of("stationTypeID", Eve.ReadSide.ColumnType.Int, "n.doc #>> '{typeID}'"),
+                Eve.ReadSide.Column.Of("ownerID", Eve.ReadSide.ColumnType.Int,
+                    "COALESCE(NULLIF(n.doc #>> '{corporationID}', '0'), NULLIF(n.doc #>> '{ownerID}', '0'))"),
+                Eve.ReadSide.Column.Of("serviceMask", Eve.ReadSide.ColumnType.Int,
+                    StationService.AllServicesMask.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                Eve.ReadSide.Column.Of("constellationID", Eve.ReadSide.ColumnType.Int, "s.doc #>> '{constellationID}'"),
+                Eve.ReadSide.Column.Of("regionID", Eve.ReadSide.ColumnType.Int, "s.doc #>> '{regionID}'"),
+            ])
+        {
+            OrderBy = "stationID",
+            Cache = true,
+        });
+    }
+
+    [Method("GetStationInfo")]
+    public async ValueTask<PyValue> GetStationInfo(ServiceCall call)
+    {
+        var rows = await _reads.RowsAsync(StationInfoQuery, cancellationToken: call.Cancellation);
+        return ObjectCaching.MethodResult(rows.ToRowset(), _nowUnixMs());
+    }
+}

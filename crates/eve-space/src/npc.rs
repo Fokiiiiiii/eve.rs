@@ -120,7 +120,13 @@ impl Scene {
         self.brains.get_or_insert_with(Brains::default).give(session, &ship, system_id, behavior, group)
     }
 
-    fn insert_npc(&mut self, spec: ShipSpec, identity: NpcIdentity, place: NpcPlace, now: i64) -> SessionId {
+    pub(crate) fn insert_npc(
+        &mut self,
+        spec: ShipSpec,
+        identity: NpcIdentity,
+        place: NpcPlace,
+        now: i64,
+    ) -> SessionId {
         self.npc_sequence += 1;
         let session = NPC_SESSION_BASE + self.npc_sequence;
         let modules = Modules::with_charge(

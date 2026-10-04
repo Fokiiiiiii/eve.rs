@@ -19,9 +19,14 @@ use crate::wire::{dict, filetime, id, int, real, text, tuple, word};
 const CAPACITOR_CHARGE: i32 = 18;
 /// The attribute of a module that holds the length of its cycle (told as a real, whatever its value).
 const DURATION: i32 = 73;
+/// The attribute of a module that holds the length of its cycle (`speed`).
+const CYCLE: i32 = 51;
 /// The capacitor's charge is told every half second, worked out at the tick a tenth of a second on from the moment (the reference's ticks).
 pub(crate) const SAMPLE_EVERY: i64 = TICKS_PER_SECOND / 2;
 pub(crate) const TICK: i64 = TICKS_PER_SECOND / 10;
+
+/// The dogma effect of a microwarpdrive (`moduleBonusMicrowarpdrive`): what a warp scrambler that blocks one keeps from running.
+pub(crate) const MICROWARPDRIVE: i32 = 6730;
 /// A capacitor within this many GJ of full is full (the reference settles it so).
 const FULL_SNAP: f64 = 1.0;
 
@@ -97,6 +102,17 @@ pub enum Remote {
     Paint { percent: f64 },
     /// The range the target locks at and its scan resolution are changed by those percentages (a sensor dampener: negative).
     Damp { range_percent: f64, resolution_percent: f64 },
+    /// The turrets the target fires are changed by those percentages of their optimal range, falloff and tracking speed for as long as the effect lands (a tracking
+    /// disruptor: negative).
+    Disrupt { range_percent: f64, falloff_percent: f64, tracking_percent: f64 },
+    /// The missiles the target launches are changed by those percentages of their speed, flight time, explosion velocity and explosion radius for as long as the effect
+    /// lands (a guidance disruptor: negative, but for the radius).
+    GuidanceDisrupt {
+        velocity_percent: f64,
+        delay_percent: f64,
+        aoe_velocity_percent: f64,
+        aoe_cloud_percent: f64,
+    },
     /// The target is held out of warp: `strength` points of scramble (a warp scrambler 2, a warp disruptor 1; the ship's own warp core subtracts). `blocks_mwd`: and out
     /// of its microwarpdrive.
     Scramble { strength: f64, blocks_mwd: bool },
@@ -124,6 +140,22 @@ impl Remote {
             Self::Scramble { strength, blocks_mwd } => {
                 Some(Lasting::Scramble { strength: strength * share, blocks_mwd })
             }
+            Self::Disrupt { range_percent, falloff_percent, tracking_percent } => Some(Lasting::Disrupt {
+                range_percent: range_percent * share,
+                falloff_percent: falloff_percent * share,
+                tracking_percent: tracking_percent * share,
+            }),
+            Self::GuidanceDisrupt {
+                velocity_percent,
+                delay_percent,
+                aoe_velocity_percent,
+                aoe_cloud_percent,
+            } => Some(Lasting::GuidanceDisrupt {
+                velocity_percent: velocity_percent * share,
+                delay_percent: delay_percent * share,
+                aoe_velocity_percent: aoe_velocity_percent * share,
+                aoe_cloud_percent: aoe_cloud_percent * share,
+            }),
             _ => None,
         }
     }
@@ -137,6 +169,10 @@ pub enum Action {
     /// The effect is projected at the locked target: it needs the target in reach, and does what `what` says, weakened by distance, as the cycle begins or ends.
     /// `jam` is what the target's client calls it on its HUD (`remoteArmorRepair`, `ewEnergyNeut`).
     Remote { what: Remote, reach: Reach, when: Applies, jam: String },
+    /// Every ship within `range` of the surface of the ship that runs the effect (not its own) takes `damage` (em, thermal, kinetic, explosive) as the cycle begins: a smartbomb
+    /// needs no target and rolls nothing. `hurts_pilots` is false where the safety of the pilot would stop it (the host knows the security of the system): it does not
+    /// start with another pilot in its range, and stops when one comes in.
+    Smartbomb { range: f64, damage: crate::health::Damage, hurts_pilots: bool },
 }
 
 /// An effect the host asks the scene to run, with everything the host has worked out for it.
@@ -170,7 +206,7 @@ impl Effect {
     pub(crate) fn remote(&self) -> Option<(&Remote, &Reach, Applies)> {
         match self.action.as_ref()? {
             Action::Remote { what, reach, when, .. } => Some((what, reach, *when)),
-            Action::Repair { .. } => None,
+            Action::Repair { .. } | Action::Smartbomb { .. } => None,
         }
     }
 
@@ -180,13 +216,15 @@ impl Effect {
             // an ECM jam is told to the HUD only when it lands (by `Scene::jam`), not as the effect begins
             Action::Remote { what: Remote::Jam { .. }, .. } => None,
             Action::Remote { jam, .. } if !jam.is_empty() => Some(jam),
-            _ => None,
+            Action::Remote { .. } | Action::Repair { .. } | Action::Smartbomb { .. } => None,
         }
     }
 
     /// Whether the client plays the effect as an attack (a weapon, a neutralizer, a nosferatu).
     pub(crate) fn offensive(&self) -> bool {
-        self.turret.is_some() || self.remote().is_some_and(|(what, ..)| what.hostile())
+        self.turret.is_some()
+            || self.remote().is_some_and(|(what, ..)| what.hostile())
+            || matches!(self.action, Some(Action::Smartbomb { .. }))
     }
 
     /// How many cycles the client is told the effect plays: a turret's are the ones asked for, those of a projected effect last as long as the effect can (the
@@ -284,11 +322,13 @@ impl Capacitor {
 
 /// How an effect came to its end.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Ending {
+pub(crate) enum Ending {
     /// The pilot asked, or the cycles were done, or the capacitor or the target was not there for another.
     Done,
     /// The target was lost: the weapon stops at once.
     TargetLost,
+    /// Something forbids the effect while it runs (a warp scrambler on a microwarpdrive): it stops at once, as when the target is lost.
+    Forced,
     /// The charge is spent: the client is told there is none.
     NoRounds,
 }
@@ -410,15 +450,26 @@ impl Scene {
         )
     }
 
-    /// The values an effect changes, told to the pilot.
-    fn changes_told(session: SessionId, owner: i64, changes: &[Change], when: i64) -> Option<Out> {
+    /// The values an effect changes, told to the pilot. A launcher's cycle is told as a real whatever its value (the recording of the reference's launcher: `4900.0`).
+    fn changes_told(
+        session: SessionId,
+        owner: i64,
+        effect: &Effect,
+        changes: &[Change],
+        when: i64,
+    ) -> Option<Out> {
+        let launcher = effect.turret.as_ref().is_some_and(|turret| turret.missile.is_some());
         if changes.is_empty() {
             return None;
         }
         let lines: Vec<Value> = changes
             .iter()
             .map(|c| {
-                let value = if c.attribute_id == DURATION { real(c.value) } else { number(c.value) };
+                let value = if c.attribute_id == DURATION || (launcher && c.attribute_id == CYCLE) {
+                    real(c.value)
+                } else {
+                    number(c.value)
+                };
                 attribute_change(owner, c.item_id, c.attribute_id, when, value, Value::None)
             })
             .collect();
@@ -537,6 +588,19 @@ impl Scene {
         if pilot.modules.running.iter().any(|r| r.effect.module_id == effect.module_id) {
             return vec![Out::Refused { session, command: CODE, reason: "ALREADY_ACTIVE" }];
         }
+        // a smartbomb that the safety forbids does not start with another pilot in its range
+        if let Some(Action::Smartbomb { range, hurts_pilots: false, .. }) = effect.action.as_ref()
+            && !self
+                .in_smartbomb_range(session, *range)
+                .iter()
+                .all(|(other, _)| crate::npc::is_npc_session(*other))
+        {
+            return vec![Out::Refused { session, command: CODE, reason: "SafetyActivated" }];
+        }
+        // a warp scrambler that blocks a microwarpdrive keeps one from being started
+        if effect.effect_id == MICROWARPDRIVE && pilot.incoming.mwd_blocked() {
+            return vec![Out::Refused { session, command: CODE, reason: "MICROWARPDRIVE_BLOCKED" }];
+        }
         if effect.turret.is_some() {
             if effect.target_id <= 0 {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_TARGET" }];
@@ -550,6 +614,21 @@ impl Scene {
             }
             if effect.turret.as_ref().and_then(|t| t.charge).is_some_and(|c| c.rounds < c.per_cycle) {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_AMMO" }];
+            }
+            // a missile goes only as far as it flies: a target further off is out of reach (the client is told how far the missile goes and how far the target is)
+            if let Some(missile) = effect.turret.as_ref().and_then(|t| t.missile.as_ref())
+                && let Some(target) = self.session_of(effect.target_id)
+                && let Some(apart) = self.apart(session, target)
+                && apart > missile.effective_range() + crate::weapons::MISSILE_RANGE_GRACE
+            {
+                return vec![Out::TargetRefused {
+                    session,
+                    command: CODE,
+                    reason: "TARGET_OUT_OF_RANGE",
+                    target_type: self.pilots[&target].ship.spec.type_id,
+                    desired_range: missile.effective_range(),
+                    actual_distance: apart,
+                }];
             }
         }
         // an effect that is projected at a ship needs it: there, locked and in reach (what is too far off is told with the range and how far it is)
@@ -606,9 +685,9 @@ impl Scene {
         let fx = self.tell_all(session, vec![Self::fx_action(stamp, &ship, &run.effect, true)]);
         if run.effect.turret.is_some() {
             out.extend(fx);
-            out.extend(Self::changes_told(session, owner, &run.effect.on_changes, now));
+            out.extend(Self::changes_told(session, owner, &run.effect, &run.effect.on_changes, now));
         } else {
-            out.extend(Self::changes_told(session, owner, &run.effect.on_changes, now));
+            out.extend(Self::changes_told(session, owner, &run.effect, &run.effect.on_changes, now));
             out.extend(fx);
         }
         out.push(Self::effect_told(session, owner, ship_id, &run, now, true, now, None));
@@ -850,7 +929,10 @@ impl Scene {
         let (spent, goes_on) = self.spend_round(session, next.effect.module_id, at);
         out.extend(spent);
         if goes_on {
-            out.push(Self::effect_told(session, owner, ship_id, &next, at, true, at, None));
+            // a launcher is not told again each cycle: the recording of the reference's launcher has the effect told on at its start and off at its end, with the rounds between
+            if next.effect.turret.as_ref().is_none_or(|turret| turret.missile.is_none()) {
+                out.push(Self::effect_told(session, owner, ship_id, &next, at, true, at, None));
+            }
         } else if let Some(pilot) = self.pilots.get_mut(&session)
             && let Some(position) =
                 pilot.modules.running.iter().position(|r| r.effect.module_id == next.effect.module_id)
@@ -909,12 +991,15 @@ impl Scene {
             Some(Action::Remote { what, reach, when: applies, .. }) if *applies == when => {
                 self.project(session, effect, what, reach, at)
             }
+            Some(Action::Smartbomb { range, damage, hurts_pilots }) if when == Applies::CycleStart => {
+                self.smartbomb(session, effect, *range, *damage, *hurts_pilots, at)
+            }
             _ => Vec::new(),
         }
     }
 
     /// How far apart the surfaces of two ships of the scene are (0 when they touch).
-    fn apart(&self, a: SessionId, b: SessionId) -> Option<f64> {
+    pub(crate) fn apart(&self, a: SessionId, b: SessionId) -> Option<f64> {
         let (a, b) = (&self.pilots.get(&a)?.ship, &self.pilots.get(&b)?.ship);
         let (p, q) = (a.position, b.position);
         let centres = ((p.x - q.x).powi(2) + (p.y - q.y).powi(2) + (p.z - q.z).powi(2)).sqrt();
@@ -941,7 +1026,12 @@ impl Scene {
             if resolution > 0.0 && signature > 0.0 { (signature / resolution).min(1.0) } else { 1.0 }
         };
         let out = match what {
-            Remote::Web { .. } | Remote::Paint { .. } | Remote::Damp { .. } | Remote::Scramble { .. } => {
+            Remote::Web { .. }
+            | Remote::Paint { .. }
+            | Remote::Damp { .. }
+            | Remote::Scramble { .. }
+            | Remote::Disrupt { .. }
+            | Remote::GuidanceDisrupt { .. } => {
                 let lasting = what.lasting(share).expect("these last");
                 self.hold(session, effect, lasting, at)
             }
@@ -1024,7 +1114,7 @@ impl Scene {
     /// An effect is over: the client is told the values it gave back, that it is off, and the ship's numbers and the effect are taken off in one update.
     /// An effect cut short by the loss of its target (`target_lost`) is told in the other order: the update first, then the values, then that it is off
     /// (the recording of the reference's gun).
-    fn effect_ended(
+    pub(crate) fn effect_ended(
         &mut self,
         session: SessionId,
         run: Running,
@@ -1033,9 +1123,10 @@ impl Scene {
         at: i64,
         ending: Ending,
     ) -> Vec<Out> {
-        let (target_lost, out_of_rounds) = (ending == Ending::TargetLost, ending == Ending::NoRounds);
+        let (target_lost, out_of_rounds) =
+            (matches!(ending, Ending::TargetLost | Ending::Forced), ending == Ending::NoRounds);
         let mut out = Vec::new();
-        let changes = Self::changes_told(session, owner, &run.effect.off_changes, at);
+        let changes = Self::changes_told(session, owner, &run.effect, &run.effect.off_changes, at);
         let error = out_of_rounds.then(|| no_charges(run.effect.module_type));
         let off = Self::effect_told(session, owner, ship_id, &run, at, false, run.cycle_start, error);
         let stamp = self.next_stamp(at);
@@ -1068,6 +1159,33 @@ impl Scene {
 
     /// The weapons of a ship that are aimed at ships it no longer has locked stop at once, the cycle they are in unfinished
     /// (`stopTargetedModuleEffects` of the reference, which `removeLockedTarget` runs before it tells the pilot the lock is lost).
+    /// A module that runs is stopped at once (what forbids it came with the cycle: the safety, a scrambler).
+    pub(crate) fn stop_module(&mut self, session: SessionId, module_id: i64, now: i64) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+        let Some(index) = pilot.modules.running.iter().position(|run| run.effect.module_id == module_id)
+        else {
+            return Vec::new();
+        };
+        let run = pilot.modules.running.remove(index);
+        self.effect_ended(session, run, owner, ship_id, now, Ending::Forced)
+    }
+
+    /// A microwarpdrive that runs on the ship is stopped at once (a warp scrambler that blocks it has landed).
+    pub(crate) fn stop_microwarpdrives(&mut self, session: SessionId, now: i64) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+        let (stopped, kept): (Vec<Running>, Vec<Running>) = std::mem::take(&mut pilot.modules.running)
+            .into_iter()
+            .partition(|run| run.effect.effect_id == MICROWARPDRIVE);
+        pilot.modules.running = kept;
+        let mut out = Vec::new();
+        for run in stopped {
+            out.extend(self.effect_ended(session, run, owner, ship_id, now, Ending::Forced));
+        }
+        out
+    }
+
     pub(crate) fn stop_weapons_at(&mut self, session: SessionId, targets: &[i64], now: i64) -> Vec<Out> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
@@ -2391,6 +2509,129 @@ pub(crate) mod tests {
                 && (spec.scan_resolution - resolution * 0.8).abs() < 1e-9
         );
         assert!(labels(&damped).iter().any(|l| l == "8:attributes[76,564]"), "{:?}", labels(&damped));
+    }
+
+    /// A smartbomb of `range` metres that does `damage` (em, thermal, kinetic, explosive) a cycle.
+    fn smartbomb(range: f64, damage: [f64; 4], hurts_pilots: bool) -> Effect {
+        Effect {
+            fx: "effects.EmpWave".to_string(),
+            duration_ms: 10_000.0,
+            capacitor_need: 5.0,
+            target_id: 0,
+            action: Some(Action::Smartbomb { range, damage, hurts_pilots }),
+            ..projected(Remote::Web { percent: 0.0 }, Applies::CycleStart, 0)
+        }
+    }
+
+    fn total(layers: &crate::health::Layers) -> f64 {
+        layers.shield + layers.armor + layers.structure
+    }
+
+    #[test]
+    fn a_smartbomb_hurts_every_ship_in_its_range_each_cycle_and_nothing_beyond_it() {
+        // B stands two kilometres off A's surface: inside a three kilometre field, with no lock between them
+        let (mut scene, t) = reaching(2_000.0);
+        scene.target_order(A, crate::targeting::Order::Clear, t);
+        let before = total(&partner_layers(&scene, t));
+        let started = scene.activate(A, smartbomb(3_000.0, [0.0, 40.0, 0.0, 40.0], true), t);
+        assert!(started.iter().any(|o| matches!(o, Out::Accepted { .. })), "{:?}", labels(&started));
+        let after = total(&partner_layers(&scene, t));
+        assert!(after < before - 1.0, "{before} then {after}");
+        assert!(
+            told_hud(&started, B, "OnDamageMessage") && told_hud(&started, A, "OnDamageMessage"),
+            "{:?}",
+            labels(&started)
+        );
+        // the next cycle is another blast
+        let (_, t2) = poll_until(&mut scene, t, 10.5);
+        assert!(total(&partner_layers(&scene, t2)) < after - 1.0);
+        // beyond the field nothing is hurt
+        let (mut far, tf) = reaching(5_000.0);
+        far.target_order(A, crate::targeting::Order::Clear, tf);
+        let whole = total(&partner_layers(&far, tf));
+        far.activate(A, smartbomb(3_000.0, [0.0, 40.0, 0.0, 40.0], true), tf);
+        assert_eq!(total(&partner_layers(&far, tf)), whole);
+        // and a ship whose undock protection is on takes nothing
+        let (mut safe, ts) = reaching(2_000.0);
+        safe.target_order(A, crate::targeting::Order::Clear, ts);
+        safe.pilots.get_mut(&B).unwrap().protected_until = ts + 60 * SECOND;
+        let kept = total(&partner_layers(&safe, ts));
+        safe.activate(A, smartbomb(3_000.0, [0.0, 40.0, 0.0, 40.0], true), ts);
+        assert_eq!(total(&partner_layers(&safe, ts)), kept);
+    }
+
+    #[test]
+    fn a_smartbomb_the_safety_forbids_does_not_start_with_a_pilot_in_range_and_stops_when_one_comes_in() {
+        let (mut scene, t) = reaching(2_000.0);
+        scene.target_order(A, crate::targeting::Order::Clear, t);
+        let before = total(&partner_layers(&scene, t));
+        let refused = scene.activate(A, smartbomb(3_000.0, [0.0, 40.0, 0.0, 40.0], false), t);
+        assert!(
+            refused.iter().any(|o| matches!(o, Out::Refused { reason: "SafetyActivated", .. })),
+            "{:?}",
+            labels(&refused)
+        );
+        assert_eq!(total(&partner_layers(&scene, t)), before);
+        // with nobody in range it starts, and a pilot that comes in range stops it at the next cycle
+        let (mut quiet, tq) = reaching(8_000.0);
+        quiet.target_order(A, crate::targeting::Order::Clear, tq);
+        let started = quiet.activate(A, smartbomb(3_000.0, [0.0, 40.0, 0.0, 40.0], false), tq);
+        assert!(started.iter().any(|o| matches!(o, Out::Accepted { .. })), "{:?}", labels(&started));
+        let here = quiet.pilots[&A].ship.position;
+        let (ra, rb) = (quiet.pilots[&A].ship.spec.radius, quiet.pilots[&B].ship.spec.radius);
+        quiet.pilots.get_mut(&B).unwrap().ship.position =
+            eve_destiny::Vec3 { x: here.x + 1_000.0 + ra + rb, y: here.y, z: here.z };
+        let whole = total(&partner_layers(&quiet, tq));
+        let (told, t2) = poll_until(&mut quiet, tq, 11.0);
+        assert_eq!(total(&partner_layers(&quiet, t2)), whole, "{:?}", labels(&told));
+        assert!(!quiet.pilots[&A].modules.running.iter().any(|r| r.effect.module_id == MODULE), "it stopped");
+    }
+
+    /// The afterburner of the tests, as the dogma effect of a microwarpdrive.
+    fn microwarpdrive() -> Effect {
+        Effect { effect_id: MICROWARPDRIVE, module_id: MODULE + 100, ..afterburner() }
+    }
+
+    #[test]
+    fn a_scrambler_that_blocks_a_microwarpdrive_stops_the_one_that_runs_and_keeps_another_from_starting() {
+        let (mut scene, t) = reaching(3_000.0);
+        let started = scene.activate(B, microwarpdrive(), t);
+        assert!(started.iter().any(|o| matches!(o, Out::Accepted { .. })), "{:?}", labels(&started));
+        assert!(scene.pilots[&B].modules.running.iter().any(|r| r.effect.effect_id == MICROWARPDRIVE));
+        // a disruptor does not block it, a scrambler does: the drive that runs is stopped at once and the ship is told it is off
+        let disrupt = holding(MODULE, Remote::Scramble { strength: 1.0, blocks_mwd: false }, "warpScrambler");
+        let free = scene.activate(A, disrupt, t + SECOND);
+        assert!(
+            scene.pilots[&B].modules.running.iter().any(|r| r.effect.effect_id == MICROWARPDRIVE),
+            "{:?}",
+            labels(&free)
+        );
+        scene.deactivate(A, MODULE, t + 2 * SECOND);
+        let (_, t2) = poll_until(&mut scene, t + 2 * SECOND, 8.0);
+        assert!(!scene.pilots[&B].incoming.scrambled());
+        let scram =
+            holding(MODULE + 1, Remote::Scramble { strength: 2.0, blocks_mwd: true }, "warpScramblerMWD");
+        let stopped = scene.activate(A, scram, t2);
+        assert!(
+            !scene.pilots[&B].modules.running.iter().any(|r| r.effect.effect_id == MICROWARPDRIVE),
+            "{:?}",
+            labels(&stopped)
+        );
+        assert!(
+            told_hud(&stopped, B, "OnGodmaShipEffect"),
+            "the pilot is told the drive is off: {:?}",
+            labels(&stopped)
+        );
+        // and another cannot be started while the scrambler holds the ship; an afterburner can
+        let refused = scene.activate(B, microwarpdrive(), t2 + SECOND);
+        assert!(
+            refused.iter().any(|o| matches!(o, Out::Refused { reason: "MICROWARPDRIVE_BLOCKED", .. })),
+            "{:?}",
+            labels(&refused)
+        );
+        let ab = Effect { module_id: MODULE + 101, ..afterburner() };
+        let accepted = scene.activate(B, ab, t2 + SECOND);
+        assert!(accepted.iter().any(|o| matches!(o, Out::Accepted { .. })), "{:?}", labels(&accepted));
     }
 
     #[test]

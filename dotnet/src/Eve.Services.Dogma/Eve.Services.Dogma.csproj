@@ -5,6 +5,7 @@
     <ProjectReference Include="../Eve.Services.Skills/Eve.Services.Skills.csproj" />
     <ProjectReference Include="../Eve.Ships/Eve.Ships.csproj" />
     <ProjectReference Include="../Eve.Dogma/Eve.Dogma.csproj" />
+    <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />
     <ProjectReference Include="../Eve.Services.Generator/Eve.Services.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>

@@ -130,7 +130,7 @@ public sealed class MarketSeedV4Tests
         Assert.Equal(new DateTimeOffset(2025,9,30,12,0,0,TimeSpan.Zero),ask.Issued);
         Assert.Equal(90,ask.Duration);
         Assert.Equal($"tq:{RegionId}:20",ask.StableKey);
-        Assert.Equal("\"page-1\"",result.Metadata.Regions.Single().Pages[0].ETag);
+        Assert.Equal(["\"page-1\"","\"page-2\""],result.Metadata.Regions.Single().Pages.Select(page=>page.ETag));
         Assert.Equal(LastModified,result.Metadata.Regions.Single().LastModified);
     }
 
@@ -158,7 +158,7 @@ public sealed class MarketSeedV4Tests
             var page = Query(request.RequestUri!,"page");
             if (n < 2)
                 return Task.FromResult(Response(n == 0 ? $"[{Order(1,34,StationId,true,1m)}]" : "[]",2,
-                    n == 0 ? LastModified : LastModified.AddMinutes(1),DateTimeOffset.UtcNow.AddSeconds(-1),$"\"old-{page}\""));
+                    n == 0 ? LastModified : LastModified.AddMinutes(1),DateTimeOffset.UtcNow.AddSeconds(6),$"\"old-{page}\""));
             return Task.FromResult(Response(page == "1" ? $"[{Order(2,34,StationId,true,2m)}]" : "[]",2,
                 LastModified.AddMinutes(1),DateTimeOffset.UtcNow.AddMinutes(5),$"\"new-{page}\""));
         });
@@ -166,9 +166,122 @@ public sealed class MarketSeedV4Tests
 
         var result = await CaptureAndReadAsync(client);
 
-        Assert.Equal(4,handler.Requests.Count);
+        Assert.Equal(["1","2","1","2"],handler.Requests.Select(uri => Query(new Uri(uri),"page")));
         Assert.Equal(2,result.Orders.Single().OrderId);
         Assert.Equal(LastModified.AddMinutes(1),result.Metadata.Regions.Single().LastModified);
+        Assert.Equal(["\"new-1\"","\"new-2\""],result.Metadata.Regions.Single().Pages.Select(page => page.ETag));
+    }
+
+    [Fact]
+    public async Task Refreshes_page_one_before_scanning_when_its_cache_is_expired()
+    {
+        var requests = 0;
+        using var handler = new FakeHandler((request, _) =>
+        {
+            var n = requests++;
+            var page = Query(request.RequestUri!,"page");
+            if (n == 0)
+                return Task.FromResult(Response($"[{Order(1,34,StationId,true,1m)}]",2,LastModified,
+                    DateTimeOffset.UtcNow.AddSeconds(-1),"\"stale-page-1\""));
+            return Task.FromResult(Response(page == "1" ? $"[{Order(2,34,StationId,true,2m)}]" : $"[{Order(3,34,StationId,true,3m)}]",
+                2,LastModified.AddMinutes(1),DateTimeOffset.UtcNow.AddMinutes(5),$"\"fresh-{page}\""));
+        });
+        using var client = new HttpClient(handler);
+
+        var result = await CaptureAndReadAsync(client);
+
+        Assert.Equal(["1","1","2"],handler.Requests.Select(uri => Query(new Uri(uri),"page")));
+        Assert.Equal([2L,3L],result.Orders.Select(order => order.OrderId));
+        Assert.Equal(["\"fresh-1\"","\"fresh-2\""],
+            result.Metadata.Regions.Single().Pages.Select(page => page.ETag));
+    }
+
+    [Fact]
+    public async Task Restarts_region_when_page_two_cache_is_expired_and_discards_page_one_rows()
+    {
+        var requests = 0;
+        using var handler = new FakeHandler((request, _) =>
+        {
+            var n = requests++;
+            var page = Query(request.RequestUri!,"page");
+            var attempt = n / 2;
+            if (attempt == 0 && page == "1")
+                return Task.FromResult(Response($"[{Order(1,34,StationId,true,1m)}]",2,LastModified,
+                    DateTimeOffset.UtcNow.AddMinutes(5),"\"stale-set-page-1\""));
+            if (attempt == 0)
+                return Task.FromResult(Response($"[{Order(99,34,StationId,true,99m)}]",2,LastModified,
+                    DateTimeOffset.UtcNow.AddSeconds(-1),"\"expired-page-2\""));
+            return Task.FromResult(Response(page == "1" ? $"[{Order(2,34,StationId,true,2m)}]" : $"[{Order(3,34,StationId,true,3m)}]",
+                2,LastModified.AddMinutes(1),DateTimeOffset.UtcNow.AddMinutes(5),$"\"fresh-{page}\""));
+        });
+        using var client = new HttpClient(handler);
+
+        var result = await CaptureAndReadAsync(client);
+
+        Assert.Equal(["1","2","1","2"],handler.Requests.Select(uri => Query(new Uri(uri),"page")));
+        Assert.Equal([2L,3L],result.Orders.Select(order => order.OrderId));
+        Assert.Equal(["\"fresh-1\"","\"fresh-2\""],
+            result.Metadata.Regions.Single().Pages.Select(page => page.ETag));
+    }
+
+    [Fact]
+    public async Task Restarts_region_when_x_pages_changes_and_discards_partial_rows()
+    {
+        var requests = 0;
+        using var handler = new FakeHandler((request, _) =>
+        {
+            var n = requests++;
+            var page = Query(request.RequestUri!,"page");
+            if (n == 0)
+                return Task.FromResult(Response($"[{Order(1,34,StationId,true,1m)}]",2,LastModified,
+                    DateTimeOffset.UtcNow.AddSeconds(6),"\"old-1\""));
+            if (n == 1)
+                return Task.FromResult(Response($"[{Order(2,34,StationId,true,2m)}]",3,LastModified,
+                    DateTimeOffset.UtcNow.AddMinutes(5),"\"old-2\""));
+            var orderId = page switch { "1" => 3L, "2" => 4L, _ => 5L };
+            return Task.FromResult(Response($"[{Order(orderId,34,StationId,true,orderId)}]",3,
+                LastModified.AddMinutes(1),DateTimeOffset.UtcNow.AddMinutes(5),$"\"new-{page}\""));
+        });
+        using var client = new HttpClient(handler);
+
+        var result = await CaptureAndReadAsync(client);
+
+        Assert.Equal(["1","2","1","2","3"],handler.Requests.Select(uri => Query(new Uri(uri),"page")));
+        Assert.Equal([3L,4L,5L],result.Orders.Select(order => order.OrderId));
+        Assert.Equal(["\"new-1\"","\"new-2\"","\"new-3\""],
+            result.Metadata.Regions.Single().Pages.Select(page => page.ETag));
+        Assert.Equal(LastModified.AddMinutes(1),result.Metadata.Regions.Single().LastModified);
+    }
+
+    [Fact]
+    public async Task Retry_limit_reports_last_modified_page_and_discards_partial_region_rows()
+    {
+        var requests = 0;
+        using var handler = new FakeHandler((request, _) =>
+        {
+            var n = requests++;
+            var page = Query(request.RequestUri!,"page");
+            var attempt = n / 2;
+            if (page == "1")
+                return Task.FromResult(Response($"[{Order(100 + attempt,34,StationId,true,1m)}]",2,LastModified,
+                    DateTimeOffset.UtcNow.AddSeconds(6),$"\"attempt-{attempt}-1\""));
+            return Task.FromResult(Response("[]",2,LastModified.AddMinutes(attempt + 1),
+                DateTimeOffset.UtcNow.AddMinutes(5),$"\"attempt-{attempt}-2\""));
+        });
+        using var client = new HttpClient(handler);
+        await using var artifact = new MemoryStream();
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() => MarketSeedV4.CaptureAsync(client,artifact,
+            [RegionId],new HashSet<long> { 34 },new HashSet<long> { StationId },3396210,DateTimeOffset.UnixEpoch));
+
+        Assert.Contains("Last-Modified",error.Message);
+        Assert.Contains($"region {RegionId}",error.Message);
+        Assert.Contains("page 2",error.Message);
+        Assert.Equal(6,handler.Requests.Count);
+        Assert.Equal(["1","2","1","2","1","2"],handler.Requests.Select(uri => Query(new Uri(uri),"page")));
+        var incompleteArtifact = System.Text.Encoding.UTF8.GetString(artifact.ToArray());
+        Assert.Contains("market-seed-v4-jsonl",incompleteArtifact);
+        Assert.DoesNotContain("order_id",incompleteArtifact);
     }
 
     [Fact]

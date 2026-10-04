@@ -268,8 +268,8 @@ public class SimClientTests
         var sim = new FakeSimulation { AckVersion = SimCodec.ProtocolVersion + 1 };
         await using var _ = sim;
         sim.Listen();
-        var log = new List<string>();
-        await using var client = SimClient.ToUnixSocket(sim.Path, log.Add);
+        var log = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        await using var client = SimClient.ToUnixSocket(sim.Path, log.Enqueue);
         client.RetryAfter = TimeSpan.FromMilliseconds(20);
         client.Start();
         await Until(() => sim.Connections >= 2);

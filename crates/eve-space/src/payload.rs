@@ -35,6 +35,11 @@ fn state_buffer(kind: u8, stamp: u32, balls: &[BallEntity]) -> Result<Value, Bal
     Ok(Value::Buffer(bytes.into()))
 }
 
+/// The state buffer of an `AddBalls2` for these balls (the missile that is fired has no slim item of a ship, so it builds its own update).
+pub fn add_balls_buffer(stamp: u32, balls: &[BallEntity]) -> Result<Value, BallError> {
+    state_buffer(ADD_BALLS, stamp, balls)
+}
+
 /// One action of a `DoDestinyUpdate`: what happened at a stamp, `(stamp, (name, args))`.
 pub fn action(stamp: u32, name: &'static str, args: impl IntoIterator<Item = Value>) -> Value {
     tuple([id(i64::from(stamp)), tuple([word(name), tuple(args)])])
@@ -80,6 +85,11 @@ pub fn add_wreck(stamp: u32, wreck: &Wreck, now: i64) -> Result<Value, BallError
 /// `OnSlimItemChange`: the slim item of a wreck or a can is told again (what is in it, who may take it), as an object.
 pub fn slim_item_change(stamp: u32, wreck: &Wreck) -> Value {
     action(stamp, "OnSlimItemChange", [id(wreck.id), slim_object(wreck.slim_entries())])
+}
+
+/// `OnSlimItemChange` for a ship: its slim item is told again, as an object, to whoever has the ship in view (a pilot whose security status changed, for one).
+pub fn ship_slim_item_change(stamp: u32, ship: &Ship) -> Value {
+    action(stamp, "OnSlimItemChange", [id(ship.spec.ship_id), slim_object(slim::ship_entries(ship))])
 }
 
 /// The effect the client plays where a pilot jettisons cargo (`effects.Jettison`, played on the can: it has no module, target or charge).

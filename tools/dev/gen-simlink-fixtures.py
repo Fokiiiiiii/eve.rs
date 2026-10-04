@@ -91,6 +91,49 @@ def turret(t):
 LAYERS = {"shield": 0, "armor": 1, "structure": 2}
 
 
+def action(a):
+    kind = a["kind"]
+    if kind == "smartbomb":
+        return bytes([2]) + struct.pack("<d", a["range"]) + struct.pack("<4d", *a["damage"]) + bytes([1 if a["hurtsPilots"] else 0])
+    if kind == "repair":
+        return bytes([0, LAYERS[a["layer"]], 1 if a["when"] == "end" else 0]) + struct.pack("<d", a["amount"])
+    if kind == "ecmBurst":
+        return bytes([3]) + struct.pack("<d", a["range"]) + struct.pack("<4d", *a["strength"])
+    if kind == "cloak":
+        return bytes([5])
+    if kind == "charged":
+        body = bytes([4]) + struct.pack("<iiqq", a["chargeTypeId"], a["chargeFlag"], a["chargePerCycle"], a["charges"])
+        body += action(a["action"])
+        fallback = a.get("fallback")
+        body += bytes([1 if fallback else 0])
+        if fallback:
+            body += action(fallback)
+        return body
+
+    what = a["what"]
+    body = bytes([1, 1 if a["when"] == "end" else 0]) + struct.pack("<dd", a["optimal"], a["falloff"]) + s(a["jam"])
+    body += bytes([{"repair": 0, "transfer": 1, "neutralize": 2, "drain": 3, "web": 4, "paint": 5, "damp": 6, "scramble": 7, "jam": 8, "disrupt": 9, "guidanceDisrupt": 10}[what]])
+    if what == "repair":
+        body += bytes([LAYERS[a["layer"]]])
+    if what in ("repair", "transfer", "neutralize", "drain"):
+        body += struct.pack("<d", a["amount"])
+    if what in ("neutralize", "drain"):
+        body += struct.pack("<d", a["signatureResolution"])
+    if what in ("web", "paint"):
+        body += struct.pack("<d", a["percent"])
+    if what == "damp":
+        body += struct.pack("<dd", a["rangePercent"], a["resolutionPercent"])
+    if what == "scramble":
+        body += struct.pack("<d", a["strength"]) + bytes([1 if a["blocksMwd"] else 0])
+    if what == "jam":
+        body += struct.pack("<4d", *a["strength"])
+    if what == "disrupt":
+        body += struct.pack("<ddd", a["rangePercent"], a["falloffPercent"], a["trackingPercent"])
+    if what == "guidanceDisrupt":
+        body += struct.pack("<dddd", a["velocityPercent"], a["delayPercent"], a["aoeVelocityPercent"], a["aoeCloudPercent"])
+    return body
+
+
 def effect(e):
     body = i64(e["moduleId"]) + struct.pack("<ii", e["moduleType"], e["effectId"]) + s(e["fx"])
     body += struct.pack("<ddi", e["durationMs"], e["capacitorNeed"], e["repeat"]) + i64(e["targetId"])
@@ -101,32 +144,8 @@ def effect(e):
             body += numbers(n)
     body += changes(e["onChanges"]) + changes(e["offChanges"])
     body = body + turret(gun) if gun else body
-    if act and act["kind"] == "smartbomb":
-        body += bytes([2]) + struct.pack("<d", act["range"]) + struct.pack("<4d", *act["damage"]) + bytes([1 if act["hurtsPilots"] else 0])
-    elif act and act["kind"] == "repair":
-        body += bytes([0, LAYERS[act["layer"]], 1 if act["when"] == "end" else 0]) + struct.pack("<d", act["amount"])
-    elif act:
-        what = act["what"]
-        body += bytes([1, 1 if act["when"] == "end" else 0]) + struct.pack("<dd", act["optimal"], act["falloff"]) + s(act["jam"])
-        body += bytes([{"repair": 0, "transfer": 1, "neutralize": 2, "drain": 3, "web": 4, "paint": 5, "damp": 6, "scramble": 7, "jam": 8, "disrupt": 9, "guidanceDisrupt": 10}[what]])
-        if what == "repair":
-            body += bytes([LAYERS[act["layer"]]])
-        if what in ("repair", "transfer", "neutralize", "drain"):
-            body += struct.pack("<d", act["amount"])
-        if what in ("neutralize", "drain"):
-            body += struct.pack("<d", act["signatureResolution"])
-        if what in ("web", "paint"):
-            body += struct.pack("<d", act["percent"])
-        if what == "damp":
-            body += struct.pack("<dd", act["rangePercent"], act["resolutionPercent"])
-        if what == "scramble":
-            body += struct.pack("<d", act["strength"]) + bytes([1 if act["blocksMwd"] else 0])
-        if what == "jam":
-            body += struct.pack("<4d", *act["strength"])
-        if what == "disrupt":
-            body += struct.pack("<ddd", act["rangePercent"], act["falloffPercent"], act["trackingPercent"])
-        if what == "guidanceDisrupt":
-            body += struct.pack("<dddd", act["velocityPercent"], act["delayPercent"], act["aoeVelocityPercent"], act["aoeCloudPercent"])
+    if act:
+        body += action(act)
     return body
 
 
@@ -416,6 +435,19 @@ valid = [
      "effect": {"moduleId": "9988400002813", "moduleType": 1563, "effectId": 38, "fx": "effects.EmpWave",
                 "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1000, "targetId": "0",
                 "action": {"kind": "smartbomb", "range": 3000.0, "damage": [50.0, 0.0, 0.0, 0.0], "hurtsPilots": True},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate an ECM burst", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 580, "effectId": 38, "fx": "effects.EcmBurstJammer",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1000, "targetId": "0",
+                "action": {"kind": "ecmBurst", "range": 3000.0, "strength": [6.0, 6.0, 6.0, 6.0]},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a charged ancillary repair", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 580, "effectId": 38, "fx": "effects.EcmBurstJammer",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1000, "targetId": "0",
+                "action": {"kind": "charged", "chargeTypeId": 91001, "chargeFlag": 27,
+                           "chargePerCycle": 1, "charges": 2,
+                           "action": {"kind": "repair", "layer": "armor", "amount": 10.0, "when": "end"},
+                           "fallback": {"kind": "repair", "layer": "armor", "amount": 5.0, "when": "end"}},
                 "onChanges": [], "offChanges": []}},
     {"name": "activate a tracking disruptor", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002812", "moduleType": 2108, "effectId": 6424, "fx": "effects.TrackingDisruption",

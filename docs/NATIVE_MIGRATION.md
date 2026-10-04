@@ -449,3 +449,5 @@ After Kepler's corrections, Space passed 204/204 and the restored ECM [PgFact] p
 3,231/3,231 pass, skip 0. The 205 Space cases were verified as 204 + 1 across separate invocations, not one full-project run.
 Kepler reported eve-space Rust tests 485/485 and Clippy -Dwarnings passing. No live-client acceptance or performance comparison is claimed for this batch.
 
+
+Post-push Host correction (2026-10-04): the Host startup reader now reads npcCharacters.locationID from pinned SDE 3396210 instead of absent sde.agtAgents; its focused regression passed 1/1 and the normal-dependency Host Release build completed with 0 warnings and 0 errors. Kepler regenerated ECM/charged fixtures twice with identical SHA and verified Rust simlink 5/5 and C# SimCodec 120/120. The first remote CI run passed 4/6 jobs; post-push remote CI remains pending and is not yet confirmed.

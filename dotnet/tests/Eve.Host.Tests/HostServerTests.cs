@@ -342,6 +342,28 @@ public class HostServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Agent_location_read_model_uses_npc_characters_and_station_location_ids()
+    {
+        using var stationAgent = System.Text.Json.JsonDocument.Parse("""{"locationID":60000004}""");
+        using var missingLocation = System.Text.Json.JsonDocument.Parse("""{"name":{"en":"No location"}}""");
+        string? requestedTable = null;
+        var model = new PersistenceAgentLocationReadModel((table, _) =>
+        {
+            requestedTable = table;
+            return Task.FromResult<IReadOnlyList<Eve.Sde.SdeRow>>([
+                new Eve.Sde.SdeRow(300001, stationAgent.RootElement),
+                new Eve.Sde.SdeRow(300002, missingLocation.RootElement),
+            ]);
+        });
+
+        var locations = await model.ReadAsync(CancellationToken.None);
+
+        Assert.Equal("npcCharacters", requestedTable);
+        Assert.Equal(60000004, locations[300001]);
+        Assert.DoesNotContain(300002, locations.Keys);
+    }
+
+    [Fact]
     public async Task Character_personal_read_model_loads_contacts_and_notes_from_owner_scoped_tables()
     {
         var tables = new Dictionary<string, System.Text.Json.Nodes.JsonObject>

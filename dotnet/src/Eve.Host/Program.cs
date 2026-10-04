@@ -467,13 +467,9 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         scheduleAllianceApplication: allianceDue.ScheduleAcceptedAsync,
         wakeAllianceApplicationScheduler: allianceDue.Wake);
 
-    var agentLocationById = new Dictionary<long, long>();
-    foreach (var row in await sde.ReadAsync("agtAgents"))
-    {
-        if (row.Doc.TryGetProperty("locationID", out var location) &&
-            location.TryGetInt64(out var stationId) && stationId > 0)
-            agentLocationById[row.Key] = stationId;
-    }
+    var agentLocationById = await new PersistenceAgentLocationReadModel(
+        (table, cancellation) => sde.ReadAsync(table, cancellationToken: cancellation))
+        .ReadAsync(CancellationToken.None);
     var structureDirectoryReadModel = new PersistenceStructureDirectoryReadModel(ReadGameStoreTableAsync, AffiliationOfAsync);
     var sovereigntyReadModel = new PersistenceSovFwReadModel(ReadGameStoreTableAsync, AffiliationOfAsync);
     var incursionAnomalyReadModel = new PersistenceIncursionAnomalyReadModel(
@@ -1246,6 +1242,27 @@ public static class PersistenceReadHelpers
             (name, token) => store.LoadTableAsync(name, createIfMissing: false, token),
             table,
             cancellationToken);
+}
+
+public sealed class PersistenceAgentLocationReadModel(
+    Func<string, CancellationToken, Task<IReadOnlyList<SdeRow>>> readTableAsync)
+{
+    public async Task<IReadOnlyDictionary<long, long>> ReadAsync(CancellationToken cancellationToken)
+    {
+        var locations = new Dictionary<long, long>();
+        foreach (var row in await readTableAsync("npcCharacters", cancellationToken))
+        {
+            if (row.Key > 0 &&
+                row.Doc.TryGetProperty("locationID", out var location) &&
+                location.TryGetInt64(out var locationId) &&
+                locationId > 0)
+            {
+                locations[row.Key] = locationId;
+            }
+        }
+
+        return locations;
+    }
 }
 
 public sealed class PersistenceCharMgrReadModel(

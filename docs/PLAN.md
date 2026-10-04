@@ -227,6 +227,10 @@ unavailable checks must be recorded separately in NATIVE_MIGRATION.md.
 - [ ] Structure Asset Safety
 - [ ] Structure Deliveries
 
+## Ship operations and module coverage
+
+The complete Wiki module/rig/subsystem family inventory, current Host/Rust coverage states, Mill operation backlog, the Drone Mine/Salvage call-path discrepancy, required entity/SDE dependencies, and ordered acceptance slices are tracked in [SHIP_OPERATIONS_HANDOFF.md](SHIP_OPERATIONS_HANDOFF.md). Keep read/fit support distinct from active simulation behavior; an SDE item family is not marked absent until its current-SDE rows are checked. Autopilot and Kepler heat/ammunition focused results are worker reports, not the final integrated suite. Post-push CI run 37196142757 passed all six jobs; the parent is still reviewing the .NET job log for the final suite count.
+
 ## Consolidation and cleanup
 
 - After implementation and verification, consolidate on one `main` after commit/push; inspect stashes and remaining diffs, then move unneeded work areas and validation artifacts to the Recycle Bin.

@@ -9,6 +9,7 @@ using Eve.Sde;
 using Eve.Ships;
 using Eve.Skills;
 using Eve.Universe;
+using Eve.Wallet;
 using Npgsql;
 
 namespace Eve.Services.Inventory.Tests;
@@ -558,5 +559,93 @@ public class InvBrokerTests
         var items = new PgItemStore(source, "inventory");
         var service = new InvBrokerService(items, new ItemTypeCatalog(new SdeReader(source)), Rig.Stations, Rig.Unused(source, items), new DogmaStatic([], [], []), () => 1);
         Assert.Equal(InventoryWire.DescriptorHeader, service.GetItemDescriptor(new ServiceCall { Method = "GetItemDescriptor", Args = [], Session = new ClientSession() }));
+    }
+
+
+    [PgFact]
+    public async Task Available_turret_slots_are_a_python_integer_zero_when_the_bound_session_has_no_character()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var session = Rig.Session(character: null);
+        var hangar = await rig.HangarAsync(session);
+
+        Assert.Equal(new PyInt(0), await rig.CallAsync(session, "GetAvailableTurretSlots", hangar));
+    }
+
+
+    [PgFact]
+    public async Task Available_turret_slots_without_a_bound_object_uses_the_prepared_active_ship()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var schemas = new[] { $"tc_{suffix}", $"ts_{suffix}", $"tw_{suffix}", $"tf_{suffix}" };
+        try
+        {
+            var characters = new PgCharacterStore(rig.Source, schemas[0]);
+            var skills = new PgSkillStore(rig.Source, schemas[1]);
+            var wallets = new PgWalletStore(rig.Source, schemas[2]);
+            var modules = new PgModuleStateStore(rig.Source, schemas[3]);
+            await PgCharacterStore.MigrateAsync(rig.Source, schemas[0]);
+            await PgSkillStore.MigrateAsync(rig.Source, schemas[1]);
+            await PgWalletStore.MigrateAsync(rig.Source, schemas[2]);
+            await PgModuleStateStore.MigrateAsync(rig.Source, schemas[3]);
+
+            var sde = new SdeReader(rig.Source);
+            Assert.NotNull(await sde.BuildAsync());
+            CharacterNames.EnsureUnicodeSupport();
+            var statics = await DogmaStatic.LoadAsync(sde);
+            var creation = new CharacterCreation(
+                rig.Source, characters, rig.Items, skills, await SkillCatalog.LoadAsync(sde), wallets,
+                new StartingWallet(), await CreationCatalog.LoadAsync(sde, Rig.Station), modules);
+            var created = Assert.IsType<Created>(await creation.CreateAsync(
+                new CreationRequest(1, "Turret RPC Tester", 2, 3, 1, 10, 33, [1], [2])));
+            var ships = new CharacterShips(rig.Source, statics, characters, rig.Items, skills, modules);
+            var service = new InvBrokerService(
+                rig.Items, new ItemTypeCatalog(sde), Rig.Stations, ships, statics, () => 1);
+
+            var turrets = (await rig.Items.InLocationAsync(created.ShipId, created.CharacterId))
+                .Where(item => item.TypeId is 21857 or 3636).ToArray();
+            Assert.NotEmpty(turrets);
+            foreach (var turret in turrets)
+            {
+                Assert.IsType<ShipChanged>(await ships.MoveAsync(
+                    created.CharacterId, turret.Id, created.ShipId, Rig.Station, ItemFlags.Hangar, null));
+            }
+
+            var session = Rig.Session(created.CharacterId);
+            var snapshot = await ships.LoadAsync(created.CharacterId);
+            Assert.NotNull(snapshot);
+            var expected = Math.Max(0L, (long)snapshot.World.Get(snapshot.Ship.Id, BuiltInEffects.TurretSlotsLeft));
+            Assert.True(expected > 0, "the prepared active ship must expose at least one free turret slot");
+
+            var answer = await ((IService)service).CallAsync(new ServiceCall
+            {
+                Method = "GetAvailableTurretSlots",
+                Args = [],
+                Session = session,
+                CallId = new PyInt(1),
+            });
+
+            Assert.IsType<PyInt>(answer);
+            Assert.Equal(expected, ((PyInt)answer).Value);
+
+            var missingShip = Rig.Session(character: long.MaxValue - 1);
+            var unprepared = await ((IService)service).CallAsync(new ServiceCall
+            {
+                Method = "GetAvailableTurretSlots",
+                Args = [],
+                Session = missingShip,
+                CallId = new PyInt(2),
+            });
+            Assert.Equal(new PyInt(0), unprepared);
+        }
+        finally
+        {
+            foreach (var schema in schemas)
+            {
+                await using var command = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+                await command.ExecuteNonQueryAsync();
+            }
+        }
     }
 }

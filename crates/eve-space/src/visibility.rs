@@ -29,6 +29,19 @@ pub struct Presence {
     pub warping: bool,
 }
 
+/// Cloak transition as it affects what another pilot can see and target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloakState {
+    /// Fully visible and targetable.
+    Uncloaked,
+    /// The ship remains visible during the cloak animation but cannot lock or be locked.
+    Cloaking,
+    /// Fully cloaked, including while covert-warping.
+    Cloaked,
+    /// Visible and targetable as soon as decloaking begins.
+    Decloaking,
+}
+
 /// Whether `observer` can see `subject`: they are in the same box of the grid, or one of them is in warp and they are within the warp envelope.
 /// The rule is the same both ways round, so two ships see each other or neither does.
 pub fn can_see(observer: Presence, subject: Presence) -> bool {
@@ -36,6 +49,24 @@ pub fn can_see(observer: Presence, subject: Presence) -> bool {
         return true;
     }
     (observer.warping || subject.warping) && distance(observer.position, subject.position) <= WARP_ENVELOPE
+}
+
+/// Whether the observer sees the subject through the public-grid and warp rules,
+/// after the subject's cloak transition is applied.
+pub fn can_see_subject(observer: Presence, subject: Presence, subject_cloak: CloakState) -> bool {
+    !matches!(subject_cloak, CloakState::Cloaked) && can_see(observer, subject)
+}
+
+/// Whether the observer may lock the subject, applying cloak restrictions and visibility.
+pub fn can_select_target(
+    observer: Presence,
+    subject: Presence,
+    observer_cloak: CloakState,
+    subject_cloak: CloakState,
+) -> bool {
+    matches!(observer_cloak, CloakState::Uncloaked | CloakState::Decloaking)
+        && matches!(subject_cloak, CloakState::Uncloaked | CloakState::Decloaking)
+        && can_see(observer, subject)
 }
 
 #[cfg(test)]
@@ -99,5 +130,56 @@ mod tests {
     #[test]
     fn an_ordinary_ship_out_of_the_box_is_out_of_view_however_near() {
         assert!(!can_see(at(GRID_BOX - 1.0, 0.0, 0.0, false), at(GRID_BOX, 0.0, 0.0, false)));
+    }
+
+    #[test]
+    fn a_cloaked_ship_is_hidden_from_visibility_and_target_selection_on_the_same_grid() {
+        let observer = at(1_000.0, 0.0, 0.0, false);
+        let cloaked_subject = at(2_000.0, 0.0, 0.0, false);
+
+        assert!(!can_see_subject(observer, cloaked_subject, CloakState::Cloaked));
+        assert!(!can_select_target(observer, cloaked_subject, CloakState::Uncloaked, CloakState::Cloaked));
+    }
+
+    #[test]
+    fn a_cloaked_ship_flying_off_stays_hidden_inside_the_warp_envelope() {
+        let observer = at(0.0, 0.0, 0.0, false);
+        let cloaked_warping_subject = at(WARP_ENVELOPE / 2.0, 0.0, 0.0, true);
+
+        assert!(can_see(observer, cloaked_warping_subject));
+        assert!(!can_see_subject(observer, cloaked_warping_subject, CloakState::Cloaked));
+        assert!(!can_select_target(
+            observer,
+            cloaked_warping_subject,
+            CloakState::Uncloaked,
+            CloakState::Cloaked
+        ));
+    }
+
+    #[test]
+    fn decloaking_makes_a_subject_visible_and_selectable_immediately() {
+        let observer = at(1_000.0, 0.0, 0.0, false);
+        let subject = at(2_000.0, 0.0, 0.0, false);
+
+        assert!(can_see_subject(observer, subject, CloakState::Decloaking));
+        assert!(can_select_target(observer, subject, CloakState::Uncloaked, CloakState::Decloaking));
+    }
+
+    #[test]
+    fn a_cloaked_observer_cannot_select_an_uncloaked_visible_subject() {
+        let observer = at(1_000.0, 0.0, 0.0, false);
+        let subject = at(2_000.0, 0.0, 0.0, false);
+
+        assert!(can_see_subject(observer, subject, CloakState::Decloaking));
+        assert!(!can_select_target(observer, subject, CloakState::Cloaked, CloakState::Uncloaked));
+    }
+
+    #[test]
+    fn the_cloaking_animation_is_visible_but_not_targetable() {
+        let observer = at(1_000.0, 0.0, 0.0, false);
+        let subject = at(2_000.0, 0.0, 0.0, false);
+
+        assert!(can_see_subject(observer, subject, CloakState::Cloaking));
+        assert!(!can_select_target(observer, subject, CloakState::Uncloaked, CloakState::Cloaking,));
     }
 }

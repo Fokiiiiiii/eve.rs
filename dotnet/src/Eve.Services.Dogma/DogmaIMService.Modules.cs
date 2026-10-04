@@ -29,6 +29,9 @@ public sealed partial class DogmaIMService
             {
                 "NOT_IN_SPACE" or "NO_SHIP_IN_SPACE" or "MODULE_NOT_FOUND" => MachoErrors.ThrowUserError("DeniedShipChanged"),
                 "MODULE_NOT_ACTIVE" => Notify($"{name} is not active."),
+                "MODULE_INCAPACITATED" => Notify($"{name} is too damaged to overload."),
+                "MODULE_NOT_OVERLOADABLE" => Notify($"{name} cannot be overloaded."),
+                "THERMODYNAMICS_SKILL_REQUIRED" => MachoErrors.ThrowUserError("DontHaveThermoDynamicsSkill", ("skillLevel", new PyInt(1))),
                 _ => Notify($"Failed to deactivate {name}."),
             };
         }
@@ -47,8 +50,15 @@ public sealed partial class DogmaIMService
                 ("actualDistance", Py.Number(Math.Max(0, refusal.ActualDistance)))),
             "NO_AMMO" => MachoErrors.ThrowUserError("NoCharges", ("launcher", new PyTuple([new PyInt(TypeReference), new PyInt(refusal.ModuleType)]))),
             "MODULE_NOT_ONLINE" => Notify($"{name} is offline."),
+            "MODULE_INCAPACITATED" => Notify($"{name} is too damaged to overload."),
+            "MODULE_NOT_OVERLOADABLE" => Notify($"{name} cannot be overloaded."),
+            "THERMODYNAMICS_SKILL_REQUIRED" => MachoErrors.ThrowUserError("DontHaveThermoDynamicsSkill", ("skillLevel", new PyInt(1))),
             "NOT_ENOUGH_CAPACITOR" => Notify("You do not have enough capacitor to activate that module."),
             "MICROWARPDRIVE_BLOCKED" => Notify("You cannot activate a microwarpdrive while a warp scrambler holds your ship."),
+            "CLOAK_WARP_BLOCKED" => Notify("You cannot activate that cloaking device while warping."),
+            "CLOAK_TARGET_LOCKED" => Notify("Your ship is already target locked and cannot activate a cloaking device."),
+            "CLOAK_PROXIMITY_BLOCKED" => Notify("You are too close to another object to activate your cloaking device."),
+            "MODULE_CLOAKED" => Notify("You cannot activate modules while cloaked."),
             "UNSUPPORTED_EFFECT" => Notify($"{name} cannot be activated."),
             _ => Notify($"Failed to activate {name}: {refusal.Reason ?? "unknown error"}."),
         };
@@ -77,5 +87,43 @@ public sealed partial class DogmaIMService
         var effect = JsSemantics.StringValue(call.Arg(1)) ?? "";
         await ModuleOrderAsync(call, m => m.DeactivateAsync(call.Session, module, effect, call.Cancellation), starting: false);
         return new PyInt(1);
+    }
+
+    /// <summary><c>Overload(itemID, effectID)</c>: starts one fitted module's Dogma overload effect.</summary>
+    [Method("Overload")]
+    public async ValueTask<PyValue> Overload(ServiceCall call)
+    {
+        var module = IdOf(call.Arg(0)) ?? 0;
+        var effect = (int)Math.Clamp(IdOf(call.Arg(1)) ?? 0, int.MinValue, int.MaxValue);
+        await ModuleOrderAsync(call, modules => modules.OverloadAsync(call.Session, module, effect, true, call.Cancellation), starting: true);
+        return new PyInt(1);
+    }
+
+    /// <summary><c>StopOverload(itemID, effectID)</c>: stops a fitted module's overload effect at its cycle boundary.</summary>
+    [Method("StopOverload")]
+    public async ValueTask<PyValue> StopOverload(ServiceCall call)
+    {
+        var module = IdOf(call.Arg(0)) ?? 0;
+        var effect = (int)Math.Clamp(IdOf(call.Arg(1)) ?? 0, int.MinValue, int.MaxValue);
+        await ModuleOrderAsync(call, modules => modules.OverloadAsync(call.Session, module, effect, false, call.Cancellation), starting: false);
+        return new PyInt(1);
+    }
+
+    /// <summary><c>OverloadRack(itemID)</c>: overloads overloadable online modules in the fitted module's rack.</summary>
+    [Method("OverloadRack")]
+    public async ValueTask<PyValue> OverloadRack(ServiceCall call)
+    {
+        var module = IdOf(call.Arg(0)) ?? 0;
+        var result = await ModuleOrderAsync(call, space => space.OverloadRackAsync(call.Session, module, true, call.Cancellation), starting: true);
+        return new PyList([.. result.ModuleIds.Select(id => new PyLong(id))]);
+    }
+
+    /// <summary><c>StopOverloadRack(itemID)</c>: stops overload in the fitted module's rack.</summary>
+    [Method("StopOverloadRack")]
+    public async ValueTask<PyValue> StopOverloadRack(ServiceCall call)
+    {
+        var module = IdOf(call.Arg(0)) ?? 0;
+        var result = await ModuleOrderAsync(call, space => space.OverloadRackAsync(call.Session, module, false, call.Cancellation), starting: false);
+        return new PyList([.. result.ModuleIds.Select(id => new PyLong(id))]);
     }
 }

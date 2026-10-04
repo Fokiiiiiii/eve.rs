@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 16;
+    public const ushort ProtocolVersion = 18;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -64,6 +64,10 @@ public static class SimCodec
         public const byte DroneResults = 38;
         public const byte DroneScooped = 39;
         public const byte DroneReleased = 40;
+        public const byte HeatProfile = 41;
+        public const byte ModuleOverheat = 42;
+        public const byte ModuleOffline = 43;
+        public const byte RackOverheat = 44;
         public const byte Destroy = 24;
         public const byte Respawn = 25;
         public const byte PlaceWreck = 26;
@@ -319,6 +323,26 @@ public static class SimCodec
                     }
                     return new SimAction.Repair((SimLayer)layer, r.F64(), when == 1);
                 }
+            case 3:
+                {
+                    var range = r.F64();
+                    double[] strength = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    return new SimAction.EcmBurst(range, strength);
+                }
+            case 5:
+                return new SimAction.Cloak();
+            case 4:
+                {
+                    var typeId = r.I32();
+                    var flag = r.I32();
+                    var perCycle = r.I64();
+                    var charges = r.I64();
+                    var action = ReadAction(ref r);
+                    var hasFallback = r.U8();
+                    if (hasFallback > 1 || perCycle <= 0 || charges < 0) throw new SimLinkException(SimLinkError.BadValue, "bad charged action");
+                    var fallback = hasFallback == 1 ? ReadAction(ref r) : null;
+                    return new SimAction.Charged(action, fallback, typeId, flag, checked((int)perCycle), charges);
+                }
             case 2:
                 {
                     var range = r.F64();
@@ -420,6 +444,30 @@ public static class SimCodec
             case Kind.HelloAck:
                 message = new SimHelloAck(r.U16(), r.U32());
                 break;
+            case Kind.HeatProfile:
+                message = new SimSetHeatProfile(r.U64(), ReadHeatProfile(ref r));
+                break;
+            case Kind.ModuleOverheat:
+                {
+                    var session = r.U64();
+                    var module = r.I64();
+                    var active = r.U8();
+                    if (active > 1) throw new SimLinkException(SimLinkError.BadValue, "bad module overheat state");
+                    message = new SimSetModuleOverheat(session, module, active == 1);
+                    break;
+                }
+            case Kind.ModuleOffline:
+                message = new SimSetModuleOffline(r.U64(), r.I64());
+                break;
+            case Kind.RackOverheat:
+                {
+                    var session = r.U64();
+                    var rack = r.U8();
+                    var active = r.U8();
+                    if (rack > 2 || active > 1) throw new SimLinkException(SimLinkError.BadValue, "bad rack overheat state");
+                    message = new SimSetRackOverheat(session, rack, active == 1);
+                    break;
+                }
             case Kind.Enter:
                 {
                     var session = r.U64();
@@ -854,6 +902,59 @@ public static class SimCodec
         }
     }
 
+private static void WriteAction(Writer w, SimAction action)
+    {
+        switch (action)
+        {
+            case SimAction.Repair repair:
+                w.U8(0); w.U8((byte)repair.Layer); w.U8(repair.AtCycleEnd ? (byte)1 : (byte)0); w.F64(repair.Amount);
+                break;
+            case SimAction.EcmBurst burst:
+                w.U8(3); w.F64(burst.Range); foreach (var number in burst.Strength) w.F64(number);
+                break;
+            case SimAction.Charged charged:
+                w.U8(4); w.I32(charged.ChargeTypeId); w.I32(charged.ChargeFlag); w.I64(charged.ChargePerCycle); w.I64(charged.Charges);
+                WriteAction(w, charged.Action);
+                w.U8(charged.Fallback is null ? (byte)0 : (byte)1);
+                if (charged.Fallback is { } fallback) WriteAction(w, fallback);
+                break;
+            case SimAction.Cloak:
+                w.U8(5);
+                break;
+            case SimAction.Smartbomb bomb:
+                w.U8(2); w.F64(bomb.Range); foreach (var number in bomb.Damage) w.F64(number); w.U8(bomb.HurtsPilots ? (byte)1 : (byte)0);
+                break;
+            case SimAction.Remote remote:
+                w.U8(1); w.U8(remote.AtCycleEnd ? (byte)1 : (byte)0); w.F64(remote.Optimal); w.F64(remote.Falloff); w.Text(remote.Jam);
+                switch (remote.What)
+                {
+                    case SimRemote.Repair mend:
+                        w.U8(0); w.U8((byte)mend.Layer); w.F64(mend.Amount); break;
+                    case SimRemote.Transfer transfer:
+                        w.U8(1); w.F64(transfer.Amount); break;
+                    case SimRemote.Neutralize neutralize:
+                        w.U8(2); w.F64(neutralize.Amount); w.F64(neutralize.SignatureResolution); break;
+                    case SimRemote.Drain drain:
+                        w.U8(3); w.F64(drain.Amount); w.F64(drain.SignatureResolution); break;
+                    case SimRemote.Web web:
+                        w.U8(4); w.F64(web.Percent); break;
+                    case SimRemote.Paint paint:
+                        w.U8(5); w.F64(paint.Percent); break;
+                    case SimRemote.Damp damp:
+                        w.U8(6); w.F64(damp.RangePercent); w.F64(damp.ResolutionPercent); break;
+                    case SimRemote.Scramble scramble:
+                        w.U8(7); w.F64(scramble.Strength); w.U8(scramble.BlocksMwd ? (byte)1 : (byte)0); break;
+                    case SimRemote.Disrupt disrupt:
+                        w.U8(9); w.F64(disrupt.RangePercent); w.F64(disrupt.FalloffPercent); w.F64(disrupt.TrackingPercent); break;
+                    case SimRemote.GuidanceDisrupt guidance:
+                        w.U8(10); w.F64(guidance.VelocityPercent); w.F64(guidance.DelayPercent); w.F64(guidance.AoeVelocityPercent); w.F64(guidance.AoeCloudPercent); break;
+                    case SimRemote.Jam jam:
+                        w.U8(8); w.F64(jam.Gravimetric); w.F64(jam.Ladar); w.F64(jam.Magnetometric); w.F64(jam.Radar); break;
+                }
+                break;
+        }
+    }
+
     private static void WriteEffect(Writer w, SimEffect e)
     {
         w.I64(e.ModuleId);
@@ -865,105 +966,54 @@ public static class SimCodec
         w.I32(e.Repeat);
         w.I64(e.TargetId);
         w.U8((byte)((e.On is null ? 0 : 1) | (e.Off is null ? 0 : 2) | (e.Turret is null ? 0 : 4) | (e.Action is null ? 0 : 8)));
-        if (e.On is { } on)
-        {
-            WriteNumbers(w, on);
-        }
-        if (e.Off is { } off)
-        {
-            WriteNumbers(w, off);
-        }
+        if (e.On is { } on) WriteNumbers(w, on);
+        if (e.Off is { } off) WriteNumbers(w, off);
         WriteChanges(w, e.OnChanges);
         WriteChanges(w, e.OffChanges);
-        if (e.Turret is { } turret)
+        if (e.Turret is { } turret) WriteTurret(w, turret);
+        if (e.Action is { } action) WriteAction(w, action);
+    }
+
+
+    private static void WriteHeatProfile(Writer w, SimHeatProfile p)
+    {
+        if (p.Capacity.Count != 3 || p.InitialRackHeat.Count != 3 || p.DissipationRate.Count != 3 || p.Attenuation.Count != 3 || p.Modules.Count > 256)
+            throw new ArgumentException("invalid heat profile", nameof(p));
+        w.F64(p.GenerationMultiplier);
+        w.F64(p.DamageMultiplier);
+        w.I32(p.ThermodynamicsLevel);
+        foreach (var value in p.Capacity.Concat(p.InitialRackHeat).Concat(p.DissipationRate).Concat(p.Attenuation)) w.F64(value);
+        w.I32(p.Modules.Count);
+        foreach (var m in p.Modules)
         {
-            WriteTurret(w, turret);
+            w.I64(m.ModuleId); w.I32(m.Flag); w.F64(m.StructureHp); w.F64(m.DamageHp); w.F64(m.HeatDamageHp); w.F64(m.HeatAbsorptionRate);
+            w.U8(m.Overloadable ? (byte)1 : (byte)0); w.U8(m.HeatImmune ? (byte)1 : (byte)0); w.U8(m.Online ? (byte)1 : (byte)0);
         }
-        switch (e.Action)
-        {
-            case SimAction.Repair repair:
-                w.U8(0);
-                w.U8((byte)repair.Layer);
-                w.U8(repair.AtCycleEnd ? (byte)1 : (byte)0);
-                w.F64(repair.Amount);
-                break;
-            case SimAction.Smartbomb bomb:
-                w.U8(2);
-                w.F64(bomb.Range);
-                foreach (var number in bomb.Damage)
-                {
-                    w.F64(number);
-                }
-                w.U8(bomb.HurtsPilots ? (byte)1 : (byte)0);
-                break;
-            case SimAction.Remote remote:
-                w.U8(1);
-                w.U8(remote.AtCycleEnd ? (byte)1 : (byte)0);
-                w.F64(remote.Optimal);
-                w.F64(remote.Falloff);
-                w.Text(remote.Jam);
-                switch (remote.What)
-                {
-                    case SimRemote.Repair mend:
-                        w.U8(0);
-                        w.U8((byte)mend.Layer);
-                        w.F64(mend.Amount);
-                        break;
-                    case SimRemote.Transfer transfer:
-                        w.U8(1);
-                        w.F64(transfer.Amount);
-                        break;
-                    case SimRemote.Neutralize neutralize:
-                        w.U8(2);
-                        w.F64(neutralize.Amount);
-                        w.F64(neutralize.SignatureResolution);
-                        break;
-                    case SimRemote.Drain drain:
-                        w.U8(3);
-                        w.F64(drain.Amount);
-                        w.F64(drain.SignatureResolution);
-                        break;
-                    case SimRemote.Web web:
-                        w.U8(4);
-                        w.F64(web.Percent);
-                        break;
-                    case SimRemote.Paint paint:
-                        w.U8(5);
-                        w.F64(paint.Percent);
-                        break;
-                    case SimRemote.Damp damp:
-                        w.U8(6);
-                        w.F64(damp.RangePercent);
-                        w.F64(damp.ResolutionPercent);
-                        break;
-                    case SimRemote.Scramble scramble:
-                        w.U8(7);
-                        w.F64(scramble.Strength);
-                        w.U8(scramble.BlocksMwd ? (byte)1 : (byte)0);
-                        break;
-                    case SimRemote.Disrupt disrupt:
-                        w.U8(9);
-                        w.F64(disrupt.RangePercent);
-                        w.F64(disrupt.FalloffPercent);
-                        w.F64(disrupt.TrackingPercent);
-                        break;
-                    case SimRemote.GuidanceDisrupt guidance:
-                        w.U8(10);
-                        w.F64(guidance.VelocityPercent);
-                        w.F64(guidance.DelayPercent);
-                        w.F64(guidance.AoeVelocityPercent);
-                        w.F64(guidance.AoeCloudPercent);
-                        break;
-                    case SimRemote.Jam jam:
-                        w.U8(8);
-                        w.F64(jam.Gravimetric);
-                        w.F64(jam.Ladar);
-                        w.F64(jam.Magnetometric);
-                        w.F64(jam.Radar);
-                        break;
-                }
-                break;
-        }
+    }
+
+    private static SimHeatProfile ReadHeatProfile(ref Reader r)
+    {
+        var generation = r.F64();
+        var damage = r.F64();
+        var thermodynamics = r.I32();
+        double[] capacity = [r.F64(), r.F64(), r.F64()];
+        double[] initial = [r.F64(), r.F64(), r.F64()];
+        double[] dissipation = [r.F64(), r.F64(), r.F64()];
+        double[] attenuation = [r.F64(), r.F64(), r.F64()];
+        var count = r.I32();
+        if (count is < 0 or > 256 || thermodynamics is < 0 or > 5) throw new SimLinkException(SimLinkError.BadValue, "bad heat profile");
+        var modules = new SimHeatModule[count];
+        for (var i = 0; i < count; i++)
+            modules[i] = new SimHeatModule(r.I64(), r.I32(), r.F64(), r.F64(), r.F64(), r.F64(),
+                ReadHeatBool(ref r), ReadHeatBool(ref r), ReadHeatBool(ref r));
+        return new SimHeatProfile(generation, damage, thermodynamics, capacity, initial, dissipation, attenuation, modules);
+    }
+
+    private static bool ReadHeatBool(ref Reader r)
+    {
+        var value = r.U8();
+        if (value > 1) throw new SimLinkException(SimLinkError.BadValue, "bad heat flag");
+        return value == 1;
     }
 
     private static void WriteCondition(Writer w, SimCondition c)
@@ -1040,6 +1090,29 @@ public static class SimCodec
                 w.U8(Kind.HelloAck);
                 w.U16(m.Version);
                 w.U32(m.PollHz);
+                break;
+            case SimSetHeatProfile m:
+                w.U8(Kind.HeatProfile);
+                w.U64(m.SessionId);
+                WriteHeatProfile(w, m.Profile);
+                break;
+            case SimSetModuleOverheat m:
+                w.U8(Kind.ModuleOverheat);
+                w.U64(m.SessionId);
+                w.I64(m.ModuleId);
+                w.U8(m.Active ? (byte)1 : (byte)0);
+                break;
+            case SimSetModuleOffline m:
+                w.U8(Kind.ModuleOffline);
+                w.U64(m.SessionId);
+                w.I64(m.ModuleId);
+                break;
+            case SimSetRackOverheat m:
+                if (m.Rack is < 0 or > 2) throw new ArgumentOutOfRangeException(nameof(m));
+                w.U8(Kind.RackOverheat);
+                w.U64(m.SessionId);
+                w.U8((byte)m.Rack);
+                w.U8(m.Active ? (byte)1 : (byte)0);
                 break;
             case SimEnter m:
                 w.U8(Kind.Enter);

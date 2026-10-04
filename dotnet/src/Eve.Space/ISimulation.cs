@@ -52,6 +52,14 @@ public interface ISimulation
     /// <summary>Puts a ship in a solar system. Returns null when it was done and the reason when it was not; throws <see cref="SimUnavailableException"/> when the simulation cannot be reached.</summary>
     Task<string?> EnterAsync(SimEnter enter, CancellationToken cancellationToken = default);
 
+    Task SetHeatProfileAsync(ulong sessionId, SimHeatProfile profile, CancellationToken cancellationToken = default);
+
+    Task SetModuleOverheatAsync(ulong sessionId, long moduleId, bool active, CancellationToken cancellationToken = default);
+
+    Task OfflineModuleAsync(ulong sessionId, long moduleId, CancellationToken cancellationToken = default);
+
+    Task SetRackOverheatAsync(ulong sessionId, int rack, bool active, CancellationToken cancellationToken = default);
+
     void Leave(ulong sessionId, LeaveWhy why);
 
     void Bind(ulong sessionId);

@@ -12,19 +12,35 @@ public class RepairHostTests
     private const int CapacitorNeed = 6, Duration = 73, ShieldBonus = 68, StructureDamageAmount = 83, ArmorDamageAmount = 84;
 
     /// <summary>A pilot in space whose ship carries the module (online), fitted to the slot.</summary>
-    internal static async Task<(ClientSession Session, Eve.Characters.Created Character, long Module)> InSpaceWithAsync(Rig rig, int typeId, int flag)
+    internal static async Task<(ClientSession Session, Eve.Characters.Created Character, long Module)> InSpaceWithAsync(
+        Rig rig, int typeId, int flag, int? shipTypeId = null)
     {
         var character = await rig.NewCharacterAsync();
-        Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.MoveAsync(character.CharacterId, character.ShipId + 3, character.ShipId, Rig.Station, ItemFlags.Hangar, null));
+        long shipId = character.ShipId;
+        if (shipTypeId is { } replacementTypeId)
+        {
+            var replacement = (await rig.Ships.GrantAsync(character.CharacterId, replacementTypeId, 1, singleton: true))!.Single().After;
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await rig.Characters.SetShipAsync(connection, transaction, character.CharacterId, replacement.Id);
+            await transaction.CommitAsync();
+            character = character with { ShipId = replacement.Id };
+            shipId = replacement.Id;
+        }
+        else
+        {
+            Assert.IsType<Eve.Ships.ShipChanged>(
+                await rig.Ships.MoveAsync(character.CharacterId, character.ShipId + 3, character.ShipId, Rig.Station, ItemFlags.Hangar, null));
+        }
         var granted = (await rig.Ships.GrantAsync(character.CharacterId, typeId, 1, singleton: true))!.Single().After;
         await TrainAsync(rig, character.CharacterId);
-        // the starting ship comes with a few modules: what is in the slot goes back to the hangar
-        foreach (var occupant in (await rig.Items.InLocationAsync(character.ShipId, character.CharacterId)).Where(i => i.Flag == flag))
+        // move any modules already in the selected hull's slot back to the hangar
+        foreach (var occupant in (await rig.Items.InLocationAsync(shipId, character.CharacterId)).Where(i => i.Flag == flag))
         {
-            Changed(await rig.Ships.MoveAsync(character.CharacterId, occupant.Id, character.ShipId, Rig.Station, ItemFlags.Hangar, null));
+            Changed(await rig.Ships.MoveAsync(character.CharacterId, occupant.Id, shipId, Rig.Station, ItemFlags.Hangar, null));
         }
-        Changed(await rig.Ships.MoveAsync(character.CharacterId, granted.Id, Rig.Station, character.ShipId, flag, 1), $"type {typeId} flag {flag}");
-        Changed(await rig.Ships.SetOnlineAsync(character.CharacterId, character.ShipId, granted.Id, true));
+        Changed(await rig.Ships.MoveAsync(character.CharacterId, granted.Id, Rig.Station, shipId, flag, 1), $"type {typeId} flag {flag}");
+        Changed(await rig.Ships.SetOnlineAsync(character.CharacterId, shipId, granted.Id, true));
         var session = await rig.SessionAsync(character, 1);
         var oid = await rig.BindShipAsync(session);
         await rig.ShipCallAsync(session, "Undock", oid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
@@ -94,10 +110,11 @@ public class ProjectedHostTests
     private const int RemoteArmorRepairer = 11355, RemoteShieldBooster = 3586, EnergyNeutralizer = 533, EnergyNosferatu = 530, CapacitorTransmitter = 529;
     private const long Target = 1_000_000_000_042;
 
-    private static async Task<(Rig Rig, ClientSession Session, Eve.Characters.Created Character, long Module)> ReadyAsync(int typeId, int slot = HighSlot)
+    private static async Task<(Rig Rig, ClientSession Session, Eve.Characters.Created Character, long Module)> ReadyAsync(
+        int typeId, int slot = HighSlot, int? shipTypeId = null)
     {
         var rig = await Rig.CreateAsync();
-        var (session, character, module) = await RepairHostTests.InSpaceWithAsync(rig, typeId, slot);
+        var (session, character, module) = await RepairHostTests.InSpaceWithAsync(rig, typeId, slot, shipTypeId);
         return (rig, session, character, module);
     }
 
@@ -280,6 +297,29 @@ public class ProjectedHostTests
         // the rig's system is not null security: the simulation is told not to hurt pilots with it
         Assert.False(bomb.HurtsPilots);
     }
+
+// SDE type 580 uses a mid slot and is restricted to battleship-class hulls.
+
+    [PgFact]
+
+    public async Task An_ECM_burst_is_packaged_from_its_dogma_range_and_racial_strengths_without_a_target()
+    {
+        const int BurstJammerI = 580, Raven = 638;
+        var (rig, session, character, module) = await ReadyAsync(BurstJammerI, MidSlot, shipTypeId: Raven);
+        await using var _ = rig;
+        Assert.Equal(MidSlot, (await rig.Items.GetAsync(module))!.Flag);
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, module, "ecmBurstJammer", 0, 1000, CancellationToken.None));
+        var effect = Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect;
+        var burst = Assert.IsType<SimAction.EcmBurst>(effect.Action);
+        Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 142), 6), burst.Range);
+        Assert.Equal(
+            [Math.Round(await ValueAsync(rig, character, module, 238), 6), Math.Round(await ValueAsync(rig, character, module, 239), 6),
+             Math.Round(await ValueAsync(rig, character, module, 240), 6), Math.Round(await ValueAsync(rig, character, module, 241), 6)],
+            burst.Strength);
+        Assert.True(burst.Range > 0 && burst.Strength.Any(strength => strength > 0));
+        Assert.Equal(0, effect.TargetId);
+    }
+
 
     [PgFact]
     public async Task A_tracking_disruptor_takes_the_percentages_dogma_gives_from_the_range_the_falloff_and_the_tracking_of_its_target()

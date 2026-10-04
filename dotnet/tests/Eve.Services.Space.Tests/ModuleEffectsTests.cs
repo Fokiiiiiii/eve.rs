@@ -23,7 +23,7 @@ public class ModuleEffectsTests
         {
             "moduleBonusAfterburner", "moduleBonusMicrowarpdrive", "targetAttack", "projectileFired", "armorRepair", "shieldBoosting", "structureRepair", "empWave", "remoteWebifierFalloff",
             "remoteTargetPaintFalloff", "remoteSensorDampFalloff", "warpScrambleBlockMWDWithNPCEffect", "warpDisrupt", "shipModuleTrackingDisruptor", "shipModuleGuidanceDisruptor", "remoteECMFalloff",
-            "shipModuleRemoteShieldBooster", "shipModuleRemoteArmorRepairer", "shipModuleRemoteHullRepairer", "shipModuleRemoteCapacitorTransmitter", "energyNeutralizerFalloff", "energyNosferatuFalloff",
+            "ecmBurstJammer", "cloaking", "cloakingWarpSafe", "cloakingPrototype", "shipModuleRemoteShieldBooster", "shipModuleRemoteArmorRepairer", "shipModuleRemoteHullRepairer", "shipModuleRemoteCapacitorTransmitter", "energyNeutralizerFalloff", "energyNosferatuFalloff",
         })
         {
             Assert.Contains(name, registry.Names, StringComparer.OrdinalIgnoreCase);

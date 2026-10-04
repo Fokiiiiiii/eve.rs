@@ -9,6 +9,8 @@ public sealed record ModuleResult(bool Ok, string? Reason = null, int ModuleType
     /// <summary>For <c>TARGET_OUT_OF_RANGE</c>: the type of the target, the type of the ship that runs the module, how far the module reaches and how far the target is (metres, surface to surface).</summary>
     public int TargetType { get; init; }
 
+    public IReadOnlyList<long> ModuleIds { get; init; } = [];
+
     public int ShipType { get; init; }
 
     public double DesiredRange { get; init; }
@@ -28,4 +30,11 @@ public interface ISpaceModules
 
     /// <summary>Asks for an effect to stop at the end of its cycle (<c>Deactivate(itemID, effectName)</c>); null when the session has no ship in space.</summary>
     Task<ModuleResult?> DeactivateAsync(ClientSession session, long moduleId, string effectName, CancellationToken cancellationToken);
+
+    /// <summary>Starts or stops a module's SDE overload effect.</summary>
+    Task<ModuleResult?> OverloadAsync(ClientSession session, long moduleId, int effectId, bool active, CancellationToken cancellationToken);
+
+    Task<ModuleResult?> OfflineAsync(ClientSession session, long moduleId, CancellationToken cancellationToken);
+
+    Task<ModuleResult?> OverloadRackAsync(ClientSession session, long moduleId, bool active, CancellationToken cancellationToken);
 }

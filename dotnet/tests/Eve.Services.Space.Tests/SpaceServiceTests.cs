@@ -25,6 +25,40 @@ public class SpaceServiceTests
         return (oid, answer);
     }
 
+
+    private static SimEnter AssertUndockSimulationMessages(Rig rig)
+    {
+        var enter = Assert.Single(rig.Sim.Heard.OfType<SimEnter>());
+        var heat = Assert.Single(rig.Sim.Heard.OfType<SimSetHeatProfile>());
+        Assert.Equal(2, rig.Sim.Heard.Count);
+        Assert.Equal(enter.SessionId, heat.SessionId);
+
+        var profile = heat.Profile;
+        Assert.Equal(3, profile.Capacity.Count);
+        Assert.Equal(3, profile.InitialRackHeat.Count);
+        Assert.Equal(3, profile.DissipationRate.Count);
+        Assert.Equal(3, profile.Attenuation.Count);
+        Assert.InRange(profile.ThermodynamicsLevel, 0, 5);
+        Assert.True(double.IsFinite(profile.GenerationMultiplier) && profile.GenerationMultiplier > 0);
+        Assert.Equal(Math.Max(0.75, 1 - profile.ThermodynamicsLevel * 0.05), profile.DamageMultiplier);
+        Assert.All(profile.Capacity, value => Assert.True(double.IsFinite(value) && value > 0));
+        Assert.All(profile.InitialRackHeat, value => Assert.True(double.IsFinite(value) && value >= 0));
+        Assert.All(profile.DissipationRate, value => Assert.True(double.IsFinite(value) && value > 0));
+        Assert.All(profile.Attenuation, value => Assert.True(double.IsFinite(value) && value > 0));
+        Assert.Equal(enter.Ship.Modules.Count, profile.Modules.Count);
+        Assert.Equal(
+            enter.Ship.Modules.Select(module => (module.ItemId, module.Flag)).OrderBy(module => module.ItemId).ToArray(),
+            profile.Modules.Select(module => (module.ModuleId, module.Flag)).OrderBy(module => module.ModuleId).ToArray());
+        Assert.All(profile.Modules, module =>
+        {
+            Assert.True(double.IsFinite(module.StructureHp) && module.StructureHp > 0);
+            Assert.True(double.IsFinite(module.DamageHp) && module.DamageHp >= 0);
+            Assert.True(double.IsFinite(module.HeatDamageHp) && module.HeatDamageHp >= 0);
+            Assert.True(double.IsFinite(module.HeatAbsorptionRate) && module.HeatAbsorptionRate >= 0);
+        });
+        return enter;
+    }
+
     private static async Task<(string Oid, PyValue Answer)> InSpaceAsync(Rig rig, ClientSession session)
     {
         var undocked = await UndockAsync(rig, session);
@@ -95,7 +129,7 @@ public class SpaceServiceTests
         Assert.Equal(Rig.Station, session.GetInt("stationid2"));
         Assert.Equal(system, session.GetInt("solarsystemid"));
         // the simulation
-        var enter = Assert.IsType<SimEnter>(Assert.Single(rig.Sim.Heard));
+        var enter = AssertUndockSimulationMessages(rig);
         Assert.Equal(((ulong)session.SessionId, system, EnterHow.Undock, Rig.Station), (enter.SessionId, enter.SolarSystemId, enter.How, enter.StationId));
         Assert.Equal((character.ShipId, character.CharacterId, "Ibis"), (enter.Ship.ShipId, enter.Ship.CharacterId, enter.Ship.Name));
         Assert.True(enter.Ship.Mass > 0 && enter.Ship.MaxVelocity > 0 && enter.Ship.Agility > 0 && enter.Ship.Radius > 0 && enter.Ship.ShieldRechargeMs > 0);
@@ -125,7 +159,7 @@ public class SpaceServiceTests
 
         await UndockAsync(rig, session);
 
-        var enter = Assert.IsType<SimEnter>(Assert.Single(rig.Sim.Heard));
+        var enter = AssertUndockSimulationMessages(rig);
         Assert.Equal(new SimCondition(0.35, 0.6, 1.0, 1.0), enter.Ship.Condition);
         // what the Ibis can take (the recording's ship: 220 shield, 137.5 armor, 201.25 hull) and how it resists (dogma's resonances, em first)
         var vitals = enter.Ship.Vitals!;
@@ -255,7 +289,7 @@ public class SpaceServiceTests
         var (oid, _) = await InSpaceAsync(rig, session);
         var again = await rig.ShipCallAsync(session, "Undock", oid, new PyLong(1), PyBool.False);
         Assert.Equal(PyNone.Instance, again);
-        Assert.Single(rig.Sim.Heard);
+        AssertUndockSimulationMessages(rig);
     }
 
     // ── in space ─────────────────────────────────────────────────────────────
@@ -544,6 +578,133 @@ public class SpaceServiceTests
         // a module that is switched off cannot run anything
         snapshot.World.SetState(afterburner, Eve.Dogma.ItemState.Offline);
         Assert.Equal("MODULE_NOT_ONLINE", Why(afterburner, "moduleBonusAfterburner"));
+    }
+
+
+
+    [Fact]
+    public void A_cloaking_device_packages_a_non_targeted_cloak_action()
+    {
+        var loaded = ModulePackageFixture(11370, "Prototype Cloaking Device I", "cloakingPrototype",
+            new Dictionary<int, double> { [6] = 0, [56] = 1, [73] = 1000 }, groupId: 330);
+        var result = ModulePackages.Of(loaded.Snapshot, loaded.Statics, loaded.ModuleId, "cloakingPrototype", 0, 100);
+        var package = Assert.IsType<SimEffect>(result.Effect);
+        Assert.IsType<SimAction.Cloak>(package.Action);
+        Assert.Equal(0, package.TargetId);
+    }
+
+    [Fact]
+    public void Ancillary_repairers_map_the_fueled_effects_and_apply_the_armor_charge_multiplier()
+    {
+        var armor = ModulePackageFixture(
+            33076,
+            "Small Ancillary Armor Repairer",
+            "fueledArmorRepair",
+            new Dictionary<int, double> { [6] = 5, [56] = 1, [73] = 6000, [84] = 52, [1886] = 3 },
+            chargeTypeId: 91001,
+            chargeQuantity: 1);
+        var armorPackage = ModulePackages.Of(armor.Snapshot, armor.Statics, armor.ModuleId, "fueledArmorRepair", 0, 5).Effect;
+        var armorCharge = Assert.IsType<SimAction.Charged>(Assert.IsType<SimEffect>(armorPackage).Action);
+        Assert.Equal(new SimAction.Repair(SimLayer.Armor, 156, true), armorCharge.Action);
+        Assert.Equal(new SimAction.Repair(SimLayer.Armor, 52, true), armorCharge.Fallback);
+        Assert.Equal((91001, 1L), (armorCharge.ChargeTypeId, (long)armorCharge.Charges));
+
+        var shield = ModulePackageFixture(
+            32774,
+            "Small Ancillary Shield Booster",
+            "fueledShieldBoosting",
+            new Dictionary<int, double> { [6] = 35, [56] = 1, [73] = 3000, [68] = 200 });
+        var shieldPackage = ModulePackages.Of(shield.Snapshot, shield.Statics, shield.ModuleId, "fueledShieldBoosting", 0, 5).Effect;
+        var shieldRepair = Assert.IsType<SimAction.Repair>(Assert.IsType<SimEffect>(shieldPackage).Action);
+        Assert.Equal(new SimAction.Repair(SimLayer.Shield, 200, false), shieldRepair);
+    }
+
+    [Fact]
+    public void Power_booster_maps_the_loaded_charge_to_a_self_capacitor_transfer()
+    {
+        var loaded = ModulePackageFixture(
+            3566,
+            "Small Capacitor Booster I",
+            "powerBooster",
+            new Dictionary<int, double> { [6] = 0, [56] = 1, [73] = 15000 },
+            chargeTypeId: 91002,
+            chargeAttributes: new Dictionary<int, double> { [67] = 25 },
+            chargeQuantity: 3);
+        var made = ModulePackages.Of(loaded.Snapshot, loaded.Statics, loaded.ModuleId, "powerBooster", 0, 100);
+        var package = Assert.IsType<SimEffect>(made.Effect);
+        var charged = Assert.IsType<SimAction.Charged>(package.Action);
+        var transfer = Assert.IsType<SimAction.Remote>(charged.Action);
+        Assert.Null(charged.Fallback);
+        Assert.Equal((91002, 3L), (charged.ChargeTypeId, (long)charged.Charges));
+
+        Assert.Equal(loaded.ShipId, package.TargetId);
+        Assert.Equal(3, package.Repeat);
+        Assert.Equal(new SimRemote.Transfer(25), transfer.What);
+        Assert.Equal((0d, 0d, false, "energyTransfer"), (transfer.Optimal, transfer.Falloff, transfer.AtCycleEnd, transfer.Jam));
+
+        var unloaded = ModulePackageFixture(
+            3566,
+            "Small Capacitor Booster I",
+            "powerBooster",
+            new Dictionary<int, double> { [6] = 0, [56] = 1, [73] = 15000 });
+        var refused = ModulePackages.Of(unloaded.Snapshot, unloaded.Statics, unloaded.ModuleId, "powerBooster", 0, 1);
+        Assert.Equal("NO_AMMO", refused.Reason);
+        Assert.Null(refused.Effect);
+    }
+
+    private static (Eve.Ships.ShipSnapshot Snapshot, Eve.Dogma.DogmaStatic Statics, long ModuleId, long ShipId) ModulePackageFixture(
+        int moduleTypeId,
+        string moduleName,
+        string effectName,
+        IReadOnlyDictionary<int, double> moduleAttributes,
+        int? chargeTypeId = null,
+        IReadOnlyDictionary<int, double>? chargeAttributes = null,
+        long chargeQuantity = 0,
+        int groupId = 1)
+    {
+        const long characterId = 70001;
+        const long shipId = 70002;
+        const long moduleId = 70003;
+        const long chargeId = 70004;
+        const int effectId = 70005;
+        const int flag = 11;
+
+        var effect = new Eve.Dogma.EffectDef(effectId, effectName, Eve.Dogma.EffectDef.Activation, [])
+        {
+            Guid = $"effects.{char.ToUpperInvariant(effectName[0])}{effectName[1..]}",
+            DurationAttributeId = 73,
+            DischargeAttributeId = 6,
+        };
+        var moduleType = new Eve.Dogma.TypeDef(moduleTypeId, groupId, 7, moduleAttributes, [effectId], moduleName);
+        var types = new List<Eve.Dogma.TypeDef> { moduleType };
+        var charges = new List<Eve.Inventory.Item>();
+        if (chargeTypeId is { } typeId && chargeQuantity > 0)
+        {
+            types.Add(new Eve.Dogma.TypeDef(typeId, 2, 8, chargeAttributes ?? new Dictionary<int, double>(), [], "Test charge"));
+            charges.Add(new Eve.Inventory.Item(chargeId, typeId, characterId, shipId, flag, chargeQuantity, false, null));
+        }
+
+        var statics = new Eve.Dogma.DogmaStatic([], [effect], types);
+        var character = new Eve.Characters.Character(
+            characterId, 1, "Module test", 1, 1, 1, 1, 1, 1, 1000001,
+            null, null, 60003760, 60003760, 30000142, 20000020, 10000001, shipId,
+            DateTimeOffset.UnixEpoch, null, null);
+        var ship = new Eve.Inventory.Item(shipId, 587, characterId, 60003760, 0, 1, true, null);
+        var module = new Eve.Inventory.Item(moduleId, moduleTypeId, characterId, shipId, flag, 1, true, null);
+        var world = new Eve.Dogma.DogmaWorld(statics, characterId, shipId);
+        world.Add(new Eve.Dogma.DogmaItem(characterId, character.TypeId, characterId, shipId, Eve.Ships.ShipSnapshot.PilotFlag, Eve.Dogma.ItemState.Online));
+        world.Add(new Eve.Dogma.DogmaItem(shipId, ship.TypeId, characterId, ship.LocationId, ship.Flag, Eve.Dogma.ItemState.Online));
+        world.Add(new Eve.Dogma.DogmaItem(moduleId, moduleTypeId, characterId, shipId, flag, Eve.Dogma.ItemState.Online));
+        if (charges.Count > 0)
+        {
+            world.Add(new Eve.Dogma.DogmaItem(chargeId, chargeTypeId!.Value, characterId, shipId, flag, Eve.Dogma.ItemState.Online));
+        }
+
+        return (
+            new Eve.Ships.ShipSnapshot { Character = character, Ship = ship, Fitted = [module], Charges = charges, Skills = [], World = world },
+            statics,
+            moduleId,
+            shipId);
     }
 
     [PgFact]

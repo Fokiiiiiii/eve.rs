@@ -575,7 +575,6 @@ impl Scene {
         out
     }
 
-    /// The drones' brains: each does what it is set on, as the scene moves on to `now`.
     pub(crate) fn advance_drones(&mut self, now: i64) -> Vec<Out> {
         if self.drones.is_empty() {
             return Vec::new();
@@ -585,6 +584,22 @@ impl Scene {
         for session in sessions {
             if !self.pilots.contains_key(&session) {
                 self.drones.remove(&session);
+                continue;
+            }
+            // A controller may have been destroyed and replaced by a capsule in the same session.
+            // The session still exists then, but it no longer owns the ship that launched this drone.
+            let controller_lost = self
+                .pilots
+                .get(&session)
+                .and_then(|pilot| pilot.ship.npc.as_ref())
+                .and_then(|npc| npc.drone.as_ref())
+                .is_some_and(|link| {
+                    self.pilots
+                        .get(&link.controller)
+                        .is_none_or(|controller| controller.ship.spec.ship_id != link.controller_ship_id)
+                });
+            if controller_lost {
+                out.extend(self.abandon(session, now));
                 continue;
             }
             let Some(task) = self.drones.get(&session).map(|ai| ai.task) else { continue };
@@ -1203,12 +1218,25 @@ mod tests {
             _ => None,
         });
         assert_eq!(destroyed, Some((None, None)), "{told:?}");
-        // the controller's drone list: idle, nobody's
+        // EVE.js clears controller/owner/target, keeps typeID, and sends activity reset separately.
         let player = for_the_player(&told);
         let state = notified(&player, "OnDroneStateChange");
         assert_eq!(state.len(), 1);
-        assert_eq!(state[0][..4], [Value::Long(DRONE_SHIP), Value::Int(0), Value::Int(0), Value::Int(0)]);
-        assert_eq!(notified(&player, "OnDroneActivityChange").len(), 1);
+        assert_eq!(
+            state[0],
+            &vec![
+                Value::Long(DRONE_SHIP),
+                Value::Int(0),
+                Value::Int(0),
+                Value::Int(0),
+                Value::Int(2_454),
+                Value::Int(0),
+                Value::None,
+            ]
+        );
+        let activity = notified(&player, "OnDroneActivityChange");
+        assert_eq!(activity.len(), 1);
+        assert_eq!(activity[0], &vec![Value::Long(DRONE_SHIP), Value::None, Value::None]);
         assert!(scene.drones_of(PLAYER).is_empty());
     }
 
@@ -1217,6 +1245,39 @@ mod tests {
         let (mut scene, _, _) = launched();
         let told = scene.leave(PLAYER, Departure::Docked, LATER + SECOND).unwrap();
         assert!(told.iter().any(|o| matches!(o, Out::DroneReleased { drone_id, session, .. } if *drone_id == DRONE_SHIP && *session == PLAYER)));
+        assert!(scene.session_of(DRONE_SHIP).is_none());
+        assert!(scene.drones.is_empty());
+    }
+
+    #[test]
+    fn a_drone_is_released_when_its_controller_ship_is_destroyed() {
+        let (mut scene, _, _) = launched();
+        let destroyed = scene.destroy(PLAYER, None, LATER + SECOND);
+        assert!(
+            destroyed.iter().any(|out| matches!(out, Out::Destroyed { session, .. } if *session == PLAYER))
+        );
+        // The controller session has left the scene; the next drone tick must notify the host to settle its bay item.
+        assert!(scene.session_of(DRONE_SHIP).is_some());
+        let released = scene.advance_drones(LATER + 2 * SECOND);
+        assert!(
+            released.iter().any(|out| matches!(out, Out::DroneReleased { session, drone_id, .. } if *session == PLAYER && *drone_id == DRONE_SHIP)),
+            "{released:?}"
+        );
+        assert!(scene.session_of(DRONE_SHIP).is_none());
+        assert!(scene.drones.is_empty());
+        assert!(scene.advance_drones(LATER + 3 * SECOND).is_empty(), "the lifecycle event is emitted once");
+    }
+
+    #[test]
+    fn a_drone_is_released_when_its_controller_session_returns_in_a_different_ship() {
+        let (mut scene, _, _) = launched();
+        let old_ship_id = scene.pilots[&PLAYER].ship.spec.ship_id;
+        scene.pilots.get_mut(&PLAYER).unwrap().ship.spec.ship_id = old_ship_id + 1;
+        let released = scene.advance_drones(LATER + SECOND);
+        assert!(
+            released.iter().any(|out| matches!(out, Out::DroneReleased { session, drone_id, .. } if *session == PLAYER && *drone_id == DRONE_SHIP)),
+            "{released:?}"
+        );
         assert!(scene.session_of(DRONE_SHIP).is_none());
         assert!(scene.drones.is_empty());
     }

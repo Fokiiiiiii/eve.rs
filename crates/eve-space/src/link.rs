@@ -9,11 +9,12 @@ use crate::death::Credit;
 use crate::health::{Condition, Layer, Resonances, Vitals};
 use crate::missiles::Missile;
 use crate::modules::{Action, Applies, Change, Effect, Numbers, Reach, Remote};
+use crate::scene::{HeatModuleProfile, HeatProfile, HeatRack};
 use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Charge, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 16;
+pub const PROTOCOL_VERSION: u16 = 18;
 
 /// The message kinds.
 pub mod kind {
@@ -57,6 +58,10 @@ pub mod kind {
     pub const DRONE_RESULTS: u8 = 38;
     pub const DRONE_SCOOPED: u8 = 39;
     pub const DRONE_RELEASED: u8 = 40;
+    pub const HEAT_PROFILE: u8 = 41;
+    pub const MODULE_OVERHEAT: u8 = 42;
+    pub const MODULE_OFFLINE: u8 = 43;
+    pub const RACK_OVERHEAT: u8 = 44;
 }
 
 /// What the host changes in the rounds of a gun, in the order the simulation hears it (the host asks for it when a pilot loads or unloads a gun in space).
@@ -186,6 +191,24 @@ pub enum Message {
     ShipSpec {
         session_id: u64,
         ship: Box<ShipSpec>,
+    },
+    HeatProfile {
+        session_id: u64,
+        profile: HeatProfile,
+    },
+    ModuleOverheat {
+        session_id: u64,
+        module_id: i64,
+        active: bool,
+    },
+    ModuleOffline {
+        session_id: u64,
+        module_id: i64,
+    },
+    RackOverheat {
+        session_id: u64,
+        rack: HeatRack,
+        active: bool,
     },
     Notify {
         session_id: u64,
@@ -489,6 +512,36 @@ fn put_vitals(out: &mut Vec<u8>, vitals: &Vitals) {
         layers.iter().chain(&resonances.shield).chain(&resonances.armor).chain(&resonances.structure)
     {
         out.extend_from_slice(&number.to_le_bytes());
+    }
+}
+
+fn put_heat_profile(out: &mut Vec<u8>, profile: &HeatProfile) {
+    out.extend_from_slice(&profile.generation_multiplier.to_le_bytes());
+    out.extend_from_slice(&profile.damage_multiplier.to_le_bytes());
+    out.extend_from_slice(&i32::from(profile.thermodynamics_level).to_le_bytes());
+    for value in profile
+        .capacity
+        .iter()
+        .chain(&profile.initial_rack_heat)
+        .chain(&profile.dissipation_rate)
+        .chain(&profile.attenuation)
+    {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    out.extend_from_slice(&(profile.modules.len() as i32).to_le_bytes());
+    for module in &profile.modules {
+        out.extend_from_slice(&module.module_id.to_le_bytes());
+        out.extend_from_slice(&module.flag.to_le_bytes());
+        for value in
+            [module.structure_hp, module.damage_hp, module.heat_damage_hp, module.heat_absorption_rate]
+        {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        out.extend_from_slice(&[
+            u8::from(module.overloadable),
+            u8::from(module.heat_immune),
+            u8::from(module.online),
+        ]);
     }
 }
 
@@ -813,6 +866,26 @@ fn put_action(out: &mut Vec<u8>, action: &Action) {
             }
             out.push(u8::from(*hurts_pilots));
         }
+        Action::Charged { action, fallback, charge_type_id, charge_flag, charge_per_cycle, charges } => {
+            out.push(4);
+            out.extend_from_slice(&charge_type_id.to_le_bytes());
+            out.extend_from_slice(&charge_flag.to_le_bytes());
+            out.extend_from_slice(&charge_per_cycle.to_le_bytes());
+            out.extend_from_slice(&charges.to_le_bytes());
+            put_action(out, action);
+            out.push(u8::from(fallback.is_some()));
+            if let Some(fallback) = fallback {
+                put_action(out, fallback);
+            }
+        }
+        Action::EcmBurst { range, strength } => {
+            out.push(3);
+            out.extend_from_slice(&range.to_le_bytes());
+            for number in strength {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
+        }
+        Action::Cloak => out.push(5),
         Action::Remote { what, reach, when, jam } => {
             out.push(1);
             out.push(when_byte(when));
@@ -959,6 +1032,27 @@ fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             };
             Ok(Action::Smartbomb { range, damage, hurts_pilots })
         }
+        3 => Ok(Action::EcmBurst {
+            range: reader.f64()?,
+            strength: [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?],
+        }),
+        5 => Ok(Action::Cloak),
+        4 => {
+            let charge_type_id = reader.i32()?;
+            let charge_flag = reader.i32()?;
+            let charge_per_cycle = reader.i64()?;
+            let charges = reader.i64()?;
+            if charge_per_cycle <= 0 || charges < 0 {
+                return Err(DecodeError::BadValue("charged action"));
+            }
+            let action = Box::new(read_action(reader)?);
+            let fallback = match reader.u8()? {
+                0 => None,
+                1 => Some(Box::new(read_action(reader)?)),
+                _ => return Err(DecodeError::BadValue("charged action fallback")),
+            };
+            Ok(Action::Charged { action, fallback, charge_type_id, charge_flag, charge_per_cycle, charges })
+        }
         _ => Err(DecodeError::BadValue("action")),
     }
 }
@@ -1040,6 +1134,59 @@ fn read_vitals(reader: &mut Reader) -> Result<Vitals, DecodeError> {
             armor: read_damage(reader)?,
             structure: read_damage(reader)?,
         },
+    })
+}
+
+fn read_heat_profile(reader: &mut Reader) -> Result<HeatProfile, DecodeError> {
+    let generation_multiplier = reader.f64()?;
+    let damage_multiplier = reader.f64()?;
+    let thermodynamics_level = reader.i32()?;
+    if !(0..=5).contains(&thermodynamics_level) {
+        return Err(DecodeError::BadValue("thermodynamics_level"));
+    }
+    let capacity = [reader.f64()?, reader.f64()?, reader.f64()?];
+    let initial_rack_heat = [reader.f64()?, reader.f64()?, reader.f64()?];
+    let dissipation_rate = [reader.f64()?, reader.f64()?, reader.f64()?];
+    let attenuation = [reader.f64()?, reader.f64()?, reader.f64()?];
+    let count = reader.i32()?;
+    if !(0..=256).contains(&count) {
+        return Err(DecodeError::BadValue("heat modules"));
+    }
+    let mut modules = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let module_id = reader.i64()?;
+        let flag = reader.i32()?;
+        let structure_hp = reader.f64()?;
+        let damage_hp = reader.f64()?;
+        let heat_damage_hp = reader.f64()?;
+        let heat_absorption_rate = reader.f64()?;
+        let overloadable = reader.u8()?;
+        let heat_immune = reader.u8()?;
+        let online = reader.u8()?;
+        if overloadable > 1 || heat_immune > 1 || online > 1 {
+            return Err(DecodeError::BadValue("heat module flag"));
+        }
+        modules.push(HeatModuleProfile {
+            module_id,
+            flag,
+            structure_hp,
+            damage_hp,
+            heat_damage_hp,
+            heat_absorption_rate,
+            overloadable: overloadable == 1,
+            heat_immune: heat_immune == 1,
+            online: online == 1,
+        });
+    }
+    Ok(HeatProfile {
+        generation_multiplier,
+        damage_multiplier,
+        thermodynamics_level: thermodynamics_level as u8,
+        capacity,
+        initial_rack_heat,
+        dissipation_rate,
+        attenuation,
+        modules,
     })
 }
 
@@ -1140,6 +1287,10 @@ impl Message {
             Self::UpdateState { .. } => kind::UPDATE_STATE,
             Self::Command { .. } => kind::COMMAND,
             Self::ShipSpec { .. } => kind::SHIP_SPEC,
+            Self::HeatProfile { .. } => kind::HEAT_PROFILE,
+            Self::ModuleOverheat { .. } => kind::MODULE_OVERHEAT,
+            Self::ModuleOffline { .. } => kind::MODULE_OFFLINE,
+            Self::RackOverheat { .. } => kind::RACK_OVERHEAT,
             Self::Notify { .. } => kind::NOTIFY,
             Self::Docked { .. } => kind::DOCKED,
             Self::Arrived { .. } => kind::ARRIVED,
@@ -1224,6 +1375,24 @@ impl Message {
             Self::ShipSpec { session_id, ship } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 put_ship(&mut out, ship);
+            }
+            Self::HeatProfile { session_id, profile } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                put_heat_profile(&mut out, profile);
+            }
+            Self::ModuleOverheat { session_id, module_id, active } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&module_id.to_le_bytes());
+                out.push(u8::from(*active));
+            }
+            Self::ModuleOffline { session_id, module_id } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&module_id.to_le_bytes());
+            }
+            Self::RackOverheat { session_id, rack, active } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.push(*rack as u8);
+                out.push(u8::from(*active));
             }
             Self::Notify { session_id, name, id_type, args } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
@@ -1520,6 +1689,35 @@ impl Message {
                 Message::Command { session_id, command, args }
             }
             kind::SHIP_SPEC => Message::ShipSpec { session_id: r.u64()?, ship: Box::new(read_ship(&mut r)?) },
+            kind::HEAT_PROFILE => {
+                Message::HeatProfile { session_id: r.u64()?, profile: read_heat_profile(&mut r)? }
+            }
+            kind::MODULE_OVERHEAT => {
+                let session_id = r.u64()?;
+                let module_id = r.i64()?;
+                let active = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("module overheat")),
+                };
+                Message::ModuleOverheat { session_id, module_id, active }
+            }
+            kind::MODULE_OFFLINE => Message::ModuleOffline { session_id: r.u64()?, module_id: r.i64()? },
+            kind::RACK_OVERHEAT => {
+                let session_id = r.u64()?;
+                let rack = match r.u8()? {
+                    0 => HeatRack::High,
+                    1 => HeatRack::Medium,
+                    2 => HeatRack::Low,
+                    _ => return Err(DecodeError::BadValue("heat rack")),
+                };
+                let active = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("rack overheat")),
+                };
+                Message::RackOverheat { session_id, rack, active }
+            }
             kind::NOTIFY => Message::Notify {
                 session_id: r.u64()?,
                 name: r.text()?,

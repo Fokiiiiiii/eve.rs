@@ -56,6 +56,15 @@ public class SimCodecTests
 
     private static SimAction ActionOf(JsonNode a)
     {
+        if ((string)a["kind"]! == "charged")
+        {
+            var fallback = a["fallback"] is { } f ? ActionOf(f) : null;
+            return new SimAction.Charged(ActionOf(a["action"]!), fallback, (int)a["chargeTypeId"]!, (int)a["chargeFlag"]!, (int)a["chargePerCycle"]!, (long)a["charges"]!);
+        }
+        if ((string)a["kind"]! == "ecmBurst")
+        {
+            return new SimAction.EcmBurst((double)a["range"]!, Four(a["strength"]!));
+        }
         if ((string)a["kind"]! == "smartbomb")
         {
             return new SimAction.Smartbomb((double)a["range"]!, Four(a["damage"]!), (bool)a["hurtsPilots"]!);
@@ -188,6 +197,55 @@ public class SimCodecTests
         Assert.Equal(message.GetType(), decoded.GetType());
         // records compare their lists and byte strings by reference: the wire form says whether they are the same
         Assert.Equal(Convert.ToHexString(expected), Convert.ToHexString(SimCodec.Encode(decoded)));
+    }
+
+    [Fact]
+    public void A_heat_profile_roundtrips_through_the_sim_codec()
+    {
+        var profile = new SimHeatProfile(0.75, 0.85, 3, [100, 100, 100], [1, 2, 3], [0.01, 0.02, 0.03], [0.7, 0.71, 0.72],
+            [new SimHeatModule(123, 27, 40, 2, 6.6, 0.01, true, false, true)]);
+        var encoded = SimCodec.Encode(new SimSetHeatProfile(42, profile));
+        var decoded = Assert.IsType<SimSetHeatProfile>(SimCodec.Decode(encoded.AsMemory(4)));
+        Assert.Equal(42UL, decoded.SessionId);
+        Assert.Equal(Convert.ToHexString(encoded), Convert.ToHexString(SimCodec.Encode(decoded)));
+        Assert.Equal(profile.Modules, decoded.Profile.Modules);
+    }
+
+    [Fact]
+    public void A_charged_action_roundtrips_its_cycle_charge_and_fallback()
+    {
+        var baseline = Assert.IsType<SimActivate>(MessageOf(Case("valid", "activate an ECM burst")));
+        var charged = new SimAction.Charged(
+            new SimAction.Remote(new SimRemote.Transfer(60), 0, 0, false, "energyTransfer"),
+            new SimAction.Repair(SimLayer.Armor, 24, true), 16272, 27, 3, 5);
+        var message = baseline with { Effect = baseline.Effect with { Action = charged } };
+        var encoded = SimCodec.Encode(message);
+        var decoded = Assert.IsType<SimActivate>(SimCodec.Decode(encoded.AsMemory(4)));
+        Assert.Equal(Convert.ToHexString(encoded), Convert.ToHexString(SimCodec.Encode(decoded)));
+        var action = Assert.IsType<SimAction.Charged>(decoded.Effect.Action);
+        Assert.Equal((16272, 27, 3, 5L), (action.ChargeTypeId, action.ChargeFlag, action.ChargePerCycle, action.Charges));
+        Assert.IsType<SimAction.Repair>(action.Fallback);
+    }
+
+    [Fact]
+    public void A_module_overheat_order_roundtrips_through_the_sim_codec()
+    {
+        var encoded = SimCodec.Encode(new SimSetModuleOverheat(42, 123, true));
+        Assert.Equal(new SimSetModuleOverheat(42, 123, true), SimCodec.Decode(encoded.AsMemory(4)));
+    }
+
+    [Fact]
+    public void A_module_offline_order_roundtrips_through_the_sim_codec()
+    {
+        var encoded = SimCodec.Encode(new SimSetModuleOffline(42, 123));
+        Assert.Equal(new SimSetModuleOffline(42, 123), SimCodec.Decode(encoded.AsMemory(4)));
+    }
+
+    [Fact]
+    public void A_rack_overheat_order_roundtrips_through_the_sim_codec()
+    {
+        var encoded = SimCodec.Encode(new SimSetRackOverheat(42, 1, true));
+        Assert.Equal(new SimSetRackOverheat(42, 1, true), SimCodec.Decode(encoded.AsMemory(4)));
     }
 
     [Theory]

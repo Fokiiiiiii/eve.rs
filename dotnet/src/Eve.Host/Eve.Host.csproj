@@ -10,6 +10,7 @@
     <TieredPGO>true</TieredPGO>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../Eve.GameStore/Eve.GameStore.csproj" />
     <ProjectReference Include="../Eve.Identity/Eve.Identity.csproj" />
     <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />
     <ProjectReference Include="../Eve.Events/Eve.Events.csproj" />

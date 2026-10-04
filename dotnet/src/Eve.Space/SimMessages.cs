@@ -58,6 +58,22 @@ public sealed record SimSensors(double Gravimetric, double Ladar, double Magneto
 /// <summary>A ship enters a solar system.</summary>
 public sealed record SimEnter(ulong SessionId, int SolarSystemId, EnterHow How, long StationId, SimShip Ship) : SimMessage;
 
+public sealed record SimHeatModule(
+    long ModuleId, int Flag, double StructureHp, double DamageHp, double HeatDamageHp, double HeatAbsorptionRate, bool Overloadable, bool HeatImmune, bool Online);
+
+public sealed record SimHeatProfile(
+    double GenerationMultiplier, double DamageMultiplier, int ThermodynamicsLevel,
+    IReadOnlyList<double> Capacity, IReadOnlyList<double> InitialRackHeat, IReadOnlyList<double> DissipationRate, IReadOnlyList<double> Attenuation,
+    IReadOnlyList<SimHeatModule> Modules);
+
+public sealed record SimSetHeatProfile(ulong SessionId, SimHeatProfile Profile) : SimMessage;
+
+public sealed record SimSetModuleOverheat(ulong SessionId, long ModuleId, bool Active) : SimMessage;
+
+public sealed record SimSetModuleOffline(ulong SessionId, long ModuleId) : SimMessage;
+
+public sealed record SimSetRackOverheat(ulong SessionId, int Rack, bool Active) : SimMessage;
+
 /// <summary>Whether an <see cref="SimEnter"/> was done: <see cref="Error"/> is null when it was, the reason when it was not.</summary>
 public sealed record SimEnterReply(ulong SessionId, string? Error) : SimMessage;
 
@@ -269,6 +285,17 @@ public abstract record SimAction
     /// (<c>SafetyActivated</c>) and stops when one comes in.
     /// </summary>
     public sealed record Smartbomb(double Range, IReadOnlyList<double> Damage, bool HurtsPilots) : SimAction;
+
+
+    /// <summary>An ECM burst rolls against every nearby ship at cycle start and breaks successful targets' current locks without leaving a lasting jam.</summary>
+    public sealed record EcmBurst(double Range, IReadOnlyList<double> Strength) : SimAction;
+
+    /// <summary>Uses loaded charges at each cycle; after they run out the effect may switch to an uncharged action or stop.</summary>
+    public sealed record Charged(SimAction Action, SimAction? Fallback, int ChargeTypeId, int ChargeFlag, int ChargePerCycle, long Charges) : SimAction;
+
+
+    /// <summary>Engages or disengages the ship's active cloaking device.</summary>
+    public sealed record Cloak : SimAction;
 }
 
 /// <summary>What a module that is projected at another ship does to it each cycle.</summary>

@@ -316,7 +316,30 @@ impl Scene {
             return self.stop_module(session, effect.module_id, at);
         }
         let owner = self.combat_owner(session);
-        let mut out = Vec::new();
+        // EVE.js server/src/space/modules/smartbombRuntime.js (828823a75f211fdecb945b087a26c225f111491f)
+        // runs empWave per cycle; eve-logic EMPWave.py (1dbb5711a072a146e1d228365668ac05655eefe1)
+        // renders the field and impacts from the source ship and module type.
+        // Advance past the previous one-shot's expiry before reusing this module ID.
+        let _ = self.next_stamp(at);
+        let wave_stamp = self.next_stamp(at);
+        let wave = crate::payload::action(
+            wave_stamp,
+            "OnSpecialFX",
+            [
+                crate::wire::id(attacker_id),
+                crate::wire::id(effect.module_id),
+                crate::wire::int(i64::from(effect.module_type)),
+                Value::None,
+                Value::None,
+                crate::wire::text("effects.EMPWave"),
+                crate::wire::int(1),
+                crate::wire::int(1),
+                crate::wire::int(1),
+                crate::wire::real(effect.duration_ms),
+                Value::None,
+            ],
+        );
+        let mut out = self.tell_all(session, vec![wave]);
         // the missiles on their way within its reach are hurt as well, by the damage the bomb does (their own hit points, not a ship's): the pilot's own are spared
         let (centre, reach) = {
             let ship = &self.pilots[&session].ship;
@@ -1608,6 +1631,38 @@ mod tests {
                 && names.iter().any(|n| n.contains("RemoveBalls")),
             "{names:?}"
         );
+    }
+
+    #[test]
+    fn a_smartbomb_broadcasts_its_emp_wave_on_every_cycle() {
+        let (mut scene, npc, now) = duel();
+        let module_id = NPC_SHIP + 1;
+        let mut effect = smartbomb_effect(module_id, [40.0, 0.0, 0.0, 0.0]);
+        effect.repeat = 2;
+
+        let wave_fx = |out: &[Out]| {
+            let player_out =
+                out.iter().filter(|message| message.session() == PLAYER).cloned().collect::<Vec<_>>();
+            special_fx(&player_out)
+                .into_iter()
+                .filter(|args| args.get(5) == Some(&Value::Str("effects.EMPWave".into())))
+                .collect::<Vec<_>>()
+        };
+
+        let first = scene.activate(npc, effect, now);
+        let waves = wave_fx(&first);
+        assert_eq!(waves.len(), 1, "{waves:?}");
+        assert_eq!(waves[0][0], id(NPC_SHIP));
+        assert_eq!(waves[0][1], id(module_id));
+        assert_eq!(waves[0][2], int(3_977));
+        assert_eq!(waves[0][9], crate::wire::real(3_000.0));
+
+        let second = scene.poll(now + 3 * SECOND);
+        let waves = wave_fx(&second);
+        assert_eq!(waves.len(), 1, "{waves:?}");
+        assert_eq!(waves[0][0], id(NPC_SHIP));
+        assert_eq!(waves[0][1], id(module_id));
+        assert_eq!(waves[0][5], Value::Str("effects.EMPWave".into()));
     }
 
     #[test]

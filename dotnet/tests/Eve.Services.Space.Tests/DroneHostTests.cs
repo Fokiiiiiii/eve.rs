@@ -135,4 +135,103 @@ public class DroneHostTests
         await Rig.UntilAsync(() => rig.Items.GetAsync(flying.Drone).GetAwaiter().GetResult() is null);
         Assert.Contains(Events.Of(flying.Session), e => e.Name == "OnItemChange");
     }
+
+
+    [PgFact]
+    public async Task Inventory_add_and_get_capacity_use_the_drone_scene_and_complete_the_normal_scoop_notifications()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await FlyingWithADroneAsync(rig);
+        await LaunchAsync(flying);
+        var inventory = await rig.BindInventoryShipInSpaceAsync(flying.Session);
+
+        var capacity = Assert.IsType<PyObject>(await rig.InventoryCallAsync(flying.Session, "GetCapacity", inventory, [new PyInt(CharacterShips.DroneBayFlag)]));
+        Assert.Equal(new PyStr("util.KeyVal"), capacity.Name);
+        var room = Assert.IsType<PyDict>(capacity.Args);
+        Assert.Equal(5d, Numeric(room.Entries.Single(e => e.Key == new PyStr("capacity")).Value));
+        Assert.Equal(0d, Numeric(room.Entries.Single(e => e.Key == new PyStr("used")).Value));
+
+        Events.Of(flying.Session);
+        var added = await rig.InventoryCallAsync(
+            flying.Session,
+            "Add",
+            inventory,
+            [InventoryWire.Id(flying.Drone), new PyInt(flying.System)],
+            new PyDict([new(new PyStr("flag"), new PyInt(CharacterShips.DroneBayFlag))]));
+        Assert.Equal(flying.Drone, Events.Number(added));
+        var command = Assert.Single(rig.Sim.Heard.OfType<SimDroneCommand>());
+        Assert.Equal(((ulong)flying.Session.SessionId, SimDroneCommands.ReturnBay, (long)flying.Session.GetInt("shipid")!.Value, flying.Drone),
+            (command.SessionId, command.Command, command.TargetId, Assert.Single(command.DroneIds)));
+        Assert.Equal((flying.System, CharacterShips.InSpaceFlag), ((await rig.Items.GetAsync(flying.Drone))!.LocationId, (await rig.Items.GetAsync(flying.Drone))!.Flag));
+
+        rig.Sim.Say(new SimDroneScooped((ulong)flying.Session.SessionId, flying.Drone));
+        await Rig.UntilAsync(() => rig.Items.GetAsync(flying.Drone).GetAwaiter().GetResult() is { LocationId: var location, Flag: CharacterShips.DroneBayFlag }
+            && location == flying.Session.GetInt("shipid"));
+        Assert.Contains(Events.Of(flying.Session, clear: false), e => e.Name == "OnItemChange");
+    }
+
+    [PgFact]
+    public async Task Inventory_add_does_not_move_a_database_only_drone_and_rejects_a_scene_refusal()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await FlyingWithADroneAsync(rig);
+        await LaunchAsync(flying);
+        var inventory = await rig.BindInventoryShipInSpaceAsync(flying.Session);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.CreateAsync(connection, transaction, new NewItem(Hobgoblin, flying.Character, flying.System, CharacterShips.InSpaceFlag, 1, true));
+            await transaction.CommitAsync();
+        }
+        var unsupported = (await rig.Items.InLocationAsync(flying.System, flying.Character)).Single(i => i.TypeId == Hobgoblin && i.Id != flying.Drone);
+        var moveCommands = rig.Sim.Heard.OfType<SimDroneCommand>().Count();
+
+        var orphan = await rig.InventoryCallAsync(
+            flying.Session,
+            "Add",
+            inventory,
+            [InventoryWire.Id(unsupported.Id), new PyInt(flying.System)],
+            new PyDict([new(new PyStr("flag"), new PyInt(CharacterShips.DroneBayFlag))]));
+        Assert.Same(PyNone.Instance, orphan);
+        Assert.Equal(moveCommands, rig.Sim.Heard.OfType<SimDroneCommand>().Count());
+        Assert.Equal((flying.System, CharacterShips.InSpaceFlag), ((await rig.Items.GetAsync(unsupported.Id))!.LocationId, (await rig.Items.GetAsync(unsupported.Id))!.Flag));
+
+        rig.Sim.DroneAnswer = (_, _, _, drones) => new CommandReply(true, 0, null)
+        {
+            Drones = [.. drones.Select(id => new SimDroneResult(id, "OUT_OF_RANGE"))],
+        };
+        var refused = await rig.InventoryCallAsync(
+            flying.Session,
+            "Add",
+            inventory,
+            [InventoryWire.Id(flying.Drone), new PyInt(flying.System)],
+            new PyDict([new(new PyStr("flag"), new PyInt(CharacterShips.DroneBayFlag))]));
+        Assert.Same(PyNone.Instance, refused);
+        Assert.Equal((flying.System, CharacterShips.InSpaceFlag), ((await rig.Items.GetAsync(flying.Drone))!.LocationId, (await rig.Items.GetAsync(flying.Drone))!.Flag));
+    }
+
+    private static double Numeric(PyValue value) => value switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        PyReal real => real.Value,
+        _ => throw new InvalidOperationException(value.ToString()),
+    };
+
+
+    [PgFact]
+    public async Task Inventory_turret_slot_rpc_returns_the_active_ships_nonnegative_remaining_count()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await FlyingWithADroneAsync(rig, skill: 0);
+        var inventory = await rig.BindInventoryShipInSpaceAsync(flying.Session);
+        var snapshot = await rig.Ships.LoadAsync(flying.Character);
+        Assert.NotNull(snapshot);
+        var expected = Math.Max(0L, (long)snapshot.World.Get(snapshot.Ship.Id, Eve.Dogma.BuiltInEffects.TurretSlotsLeft));
+
+        var answer = await rig.InventoryCallAsync(flying.Session, "GetAvailableTurretSlots", inventory, []);
+
+        Assert.IsType<PyInt>(answer);
+        Assert.Equal(expected, Events.Number(answer));
+    }
 }

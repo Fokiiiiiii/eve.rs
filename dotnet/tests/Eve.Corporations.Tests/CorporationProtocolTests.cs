@@ -5,6 +5,197 @@ using Eve.Services.Corporations;
 
 namespace Eve.Corporations.Tests;
 
+public sealed class WarsInfoMgrServiceTests
+{
+    private const string WarRowsetName = "carbon.common.script.sys.crowset.CRowset";
+    private const string CachedMethodCallName = "carbon.common.script.net.objectCaching.CachedMethodCallResult";
+
+    [Eve.Corporations.Tests.PgFact]
+    public async Task Owner_lookups_and_public_info_preserve_the_reference_wire_shapes()
+    {
+        await using var rig = await WarRig.CreateAsync();
+        await rig.SetAsync("war", 1001, 1002, attrs: new
+        {
+            mutual = false,
+            openForAllies = true,
+            warHQID = 4001L,
+            timeDeclared = 1_700_000_000_000L,
+            timeStarted = 1_700_000_086_400L,
+            reasonStarted = 7,
+            reward = 123.5
+        });
+        var war = Assert.Single(await rig.Relations.ListAsync("war"));
+        await rig.SetAsync("war.ally", 1003, war.Id, attrs: new { side = "defender" });
+
+        var service = new Eve.Services.Corporations.WarsInfoMgrService(rig.Relations, () => rig.Now);
+        var byOwner = AssertRowset(UnwrapCached(await service.GetWarsByOwnerID(Call("GetWarsByOwnerID", new Eve.Marshal.PyLong(1003)))));
+        var row = Assert.IsType<Eve.Marshal.PyPackedRow>(Assert.Single(byOwner.List));
+        Assert.Equal(17, row.Values.Count);
+        Assert.Equal(war.Id, Number(row.Values[0]));
+        Assert.Equal(1001, Number(row.Values[1]));
+        Assert.Equal(1002, Number(row.Values[2]));
+        Assert.Equal(Eve.Services.Py.FileTimeFromUnixMs(1_700_000_000_000L), Number(row.Values[3]));
+        Assert.Equal(Eve.Services.Py.FileTimeFromUnixMs(1_700_000_086_400L), Number(row.Values[7]));
+        Assert.Equal(1, Number(row.Values[15]));
+
+        var byOwners = Assert.IsType<Eve.Marshal.PyDict>(await service.GetWarsByOwners(Call(
+            "GetWarsByOwners",
+            new Eve.Marshal.PyList([new Eve.Marshal.PyLong(1001), new Eve.Marshal.PyLong(1003), new Eve.Marshal.PyLong(9999)]))));
+        Assert.Collection(byOwners.Entries, _ => { }, _ => { }, _ => { });
+        Assert.Contains(byOwners.Entries, entry => Number(entry.Key) == 1003 && Assert.IsType<Eve.Marshal.PyDict>(entry.Value).Entries.Count == 1);
+
+        var publicInfo = await service.GetPublicWarInfo(Call("GetPublicWarInfo", new Eve.Marshal.PyLong(war.Id)));
+        var fields = KeyValFields(publicInfo);
+        Assert.Equal(war.Id, Number(fields["warID"]));
+        Assert.Equal(4001, Number(fields["warHQ"]));
+        Assert.Single(Assert.IsType<Eve.Marshal.PyDict>(fields["allies"]).Entries);
+        Assert.IsType<Eve.Marshal.PyNone>(await service.GetPublicWarInfo(Call("GetPublicWarInfo", new Eve.Marshal.PyLong(long.MaxValue))));
+
+        var structureWars = Assert.IsType<Eve.Marshal.PyList>(await service.GetWarsForStructure(Call("GetWarsForStructure", new Eve.Marshal.PyLong(4001))));
+        Assert.Equal(war.Id, Number(KeyValFields(Assert.Single(structureWars.Items))["warID"]));
+    }
+
+    [Eve.Corporations.Tests.PgFact]
+    public async Task Assistance_lookup_is_defender_only_and_uses_session_owner_defaults()
+    {
+        await using var rig = await WarRig.CreateAsync();
+        await rig.SetAsync("war", 1101, 1201, attrs: new { openForAllies = true });
+        await rig.SetAsync("war", 1102, 1201, attrs: new { openForAllies = false });
+        await rig.SetAsync("war", 1201, 1301, attrs: new { openForAllies = true });
+        var service = new Eve.Services.Corporations.WarsInfoMgrService(rig.Relations, () => rig.Now);
+
+        var session = new Eve.Services.ClientSession();
+        session.Set("allianceID", new Eve.Marshal.PyLong(1201));
+        var bySession = Assert.IsType<Eve.Marshal.PyList>(await service.GetWarsRequiringAssistance(Call("GetWarsRequiringAssistance", session: session)));
+        Assert.Single(bySession.Items);
+        Assert.Equal(1101, Number(KeyValFields(bySession.Items[0])["declaredByID"]));
+
+        var byDefender = Assert.IsType<Eve.Marshal.PyList>(await service.GetWarsRequiringAssistance(Call("GetWarsRequiringAssistance", new Eve.Marshal.PyLong(1201))));
+        Assert.Single(byDefender.Items);
+        var byAttacker = Assert.IsType<Eve.Marshal.PyList>(await service.GetWarsRequiringAssistance(Call("GetWarsRequiringAssistance", new Eve.Marshal.PyLong(1101))));
+        Assert.Empty(byAttacker.Items);
+    }
+
+    [Eve.Corporations.Tests.PgFact]
+    public async Task Top50_uses_descending_exclusive_cursor_and_structure_rows_sort_by_declaration_time()
+    {
+        await using var rig = await WarRig.CreateAsync();
+        for (var index = 0; index < 51; index++)
+        {
+            await rig.SetAsync("war", 20000 + index, 30000 + index);
+        }
+        await rig.SetAsync("war", 41001, 41002, attrs: new { warHQID = 7000L, timeDeclared = 2_000L });
+        await rig.SetAsync("war", 42001, 42002, attrs: new { warHQID = 7000L, timeDeclared = 1_000L });
+
+        var service = new Eve.Services.Corporations.WarsInfoMgrService(rig.Relations, () => rig.Now);
+        var top50 = AssertRowset(UnwrapCached(await service.GetTop50(Call("GetTop50"))));
+        Assert.Equal(50, top50.List.Count);
+        var ids = top50.List.Cast<Eve.Marshal.PyPackedRow>().Select(row => Number(row.Values[0])).ToArray();
+        Assert.Equal(ids.OrderByDescending(id => id), ids);
+        Assert.Equal(17, ((Eve.Marshal.PyPackedRow)top50.List[0]).Values.Count);
+        var cursor = ids[0];
+        var nextPage = AssertRowset(UnwrapCached(await service.GetTop50(Call("GetTop50", new Eve.Marshal.PyLong(cursor)))));
+        Assert.True(Number(((Eve.Marshal.PyPackedRow)nextPage.List[0]).Values[0]) < cursor);
+
+        var structureWars = Assert.IsType<Eve.Marshal.PyList>(await service.GetWarsForStructure(Call("GetWarsForStructure", new Eve.Marshal.PyLong(7000))));
+        Assert.Equal(2, structureWars.Items.Count);
+        var declaredTimes = structureWars.Items.Select(item => Number(KeyValFields(item)["timeDeclared"])).ToArray();
+        Assert.True(declaredTimes[0] > declaredTimes[1]);
+    }
+
+    private static Eve.Services.ServiceCall Call(string method, params Eve.Marshal.PyValue[] args) =>
+        Call(method, args, new Eve.Services.ClientSession());
+
+    private static Eve.Services.ServiceCall Call(string method, Eve.Services.ClientSession session, params Eve.Marshal.PyValue[] args) =>
+        Call(method, args, session);
+
+    private static Eve.Services.ServiceCall Call(string method, Eve.Marshal.PyValue[] args, Eve.Services.ClientSession session) =>
+        new() { Method = method, Args = args, Session = session };
+
+    private static Eve.Marshal.PyValue UnwrapCached(Eve.Marshal.PyValue result)
+    {
+        var wrapper = Assert.IsType<Eve.Marshal.PyObject>(result);
+        Assert.Equal(CachedMethodCallName, Assert.IsType<Eve.Marshal.PyStr>(wrapper.Name).Value);
+        var args = Assert.IsType<Eve.Marshal.PyTuple>(wrapper.Args);
+        return Assert.IsType<Eve.Marshal.PySubStream>(args.Items[1]).Decoded!;
+    }
+
+    private static Eve.Marshal.PyObjectEx AssertRowset(Eve.Marshal.PyValue value)
+    {
+        var rowset = Assert.IsType<Eve.Marshal.PyObjectEx>(value);
+        Assert.Equal(Eve.Marshal.ObjectExKind.Ex2, rowset.Kind);
+        var header = Assert.IsType<Eve.Marshal.PyTuple>(rowset.Header);
+        var classHeader = Assert.IsType<Eve.Marshal.PyTuple>(header.Items[0]);
+        Assert.Equal(WarRowsetName, Assert.IsType<Eve.Marshal.PyToken>(classHeader.Items[0]).Value);
+        return rowset;
+    }
+
+    private static IReadOnlyDictionary<string, Eve.Marshal.PyValue> KeyValFields(Eve.Marshal.PyValue value)
+    {
+        var keyVal = Assert.IsType<Eve.Marshal.PyObject>(value);
+        Assert.Equal("util.KeyVal", Assert.IsType<Eve.Marshal.PyStr>(keyVal.Name).Value);
+        var dict = Assert.IsType<Eve.Marshal.PyDict>(keyVal.Args);
+        return dict.Entries.ToDictionary(entry => Assert.IsType<Eve.Marshal.PyStr>(entry.Key).Value, entry => entry.Value);
+    }
+
+    private static long Number(Eve.Marshal.PyValue value) => value switch
+    {
+        Eve.Marshal.PyInt integer => integer.Value,
+        Eve.Marshal.PyLong integer => integer.Value,
+        _ => throw new Xunit.Sdk.XunitException($"Expected a marshal integer but received {value.GetType().Name}.")
+    };
+
+    private sealed class WarRig : IAsyncDisposable
+    {
+        private readonly string[] _schemas;
+        private WarRig(Npgsql.NpgsqlDataSource source, string[] schemas, long now)
+        {
+            Source = source;
+            _schemas = schemas;
+            Now = now;
+            Scheduler = new Eve.Scheduler.DurableScheduler(source, () => Now, new Eve.Scheduler.SchedulerOptions { Concurrency = 1 }, schemas[0]);
+            Bus = new Eve.Events.EventBus(source, Scheduler, null, schemas[1]);
+            Relations = new Eve.Relations.RelationStore(source, Scheduler, Bus, schemas[2]);
+        }
+
+        public Npgsql.NpgsqlDataSource Source { get; }
+        public Eve.Scheduler.DurableScheduler Scheduler { get; }
+        public Eve.Events.EventBus Bus { get; }
+        public Eve.Relations.RelationStore Relations { get; }
+        public long Now { get; }
+
+        public static async Task<WarRig> CreateAsync()
+        {
+            var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ToConnectionString(Eve.Corporations.Tests.Rig.Url!));
+            var id = Guid.NewGuid().ToString("N")[..12];
+            string[] schemas = ["war_sched_" + id, "war_events_" + id, "war_rel_" + id];
+            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 10000;
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(source, schemas[0]);
+            await Eve.Events.EventBus.MigrateAsync(source, schemas[1]);
+            await Eve.Relations.RelationStore.MigrateAsync(source, schemas[2]);
+            return new WarRig(source, schemas, now);
+        }
+
+        public async Task SetAsync(string kind, long subject, long obj, object? attrs = null)
+        {
+            await using var connection = await Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await Relations.SetAsync(connection, transaction, kind, subject, obj, 0, "wars read test", attrs);
+            await transaction.CommitAsync();
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            foreach (var schema in _schemas)
+            {
+                await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+                await command.ExecuteNonQueryAsync();
+            }
+            await Source.DisposeAsync();
+        }
+    }
+}
+
 public class CorporationProtocolTests
 {
     private sealed class PacketSink : IPacketSink
@@ -672,6 +863,121 @@ public class CorporationProtocolTests
     }
 
     [Fact]
+    public async Task Standing_manager_reads_character_rows_corporation_averages_history_and_npc_relations()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schema = "standing_" + Guid.NewGuid().ToString("N")[..12];
+        var relationSchema = schema + "_relations";
+        var schedulerSchema = schema + "_scheduler";
+        var eventsSchema = schema + "_events";
+        var staticSchema = schema + "_sde";
+        try
+        {
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(rig.Source, schedulerSchema);
+            await Eve.Events.EventBus.MigrateAsync(rig.Source, eventsSchema);
+            await Eve.Relations.RelationStore.MigrateAsync(rig.Source, relationSchema);
+            await using (var seedSde = rig.Source.CreateCommand($"""
+                CREATE SCHEMA {staticSchema};
+                CREATE TABLE {staticSchema}."npcCorporations" (key text PRIMARY KEY, doc jsonb NOT NULL);
+                CREATE TABLE {staticSchema}.factions (key text PRIMARY KEY, doc jsonb NOT NULL);
+                INSERT INTO {staticSchema}."npcCorporations"(key, doc)
+                    VALUES ('1000001', jsonb_build_object('factionID', 500001, 'enemyID', 1000002, 'friendID', 1000002)),
+                           ('1000002', jsonb_build_object('factionID', 500002, 'enemyID', 1000001));
+                INSERT INTO {staticSchema}.factions(key, doc)
+                    VALUES ('500001', jsonb_build_object('corporationID', 1000001)),
+                           ('500002', jsonb_build_object('corporationID', 1000002));
+                """))
+            {
+                await seedSde.ExecuteNonQueryAsync();
+            }
+
+            var scheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now, schema: schedulerSchema);
+            var events = new Eve.Events.EventBus(rig.Source, scheduler, schema: eventsSchema);
+            var relations = new Eve.Relations.RelationStore(rig.Source, scheduler, events, relationSchema);
+            var reads = new Eve.ReadSide.ReadSide(rig.Source, new Dictionary<string, string>
+            {
+                ["relations"] = relationSchema,
+                ["sde"] = staticSchema,
+            });
+            var founder = await rig.CharacterAsync("Standing Founder");
+            var member = await rig.CharacterAsync("Standing Member");
+            var corporation = await rig.Store.CreateAsync(
+                founder, new("Standing Works", "STAND", "", "", 0.05m), "standing-corp");
+            await relations.SetAsync(Eve.Relations.RelationKinds.CorporationMember.Name, founder, corporation.Id, 0, "test");
+            await relations.SetAsync(Eve.Relations.RelationKinds.CorporationMember.Name, member, corporation.Id, 0, "test");
+            await relations.SetAsync(Eve.Relations.RelationKinds.Standing.Name, 500001, founder, 1.25,
+                """{"eventTypeID":65,"eventDateTime":"134000000000000000","modification":0.125,"msg":"standing changed"}""");
+            await relations.SetAsync(Eve.Relations.RelationKinds.Standing.Name, 500002, founder, -0.5, "test");
+            await relations.SetAsync(Eve.Relations.RelationKinds.Standing.Name, 500001, member, 2.75, "test");
+
+            var service = new StandingMgrService(reads, rig.Store, () => rig.Now);
+            var characterSession = new ClientSession { CharacterId = founder };
+            var characterRows = Lines(await service.GetCharStandings(Call(characterSession, "GetCharStandings")));
+            Assert.Equal(2, characterRows.Count);
+            var firstCharacterRow = Assert.IsType<PyList>(characterRows[0]).Items;
+            Assert.Equal(new PyInt(500001), firstCharacterRow[0]);
+            Assert.Equal(new PyReal(1.25), firstCharacterRow[1]);
+
+            var corporationSession = new ClientSession();
+            corporationSession.Set("corporationID", new PyInt(corporation.Id));
+            var corporationRows = Lines(await service.GetCorpStandings(Call(corporationSession, "GetCorpStandings")));
+            Assert.Equal(2, corporationRows.Count);
+            var firstCorporationRow = Assert.IsType<PyList>(corporationRows[0]).Items;
+            Assert.Equal(new PyInt(500001), firstCorporationRow[0]);
+            Assert.Equal(new PyReal(2.0), firstCorporationRow[1]);
+            await relations.SetAsync(Eve.Relations.RelationKinds.Standing.Name, 500001, corporation.Id, 4.5, "corporation override");
+            var explicitCorporationRows = Lines(await service.GetCorpStandings(Call(corporationSession, "GetCorpStandings")));
+            Assert.Single(explicitCorporationRows);
+            var explicitCorporationRow = Assert.IsType<PyList>(explicitCorporationRows[0]).Items;
+            Assert.Equal(new PyReal(4.5), explicitCorporationRow[1]);
+
+            var npcRows = Lines(await service.GetNPCNPCStandings(Call(characterSession, "GetNPCNPCStandings")));
+            Assert.Equal(8, npcRows.Count);
+            var combinedNpcRelation = npcRows
+                .Select(row => Assert.IsType<PyList>(row).Items)
+                .Single(values => values[0] == new PyInt(1000001) && values[1] == new PyInt(1000002));
+            Assert.Equal(new PyReal(1.0), combinedNpcRelation[2]);
+
+            var transactions = Assert.IsType<PyList>(await service.GetStandingTransactions(
+                Call(characterSession, "GetStandingTransactions", new PyInt(500001), new PyInt(founder))));
+            Assert.Single(transactions.Items);
+            Assert.Equal(new PyInt(65), Field(transactions.Items[0], "eventTypeID"));
+            Assert.Equal(new PyLong(134000000000000000), Field(transactions.Items[0], "eventDateTime"));
+            Assert.Equal(new PyReal(0.125), Field(transactions.Items[0], "modification"));
+
+            var compositionPayload = CachedPayload(await service.GetStandingCompositions(
+                Call(characterSession, "GetStandingCompositions", new PyInt(500001), new PyInt(corporation.Id))));
+            Assert.Equal(new PyStr("carbon.common.script.sys.crowset.CRowset"), Assert.IsType<PyObject>(compositionPayload).Name);
+            Assert.Equal(2, Lines(compositionPayload).Count);
+        }
+        finally
+        {
+            foreach (var cleanupSchema in new[] { staticSchema, eventsSchema, schedulerSchema, relationSchema })
+            {
+                await using var drop = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {cleanupSchema} CASCADE");
+                await drop.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
+    [Fact]
+    public void Standing_manager_service_exposes_the_reference_read_methods()
+    {
+        var type = typeof(CorporationService).Assembly.GetType("Eve.Services.Corporations.StandingMgrService");
+        Assert.NotNull(type);
+        var methods = type!.GetMethods()
+            .Where(method => Attribute.IsDefined(method, typeof(MethodAttribute)))
+            .Select(method => method.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        Assert.Subset(methods, new HashSet<string>
+        {
+            "GetNPCNPCStandings", "GetCharStandings", "GetCorpStandings",
+            "GetStandingTransactions", "GetStandingCompositions"
+        });
+        Assert.Contains("GetCharStandings", methods);
+    }
+
+    [Fact]
     public void Corporation_service_exposes_reference_methods()
     {
         var service = (IService)new CorporationService(null!, null!);
@@ -680,5 +986,184 @@ public class CorporationProtocolTests
             "CreateMedal", "SetMedalStatus", "GetAllCorpMedals", "GetRecipientsOfMedal",
             "GiveMedalToCharacters", "GetMedalDetails", "GetMedalsReceived", "GetCorpInfo"
         }) Assert.True(service.HasMethod(method), method);
+    }
+
+    [Fact]
+    public async Task Wars_info_manager_returns_reference_wire_shapes_from_relations()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schema = "wars_" + Guid.NewGuid().ToString("N")[..12];
+        var relationSchema = schema + "_relations";
+        var schedulerSchema = schema + "_scheduler";
+        var eventsSchema = schema + "_events";
+        try
+        {
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(rig.Source, schedulerSchema);
+            await Eve.Events.EventBus.MigrateAsync(rig.Source, eventsSchema);
+            await Eve.Relations.RelationStore.MigrateAsync(rig.Source, relationSchema);
+
+            var scheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now, schema: schedulerSchema);
+            var events = new Eve.Events.EventBus(rig.Source, scheduler, schema: eventsSchema);
+            var relations = new Eve.Relations.RelationStore(rig.Source, scheduler, events, relationSchema);
+
+            const long attacker = 990001;
+            const long defender = 990002;
+            const long secondDefender = 990003;
+            const long ally = 990004;
+            const long ownerWithoutWars = 990005;
+            const long structure = 990006;
+            const long legacyOwner = 990007;
+            const long legacyDefender = 990008;
+            const long legacyStructure = 990009;
+            var now = rig.Now;
+            var firstDeclared = now - 20_000;
+            var firstStarted = now - 10_000;
+            var secondDeclared = now - 5_000;
+
+            await using (var connection = await rig.Source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                var first = await relations.SetAsync(connection, transaction, Eve.Relations.RelationKinds.War.Name,
+                    attacker, defender, 25, "test",
+                    attrs: new
+                    {
+                        timeDeclared = firstDeclared,
+                        timeStarted = firstStarted,
+                        mutual = false,
+                        openForAllies = true,
+                        warHQID = structure,
+                        billID = 77,
+                        reasonStarted = 1,
+                    });
+                Assert.NotNull(first);
+
+                var second = await relations.SetAsync(connection, transaction, Eve.Relations.RelationKinds.War.Name,
+                    attacker, secondDefender, 50, "test",
+                    attrs: new
+                    {
+                        timeDeclared = secondDeclared,
+                        timeStarted = now,
+                        timeFinished = now + 1_000,
+                        mutual = true,
+                        openForAllies = false,
+                        warHQID = structure,
+                        reasonEnded = 4,
+                    });
+                Assert.NotNull(second);
+
+                await relations.SetAsync(connection, transaction, Eve.Relations.RelationKinds.WarAlly.Name,
+                    ally, first!.RelationId, 0, "test",
+                    attrs: new { side = "defender" });
+
+                var legacy = await relations.SetAsync(connection, transaction, Eve.Relations.RelationKinds.War.Name,
+                    legacyOwner, legacyDefender, 0, "test",
+                    attrs: new { warHQ = legacyStructure, timeDeclared = now - 2_000, timeStarted = now });
+                Assert.NotNull(legacy);
+
+                await transaction.CommitAsync();
+            }
+
+            var service = new WarsInfoMgrService(relations, () => rig.Now);
+            var attackerSession = new ClientSession();
+            var ownerResult = CachedPayload(await service.GetWarsByOwnerID(
+                Call(attackerSession, "GetWarsByOwnerID", new PyInt(attacker))));
+            var rowset = Assert.IsType<PyObjectEx>(ownerResult);
+            Assert.Equal(ObjectExKind.Ex2, rowset.Kind);
+            var ownerRows = rowset.List.Select(row => Assert.IsType<PyPackedRow>(row)).ToArray();
+            Assert.Equal(2, ownerRows.Length);
+            Assert.Equal(17, ownerRows[0].Values.Count);
+            Assert.Equal(new PyInt(0), ownerRows[0].Values[9]);
+            Assert.Equal(new PyInt(1), ownerRows[0].Values[11]);
+            Assert.Equal(new PyInt(1), ownerRows[0].Values[12]);
+            Assert.Equal(new PyInt(1), ownerRows[0].Values[15]);
+            Assert.Equal(PyValue.None, ownerRows[0].Values[4]);
+            Assert.Equal(new PyInt(1), ownerRows[1].Values[9]);
+            Assert.Equal(new PyInt(0), ownerRows[1].Values[11]);
+            Assert.Equal(new PyInt(0), ownerRows[1].Values[12]);
+            Assert.Equal(new PyLong(Eve.Services.Py.FileTimeFromUnixMs(firstDeclared)), ownerRows[0].Values[3]);
+            Assert.Equal(new PyLong(Eve.Services.Py.FileTimeFromUnixMs(firstStarted)), ownerRows[0].Values[7]);
+
+            var alliesByOwner = Assert.IsType<PyDict>(await service.GetWarsByOwners(
+                Call(attackerSession, "GetWarsByOwners",
+                    new PyList([new PyInt(attacker), new PyInt(ally), new PyInt(ownerWithoutWars)]))));
+            var attackerWars = Assert.IsType<PyDict>(alliesByOwner.Entries.Single(entry => entry.Key == new PyInt(attacker)).Value);
+            Assert.Equal(2, attackerWars.Entries.Count);
+            var allyWars = Assert.IsType<PyDict>(alliesByOwner.Entries.Single(entry => entry.Key == new PyInt(ally)).Value);
+            Assert.Single(allyWars.Entries);
+            Assert.Empty(Assert.IsType<PyDict>(alliesByOwner.Entries.Single(entry => entry.Key == new PyInt(ownerWithoutWars)).Value).Entries);
+            var negativeOwnerWars = Assert.IsType<PyDict>(await service.GetWarsByOwners(
+                Call(attackerSession, "GetWarsByOwners", new PyList([new PyInt(-1)]))));
+            Assert.Empty(Assert.IsType<PyDict>(Assert.Single(negativeOwnerWars.Entries).Value).Entries);
+
+            var defenderSession = new ClientSession();
+            defenderSession.Set("corporationID", new PyInt(defender));
+            var assistance = Assert.IsType<PyList>(await service.GetWarsRequiringAssistance(
+                Call(defenderSession, "GetWarsRequiringAssistance")));
+            var assistanceWar = Assert.Single(assistance.Items);
+            Assert.Equal(new PyInt(1), Field(assistanceWar, "openForAllies"));
+            Assert.Empty(Assert.IsType<PyList>(await service.GetWarsRequiringAssistance(
+                Call(defenderSession, "GetWarsRequiringAssistance", new PyInt(-1)))).Items);
+
+            long Id(PyValue value) => value switch
+            {
+                PyInt integer => integer.Value,
+                PyLong integer => integer.Value,
+                _ => throw new Xunit.Sdk.XunitException($"Unexpected ID value type: {value.GetType().Name}"),
+            };
+            var top50 = CachedPayload(await service.GetTop50(
+                Call(attackerSession, "GetTop50", new PyInt(Id(ownerRows[1].Values[0]) + 1))));
+            var topRows = Assert.IsType<PyObjectEx>(top50).List.Select(row => Assert.IsType<PyPackedRow>(row)).ToArray();
+            Assert.Equal(2, topRows.Length);
+            Assert.Equal(ownerRows[1].Values[0], topRows[0].Values[0]);
+            var negativeTop50 = CachedPayload(await service.GetTop50(
+                Call(attackerSession, "GetTop50", new PyInt(-1))));
+            Assert.Empty(Assert.IsType<PyObjectEx>(negativeTop50).List);
+
+            var publicInfo = await service.GetPublicWarInfo(
+                Call(attackerSession, "GetPublicWarInfo", ownerRows[0].Values[0]));
+            Assert.Equal(new PyStr("util.KeyVal"), Assert.IsType<PyObject>(publicInfo).Name);
+            Assert.Equal(PyValue.None, await service.GetPublicWarInfo(
+                Call(attackerSession, "GetPublicWarInfo", new PyInt(long.MaxValue))));
+
+            var structureWars = Assert.IsType<PyList>(await service.GetWarsForStructure(
+                Call(attackerSession, "GetWarsForStructure", new PyInt(structure))));
+            Assert.Equal(2, structureWars.Items.Count);
+            Assert.Equal(ownerRows[1].Values[0], Field(structureWars.Items[0], "warID"));
+
+            var legacyRows = Assert.IsType<PyObjectEx>(CachedPayload(await service.GetWarsByOwnerID(
+                Call(attackerSession, "GetWarsByOwnerID", new PyInt(legacyOwner)))));
+            var legacyRow = Assert.IsType<PyPackedRow>(Assert.Single(legacyRows.List));
+            Assert.Equal(new PyInt(legacyStructure), legacyRow.Values[14]);
+            var legacyInfo = await service.GetPublicWarInfo(
+                Call(attackerSession, "GetPublicWarInfo", legacyRow.Values[0]));
+            Assert.Equal(PyValue.None, Field(legacyInfo, "warHQID"));
+            Assert.Equal(PyValue.None, Field(legacyInfo, "warHQ"));
+            Assert.Empty(Assert.IsType<PyList>(await service.GetWarsForStructure(
+                Call(attackerSession, "GetWarsForStructure", new PyInt(legacyStructure)))).Items);
+        }
+        finally
+        {
+            foreach (var cleanupSchema in new[] { eventsSchema, schedulerSchema, relationSchema })
+            {
+                await using var drop = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {cleanupSchema} CASCADE");
+                await drop.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
+    [Fact]
+    public void Wars_info_manager_exposes_the_six_reference_methods()
+    {
+        var type = typeof(CorporationService).Assembly.GetType("Eve.Services.Corporations.WarsInfoMgrService");
+        Assert.NotNull(type);
+        var methods = type!.GetMethods()
+            .Where(method => Attribute.IsDefined(method, typeof(MethodAttribute)))
+            .Select(method => method.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        Assert.Equal(new HashSet<string>
+        {
+            "GetWarsByOwnerID", "GetWarsByOwners", "GetWarsRequiringAssistance",
+            "GetTop50", "GetPublicWarInfo", "GetWarsForStructure",
+        }, methods);
     }
 }

@@ -16,7 +16,7 @@ namespace Eve.Services.Inventory;
 /// </summary>
 [Service("invbroker")]
 public sealed partial class InvBrokerService(
-    PgItemStore items, ItemTypeCatalog types, StationCatalog stations, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs, ISpaceContainers? space = null) : IBoundObjectReleaseHandler
+    PgItemStore items, ItemTypeCatalog types, StationCatalog stations, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs, ISpaceContainers? space = null, ISpaceDroneBays? droneBays = null) : IBoundObjectReleaseHandler
 {
     /// <summary>The container the client asks for to get the hangar of the station it is docked at.</summary>
     public const int ContainerHangar = 10004;
@@ -290,6 +290,13 @@ public sealed partial class InvBrokerService(
         var flag = FlagOf(call);
         if (context.Kind == Kind.Ship)
         {
+            if (space?.IsInSpace(call.Session) == true && flag == CharacterShips.DroneBayFlag)
+            {
+                return droneBays is not null
+                    && await droneBays.RoomAsync(call.Session, context.ItemId, flag.Value, call.Cancellation) is { } inSpaceRoom
+                    ? KeyVal(inSpaceRoom.Capacity, inSpaceRoom.Used)
+                    : None;
+            }
             return await ships.RoomAsync(character, context.ItemId, flag ?? CharacterShips.CargoFlag, call.Cancellation) is { } room ? KeyVal(room.Capacity, room.Used) : None;
         }
         if (context.Kind == Kind.Space)
@@ -303,6 +310,21 @@ public sealed partial class InvBrokerService(
         var inHangar = StationOf(call.Session) is { } station ? await items.InLocationAsync(station, character, call.Cancellation) : [];
         var used = await ships.VolumeOfAsync(inHangar.Where(i => flag is null || i.Flag == flag), call.Cancellation);
         return KeyVal(flag == CharacterShips.CargoFlag ? BareCargoCapacity : HangarCapacity, used);
+    }
+
+
+    /// <summary>Remaining turret hardpoints, as queried from the inventory service by the fitting client.</summary>
+    [Method("GetAvailableTurretSlots")]
+    public async ValueTask<PyValue> GetAvailableTurretSlots(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } character
+            || await ships.LoadAsync(character, call.Cancellation) is not { } snapshot)
+        {
+            return new PyInt(0);
+        }
+
+        var remaining = snapshot.World.Get(snapshot.Ship.Id, BuiltInEffects.TurretSlotsLeft);
+        return new PyInt(Math.Max(0L, (long)remaining));
     }
 
     /// <summary>
@@ -355,9 +377,16 @@ public sealed partial class InvBrokerService(
             return None;
         }
         long? quantity = (call.Kwarg("qty") ?? call.Kwarg("quantity")) is { } asked ? IdOf(asked) : null;
+        int? flag = call.Kwarg("flag") is { } named ? Flag(named) : null;
         if (space is not null && space.IsInSpace(call.Session))
         {
-            // in space what moves is between the ship's hold and a can or a wreck, and the client is told by the one that knows where they are
+            if (context.Kind == Kind.Ship && flag == CharacterShips.DroneBayFlag)
+            {
+                return droneBays is not null
+                    && await droneBays.AddAsync(call.Session, itemId, IdOf(call.Arg(1)) ?? 0, context.ItemId, flag.Value, quantity, call.Cancellation) is { } drone
+                    ? InventoryWire.Id(drone)
+                    : None;
+            }
             return await space.MoveAsync(call.Session, itemId, IdOf(call.Arg(1)) ?? 0, context.ItemId, quantity, call.Cancellation) is { } moved ? InventoryWire.Id(moved) : None;
         }
         var destination = context.Kind == Kind.Hangar ? StationOf(call.Session) : context.ItemId;
@@ -365,7 +394,6 @@ public sealed partial class InvBrokerService(
         {
             return None;
         }
-        int? flag = call.Kwarg("flag") is { } named ? Flag(named) : null;
         switch (await ships.MoveAsync(character, itemId, IdOf(call.Arg(1)) ?? 0, location, flag, quantity, call.Cancellation))
         {
             case ShipChanged changed:

@@ -66,13 +66,14 @@ public class ArchitectureTests
     }
 
     [Fact]
-    public void Nothing_but_the_legacy_importer_builds_on_the_legacy_store()
+    public void The_host_and_legacy_importer_are_the_only_projects_using_game_store()
     {
         foreach (var (project, references) in References())
         {
-            if (project is "Eve.GameStore.Import")
+            if (project is "Eve.GameStore.Import" or "Eve.Host")
             {
                 Assert.Contains("Eve.GameStore", references);
+                Assert.DoesNotContain("Eve.GameStore.Import", references);
                 continue;
             }
             Assert.DoesNotContain("Eve.GameStore", references);

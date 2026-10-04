@@ -8,6 +8,7 @@ use eve_space::link::{
 };
 use eve_space::missiles::Missile;
 use eve_space::modules::{Action, Applies, Change, Effect, Numbers, Reach, Remote};
+use eve_space::scene::{HeatModuleProfile, HeatProfile, HeatRack};
 use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use eve_space::weapons::{Charge, Turret};
 use eve_space::wreck::WreckKind;
@@ -202,6 +203,32 @@ fn effect_of(case: &Value) -> Effect {
                         damage[3].as_f64().unwrap(),
                     ],
                     hurts_pilots: a["hurtsPilots"].as_bool().unwrap(),
+                };
+            }
+            if a["kind"] == "charged" {
+                let repair = |value: &Value| Action::Repair {
+                    layer: match value["layer"].as_str().unwrap() {
+                        "shield" => Layer::Shield,
+                        "armor" => Layer::Armor,
+                        _ => Layer::Structure,
+                    },
+                    amount: value["amount"].as_f64().unwrap(),
+                    when: if value["when"] == "end" { Applies::CycleEnd } else { Applies::CycleStart },
+                };
+                let fallback = (!a["fallback"].is_null()).then(|| Box::new(repair(&a["fallback"])));
+                return Action::Charged {
+                    action: Box::new(repair(&a["action"])),
+                    fallback,
+                    charge_type_id: a["chargeTypeId"].as_i64().unwrap() as i32,
+                    charge_flag: a["chargeFlag"].as_i64().unwrap() as i32,
+                    charge_per_cycle: a["chargePerCycle"].as_i64().unwrap(),
+                    charges: a["charges"].as_i64().unwrap(),
+                };
+            }
+            if a["kind"] == "ecmBurst" {
+                return Action::EcmBurst {
+                    range: a["range"].as_f64().unwrap(),
+                    strength: sensors_of(&a["strength"]),
                 };
             }
             if a["kind"] == "repair" {
@@ -591,6 +618,79 @@ fn every_valid_frame_encodes_to_its_bytes_and_decodes_back() {
             "length of {name}"
         );
         assert_eq!(Message::decode(payload).unwrap(), message, "decoding of {name}");
+    }
+}
+
+#[test]
+fn a_heat_profile_roundtrips_through_the_link() {
+    let profile = HeatProfile {
+        generation_multiplier: 0.75,
+        damage_multiplier: 0.85,
+        thermodynamics_level: 3,
+        capacity: [100.0; 3],
+        initial_rack_heat: [0.0, 1.0, 2.0],
+        dissipation_rate: [0.01; 3],
+        attenuation: [0.71; 3],
+        modules: vec![HeatModuleProfile {
+            module_id: 123,
+            flag: 27,
+            structure_hp: 40.0,
+            damage_hp: 2.0,
+            heat_damage_hp: 6.6,
+            heat_absorption_rate: 0.01,
+            overloadable: true,
+            heat_immune: false,
+            online: true,
+        }],
+    };
+    let message = Message::HeatProfile { session_id: 42, profile: profile.clone() };
+    let frame = message.encode();
+    assert_eq!(Message::decode(&frame[4..]).unwrap(), message);
+}
+
+#[test]
+fn charged_actions_roundtrip_cycle_charge_and_fallback_in_the_shared_link() {
+    let fixtures = fixtures();
+    let case = fixtures["valid"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["name"] == "activate an ECM burst")
+        .unwrap();
+    let Message::Activate { session_id, effect } = message_of(case) else {
+        panic!("fixture must activate an effect")
+    };
+    let mut effect = *effect;
+    effect.action = Some(Action::Charged {
+        action: Box::new(Action::Remote {
+            what: Remote::Transfer { amount: 60.0 },
+            reach: Reach { optimal: 0.0, falloff: 0.0 },
+            when: Applies::CycleStart,
+            jam: "energyTransfer".to_string(),
+        }),
+        fallback: Some(Box::new(Action::Repair {
+            layer: Layer::Armor,
+            amount: 24.0,
+            when: Applies::CycleEnd,
+        })),
+        charge_type_id: 16272,
+        charge_flag: 27,
+        charge_per_cycle: 3,
+        charges: 5,
+    });
+    let message = Message::Activate { session_id, effect: Box::new(effect) };
+    let frame = message.encode();
+    assert_eq!(Message::decode(&frame[4..]).unwrap(), message);
+}
+
+#[test]
+fn module_offline_and_rack_overheat_orders_roundtrip_through_the_link() {
+    for message in [
+        Message::ModuleOffline { session_id: 42, module_id: 123 },
+        Message::RackOverheat { session_id: 42, rack: HeatRack::Medium, active: true },
+    ] {
+        let frame = message.encode();
+        assert_eq!(Message::decode(&frame[4..]).unwrap(), message);
     }
 }
 

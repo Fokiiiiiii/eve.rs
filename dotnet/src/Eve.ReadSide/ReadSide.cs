@@ -37,6 +37,16 @@ public sealed class RowSet
     /// <summary>A <c>Rowset</c> (<c>eve.common.script.sys.rowset.Rowset</c>): the column names and a list per row. What most list-returning service calls return.</summary>
     public PyValue ToRowset() => Py.Rowset([.. Columns.Select(c => c.Name)], Rows.Select(row => (PyValue)new PyList(Values(row))));
 
+    /// <summary>A database rowset (<c>carbon.common.script.sys.crowset.CRowset</c>) with a shared descriptor.</summary>
+    public PyValue ToCRowset()
+    {
+        var descriptor = Descriptor();
+        return new PyObject(new PyStr("carbon.common.script.sys.crowset.CRowset"), Py.Dict(
+            ("header", descriptor.Header),
+            ("RowClass", new PyToken("util.Row")),
+            ("lines", new PyList(ToPackedRows()))));
+    }
+
     private Descriptor Descriptor() => Eve.Marshal.Descriptor.FromHeader(new PyObjectEx(ObjectExKind.Ex1,
         Py.Tuple(new PyToken("blue.DBRowDescriptor"), Py.Tuple(Py.Tuple([.. Columns.Select(c => (PyValue)Py.Tuple(new PyStr(c.Name), new PyInt(c.Type.DbType())))]))), [], []));
 

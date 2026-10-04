@@ -129,4 +129,116 @@ public class WeaponHostTests
 
         Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "targetAttack", other.GetInt("shipid")!.Value, 1000, CancellationToken.None));
     }
+
+
+    [Theory]
+    [InlineData(true, false, false, false, false, false)]
+    [InlineData(false, true, false, false, false, false)]
+    [InlineData(false, false, true, false, false, false)]
+    [InlineData(false, false, false, true, false, false)]
+    [InlineData(false, false, false, false, true, false)]
+    [InlineData(false, false, false, false, false, true)]
+    public async Task Legal_war_engagement_or_target_status_allows_highsec_ship_attack(
+        bool activeWar,
+        bool activeLimitedEngagement,
+        bool targetIsCriminal,
+        bool targetIsSuspect,
+        bool targetIsOutlaw,
+        bool legalFriendlyFire)
+    {
+        await using var rig = await Rig.CreateAsync();
+        var attacker = await rig.NewCharacterAsync("Space Tester", 1);
+        var victim = await rig.NewCharacterAsync("Space Victim", 2);
+        var session = await InSpaceAsync(rig, attacker, 1);
+        var other = await InSpaceAsync(rig, victim, 2);
+        var gun = await GunOfAsync(rig, attacker);
+        rig.Space.SafetyLevelOf = (_, _) => Task.FromResult(Eve.Crimewatch.SafetyLevel.Full);
+        var contextReads = 0;
+        rig.Space.WeaponTargetContextOf = (attackerId, targetId, _) =>
+        {
+            Assert.Equal(attacker.CharacterId, attackerId);
+            Assert.Equal(victim.CharacterId, targetId);
+            contextReads++;
+            return Task.FromResult(new WeaponTargetContext(
+                AttackerIsPlayer: true,
+                TargetIsPlayerProperty: true,
+                ActiveWar: activeWar,
+                ActiveLimitedEngagement: activeLimitedEngagement,
+                TargetIsCriminal: targetIsCriminal,
+                TargetIsSuspect: targetIsSuspect,
+                TargetIsOutlaw: targetIsOutlaw,
+                LegalFriendlyFire: legalFriendlyFire));
+        };
+
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(
+            session, gun, "targetAttack", other.GetInt("shipid")!.Value, 1000, CancellationToken.None));
+        Assert.Equal(1, contextReads);
+    }
+
+
+    [Fact]
+    public void Highsec_player_ship_safety_allows_only_illegal_aggression_with_safety_disabled()
+    {
+        var target = new WeaponTargetContext(AttackerIsPlayer: true, TargetIsPlayerProperty: true);
+        Assert.True(WeaponSafety.StopsFire(Eve.Universe.SecurityClass.HighSec, Eve.Crimewatch.SafetyLevel.Full, target));
+        Assert.True(WeaponSafety.StopsFire(Eve.Universe.SecurityClass.HighSec, Eve.Crimewatch.SafetyLevel.Partial, target));
+        Assert.False(WeaponSafety.StopsFire(Eve.Universe.SecurityClass.HighSec, Eve.Crimewatch.SafetyLevel.None, target));
+        Assert.True(WeaponSafety.StopsFire(Eve.Universe.SecurityClass.HighSec, 99, target));
+        Assert.False(WeaponSafety.StopsFire(Eve.Universe.SecurityClass.HighSec, -1, target));
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void War_and_limited_engagement_allow_highsec_ship_attacks(bool activeWar, bool activeLimitedEngagement)
+    {
+        var target = new WeaponTargetContext(
+            AttackerIsPlayer: true,
+            TargetIsPlayerProperty: true,
+            ActiveWar: activeWar,
+            ActiveLimitedEngagement: activeLimitedEngagement);
+
+        Assert.False(WeaponSafety.StopsFire(Eve.Universe.SecurityClass.HighSec, Eve.Crimewatch.SafetyLevel.Full, target));
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public void Safety_does_not_block_a_ship_attack_when_either_side_is_an_npc(bool attackerIsPlayer, bool targetIsPlayer)
+    {
+        var target = new WeaponTargetContext(attackerIsPlayer, targetIsPlayer);
+
+        Assert.False(WeaponSafety.StopsFire(Eve.Universe.SecurityClass.HighSec, Eve.Crimewatch.SafetyLevel.Full, target));
+    }
+
+    [Fact]
+    public void Crimewatch_flags_outlaw_status_and_legal_friendly_fire_are_legal_targets()
+    {
+        var targets = new[]
+        {
+            new WeaponTargetContext(true, true, TargetIsCriminal: true),
+            new WeaponTargetContext(true, true, TargetIsSuspect: true),
+            new WeaponTargetContext(true, true, TargetIsOutlaw: true),
+            new WeaponTargetContext(true, true, LegalFriendlyFire: true),
+            new WeaponTargetContext(true, true, SamePilot: true),
+        };
+
+        Assert.All(targets, target =>
+            Assert.False(WeaponSafety.StopsFire(Eve.Universe.SecurityClass.HighSec, Eve.Crimewatch.SafetyLevel.Full, target)));
+    }
+
+    [Fact]
+    public void Lowsec_ship_and_capsule_use_suspect_and_criminal_safety_thresholds()
+    {
+        var ship = new WeaponTargetContext(true, true);
+        Assert.True(WeaponSafety.StopsFire(Eve.Universe.SecurityClass.LowSec, Eve.Crimewatch.SafetyLevel.Full, ship));
+        Assert.False(WeaponSafety.StopsFire(Eve.Universe.SecurityClass.LowSec, Eve.Crimewatch.SafetyLevel.Partial, ship));
+
+        var capsule = new WeaponTargetContext(true, true, TargetIsCapsule: true);
+        Assert.True(WeaponSafety.StopsFire(Eve.Universe.SecurityClass.LowSec, Eve.Crimewatch.SafetyLevel.Full, capsule));
+        Assert.True(WeaponSafety.StopsFire(Eve.Universe.SecurityClass.LowSec, Eve.Crimewatch.SafetyLevel.Partial, capsule));
+        Assert.False(WeaponSafety.StopsFire(Eve.Universe.SecurityClass.LowSec, Eve.Crimewatch.SafetyLevel.None, capsule));
+        Assert.False(WeaponSafety.StopsFire(Eve.Universe.SecurityClass.ZeroSec, Eve.Crimewatch.SafetyLevel.Full, capsule));
+    }
 }

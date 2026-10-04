@@ -161,18 +161,74 @@ impl Remote {
     }
 }
 
-/// What a cycle of an effect does to the scene besides what it costs the capacitor and the numbers it changes (the host has worked out the points from dogma).
+impl Action {
+    fn charge_use(&self) -> Option<(i32, i32, i64, i64)> {
+        match self {
+            Self::Charged { charge_type_id, charge_flag, charge_per_cycle, charges, .. } => {
+                Some((*charge_type_id, *charge_flag, *charge_per_cycle, *charges))
+            }
+            _ => None,
+        }
+    }
+
+    fn with_charges(&self, charged_this_cycle: bool) -> Option<&Action> {
+        match self {
+            Self::Charged { action, fallback, .. } => {
+                if charged_this_cycle {
+                    Some(action)
+                } else {
+                    fallback.as_deref()
+                }
+            }
+            _ => Some(self),
+        }
+    }
+
+    fn offensive(&self) -> bool {
+        match self {
+            Self::Remote { what, .. } => what.hostile(),
+            Self::Smartbomb { .. } | Self::EcmBurst { .. } => true,
+            Self::Cloak => false,
+            Self::Charged { action, fallback, .. } => {
+                action.offensive() || fallback.as_deref().is_some_and(Action::offensive)
+            }
+            Self::Repair { .. } => false,
+        }
+    }
+}
+
+/// What a cycle of an effect does to the scene besides what it costs the capacitor and the numbers it changes.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
-    /// A layer of the ship that runs the effect is mended: `amount` points a cycle (an armor repairer, a shield booster, a hull repairer).
-    Repair { layer: Layer, amount: f64, when: Applies },
-    /// The effect is projected at the locked target: it needs the target in reach, and does what `what` says, weakened by distance, as the cycle begins or ends.
-    /// `jam` is what the target's client calls it on its HUD (`remoteArmorRepair`, `ewEnergyNeut`).
-    Remote { what: Remote, reach: Reach, when: Applies, jam: String },
-    /// Every ship within `range` of the surface of the ship that runs the effect (not its own) takes `damage` (em, thermal, kinetic, explosive) as the cycle begins: a smartbomb
-    /// needs no target and rolls nothing. `hurts_pilots` is false where the safety of the pilot would stop it (the host knows the security of the system): it does not
-    /// start with another pilot in its range, and stops when one comes in.
-    Smartbomb { range: f64, damage: crate::health::Damage, hurts_pilots: bool },
+    Repair {
+        layer: Layer,
+        amount: f64,
+        when: Applies,
+    },
+    Remote {
+        what: Remote,
+        reach: Reach,
+        when: Applies,
+        jam: String,
+    },
+    Smartbomb {
+        range: f64,
+        damage: crate::health::Damage,
+        hurts_pilots: bool,
+    },
+    EcmBurst {
+        range: f64,
+        strength: [f64; 4],
+    },
+    Cloak,
+    Charged {
+        action: Box<Action>,
+        fallback: Option<Box<Action>>,
+        charge_type_id: i32,
+        charge_flag: i32,
+        charge_per_cycle: i64,
+        charges: i64,
+    },
 }
 
 /// An effect the host asks the scene to run, with everything the host has worked out for it.
@@ -202,29 +258,35 @@ pub struct Effect {
 }
 
 impl Effect {
-    /// What the effect does to the ship it is projected at, where it reaches and when in a cycle.
     pub(crate) fn remote(&self) -> Option<(&Remote, &Reach, Applies)> {
-        match self.action.as_ref()? {
-            Action::Remote { what, reach, when, .. } => Some((what, reach, *when)),
-            Action::Repair { .. } | Action::Smartbomb { .. } => None,
+        fn from(action: &Action) -> Option<(&Remote, &Reach, Applies)> {
+            match action {
+                Action::Remote { what, reach, when, .. } => Some((what, reach, *when)),
+                Action::Charged { action, fallback, .. } => {
+                    from(action).or_else(|| fallback.as_deref().and_then(from))
+                }
+                _ => None,
+            }
         }
+        from(self.action.as_ref()?)
     }
 
-    /// What the target's client calls an effect that is projected at it, on its HUD.
     pub(crate) fn jam(&self) -> Option<&str> {
-        match self.action.as_ref()? {
-            // an ECM jam is told to the HUD only when it lands (by `Scene::jam`), not as the effect begins
-            Action::Remote { what: Remote::Jam { .. }, .. } => None,
-            Action::Remote { jam, .. } if !jam.is_empty() => Some(jam),
-            Action::Remote { .. } | Action::Repair { .. } | Action::Smartbomb { .. } => None,
+        fn from(action: &Action) -> Option<&str> {
+            match action {
+                Action::Remote { what: Remote::Jam { .. }, .. } => None,
+                Action::Remote { jam, .. } if !jam.is_empty() => Some(jam),
+                Action::Charged { action, fallback, .. } => {
+                    from(action).or_else(|| fallback.as_deref().and_then(from))
+                }
+                _ => None,
+            }
         }
+        from(self.action.as_ref()?)
     }
 
-    /// Whether the client plays the effect as an attack (a weapon, a neutralizer, a nosferatu).
     pub(crate) fn offensive(&self) -> bool {
-        self.turret.is_some()
-            || self.remote().is_some_and(|(what, ..)| what.hostile())
-            || matches!(self.action, Some(Action::Smartbomb { .. }))
+        self.turret.is_some() || self.action.as_ref().is_some_and(Action::offensive)
     }
 
     /// How many cycles the client is told the effect plays: a turret's are the ones asked for, those of a projected effect last as long as the effect can (the
@@ -342,8 +404,10 @@ pub(crate) struct Running {
     cycles: i32,
     /// The pilot asked for it to stop: it does when the cycle ends.
     stopping: bool,
-    /// The rounds a turret that fires a charge has left.
+    /// The rounds a turret or charge-using module has left.
     rounds: Option<i64>,
+    /// Whether the cycle in progress started with a charge available.
+    charged_this_cycle: bool,
 }
 
 /// The modules of a ship that run, and its capacitor.
@@ -601,6 +665,22 @@ impl Scene {
         if effect.effect_id == MICROWARPDRIVE && pilot.incoming.mwd_blocked() {
             return vec![Out::Refused { session, command: CODE, reason: "MICROWARPDRIVE_BLOCKED" }];
         }
+        if matches!(effect.action.as_ref(), Some(Action::Cloak)) {
+            if pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()) {
+                return vec![Out::Refused { session, command: CODE, reason: "CLOAK_WARP_BLOCKED" }];
+            }
+            if !pilot.targeting.pending_targets().is_empty()
+                || !pilot.targeting.targets().is_empty()
+                || !self.targeters_of(pilot.ship.spec.ship_id).is_empty()
+            {
+                return vec![Out::Refused { session, command: CODE, reason: "CLOAK_TARGET_LOCKED" }];
+            }
+            if !self.in_smartbomb_range(session, 2_000.0).is_empty() {
+                return vec![Out::Refused { session, command: CODE, reason: "CLOAK_PROXIMITY_BLOCKED" }];
+            }
+        } else if pilot.cloak != crate::visibility::CloakState::Uncloaked {
+            return vec![Out::Refused { session, command: CODE, reason: "MODULE_CLOAKED" }];
+        }
         if effect.turret.is_some() {
             if effect.target_id <= 0 {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_TARGET" }];
@@ -632,14 +712,16 @@ impl Scene {
             }
         }
         // an effect that is projected at a ship needs it: there, locked and in reach (what is too far off is told with the range and how far it is)
-        if let Some((_, reach, _)) = effect.remote() {
+        if let Some((what, reach, _)) = effect.remote() {
             if effect.target_id <= 0 {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_TARGET" }];
             }
             let Some(target) = self.session_of(effect.target_id) else {
                 return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_FOUND" }];
             };
-            if !self.locked_by(session).contains(&effect.target_id) {
+            let self_capacitor_boost = matches!(what, Remote::Transfer { .. })
+                && self.pilots.get(&session).is_some_and(|pilot| effect.target_id == pilot.ship.spec.ship_id);
+            if !self_capacitor_boost && !self.locked_by(session).contains(&effect.target_id) {
                 return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_LOCKED" }];
             }
             let apart = self.apart(session, target).unwrap_or(f64::INFINITY);
@@ -665,8 +747,12 @@ impl Scene {
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
         let pilot = self.pilots.get_mut(&session).expect("the pilot is in the scene");
         pilot.protected_until = 0;
-        let rounds = effect.turret.as_ref().and_then(|t| t.charge).map(|c| c.rounds);
-        let run = Running { effect, cycle_start: now, cycles: 1, stopping: false, rounds };
+        let rounds = effect.turret.as_ref().and_then(|t| t.charge).map(|c| c.rounds).or_else(|| {
+            effect.action.as_ref().and_then(Action::charge_use).map(|(_, _, _, charges)| charges)
+        });
+        let charged_this_cycle = rounds.is_some_and(|left| left > 0);
+        let run =
+            Running { effect, cycle_start: now, cycles: 1, stopping: false, rounds, charged_this_cycle };
         let (before, after) = match pilot.modules.capacitor.as_mut() {
             Some(capacitor) => capacitor.draw(now, run.effect.capacitor_need),
             None => (0.0, 0.0),
@@ -701,7 +787,10 @@ impl Scene {
         // the round of the first shot is spent after the shot; a turret that has no round for the next cycle stops
         let (spent, goes_on) = self.spend_round(session, effect.module_id, now);
         out.extend(spent);
+        let stop_without_charge =
+            matches!(effect.action.as_ref(), Some(Action::Charged { fallback: None, .. }));
         if !goes_on
+            && (effect.turret.is_some() || stop_without_charge)
             && let Some(pilot) = self.pilots.get_mut(&session)
             && let Some(at) =
                 pilot.modules.running.iter().position(|r| r.effect.module_id == effect.module_id)
@@ -748,24 +837,36 @@ impl Scene {
         answer(true, before, *rounds)
     }
 
-    /// A turret that fires a charge spends the rounds of a cycle: the client is told the rounds in the slot and the host the rounds that are left (it keeps the
-    /// quantity of the charge). The second answer says whether the turret has rounds for another cycle.
     fn spend_round(&mut self, session: SessionId, module_id: i64, at: i64) -> (Vec<Out>, bool) {
         let Some(pilot) = self.pilots.get_mut(&session) else { return (Vec::new(), false) };
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
         let Some(run) = pilot.modules.running.iter_mut().find(|r| r.effect.module_id == module_id) else {
             return (Vec::new(), true);
         };
-        let (Some(charge), Some(rounds)) =
-            (run.effect.turret.as_ref().and_then(|t| t.charge), run.rounds.as_mut())
-        else {
+        let action_charge = run.effect.action.as_ref().and_then(Action::charge_use);
+        let use_charge = run
+            .effect
+            .turret
+            .as_ref()
+            .and_then(|turret| turret.charge)
+            .map(|charge| (charge.type_id, charge.flag, charge.per_cycle))
+            .or_else(|| action_charge.map(|(type_id, flag, per_cycle, _)| (type_id, flag, per_cycle)));
+        let (Some((type_id, flag, per_cycle)), Some(rounds)) = (use_charge, run.rounds.as_mut()) else {
             return (Vec::new(), true);
         };
-        let (old, new) = (*rounds, (*rounds - charge.per_cycle).max(0));
+        let (old, new) = (*rounds, (*rounds - per_cycle).max(0));
+        if old <= 0 {
+            let has_fallback = run
+                .effect
+                .action
+                .as_ref()
+                .is_some_and(|action| matches!(action, Action::Charged { fallback: Some(_), .. }));
+            return (Vec::new(), has_fallback);
+        }
         *rounds = new;
         let line = attribute_change_of(
             owner,
-            charge_key(ship_id, &charge),
+            charge_key(ship_id, &crate::weapons::Charge { type_id, flag, rounds: old, per_cycle }),
             805,
             at,
             number(new as f64),
@@ -776,7 +877,7 @@ impl Scene {
                 Self::dogma_notify(session, "OnModuleAttributeChanges", vec![Value::List(vec![line])]),
                 Out::ChargeSpent { session, module_id, rounds_left: new },
             ],
-            new >= charge.per_cycle,
+            action_charge.is_some() && new > 0 || action_charge.is_none() && new >= per_cycle,
         )
     }
 
@@ -873,7 +974,14 @@ impl Scene {
         let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
         let run = pilot.modules.running[index].clone();
         // a weapon goes on while its target is there and locked, an effect projected at a ship while the ship is also in reach
-        let target_ok = if run.effect.turret.is_some() {
+        let self_capacitor_boost = run
+            .effect
+            .remote()
+            .is_some_and(|(what, ..)| matches!(what, Remote::Transfer { .. }))
+            && self.pilots.get(&session).is_some_and(|pilot| run.effect.target_id == pilot.ship.spec.ship_id);
+        let target_ok = if self_capacitor_boost {
+            true
+        } else if run.effect.turret.is_some() {
             self.turret_target_ok(session, &run.effect)
         } else if let Some((_, reach, _)) = run.effect.remote() {
             self.turret_target_ok(session, &run.effect)
@@ -897,13 +1005,18 @@ impl Scene {
             return out;
         }
         // the host took the rounds out while the gun ran (a pilot unloaded it in space): it stops with no shot
-        if run
-            .effect
-            .turret
-            .as_ref()
-            .and_then(|t| t.charge)
-            .zip(run.rounds)
-            .is_some_and(|(charge, rounds)| rounds < charge.per_cycle)
+        let no_action_charge = matches!(
+            run.effect.action.as_ref(),
+            Some(Action::Charged { fallback: None, .. }) if run.rounds.unwrap_or(0) <= 0
+        );
+        if no_action_charge
+            || run
+                .effect
+                .turret
+                .as_ref()
+                .and_then(|t| t.charge)
+                .zip(run.rounds)
+                .is_some_and(|(charge, rounds)| rounds < charge.per_cycle)
         {
             pilot.modules.running.remove(index);
             out.extend(self.effect_ended(session, run, owner, ship_id, at, Ending::NoRounds));
@@ -916,12 +1029,26 @@ impl Scene {
         let next = &mut pilot.modules.running[index];
         next.cycle_start = at;
         next.cycles += 1;
+        next.charged_this_cycle = next.rounds.is_some_and(|left| left > 0);
         let next = next.clone();
         out.push(Self::charge_told(session, owner, ship_id, at, after, before));
         if next.effect.turret.is_none() {
             out.push(Self::effect_told(session, owner, ship_id, &next, at, true, at, None));
             out.extend(self.act(session, &next.effect, Applies::CycleStart, at));
             out.extend(self.jam_told(session, &next.effect, at, Jam::Refresh));
+            let (spent, goes_on) = self.spend_round(session, next.effect.module_id, at);
+            out.extend(spent);
+            let stop_without_charge =
+                matches!(next.effect.action.as_ref(), Some(Action::Charged { fallback: None, .. }));
+            if !goes_on
+                && stop_without_charge
+                && let Some(pilot) = self.pilots.get_mut(&session)
+                && let Some(position) =
+                    pilot.modules.running.iter().position(|run| run.effect.module_id == next.effect.module_id)
+            {
+                let run = pilot.modules.running.remove(position);
+                out.extend(self.effect_ended(session, run, owner, ship_id, at, Ending::NoRounds));
+            }
             return out;
         }
         // a turret shoots, spends its round and then is told to have begun another cycle (the recording of the reference's gun); one that is out of rounds stops
@@ -978,9 +1105,24 @@ impl Scene {
         out
     }
 
-    /// What a cycle of `effect` does to the scene at this point of the cycle (`when`): a repair mends the layer of the ship that runs it, an effect projected at a
-    /// ship does what it does to that ship, and the pilots and those who see the ships are told what changed.
     fn act(&mut self, session: SessionId, effect: &Effect, when: Applies, at: i64) -> Vec<Out> {
+        if let Some(Action::Charged { .. }) = effect.action.as_ref() {
+            let charged_this_cycle = self
+                .pilots
+                .get(&session)
+                .and_then(|pilot| {
+                    pilot.modules.running.iter().find(|run| run.effect.module_id == effect.module_id)
+                })
+                .is_some_and(|run| run.charged_this_cycle);
+            let Some(action) =
+                effect.action.as_ref().and_then(|action| action.with_charges(charged_this_cycle))
+            else {
+                return Vec::new();
+            };
+            let mut selected = effect.clone();
+            selected.action = Some(action.clone());
+            return self.act(session, &selected, when, at);
+        }
         match effect.action.as_ref() {
             Some(Action::Repair { layer, amount, when: applies }) if *applies == when => {
                 let Some(ship_id) = self.pilots.get(&session).map(|pilot| pilot.ship.spec.ship_id) else {
@@ -993,6 +1135,22 @@ impl Scene {
             }
             Some(Action::Smartbomb { range, damage, hurts_pilots }) if when == Applies::CycleStart => {
                 self.smartbomb(session, effect, *range, *damage, *hurts_pilots, at)
+            }
+            Some(Action::EcmBurst { range, strength }) if when == Applies::CycleStart => {
+                self.jam_burst(session, strength, *range, at)
+            }
+            Some(Action::Cloak) if when == Applies::CycleStart => {
+                let changed = if let Some(pilot) = self.pilots.get_mut(&session) {
+                    let changed = pilot.cloak != crate::visibility::CloakState::Cloaked;
+                    pilot.cloak = crate::visibility::CloakState::Cloaked;
+                    changed
+                } else {
+                    false
+                };
+                if changed {
+                    self.boxes.clear();
+                }
+                Vec::new()
             }
             _ => Vec::new(),
         }
@@ -1154,13 +1312,31 @@ impl Scene {
         {
             out.extend(self.release(ship_id, run.effect.module_id, run.effect.target_id, at));
         }
+        if matches!(run.effect.action.as_ref(), Some(Action::Cloak)) {
+            let changed = if let Some(pilot) = self.pilots.get_mut(&session) {
+                let changed = pilot.cloak != crate::visibility::CloakState::Uncloaked;
+                pilot.cloak = crate::visibility::CloakState::Uncloaked;
+                changed
+            } else {
+                false
+            };
+            if changed {
+                self.boxes.clear();
+            }
+        }
         out
     }
 
-    /// The weapons of a ship that are aimed at ships it no longer has locked stop at once, the cycle they are in unfinished
-    /// (`stopTargetedModuleEffects` of the reference, which `removeLockedTarget` runs before it tells the pilot the lock is lost).
-    /// A module that runs is stopped at once (what forbids it came with the cycle: the safety, a scrambler).
+    /// A module whose effect is forbidden while it runs is stopped immediately, mid-cycle.
     pub(crate) fn stop_module(&mut self, session: SessionId, module_id: i64, now: i64) -> Vec<Out> {
+        self.offline_module(session, module_id, now)
+    }
+
+    /// Taking a module offline interrupts its running effect immediately, even during a cycle.
+    /// Ported from EVE.js moduleOperation.js at commit 828823a75f211fdecb945b087a26c225f111491f:
+    /// https://github.com/Fokiiiiiii/evejs-v0.12.9/blob/828823a75f211fdecb945b087a26c225f111491f/server/src/services/dogma/dogmaService/moduleOperation.js#L2607-L2618
+    /// The caller remains responsible for persisting the module's online state.
+    pub(crate) fn offline_module(&mut self, session: SessionId, module_id: i64, now: i64) -> Vec<Out> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
         let Some(index) = pilot.modules.running.iter().position(|run| run.effect.module_id == module_id)
@@ -1838,6 +2014,134 @@ pub(crate) mod tests {
         assert!(told.iter().any(|l| l.starts_with("7:attributes[") && l.contains("266")), "{told:?}");
         assert!(told.iter().any(|l| l.contains("OnDamageStateChange") || l.contains("destiny")), "{told:?}");
         assert!(told.iter().any(|l| l.starts_with("8:destiny[")), "the one who looks on is told: {told:?}");
+    }
+
+    #[test]
+    fn ancillary_repair_consumes_loaded_charges_each_cycle_then_uses_its_fallback() {
+        let (mut scene, t) = hurt();
+        let before = layers(&scene, t).armor;
+        let mut effect = repairer(Layer::Armor, 10.0, Applies::CycleEnd);
+        effect.repeat = 3;
+        effect.action = Some(Action::Charged {
+            action: Box::new(Action::Repair { layer: Layer::Armor, amount: 10.0, when: Applies::CycleEnd }),
+            fallback: Some(Box::new(Action::Repair {
+                layer: Layer::Armor,
+                amount: 5.0,
+                when: Applies::CycleEnd,
+            })),
+            charge_type_id: 91001,
+            charge_flag: 27,
+            charge_per_cycle: 1,
+            charges: 2,
+        });
+        let started = scene.activate(A, effect, t);
+        assert!(
+            started
+                .iter()
+                .any(|event| matches!(event, Out::ChargeSpent { module_id: MODULE, rounds_left: 1, .. }))
+        );
+        let (spent, first_cycle) = poll_until(&mut scene, t, 5.1);
+        let after_first = layers(&scene, first_cycle).armor;
+        assert!(
+            spent
+                .iter()
+                .any(|event| matches!(event, Out::ChargeSpent { module_id: MODULE, rounds_left: 0, .. }))
+        );
+        assert!((after_first - (before + 10.0).min(137.5)).abs() < 1e-3);
+        let (_, second_cycle) = poll_until(&mut scene, first_cycle, 5.1);
+        let after_second = layers(&scene, second_cycle).armor;
+        assert!((after_second - (after_first + 10.0).min(137.5)).abs() < 1e-3);
+        let (third, third_cycle) = poll_until(&mut scene, second_cycle, 5.1);
+        assert!(!third.iter().any(|event| matches!(event, Out::ChargeSpent { module_id: MODULE, .. })));
+        let after_third = layers(&scene, third_cycle).armor;
+        assert!((after_third - (after_second + 5.0).min(137.5)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn an_active_cloak_hides_a_ship_from_locking_until_the_module_ends() {
+        let (mut scene, t) = reaching(5_000.0);
+        let ship_id = scene.pilots[&A].ship.spec.ship_id;
+        let target_id = scene.pilots[&B].ship.spec.ship_id;
+        scene.target_order(A, crate::targeting::Order::Clear, t);
+        scene.target_order(B, crate::targeting::Order::Clear, t);
+        let mut effect = repairer(Layer::Armor, 1.0, Applies::CycleStart);
+        effect.module_type = 11577;
+        effect.effect_id = 197;
+        effect.fx = "effects.Cloaking".to_string();
+        effect.action = Some(Action::Cloak);
+        let started = scene.activate(A, effect, t);
+        assert!(
+            started.iter().any(|event| matches!(event, Out::Accepted { command: 17, .. })),
+            "{:?}",
+            labels(&started)
+        );
+        assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Cloaked);
+        for (session, target) in [(B, ship_id), (A, target_id)] {
+            let refused = scene.target_order(session, crate::targeting::Order::Lock(target), t);
+            assert!(
+                refused
+                    .iter()
+                    .any(|event| matches!(event, Out::TargetRefused { reason: "TARGET_NOT_FOUND", .. }))
+            );
+        }
+        let (_, cloaked_at) = poll_until(&mut scene, t, 1.1);
+        assert!(!scene.pilots[&B].sees.contains(&A));
+        scene.deactivate(A, MODULE, cloaked_at);
+        let (_, ended) = poll_until(&mut scene, cloaked_at, 5.1);
+        assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Uncloaked);
+        assert!(scene.pilots[&B].sees.contains(&A));
+        assert!(ended >= cloaked_at);
+    }
+
+    #[test]
+    fn a_power_booster_transfers_to_its_own_ship_and_spends_one_charge_per_cycle() {
+        let (mut scene, t) = reaching(2_000.0);
+        let ship_id = scene.pilots[&A].ship.spec.ship_id;
+        let effect = Effect {
+            module_id: MODULE,
+            module_type: 3566,
+            effect_id: 13,
+            fx: "effects.CapacitorBooster".to_string(),
+            duration_ms: 5_000.0,
+            capacitor_need: 0.0,
+            repeat: 2,
+            target_id: ship_id,
+            turret: None,
+            action: Some(Action::Charged {
+                action: Box::new(Action::Remote {
+                    what: Remote::Transfer { amount: 25.0 },
+                    reach: Reach { optimal: 0.0, falloff: 0.0 },
+                    when: Applies::CycleStart,
+                    jam: "energyTransfer".to_string(),
+                }),
+                fallback: None,
+                charge_type_id: 91002,
+                charge_flag: 27,
+                charge_per_cycle: 1,
+                charges: 2,
+            }),
+            on: None,
+            off: None,
+            on_changes: Vec::new(),
+            off_changes: Vec::new(),
+        };
+        let started = scene.activate(A, effect, t);
+        assert!(started.iter().any(|event| matches!(event, Out::Accepted { command: 17, .. })));
+        assert!(
+            started
+                .iter()
+                .any(|event| matches!(event, Out::ChargeSpent { module_id: MODULE, rounds_left: 1, .. }))
+        );
+        let (second, later) = poll_until(&mut scene, t, 5.1);
+        assert!(
+            second
+                .iter()
+                .any(|event| matches!(event, Out::ChargeSpent { module_id: MODULE, rounds_left: 0, .. })),
+            "{:?}",
+            labels(&second)
+        );
+        assert!(!scene.pilots[&A].modules.running.iter().any(|run| run.effect.module_id == MODULE));
+        assert!(scene.pilots[&A].modules.capacitor.as_ref().unwrap().charge_at(later) > 0.0);
     }
 
     #[test]
@@ -2561,6 +2865,30 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn an_ecm_burst_breaks_nearby_locks_at_cycle_start_but_does_not_leave_a_jam() {
+        let (mut scene, t) = reaching(2_000.0);
+        scene.pilots.get_mut(&B).unwrap().ship.spec.sensor_strength = [10.0; 4];
+        scene.pilots.get_mut(&B).unwrap().ship.spec.ecm_resistance = 1.0;
+        let target_id = scene.pilots[&A].ship.spec.ship_id;
+        scene.target_order(B, crate::targeting::Order::Lock(target_id), t);
+        let (_, locked_at) = poll_until(&mut scene, t, 30.0);
+        assert!(!scene.pilots[&B].targeting.targets().is_empty());
+
+        let burst = Effect {
+            fx: "effects.EcmBurstJammer".to_string(),
+            action: Some(Action::EcmBurst { range: 3_000.0, strength: [1_000.0; 4] }),
+            ..smartbomb(0.0, [0.0; 4], true)
+        };
+        let out = scene.activate(A, burst, locked_at);
+        assert!(out.iter().any(|event| matches!(event, Out::Accepted { .. })), "{:?}", labels(&out));
+        assert!(
+            scene.pilots[&B].targeting.pending_targets().is_empty()
+                && scene.pilots[&B].targeting.targets().is_empty()
+        );
+        assert!(!scene.pilots[&B].incoming.jammed());
+    }
+
+    #[test]
     fn a_smartbomb_the_safety_forbids_does_not_start_with_a_pilot_in_range_and_stops_when_one_comes_in() {
         let (mut scene, t) = reaching(2_000.0);
         scene.target_order(A, crate::targeting::Order::Clear, t);
@@ -2677,5 +3005,26 @@ pub(crate) mod tests {
         let (out, _) = poll_until(&mut scene, t, 6.0);
         assert_eq!(speed_of(&scene, B), base, "{:?}", labels(&out));
         assert!(scene.pilots[&B].incoming.is_empty());
+    }
+
+    #[test]
+    fn offlining_a_module_during_a_cycle_stops_it_immediately() {
+        let (mut scene, t) = hurt();
+        let before = layers(&scene, t).armor;
+        scene.activate(A, repairer(Layer::Armor, 30.0, Applies::CycleEnd), t);
+
+        let out = scene.offline_module(A, MODULE, t + SECOND);
+        assert_eq!(scene.pilots[&A].modules.running_count(), 0);
+        assert!((layers(&scene, t + SECOND).armor - before).abs() < 1e-3);
+        let Some(Out::Notify { args, .. }) =
+            out.iter().find(|out| matches!(out, Out::Notify { name: "OnGodmaShipEffect", .. }))
+        else {
+            panic!("the offlined effect is told to the client: {out:?}");
+        };
+        assert_eq!(args[8], Value::Bool(false));
+
+        let (later, _) = poll_until(&mut scene, t + SECOND, 5.0);
+        assert!((layers(&scene, t + 6 * SECOND).armor - before).abs() < 1e-3);
+        assert!(later.iter().all(|out| !matches!(out, Out::Notify { name: "OnGodmaShipEffect", .. })));
     }
 }

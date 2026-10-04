@@ -4,6 +4,7 @@ using Eve.Dogma;
 using Eve.Fitting;
 using Eve.Inventory;
 using Eve.Macho;
+using Eve.Services.Inventory;
 using Eve.Marshal;
 using Eve.Sde;
 using Eve.Ships;
@@ -67,6 +68,7 @@ internal sealed class Rig : IAsyncDisposable
         Space.UseBounties(Bounties);
         Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, statics, Space, () => Now, Log.Add);
         Drones = new SpaceDrones(Sim, Ships, statics, Space, () => Now, Log.Add);
+        Inventory = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Ships, statics, () => Now, Containers, Drones);
         Ship = new ShipService(Space, () => ClockMs, Containers, Drones);
         Beyonce = new BeyonceService(Space, () => ClockMs);
         Entity = new EntityService(Drones, () => ClockMs);
@@ -130,6 +132,8 @@ internal sealed class Rig : IAsyncDisposable
     /// <param name="protection">How long a ship is protected after it undocks (never, unless a test wants the end of it).</param>
     /// <param name="npcLoot">Whether an NPC that is destroyed leaves a wreck the host makes with <see cref="LootTable"/> in it.</param>
     /// <param name="beltRats">How the rats of the belts are rolled (none: the belts have none).</param>
+    public InvBrokerService Inventory { get; }
+
     public static async Task<Rig> CreateAsync(TimeSpan? protection = null, TimeSpan? jumpCloak = null, bool npcLoot = false, Eve.Npc.BeltRatConfig? beltRats = null)
     {
         CharacterNames.EnsureUnicodeSupport();
@@ -192,6 +196,23 @@ internal sealed class Rig : IAsyncDisposable
         await service.CallAsync(new ServiceCall { Method = method, Args = args, Session = session, CallId = new PyInt(1), BoundObjectId = bound });
 
     public Task<PyValue> ShipCallAsync(ClientSession session, string method, string? bound = null, params PyValue[] args) => CallAsync(Ship, session, method, bound, args);
+
+    public ValueTask<PyValue> InventoryCallAsync(ClientSession session, string method, string? bound, PyValue[] args, PyValue? kwargs = null) =>
+        ((IService)Inventory).CallAsync(new ServiceCall
+        {
+            Method = method,
+            Args = args,
+            Kwargs = kwargs ?? PyNone.Instance,
+            Session = session,
+            CallId = new PyInt(1),
+            BoundObjectId = bound,
+        });
+
+    public async Task<string> BindInventoryShipInSpaceAsync(ClientSession session)
+    {
+        var opened = await InventoryCallAsync(session, "GetInventoryFromId", null, [new PyLong(session.GetInt("shipid")!.Value)]);
+        return OidOf(opened);
+    }
 
     public Task<PyValue> BeyonceCallAsync(ClientSession session, string method, string? bound = null, params PyValue[] args) => CallAsync(Beyonce, session, method, bound, args);
 

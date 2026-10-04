@@ -125,6 +125,20 @@ public sealed partial class DogmaIMService(
         return answer;
     }
 
+    /// <summary>Returns the active ship's remaining turret hardpoints as the integer the fitting UI reads.</summary>
+    [Method("GetAvailableTurretSlots")]
+    public async ValueTask<PyValue> GetAvailableTurretSlots(ServiceCall call)
+    {
+        if (BoundContextOf(call) is null || call.Session.CharacterId is not { } character
+            || await ships.LoadAsync(character, call.Cancellation) is not { } snapshot)
+        {
+            return new PyInt(0);
+        }
+
+        var remaining = snapshot.World.Get(snapshot.Ship.Id, BuiltInEffects.TurretSlotsLeft);
+        return new PyInt(Math.Max(0L, (long)remaining));
+    }
+
     private Context? BoundContextOf(ServiceCall call) =>
         call.BoundObjectId is { } oid && _bound.TryGetValue(oid, out var context) && context.SessionId == call.Session.SessionId ? context : null;
 
@@ -147,6 +161,10 @@ public sealed partial class DogmaIMService(
         switch (await ships.SetOnlineAsync(character, shipId, moduleId, online, call.Cancellation))
         {
             case ShipChanged changed:
+                if (!online && modules is not null && await modules.OfflineAsync(call.Session, moduleId, call.Cancellation) is { Ok: false } offlineRefusal)
+                {
+                    throw ModuleError(offlineRefusal, starting: false);
+                }
                 ShipNotifications.Send(call.Session, character, changed, item => DogmaInfo.RowOf(item, statics.Type(item.TypeId)), Py.FileTimeFromUnixMs(nowUnixMs()));
                 return None;
             case ShipRefused refused:

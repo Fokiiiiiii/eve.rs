@@ -16,5 +16,7 @@ internal static class ModuleEffects
         .Register(new MissileEffect())
         .Register(new RepairEffect())
         .Register(new ProjectedEffect())
-        .Register(new SmartbombEffect());
+        .Register(new SmartbombEffect())
+        .Register(new EcmBurstEffect())
+        .Register(new CloakingEffect());
 }

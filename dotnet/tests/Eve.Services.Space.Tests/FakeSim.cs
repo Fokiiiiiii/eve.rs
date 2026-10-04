@@ -127,6 +127,30 @@ internal sealed class FakeSim : ISimulation
 
     public void Destroy(long shipId, SimCredit credit) => Heard.Add(new SimDestroy(shipId, credit));
 
+    public Task SetHeatProfileAsync(ulong sessionId, SimHeatProfile profile, CancellationToken cancellationToken = default)
+    {
+        Heard.Add(new SimSetHeatProfile(sessionId, profile));
+        return Task.CompletedTask;
+    }
+
+    public Task SetModuleOverheatAsync(ulong sessionId, long moduleId, bool active, CancellationToken cancellationToken = default)
+    {
+        Heard.Add(new SimSetModuleOverheat(sessionId, moduleId, active));
+        return Task.CompletedTask;
+    }
+
+    public Task OfflineModuleAsync(ulong sessionId, long moduleId, CancellationToken cancellationToken = default)
+    {
+        Heard.Add(new SimSetModuleOffline(sessionId, moduleId));
+        return Task.CompletedTask;
+    }
+
+    public Task SetRackOverheatAsync(ulong sessionId, int rack, bool active, CancellationToken cancellationToken = default)
+    {
+        Heard.Add(new SimSetRackOverheat(sessionId, rack, active));
+        return Task.CompletedTask;
+    }
+
     public Task<string?> EnterAsync(SimEnter enter, CancellationToken cancellationToken = default)
     {
         if (!IsConnected)

@@ -110,6 +110,176 @@ impl Missile {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MissileThreat {
+    /// The missile ball's centre and current velocity, in metres and metres per second.
+    pub position: [f64; 3],
+    pub velocity: [f64; 3],
+    pub radius_m: f64,
+    pub hit_points: f64,
+    /// Seconds until its warhead reaches its ship target, measured from this snapshot.
+    pub time_to_target_seconds: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MissileInterception {
+    /// Seconds from firing until the interceptor touches the missile's surface.
+    pub time_seconds: f64,
+    pub distance_m: f64,
+    /// The incoming missile's centre when the shot reaches it.
+    pub position: [f64; 3],
+    pub remaining_hit_points: f64,
+    pub destroyed: bool,
+}
+
+impl MissileInterception {
+    /// A destroyed incoming missile never delivers its warhead to its ship target.
+    pub fn target_spared(self) -> bool {
+        self.destroyed
+    }
+}
+
+/// A defender charge which homes on an incoming missile using its charge's speed and flight time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DefenderMissile {
+    speed_mps: f64,
+    flight_time_seconds: f64,
+    range_m: f64,
+    damage: f64,
+}
+
+impl DefenderMissile {
+    pub fn from_charge(charge: &Missile, damage: f64) -> Self {
+        Self {
+            speed_mps: charge.max_velocity,
+            flight_time_seconds: charge.flight_time_ms / 1_000.0,
+            range_m: charge.effective_range(),
+            damage,
+        }
+    }
+
+    pub fn intercept(&self, origin: [f64; 3], threat: &MissileThreat) -> Option<MissileInterception> {
+        intercept_missile(origin, self.speed_mps, self.range_m, self.flight_time_seconds, self.damage, threat)
+    }
+}
+
+/// One point-defense round. Its travel is limited by both projectile speed and module range.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PointDefenseProjectile {
+    pub projectile_speed_mps: f64,
+    pub max_range_m: f64,
+    pub damage: f64,
+}
+
+impl PointDefenseProjectile {
+    /// Solve where a straight projectile meets the incoming missile's current trajectory.
+    pub fn intercept(&self, origin: [f64; 3], threat: &MissileThreat) -> Option<MissileInterception> {
+        let max_flight_seconds = self.max_range_m / self.projectile_speed_mps;
+        intercept_missile(
+            origin,
+            self.projectile_speed_mps,
+            self.max_range_m,
+            max_flight_seconds,
+            self.damage,
+            threat,
+        )
+    }
+}
+
+fn intercept_missile(
+    origin: [f64; 3],
+    speed_mps: f64,
+    range_m: f64,
+    max_flight_seconds: f64,
+    damage: f64,
+    threat: &MissileThreat,
+) -> Option<MissileInterception> {
+    let finite = |values: &[f64]| values.iter().all(|value| value.is_finite());
+    if !finite(&origin)
+        || !finite(&threat.position)
+        || !finite(&threat.velocity)
+        || !finite(&[
+            speed_mps,
+            range_m,
+            max_flight_seconds,
+            damage,
+            threat.radius_m,
+            threat.hit_points,
+            threat.time_to_target_seconds,
+        ])
+        || speed_mps <= 0.0
+        || range_m < 0.0
+        || max_flight_seconds < 0.0
+        || damage <= 0.0
+        || threat.radius_m < 0.0
+        || threat.hit_points <= 0.0
+        || threat.time_to_target_seconds <= 0.0
+    {
+        return None;
+    }
+
+    let relative_position =
+        [threat.position[0] - origin[0], threat.position[1] - origin[1], threat.position[2] - origin[2]];
+    let time_seconds = intercept_time(relative_position, threat.velocity, speed_mps, threat.radius_m)?;
+    // The target missile's warhead resolves first if both events have the same timestamp.
+    if !time_seconds.is_finite()
+        || time_seconds < 0.0
+        || time_seconds > max_flight_seconds
+        || time_seconds >= threat.time_to_target_seconds
+    {
+        return None;
+    }
+
+    let distance_m = speed_mps * time_seconds;
+    if !distance_m.is_finite() || distance_m > range_m {
+        return None;
+    }
+    let position = [
+        threat.position[0] + threat.velocity[0] * time_seconds,
+        threat.position[1] + threat.velocity[1] * time_seconds,
+        threat.position[2] + threat.velocity[2] * time_seconds,
+    ];
+    let remaining_hit_points = (threat.hit_points - damage).max(0.0);
+    Some(MissileInterception {
+        time_seconds,
+        distance_m,
+        position,
+        remaining_hit_points,
+        destroyed: remaining_hit_points <= 0.0,
+    })
+}
+
+fn intercept_time(
+    relative_position: [f64; 3],
+    target_velocity: [f64; 3],
+    speed_mps: f64,
+    target_radius_m: f64,
+) -> Option<f64> {
+    let dot = |left: [f64; 3], right: [f64; 3]| left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+    let distance_squared = dot(relative_position, relative_position);
+    let radius_squared = target_radius_m * target_radius_m;
+    if distance_squared <= radius_squared {
+        return Some(0.0);
+    }
+
+    // |relative_position + target_velocity * t| = speed * t + target_radius
+    let a = dot(target_velocity, target_velocity) - speed_mps * speed_mps;
+    let b = 2.0 * (dot(relative_position, target_velocity) - speed_mps * target_radius_m);
+    let c = distance_squared - radius_squared;
+    if a.abs() <= 1e-12 {
+        return (b < 0.0).then_some(-c / b);
+    }
+
+    let discriminant = b * b - 4.0 * a * c;
+    if discriminant < 0.0 || !discriminant.is_finite() {
+        return None;
+    }
+    let root = discriminant.sqrt();
+    let first = (-b - root) / (2.0 * a);
+    let second = (-b + root) / (2.0 * a);
+    [first, second].into_iter().filter(|time| time.is_finite() && *time >= 0.0).min_by(f64::total_cmp)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,5 +344,73 @@ mod tests {
             [0.0, 0.0, 26.680_5, 0.0],
             "a signature of 14 against an explosion radius of 20 is 0.7 of 38.115"
         );
+    }
+
+    fn threat(
+        position: [f64; 3],
+        velocity: [f64; 3],
+        hit_points: f64,
+        time_to_target_seconds: f64,
+    ) -> MissileThreat {
+        MissileThreat { position, velocity, radius_m: 0.0, hit_points, time_to_target_seconds }
+    }
+
+    #[test]
+    fn a_defender_missile_destroys_the_incoming_missile_before_its_target_is_hit() {
+        let missile = DefenderMissile::from_charge(&rocket(), 90.0);
+        let hit = missile.intercept([0.0; 3], &threat([3_000.0, 0.0, 0.0], [0.0; 3], 90.0, 3.0)).unwrap();
+
+        assert_eq!(hit.time_seconds, 2.0);
+        assert_eq!(hit.distance_m, 3_000.0);
+        assert_eq!(hit.position, [3_000.0, 0.0, 0.0]);
+        assert!(hit.destroyed);
+        assert!(hit.target_spared());
+    }
+
+    #[test]
+    fn a_point_defense_projectile_hits_at_its_range_boundary() {
+        let target = MissileThreat { radius_m: 1.0, ..threat([101.0, 0.0, 0.0], [0.0; 3], 90.0, 3.0) };
+        let shot = PointDefenseProjectile { projectile_speed_mps: 50.0, max_range_m: 100.0, damage: 90.0 };
+
+        let hit = shot.intercept([0.0; 3], &target).unwrap();
+        assert_eq!(hit.time_seconds, 2.0);
+        assert_eq!(hit.distance_m, 100.0);
+        assert_eq!(hit.position, [101.0, 0.0, 0.0]);
+        assert!(hit.target_spared());
+
+        let out_of_range = PointDefenseProjectile { max_range_m: 99.999, ..shot };
+        assert!(out_of_range.intercept([0.0; 3], &target).is_none());
+    }
+
+    #[test]
+    fn an_interceptor_arriving_at_the_warhead_deadline_is_too_late() {
+        let shot = PointDefenseProjectile { projectile_speed_mps: 50.0, max_range_m: 200.0, damage: 90.0 };
+        let target = threat([100.0, 0.0, 0.0], [0.0; 3], 90.0, 2.0);
+
+        assert!(shot.intercept([0.0; 3], &target).is_none());
+    }
+
+    #[test]
+    fn a_defender_missile_expires_at_its_flight_time_boundary() {
+        let target = threat([100.0, 0.0, 0.0], [0.0; 3], 90.0, 3.0);
+        let charge = Missile { max_velocity: 50.0, flight_time_ms: 2_000.0, ..rocket() };
+        let reaches_at_expiry = DefenderMissile::from_charge(&charge, 90.0);
+        assert!(reaches_at_expiry.intercept([0.0; 3], &target).is_some());
+
+        let expires_just_before = Missile { flight_time_ms: 1_999.0, ..charge };
+        assert!(
+            DefenderMissile::from_charge(&expires_just_before, 90.0).intercept([0.0; 3], &target).is_none()
+        );
+    }
+
+    #[test]
+    fn a_partial_defense_hit_does_not_spare_the_target() {
+        let shot = PointDefenseProjectile { projectile_speed_mps: 100.0, max_range_m: 500.0, damage: 89.0 };
+        let target = threat([200.0, 0.0, 0.0], [0.0; 3], 90.0, 3.0);
+        let hit = shot.intercept([0.0; 3], &target).unwrap();
+
+        assert_eq!(hit.remaining_hit_points, 1.0);
+        assert!(!hit.destroyed);
+        assert!(!hit.target_spared());
     }
 }

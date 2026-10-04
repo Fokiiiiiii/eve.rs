@@ -13,20 +13,50 @@ use crate::wire::{id, real};
 /// What the client's HUD calls an ECM jam (the reference's `jammingType` of an ECM module).
 const JAMMING: &str = "electronic";
 
-/// The chance that a jammer with `strength` (gravimetric, ladar, magnetometric, radar) jams a ship with `sensor` strengths: its strength for the sensor the ship has the most of
-/// (the first of them when two are alike) over that sensor's strength, weakened by `share` of the reach and by the ship's resistance to ECM (1 for none, 0 for immune).
 pub(crate) fn jam_chance(strength: &[f64; 4], sensor: &[f64; 4], resistance: f64, share: f64) -> f64 {
     let mut best = None;
     for (n, s) in sensor.iter().enumerate() {
-        if *s > 0.0 && best.is_none_or(|(_, top)| *s > top) {
-            best = Some((n, *s));
+        let sensor_strength = if s.is_finite() { s.max(0.0) } else { 0.0 };
+        if sensor_strength > 0.0 && best.is_none_or(|(_, top)| sensor_strength > top) {
+            best = Some((n, sensor_strength));
         }
     }
     let Some((kind, held)) = best else { return 0.0 };
-    if strength[kind] <= 0.0 {
+    let jammer_strength = if strength[kind].is_finite() { strength[kind].max(0.0) } else { 0.0 };
+    let reach = if share.is_finite() { share.max(0.0) } else { 0.0 };
+    // Dogma's ECMResistance is an effectiveness multiplier: 1 is ordinary, 0 is immune.
+    // EVE.js falls back to the Dogma default (1) when the target value is not finite.
+    let resistance = if resistance.is_finite() { resistance.clamp(0.0, 1.0) } else { 1.0 };
+    if jammer_strength == 0.0 || reach == 0.0 || resistance == 0.0 {
         return 0.0;
     }
-    (strength[kind] / held.max(1e-6) * share.max(0.0) * resistance.clamp(0.0, 1.0)).clamp(0.0, 1.0)
+    (jammer_strength / held.max(1e-6) * reach * resistance).clamp(0.0, 1.0)
+}
+
+/// Whether the ships' surfaces fall within an ECM burst's radius. The extra metre matches the EVE.js boundary tolerance.
+fn burst_reaches(
+    source_position: [f64; 3],
+    source_radius: f64,
+    target_position: [f64; 3],
+    target_radius: f64,
+    burst_radius: f64,
+) -> bool {
+    if !burst_radius.is_finite()
+        || burst_radius <= 0.0
+        || !source_radius.is_finite()
+        || !target_radius.is_finite()
+        || source_position.iter().chain(&target_position).any(|coordinate| !coordinate.is_finite())
+    {
+        return false;
+    }
+    let distance = (source_position[0] - target_position[0])
+        .hypot(source_position[1] - target_position[1])
+        .hypot(source_position[2] - target_position[2]);
+    if !distance.is_finite() {
+        return false;
+    }
+    let surface_distance = (distance - source_radius.max(0.0) - target_radius.max(0.0)).max(0.0);
+    surface_distance <= burst_radius + 1.0
 }
 
 /// A draw in `[0, 1)` is a jam when it falls under the chance.
@@ -376,6 +406,53 @@ impl Scene {
         out
     }
 
+    /// An ECM burst independently rolls against each other ship in the surface-radius and breaks its locks on a success.
+    /// Unlike a targeted ECM cycle, a burst leaves no lasting jam and does not stop future target locks.
+    pub(crate) fn jam_burst(
+        &mut self,
+        source: SessionId,
+        strength: &[f64; 4],
+        radius: f64,
+        at: i64,
+    ) -> Vec<Out> {
+        let Some((source_position, source_radius)) = self.pilots.get(&source).map(|pilot| {
+            ([pilot.ship.position.x, pilot.ship.position.y, pilot.ship.position.z], pilot.ship.spec.radius)
+        }) else {
+            return Vec::new();
+        };
+        let mut targets: Vec<(u64, SessionId)> = self
+            .pilots
+            .iter()
+            .filter_map(|(target, pilot)| {
+                if *target == source {
+                    return None;
+                }
+                let ship = &pilot.ship;
+                burst_reaches(
+                    source_position,
+                    source_radius,
+                    [ship.position.x, ship.position.y, ship.position.z],
+                    ship.spec.radius,
+                    radius,
+                )
+                .then_some((pilot.entered, *target))
+            })
+            .collect();
+        // Keep the random rolls in arrival order, matching the order of EVE.js dynamic entities.
+        targets.sort_unstable();
+
+        let mut out = Vec::new();
+        for (_, target) in targets {
+            let chance = self.pilots.get(&target).map_or(0.0, |pilot| {
+                jam_chance(strength, &pilot.ship.spec.sensor_strength, pilot.ship.spec.ecm_resistance, 1.0)
+            });
+            if rolls_under(self.rng.random(), chance) {
+                out.extend(self.break_locks_except(target, &[], at));
+            }
+        }
+        out
+    }
+
     /// The ship's numbers are what its base is with what lands on it worked in; those that changed are told to its pilot and, for the speed, to all who see it.
     pub(crate) fn retune(&mut self, session: SessionId, at: i64) -> Vec<Out> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
@@ -530,5 +607,45 @@ mod tests {
         incoming.upsert(5, 13, Lasting::Scramble { strength: 1.0, blocks_mwd: false }, 100);
         assert_eq!(incoming.scramble_points(), 3.0);
         assert!(incoming.scrambled());
+    }
+
+    #[test]
+    fn jam_chance_obeys_ecm_resistance_and_strength_boundaries() {
+        let sensor = [0.0, 0.0, 0.0, 20.0];
+        let normal_jammer = [0.0, 0.0, 0.0, 10.0];
+
+        assert_eq!(jam_chance(&normal_jammer, &sensor, 0.0, 1.0), 0.0);
+        assert_eq!(jam_chance(&normal_jammer, &sensor, 0.00001, 1.0), 0.000005);
+        assert_eq!(jam_chance(&normal_jammer, &sensor, 0.5, 1.0), 0.25);
+        assert_eq!(jam_chance(&normal_jammer, &sensor, 1.0, 1.0), 0.5);
+        assert_eq!(jam_chance(&normal_jammer, &sensor, -1.0, 1.0), 0.0);
+        assert_eq!(jam_chance(&normal_jammer, &sensor, 2.0, 1.0), 0.5);
+
+        let equal_strength_jammer = [0.0, 0.0, 0.0, 20.0];
+        assert_eq!(jam_chance(&equal_strength_jammer, &sensor, 1.0, 1.0), 1.0);
+        let stronger_jammer = [0.0, 0.0, 0.0, 40.0];
+        assert_eq!(jam_chance(&stronger_jammer, &sensor, 1.0, 1.0), 1.0);
+        let no_sensor = [0.0; 4];
+        assert_eq!(jam_chance(&stronger_jammer, &no_sensor, 1.0, 1.0), 0.0);
+
+        let no_jammer = [0.0; 4];
+        assert_eq!(jam_chance(&no_jammer, &sensor, 1.0, 1.0), 0.0);
+        let non_finite_jammer = [0.0, 0.0, 0.0, f64::NAN];
+        assert_eq!(jam_chance(&non_finite_jammer, &sensor, 1.0, 1.0), 0.0);
+        let infinite_sensor = [0.0, 0.0, 0.0, f64::INFINITY];
+        assert_eq!(jam_chance(&normal_jammer, &infinite_sensor, 1.0, 1.0), 0.0);
+        // EVE.js falls back to Dogma's default ECMResistance of 1 for a non-finite target value.
+        assert_eq!(jam_chance(&normal_jammer, &sensor, f64::NAN, 1.0), 0.5);
+    }
+
+    #[test]
+    fn ecm_burst_uses_surface_radius_and_rejects_invalid_geometry() {
+        let origin = [0.0, 0.0, 0.0];
+        // 1021 m center distance minus two 10 m hulls is exactly radius + the 1 m wire tolerance.
+        assert!(burst_reaches(origin, 10.0, [1021.0, 0.0, 0.0], 10.0, 1000.0));
+        assert!(!burst_reaches(origin, 10.0, [1022.01, 0.0, 0.0], 10.0, 1000.0));
+        assert!(burst_reaches(origin, 10.0, [0.0, 0.0, 0.0], 10.0, 1.0));
+        assert!(!burst_reaches(origin, 10.0, [0.0, 0.0, 0.0], 10.0, 0.0));
+        assert!(!burst_reaches(origin, 10.0, [f64::NAN, 0.0, 0.0], 10.0, 1000.0));
     }
 }

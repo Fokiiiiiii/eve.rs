@@ -19,7 +19,14 @@ public static class MarketWire
                 Py.Number((double)o.Price),new PyInt(o.VolumeRemaining),new PyInt(o.TypeId),new PyInt(MarketRules.RangeForClient(o.Range)),new PyLong(o.Id),
                 new PyInt(o.VolumeEntered),new PyInt(o.MinimumVolume),new PyInt(o.Bid ? 1 : 0),new PyLong(Py.FileTimeFromUnixMs(o.IssuedMs)),
                 new PyInt(o.Duration),new PyInt(o.Location.StationId),new PyInt(o.Location.RegionId),new PyInt(o.Location.SolarSystemId),
-                new PyInt(o.Location.ConstellationId),new PyInt(viewer.SolarSystemId>0 ? Math.Max(0,topology.OrderDistance(viewer,o.Location)) : 0)))]))));
+                new PyInt(o.Location.ConstellationId),new PyInt(topology.OrderDistance(viewer,o.Location))))]))));
+
+
+    public static PyValue BestByOrder(MarketOrder order,long quantity) => Py.KeyVal(
+        ("price",Py.Number(MarketRules.RoundIsk((double)order.Price))),
+        ("volRemaining",Py.Number(quantity)),
+        ("typeID",new PyInt(order.TypeId)),
+        ("stationID",new PyInt(order.Location.StationId)));
 }
 
 

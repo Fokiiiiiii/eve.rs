@@ -24,3 +24,41 @@ internal sealed class SmartbombEffect : ShipEffect
             new SimAction.Smartbomb(range, [Damage(EmDamage), Damage(ThermalDamage), Damage(KineticDamage), Damage(ExplosiveDamage)], true));
     }
 }
+
+/// <summary>Packages the non-targeted ECM burst from dogma's range and racial sensor-jamming strengths.</summary>
+internal sealed class EcmBurstEffect : ShipEffect
+{
+    public override IReadOnlyCollection<string> EffectNames { get; } = ["ecmBurstJammer"];
+
+    protected override SimEffect Build(ModuleEffectContext module)
+    {
+        var (duration, capacitor, durationAttribute) = module.Cycle();
+        var range = Math.Max(0, NpcArmament.Round6(module.Value(EcmBurstRange, 0)));
+        double Strength(int attribute) => NpcArmament.Round6(Math.Max(0, module.Value(attribute, 0)));
+        SimChange[] told =
+        [
+            new(module.ModuleId, CapacitorNeed, capacitor),
+            new(module.ModuleId, durationAttribute, Three(duration)),
+            new(module.ModuleId, EcmBurstRange, range)
+        ];
+        return new SimEffect(
+            module.ModuleId, module.Module.TypeId, module.Effect.Id, module.Effect.Guid, duration, capacitor, Math.Max(1, module.Repeat), 0, null, null, told, told, null,
+            new SimAction.EcmBurst(range, [Strength(GravimetricJam), Strength(LadarJam), Strength(MagnetometricJam), Strength(RadarJam)]));
+    }
+}
+
+internal sealed class CloakingEffect : ShipEffect
+{
+    public override IReadOnlyCollection<string> EffectNames { get; } = ["cloaking", "cloakingWarpSafe", "cloakingPrototype"];
+
+    protected override bool Handles(ModuleEffectContext module) => module.Type.GroupId == 330;
+
+    protected override SimEffect Build(ModuleEffectContext module)
+    {
+        var (duration, capacitor, durationAttribute) = module.Cycle();
+        SimChange[] told = [new(module.ModuleId, CapacitorNeed, capacitor), new(module.ModuleId, durationAttribute, Three(duration))];
+        return new SimEffect(
+            module.ModuleId, module.Module.TypeId, module.Effect.Id, module.Effect.Guid, duration, capacitor,
+            Math.Max(1, module.Repeat), 0, null, null, told, told, null, new SimAction.Cloak());
+    }
+}

@@ -47,7 +47,7 @@ internal sealed class Foundations : IAsyncDisposable
         var relations = new RelationStore(source, scheduler, events, relationsSchema);
         var content = new ContentRuntime(source, scheduler, events, contentSchema);
         log($"foundations in PostgreSQL, schemas {schedulerSchema}, {eventsSchema}, {relationsSchema} and {contentSchema}");
-        return new Foundations(scheduler, events, relations, content, new RowsetReaderHolder(new Eve.ReadSide.ReadSide(source)));
+        return new Foundations(scheduler, events, relations, content, new RowsetReaderHolder(new Eve.ReadSide.ReadSide(source, new Dictionary<string, string> { ["relations"] = relationsSchema })));
     }
 
     /// <summary>

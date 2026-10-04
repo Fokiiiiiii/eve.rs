@@ -167,14 +167,14 @@ unavailable checks must be recorded separately in NATIVE_MIGRATION.md.
 
 - [ ] Map / Universe read-side (`map.GetStationInfo` is implemented; remaining RPCs are pending)
 - [ ] Lookup / Search
-- [ ] Social / Contacts
-- [ ] Block list
-- [ ] Character Notes
+- [ ] Social / Contacts (saved contacts, blocked senders, and labels are read from owner-scoped `characters` data; write and full social parity remain partial)
+- [ ] Block list (saved blocked senders are returned by `charMgr.GetContactList`; block/unblock writes remain pending)
+- [ ] Character Notes (saved owner/item notes are connected to `characterNotes`; a missing table returns empty/`S:Folders` defaults without creating a table; Host focused tests 2/2, CharacterInfo 44/44, Host 73/73; write/edit/remove parity remains pending)
 - [ ] Online Status
-- [ ] Mail
+- [ ] Mail (read-side `SyncMail`, `GetMailHeaders`, `GetBody`, and `GetLabels` is implemented and focused-tested; send/delete and full write parity remain)
 - [ ] Mailing Lists
-- [ ] Notifications
-- [ ] Calendar
+- [ ] Notifications (stored notification read-side: `GetAllNotifications`, `GetByGroupID`, and `GetUnprocessed`; write/producer parity remains)
+- [ ] Calendar (four event/attendance read RPCs and empty/missing-event contracts are covered; persistence-backed event writes remain)
 - [ ] Shared Settings
 - [ ] Overview Presets
 - [ ] Subscription / Omega
@@ -193,18 +193,18 @@ unavailable checks must be recorded separately in NATIVE_MIGRATION.md.
 - [ ] Alliance Core
 - [ ] Alliance Membership (durable due transitions and war holds use Scheduler/Relations; remaining parity is pending)
 - [ ] Alliance Public Info
-- [ ] Wars information read-side
-- [ ] Standing
+- [ ] Wars information read-side (`Eve.Services.IWars.AreAtWarAsync` is relation-backed and used by Crimewatch; the `warsInfoMgr` read RPC set is not yet verified as complete)
+- [ ] Standing (five `standingMgr` read RPCs are registered; journal producers and client replay remain)
 - [ ] Insurance price and contract information read-side
-- [ ] Market Core
-- [ ] Market Order Book
-- [ ] Market Price History
-- [ ] Market Topology
-- [ ] Market Cache
+- [ ] Market Core (transactional order settlement exists; remaining client service and integration parity is partial)
+- [ ] Market Order Book (read-side extensions are present; broad RPC and client replay parity remains partial)
+- [ ] Market Price History (trade/history read RPCs are present; full history parity and client replay remain)
+- [ ] Market Topology (topology/read cache behavior has a focused implementation pass; final full parity remains)
+- [ ] Market Cache (invalidation behavior has a focused implementation pass; end-to-end client validation remains)
 - [ ] NPC seeded market orders (NPC-station ESI paging changes compile; integration and capture acceptance remain pending)
 - [ ] Agents read-side
 - [ ] Mission Journal read-side
-- [ ] Industry Job read-side
+- [ ] Industry Job read-side (`GetJob`, `GetJobsByOwner`, and `GetJobCounts` read persisted jobs; dedicated tests passed 11/11; this does not complete Industry write/job production)
 - [ ] Industry history / statistics
 - [ ] PI / Planetary management
 - [ ] Bill / Billing
@@ -226,3 +226,7 @@ unavailable checks must be recorded separately in NATIVE_MIGRATION.md.
 - [ ] Structure Settings
 - [ ] Structure Asset Safety
 - [ ] Structure Deliveries
+
+## Consolidation and cleanup
+
+- After implementation and verification, consolidate on one `main` after commit/push; inspect stashes and remaining diffs, then move unneeded work areas and validation artifacts to the Recycle Bin.

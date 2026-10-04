@@ -1006,6 +1006,56 @@
    "hex": "79000000134f2c3859955c0600fdb6089b150900001b060000260000000f00656666656374732e456d7057617665000000000088c3400000000000003e40e8030000000000000000000008000000000000000002000000000070a740000000000000494000000000000000000000000000000000000000000000000001"
   },
   {
+   "name": "activate an ECM burst",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 580,
+    "effectId": 38,
+    "fx": "effects.EcmBurstJammer",
+    "durationMs": 10000.0,
+    "capacitorNeed": 30.0,
+    "repeat": 1000,
+    "targetId": "0",
+    "action": {
+     "kind": "ecmBurst",
+     "range": 3000.0,
+     "strength": [6.0, 6.0, 6.0, 6.0]
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "7f000000134f2c3859955c0600fdb6089b1509000044020000260000001600656666656374732e45636d42757273744a616d6d6572000000000088c3400000000000003e40e8030000000000000000000008000000000000000003000000000070a7400000000000001840000000000000184000000000000018400000000000001840"
+  },
+  {
+   "name": "activate a charged ancillary repair",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 580,
+    "effectId": 38,
+    "fx": "effects.EcmBurstJammer",
+    "durationMs": 10000.0,
+    "capacitorNeed": 30.0,
+    "repeat": 1000,
+    "targetId": "0",
+    "action": {
+     "kind": "charged",
+     "chargeTypeId": 91001,
+     "chargeFlag": 27,
+     "chargePerCycle": 1,
+     "charges": 2,
+     "action": {"kind": "repair", "layer": "armor", "amount": 10.0, "when": "end"},
+     "fallback": {"kind": "repair", "layer": "armor", "amount": 5.0, "when": "end"}
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "86000000134f2c3859955c0600fdb6089b1509000044020000260000001600656666656374732e45636d42757273744a616d6d6572000000000088c3400000000000003e40e8030000000000000000000008000000000000000004796301001b000000010000000000000002000000000000000001010000000000002440010001010000000000001440"
+  },
+  {
    "name": "activate a tracking disruptor",
    "kind": "Activate",
    "sessionId": "1790646377000015",

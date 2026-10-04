@@ -54,6 +54,42 @@ internal static class SimShips
         return new SimSensors(attribute(GravimetricStrength), attribute(LadarStrength), attribute(MagnetometricStrength), attribute(RadarStrength), resistance > 0 ? resistance : 1.0);
     }
 
+public static SimHeatProfile HeatProfileOf(ShipSnapshot snapshot, DogmaStatic statics)
+    {
+        const int Thermodynamics = 28164;
+        const int Damage = 3, HitPoints = 9, HeatAbsorptionRate = 1180, HeatDamage = 1211;
+        const int HeatCapacityHi = 1178, HeatCapacityMed = 1199, HeatCapacityLow = 1200;
+        const int HeatDissipationHi = 1179, HeatDissipationMed = 1196, HeatDissipationLow = 1198;
+        const int HeatGenerationMultiplier = 1224;
+        const int HeatAttenuationHi = 1259, HeatAttenuationMed = 1261, HeatAttenuationLow = 1262;
+        double ShipAttribute(int id, double fallback) {
+            var value = snapshot.World.Get(snapshot.Ship.Id, id);
+            return double.IsFinite(value) && value > 0 ? value : fallback;
+        }
+        int thermodynamics = snapshot.Skills.FirstOrDefault(skill => skill.TypeId == Thermodynamics)?.Level ?? 0;
+        var modules = snapshot.Fitted.Select(module => {
+            var type = statics.Type(module.TypeId);
+            var state = snapshot.World.Item(module.Id)?.State;
+            var overloadable = type?.EffectIds.Select(statics.Effect).Any(effect => effect?.Category == EffectDef.Overload) == true;
+            var heatImmune = type?.EffectIds.Select(statics.Effect).Any(effect =>
+                effect?.Name.Contains("mining", StringComparison.OrdinalIgnoreCase) == true ||
+                effect?.Name.Contains("harvest", StringComparison.OrdinalIgnoreCase) == true) == true;
+            double ModuleAttribute(int id) {
+                var value = snapshot.World.Get(module.Id, id);
+                return double.IsFinite(value) ? Math.Max(0, value) : 0;
+            }
+            return new SimHeatModule(module.Id, module.Flag, ModuleAttribute(HitPoints), ModuleAttribute(Damage), ModuleAttribute(HeatDamage),
+                ModuleAttribute(HeatAbsorptionRate), overloadable, heatImmune, state is { } online && online >= ItemState.Online);
+        }).ToArray();
+        return new SimHeatProfile(
+            ShipAttribute(HeatGenerationMultiplier, 1), Math.Max(0.75, 1 - thermodynamics * 0.05), thermodynamics,
+            [ShipAttribute(HeatCapacityHi, 100), ShipAttribute(HeatCapacityMed, 100), ShipAttribute(HeatCapacityLow, 100)],
+            [snapshot.World.Get(snapshot.Ship.Id, 1176), snapshot.World.Get(snapshot.Ship.Id, 1177), snapshot.World.Get(snapshot.Ship.Id, 1175)],
+            [ShipAttribute(HeatDissipationHi, 0.01), ShipAttribute(HeatDissipationMed, 0.01), ShipAttribute(HeatDissipationLow, 0.01)],
+            [ShipAttribute(HeatAttenuationHi, 1), ShipAttribute(HeatAttenuationMed, 1), ShipAttribute(HeatAttenuationLow, 1)],
+            modules);
+    }
+
     public static SimShip Of(ShipSnapshot snapshot, DogmaStatic statics, double securityStatus = 0)
     {
         var ship = snapshot.Ship;

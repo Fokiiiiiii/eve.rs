@@ -63,4 +63,32 @@ public class DroneBayTests
         Assert.Equal(drones, back.ItemId);
         Assert.Equal(0d, (await rig.Ships.RoomAsync(c.CharacterId, c.ShipId, CharacterShips.DroneBayFlag))!.Value.Used);
     }
+
+
+    [PgFact]
+    public async Task A_returning_drone_cannot_use_volume_reserved_for_another_drone_still_out()
+    {
+        await using var rig = await Rig.CreateAsync();
+        const int system = 30000142;
+        var (c, drones) = await WithDronesAsync(rig, quantity: 2);
+        Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(
+            c.CharacterId, drones, Rig.Station, c.ShipId, CharacterShips.DroneBayFlag, 1));
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.MoveToOwnerAsync(connection, transaction, c.ShipId, c.CharacterId, system, 0);
+            await transaction.CommitAsync();
+        }
+
+        var stillOut = await rig.GiveAsync(c.CharacterId, Hobgoblin, location: system, flag: 0);
+        var returning = await rig.GiveAsync(c.CharacterId, Hobgoblin, location: system, flag: 0);
+        var refusal = Assert.IsType<DroneBayFull>(await rig.Ships.ScoopDroneAsync(
+            c.CharacterId, c.ShipId, returning, system, [stillOut]));
+
+        Assert.Equal((Hobgoblin, 0d, 5d), (refusal.TypeId, refusal.Available, refusal.Volume));
+        Assert.Equal((system, CharacterShips.InSpaceFlag), ((await rig.Items.GetAsync(returning))!.LocationId, (await rig.Items.GetAsync(returning))!.Flag));
+    }
+
+
 }

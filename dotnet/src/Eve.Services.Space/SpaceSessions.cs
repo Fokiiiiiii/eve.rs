@@ -171,6 +171,9 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// <summary>The host put the wreck of a destroyed ship (or the corpse of a pilot) in space.</summary>
     public event Action<SimPlaceWreck>? WreckPlaced;
 
+    // NPC death finishers run on separate tasks; keep synchronous event subscribers serialized.
+    private readonly object _npcDestroyedGate = new();
+
     /// <summary>
     /// An NPC the host spawned was destroyed. Raised on a thread of the host after its wreck and bounty were done, so a handler should be quick (or hand its work on) and must not
     /// throw: what it throws is logged and nothing else.
@@ -291,6 +294,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         try
         {
             refusal = await _sim.EnterAsync(new SimEnter((ulong)session.SessionId, systemId, EnterHow.Undock, stationId, spec), cancellationToken);
+            if (refusal is null) await _sim.SetHeatProfileAsync((ulong)session.SessionId, SimShips.HeatProfileOf(snapshot, _statics), cancellationToken);
         }
         catch (SimUnavailableException error)
         {
@@ -496,11 +500,19 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         if (securityClass is { } empire && (attack || package.Action is SimAction.Smartbomb))
         {
             var level = SafetyLevelOf is { } ask ? await ask(characterId, cancellationToken) : SafetyLevel.Full;
-            if (victim is not null && WeaponSafety.StopsFire(empire, level, await IsCapsuleAsync(victim, empire, cancellationToken)))
+            if (victim is not null)
             {
-                return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
+                var targetIsCapsule = await IsCapsuleAsync(victim, empire, cancellationToken);
+                if (WeaponSafety.RequiredLevel(empire, targetIsCapsule) is not null)
+                {
+                    var context = await WeaponSafetyContextAsync(characterId, victim.CharacterId, targetIsCapsule, cancellationToken);
+                    if (WeaponSafety.StopsFire(empire, level, context))
+                    {
+                        return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
+                    }
+                }
             }
-            // a smartbomb hurts whoever is in its field: where the safety of the pilot stops fire, the simulation is told not to hurt pilots
+            // An untargeted smartbomb can hit neutral pilots as well as legal opponents, so its pilot-damage safety stays target-independent.
             if (package.Action is SimAction.Smartbomb bomb && WeaponSafety.StopsFire(empire, level))
             {
                 package = package with { Action = bomb with { HurtsPilots = false } };
@@ -547,7 +559,44 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// <summary>The ship safety level of a character (set by the host that keeps them; full when it is not set). See <see cref="WeaponSafety"/>.</summary>
     public Func<long, CancellationToken, Task<int>>? SafetyLevelOf { get; set; }
 
+
+    /// <summary>Resolves current Crimewatch flags and pair-specific legal permissions for a player ship target.</summary>
+    public Func<long, long, CancellationToken, Task<WeaponTargetContext>>? WeaponTargetContextOf { get; set; }
+
     /// <summary>Whether the pilot's ship is a capsule. Only a low-security attack depends on it (a capsule there is a crime of a criminal), so it is only looked up then.</summary>
+    private async Task<WeaponTargetContext> WeaponSafetyContextAsync(
+        long attackerCharacterId,
+        long targetCharacterId,
+        bool targetIsCapsule,
+        CancellationToken cancellationToken)
+    {
+        var ordinaryPlayerAttack = new WeaponTargetContext(
+            AttackerIsPlayer: true,
+            TargetIsPlayerProperty: true,
+            TargetIsCapsule: targetIsCapsule);
+        if (WeaponTargetContextOf is not { } read)
+        {
+            return ordinaryPlayerAttack;
+        }
+
+        try
+        {
+            var resolved = await read(attackerCharacterId, targetCharacterId, cancellationToken);
+            return resolved with
+            {
+                AttackerIsPlayer = true,
+                TargetIsPlayerProperty = true,
+                TargetIsCapsule = targetIsCapsule,
+                SamePilot = false
+            };
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            _log?.Invoke($"weapon safety facts for {attackerCharacterId} -> {targetCharacterId} failed: {error.Message}");
+            return ordinaryPlayerAttack;
+        }
+    }
+
     private async Task<bool> IsCapsuleAsync(Pilot pilot, SecurityClass securityClass, CancellationToken cancellationToken)
     {
         if (!Security.IsLowSec(securityClass))
@@ -573,6 +622,73 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         var type = module is null ? null : _statics.Type(module.TypeId);
         var reply = await AskSimAsync(id, () => _sim.CommandAsync(id, SimCommands.Deactivate, [moduleId], cancellationToken), session);
         return reply.Accepted ? ModuleResult.Done : ModuleResult.Refusal(reply.Reason == "NOT_ACTIVE" ? "MODULE_NOT_ACTIVE" : reply.Reason ?? "REFUSED", module?.TypeId ?? 0, type?.Name ?? "");
+    }
+
+    public async Task<ModuleResult?> OfflineAsync(ClientSession session, long moduleId, CancellationToken cancellationToken)
+    {
+        var id = (ulong)session.SessionId;
+        if (!_pilots.TryGetValue(id, out var pilot)) return null;
+        if (!_sim.IsConnected) return ModuleResult.Refusal("SIM_UNAVAILABLE");
+        var snapshot = await _ships.LoadAsync(pilot.CharacterId, cancellationToken);
+        if (snapshot is not null)
+            await _sim.SetHeatProfileAsync(id, SimShips.HeatProfileOf(snapshot, _statics), cancellationToken);
+        await _sim.OfflineModuleAsync(id, moduleId, cancellationToken);
+        return ModuleResult.Done;
+    }
+
+    public async Task<ModuleResult?> OverloadAsync(ClientSession session, long moduleId, int effectId, bool active, CancellationToken cancellationToken)
+    {
+        var id = (ulong)session.SessionId;
+        if (!_pilots.ContainsKey(id) || session.CharacterId is not { } characterId) return null;
+        if (!_sim.IsConnected) return ModuleResult.Refusal("SIM_UNAVAILABLE");
+
+        var snapshot = await _ships.LoadAsync(characterId, cancellationToken);
+        var module = snapshot?.Fitted.FirstOrDefault(item => item.Id == moduleId);
+        if (module is null || snapshot is null) return ModuleResult.Refusal("MODULE_NOT_FOUND");
+        var type = _statics.Type(module.TypeId);
+        var overload = type?.EffectIds.Select(_statics.Effect)
+            .FirstOrDefault(effect => effect is { Category: EffectDef.Overload } && effect.Id == effectId);
+        if (overload is null) return ModuleResult.Refusal("MODULE_NOT_OVERLOADABLE", module.TypeId, type?.Name ?? "");
+        if (snapshot.World.Get(moduleId, 3) >= snapshot.World.Get(moduleId, 9)) return ModuleResult.Refusal("MODULE_INCAPACITATED", module.TypeId, type?.Name ?? "");
+        if (snapshot.World.Item(moduleId) is not { State: >= ItemState.Online })
+            return ModuleResult.Refusal("MODULE_NOT_ONLINE", module.TypeId, type?.Name ?? "");
+        if (active && snapshot.Skills.FirstOrDefault(skill => skill.TypeId == 28164)?.Level is not > 0)
+            return ModuleResult.Refusal("THERMODYNAMICS_SKILL_REQUIRED", module.TypeId, type?.Name ?? "");
+
+        await _sim.SetHeatProfileAsync(id, SimShips.HeatProfileOf(snapshot, _statics), cancellationToken);
+        await _sim.SetModuleOverheatAsync(id, moduleId, active, cancellationToken);
+        return ModuleResult.Done;
+    }
+
+    public async Task<ModuleResult?> OverloadRackAsync(ClientSession session, long moduleId, bool active, CancellationToken cancellationToken)
+    {
+        var id = (ulong)session.SessionId;
+        if (!_pilots.TryGetValue(id, out var pilot)) return null;
+        if (!_sim.IsConnected) return ModuleResult.Refusal("SIM_UNAVAILABLE");
+        if (session.CharacterId is not { } characterId) return ModuleResult.Refusal("NO_SHIP_IN_SPACE");
+
+        var snapshot = await _ships.LoadAsync(characterId, cancellationToken);
+        var anchor = snapshot?.Fitted.FirstOrDefault(item => item.Id == moduleId);
+        if (snapshot is null || anchor is null) return ModuleResult.Refusal("MODULE_NOT_FOUND");
+        static int RackOf(int flag) => flag switch { >= 27 and <= 34 => 0, >= 19 and <= 26 => 1, >= 11 and <= 18 => 2, _ => -1 };
+        var rack = RackOf(anchor.Flag);
+        if (rack < 0) return ModuleResult.Refusal("MODULE_NOT_OVERLOADABLE", anchor.TypeId, _statics.Type(anchor.TypeId)?.Name ?? "");
+        if (active && snapshot.Skills.FirstOrDefault(skill => skill.TypeId == 28164)?.Level is not > 0)
+            return ModuleResult.Refusal("THERMODYNAMICS_SKILL_REQUIRED", anchor.TypeId, _statics.Type(anchor.TypeId)?.Name ?? "");
+
+        bool Overloadable(Eve.Inventory.Item item) =>
+            _statics.Type(item.TypeId)?.EffectIds.Select(_statics.Effect).Any(effect => effect?.Category == EffectDef.Overload) == true;
+        var modules = snapshot.Fitted
+            .Where(item => RackOf(item.Flag) == rack && snapshot.World.Item(item.Id) is { State: >= ItemState.Online } && Overloadable(item))
+            .Where(item => snapshot.World.Get(item.Id, 3) < snapshot.World.Get(item.Id, 9))
+            .OrderBy(item => item.Flag)
+            .Select(item => item.Id)
+            .ToArray();
+        if (modules.Length == 0) return ModuleResult.Refusal("MODULE_NOT_OVERLOADABLE", anchor.TypeId, _statics.Type(anchor.TypeId)?.Name ?? "");
+
+        await _sim.SetHeatProfileAsync(id, SimShips.HeatProfileOf(snapshot, _statics), cancellationToken);
+        await _sim.SetRackOverheatAsync(id, rack, active, cancellationToken);
+        return ModuleResult.Done with { ModuleIds = modules };
     }
 
     /// <summary>What the ship in space has taken now, from the simulation.</summary>
@@ -816,8 +932,11 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         finally
         {
             var kill = new NpcKill(killer?.CharacterId ?? 0, npc.TypeId, npc.Profile, npc.SolarSystemId, destroyed.ShipId);
-            Raise(NpcDestroyed, kill, nameof(NpcDestroyed));
-            Announce("npc.killed", new { characterId = kill.FinalBlowCharacterId, typeId = kill.NpcTypeId, profile = kill.Profile.Id, solarSystemId = kill.SolarSystemId, shipId = kill.ShipId }, $"system:{kill.SolarSystemId}");
+            lock (_npcDestroyedGate)
+            {
+                Raise(NpcDestroyed, kill, nameof(NpcDestroyed));
+                Announce("npc.killed", new { characterId = kill.FinalBlowCharacterId, typeId = kill.NpcTypeId, profile = kill.Profile.Id, solarSystemId = kill.SolarSystemId, shipId = kill.ShipId }, $"system:{kill.SolarSystemId}");
+            }
         }
     }
 

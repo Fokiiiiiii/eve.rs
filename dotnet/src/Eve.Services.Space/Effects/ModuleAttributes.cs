@@ -32,6 +32,7 @@ internal static class ModuleAttributes
     public const int NeutralizerSignatureResolution = 2451;
     public const int WebSpeedFactor = 20;
     public const int EmpFieldRange = 99;
+    public const int EcmBurstRange = 142;
     public const int RangeDisruption = 351;
     public const int FalloffDisruption = 349;
     public const int TrackingDisruption = 767;

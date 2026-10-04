@@ -285,6 +285,62 @@ public sealed partial class MarketStore
         return new(asks,bids);
     }
 
+
+    public Task<IReadOnlyList<(MarketOrder Order,long Quantity)>> StationAsksAsync(
+        int region,long stationId,IReadOnlySet<long> npcStationIds,long nowMs,CancellationToken token = default) =>
+        AskSummariesAsync(region,null,stationId,npcStationIds,nowMs,token);
+
+    public Task<IReadOnlyList<(MarketOrder Order,long Quantity)>> SystemAsksAsync(
+        int region,int solarSystemId,IReadOnlySet<long> npcStationIds,long nowMs,CancellationToken token = default) =>
+        AskSummariesAsync(region,solarSystemId,null,npcStationIds,nowMs,token);
+
+    public Task<IReadOnlyList<(MarketOrder Order,long Quantity)>> RegionBestAsync(
+        int region,IReadOnlySet<long> npcStationIds,long nowMs,CancellationToken token = default) =>
+        AskSummariesAsync(region,null,null,npcStationIds,nowMs,token);
+
+    private async Task<IReadOnlyList<(MarketOrder Order,long Quantity)>> AskSummariesAsync(
+        int region,int? solarSystemId,long? stationId,IReadOnlySet<long> npcStationIds,long nowMs,CancellationToken token)
+    {
+        ArgumentNullException.ThrowIfNull(npcStationIds);
+        if(region<=0 || npcStationIds.Count==0 || solarSystemId is <= 0 || stationId is <= 0 ||
+            stationId is { } selectedStation && !npcStationIds.Contains(selectedStation))
+            return [];
+
+        await using var connection=await _source.OpenConnectionAsync(token);
+        await using var command=new NpgsqlCommand($"""
+            WITH scoped AS (
+                SELECT {BookColumns} FROM {_schema}.orders
+                WHERE region_id=$1 AND bid=false AND state=0 AND vol_remaining>0
+                    AND (is_npc OR issued_ms + duration_days::bigint*86400000 > $2)
+                    AND station_id=ANY($3)
+                    AND ($4::integer IS NULL OR solar_system_id=$4)
+                    AND ($5::bigint IS NULL OR station_id=$5)
+            ),
+            summaries AS (
+                SELECT DISTINCT ON (type_id) *,
+                    LEAST(SUM(vol_remaining) OVER (PARTITION BY type_id),9223372036854775807)::bigint AS total_ask_quantity
+                FROM scoped
+                ORDER BY type_id,price,station_id,id
+            )
+            SELECT {BookColumns},total_ask_quantity FROM summaries ORDER BY type_id
+            """,connection)
+        {
+            Parameters =
+            {
+                new(){Value=region},
+                new(){Value=nowMs},
+                new(){Value=npcStationIds.ToArray()},
+                new(){Value=solarSystemId is { } system ? system : DBNull.Value},
+                new(){Value=stationId is { } station ? station : DBNull.Value},
+            },
+        };
+        var rows=new List<(MarketOrder Order,long Quantity)>();
+        await using var reader=await command.ExecuteReaderAsync(token);
+        while(await reader.ReadAsync(token))
+            rows.Add((Read(reader),reader.GetInt64(15)));
+        return rows;
+    }
+
     public async Task<IReadOnlyList<MarketOwnedOrder>> OwnOrdersAsync(long actor,long walletOwner,bool includeHistory,CancellationToken token = default)
     {
         await using var command=_source.CreateCommand($"""

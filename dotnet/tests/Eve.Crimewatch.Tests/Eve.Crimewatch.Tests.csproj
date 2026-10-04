@@ -5,6 +5,7 @@
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <ProjectReference Include="../../src/Eve.Crimewatch/Eve.Crimewatch.csproj" />
+    <ProjectReference Include="../../src/Eve.Universe/Eve.Universe.csproj" />
     <Using Include="Xunit" />
   </ItemGroup>
 </Project>

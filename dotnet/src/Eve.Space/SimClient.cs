@@ -305,6 +305,34 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public Task<string?> EnterAsync(SimEnter enter, CancellationToken cancellationToken = default) =>
         AwaitAsync(_entering, enter.SessionId, enter, cancellationToken);
 
+    public Task SetHeatProfileAsync(ulong sessionId, SimHeatProfile profile, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Send(new SimSetHeatProfile(sessionId, profile));
+        return Task.CompletedTask;
+    }
+
+    public Task SetModuleOverheatAsync(ulong sessionId, long moduleId, bool active, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Send(new SimSetModuleOverheat(sessionId, moduleId, active));
+        return Task.CompletedTask;
+    }
+
+    public Task OfflineModuleAsync(ulong sessionId, long moduleId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Send(new SimSetModuleOffline(sessionId, moduleId));
+        return Task.CompletedTask;
+    }
+
+    public Task SetRackOverheatAsync(ulong sessionId, int rack, bool active, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Send(new SimSetRackOverheat(sessionId, rack, active));
+        return Task.CompletedTask;
+    }
+
     public Task<CommandReply> CommandAsync(ulong sessionId, byte code, double[] args, CancellationToken cancellationToken = default) =>
         AwaitAsync(_answered, (sessionId, code), new SimCommand(sessionId, code, args), cancellationToken);
 

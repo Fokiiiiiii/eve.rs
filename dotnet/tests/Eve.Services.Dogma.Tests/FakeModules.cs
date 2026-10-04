@@ -21,4 +21,22 @@ internal sealed class FakeModules : ISpaceModules
         Asked.Add($"deactivate {moduleId} {effectName}");
         return Task.FromResult(Answer);
     }
+
+    public Task<ModuleResult?> OverloadAsync(ClientSession session, long moduleId, int effectId, bool active, CancellationToken cancellationToken)
+    {
+        Asked.Add($"{(active ? "overload" : "stop overload")} {moduleId} {effectId}");
+        return Task.FromResult(Answer);
+    }
+
+    public Task<ModuleResult?> OfflineAsync(ClientSession session, long moduleId, CancellationToken cancellationToken)
+    {
+        Asked.Add($"offline {moduleId}");
+        return Task.FromResult(Answer);
+    }
+
+    public Task<ModuleResult?> OverloadRackAsync(ClientSession session, long moduleId, bool active, CancellationToken cancellationToken)
+    {
+        Asked.Add($"{(active ? "overload rack" : "stop overload rack")} {moduleId}");
+        return Task.FromResult(Answer);
+    }
 }

@@ -90,8 +90,6 @@ impl Targeting {
     }
 }
 
-/// Something a ship can point at: the figures a lock depends on.
-#[derive(Debug, Clone, Copy)]
 pub(crate) struct Subject {
     id: i64,
     session: Option<SessionId>,
@@ -101,6 +99,7 @@ pub(crate) struct Subject {
     group_id: i32,
     signature_radius: f64,
     state: DamageState,
+    has_damage_state: bool,
     warping: bool,
     protected: bool,
 }
@@ -157,8 +156,24 @@ impl Scene {
                 group_id: spec.group_id,
                 signature_radius: spec.signature_radius,
                 state: pilot.ship.health.state_at(now),
+                has_damage_state: true,
                 warping: pilot.flight.as_ref().is_some_and(|f| f.is_warping()),
                 protected: pilot.protected_until > now,
+            });
+        }
+        if let Some(wreck) = self.wrecks.get(&target) {
+            return Some(Subject {
+                id: target,
+                session: None,
+                position: wreck.position,
+                radius: wreck.radius,
+                type_id: wreck.kind.type_id,
+                group_id: wreck.group_id,
+                signature_radius: wreck.radius,
+                state: DamageState::whole(0.0),
+                has_damage_state: false,
+                warping: false,
+                protected: false,
             });
         }
         let body = self.system().body(target)?;
@@ -175,12 +190,12 @@ impl Scene {
             } else {
                 0.0
             }),
+            has_damage_state: body.kind == BodyKind::Station,
             warping: false,
             protected: false,
         })
     }
 
-    /// Whether `session`'s ship may lock `target` (what a lock already going or held has to keep meeting; `count` also checks room for another).
     fn check_lock(&self, session: SessionId, target: &Subject, count: bool) -> Result<(), Refusal> {
         let source = self.pilots.get(&session).ok_or(Refusal::of("NOT_IN_SPACE"))?;
         if target.protected {
@@ -201,6 +216,16 @@ impl Scene {
         }
         if target.warping {
             return Err(Refusal::of_type("TARGET_WARPING", target.type_id));
+        }
+        let observer = crate::visibility::Presence { position: source.ship.position, warping: false };
+        let subject = crate::visibility::Presence { position: target.position, warping: false };
+        let target_cloak = self
+            .pilots
+            .values()
+            .find(|pilot| pilot.ship.spec.ship_id == target.id)
+            .map_or(crate::visibility::CloakState::Uncloaked, |pilot| pilot.cloak);
+        if !crate::visibility::can_select_target(observer, subject, source.cloak, target_cloak) {
+            return Err(Refusal::of("TARGET_NOT_FOUND"));
         }
         let spec = &source.ship.spec;
         let apart = (distance(source.ship.position, target.position) - spec.radius - target.radius).max(0.0);
@@ -250,7 +275,7 @@ impl Scene {
     }
 
     /// The ships (and nothing else can, yet) that have `target` locked, by id.
-    fn targeters_of(&self, target: i64) -> Vec<i64> {
+    pub(crate) fn targeters_of(&self, target: i64) -> Vec<i64> {
         let mut by: Vec<i64> = self
             .pilots
             .values()
@@ -330,7 +355,6 @@ impl Scene {
         Self::answer(session, order, true, self.locked_by(session))
     }
 
-    /// The lock is had: the ship is told, the one locked is told, and the damage state of what is locked is sent to everyone who can see it.
     fn finish_lock(&mut self, session: SessionId, subject: Subject, sequence: u64, now: i64) -> Vec<Out> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         pilot.targeting.pending.retain(|p| p.target != subject.id);
@@ -342,7 +366,9 @@ impl Scene {
         {
             out.push(on_target(target_session, "otheradd", Some(source_id)));
         }
-        out.extend(self.announce_damage_state(&subject, now));
+        if subject.has_damage_state {
+            out.extend(self.announce_damage_state(&subject, now));
+        }
         out
     }
 
@@ -629,6 +655,18 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn announced_damage_state(outs: &[Out]) -> bool {
+        let expected = Value::Str("OnDamageStateChange".into());
+        told(outs, "DoDestinyUpdate").iter().any(|(_, args)| {
+            let Some(Value::List(actions)) = args.first() else { return false };
+            actions.iter().any(|action| {
+                let Value::Tuple(action) = action else { return false };
+                let Some(Value::Tuple(payload)) = action.get(1) else { return false };
+                payload.first() == Some(&expected)
+            })
+        })
     }
 
     fn on_target(outs: &[Out]) -> Vec<(SessionId, Vec<String>)> {
@@ -971,6 +1009,10 @@ mod tests {
             scene.undock(session, spec_of(n), STATION, NOON - 40 * SECOND).unwrap();
         }
         scene.undock(C, spec_of(2), STATION, NOON).unwrap();
+        for session in [A, B, C] {
+            scene.pilots.get_mut(&session).unwrap().ship.position =
+                Vec3::new(100_000.0, 100_000.0, 100_000.0);
+        }
         let t = NOON + 5 * SECOND;
         assert_eq!(refusal(&scene.target_order(A, Order::Lock(ship_id(C)), t)).reason, "TARGET_INVULNERABLE");
         assert!(answer(&scene.target_order(C, Order::Lock(ship_id(A)), t)).0, "C is protected and locks");
@@ -1187,5 +1229,192 @@ mod tests {
         let (out, _) = poll_until(&mut scene, t, 6.0);
         assert_eq!(on_target(&out).len(), 2);
         assert!(told(&out, "DoDestinyUpdate").is_empty(), "{out:?}");
+    }
+
+    fn insert_wreck(scene: &mut Scene, id: i64, group_id: i32, type_id: i32, position: Vec3) {
+        scene.wrecks.insert(
+            id,
+            crate::wreck::Wreck {
+                id,
+                group_id,
+                kind: crate::wreck::WreckKind { type_id, name: "Test wreck".to_string(), graphic_id: None },
+                position,
+                direction: Vec3::new(0.0, 0.0, 1.0),
+                radius: 100.0,
+                owner_id: 1_000_001,
+                corporation_id: 0,
+                alliance_id: 0,
+                war_faction_id: 0,
+                rights: crate::wreck::LootRights::default(),
+                launcher_id: 1_000_001,
+                is_empty: true,
+                rights_known: false,
+                expires_at: i64::MAX,
+            },
+        );
+    }
+
+    #[test]
+    fn npc_and_drone_groups_can_be_locked_and_receive_target_events() {
+        let mut scene = Scene::new(world());
+        scene.undock(B, spec_of(1), STATION, NOON).unwrap();
+
+        let mut npc = spec_of(0);
+        npc.ship_id = 980_050_000_055;
+        npc.character_id = 0;
+        npc.owner_id = 1_000_125;
+        npc.corporation_id = 1_000_125;
+        npc.type_id = 3863;
+        npc.group_id = 301;
+        npc.category_id = 11;
+        npc.name.clear();
+        scene.undock(crate::npc::NPC_SESSION_BASE, npc, STATION, NOON).unwrap();
+
+        let mut drone = spec_of(2);
+        drone.ship_id = 980_050_000_056;
+        drone.character_id = 0;
+        drone.type_id = 2454;
+        drone.group_id = 100;
+        drone.category_id = 18;
+        drone.name = "Hobgoblin I".to_string();
+        drone.radius = 15.0;
+        drone.signature_radius = 15.0;
+        scene.undock(crate::npc::NPC_SESSION_BASE + 1, drone, STATION, NOON).unwrap();
+
+        scene.bind(B, NOON);
+        let (_, mut now) = poll_until(&mut scene, NOON, 40.0);
+        let mut expected_targets = Vec::new();
+        for (session, target) in [
+            (crate::npc::NPC_SESSION_BASE, 980_050_000_055),
+            (crate::npc::NPC_SESSION_BASE + 1, 980_050_000_056),
+        ] {
+            let asked = scene.target_order(B, Order::Lock(target), now);
+            assert_eq!(answer(&asked), (true, expected_targets.clone()), "{asked:?}");
+            let (out, next) = poll_until(&mut scene, now, 12.0);
+            assert_eq!(
+                on_target(&out),
+                vec![
+                    (B, words(&["add", &target.to_string()])),
+                    (session, words(&["otheradd", &ship_id(B).to_string()])),
+                ],
+                "{out:?}"
+            );
+            expected_targets.push(target);
+            assert_eq!(
+                answer(&scene.target_order(B, Order::Targets, next)),
+                (false, expected_targets.clone())
+            );
+            now = next;
+        }
+    }
+
+    #[test]
+    fn wrecks_and_containers_can_be_locked_without_damage_state_notifications() {
+        let (mut scene, mut now) = crowd(2);
+        let position = scene.pilots.get(&B).unwrap().ship.position;
+        let mut expected_targets = Vec::new();
+        for (target, group, type_id) in [
+            (99_000_001, crate::wreck::WRECK_GROUP, 27_002),
+            (99_000_002, crate::wreck::CONTAINER_GROUP, 23_611),
+        ] {
+            insert_wreck(&mut scene, target, group, type_id, position);
+            let asked = scene.target_order(B, Order::Lock(target), now);
+            assert_eq!(answer(&asked), (true, expected_targets.clone()), "{asked:?}");
+            let (out, next) = poll_until(&mut scene, now, 10.0);
+            assert_eq!(on_target(&out), vec![(B, words(&["add", &target.to_string()]))]);
+            assert!(!announced_damage_state(&out), "{out:?}");
+            expected_targets.push(target);
+            assert_eq!(
+                answer(&scene.target_order(B, Order::Targets, next)),
+                (false, expected_targets.clone())
+            );
+            now = next;
+        }
+    }
+
+    #[test]
+    fn an_individual_asteroid_can_be_locked_but_all_untargetable_groups_remain_refused() {
+        let mut system = (*world()).clone();
+        let position = system.body(STATION).unwrap().position;
+        system.bodies.push(Body {
+            id: 41_000_025,
+            type_id: 1234,
+            group_id: 25,
+            category_id: 25,
+            owner_id: 0,
+            name: "Asteroid".to_string(),
+            kind: BodyKind::Belt,
+            position,
+            radius: 100.0,
+            graphic_id: None,
+            detail: Detail::None,
+        });
+
+        let mut scene = Scene::new(Arc::new(system));
+        for (session, offset) in [(A, 0), (B, 1)] {
+            scene.undock(session, spec_of(offset), STATION, NOON).unwrap();
+            scene.bind(session, NOON);
+        }
+        let (_, now) = poll_until(&mut scene, NOON, 40.0);
+        let asked = scene.target_order(B, Order::Lock(41_000_025), now);
+        assert_eq!(answer(&asked), (true, vec![]), "{asked:?}");
+        let (out, now) = poll_until(&mut scene, now, 10.0);
+        assert_eq!(on_target(&out), vec![(B, words(&["add", "41000025"]))]);
+        assert!(!announced_damage_state(&out), "{out:?}");
+
+        let mut system = (*world()).clone();
+        let position = system.body(STATION).unwrap().position;
+        for (index, group_id) in UNTARGETABLE_GROUPS.iter().copied().enumerate() {
+            system.bodies.push(Body {
+                id: 41_001_000 + index as i64,
+                type_id: 5_000 + index as i32,
+                group_id,
+                category_id: 2,
+                owner_id: 0,
+                name: "Untargetable scenery".to_string(),
+                kind: BodyKind::Star,
+                position,
+                radius: 100.0,
+                graphic_id: None,
+                detail: Detail::None,
+            });
+        }
+        let mut scene = Scene::new(Arc::new(system));
+        for (session, offset) in [(A, 0), (B, 1)] {
+            scene.undock(session, spec_of(offset), STATION, now).unwrap();
+            scene.bind(session, now);
+        }
+        let (_, now) = poll_until(&mut scene, now, 40.0);
+        for (index, group_id) in UNTARGETABLE_GROUPS.iter().copied().enumerate() {
+            let target = 41_001_000 + index as i64;
+            let out = scene.target_order(B, Order::Lock(target), now);
+            let refusal = refusal(&out);
+            assert_eq!(
+                (refusal.reason, refusal.target_type),
+                ("TARGET_NOT_TARGETABLE", 5_000 + index as i32),
+                "group {group_id}: {out:?}"
+            );
+            assert!(on_target(&out).is_empty(), "{out:?}");
+        }
+    }
+
+    #[test]
+    fn an_out_of_range_wreck_refusal_includes_its_type_and_surface_distance() {
+        let (mut scene, now) = crowd(2);
+        let source_position = Vec3::new(100_000.0, 100_000.0, 100_000.0);
+        scene.pilots.get_mut(&B).unwrap().ship.position = source_position;
+        insert_wreck(
+            &mut scene,
+            99_000_003,
+            crate::wreck::WRECK_GROUP,
+            27_003,
+            Vec3::new(135_000.0, 100_000.0, 100_000.0),
+        );
+        let out = scene.target_order(B, Order::Lock(99_000_003), now);
+        let refusal = refusal(&out);
+        assert_eq!(refusal.reason, "TARGET_OUT_OF_RANGE");
+        assert_eq!(refusal.target_type, 27_003);
+        assert!(refusal.actual_distance > refusal.desired_range, "{refusal:?}");
+        assert!(on_target(&out).is_empty(), "{out:?}");
     }
 }

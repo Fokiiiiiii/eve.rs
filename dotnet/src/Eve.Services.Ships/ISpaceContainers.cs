@@ -1,4 +1,5 @@
 using Eve.Inventory;
+using Eve.Ships;
 
 namespace Eve.Services.Ships;
 
@@ -38,4 +39,15 @@ public interface ISpaceContainers
     /// client's error while the pilot waits for the next can.
     /// </summary>
     Task<IReadOnlyList<long>> JettisonAsync(ClientSession session, IReadOnlyList<long> itemIds, CancellationToken cancellationToken);
+}
+
+
+/// <summary>The in-space drone-bay inventory boundary. Implementations must use live scene ownership and simulation commands.</summary>
+public interface ISpaceDroneBays
+{
+    /// <summary>The active ship's in-space bay capacity and physical volume.</summary>
+    Task<CharacterShips.Room?> RoomAsync(ClientSession session, long shipId, int flag, CancellationToken cancellationToken);
+
+    /// <summary>Orders an owned, scene-controlled drone to return; the simulation's scoop event performs the database move and notifications.</summary>
+    Task<long?> AddAsync(ClientSession session, long itemId, long sourceId, long destinationId, int destinationFlag, long? quantity, CancellationToken cancellationToken);
 }

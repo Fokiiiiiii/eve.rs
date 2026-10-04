@@ -32,7 +32,7 @@ public interface ISpaceDrones
 /// the simulation (<c>eve_space::drones</c>) that circles its ship, goes at what the pilot sends it at and shoots it. What the simulation tells of the drones of a session (a drone that was taken
 /// in, one that was let go, one that was destroyed) decides what becomes of the item.
 /// </summary>
-public sealed class SpaceDrones : ISpaceDrones, IDisposable
+public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
 {
     private const int MaxVelocityAttribute = 37;
     private const int FlyRangeAttribute = 416;
@@ -380,6 +380,45 @@ public sealed class SpaceDrones : ISpaceDrones, IDisposable
             InventoryWire.Id(id),
             Refusal(_launched.ContainsKey(id) ? "That drone cannot currently be scooped into the drone bay." : "That drone is not in local space."))).ToList();
         return Task.FromResult(Dict(refused));
+    }
+
+
+    /// <summary>Capacity for the active ship's in-space drone-bay inventory (flag 87).</summary>
+    public async Task<CharacterShips.Room?> RoomAsync(ClientSession session, long shipId, int flag, CancellationToken cancellationToken)
+    {
+        if (flag != CharacterShips.DroneBayFlag || !_space.IsInSpace(session)
+            || session.CharacterId is not { } characterId
+            || _space.SolarSystemOf(session) is not { } system)
+        {
+            return null;
+        }
+        return await _ships.DroneBayRoomInSpaceAsync(characterId, shipId, system, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Routes an in-space drone-bay Add through its live controlling scene object. The simulation owns distance and completion;
+    /// its scoop event performs the reserved-capacity transaction and the normal item-change notifications.
+    /// </summary>
+    public async Task<long?> AddAsync(
+        ClientSession session, long itemId, long sourceId, long destinationId, int destinationFlag, long? quantity,
+        CancellationToken cancellationToken)
+    {
+        if (destinationFlag != CharacterShips.DroneBayFlag || quantity is { } requested && requested != 1
+            || !_space.IsInSpace(session) || session.CharacterId is not { } characterId
+            || _space.SolarSystemOf(session) is not { } system || sourceId != system
+            || await _ships.LoadAsync(characterId, cancellationToken).ConfigureAwait(false) is not { } snapshot
+            || snapshot.Ship.Id != destinationId || snapshot.Ship.LocationId != system
+            || !_launched.TryGetValue(itemId, out var drone)
+            || drone.CharacterId != characterId || drone.ShipId != destinationId || drone.SolarSystemId != system
+            || drone.Controller != (ulong)session.SessionId || _letGo.ContainsKey(itemId)
+            || await _ships.ItemAsync(itemId, cancellationToken).ConfigureAwait(false) is not { } item
+            || item.OwnerId != characterId || item.LocationId != system || item.Flag != CharacterShips.InSpaceFlag || !item.Singleton)
+        {
+            return null;
+        }
+
+        var reply = await CommandAsync(session, SimDroneCommands.ReturnBay, destinationId, [itemId], cancellationToken).ConfigureAwait(false);
+        return reply is PyDict { Entries.Count: 0 } ? itemId : null;
     }
 
     // ── what the simulation says ─────────────────────────────────────────────

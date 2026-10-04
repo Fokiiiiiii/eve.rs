@@ -12,7 +12,7 @@ use eve_marshal::Value;
 use crate::payload;
 use crate::scene::{Out, Scene, SessionId};
 use crate::ship::Ship;
-use crate::visibility::{Presence, can_see, grid_of};
+use crate::visibility::{CloakState, Presence, can_see, can_see_subject, grid_of};
 use crate::wire::{id, real};
 use crate::wreck::Wreck;
 use eve_destiny::Vec3;
@@ -36,7 +36,10 @@ impl Scene {
 
     fn visible_to(&self, observer: SessionId, subject: SessionId) -> bool {
         match (self.presence(observer), self.presence(subject)) {
-            (Some(o), Some(s)) => can_see(o, s),
+            (Some(observer), Some(subject_presence)) => {
+                let cloak = self.pilots.get(&subject).map_or(CloakState::Uncloaked, |pilot| pilot.cloak);
+                can_see_subject(observer, subject_presence, cloak)
+            }
             _ => false,
         }
     }

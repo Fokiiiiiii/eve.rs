@@ -203,6 +203,105 @@ pub enum SceneError {
     NotDestroyed(SessionId),
 }
 
+/// A module's high, medium or low power rack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeatRack {
+    High,
+    Medium,
+    Low,
+}
+
+impl HeatRack {
+    const ALL: [Self; 3] = [Self::High, Self::Medium, Self::Low];
+
+    const fn index(self) -> usize {
+        match self {
+            Self::High => 0,
+            Self::Medium => 1,
+            Self::Low => 2,
+        }
+    }
+
+    const fn attribute_id(self) -> i32 {
+        match self {
+            Self::High => 1175,
+            Self::Medium => 1176,
+            Self::Low => 1177,
+        }
+    }
+}
+
+/// The dogma attributes needed by the simulation for one fitted module.
+/// Values are supplied by the host from the fitted item and SDE.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeatModuleProfile {
+    pub module_id: i64,
+    pub flag: i32,
+    /// The module's maximum structure HP (hp).
+    pub structure_hp: f64,
+    /// Existing module damage in HP (damage), not a 0..1 ratio.
+    pub damage_hp: f64,
+    /// The source module's heat damage per overloaded cycle (heatDamage).
+    pub heat_damage_hp: f64,
+    /// The source module's rack heat rate (heatAbsorbtionRateModifier).
+    pub heat_absorption_rate: f64,
+    /// True when its type has an overload effect (Dogma effect category 5).
+    pub overloadable: bool,
+    /// Mining modules are excluded from heat damage by the reference.
+    pub heat_immune: bool,
+    /// Whether the module is online and may be overloaded.
+    pub online: bool,
+}
+
+/// SDE and character-derived values required by the heat simulation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeatProfile {
+    /// Hull heatGenerationMultiplier, defaulting to 1 when the SDE has no value.
+    pub generation_multiplier: f64,
+    /// Thermodynamics and hull/environment modifiers applied to heatDamage.
+    pub damage_multiplier: f64,
+    /// Thermodynamics level; level 1 is required to overload modules.
+    pub thermodynamics_level: u8,
+    /// Rack heat capacities in high, medium, low order.
+    pub capacity: [f64; 3],
+    /// Rack heat loaded from the host for a newly spawned ship.
+    pub initial_rack_heat: [f64; 3],
+    /// Rack heat dissipation rates in high, medium, low order.
+    pub dissipation_rate: [f64; 3],
+    /// Rack heat attenuation in high, medium, low order.
+    pub attenuation: [f64; 3],
+    /// All fitted high, medium and low slot modules, including non-overloadable modules.
+    pub modules: Vec<HeatModuleProfile>,
+}
+
+impl Default for HeatProfile {
+    fn default() -> Self {
+        Self {
+            generation_multiplier: 1.0,
+            damage_multiplier: 1.0,
+            thermodynamics_level: 0,
+            capacity: [100.0; 3],
+            initial_rack_heat: [0.0; 3],
+            dissipation_rate: [0.01; 3],
+            attenuation: [0.63; 3],
+            modules: Vec::new(),
+        }
+    }
+}
+
+/// Invalid or unavailable module heat state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeatError {
+    UnknownPilot,
+    ProfileNotConfigured,
+    InvalidProfile(&'static str),
+    UnknownModule,
+    ModuleNotOverloadable,
+    ModuleOffline,
+    ModuleBurnedOut,
+    ThermodynamicsRequired,
+}
+
 #[derive(Debug, Clone)]
 struct PendingDock {
     station_id: i64,
@@ -239,11 +338,13 @@ pub(crate) struct Pilot {
     pub(crate) protected_until: i64,
     /// What other ships' modules do to this ship's numbers while they run (webs, painters, dampeners, scramblers).
     pub(crate) incoming: crate::ewar::Incoming,
+    /// Cloak state used by target selection and public visibility.
+    pub(crate) cloak: crate::visibility::CloakState,
+    /// The overload state, per-rack heat and module heat damage carried by this ship.
+    heat: HeatState,
 }
 
 impl Pilot {
-    /// A ship that has just come into the scene at `now`, at rest in the order of arrival `entered`, that has not bound the ballpark and holds nothing
-    /// locked.
     pub(crate) fn new(ship: Ship, modules: Modules, entered: u64, now: i64, protected_until: i64) -> Self {
         Self {
             ship,
@@ -261,7 +362,18 @@ impl Pilot {
             modules,
             protected_until,
             incoming: crate::ewar::Incoming::default(),
+            cloak: crate::visibility::CloakState::Uncloaked,
+            heat: HeatState::default(),
         }
+    }
+
+    /// Jumping clears a primed or active overheat request while rack heat continues to cool.
+    fn clear_overheat_for_jump(&mut self) {
+        for module in self.heat.modules.values_mut() {
+            module.overloaded = false;
+            module.pending_overload = None;
+        }
+        self.heat.force_notify = true;
     }
 }
 
@@ -994,6 +1106,7 @@ impl Scene {
             self.settle_pilot(session, now);
             let Some(mut pilot) = self.pilots.remove(&session) else { continue };
             let Some(jump) = pilot.jump.take() else { continue };
+            pilot.clear_overheat_for_jump();
             let held = std::mem::take(&mut pilot.targeting);
             told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &held, now));
             told.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
@@ -1085,8 +1198,219 @@ impl Scene {
         self.with_backlog(told)
     }
 
-    /// Finishes what is due at `now`: a docking that has taken its time takes the ship out of space (the ones who watched it are told it is gone),
-    /// and ships that have come into view or left it are told of one another.
+    pub fn set_heat_profile(
+        &mut self,
+        session: SessionId,
+        mut profile: HeatProfile,
+        now: i64,
+    ) -> Result<(), HeatError> {
+        let pilot = self.pilots.get_mut(&session).ok_or(HeatError::UnknownPilot)?;
+        validate_heat_profile(&pilot.ship.spec, &profile)?;
+        if pilot.heat.profile.is_none() {
+            pilot.heat.levels = profile.initial_rack_heat;
+        }
+
+        let mut modules = BTreeMap::new();
+        for module in std::mem::take(&mut profile.modules) {
+            let module_id = module.module_id;
+            let previous = pilot.heat.modules.get(&module_id);
+            let damaged = module.damage_hp >= module.structure_hp;
+            let available = module.overloadable && module.online && !damaged;
+            let mut runtime = HeatModuleRuntime {
+                profile: module,
+                overloaded: previous.is_some_and(|old| old.overloaded) && available,
+                pending_overload: previous.and_then(|old| old.pending_overload),
+                cycle_start: previous.and_then(|old| old.cycle_start),
+                next_cycle_at: previous.and_then(|old| old.next_cycle_at),
+                completed_cycles: previous.map_or(0, |old| old.completed_cycles),
+                was_running: previous.is_some_and(|old| old.was_running),
+            };
+            if !available {
+                runtime.pending_overload = None;
+            }
+            modules.insert(module_id, runtime);
+        }
+
+        pilot.heat.profile = Some(profile);
+        pilot.heat.modules = modules;
+        pilot.heat.updated_at.get_or_insert(now);
+        pilot.heat.force_notify = true;
+        Ok(())
+    }
+
+    /// Request module overheat. A running module applies the change at its next cycle boundary;
+    /// an idle module can be primed for its first cycle.
+    pub fn set_module_overheat(
+        &mut self,
+        session: SessionId,
+        module_id: i64,
+        active: bool,
+    ) -> Result<(), HeatError> {
+        let pilot = self.pilots.get_mut(&session).ok_or(HeatError::UnknownPilot)?;
+        let profile = pilot.heat.profile.as_ref().ok_or(HeatError::ProfileNotConfigured)?;
+        let runtime = pilot.heat.modules.get_mut(&module_id).ok_or(HeatError::UnknownModule)?;
+        if active && profile.thermodynamics_level == 0 {
+            return Err(HeatError::ThermodynamicsRequired);
+        }
+        if active && !runtime.profile.overloadable {
+            return Err(HeatError::ModuleNotOverloadable);
+        }
+        if active && !runtime.profile.online {
+            return Err(HeatError::ModuleOffline);
+        }
+        if active && runtime.profile.damage_hp >= runtime.profile.structure_hp {
+            return Err(HeatError::ModuleBurnedOut);
+        }
+
+        let cycling = pilot.modules.running_effects().any(|(effect, _)| effect.module_id == module_id);
+        runtime.request_overheat(active, cycling);
+        pilot.heat.force_notify = true;
+        Ok(())
+    }
+
+    /// Request overheat for all overloadable modules in one rack.
+    pub fn set_rack_overheat(
+        &mut self,
+        session: SessionId,
+        rack: HeatRack,
+        active: bool,
+    ) -> Result<Vec<i64>, HeatError> {
+        let pilot = self.pilots.get(&session).ok_or(HeatError::UnknownPilot)?;
+        if pilot.heat.profile.is_none() {
+            return Err(HeatError::ProfileNotConfigured);
+        }
+        let module_ids: Vec<i64> = pilot
+            .heat
+            .modules
+            .iter()
+            .filter_map(|(module_id, module)| {
+                let in_rack = heat_rack_slot(module.profile.flag).is_some_and(|(which, _)| which == rack);
+                let wanted = if active {
+                    module.profile.overloadable
+                        && module.profile.online
+                        && module.profile.damage_hp < module.profile.structure_hp
+                } else {
+                    module.overloaded || module.pending_overload == Some(true)
+                };
+                (in_rack && wanted).then_some(*module_id)
+            })
+            .collect();
+
+        for module_id in &module_ids {
+            self.set_module_overheat(session, *module_id, active)?;
+        }
+        Ok(module_ids)
+    }
+
+    /// The current rack heat, in Dogma heat units (normally 0 through 100).
+    pub fn rack_heat_level(&self, session: SessionId, rack: HeatRack) -> Option<f64> {
+        let pilot = self.pilots.get(&session)?;
+        pilot.heat.profile.as_ref()?;
+        Some(pilot.heat.levels[rack.index()])
+    }
+
+    fn prepare_overheating(&mut self, now: i64) -> HeatSettlement {
+        let sessions: Vec<SessionId> = self.pilots.keys().copied().collect();
+        let mut settlement = HeatSettlement::default();
+        for session in sessions {
+            let Some(pilot) = self.pilots.get_mut(&session) else { continue };
+            let mut one = prepare_pilot_heat(pilot, session, now);
+            settlement.attempts.append(&mut one.attempts);
+            settlement.notifications.append(&mut one.notifications);
+        }
+        settlement
+    }
+
+    /// Apply the completed-cycle rolls after module actions, notify Dogma, then stop burned-out modules.
+    fn apply_overheating(&mut self, mut settlement: HeatSettlement, now: i64) -> Vec<Out> {
+        let mut changes = BTreeMap::<SessionId, Vec<Value>>::new();
+        for (session, args) in settlement.notifications.drain(..) {
+            changes.entry(session).or_default().extend(args);
+        }
+        let mut burned = BTreeSet::<(SessionId, i64)>::new();
+
+        for attempt in settlement.attempts {
+            for (module_id, chance) in attempt.targets {
+                let eligible = self.pilots.get(&attempt.session).is_some_and(|pilot| {
+                    let source_alive = pilot
+                        .heat
+                        .modules
+                        .get(&attempt.source_module_id)
+                        .is_some_and(|source| source.profile.damage_hp < source.profile.structure_hp);
+                    let target_alive = pilot.heat.modules.get(&module_id).is_some_and(|target| {
+                        !target.profile.heat_immune && target.profile.damage_hp < target.profile.structure_hp
+                    });
+                    source_alive && target_alive && chance > 0.0
+                });
+                if !eligible {
+                    continue;
+                }
+                if self.rng.random() >= chance {
+                    continue;
+                }
+
+                let Some(pilot) = self.pilots.get_mut(&attempt.session) else { continue };
+                let Some(target) = pilot.heat.modules.get_mut(&module_id) else { continue };
+                let previous = target.profile.damage_hp;
+                let (next, burned_out) =
+                    heat_damage_after(previous, target.profile.structure_hp, attempt.damage_hp);
+                if next <= previous {
+                    continue;
+                }
+                target.profile.damage_hp = next;
+                if burned_out {
+                    target.profile.online = false;
+                    target.overloaded = false;
+                    target.pending_overload = None;
+                    burned.insert((attempt.session, module_id));
+                }
+                let line = crate::modules::attribute_change(
+                    pilot.ship.spec.character_id,
+                    module_id,
+                    HEAT_ATTRIBUTE_ITEM_DAMAGE,
+                    attempt.at,
+                    real(next),
+                    real(previous),
+                );
+                changes.entry(attempt.session).or_default().push(line);
+            }
+        }
+
+        let mut told = Vec::new();
+        for (session, lines) in changes {
+            if !lines.is_empty() {
+                told.push(Out::Notify {
+                    session,
+                    name: "OnModuleAttributeChanges",
+                    id_type: "clientID",
+                    args: vec![Value::List(lines)],
+                });
+            }
+        }
+
+        for (session, module_id) in burned {
+            told.extend(self.stop_module(session, module_id, now));
+        }
+        told
+    }
+
+    fn next_heat_cycle_boundary(&self, now: i64) -> Option<i64> {
+        self.pilots
+            .values()
+            .flat_map(|pilot| {
+                pilot.modules.running_effects().filter_map(move |(effect, cycle_start)| {
+                    let module = pilot.heat.modules.get(&effect.module_id)?;
+                    if !module.overloaded && module.pending_overload.is_none() {
+                        return None;
+                    }
+                    heat_duration_ticks(effect.duration_ms)
+                        .and_then(|duration| cycle_start.checked_add(duration))
+                })
+            })
+            .filter(|at| *at <= now)
+            .min()
+    }
+
     pub fn poll(&mut self, now: i64) -> Vec<Out> {
         self.settle_all(now);
         let due: Vec<(SessionId, i64)> = self
@@ -1112,7 +1436,14 @@ impl Scene {
         told.extend(self.note_drone_threats(now));
         told.extend(self.tick_brains(now));
         told.extend(self.settle_targets(now));
+        while let Some(at) = self.next_heat_cycle_boundary(now) {
+            let heat = self.prepare_overheating(at);
+            told.extend(self.settle_modules(at));
+            told.extend(self.apply_overheating(heat, at));
+        }
+        let heat = self.prepare_overheating(now);
         told.extend(self.settle_modules(now));
+        told.extend(self.apply_overheating(heat, now));
         told.extend(self.advance_missiles(now));
         told.extend(self.advance_drones(now));
         told.extend(self.reconcile(now));
@@ -1387,6 +1718,415 @@ fn stop(ship: &mut Ship) -> Steering {
     if standing { Steering::Nothing } else { Steering::Actions(vec![("Stop", Vec::new())]) }
 }
 
+/// The module damage Dogma attribute expected by the client.
+const HEAT_ATTRIBUTE_ITEM_DAMAGE: i32 = 3;
+const HEAT_NOTIFY_INTERVAL: i64 = 5 * TICKS_PER_SECOND;
+const HEAT_NOTIFY_MIN_DELTA: f64 = 1.0;
+const HEAT_NOTIFY_INTERVAL_MIN_DELTA: f64 = 0.2;
+const HEAT_MAX_ADVANCE_SECONDS: f64 = 60.0;
+const HEAT_ZERO_EPSILON: f64 = 0.05;
+
+#[derive(Debug, Default, Clone)]
+struct HeatState {
+    profile: Option<HeatProfile>,
+    modules: BTreeMap<i64, HeatModuleRuntime>,
+    levels: [f64; 3],
+    updated_at: Option<i64>,
+    notified_levels: [f64; 3],
+    last_notify_at: Option<i64>,
+    force_notify: bool,
+}
+
+#[derive(Debug, Clone)]
+struct HeatModuleRuntime {
+    profile: HeatModuleProfile,
+    overloaded: bool,
+    pending_overload: Option<bool>,
+    was_running: bool,
+    cycle_start: Option<i64>,
+    next_cycle_at: Option<i64>,
+    completed_cycles: i32,
+}
+
+impl HeatModuleRuntime {
+    fn request_overheat(&mut self, active: bool, cycling: bool) {
+        if cycling {
+            self.pending_overload = (self.overloaded != active).then_some(active);
+        } else {
+            self.overloaded = active;
+            self.pending_overload = None;
+        }
+    }
+
+    fn settle_cycle_boundary(&mut self) {
+        if let Some(active) = self.pending_overload.take() {
+            self.overloaded = active;
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct HeatSettlement {
+    attempts: Vec<HeatDamageAttempt>,
+    notifications: Vec<(SessionId, Vec<Value>)>,
+}
+
+#[derive(Debug)]
+struct HeatDamageAttempt {
+    session: SessionId,
+    source_module_id: i64,
+    at: i64,
+    damage_hp: f64,
+    targets: Vec<(i64, f64)>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ActiveHeatCycle {
+    cycle_start: i64,
+    duration_ticks: i64,
+    repeat: i32,
+}
+
+fn heat_rack_slot(flag: i32) -> Option<(HeatRack, u8)> {
+    match flag {
+        27..=34 => Some((HeatRack::High, (flag - 27) as u8)),
+        19..=26 => Some((HeatRack::Medium, (flag - 19) as u8)),
+        11..=18 => Some((HeatRack::Low, (flag - 11) as u8)),
+        _ => None,
+    }
+}
+
+fn validate_heat_profile(spec: &ShipSpec, profile: &HeatProfile) -> Result<(), HeatError> {
+    if !profile.generation_multiplier.is_finite() || profile.generation_multiplier < 0.0 {
+        return Err(HeatError::InvalidProfile("generation multiplier"));
+    }
+    if !profile.damage_multiplier.is_finite() || profile.damage_multiplier < 0.0 {
+        return Err(HeatError::InvalidProfile("damage multiplier"));
+    }
+    if profile.thermodynamics_level > 5 {
+        return Err(HeatError::InvalidProfile("Thermodynamics level"));
+    }
+    for rack in HeatRack::ALL {
+        let index = rack.index();
+        if !profile.capacity[index].is_finite() || profile.capacity[index] <= 0.0 {
+            return Err(HeatError::InvalidProfile("rack capacity"));
+        }
+        if !profile.initial_rack_heat[index].is_finite()
+            || !(0.0..=profile.capacity[index]).contains(&profile.initial_rack_heat[index])
+        {
+            return Err(HeatError::InvalidProfile("initial rack heat"));
+        }
+        if !profile.dissipation_rate[index].is_finite() || profile.dissipation_rate[index] < 0.0 {
+            return Err(HeatError::InvalidProfile("rack dissipation rate"));
+        }
+        if !profile.attenuation[index].is_finite() || !(0.0..=1.0).contains(&profile.attenuation[index]) {
+            return Err(HeatError::InvalidProfile("rack attenuation"));
+        }
+    }
+
+    let mut module_ids = BTreeSet::new();
+    let mut slot_flags = BTreeSet::new();
+    for module in &profile.modules {
+        if module.module_id <= 0 || !module_ids.insert(module.module_id) {
+            return Err(HeatError::InvalidProfile("duplicate or invalid module id"));
+        }
+        if heat_rack_slot(module.flag).is_none() || !slot_flags.insert(module.flag) {
+            return Err(HeatError::InvalidProfile("duplicate or invalid rack slot"));
+        }
+        if !spec.modules.iter().any(|fitted| fitted.item_id == module.module_id && fitted.flag == module.flag)
+        {
+            return Err(HeatError::InvalidProfile("module does not match ship fitting"));
+        }
+        if !module.structure_hp.is_finite() || module.structure_hp <= 0.0 {
+            return Err(HeatError::InvalidProfile("module structure HP"));
+        }
+        if !module.damage_hp.is_finite() || !(0.0..=module.structure_hp).contains(&module.damage_hp) {
+            return Err(HeatError::InvalidProfile("module damage"));
+        }
+        if !module.heat_damage_hp.is_finite() || module.heat_damage_hp < 0.0 {
+            return Err(HeatError::InvalidProfile("module heat damage"));
+        }
+        if !module.heat_absorption_rate.is_finite() || module.heat_absorption_rate < 0.0 {
+            return Err(HeatError::InvalidProfile("module heat absorption"));
+        }
+    }
+
+    for fitted in &spec.modules {
+        if heat_rack_slot(fitted.flag).is_some() && !module_ids.contains(&fitted.item_id) {
+            return Err(HeatError::InvalidProfile("missing fitted module profile"));
+        }
+    }
+    Ok(())
+}
+
+fn heat_duration_ticks(duration_ms: f64) -> Option<i64> {
+    if !duration_ms.is_finite() || duration_ms <= 0.0 {
+        return None;
+    }
+    let ticks = duration_ms * (TICKS_PER_SECOND as f64 / 1_000.0);
+    (ticks <= i64::MAX as f64).then_some((ticks as i64).max(1))
+}
+
+fn heat_damage_after(previous: f64, structure_hp: f64, damage_hp: f64) -> (f64, bool) {
+    if !previous.is_finite() || !structure_hp.is_finite() || structure_hp <= 0.0 || !damage_hp.is_finite() {
+        return (previous.max(0.0), false);
+    }
+    let previous = previous.clamp(0.0, structure_hp);
+    let next = (previous + damage_hp.max(0.0)).clamp(0.0, structure_hp);
+    (next, next >= structure_hp - 1e-9)
+}
+
+fn heat_damage_chance(heat: f64, capacity: f64, attenuation: f64, distance: u8) -> f64 {
+    if !heat.is_finite() || !capacity.is_finite() || capacity <= 0.0 {
+        return 0.0;
+    }
+    let fraction = (heat / capacity).clamp(0.0, 1.0);
+    let falloff = attenuation.clamp(0.0, 1.0).powi(i32::from(distance));
+    (fraction * falloff).clamp(0.0, 1.0)
+}
+
+fn rack_heat_after(
+    previous: f64,
+    capacity: f64,
+    incoming_rate: f64,
+    generation_multiplier: f64,
+    dissipation_rate: f64,
+    delta_seconds: f64,
+) -> f64 {
+    if !capacity.is_finite() || capacity <= 0.0 || !delta_seconds.is_finite() || delta_seconds <= 0.0 {
+        return previous.max(0.0);
+    }
+    let previous = previous.clamp(0.0, capacity);
+    let next = if incoming_rate > 0.0 && generation_multiplier > 0.0 {
+        capacity - (capacity - previous) * (-(incoming_rate * generation_multiplier * delta_seconds)).exp()
+    } else if dissipation_rate > 0.0 {
+        previous * (-(dissipation_rate * delta_seconds)).exp()
+    } else {
+        previous
+    };
+    next.clamp(0.0, capacity)
+}
+
+fn prepare_pilot_heat(pilot: &mut Pilot, session: SessionId, now: i64) -> HeatSettlement {
+    let mut settlement = HeatSettlement::default();
+    if pilot.heat.profile.is_none() {
+        return settlement;
+    }
+
+    let active: BTreeMap<i64, ActiveHeatCycle> = pilot
+        .modules
+        .running_effects()
+        .filter_map(|(effect, cycle_start)| {
+            Some((
+                effect.module_id,
+                ActiveHeatCycle {
+                    cycle_start,
+                    duration_ticks: heat_duration_ticks(effect.duration_ms)?,
+                    repeat: effect.repeat,
+                },
+            ))
+        })
+        .collect();
+    let active_ids: BTreeSet<i64> = active.keys().copied().collect();
+
+    for (module_id, runtime) in &mut pilot.heat.modules {
+        if !active_ids.contains(module_id) {
+            runtime.was_running = false;
+            runtime.cycle_start = None;
+            runtime.next_cycle_at = None;
+            runtime.completed_cycles = 0;
+            runtime.settle_cycle_boundary();
+        }
+    }
+
+    for (module_id, cycle) in &active {
+        let Some(runtime) = pilot.heat.modules.get_mut(module_id) else { continue };
+        if !runtime.profile.online || runtime.profile.damage_hp >= runtime.profile.structure_hp {
+            runtime.overloaded = false;
+            runtime.pending_overload = None;
+            continue;
+        }
+        let start = cycle.cycle_start;
+        if !runtime.was_running {
+            runtime.was_running = true;
+            runtime.cycle_start = Some(start);
+            runtime.next_cycle_at = start.checked_add(cycle.duration_ticks);
+            runtime.completed_cycles = 0;
+        } else if runtime.cycle_start != Some(start) {
+            runtime.cycle_start = Some(start);
+            runtime.next_cycle_at = start.checked_add(cycle.duration_ticks);
+        }
+    }
+
+    let mut cycling = active_ids;
+    loop {
+        let next = cycling
+            .iter()
+            .filter_map(|module_id| {
+                pilot
+                    .heat
+                    .modules
+                    .get(module_id)
+                    .and_then(|runtime| runtime.next_cycle_at.map(|at| (at, *module_id)))
+            })
+            .filter(|(at, _)| *at <= now)
+            .min();
+        let Some((at, source_module_id)) = next else { break };
+
+        advance_rack_heat(&mut pilot.heat, &cycling, at);
+        let source_snapshot = pilot.heat.modules.get(&source_module_id).cloned();
+        if let Some(source) = source_snapshot
+            && source.overloaded
+            && source.profile.overloadable
+            && source.profile.heat_damage_hp > 0.0
+            && source.profile.damage_hp < source.profile.structure_hp
+            && let Some((rack, source_slot)) = heat_rack_slot(source.profile.flag)
+        {
+            let profile = pilot.heat.profile.as_ref().expect("heat profile checked above");
+            let skill_multiplier = (1.0 - 0.05 * f64::from(profile.thermodynamics_level)).max(0.0);
+            let damage_hp = source.profile.heat_damage_hp * skill_multiplier * profile.damage_multiplier;
+            let index = rack.index();
+            let heat = pilot.heat.levels[index];
+            let capacity = profile.capacity[index];
+            let attenuation = profile.attenuation[index];
+            let mut candidates: Vec<(i32, i64, f64)> = pilot
+                .heat
+                .modules
+                .iter()
+                .filter_map(|(module_id, candidate)| {
+                    if candidate.profile.heat_immune
+                        || candidate.profile.damage_hp >= candidate.profile.structure_hp
+                    {
+                        return None;
+                    }
+                    let (candidate_rack, candidate_slot) = heat_rack_slot(candidate.profile.flag)?;
+                    if candidate_rack != rack {
+                        return None;
+                    }
+                    let distance = source_slot.abs_diff(candidate_slot);
+                    let chance = heat_damage_chance(heat, capacity, attenuation, distance);
+                    (chance > 0.0).then_some((candidate.profile.flag, *module_id, chance))
+                })
+                .collect();
+            candidates.sort_by_key(|(flag, _, _)| *flag);
+            if damage_hp > 0.0 {
+                settlement.attempts.push(HeatDamageAttempt {
+                    session,
+                    source_module_id,
+                    at,
+                    damage_hp,
+                    targets: candidates
+                        .into_iter()
+                        .map(|(_, module_id, chance)| (module_id, chance))
+                        .collect(),
+                });
+            }
+        }
+
+        if let Some(runtime) = pilot.heat.modules.get_mut(&source_module_id) {
+            runtime.completed_cycles = runtime.completed_cycles.saturating_add(1);
+            runtime.cycle_start = Some(at);
+            runtime.next_cycle_at = at.checked_add(active[&source_module_id].duration_ticks);
+            runtime.settle_cycle_boundary();
+            if active[&source_module_id].repeat > 0
+                && runtime.completed_cycles >= active[&source_module_id].repeat
+            {
+                runtime.was_running = false;
+                runtime.cycle_start = None;
+                runtime.next_cycle_at = None;
+                cycling.remove(&source_module_id);
+            }
+        }
+    }
+
+    advance_rack_heat(&mut pilot.heat, &cycling, now);
+    let gauge_lines = heat_gauge_changes(pilot, session, now);
+    if !gauge_lines.is_empty() {
+        settlement.notifications.push((session, gauge_lines));
+    }
+    settlement
+}
+
+fn advance_rack_heat(state: &mut HeatState, cycling: &BTreeSet<i64>, now: i64) {
+    let Some(profile) = state.profile.as_ref() else { return };
+    let Some(previous_at) = state.updated_at else {
+        state.updated_at = Some(now);
+        return;
+    };
+    if now <= previous_at {
+        return;
+    }
+    state.updated_at = Some(now);
+    let delta_seconds =
+        (((now - previous_at) as f64) / TICKS_PER_SECOND as f64).min(HEAT_MAX_ADVANCE_SECONDS);
+
+    let mut incoming = [0.0; 3];
+    for module_id in cycling {
+        let Some(module) = state.modules.get(module_id) else { continue };
+        if !module.overloaded
+            || !module.profile.online
+            || module.profile.damage_hp >= module.profile.structure_hp
+        {
+            continue;
+        }
+        let Some((rack, _)) = heat_rack_slot(module.profile.flag) else { continue };
+        incoming[rack.index()] += module.profile.heat_absorption_rate;
+    }
+
+    let generation = profile.generation_multiplier;
+    let capacities = profile.capacity;
+    let dissipation = profile.dissipation_rate;
+    for rack in HeatRack::ALL {
+        let index = rack.index();
+        let next = rack_heat_after(
+            state.levels[index],
+            capacities[index],
+            incoming[index],
+            generation,
+            dissipation[index],
+            delta_seconds,
+        );
+        state.levels[index] = if next < HEAT_ZERO_EPSILON { 0.0 } else { next };
+    }
+}
+
+fn heat_gauge_changes(pilot: &mut Pilot, session: SessionId, now: i64) -> Vec<Value> {
+    if !pilot.bound {
+        return Vec::new();
+    }
+    let interval_due =
+        pilot.heat.last_notify_at.is_none_or(|last| now.saturating_sub(last) >= HEAT_NOTIFY_INTERVAL);
+    let force = pilot.heat.force_notify;
+    let mut lines = Vec::new();
+    for rack in HeatRack::ALL {
+        let index = rack.index();
+        let level = pilot.heat.levels[index];
+        let notified = pilot.heat.notified_levels[index];
+        let delta = (level - notified).abs();
+        let due = force
+            || (level <= 0.0 && notified > 0.0)
+            || delta >= HEAT_NOTIFY_MIN_DELTA
+            || (interval_due && delta >= HEAT_NOTIFY_INTERVAL_MIN_DELTA);
+        if !due {
+            continue;
+        }
+        pilot.heat.notified_levels[index] = level;
+        lines.push(crate::modules::attribute_change(
+            pilot.ship.spec.character_id,
+            pilot.ship.spec.ship_id,
+            rack.attribute_id(),
+            now,
+            real((level * 1_000.0).round() / 1_000.0),
+            Value::None,
+        ));
+    }
+    if !lines.is_empty() {
+        pilot.heat.last_notify_at = Some(now);
+    }
+    pilot.heat.force_notify = false;
+    let _ = session;
+    lines
+}
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -2517,6 +3257,12 @@ pub(crate) mod tests {
     #[test]
     fn the_ship_leaves_four_seconds_after_the_command_and_not_before() {
         let mut scene = scene_by_a_gate();
+        let module_id = spec().modules[0].item_id;
+        let mut profile = heat_profile_for_spec(1);
+        profile.initial_rack_heat[HeatRack::Medium.index()] = 42.0;
+        scene.set_heat_profile(SESSION, profile, NOON).unwrap();
+        scene.set_module_overheat(SESSION, module_id, true).unwrap();
+
         scene.command(SESSION, jump(NEAR_GATE, 0), NOON);
         assert!(scene.due_jumps(NOON + seconds(3)).0.is_empty());
         assert!(scene.due_jumps(NOON + seconds(4) - 1).0.is_empty());
@@ -2533,6 +3279,10 @@ pub(crate) mod tests {
             ),
             (SESSION, 30_000_001, NEAR_GATE, OTHER_SYSTEM, ARRIVAL_GATE)
         );
+        let heat_module = &traveller.pilot.heat.modules[&module_id];
+        assert!(!heat_module.overloaded);
+        assert_eq!(heat_module.pending_overload, None);
+        assert_eq!(traveller.pilot.heat.levels[HeatRack::Medium.index()], 42.0);
         assert!(scene.is_empty(), "it is no longer here");
         assert!(scene.due_jumps(NOON + seconds(9)).0.is_empty(), "and goes once");
     }
@@ -2720,5 +3470,170 @@ pub(crate) mod tests {
             actions_of(&told[0])[1].1.clone()
         };
         assert_eq!(land(), land());
+    }
+
+    fn heat_profile_for_spec(thermodynamics_level: u8) -> HeatProfile {
+        let module = spec().modules[0].clone();
+        HeatProfile {
+            thermodynamics_level,
+            modules: vec![HeatModuleProfile {
+                module_id: module.item_id,
+                flag: module.flag,
+                structure_hp: 40.0,
+                damage_hp: 0.0,
+                heat_damage_hp: 4.0,
+                heat_absorption_rate: 0.01,
+                overloadable: true,
+                heat_immune: false,
+                online: true,
+            }],
+            ..HeatProfile::default()
+        }
+    }
+
+    #[test]
+    fn rack_heat_uses_exponential_generation_and_dissipation() {
+        let generated = rack_heat_after(0.0, 100.0, 0.01, 1.0, 0.01, 10.0);
+        assert!((generated - (100.0 * (1.0 - (-0.1_f64).exp()))).abs() < 1e-9);
+
+        let cooled = rack_heat_after(50.0, 100.0, 0.0, 1.0, 0.01, 10.0);
+        assert!((cooled - (50.0 * (-0.1_f64).exp())).abs() < 1e-9);
+        assert_eq!(rack_heat_after(100.0, 100.0, 0.01, 1.0, 0.01, 10.0), 100.0);
+    }
+
+    #[test]
+    fn heat_damage_chance_is_zero_when_cold_and_falls_off_by_slot_distance() {
+        assert_eq!(heat_damage_chance(0.0, 100.0, 0.63, 0), 0.0);
+        assert_eq!(heat_damage_chance(100.0, 100.0, 0.63, 0), 1.0);
+        let adjacent = heat_damage_chance(50.0, 100.0, 0.63, 1);
+        let far_edge = heat_damage_chance(50.0, 100.0, 0.63, 7);
+        assert!((adjacent - 0.315).abs() < 1e-12);
+        assert!(far_edge > 0.0 && far_edge < adjacent);
+        assert_eq!(heat_damage_chance(50.0, 100.0, 0.63, 0), 0.5);
+    }
+
+    #[test]
+    fn heat_damage_clamps_to_module_structure_and_reports_burnout_at_the_boundary() {
+        assert_eq!(heat_damage_after(38.0, 40.0, 1.0), (39.0, false));
+        assert_eq!(heat_damage_after(39.0, 40.0, 4.0), (40.0, true));
+        assert_eq!(heat_damage_after(0.0, 40.0, 100.0), (40.0, true));
+        assert_eq!(heat_damage_after(40.0, 40.0, 1.0), (40.0, true));
+    }
+
+    #[test]
+    fn overheat_requests_apply_at_cycle_boundaries_and_idle_modules_can_be_primed() {
+        let mut runtime = HeatModuleRuntime {
+            profile: heat_profile_for_spec(1).modules.remove(0),
+            overloaded: false,
+            pending_overload: None,
+            was_running: true,
+            cycle_start: Some(NOON),
+            next_cycle_at: Some(NOON + TICKS_PER_SECOND),
+            completed_cycles: 0,
+        };
+        runtime.request_overheat(true, true);
+        assert!(!runtime.overloaded);
+        assert_eq!(runtime.pending_overload, Some(true));
+        runtime.settle_cycle_boundary();
+        assert!(runtime.overloaded);
+
+        runtime.request_overheat(false, true);
+        assert!(runtime.overloaded);
+        runtime.settle_cycle_boundary();
+        assert!(!runtime.overloaded);
+
+        runtime.request_overheat(true, false);
+        assert!(runtime.overloaded);
+        assert_eq!(runtime.pending_overload, None);
+    }
+
+    #[test]
+    fn scene_requires_thermodynamics_and_supports_idle_module_preheat() {
+        let mut scene = Scene::new(system());
+        let ship = spec();
+        let module_id = ship.modules[0].item_id;
+        scene.undock(SESSION, ship, STATION, NOON).unwrap();
+
+        let mut initial = heat_profile_for_spec(0);
+        initial.initial_rack_heat[HeatRack::Medium.index()] = 37.25;
+        scene.set_heat_profile(SESSION, initial, NOON).unwrap();
+        assert_eq!(scene.rack_heat_level(SESSION, HeatRack::Medium), Some(37.25));
+        assert_eq!(
+            scene.set_module_overheat(SESSION, module_id, true),
+            Err(HeatError::ThermodynamicsRequired)
+        );
+
+        scene.set_heat_profile(SESSION, heat_profile_for_spec(1), NOON).unwrap();
+        assert_eq!(scene.rack_heat_level(SESSION, HeatRack::Medium), Some(37.25));
+        assert_eq!(scene.set_module_overheat(SESSION, module_id, true), Ok(()));
+        assert!(scene.pilots[&SESSION].heat.modules[&module_id].overloaded);
+        assert_eq!(scene.set_rack_overheat(SESSION, HeatRack::Medium, false).unwrap(), vec![module_id]);
+        assert!(!scene.pilots[&SESSION].heat.modules[&module_id].overloaded);
+    }
+
+    #[test]
+    fn jumping_clears_overheat_requests_without_cooling_the_rack_instantly() {
+        let mut scene = Scene::new(system());
+        let ship = spec();
+        let module_id = ship.modules[0].item_id;
+        scene.undock(SESSION, ship, STATION, NOON).unwrap();
+
+        let mut profile = heat_profile_for_spec(1);
+        profile.initial_rack_heat[HeatRack::Medium.index()] = 42.0;
+        scene.set_heat_profile(SESSION, profile, NOON).unwrap();
+        scene.set_module_overheat(SESSION, module_id, true).unwrap();
+        let pilot = scene.pilots.get_mut(&SESSION).unwrap();
+        pilot.heat.modules.get_mut(&module_id).unwrap().pending_overload = Some(false);
+
+        pilot.clear_overheat_for_jump();
+
+        let module = &pilot.heat.modules[&module_id];
+        assert!(!module.overloaded);
+        assert_eq!(module.pending_overload, None);
+        assert_eq!(pilot.heat.levels[HeatRack::Medium.index()], 42.0);
+    }
+
+    #[test]
+    fn an_overheated_cycle_damages_and_burns_a_fitted_module_in_its_rack() {
+        let mut scene = Scene::new(system());
+        let ship = spec();
+        let module_id = ship.modules[0].item_id;
+        scene.undock(SESSION, ship, STATION, NOON).unwrap();
+
+        let mut profile = heat_profile_for_spec(1);
+        profile.modules[0].structure_hp = 4.0;
+        profile.modules[0].heat_damage_hp = 5.0;
+        scene.set_heat_profile(SESSION, profile, NOON).unwrap();
+        scene.pilots.get_mut(&SESSION).unwrap().heat.levels[HeatRack::Medium.index()] = 100.0;
+        scene.set_module_overheat(SESSION, module_id, true).unwrap();
+
+        let effect = crate::modules::Effect {
+            module_id,
+            module_type: 21_857,
+            effect_id: 1,
+            fx: "effects.Test".to_string(),
+            duration_ms: 1_000.0,
+            capacitor_need: 0.0,
+            repeat: 1,
+            target_id: 0,
+            turret: None,
+            action: None,
+            on: None,
+            off: None,
+            on_changes: Vec::new(),
+            off_changes: Vec::new(),
+        };
+        assert!(
+            scene
+                .activate(SESSION, effect, NOON)
+                .iter()
+                .any(|out| matches!(out, Out::Accepted { command: 17, .. }))
+        );
+
+        let told = scene.poll(NOON + TICKS_PER_SECOND);
+        assert!(told.iter().any(|out| matches!(out, Out::Notify { name: "OnModuleAttributeChanges", .. })));
+        let damaged = &scene.pilots[&SESSION].heat.modules[&module_id].profile;
+        assert_eq!(damaged.damage_hp, damaged.structure_hp);
+        assert!(!damaged.online);
     }
 }

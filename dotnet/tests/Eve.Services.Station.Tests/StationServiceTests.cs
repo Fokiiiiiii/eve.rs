@@ -304,6 +304,55 @@ public class StationServiceTests
         Assert.Equal(system.GetProperty("constellationID").GetInt32(), ((PyInt)first[6]).Value);
         Assert.Equal(system.GetProperty("regionID").GetInt32(), ((PyInt)first[7]).Value);
     }
+
+    [PgFact]
+    public async Task Map_security_modified_systems_and_station_counts_use_read_side()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
+        var reads = new Eve.ReadSide.ReadSide(source);
+        var service = new MapService(reads, () => Data.ClockMs);
+        var (session, _) = Data.Session(null);
+
+        Assert.Contains("map.securityModifiedSystems", reads.Names);
+        Assert.Contains("map.stationCount", reads.Names);
+
+        var modified = Assert.IsType<PyObject>(
+            await Data.CallAsync(service, session, "GetSecurityModifiedSystems"));
+        Assert.Equal("eve.common.script.sys.rowset.Rowset", JsSemantics.StringValue(modified.Name));
+        var modifiedFields = Data.Fields(modified);
+        Assert.Equal(
+            ["solarSystemID"],
+            ((PyList)modifiedFields["header"]).Items.Select(JsSemantics.StringValue));
+        Assert.Equal("util.Row", JsSemantics.StringValue(modifiedFields["RowClass"]));
+        Assert.Empty(((PyList)modifiedFields["lines"]).Items);
+
+        var answer = Assert.IsType<PyList>(
+            await Data.CallAsync(service, session, "GetStationCount"));
+        var actual = answer.Items.Select(value =>
+        {
+            var tuple = Assert.IsType<PyTuple>(value).Items;
+            Assert.Equal(2, tuple.Count);
+            return (
+                SolarSystemId: ((PyInt)tuple[0]).Value,
+                StationCount: ((PyInt)tuple[1]).Value);
+        }).ToArray();
+
+        var sde = new SdeReader(source);
+        var systems = await sde.ReadAsync("mapSolarSystems");
+        var stations = await sde.ReadAsync("npcStations");
+        var stationCounts = stations
+            .GroupBy(station => (long)station.Doc.GetProperty("solarSystemID").GetInt32())
+            .ToDictionary(group => group.Key, group => group.Count());
+        var expected = systems
+            .OrderBy(system => system.Key)
+            .Select(system => (
+                SolarSystemId: system.Key,
+                StationCount: (long)stationCounts.GetValueOrDefault(system.Key, 0)))
+            .ToArray();
+
+        Assert.Equal(expected, actual);
+        Assert.Contains(expected, row => row.StationCount == 0);
+    }
 }
 
 public class GuestTests

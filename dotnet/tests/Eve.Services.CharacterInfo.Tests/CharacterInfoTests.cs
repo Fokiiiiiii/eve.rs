@@ -249,8 +249,130 @@ public class CharMgrTests
         Assert.Equal(new PyList(new[] { "contactID", "inWatchlist", "relationshipID", "labelMask" }.Select(c => (PyValue)new PyStr(c)).ToList()), addresses.Entries[0].Value);
         Assert.Equal(new PyToken("util.Row"), addresses.Entries[2].Value);
         Assert.Equal(new PyList([]), addresses.Entries[3].Value);
-        Assert.Equal(new PyList([new PyStr("senderID")]), ((PyDict)((PyObject)contacts["blocked"]).Args).Entries[0].Value);
+        var blocked = (PyObject)contacts["blocked"];
+        Assert.Equal("eve.common.script.sys.rowset.Rowset", JsSemantics.StringValue(blocked.Name));
+        var blockedRows = (PyDict)blocked.Args;
+        Assert.Equal(new PyList([new PyStr("senderID")]), blockedRows.Entries[0].Value);
+        Assert.Equal(new PyList([]), blockedRows.Entries[3].Value);
     }
+
+
+    [PgFact]
+    public async Task Contacts_labels_and_notes_are_read_for_the_bound_character()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var first = await rig.MakeAsync("Ann Lee");
+        var second = await rig.MakeAsync("Bob Lee");
+        var snapshots = new Dictionary<long, CharMgrPersonalData>
+        {
+            [first] = new(
+                [new CharMgrContact(2001, true, -10, 5)],
+                [3001],
+                new Dictionary<long, CharMgrContactLabel> { [4] = new("Fleet", 7) },
+                [new CharMgrOwnerNote(1, "S:Folders", "1::F::0::Main|"), new CharMgrOwnerNote(2, "Briefing", "Dock at Perimeter")],
+                new Dictionary<long, string> { [4001] = "Saved ship note" }),
+            [second] = new(
+                [new CharMgrContact(2002, false, -5, 0)],
+                [],
+                new Dictionary<long, CharMgrContactLabel> { [8] = new("Friends", 3) },
+                [new CharMgrOwnerNote(4, "Personal", "Private note")],
+                new Dictionary<long, string>())
+            {
+                NextOwnerNoteId = 5,
+            }
+        };
+        var service = new CharMgrService(
+            rig.Characters,
+            Rig.Stations,
+            (ownerId, _) => ValueTask.FromResult(snapshots.GetValueOrDefault(ownerId)));
+
+        async Task<PyValue> Ask(long ownerId, string method, params PyValue[] args)
+        {
+            var (session, _) = Rig.Session(ownerId);
+            return await Rig.CallAsync(service, session, method, args);
+        }
+
+        Assert.Equal(
+            Py.KeyVal(
+                ("addresses", Py.Rowset(
+                    ["contactID", "inWatchlist", "relationshipID", "labelMask"],
+                    [new PyList([Id(2001), Id(1), Id(-10), Id(5)])])),
+                ("blocked", Py.Rowset(["senderID"], [new PyList([Id(3001)])]))),
+            await Ask(first, "GetContactList"));
+        Assert.Equal(
+            new PyDict([new KeyValuePair<PyValue, PyValue>(
+                Id(4), Py.KeyVal(("labelID", Id(4)), ("name", new PyStr("Fleet")), ("color", Id(7))))]),
+            await Ask(first, "GetLabels"));
+        Assert.Equal(
+            Py.Rowset(["noteID", "label"], [
+                new PyList([Id(1), new PyStr("S:Folders")]),
+                new PyList([Id(2), new PyStr("Briefing")]),
+            ]),
+            await Ask(first, "GetOwnerNoteLabels"));
+        Assert.Equal(
+            new PyList([Py.KeyVal(("noteID", Id(2)), ("label", new PyStr("Briefing")), ("note", new PyStr("Dock at Perimeter")))]),
+            await Ask(first, "GetOwnerNote", Id(2)));
+        Assert.Equal(new PyStr("Saved ship note"), await Ask(first, "GetNote", Id(4001)));
+
+        Assert.Equal(
+            Py.KeyVal(
+                ("addresses", Py.Rowset(
+                    ["contactID", "inWatchlist", "relationshipID", "labelMask"],
+                    [new PyList([Id(2002), Id(0), Id(-5), Id(0)])])),
+                ("blocked", Py.Rowset(["senderID"], []))),
+            await Ask(second, "GetContactList"));
+        Assert.Equal(
+            new PyDict([new KeyValuePair<PyValue, PyValue>(
+                Id(8), Py.KeyVal(("labelID", Id(8)), ("name", new PyStr("Friends")), ("color", Id(3))))]),
+            await Ask(second, "GetLabels"));
+        Assert.Equal(
+            Py.Rowset(["noteID", "label"], [
+                new PyList([Id(4), new PyStr("Personal")]),
+                new PyList([Id(5), new PyStr("S:Folders")]),
+            ]),
+            await Ask(second, "GetOwnerNoteLabels"));
+        Assert.Equal(
+            new PyList([Py.KeyVal(
+                ("noteID", Id(5)),
+                ("label", new PyStr("S:Folders")),
+                ("note", new PyStr("1::F::0::Main|")))]),
+            await Ask(second, "GetOwnerNote", Id(5)));
+        Assert.Equal(new PyStr(""), await Ask(second, "GetNote", Id(4001)));
+    }
+
+    [PgFact]
+    public async Task Social_and_note_reads_keep_the_Evejs_empty_contract()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var id = await rig.MakeAsync("Ann Lee");
+        var (session, _) = Rig.Session(id);
+        Task<PyValue> Ask(string method, params PyValue[] args) => Rig.CallAsync(rig.CharMgr, session, method, args);
+
+        Assert.Equal(new PyDict([]), await Ask("GetLabels"));
+        Assert.Equal(
+            Py.Rowset(["noteID", "label"], [new PyList([Id(1), new PyStr("S:Folders")])]),
+            await Ask("GetOwnerNoteLabels"));
+        Assert.Equal(
+            new PyList([Py.KeyVal(
+                ("noteID", Id(1)),
+                ("label", new PyStr("S:Folders")),
+                ("note", new PyStr("1::F::0::Main|")))]),
+            await Ask("GetOwnerNote", Id(1)));
+        Assert.Equal(
+            new PyList([Py.KeyVal(
+                ("noteID", Id(999)),
+                ("label", new PyStr("")),
+                ("note", new PyStr("")))]),
+            await Ask("GetOwnerNote", Id(999)));
+        Assert.Equal(new PyStr(""), await Ask("GetNote", Id(123)));
+
+        var (unbound, _) = Rig.Session(null);
+        Assert.Equal(
+            Py.Rowset(["noteID", "label"], []),
+            await Rig.CallAsync(rig.CharMgr, unbound, "GetOwnerNoteLabels"));
+    }
+
+
 }
 
 public class AccountTests

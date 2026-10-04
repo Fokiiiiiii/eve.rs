@@ -1072,3 +1072,713 @@ public static void ApplicationChanged(CharacterSessions? sessions,ServiceCall ca
         catch (Exception) { }
     }
 }
+
+// Wire behavior follows EveJS v0.12.9 standingMgrService.js / standingRuntime.js (828823a75f211fdecb945b087a26c225f111491f)
+// and eve-logic V24.01 standingsvc.py (1dbb5711a072a146e1d228365668ac05655eefe1).
+/// <summary>The client's standing manager, backed by shared affiliation and standing relations.</summary>
+/// <summary>Read-only projection of war relations into the warsInfoMgr wire contract.</summary>
+[Eve.Services.Service("warsInfoMgr")]
+public sealed partial class WarsInfoMgrService
+{
+    private const string WarKind = "war";
+    private const string WarAllyKind = "war.ally";
+    private const string RowsetName = "carbon.common.script.sys.crowset.CRowset";
+    private const long MaxSafeInteger = 9_007_199_254_740_991L;
+    private const long FileTimeEpochThreshold = 100_000_000_000_000_000L;
+    private static readonly (string Name, int Type)[] WarColumns =
+    [
+        ("warID", 0x03), ("declaredByID", 0x03), ("againstID", 0x03),
+        ("timeDeclared", 0x40), ("timeFinished", 0x40), ("retracted", 0x40),
+        ("retractedBy", 0x03), ("timeStarted", 0x40), ("billID", 0x03),
+        ("mutual", 0x0b), ("createdFromWarID", 0x03), ("openForAllies", 0x0b),
+        ("canBeRetracted", 0x0b), ("reasonEnded", 0x11), ("warHQ", 0x14),
+        ("noOfAllies", 0x03), ("reasonStarted", 0x11)
+    ];
+    private static readonly System.Text.RegularExpressions.Regex PickledInt =
+        new(@"(?:^|\n)I(-?\d+)\na", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    private static readonly System.Text.RegularExpressions.Regex PickledLong =
+        new(@"(?:^|\n)L(-?\d+)L\na", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private readonly Eve.Relations.RelationStore _relations;
+    private readonly Func<long> _nowUnixMs;
+
+    public WarsInfoMgrService(Eve.Relations.RelationStore relations, Func<long> nowUnixMs)
+    {
+        _relations = relations;
+        _nowUnixMs = nowUnixMs;
+    }
+
+    [Eve.Services.Method("GetWarsByOwnerID")]
+    public async ValueTask<Eve.Marshal.PyValue> GetWarsByOwnerID(Eve.Services.ServiceCall call)
+    {
+        var ownerId = PositiveId(call.Arg(0)) ?? 0;
+        var wars = await WarsAsync(call.Cancellation);
+        WarRecord[] rows = ownerId == 0 ? [] : wars.Where(war => Owns(war, ownerId)).OrderBy(war => war.WarId).ToArray();
+        return Eve.Services.ObjectCaching.MethodResult(Rowset(rows), _nowUnixMs(), "15 minutes");
+    }
+
+    [Eve.Services.Method("GetWarsByOwners")]
+    public async ValueTask<Eve.Marshal.PyValue> GetWarsByOwners(Eve.Services.ServiceCall call)
+    {
+        var ownerIds = OwnerIds(call.Arg(0));
+        var wars = await WarsAsync(call.Cancellation);
+        return new Eve.Marshal.PyDict([.. ownerIds.Select(ownerId =>
+            new KeyValuePair<Eve.Marshal.PyValue, Eve.Marshal.PyValue>(
+                Number(ownerId),
+                new Eve.Marshal.PyDict([.. wars.Where(war => Owns(war, ownerId)).OrderBy(war => war.WarId)
+                    .Select(war => new KeyValuePair<Eve.Marshal.PyValue, Eve.Marshal.PyValue>(Number(war.WarId), Payload(war)))])))]);
+    }
+
+    [Eve.Services.Method("GetWarsRequiringAssistance")]
+    public async ValueTask<Eve.Marshal.PyValue> GetWarsRequiringAssistance(Eve.Services.ServiceCall call)
+    {
+        var ownerId = IntegerValue(call.Arg(0));
+        if (ownerId == 0)
+        {
+            ownerId = SessionOwnerId(call.Session);
+        }
+        if (ownerId == 0)
+        {
+            return new Eve.Marshal.PyList([]);
+        }
+
+        var wars = await WarsAsync(call.Cancellation);
+        return new Eve.Marshal.PyList([.. wars
+            .Where(war => war.AgainstId == ownerId && war.OpenForAllies)
+            .OrderBy(war => war.WarId)
+            .Select(Payload)]);
+    }
+
+    [Eve.Services.Method("GetTop50")]
+    public async ValueTask<Eve.Marshal.PyValue> GetTop50(Eve.Services.ServiceCall call)
+    {
+        var maximum = IntegerValue(call.Arg(0));
+        if (maximum == 0)
+        {
+            maximum = MaxSafeInteger;
+        }
+        var wars = await WarsAsync(call.Cancellation);
+        var rows = wars.Where(war => war.WarId < maximum).OrderByDescending(war => war.WarId).Take(50).ToArray();
+        return Eve.Services.ObjectCaching.MethodResult(Rowset(rows), _nowUnixMs(), "15 minutes");
+    }
+
+    [Eve.Services.Method("GetPublicWarInfo")]
+    public async ValueTask<Eve.Marshal.PyValue> GetPublicWarInfo(Eve.Services.ServiceCall call)
+    {
+        var warId = PositiveId(call.Arg(0)) ?? 0;
+        if (warId == 0)
+        {
+            return Eve.Marshal.PyNone.Instance;
+        }
+
+        var wars = await WarsAsync(call.Cancellation);
+        var war = wars.FirstOrDefault(candidate => candidate.WarId == warId);
+        return war is null ? Eve.Marshal.PyNone.Instance : Payload(war);
+    }
+
+    [Eve.Services.Method("GetWarsForStructure")]
+    public async ValueTask<Eve.Marshal.PyValue> GetWarsForStructure(Eve.Services.ServiceCall call)
+    {
+        var structureId = PositiveId(call.Arg(0)) ?? 0;
+        if (structureId == 0)
+        {
+            return new Eve.Marshal.PyList([]);
+        }
+
+        var wars = await WarsAsync(call.Cancellation);
+        return new Eve.Marshal.PyList([.. wars.Where(war => war.WarHqId == structureId)
+            .OrderByDescending(war => war.TimeDeclared)
+            .ThenBy(war => war.WarId)
+            .Select(Payload)]);
+    }
+
+    private async Task<IReadOnlyList<WarRecord>> WarsAsync(CancellationToken token)
+    {
+        var warsTask = _relations.ListAsync(WarKind, token);
+        var alliesTask = _relations.ListAsync(WarAllyKind, token);
+        await Task.WhenAll(warsTask, alliesTask);
+        var allies = alliesTask.Result.GroupBy(row => row.Object)
+            .ToDictionary(group => group.Key, group => group.OrderBy(row => row.Subject).ToArray());
+        return [.. warsTask.Result.Select(war =>
+        {
+            allies.TryGetValue(war.Id, out var warAllies);
+            return Record(war, warAllies ?? []);
+        })];
+    }
+
+    private static WarRecord Record(Eve.Relations.Relation relation, IReadOnlyList<Eve.Relations.Relation> allies)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(string.IsNullOrWhiteSpace(relation.AttrsJson) ? "{}" : relation.AttrsJson);
+        var attrs = document.RootElement.Clone();
+        return new WarRecord(
+            relation.Id, relation.Subject, relation.Object,
+            FileTime(attrs, "timeDeclared", relation.SinceMs),
+            FileTime(attrs, "timeStarted", relation.SinceMs),
+            OptionalFileTime(attrs, "timeFinished", relation.UntilMs),
+            OptionalFileTime(attrs, "retracted", null),
+            OptionalLong(attrs, "retractedBy"),
+            OptionalLong(attrs, "billID"),
+            Flag(attrs, "mutual"), Flag(attrs, "openForAllies"),
+            OptionalLong(attrs, "createdFromWarID"),
+            OptionalLong(attrs, "warHQID"),
+            OptionalLong(attrs, "warHQ"),
+            Integer(attrs, "reasonEnded"), Integer(attrs, "reasonStarted"),
+            Number(attrs, "reward"),
+            [.. allies.Select(ReadAlly)]);
+    }
+
+    private static AllyInfo ReadAlly(Eve.Relations.Relation relation)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(string.IsNullOrWhiteSpace(relation.AttrsJson) ? "{}" : relation.AttrsJson);
+        var attrs = document.RootElement.Clone();
+        return new AllyInfo(relation.Subject, FileTime(attrs, "timeStarted", relation.SinceMs),
+            OptionalFileTime(attrs, "timeFinished", relation.UntilMs));
+    }
+
+    private static bool Owns(WarRecord war, long id) =>
+        war.DeclaredById == id || war.AgainstId == id || war.Allies.Any(ally => ally.AllyId == id);
+
+    private static Eve.Marshal.PyValue Payload(WarRecord war)
+    {
+        var allies = new Eve.Marshal.PyDict([.. war.Allies.Select(ally =>
+            new KeyValuePair<Eve.Marshal.PyValue, Eve.Marshal.PyValue>(
+                Number(ally.AllyId),
+                Eve.Services.Py.KeyVal(
+                    ("allyID", Number(ally.AllyId)),
+                    ("timeStarted", Eve.Services.Py.FileTimeLong(ally.TimeStarted)),
+                    ("timeFinished", Time(ally.TimeFinished)))))]);
+
+        return Eve.Services.Py.KeyVal(
+            ("warID", Number(war.WarId)),
+            ("declaredByID", Number(war.DeclaredById)),
+            ("againstID", Number(war.AgainstId)),
+            ("warHQID", OptionalNumber(war.WarHqId)),
+            ("warHQ", OptionalNumber(war.WarHqId)),
+            ("timeDeclared", Eve.Services.Py.FileTimeLong(war.TimeDeclared)),
+            ("timeStarted", Eve.Services.Py.FileTimeLong(war.TimeStarted)),
+            ("timeFinished", Time(war.TimeFinished)),
+            ("retracted", Time(war.Retracted)),
+            ("retractedBy", OptionalNumber(war.RetractedBy)),
+            ("billID", OptionalNumber(war.BillId)),
+            ("mutual", new Eve.Marshal.PyInt(war.Mutual ? 1 : 0)),
+            ("openForAllies", new Eve.Marshal.PyInt(war.OpenForAllies ? 1 : 0)),
+            ("createdFromWarID", OptionalNumber(war.CreatedFromWarId)),
+            ("reward", Eve.Services.Py.Number(war.Reward)),
+            ("allies", allies));
+    }
+
+    private static Eve.Marshal.PyValue Rowset(IReadOnlyList<WarRecord> wars)
+    {
+        var descriptor = Eve.Marshal.Descriptor.FromHeader(new Eve.Marshal.PyObjectEx(
+            Eve.Marshal.ObjectExKind.Ex1,
+            Eve.Services.Py.Tuple(new Eve.Marshal.PyToken("blue.DBRowDescriptor"),
+                Eve.Services.Py.Tuple(Eve.Services.Py.Tuple([.. WarColumns.Select(column =>
+                    (Eve.Marshal.PyValue)Eve.Services.Py.Tuple(new Eve.Marshal.PyStr(column.Name), new Eve.Marshal.PyInt(column.Type)))]))),
+            [], []));
+        var header = Eve.Services.Py.Tuple(
+            Eve.Services.Py.Tuple(new Eve.Marshal.PyToken(RowsetName)),
+            Eve.Services.Py.Dict(("header", descriptor.Header)));
+        var rows = wars.Select(war => (Eve.Marshal.PyValue)new Eve.Marshal.PyPackedRow(descriptor,
+        [
+            Number(war.WarId), Number(war.DeclaredById), Number(war.AgainstId),
+            Eve.Services.Py.FileTimeLong(war.TimeDeclared), Time(war.TimeFinished), Time(war.Retracted),
+            OptionalNumber(war.RetractedBy), Eve.Services.Py.FileTimeLong(war.TimeStarted), OptionalNumber(war.BillId),
+            new Eve.Marshal.PyInt(war.Mutual ? 1 : 0), OptionalNumber(war.CreatedFromWarId),
+            new Eve.Marshal.PyInt(war.OpenForAllies ? 1 : 0),
+            new Eve.Marshal.PyInt(war.TimeFinished is null && war.Retracted is null ? 1 : 0),
+            new Eve.Marshal.PyInt(war.ReasonEnded), OptionalNumber(war.WarHqId ?? war.WarHq),
+            new Eve.Marshal.PyInt(war.Allies.Count), new Eve.Marshal.PyInt(war.ReasonStarted)
+        ]));
+        return new Eve.Marshal.PyObjectEx(Eve.Marshal.ObjectExKind.Ex2, header, [.. rows], []);
+    }
+
+    private static long SessionOwnerId(Eve.Services.ClientSession session) =>
+        PositiveId(session.Get("allianceID")) ?? PositiveId(session.Get("allianceid")) ??
+        PositiveId(session.Get("corporationID")) ?? PositiveId(session.Get("corpid")) ?? 0;
+
+    private static long? PositiveId(Eve.Marshal.PyValue? value)
+    {
+        var id = IntegerValue(value);
+        return id > 0 ? id : null;
+    }
+
+    private static long IntegerValue(Eve.Marshal.PyValue? value) => value switch
+    {
+        Eve.Marshal.PyInt integer => integer.Value,
+        Eve.Marshal.PyLong integer => integer.Value,
+        Eve.Marshal.PyBool boolean => boolean.Value ? 1 : 0,
+        Eve.Marshal.PyReal number when double.IsFinite(number.Value) && number.Value >= long.MinValue && number.Value <= long.MaxValue => (long)number.Value,
+        Eve.Marshal.PyStr text when long.TryParse(text.Value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsed) => parsed,
+        Eve.Marshal.PyWString text when long.TryParse(text.Value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsed) => parsed,
+        Eve.Marshal.PyToken text when long.TryParse(text.Value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsed) => parsed,
+        _ => 0
+    };
+
+    private static long[] OwnerIds(Eve.Marshal.PyValue raw)
+    {
+        IEnumerable<Eve.Marshal.PyValue> values = raw switch
+        {
+            Eve.Marshal.PyList list => list.Items,
+            Eve.Marshal.PyTuple tuple => tuple.Items,
+            Eve.Marshal.PyObjectEx { Kind: Eve.Marshal.ObjectExKind.Ex1, Header: Eve.Marshal.PyTuple header }
+                when header.Items.Count > 1 && IsSetName(header.Items[0]) =>
+                    header.Items[1] is Eve.Marshal.PyTuple args && args.Items.Count > 0 ? Sequence(args.Items[0]) : [],
+            Eve.Marshal.PyCPickled pickle => PickledOwnerIds(pickle),
+            _ => []
+        };
+        return [.. values.Select(IntegerValue).Where(id => id != 0).Distinct()];
+    }
+
+    private static bool IsSetName(Eve.Marshal.PyValue value) =>
+        value is Eve.Marshal.PyToken token && token.Value is "__builtin__.set" or "builtins.set";
+
+    private static IEnumerable<Eve.Marshal.PyValue> Sequence(Eve.Marshal.PyValue value) => value switch
+    {
+        Eve.Marshal.PyList list => list.Items,
+        Eve.Marshal.PyTuple tuple => tuple.Items,
+        _ => []
+    };
+
+    private static IEnumerable<Eve.Marshal.PyValue> PickledOwnerIds(Eve.Marshal.PyCPickled pickle)
+    {
+        var text = System.Text.Encoding.ASCII.GetString(pickle.Value.Span);
+        if (!text.Contains("set\n", StringComparison.Ordinal) ||
+            (!text.Contains("c__builtin__\nset\n", StringComparison.Ordinal) &&
+             !text.Contains("cbuiltins\nset\n", StringComparison.Ordinal)))
+        {
+            return [];
+        }
+
+        var values = new List<Eve.Marshal.PyValue>();
+        foreach (System.Text.RegularExpressions.Match match in PickledInt.Matches(text))
+        {
+            if (long.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var value))
+            {
+                values.Add(new Eve.Marshal.PyLong(value));
+            }
+        }
+        foreach (System.Text.RegularExpressions.Match match in PickledLong.Matches(text))
+        {
+            if (long.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var value))
+            {
+                values.Add(new Eve.Marshal.PyLong(value));
+            }
+        }
+        return values;
+    }
+
+    private static Eve.Marshal.PyValue Number(long value) => Eve.Services.Py.Number(value);
+    private static Eve.Marshal.PyValue OptionalNumber(long? value) => value is { } id ? Number(id) : Eve.Marshal.PyNone.Instance;
+    private static Eve.Marshal.PyValue Time(long? value) => value is { } filetime ? Eve.Services.Py.FileTimeLong(filetime) : Eve.Marshal.PyNone.Instance;
+
+    private static long FileTime(System.Text.Json.JsonElement attrs, string key, long fallbackUnixMs) =>
+        TryLong(attrs, key, out var value) ? NormalizeTime(value) : Eve.Services.Py.FileTimeFromUnixMs(fallbackUnixMs);
+
+    private static long? OptionalFileTime(System.Text.Json.JsonElement attrs, string key, long? fallbackUnixMs)
+    {
+        if (TryLong(attrs, key, out var value))
+        {
+            return value == 0 ? null : NormalizeTime(value);
+        }
+        return fallbackUnixMs is { } unixMs ? Eve.Services.Py.FileTimeFromUnixMs(unixMs) : null;
+    }
+
+    private static long NormalizeTime(long value) =>
+        value == 0 || value >= FileTimeEpochThreshold ? value : Eve.Services.Py.FileTimeFromUnixMs(value);
+
+    private static long? OptionalLong(System.Text.Json.JsonElement attrs, string key) =>
+        TryLong(attrs, key, out var value) && value != 0 ? value : null;
+
+    private static int Integer(System.Text.Json.JsonElement attrs, string key) =>
+        TryLong(attrs, key, out var value) && value is >= int.MinValue and <= int.MaxValue ? (int)value : 0;
+
+    private static double Number(System.Text.Json.JsonElement attrs, string key)
+    {
+        if (TryProperty(attrs, key, out var value))
+        {
+            if (value.ValueKind == System.Text.Json.JsonValueKind.Number && value.TryGetDouble(out var number) && double.IsFinite(number))
+            {
+                return number;
+            }
+            if (value.ValueKind == System.Text.Json.JsonValueKind.String &&
+                double.TryParse(value.GetString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out number) &&
+                double.IsFinite(number))
+            {
+                return number;
+            }
+        }
+        return 0;
+    }
+
+    private static bool Flag(System.Text.Json.JsonElement attrs, string key)
+    {
+        if (!TryProperty(attrs, key, out var value))
+        {
+            return false;
+        }
+        return value.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.True => true,
+            System.Text.Json.JsonValueKind.False or System.Text.Json.JsonValueKind.Null => false,
+            System.Text.Json.JsonValueKind.Number => value.TryGetDouble(out var number) && number != 0,
+            System.Text.Json.JsonValueKind.String => bool.TryParse(value.GetString(), out var boolean)
+                ? boolean
+                : long.TryParse(value.GetString(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var integer) && integer != 0,
+            _ => false
+        };
+    }
+
+    private static bool TryLong(System.Text.Json.JsonElement attrs, string key, out long value)
+    {
+        if (TryProperty(attrs, key, out var element))
+        {
+            if (element.ValueKind == System.Text.Json.JsonValueKind.Number && element.TryGetInt64(out value))
+            {
+                return true;
+            }
+            if (element.ValueKind == System.Text.Json.JsonValueKind.String &&
+                long.TryParse(element.GetString(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out value))
+            {
+                return true;
+            }
+        }
+        value = 0;
+        return false;
+    }
+
+    private static bool TryProperty(System.Text.Json.JsonElement attrs, string key, out System.Text.Json.JsonElement value)
+    {
+        if (attrs.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            foreach (var property in attrs.EnumerateObject())
+            {
+                if (property.Name.Equals(key, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+        value = default;
+        return false;
+    }
+
+    private sealed record WarRecord(long WarId, long DeclaredById, long AgainstId, long TimeDeclared,
+        long TimeStarted, long? TimeFinished, long? Retracted, long? RetractedBy, long? BillId,
+        bool Mutual, bool OpenForAllies, long? CreatedFromWarId, long? WarHqId, long? WarHq,
+        int ReasonEnded, int ReasonStarted, double Reward, IReadOnlyList<AllyInfo> Allies);
+
+    private sealed record AllyInfo(long AllyId, long TimeStarted, long? TimeFinished);
+}
+
+[Service("standingMgr")]
+public sealed partial class StandingMgrService
+{
+    private const string NpcNpcQuery = "standing.npcNpc";
+    private const string CharacterQuery = "standing.character";
+    private const string CorporationQuery = "standing.corporation";
+    private const string TransactionQuery = "standing.transactions";
+    private const string CompositionQuery = "standing.compositions";
+    private readonly Eve.ReadSide.ReadSide _reads;
+    private readonly Eve.Corporations.CorporationStore _corporations;
+    private readonly Func<long> _nowUnixMs;
+
+    public StandingMgrService(Eve.ReadSide.ReadSide reads, Eve.Corporations.CorporationStore corporations, Func<long> nowUnixMs)
+    {
+        _reads = reads;
+        _corporations = corporations;
+        _nowUnixMs = nowUnixMs;
+
+        reads.Register(new Eve.ReadSide.RowsetQuery(
+            NpcNpcQuery,
+            """
+            (
+                WITH npc AS (
+                    SELECT key::bigint AS id,
+                           NULLIF(doc->>'factionID', '')::bigint AS faction_id,
+                           NULLIF(doc->>'enemyID', '')::bigint AS enemy_id,
+                           NULLIF(doc->>'friendID', '')::bigint AS friend_id
+                    FROM {sde}."npcCorporations"
+                ),
+                factions AS (
+                    SELECT key::bigint AS id,
+                           NULLIF(doc->>'corporationID', '')::bigint AS corporation_id
+                    FROM {sde}.factions
+                ),
+                relations AS (
+                    SELECT faction_id AS from_id, id AS to_id, 2::double precision AS standing
+                    FROM npc WHERE faction_id IS NOT NULL
+                    UNION ALL
+                    SELECT id, faction_id, 2::double precision
+                    FROM npc WHERE faction_id IS NOT NULL
+                    UNION ALL
+                    SELECT id, enemy_id, -1::double precision
+                    FROM npc WHERE enemy_id IS NOT NULL
+                    UNION ALL
+                    SELECT id, friend_id, 1::double precision
+                    FROM npc WHERE friend_id IS NOT NULL
+                    UNION ALL
+                    SELECT faction.id, enemy.faction_id, -1::double precision
+                    FROM factions faction
+                    JOIN npc executive ON executive.id = faction.corporation_id
+                    JOIN npc enemy ON enemy.id = executive.enemy_id
+                    WHERE enemy.faction_id IS NOT NULL AND enemy.faction_id <> faction.id
+                    UNION ALL
+                    SELECT faction.id, friend.faction_id, 1::double precision
+                    FROM factions faction
+                    JOIN npc executive ON executive.id = faction.corporation_id
+                    JOIN npc friend ON friend.id = executive.friend_id
+                    WHERE friend.faction_id IS NOT NULL AND friend.faction_id <> faction.id
+                )
+                SELECT from_id, to_id, max(standing) AS standing
+                FROM relations
+                WHERE from_id <> to_id
+                GROUP BY from_id, to_id
+            ) npc_standings
+            """,
+            [
+                Eve.ReadSide.Column.Of("fromID", Eve.ReadSide.ColumnType.Int, "from_id"),
+                Eve.ReadSide.Column.Of("toID", Eve.ReadSide.ColumnType.Int, "to_id"),
+                Eve.ReadSide.Column.Of("standing", Eve.ReadSide.ColumnType.Real, "standing"),
+            ])
+        {
+            OrderBy = "fromID, toID",
+            Cache = true,
+        });
+        reads.Register(new Eve.ReadSide.RowsetQuery(
+            CharacterQuery,
+            "{relations}.relations",
+            [
+                Eve.ReadSide.Column.Of("fromID", Eve.ReadSide.ColumnType.Int, "subject"),
+                Eve.ReadSide.Column.Of("standing", Eve.ReadSide.ColumnType.Real, "value"),
+            ])
+        {
+            Where = "kind = 'standing' AND object = $1",
+            OrderBy = "fromID",
+        });
+        reads.Register(new Eve.ReadSide.RowsetQuery(
+            CorporationQuery,
+            """
+            (
+                WITH direct AS (
+                    SELECT subject AS from_id, floor(value * 1000 + 0.5) / 1000 AS standing
+                    FROM {relations}.relations
+                    WHERE kind = 'standing' AND object = $1
+                ),
+                member_average AS (
+                    SELECT standing.subject AS from_id,
+                           floor(avg(standing.value) * 1000 + 0.5) / 1000 AS standing
+                    FROM {relations}.relations member
+                    JOIN {relations}.relations standing
+                      ON standing.kind = 'standing' AND standing.object = member.subject
+                    WHERE member.kind = 'affiliation.corporation' AND member.object = $1
+                    GROUP BY standing.subject
+                )
+                SELECT from_id, standing FROM direct
+                UNION ALL
+                SELECT from_id, standing FROM member_average
+                WHERE NOT EXISTS (SELECT 1 FROM direct)
+            ) standings
+            """,
+            [
+                Eve.ReadSide.Column.Of("fromID", Eve.ReadSide.ColumnType.Int, "from_id"),
+                Eve.ReadSide.Column.Of("standing", Eve.ReadSide.ColumnType.Real, "standing"),
+            ])
+        {
+            OrderBy = "fromID",
+        });
+        reads.Register(new Eve.ReadSide.RowsetQuery(
+            TransactionQuery,
+            "{relations}.relation_history",
+            [
+                Eve.ReadSide.Column.Of("atMs", Eve.ReadSide.ColumnType.Long, "at_ms"),
+                Eve.ReadSide.Column.Of("oldValue", Eve.ReadSide.ColumnType.Real, "old_value"),
+                Eve.ReadSide.Column.Of("newValue", Eve.ReadSide.ColumnType.Real, "new_value"),
+                Eve.ReadSide.Column.Of("reason", Eve.ReadSide.ColumnType.Text, "reason"),
+            ])
+        {
+            Where = "kind = 'standing' AND subject = $1 AND object = $2",
+            OrderBy = "at_ms DESC, id DESC",
+            Limit = 512,
+        });
+        reads.Register(new Eve.ReadSide.RowsetQuery(
+            CompositionQuery,
+            """
+            {relations}.relations member
+            JOIN {relations}.relations standing
+              ON standing.kind = 'standing'
+             AND standing.subject = $1
+             AND standing.object = member.subject
+            """,
+            [
+                Eve.ReadSide.Column.Of("standing", Eve.ReadSide.ColumnType.Real,
+                    "floor(standing.value * 1000 + 0.5) / 1000"),
+                Eve.ReadSide.Column.Of("ownerID", Eve.ReadSide.ColumnType.Int, "member.subject"),
+            ])
+        {
+            Where = "member.kind = 'affiliation.corporation' AND member.object = $2",
+            OrderBy = "standing DESC, ownerID",
+        });
+    }
+
+    [Method("GetNPCNPCStandings")]
+    public async ValueTask<PyValue> GetNPCNPCStandings(ServiceCall call)
+    {
+        var rows = await _reads.RowsAsync(NpcNpcQuery, cancellationToken: call.Cancellation);
+        return Rowset(rows);
+    }
+
+    [Method("GetCharStandings")]
+    public async ValueTask<PyValue> GetCharStandings(ServiceCall call)
+    {
+        var characterId = call.Session.CharacterId.GetValueOrDefault();
+        if (characterId == 0)
+        {
+            characterId = call.Session.GetInt("characterID") ?? 0;
+        }
+        var rows = await _reads.RowsAsync(CharacterQuery, [characterId], call.Cancellation);
+        return Rowset(rows);
+    }
+
+    [Method("GetCorpStandings")]
+    public async ValueTask<PyValue> GetCorpStandings(ServiceCall call)
+    {
+        var corporationId = call.Session.GetInt("corporationID") ?? call.Session.GetInt("corpid") ?? 0;
+        var rows = await _reads.RowsAsync(CorporationQuery, [corporationId], call.Cancellation);
+        return Rowset(rows);
+    }
+
+    [Method("GetStandingTransactions")]
+    public async ValueTask<PyValue> GetStandingTransactions(ServiceCall call)
+    {
+        var fromId = PositiveId(call.Arg(0));
+        var toId = PositiveId(call.Arg(1));
+        if (fromId == 0 || toId == 0)
+        {
+            return new PyList([]);
+        }
+        var rows = await _reads.RowsAsync(TransactionQuery, [fromId, toId], call.Cancellation);
+        var transactions = new List<PyValue>(rows.Count);
+        foreach (var row in rows.Rows)
+        {
+            if (row[3] is not string reason ||
+                !TryStandingTransaction(reason, Convert.ToInt64(row[0]), row[1], row[2], fromId, toId, out var transaction))
+            {
+                continue;
+            }
+            transactions.Add(transaction);
+        }
+        return new PyList(transactions);
+    }
+
+    [Method("GetStandingCompositions")]
+    public async ValueTask<PyValue> GetStandingCompositions(ServiceCall call)
+    {
+        var fromId = PositiveId(call.Arg(0));
+        var corporationId = PositiveId(call.Arg(1));
+        if (fromId == 0 || corporationId == 0 ||
+            await _corporations.GetAsync(corporationId, call.Cancellation) is not { IsNpc: false })
+        {
+            return EmptyCompositionRowset();
+        }
+        var rows = await _reads.RowsAsync(CompositionQuery, [fromId, corporationId], call.Cancellation);
+        return ObjectCaching.MethodResult(rows.ToCRowset(), _nowUnixMs(), "5 minutes", "corpid");
+    }
+
+    private static PyValue Rowset(Eve.ReadSide.RowSet rows) => new PyObject(
+        new PyStr("eve.common.script.sys.rowset.Rowset"),
+        Py.Dict(
+            ("header", new PyList([.. rows.Columns.Select(column => (PyValue)new PyStr(column.Name))])),
+            ("RowClass", new PyToken("util.Row")),
+            ("lines", new PyList([.. rows.Rows.Select(row => (PyValue)new PyList(rows.Values(row)))]))));
+
+    private static PyValue EmptyCompositionRowset() => new PyObject(
+        new PyStr("carbon.common.script.sys.crowset.CRowset"),
+        Py.Dict(
+            ("header", Eve.Marshal.Descriptor.FromHeader(new PyObjectEx(
+                ObjectExKind.Ex1,
+                Py.Tuple(new PyToken("blue.DBRowDescriptor"), Py.Tuple(
+                    Py.Tuple(Py.Tuple(new PyStr("standing"), new PyInt(5))),
+                    Py.Tuple(Py.Tuple(new PyStr("ownerID"), new PyInt(3))))),
+                [],
+                [])).Header),
+            ("RowClass", new PyToken("util.Row")),
+            ("lines", new PyList([]))));
+
+    private static long PositiveId(PyValue value) => value switch
+    {
+        PyInt integer when integer.Value > 0 => integer.Value,
+        PyLong integer when integer.Value > 0 => integer.Value,
+        PyReal number when double.IsFinite(number.Value) && number.Value > 0 && number.Value <= long.MaxValue => (long)number.Value,
+        _ => 0,
+    };
+
+    private static bool TryStandingTransaction(
+        string reason,
+        long atMs,
+        object? oldValue,
+        object? newValue,
+        long fromId,
+        long toId,
+        out PyValue transaction)
+    {
+        transaction = PyNone.Instance;
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(reason);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("eventTypeID", out var eventTypeValue) ||
+                !eventTypeValue.TryGetInt32(out var eventTypeId) ||
+                eventTypeId <= 0)
+            {
+                return false;
+            }
+            var oldNumber = oldValue is null ? 0d : Convert.ToDouble(oldValue);
+            var newNumber = newValue is null ? 0d : Convert.ToDouble(newValue);
+            var modification = JsonNumber(root, "modification") ?? newNumber - oldNumber;
+            var eventDateTime = JsonLong(root, "eventDateTime") ?? Py.FileTimeFromUnixMs(atMs);
+            var message = root.TryGetProperty("msg", out var msg) && msg.ValueKind == System.Text.Json.JsonValueKind.String
+                ? msg.GetString() ?? ""
+                : "";
+            transaction = Py.KeyVal(
+                ("eventTypeID", new PyInt(eventTypeId)),
+                ("eventDateTime", new PyLong(eventDateTime)),
+                ("modification", Py.Number(modification)),
+                ("fromID", new PyInt(fromId)),
+                ("toID", new PyInt(toId)),
+                ("msg", new PyWString(message)),
+                ("int_1", JsonLong(root, "int_1") is { } first ? new PyInt(first) : PyNone.Instance),
+                ("int_2", JsonLong(root, "int_2") is { } second ? new PyInt(second) : PyNone.Instance),
+                ("int_3", JsonLong(root, "int_3") is { } third ? new PyInt(third) : PyNone.Instance));
+            return true;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static double? JsonNumber(System.Text.Json.JsonElement root, string name) =>
+        root.TryGetProperty(name, out var value) &&
+        value.ValueKind == System.Text.Json.JsonValueKind.Number &&
+        value.TryGetDouble(out var number) &&
+        double.IsFinite(number)
+            ? number
+            : null;
+
+    private static long? JsonLong(System.Text.Json.JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var value))
+        {
+            return null;
+        }
+        if (value.ValueKind == System.Text.Json.JsonValueKind.Number && value.TryGetInt64(out var number))
+        {
+            return number;
+        }
+        return value.ValueKind == System.Text.Json.JsonValueKind.String &&
+               long.TryParse(value.GetString(), out var parsed)
+            ? parsed
+            : null;
+    }
+}

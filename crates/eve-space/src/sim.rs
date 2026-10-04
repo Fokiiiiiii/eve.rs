@@ -301,6 +301,46 @@ impl Sim {
                 return Ok(vec![Message::HelloAck { version: PROTOCOL_VERSION, poll_hz: POLL_HZ }]);
             }
             Message::Enter(enter) => return Ok(self.enter(*enter, now)),
+            Message::HeatProfile { session_id, profile } => {
+                let Some(scene) = self.scene_of(session_id) else {
+                    return Err(ProtocolError("a heat profile names a session not in space".to_string()));
+                };
+                scene
+                    .set_heat_profile(session_id, profile, now)
+                    .map_err(|error| ProtocolError(format!("invalid heat profile: {error:?}")))?;
+                return Ok(Vec::new());
+            }
+            Message::ModuleOverheat { session_id, module_id, active } => {
+                let Some(scene) = self.scene_of(session_id) else {
+                    return Err(ProtocolError(
+                        "a module overheat request names a session not in space".to_string(),
+                    ));
+                };
+                scene
+                    .set_module_overheat(session_id, module_id, active)
+                    .map_err(|error| ProtocolError(format!("module overheat request failed: {error:?}")))?;
+                return Ok(Vec::new());
+            }
+            Message::ModuleOffline { session_id, module_id } => {
+                let Some(scene) = self.scene_of(session_id) else {
+                    return Err(ProtocolError(
+                        "a module offline request names a session not in space".to_string(),
+                    ));
+                };
+                let out = scene.offline_module(session_id, module_id, now);
+                return Ok(Self::messages(out));
+            }
+            Message::RackOverheat { session_id, rack, active } => {
+                let Some(scene) = self.scene_of(session_id) else {
+                    return Err(ProtocolError(
+                        "a rack overheat request names a session not in space".to_string(),
+                    ));
+                };
+                scene
+                    .set_rack_overheat(session_id, rack, active)
+                    .map_err(|error| ProtocolError(format!("rack overheat request failed: {error:?}")))?;
+                return Ok(Vec::new());
+            }
             Message::Leave { session_id, why } => {
                 let why = match why {
                     0 => Departure::Docked,
@@ -1264,6 +1304,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_offline_message_stops_a_running_module_immediately_and_idempotently() {
+        let mut sim = undocked();
+        sim.handle(
+            Message::Activate { session_id: SESSION, effect: Box::new(afterburner(77)) },
+            NOON + 40 * SECOND,
+        )
+        .unwrap();
+        let stopped = sim
+            .handle(Message::ModuleOffline { session_id: SESSION, module_id: 77 }, NOON + 41 * SECOND)
+            .unwrap();
+        assert!(!stopped.is_empty(), "the running effect is ended immediately");
+        let repeated = sim
+            .handle(Message::ModuleOffline { session_id: SESSION, module_id: 77 }, NOON + 42 * SECOND)
+            .unwrap();
+        assert!(repeated.is_empty(), "repeating offline after it stopped is idempotent");
+    }
+
     fn names(messages: &[Message]) -> Vec<String> {
         messages
             .iter()
@@ -1464,6 +1522,49 @@ mod tests {
         let out =
             sim.handle(Message::ShipSpec { session_id: SESSION, ship: Box::new(faster) }, NOON).unwrap();
         assert_eq!(names(&out), ["DoDestinyUpdate"]);
+    }
+
+    #[test]
+    fn a_heat_profile_link_message_installs_dogma_module_data_for_scene_overload() {
+        let mut simulation = sim();
+        let entering = enter(SESSION, STATION, SYSTEM);
+        let fitted = match &entering {
+            Message::Enter(entry) => entry.ship.modules.clone(),
+            _ => unreachable!(),
+        };
+        simulation.handle(entering, NOON).unwrap();
+        let profile = crate::scene::HeatProfile {
+            generation_multiplier: 1.0,
+            damage_multiplier: 0.95,
+            thermodynamics_level: 1,
+            capacity: [100.0; 3],
+            initial_rack_heat: [0.0; 3],
+            dissipation_rate: [0.01; 3],
+            attenuation: [0.71; 3],
+            modules: fitted
+                .iter()
+                .filter(|module| (11..=34).contains(&module.flag))
+                .map(|module| crate::scene::HeatModuleProfile {
+                    module_id: module.item_id,
+                    flag: module.flag,
+                    structure_hp: 100.0,
+                    damage_hp: 0.0,
+                    heat_damage_hp: 6.0,
+                    heat_absorption_rate: 0.01,
+                    overloadable: true,
+                    heat_immune: false,
+                    online: true,
+                })
+                .collect(),
+        };
+        let module_id = profile.modules[0].module_id;
+        simulation.handle(Message::HeatProfile { session_id: SESSION, profile }, NOON).unwrap();
+        assert!(
+            simulation
+                .handle(Message::ModuleOverheat { session_id: SESSION, module_id, active: true }, NOON)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

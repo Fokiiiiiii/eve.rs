@@ -124,6 +124,9 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
 public sealed partial class MapService
 {
     private const string StationInfoQuery = "map.stationInfo";
+    // The pinned EVE.js handler returns no modified systems; do not infer overrides from base SDE security.
+    private const string SecurityModifiedSystemsQuery = "map.securityModifiedSystems";
+    private const string StationCountQuery = "map.stationCount";
     private readonly Eve.ReadSide.ReadSide _reads;
     private readonly Func<long> _nowUnixMs;
 
@@ -154,6 +157,36 @@ public sealed partial class MapService
             OrderBy = "stationID",
             Cache = true,
         });
+        reads.Register(new Eve.ReadSide.RowsetQuery(
+            SecurityModifiedSystemsQuery,
+            "{sde}.\"mapSolarSystems\"",
+            [
+                Eve.ReadSide.Column.Of("solarSystemID", Eve.ReadSide.ColumnType.Int, "key::integer"),
+            ])
+        {
+            Where = "false",
+            OrderBy = "solarSystemID",
+            Cache = true,
+        });
+        reads.Register(new Eve.ReadSide.RowsetQuery(
+            StationCountQuery,
+            """
+            (
+                SELECT s.key::integer AS solarSystemID, COUNT(n.key)::integer AS stationCount
+                FROM {sde}."mapSolarSystems" s
+                LEFT JOIN {sde}."npcStations" n
+                  ON n.doc->>'solarSystemID' = s.key
+                GROUP BY s.key
+            ) mapStationCounts
+            """,
+            [
+                Eve.ReadSide.Column.Of("solarSystemID", Eve.ReadSide.ColumnType.Int, "mapStationCounts.solarSystemID"),
+                Eve.ReadSide.Column.Of("stationCount", Eve.ReadSide.ColumnType.Int, "mapStationCounts.stationCount"),
+            ])
+        {
+            OrderBy = "solarSystemID",
+            Cache = true,
+        });
     }
 
     [Method("GetStationInfo")]
@@ -161,5 +194,21 @@ public sealed partial class MapService
     {
         var rows = await _reads.RowsAsync(StationInfoQuery, cancellationToken: call.Cancellation);
         return ObjectCaching.MethodResult(rows.ToRowset(), _nowUnixMs());
+    }
+
+    [Method("GetSecurityModifiedSystems")]
+    public async ValueTask<PyValue> GetSecurityModifiedSystems(ServiceCall call)
+    {
+        var rows = await _reads.RowsAsync(SecurityModifiedSystemsQuery, cancellationToken: call.Cancellation);
+        return rows.ToRowset();
+    }
+
+    [Method("GetStationCount")]
+    public async ValueTask<PyValue> GetStationCount(ServiceCall call)
+    {
+        var rows = await _reads.RowsAsync(StationCountQuery, cancellationToken: call.Cancellation);
+        return new PyList([.. rows.Rows.Select(row => Py.Tuple(
+            new PyInt(Convert.ToInt64(row[0])),
+            new PyInt(Convert.ToInt64(row[1]))))]);
     }
 }

@@ -12,6 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Eve.Services.Space/Eve.Services.Space.csproj" />
+    <ProjectReference Include="../../src/Eve.Services.Inventory/Eve.Services.Inventory.csproj" />
     <ProjectReference Include="../../src/Eve.Services.Dogma/Eve.Services.Dogma.csproj" />
     <ProjectReference Include="../../src/Eve.Wallet/Eve.Wallet.csproj" />
     <ProjectReference Include="../../src/Eve.Data/Eve.Data.csproj" />

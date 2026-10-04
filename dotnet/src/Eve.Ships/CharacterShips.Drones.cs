@@ -71,7 +71,7 @@ public sealed partial class CharacterShips
     /// The drone, in the solar system, goes into the drone bay of the character's ship. The bay keeps room for the drones that are still out (<paramref name="stillOut"/>, their item ids),
     /// as the reference's does, so a drone that was launched always has a berth waiting; one that was not (a drone found, one let go) must find real room.
     /// </summary>
-    public async Task<DroneScoop> ScoopDroneAsync(long characterId, long shipId, long droneId, int solarSystemId, IReadOnlyCollection<long> stillOut, CancellationToken cancellationToken = default)
+    internal async Task<DroneScoop> ScoopDroneAsync(long characterId, long shipId, long droneId, int solarSystemId, IReadOnlyCollection<long> stillOut, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -79,7 +79,8 @@ public sealed partial class CharacterShips
 
         if (await items.LockAndGetAsync(connection, transaction, droneId, cancellationToken) is not { } drone
             || drone.OwnerId != characterId || drone.LocationId != solarSystemId || drone.Flag != InSpaceFlag
-            || await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Id != shipId)
+            || await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Id != shipId
+            || snapshot.Ship.LocationId != solarSystemId || snapshot.Ship.Flag != InSpaceFlag)
         {
             return new DroneNotThere();
         }
@@ -143,4 +144,22 @@ public sealed partial class CharacterShips
         }
         return returned;
     }
+
+
+    /// <summary>The in-space <c>invbroker.GetCapacity(87)</c> answer: the active ship's drone capacity and the volume physically in its bay.</summary>
+    public async Task<Room?> DroneBayRoomInSpaceAsync(long characterId, long shipId, int solarSystemId, CancellationToken cancellationToken = default)
+    {
+        if (await items.GetAsync(shipId, cancellationToken) is not { } ship
+            || ship.OwnerId != characterId || ship.LocationId != solarSystemId || ship.Flag != InSpaceFlag
+            || await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Id != shipId
+            || snapshot.Ship.LocationId != solarSystemId || snapshot.Ship.Flag != InSpaceFlag)
+        {
+            return null;
+        }
+
+        var contents = (await items.InContainerAsync(shipId, cancellationToken)).Where(i => i.Flag == DroneBayFlag);
+        return new Room(snapshot.World.Get(shipId, DroneCapacityAttribute), await VolumeOfAsync(contents, cancellationToken));
+    }
+
+    /// <summary>The in-space <c>invbroker.Add</c> destination for a drone bay. A valid Add moves one owned drone item into the active ship's bay.</summary>
 }

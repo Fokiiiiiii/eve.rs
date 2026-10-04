@@ -12,5 +12,6 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Eve.Ships.Tests" />
+    <InternalsVisibleTo Include="Eve.Services.Space" />
   </ItemGroup>
 </Project>

@@ -9,8 +9,33 @@ namespace Eve.Services.CharacterInfo;
 /// home station, the creation date, the contact list. Notes, contacts and settings that a player edits come with the
 /// modules that keep them; until then those answer as for a player with none.
 /// </summary>
+public sealed record CharMgrContact(long ContactId, bool InWatchlist, long RelationshipId, long LabelMask);
+
+public sealed record CharMgrContactLabel(string Name, long Color);
+
+public sealed record CharMgrOwnerNote(long NoteId, string Label, string Note);
+
+public sealed record CharMgrPersonalData(
+    IReadOnlyList<CharMgrContact> Contacts,
+    IReadOnlyList<long> BlockedSenders,
+    IReadOnlyDictionary<long, CharMgrContactLabel> Labels,
+    IReadOnlyList<CharMgrOwnerNote> OwnerNotes,
+    IReadOnlyDictionary<long, string> ItemNotes)
+{
+    public static CharMgrPersonalData Empty { get; } = new(
+        Array.Empty<CharMgrContact>(),
+        Array.Empty<long>(),
+        new Dictionary<long, CharMgrContactLabel>(),
+        Array.Empty<CharMgrOwnerNote>(),
+        new Dictionary<long, string>());
+
+    public long? NextOwnerNoteId { get; init; }
+}
 [Service("charMgr")]
-public sealed partial class CharMgrService(PgCharacterStore characters, StationCatalog stations)
+public sealed partial class CharMgrService(
+    PgCharacterStore characters,
+    StationCatalog stations,
+    Func<long, CancellationToken, ValueTask<CharMgrPersonalData?>>? readPersonalData = null)
 {
     /// <summary>The reference's default text for the character description is its own branding; a new character has none.</summary>
     private const string NoDescription = "";
@@ -135,10 +160,134 @@ public sealed partial class CharMgrService(PgCharacterStore characters, StationC
     public PyValue GetSettingsInfo(ServiceCall call) => Py.Tuple(new PyBuffer(SettingsCode), new PyInt(0));
 
     /// <summary>The contacts and the blocked senders: none until the contacts module exists.</summary>
+    private async ValueTask<CharMgrPersonalData> ReadPersonalDataAsync(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } characterId || characterId <= 0 || readPersonalData is null)
+        {
+            return CharMgrPersonalData.Empty;
+        }
+
+        return await readPersonalData(characterId, call.Cancellation) ?? CharMgrPersonalData.Empty;
+    }
+
     [Method("GetContactList")]
-    public PyValue GetContactList(ServiceCall call) => Py.KeyVal(
-        ("addresses", Py.Rowset(["contactID", "inWatchlist", "relationshipID", "labelMask"], [])),
-        ("blocked", Py.Rowset(["senderID"], [])));
+
+    public async ValueTask<PyValue> GetContactList(ServiceCall call)
+    {
+        var data = await ReadPersonalDataAsync(call);
+        var addresses = data.Contacts
+            .Where(contact => contact.ContactId > 0)
+            .OrderBy(contact => contact.ContactId)
+            .Select(contact => (PyValue)new PyList([
+                new PyInt(contact.ContactId),
+                new PyInt(contact.InWatchlist ? 1 : 0),
+                new PyInt(contact.RelationshipId),
+                new PyInt(contact.LabelMask),
+            ]))
+            .ToArray();
+        var blocked = data.BlockedSenders
+            .Where(senderId => senderId > 0)
+            .Distinct()
+            .Order()
+            .Select(senderId => (PyValue)new PyList([new PyInt(senderId)]))
+            .ToArray();
+
+        return Py.KeyVal(
+            ("addresses", Py.Rowset(["contactID", "inWatchlist", "relationshipID", "labelMask"], addresses)),
+            ("blocked", Py.Rowset(["senderID"], blocked)));
+    }
+
+
+
+    [Method("GetLabels")]
+
+    public async ValueTask<PyValue> GetLabels(ServiceCall call)
+    {
+        var data = await ReadPersonalDataAsync(call);
+        var entries = data.Labels
+            .Where(label => label.Key > 0)
+            .OrderBy(label => label.Key)
+            .Select(label => new KeyValuePair<PyValue, PyValue>(
+                new PyInt(label.Key),
+                Py.KeyVal(
+                    ("labelID", new PyInt(label.Key)),
+                    ("name", new PyStr(label.Value.Name)),
+                    ("color", new PyInt(label.Value.Color)))))
+            .ToArray();
+        return new PyDict(entries);
+    }
+
+
+
+    /// <summary>The reference exposes its default notes folder for a bound character.</summary>
+    private static CharMgrOwnerNote? DefaultFoldersNote(CharMgrPersonalData data)
+    {
+        if (data.OwnerNotes.Any(note => note.Label == "S:Folders"))
+        {
+            return null;
+        }
+
+        var usedIds = data.OwnerNotes.Select(note => note.NoteId).ToHashSet();
+        var noteId = data.NextOwnerNoteId is > 0 ? data.NextOwnerNoteId.Value : 1;
+        while (usedIds.Contains(noteId) && noteId < long.MaxValue)
+        {
+            noteId++;
+        }
+
+        return usedIds.Contains(noteId)
+            ? null
+            : new CharMgrOwnerNote(noteId, "S:Folders", "1::F::0::Main|");
+    }
+
+    [Method("GetOwnerNoteLabels")]
+
+    public async ValueTask<PyValue> GetOwnerNoteLabels(ServiceCall call)
+    {
+        var data = await ReadPersonalDataAsync(call);
+        var notes = data.OwnerNotes
+            .Where(note => note.NoteId > 0)
+            .OrderBy(note => note.NoteId)
+            .ToList();
+        if (call.Session.CharacterId is > 0 && DefaultFoldersNote(data) is { } defaultFolders)
+        {
+            notes.Add(defaultFolders);
+            notes.Sort((left, right) => left.NoteId.CompareTo(right.NoteId));
+        }
+
+        var rows = notes
+            .Select(note => (PyValue)new PyList([new PyInt(note.NoteId), new PyStr(note.Label ?? "")]))
+            .ToArray();
+        return Py.Rowset(["noteID", "label"], rows);
+    }
+
+    /// <summary>An absent note is returned in the one-row KeyVal list expected by the client.</summary>
+    [Method("GetOwnerNote")]
+
+    public async ValueTask<PyValue> GetOwnerNote(ServiceCall call)
+    {
+        var noteId = IdOf(call.Arg(0)) ?? 0;
+        var data = await ReadPersonalDataAsync(call);
+        var note = data.OwnerNotes.FirstOrDefault(entry => entry.NoteId == noteId);
+        if (note is null && call.Session.CharacterId is > 0 && DefaultFoldersNote(data) is { } defaultFolders &&
+            defaultFolders.NoteId == noteId)
+        {
+            note = defaultFolders;
+        }
+
+        return new PyList([Py.KeyVal(
+            ("noteID", new PyInt(noteId)),
+            ("label", new PyStr(note?.Label ?? "")),
+            ("note", new PyStr(note?.Note ?? "")))]);
+    }
+
+    [Method("GetNote")]
+
+    public async ValueTask<PyValue> GetNote(ServiceCall call)
+    {
+        var itemId = IdOf(call.Arg(0)) ?? 0;
+        var data = await ReadPersonalDataAsync(call);
+        return new PyStr(data.ItemNotes.GetValueOrDefault(itemId, ""));
+    }
 
     [Method("GetRecentShipKillsAndLosses")]
     public PyValue GetRecentShipKillsAndLosses(ServiceCall call) => new PyList([]);

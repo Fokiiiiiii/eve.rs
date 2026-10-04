@@ -203,6 +203,22 @@ public class DogmaServiceTests
         var shipInfo = Dict(Field(await rig.CallAsync(session, "GetAllInfo", oid, Everything), "shipInfo"));
         Assert.Equal([588, 21857, 3636, 3651], shipInfo.Entries.Select(e => (int)((PyInt)((PyPackedRow)Field(e.Value, "invItem")).Values[1]).Value));
     }
+
+
+    [PgFact]
+    public async Task GetAvailableTurretSlots_returns_the_active_ships_remaining_hardpoints_as_a_python_integer()
+    {
+        var (rig, character, session, oid) = await BoundAsync();
+        await using var _ = rig;
+        var snapshot = await rig.Ships.LoadAsync(character.CharacterId);
+        Assert.NotNull(snapshot);
+        var expected = Math.Max(0L, (long)snapshot.World.Get(snapshot.Ship.Id, Eve.Dogma.BuiltInEffects.TurretSlotsLeft));
+
+        var result = await rig.CallAsync(session, "GetAvailableTurretSlots", oid);
+
+        Assert.IsType<PyInt>(result);
+        Assert.Equal(expected, Id(result));
+    }
 }
 
 public class ShipEventTests

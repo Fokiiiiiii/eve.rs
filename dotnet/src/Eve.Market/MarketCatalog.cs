@@ -8,9 +8,10 @@ namespace Eve.Market;
 public sealed record MarketGroup(int Id,int? ParentId,string Name,string Description,int? IconId,bool HasTypes);
 
 /// <summary>Static EVE market groups loaded from the current SDE.</summary>
-public sealed class MarketCatalog(IReadOnlyList<MarketGroup> groups)
+public sealed class MarketCatalog(IReadOnlyList<MarketGroup> groups,IReadOnlySet<long>? npcStationIds=null)
 {
-    public IReadOnlyList<MarketGroup> Groups { get; } = groups;
+    public IReadOnlyList<MarketGroup> Groups { get; }=groups;
+    public IReadOnlySet<long> NpcStationIds { get; }=npcStationIds ?? new HashSet<long>();
 
     public static async Task<MarketCatalog> LoadAsync(SdeReader sde,CancellationToken token = default)
     {
@@ -21,8 +22,10 @@ public sealed class MarketCatalog(IReadOnlyList<MarketGroup> groups)
             return new MarketGroup((int)row.Key,OptionalInt("parentGroupID"),SdeReader.English(doc.GetProperty("name")),
                 doc.TryGetProperty("description",out var description) ? SdeReader.English(description) : "",OptionalInt("iconID"),
                 doc.TryGetProperty("hasTypes",out var hasTypes) && hasTypes.ValueKind==JsonValueKind.True);
-        }).ToArray();
-        return new MarketCatalog(groups);
+        }).OrderBy(group=>group.Id).ToArray();
+        var npcStationIds=(await sde.ReadAsync("npcStations",cancellationToken:token))
+            .Select(row=>(long)row.Key).ToHashSet();
+        return new MarketCatalog(groups,npcStationIds);
     }
 }
 

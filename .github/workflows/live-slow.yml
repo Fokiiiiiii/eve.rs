@@ -48,19 +48,19 @@ jobs:
       KEEP_LOGS: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - id: sde-build
         run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .cache/sde
           key: sde-${{ steps.sde-build.outputs.build }}
@@ -78,7 +78,7 @@ jobs:
         run: tools/dev/run-eve-live.sh
       - name: Keep the logs of the stack
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: live-slow-logs
           path: .live-logs

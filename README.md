@@ -49,6 +49,13 @@ EVE_PG_URL=$(tools/dev/pg18.sh url) cargo test --workspace
 cargo run --release -p eve-bench -- --compare
 ```
 
+## Shared foundations
+
+Features do not keep timers, event hooks or tables of running things of their own: the server has a durable scheduler (`Eve.Scheduler`), an
+event bus with a transactional outbox (`Eve.Events`), a relation store for standings, wars, security status and affiliation (`Eve.Relations`),
+a content runtime for missions, anomalies and incursions (`Eve.Content`), an effect registry for what modules do (`Eve.Dogma`), and a rowset
+read side (`Eve.ReadSide`). Read [`docs/FOUNDATIONS.md`](docs/FOUNDATIONS.md) before adding a feature.
+
 ## Development environment and CI
 
 - **GitHub Codespaces / Dev Container** (`.devcontainer/`): the Rust toolchain, the .NET 10 SDK, Python and a PostgreSQL 18

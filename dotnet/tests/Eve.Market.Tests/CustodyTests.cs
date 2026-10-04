@@ -159,8 +159,9 @@ public sealed class MarketSeedV4StoreTests
             Assert.Equal((2,0L),await SeedState("jita:34:ask"));
             Assert.Equal(2,Assert.Single((await store.BookAsync(location.RegionId,35,now)).Asks).MinimumVolume);
 
-            var invalid=newAsk with { Key="tq:v4:invalid",Volume=26,VolumeRemaining=27 };
-            await Assert.ThrowsAsync<ArgumentException>(()=>store.SeedNpcV4Async(Stream(newAsk,invalid),new string('c',64),3396210,now+2000,()=>now+2100));
+            var invalid=newAsk with { Key="tq:v4:invalid",VolumeRemaining=-1 };
+            var error=await Assert.ThrowsAsync<ArgumentException>(()=>store.SeedNpcV4Async(Stream(newAsk,invalid),new string('c',64),3396210,now+2000,()=>now+2100));
+            Assert.Contains("volume_remain",error.Message);
             await using var state=source.CreateCommand($"SELECT fingerprint,order_count FROM {schema}.market_seed_state WHERE version=4");
             await using var stateReader=await state.ExecuteReaderAsync();
             Assert.True(await stateReader.ReadAsync());

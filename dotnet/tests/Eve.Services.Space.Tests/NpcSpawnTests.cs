@@ -128,7 +128,7 @@ public class NpcSpawnTests
                 Assert.True(weapon.CycleMs >= 1 && weapon.RawDamage.Sum() > 0, $"type {spawn.Ship.TypeId}");
             });
         });
-        // the hulls that fire missiles have no weapon here yet (8 % of the pool), and the report says how many
+        // a hull that has no weapon at all comes unarmed, and the report says how many
         var unarmed = spawns.Count(spawn => spawn.Identity.Weapons.Count == 0);
         Assert.Equal(unarmed, report.Unarmed);
         Assert.InRange(unarmed, 0, 15);
@@ -137,20 +137,25 @@ public class NpcSpawnTests
     }
 
     [PgFact]
-    public async Task A_hull_that_fires_missiles_comes_without_a_weapon_and_the_report_says_so()
+    public async Task A_hull_that_launches_missiles_comes_armed_with_its_launcher()
     {
         var (rig, _, session) = await InSpaceAsync();
         await using var _ = rig;
 
-        // Dire Guristas Invader (type 13041) has no turret effect: the reference arms it with missile launchers, which the simulation cannot fire yet
+        // Dire Guristas Invader (type 13041) has no turret effect: the reference arms it with the launcher of its hull (`missileLaunchingForEntity`) and its missile
         var report = await rig.Space.SpawnNpcsAsync(session, "parity_dire_guristas_invader", 2, CancellationToken.None);
 
         Assert.Null(report.Error);
         Assert.Equal(2, report.Spawned);
-        Assert.Equal(2, report.Unarmed);
+        Assert.Equal(0, report.Unarmed);
         Assert.All(rig.Sim.Heard.OfType<SimSpawn>(), spawn =>
         {
-            Assert.Empty(spawn.Identity.Weapons);
+            var weapon = Assert.Single(spawn.Identity.Weapons);
+            Assert.Equal(spawn.Ship.ShipId, weapon.ModuleId);
+            Assert.Equal(569, weapon.EffectId);
+            // the missile is the one of the hull's own type, found in the static data (loaded with the hull)
+            var missile = Assert.IsType<SimMissile>(weapon.Missile);
+            Assert.True(missile.MaxVelocity > 0 && missile.FlightTimeMs > 0 && weapon.RawDamage.Sum() > 0);
             Assert.Equal(5_000, spawn.Identity.AggressionRange);
             // the type has no lock range (attribute 76) and the sensor range of the NPC is what it attacks at
             Assert.Equal(5_000, spawn.Ship.MaxTargetRange);

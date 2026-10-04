@@ -1,6 +1,8 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Eve.Characters/Eve.Characters.csproj" />
+    <Project Path="src/Eve.Content/Eve.Content.csproj" />
+    <Project Path="src/Eve.Crimewatch/Eve.Crimewatch.csproj" />
     <Project Path="src/Eve.Corporations/Eve.Corporations.csproj" />
     <Project Path="src/Eve.Data/Eve.Data.csproj" />
     <Project Path="src/Eve.GameStore.Import/Eve.GameStore.Import.csproj" />
@@ -14,8 +16,12 @@
     <Project Path="src/Eve.Marshal/Eve.Marshal.csproj" />
     <Project Path="src/Eve.Sde/Eve.Sde.csproj" />
     <Project Path="src/Eve.Dogma/Eve.Dogma.csproj" />
+    <Project Path="src/Eve.Events/Eve.Events.csproj" />
     <Project Path="src/Eve.Fitting/Eve.Fitting.csproj" />
     <Project Path="src/Eve.Ships/Eve.Ships.csproj" />
+    <Project Path="src/Eve.ReadSide/Eve.ReadSide.csproj" />
+    <Project Path="src/Eve.Relations/Eve.Relations.csproj" />
+    <Project Path="src/Eve.Scheduler/Eve.Scheduler.csproj" />
     <Project Path="src/Eve.Skills/Eve.Skills.csproj" />
     <Project Path="src/Eve.Space/Eve.Space.csproj" />
     <Project Path="src/Eve.Universe/Eve.Universe.csproj" />
@@ -23,6 +29,7 @@
     <Project Path="src/Eve.Services.CharacterInfo/Eve.Services.CharacterInfo.csproj" />
     <Project Path="src/Eve.Services.CharacterSelect/Eve.Services.CharacterSelect.csproj" />
     <Project Path="src/Eve.Services.Core/Eve.Services.Core.csproj" />
+    <Project Path="src/Eve.Services.Crimewatch/Eve.Services.Crimewatch.csproj" />
     <Project Path="src/Eve.Services.Generator/Eve.Services.Generator.csproj" />
     <Project Path="src/Eve.Services.Dogma/Eve.Services.Dogma.csproj" />
     <Project Path="src/Eve.Services.Ships/Eve.Services.Ships.csproj" />
@@ -47,11 +54,18 @@
     <Project Path="tests/Eve.Npc.Tests/Eve.Npc.Tests.csproj" />
     <Project Path="tests/Eve.Services.CharacterInfo.Tests/Eve.Services.CharacterInfo.Tests.csproj" />
     <Project Path="tests/Eve.Services.CharacterSelect.Tests/Eve.Services.CharacterSelect.Tests.csproj" />
+    <Project Path="tests/Eve.Content.Tests/Eve.Content.Tests.csproj" />
+    <Project Path="tests/Eve.Crimewatch.Tests/Eve.Crimewatch.Tests.csproj" />
+    <Project Path="tests/Eve.Services.Crimewatch.Tests/Eve.Services.Crimewatch.Tests.csproj" />
     <Project Path="tests/Eve.Corporations.Tests/Eve.Corporations.Tests.csproj" />
     <Project Path="tests/Eve.Dogma.Tests/Eve.Dogma.Tests.csproj" />
+    <Project Path="tests/Eve.Events.Tests/Eve.Events.Tests.csproj" />
     <Project Path="tests/Eve.Fitting.Tests/Eve.Fitting.Tests.csproj" />
     <Project Path="tests/Eve.Services.Wallet.Tests/Eve.Services.Wallet.Tests.csproj" />
     <Project Path="tests/Eve.Ships.Tests/Eve.Ships.Tests.csproj" />
+    <Project Path="tests/Eve.ReadSide.Tests/Eve.ReadSide.Tests.csproj" />
+    <Project Path="tests/Eve.Relations.Tests/Eve.Relations.Tests.csproj" />
+    <Project Path="tests/Eve.Scheduler.Tests/Eve.Scheduler.Tests.csproj" />
     <Project Path="tests/Eve.Skills.Tests/Eve.Skills.Tests.csproj" />
     <Project Path="tests/Eve.Space.Tests/Eve.Space.Tests.csproj" />
     <Project Path="tests/Eve.Universe.Tests/Eve.Universe.Tests.csproj" />

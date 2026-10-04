@@ -1,3 +1,4 @@
+using Eve.Scheduler;
 using System.Collections.Concurrent;
 using Eve.Marshal;
 using Eve.Skills;
@@ -20,7 +21,9 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
     /// <summary>How long after a line is due the queue is settled (the clock and the timer may not agree to the millisecond).</summary>
     private const int GraceMs = 100;
 
-    private readonly ConcurrentDictionary<long, Timer> _timers = new();
+    private readonly LocalTimers _timers = new();
+
+    private static string TimerKey(long characterId) => $"skills.training:{characterId}";
 
     private long NowFileTime => Py.FileTimeFromUnixMs(nowUnixMs());
 
@@ -98,30 +101,26 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
         }
     }
 
-    /// <summary>Arms (or clears) the timer that settles the queue when its running line is due.</summary>
+    /// <summary>Arms (or clears) the timer that settles the queue when its running line is due (a <see cref="LocalTimers"/> timer: what runs in this process for a logged-in character only).</summary>
     public void Reschedule(long characterId, long accountId, TrainingView view)
     {
         if (!schedule)
         {
             return;
         }
-        if (_timers.TryRemove(characterId, out var old))
-        {
-            old.Dispose();
-        }
         if (view.Current?.End is not { } end)
         {
+            _timers.Cancel(TimerKey(characterId));
             return;
         }
         var dueMs = Math.Clamp(((end - Py.FileTimeFromUnixMs(nowUnixMs())) / 10_000) + GraceMs, GraceMs, int.MaxValue - 1);
-        _timers[characterId] = new Timer(_ => _ = FireAsync(characterId, accountId), null, dueMs, Timeout.Infinite);
+        _timers.Set(TimerKey(characterId), TimeSpan.FromMilliseconds(dueMs), () => FireAsync(characterId, accountId));
     }
 
     private async Task FireAsync(long characterId, long accountId)
     {
         try
         {
-            _timers.TryRemove(characterId, out _);
             if (await training.SettleAsync(characterId, accountId) is null)
             {
                 Reschedule(characterId, accountId, await training.ViewAsync(characterId, accountId)); // not due yet after all

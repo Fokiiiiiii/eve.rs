@@ -153,6 +153,49 @@ public sealed class NpcArmamentTests
         Assert.Null(NpcArmament.HullWeapon(Hull(LaserHull, 10), ShipId, Statics(missiles)));
     }
 
+    private static readonly EffectDef LaunchesMissiles = Effect(569, "missileLaunchingForEntity", "effects.MissileDeployment", EffectDef.Target);
+
+    private static DogmaStatic WithMissile(params EffectDef[] effects) =>
+        new([new AttributeDef(247, "entityAttackRange", 15_000, true, false, 0)], effects,
+            [new TypeDef(266, 387, 8, new Dictionary<int, double> { [4] = 100, [9] = 90, [37] = 2_250, [70] = 5.22, [117] = 33, [162] = 300, [281] = 2_000, [653] = 150, [654] = 20, [1353] = 0.644 }, [], "Scourge Rocket")]);
+
+    [Fact]
+    public void A_hull_that_launches_missiles_carries_the_missile_with_its_own_multipliers_and_has_no_rounds_to_spend()
+    {
+        // damage 1.5 times, speed 1.1, flight 1.2, explosion velocity 0.9, explosion radius 2; a cycle of 6 s
+        var hull = Hull([(507, 266), (506, 6_000), (212, 1.5), (645, 1.1), (646, 1.2), (859, 0.9), (858, 2)], 569);
+
+        var weapon = NpcArmament.HullWeapon(hull, ShipId, WithMissile(LaunchesMissiles));
+
+        Assert.NotNull(weapon);
+        Assert.Equal((ShipId, 569, 6_000.0, 0.0, 23245, "effects.MissileDeployment"), (weapon.ModuleId, weapon.EffectId, weapon.CycleMs, weapon.CapacitorNeed, weapon.WeaponTypeId, weapon.Fx));
+        Assert.Equal([0.0, 0.0, 49.5, 0.0], weapon.RawDamage);
+        Assert.Null(weapon.Charge);
+        var missile = weapon.Missile!;
+        Assert.Equal((266, 387, "Scourge Rocket", 300.0, 100.0, 5.22, 90.0), (missile.ChargeTypeId, missile.GroupId, missile.Name, missile.Radius, missile.Mass, missile.Agility, missile.HitPoints));
+        Assert.Equal((2_475.0, 2_400.0, 40.0, 135.0, 0.644, 5.5), (missile.MaxVelocity, missile.FlightTimeMs, missile.ExplosionRadius, missile.ExplosionVelocity, missile.DamageReductionFactor, missile.DamageReductionSensitivity));
+        // how far it goes: its speed for as long as it flies
+        Assert.Equal(5_940.0, weapon.OptimalRange);
+    }
+
+    [Fact]
+    public void A_hull_that_launches_nothing_or_whose_missile_is_not_loaded_has_no_missile_weapon_and_the_cycle_falls_back_to_the_hulls_speed()
+    {
+        Assert.Null(NpcArmament.HullWeapon(Hull([(507, 266)], 569), ShipId, new DogmaStatic([], [LaunchesMissiles], [])));   // the missile type is not known
+        Assert.Null(NpcArmament.HullWeapon(Hull([(507, 0)], 569), ShipId, WithMissile(LaunchesMissiles)));                 // it names none
+        Assert.Null(NpcArmament.HullWeapon(Hull([(507, 266)]), ShipId, WithMissile(LaunchesMissiles)));                    // it does not launch
+        Assert.Equal(4_500.0, NpcArmament.HullWeapon(Hull([(507, 266), (51, 4_500)], 569), ShipId, WithMissile(LaunchesMissiles))!.CycleMs);
+    }
+
+    [Fact]
+    public void A_hull_with_a_turret_and_missiles_is_armed_with_its_turret()
+    {
+        var weapon = NpcArmament.HullWeapon(Hull([.. LaserHull, (507, 266)], 10, 569), ShipId, WithMissile(TargetAttack, LaunchesMissiles));
+
+        Assert.Equal("effects.Laser", weapon!.Fx);
+        Assert.Null(weapon.Missile);
+    }
+
     [Fact]
     public void The_weapon_is_the_first_turret_effect_and_the_fx_the_first_effect_a_pilot_can_run()
     {

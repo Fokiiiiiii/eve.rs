@@ -98,6 +98,22 @@ pub struct NpcCombat {
     pub aggression_range: f64,
 }
 
+/// What makes an NPC's ship a drone: it is a companion of the ship that controls it (`crate::drones`), launched from that ship's drone bay.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DroneLink {
+    /// The session of the pilot whose ship controls the drone, and that ship.
+    pub controller: crate::scene::SessionId,
+    pub controller_ship_id: i64,
+    /// The graphic of the drone's type (its slim item names it).
+    pub graphic_id: i32,
+    /// How far off the controller (or its target) the drone circles, metres (`entityFlyRange`, 500 to 5,000).
+    pub orbit_distance: f64,
+    /// The fraction of its top speed it flies at while it only follows its controller (`entityCruiseSpeed` over `maxVelocity`).
+    pub cruise_fraction: f64,
+    /// What the drone is doing, as the client numbers it (`activityState` of its slim item: 0 idle, 1 fighting, 3 approaching, 4 returning, 6 pursuing).
+    pub activity: i32,
+}
+
 /// What sets an NPC's ship apart from a player's: nobody flies it (its ball has no session and is not interactive), its slim item has no name and
 /// carries the limits the NPC's owner reacts to (`hostile_response_threshold`, `friendly_response_threshold`: the standings at which it treats others
 /// as enemies or friends), and it fights with what `combat` says.
@@ -113,6 +129,8 @@ pub struct NpcIdentity {
     /// The host makes the wreck of this NPC when it is destroyed (an item with what the NPC leaves in it), as it does a player's: the scene makes none and
     /// tells the host what the ship leaves (`Out::Destroyed`).
     pub host_wreck: bool,
+    /// Set for a drone: whose it is.
+    pub drone: Option<DroneLink>,
 }
 
 impl Default for NpcIdentity {
@@ -126,6 +144,7 @@ impl Default for NpcIdentity {
             wreck: None,
             hull: false,
             host_wreck: false,
+            drone: None,
         }
     }
 }
@@ -169,9 +188,10 @@ impl Ship {
 
     /// The ball the destiny stream describes the ship with.
     pub fn ball(&self) -> BallEntity {
+        let drone = self.npc.as_ref().is_some_and(|npc| npc.drone.is_some());
         BallEntity {
             item_id: IdRef::Valid(self.spec.ship_id),
-            kind: Kind::Ship,
+            kind: if drone { Kind::Drone } else { Kind::Ship },
             legacy_mode: match self.course {
                 Course::Goto => LegacyMode::Goto,
                 Course::Stop => LegacyMode::Stop,
@@ -221,6 +241,7 @@ impl Ship {
             has_session: self.npc.is_none(),
             pilot_positive: self.npc.is_none() && self.spec.character_id > 0,
             owner_positive: self.spec.owner_id > 0,
+            controller_positive: drone,
             ..BallEntity::default()
         }
     }

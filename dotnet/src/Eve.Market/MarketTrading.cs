@@ -85,6 +85,14 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             throw new MarketError("MARKET_SETTLEMENT_RECONCILIATION_REQUIRED");
     }
 
+    private static bool HasCorporateHangarTakeRole(SessionRoles? roles,long stationId,int flag)
+    {
+        if (roles is null || flag is < 115 or > 121) return false;
+        var scoped=stationId==roles.HqId ? roles.AtHq : stationId==roles.BaseId ? roles.AtBase : roles.AtOther;
+        // EVE appConst.corpHangarTakeRolesByFlag: flag 115..121 maps to role bits 13..19.
+        return (scoped & (1L << (flag-102))) != 0;
+    }
+
     public Task<MarketReceipt> PlaceAsync(MarketRequest request,string operationKey,CancellationToken token = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(operationKey);
@@ -101,8 +109,14 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
                 await guard.ExecuteNonQueryAsync(token);
             var actor = await characters.LockAndGetAsync(c,tx,request.ActorId,token) ?? throw new MarketError("CHARACTER_NOT_FOUND");
             var station = stations.Get(request.StationId) ?? throw new MarketError("MARKET_STATION_NOT_FOUND");
-            var account = request.UseCorporation
-                ? (await corporations.MarketAuthorityAsync(c,tx,actor.Id,null,station.Id,token)).Wallet : new WalletAccount(actor.Id);
+            var account=new WalletAccount(actor.Id);
+            SessionRoles? corporationRoles=null;
+            if(request.UseCorporation)
+            {
+                var authority=await corporations.MarketAuthorityAsync(c,tx,actor.Id,null,station.Id,token);
+                account=authority.Wallet;
+                corporationRoles=authority.Roles;
+            }
             var terms = new CommandTerms(request,account);
             var fingerprint = JsonSerializer.Serialize(terms);
             await using (var prior = Command(c,tx,$"SELECT fingerprint,result::text FROM {Schema}.commands WHERE operation_key=$1",operationKey))
@@ -135,8 +149,12 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             if (!request.Buying)
             {
                 stock = request.ItemId is { } itemId ? await items.LockAndGetAsync(c,tx,itemId,token) : null;
-                if (stock is null || stock.TypeId != request.TypeId || stock.OwnerId != actor.Id || stock.LocationId != station.Id || stock.Flag != ItemFlags.Hangar ||
-                    stock.Singleton || stock.Quantity < request.Quantity) throw new MarketError("MARKET_ITEM_CUSTODY_INVALID");
+                var personalStock=stock is not null && stock.OwnerId==actor.Id && stock.Flag==ItemFlags.Hangar;
+                var corpStock=stock is not null && stock.OwnerId==account.OwnerId &&
+                    HasCorporateHangarTakeRole(corporationRoles,station.Id,stock.Flag);
+                if (stock is null || stock.TypeId != request.TypeId || stock.LocationId != station.Id ||
+                    (!personalStock && !corpStock) || stock.Singleton || stock.Quantity < request.Quantity)
+                    throw new MarketError("MARKET_ITEM_CUSTODY_INVALID");
             }
             // The lock is per region/type book, not server-wide. Wallet participants use their shared owner/key order.
             await using (var bookLock = Command(c,tx,"SELECT pg_advisory_xact_lock(hashtextextended($1,0))",$"market:{Schema}:book:{station.RegionId}:{request.TypeId}"))
@@ -249,15 +267,16 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
                 await using (var insert = Command(c,tx,$"""
                     INSERT INTO {Schema}.orders(type_id,bid,price,vol_remaining,vol_entered,min_volume,range_value,station_id,solar_system_id,constellation_id,region_id,
                         issued_ms,duration_days,actor_id,wallet_owner_id,account_key,escrow_isk,source_owner_id,source_location_id,source_flag)
-                    VALUES($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$13,$7,4) RETURNING id
+                    VALUES($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id
                     """,request.TypeId,request.Buying,request.Price,remaining,request.Buying ? request.MinimumVolume : 1L,
                     request.Buying ? request.Range : -1,station.Id,station.SolarSystemId,station.ConstellationId,station.RegionId,time,request.Duration,
-                    actor.Id,account.OwnerId,account.AccountKey,request.Buying ? value : 0m))
+                    actor.Id,account.OwnerId,account.AccountKey,request.Buying ? value : 0m,
+                    stock?.OwnerId ?? actor.Id,stock?.LocationId ?? station.Id,stock?.Flag ?? ItemFlags.Hangar))
                     opened = (long)(await insert.ExecuteScalarAsync(token))!;
                 if (!request.Buying)
                 {
                     var rest = await items.LockAndGetAsync(c,tx,stock!.Id,token) ?? throw new MarketError("MARKET_ITEM_CUSTODY_INVALID");
-                    var escrow = await items.MoveStackAsync(c,tx,rest,remaining,actor.Id,EscrowBase+opened.Value,ItemFlags.Hangar,token);
+                    var escrow = await items.MoveStackAsync(c,tx,rest,remaining,stock!.OwnerId,EscrowBase+opened.Value,ItemFlags.Hangar,token);
                     await using var bind = Command(c,tx,$"UPDATE {Schema}.orders SET escrow_item_id=$2 WHERE id=$1",opened.Value,escrow.Id);
                     await bind.ExecuteNonQueryAsync(token);
                 }

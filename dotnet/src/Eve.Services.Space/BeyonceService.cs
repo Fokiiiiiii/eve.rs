@@ -158,6 +158,19 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
         return await space.WarpAsync(call.Session, (long)target, range, call.Cancellation);
     }
 
+
+    /// <summary>Autopilot uses the same warp command but arrives 10 km from its destination.</summary>
+    [Method("CmdWarpToStuffAutopilot")]
+    public async ValueTask<PyValue> CmdWarpToStuffAutopilot(ServiceCall call)
+    {
+        if (!_binding.Owns(call))
+        {
+            return None;
+        }
+        var target = Number(call.Arg(0)) ?? 0;
+        return await space.WarpAsync(call.Session, (long)target, 10_000, call.Cancellation);
+    }
+
     /// <summary>
     /// <c>CmdStargateJump(fromGate, toGate, shipID)</c>: go into a stargate. The answer is the bound object and the time it can be used from again;
     /// the ship is in the other solar system a few seconds later, when the client is told the session has changed.

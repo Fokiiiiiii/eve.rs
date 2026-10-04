@@ -853,6 +853,42 @@ public class SpaceServiceTests
     // ── warp ─────────────────────────────────────────────────────────────────
 
     [PgFact]
+    public async Task Autopilot_warp_uses_the_reference_arrival_range_and_keeps_the_warp_refusal_contract()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        Events.Of(session);
+
+        var answer = await rig.BeyonceCallAsync(session, "CmdWarpToStuffAutopilot", oid, new PyLong(40491233));
+
+        Assert.Equal(PyNone.Instance, answer);
+        Assert.Equal(
+            Describe(new SimCommand((ulong)session.SessionId, SimCommands.WarpTo, [40491233, 10_000])),
+            Describe(rig.Sim.Heard.Last()));
+
+        rig.Sim.WarpAnswer = new CommandReply(false, 0, "WARP_SCRAMBLED");
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.BeyonceCallAsync(session, "CmdWarpToStuffAutopilot", oid, new PyLong(40491233)));
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+
+        var otherCharacter = await rig.NewCharacterAsync("Other Pilot", account: 2);
+        var otherSession = await rig.SessionAsync(otherCharacter, id: 2);
+        var heard = rig.Sim.Heard.Count;
+        Assert.Equal(
+            PyNone.Instance,
+            await rig.BeyonceCallAsync(otherSession, "CmdWarpToStuffAutopilot", oid, new PyLong(40491233)));
+        Assert.Equal(heard, rig.Sim.Heard.Count);
+        Assert.Equal(
+            PyNone.Instance,
+            await rig.BeyonceCallAsync(session, "CmdWarpToStuffAutopilot", null, new PyLong(40491233)));
+        Assert.Equal(heard, rig.Sim.Heard.Count);
+
+        Assert.Single(Events.Of(session), e => e.Name == "OnInvulnCancelled");
+    }
+
+    [PgFact]
     public async Task A_warp_is_given_to_the_simulation_with_the_range_the_client_asked_for_and_ends_the_protection()
     {
         var (rig, _, session) = await DockedAsync();

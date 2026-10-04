@@ -3,7 +3,7 @@
 use eve_marshal::{Descriptor, PackedColumn, PackedRow, Value, dbtype};
 
 use crate::security;
-use crate::ship::{NpcIdentity, Ship, ShipSpec};
+use crate::ship::{DroneLink, NpcIdentity, Ship, ShipSpec};
 use crate::wire::{id, int, list, real, text, tuple, word};
 use crate::world::{Body, BodyKind, Detail, SolarSystem};
 
@@ -126,9 +126,27 @@ pub fn body_entries(system: &SolarSystem, body: &Body) -> Entries {
 /// The entries of a ship's slim item: a player's, or an NPC's (which has no name and ends with the limits of its owner's reactions).
 pub fn ship_entries(ship: &Ship) -> Entries {
     match &ship.npc {
+        Some(NpcIdentity { drone: Some(link), .. }) => drone_entries(&ship.spec, link),
         Some(npc) if !npc.hull => npc_ship_entries(&ship.spec, npc),
         _ => pilot_ship_entries(&ship.spec),
     }
+}
+
+/// The entries of the slim item of a drone, in the order the reference gives them (`oracle/fixtures/scenarios/drone_flight.json`): its type's name, the graphic and what it is doing.
+fn drone_entries(spec: &ShipSpec, link: &DroneLink) -> Entries {
+    vec![
+        ("itemID", id(spec.ship_id)),
+        ("typeID", int(i64::from(spec.type_id))),
+        ("ownerID", int(spec.owner_id)),
+        ("name", text(spec.name.clone())),
+        ("groupID", int(i64::from(spec.group_id))),
+        ("categoryID", int(i64::from(spec.category_id))),
+        ("graphicID", int(i64::from(link.graphic_id))),
+        ("corpID", int(i64::from(spec.corporation_id))),
+        ("allianceID", int(i64::from(spec.alliance_id))),
+        ("warFactionID", int(i64::from(spec.war_faction_id))),
+        ("activityState", int(i64::from(link.activity))),
+    ]
 }
 
 /// The entries of the slim item of an NPC's ship, in the order the reference gives them (`oracle/fixtures/scenarios/jump.json`).

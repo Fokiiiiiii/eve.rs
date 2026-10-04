@@ -190,7 +190,7 @@ public class ProjectedHostTests
 
     private const int MidSlot = 19;
     private const int SmallEmpSmartbomb = 1563;
-    private const int StasisWebifier = 526, WarpScrambler = 447, WarpDisruptor = 3242, TargetPainter = 12709, SensorDampener = 1968, RadarJammer = 1956, MultispectralJammer = 1957, TrackingDisruptorModule = 2108;
+    private const int StasisWebifier = 526, WarpScrambler = 447, WarpDisruptor = 3242, TargetPainter = 12709, SensorDampener = 1968, RadarJammer = 1956, MultispectralJammer = 1957, TrackingDisruptorModule = 2108, GuidanceDisruptorModule = 5321;
 
     private static async Task<(SimAction.Remote Action, SimEffect Effect, Rig Rig, Eve.Characters.Created Character, long Module)> StartedAsync(int typeId, string effectName)
     {
@@ -294,6 +294,24 @@ public class ProjectedHostTests
                 (Math.Round(await ValueAsync(rig, character, module, 351), 6), Math.Round(await ValueAsync(rig, character, module, 349), 6), Math.Round(await ValueAsync(rig, character, module, 767), 6)),
                 (what.RangePercent, what.FalloffPercent, what.TrackingPercent));
             Assert.True(what.RangePercent < 0 && what.FalloffPercent < 0 && what.TrackingPercent < 0, $"{what}");
+            Assert.True(disrupt.Optimal > 0 && effect.DurationMs > 0);
+        }
+    }
+
+    [PgFact]
+    public async Task A_guidance_disruptor_takes_the_percentages_dogma_gives_from_the_speed_the_flight_and_the_explosion_of_the_missiles_of_its_target()
+    {
+        var (disrupt, effect, rig, character, module) = await StartedAsync(GuidanceDisruptorModule, "shipModuleGuidanceDisruptor");
+        await using (rig)
+        {
+            Assert.Equal("ewGuidanceDisrupt", disrupt.Jam);
+            Assert.False(disrupt.AtCycleEnd);
+            var what = Assert.IsType<SimRemote.GuidanceDisrupt>(disrupt.What);
+            Assert.Equal(
+                (Math.Round(await ValueAsync(rig, character, module, 547), 6), Math.Round(await ValueAsync(rig, character, module, 596), 6), Math.Round(await ValueAsync(rig, character, module, 847), 6), Math.Round(await ValueAsync(rig, character, module, 848), 6)),
+                (what.VelocityPercent, what.DelayPercent, what.AoeVelocityPercent, what.AoeCloudPercent));
+            // the missiles go slower and not as far, and burst wider and slower
+            Assert.True(what.VelocityPercent < 0 && what.DelayPercent < 0 && what.AoeVelocityPercent < 0 && what.AoeCloudPercent > 0, $"{what}");
             Assert.True(disrupt.Optimal > 0 && effect.DurationMs > 0);
         }
     }

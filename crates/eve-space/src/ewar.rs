@@ -53,6 +53,13 @@ pub(crate) enum Lasting {
     Scramble { strength: f64, blocks_mwd: bool },
     /// Percentages of the optimal range, the falloff and the tracking speed of the turrets the ship fires (negative for a tracking disruptor).
     Disrupt { range_percent: f64, falloff_percent: f64, tracking_percent: f64 },
+    /// Percentages of the speed, flight time, explosion velocity and explosion radius of the missiles the ship launches (negative but for the radius for a guidance disruptor).
+    GuidanceDisrupt {
+        velocity_percent: f64,
+        delay_percent: f64,
+        aoe_velocity_percent: f64,
+        aoe_cloud_percent: f64,
+    },
     /// Held by an ECM jammer: the ship's locks are broken and it can lock only the ships that jam it.
     Jam,
 }
@@ -158,6 +165,41 @@ impl Incoming {
                 if let Lasting::Disrupt { tracking_percent, .. } = w { Some(*tracking_percent) } else { None }
             }),
         )
+    }
+
+    /// What lands on the ship's missiles: the factors of their speed, flight time, explosion velocity and explosion radius, each stacking with the game's penalty.
+    pub(crate) fn missile_factors(&self) -> crate::missiles::Guidance {
+        let pick = |choose: fn(&Lasting) -> Option<f64>| self.factor(choose);
+        crate::missiles::Guidance {
+            velocity: pick(|w| {
+                if let Lasting::GuidanceDisrupt { velocity_percent, .. } = w {
+                    Some(*velocity_percent)
+                } else {
+                    None
+                }
+            }),
+            flight_time: pick(|w| {
+                if let Lasting::GuidanceDisrupt { delay_percent, .. } = w {
+                    Some(*delay_percent)
+                } else {
+                    None
+                }
+            }),
+            explosion_velocity: pick(|w| {
+                if let Lasting::GuidanceDisrupt { aoe_velocity_percent, .. } = w {
+                    Some(*aoe_velocity_percent)
+                } else {
+                    None
+                }
+            }),
+            explosion_radius: pick(|w| {
+                if let Lasting::GuidanceDisrupt { aoe_cloud_percent, .. } = w {
+                    Some(*aoe_cloud_percent)
+                } else {
+                    None
+                }
+            }),
+        }
     }
 
     pub(crate) fn jammed(&self) -> bool {
@@ -432,6 +474,35 @@ mod tests {
             scan_resolution: 500.0,
         };
         assert_eq!(incoming.worked(&base), base);
+    }
+
+    #[test]
+    fn guidance_disruptions_stack_with_the_penalty_and_work_on_the_missiles_alone() {
+        use crate::missiles::Guidance;
+        let mut incoming = Incoming::default();
+        assert_eq!(incoming.missile_factors(), Guidance::NONE);
+        let disrupt = |velocity, delay, aoe_velocity, aoe_cloud| Lasting::GuidanceDisrupt {
+            velocity_percent: velocity,
+            delay_percent: delay,
+            aoe_velocity_percent: aoe_velocity,
+            aoe_cloud_percent: aoe_cloud,
+        };
+        incoming.upsert(1, 10, disrupt(-10.0, -10.0, -20.0, 20.0), 100);
+        let one = incoming.missile_factors();
+        assert!(
+            (one.velocity - 0.9).abs() < 1e-9
+                && (one.flight_time - 0.9).abs() < 1e-9
+                && (one.explosion_velocity - 0.8).abs() < 1e-9
+                && (one.explosion_radius - 1.2).abs() < 1e-9,
+            "{one:?}"
+        );
+        // a second counts for a little less than the first, in the direction of each (the radius grows, the rest shrink)
+        incoming.upsert(2, 11, disrupt(-10.0, -10.0, -20.0, 20.0), 100);
+        let two = incoming.missile_factors();
+        assert!((two.velocity - 0.9 * (1.0 - 0.1 * penalty(1))).abs() < 1e-9, "{two:?}");
+        assert!(two.velocity < one.velocity && two.explosion_radius > one.explosion_radius);
+        // the turrets of the ship are not touched by it
+        assert_eq!(incoming.weapon_factors(), (1.0, 1.0, 1.0));
     }
 
     #[test]

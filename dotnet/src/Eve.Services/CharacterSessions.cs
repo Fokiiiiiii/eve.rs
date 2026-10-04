@@ -25,6 +25,10 @@ public sealed class CharacterSessions
     public IReadOnlyList<ClientSession> OfUser(long userId) =>
         [.. _byCharacter.Values.Where(s => s.UserId == userId).Distinct()];
 
+    /// <summary>The sessions with a character that are in space (not docked) in a solar system.</summary>
+    public IReadOnlyList<ClientSession> InSpace(long solarSystemId) =>
+        [.. _byCharacter.Values.Where(s => s.CharacterId is not null && s.GetInt("stationid") is null && s.GetInt("solarsystemid") == solarSystemId).Distinct()];
+
     public IReadOnlyList<ClientSession> OfCorporation(long corporationId) =>
         [.. _byCharacter.Values.Where(s => s.CharacterId is not null && s.GetInt("corpid") == corporationId).Distinct()];
 }

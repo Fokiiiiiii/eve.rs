@@ -102,6 +102,30 @@ public sealed class PgItemStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>Makes an item a singleton (an assembled one: a drone that was launched from a stack is one), inside the caller's transaction.</summary>
+    public async Task MakeSingletonAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"UPDATE {_schema}.items SET singleton = true, quantity = 1 WHERE id = $1", connection, transaction)
+        {
+            Parameters = { new() { Value = id } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>Who owns something with this flag, once each (what a sweep for items that are in space asks: a ship, a can or a wreck has the flag of no place).</summary>
+    public async Task<IReadOnlyList<long>> OwnersWithFlagAsync(int flag, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT DISTINCT owner_id FROM {_schema}.items WHERE flag = $1 ORDER BY owner_id");
+        command.Parameters.Add(new NpgsqlParameter { Value = flag });
+        var owners = new List<long>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            owners.Add(reader.GetInt64(0));
+        }
+        return owners;
+    }
+
     /// <summary>Lock an inventory fact in the caller's transaction before deciding custody or quantity.</summary>
     public async Task<Item?> LockAndGetAsync(NpgsqlConnection connection,NpgsqlTransaction transaction,long id,CancellationToken cancellationToken = default)
     {

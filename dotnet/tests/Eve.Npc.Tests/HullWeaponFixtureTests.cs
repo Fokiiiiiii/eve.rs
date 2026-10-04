@@ -1,12 +1,15 @@
 using System.Text.Json;
 using Eve.Dogma;
 using Eve.Npc;
+using Eve.Space;
 
 namespace Eve.Npc.Tests;
 
 /// <summary>
 /// The weapon a hull carries is the one the reference's npcEquipment made of it, for every NPC ship type of the static data
-/// (<c>oracle/fixtures/npc/hull_weapons.json</c>, made by <c>tools/dev/gen-npc-armament-fixture.js</c> with the attributes and effects it worked from).
+/// (<c>oracle/fixtures/npc/hull_weapons.json</c>, made by <c>tools/dev/gen-npc-armament-fixture.js</c> with the attributes and effects it worked from): its turret or, where it
+/// has none, the missile it launches (<c>getNpcEntityMissileWeaponSource</c>). A hull that has both is armed with its turret: an NPC's weapons are effects of its ship, and the
+/// simulation runs one effect of the ship at a time.
 /// </summary>
 public sealed class HullWeaponFixtureTests
 {
@@ -24,7 +27,11 @@ public sealed class HullWeaponFixtureTests
             {
                 Guid = e.Value.GetProperty("guid").GetString()!,
             });
-        var statics = new DogmaStatic([new AttributeDef(247, "entityAttackRange", 15_000, true, false, 0)], effects.Values, []);
+        var missileTypes = fixture.RootElement.GetProperty("missileTypes").EnumerateObject().Select(t => new TypeDef(
+            int.Parse(t.Name), t.Value.GetProperty("groupID").GetInt32(), 8,
+            t.Value.GetProperty("attributes").EnumerateObject().ToDictionary(a => int.Parse(a.Name), a => a.Value.GetDouble()), [], t.Value.GetProperty("name").GetString()!)).ToList();
+        var statics = new DogmaStatic([new AttributeDef(247, "entityAttackRange", 15_000, true, false, 0)], effects.Values, missileTypes);
+        var missiles = 0;
         var cases = fixture.RootElement.GetProperty("cases").EnumerateArray().ToList();
         Assert.True(cases.Count > 4_000, $"{cases.Count} cases");
 
@@ -40,6 +47,15 @@ public sealed class HullWeaponFixtureTests
             // (a vorton projector is not a turret)
             var theirs = c.GetProperty("weapons").EnumerateArray().FirstOrDefault(w => w.GetProperty("family").GetString() is not "vortonProjector");
             var mine = NpcArmament.HullWeapon(hull, ShipId, statics);
+            if (theirs.ValueKind == JsonValueKind.Undefined && c.GetProperty("missile") is { ValueKind: JsonValueKind.Object } launched)
+            {
+                missiles++;
+                if (!SameMissileWeapon(mine, hull, launched, effects))
+                {
+                    wrong.Add($"type {typeId}: mine {mine}, the reference's missile {launched}");
+                }
+                continue;
+            }
             if (theirs.ValueKind == JsonValueKind.Undefined)
             {
                 if (mine is not null)
@@ -72,6 +88,25 @@ public sealed class HullWeaponFixtureTests
             }
         }
         Assert.True(armed > 4_000, $"{armed} armed types");
+        Assert.True(missiles > 500, $"{missiles} hulls that launch missiles and have no turret");
         Assert.True(wrong.Count == 0, $"{wrong.Count} of {cases.Count} differ:\n{string.Join("\n", wrong.Take(20))}");
+    }
+
+    /// <summary>Whether the weapon of a hull is the missile launcher the reference made of it: the effect the hull has, the cycle, the damage, and the missile's speed, flight and explosion.</summary>
+    private static bool SameMissileWeapon(SimNpcWeapon? mine, TypeDef hull, JsonElement theirs, Dictionary<int, EffectDef> effects)
+    {
+        if (mine?.Missile is not { } missile)
+        {
+            return false;
+        }
+        var launcher = hull.EffectIds.Select(id => effects.GetValueOrDefault(id)).FirstOrDefault(e => e is not null && e.Name.Equals("missileLaunchingForEntity", StringComparison.OrdinalIgnoreCase));
+        return launcher is not null
+            && mine.ModuleId == ShipId && mine.EffectId == launcher.Id && mine.WeaponTypeId == hull.TypeId && mine.Charge is null
+            && mine.CycleMs == theirs.GetProperty("durationMs").GetDouble()
+            && mine.OptimalRange == theirs.GetProperty("approxRange").GetDouble()
+            && mine.RawDamage.SequenceEqual(theirs.GetProperty("rawShotDamage").EnumerateArray().Select(d => d.GetDouble()))
+            && (missile.ChargeTypeId, missile.MaxVelocity, missile.FlightTimeMs, missile.ExplosionRadius, missile.ExplosionVelocity, missile.DamageReductionFactor, missile.DamageReductionSensitivity)
+            == (theirs.GetProperty("typeID").GetInt32(), theirs.GetProperty("maxVelocity").GetDouble(), theirs.GetProperty("flightTimeMs").GetDouble(), theirs.GetProperty("explosionRadius").GetDouble(),
+                theirs.GetProperty("explosionVelocity").GetDouble(), theirs.GetProperty("damageReductionFactor").GetDouble(), theirs.GetProperty("damageReductionSensitivity").GetDouble());
     }
 }

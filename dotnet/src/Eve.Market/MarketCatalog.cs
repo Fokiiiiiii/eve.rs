@@ -108,6 +108,7 @@ public static class MarketSeedV4
         if (npcStationIds.Any(id => id <= 0)) throw new ArgumentOutOfRangeException(nameof(npcStationIds));
 
         var capturedAt = capturedAtUtc.ToUniversalTime();
+        var pageSetRefreshMargin = TimeSpan.FromSeconds(5);
         await WriteLineAsync(destination,new HeaderLine("header","market-seed-v4-jsonl",SchemaVersion,Source,
             DataSource,CompatibilityDate,sdeBuild,capturedAt),cancellationToken);
 
@@ -119,61 +120,108 @@ public static class MarketSeedV4
             var regionStart = destination.Position;
             Region? capturedRegion = null;
 
-            for (var attempt = 1; attempt <= MaxRegionAttempts; attempt++)
+            try
+            {
+                for (var attempt = 1; attempt <= MaxRegionAttempts; attempt++)
+                {
+                    destination.Position = regionStart;
+                    destination.SetLength(regionStart);
+                    var pages = new List<PageCache>();
+                    long regionRows = 0;
+                    int? pageCount = null;
+                    DateTimeOffset? pageSetLastModified = null;
+                    DateTimeOffset? pageSetExpires = null;
+                    DateTimeOffset? inconsistentExpires = null;
+                    var lastModifiedSet = false;
+                    var inconsistent = false;
+                    string? inconsistentValidator = null;
+                    var inconsistentPage = 0;
+
+                    for (var page = 1; pageCount is null || page <= pageCount.Value; page++)
+                    {
+                        var fetched = await FetchPageAsync(client,regionId,page,cancellationToken);
+                        if (pageCount is null) pageCount = fetched.PageCount;
+                        if (page == 1) pageSetExpires = fetched.Cache.Expires;
+
+                        if (fetched.PageCount != pageCount.Value)
+                        {
+                            inconsistent = true;
+                            inconsistentValidator ??= "X-Pages";
+                            inconsistentPage = page;
+                            break;
+                        }
+
+                        var now = DateTimeOffset.UtcNow;
+                        if (fetched.Cache.Expires <= now ||
+                            page == 1 && pageCount.Value > 1 && fetched.Cache.Expires - now <= pageSetRefreshMargin)
+                        {
+                            inconsistent = true;
+                            inconsistentValidator ??= "Expires";
+                            inconsistentPage = page;
+                            inconsistentExpires = fetched.Cache.Expires;
+                            break;
+                        }
+
+                        if (!lastModifiedSet)
+                        {
+                            pageSetLastModified = fetched.Cache.LastModified;
+                            lastModifiedSet = true;
+                        }
+                        else if (fetched.Cache.LastModified != pageSetLastModified)
+                        {
+                            inconsistent = true;
+                            inconsistentValidator ??= "Last-Modified";
+                            inconsistentPage = page;
+                            break;
+                        }
+
+                        // ETag belongs to this page; X-Pages and Last-Modified validate the region's page set.
+                        pages.Add(fetched.Cache);
+                        var orders = ParseOrders(fetched.Json,regionId,validTypeIds,npcStationIds,page);
+                        foreach (var order in orders.OrderBy(order => order.OrderId))
+                        {
+                            await WriteLineAsync(destination,new OrderLine("order",order),cancellationToken);
+                            regionRows++;
+                        }
+                    }
+
+                    var expiredPage = pages.FirstOrDefault(page => page.Expires <= DateTimeOffset.UtcNow);
+                    if (expiredPage is not null)
+                    {
+                        inconsistent = true;
+                        inconsistentValidator ??= "Expires";
+                        inconsistentPage = expiredPage.Page;
+                        inconsistentExpires = expiredPage.Expires;
+                    }
+                    if (inconsistent)
+                    {
+                        if (attempt == MaxRegionAttempts)
+                            throw new InvalidDataException(
+                                $"ESI {inconsistentValidator ?? "cache"} validator changed while reading region {regionId} at page {inconsistentPage}.");
+
+                        var now = DateTimeOffset.UtcNow;
+                        var refreshAt = inconsistentValidator == "Expires" ? inconsistentExpires : pageSetExpires;
+                        var wait = (refreshAt ?? now) - now;
+                        await Task.Delay(wait > TimeSpan.Zero ? wait + TimeSpan.FromSeconds(1) : TimeSpan.FromSeconds(1),cancellationToken);
+                        continue;
+                    }
+
+                    capturedRegion = new Region(regionId,pageCount!.Value,pageSetLastModified,pages);
+                    await WriteLineAsync(destination,new RegionLine("region",capturedRegion),cancellationToken);
+                    retained = checked(retained + regionRows);
+                    break;
+                }
+
+                if (capturedRegion is null)
+                    throw new InvalidDataException($"Could not capture a consistent ESI page set for region {regionId}.");
+                regions.Add(capturedRegion);
+            }
+            catch
             {
                 destination.Position = regionStart;
                 destination.SetLength(regionStart);
-                var pages = new List<PageCache>();
-                long regionRows = 0;
-                int? pageCount = null;
-                DateTimeOffset? pageSetLastModified = null;
-                var lastModifiedSet = false;
-                var inconsistent = false;
-                DateTimeOffset latestExpiry = DateTimeOffset.MinValue;
-
-                for (var page = 1; pageCount is null || page <= pageCount.Value; page++)
-                {
-                    var fetched = await FetchPageAsync(client,regionId,page,cancellationToken);
-                    if (pageCount is null) pageCount = fetched.PageCount;
-                    else if (fetched.PageCount != pageCount.Value) inconsistent = true;
-
-                    if (fetched.Cache.Expires <= DateTimeOffset.UtcNow) inconsistent = true;
-                    if (fetched.Cache.Expires > latestExpiry) latestExpiry = fetched.Cache.Expires;
-                    if (!lastModifiedSet)
-                    {
-                        pageSetLastModified = fetched.Cache.LastModified;
-                        lastModifiedSet = true;
-                    }
-                    else if (fetched.Cache.LastModified != pageSetLastModified) inconsistent = true;
-                    pages.Add(fetched.Cache);
-
-                    var orders = ParseOrders(fetched.Json,regionId,validTypeIds,npcStationIds,page);
-                    foreach (var order in orders.OrderBy(order => order.OrderId))
-                    {
-                        await WriteLineAsync(destination,new OrderLine("order",order),cancellationToken);
-                        regionRows++;
-                    }
-                }
-
-                if (pages.Any(page => page.Expires <= DateTimeOffset.UtcNow)) inconsistent = true;
-                if (inconsistent)
-                {
-                    if (attempt == MaxRegionAttempts)
-                        throw new InvalidDataException($"ESI cache validators changed while reading region {regionId}.");
-                    var wait = latestExpiry - DateTimeOffset.UtcNow;
-                    if (wait > TimeSpan.Zero) await Task.Delay(wait + TimeSpan.FromSeconds(1),cancellationToken);
-                    continue;
-                }
-
-                capturedRegion = new Region(regionId,pageCount!.Value,pageSetLastModified,pages);
-                await WriteLineAsync(destination,new RegionLine("region",capturedRegion),cancellationToken);
-                retained = checked(retained + regionRows);
-                break;
+                throw;
             }
-
-            if (capturedRegion is null)
-                throw new InvalidDataException($"Could not capture a consistent ESI page set for region {regionId}.");
-            regions.Add(capturedRegion);
         }
 
         await WriteLineAsync(destination,new CompleteLine("complete",retained,regions.Count),cancellationToken);

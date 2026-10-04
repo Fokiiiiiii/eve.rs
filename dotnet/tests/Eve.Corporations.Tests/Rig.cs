@@ -54,6 +54,32 @@ internal sealed class Rig : IAsyncDisposable
         await tx.CommitAsync();
         return id;
     }
+
+
+    public async Task SeedNpcCorporationAsync(long corporationId)
+    {
+        await using var connection = await Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await using (var owner = new NpgsqlCommand($"INSERT INTO {_schemas[0]}.owner_names(owner_id,name_key,ticker_key,is_npc) VALUES($1,$2,$3,true)", connection, transaction))
+        {
+            owner.Parameters.AddWithValue(corporationId);
+            owner.Parameters.AddWithValue($"test npc {corporationId}");
+            owner.Parameters.AddWithValue($"N{corporationId}");
+            await owner.ExecuteNonQueryAsync();
+        }
+        await using (var corporation = new NpgsqlCommand($"""
+            INSERT INTO {_schemas[0]}.corporations
+                (id,name,ticker,ceo_id,creator_id,station_id,solar_system_id,tax_rate,lp_tax_rate,description,url,member_limit,is_npc,created_ms)
+            VALUES($1,$2,$3,0,0,0,0,0,0,'','',-1,true,0)
+            """, connection, transaction))
+        {
+            corporation.Parameters.AddWithValue(corporationId);
+            corporation.Parameters.AddWithValue($"Test NPC {corporationId}");
+            corporation.Parameters.AddWithValue($"N{corporationId}");
+            await corporation.ExecuteNonQueryAsync();
+        }
+        await transaction.CommitAsync();
+    }
     public async ValueTask DisposeAsync()
     {
         foreach (var schema in _schemas)

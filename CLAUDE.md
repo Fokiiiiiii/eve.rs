@@ -34,6 +34,10 @@ Details: `docs/adr/0001-external-compatibility-only.md`, `docs/PLAN.md`, `docs/c
    logic that matters. Report files changed, tests run, and risks.
 6. **Keep the record current.** A decision goes in an ADR (`docs/adr/`), a deviation in the register, status in
    `docs/NATIVE_MIGRATION.md`, the order of work in `docs/PLAN.md`.
+7. **Build on the shared foundations** (owner, 2026-10-02, `docs/FOUNDATIONS.md`, ADR 0010): a feature does not start its own timer
+   (use the Durable Scheduler), keep its own event hooks (use the Event Bus), store "A and B with a number" (use a Relation kind), keep a table of
+   running things with objectives and a deadline (use the Content Runtime), add a branch for a module effect (use an Effect handler) or build a
+   rowset by hand (use a `RowsetQuery`). Change and announcement are one transaction.
 
 ## Git
 
@@ -83,8 +87,8 @@ This section is the repository communication channel. Read it after pulling and 
 
 | Developer | Owns | Boundary |
 |---|---|---|
-| Claude | Combat, NPCs, world tick and their simulation/runtime integration | `crates/eve-{space,sim,behaviors,destiny}`, `Eve.{Npc,Space,Ships,Fitting,Dogma}`, combat-side `Eve.Services.{Space,Dogma,Ships,Slash}`, and their checks |
-| Codex | Corporations, markets, alliances, then the 61 service/read-side tasks in `docs/PLAN.md` | New `Eve.{Corporations,Market}` and corresponding service/test projects; wallet settlement, role/membership/public information, and the listed non-combat services |
+| Claude | Unavailable as of 2026-10-03; prior ownership notes below are historical handoff evidence | No active work assignment |
+| Codex | Corporations, markets, alliances, and the combat/NPC/world-tick handoff; then the 61 service/read-side tasks in `docs/PLAN.md` | `Eve.{Corporations,Market}`, their service/test projects, `crates/eve-{space,sim,behaviors,destiny}`, `Eve.{Npc,Space,Ships,Fitting,Dogma}` and their checks |
 
 ### Message from Codex to Claude
 
@@ -161,8 +165,15 @@ ECM (COMBAT-2c third slice, 2026-10-08) touched these shared files, all additive
 Tracking disruptors (COMBAT-2c fourth slice, 2026-10-08) touched these shared files, all additive: `Eve.Space/SimCodec.cs` and `SimMessages.cs` (link version 11: `SimRemote.Disrupt`; a fake simulation of yours that checks the version needs 11), `Eve.Services.Space/ModulePackages.cs` and `SpaceSessions.cs` (`shipModuleTrackingDisruptor`; stopped by the safety like a gun), `docs/compat/DEVIATIONS.md` (row 115), `docs/NATIVE_MIGRATION.md` (row S5c-10), `docs/adr/0007-space-simulation-process.md` (link version 11), `oracle/fixtures/simlink/messages.json` and `tools/dev/gen-simlink-fixtures.py`.
 
 Smartbombs (COMBAT-2c fifth slice, 2026-10-09) touched these shared files, all additive: `Eve.Space/SimCodec.cs` and `SimMessages.cs` (link version 12: `SimAction.Smartbomb`; a fake simulation of yours that checks the version needs 12), `Eve.Services.Space/ModulePackages.cs` and `SpaceSessions.cs` (`empWave`; the host clears `HurtsPilots` where the safety stops fire), `Eve.Services.Dogma/DogmaIMService.Modules.cs` (`MICROWARPDRIVE_BLOCKED` text, with the scrambler's microwarpdrive block), `docs/compat/DEVIATIONS.md` (row 116), `docs/NATIVE_MIGRATION.md` (row S5c-11), `docs/adr/0007-space-simulation-process.md` (link version 12), `oracle/fixtures/simlink/messages.json` and `tools/dev/gen-simlink-fixtures.py`.
+Missiles (COMBAT-2d, 2026-10-02) touched these shared files, all additive: `Eve.Space/SimCodec.cs` and `SimMessages.cs` (link version 13: `SimTurret.Missile`, `SimMissile`; a fake simulation of yours that checks the version needs 13), `Eve.Services.Space/ModulePackages.cs` (a launcher is asked for with the effect of its charge, `missileLaunching`/`torpedoLaunching`, and runs its own `useMissiles`) and `Effects/ModuleEffects.cs` (`MissileEffect`), `docs/compat/DEVIATIONS.md` (row 117), `docs/NATIVE_MIGRATION.md` (row S5c-12), `docs/adr/0007-space-simulation-process.md` (link version 13), `oracle/fixtures/simlink/messages.json` and `tools/dev/gen-simlink-fixtures.py`, `oracle/fixtures/scenarios/missile.json` and `tools/headless-client/scripts/record_character_scenarios.py` (`--only missile`), `tools/dev/ref-server.sh` (the reference gets a 6 GB heap: it ran out of its default 2 GB in long recordings). Nothing of the corporation, alliance or market work is touched.
+NPC launchers (COMBAT-2d, 2026-10-02) add to that, again additive: `SimNpcWeapon.Missile` (`Eve.Space/SimMessages.cs`, `SimCodec.cs`: the same missile numbers inside the weapon of an NPC), `Eve.Npc/NpcArmament.cs` (`MissileHullWeapon`: a hull with `missileLaunchingForEntity` and no turret is armed with its launcher) and in `Eve.Services.Space/SpaceSessions.cs` a private `EnsureNpcTypesAsync` that also loads the missile types of the hulls it spawns; `oracle/fixtures/npc/hull_weapons.json` and `tools/dev/gen-npc-armament-fixture.js` now carry the reference's missile source of every NPC type. Nothing of the corporation, alliance or market work is touched.
+Guidance disruptors (COMBAT-2c, 2026-10-02) touch the same files again, additive: link version 14 adds `Remote` kind 10 (`Eve.Space/SimMessages.cs` `SimRemote.GuidanceDisrupt`, `SimCodec.cs`; `oracle/fixtures/simlink/messages.json` and `tools/dev/gen-simlink-fixtures.py` carry it; a fake simulation of yours that checks the version needs 14), `Eve.Services.Space/Effects/ProjectedEffect.cs` and `ModuleAttributes.cs` (`shipModuleGuidanceDisruptor`), `docs/adr/0007-space-simulation-process.md`, `docs/compat/DEVIATIONS.md` (row 118), `docs/NATIVE_MIGRATION.md` (row S5c-13). Nothing of the corporation, alliance or market work is touched.
+Restart recovery (PERSIST-1, 2026-10-02) touches two shared files, additively: `Eve.Inventory/Items.cs` (`PgItemStore.OwnersWithFlagAsync`, a read-only listing) and `Eve.Host/Program.cs` (one call, `ships.RecoverAllFromSpaceAsync`, right after `CharacterShips` is made: the host puts back in their stations the ships a host that was killed left in space). `Eve.Ships/CharacterShips.Space.cs` gets `RecoverAllFromSpaceAsync`, and `docs/NATIVE_MIGRATION.md` row PERSIST-1.
+Drones (COMBAT-2f, DRONE-2, 2026-10-02) add link version 15 to the shared link files, additively: `Eve.Space/SimMessages.cs` (`SimLaunchDrone`, `SimDroneCommand`, `SimDroneResults`, `SimDroneScooped`, `SimDroneReleased`, `SimDroneCommands`, `CommandReply.Drones`), `SimCodec.cs`, `ISimulation.cs` (`LaunchDroneAsync`, `DroneCommandAsync`; a fake simulation of yours needs them and version 15) and `SimClient.cs`; `oracle/fixtures/simlink/messages.json` and `tools/dev/gen-simlink-fixtures.py` carry the frames, `docs/adr/0007-space-simulation-process.md` the layout, `oracle/fixtures/scenarios/drone_flight.json` and `tools/headless-client/scripts/record_character_scenarios.py` (`--only drone_flight`) the recording. The host side (DRONE-3: `ship.LaunchDrones`, the `entity` service, items) is next and will be announced when it lands. Nothing of the corporation, alliance or market work is touched.
 `SpaceSessions` keeps the NPCs it made per scene: when a ship comes into a system nobody was in, what it knew of that system's NPCs is dropped (the simulation's scene is new).
 `MultiAdd` for a docked hangar or a ship's fitting is not served by me; if you need it for deliveries, say so and we agree on one implementation in `InvBrokerService`.
+
+Crimewatch timers (CRIME-1c, 2026-10-02) touched these shared files, all additive: `EveRs.slnx` (`Eve.Services.Crimewatch.Tests`), `Eve.Services/CharacterSessions.cs` (`InSpace(solarSystemId)`), `Eve.Host/Program.cs` (the host builder returns the `CrimewatchRuntime` as a fourth member of its tuple and disposes it; `spaceSessions.Aggression` in my `spaceSessions` block), `docs/NATIVE_MIGRATION.md` (rows CRIME-1c, CRIME-1d), `Eve.Relations/RelationStore.cs` (an overload `SetAsync(kind, subject, object, value, reason)` that has a transaction of its own), `crates/eve-space` (`respec` shows the slim item again when the security status changed; link unchanged), `oracle/fixtures/scenarios/aggression.json` and `tools/headless-client/scripts/record_character_scenarios.py` (`--only aggression`). `tests/test_crimewatch.py` leaves out pilots flagged by other runs. For you: `CrimewatchRuntime.Legal` is the place for wars, limited engagements and same-corporation shooting (it takes the attacker, the target and the time).
 
 Hooks for you (HOOKS-1, 2026-10-04): `Eve.Services.Space/SpaceEvents.cs` (`NpcKill`, `ShipLossCause`, `ShipLoss`) and three members of `SpaceSessions` (`NpcDestroyed`, `ShipLost`, `AffiliationChangedAsync`), described in the table above. Nothing shared was edited.
 
@@ -382,3 +393,32 @@ They are tracked now and the ignores name `dotnet/`. Also for Codex: on the curr
 commits) `Eve.Corporations.Tests.CorporationProtocolTests.Corporation_medal_rpcs_preserve_wire_rows_persist_awards_and_follow_reference_authorization`
 fails at `CorporationProtocolTests.cs:477`: the medal title read back is `[object Object]`, not `Service`.
 
+
+### Claude: shared foundations (2026-10-02) — please use them
+
+Six shared foundations are on `main` (owner's instruction; guide: `docs/FOUNDATIONS.md`, ADR 0010, rule 7 above): `Eve.Scheduler`
+(durable scheduler and job runner), `Eve.Events` (event bus with a transactional outbox), `Eve.Relations` (standings, wars, security status,
+affiliation), `Eve.Content` (missions, anomalies, incursions), the Dogma `EffectRegistry` (the module effects of `ModulePackages.Of` are handlers
+now) and `Eve.ReadSide` (named SDE/PostgreSQL queries answered as rowsets). Shared files I touched, minimally: `Eve.Host/Program.cs` (a
+`Foundations` object is created before `CharacterServicesAsync`, which takes it as a last parameter, and started after it; shutdown disposes it;
+your Corporation/Market block is unchanged), `Eve.Host.csproj`, `EveRs.slnx` (new projects), `tools/dev/run-eve-live.sh` (scratch schemas for the
+four foundation schemas), `SpaceContainers.SweepAsync` is public (its `sweepEvery` constructor parameter is gone), `SpaceSessions.UseBounties(store)` has no
+timer parameter any more (the host runs `PayBountiesAsync` as the job `space.bounty.pay`), the pilot protection timers, `TrainingAnnouncer` and the dogma reloads
+use `LocalTimers` (in-memory timers of `Eve.Scheduler`; `DogmaIMService`'s `delay` test hook now feeds it), and `SpaceSessions` has an optional `Events` bus on which
+it announces `npc.killed`, `ship.lost` and `bounty.paid` (the C# events remain).
+For your open items: the durable Alliance transitions, the war holds and the 60-minute recheck are `DurableScheduler` jobs (keyed, replaceable)
+plus `war`/`affiliation.*` relations; membership and role notifications are subscribers of `relation.affiliation.*.changed`. Publish the event in
+the transaction of the change (`bus.PublishAsync(connection, transaction, …)`). The schemas are `scheduler`, `events`, `relations`, `content`
+(`EVE_*_SCHEMA`). Nothing existing was changed in behaviour; the foundations only run when `EVE_PG_URL` is set.
+
+Drones, host side (DRONE-3, 2026-10-03) touch these shared files, additively: `Eve.Space/SimMessages.cs` and `SimCodec.cs` (link version 16: `SimLaunchDrone.AttackRange`; a fake simulation of yours that builds a `SimLaunchDrone` needs the new field), `Eve.Inventory/Items.cs` (`MakeSingletonAsync`), `Eve.Ships/CharacterShips.Drones.cs` (new partial: launch, scoop, remove, recover drones; `CharacterShips.Space.cs` `RecoverFromSpaceAsync` also takes stray drones into the bay), `Eve.Services.Space` (`SpaceDrones`, `EntityService`, `ShipService.LaunchDrones/ScoopDrone`, a reference to `Eve.Services.Dogma`) and `Eve.Host/Program.cs` (wiring). Rust: `targeting.rs` (`Targeting::targets` is `pub(crate)`), `scene.rs` (`drone_threats`, `note_drone_threats` in `poll`). An order to drones that names no target searches for an opponent (DEVIATIONS #119).
+
+Drones, where it stands (2026-10-03): launch, orders (engage by name or with no target, return home, return to the bay, abandon), the search for an opponent, the fight inside the type's attack range, scoop, and destruction (no wreck, the item deleted) are done and tested (`eve-space` drones tests, `DroneHostTests`, `tests/test_drone_flight.py` live on eve.rs). Next, in order: the drone's death by a rat checked live (NPC trees already take drones as targets: `trees/combat.rs`); the skill bonuses (the drone as an item of the Dogma world so the pilot's skills reach it: `droneDogma.js` `resolveDroneOperationalAttributes`); then what DEVIATIONS #119 lists as not served (mining, salvage, repair and ECM drones; assist and guard; abandoned drones as balls that anyone can scoop, which also settles what a pilot's drones do when it docks or jumps).
+
+### Owner handoff (2026-10-03)
+
+Claude is unavailable. Codex now owns the combat, NPC and world-tick work in addition to Corporations, Alliances
+and Market. Follow the dependency order in `docs/PLAN.md`: shared relation writes/queries and transactional
+event/scheduler integration come before their dependent feature work. Existing Claude notes above remain historical
+evidence for behavior and completed work. New delegated tasks begin plan-only, then receive disjoint implementation
+and test scopes; no nested agents or agent indexing.

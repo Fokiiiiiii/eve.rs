@@ -48,4 +48,26 @@ public sealed partial class PgCharacterStore
         }
         return characters;
     }
+
+
+    public const int CorporationAffiliationPageSize = 256;
+
+    public async Task<IReadOnlyList<(long CharacterId, long CorporationId)>> AffiliationsAfterAsync(
+        long afterCharacterId, int limit = CorporationAffiliationPageSize, CancellationToken cancellationToken = default)
+    {
+        if (afterCharacterId < 0)
+            throw new ArgumentOutOfRangeException(nameof(afterCharacterId));
+        if (limit is < 1 or > CorporationAffiliationPageSize)
+            throw new ArgumentOutOfRangeException(nameof(limit), $"limit must be between 1 and {CorporationAffiliationPageSize}");
+
+        await using var command = _source.CreateCommand(
+            $"SELECT id, corporation_id FROM {_schema}.characters WHERE id > $1 ORDER BY id LIMIT $2");
+        command.Parameters.Add(new NpgsqlParameter { Value = afterCharacterId });
+        command.Parameters.Add(new NpgsqlParameter { Value = limit });
+        var affiliations = new List<(long CharacterId, long CorporationId)>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            affiliations.Add((reader.GetInt64(0), reader.GetInt64(1)));
+        return affiliations;
+    }
 }

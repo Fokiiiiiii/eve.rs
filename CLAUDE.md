@@ -78,6 +78,12 @@ Details: `docs/adr/0001-external-compatibility-only.md`, `docs/PLAN.md`, `docs/c
 - A tool quirk: `\uXXXX` typed in a tool call may reach the file as the real character (U+2028 broke C#).
   Use numeric escapes such as `(char)0x2028`, or write such text from a script.
 - Minimise cost: use local evidence and small reads, and do not install packages or widen the scope without need.
+- Code discovery goes through MCP first: `tools/dev/setup-mcp.sh` installs and registers `codebase-memory-mcp` and
+  `serena` (once per fresh container; restart the session after). Order: `search_graph` → `trace_path` →
+  `get_code_snippet` → `query_graph`; Serena for symbol lookup, references and narrow edits; grep and read only for
+  strings, configs, docs and scripts, or when the MCP tools are not enough.
+- Owner direction (2026-10-05): the owner has written most of the remaining corporation/alliance/market/service
+  backlog. Optimisation comes before new implementation, and the implementation backlog is not advanced unprompted.
 
 
 ## Parallel work coordination (owner, 2026-10-01)

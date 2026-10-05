@@ -67,7 +67,7 @@ Details: `docs/adr/0001-external-compatibility-only.md`, `docs/PLAN.md`, `docs/c
 - Run the new server and the client's live tests: `tools/dev/run-eve-live.sh` (starts `eve-host` and `eve-net`
   on a private socket and port 26100). `EVE_RUN='<command>' tools/dev/run-eve-live.sh` runs another command
   against it, for example `target/release/eve-loadgen $EVE_LIVE_HOST` to measure it.
-- CI (`.github/workflows/ci.yml`) runs the checks above and the fast live tests on every push; a Dev Container
+- CI (`.github/workflows/ci.yml`) runs the checks above and the fast live tests when it is started by hand (it does not run on a push: switched off 2026-10-04); a Dev Container
   (`.devcontainer/`) and `docker-compose.yml` set up the same environment. Set `EVE_MARKET_SEED=skip` when you start
   the host yourself: its first start otherwise fetches the NPC market from ESI (see the note at the end of this file).
 - The reference server is the `Fokiiiiiii/evejs-v0.12.9` repository (branch `ccr-fd6b2132-4353h1` holds the
@@ -78,6 +78,12 @@ Details: `docs/adr/0001-external-compatibility-only.md`, `docs/PLAN.md`, `docs/c
 - A tool quirk: `\uXXXX` typed in a tool call may reach the file as the real character (U+2028 broke C#).
   Use numeric escapes such as `(char)0x2028`, or write such text from a script.
 - Minimise cost: use local evidence and small reads, and do not install packages or widen the scope without need.
+- Code discovery goes through MCP first: `tools/dev/setup-mcp.sh` installs and registers `codebase-memory-mcp` and
+  `serena` (once per fresh container; restart the session after). Order: `search_graph` → `trace_path` →
+  `get_code_snippet` → `query_graph`; Serena for symbol lookup, references and narrow edits; grep and read only for
+  strings, configs, docs and scripts, or when the MCP tools are not enough.
+- Owner direction (2026-10-05): the owner has written most of the remaining corporation/alliance/market/service
+  backlog. Optimisation comes before new implementation, and the implementation backlog is not advanced unprompted.
 
 
 ## Parallel work coordination (owner, 2026-10-01)

@@ -70,6 +70,11 @@ const SIGNATURE_RADIUS: i32 = 552;
 const MAX_TARGET_RANGE: i32 = 76;
 const SCAN_RESOLUTION: i32 = 564;
 
+pub(crate) const SCAN_GRAVIMETRIC_STRENGTH_PERCENT: i32 = 1027;
+pub(crate) const SCAN_LADAR_STRENGTH_PERCENT: i32 = 1028;
+pub(crate) const SCAN_MAGNETOMETRIC_STRENGTH_PERCENT: i32 = 1029;
+pub(crate) const SCAN_RADAR_STRENGTH_PERCENT: i32 = 1030;
+
 /// What one module does to the ship it is projected at, already weakened by the distance (percentages of the attribute, the points of a scramble).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Lasting {
@@ -77,8 +82,15 @@ pub(crate) enum Lasting {
     Web { percent: f64 },
     /// A percentage of the signature radius (positive for a target painter).
     Paint { percent: f64 },
-    /// A percentage of the range the ship locks at and of its scan resolution (negative for a dampener).
-    Damp { range_percent: f64, resolution_percent: f64 },
+    /// Percentages of lock range, scan resolution and the four sensor strengths (negative values are hostile).
+    Damp {
+        range_percent: f64,
+        resolution_percent: f64,
+        gravimetric_percent: f64,
+        ladar_percent: f64,
+        magnetometric_percent: f64,
+        radar_percent: f64,
+    },
     /// Points of warp scramble: more than the ship's own warp core holds it out of warp (`blocks_mwd`: a microwarpdrive too).
     Scramble { strength: f64, blocks_mwd: bool },
     /// Percentages of the optimal range, the falloff and the tracking speed of the turrets the ship fires (negative for a tracking disruptor).
@@ -111,6 +123,7 @@ pub(crate) struct Base {
     pub signature_radius: f64,
     pub max_target_range: f64,
     pub scan_resolution: f64,
+    pub sensor_strength: [f64; 4],
 }
 
 /// What lands on a ship.
@@ -263,6 +276,21 @@ impl Incoming {
                     Lasting::Damp { resolution_percent, .. } => Some(*resolution_percent),
                     _ => None,
                 }),
+            sensor_strength: std::array::from_fn(|index| {
+                let factor = self.factor(|w| match w {
+                    Lasting::Damp {
+                        gravimetric_percent,
+                        ladar_percent,
+                        magnetometric_percent,
+                        radar_percent,
+                        ..
+                    } => Some(
+                        [*gravimetric_percent, *ladar_percent, *magnetometric_percent, *radar_percent][index],
+                    ),
+                    _ => None,
+                });
+                base.sensor_strength[index] * factor
+            }),
         }
     }
 }
@@ -289,6 +317,7 @@ impl Scene {
                 signature_radius: spec.signature_radius,
                 max_target_range: spec.max_target_range,
                 scan_resolution: spec.scan_resolution,
+                sensor_strength: spec.sensor_strength,
             });
         }
         pilot.incoming.upsert(source_ship, effect.module_id, what, until);
@@ -475,6 +504,10 @@ impl Scene {
         set(SIGNATURE_RADIUS, &mut spec.signature_radius, worked.signature_radius);
         set(MAX_TARGET_RANGE, &mut spec.max_target_range, worked.max_target_range);
         set(SCAN_RESOLUTION, &mut spec.scan_resolution, worked.scan_resolution);
+        set(SCAN_GRAVIMETRIC_STRENGTH_PERCENT, &mut spec.sensor_strength[0], worked.sensor_strength[0]);
+        set(SCAN_LADAR_STRENGTH_PERCENT, &mut spec.sensor_strength[1], worked.sensor_strength[1]);
+        set(SCAN_MAGNETOMETRIC_STRENGTH_PERCENT, &mut spec.sensor_strength[2], worked.sensor_strength[2]);
+        set(SCAN_RADAR_STRENGTH_PERCENT, &mut spec.sensor_strength[3], worked.sensor_strength[3]);
         let velocity = spec.max_velocity;
         if pilot.incoming.is_empty() {
             pilot.incoming.base = None;
@@ -549,6 +582,7 @@ mod tests {
             signature_radius: 40.0,
             max_target_range: 30_000.0,
             scan_resolution: 500.0,
+            sensor_strength: [10.0, 20.0, 30.0, 40.0],
         };
         assert_eq!(incoming.worked(&base), base);
     }
@@ -589,12 +623,25 @@ mod tests {
             signature_radius: 40.0,
             max_target_range: 30_000.0,
             scan_resolution: 500.0,
+            sensor_strength: [10.0, 20.0, 30.0, 40.0],
         };
         let mut incoming = Incoming::default();
         incoming.upsert(1, 10, Lasting::Web { percent: -60.0 }, 100);
         incoming.upsert(1, 10, Lasting::Web { percent: -40.0 }, 200);
         incoming.upsert(2, 10, Lasting::Paint { percent: 25.0 }, 100);
-        incoming.upsert(3, 11, Lasting::Damp { range_percent: -20.0, resolution_percent: -30.0 }, 100);
+        incoming.upsert(
+            3,
+            11,
+            Lasting::Damp {
+                range_percent: -20.0,
+                resolution_percent: -30.0,
+                gravimetric_percent: 0.0,
+                ladar_percent: 0.0,
+                magnetometric_percent: 0.0,
+                radar_percent: 0.0,
+            },
+            100,
+        );
         let worked = incoming.worked(&base);
         assert!((worked.max_velocity - 240.0).abs() < 1e-9, "{worked:?}");
         assert!((worked.signature_radius - 50.0).abs() < 1e-9);
@@ -607,6 +654,91 @@ mod tests {
         incoming.upsert(5, 13, Lasting::Scramble { strength: 1.0, blocks_mwd: false }, 100);
         assert_eq!(incoming.scramble_points(), 3.0);
         assert!(incoming.scrambled());
+    }
+
+    #[test]
+    fn a_positive_remote_sensor_boost_stacks_refreshes_and_expires_across_all_sensor_channels() {
+        let base = Base {
+            max_velocity: 400.0,
+            signature_radius: 40.0,
+            max_target_range: 30_000.0,
+            scan_resolution: 500.0,
+            sensor_strength: [10.0, 20.0, 30.0, 40.0],
+        };
+        let session = crate::scene::tests::SESSION;
+        let mut scene = Scene::new(crate::scene::tests::system());
+        scene.undock(session, crate::scene::tests::spec(), crate::scene::tests::STATION, 100).unwrap();
+        scene.pilots.get_mut(&session).unwrap().incoming.base = Some(base);
+
+        let boost = Lasting::Damp {
+            range_percent: 25.0,
+            resolution_percent: 35.0,
+            gravimetric_percent: 20.0,
+            ladar_percent: 30.0,
+            magnetometric_percent: 40.0,
+            radar_percent: 50.0,
+        };
+        let second_boost = Lasting::Damp {
+            range_percent: 0.0,
+            resolution_percent: 0.0,
+            gravimetric_percent: 20.0,
+            ladar_percent: 20.0,
+            magnetometric_percent: 20.0,
+            radar_percent: 20.0,
+        };
+        let negative = Lasting::Damp {
+            range_percent: -50.0,
+            resolution_percent: -40.0,
+            gravimetric_percent: 0.0,
+            ladar_percent: 0.0,
+            magnetometric_percent: 0.0,
+            radar_percent: 0.0,
+        };
+        {
+            let incoming = &mut scene.pilots.get_mut(&session).unwrap().incoming;
+            incoming.upsert(1, 10, boost, 100);
+            incoming.upsert(1, 10, boost, 200);
+            incoming.upsert(2, 11, second_boost, 250);
+            incoming.upsert(3, 12, negative, 300);
+            let boosts: Vec<_> =
+                incoming.records.iter().filter(|r| r.source == 1 && r.module == 10).collect();
+            assert_eq!(boosts.len(), 1);
+            assert_eq!(boosts[0].until, 200);
+            let worked = incoming.worked(&base);
+            assert!((worked.max_target_range - 18_750.0).abs() < 1e-9, "{worked:?}");
+            assert!((worked.scan_resolution - 405.0).abs() < 1e-9, "{worked:?}");
+            let once = [12.0, 26.0, 42.0, 60.0];
+            let unpenalized = [14.4, 31.2, 50.4, 72.0];
+            for index in 0..4 {
+                assert!(worked.sensor_strength[index] > once[index], "{worked:?}");
+                assert!(worked.sensor_strength[index] < unpenalized[index], "{worked:?}");
+            }
+            let radar_jammer = [0.0, 0.0, 0.0, 40.0];
+            assert!(
+                jam_chance(&radar_jammer, &worked.sensor_strength, 1.0, 1.0)
+                    < jam_chance(&radar_jammer, &base.sensor_strength, 1.0, 1.0)
+            );
+        }
+
+        assert!(scene.expire_incoming(session, 199).is_empty());
+        let incoming = &scene.pilots[&session].incoming;
+        assert!(incoming.records.iter().any(|r| r.source == 1 && r.module == 10));
+        assert!(incoming.records.iter().any(|r| r.source == 2 && r.module == 11));
+
+        scene.expire_incoming(session, 200);
+        let pilot = &scene.pilots[&session];
+        assert_eq!(pilot.incoming.records.len(), 2);
+        for (actual, expected) in pilot.ship.spec.sensor_strength.iter().zip([12.0, 24.0, 36.0, 48.0]) {
+            assert!((actual - expected).abs() < 1e-9);
+        }
+
+        scene.expire_incoming(session, 250);
+        let pilot = &scene.pilots[&session];
+        assert_eq!(pilot.incoming.records.len(), 1);
+        assert_eq!(pilot.incoming.records[0].what, negative);
+        for (actual, expected) in pilot.ship.spec.sensor_strength.iter().zip(base.sensor_strength) {
+            assert!((actual - expected).abs() < 1e-9);
+        }
     }
 
     #[test]

@@ -206,16 +206,50 @@ fn the_watcher_is_told_of_each_order_as_the_reference_told_it() {
     for (label, command) in orders {
         let out = scene.command(ACTOR, command, t);
         let recorded = &destiny_events(step(&r.race, label), "seen")[0];
+        let expected_names = recorded_names(recorded);
         let told: Vec<&Out> =
             out.iter().filter(|o| matches!(o, Out::Notify { session: WATCHER, .. })).collect();
-        assert_eq!(told.len(), 1, "{label}: one update to the watcher");
-        let ours = out_args(told[0]);
+        let mut command_updates = Vec::new();
+        let mut collision_updates = Vec::new();
+        for update in &told {
+            let args = out_args(*update);
+            if action_names_of(&args) == expected_names {
+                command_updates.push(args);
+            } else {
+                collision_updates.push(args);
+            }
+        }
+        assert_eq!(command_updates.len(), 1, "{label}: command output {out:?}");
+        for collision in &collision_updates {
+            let names = action_names_of(collision);
+            assert_eq!(names.len(), 4, "{label}: {collision:?}");
+            assert_eq!(&names[..3], ["SetBallPosition", "SetBallVelocity", "SetSpeedFraction"]);
+            assert!(names[3] == "Stop" || names[3] == "GotoDirection", "{label}: {collision:?}");
+        }
+        if !collision_updates.is_empty() {
+            let (actor_position, actor_radius) = {
+                let actor = scene.ship(ACTOR, t).unwrap();
+                (actor.position, actor.spec.radius)
+            };
+            let (watcher_position, watcher_radius) = {
+                let watcher = scene.ship(WATCHER, t).unwrap();
+                (watcher.position, watcher.spec.radius)
+            };
+            let delta = Vec3::new(
+                actor_position.x - watcher_position.x,
+                actor_position.y - watcher_position.y,
+                actor_position.z - watcher_position.z,
+            );
+            let separation = delta.x.hypot(delta.y).hypot(delta.z);
+            assert!(separation >= actor_radius + watcher_radius - 1e-6, "{label}: {separation}");
+        }
+        let ours = &command_updates[0];
         let theirs = event_args(recorded);
-        assert_eq!(action_names_of(&ours), recorded_names(recorded), "{label}");
+        assert_eq!(action_names_of(ours), expected_names, "{label}");
         assert_eq!(theirs["$tuple"][1], ours["$tuple"][1], "{label}: wait");
         if label != "the actor goes in a direction" {
             // the values are the same (a direction is worked out from where the recorded ship pointed)
-            assert_eq!(without_stamps(&ours), without_stamps(&theirs), "{label}");
+            assert_eq!(without_stamps(ours), without_stamps(&theirs), "{label}");
         }
         t += 3 * SECOND;
     }

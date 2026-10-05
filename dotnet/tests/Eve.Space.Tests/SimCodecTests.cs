@@ -75,6 +75,7 @@ public class SimCodecTests
         {
             return new SimAction.Repair(Layer(), amount, end);
         }
+        double Optional(string name) => a[name] is { } value ? (double)value : 0d;
         SimRemote what = (string)a["what"]! switch
         {
             "repair" => new SimRemote.Repair(Layer(), amount),
@@ -83,7 +84,7 @@ public class SimCodecTests
             "drain" => new SimRemote.Drain(amount, (double)a["signatureResolution"]!),
             "web" => new SimRemote.Web((double)a["percent"]!),
             "paint" => new SimRemote.Paint((double)a["percent"]!),
-            "damp" => new SimRemote.Damp((double)a["rangePercent"]!, (double)a["resolutionPercent"]!),
+            "damp" => new SimRemote.Damp((double)a["rangePercent"]!, (double)a["resolutionPercent"]!, Optional("gravimetricStrengthPercent"), Optional("ladarStrengthPercent"), Optional("magnetometricStrengthPercent"), Optional("radarStrengthPercent")),
             "disrupt" => new SimRemote.Disrupt((double)a["rangePercent"]!, (double)a["falloffPercent"]!, (double)a["trackingPercent"]!),
             "guidanceDisrupt" => new SimRemote.GuidanceDisrupt((double)a["velocityPercent"]!, (double)a["delayPercent"]!, (double)a["aoeVelocityPercent"]!, (double)a["aoeCloudPercent"]!),
             "jam" => new SimRemote.Jam(Four(a["strength"]!)[0], Four(a["strength"]!)[1], Four(a["strength"]!)[2], Four(a["strength"]!)[3]),
@@ -166,7 +167,7 @@ public class SimCodecTests
             "SpawnReply" => (bool)c["ok"]! ? new SimSpawnReply((ulong)Wide(c, "requestId"), (ulong)Wide(c, "session"), null) : new SimSpawnReply((ulong)Wide(c, "requestId"), null, (string)c["reason"]!),
             "LaunchDrone" => new SimLaunchDrone(
                 (ulong)Wide(c, "requestId"), Session(), ShipOf(c["ship"]!), WeaponOf(c["weapon"]!), (int)c["graphicId"]!, (double)c["orbitDistance"]!, (double)c["attackRange"]!, (double)c["cruiseFraction"]!),
-            "DroneCommand" => new SimDroneCommand(Session(), (byte)(int)c["command"]!, Wide(c, "targetId"), [.. ((JsonArray)c["droneIds"]!).Select(d => long.Parse((string)d!))]),
+            "DroneCommand" => new SimDroneCommand(Session(), (byte)(int)c["command"]!, Wide(c, "targetId"), [.. ((JsonArray)c["droneIds"]!).Select(d => long.Parse((string)d!))], (double)c["controlRange"]!),
             "DroneResults" => new SimDroneResults(Session(), (byte)(int)c["command"]!, [.. ((JsonArray)c["results"]!).Select(r => new SimDroneResult(Wide(r!, "droneId"), (string)r!["reason"]!))]),
             "DroneScooped" => new SimDroneScooped(Session(), Wide(c, "droneId")),
             "DroneReleased" => new SimDroneReleased(Session(), Wide(c, "droneId"), VectorOf(c["position"]!)),
@@ -225,6 +226,20 @@ public class SimCodecTests
         var action = Assert.IsType<SimAction.Charged>(decoded.Effect.Action);
         Assert.Equal((16272, 27, 3, 5L), (action.ChargeTypeId, action.ChargeFlag, action.ChargePerCycle, action.Charges));
         Assert.IsType<SimAction.Repair>(action.Fallback);
+    }
+
+
+    [Fact]
+    public void A_micro_jump_drive_action_roundtrips_through_the_sim_codec()
+    {
+        var baseline = Assert.IsType<SimActivate>(MessageOf(Case("valid", "activate an ECM burst")));
+        var action = new SimAction.MicroJumpDrive(100_000, 180_000);
+        var message = baseline with { Effect = baseline.Effect with { Action = action } };
+        var encoded = SimCodec.Encode(message);
+        var decoded = Assert.IsType<SimActivate>(SimCodec.Decode(encoded.AsMemory(4)));
+
+        Assert.Equal(Convert.ToHexString(encoded), Convert.ToHexString(SimCodec.Encode(decoded)));
+        Assert.Equal(action, Assert.IsType<SimAction.MicroJumpDrive>(decoded.Effect.Action));
     }
 
     [Fact]

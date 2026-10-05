@@ -14,6 +14,8 @@ public sealed record SpaceTransition(SpaceMove? Moved, string? Refusal)
     public static SpaceTransition Refused(string reason) => new(null, reason);
 }
 
+
+/// <summary>The active ship changed while its previous and next ships remain in the same hangar.</summary>
 public sealed partial class CharacterShips
 {
     /// <summary>The flag of an item that is in space, not in any inventory place.</summary>
@@ -65,6 +67,41 @@ public sealed partial class CharacterShips
         return SpaceTransition.Done(new SpaceMove(ship with { LocationId = stationId, Flag = ItemFlags.Hangar }, ship.LocationId, ship.Flag, character with { StationId = stationId }));
     }
 
+    /// <summary>Changes the active ship to another ship in the same station hangar without moving either item.</summary>
+    public async Task<bool> BoardAsync(long characterId, long stationId, long currentShipId, long shipId, CancellationToken cancellationToken = default)
+    {
+        if (currentShipId <= 0 || shipId <= 0 || currentShipId == shipId)
+        {
+            return false;
+        }
+
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+
+        if (await characters.GetAsync(characterId, cancellationToken) is not { ShipId: { } activeShipId, StationId: { } currentStationId }
+            || activeShipId != currentShipId || currentStationId != stationId
+            || await items.LockAndGetAsync(connection, transaction, currentShipId, cancellationToken) is not { } current
+            || await items.LockAndGetAsync(connection, transaction, shipId, cancellationToken) is not { } next
+            || current.OwnerId != characterId || next.OwnerId != characterId
+            || current.LocationId != stationId || next.LocationId != stationId
+            || current.Flag != ItemFlags.Hangar || next.Flag != ItemFlags.Hangar
+            || !current.Singleton || !next.Singleton)
+        {
+            return false;
+        }
+
+        await statics.EnsureTypesAsync([current.TypeId, next.TypeId], cancellationToken);
+        if (statics.Type(current.TypeId)?.CategoryId != 6 || statics.Type(next.TypeId)?.CategoryId != 6)
+        {
+            return false;
+        }
+
+        await characters.SetShipAsync(connection, transaction, characterId, shipId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return true;
+    }
+
     /// <summary>
     /// The character's active ship, in space, has gone through a stargate: it is in space in the other solar system, and so is the character.
     /// </summary>
@@ -91,6 +128,51 @@ public sealed partial class CharacterShips
             ship.LocationId,
             ship.Flag,
             character with { SolarSystemId = solarSystemId, ConstellationId = constellationId, RegionId = regionId }));
+    }
+
+
+    /// <summary>Prepares a capsule for leaving the docked ship; the client's following Board call switches to it.</summary>
+    /// <summary>Ejects from a docked ship into the character's capsule, keeping the ship in its hangar.</summary>
+    public async Task<Item?> LeaveShipAsync(long characterId, long stationId, long shipId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+
+        if (await characters.GetAsync(characterId, cancellationToken) is not { ShipId: { } activeShipId } character
+            || activeShipId != shipId || character.StationId != stationId)
+        {
+            return null;
+        }
+        var ship = await items.LockAndGetAsync(connection, transaction, shipId, cancellationToken);
+        if (ship is null || ship.OwnerId != characterId || ship.LocationId != stationId || ship.Flag != ItemFlags.Hangar)
+        {
+            return null;
+        }
+        if (ship.TypeId == CapsuleTypeId)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return ship;
+        }
+
+        var inventory = await items.InLocationAsync(stationId, characterId, cancellationToken) ?? [];
+        var capsule = inventory.FirstOrDefault(item => item.TypeId == CapsuleTypeId && item.Singleton && item.Flag == ItemFlags.Hangar);
+        if (capsule is not null)
+        {
+            capsule = await items.LockAndGetAsync(connection, transaction, capsule.Id, cancellationToken);
+            if (capsule is null || capsule.OwnerId != characterId || capsule.LocationId != stationId || capsule.Flag != ItemFlags.Hangar || !capsule.Singleton)
+            {
+                return null;
+            }
+        }
+        else
+        {
+            var capsuleId = await items.CreateAsync(connection, transaction, new NewItem(CapsuleTypeId, characterId, stationId, ItemFlags.Hangar, 1, true), cancellationToken);
+            capsule = new Item(capsuleId, CapsuleTypeId, characterId, stationId, ItemFlags.Hangar, 1, true, null);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return capsule;
     }
 
     /// <summary>

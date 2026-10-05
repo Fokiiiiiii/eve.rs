@@ -599,7 +599,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             }),
         allianceRegistry,
         new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now), new SkillCommands(skillCatalog, skills, source, dogmaSync, now)),
-        .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now, spaceContainers, spaceDrones), new BeyonceService(spaceSessions, now), new EntityService(spaceDrones!, now) },
+        .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now, spaceContainers, spaceDrones), new BeyonceService(spaceSessions, now), new EntityService(spaceDrones!, now, spaceContainers) },
     ];
     return (services, spaceSessions, sim, crimewatchRuntime);
 }

@@ -43,7 +43,7 @@ internal sealed class EcmBurstEffect : ShipEffect
         ];
         return new SimEffect(
             module.ModuleId, module.Module.TypeId, module.Effect.Id, module.Effect.Guid, duration, capacitor, Math.Max(1, module.Repeat), 0, null, null, told, told, null,
-            new SimAction.EcmBurst(range, [Strength(GravimetricJam), Strength(LadarJam), Strength(MagnetometricJam), Strength(RadarJam)]));
+            new SimAction.EcmBurst(range, [Strength(ScanGravimetricStrengthBonus), Strength(ScanLadarStrengthBonus), Strength(ScanMagnetometricStrengthBonus), Strength(ScanRadarStrengthBonus)]));
     }
 }
 

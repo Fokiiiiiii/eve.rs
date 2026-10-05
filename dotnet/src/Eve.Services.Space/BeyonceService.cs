@@ -140,8 +140,8 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
     }
 
     /// <summary>
-    /// <c>CmdWarpToStuff(type, target, minRange=)</c>: warp to a body of the system (<c>type</c> is <c>"item"</c>; the other kinds of place, bookmarks,
-    /// scanned sites and the like, are not there yet and are told as a warp that cannot be done).
+    /// <c>CmdWarpToStuff(type, target, minRange=)</c>: warp to a system body (<c>"item"</c>) or bookmark (<c>"bookmark"</c>). Other destination types,
+    /// scanned sites and the like are told as a warp that cannot be done).
     /// </summary>
     [Method("CmdWarpToStuff")]
     public async ValueTask<PyValue> CmdWarpToStuff(ServiceCall call)
@@ -150,7 +150,8 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
         {
             return None;
         }
-        if (JsSemantics.PlainText(call.Arg(0)) != "item" || Number(call.Arg(1)) is not { } target)
+        var type = JsSemantics.PlainText(call.Arg(0));
+        if ((type != "item" && type != "bookmark") || Number(call.Arg(1)) is not { } target)
         {
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You cannot warp there right now.")));
         }

@@ -34,6 +34,11 @@ public interface ISpaceContainers
     /// </summary>
     Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long> itemIds, long sourceId, long destinationId, CancellationToken cancellationToken);
 
+
+    /// <summary>Abandons loot rights for owned cans or wrecks without moving their contents.</summary>
+    Task AbandonLootAsync(ClientSession session, IReadOnlyList<long> containerIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("This space container service cannot abandon loot.");
+
     /// <summary>
     /// <c>ship.Jettison</c>: the stacks of the hold go into a new can ahead of the ship. Answers the ids that went into a can (none when nothing could be jettisoned); throws the
     /// client's error while the pilot waits for the next can.

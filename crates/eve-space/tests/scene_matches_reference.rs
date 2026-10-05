@@ -261,15 +261,31 @@ fn each_command_is_answered_with_the_update_the_reference_sent() {
     for label in ["speed fraction", "go in a direction", "go in another direction", "stop"] {
         let (stamp, command, expected) = recorded_command(&recorded, label);
         let out = scene.command(SESSION, command, at_stamp(stamp));
-        assert_eq!(out.len(), 2, "{label}: the update and the word that the command was accepted");
-        assert_eq!(out_args(&out[0]), expected, "{label}");
-        let Out::Notify { name, id_type, .. } = &out[0] else { unreachable!() };
-        assert_eq!((*name, *id_type), ("DoDestinyUpdate", "clientID"));
+        let matching: Vec<usize> = out
+            .iter()
+            .enumerate()
+            .filter_map(|(index, message)| {
+                let Out::Notify { .. } = message else { return None };
+                matches_command_actions(&out_args(message), &expected).then_some(index)
+            })
+            .collect();
+        let Some(&command_index) = matching.last() else {
+            panic!("{label}: no command update in {out:?}");
+        };
+        for (index, message) in out.iter().enumerate() {
+            if index != command_index && matches!(message, Out::Notify { .. }) {
+                validate_extra_update(&out_args(message), label);
+            }
+        }
         assert_eq!(
-            out[1],
-            Out::Accepted { session: SESSION, command: command.code(), at: at_stamp(stamp) },
-            "{label}"
+            out.iter().filter(|message| matches!(message, Out::Accepted { .. })).count(),
+            1,
+            "{label}: accepted once"
         );
+        assert!(out.iter().any(|message| matches!(
+            message,
+            Out::Accepted { session: SESSION, command: code, at } if *code == command.code() && *at == at_stamp(stamp)
+        )), "{label}");
         assert_eq!(stamp_at(at_stamp(stamp)), stamp as u32);
     }
 }
@@ -284,6 +300,31 @@ fn actions_without_the_ship(actions: &[Value]) -> Vec<(String, Vec<Value>)> {
             (inner[0].as_str().unwrap().to_string(), args[1..].to_vec())
         })
         .collect()
+}
+
+fn matches_command_actions(actual: &Value, expected: &Value) -> bool {
+    let actual = actions_without_the_ship(actual["$tuple"][0].as_array().unwrap());
+    let expected = actions_without_the_ship(expected["$tuple"][0].as_array().unwrap());
+    actual.len() == expected.len()
+        && actual.iter().zip(&expected).all(|((name, args), (expected_name, expected_args))| {
+            name == expected_name
+                && if name == "GotoDirection" {
+                    shape(&json!(args)) == shape(&json!(expected_args))
+                } else {
+                    args == expected_args
+                }
+        })
+}
+
+fn validate_extra_update(args: &Value, label: &str) -> bool {
+    let names = action_names_of(args);
+    if names.len() == 1 && (names[0] == "GotoDirection" || names[0] == "Stop") {
+        return false;
+    }
+    assert_eq!(names.len(), 4, "{label}: unexpected extra update {args:?}");
+    assert_eq!(&names[..3], ["SetBallPosition", "SetBallVelocity", "SetSpeedFraction"]);
+    assert!(names[3] == "Stop" || names[3] == "GotoDirection", "{label}: {names:?}");
+    true
 }
 
 #[test]
@@ -317,36 +358,69 @@ fn each_order_is_answered_with_the_update_the_reference_sent() {
         let code = command.code();
         match recorded_update.first() {
             Some(update) => {
-                assert_eq!(out.len(), 2, "{label}");
-                let ours = out_args(&out[0]);
-                let ours = actions_without_the_ship(ours["$tuple"][0].as_array().unwrap());
-                let theirs = actions_without_the_ship(event_args(update)["$tuple"][0].as_array().unwrap());
-                assert_eq!(
-                    ours.iter().map(|a| &a.0).collect::<Vec<_>>(),
-                    theirs.iter().map(|a| &a.0).collect::<Vec<_>>(),
-                    "{label}"
-                );
-                for ((name, mine), (_, expected)) in ours.iter().zip(&theirs) {
-                    if name == "GotoDirection" {
-                        assert_eq!(shape(&json!(mine)), shape(&json!(expected)), "{label}");
-                    } else {
-                        assert_eq!(mine, expected, "{label}: {name}");
+                let expected = event_args(update);
+                let matching: Vec<usize> = out
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, message)| {
+                        let Out::Notify { .. } = message else { return None };
+                        matches_command_actions(&out_args(message), &expected).then_some(index)
+                    })
+                    .collect();
+                let Some(&command_index) = matching.last() else {
+                    panic!("{label}: no command update matching the reference in {out:?}");
+                };
+                for (index, message) in out.iter().enumerate() {
+                    if index != command_index && matches!(message, Out::Notify { .. }) {
+                        validate_extra_update(&out_args(message), label);
                     }
                 }
-                assert_eq!(out[1], Out::Accepted { session: SESSION, command: code, at: now }, "{label}");
-            }
-            None if label.ends_with("not there") => {
+                let ours =
+                    actions_without_the_ship(out_args(&out[command_index])["$tuple"][0].as_array().unwrap());
+                let theirs = actions_without_the_ship(expected["$tuple"][0].as_array().unwrap());
                 assert_eq!(
-                    out,
-                    [Out::Refused { session: SESSION, command: code, reason: "UNKNOWN_TARGET" }],
+                    ours.iter().map(|action| &action.0).collect::<Vec<_>>(),
+                    theirs.iter().map(|action| &action.0).collect::<Vec<_>>(),
                     "{label}"
                 );
+                for ((name, actual), (_, expected)) in ours.iter().zip(&theirs) {
+                    if name == "GotoDirection" {
+                        assert_eq!(shape(&json!(actual)), shape(&json!(expected)), "{label}");
+                    } else {
+                        assert_eq!(actual, expected, "{label}: {name}");
+                    }
+                }
+                assert!(out.iter().any(|message| matches!(
+                    message,
+                    Out::Accepted { session: SESSION, command: accepted, at } if *accepted == code && *at == now
+                )), "{label}");
             }
-            None => assert_eq!(
-                out,
-                [Out::Accepted { session: SESSION, command: code, at: now }],
-                "{label}: nothing to say"
-            ),
+            None if label.ends_with("not there") => {
+                let refusals: Vec<_> =
+                    out.iter().filter(|message| matches!(message, Out::Refused { .. })).collect();
+                assert_eq!(refusals.len(), 1, "{label}: {out:?}");
+                assert_eq!(
+                    *refusals[0],
+                    Out::Refused { session: SESSION, command: code, reason: "UNKNOWN_TARGET" },
+                    "{label}"
+                );
+                for message in &out {
+                    if matches!(message, Out::Notify { .. }) {
+                        validate_extra_update(&out_args(message), label);
+                    }
+                }
+            }
+            None => {
+                assert!(out.iter().any(|message| matches!(
+                    message,
+                    Out::Accepted { session: SESSION, command: accepted, at } if *accepted == code && *at == now
+                )), "{label}: {out:?}");
+                for message in &out {
+                    if matches!(message, Out::Notify { .. }) {
+                        validate_extra_update(&out_args(message), label);
+                    }
+                }
+            }
         }
     }
 }

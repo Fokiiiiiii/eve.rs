@@ -21,8 +21,8 @@ public class ModuleEffectsTests
         // the effects of this release, by name: the list only grows
         foreach (var name in new[]
         {
-            "moduleBonusAfterburner", "moduleBonusMicrowarpdrive", "targetAttack", "projectileFired", "armorRepair", "shieldBoosting", "structureRepair", "empWave", "remoteWebifierFalloff",
-            "remoteTargetPaintFalloff", "remoteSensorDampFalloff", "warpScrambleBlockMWDWithNPCEffect", "warpDisrupt", "shipModuleTrackingDisruptor", "shipModuleGuidanceDisruptor", "remoteECMFalloff",
+            "moduleBonusAfterburner", "moduleBonusMicrowarpdrive", "microJumpDrive", "targetAttack", "projectileFired", "armorRepair", "shieldBoosting", "structureRepair", "empWave", "remoteWebifierFalloff",
+            "remoteTargetPaintFalloff", "remoteSensorDampFalloff", "remoteSensorBoostFalloff", "warpScrambleBlockMWDWithNPCEffect", "warpDisrupt", "shipModuleTrackingDisruptor", "shipModuleGuidanceDisruptor", "remoteECMFalloff",
             "ecmBurstJammer", "cloaking", "cloakingWarpSafe", "cloakingPrototype", "shipModuleRemoteShieldBooster", "shipModuleRemoteArmorRepairer", "shipModuleRemoteHullRepairer", "shipModuleRemoteCapacitorTransmitter", "energyNeutralizerFalloff", "energyNosferatuFalloff",
         })
         {

@@ -100,8 +100,16 @@ pub enum Remote {
     Web { percent: f64 },
     /// The target's signature radius is changed by `percent` (a target painter: positive).
     Paint { percent: f64 },
-    /// The range the target locks at and its scan resolution are changed by those percentages (a sensor dampener: negative).
-    Damp { range_percent: f64, resolution_percent: f64 },
+    /// The target's lock range, scan resolution, and four sensor strengths are changed by these percentages.
+    /// Sensor boosts are positive; dampeners reduce lock range and scan resolution.
+    Damp {
+        range_percent: f64,
+        resolution_percent: f64,
+        gravimetric_percent: f64,
+        ladar_percent: f64,
+        magnetometric_percent: f64,
+        radar_percent: f64,
+    },
     /// The turrets the target fires are changed by those percentages of their optimal range, falloff and tracking speed for as long as the effect lands (a tracking
     /// disruptor: negative).
     Disrupt { range_percent: f64, falloff_percent: f64, tracking_percent: f64 },
@@ -122,20 +130,49 @@ pub enum Remote {
 }
 
 impl Remote {
-    /// Whether the effect is an attack (the client plays it as one, and the target is aggressed).
     pub fn hostile(&self) -> bool {
-        !matches!(self, Self::Repair { .. } | Self::Transfer { .. })
+        match self {
+            Self::Repair { .. } | Self::Transfer { .. } => false,
+            Self::Damp {
+                range_percent,
+                resolution_percent,
+                gravimetric_percent,
+                ladar_percent,
+                magnetometric_percent,
+                radar_percent,
+            } => ![
+                *range_percent,
+                *resolution_percent,
+                *gravimetric_percent,
+                *ladar_percent,
+                *magnetometric_percent,
+                *radar_percent,
+            ]
+            .into_iter()
+            .all(|percent| percent >= 0.0),
+            _ => true,
+        }
     }
 
-    /// What the effect does to the target's numbers for as long as it lands, weakened by `share`: those that last are kept by the target (`crate::ewar`), not done once a cycle.
     pub(crate) fn lasting(&self, share: f64) -> Option<crate::ewar::Lasting> {
         use crate::ewar::Lasting;
         match *self {
             Self::Web { percent } => Some(Lasting::Web { percent: percent * share }),
             Self::Paint { percent } => Some(Lasting::Paint { percent: percent * share }),
-            Self::Damp { range_percent, resolution_percent } => Some(Lasting::Damp {
+            Self::Damp {
+                range_percent,
+                resolution_percent,
+                gravimetric_percent,
+                ladar_percent,
+                magnetometric_percent,
+                radar_percent,
+            } => Some(Lasting::Damp {
                 range_percent: range_percent * share,
                 resolution_percent: resolution_percent * share,
+                gravimetric_percent: gravimetric_percent * share,
+                ladar_percent: ladar_percent * share,
+                magnetometric_percent: magnetometric_percent * share,
+                radar_percent: radar_percent * share,
             }),
             Self::Scramble { strength, blocks_mwd } => {
                 Some(Lasting::Scramble { strength: strength * share, blocks_mwd })
@@ -188,7 +225,7 @@ impl Action {
         match self {
             Self::Remote { what, .. } => what.hostile(),
             Self::Smartbomb { .. } | Self::EcmBurst { .. } => true,
-            Self::Cloak => false,
+            Self::Cloak | Self::MicroJumpDrive { .. } => false,
             Self::Charged { action, fallback, .. } => {
                 action.offensive() || fallback.as_deref().is_some_and(Action::offensive)
             }
@@ -221,6 +258,10 @@ pub enum Action {
         strength: [f64; 4],
     },
     Cloak,
+    MicroJumpDrive {
+        distance_meters: f64,
+        cooldown_ms: i64,
+    },
     Charged {
         action: Box<Action>,
         fallback: Option<Box<Action>>,
@@ -415,12 +456,17 @@ pub(crate) struct Running {
 pub(crate) struct Modules {
     pub(crate) capacitor: Option<Capacitor>,
     running: Vec<Running>,
+    mjd_cooldowns: Vec<(i64, i64)>,
 }
 
 impl Modules {
     /// The modules of a ship whose capacitor holds `ratio` of what it can.
     pub(crate) fn with_charge(capacity: f64, recharge_s: f64, ratio: f64, now: i64) -> Self {
-        Self { capacitor: Some(Capacitor::filled(capacity, recharge_s, ratio, now)), running: Vec::new() }
+        Self {
+            capacitor: Some(Capacitor::filled(capacity, recharge_s, ratio, now)),
+            running: Vec::new(),
+            mjd_cooldowns: Vec::new(),
+        }
     }
 
     /// How many effects run.
@@ -432,6 +478,12 @@ impl Modules {
     /// The effects that run, with the moment the cycle each is in began.
     pub(crate) fn running_effects(&self) -> impl Iterator<Item = (&Effect, i64)> {
         self.running.iter().map(|run| (&run.effect, run.cycle_start))
+    }
+
+    pub(crate) fn is_mjd_spooling(&self) -> bool {
+        self.running
+            .iter()
+            .any(|run| matches!(run.effect.action.as_ref(), Some(Action::MicroJumpDrive { .. })))
     }
 
     pub(crate) fn is_idle(&self) -> bool {
@@ -644,13 +696,30 @@ impl Scene {
         if !self.pilots.contains_key(&session) {
             return vec![Out::Refused { session, command: CODE, reason: "NO_SHIP_IN_SPACE" }];
         }
-        if effect.duration_ms < 1.0 || effect.repeat < 1 {
+        if !effect.duration_ms.is_finite() || effect.duration_ms < 1.0 || effect.repeat < 1 {
             return vec![Out::Refused { session, command: CODE, reason: "BAD_EFFECT" }];
         }
         self.settle_all(now);
         let pilot = &self.pilots[&session];
         if pilot.modules.running.iter().any(|r| r.effect.module_id == effect.module_id) {
             return vec![Out::Refused { session, command: CODE, reason: "ALREADY_ACTIVE" }];
+        }
+        if let Some(Action::MicroJumpDrive { distance_meters, cooldown_ms }) = effect.action.as_ref() {
+            if !distance_meters.is_finite()
+                || *distance_meters <= 0.0
+                || *cooldown_ms <= 0
+                || effect.repeat != 1
+            {
+                return vec![Out::Refused { session, command: CODE, reason: "BAD_MJD" }];
+            }
+            if pilot
+                .modules
+                .mjd_cooldowns
+                .iter()
+                .any(|(module_id, until)| *module_id == effect.module_id && *until > now)
+            {
+                return vec![Out::Refused { session, command: CODE, reason: "MJD_COOLDOWN" }];
+            }
         }
         // a smartbomb that the safety forbids does not start with another pilot in its range
         if let Some(Action::Smartbomb { range, hurts_pilots: false, .. }) = effect.action.as_ref()
@@ -721,7 +790,30 @@ impl Scene {
             };
             let self_capacitor_boost = matches!(what, Remote::Transfer { .. })
                 && self.pilots.get(&session).is_some_and(|pilot| effect.target_id == pilot.ship.spec.ship_id);
-            if !self_capacitor_boost && !self.locked_by(session).contains(&effect.target_id) {
+            let self_sensor_boost =
+                self.pilots.get(&session).is_some_and(|pilot| effect.target_id == pilot.ship.spec.ship_id)
+                    && effect.jam() == Some("remoteSensorBoost")
+                    && matches!(
+                        what,
+                        Remote::Damp {
+                            range_percent,
+                            resolution_percent,
+                            gravimetric_percent,
+                            ladar_percent,
+                            magnetometric_percent,
+                            radar_percent,
+                        } if *range_percent >= 0.0
+                            && *resolution_percent >= 0.0
+                            && (*range_percent > 0.0 || *resolution_percent > 0.0)
+                            && *gravimetric_percent == 0.0
+                            && *ladar_percent == 0.0
+                            && *magnetometric_percent == 0.0
+                            && *radar_percent == 0.0
+                    );
+            if !self_capacitor_boost
+                && !self_sensor_boost
+                && !self.locked_by(session).contains(&effect.target_id)
+            {
                 return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_LOCKED" }];
             }
             let apart = self.apart(session, target).unwrap_or(f64::INFINITY);
@@ -973,13 +1065,52 @@ impl Scene {
     fn end_cycle(&mut self, session: SessionId, index: usize, at: i64) -> Vec<Out> {
         let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
         let run = pilot.modules.running[index].clone();
+        if let Some(Action::MicroJumpDrive { distance_meters, cooldown_ms }) = run.effect.action.as_ref() {
+            let module_id = run.effect.module_id;
+            let cooldown_until = at.saturating_add((*cooldown_ms).saturating_mul(TICKS_PER_SECOND / 1000));
+            let scrammed = self.pilots.get(&session).is_some_and(|pilot| pilot.incoming.mwd_blocked());
+            let (owner, ship_id) = {
+                let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+                pilot.modules.mjd_cooldowns.retain(|(id, _)| *id != module_id);
+                pilot.modules.mjd_cooldowns.push((module_id, cooldown_until));
+                let identity = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+                pilot.modules.running.remove(index);
+                identity
+            };
+            let mut out =
+                if scrammed { Vec::new() } else { self.perform_micro_jump(session, *distance_meters, at) };
+            out.extend(self.effect_ended(session, run, owner, ship_id, at, Ending::Done));
+            return out;
+        }
         // a weapon goes on while its target is there and locked, an effect projected at a ship while the ship is also in reach
         let self_capacitor_boost = run
             .effect
             .remote()
             .is_some_and(|(what, ..)| matches!(what, Remote::Transfer { .. }))
             && self.pilots.get(&session).is_some_and(|pilot| run.effect.target_id == pilot.ship.spec.ship_id);
-        let target_ok = if self_capacitor_boost {
+        let self_sensor_boost =
+            self.pilots.get(&session).is_some_and(|pilot| run.effect.target_id == pilot.ship.spec.ship_id)
+                && run.effect.jam() == Some("remoteSensorBoost")
+                && run.effect.remote().is_some_and(|(what, ..)| {
+                    matches!(
+                        what,
+                        Remote::Damp {
+                            range_percent,
+                            resolution_percent,
+                            gravimetric_percent,
+                            ladar_percent,
+                            magnetometric_percent,
+                            radar_percent,
+                        } if *range_percent >= 0.0
+                            && *resolution_percent >= 0.0
+                            && (*range_percent > 0.0 || *resolution_percent > 0.0)
+                            && *gravimetric_percent == 0.0
+                            && *ladar_percent == 0.0
+                            && *magnetometric_percent == 0.0
+                            && *radar_percent == 0.0
+                    )
+                });
+        let target_ok = if self_capacitor_boost || self_sensor_boost {
             true
         } else if run.effect.turret.is_some() {
             self.turret_target_ok(session, &run.effect)
@@ -1439,6 +1570,24 @@ pub(crate) mod tests {
         }
     }
 
+    fn micro_jump_drive() -> Effect {
+        Effect {
+            module_id: MODULE + 200,
+            module_type: 4383,
+            effect_id: 4921,
+            fx: "effects.MicroJumpDriveEngage".to_string(),
+            duration_ms: 12_000.0,
+            capacitor_need: 0.0,
+            repeat: 1,
+            action: Some(Action::MicroJumpDrive { distance_meters: 100_000.0, cooldown_ms: 180_000 }),
+            on: None,
+            off: None,
+            on_changes: Vec::new(),
+            off_changes: Vec::new(),
+            ..afterburner()
+        }
+    }
+
     fn other_spec() -> ShipSpec {
         let mut other = spec();
         other.ship_id += 4;
@@ -1477,6 +1626,23 @@ pub(crate) mod tests {
         scene.bind(A, NOON);
         scene.undock(B, other_spec(), STATION, NOON).unwrap();
         scene.bind(B, NOON);
+
+        let station = scene.system().body(STATION).unwrap().position;
+        let ship_a = scene.pilots[&A].ship.position;
+        let radial = (ship_a.x - station.x).hypot(ship_a.y - station.y).max(1.0);
+        let ship_b = eve_destiny::Vec3::new(
+            ship_a.x - (ship_a.y - station.y) / radial * 5_000.0,
+            ship_a.y + (ship_a.x - station.x) / radial * 5_000.0,
+            ship_a.z,
+        );
+        for (session, position) in [(A, ship_a), (B, ship_b)] {
+            let ship = &mut scene.pilots.get_mut(&session).unwrap().ship;
+            ship.position = position;
+            ship.velocity = eve_destiny::Vec3::ZERO;
+            ship.speed_fraction = 0.0;
+            ship.course = crate::ship::Course::Stop;
+        }
+
         let t = NOON + 40 * SECOND;
         scene.poll(t);
         (scene, t)
@@ -2773,7 +2939,14 @@ pub(crate) mod tests {
             A,
             holding(
                 MODULE,
-                Remote::Damp { range_percent: -90.0, resolution_percent: 0.0 },
+                Remote::Damp {
+                    range_percent: -90.0,
+                    resolution_percent: 0.0,
+                    gravimetric_percent: 0.0,
+                    ladar_percent: 0.0,
+                    magnetometric_percent: 0.0,
+                    radar_percent: 0.0,
+                },
                 "ewRemoteSensorDamp",
             ),
             t,
@@ -2785,6 +2958,98 @@ pub(crate) mod tests {
             "{:?}",
             labels(&told)
         );
+    }
+
+    #[test]
+    fn remote_sensor_boost_is_assistance_with_all_percentages_falloff_scaled_and_negative_or_mixed_damp_is_hostile()
+     {
+        let boost = Remote::Damp {
+            range_percent: 20.0,
+            resolution_percent: 10.0,
+            gravimetric_percent: 30.0,
+            ladar_percent: 40.0,
+            magnetometric_percent: 50.0,
+            radar_percent: 60.0,
+        };
+        assert!(!boost.hostile());
+        assert_eq!(
+            boost.lasting(0.5),
+            Some(crate::ewar::Lasting::Damp {
+                range_percent: 10.0,
+                resolution_percent: 5.0,
+                gravimetric_percent: 15.0,
+                ladar_percent: 20.0,
+                magnetometric_percent: 25.0,
+                radar_percent: 30.0,
+            })
+        );
+        assert!(
+            Remote::Damp {
+                range_percent: -25.0,
+                resolution_percent: -25.0,
+                gravimetric_percent: 0.0,
+                ladar_percent: 0.0,
+                magnetometric_percent: 0.0,
+                radar_percent: 0.0,
+            }
+            .hostile()
+        );
+        assert!(
+            Remote::Damp {
+                range_percent: 25.0,
+                resolution_percent: 25.0,
+                gravimetric_percent: 20.0,
+                ladar_percent: -1.0,
+                magnetometric_percent: 20.0,
+                radar_percent: 20.0,
+            }
+            .hostile()
+        );
+    }
+
+    #[test]
+    fn two_local_sensor_boosters_stack_and_stopping_one_keeps_the_other() {
+        let (mut scene, t) = crowd();
+        let ship_id = spec().ship_id;
+        let (base_range, base_resolution) = {
+            let ship = &scene.pilots[&A].ship.spec;
+            (ship.max_target_range, ship.scan_resolution)
+        };
+        let self_boost = |module_id, range_percent, resolution_percent| {
+            let mut effect = projected(
+                Remote::Damp {
+                    range_percent,
+                    resolution_percent,
+                    gravimetric_percent: 0.0,
+                    ladar_percent: 0.0,
+                    magnetometric_percent: 0.0,
+                    radar_percent: 0.0,
+                },
+                Applies::CycleStart,
+                ship_id,
+            );
+            effect.module_id = module_id;
+            if let Some(Action::Remote { reach, jam, .. }) = effect.action.as_mut() {
+                *reach = Reach { optimal: 1.0, falloff: 0.0 };
+                *jam = "remoteSensorBoost".to_string();
+            }
+            effect
+        };
+        let first_module = MODULE + 20;
+        let second_module = MODULE + 21;
+        let first = scene.activate(A, self_boost(first_module, 50.0, 40.0), t);
+        assert!(matches!(first.first(), Some(Out::Accepted { .. })), "{first:?}");
+        let second = scene.activate(A, self_boost(second_module, 30.0, 20.0), t);
+        assert!(matches!(second.first(), Some(Out::Accepted { .. })), "{second:?}");
+        assert!(first.iter().any(|out| matches!(out, Out::Notify { session: A, name: "OnJamStart", .. })));
+        assert!(scene.pilots[&A].ship.spec.max_target_range > base_range * 1.3);
+        assert!(scene.pilots[&A].ship.spec.scan_resolution > base_resolution * 1.2);
+
+        scene.deactivate(A, first_module, t + SECOND);
+        let (ended, _) = poll_until(&mut scene, t + SECOND, 5.1);
+        assert_eq!(scene.pilots[&A].modules.running_count(), 1, "{:?}", labels(&ended));
+        assert!((scene.pilots[&A].ship.spec.max_target_range - base_range * 1.3).abs() < 1e-6);
+        assert!((scene.pilots[&A].ship.spec.scan_resolution - base_resolution * 1.2).abs() < 1e-6);
     }
 
     #[test]
@@ -2802,7 +3067,14 @@ pub(crate) mod tests {
             A,
             holding(
                 MODULE + 1,
-                Remote::Damp { range_percent: -30.0, resolution_percent: -20.0 },
+                Remote::Damp {
+                    range_percent: -30.0,
+                    resolution_percent: -20.0,
+                    gravimetric_percent: 0.0,
+                    ladar_percent: 0.0,
+                    magnetometric_percent: 0.0,
+                    radar_percent: 0.0,
+                },
                 "ewRemoteSensorDamp",
             ),
             t,
@@ -2918,6 +3190,66 @@ pub(crate) mod tests {
     /// The afterburner of the tests, as the dogma effect of a microwarpdrive.
     fn microwarpdrive() -> Effect {
         Effect { effect_id: MICROWARPDRIVE, module_id: MODULE + 100, ..afterburner() }
+    }
+
+    #[test]
+    fn an_uninterrupted_mjd_jumps_at_spool_end_and_starts_cooldown() {
+        let (mut scene, t) = crowd();
+        let started = scene.activate(A, micro_jump_drive(), t);
+        assert!(started.iter().any(|out| matches!(out, Out::Accepted { .. })));
+
+        let deadline = t + 12 * SECOND;
+        let (position, direction, speed) = {
+            let ship = scene.ship(A, deadline).unwrap();
+            (ship.position, ship.direction, ship.speed_fraction)
+        };
+        scene.poll(deadline);
+        let after = scene.ship(A, deadline).unwrap();
+        assert!((after.position.x - position.x - direction.x * 100_000.0).abs() < 0.001);
+        assert!((after.position.y - position.y - direction.y * 100_000.0).abs() < 0.001);
+        assert!((after.position.z - position.z - direction.z * 100_000.0).abs() < 0.001);
+        assert_eq!(after.speed_fraction, speed);
+        assert_eq!(
+            (after.direction.x, after.direction.y, after.direction.z),
+            (direction.x, direction.y, direction.z)
+        );
+
+        let cooling = scene.activate(A, micro_jump_drive(), deadline + SECOND);
+        assert!(cooling.iter().any(|out| matches!(out, Out::Refused { reason: "MJD_COOLDOWN", .. })));
+    }
+
+    #[test]
+    fn a_scram_at_mjd_spool_end_aborts_and_cooldown_expires() {
+        let (mut scene, t) = reaching(3_000.0);
+        let repeated = Effect { repeat: 2, ..micro_jump_drive() };
+        let refused = scene.activate(B, repeated, t);
+        assert!(refused.iter().any(|out| matches!(out, Out::Refused { reason: "BAD_MJD", .. })));
+
+        let started = scene.activate(B, micro_jump_drive(), t);
+        assert!(started.iter().any(|out| matches!(out, Out::Accepted { .. })));
+        let steering = scene.command(
+            B,
+            crate::scene::Command::GotoDirection(eve_destiny::Vec3::new(1.0, 0.0, 0.0)),
+            t + SECOND,
+        );
+        assert!(steering.iter().any(|out| matches!(out, Out::Refused { reason: "MJD_SPOOLING", .. })));
+
+        let scram =
+            holding(MODULE + 201, Remote::Scramble { strength: 2.0, blocks_mwd: true }, "warpScramblerMWD");
+        let held = scene.activate(A, scram, t + SECOND);
+        assert!(held.iter().any(|out| matches!(out, Out::Accepted { .. })));
+        assert!(scene.pilots[&B].incoming.mwd_blocked());
+
+        let deadline = t + 12 * SECOND;
+        let position_before = scene.ship(B, deadline).unwrap().position;
+        scene.poll(deadline);
+        assert_eq!(scene.ship(B, deadline).unwrap().position, position_before);
+        assert!(!scene.pilots[&B].modules.running.iter().any(|run| run.effect.module_id == MODULE + 200));
+
+        let cooling = scene.activate(B, micro_jump_drive(), deadline + SECOND);
+        assert!(cooling.iter().any(|out| matches!(out, Out::Refused { reason: "MJD_COOLDOWN", .. })));
+        let expired = scene.activate(B, micro_jump_drive(), deadline + 180 * SECOND);
+        assert!(expired.iter().any(|out| matches!(out, Out::Accepted { .. })));
     }
 
     #[test]

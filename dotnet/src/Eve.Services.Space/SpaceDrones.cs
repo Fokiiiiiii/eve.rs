@@ -39,7 +39,10 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
     private const int OrbitRangeAttribute = 157;
     private const int CruiseSpeedAttribute = 508;
     private const int EntityAttackRangeAttribute = 247;
+    // The current SDE has no Drone Control Unit type; do not synthesize a max-active-drone bonus.
     private const int MaxActiveDronesAttribute = 352;
+    private const int DroneControlRangeBonusAttribute = 459;
+    private const double DefaultDroneControlRange = 20_000;
     private const int DroneBandwidthAttribute = 1271;
     private const int DroneBandwidthUsedAttribute = 1272;
     private const int QuantityAttribute = 805;
@@ -213,7 +216,11 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
                     ShipNotifications.SendItemChange(session, change, RowOf);
                 }
                 SendPrime(session, InventoryWire.Id(shipId), drone with { LocationId = shipId, Flag = CharacterShips.DroneBayFlag }, drone.TypeId);
-                var weapon = NpcArmament.HullWeapon(type, drone.Id, _statics)!;
+                snapshot.World.Add(new DogmaItem(drone.Id, drone.TypeId, characterId, shipId, CharacterShips.DroneBayFlag));
+                var baseDamageMultiplier = type.Attributes.GetValueOrDefault(NpcArmament.DamageMultiplier, 1d);
+                var damageMultiplier = snapshot.World.Get(drone.Id, NpcArmament.DamageMultiplier);
+                var damageScale = baseDamageMultiplier > 0 ? damageMultiplier / baseDamageMultiplier : 0;
+                var weapon = NpcArmament.HullWeapon(type, drone.Id, _statics, damageScale)!;
                 if (!await SpawnAsync(session, snapshot, drone, type, weapon, cancellationToken).ConfigureAwait(false))
                 {
                     results.Add(Refusal("Unable to materialize drone in space."));
@@ -344,10 +351,22 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
                 _letGo[id] = 0;
             }
         }
+        var controlRange = DefaultDroneControlRange;
+        if (session.CharacterId is { } characterId
+            && session.GetInt("shipid") is { } shipId
+            && await _ships.LoadAsync(characterId, cancellationToken).ConfigureAwait(false) is { } snapshot
+            && snapshot.Ship.Id == shipId)
+        {
+            var bonus = snapshot.World.Get(shipId, DroneControlRangeBonusAttribute);
+            if (double.IsFinite(bonus) && bonus > 0 && double.IsFinite(controlRange + bonus))
+            {
+                controlRange += bonus;
+            }
+        }
         CommandReply reply;
         try
         {
-            reply = await _sim.DroneCommandAsync(controller, command, targetId, droneIds, cancellationToken).ConfigureAwait(false);
+            reply = await _sim.DroneCommandAsync(controller, command, targetId, droneIds, controlRange, cancellationToken).ConfigureAwait(false);
         }
         catch (SimUnavailableException error)
         {

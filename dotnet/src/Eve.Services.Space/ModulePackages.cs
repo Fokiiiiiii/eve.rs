@@ -65,6 +65,10 @@ internal static class ModulePackages
         };
         var handlerContext = ReferenceEquals(handlerEffect, effect) ? context : context with { Effect = handlerEffect };
         var handler = ModuleEffects.Default.Find(handlerContext);
+        if (effect.Name.Trim().Equals("sensorBoost", StringComparison.OrdinalIgnoreCase))
+        {
+            handler = ModuleEffects.SensorBooster;
+        }
         // the handler may refuse before the target is asked for (a gun with nothing to shoot is refused first: the reference's order)
         if (handler?.Refusal(handlerContext) is { } reason)
         {

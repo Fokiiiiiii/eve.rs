@@ -1,6 +1,6 @@
 # Ship Operations and Module Coverage Handoff
 
-**Updated:** 2026-10-04
+**Updated:** 2026-10-05
 
 **Scope:** EVE University Wiki module families, player ship operations, current eve.rs Host/C#/Rust paths, and the next bounded implementation slices.
 
@@ -60,6 +60,8 @@ The existing `Remote.Damp` mathematics can apply positive percentages to targeti
 Contract: existing `dogmaIM.Activate` RPC; SDE effect name `remoteSensorBoostFalloff`; `EffectDef.Id` and `EffectDef.Guid` from SDE; client `jammingType` `remoteSensorBoost`; source attributes for max target range, scan resolution, and gravimetric/ladar/magnetometric/radar sensor-strength percentages; cycle/range/falloff values from the effect/module. Assistance needs a separate Host classification, ship-target validation, active `disallowAssistance` rules, and cycle refresh/expiry. Do not report two range/scan bonuses as full parity.
 
 Small first C# boundary: `ProjectedEffect.cs`, `ModuleAttributes.cs`, `SpaceSessions.cs`, focused Host/Space tests. Full sensor-strength parity additionally needs the EWAR/dogma/ship payload path, after Kepler finishes the current Rust module work. Wiki references: [Electronic Warfare](https://wiki.eveuniversity.org/Electronic_Warfare), [Scripts](https://wiki.eveuniversity.org/Scripts); pinned [EVEJS assistance runtime](https://github.com/Fokiiiiiii/evejs-v0.12.9/blob/828823a75f211fdecb945b087a26c225f111491f/server/src/space/modules/assistanceModuleRuntime.js).
+
+Client-source check: [`eve-logic` at `1dbb571`](https://github.com/Fokiiiiiii/eve-logic/tree/1dbb5711a072a146e1d228365668ac05655eefe1) maps effect `6427` to `buffBarConst.Slot_SensorBooster` in [`dogma/effects/__init__.py`](https://github.com/Fokiiiiiii/eve-logic/blob/1dbb5711a072a146e1d228365668ac05655eefe1/dogma/effects/__init__.py); [`dogma/const.py`](https://github.com/Fokiiiiiii/eve-logic/blob/1dbb5711a072a146e1d228365668ac05655eefe1/dogma/const.py) defines `disallowAssistance=854`, `maxTargetRangeBonus=309`, and `scanResolutionBonus=566`. `dogmaim.py` in this snapshot only exposes the service start/accessor, so it does not confirm the RPC implementation details.
 
 ### Cloak, MJD/MJFG, bombs, Defender and Point Defense
 
@@ -148,6 +150,31 @@ On resume, read the S5 service backlog in [PLAN.md](PLAN.md) and this handoff fi
 | SDE cache | `C:\Users\yutai\eve.rs\.cache\sde\eve-online-static-data-3396210-jsonl` (`.complete`, build 3396210); dedicated import DB was dropped after use |
 | Mill Autopilot focused slice | Worker-reported .NET 1/1 and PG18.6 1/1, both skip 0, exit 0; commit/push reported |
 | Kepler heat/ammunition focused slice | Worker-reported Rust heat 1/1, overheat 4/4, fmt/clippy clean, and C# Ammo/Queue 6/6 skip 0; commit/push reported |
-| Final .NET suite total | Parent is checking the .NET job log; do not substitute earlier totals |
+| Final .NET suite total | [CI run 37196142757](https://github.com/Fokiiiiiii/eve.rs/actions/runs/37196142757), .NET job 111419153202: 34 test assemblies, 3,233 passed, 0 failed, 0 skipped (job succeeded) |
 | Post-push CI | [Run 37196142757](https://github.com/Fokiiiiiii/eve.rs/actions/runs/37196142757): all six jobs completed successfully — .NET build/test, Rust fmt/clippy/test, latest Rust advisory, fixture/generator match, Python client golden/mock, and end-to-end server stack/headless client |
 | Live client acceptance | Not recorded for this handoff |
+
+### Implementation batch — 2026-10-05
+
+The current working tree adds or completes these behavior slices:
+
+- Assistance legality distinguishes positive `remoteSensorBoost` from hostile effects, checks target `disallowAssistance` (`854`), and preserves aggression handling for negative or mixed `Damp` effects.
+- Remote Sensor Boost now applies targeting range (`309`), scan resolution (`566`), and all four sensor-strength channels (`238`–`241`) through the C#/Rust SimLink payload. Stacking, falloff, refresh, expiry, Dogma updates, and ECM strength use the existing EWAR path. Local `sensorBoost` uses the same modifier path for stacking and expiry.
+- Micro Jump Drive supports SDE-backed range/cooldown, spool, heading-based movement, scram interruption, repeat refusal, and cooldown after an interrupted spool.
+- Ship-to-ship and ship-to-static-body bumps resolve overlap and one-tick swept contacts, update position/velocity/heading, and notify observers. Swept paths use a linear segment and resolve at most one swept impact per ship per settlement; same-tick curved paths and multiple impacts remain unmodeled.
+- Fitting checks subsystem slot roles. Rig size and calibration behavior already existed; focused current-SDE regression coverage was added. Dogma tests now cover existing stacked turret and missile damage amplifiers without adding a second damage multiplier.
+- Docked `MultiAdd` supports client AutoFit. Drone damage amplification, Drone Link Augmentor control range (attribute `459`), and docked Drone Bay storage/retrieval and capacity are connected to their runtime paths.
+- `Board` and `LeaveShip` use the client sequence: `LeaveShip` prepares/returns a capsule ID; the following `Board(capsuleID, currentShipID)` changes the active ship. `CmdAbandonLoot` clears loot rights while leaving the contents in place.
+- Bookmark RPC handling accepts `CmdWarpToStuff("bookmark", bookmarkID, minRange)`, but bookmark coordinates are not yet resolved by the simulation. Drone Control Unit types are absent from the checked SDE build, so no guessed types or effects were added.
+
+### Verification checkpoint — 2026-10-05
+
+| Gate | Result |
+|---|---|
+| `cargo fmt --all --check` | Exit 0 |
+| `cargo test -p eve-space --quiet` | Exit 0; 478 unit tests and all integration test binaries passed |
+| `dotnet build .\dotnet\src\Eve.Host\Eve.Host.csproj --no-restore --verbosity minimal` | Exit 0; 0 warnings, 0 errors |
+| Focused .NET suites | Exit 0 across `Eve.Space.Tests` (136 passed), `Eve.Fitting.Tests` (47 passed, 3 skipped), `Eve.Services.Dogma.Tests` (70 passed, 47 skipped), `Eve.Services.Inventory.Tests` (7 passed, 21 skipped), `Eve.Services.Space.Tests` (40 passed, 173 skipped), `Eve.Dogma.Tests` (51 passed, 4 skipped), and `Eve.Npc.Tests` (152 passed, 14 skipped) |
+| PostgreSQL-backed tests | Skipped where gated because `EVE_PG_URL` is not set; no database connection was made |
+| SimLink fixture generator | Exit 0; generated 99 valid and 10 invalid frames |
+| Live client acceptance | Not performed |

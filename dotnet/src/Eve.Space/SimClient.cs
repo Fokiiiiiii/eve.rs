@@ -365,8 +365,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public Task<SimSpawnReply> LaunchDroneAsync(SimLaunchDrone launch, CancellationToken cancellationToken = default) =>
         AwaitAsync(_spawning, launch.RequestId, launch, cancellationToken);
 
-    public Task<CommandReply> DroneCommandAsync(ulong sessionId, byte command, long targetId, IReadOnlyList<long> droneIds, CancellationToken cancellationToken = default) =>
-        AwaitAsync(_answered, (sessionId, SimDroneCommands.Key(command)), new SimDroneCommand(sessionId, command, targetId, droneIds), cancellationToken);
+    public Task<CommandReply> DroneCommandAsync(ulong sessionId, byte command, long targetId, IReadOnlyList<long> droneIds, double controlRange, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_answered, (sessionId, SimDroneCommands.Key(command)), new SimDroneCommand(sessionId, command, targetId, droneIds, controlRange), cancellationToken);
 
     public Task<string?> RespawnAsync(SimRespawn respawn, CancellationToken cancellationToken = default) =>
         AwaitAsync(_entering, respawn.SessionId, respawn, cancellationToken);

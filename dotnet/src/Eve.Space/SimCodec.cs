@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 18;
+    public const ushort ProtocolVersion = 20;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -331,6 +331,8 @@ public static class SimCodec
                 }
             case 5:
                 return new SimAction.Cloak();
+            case 6:
+                return new SimAction.MicroJumpDrive(r.F64(), r.I64());
             case 4:
                 {
                     var typeId = r.I32();
@@ -371,7 +373,7 @@ public static class SimCodec
                         3 => new SimRemote.Drain(r.F64(), r.F64()),
                         4 => new SimRemote.Web(r.F64()),
                         5 => new SimRemote.Paint(r.F64()),
-                        6 => new SimRemote.Damp(r.F64(), r.F64()),
+                        6 => new SimRemote.Damp(r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64()),
                         7 => ReadScramble(ref r),
                         8 => new SimRemote.Jam(r.F64(), r.F64(), r.F64(), r.F64()),
                         9 => new SimRemote.Disrupt(r.F64(), r.F64(), r.F64()),
@@ -602,7 +604,7 @@ public static class SimCodec
                     var command = r.U8();
                     var target = r.I64();
                     var count = r.U32();
-                    if (count > r.Remaining / 8)
+                    if (r.Remaining < 8 || count > (r.Remaining - 8) / 8)
                     {
                         throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");
                     }
@@ -611,7 +613,7 @@ public static class SimCodec
                     {
                         drones[i] = r.I64();
                     }
-                    message = new SimDroneCommand(session, command, target, drones);
+                    message = new SimDroneCommand(session, command, target, drones, r.F64());
                     break;
                 }
             case Kind.DroneResults:
@@ -921,6 +923,9 @@ private static void WriteAction(Writer w, SimAction action)
             case SimAction.Cloak:
                 w.U8(5);
                 break;
+            case SimAction.MicroJumpDrive jump:
+                w.U8(6); w.F64(jump.DistanceMeters); w.I64(jump.CooldownMs);
+                break;
             case SimAction.Smartbomb bomb:
                 w.U8(2); w.F64(bomb.Range); foreach (var number in bomb.Damage) w.F64(number); w.U8(bomb.HurtsPilots ? (byte)1 : (byte)0);
                 break;
@@ -941,7 +946,7 @@ private static void WriteAction(Writer w, SimAction action)
                     case SimRemote.Paint paint:
                         w.U8(5); w.F64(paint.Percent); break;
                     case SimRemote.Damp damp:
-                        w.U8(6); w.F64(damp.RangePercent); w.F64(damp.ResolutionPercent); break;
+                        w.U8(6); w.F64(damp.RangePercent); w.F64(damp.ResolutionPercent); w.F64(damp.GravimetricStrengthPercent); w.F64(damp.LadarStrengthPercent); w.F64(damp.MagnetometricStrengthPercent); w.F64(damp.RadarStrengthPercent); break;
                     case SimRemote.Scramble scramble:
                         w.U8(7); w.F64(scramble.Strength); w.U8(scramble.BlocksMwd ? (byte)1 : (byte)0); break;
                     case SimRemote.Disrupt disrupt:
@@ -1355,6 +1360,7 @@ private static void WriteAction(Writer w, SimAction action)
                 {
                     w.I64(drone);
                 }
+                w.F64(m.ControlRange);
                 break;
             case SimDroneResults m:
                 w.U8(Kind.DroneResults);

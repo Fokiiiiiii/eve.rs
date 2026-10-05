@@ -296,6 +296,9 @@ public abstract record SimAction
 
     /// <summary>Engages or disengages the ship's active cloaking device.</summary>
     public sealed record Cloak : SimAction;
+
+    /// <summary>Spools once, then shifts the ship along its heading; cooldown begins when the spool succeeds or is interrupted.</summary>
+    public sealed record MicroJumpDrive(double DistanceMeters, long CooldownMs) : SimAction;
 }
 
 /// <summary>What a module that is projected at another ship does to it each cycle.</summary>
@@ -327,7 +330,7 @@ public abstract record SimRemote
     public sealed record Paint(double Percent) : SimRemote;
 
     /// <summary>The range the target locks at and its scan resolution are changed by those percentages (a sensor dampener: negative).</summary>
-    public sealed record Damp(double RangePercent, double ResolutionPercent) : SimRemote;
+    public sealed record Damp(double RangePercent, double ResolutionPercent, double GravimetricStrengthPercent = 0, double LadarStrengthPercent = 0, double MagnetometricStrengthPercent = 0, double RadarStrengthPercent = 0) : SimRemote;
 
     /// <summary>The target is held out of warp: <paramref name="Strength"/> points of scramble (a warp scrambler 2, a warp disruptor 1); <paramref name="BlocksMwd"/>: and out of its microwarpdrive.</summary>
     public sealed record Scramble(double Strength, bool BlocksMwd) : SimRemote;
@@ -399,7 +402,7 @@ public static class SimDroneCommands
 }
 
 /// <summary>A pilot gives its drones (their item ids) an order; the answer is <see cref="SimDroneResults"/>.</summary>
-public sealed record SimDroneCommand(ulong SessionId, byte Command, long TargetId, IReadOnlyList<long> DroneIds) : SimMessage;
+public sealed record SimDroneCommand(ulong SessionId, byte Command, long TargetId, IReadOnlyList<long> DroneIds, double ControlRange = 20_000.0) : SimMessage;
 
 /// <summary>What one drone did with an order: <paramref name="Reason"/> is empty when it took it.</summary>
 public sealed record SimDroneResult(long DroneId, string Reason);

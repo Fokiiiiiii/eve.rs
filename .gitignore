@@ -4,6 +4,7 @@
 
 # Local caches and client-derived output
 /.cache/
+/.codebase-memory/
 /tools/spec-extract/out/
 
 # Python

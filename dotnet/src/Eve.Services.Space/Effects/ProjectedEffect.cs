@@ -30,7 +30,8 @@ internal sealed class ProjectedEffect : ShipEffect
         // what lasts for as long as the effect runs: the percentages are signed as dogma has them (a web is negative), a scrambler holds a microwarpdrive too
         ["remoteWebifierFalloff"] = v => (new SimRemote.Web(Signed(v, WebSpeedFactor)), false, "webify"),
         ["remoteTargetPaintFalloff"] = v => (new SimRemote.Paint(Signed(v, PainterSignatureBonus)), false, "ewTargetPaint"),
-        ["remoteSensorDampFalloff"] = v => (new SimRemote.Damp(Signed(v, DampenerRangeBonus), Signed(v, DampenerResolutionBonus)), false, "ewRemoteSensorDamp"),
+        ["remoteSensorDampFalloff"] = v => (new SimRemote.Damp(Signed(v, MaxTargetRangeBonus), Signed(v, ScanResolutionBonus)), false, "ewRemoteSensorDamp"),
+        ["remoteSensorBoostFalloff"] = v => (new SimRemote.Damp(Signed(v, MaxTargetRangeBonus), Signed(v, ScanResolutionBonus), Signed(v, ScanGravimetricStrengthBonus), Signed(v, ScanLadarStrengthBonus), Signed(v, ScanMagnetometricStrengthBonus), Signed(v, ScanRadarStrengthBonus)), false, "remoteSensorBoost"),
         ["warpScrambleBlockMWDWithNPCEffect"] = v => (new SimRemote.Scramble(Amount(v, WarpScrambleStrength), true), false, "warpScramblerMWD"),
         ["warpDisrupt"] = v => (new SimRemote.Scramble(Amount(v, WarpScrambleStrength), false), false, "warpScrambler"),
         // what the target's turrets lose: percentages of their range, falloff and tracking speed, as dogma gives them (negative)
@@ -38,7 +39,7 @@ internal sealed class ProjectedEffect : ShipEffect
         // what the target's missiles lose: percentages of their speed, flight time and explosion velocity and radius (the radius grows), as dogma gives them
         ["shipModuleGuidanceDisruptor"] = v => (new SimRemote.GuidanceDisrupt(Signed(v, MissileVelocityBonus), Signed(v, ExplosionDelayBonus), Signed(v, AoeVelocityBonus), Signed(v, AoeCloudSizeBonus)), false, "ewGuidanceDisrupt"),
         // the target's HUD is told when a jam lands (the simulation rolls for it), not as the effect begins
-        ["remoteECMFalloff"] = v => (new SimRemote.Jam(Amount(v, GravimetricJam), Amount(v, LadarJam), Amount(v, MagnetometricJam), Amount(v, RadarJam)), false, ""),
+        ["remoteECMFalloff"] = v => (new SimRemote.Jam(Amount(v, ScanGravimetricStrengthBonus), Amount(v, ScanLadarStrengthBonus), Amount(v, ScanMagnetometricStrengthBonus), Amount(v, ScanRadarStrengthBonus)), false, ""),
     };
 
     public override IReadOnlyCollection<string> EffectNames { get; } = [.. Specs.Keys];

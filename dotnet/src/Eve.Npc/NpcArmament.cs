@@ -19,7 +19,7 @@ public static class NpcArmament
     private const int Falloff = 158;
     private const int TrackingSpeed = 160;
     private const int OptimalSigRadius = 620;
-    private const int DamageMultiplier = 64;
+    public const int DamageMultiplier = 64;
     private const int EmDamage = 114;
     private const int ExplosiveDamage = 116;
     private const int KineticDamage = 117;
@@ -141,8 +141,16 @@ public static class NpcArmament
     /// The turret a hull carries, as a weapon of the ship's own (the simulation knows the module of an NPC's weapon to be the ship): the first effect of the
     /// hull that is a turret, with the hull's own attributes for its cycle, range, tracking and damage. Null when the hull deals no damage or has no turret.
     /// </summary>
-    public static SimNpcWeapon? HullWeapon(TypeDef hull, long shipId, DogmaStatic statics) =>
-        TurretHullWeapon(hull, shipId, statics) ?? MissileHullWeapon(hull, shipId, statics);
+    public static SimNpcWeapon? HullWeapon(TypeDef hull, long shipId, DogmaStatic statics, double damageScale = 1d)
+    {
+        var weapon = TurretHullWeapon(hull, shipId, statics) ?? MissileHullWeapon(hull, shipId, statics);
+        if (weapon is null || damageScale == 1d)
+        {
+            return weapon;
+        }
+        var scale = Math.Max(0, damageScale);
+        return weapon with { RawDamage = [.. weapon.RawDamage.Select(damage => Round6(Math.Max(0, damage) * scale))] };
+    }
 
     private static SimNpcWeapon? TurretHullWeapon(TypeDef hull, long shipId, DogmaStatic statics)
     {

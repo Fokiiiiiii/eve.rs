@@ -85,7 +85,31 @@ public sealed partial class ShipService(SpaceSessions space, Func<long> nowUnixM
         drones is null || !_binding.Owns(call) ? None : await drones.ScoopAsync(call.Session, SpaceDrones.IdsOf(call.Arg(0)), call.Cancellation);
 
     /// <summary><c>Undock(shipID, ignoreContraband, onlineModules=)</c>: answers the bound object and the time it can be used from again.</summary>
+    /// <summary>The client call <c>Board(shipID, oldShipID)</c> used by its active-ship switch.</summary>
+    /// <summary>The client call <c>LeaveShip(shipID)</c> returns the capsule made active by the session.</summary>
     [Method("Undock")]
     public async ValueTask<PyValue> Undock(ServiceCall call) =>
         _binding.Owns(call) ? await space.UndockAsync(call.Session, call.BoundObjectId, call.Cancellation) : None;
+
+    /// <summary><c>Board(shipID, currentShipID)</c>: selects an owned ship in the station hangar.</summary>
+    [Method("Board")]
+    public async ValueTask<PyValue> Board(ServiceCall call)
+    {
+        if (!_binding.Owns(call) || IdOf(call.Arg(0)) is not { } shipId || IdOf(call.Arg(1)) is not { } currentShipId)
+        {
+            return None;
+        }
+        return await space.BoardAsync(call.Session, shipId, currentShipId, call.Cancellation);
+    }
+
+    /// <summary><c>LeaveShip(shipID)</c>: makes a capsule available for the client's following Board call.</summary>
+    [Method("LeaveShip")]
+    public async ValueTask<PyValue> LeaveShip(ServiceCall call)
+    {
+        if (!_binding.Owns(call) || IdOf(call.Arg(0)) is not { } shipId || shipId <= 0)
+        {
+            return None;
+        }
+        return await space.LeaveShipAsync(call.Session, shipId, call.Cancellation);
+    }
 }

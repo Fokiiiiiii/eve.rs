@@ -629,6 +629,17 @@ mod tests {
             scene.undock(session, spec_of(n as i64), STATION, NOON + n as i64 * SECOND).unwrap();
             scene.bind(session, NOON + n as i64 * SECOND);
         }
+        let anchor = scene.pilots[&A].ship.position;
+        let direction = scene.pilots[&A].ship.direction;
+        for n in 1..ships {
+            let ship = &mut scene.pilots.get_mut(&(A + n as u64)).unwrap().ship;
+            let offset = 1_500.0 * n as f64;
+            ship.position = Vec3::new(
+                anchor.x + direction.x * offset,
+                anchor.y + direction.y * offset,
+                anchor.z + direction.z * offset,
+            );
+        }
         let mut t = NOON;
         while t < NOON + 40 * SECOND {
             t += SECOND / 4;
@@ -1114,6 +1125,16 @@ mod tests {
         let mut scene = Scene::new(Arc::new(world));
         for (session, n) in [(A, 0), (B, 1)] {
             scene.undock(session, spec_of(n), STATION, NOON).unwrap();
+        }
+        let station = scene.system().body(STATION).unwrap().clone();
+        for (session, gap) in [(A, 1_000.0), (B, 15_000.0)] {
+            let pilot = scene.pilots.get_mut(&session).unwrap();
+            let distance = station.radius + pilot.ship.spec.radius + gap;
+            pilot.ship.position =
+                Vec3::new(station.position.x + distance, station.position.y, station.position.z);
+            pilot.ship.velocity = Vec3::ZERO;
+            pilot.ship.speed_fraction = 0.0;
+            pilot.ship.course = crate::ship::Course::Stop;
             scene.bind(session, NOON);
         }
         let (_, t) = poll_until(&mut scene, NOON, 40.0);

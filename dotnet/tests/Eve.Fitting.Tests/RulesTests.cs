@@ -11,14 +11,14 @@ public class RulesTests
     private static readonly AttributeDef[] Attributes =
     [
         new(12, "lowSlots", 0, true, true, 4), new(13, "medSlots", 0, true, true, 4), new(14, "hiSlots", 0, true, true, 4), new(1137, "rigSlots", 0, true, true, 4),
-        new(1367, "maxSubSystems", 0, true, true, 4), new(101, "launcherSlotsLeft", 0, true, true, 4), new(102, "turretSlotsLeft", 0, true, true, 4),
+        new(1366, "subSystemSlot", 0, true, true, 4), new(1367, "maxSubSystems", 0, true, true, 4), new(101, "launcherSlotsLeft", 0, true, true, 4), new(102, "turretSlotsLeft", 0, true, true, 4),
         new(47, "slots", 1, true, true, 4), new(280, "skillLevel", 0, true, true, 4), new(1547, "rigSize", 0, true, true, 4),
         new(1132, "upgradeCapacity", 0, true, true, 4), new(1153, "upgradeCost", 0, true, true, 4), new(2431, "maxTypeFitted", 0, true, true, 4),
         new(1544, "maxGroupFitted", 0, true, true, 4), new(1298, "canFitShipGroup01", 0, true, true, 4), new(1302, "canFitShipType1", 0, true, true, 4),
         new(182, "requiredSkill1", 0, true, true, 4), new(277, "requiredSkill1Level", 0, true, true, 4),
     ];
 
-    private const int HighModule = 5001, MediumModule = 5002, LowModule = 5003, Rig = 5004, Turret = 5005, Launcher = 5006, Charge = 5007, Plain = 5008, SkilledModule = 5009;
+    private const int HighModule = 5001, MediumModule = 5002, LowModule = 5003, Rig = 5004, Turret = 5005, Launcher = 5006, Charge = 5007, Plain = 5008, SkilledModule = 5009, SubsystemModule = 5010;
 
     private static TypeDef Module(int type, int group, int category, Dictionary<int, double>? attributes, params int[] effects) =>
         new(type, group, category, attributes ?? new Dictionary<int, double>(), effects);
@@ -38,6 +38,7 @@ public class RulesTests
             Module(Charge, 86, 8, null, 12),
             Module(Plain, 1, 4, null),
             Module(SkilledModule, 53, 7, new Dictionary<int, double> { [182] = Skill, [277] = 3 }, 12),
+            Module(SubsystemModule, 954, 7, new Dictionary<int, double> { [1366] = 126 }, BuiltInEffects.SubSystem),
         ]);
 
     private static (DogmaWorld World, DogmaStatic Statics) Ship(Dictionary<int, double>? shipAttributes = null, int skillLevel = 0, DogmaStatic? statics = null)
@@ -114,6 +115,13 @@ public class RulesTests
     {
         var (world, statics) = Ship();
         Assert.Equal(expected, Why(world, statics, Candidate(world, type), flag));
+    }
+
+    [Fact]
+    public void A_subsystem_must_match_its_designated_slot_role()
+    {
+        var (world, statics) = Ship(new Dictionary<int, double> { [1367] = 5 });
+        Assert.Equal(FitError.InvalidSlot, Why(world, statics, Candidate(world, SubsystemModule), 125));
     }
 
     [Fact]
@@ -219,6 +227,33 @@ public class RulesTests
         Fit(world, 7002, Slots.RigFirst, 3000);
         Fit(world, 7002, Slots.RigFirst + 1, 3001);
         Assert.Null(Why(world, statics, Candidate(world, 7002), Slots.RigFirst + 2)); // 450 of 450
+    }
+
+
+    [Fact]
+    public void Current_sde_rig_sizes_must_match_and_installed_rigs_share_calibration()
+    {
+        // CCP SDE build 3569502: Rifter (587) is size 1 with 400 calibration;
+        // Small Projectile Collision Accelerator II (31686) costs 300, while
+        // Medium Hybrid Collision Accelerator II (31546) is size 2 and costs 300.
+        var statics = new DogmaStatic(Attributes, BuiltInEffects.Merge([]),
+        [
+            new TypeDef(587, 25, 6, new Dictionary<int, double> { [1137] = 3, [1547] = 1, [1132] = 400 }, []),
+            new TypeDef(1373, 1, 1, new Dictionary<int, double>(), []),
+            Module(31686, 777, 7, new Dictionary<int, double> { [1547] = 1, [1153] = 300 }, BuiltInEffects.RigSlot),
+            Module(31546, 776, 7, new Dictionary<int, double> { [1547] = 2, [1153] = 300 }, BuiltInEffects.RigSlot),
+        ]);
+        var world = new DogmaWorld(statics, Char, ShipId);
+        world.Add(new DogmaItem(Char, 1373, Char, ShipId, 57));
+        world.Add(new DogmaItem(ShipId, 587, Char, Station, 4));
+
+        Assert.Null(Why(world, statics, Candidate(world, 31686, 2000), Slots.RigFirst));
+        Fit(world, 31686, Slots.RigFirst, 3000);
+        Assert.Equal(FitError.RigSizeMismatch, Why(world, statics, Candidate(world, 31546, 2001), Slots.RigFirst + 1));
+
+        var second = FittingRules.Check(world, statics, ShipId, Candidate(world, 31686, 2002), Slots.RigFirst + 1);
+        Assert.Equal(FitError.InsufficientCalibration, second?.Error);
+        Assert.Equal((400d, 600d), (second!.Data["upgradeCapacity"], second.Data["upgradeLoad"]));
     }
 
     [Fact]

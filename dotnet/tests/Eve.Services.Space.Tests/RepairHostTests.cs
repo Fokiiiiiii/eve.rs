@@ -387,4 +387,51 @@ public class ProjectedHostTests
             Assert.Equal(20_000d, disrupt.Optimal);
         }
     }
+
+
+    [PgFact]
+    public async Task A_remote_sensor_booster_packages_positive_range_scan_and_sensor_strength_without_hostility()
+    {
+        const int RemoteSensorBoosterI = 1963;
+        var (rig, session, character, module) = await ReadyAsync(RemoteSensorBoosterI, MidSlot);
+        await using var _ = rig;
+        var other = await WeaponHostTests.InSpaceAsync(rig, await rig.NewCharacterAsync("Space Victim", 2), 2);
+        var safetyChecks = 0;
+        var aggression = new List<Eve.Crimewatch.AggressionRequest>();
+        rig.Space.SafetyLevelOf = (_, _) =>
+        {
+            safetyChecks++;
+            return Task.FromResult(2);
+        };
+        rig.Space.Aggression = (request, _) =>
+        {
+            aggression.Add(request);
+            return Task.CompletedTask;
+        };
+
+        var target = other.GetInt("shipid")!.Value;
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, module, "remoteSensorBoostFalloff", target, 1000, CancellationToken.None));
+        var effect = Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect;
+        Assert.Equal((module, 6427, target), (effect.ModuleId, effect.EffectId, effect.TargetId));
+        Assert.Equal(await ValueAsync(rig, character, module, 73), effect.DurationMs, 3);
+        Assert.True(effect.DurationMs > 0);
+
+        var remote = Assert.IsType<SimAction.Remote>(effect.Action);
+        Assert.Equal("remoteSensorBoost", remote.Jam);
+        Assert.False(remote.AtCycleEnd);
+        Assert.True(remote.Optimal > 0 && remote.Falloff > 0);
+        var boost = Assert.IsType<SimRemote.Damp>(remote.What);
+        Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 309), 6), boost.RangePercent);
+        Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 566), 6), boost.ResolutionPercent);
+        Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 238), 6), boost.GravimetricStrengthPercent);
+        Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 239), 6), boost.LadarStrengthPercent);
+        Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 240), 6), boost.MagnetometricStrengthPercent);
+        Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 241), 6), boost.RadarStrengthPercent);
+        Assert.True(boost.RangePercent > 0 && boost.ResolutionPercent > 0);
+        Assert.All(
+            new[] { boost.GravimetricStrengthPercent, boost.LadarStrengthPercent, boost.MagnetometricStrengthPercent, boost.RadarStrengthPercent },
+            percent => Assert.True(percent > 0));
+        Assert.Equal(0, safetyChecks);
+        Assert.Empty(aggression);
+    }
 }

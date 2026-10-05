@@ -56,13 +56,13 @@ internal sealed class FakeSim : ISimulation
     /// <summary>What an order to drones is answered with: every drone takes it, unless the test says otherwise.</summary>
     public Func<ulong, byte, long, IReadOnlyList<long>, CommandReply>? DroneAnswer { get; set; }
 
-    public Task<CommandReply> DroneCommandAsync(ulong sessionId, byte command, long targetId, IReadOnlyList<long> droneIds, CancellationToken cancellationToken = default)
+    public Task<CommandReply> DroneCommandAsync(ulong sessionId, byte command, long targetId, IReadOnlyList<long> droneIds, double controlRange, CancellationToken cancellationToken = default)
     {
         if (!IsConnected)
         {
             throw new SimUnavailableException("the simulation is not running");
         }
-        Heard.Add(new SimDroneCommand(sessionId, command, targetId, droneIds));
+        Heard.Add(new SimDroneCommand(sessionId, command, targetId, droneIds, controlRange));
         return Task.FromResult(DroneAnswer?.Invoke(sessionId, command, targetId, droneIds)
             ?? new CommandReply(true, 0, null) { Drones = [.. droneIds.Select(id => new SimDroneResult(id, ""))] });
     }

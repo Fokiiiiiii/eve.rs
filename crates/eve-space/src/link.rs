@@ -14,7 +14,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Charge, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 18;
+pub const PROTOCOL_VERSION: u16 = 20;
 
 /// The message kinds.
 pub mod kind {
@@ -307,12 +307,13 @@ pub enum Message {
     },
     /// The host launches a drone beside the ship of a pilot (answered with `SpawnReply`: the session the drone is known by, or why not).
     LaunchDrone(Box<LaunchDrone>),
-    /// A pilot gives its drones an order: the command (`DroneCommand::code`), the target of an engage, and the drones (their item ids).
+    /// A pilot gives its drones an order: the command (`DroneCommand::code`), the target of an engage, the drones (their item ids), and their control range.
     DroneCommand {
         session_id: u64,
         command: u8,
         target_id: i64,
         drone_ids: Vec<i64>,
+        control_range: f64,
     },
     /// What each drone did with the order: its item id and the reason it did not take it (empty when it did).
     DroneResults {
@@ -886,6 +887,11 @@ fn put_action(out: &mut Vec<u8>, action: &Action) {
             }
         }
         Action::Cloak => out.push(5),
+        Action::MicroJumpDrive { distance_meters, cooldown_ms } => {
+            out.push(6);
+            out.extend_from_slice(&distance_meters.to_le_bytes());
+            out.extend_from_slice(&cooldown_ms.to_le_bytes());
+        }
         Action::Remote { what, reach, when, jam } => {
             out.push(1);
             out.push(when_byte(when));
@@ -920,10 +926,21 @@ fn put_action(out: &mut Vec<u8>, action: &Action) {
                     out.push(5);
                     out.extend_from_slice(&percent.to_le_bytes());
                 }
-                Remote::Damp { range_percent, resolution_percent } => {
+                Remote::Damp {
+                    range_percent,
+                    resolution_percent,
+                    gravimetric_percent,
+                    ladar_percent,
+                    magnetometric_percent,
+                    radar_percent,
+                } => {
                     out.push(6);
                     out.extend_from_slice(&range_percent.to_le_bytes());
                     out.extend_from_slice(&resolution_percent.to_le_bytes());
+                    out.extend_from_slice(&gravimetric_percent.to_le_bytes());
+                    out.extend_from_slice(&ladar_percent.to_le_bytes());
+                    out.extend_from_slice(&magnetometric_percent.to_le_bytes());
+                    out.extend_from_slice(&radar_percent.to_le_bytes());
                 }
                 Remote::Scramble { strength, blocks_mwd } => {
                     out.push(7);
@@ -997,7 +1014,14 @@ fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
                 3 => Remote::Drain { amount: reader.f64()?, signature_resolution: reader.f64()? },
                 4 => Remote::Web { percent: reader.f64()? },
                 5 => Remote::Paint { percent: reader.f64()? },
-                6 => Remote::Damp { range_percent: reader.f64()?, resolution_percent: reader.f64()? },
+                6 => Remote::Damp {
+                    range_percent: reader.f64()?,
+                    resolution_percent: reader.f64()?,
+                    gravimetric_percent: reader.f64()?,
+                    ladar_percent: reader.f64()?,
+                    magnetometric_percent: reader.f64()?,
+                    radar_percent: reader.f64()?,
+                },
                 7 => Remote::Scramble {
                     strength: reader.f64()?,
                     blocks_mwd: match reader.u8()? {
@@ -1037,6 +1061,14 @@ fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             strength: [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?],
         }),
         5 => Ok(Action::Cloak),
+        6 => {
+            let distance_meters = reader.f64()?;
+            let cooldown_ms = reader.i64()?;
+            if !distance_meters.is_finite() || distance_meters <= 0.0 || cooldown_ms <= 0 {
+                return Err(DecodeError::BadValue("micro jump drive"));
+            }
+            Ok(Action::MicroJumpDrive { distance_meters, cooldown_ms })
+        }
         4 => {
             let charge_type_id = reader.i32()?;
             let charge_flag = reader.i32()?;
@@ -1586,7 +1618,7 @@ impl Message {
                 out.extend_from_slice(&launch.attack_range.to_le_bytes());
                 out.extend_from_slice(&launch.cruise_fraction.to_le_bytes());
             }
-            Self::DroneCommand { session_id, command, target_id, drone_ids } => {
+            Self::DroneCommand { session_id, command, target_id, drone_ids, control_range } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.push(*command);
                 out.extend_from_slice(&target_id.to_le_bytes());
@@ -1594,6 +1626,7 @@ impl Message {
                 for drone in drone_ids {
                     out.extend_from_slice(&drone.to_le_bytes());
                 }
+                out.extend_from_slice(&control_range.to_le_bytes());
             }
             Self::DroneResults { session_id, command, results } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
@@ -1935,11 +1968,12 @@ impl Message {
             kind::DRONE_COMMAND => {
                 let (session_id, command, target_id) = (r.u64()?, r.u8()?, r.i64()?);
                 let count = r.u32()? as usize;
-                if count > r.data.len() / 8 {
+                if count > r.data.len().saturating_sub(8) / 8 {
                     return Err(DecodeError::Truncated);
                 }
                 let drone_ids = (0..count).map(|_| r.i64()).collect::<Result<Vec<_>, _>>()?;
-                Message::DroneCommand { session_id, command, target_id, drone_ids }
+                let control_range = r.f64()?;
+                Message::DroneCommand { session_id, command, target_id, drone_ids, control_range }
             }
             kind::DRONE_RESULTS => {
                 let (session_id, command) = (r.u64()?, r.u8()?);

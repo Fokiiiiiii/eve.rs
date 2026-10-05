@@ -486,6 +486,116 @@ public class InvBrokerTests
     }
 
     /// <summary>The space a pilot flies in as a test plays it: what is asked of a "Loot All" is kept and what it is answered with is the test's.</summary>
+[PgFact]
+    public async Task A_docked_ship_inventory_moves_drones_into_and_out_of_the_drone_bay()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var schemas = new[] { $"dc_{suffix}", $"ds_{suffix}", $"dw_{suffix}", $"df_{suffix}" };
+        try
+        {
+            var characters = new PgCharacterStore(rig.Source, schemas[0]);
+            var skills = new PgSkillStore(rig.Source, schemas[1]);
+            var wallets = new PgWalletStore(rig.Source, schemas[2]);
+            var modules = new PgModuleStateStore(rig.Source, schemas[3]);
+            await PgCharacterStore.MigrateAsync(rig.Source, schemas[0]);
+            await PgSkillStore.MigrateAsync(rig.Source, schemas[1]);
+            await PgWalletStore.MigrateAsync(rig.Source, schemas[2]);
+            await PgModuleStateStore.MigrateAsync(rig.Source, schemas[3]);
+
+            var sde = new SdeReader(rig.Source);
+            Assert.NotNull(await sde.BuildAsync());
+            CharacterNames.EnsureUnicodeSupport();
+            var statics = await DogmaStatic.LoadAsync(sde);
+            var creation = new CharacterCreation(
+                rig.Source, characters, rig.Items, skills, await SkillCatalog.LoadAsync(sde), wallets,
+                new StartingWallet(), await CreationCatalog.LoadAsync(sde, Rig.Station), modules);
+            var created = Assert.IsType<Created>(await creation.CreateAsync(
+                new CreationRequest(1, "Drone Bay RPC Tester", 1, 1, 1, 10, 35, [1], [2])));
+            var ships = new CharacterShips(rig.Source, statics, characters, rig.Items, skills, modules);
+            var service = new InvBrokerService(rig.Items, new ItemTypeCatalog(sde), Rig.Stations, ships, statics, () => Rig.ClockMs);
+            var drones = await rig.AddAsync(2454, created.CharacterId, Rig.Station, quantity: 2);
+            var tritanium = await rig.AddAsync(Rig.Tritanium, created.CharacterId, Rig.Station);
+            var session = Rig.Session(character: created.CharacterId);
+
+            async Task<PyValue> Call(string? bound, string method, PyValue[] args, params (string Name, PyValue Value)[] kwargs)
+            {
+                var rpc = new ServiceCall
+                {
+                    Method = method,
+                    Args = args,
+                    Session = session,
+                    BoundObjectId = bound,
+                    Kwargs = kwargs.Length == 0 ? PyNone.Instance
+                        : new PyDict([.. kwargs.Select(k => new KeyValuePair<PyValue, PyValue>(new PyStr(k.Name), k.Value))]),
+                };
+                return method switch
+                {
+                    "GetInventory" => service.GetInventory(rpc),
+                    "GetInventoryFromId" => await service.GetInventoryFromId(rpc),
+                    "GetCapacity" => await service.GetCapacity(rpc),
+                    "Add" => await service.Add(rpc),
+                    _ => throw new InvalidOperationException($"Unexpected inventory RPC {method}"),
+                };
+            }
+
+            var shipInventory = Rig.OidOf(await Call(null, "GetInventoryFromId", [new PyLong(created.ShipId)]));
+            var hangar = Rig.OidOf(await Call(null, "GetInventory", [new PyInt(InvBrokerService.ContainerHangar)]));
+            var empty = Assert.IsType<PyObject>(await Call(shipInventory, "GetCapacity", [new PyInt(CharacterShips.DroneBayFlag)]));
+            var emptyRoom = Assert.IsType<PyDict>(empty.Args);
+            Assert.Equal(Py.Number(5), emptyRoom.Entries.Single(e => e.Key == new PyStr("capacity")).Value);
+            Assert.Equal(Py.Number(0), emptyRoom.Entries.Single(e => e.Key == new PyStr("used")).Value);
+
+            var wrongLocation = await Call(shipInventory, "Add", [new PyLong(drones), new PyLong(Rig.OtherStation)],
+                ("flag", new PyInt(CharacterShips.DroneBayFlag)));
+            Assert.Equal(PyNone.Instance, wrongLocation);
+
+            await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+                await Call(shipInventory, "Add", [new PyLong(tritanium), new PyLong(Rig.Station)],
+                    ("flag", new PyInt(CharacterShips.DroneBayFlag))));
+
+            var undockedSession = Rig.Session(station: null, character: created.CharacterId, id: session.SessionId);
+            var undocked = await service.Add(new ServiceCall
+            {
+                Method = "Add",
+                Args = [new PyLong(drones), new PyLong(Rig.Station)],
+                Kwargs = new PyDict([new(new PyStr("flag"), new PyInt(CharacterShips.DroneBayFlag))]),
+                Session = undockedSession,
+                BoundObjectId = shipInventory,
+            });
+            Assert.Equal(PyNone.Instance, undocked);
+
+            await Call(shipInventory, "Add", [new PyLong(drones), new PyLong(Rig.Station)],
+                ("flag", new PyInt(CharacterShips.DroneBayFlag)), ("qty", new PyInt(1)));
+            var bayDrone = (await rig.Items.InLocationAsync(created.ShipId, created.CharacterId))
+                .Single(item => item.Flag == CharacterShips.DroneBayFlag);
+            var full = Assert.IsType<PyObject>(await Call(shipInventory, "GetCapacity", [new PyInt(CharacterShips.DroneBayFlag)]));
+            var fullRoom = Assert.IsType<PyDict>(full.Args);
+            Assert.Equal(Py.Number(5), fullRoom.Entries.Single(e => e.Key == new PyStr("capacity")).Value);
+            Assert.Equal(Py.Number(5), fullRoom.Entries.Single(e => e.Key == new PyStr("used")).Value);
+            await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+                await Call(shipInventory, "Add", [new PyLong(drones), new PyLong(Rig.Station)],
+                    ("flag", new PyInt(CharacterShips.DroneBayFlag))));
+
+            await Call(hangar, "Add", [new PyLong(bayDrone.Id), new PyLong(created.ShipId)],
+                ("flag", new PyInt(ItemFlags.Hangar)));
+            var returned = await rig.Items.GetAsync(bayDrone.Id);
+            Assert.NotNull(returned);
+            Assert.Equal((Rig.Station, ItemFlags.Hangar), (returned.LocationId, returned.Flag));
+            var emptyAgain = Assert.IsType<PyObject>(await Call(shipInventory, "GetCapacity", [new PyInt(CharacterShips.DroneBayFlag)]));
+            var emptyAgainRoom = Assert.IsType<PyDict>(emptyAgain.Args);
+            Assert.Equal(Py.Number(0), emptyAgainRoom.Entries.Single(e => e.Key == new PyStr("used")).Value);
+        }
+        finally
+        {
+            foreach (var schema in schemas)
+            {
+                await using var command = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
     private sealed class FakeSpace : Eve.Services.Ships.ISpaceContainers
     {
         public bool? Answer { get; set; }
@@ -612,7 +722,7 @@ public class InvBrokerTests
                     created.CharacterId, turret.Id, created.ShipId, Rig.Station, ItemFlags.Hangar, null));
             }
 
-            var session = Rig.Session(created.CharacterId);
+            var session = Rig.Session(character: created.CharacterId);
             var snapshot = await ships.LoadAsync(created.CharacterId);
             Assert.NotNull(snapshot);
             var expected = Math.Max(0L, (long)snapshot.World.Get(snapshot.Ship.Id, BuiltInEffects.TurretSlotsLeft));

@@ -27,6 +27,18 @@ public sealed class PgFactAttribute : FactAttribute
     }
 }
 
+
+public sealed class PgTheoryAttribute : TheoryAttribute
+{
+    public PgTheoryAttribute()
+    {
+        if (Rig.Url is null)
+        {
+            Skip = "EVE_PG_URL is not set (see tools/dev/pg18.sh)";
+        }
+    }
+}
+
 /// <summary>Keeps what the server sent, so a test can read the events.</summary>
 internal sealed class Sink : IPacketSink
 {

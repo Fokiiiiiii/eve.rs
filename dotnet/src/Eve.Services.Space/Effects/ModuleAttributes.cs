@@ -40,14 +40,16 @@ internal static class ModuleAttributes
     public const int ExplosionDelayBonus = 596;
     public const int AoeVelocityBonus = 847;
     public const int AoeCloudSizeBonus = 848;
-    public const int GravimetricJam = 238;
-    public const int LadarJam = 239;
-    public const int MagnetometricJam = 240;
-    public const int RadarJam = 241;
+    public const int ScanGravimetricStrengthBonus = 238;
+    public const int ScanLadarStrengthBonus = 239;
+    public const int ScanMagnetometricStrengthBonus = 240;
+    public const int ScanRadarStrengthBonus = 241;
     public const int PainterSignatureBonus = 554;
-    public const int DampenerRangeBonus = 309;
-    public const int DampenerResolutionBonus = 566;
+    public const int MaxTargetRangeBonus = 309;
+    public const int ScanResolutionBonus = 566;
     public const int WarpScrambleStrength = 105;
+    public const int MicroJumpDriveCooldown = 669;
+    public const int MicroJumpDriveRange = 2066;
 
     /// <summary>The attributes that name the groups of the charges a module takes (chargeGroup1 to chargeGroup5).</summary>
     public static readonly int[] ChargeGroups = [604, 605, 606, 609, 610];

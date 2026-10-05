@@ -336,7 +336,7 @@ impl Scene {
         out
     }
 
-    /// A pilot gives its drones an order. What each did with it is answered with [`Out::DroneResults`]: `None` for a drone that took it, the reason for one that did not.
+    /// A pilot gives its drones an order at the current 20 km base control range.
     pub fn drone_command(
         &mut self,
         controller: SessionId,
@@ -344,12 +344,27 @@ impl Scene {
         command: DroneCommand,
         now: i64,
     ) -> Vec<Out> {
+        self.drone_command_with_range(controller, drones, command, CONTROL_RANGE, now)
+    }
+
+    /// A pilot gives its drones an order using the fitted Dogma control range.
+    pub fn drone_command_with_range(
+        &mut self,
+        controller: SessionId,
+        drones: &[i64],
+        command: DroneCommand,
+        control_range: f64,
+        now: i64,
+    ) -> Vec<Out> {
+        let control_range =
+            if control_range.is_finite() { control_range.max(CONTROL_RANGE) } else { CONTROL_RANGE };
         self.settle_all(now);
         let mut out = Vec::new();
         let mut results = Vec::new();
         // an order to engage that names nothing (the pilot has locked nothing) sends the drones to look for an opponent themselves
         let searching = matches!(command, DroneCommand::Engage { target } if target <= 0);
-        let found = if searching { self.opponents_of(controller, now) } else { Vec::new() };
+        let found =
+            if searching { self.opponents_of_with_range(controller, now, control_range) } else { Vec::new() };
         let mut asked = 0;
         for &drone_id in drones {
             let session =
@@ -380,8 +395,8 @@ impl Scene {
                         results.push((drone_id, Some("NO_TARGET")));
                         continue;
                     }
-                    // a target beyond the range the pilot controls its drones to is refused (the reference's `isTargetBeyondDroneControlRange`; a drone that has the target keeps chasing it)
-                    if self.apart(controller, target_session).is_some_and(|apart| apart > CONTROL_RANGE) {
+                    // a target beyond the Dogma control range is refused; a drone already given the target keeps chasing it
+                    if self.apart(controller, target_session).is_some_and(|apart| apart > control_range) {
                         results.push((drone_id, Some("OUT_OF_RANGE")));
                         continue;
                     }
@@ -407,17 +422,22 @@ impl Scene {
         out
     }
 
-    /// Who the drones of a controller can be sent at when it has chosen nobody, the best first: those that attacked it lately (the newest first), then those that have it or one of its
-    /// drones locked, then the nearest ship that nobody flies and that is not a drone, all within the range the pilot controls its drones to. Only NPCs are found: a drone is not sent
-    /// at a pilot unless the pilot names it.
-    pub(crate) fn opponents_of(&self, controller: SessionId, now: i64) -> Vec<i64> {
+    /// Finds targets using the range passed with a drone command.
+    pub(crate) fn opponents_of_with_range(
+        &self,
+        controller: SessionId,
+        now: i64,
+        control_range: f64,
+    ) -> Vec<i64> {
+        let control_range =
+            if control_range.is_finite() { control_range.max(CONTROL_RANGE) } else { CONTROL_RANGE };
         let Some(controller_ship) = self.pilots.get(&controller).map(|pilot| pilot.ship.spec.ship_id) else {
             return Vec::new();
         };
         let reachable = |scene: &Scene, session: SessionId| {
             crate::npc::is_npc_session(session)
                 && scene.controller_of_drone(session).is_none()
-                && scene.apart(controller, session).is_some_and(|apart| apart <= CONTROL_RANGE)
+                && scene.apart(controller, session).is_some_and(|apart| apart <= control_range)
         };
         let mut found: Vec<i64> = Vec::new();
         let keep = |ship: i64, found: &mut Vec<i64>| {
@@ -1067,13 +1087,16 @@ mod tests {
         };
         scene.drone_threats.insert(PLAYER, vec![(RAT_SHIP + 1, LATER), (RAT_SHIP + 2, LATER)]);
         assert_eq!(
-            scene.opponents_of(PLAYER, LATER),
+            scene.opponents_of_with_range(PLAYER, LATER, CONTROL_RANGE),
             [RAT_SHIP + 1, RAT_SHIP],
             "the one that attacked, then the nearest; not the one out of range"
         );
         let _ = attacker;
         // what was long ago is forgotten
-        assert_eq!(scene.opponents_of(PLAYER, LATER + 31 * SECOND), [RAT_SHIP, RAT_SHIP + 1]);
+        assert_eq!(
+            scene.opponents_of_with_range(PLAYER, LATER + 31 * SECOND, CONTROL_RANGE),
+            [RAT_SHIP, RAT_SHIP + 1]
+        );
     }
 
     #[test]
@@ -1102,6 +1125,35 @@ mod tests {
         let sent =
             scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Engage { target: RAT_SHIP }, LATER);
         assert_eq!(result_of(&sent), [(DRONE_SHIP, None)]);
+    }
+
+    #[test]
+    fn a_drone_link_augmentor_range_allows_a_command_beyond_twenty_kilometers() {
+        let (mut scene, _, _) = launched();
+        spawn_rat_at(&mut scene, RAT_SHIP, 25_000.0);
+        let sent = scene.drone_command_with_range(
+            PLAYER,
+            &[DRONE_SHIP],
+            DroneCommand::Engage { target: RAT_SHIP },
+            40_000.0,
+            LATER,
+        );
+        assert_eq!(result_of(&sent), [(DRONE_SHIP, None)]);
+    }
+
+    #[test]
+    fn a_drone_link_augmentor_range_finds_unlocked_targets_beyond_twenty_kilometers() {
+        let (mut scene, _, _) = launched();
+        spawn_rat_at(&mut scene, RAT_SHIP, 25_000.0);
+        let sent = scene.drone_command_with_range(
+            PLAYER,
+            &[DRONE_SHIP],
+            DroneCommand::Engage { target: 0 },
+            40_000.0,
+            LATER,
+        );
+        assert_eq!(result_of(&sent), [(DRONE_SHIP, None)]);
+        assert_eq!(target_of_the_state(&for_the_player(&sent)), Some(Value::Long(RAT_SHIP)));
     }
 
     #[test]

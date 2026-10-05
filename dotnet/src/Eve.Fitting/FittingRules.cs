@@ -131,6 +131,11 @@ public static class FittingRules
         {
             return FitFailure.Of(FitError.InvalidSlot);
         }
+        if (family == SlotFamily.Subsystem &&
+            type.Attributes.TryGetValue(1366, out var subsystemSlot) && (int)subsystemSlot != flag)
+        {
+            return FitFailure.Of(FitError.InvalidSlot);
+        }
         var others = Fitted(world, shipId).Where(i => i.Id != candidate.Id).ToList();
         if (others.Any(i => i.FlagId == flag))
         {

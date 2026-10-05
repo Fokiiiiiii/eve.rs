@@ -49,6 +49,8 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
     private readonly ConcurrentDictionary<long, byte> _placed = new();
     private readonly ConcurrentDictionary<ulong, long> _cooldownUntil = new();
 
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, byte> _abandonedLoot = new();
+
     public SpaceContainers(
         ISimulation sim, CharacterShips ships, PgItemStore items, PgSpaceItemStore spaceItems, DogmaStatic statics, SpaceSessions space, Func<long> nowUnixMs, Action<string>? log = null,
         TimeSpan? sweepEvery = null)
@@ -119,14 +121,60 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
     }
 
     /// <summary>Whether the pilot may take what is in the container: it is the pilot's own, or its corporation's (a can's owner is the one who jettisoned into it).</summary>
-    private async Task<bool> MayTakeFromAsync(long characterId, Item container, CancellationToken cancellationToken)
+    private async Task<bool> MayTakeFromAsync(long characterId, Item container, CancellationToken cancellationToken, SpaceItem? rights = null)
     {
-        if (container.OwnerId == characterId)
+        if (_abandonedLoot.ContainsKey(container.Id) || container.OwnerId == characterId)
+        {
+            return true;
+        }
+        rights ??= await _spaceItems.GetAsync(container.Id, cancellationToken);
+        if (IsAbandoned(rights))
         {
             return true;
         }
         return await _ships.CharacterAsync(characterId, cancellationToken) is { } pilot
             && await _ships.CharacterAsync(container.OwnerId, cancellationToken) is { } owner && owner.CorporationId == pilot.CorporationId;
+    }
+
+
+    private static bool IsAbandoned(SpaceItem? item) =>
+        item is { CharacterId: 0, CorporationId: 0, AllianceId: 0, WarFactionId: 0 };
+
+    private static SpaceItem Abandon(SpaceItem item) =>
+        item with { CharacterId = 0, CorporationId = 0, AllianceId = 0, WarFactionId = 0 };
+
+    /// <summary>Validates the whole request before releasing any loot rights; contents stay in their container.</summary>
+    public async Task AbandonLootAsync(ClientSession session, IReadOnlyList<long> containerIds, CancellationToken cancellationToken)
+    {
+        if (session.CharacterId is not { } characterId || !_space.IsInSpace(session))
+        {
+            return;
+        }
+
+        var targets = new List<(Item Container, SpaceItem? Rights)>();
+        foreach (var containerId in containerIds.Distinct())
+        {
+            if (await OpenAsync(session, containerId, cancellationToken) is not { } container)
+            {
+                continue;
+            }
+            var rights = await _spaceItems.GetAsync(containerId, cancellationToken);
+            if (!await MayTakeFromAsync(characterId, container, cancellationToken, rights))
+            {
+                throw MachoErrors.ThrowUserError("SafetyActivated");
+            }
+            targets.Add((container, rights));
+        }
+
+        foreach (var (container, rights) in targets)
+        {
+            _abandonedLoot.TryAdd(container.Id, 0);
+            var current = await _spaceItems.GetAsync(container.Id, cancellationToken) ?? rights;
+            if (current is not null && !IsAbandoned(current))
+            {
+                await _spaceItems.SaveAsync(Abandon(current), cancellationToken);
+            }
+        }
     }
 
     // ── moving goods ─────────────────────────────────────────────────────────
@@ -399,6 +447,7 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
     private async Task ForgetAsync(long itemId)
     {
         _placed.TryRemove(itemId, out _);
+        _abandonedLoot.TryRemove(itemId, out _);
         await _spaceItems.RemoveAsync(itemId);
     }
 
@@ -415,9 +464,15 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
     {
         try
         {
-            await _spaceItems.SaveAsync(new SpaceItem(
+            var item = new SpaceItem(
                 wreck.WreckId, wreck.SolarSystemId, wreck.Position, wreck.Direction, wreck.Radius, wreck.GroupId, wreck.LauncherId, wreck.Credit.CharacterId, wreck.Credit.CorporationId,
-                wreck.Credit.AllianceId, wreck.Credit.WarFactionId, _nowUnixMs() + (long)CanLifetime.TotalMilliseconds));
+                wreck.Credit.AllianceId, wreck.Credit.WarFactionId, _nowUnixMs() + (long)CanLifetime.TotalMilliseconds);
+            var saved = _abandonedLoot.ContainsKey(wreck.WreckId) ? Abandon(item) : item;
+            await _spaceItems.SaveAsync(saved);
+            if (_abandonedLoot.ContainsKey(wreck.WreckId) && !IsAbandoned(saved))
+            {
+                await _spaceItems.SaveAsync(Abandon(saved));
+            }
         }
         catch (Exception error)
         {

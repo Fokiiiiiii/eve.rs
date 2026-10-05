@@ -13,12 +13,12 @@ namespace Eve.Services.Space.Tests;
 /// </summary>
 public class DroneHostTests
 {
-    private const int Hobgoblin = 2454, DronesSkill = 3436;
+    private const int Hobgoblin = 2454, DronesSkill = 3436, DroneDamageAmplifier = 47447;
 
     private sealed record Flying(Rig Rig, Eve.Services.ClientSession Session, long Drone, long Character, string Ship, string Entity, int System);
 
     /// <summary>A pilot in space with a Hobgoblin I in the drone bay of its ship, and the Drones skill at level 1 unless <paramref name="skill"/> is 0.</summary>
-    private static async Task<Flying> FlyingWithADroneAsync(Rig rig, int skill = 1)
+    private static async Task<Flying> FlyingWithADroneAsync(Rig rig, int skill = 1, bool withDroneDamageAmplifier = false, bool withDroneLinkAugmentor = false)
     {
         var character = await rig.NewCharacterAsync();
         if (skill > 0)
@@ -26,6 +26,25 @@ public class DroneHostTests
             await using var connection = await rig.Source.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
             await rig.Skills.GrantAsync(connection, transaction, character.CharacterId, [new CharacterSkill(DronesSkill, skill, 250)]);
+            await transaction.CommitAsync();
+        }
+        if (withDroneDamageAmplifier || withDroneLinkAugmentor)
+        {
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            if (withDroneDamageAmplifier)
+            {
+                var amplifierId = await rig.Items.CreateAsync(connection, transaction,
+                    new NewItem(DroneDamageAmplifier, character.CharacterId, character.ShipId, Eve.Inventory.ItemFlags.LowSlot0, 1, true));
+                await rig.Modules.SetAsync(connection, transaction, amplifierId, Eve.Dogma.ItemState.Online);
+            }
+            if (withDroneLinkAugmentor)
+            {
+                const int droneLinkAugmentor = 23527;
+                var augmentorId = await rig.Items.CreateAsync(connection, transaction,
+                    new NewItem(droneLinkAugmentor, character.CharacterId, character.ShipId, Eve.Inventory.ItemFlags.HiSlot0, 1, true));
+                await rig.Modules.SetAsync(connection, transaction, augmentorId, Eve.Dogma.ItemState.Online);
+            }
             await transaction.CommitAsync();
         }
         var drone = (await rig.Ships.GrantAsync(character.CharacterId, Hobgoblin, 1, singleton: false))!.Single().After;
@@ -72,6 +91,24 @@ public class DroneHostTests
     }
 
     [PgFact]
+    public async Task An_online_drone_damage_amplifier_increases_hobgoblin_weapon_damage_by_ten_percent()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await FlyingWithADroneAsync(rig, withDroneDamageAmplifier: true);
+        var snapshot = await rig.Ships.LoadAsync(flying.Character);
+        Assert.NotNull(snapshot);
+        var amplifier = Assert.Single(snapshot.Fitted, item => item.TypeId == DroneDamageAmplifier);
+        Assert.Equal(Eve.Dogma.ItemState.Online, snapshot.World.Item(amplifier.Id)?.State);
+
+        var baseWeapon = Eve.Npc.NpcArmament.HullWeapon(rig.Statics.Type(Hobgoblin)!, flying.Drone, rig.Statics)!;
+        await LaunchAsync(flying);
+
+        var launch = Assert.Single(rig.Sim.Heard.OfType<SimLaunchDrone>());
+        var expectedDamage = baseWeapon.RawDamage.Select(damage => Eve.Npc.NpcArmament.Round6(damage * 1.1)).ToArray();
+        Assert.Equal(expectedDamage, launch.Weapon.RawDamage);
+    }
+
+    [PgFact]
     public async Task A_pilot_flies_as_many_drones_as_its_skills_allow_and_is_refused_the_rest()
     {
         await using var rig = await Rig.CreateAsync();
@@ -101,6 +138,7 @@ public class DroneHostTests
         var order = rig.Sim.Heard.OfType<SimDroneCommand>().Last();
         Assert.Equal((SimDroneCommands.Engage, 0L), (order.Command, order.TargetId));
         Assert.Equal([flying.Drone], order.DroneIds);
+        Assert.Equal(20_000.0, order.ControlRange);
 
         // and when there is no one to find the drone says so
         rig.Sim.DroneAnswer = (_, _, _, drones) => new CommandReply(true, 0, null) { Drones = [.. drones.Select(d => new SimDroneResult(d, "NO_OPPONENT"))] };
@@ -112,6 +150,22 @@ public class DroneHostTests
         var assist = await rig.EntityCallAsync(flying.Session, "CmdAssist", flying.Entity, new PyInt(flying.Character), ids);
         Assert.Equal(["That drone order is not available yet."], Refusals(assist));
         Assert.Equal(heard, rig.Sim.Heard.Count);
+    }
+
+
+    [PgFact]
+    public async Task A_drone_link_augmentor_adds_its_fitted_dogma_range_to_drone_commands()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await FlyingWithADroneAsync(rig, withDroneLinkAugmentor: true);
+        await LaunchAsync(flying);
+
+        var ids = new PyList([InventoryWire.Id(flying.Drone)]);
+        var answer = await rig.EntityCallAsync(flying.Session, "CmdEngage", flying.Entity, ids, PyNone.Instance);
+
+        Assert.Empty(Assert.IsType<PyDict>(answer).Entries);
+        var order = Assert.Single(rig.Sim.Heard.OfType<SimDroneCommand>());
+        Assert.Equal(40_000.0, order.ControlRange);
     }
 
     [PgFact]

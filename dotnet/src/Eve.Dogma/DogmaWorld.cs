@@ -191,7 +191,7 @@ public sealed class DogmaWorld
         EffectDef.Online => state >= ItemState.Online,
         EffectDef.Activation => state >= ItemState.Active,
         EffectDef.Overload => state >= ItemState.Overloaded,
-        _ => false, // an effect on a target or on an area needs a target or an area
+        _ => false, // an effect on a target or an area needs a target or an area
     };
 
     private void Changed()

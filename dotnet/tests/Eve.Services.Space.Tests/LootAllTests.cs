@@ -177,4 +177,52 @@ public class LootAllTests
         Assert.Equal(f.Can, (await rig.Items.GetAsync(f.First))!.LocationId);
         Assert.Empty(Events.Of(f.Session));
     }
+
+
+    [PgFact]
+    public async Task Abandon_loot_requires_existing_rights_is_idempotent_and_keeps_the_contents()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var f = await WithACanAsync(rig);
+        var container = (await rig.Items.GetAsync(f.Can))!;
+        var entity = new Eve.Services.Space.EntityService(rig.Drones, () => Rig.ClockMs, rig.Containers);
+        var bound = (PyTuple)await entity.MachoBindObject(new Eve.Services.ServiceCall
+        {
+            Method = "MachoBindObject",
+            Args = [Py.Tuple(new PyInt(f.Session.GetInt("solarsystemid")!.Value), new PyInt(5)), PyNone.Instance],
+            Session = f.Session,
+        });
+        var call = new Eve.Services.ServiceCall
+        {
+            Method = "CmdAbandonLoot",
+            Args = [new PyList([new PyLong(f.Can), new PyLong(f.Can)])],
+            Session = f.Session,
+            BoundObjectId = Rig.OidOf(bound.Items[0]),
+        };
+
+        async Task SetContainerOwnerAsync(long ownerId)
+        {
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await rig.Items.MoveToOwnerAsync(connection, transaction, container.Id, ownerId, container.LocationId, container.Flag);
+            await transaction.CommitAsync();
+        }
+
+        await SetContainerOwnerAsync(777_000_001);
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(async () => await entity.CmdAbandonLoot(call));
+        Assert.Equal("SafetyActivated", UserError(refused).Name);
+        Assert.Equal(f.Can, (await rig.Items.GetAsync(f.First))!.LocationId);
+
+        await SetContainerOwnerAsync(f.Character.CharacterId);
+        Assert.Equal(PyNone.Instance, await entity.CmdAbandonLoot(call));
+        Assert.Equal(PyNone.Instance, await entity.CmdAbandonLoot(call));
+        Assert.Equal(f.Can, (await rig.Items.GetAsync(f.First))!.LocationId);
+        Assert.Equal(f.Can, (await rig.Items.GetAsync(f.Second))!.LocationId);
+
+        await SetContainerOwnerAsync(777_000_001);
+        Assert.Equal(PyNone.Instance, await entity.CmdAbandonLoot(call));
+        Assert.Equal(true, await LootAsync(f, f.First, f.Second));
+        Assert.Equal(f.Character.ShipId, (await rig.Items.GetAsync(f.First))!.LocationId);
+        Assert.Equal(f.Character.ShipId, (await rig.Items.GetAsync(f.Second))!.LocationId);
+    }
 }

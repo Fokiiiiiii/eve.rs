@@ -122,7 +122,11 @@ def action(a):
     if what in ("web", "paint"):
         body += struct.pack("<d", a["percent"])
     if what == "damp":
-        body += struct.pack("<dd", a["rangePercent"], a["resolutionPercent"])
+        body += struct.pack(
+            "<6d",
+            a["rangePercent"], a["resolutionPercent"],
+            a.get("gravimetricStrengthPercent", 0.0), a.get("ladarStrengthPercent", 0.0),
+            a.get("magnetometricStrengthPercent", 0.0), a.get("radarStrengthPercent", 0.0))
     if what == "scramble":
         body += struct.pack("<d", a["strength"]) + bytes([1 if a["blocksMwd"] else 0])
     if what == "jam":
@@ -254,7 +258,7 @@ def build(m):
                      + struct.pack("<iddd", m["graphicId"], m["orbitDistance"], m["attackRange"], m["cruiseFraction"]))
     if k == "DroneCommand":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + i64(m["targetId"]) + struct.pack("<I", len(m["droneIds"]))
-                     + b"".join(i64(d) for d in m["droneIds"]))
+                     + b"".join(i64(d) for d in m["droneIds"]) + struct.pack("<d", m["controlRange"]))
     if k == "DroneResults":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<I", len(m["results"]))
                      + b"".join(i64(r["droneId"]) + s(r["reason"]) for r in m["results"]))
@@ -285,8 +289,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 16},
-    {"name": "hello ack", "kind": "HelloAck", "version": 16, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 20},
+    {"name": "hello ack", "kind": "HelloAck", "version": 20, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -425,6 +429,14 @@ valid = [
                 "action": {"kind": "remote", "what": "damp", "rangePercent": -13.7, "resolutionPercent": -13.7,
                            "optimal": 25000.0, "falloff": 50000.0, "when": "start", "jam": "ewRemoteSensorDamp"},
                 "onChanges": [], "offChanges": []}},
+    {"name": "activate a remote sensor booster", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002811", "moduleType": 1963, "effectId": 6427, "fx": "effects.RemoteSensorBoost",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "damp", "rangePercent": 10.0, "resolutionPercent": 15.0,
+                           "gravimetricStrengthPercent": 20.0, "ladarStrengthPercent": 25.0,
+                           "magnetometricStrengthPercent": 30.0, "radarStrengthPercent": 35.0,
+                           "optimal": 25000.0, "falloff": 50000.0, "when": "start", "jam": "remoteSensorBoost"},
+                "onChanges": [], "offChanges": []}},
     {"name": "activate a warp scrambler", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002810", "moduleType": 447, "effectId": 5934, "fx": "effects.WarpScramble",
                 "durationMs": 5000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "9988400003001",
@@ -547,8 +559,8 @@ valid = [
                 "rawDamage": [0.0, 32.0, 0.0, 0.0], "optimalRange": 2100.0, "falloff": 2000.0, "trackingSpeed": 1.815, "signatureResolution": 25.0},
      "graphicId": 1099, "orbitDistance": 700.0, "attackRange": 2800.0, "cruiseFraction": 0.2357142857142857},
     {"name": "order to engage", "kind": "DroneCommand", "sessionId": "1790646377000015", "command": 1, "targetId": "980050000077",
-     "droneIds": ["9988400003716", "9988400003717"]},
-    {"name": "order to go home", "kind": "DroneCommand", "sessionId": "1790646377000015", "command": 2, "targetId": "0", "droneIds": ["9988400003716"]},
+     "droneIds": ["9988400003716", "9988400003717"], "controlRange": 40_000.0},
+    {"name": "order to go home", "kind": "DroneCommand", "sessionId": "1790646377000015", "command": 2, "targetId": "0", "droneIds": ["9988400003716"], "controlRange": 20_000.0},
     {"name": "what the drones did with an order", "kind": "DroneResults", "sessionId": "1790646377000015", "command": 1,
      "results": [{"droneId": "9988400003716", "reason": ""}, {"droneId": "9988400003717", "reason": "NOT_CONTROLLED"}]},
     {"name": "a drone scooped into the bay", "kind": "DroneScooped", "sessionId": "1790646377000015", "droneId": "9988400003716"},

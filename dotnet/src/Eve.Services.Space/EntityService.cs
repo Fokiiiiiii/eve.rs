@@ -9,7 +9,7 @@ namespace Eve.Services.Space;
 /// binds it for whoever asks (it answers the client in the place it is in), so does this.
 /// </summary>
 [Service("entity")]
-public sealed partial class EntityService(ISpaceDrones drones, Func<long> nowUnixMs) : IBoundObjectReleaseHandler
+public sealed partial class EntityService(ISpaceDrones drones, Func<long> nowUnixMs, Eve.Services.Ships.ISpaceContainers? containers = null) : IBoundObjectReleaseHandler
 {
     private readonly Binding _binding = new(nowUnixMs);
 
@@ -68,4 +68,20 @@ public sealed partial class EntityService(ISpaceDrones drones, Func<long> nowUni
     /// <summary><c>CmdAbandonDrone(droneIDs)</c>: the drones are let go.</summary>
     [Method("CmdAbandonDrone")]
     public ValueTask<PyValue> CmdAbandonDrone(ServiceCall call) => OrderAsync(call, SimDroneCommands.Abandon, 0, call.Arg(0));
+
+    /// <summary>Releases the selected space containers' loot rights without moving or deleting their contents.</summary>
+    [Method("CmdAbandonLoot")]
+    public async ValueTask<PyValue> CmdAbandonLoot(ServiceCall call)
+    {
+        if (!_binding.Owns(call))
+        {
+            return None;
+        }
+        if (containers is null)
+        {
+            throw new InvalidOperationException("The space container custody service is not available.");
+        }
+        await containers.AbandonLootAsync(call.Session, SpaceDrones.IdsOf(call.Arg(0)), call.Cancellation);
+        return None;
+    }
 }

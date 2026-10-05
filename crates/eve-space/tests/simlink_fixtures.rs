@@ -246,6 +246,10 @@ fn effect_of(case: &Value) -> Effect {
                 "damp" => Remote::Damp {
                     range_percent: a["rangePercent"].as_f64().unwrap(),
                     resolution_percent: a["resolutionPercent"].as_f64().unwrap(),
+                    gravimetric_percent: a["gravimetricStrengthPercent"].as_f64().unwrap_or(0.0),
+                    ladar_percent: a["ladarStrengthPercent"].as_f64().unwrap_or(0.0),
+                    magnetometric_percent: a["magnetometricStrengthPercent"].as_f64().unwrap_or(0.0),
+                    radar_percent: a["radarStrengthPercent"].as_f64().unwrap_or(0.0),
                 },
                 "disrupt" => Remote::Disrupt {
                     range_percent: a["rangePercent"].as_f64().unwrap(),
@@ -559,6 +563,7 @@ fn message_of(case: &Value) -> Message {
                 .iter()
                 .map(|d| d.as_str().unwrap().parse().unwrap())
                 .collect(),
+            control_range: case["controlRange"].as_f64().unwrap(),
         },
         "DroneResults" => Message::DroneResults {
             session_id: session_id(),

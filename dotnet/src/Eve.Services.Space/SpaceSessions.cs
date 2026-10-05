@@ -35,13 +35,15 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     private const int JumpQueueSpace = 1000;
     private const int JumpQueueTimeoutSeconds = 180;
 
-    private sealed class Pilot(ClientSession session, long characterId, long shipId, int solarSystemId, long invulnerableUntil, long undockedFrom = 0, bool jumpCloak = false)
+    private sealed class Pilot(ClientSession session, long characterId, long shipId, int typeId, int solarSystemId, long invulnerableUntil, long undockedFrom = 0, bool jumpCloak = false)
     {
         public ClientSession Session { get; } = session;
 
         public long CharacterId { get; } = characterId;
 
         public long ShipId { get; } = shipId;
+
+        public int TypeId { get; } = typeId;
 
         public int SolarSystemId { get; } = solarSystemId;
 
@@ -308,7 +310,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         }
 
         var now = FileTimeNow();
-        var pilot = new Pilot(session, characterId, moved.Ship.Id, systemId, now + UndockInvulnerabilityTicks, stationId);
+        var pilot = new Pilot(session, characterId, moved.Ship.Id, moved.Ship.TypeId, systemId, now + UndockInvulnerabilityTicks, stationId);
         if (!_pilots.Values.Any(other => other.SolarSystemId == systemId))
         {
             ForgetNpcsOf(systemId);
@@ -328,6 +330,40 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         session.SendNotification("OnInvulunOnUndockingUpdated", "shipid", InventoryWire.Id(pilot.ShipId), new PyLong(pilot.InvulnerableUntil), new PyLong(UndockInvulnerabilityTicks));
 
         return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId), new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + SessionChangeCooldownMs)));
+    }
+
+
+    /// <summary>Boards another ship from the current station hangar and updates the active session ship.</summary>
+    /// <summary>Leaves a docked ship, activates the character's capsule, and keeps the ship in the hangar.</summary>
+
+    /// <summary>Boards a ship already in the character's station hangar.</summary>
+    public async ValueTask<PyValue> BoardAsync(ClientSession session, long shipId, long currentShipId, CancellationToken cancellationToken)
+    {
+        var locationId = session.GetInt("stationid") ?? session.GetInt("structureid");
+        if (session.CharacterId is not { } characterId || locationId is not { } dockLocationId
+            || session.GetInt("shipid") != currentShipId || IsInSpace(session)
+            || !await _ships.BoardAsync(characterId, dockLocationId, currentShipId, shipId, cancellationToken))
+        {
+            return None;
+        }
+
+        session.Change(("shipid", new PyLong(shipId)));
+        var empty = new PyDict([]);
+        return Py.Tuple(empty, empty, empty, empty);
+    }
+
+    /// <summary>Prepares a capsule; the client's following Board call performs the active ship switch.</summary>
+    public async ValueTask<PyValue> LeaveShipAsync(ClientSession session, long shipId, CancellationToken cancellationToken)
+    {
+        var locationId = session.GetInt("stationid") ?? session.GetInt("structureid");
+        if (session.CharacterId is not { } characterId || locationId is not { } dockLocationId
+            || session.GetInt("shipid") != shipId || IsInSpace(session))
+        {
+            return None;
+        }
+
+        var capsule = await _ships.LeaveShipAsync(characterId, dockLocationId, shipId, cancellationToken);
+        return capsule is null ? None : InventoryWire.Id(capsule.Id);
     }
 
     private static ItemRow ShipRow(Item ship, TypeDef? type) =>
@@ -493,8 +529,31 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         {
             return ModuleResult.Refusal(made.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
         }
+        var assistance = package.Action is SimAction.Remote
+        {
+            What: SimRemote.Repair or SimRemote.Transfer
+                or SimRemote.Damp { RangePercent: >= 0, ResolutionPercent: >= 0, GravimetricStrengthPercent: >= 0, LadarStrengthPercent: >= 0, MagnetometricStrengthPercent: >= 0, RadarStrengthPercent: >= 0 }
+        };
+        if (assistance)
+        {
+            var targetTypeId = _pilots.Values.FirstOrDefault(other => other.ShipId == package.TargetId)?.TypeId;
+            if (targetTypeId is null && _npcShips.TryGetValue(package.TargetId, out var npc))
+            {
+                targetTypeId = npc.TypeId;
+            }
+            if (targetTypeId is not { } targetTypeIdValue)
+            {
+                return ModuleResult.Refusal("REFUSED", made.ModuleType, made.ModuleName);
+            }
+            var targetType = _statics.Type(targetTypeIdValue);
+            if (targetType is null
+                || (targetType.Attributes.TryGetValue(854, out var disallowAssistance) && disallowAssistance > 0))
+            {
+                return ModuleResult.Refusal("REFUSED", made.ModuleType, made.ModuleName);
+            }
+        }
         // the safety of the pilot: a weapon is not started at the ship of another pilot where that would be a crime the safety the pilot has set does not allow
-        var attack = package.Turret is not null || package.Action is SimAction.Remote { What: SimRemote.Neutralize or SimRemote.Drain or SimRemote.Web or SimRemote.Paint or SimRemote.Damp or SimRemote.Scramble or SimRemote.Jam or SimRemote.Disrupt };
+        var attack = package.Turret is not null || package.Action is SimAction.Remote { What: SimRemote.Neutralize or SimRemote.Drain or SimRemote.Web or SimRemote.Paint or SimRemote.Damp { RangePercent: < 0 } or SimRemote.Damp { ResolutionPercent: < 0 } or SimRemote.Damp { GravimetricStrengthPercent: < 0 } or SimRemote.Damp { LadarStrengthPercent: < 0 } or SimRemote.Damp { MagnetometricStrengthPercent: < 0 } or SimRemote.Damp { RadarStrengthPercent: < 0 } or SimRemote.Scramble or SimRemote.Jam or SimRemote.Disrupt };
         var securityClass = _systems.Get(pilot.SolarSystemId) is { } where ? Security.ClassFromLevel(where.Security) : (SecurityClass?)null;
         var victim = attack ? _pilots.Values.FirstOrDefault(other => other.ShipId == package.TargetId && other.CharacterId != characterId) : null;
         if (securityClass is { } empire && (attack || package.Action is SimAction.Smartbomb))
@@ -1409,7 +1468,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                 return;
             }
             var now = FileTimeNow();
-            var arrived = new Pilot(session, pilot.CharacterId, pilot.ShipId, jumped.ToSystem, now + JumpCloakTicks, pilot.UndockedFrom, jumpCloak: true);
+            var arrived = new Pilot(session, pilot.CharacterId, pilot.ShipId, pilot.TypeId, jumped.ToSystem, now + JumpCloakTicks, pilot.UndockedFrom, jumpCloak: true);
             if (!_pilots.Values.Any(other => other.SolarSystemId == jumped.ToSystem))
             {
                 ForgetNpcsOf(jumped.ToSystem);
@@ -1604,7 +1663,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             // the pilot flies the capsule where the ship was: the simulation adds its ball (it answers after the client has been sent it)
             if (await _ships.LoadAsync(pilot.CharacterId) is { } flown && flown.Ship.Id == capsule.Id)
             {
-                var flying = new Pilot(session, pilot.CharacterId, capsule.Id, pilot.SolarSystemId, 0);
+                var flying = new Pilot(session, pilot.CharacterId, capsule.Id, flown.Ship.TypeId, pilot.SolarSystemId, 0);
                 flying.End();
                 if (!_pilots.TryUpdate(id, flying, pilot))
                 {

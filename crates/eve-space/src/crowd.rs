@@ -876,9 +876,10 @@ mod tests {
         assert!(scene.undock(B, other_spec(), STATION, NOON + SECOND).unwrap().is_empty(), "A cannot see B");
         scene.bind(B, NOON + SECOND);
         assert!(scene.poll(NOON + 2 * SECOND).is_empty(), "nothing has changed");
-        // A comes back to where B is
+        // A comes back inside B's grid box but outside its hull
         let there = scene.pilots[&B].ship.position;
-        scene.pilots.get_mut(&A).unwrap().ship.position = there;
+        let separation = scene.pilots[&A].ship.spec.radius + scene.pilots[&B].ship.spec.radius + 1.0;
+        scene.pilots.get_mut(&A).unwrap().ship.position = Vec3::new(there.x - separation, there.y, there.z);
         let told = scene.poll(NOON + 3 * SECOND);
         assert_eq!(told.len(), 2, "each is shown the other");
         assert_eq!(told.iter().map(recipient).collect::<Vec<_>>(), [A, B]);

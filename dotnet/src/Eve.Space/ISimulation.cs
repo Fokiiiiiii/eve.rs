@@ -84,7 +84,7 @@ public interface ISimulation
     Task<SimSpawnReply> LaunchDroneAsync(SimLaunchDrone launch, CancellationToken cancellationToken = default);
 
     /// <summary>Gives a pilot's drones an order (<see cref="SimDroneCommands"/>) and waits for what each did with it (<see cref="CommandReply.Drones"/>).</summary>
-    Task<CommandReply> DroneCommandAsync(ulong sessionId, byte command, long targetId, IReadOnlyList<long> droneIds, CancellationToken cancellationToken = default);
+    Task<CommandReply> DroneCommandAsync(ulong sessionId, byte command, long targetId, IReadOnlyList<long> droneIds, double controlRange, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gives a session whose ship was destroyed another (the capsule the host made), at rest at the place; null when it was done, else why not.

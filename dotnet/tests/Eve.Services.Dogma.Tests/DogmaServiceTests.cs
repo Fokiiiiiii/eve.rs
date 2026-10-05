@@ -219,6 +219,71 @@ public class DogmaServiceTests
         Assert.IsType<PyInt>(result);
         Assert.Equal(expected, Id(result));
     }
+
+
+    [PgFact]
+    public async Task Online_turret_damage_amplifiers_modify_matching_weapon_damage_with_SDE_stacking()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        var snapshot = await rig.Ships.LoadAsync(character.CharacterId);
+        Assert.NotNull(snapshot);
+        var world = snapshot.World;
+        var shipId = snapshot.Ship.Id;
+        var nextItemId = long.MaxValue - 1_000;
+
+        Eve.Dogma.DogmaItem Add(int typeId, int flag, Eve.Dogma.ItemState state) =>
+            world.Add(new Eve.Dogma.DogmaItem(nextItemId++, typeId, character.CharacterId, shipId, flag, state));
+
+        foreach (var (amplifierTypeId, weaponTypeId) in new[] { (520, 484), (2363, 453), (9944, 564) })
+        {
+            var weapon = Add(weaponTypeId, 27, Eve.Dogma.ItemState.Online);
+            var baseline = world.Get(weapon.Id, 64);
+            var amplifier = Add(amplifierTypeId, 11, Eve.Dogma.ItemState.Offline);
+
+            Assert.Equal(baseline, world.Get(weapon.Id, 64));
+            world.SetState(amplifier.Id, Eve.Dogma.ItemState.Online);
+            var single = world.Get(weapon.Id, 64);
+            Assert.True(single > baseline);
+
+            if (amplifierTypeId == 520)
+            {
+                Add(amplifierTypeId, 11, Eve.Dogma.ItemState.Online);
+                var stacked = world.Get(weapon.Id, 64);
+                Assert.True(stacked > single);
+                Assert.True(stacked < single * single / baseline);
+            }
+        }
+    }
+
+    [PgFact]
+    public async Task Online_ballistic_control_system_scales_the_missile_damage_multiplier_with_SDE_stacking()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        var snapshot = await rig.Ships.LoadAsync(character.CharacterId);
+        Assert.NotNull(snapshot);
+        var world = snapshot.World;
+        var shipId = snapshot.Ship.Id;
+        var nextItemId = long.MaxValue - 2_000;
+
+        Eve.Dogma.DogmaItem Add(Eve.Dogma.ItemState state) =>
+            world.Add(new Eve.Dogma.DogmaItem(nextItemId++, 12274, character.CharacterId, shipId, 11, state));
+
+        var baseline = world.Get(character.CharacterId, 212);
+        Assert.True(baseline > 0);
+        var first = Add(Eve.Dogma.ItemState.Offline);
+        Assert.Equal(baseline, world.Get(character.CharacterId, 212));
+
+        world.SetState(first.Id, Eve.Dogma.ItemState.Online);
+        var single = world.Get(character.CharacterId, 212);
+        Assert.True(single > baseline);
+
+        Add(Eve.Dogma.ItemState.Online);
+        var stacked = world.Get(character.CharacterId, 212);
+        Assert.True(stacked > single);
+        Assert.True(stacked < single * single / baseline);
+    }
 }
 
 public class ShipEventTests
@@ -364,6 +429,26 @@ public class ShipEventTests
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(async () => await Inventory(rig, session, shipInventory, "Add", [new PyLong(ship + 3), new PyLong(Rig.Station)], Kw("flag", 27)));
         Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
         Assert.Empty(Events.Of(session));
+    }
+
+    [PgFact]
+    public async Task MultiAdd_uses_the_client_auto_fit_flag_to_fit_selected_modules()
+    {
+        var (rig, character, session, _, hangar) = await ReadyAsync();
+        await using var owned = rig;
+        var ship = character.ShipId;
+        var shipInventory = Rig.OidOf(await rig.InventoryAsync(session, "GetInventoryFromId", args: [new PyLong(ship)]));
+        var module = ship + 2;
+        await Inventory(rig, session, hangar, "Add", [new PyLong(module), new PyLong(ship)], Kw("flag", 4));
+        Events.Of(session);
+
+        Assert.Equal(PyBool.True, await Inventory(rig, session, shipInventory, "MultiAdd",
+            [new PyList([new PyLong(module)]), new PyLong(Rig.Station)], Kw("flag", 0)));
+        Assert.Equal(["OnMultiEvent", "OnItemsChanged"], Events.Of(session).Select(e => e.Name));
+
+        var rows = (PyList)await Inventory(rig, session, shipInventory, "GetItems", [new PyTuple([new PyLong(module)])]);
+        var fitted = Assert.IsType<PyPackedRow>(Assert.Single(rows.Items));
+        Assert.Equal(27L, Events.Number(fitted.Values[4]));
     }
 
     [PgFact]

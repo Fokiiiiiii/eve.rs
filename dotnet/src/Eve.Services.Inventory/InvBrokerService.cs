@@ -290,12 +290,17 @@ public sealed partial class InvBrokerService(
         var flag = FlagOf(call);
         if (context.Kind == Kind.Ship)
         {
-            if (space?.IsInSpace(call.Session) == true && flag == CharacterShips.DroneBayFlag)
+            if (space is not null && space.IsInSpace(call.Session) && flag == CharacterShips.DroneBayFlag)
             {
                 return droneBays is not null
                     && await droneBays.RoomAsync(call.Session, context.ItemId, flag.Value, call.Cancellation) is { } inSpaceRoom
                     ? KeyVal(inSpaceRoom.Capacity, inSpaceRoom.Used)
                     : None;
+            }
+            if (flag == CharacterShips.DroneBayFlag
+                && !await IsDockedShipContextAsync(call.Session, character, context.ItemId, call.Cancellation))
+            {
+                return None;
             }
             return await ships.RoomAsync(character, context.ItemId, flag ?? CharacterShips.CargoFlag, call.Cancellation) is { } room ? KeyVal(room.Capacity, room.Used) : None;
         }
@@ -369,6 +374,17 @@ public sealed partial class InvBrokerService(
     /// free one), a module out of its slot into the hangar, goods into the cargo hold. Answers the id of the item that moved, and the client is
     /// told what changed. What cannot be done is answered with a message or, for an item that is not there, with None.
     /// </summary>
+private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, long characterId, long shipId, CancellationToken cancellationToken)
+    {
+        if (StationOf(session) is not { } station || await items.GetAsync(shipId, cancellationToken) is not { } ship)
+        {
+            return false;
+        }
+        return ship.OwnerId == characterId
+            && ship.LocationId == station
+            && await types.GetAsync(ship.TypeId, cancellationToken) is { CategoryId: ShipCategory };
+    }
+
     [Method("Add")]
     public async ValueTask<PyValue> Add(ServiceCall call)
     {
@@ -388,6 +404,11 @@ public sealed partial class InvBrokerService(
                     : None;
             }
             return await space.MoveAsync(call.Session, itemId, IdOf(call.Arg(1)) ?? 0, context.ItemId, quantity, call.Cancellation) is { } moved ? InventoryWire.Id(moved) : None;
+        }
+        if (context.Kind == Kind.Ship && flag == CharacterShips.DroneBayFlag
+            && !await IsDockedShipContextAsync(call.Session, character, context.ItemId, call.Cancellation))
+        {
+            return None;
         }
         var destination = context.Kind == Kind.Hangar ? StationOf(call.Session) : context.ItemId;
         if (destination is not { } location)
@@ -413,8 +434,7 @@ public sealed partial class InvBrokerService(
     [Method("MultiAdd")]
     public async ValueTask<PyValue> MultiAdd(ServiceCall call)
     {
-        if (ContextOf(call) is not { Kind: Kind.Ship } context || space is null || !space.IsInSpace(call.Session) || IdOf(call.Arg(1)) is not { } source
-            || (call.Kwarg("flag") is { } named && Flag(named) is { } flag && flag != CharacterShips.CargoFlag))
+        if (ContextOf(call) is not { Kind: Kind.Ship } context || IdOf(call.Arg(1)) is not { } source)
         {
             return None;
         }
@@ -428,12 +448,42 @@ public sealed partial class InvBrokerService(
         {
             return None;
         }
-        return await space.MoveAllAsync(call.Session, ids, source, context.ItemId, call.Cancellation) switch
+        if (space is not null && space.IsInSpace(call.Session))
         {
-            true => PyBool.True,
-            false => throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("None of the selected items could be moved."))),
-            null => None,
-        };
+            if (call.Kwarg("flag") is { } named && Flag(named) is { } flag && flag != CharacterShips.CargoFlag)
+            {
+                return None;
+            }
+            return await space.MoveAllAsync(call.Session, ids, source, context.ItemId, call.Cancellation) switch
+            {
+                true => PyBool.True,
+                false => throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("None of the selected items could be moved."))),
+                null => None,
+            };
+        }
+        if (StationOf(call.Session) is null || call.Session.CharacterId is not { } character
+            || call.Kwarg("flag") is not { } autoFit || IdOf(autoFit) != 0)
+        {
+            return None;
+        }
+
+        // ponytail: one transaction per item; add batch fitting only if measured MultiAdd latency warrants it.
+        var moved = false;
+        foreach (var itemId in ids)
+        {
+            switch (await ships.MoveAsync(character, itemId, source, context.ItemId, 0, null, call.Cancellation))
+            {
+                case ShipChanged changed:
+                    ShipNotifications.Send(call.Session, character, changed, item => DogmaRow(item), Py.FileTimeFromUnixMs(nowUnixMs()));
+                    moved = true;
+                    break;
+                case ShipRefused refused:
+                    throw ShipErrors.Of(refused, statics);
+            }
+        }
+        return moved
+            ? PyBool.True
+            : throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("None of the selected items could be moved.")));
     }
 
     private ItemRow DogmaRow(Item item) =>

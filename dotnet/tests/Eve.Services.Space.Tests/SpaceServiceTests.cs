@@ -17,6 +17,96 @@ public class SpaceServiceTests
         return (rig, character, await rig.SessionAsync(character));
     }
 
+    [PgFact]
+    public async Task Boarding_switches_the_active_ship_once_and_keeps_both_hulls_in_the_hangar()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        var ships = (await rig.Ships.GrantAsync(character.CharacterId, 601, 2, singleton: true))!;
+        var first = ships[0].After;
+        var second = ships[1].After;
+        var oid = await rig.BindShipAsync(session);
+        var beforeSimulation = rig.Sim.Heard.Count;
+
+        var results = await Task.WhenAll(
+            rig.ShipCallAsync(session, "Board", oid, new PyLong(first.Id), new PyLong(character.ShipId)),
+            rig.ShipCallAsync(session, "Board", oid, new PyLong(second.Id), new PyLong(character.ShipId)));
+
+        var reply = Assert.IsType<PyTuple>(Assert.Single(results, result => result is PyTuple));
+        Assert.Single(results, result => result is PyNone);
+        Assert.Equal(4, reply.Items.Count);
+        Assert.All(reply.Items, item => Assert.IsType<PyDict>(item));
+
+        var activeShipId = (await rig.Characters.GetAsync(character.CharacterId))!.ShipId;
+        Assert.Contains(activeShipId, new long?[] { first.Id, second.Id });
+        Assert.Equal(activeShipId, session.GetInt("shipid"));
+        var hulls = new[]
+        {
+            (await rig.Items.GetAsync(character.ShipId))!,
+            (await rig.Items.GetAsync(first.Id))!,
+            (await rig.Items.GetAsync(second.Id))!,
+        };
+        Assert.All(hulls, hull => Assert.Equal((Rig.Station, Eve.Inventory.ItemFlags.Hangar), (hull.LocationId, hull.Flag)));
+        Assert.Equal(beforeSimulation, rig.Sim.Heard.Count);
+    }
+
+    [PgFact]
+    public async Task Boarding_with_a_stale_current_ship_id_is_refused_without_changing_session_or_custody()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        var offers = await rig.Ships.GrantAsync(character.CharacterId, 601, 1, singleton: true) ?? [];
+        var offered = Assert.Single(offers);
+        var oid = await rig.BindShipAsync(session);
+
+        var result = await rig.ShipCallAsync(
+            session,
+            "Board",
+            oid,
+            new PyLong(offered.After.Id),
+            new PyLong(character.ShipId + 1));
+
+        Assert.Equal(PyNone.Instance, result);
+        Assert.Equal(character.ShipId, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
+        Assert.Equal(character.ShipId, session.GetInt("shipid"));
+        var hulls = new[]
+        {
+            (await rig.Items.GetAsync(character.ShipId))!,
+            (await rig.Items.GetAsync(offered.After.Id))!,
+        };
+        Assert.All(hulls, hull => Assert.Equal((Rig.Station, Eve.Inventory.ItemFlags.Hangar), (hull.LocationId, hull.Flag)));
+    }
+
+    [PgFact]
+    public async Task Leaving_a_ship_prepares_a_capsule_then_board_switches_while_storing_the_hull()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        var oid = await rig.BindShipAsync(session);
+
+        var leave = await rig.ShipCallAsync(session, "LeaveShip", oid, new PyLong(character.ShipId));
+        var capsuleId = leave switch
+        {
+            PyInt value => value.Value,
+            PyLong value => value.Value,
+            _ => 0,
+        };
+
+        Assert.True(capsuleId > 0);
+        Assert.Equal(character.ShipId, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
+        Assert.Equal(character.ShipId, session.GetInt("shipid"));
+        var capsule = (await rig.Items.GetAsync(capsuleId))!;
+        Assert.Equal((Rig.Station, Eve.Inventory.ItemFlags.Hangar), (capsule.LocationId, capsule.Flag));
+
+        var board = await rig.ShipCallAsync(session, "Board", oid, new PyLong(capsuleId), new PyLong(character.ShipId));
+
+        Assert.IsType<PyTuple>(board);
+        Assert.Equal(capsuleId, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
+        Assert.Equal(capsuleId, session.GetInt("shipid"));
+        var hull = (await rig.Items.GetAsync(character.ShipId))!;
+        Assert.Equal((Rig.Station, Eve.Inventory.ItemFlags.Hangar), (hull.LocationId, hull.Flag));
+    }
+
     /// <summary>Binds the ship service and undocks.</summary>
     private static async Task<(string Oid, PyValue Answer)> UndockAsync(Rig rig, ClientSession session)
     {
@@ -652,6 +742,55 @@ public class SpaceServiceTests
         Assert.Null(refused.Effect);
     }
 
+    [Fact]
+    public void A_micro_jump_drive_package_uses_dogma_range_and_cooldown_and_spools_once()
+    {
+        var standard = ModulePackageFixture(4383, "Large Micro Jump Drive", "microJumpDrive",
+            new Dictionary<int, double> { [6] = 0, [73] = 12_000, [669] = 180_000 },
+            effectId: 4921, effectGuid: "effects.MicroJumpDriveEngage");
+        var standardResult = ModulePackages.Of(standard.Snapshot, standard.Statics, standard.ModuleId, "microJumpDrive", 0, 20);
+        var standardPackage = Assert.IsType<SimEffect>(standardResult.Effect);
+        Assert.Equal(4921, standardPackage.EffectId);
+        Assert.Equal("effects.MicroJumpDriveEngage", standardPackage.Fx);
+        Assert.Equal(12_000, standardPackage.DurationMs);
+        Assert.Equal(1, standardPackage.Repeat);
+        Assert.Equal(new SimAction.MicroJumpDrive(100_000, 180_000), standardPackage.Action);
+
+        var capital = ModulePackageFixture(88712, "Xarasier Capital Micro Jump Drive", "microJumpDrive",
+            new Dictionary<int, double> { [6] = 0, [73] = 12_000, [669] = 150_000, [2066] = 250_000 },
+            effectId: 4921, effectGuid: "effects.MicroJumpDriveEngage");
+        var capitalResult = ModulePackages.Of(capital.Snapshot, capital.Statics, capital.ModuleId, "microJumpDrive", 0, 100);
+        var capitalPackage = Assert.IsType<SimEffect>(capitalResult.Effect);
+        Assert.Equal(1, capitalPackage.Repeat);
+        Assert.Equal(new SimAction.MicroJumpDrive(250_000, 150_000), capitalPackage.Action);
+    }
+
+    [Fact]
+    public void A_local_sensor_booster_applies_and_removes_its_ship_bonuses()
+    {
+        var loaded = ModulePackageFixture(
+            90005,
+            "Sensor Booster I",
+            "sensorBoost",
+            new Dictionary<int, double> { [6] = 12, [73] = 5_000, [309] = 30, [566] = 40 },
+            effectId: 70006);
+
+        var result = ModulePackages.Of(loaded.Snapshot, loaded.Statics, loaded.ModuleId, "sensorBoost", 0, 20);
+        var package = Assert.IsType<SimEffect>(result.Effect);
+
+        Assert.Equal(70006, package.EffectId);
+        Assert.Equal(5_000, package.DurationMs);
+        Assert.Equal(12, package.CapacitorNeed);
+        Assert.Equal(20, package.Repeat);
+        Assert.Equal(loaded.ShipId, package.TargetId);
+
+        var remote = Assert.IsType<SimAction.Remote>(package.Action);
+        Assert.Equal(new SimRemote.Damp(30, 40), remote.What);
+        Assert.Equal((0d, 0d, false, "remoteSensorBoost"), (remote.Optimal, remote.Falloff, remote.AtCycleEnd, remote.Jam));
+        Assert.Equal(package.OnChanges, package.OffChanges);
+        Assert.All(package.OnChanges, change => Assert.Equal(loaded.ModuleId, change.ItemId));
+    }
+
     private static (Eve.Ships.ShipSnapshot Snapshot, Eve.Dogma.DogmaStatic Statics, long ModuleId, long ShipId) ModulePackageFixture(
         int moduleTypeId,
         string moduleName,
@@ -660,18 +799,19 @@ public class SpaceServiceTests
         int? chargeTypeId = null,
         IReadOnlyDictionary<int, double>? chargeAttributes = null,
         long chargeQuantity = 0,
-        int groupId = 1)
+        int groupId = 1,
+        int effectId = 70005,
+        string? effectGuid = null)
     {
         const long characterId = 70001;
         const long shipId = 70002;
         const long moduleId = 70003;
         const long chargeId = 70004;
-        const int effectId = 70005;
         const int flag = 11;
 
         var effect = new Eve.Dogma.EffectDef(effectId, effectName, Eve.Dogma.EffectDef.Activation, [])
         {
-            Guid = $"effects.{char.ToUpperInvariant(effectName[0])}{effectName[1..]}",
+            Guid = effectGuid ?? $"effects.{char.ToUpperInvariant(effectName[0])}{effectName[1..]}",
             DurationAttributeId = 73,
             DischargeAttributeId = 6,
         };
@@ -933,13 +1073,37 @@ public class SpaceServiceTests
         }
         Assert.DoesNotContain(Events.Of(session), e => e.Name == "OnInvulnCancelled"); // a warp that was refused costs the pilot nothing
 
-        await Assert.ThrowsAsync<MachoWrappedException>(() => rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("bookmark"), new PyInt(5)));
+        await Assert.ThrowsAsync<MachoWrappedException>(() => rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("unsupported"), new PyInt(5)));
         await Assert.ThrowsAsync<MachoWrappedException>(() => rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("item"), new PyStr("planet")));
         Assert.Equal(before + 2, rig.Sim.Heard.Count);
 
         // not from an object of this session
         Assert.Equal(PyNone.Instance, await rig.BeyonceCallAsync(session, "CmdWarpToStuff", null, new PyStr("item"), new PyInt(40491233)));
         Assert.Equal(before + 2, rig.Sim.Heard.Count);
+    }
+
+    [PgFact]
+    public async Task A_bookmark_warp_uses_the_bookmark_id_and_requested_range()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        var before = rig.Sim.Heard.Count;
+
+        const long bookmarkId = 50_123_456;
+        const long range = 20_000;
+        var answer = await rig.BeyonceCallWithAsync(
+            session,
+            "CmdWarpToStuff",
+            oid,
+            [new PyStr("bookmark"), new PyLong(bookmarkId)],
+            ("minRange", new PyLong(range)));
+
+        Assert.Equal(PyNone.Instance, answer);
+        Assert.Equal(
+            [Describe(new SimCommand((ulong)session.SessionId, SimCommands.WarpTo, [bookmarkId, range]))],
+            rig.Sim.Heard.Skip(before).Select(Describe));
     }
 
     [PgFact]
@@ -1436,4 +1600,6 @@ public class SpaceServiceTests
         await Rig.UntilAsync(() => rig.Items.GetAsync(character.ShipId).GetAwaiter().GetResult() is { LocationId: Rig.Station });
         Assert.False(rig.Space.IsInSpace(session));
     }
+
+
 }

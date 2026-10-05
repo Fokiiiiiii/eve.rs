@@ -7,7 +7,7 @@ namespace Eve.Services.Space.Tests;
 /// <summary>A pilot starts the gun of its ship at what it has locked: the host works out what the gun shoots and the safety of the pilot decides where it may.</summary>
 public class WeaponHostTests
 {
-    private static async Task<ClientSession> InSpaceAsync(Rig rig, Eve.Characters.Created character, long id)
+    internal static async Task<ClientSession> InSpaceAsync(Rig rig, Eve.Characters.Created character, long id)
     {
         var session = await rig.SessionAsync(character, id);
         var oid = await rig.BindShipAsync(session);
@@ -131,7 +131,7 @@ public class WeaponHostTests
     }
 
 
-    [Theory]
+    [PgTheory]
     [InlineData(true, false, false, false, false, false)]
     [InlineData(false, true, false, false, false, false)]
     [InlineData(false, false, true, false, false, false)]
@@ -240,5 +240,49 @@ public class WeaponHostTests
         Assert.True(WeaponSafety.StopsFire(Eve.Universe.SecurityClass.LowSec, Eve.Crimewatch.SafetyLevel.Partial, capsule));
         Assert.False(WeaponSafety.StopsFire(Eve.Universe.SecurityClass.LowSec, Eve.Crimewatch.SafetyLevel.None, capsule));
         Assert.False(WeaponSafety.StopsFire(Eve.Universe.SecurityClass.ZeroSec, Eve.Crimewatch.SafetyLevel.Full, capsule));
+    }
+
+
+    [PgFact]
+    public async Task A_negative_sensor_dampener_still_uses_safety_and_aggression()
+    {
+        const int SensorDampener = 1968, MidSlot = 19;
+        await using var rig = await Rig.CreateAsync();
+        var (session, attacker, module) = await RepairHostTests.InSpaceWithAsync(rig, SensorDampener, MidSlot);
+        var victim = await rig.NewCharacterAsync("Space Victim", 2);
+        var other = await InSpaceAsync(rig, victim, 2);
+        var level = 2;
+        var safetyChecks = 0;
+        var aggression = new List<Eve.Crimewatch.AggressionRequest>();
+        rig.Space.SafetyLevelOf = (_, _) =>
+        {
+            safetyChecks++;
+            return Task.FromResult(level);
+        };
+        rig.Space.Aggression = (request, _) =>
+        {
+            aggression.Add(request);
+            return Task.CompletedTask;
+        };
+        var target = other.GetInt("shipid")!.Value;
+        var activations = rig.Sim.Heard.OfType<SimActivate>().Count();
+
+        var refused = await rig.Space.ActivateAsync(session, module, "remoteSensorDampFalloff", target, 1000, CancellationToken.None);
+        Assert.Equal("SafetyActivated", refused!.Reason);
+        Assert.Equal(activations, rig.Sim.Heard.OfType<SimActivate>().Count());
+        Assert.Equal(1, safetyChecks);
+        Assert.Empty(aggression);
+
+        level = 0;
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, module, "remoteSensorDampFalloff", target, 1000, CancellationToken.None));
+        Assert.Equal(2, safetyChecks);
+        var effect = Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect;
+        var remote = Assert.IsType<SimAction.Remote>(effect.Action);
+        Assert.Equal("ewRemoteSensorDamp", remote.Jam);
+        var damp = Assert.IsType<SimRemote.Damp>(remote.What);
+        Assert.True(damp.RangePercent < 0 && damp.ResolutionPercent < 0);
+
+        var one = Assert.Single(aggression);
+        Assert.Equal((attacker.CharacterId, victim.CharacterId, target), (one.Attacker, one.Target, one.TargetShipId));
     }
 }

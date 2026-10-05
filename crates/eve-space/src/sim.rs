@@ -430,7 +430,7 @@ impl Sim {
             }
             Message::Spawn(spawn) => return Ok(self.spawn(*spawn, now)),
             Message::LaunchDrone(launch) => return Ok(self.launch_drone(*launch, now)),
-            Message::DroneCommand { session_id, command, target_id, drone_ids } => {
+            Message::DroneCommand { session_id, command, target_id, drone_ids, control_range } => {
                 let command = match command {
                     1 => DroneCommand::Engage { target: target_id },
                     2 => DroneCommand::ReturnHome,
@@ -441,7 +441,9 @@ impl Sim {
                     }
                 };
                 match self.scene_of(session_id) {
-                    Some(scene) => scene.drone_command(session_id, &drone_ids, command, now),
+                    Some(scene) => {
+                        scene.drone_command_with_range(session_id, &drone_ids, command, control_range, now)
+                    }
                     None => Vec::new(),
                 }
             }
@@ -843,6 +845,22 @@ mod tests {
         [at.x + 500.0, at.y, at.z]
     }
 
+    fn place_player_outside_station(sim: &mut Sim) {
+        let scene = sim.scenes.get_mut(&SYSTEM).unwrap();
+        let station = scene.system().body(STATION).unwrap().clone();
+        let pilot = scene.pilots.get_mut(&SESSION).unwrap();
+        let direction = pilot.ship.direction;
+        let distance = station.radius + pilot.ship.spec.radius + 1_000.0;
+        pilot.ship.position = eve_destiny::Vec3::new(
+            station.position.x + direction.x * distance,
+            station.position.y + direction.y * distance,
+            station.position.z + direction.z * distance,
+        );
+        pilot.ship.velocity = eve_destiny::Vec3::ZERO;
+        pilot.ship.speed_fraction = 0.0;
+        pilot.ship.course = crate::ship::Course::Stop;
+    }
+
     #[test]
     fn an_npc_the_host_asks_for_comes_into_the_scene_of_the_system_and_is_answered_with_its_session() {
         let mut sim = undocked();
@@ -866,6 +884,7 @@ mod tests {
     fn an_npc_the_host_places_from_a_ship_comes_that_far_from_where_the_ship_is_and_one_placed_from_a_ship_that_is_not_there_is_refused()
      {
         let mut sim = undocked();
+        place_player_outside_station(&mut sim);
         let there = sim.scenes.get_mut(&SYSTEM).unwrap().ship(SESSION, NOON).unwrap().position;
         let Message::Spawn(mut request) = spawn(9, SYSTEM, 980_050_000_005, [0.0; 3]) else { unreachable!() };
         request.anchor_ship_id = spec().ship_id;
@@ -903,6 +922,7 @@ mod tests {
     #[test]
     fn a_ship_the_host_asks_to_destroy_is_gone_and_seen_to_go_and_a_player_is_told_to_the_host() {
         let mut sim = undocked();
+        place_player_outside_station(&mut sim);
         sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
         let at = beside_the_player(&mut sim);
         let reply = sim.handle(spawn(8, SYSTEM, 980_050_000_004, at), NOON + 60 * SECOND).unwrap();
@@ -913,7 +933,7 @@ mod tests {
                 NOON + 61 * SECOND,
             )
             .unwrap();
-        // the explosion and the wreck, to the player who sees it; and to the host that it is gone (it made the ship, and the bounty is its to pay)
+        // the explosion and wreck update the bound observer; the host receives the NPC's Destroyed record
         assert_eq!(&names(&told)[..2], ["DoDestinyUpdate", "DoDestinyUpdate"]);
         let gone: Vec<_> = told.iter().filter(|m| matches!(m, Message::Destroyed { .. })).collect();
         assert!(

@@ -92,7 +92,7 @@ See `dotnet/tests/Eve.Scheduler.Tests/Rig.cs`.
 
 Some waits belong to something that exists only in this process: a pilot's undock protection, a module that is reloading, the end of the skill
 queue of a character who is logged in. They need no database row (when the process stops the pilot, the module and the session are gone too),
-so they use `LocalTimers`, the server's one in-memory timer service:
+so they use `LocalTimers`, the server's one in-memory timer service. `Foundations` creates and owns exactly one instance at `Foundations.LocalTimers`; `Program.cs` passes it as `localTimers:` to `CrimewatchRuntime`, `DogmaIMService`, `TrainingAnnouncer` and `SpaceSessions`. Those classes use a private fallback only when constructed standalone (for example, in tests):
 
 ```csharp
 _timers.Set($"space.protection:{pilotId}", TimeSpan.FromSeconds(30), () => EndProtection(pilot));   // replaces a timer of the same key
@@ -262,8 +262,7 @@ No timer, no event list, no table of running anomalies was written for this.
 | Relations | `relations` | `EVE_RELATIONS_SCHEMA` | `RelationStore` |
 | Content | `content` | `EVE_CONTENT_SCHEMA` | `ContentRuntime` |
 
-`Eve.Host/Foundations.cs` creates them and `Program.cs` hands them to the features (`CharacterServicesAsync(…, foundations)`). Take what
-you need as a constructor argument. Register handlers and subscribers **before** `foundations.StartAsync()`.
+`Eve.Host/Foundations.cs` creates the services and `Program.cs` hands them to the features (`CharacterServicesAsync(…, foundations)`). Pass `foundations.LocalTimers` to the four process-local timer consumers with the named `localTimers:` argument. Features never dispose this shared instance; `Foundations.DisposeAsync()` stops Events and Scheduler before disposing it. Standalone construction keeps an optional private fallback. Register handlers and subscribers **before** `foundations.StartAsync()`.
 
 Each project follows the module rules (ADR 0003): its own schema, embedded SQL migrations that are never edited once released, an
 injected clock, and a test project with a scratch schema (`PgFact` skips without `EVE_PG_URL`; look at `Rig.cs` in each test project).

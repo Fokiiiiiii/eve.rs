@@ -6,6 +6,10 @@ observe is kept, and everything behind that is designed again. (`docs/adr/0001-e
 
 Status of the work is in `docs/NATIVE_MIGRATION.md`. This file is the direction and the order of work.
 
+The repository-wide RPC/empty-response/Host-wiring audit and repair tracker is
+[`IMPLEMENTATION_AUDIT.md`](IMPLEMENTATION_AUDIT.md). Findings remain open until current code and the
+verification gates in that tracker prove they are complete.
+
 ## 1. The compatibility contract
 
 What must match, and how each part is checked. The reference server (EVE.js) is a behavioural reference to

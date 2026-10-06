@@ -39,6 +39,22 @@ public sealed record SovStructureRecord(
     double DefenseMultiplier = 1,
     bool IsCapital = false);
 
+
+public sealed record SovHubUpgradeState(long TypeId, bool Online);
+
+/// <summary>Host-provided sovereignty writes with current-hub authorization; UninstallUpgrade self-destructs installed upgrades without detaching or refunding them.</summary>
+public sealed record SovHubWriteOperations(
+    Func<ServiceCall, long, SovHubRecord, ValueTask<bool>> CanManageHubAsync,
+    Func<ServiceCall, long, long?, ValueTask<PyValue>> SetFuelAccessGroupAsync,
+    Func<ServiceCall, long, IReadOnlyList<long>, IReadOnlyList<SovHubUpgradeState>, ValueTask<PyValue>> SaveUpgradeConfigurationAsync,
+    Func<ServiceCall, long, long, ValueTask<PyValue>> SelfDestructUpgradeAsync,
+    Func<ServiceCall, long, PyValue, ValueTask<PyValue>> SaveWorkforceConfigurationAsync);
+
+/// <summary>Host callbacks re-read persisted Skyhooks; acquisition charges ISK and commits ownership/ACL changes before returning IDs. Destruction returns IDs only after the existing Skyhook rows are durably destroyed. Neither RPC moves reagents or workforce.</summary>
+public sealed record SovSkyhookWriteOperations(
+    Func<ServiceCall, long, SovHubRecord, IReadOnlyList<long>, ValueTask<IReadOnlyList<long>>> DestroySkyhooksAsync,
+    Func<ServiceCall, long, SovHubRecord, IReadOnlyList<long>, long?, ValueTask<IReadOnlyList<long>>> AcquireSkyhooksAsync);
+
 public sealed record FwOccupationRecord(long WarzoneId, long SolarSystemId, long OccupierId);
 
 /// <summary>Creates the EVE.js read-only sovMgr and fwWarzoneSolarsystem endpoints.</summary>
@@ -56,13 +72,15 @@ public static class SovFwService
 
     public static IReadOnlyList<IService> Create(
         Func<ServiceCall, ValueTask<SovFwReadSnapshot>> readSnapshot,
-        Func<ServiceCall, ValueTask<bool>> isOnLocalFuelAccessGroup)
+        Func<ServiceCall, ValueTask<bool>> isOnLocalFuelAccessGroup,
+        SovHubWriteOperations? writeOperations = null,
+        SovSkyhookWriteOperations? skyhookWriteOperations = null)
     {
         ArgumentNullException.ThrowIfNull(readSnapshot);
         ArgumentNullException.ThrowIfNull(isOnLocalFuelAccessGroup);
         return
         [
-            new SovMgrService(readSnapshot, isOnLocalFuelAccessGroup),
+            new SovMgrService(readSnapshot, isOnLocalFuelAccessGroup, writeOperations, skyhookWriteOperations),
             new FwWarzoneSolarsystemService(readSnapshot),
         ];
     }
@@ -74,12 +92,19 @@ public sealed partial class SovMgrService
     private readonly Func<ServiceCall, ValueTask<SovFwReadSnapshot>> _readSnapshot;
     private readonly Func<ServiceCall, ValueTask<bool>> _isOnLocalFuelAccessGroup;
 
+private readonly SovSkyhookWriteOperations? _skyhookWriteOperations;
+private readonly SovHubWriteOperations? _writeOperations;
+
     public SovMgrService(
         Func<ServiceCall, ValueTask<SovFwReadSnapshot>> readSnapshot,
-        Func<ServiceCall, ValueTask<bool>> isOnLocalFuelAccessGroup)
+        Func<ServiceCall, ValueTask<bool>> isOnLocalFuelAccessGroup,
+        SovHubWriteOperations? writeOperations = null,
+        SovSkyhookWriteOperations? skyhookWriteOperations = null)
     {
         _readSnapshot = readSnapshot;
         _isOnLocalFuelAccessGroup = isOnLocalFuelAccessGroup;
+        _writeOperations = writeOperations;
+        _skyhookWriteOperations = skyhookWriteOperations;
     }
 
     [Method("GetSovStructuresInfoForLocalSolarSystem")]
@@ -130,6 +155,243 @@ public sealed partial class SovMgrService
     [Method("IsOnLocalSovHubFuelAccessGroup")]
     public async ValueTask<PyValue> IsOnLocalSovHubFuelAccessGroup(ServiceCall call) =>
         await _isOnLocalFuelAccessGroup(call) ? PyBool.True : PyBool.False;
+
+
+    [Method("SetSovHubFuelAccessGroup")]
+    public async ValueTask<PyValue> SetSovHubFuelAccessGroup(ServiceCall call)
+    {
+        if (call.Args.Count != 2)
+            return PyNone.Instance;
+
+        var solarSystemId = SovFwService.PositiveInteger(call.Arg(0));
+        var value = call.Arg(1);
+        long? groupId = value is PyNone ? null : SovFwService.PositiveInteger(value);
+        if (solarSystemId <= 0 || (value is not PyNone && (!groupId.HasValue || groupId.Value <= 0)))
+            return PyNone.Instance;
+
+        var snapshot = await _readSnapshot(call);
+        if (!snapshot.HubsBySolarSystemId.TryGetValue(solarSystemId, out var hub) || hub.HubId is not > 0)
+            return PyNone.Instance;
+
+        var operations = WriteOperations;
+        if (!await operations.CanManageHubAsync(call, solarSystemId, hub))
+            return PyBool.False;
+        return await operations.SetFuelAccessGroupAsync(call, solarSystemId, groupId);
+    }
+
+    [Method("SaveUpgradeConfiguration")]
+    public async ValueTask<PyValue> SaveUpgradeConfiguration(ServiceCall call)
+    {
+        if (call.Args.Count != 3)
+            return PyNone.Instance;
+
+        var hubId = SovFwService.PositiveInteger(call.Arg(0));
+        if (hubId <= 0 || call.Arg(1) is not PyList newUpgradeItems || call.Arg(2) is not PyList upgradeStates)
+            return PyNone.Instance;
+
+        var itemIds = new List<long>(newUpgradeItems.Items.Count);
+        var uniqueItemIds = new HashSet<long>();
+        foreach (var item in newUpgradeItems.Items)
+        {
+            var itemId = SovFwService.PositiveInteger(item);
+            if (itemId <= 0 || !uniqueItemIds.Add(itemId))
+                return PyNone.Instance;
+            itemIds.Add(itemId);
+        }
+
+        var states = new List<SovHubUpgradeState>(upgradeStates.Items.Count);
+        foreach (var stateValue in upgradeStates.Items)
+        {
+            if (stateValue is not PyTuple { Items.Count: 2 } state)
+                return PyNone.Instance;
+            var typeId = SovFwService.PositiveInteger(state.Items[0]);
+            if (typeId <= 0 || state.Items[1] is not PyBool online)
+                return PyNone.Instance;
+            states.Add(new(typeId, online.Value));
+        }
+
+        var snapshot = await _readSnapshot(call);
+        if (!TryFindHub(snapshot, hubId, out var solarSystemId, out var hub))
+            return PyNone.Instance;
+
+        var operations = WriteOperations;
+        if (!await operations.CanManageHubAsync(call, solarSystemId, hub))
+            return PyBool.False;
+        return await operations.SaveUpgradeConfigurationAsync(call, hubId, itemIds, states);
+    }
+
+    [Method("UninstallUpgrade")]
+    public async ValueTask<PyValue> UninstallUpgrade(ServiceCall call)
+    {
+        if (call.Args.Count != 1 || call.Arg(0) is not PyTuple { Items.Count: 2 } upgradeKey)
+            return PyNone.Instance;
+
+        var hubId = SovFwService.PositiveInteger(upgradeKey.Items[0]);
+        var typeId = SovFwService.PositiveInteger(upgradeKey.Items[1]);
+        if (hubId <= 0 || typeId <= 0)
+            return PyNone.Instance;
+
+        var snapshot = await _readSnapshot(call);
+        if (!TryFindHub(snapshot, hubId, out var solarSystemId, out var hub))
+            return PyNone.Instance;
+
+        var operations = WriteOperations;
+        if (!await operations.CanManageHubAsync(call, solarSystemId, hub))
+            return PyBool.False;
+        return await operations.SelfDestructUpgradeAsync(call, hubId, typeId);
+    }
+
+    [Method("SaveWorkforceConfiguration")]
+    public async ValueTask<PyValue> SaveWorkforceConfiguration(ServiceCall call)
+    {
+        if (call.Args.Count != 2 || call.Arg(1) is PyNone)
+            return PyNone.Instance;
+
+        var hubId = SovFwService.PositiveInteger(call.Arg(0));
+        if (hubId <= 0)
+            return PyNone.Instance;
+
+        var snapshot = await _readSnapshot(call);
+        if (!TryFindHub(snapshot, hubId, out var solarSystemId, out var hub))
+            return PyNone.Instance;
+
+        var operations = WriteOperations;
+        if (!await operations.CanManageHubAsync(call, solarSystemId, hub))
+            return PyBool.False;
+        return await operations.SaveWorkforceConfigurationAsync(call, hubId, call.Arg(1));
+    }
+
+[Method("DestroySkyhooks")]
+    public async ValueTask<PyValue> DestroySkyhooks(ServiceCall call)
+    {
+        if (call.Args.Count != 1 || call.Arg(0) is not PyList requested)
+            return PyNone.Instance;
+
+        var skyhookIds = PositiveSkyhookIds(requested);
+        if (skyhookIds.Count == 0)
+            return new PyList([]);
+
+        var operations = _skyhookWriteOperations ??
+            throw new InvalidOperationException("Sovereignty Skyhook writes are not wired.");
+        var currentHub = await FindCurrentHubAsync(call);
+        if (currentHub is null)
+            return PyNone.Instance;
+        var (solarSystemId, hub) = currentHub.Value;
+        if (!await WriteOperations.CanManageHubAsync(call, solarSystemId, hub))
+            return PyBool.False;
+
+        var processed = await operations.DestroySkyhooksAsync(call, solarSystemId, hub, skyhookIds);
+        return ProcessedSkyhookIds(skyhookIds, processed);
+    }
+
+    [Method("AcquireSkyhooks")]
+    public async ValueTask<PyValue> AcquireSkyhooks(ServiceCall call)
+    {
+        if (call.Args.Count != 2 || call.Arg(0) is not PyList requested)
+            return PyNone.Instance;
+
+        long? accessListId = null;
+        if (call.Arg(1) is not PyNone)
+        {
+            var parsedAccessListId = SovFwService.PositiveInteger(call.Arg(1));
+            if (parsedAccessListId <= 0)
+                return PyNone.Instance;
+            accessListId = parsedAccessListId;
+        }
+
+        var operations = _skyhookWriteOperations ??
+            throw new InvalidOperationException("Sovereignty Skyhook writes are not wired.");
+        var skyhookIds = PositiveSkyhookIds(requested);
+        var currentHub = await FindCurrentHubAsync(call);
+        if (currentHub is null)
+            return PyNone.Instance;
+        var (solarSystemId, hub) = currentHub.Value;
+        if (!await WriteOperations.CanManageHubAsync(call, solarSystemId, hub))
+            return PyBool.False;
+        if (!WithinSkyhookAcquisitionWindow(hub))
+            return PyBool.False;
+
+        var processed = await operations.AcquireSkyhooksAsync(
+            call, solarSystemId, hub, skyhookIds, accessListId);
+        return ProcessedSkyhookIds(skyhookIds, processed);
+    }
+
+    private async ValueTask<(long SolarSystemId, SovHubRecord Hub)?> FindCurrentHubAsync(ServiceCall call)
+    {
+        var session = call.Session;
+        if (session is null)
+            return null;
+        var solarSystemId = session.GetInt("solarsystemid2") ??
+            session.GetInt("solarsystemid") ?? 0;
+        if (solarSystemId <= 0)
+            return null;
+
+        var snapshot = await _readSnapshot(call);
+        return snapshot.HubsBySolarSystemId.TryGetValue(solarSystemId, out var hub) && hub.HubId is > 0
+            ? (solarSystemId, hub)
+            : null;
+    }
+
+    private static IReadOnlyList<long> PositiveSkyhookIds(PyList requested)
+    {
+        var ids = new List<long>(requested.Items.Count);
+        var seen = new HashSet<long>();
+        foreach (var value in requested.Items)
+        {
+            var id = SovFwService.PositiveInteger(value);
+            if (id > 0 && seen.Add(id))
+                ids.Add(id);
+        }
+        return ids;
+    }
+
+    private static PyValue ProcessedSkyhookIds(
+        IReadOnlyList<long> requested, IReadOnlyList<long> processed)
+    {
+        var requestedSet = new HashSet<long>(requested);
+        var seen = new HashSet<long>();
+        var result = new List<PyValue>(processed.Count);
+        foreach (var id in processed)
+        {
+            if (id <= 0 || !requestedSet.Contains(id))
+                return PyNone.Instance;
+            if (seen.Add(id))
+                result.Add(new PyInt(id));
+        }
+        return new PyList(result);
+    }
+
+    private static bool WithinSkyhookAcquisitionWindow(SovHubRecord hub)
+    {
+        var claimTime = hub.ClaimTimeFileTime ?? 0;
+        var now = DateTime.UtcNow.ToFileTimeUtc();
+        return claimTime > 0 && now >= claimTime && now - claimTime <= TimeSpan.TicksPerDay;
+    }
+
+    private SovHubWriteOperations WriteOperations =>
+        _writeOperations ?? throw new InvalidOperationException("Sovereignty writes are not wired.");
+
+    private static bool TryFindHub(
+        SovFwReadSnapshot snapshot,
+        long hubId,
+        out long solarSystemId,
+        out SovHubRecord hub)
+    {
+        solarSystemId = 0;
+        hub = null!;
+        var found = false;
+        foreach (var (systemId, candidate) in snapshot.HubsBySolarSystemId)
+        {
+            if (candidate.HubId != hubId)
+                continue;
+            if (found)
+                return false;
+            solarSystemId = systemId;
+            hub = candidate;
+            found = true;
+        }
+        return found;
+    }
 
     private static PyValue StructureList(SovFwReadSnapshot snapshot, long systemId) =>
         snapshot.StructuresBySolarSystemId.TryGetValue(systemId, out var structures)

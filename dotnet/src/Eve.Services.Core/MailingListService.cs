@@ -18,22 +18,61 @@ namespace Eve.Services.Core;
 /// Host registration and Create/Join/Leave/Delete, membership/access and welcome-mail
 /// writers (including notifications and mail fan-out) remain separate integration work.
 /// </remarks>
+public enum MailingListManagerMethod
+{
+    Create,
+    Join,
+    Leave,
+    Delete,
+    KickMembers,
+    SetEntitiesAccess,
+    ClearEntityAccess,
+    SetMembersMuted,
+    SetMembersOperator,
+    SetMembersClear,
+    SetDefaultAccess,
+    SaveWelcomeMail,
+    SendWelcomeMail,
+    ClearWelcomeMail
+}
+
+public sealed record MailingListCaller(long SessionId, long ClientId, long? UserId, long? CharacterId);
+
+public sealed record MailingListMutation(
+    MailingListManagerMethod Method,
+    MailingListCaller Caller,
+    IReadOnlyList<PyValue> PositionalArguments);
+
+/// <summary>
+/// The host callback must authorize and mutate the latest mail.mailingLists state in one transaction.
+/// SendWelcomeMail must fan out through the existing mail.messages and mail.mailboxes stores.
+/// </summary>
+public delegate ValueTask<PyValue> MailingListMutationCallback(
+    MailingListMutation mutation,
+    CancellationToken cancellationToken);
+
 public sealed class MailingListService : IService
 {
     private readonly Func<CancellationToken, ValueTask<JsonObject?>> readMailingLists;
 
+    private readonly MailingListMutationCallback? mutateMailingList;
+
     public MailingListService() : this(_ => ValueTask.FromResult<JsonObject?>(null)) { }
 
-    public MailingListService(Func<CancellationToken, ValueTask<JsonObject?>> readMailingLists)
+    public MailingListService(
+        Func<CancellationToken, ValueTask<JsonObject?>> readMailingLists,
+        MailingListMutationCallback? mutateMailingList = null)
     {
         ArgumentNullException.ThrowIfNull(readMailingLists);
         this.readMailingLists = readMailingLists;
+        this.mutateMailingList = mutateMailingList;
     }
 
     public string Name => "mailingListsMgr";
 
     public bool HasMethod(string method) => method is
-        "GetJoinedLists" or "GetInfo" or "GetMembers" or "GetSettings" or "GetWelcomeMail";
+        "GetJoinedLists" or "GetInfo" or "GetMembers" or "GetSettings" or "GetWelcomeMail" ||
+        ManagerMethod(method) is not null;
 
     public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
@@ -41,6 +80,20 @@ public sealed class MailingListService : IService
             return PyNone.Instance;
 
         call.Cancellation.ThrowIfCancellationRequested();
+        if (ManagerMethod(call.Method) is { } managerMethod)
+        {
+            var callback = mutateMailingList ??
+                throw new InvalidOperationException("mailingListsMgr writes require an atomic persistence callback.");
+            var caller = new MailingListCaller(
+                call.Session.SessionId,
+                call.Session.ClientId,
+                call.Session.UserId,
+                call.Session.CharacterId);
+            return await callback(
+                new MailingListMutation(managerMethod, caller, call.Args),
+                call.Cancellation);
+        }
+
         var characterId = PositiveId(JsSemantics.ToNumber(call.Session.Get("charid")));
         var listId = PositiveId(JsSemantics.ToNumber(call.Arg(0)));
         if ((call.Method != "GetInfo" && characterId == 0) ||
@@ -84,6 +137,25 @@ public sealed class MailingListService : IService
             _ => Empty(call.Method),
         };
     }
+
+    private static MailingListManagerMethod? ManagerMethod(string method) => method switch
+    {
+        "Create" => MailingListManagerMethod.Create,
+        "Join" => MailingListManagerMethod.Join,
+        "Leave" => MailingListManagerMethod.Leave,
+        "Delete" => MailingListManagerMethod.Delete,
+        "KickMembers" => MailingListManagerMethod.KickMembers,
+        "SetEntitiesAccess" => MailingListManagerMethod.SetEntitiesAccess,
+        "ClearEntityAccess" => MailingListManagerMethod.ClearEntityAccess,
+        "SetMembersMuted" => MailingListManagerMethod.SetMembersMuted,
+        "SetMembersOperator" => MailingListManagerMethod.SetMembersOperator,
+        "SetMembersClear" => MailingListManagerMethod.SetMembersClear,
+        "SetDefaultAccess" => MailingListManagerMethod.SetDefaultAccess,
+        "SaveWelcomeMail" => MailingListManagerMethod.SaveWelcomeMail,
+        "SendWelcomeMail" => MailingListManagerMethod.SendWelcomeMail,
+        "ClearWelcomeMail" => MailingListManagerMethod.ClearWelcomeMail,
+        _ => null,
+    };
 
     private static PyValue Empty(string method) => method switch
     {

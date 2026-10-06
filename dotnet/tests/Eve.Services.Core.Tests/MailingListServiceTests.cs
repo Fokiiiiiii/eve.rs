@@ -177,20 +177,11 @@ public sealed class MailingListServiceTests
     }
 
     [Fact]
-    public async Task Unknown_and_writer_methods_are_not_advertised_or_sent_to_the_reader()
+    public async Task Unknown_methods_are_not_advertised_or_sent_to_the_reader()
     {
         IService service = new MailingListService(_ => throw new InvalidOperationException("Reader must not run"));
-        foreach (var method in new[]
-        {
-            "Create", "Join", "Leave", "Delete", "KickMembers", "SetEntitiesAccess",
-            "ClearEntityAccess", "SetMembersMuted", "SetMembersOperator", "SetMembersClear",
-            "SetDefaultAccess", "SaveWelcomeMail", "SendWelcomeMail", "ClearWelcomeMail",
-            "Getjoinedlists", "Unknown",
-        })
-        {
-            Assert.False(service.HasMethod(method));
-            Assert.Same(PyNone.Instance, await service.CallAsync(Request(method)));
-        }
+        Assert.False(service.HasMethod("Unknown"));
+        Assert.Same(PyNone.Instance, await service.CallAsync(Request("Unknown")));
     }
 
     [Fact]
@@ -230,7 +221,135 @@ public sealed class MailingListServiceTests
         Assert.Equal(PyBool.False, Field(info, "isMuted"));
     }
 
-    private static IService Service(JsonObject lists) => new MailingListService(_ => ValueTask.FromResult<JsonObject?>(lists));
+    [Fact]
+    public async Task Server_write_methods_are_advertised_and_forwarded_with_session_identity()
+    {
+        var accessByEntity = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyInt(800), new PyInt(1)),
+            new KeyValuePair<PyValue, PyValue>(new PyInt(900), new PyInt(0)),
+        ]);
+        var cases = new (string Method, MailingListManagerMethod ManagerMethod, PyValue[] Arguments)[]
+        {
+            ("Create", MailingListManagerMethod.Create, [new PyStr("fleetops"), new PyInt(1), new PyInt(1), new PyInt(0)]),
+            ("Join", MailingListManagerMethod.Join, [new PyStr("fleetops")]),
+            ("Leave", MailingListManagerMethod.Leave, [new PyInt(500000000)]),
+            ("Delete", MailingListManagerMethod.Delete, [new PyInt(500000000)]),
+            ("KickMembers", MailingListManagerMethod.KickMembers, [new PyInt(500000000), new PyList([new PyInt(102), new PyInt(103)])]),
+            ("SetEntitiesAccess", MailingListManagerMethod.SetEntitiesAccess, [new PyInt(500000000), accessByEntity]),
+            ("ClearEntityAccess", MailingListManagerMethod.ClearEntityAccess, [new PyInt(500000000), new PyInt(800)]),
+            ("SetMembersMuted", MailingListManagerMethod.SetMembersMuted, [new PyInt(500000000), new PyList([new PyInt(102)])]),
+            ("SetMembersOperator", MailingListManagerMethod.SetMembersOperator, [new PyInt(500000000), new PyList([new PyInt(103)])]),
+            ("SetMembersClear", MailingListManagerMethod.SetMembersClear, [new PyInt(500000000), new PyList([new PyInt(102)])]),
+            ("SetDefaultAccess", MailingListManagerMethod.SetDefaultAccess, [new PyInt(500000000), new PyInt(0), new PyInt(1), new PyInt(0)]),
+            ("SaveWelcomeMail", MailingListManagerMethod.SaveWelcomeMail, [new PyInt(500000000), new PyStr("Welcome"), new PyStr("Body")]),
+            ("SendWelcomeMail", MailingListManagerMethod.SendWelcomeMail, [new PyInt(500000000), new PyStr("Welcome"), new PyStr("Body")]),
+            ("ClearWelcomeMail", MailingListManagerMethod.ClearWelcomeMail, [new PyInt(500000000)]),
+        };
+        MailingListMutation? observed = null;
+        MailingListMutationCallback callback = (mutation, _) =>
+        {
+            observed = mutation;
+            return ValueTask.FromResult<PyValue>(new PyLong(77));
+        };
+        IService service = new MailingListService(
+            _ => throw new InvalidOperationException("Writes must not read a mailing-list snapshot."),
+            callback);
+
+        foreach (var item in cases)
+        {
+            observed = null;
+            Assert.True(service.HasMethod(item.Method));
+            Assert.Equal(new PyLong(77), await service.CallAsync(
+                MutationRequest(item.Method, 42, item.Arguments)));
+
+            var mutation = Assert.IsType<MailingListMutation>(observed);
+            Assert.Equal(item.ManagerMethod, mutation.Method);
+            Assert.Equal(new MailingListCaller(7001, 8002, 9003, 42), mutation.Caller);
+            Assert.Equal(item.Arguments, mutation.PositionalArguments);
+        }
+    }
+
+    [Fact]
+    public async Task Mutation_callback_authorizes_current_roles_and_persists_to_the_shared_mail_store()
+    {
+        var mail = new JsonObject
+        {
+            ["mailingLists"] = Lists(),
+            ["messages"] = new JsonObject(),
+            ["mailboxes"] = new JsonObject(),
+        };
+        var readCount = 0;
+        MailingListMutationCallback callback = (mutation, _) =>
+        {
+            var lists = (JsonObject)mail["mailingLists"]!;
+            var list = (JsonObject)lists["500000000"]!;
+            var members = (JsonObject)list["members"]!;
+            var characterId = mutation.Caller.CharacterId.GetValueOrDefault();
+            var ownerId = list["ownerID"]!.GetValue<long>();
+            var role = characterId == ownerId
+                ? 3L
+                : members[characterId.ToString()]?.GetValue<long>() ?? -1L;
+            if (role is not (2 or 3))
+                return ValueTask.FromResult<PyValue>(PyNone.Instance);
+
+            list["defaultAccess"] = Assert.IsType<PyInt>(mutation.PositionalArguments[1]).Value;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        };
+        var service = new MailingListService(
+            _ =>
+            {
+                readCount++;
+                return ValueTask.FromResult<JsonObject?>(mail["mailingLists"] as JsonObject);
+            },
+            callback);
+
+        async Task SetAccess(long characterId, long access) =>
+            await service.CallAsync(MutationRequest(
+                "SetDefaultAccess",
+                characterId,
+                new PyInt(500000000),
+                new PyInt(access),
+                new PyInt(1),
+                new PyInt(0)));
+
+        await SetAccess(102, 1);
+        await SetAccess(103, 1);
+        Assert.Equal(0L, ((JsonObject)mail["mailingLists"]!)["500000000"]!["defaultAccess"]!.GetValue<long>());
+
+        await SetAccess(101, 1);
+        Assert.Equal(1L, ((JsonObject)mail["mailingLists"]!)["500000000"]!["defaultAccess"]!.GetValue<long>());
+        await SetAccess(100, 0);
+        Assert.Equal(0L, ((JsonObject)mail["mailingLists"]!)["500000000"]!["defaultAccess"]!.GetValue<long>());
+
+        ((JsonObject)((JsonObject)mail["mailingLists"]!)["500000000"]!["members"]!)["102"] = 2L;
+        await SetAccess(102, 1);
+        Assert.Equal(1L, ((JsonObject)mail["mailingLists"]!)["500000000"]!["defaultAccess"]!.GetValue<long>());
+        Assert.Equal(0, readCount);
+
+        var settings = Wire(await service.CallAsync(Request("GetSettings", 500000000, 102)));
+        Assert.Equal(new PyInt(1), Field(settings, "defaultAccess"));
+        Assert.Equal(1, readCount);
+        Assert.IsType<JsonObject>(mail["messages"]);
+        Assert.IsType<JsonObject>(mail["mailboxes"]);
+    }
+
+    [Fact]
+    public async Task Writes_require_the_atomic_host_callback()
+    {
+        IService service = Service(Lists());
+        Assert.True(service.HasMethod("Create"));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await service.CallAsync(MutationRequest(
+                "Create", 100,
+                new PyStr("fleetops"), new PyInt(1), new PyInt(1), new PyInt(0))));
+    }
+
+    private static IService Service(
+        JsonObject lists,
+        MailingListMutationCallback? mutateMailingList = null) =>
+        new MailingListService(
+            _ => ValueTask.FromResult<JsonObject?>(lists),
+            mutateMailingList);
 
     private static JsonObject Lists() => (JsonObject)JsonNode.Parse("""
         {
@@ -265,5 +384,18 @@ public sealed class MailingListServiceTests
         Method = method,
         Args = listId is { } id ? [new PyInt(id)] : [],
         Session = new ClientSession { CharacterId = characterId },
+    };
+
+    private static ServiceCall MutationRequest(string method, long characterId, params PyValue[] arguments) => new()
+    {
+        Method = method,
+        Args = arguments,
+        Session = new ClientSession
+        {
+            SessionId = 7001,
+            ClientId = 8002,
+            UserId = 9003,
+            CharacterId = characterId,
+        },
     };
 }

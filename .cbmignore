@@ -37,21 +37,6 @@ code_memory.db*
 **/*.so
 **/*.dylib
 
-docs/
-oracle/fixtures/
-**/*.md
-**/*.mdx
-**/*.json
-**/*.jsonl
-**/*.yaml
-**/*.yml
-**/*.toml
-**/*.xml
-**/*.txt
-**/*.csv
-**/*.tsv
-**/*.lock
 **/*.png
 **/*.jpg
 **/*.zip
-Dockerfile

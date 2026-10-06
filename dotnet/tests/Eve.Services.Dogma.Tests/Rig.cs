@@ -75,7 +75,7 @@ internal sealed class Rig : IAsyncDisposable
 
     private readonly string[] _schemas;
 
-    private Rig(NpgsqlDataSource source, string suffix, SdeReader sde, DogmaStatic statics, CharacterCreation creation, PgModuleStateStore modules)
+    private Rig(NpgsqlDataSource source, string suffix, SdeReader sde, DogmaStatic statics, CharacterCreation creation, PgModuleStateStore modules, SkillBoosterActivationHandler? activateBooster)
     {
         Source = source;
         _schemas = [$"dc_{suffix}", $"di_{suffix}", $"ds_{suffix}", $"dw_{suffix}", $"df_{suffix}"];
@@ -86,7 +86,9 @@ internal sealed class Rig : IAsyncDisposable
         Creation = creation;
         Modules = modules;
         Ships = new CharacterShips(source, statics, Characters, Items, Skills, modules);
-        Service = new DogmaIMService(statics, Ships, () => ClockMs, null, Targeting, SpaceModules, Health, Rounds, Delay.WaitAsync);
+        Timers = new Eve.Scheduler.LocalTimers(delay: Delay.WaitAsync);
+        var boosterActivation = activateBooster ?? ((long _, long _, string _, long? _, long? _, CancellationToken _) => ValueTask.FromResult<bool?>(null));
+        Service = new DogmaIMService(statics, Ships, () => ClockMs, boosterActivation, null, Targeting, SpaceModules, Health, Rounds, Delay.WaitAsync, localTimers: Timers);
         Slash = new SlashService(new ShipHealthCommands(Ships, statics, () => ClockMs, Health));
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(sde), new Eve.Universe.StationCatalog([]), Ships, statics, () => ClockMs);
     }
@@ -126,10 +128,20 @@ internal sealed class Rig : IAsyncDisposable
     public CharacterCreation Creation { get; }
 
     public DogmaIMService Service { get; }
+    public Eve.Scheduler.LocalTimers Timers { get; }
 
     public InvBrokerService Inventory { get; }
 
-    public static async Task<Rig> CreateAsync()
+    public const int Cockroach = 11019, Ibis = 601;
+    private const int CaldariRookieShip = 601;
+
+    private static CreationCatalog CockroachCatalog(CreationCatalog source) =>
+        new(
+            source.Races.Select(r => r.Id == 1 ? r with { ShipTypeId = Cockroach, ShipName = "Cockroach" } : r),
+            source.Bloodlines,
+            CreationCatalog.Schools.Select(s => source.StarterFor(s.CorporationId)!));
+
+    public static async Task<Rig> CreateAsync(SkillBoosterActivationHandler? activateBooster = null)
     {
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
@@ -147,15 +159,42 @@ internal sealed class Rig : IAsyncDisposable
         await PgWalletStore.MigrateAsync(source, $"dw_{suffix}");
         await PgModuleStateStore.MigrateAsync(source, $"df_{suffix}");
         var creation = new CharacterCreation(
-            source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), await CreationCatalog.LoadAsync(sde, Station), modules);
-        return new Rig(source, suffix, sde, await DogmaStatic.LoadAsync(sde), creation, modules);
+            source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), CockroachCatalog(await CreationCatalog.LoadAsync(sde, Station)), modules);
+        return new Rig(source, suffix, sde, await DogmaStatic.LoadAsync(sde), creation, modules, activateBooster);
     }
 
-    /// <summary>A new character of a race (Caldari by default), in its rookie ship in the station.</summary>
-    public async Task<Created> NewCharacterAsync(string name = "Dogma Tester", int race = 1, int bloodline = 1, int school = 35, int account = 1)
+    /// <summary>A new character of a race (Caldari by default), on the Cockroach test hull.</summary>
+    public async Task<Created> NewCharacterAsync(string name = "Dogma Tester", int race = 1, int bloodline = 1, int school = 35, int account = 1, int? shipTypeId = null)
     {
+        await Statics.EnsureTypesAsync([Cockroach, 21857, 3638, 3651]);
         var made = await Creation.CreateAsync(new CreationRequest(account, name, race, bloodline, 1, 10, school, [1], [2]));
-        return Assert.IsType<Created>(made);
+        var character = Assert.IsType<Created>(made);
+        if (shipTypeId is { } selectedTypeId && (await Items.GetAsync(character.ShipId))?.TypeId != selectedTypeId)
+        {
+            var replacement = (await Ships.GrantAsync(character.CharacterId, selectedTypeId, 1, singleton: true))!.Single().After;
+            await using var connection = await Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await Characters.SetShipAsync(connection, transaction, character.CharacterId, replacement.Id);
+            await transaction.CommitAsync();
+            character = character with { ShipId = replacement.Id };
+        }
+        if (race == 1 || shipTypeId is not null)
+        {
+            var kitTypeId = shipTypeId ?? CaldariRookieShip;
+            var kit = StarterKits.For(kitTypeId == Cockroach ? CaldariRookieShip : kitTypeId);
+            if (kit.Count != 0)
+            {
+                await using var connection = await Source.OpenConnectionAsync();
+                await using var transaction = await connection.BeginTransactionAsync();
+                foreach (var module in kit)
+                {
+                    var moduleId = await Items.CreateAsync(connection, transaction, new NewItem(module.TypeId, character.CharacterId, character.ShipId, module.Flag, 1, true));
+                    await Modules.SetAsync(connection, transaction, moduleId, Eve.Dogma.ItemState.Online);
+                }
+                await transaction.CommitAsync();
+            }
+        }
+        return character;
     }
 
     public static ClientSession Session(long? character, long id = 1, long? station = Station)
@@ -201,6 +240,7 @@ internal sealed class Rig : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        Timers.Dispose();
         foreach (var schema in _schemas)
         {
             await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");

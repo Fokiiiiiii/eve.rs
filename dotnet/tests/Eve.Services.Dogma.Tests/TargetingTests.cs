@@ -111,8 +111,8 @@ public class TargetingTests
         Assert.Equal("DeniedTargetSelfWarping", (await RefusedAsync(rig, session, oid, TargetingResult.Refusal("SOURCE_WARPING"))).Name);
         Assert.Equal("TargetingAttemptCancelled", (await RefusedAsync(rig, session, oid, TargetingResult.Refusal("TARGET_NOT_FOUND"))).Name);
 
-        var (warping, warpingValues) = await RefusedAsync(rig, session, oid, TargetingResult.Refusal("TARGET_WARPING", 601));
-        Assert.Equal(("DeniedTargetOtherWarping", new PyTuple([new PyInt(4), new PyInt(601)])), (warping, warpingValues["targetName"]));
+        var (warping, warpingValues) = await RefusedAsync(rig, session, oid, TargetingResult.Refusal("TARGET_WARPING", Rig.Cockroach));
+        Assert.Equal(("DeniedTargetOtherWarping", new PyTuple([new PyInt(4), new PyInt(Rig.Cockroach)])), (warping, warpingValues["targetName"]));
         var (unknown, unknownValues) = await RefusedAsync(rig, session, oid, TargetingResult.Refusal("TARGET_WARPING"));
         Assert.Equal(("DeniedTargetOtherWarping", new PyStr("that target")), (unknown, unknownValues["targetName"]));
 

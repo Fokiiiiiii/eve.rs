@@ -263,6 +263,50 @@ public class SimCodecTests
         Assert.Equal(new SimSetRackOverheat(42, 1, true), SimCodec.Decode(encoded.AsMemory(4)));
     }
 
+
+    [Fact]
+    public void A_drone_work_cycle_roundtrips_its_profile_and_roll()
+    {
+        var expected = new SimDroneWorkCycle(42, 7, 8, 9, 10, 11, 12, SimDroneCommands.MineRepeatedly, 25, 1.5, 10, 3, 0.25);
+        var encoded = SimCodec.Encode(expected);
+
+        Assert.Equal(expected, SimCodec.Decode(encoded.AsMemory(4)));
+    }
+
+    [Fact]
+    public void A_drone_work_result_roundtrips_cargo_and_completion()
+    {
+        var expected = new SimDroneWorkResult(42, 10, 11, 12, true, "", 3, 2, true);
+        var encoded = SimCodec.Encode(expected);
+
+        Assert.Equal(expected, SimCodec.Decode(encoded.AsMemory(4)));
+    }
+
+    [Fact]
+    public void A_mutadaptive_remote_repair_action_roundtrips_its_spool_parameters()
+    {
+        var action = new SimAction.Remote(
+            new SimRemote.MutadaptiveRepair(SimLayer.Armor, 256, 0.1, 1.5), 12_000, 0, true, "remoteArmorRepair");
+        var effect = new SimEffect(700, 35298, 8, "effects.RemoteArmorRepair", 6_000, 513, int.MaxValue, 701,
+            null, null, [], [], Action: action);
+        var encoded = SimCodec.Encode(new SimActivate(42, effect));
+        var decoded = SimCodec.Decode(encoded.AsMemory(4));
+
+        Assert.Equal(encoded, SimCodec.Encode(decoded));
+    }
+
+    [Fact]
+    public void Remote_repair_cycle_request_and_result_roundtrip_the_correlation_and_lifecycle_fields()
+    {
+        var request = new SimRemoteRepairCycle(42, 700, 701, 3, 15, 12_345, 6_000, true, 256, 0.1, 1.5);
+        var requestBytes = SimCodec.Encode(request);
+        Assert.Equal(request, SimCodec.Decode(requestBytes.AsMemory(4)));
+
+        var result = new SimRemoteRepairCycleResult(42, 700, 701, 3, true, "", 640);
+        var resultBytes = SimCodec.Encode(result);
+        Assert.Equal(result, SimCodec.Decode(resultBytes.AsMemory(4)));
+    }
+
     [Theory]
     [MemberData(nameof(Invalid))]
     public void An_invalid_frame_is_refused_for_its_reason(string name)

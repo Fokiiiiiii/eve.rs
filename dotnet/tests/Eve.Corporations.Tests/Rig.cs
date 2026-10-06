@@ -18,12 +18,14 @@ internal sealed class Rig : IAsyncDisposable
     private Rig(NpgsqlDataSource source)
     {
         Source = source;
-        _schemas = ["cp_" + _id,"cc_" + _id,"cw_" + _id,"cs_" + _id];
+        _schemas = ["cp_" + _id,"cc_" + _id,"cw_" + _id,"cs_" + _id,"ci_" + _id];
         Characters = new PgCharacterStore(source,_schemas[1]);
         Wallets = new PgWalletStore(source,_schemas[2]);
         Skills = new PgSkillStore(source,_schemas[3]);
         Transactions = new WalletTransactions(source,_schemas[2]);
         Store = new CorporationStore(source,Characters,Wallets,Transactions,Skills,() => Now,_schemas[0]);
+        OfficeStore = new Eve.Corporations.CorporationOfficeStore(source,_schemas[0]);
+        Items = new Eve.Inventory.PgItemStore(source,_schemas[4]);
     }
     public NpgsqlDataSource Source { get; }
     public PgCharacterStore Characters { get; }
@@ -31,7 +33,10 @@ internal sealed class Rig : IAsyncDisposable
     public WalletTransactions Transactions { get; }
     public PgSkillStore Skills { get; }
     public CorporationStore Store { get; }
+    public Eve.Corporations.CorporationOfficeStore OfficeStore { get; }
+    public Eve.Inventory.PgItemStore Items { get; }
     public long Now { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 10000;
+    public string CorporationSchema => _schemas[0];
 
     public static async Task<Rig> CreateAsync()
     {
@@ -40,6 +45,8 @@ internal sealed class Rig : IAsyncDisposable
         await PgWalletStore.MigrateAsync(rig.Source,rig._schemas[2]);
         await PgSkillStore.MigrateAsync(rig.Source,rig._schemas[3]);
         await CorporationStore.MigrateAsync(rig.Source,rig._schemas[0]);
+        await Eve.Corporations.CorporationOfficeStore.MigrateAsync(rig.Source,rig._schemas[0]);
+        await Eve.Inventory.PgItemStore.MigrateAsync(rig.Source,rig._schemas[4]);
         return rig;
     }
 

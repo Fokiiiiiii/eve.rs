@@ -3,6 +3,7 @@
     <ProjectReference Include="../Eve.Services/Eve.Services.csproj" />
     <ProjectReference Include="../Eve.ReadSide/Eve.ReadSide.csproj" />
     <ProjectReference Include="../Eve.Corporations/Eve.Corporations.csproj" />
+    <ProjectReference Include="../Eve.Inventory/Eve.Inventory.csproj" />
     <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />
     <ProjectReference Include="../Eve.Relations/Eve.Relations.csproj" />
     <ProjectReference Include="../Eve.Events/Eve.Events.csproj" />

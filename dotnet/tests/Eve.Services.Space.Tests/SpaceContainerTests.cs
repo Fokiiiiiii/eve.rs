@@ -27,6 +27,17 @@ public class SpaceContainerTests
         return new Flying(rig, session, character, stack.Id);
     }
 
+
+    private static async Task<long> DroneInSpaceAsync(Rig rig, long characterId, int system, int droneTypeId)
+    {
+        var drone = (await rig.Ships.GrantAsync(characterId, droneTypeId, 1, singleton: true))!.Single().After;
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await rig.Items.MoveAsync(connection, transaction, drone.Id, system, Eve.Ships.CharacterShips.InSpaceFlag);
+        await transaction.CommitAsync();
+        return drone.Id;
+    }
+
     private static async Task<(string Oid, PyValue Answer)> JettisonAsync(Flying flying, params long[] ids)
     {
         var oid = await flying.Rig.BindShipInSpaceAsync(flying.Session);
@@ -314,5 +325,162 @@ public class SpaceContainerTests
         await rig.Containers.MoveAsync(flying.Session, flying.Stack, can, flying.Character.ShipId, 40, CancellationToken.None);
 
         Assert.Null(await rig.SpaceItems.GetAsync(can));
+    }
+
+
+    [PgFact]
+    public async Task Saved_asteroid_items_are_restored_to_the_simulation_once()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await FlyingWithCargoAsync(rig);
+        var system = (int)flying.Session.GetInt("solarsystemid")!.Value;
+        var veldspar = Assert.Single(await new Eve.Sde.SdeReader(rig.Source).ReadTypeSummariesAsync(),
+            type => type.Published && type.Name == "Veldspar").TypeId;
+        var (asteroid, _) = await rig.Ships.CreateAsteroidAsync(veldspar, system, 0, 1200, [1000, 2000, 3000], [1, 0, 0], 25, rig.SpaceItems);
+        var type = rig.Statics.Type(asteroid.TypeId)!;
+        var heard = rig.Sim.Heard.Count;
+        rig.Sim.Lose();
+
+        await rig.Containers.RestoreAsync(system);
+
+        var placed = Assert.IsType<Eve.Space.SimPlaceAsteroid>(Assert.Single(rig.Sim.Heard.Skip(heard)));
+        Assert.Equal((system, asteroid.Id, asteroid.TypeId, type.GroupId, type.CategoryId, type.Name, type.GraphicId, asteroid.Quantity),
+            (placed.SolarSystemId, placed.AsteroidId, placed.TypeId, placed.GroupId, placed.CategoryId, placed.Name, placed.GraphicId, placed.UnitsRemaining));
+        await rig.Containers.RestoreAsync(system);
+        Assert.Single(rig.Sim.Heard.Skip(heard));
+    }
+
+
+    [PgFact]
+    public async Task A_belt_arrival_seeds_a_persisted_sde_asteroid_for_mining()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await FlyingWithCargoAsync(rig);
+        var system = (int)flying.Session.GetInt("solarsystemid")!.Value;
+        const long beltId = 9_000_000_001;
+
+        rig.Sim.Say(new Eve.Space.SimArrived(
+            (ulong)flying.Session.SessionId, beltId, [1000, 2000, 3000]));
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>().Any());
+
+        var placed = Assert.Single(rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>());
+        Assert.Equal((system, "Veldspar", 1_000L),
+            (placed.SolarSystemId, placed.Name, placed.UnitsRemaining));
+        Assert.True(placed.AsteroidId > 0);
+        var saved = Assert.Single(await rig.SpaceItems.InSystemAsync(system), spaceItem => spaceItem.LauncherId == beltId);
+        Assert.Equal(beltId, saved.LauncherId);
+        var asteroid = (await rig.Items.GetAsync(saved.ItemId))!;
+        Assert.Equal((placed.AsteroidId, placed.UnitsRemaining, "Veldspar"),
+            (asteroid.Id, asteroid.Quantity, rig.Statics.Type(asteroid.TypeId)!.Name));
+    }
+
+    [PgFact]
+    public async Task Mine_cycles_check_drone_ownership_and_range_then_persist_ore_and_notify_the_pilot()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await FlyingWithCargoAsync(rig);
+        var system = (int)flying.Session.GetInt("solarsystemid")!.Value;
+        var types = await new Eve.Sde.SdeReader(rig.Source).ReadTypeSummariesAsync();
+        var veldspar = Assert.Single(types, type => type.Published && type.Name == "Veldspar").TypeId;
+        var miningDroneI = Assert.Single(types, type => type.Published && type.Name == "Mining Drone I").TypeId;
+        var (asteroid, _) = await rig.Ships.CreateAsteroidAsync(veldspar, system, 0, 1000, [1000, 2000, 3000], [1, 0, 0], 25, rig.SpaceItems);
+        var other = await rig.NewCharacterAsync("Other Pilot", 2);
+        var unownedDrone = await DroneInSpaceAsync(rig, other.CharacterId, system, miningDroneI);
+        var drone = await DroneInSpaceAsync(rig, flying.Character.CharacterId, system, miningDroneI);
+        Eve.Space.SimDroneWorkCycle Cycle(long droneId, ulong cycleId) => new(
+            (ulong)flying.Session.SessionId, flying.Character.CharacterId, flying.Character.ShipId, system, droneId, asteroid.Id, cycleId,
+            Eve.Space.SimDroneCommands.MineRepeatedly, 25, 0, 0, 0, 0.5);
+
+        rig.Sim.Say(Cycle(unownedDrone, 10));
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimDroneWorkResult>().Any(r => r.CycleId == 10));
+        var ownership = rig.Sim.Heard.OfType<Eve.Space.SimDroneWorkResult>().Single(r => r.CycleId == 10);
+        Assert.False(ownership.Accepted);
+        Assert.Equal("NOT_CONTROLLED", ownership.Reason);
+        Assert.Equal(1000, (await rig.Items.GetAsync(asteroid.Id))!.Quantity);
+
+        rig.Sim.MeasureAnswer = 30_001;
+        rig.Sim.Say(Cycle(drone, 11));
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimDroneWorkResult>().Any(r => r.CycleId == 11));
+        var range = rig.Sim.Heard.OfType<Eve.Space.SimDroneWorkResult>().Single(r => r.CycleId == 11);
+        Assert.False(range.Accepted);
+        Assert.Equal("OUT_OF_RANGE", range.Reason);
+        Assert.Equal(1000, (await rig.Items.GetAsync(asteroid.Id))!.Quantity);
+
+        rig.Sim.MeasureAnswer = 100;
+        rig.Sim.Say(Cycle(drone, 12));
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimDroneWorkResult>().Any(r => r.CycleId == 12));
+        var mined = rig.Sim.Heard.OfType<Eve.Space.SimDroneWorkResult>().Single(r => r.CycleId == 12);
+        Assert.True(mined.Accepted);
+        Assert.Equal((750L, 250L, false), (mined.UnitsRemaining, mined.DeliveredUnits, mined.Complete));
+        Assert.Equal(750, (await rig.Items.GetAsync(asteroid.Id))!.Quantity);
+        Assert.Equal(250L, Assert.Single(await rig.Items.InContainerAsync(flying.Character.ShipId), i => i.TypeId == veldspar).Quantity);
+        Assert.Contains(Events.Of(flying.Session), e => e.Name == "OnItemChange");
+    }
+
+    [PgFact]
+    public async Task Salvage_cycles_retry_failed_access_and_replace_the_wreck_without_losing_its_contents()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await FlyingWithCargoAsync(rig);
+        var system = (int)flying.Session.GetInt("solarsystemid")!.Value;
+        var sde = new Eve.Sde.SdeReader(rig.Source);
+        var types = await sde.ReadTypeSummariesAsync();
+        var factions = await sde.ReadAsync("factions");
+        var amarrFactionId = (int)Assert.Single(factions, faction =>
+            faction.Doc.TryGetProperty("name", out var name)
+            && Eve.Sde.SdeReader.English(name).Equals("Amarr Empire", StringComparison.OrdinalIgnoreCase)).Key;
+        var wreckTypeId = Assert.Single(types, type => type.Name == "Amarr Frigate Wreck").TypeId;
+        var salvageDroneI = Assert.Single(types, type => type.Published && type.Name == "Salvage Drone I").TypeId;
+        await rig.Statics.EnsureTypesAsync([wreckTypeId, Tritanium, salvageDroneI]);
+        var wreckType = rig.Statics.Type(wreckTypeId)!;
+        long wreckId, lootId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            wreckId = await rig.Items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(wreckTypeId, flying.Character.CharacterId, system, Eve.Ships.CharacterShips.InSpaceFlag, 1, true));
+            lootId = await rig.Items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(Tritanium, flying.Character.CharacterId, wreckId, 0, 5, false));
+            await transaction.CommitAsync();
+        }
+        await rig.SpaceItems.SaveAsync(new Eve.Ships.SpaceItem(
+            wreckId, system, [1000, 2000, 3000], [1, 0, 0], 14, wreckType.GroupId, flying.Character.ShipId,
+            flying.Character.CharacterId, 0, 0, amarrFactionId, long.MaxValue));
+        var drone = await DroneInSpaceAsync(rig, flying.Character.CharacterId, system, salvageDroneI);
+        Eve.Space.SimDroneWorkCycle Cycle(ulong cycleId, double roll) => new(
+            (ulong)flying.Session.SessionId, flying.Character.CharacterId, flying.Character.ShipId, system, drone, wreckId, cycleId,
+            Eve.Space.SimDroneCommands.Salvage, 0, 0, 0, 3, roll);
+
+        rig.Sim.Say(Cycle(20, 0.99));
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimDroneWorkResult>().Any(r => r.CycleId == 20));
+        var missed = rig.Sim.Heard.OfType<Eve.Space.SimDroneWorkResult>().Single(r => r.CycleId == 20);
+        Assert.True(missed.Accepted);
+        Assert.False(missed.Complete);
+        Assert.NotNull(await rig.Items.GetAsync(wreckId));
+
+        var heard = rig.Sim.Heard.Count;
+        rig.Sim.Say(Cycle(21, 0.0));
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimDroneWorkResult>().Any(r => r.CycleId == 21));
+        var salvaged = rig.Sim.Heard.OfType<Eve.Space.SimDroneWorkResult>().Single(r => r.CycleId == 21);
+        Assert.True(salvaged.Accepted);
+        Assert.True(salvaged.Complete);
+        Assert.Equal(1L, salvaged.DeliveredUnits);
+        var product = Assert.Single(await rig.Items.InContainerAsync(flying.Character.ShipId), item =>
+            rig.Statics.GroupName(rig.Statics.Type(item.TypeId)!.GroupId) == "Salvaged Materials");
+        Assert.Equal(1L, product.Quantity);
+        var productTypeName = rig.Statics.Type(product.TypeId)!.Name;
+        Assert.Contains(productTypeName, new[]
+        {
+            "Armor Plates", "Burned Logic Circuit", "Charred Micro Circuit", "Contaminated Nanite Compound",
+            "Defective Current Pump", "Fried Interface Circuit", "Melted Capacitor Console",
+            "Tangled Power Conduit", "Tripped Power Circuit",
+        });
+        Assert.Null(await rig.Items.GetAsync(wreckId));
+        Assert.Null(await rig.SpaceItems.GetAsync(wreckId));
+        var replacement = Assert.IsType<Eve.Space.SimPlaceWreck>(Assert.Single(rig.Sim.Heard.Skip(heard).OfType<Eve.Space.SimPlaceWreck>()));
+        var can = (await rig.Items.GetAsync(replacement.WreckId))!;
+        Assert.Equal(lootId, Assert.Single(await rig.Items.InContainerAsync(can.Id)).Id);
+        Assert.Equal(can.Id, (await rig.SpaceItems.GetAsync(can.Id))!.ItemId);
+        Assert.Contains(Events.Of(flying.Session), e => e.Name == "OnItemChange");
     }
 }

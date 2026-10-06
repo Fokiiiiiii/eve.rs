@@ -15,9 +15,10 @@ public class TrainingServiceTests
     private static PyValue Activate(bool value) => new PyDict([new(new PyStr("activate"), PyValue.Of(value))]);
 
     /// <summary>A rig with a character that has Gunnery IV, Small Hybrid Turret I and Repair Systems untrained, and its session in the game.</summary>
-    private static async Task<(Rig Rig, ClientSession Session, Capture Sink)> ReadyAsync(TrainingSettings? settings = null)
+    private static async Task<(Rig Rig, ClientSession Session, Capture Sink)> ReadyAsync(
+        TrainingSettings? settings = null, Eve.Scheduler.LocalTimers? localTimers = null, bool scheduleAnnouncer = false)
     {
-        var rig = await Rig.CreateAsync(settings);
+        var rig = await Rig.CreateAsync(settings, localTimers: localTimers, scheduleAnnouncer: scheduleAnnouncer);
         await rig.GrantAsync(Character, (3300, 4, 45255), (3301, 1, 250), (3315, 0, 0));
         var (session, sink) = Rig.Session(Character);
         rig.Sessions.Enter(Character, session);
@@ -109,10 +110,13 @@ public class TrainingServiceTests
     [PgFact]
     public async Task Starting_a_skill_by_its_type_or_by_its_item_runs_it_and_anything_else_starts_nothing()
     {
-        var (rig, session, sink) = await ReadyAsync();
+        using var shared = new Eve.Scheduler.LocalTimers(delay: (_, token) =>
+            Task.Delay(Timeout.InfiniteTimeSpan, token));
+        var (rig, session, sink) = await ReadyAsync(localTimers: shared, scheduleAnnouncer: true);
         await using var owned = rig;
         Assert.Equal(PyNone.Instance, await Call(rig, session, "CharStartTrainingSkillByTypeID", [new PyInt(3301)]));
         Assert.Equal(["OnNewSkillQueueSaved", "OnMultipleCharactersTrainingUpdated"], Notes.Of(sink).Select(n => n.Name));
+        Assert.True(shared.IsSet($"skills.training:{Character}"));
 
         Assert.Equal(PyNone.Instance, await Call(rig, session, "CharStartTrainingSkillByTypeID", [new PyInt(99)]));            // no such skill
         Assert.Equal(PyNone.Instance, await Call(rig, session, "CharStartTrainingSkill", [new PyLong(SkillWire.ItemId(Character + 1, 3301))])); // another character's

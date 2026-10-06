@@ -9,20 +9,19 @@ public sealed class InsuranceServiceTests
     private const long NowUnixMs = 1_800_000_000_000;
 
     [Fact]
-    public async Task Service_exposes_the_four_read_only_reference_calls()
+    public async Task Service_exposes_read_and_write_reference_calls()
     {
-        IService service = Create(new FakeInsuranceReadModel());
+        IService service = Create(new FakeInsuranceReadModel(), new FakeInsuranceWriteModel());
 
         Assert.Equal("insuranceSvc", service.Name);
         foreach (var method in new[]
         {
-            "GetInsurancePrice", "GetInsurancePrices", "GetContracts", "GetContractForShip"
+            "GetInsurancePrice", "GetInsurancePrices", "GetContracts", "GetContractForShip",
+            "InsureShip", "UnInsureShip"
         })
         {
             Assert.True(service.HasMethod(method), method);
         }
-        Assert.False(service.HasMethod("InsureShip"));
-        Assert.False(service.HasMethod("UnInsureShip"));
         Assert.Same(PyNone.Instance, await service.CallAsync(Call(new ClientSession(), "GetContractForShip", new PyInt(10))));
     }
 
@@ -91,7 +90,87 @@ public sealed class InsuranceServiceTests
         Assert.Single(Assert.IsType<PyList>(await service.CallAsync(Call(corporation, "GetContracts", new PyInt(1)))).Items);
     }
 
-    private static IService Create(FakeInsuranceReadModel model) => new InsuranceService(model, () => NowUnixMs);
+
+    [Fact]
+    public void Insurance_quotes_match_the_official_coverage_levels_and_wiki_example()
+    {
+        var quotes = InsuranceQuotes.ForFullPayoutValue(712_023_300);
+
+        Assert.Equal(new[] { 50, 60, 70, 80, 90, 100 }, quotes.Select(quote => quote.FractionPercent));
+        Assert.Equal(35_601_165, quotes[0].PremiumCents);
+        Assert.Equal(356_011_650, quotes[0].PayoutCents);
+        Assert.Equal(213_606_990, quotes[^1].PremiumCents);
+        Assert.Equal(712_023_300, quotes[^1].PayoutCents);
+        Assert.Equal(quotes[0], InsuranceQuotes.ForPremium(712_023_300, 35_601_165));
+        Assert.Null(InsuranceQuotes.ForPremium(712_023_300, 1));
+    }
+
+    [Fact]
+    public async Task InsureShip_forwards_the_wire_amount_owner_kind_and_replace_flag()
+    {
+        var writer = new FakeInsuranceWriteModel();
+        IService service = Create(new FakeInsuranceReadModel(), writer);
+        var session = Session(
+            ("charid", new PyInt(100)),
+            ("corpid", new PyInt(200)),
+            ("corprole", new PyLong(256)),
+            ("stationid", new PyInt(300)),
+            ("solarsystemid2", new PyInt(400)));
+
+        var result = await service.CallAsync(Call(
+            session,
+            "InsureShip",
+            new PyInt(500),
+            new PyReal(356_011.65),
+            new PyInt(0),
+            new PyInt(1)));
+
+        Assert.Same(PyNone.Instance, result);
+        Assert.Equal(new InsurancePurchaseCommand(
+            new InsuranceActorSnapshot(100, 200, 256, 300, 0, 400),
+            500,
+            35_601_165,
+            false,
+            true,
+            Eve.Services.Py.FileTimeFromUnixMs(NowUnixMs),
+            Eve.Services.Py.FileTimeFromUnixMs(NowUnixMs + 84L * 24 * 60 * 60 * 1000)), writer.Purchase);
+    }
+
+    [Fact]
+    public async Task UnInsureShip_forwards_the_ship_and_actor_to_the_atomic_writer()
+    {
+        var writer = new FakeInsuranceWriteModel();
+        IService service = Create(new FakeInsuranceReadModel(), writer);
+        var session = Session(
+            ("charid", new PyInt(100)),
+            ("corpid", new PyInt(200)),
+            ("stationid", new PyInt(300)),
+            ("solarsystemid2", new PyInt(400)));
+
+        var result = await service.CallAsync(Call(session, "UnInsureShip", new PyInt(500)));
+
+        Assert.Same(PyNone.Instance, result);
+        Assert.Equal(new InsuranceCancellationCommand(
+            new InsuranceActorSnapshot(100, 200, 0, 300, 0, 400),
+            500,
+            Eve.Services.Py.FileTimeFromUnixMs(NowUnixMs)), writer.Cancellation);
+    }
+
+    [Fact]
+    public async Task Ship_loss_settlement_is_delegated_to_the_same_atomic_insurance_writer()
+    {
+        var writer = new FakeInsuranceWriteModel();
+        var service = new InsuranceService(new FakeInsuranceReadModel(), () => NowUnixMs, writer);
+        var loss = new InsuranceLossSettlementRequest(
+            900, 500, Eve.Services.Py.FileTimeFromUnixMs(NowUnixMs), false, 100, 200);
+
+        await service.SettleShipLossAsync(loss, CancellationToken.None);
+
+        Assert.Equal(loss, writer.Loss);
+    }
+
+    private static IService Create(FakeInsuranceReadModel model, FakeInsuranceWriteModel? writer = null) =>
+        (IService)(object)new InsuranceService(model, () => NowUnixMs, writer ?? new FakeInsuranceWriteModel());
 
     private static ServiceCall Call(ClientSession session, string method, params PyValue[] args) => new()
     {
@@ -144,6 +223,43 @@ public sealed class InsuranceServiceTests
         long endDate,
         string status = "active") =>
         new(contractId, shipId, hullTypeId, ownerId, ownerKind, fraction, startDate, endDate, status);
+
+private sealed class FakeInsuranceWriteModel : IInsuranceWriteModel
+    {
+        public InsurancePurchaseCommand? Purchase { get; private set; }
+        public InsuranceCancellationCommand? Cancellation { get; private set; }
+        public InsuranceLossSettlementRequest? Loss { get; private set; }
+        public InsuranceMutationResult PurchaseResult { get; set; } = new(InsuranceMutationStatus.Applied);
+        public InsuranceMutationResult CancellationResult { get; set; } = new(InsuranceMutationStatus.Applied);
+        public InsuranceMutationResult LossResult { get; set; } = new(InsuranceMutationStatus.Applied);
+
+        public ValueTask<InsuranceMutationResult> InsureShipAsync(
+            InsurancePurchaseCommand command,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Purchase = command;
+            return ValueTask.FromResult(PurchaseResult);
+        }
+
+        public ValueTask<InsuranceMutationResult> UnInsureShipAsync(
+            InsuranceCancellationCommand command,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Cancellation = command;
+            return ValueTask.FromResult(CancellationResult);
+        }
+
+        public ValueTask<InsuranceMutationResult> SettleShipLossAsync(
+            InsuranceLossSettlementRequest request,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Loss = request;
+            return ValueTask.FromResult(LossResult);
+        }
+    }
 
     private sealed class FakeInsuranceReadModel(
         IReadOnlyDictionary<long, long>? prices = null,

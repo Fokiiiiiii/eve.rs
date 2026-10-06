@@ -29,6 +29,13 @@ public sealed partial class EntityService(ISpaceDrones drones, Func<long> nowUni
         return Py.Tuple(bound, await Binding.NestedAsync(this, call, oid));
     }
 
+private static long NumberOf(PyValue value) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        _ => 0,
+    };
+
     private async ValueTask<PyValue> OrderAsync(ServiceCall call, byte command, long target, PyValue ids) =>
         _binding.Owns(call) ? await drones.CommandAsync(call.Session, command, target, SpaceDrones.IdsOf(ids), call.Cancellation) : None;
 
@@ -45,21 +52,25 @@ public sealed partial class EntityService(ISpaceDrones drones, Func<long> nowUni
     public ValueTask<PyValue> CmdEngage(ServiceCall call) =>
         OrderAsync(call, SimDroneCommands.Engage, call.Arg(1) switch { PyInt n => n.Value, PyLong n => n.Value, _ => 0 }, call.Arg(0));
 
-    private const string NotServed = "That drone order is not available yet.";
 
-    /// <summary><c>CmdAssist(characterID, droneIDs)</c> and <c>CmdGuard(characterID, droneIDs)</c> (their subject is a pilot: the arguments are the other way round from the rest): not served yet, each drone refuses.</summary>
+
+    /// <summary>Wire signatures: <c>CmdAssist(characterID, droneIDs)</c> and <c>CmdGuard(characterID, droneIDs)</c>.</summary>
     [Method("CmdAssist")]
-    public ValueTask<PyValue> CmdAssist(ServiceCall call) => new(_binding.Owns(call) ? SpaceDrones.RefuseAll(SpaceDrones.IdsOf(call.Arg(1)), NotServed) : None);
+    public ValueTask<PyValue> CmdAssist(ServiceCall call) =>
+        OrderAsync(call, SimDroneCommands.Assist, NumberOf(call.Arg(0)), call.Arg(1));
 
     [Method("CmdGuard")]
-    public ValueTask<PyValue> CmdGuard(ServiceCall call) => new(_binding.Owns(call) ? SpaceDrones.RefuseAll(SpaceDrones.IdsOf(call.Arg(1)), NotServed) : None);
+    public ValueTask<PyValue> CmdGuard(ServiceCall call) =>
+        OrderAsync(call, SimDroneCommands.Guard, NumberOf(call.Arg(0)), call.Arg(1));
 
-    /// <summary><c>CmdMineRepeatedly(droneIDs, targetID)</c> and <c>CmdSalvage(droneIDs, targetID)</c>: not served yet (only drones that shoot fly), each drone refuses.</summary>
+    /// <summary>Wire signatures: <c>CmdMineRepeatedly(droneIDs, targetID)</c> and <c>CmdSalvage(droneIDs, targetID)</c>; Salvage accepts <c>None</c> for automatic wreck selection.</summary>
     [Method("CmdMineRepeatedly")]
-    public ValueTask<PyValue> CmdMineRepeatedly(ServiceCall call) => new(_binding.Owns(call) ? SpaceDrones.RefuseAll(SpaceDrones.IdsOf(call.Arg(0)), NotServed) : None);
+    public ValueTask<PyValue> CmdMineRepeatedly(ServiceCall call) =>
+        OrderAsync(call, SimDroneCommands.MineRepeatedly, NumberOf(call.Arg(1)), call.Arg(0));
 
     [Method("CmdSalvage")]
-    public ValueTask<PyValue> CmdSalvage(ServiceCall call) => new(_binding.Owns(call) ? SpaceDrones.RefuseAll(SpaceDrones.IdsOf(call.Arg(0)), NotServed) : None);
+    public ValueTask<PyValue> CmdSalvage(ServiceCall call) =>
+        OrderAsync(call, SimDroneCommands.Salvage, NumberOf(call.Arg(1)), call.Arg(0));
 
     /// <summary><c>CmdReconnectToDrones(droneIDs)</c>: drones that were let go and are still in space are taken up again; none are (a drone that is let go leaves the scene), so nothing is refused or done.</summary>
     [Method("CmdReconnectToDrones")]

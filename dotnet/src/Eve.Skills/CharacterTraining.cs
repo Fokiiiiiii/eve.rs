@@ -102,6 +102,222 @@ public sealed class CharacterTraining(
         return BuildView(characterId, accountId, await store.LoadAsync(characterId, cancellationToken), await SkillsOfAsync(characterId, cancellationToken), Now);
     }
 
+    /// <summary>Previews free points for the saved queue (null) or the supplied skill targets.</summary>
+    public async Task<IReadOnlyDictionary<int, long>> FreeSkillPointsAppliedAsync(
+        long characterId,
+        long accountId,
+        IReadOnlyList<(int SkillTypeId, int TargetLevel)>? selectedSkills,
+        CancellationToken cancellationToken = default)
+    {
+        var view = await ViewAsync(characterId, accountId, cancellationToken);
+        var owned = view.Skills.ToDictionary(skill => skill.TypeId);
+        if (selectedSkills is null &&
+            Training.Validate(view.State.Entries, owned, catalog, RateOf(characterId, accountId), Now) is not null)
+        {
+            return new Dictionary<int, long>();
+        }
+        var targets = selectedSkills ?? view.Queue.Select(entry => (entry.TypeId, entry.ToLevel)).ToList();
+        var balance = await skills.FreeSkillPointsAsync(characterId, cancellationToken);
+        return PlanFreeSkillPoints(owned, targets, balance, view.InTraining).Applied;
+    }
+
+    /// <summary>Applies available points to validated selected targets, or to the saved queue when targets is null.</summary>
+    public async Task<(IReadOnlyDictionary<int, long> Applied, long Remaining)> ApplyFreeSkillPointsAsync(
+        long characterId,
+        long accountId,
+        IReadOnlyList<(int SkillTypeId, int TargetLevel)>? selectedSkills,
+        CancellationToken cancellationToken = default)
+    {
+        await SettleAsync(characterId, accountId, cancellationToken);
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+
+        var state = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
+        var beforeRows = await skills.ForCharacterAsync(connection, transaction, characterId, cancellationToken);
+        var owned = beforeRows.ToDictionary(skill => skill.TypeId);
+        var balance = await skills.LockFreeSkillPointsAsync(connection, transaction, characterId, cancellationToken);
+        if (selectedSkills is null &&
+            Training.Validate(state.Entries, owned, catalog, RateOf(characterId, accountId), Now) is not null)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return (new Dictionary<int, long>(), balance);
+        }
+
+        var targets = selectedSkills ?? state.Entries.Select(entry => (entry.TypeId, entry.ToLevel)).ToList();
+        var inTraining = state.Running ? state.Entries.FirstOrDefault()?.TypeId : null;
+        var plan = PlanFreeSkillPoints(owned, targets, balance, inTraining);
+        if (plan.Spent == 0)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return (plan.Applied, balance);
+        }
+
+        var remaining = await skills.ApplyFreeSkillPointsAsync(
+            connection, transaction, characterId, plan.Before, plan.After, plan.Spent, cancellationToken);
+        if (remaining is null)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return (new Dictionary<int, long>(), balance);
+        }
+
+        var updated = new Dictionary<int, CharacterSkill>(owned);
+        foreach (var skill in plan.After)
+        {
+            updated[skill.TypeId] = skill;
+        }
+
+        var outstanding = state.Entries
+            .Where(entry => !updated.TryGetValue(entry.TypeId, out var skill) || skill.Level < entry.ToLevel)
+            .ToList();
+        var nextState = outstanding.Count == state.Entries.Count
+            ? state
+            : new QueueState(outstanding, state.Running && outstanding.Count > 0, state.Running && outstanding.Count > 0 ? state.ActiveStart : null);
+        if (nextState != state)
+        {
+            await store.SaveAsync(connection, transaction, characterId, nextState, cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        await RaiseSettledAsync(new TrainingUpdate(
+            characterId,
+            accountId,
+            [.. beforeRows.OrderBy(skill => skill.TypeId)],
+            [],
+            null,
+            false,
+            BuildView(characterId, accountId, nextState, updated, Now)));
+        return (plan.Applied, remaining.Value);
+    }
+
+    /// <summary>Applies an exact point amount to one skill, capped at its level-V threshold.</summary>
+    public async Task<long?> ApplyFreeSkillPointAmountAsync(
+        long characterId,
+        long accountId,
+        int skillTypeId,
+        long requestedPoints,
+        CancellationToken cancellationToken = default)
+    {
+        if (requestedPoints <= 0)
+        {
+            return null;
+        }
+
+        await SettleAsync(characterId, accountId, cancellationToken);
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+
+        var state = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
+        var beforeRows = await skills.ForCharacterAsync(connection, transaction, characterId, cancellationToken);
+        var owned = beforeRows.ToDictionary(skill => skill.TypeId);
+        var balance = await skills.LockFreeSkillPointsAsync(connection, transaction, characterId, cancellationToken);
+        if ((state.Running && state.Entries.FirstOrDefault()?.TypeId == skillTypeId) ||
+            !owned.TryGetValue(skillTypeId, out var current) ||
+            catalog.Get(skillTypeId) is not { } type ||
+            balance < requestedPoints)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return null;
+        }
+
+        var points = Math.Min(requestedPoints, Math.Max(0L, SkillPoints.ForTraining(type.Rank, 5) - current.SkillPoints));
+        if (points == 0)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return balance;
+        }
+
+        var total = checked(current.SkillPoints + points);
+        var updatedSkill = current with { SkillPoints = total, Level = SkillPoints.LevelAt(type.Rank, total) };
+        var remaining = await skills.ApplyFreeSkillPointsAsync(
+            connection,
+            transaction,
+            characterId,
+            new Dictionary<int, CharacterSkill> { [skillTypeId] = current },
+            [updatedSkill],
+            points,
+            cancellationToken);
+        if (remaining is null)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return null;
+        }
+
+        var updated = new Dictionary<int, CharacterSkill>(owned) { [skillTypeId] = updatedSkill };
+        var outstanding = state.Entries
+            .Where(entry => !updated.TryGetValue(entry.TypeId, out var skill) || skill.Level < entry.ToLevel)
+            .ToList();
+        var nextState = outstanding.Count == state.Entries.Count
+            ? state
+            : new QueueState(outstanding, state.Running && outstanding.Count > 0, state.Running && outstanding.Count > 0 ? state.ActiveStart : null);
+        if (nextState != state)
+        {
+            await store.SaveAsync(connection, transaction, characterId, nextState, cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        await RaiseSettledAsync(new TrainingUpdate(
+            characterId,
+            accountId,
+            [.. beforeRows.OrderBy(skill => skill.TypeId)],
+            [],
+            null,
+            false,
+            BuildView(characterId, accountId, nextState, updated, Now)));
+        return remaining.Value;
+    }
+
+    private (Dictionary<int, long> Applied, Dictionary<int, CharacterSkill> Before, List<CharacterSkill> After, long Spent)
+        PlanFreeSkillPoints(
+            IReadOnlyDictionary<int, CharacterSkill> owned,
+            IReadOnlyList<(int SkillTypeId, int TargetLevel)> targets,
+            long balance,
+            int? inTraining)
+    {
+        var current = new Dictionary<int, CharacterSkill>(owned);
+        var before = new Dictionary<int, CharacterSkill>();
+        var applied = new Dictionary<int, long>();
+        var seen = new HashSet<(int SkillTypeId, int TargetLevel)>();
+        var remaining = Math.Max(0L, balance);
+
+        foreach (var (skillTypeId, targetLevel) in targets)
+        {
+            if (!seen.Add((skillTypeId, targetLevel)) ||
+                inTraining == skillTypeId ||
+                targetLevel is < 1 or > 5 ||
+                catalog.Get(skillTypeId) is not { } type ||
+                !current.TryGetValue(skillTypeId, out var skill))
+            {
+                continue;
+            }
+
+            var needed = Math.Max(0L, SkillPoints.ForTraining(type.Rank, targetLevel) - skill.SkillPoints);
+            var amount = Math.Min(remaining, needed);
+            if (amount <= 0)
+            {
+                continue;
+            }
+
+            before.TryAdd(skillTypeId, owned[skillTypeId]);
+            var total = checked(skill.SkillPoints + amount);
+            current[skillTypeId] = skill with { SkillPoints = total, Level = SkillPoints.LevelAt(type.Rank, total) };
+            applied[skillTypeId] = applied.GetValueOrDefault(skillTypeId) + amount;
+            remaining -= amount;
+            if (remaining == 0)
+            {
+                break;
+            }
+        }
+
+        return (applied, before, [.. before.Keys.Order().Select(typeId => current[typeId])], balance - remaining);
+    }
+
+    /// <summary>Previews the free points that fit in the saved queue or the selected skill targets.</summary>
+    /// <summary>Applies available points to selected targets, or to the saved queue when targets is null.</summary>
+    /// <summary>Applies an exact point amount to one owned skill, as requested by the skills service.</summary>
+
+
     /// <summary>The history the character's skills have, newest first.</summary>
     public Task<IReadOnlyList<HistoryEntry>> HistoryAsync(long characterId, CancellationToken cancellationToken = default) => store.HistoryAsync(characterId, cancellationToken);
 

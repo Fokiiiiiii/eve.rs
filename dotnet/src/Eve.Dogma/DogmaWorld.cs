@@ -5,7 +5,7 @@ public sealed class DogmaItem
 {
     internal readonly Dictionary<int, double> Own = [];
 
-    public DogmaItem(long id, int typeId, long ownerId, long locationId, int flagId = 0, ItemState state = ItemState.Offline)
+    public DogmaItem(long id, int typeId, long ownerId, long locationId, int flagId = 0, ItemState state = ItemState.Offline, IReadOnlySet<int>? activeEffectIds = null)
     {
         Id = id;
         TypeId = typeId;
@@ -13,6 +13,7 @@ public sealed class DogmaItem
         LocationId = locationId;
         FlagId = flagId;
         State = state;
+        ActiveEffectIds = activeEffectIds;
     }
 
     public long Id { get; }
@@ -26,6 +27,9 @@ public sealed class DogmaItem
     public int FlagId { get; }
 
     public ItemState State { get; internal set; }
+
+    /// <summary>When supplied, limits an active item to effects the server actually activated.</summary>
+    public IReadOnlySet<int>? ActiveEffectIds { get; }
 
     /// <summary>The values this item carries of its own, over its type's: a skill's level, the damage a ship has taken.</summary>
     public IReadOnlyDictionary<int, double> OwnValues => Own;
@@ -178,7 +182,8 @@ public sealed class DogmaWorld
         }
         foreach (var effectId in type.EffectIds)
         {
-            if (_static.Effect(effectId) is { } effect && Runs(effect, item.State))
+            if ((item.ActiveEffectIds is null || item.ActiveEffectIds.Contains(effectId)) &&
+                _static.Effect(effectId) is { } effect && Runs(effect, item.State))
             {
                 yield return effect;
             }

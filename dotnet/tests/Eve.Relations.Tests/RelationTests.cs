@@ -22,6 +22,42 @@ public class RelationTests
     }
 
     [PgFact]
+    public async Task History_returns_the_persisted_attributes_without_reconstructing_them()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Set("security_status", Pilot, RelationStore.World, -0.25, "aggression", new
+        {
+            eventTypeID = 379,
+            otherOwnerID = Other,
+            otherTypeID = 587,
+            locationID = 30_100_001,
+            modification = -0.025,
+        });
+
+        var history = (await rig.Relations.HistoryAsync("security_status", Pilot)).Single();
+        Assert.True(history.Attrs.HasValue);
+        var attrs = history.Attrs.Value;
+        Assert.Equal(379, attrs.GetProperty("eventTypeID").GetInt32());
+        Assert.Equal(Other, attrs.GetProperty("otherOwnerID").GetInt64());
+        Assert.Equal(587, attrs.GetProperty("otherTypeID").GetInt32());
+        Assert.Equal(30_100_001, attrs.GetProperty("locationID").GetInt64());
+        Assert.Equal(-0.025, attrs.GetProperty("modification").GetDouble());
+        Assert.Equal(-0.25, history.NewValue);
+
+        var json = System.Text.Json.JsonSerializer.Serialize(history);
+        using var serialized = System.Text.Json.JsonDocument.Parse(json);
+        var serializedAttrs = serialized.RootElement.GetProperty(nameof(RelationHistoryEntry.Attrs));
+        Assert.Equal(379, serializedAttrs.GetProperty("eventTypeID").GetInt32());
+
+        var legacy = new RelationHistoryEntry(history.Id, history.Kind, history.Subject, history.Object,
+            history.OldValue, history.NewValue, history.Reason, history.AtMs);
+        Assert.Null(legacy.Attrs);
+        using var legacySerialized = System.Text.Json.JsonDocument.Parse(
+            System.Text.Json.JsonSerializer.Serialize(legacy));
+        Assert.False(legacySerialized.RootElement.TryGetProperty(nameof(RelationHistoryEntry.Attrs), out _));
+    }
+
+    [PgFact]
     public async Task Adjust_adds_to_the_value_within_the_range_and_keeps_the_rest()
     {
         await using var rig = await Rig.Create();

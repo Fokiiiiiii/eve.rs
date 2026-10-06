@@ -80,6 +80,11 @@ public static class SimCodec
         public const byte AdjustCharge = 33;
         public const byte ChargeAdjusted = 34;
         public const byte Arrived = 35;
+        public const byte PlaceAsteroid = 45;
+        public const byte DroneWorkCycle = 46;
+        public const byte DroneWorkResult = 47;
+        public const byte RemoteRepairCycle = 48;
+        public const byte RemoteRepairCycleResult = 49;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)
@@ -169,6 +174,19 @@ public static class SimCodec
         return new SimNpcWeapon(
             moduleId, effectId, cycleMs, capacitorNeed, turret.WeaponTypeId, turret.Fx, turret.RawDamage, turret.OptimalRange, turret.Falloff, turret.TrackingSpeed,
             turret.SignatureResolution, turret.Charge, turret.Missile);
+    }
+
+
+    private static SimNpcWeapon? ReadOptionalWeapon(ref Reader r)
+    {
+        var weapon = ReadWeapon(ref r);
+        return weapon.ModuleId == 0 ? null : weapon;
+    }
+
+    private static void WriteOptionalWeapon(Writer w, SimNpcWeapon? weapon)
+    {
+        WriteWeapon(w, weapon ?? new SimNpcWeapon(
+            0, 0, 0, 0, 0, string.Empty, [0d, 0d, 0d, 0d], 0, 0, 0, 0));
     }
 
     private static void WriteWeapon(Writer w, SimNpcWeapon weapon)
@@ -368,6 +386,7 @@ public static class SimCodec
                     SimRemote what = r.U8() switch
                     {
                         0 => ReadRemoteRepair(ref r),
+                        11 => ReadMutadaptiveRepair(ref r),
                         1 => new SimRemote.Transfer(r.F64()),
                         2 => new SimRemote.Neutralize(r.F64(), r.F64()),
                         3 => new SimRemote.Drain(r.F64(), r.F64()),
@@ -380,6 +399,10 @@ public static class SimCodec
                         10 => new SimRemote.GuidanceDisrupt(r.F64(), r.F64(), r.F64(), r.F64()),
                         _ => throw new SimLinkException(SimLinkError.BadValue, "bad remote"),
                     };
+                    if (what is SimRemote.MutadaptiveRepair && when != 1)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad mutadaptive repair timing");
+                    }
                     return new SimAction.Remote(what, optimal, falloff, when == 1, jam);
                 }
             default:
@@ -406,6 +429,19 @@ public static class SimCodec
             throw new SimLinkException(SimLinkError.BadValue, "bad remote repair");
         }
         return new SimRemote.Repair((SimLayer)layer, r.F64());
+    }
+
+    private static SimRemote ReadMutadaptiveRepair(ref Reader r)
+    {
+        var layer = r.U8();
+        var amount = r.F64();
+        var bonusPerCycle = r.F64();
+        var bonusMax = r.F64();
+        if (layer > 2 || !double.IsFinite(amount) || amount < 0 || !double.IsFinite(bonusPerCycle) || bonusPerCycle < 0 || !double.IsFinite(bonusMax) || bonusMax < 0)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad mutadaptive repair");
+        }
+        return new SimRemote.MutadaptiveRepair((SimLayer)layer, amount, bonusPerCycle, bonusMax);
     }
 
     private static SimTurret ReadTurret(ref Reader r)
@@ -596,7 +632,7 @@ public static class SimCodec
                     break;
                 }
             case Kind.LaunchDrone:
-                message = new SimLaunchDrone(r.U64(), r.U64(), ReadShip(ref r), ReadWeapon(ref r), r.I32(), r.F64(), r.F64(), r.F64());
+                message = new SimLaunchDrone(r.U64(), r.U64(), ReadShip(ref r), ReadOptionalWeapon(ref r), r.I32(), r.F64(), r.F64(), r.F64(), new SimDroneWorkProfile(r.F64(), r.F64(), r.F64(), r.F64(), r.F64()));
                 break;
             case Kind.DroneCommand:
                 {
@@ -639,6 +675,64 @@ public static class SimCodec
             case Kind.DroneReleased:
                 message = new SimDroneReleased(r.U64(), r.I64(), ReadVector(ref r));
                 break;
+            case Kind.DroneWorkCycle:
+                message = new SimDroneWorkCycle(r.U64(), r.I64(), r.I64(), r.I32(), r.I64(), r.I64(), r.U64(), r.U8(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64());
+                break;
+            case Kind.DroneWorkResult:
+                {
+                    var session = r.U64();
+                    var drone = r.I64();
+                    var target = r.I64();
+                    var cycleId = r.U64();
+                    var accepted = r.U8();
+                    var reason = r.Text();
+                    var unitsRemaining = r.I64();
+                    var deliveredUnits = r.I64();
+                    var complete = r.U8();
+                    if (cycleId == 0 || accepted > 1 || unitsRemaining < 0 || deliveredUnits < 0 || complete > 1)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad drone work result");
+                    }
+                    message = new SimDroneWorkResult(
+                        session, drone, target, cycleId, accepted == 1, reason, unitsRemaining, deliveredUnits, complete == 1);
+                    break;
+                }
+            case Kind.RemoteRepairCycle:
+                {
+                    var session = r.U64();
+                    var module = r.I64();
+                    var target = r.I64();
+                    var cycleId = r.U64();
+                    var cycleNumber = r.I32();
+                    var cycleAtMs = r.I64();
+                    var cycleDurationMs = r.I64();
+                    var endsAfterCycle = r.U8();
+                    var baseAmount = r.F64();
+                    var bonusPerCycle = r.F64();
+                    var bonusMax = r.F64();
+                    if (cycleId == 0 || cycleNumber <= 0 || cycleDurationMs <= 0 || endsAfterCycle > 1 || !double.IsFinite(baseAmount) || baseAmount < 0 || !double.IsFinite(bonusPerCycle) || bonusPerCycle < 0 || !double.IsFinite(bonusMax) || bonusMax < 0)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad remote repair cycle");
+                    }
+                    message = new SimRemoteRepairCycle(session, module, target, cycleId, cycleNumber, cycleAtMs, cycleDurationMs, endsAfterCycle == 1, baseAmount, bonusPerCycle, bonusMax);
+                    break;
+                }
+            case Kind.RemoteRepairCycleResult:
+                {
+                    var session = r.U64();
+                    var module = r.I64();
+                    var target = r.I64();
+                    var cycleId = r.U64();
+                    var accepted = r.U8();
+                    var reason = r.Text();
+                    var amount = r.F64();
+                    if (cycleId == 0 || accepted > 1 || !double.IsFinite(amount) || amount < 0)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad remote repair cycle result");
+                    }
+                    message = new SimRemoteRepairCycleResult(session, module, target, cycleId, accepted == 1, reason, amount);
+                    break;
+                }
             case Kind.Destroy:
                 message = new SimDestroy(r.I64(), ReadCredit(ref r));
                 break;
@@ -935,6 +1029,8 @@ private static void WriteAction(Writer w, SimAction action)
                 {
                     case SimRemote.Repair mend:
                         w.U8(0); w.U8((byte)mend.Layer); w.F64(mend.Amount); break;
+                    case SimRemote.MutadaptiveRepair mend:
+                        w.U8(11); w.U8((byte)mend.Layer); w.F64(mend.Amount); w.F64(mend.RepairMultiplierBonusPerCycle); w.F64(mend.RepairMultiplierBonusMax); break;
                     case SimRemote.Transfer transfer:
                         w.U8(1); w.F64(transfer.Amount); break;
                     case SimRemote.Neutralize neutralize:
@@ -1300,6 +1396,76 @@ private static void WriteAction(Writer w, SimAction action)
                 w.I64(m.WreckId);
                 w.I32(m.Effect);
                 break;
+            case SimPlaceAsteroid m:
+                w.U8(Kind.PlaceAsteroid);
+                w.I32(m.SolarSystemId);
+                w.I64(m.AsteroidId);
+                w.I32(m.TypeId);
+                w.I32(m.GroupId);
+                w.I32(m.CategoryId);
+                w.Text(m.Name);
+                w.U8(m.GraphicId is null ? (byte)0 : (byte)1);
+                if (m.GraphicId is { } graphicId)
+                {
+                    w.I32(graphicId);
+                }
+                WriteVector(w, m.Position);
+                WriteVector(w, m.Direction);
+                w.F64(m.Radius);
+                w.I64(m.UnitsRemaining);
+                break;
+            case SimDroneWorkCycle m:
+                w.U8(Kind.DroneWorkCycle);
+                w.U64(m.SessionId);
+                w.I64(m.CharacterId);
+                w.I64(m.ShipId);
+                w.I32(m.SolarSystemId);
+                w.I64(m.DroneId);
+                w.I64(m.TargetId);
+                w.U64(m.CycleId);
+                w.U8(m.Command);
+                w.F64(m.MiningAmountM3);
+                w.F64(m.WasteVolumeMultiplier);
+                w.F64(m.WasteProbability);
+                w.F64(m.AccessDifficultyBonus);
+                w.F64(m.Roll);
+                break;
+            case SimDroneWorkResult m:
+                w.U8(Kind.DroneWorkResult);
+                w.U64(m.SessionId);
+                w.I64(m.DroneId);
+                w.I64(m.TargetId);
+                w.U64(m.CycleId);
+                w.U8(m.Accepted ? (byte)1 : (byte)0);
+                w.Text(m.Reason);
+                w.I64(m.UnitsRemaining);
+                w.I64(m.DeliveredUnits);
+                w.U8(m.Complete ? (byte)1 : (byte)0);
+                break;
+            case SimRemoteRepairCycle m:
+                w.U8(Kind.RemoteRepairCycle);
+                w.U64(m.SessionId);
+                w.I64(m.ModuleId);
+                w.I64(m.TargetId);
+                w.U64(m.CycleId);
+                w.I32(m.CycleNumber);
+                w.I64(m.CycleAtMs);
+                w.I64(m.CycleDurationMs);
+                w.U8(m.EndsEffectAfterCycle ? (byte)1 : (byte)0);
+                w.F64(m.BaseAmount);
+                w.F64(m.RepairMultiplierBonusPerCycle);
+                w.F64(m.RepairMultiplierBonusMax);
+                break;
+            case SimRemoteRepairCycleResult m:
+                w.U8(Kind.RemoteRepairCycleResult);
+                w.U64(m.SessionId);
+                w.I64(m.ModuleId);
+                w.I64(m.TargetId);
+                w.U64(m.CycleId);
+                w.U8(m.Accepted ? (byte)1 : (byte)0);
+                w.Text(m.Reason);
+                w.F64(m.Amount);
+                break;
             case SimMeasured m:
                 w.U8(Kind.Measured);
                 w.U64(m.SessionId);
@@ -1344,11 +1510,16 @@ private static void WriteAction(Writer w, SimAction action)
                 w.U64(m.RequestId);
                 w.U64(m.SessionId);
                 WriteShip(w, m.Ship);
-                WriteWeapon(w, m.Weapon);
+                WriteOptionalWeapon(w, m.Weapon);
                 w.I32(m.GraphicId);
                 w.F64(m.OrbitDistance);
                 w.F64(m.AttackRange);
                 w.F64(m.CruiseFraction);
+                w.F64(m.Work.MiningAmountM3);
+                w.F64(m.Work.CycleTimeMs);
+                w.F64(m.Work.MiningWasteVolumeMultiplier);
+                w.F64(m.Work.MiningWasteProbability);
+                w.F64(m.Work.SalvageAccessDifficultyBonus);
                 break;
             case SimDroneCommand m:
                 w.U8(Kind.DroneCommand);

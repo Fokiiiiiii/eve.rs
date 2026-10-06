@@ -7,16 +7,28 @@ using Eve.Macho;
 public static class CoreServices
 {
     /// <summary>Creates every core service. Register them with <see cref="ServiceRegistry.Register"/>.</summary>
-    public static IReadOnlyList<IService> Create(SubscriptionSettings settings, IOmegaAccountStore accounts, Func<long> nowUnixMs)
+    public static IReadOnlyList<IService> Create(
+        SubscriptionSettings settings,
+        IOmegaAccountStore accounts,
+        Func<long> nowUnixMs,
+        Eve.Calendar.ICalendarStore? calendarStore = null,
+        Eve.Calendar.ICalendarAudienceReader? calendarAudience = null)
     {
         var licenses = new OmegaLicenses(settings, accounts, nowUnixMs);
+        var calendarManager = calendarStore is null
+            ? new CalendarMgrService()
+            : new CalendarMgrService(calendarStore,
+                calendarAudience ?? throw new ArgumentNullException(nameof(calendarAudience)));
+        var calendarProxy = calendarStore is null
+            ? new CalendarProxyService()
+            : new CalendarProxyService(calendarStore);
         return
         [
             new PingService(),
             new BrowserLockdownService(),
             new SubscriptionMgrService(settings, licenses),
-            new CalendarMgrService(),
-            new CalendarProxyService(),
+            calendarManager,
+            calendarProxy,
         ];
     }
 
@@ -85,6 +97,204 @@ public sealed record LookupAlliance(long Id, string Name, string? TickerName = n
 /// <summary>Static faction rows supplied from Universe/SDE data.</summary>
 public sealed record LookupFaction(long Id, string Name);
 
+public enum SkyhookResourcePermission
+{
+    Read,
+    Activate,
+    Deactivate,
+}
+
+public enum SkyhookResourceResultCode
+{
+    Ok,
+    NotFound,
+    Forbidden,
+    PersistenceFailure,
+}
+
+public sealed record SkyhookResourceResult<T>(SkyhookResourceResultCode Code, T? Value) where T : class;
+
+/// <summary>Current bay stock after the Host applies the CCP maturation ramp and theft outcome.</summary>
+public sealed record SkyhookReagentResource(
+    long TypeId,
+    long SecureStock,
+    long InsecureStock);
+
+public sealed record SkyhookTheftVulnerability(
+    bool Vulnerable,
+    long StartUnixSeconds,
+    long EndUnixSeconds);
+
+/// <summary>
+/// A deployed skyhook backed by sovereignty persistence. Reagent configuration is resolved from
+/// the current SDE and joined to the persisted stock and last-cycle state by the host adapter.
+/// </summary>
+public sealed record SkyhookResourceSnapshot(
+    long SkyhookId,
+    long TypeId,
+    long SolarSystemId,
+    long PlanetId,
+    long CorporationId,
+    long? AllianceId,
+    bool ProductionActive,
+    long? Workforce,
+    string ResourceVersion,
+    IReadOnlyList<SkyhookReagentResource> Reagents,
+    SkyhookTheftVulnerability? TheftVulnerability,
+    int? State = null);
+
+public sealed record SkyhookReagentAmounts(long Secure, long Insecure);
+public sealed record SkyhookWorkforce(long? Amount);
+public sealed record SkyhookProductionStatus(bool Active);
+
+/// <summary>
+/// Implements the resource operations consumed by sovereigntyResourceSvc.py.
+/// The host supplies SDE-backed resource definitions and durable sovereignty state; the read
+/// authorization callback must apply the existing theft-vulnerability visibility rules.
+/// The activation writer must revalidate owner and corporation role in the same transaction
+/// that persists the status, so a role change cannot race the preflight check.
+/// </summary>
+public sealed class SkyhookResourceService
+{
+    private const long SkyhookTypeId = 81080;
+
+    private readonly Func<long, CancellationToken, ValueTask<SkyhookResourceSnapshot?>> _readSkyhook;
+    private readonly Func<long, CancellationToken, ValueTask<IReadOnlyList<SkyhookResourceSnapshot>>> _readCorporationSkyhooks;
+    private readonly Func<ServiceCall, SkyhookResourceSnapshot, SkyhookResourcePermission, CancellationToken, ValueTask<bool>> _authorize;
+    private readonly Func<ServiceCall, SkyhookResourceSnapshot, bool, CancellationToken, ValueTask<SkyhookResourceSnapshot?>> _persistActivation;
+
+
+    public SkyhookResourceService(
+        Func<long, CancellationToken, ValueTask<SkyhookResourceSnapshot?>> readSkyhook,
+        Func<long, CancellationToken, ValueTask<IReadOnlyList<SkyhookResourceSnapshot>>> readCorporationSkyhooks,
+        Func<ServiceCall, SkyhookResourceSnapshot, SkyhookResourcePermission, CancellationToken, ValueTask<bool>> authorize,
+        Func<ServiceCall, SkyhookResourceSnapshot, bool, CancellationToken, ValueTask<SkyhookResourceSnapshot?>> persistActivation)
+    {
+        _readSkyhook = readSkyhook ?? throw new ArgumentNullException(nameof(readSkyhook));
+        _readCorporationSkyhooks = readCorporationSkyhooks ?? throw new ArgumentNullException(nameof(readCorporationSkyhooks));
+        _authorize = authorize ?? throw new ArgumentNullException(nameof(authorize));
+        _persistActivation = persistActivation ?? throw new ArgumentNullException(nameof(persistActivation));
+    }
+
+    public async ValueTask<SkyhookResourceResult<SkyhookResourceSnapshot>> GetSkyhookAsync(
+        ServiceCall call, long skyhookId)
+    {
+        var site = await ReadDeployedSkyhookAsync(skyhookId, call.Cancellation);
+        if (site is null)
+            return new(SkyhookResourceResultCode.NotFound, null);
+        if (!HasCharacter(call) || !await _authorize(call, site, SkyhookResourcePermission.Read, call.Cancellation))
+            return new(SkyhookResourceResultCode.Forbidden, null);
+        return new(SkyhookResourceResultCode.Ok, site);
+    }
+
+    public async ValueTask<SkyhookResourceResult<IReadOnlyList<SkyhookResourceSnapshot>>> GetAllByCorporationAsync(
+        ServiceCall call, long corporationId)
+    {
+        var sessionCorporationId = call.Session.GetInt("corporationID") ?? 0;
+        if (sessionCorporationId == 0)
+            sessionCorporationId = call.Session.GetInt("corpid") ?? 0;
+        if (!HasCharacter(call) || corporationId <= 0 || sessionCorporationId != corporationId)
+            return new(SkyhookResourceResultCode.Forbidden, null);
+
+        var candidates = await _readCorporationSkyhooks(corporationId, call.Cancellation);
+        var visible = new List<SkyhookResourceSnapshot>();
+        foreach (var site in candidates)
+        {
+            if (!IsDeployedSkyhook(site) || site.CorporationId != corporationId)
+                continue;
+            if (await _authorize(call, site, SkyhookResourcePermission.Read, call.Cancellation))
+                visible.Add(site);
+        }
+
+        visible.Sort(static (left, right) =>
+        {
+            var systemOrder = left.SolarSystemId.CompareTo(right.SolarSystemId);
+            return systemOrder != 0 ? systemOrder : left.SkyhookId.CompareTo(right.SkyhookId);
+        });
+        return new(SkyhookResourceResultCode.Ok, visible);
+    }
+
+    public ValueTask<SkyhookResourceResult<SkyhookResourceSnapshot>> ActivateAsync(
+        ServiceCall call, long skyhookId) => SetProductionActiveAsync(call, skyhookId, true);
+
+    public ValueTask<SkyhookResourceResult<SkyhookResourceSnapshot>> DeactivateAsync(
+        ServiceCall call, long skyhookId) => SetProductionActiveAsync(call, skyhookId, false);
+
+    public async ValueTask<SkyhookResourceResult<SkyhookProductionStatus>> IsProductionActiveAsync(
+        ServiceCall call, long skyhookId)
+    {
+        var result = await GetSkyhookAsync(call, skyhookId);
+        return result.Code == SkyhookResourceResultCode.Ok
+            ? new(SkyhookResourceResultCode.Ok, new(result.Value!.ProductionActive))
+            : new(result.Code, null);
+    }
+
+    public async ValueTask<SkyhookResourceResult<SkyhookReagentAmounts>> GetReagentsInSkyhookNowAsync(
+        ServiceCall call, long skyhookId)
+    {
+        var result = await GetSkyhookAsync(call, skyhookId);
+        if (result.Code != SkyhookResourceResultCode.Ok)
+            return new(result.Code, null);
+
+        var reagent = result.Value!.Reagents.FirstOrDefault();
+        if (!IsValid(reagent))
+            return new(SkyhookResourceResultCode.Ok, null);
+
+        return new(SkyhookResourceResultCode.Ok, new(reagent!.SecureStock, reagent.InsecureStock));
+    }
+
+    public async ValueTask<SkyhookResourceResult<SkyhookWorkforce>> GetCurrentWorkforceForSkyhookAsync(
+        ServiceCall call, long skyhookId)
+    {
+        var result = await GetSkyhookAsync(call, skyhookId);
+        return result.Code == SkyhookResourceResultCode.Ok
+            ? new(SkyhookResourceResultCode.Ok, new(result.Value!.Workforce))
+            : new(result.Code, null);
+    }
+
+    private async ValueTask<SkyhookResourceResult<SkyhookResourceSnapshot>> SetProductionActiveAsync(
+        ServiceCall call, long skyhookId, bool active)
+    {
+        var site = await ReadDeployedSkyhookAsync(skyhookId, call.Cancellation);
+        if (site is null)
+            return new(SkyhookResourceResultCode.NotFound, null);
+        if (!HasCharacter(call) || call.Session.GetInt("corpid") != site.CorporationId ||
+            !await _authorize(call, site,
+                active ? SkyhookResourcePermission.Activate : SkyhookResourcePermission.Deactivate,
+                call.Cancellation))
+            return new(SkyhookResourceResultCode.Forbidden, null);
+        if (site.ProductionActive == active)
+            return new(SkyhookResourceResultCode.Ok, site);
+
+        var updated = await _persistActivation(call, site, active, call.Cancellation);
+        if (updated is null || updated.SkyhookId != site.SkyhookId ||
+            updated.CorporationId != site.CorporationId || updated.ProductionActive != active ||
+            !IsDeployedSkyhook(updated))
+            return new(SkyhookResourceResultCode.PersistenceFailure, null);
+        return new(SkyhookResourceResultCode.Ok, updated);
+    }
+
+    private async ValueTask<SkyhookResourceSnapshot?> ReadDeployedSkyhookAsync(
+        long skyhookId, CancellationToken cancellationToken)
+    {
+        if (skyhookId <= 0)
+            return null;
+        var site = await _readSkyhook(skyhookId, cancellationToken);
+        return site is not null && site.SkyhookId == skyhookId && IsDeployedSkyhook(site) ? site : null;
+    }
+
+    private static bool HasCharacter(ServiceCall call) => call.Session.CharacterId is > 0;
+
+    private static bool IsDeployedSkyhook(SkyhookResourceSnapshot site) =>
+        site.TypeId == SkyhookTypeId && site.SkyhookId > 0 && site.SolarSystemId > 0 &&
+        site.PlanetId > 0 && site.CorporationId > 0 && site.Reagents is not null;
+
+    private static bool IsValid(SkyhookReagentResource? reagent) =>
+        reagent is not null && reagent.TypeId > 0 &&
+        reagent.SecureStock >= 0 && reagent.InsecureStock >= 0;
+
+}
+
 /// <summary>
 /// The Host adapter exposes the owner rows from the existing character, corporation,
 /// alliance, and universe stores. The core service owns EVE.js filtering and wire shape.
@@ -101,6 +311,77 @@ public interface ILookupDirectory
 /// EVE.js v0.12.9 lookupSvc owner lookup methods, pinned to
 /// 828823a75f211fdecb945b087a26c225f111491f.
 /// </summary>
+public sealed class SkyhookResourceMgrService : IService
+{
+    private static readonly HashSet<string> Methods = new(StringComparer.Ordinal)
+    {
+        "GetMyCorporationSkyhooks",
+    };
+
+    private readonly SkyhookResourceService resources;
+
+    public SkyhookResourceMgrService(SkyhookResourceService resources)
+    {
+        this.resources = resources ?? throw new ArgumentNullException(nameof(resources));
+    }
+
+    public string Name => "colonyResourcesMgr";
+
+    public bool HasMethod(string method) => Methods.Contains(method);
+
+    public async ValueTask<PyValue> CallAsync(ServiceCall call)
+    {
+        if (call.Method != "GetMyCorporationSkyhooks")
+            return PyNone.Instance;
+
+        var corporationId = call.Session.GetInt("corporationID") ?? 0;
+        if (corporationId == 0)
+            corporationId = call.Session.GetInt("corpid") ?? 0;
+        if (corporationId <= 0)
+            return new PyList([]);
+
+        var result = await resources.GetAllByCorporationAsync(call, corporationId);
+        if (result.Code != SkyhookResourceResultCode.Ok)
+        {
+            var message = result.Code switch
+            {
+                SkyhookResourceResultCode.NotFound => "Skyhook not found.",
+                SkyhookResourceResultCode.Forbidden => "You cannot access corporation skyhooks.",
+                SkyhookResourceResultCode.PersistenceFailure => "Skyhook data could not be loaded.",
+                _ => "Skyhook request failed.",
+            };
+            throw MachoErrors.ThrowUserError(
+                "CustomNotify",
+                ("notify", new PyStr(message)));
+        }
+
+        var rows = result.Value?
+            .OrderBy(skyhook => skyhook.SolarSystemId)
+            .ThenBy(skyhook => skyhook.PlanetId)
+            .ThenBy(skyhook => skyhook.SkyhookId)
+            .Select(SerializeSkyhook)
+            .ToArray() ?? [];
+        return new PyList(rows);
+    }
+
+    private static PyValue SerializeSkyhook(SkyhookResourceSnapshot skyhook)
+    {
+        // Production activation and theft vulnerability do not define the structure state.
+        var state = skyhook.State is >= 210 and <= 214 ? skyhook.State.Value : 0;
+        var allianceId = skyhook.AllianceId is > 0 ? skyhook.AllianceId.Value : 0;
+        return Py.KeyVal(
+            ("skyhookID", new PyInt(skyhook.SkyhookId)),
+            ("itemID", new PyInt(skyhook.SkyhookId)),
+            ("solarSystemID", new PyInt(skyhook.SolarSystemId)),
+            ("planetID", new PyInt(skyhook.PlanetId)),
+            ("typeID", new PyInt(skyhook.TypeId)),
+            ("state", new PyInt(state)),
+            ("corporationID", new PyInt(skyhook.CorporationId)),
+            ("ownerCorpID", new PyInt(skyhook.CorporationId)),
+            ("allianceID", new PyInt(allianceId)));
+    }
+}
+
 public sealed class LookupSvcService : IService
 {
     private readonly ILookupDirectory directory;

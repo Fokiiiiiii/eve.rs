@@ -18,7 +18,8 @@ public class DroneHostTests
     private sealed record Flying(Rig Rig, Eve.Services.ClientSession Session, long Drone, long Character, string Ship, string Entity, int System);
 
     /// <summary>A pilot in space with a Hobgoblin I in the drone bay of its ship, and the Drones skill at level 1 unless <paramref name="skill"/> is 0.</summary>
-    private static async Task<Flying> FlyingWithADroneAsync(Rig rig, int skill = 1, bool withDroneDamageAmplifier = false, bool withDroneLinkAugmentor = false)
+    private static async Task<Flying> FlyingWithADroneAsync(
+        Rig rig, int skill = 1, bool withDroneDamageAmplifier = false, bool withDroneLinkAugmentor = false, int? droneTypeId = null)
     {
         var character = await rig.NewCharacterAsync();
         if (skill > 0)
@@ -47,7 +48,7 @@ public class DroneHostTests
             }
             await transaction.CommitAsync();
         }
-        var drone = (await rig.Ships.GrantAsync(character.CharacterId, Hobgoblin, 1, singleton: false))!.Single().After;
+        var drone = (await rig.Ships.GrantAsync(character.CharacterId, droneTypeId ?? Hobgoblin, 1, singleton: false))!.Single().After;
         Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(character.CharacterId, drone.Id, Rig.Station, character.ShipId, CharacterShips.DroneBayFlag, null));
         var session = await rig.SessionAsync(character, 1);
         var oid = await rig.BindShipAsync(session);
@@ -83,6 +84,7 @@ public class DroneHostTests
         Assert.Equal((flying.System, CharacterShips.InSpaceFlag, true), (item.LocationId, item.Flag, item.Singleton));
         // the scene is asked for a ball that flies as the type says: 700 m round the ship, a laser that reaches 2,800 m
         var launch = Assert.Single(rig.Sim.Heard.OfType<SimLaunchDrone>());
+        Assert.NotNull(launch.Weapon);
         Assert.Equal(((ulong)flying.Session.SessionId, Hobgoblin, 1099, 700.0, 2800.0), (launch.SessionId, launch.Ship.TypeId, launch.GraphicId, launch.OrbitDistance, launch.AttackRange));
         Assert.Equal(10, launch.Weapon.EffectId);
         // the client is told what dogma has of the drone, then that the item moved
@@ -104,6 +106,7 @@ public class DroneHostTests
         await LaunchAsync(flying);
 
         var launch = Assert.Single(rig.Sim.Heard.OfType<SimLaunchDrone>());
+        Assert.NotNull(launch.Weapon);
         var expectedDamage = baseWeapon.RawDamage.Select(damage => Eve.Npc.NpcArmament.Round6(damage * 1.1)).ToArray();
         Assert.Equal(expectedDamage, launch.Weapon.RawDamage);
     }
@@ -132,24 +135,53 @@ public class DroneHostTests
         await LaunchAsync(flying);
         var ids = new PyList([InventoryWire.Id(flying.Drone)]);
 
-        // an order with no target is the drones looking for one themselves: the simulation hears target 0
-        var answer = await rig.EntityCallAsync(flying.Session, "CmdEngage", flying.Entity, ids, PyNone.Instance);
-        Assert.Empty(Assert.IsType<PyDict>(answer).Entries);
-        var order = rig.Sim.Heard.OfType<SimDroneCommand>().Last();
-        Assert.Equal((SimDroneCommands.Engage, 0L), (order.Command, order.TargetId));
-        Assert.Equal([flying.Drone], order.DroneIds);
-        Assert.Equal(20_000.0, order.ControlRange);
+        var engage = await rig.EntityCallAsync(flying.Session, "CmdEngage", flying.Entity, ids, PyNone.Instance);
+        Assert.Empty(Assert.IsType<PyDict>(engage).Entries);
+        var engageOrder = rig.Sim.Heard.OfType<SimDroneCommand>().Last();
+        Assert.Equal((SimDroneCommands.Engage, 0L), (engageOrder.Command, engageOrder.TargetId));
+        Assert.Equal([flying.Drone], engageOrder.DroneIds);
+        Assert.Equal(25_000.0, engageOrder.ControlRange);
 
-        // and when there is no one to find the drone says so
-        rig.Sim.DroneAnswer = (_, _, _, drones) => new CommandReply(true, 0, null) { Drones = [.. drones.Select(d => new SimDroneResult(d, "NO_OPPONENT"))] };
+        rig.Sim.DroneAnswer = (_, _, _, drones) =>
+            new CommandReply(true, 0, null) { Drones = [.. drones.Select(id => new SimDroneResult(id, "NO_OPPONENT"))] };
         var refused = await rig.EntityCallAsync(flying.Session, "CmdEngage", flying.Entity, ids, PyNone.Instance);
         Assert.Equal(["The drones found nothing to attack."], Refusals(refused));
+        rig.Sim.DroneAnswer = null;
 
-        // the orders that are not served are refused for each drone and do not reach the simulation
-        var heard = rig.Sim.Heard.Count;
+        var commandStart = rig.Sim.Heard.OfType<SimDroneCommand>().Count();
         var assist = await rig.EntityCallAsync(flying.Session, "CmdAssist", flying.Entity, new PyInt(flying.Character), ids);
-        Assert.Equal(["That drone order is not available yet."], Refusals(assist));
-        Assert.Equal(heard, rig.Sim.Heard.Count);
+        var guard = await rig.EntityCallAsync(flying.Session, "CmdGuard", flying.Entity, new PyInt(flying.Character), ids);
+        const long mineTarget = 7_100_001;
+        var mine = await rig.EntityCallAsync(flying.Session, "CmdMineRepeatedly", flying.Entity, ids, new PyLong(mineTarget));
+        const long wreckTarget = 7_100_002;
+        var salvage = await rig.EntityCallAsync(flying.Session, "CmdSalvage", flying.Entity, ids, new PyLong(wreckTarget));
+
+        foreach (var answer in new[] { assist, guard, mine, salvage })
+        {
+            Assert.Empty(Assert.IsType<PyDict>(answer).Entries);
+        }
+
+        var commands = rig.Sim.Heard.OfType<SimDroneCommand>().Skip(commandStart).ToList();
+        Assert.Collection(commands,
+            order => Assert.Equal(((ulong)flying.Session.SessionId, SimDroneCommands.Assist, flying.Character, flying.Drone),
+                (order.SessionId, order.Command, order.TargetId, Assert.Single(order.DroneIds))),
+            order => Assert.Equal(((ulong)flying.Session.SessionId, SimDroneCommands.Guard, flying.Character, flying.Drone),
+                (order.SessionId, order.Command, order.TargetId, Assert.Single(order.DroneIds))),
+            order => Assert.Equal(((ulong)flying.Session.SessionId, SimDroneCommands.MineRepeatedly, mineTarget, flying.Drone),
+                (order.SessionId, order.Command, order.TargetId, Assert.Single(order.DroneIds))),
+            order => Assert.Equal(((ulong)flying.Session.SessionId, SimDroneCommands.Salvage, wreckTarget, flying.Drone),
+                (order.SessionId, order.Command, order.TargetId, Assert.Single(order.DroneIds))));
+
+        rig.Sim.DroneAnswer = (_, command, _, drones) =>
+            new CommandReply(true, 0, null)
+            {
+                Drones = [.. drones.Select(id => new SimDroneResult(id, command == SimDroneCommands.Salvage ? "NO_WRECK" : ""))]
+            };
+        var autoSalvage = await rig.EntityCallAsync(flying.Session, "CmdSalvage", flying.Entity, ids, PyNone.Instance);
+        Assert.Equal(["No salvageable wreck was found."], Refusals(autoSalvage));
+        var autoOrder = rig.Sim.Heard.OfType<SimDroneCommand>().Last();
+        Assert.Equal((SimDroneCommands.Salvage, 0L, flying.Drone),
+            (autoOrder.Command, autoOrder.TargetId, Assert.Single(autoOrder.DroneIds)));
     }
 
 
@@ -165,7 +197,7 @@ public class DroneHostTests
 
         Assert.Empty(Assert.IsType<PyDict>(answer).Entries);
         var order = Assert.Single(rig.Sim.Heard.OfType<SimDroneCommand>());
-        Assert.Equal(40_000.0, order.ControlRange);
+        Assert.Equal(45_000.0, order.ControlRange);
     }
 
     [PgFact]
@@ -180,6 +212,7 @@ public class DroneHostTests
         await Rig.UntilAsync(() => rig.Items.GetAsync(flying.Drone).GetAwaiter().GetResult() is { Flag: CharacterShips.DroneBayFlag });
         var back = (await rig.Items.GetAsync(flying.Drone))!;
         Assert.Equal((flying.Character == back.OwnerId, back.Singleton), (true, true));
+        await Rig.UntilAsync(() => Events.Of(flying.Session, clear: false).Any(e => e.Name == "OnItemChange"));
         Assert.Contains(Events.Of(flying.Session, clear: false), e => e.Name == "OnItemChange");
 
         // out again, and destroyed: the item is deleted and the client is told it went to the junkyard
@@ -187,7 +220,8 @@ public class DroneHostTests
         Events.Of(flying.Session);
         rig.Sim.Say(new SimDestroyed(1UL << 62, flying.Drone, 0, [0, 0, 0], [1, 0, 0], 15, 0));
         await Rig.UntilAsync(() => rig.Items.GetAsync(flying.Drone).GetAwaiter().GetResult() is null);
-        Assert.Contains(Events.Of(flying.Session), e => e.Name == "OnItemChange");
+        await Rig.UntilAsync(() => Events.Of(flying.Session, clear: false).Any(e => e.Name == "OnItemChange"));
+        Assert.Contains(Events.Of(flying.Session, clear: false), e => e.Name == "OnItemChange");
     }
 
 
@@ -202,7 +236,7 @@ public class DroneHostTests
         var capacity = Assert.IsType<PyObject>(await rig.InventoryCallAsync(flying.Session, "GetCapacity", inventory, [new PyInt(CharacterShips.DroneBayFlag)]));
         Assert.Equal(new PyStr("util.KeyVal"), capacity.Name);
         var room = Assert.IsType<PyDict>(capacity.Args);
-        Assert.Equal(5d, Numeric(room.Entries.Single(e => e.Key == new PyStr("capacity")).Value));
+        Assert.Equal(500_000d, Numeric(room.Entries.Single(e => e.Key == new PyStr("capacity")).Value));
         Assert.Equal(0d, Numeric(room.Entries.Single(e => e.Key == new PyStr("used")).Value));
 
         Events.Of(flying.Session);
@@ -262,6 +296,115 @@ public class DroneHostTests
             new PyDict([new(new PyStr("flag"), new PyInt(CharacterShips.DroneBayFlag))]));
         Assert.Same(PyNone.Instance, refused);
         Assert.Equal((flying.System, CharacterShips.InSpaceFlag), ((await rig.Items.GetAsync(flying.Drone))!.LocationId, (await rig.Items.GetAsync(flying.Drone))!.Flag));
+    }
+
+
+    [PgFact]
+    public async Task A_mining_drone_cycle_depletes_its_asteroid_and_persists_ore_before_acknowledgement()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var types = await new Eve.Sde.SdeReader(rig.Source).ReadTypeSummariesAsync();
+        var droneTypeId = SdeTypeId(types, "Mining Drone I");
+        var oreTypeId = SdeTypeId(types, "Veldspar");
+        await rig.Statics.EnsureTypesAsync([droneTypeId, oreTypeId]);
+        Assert.Equal("Drone", rig.Statics.CategoryName(rig.Statics.Type(droneTypeId)!.CategoryId));
+        Assert.Equal("Asteroid", rig.Statics.CategoryName(rig.Statics.Type(oreTypeId)!.CategoryId));
+
+        var flying = await FlyingWithADroneAsync(rig, droneTypeId: droneTypeId);
+        await LaunchAsync(flying);
+        var asteroid = await rig.Ships.CreateAsteroidAsync(
+            oreTypeId, flying.System, 0, 1, [0d, 0d, 0d], [0d, 0d, 1d], 10d, rig.SpaceItems);
+
+        var order = await rig.EntityCallAsync(
+            flying.Session, "CmdMineRepeatedly", flying.Entity, new PyList([InventoryWire.Id(flying.Drone)]), new PyLong(asteroid.Item.Id));
+        Assert.Empty(Assert.IsType<PyDict>(order).Entries);
+        Events.Of(flying.Session);
+        const ulong cycleId = 7;
+        rig.Sim.Say(DroneWorkCycle(flying, asteroid.Item.Id, SimDroneCommands.MineRepeatedly, cycleId, 0.5d));
+
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimDroneWorkResult>().Any(result => result.CycleId == cycleId));
+        var result = Assert.Single(rig.Sim.Heard.OfType<SimDroneWorkResult>(), result => result.CycleId == cycleId);
+        Assert.True(result.Accepted);
+        Assert.Equal(0, result.UnitsRemaining);
+        Assert.Equal(1, result.DeliveredUnits);
+        Assert.True(result.Complete);
+        Assert.Equal(0, (await rig.Items.GetAsync(asteroid.Item.Id))!.Quantity);
+        Assert.NotNull(await rig.SpaceItems.GetAsync(asteroid.Item.Id));
+        var heardAfterDepletion = rig.Sim.Heard.Count;
+        await rig.Containers.RestoreAsync(flying.System);
+        Assert.Empty(rig.Sim.Heard.Skip(heardAfterDepletion).OfType<SimPlaceAsteroid>());
+
+        var shipId = flying.Session.GetInt("shipid")!.Value;
+        var ore = Assert.Single(await rig.Items.InLocationAsync(shipId, flying.Character),
+            item => item.Flag == CharacterShips.CargoFlag && item.TypeId == oreTypeId);
+        Assert.Equal(1, ore.Quantity);
+        await Rig.UntilAsync(() => Events.Of(flying.Session, clear: false).Any(e => e.Name == "OnItemChange"));
+    }
+
+    [PgFact]
+    public async Task A_salvage_drone_cycle_consumes_a_wreck_and_persists_an_sde_salvage_product()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var types = await new Eve.Sde.SdeReader(rig.Source).ReadTypeSummariesAsync();
+        var droneTypeId = SdeTypeId(types, "Salvage Drone I");
+        var wreckTypeId = Assert.Single(types, type => type.Name == "Amarr Frigate Wreck").TypeId;
+        await rig.Statics.EnsureTypesAsync([droneTypeId, wreckTypeId]);
+        Assert.Equal("Drone", rig.Statics.CategoryName(rig.Statics.Type(droneTypeId)!.CategoryId));
+        var wreckType = rig.Statics.Type(wreckTypeId)!;
+        Assert.Contains("Wreck", rig.Statics.GroupName(wreckType.GroupId), StringComparison.OrdinalIgnoreCase);
+
+        var flying = await FlyingWithADroneAsync(rig, droneTypeId: droneTypeId);
+        await LaunchAsync(flying);
+        long wreckId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            wreckId = await rig.Items.CreateAsync(connection, transaction,
+                new NewItem(wreckTypeId, flying.Character, flying.System, CharacterShips.InSpaceFlag, 1, true));
+            await rig.SpaceItems.SaveAsync(connection, transaction,
+                new SpaceItem(wreckId, flying.System, [0d, 0d, 0d], [0d, 0d, 1d], 10d, wreckType.GroupId,
+                    0, flying.Character, 0, 0, 0, long.MaxValue));
+            await transaction.CommitAsync();
+        }
+
+        var order = await rig.EntityCallAsync(
+            flying.Session, "CmdSalvage", flying.Entity, new PyList([InventoryWire.Id(flying.Drone)]), new PyLong(wreckId));
+        Assert.Empty(Assert.IsType<PyDict>(order).Entries);
+        Events.Of(flying.Session);
+        const ulong cycleId = 8;
+        rig.Sim.Say(DroneWorkCycle(flying, wreckId, SimDroneCommands.Salvage, cycleId));
+
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimDroneWorkResult>().Any(result => result.CycleId == cycleId));
+        var result = Assert.Single(rig.Sim.Heard.OfType<SimDroneWorkResult>(), result => result.CycleId == cycleId);
+        Assert.True(result.Accepted);
+        Assert.Equal(1, result.DeliveredUnits);
+        Assert.True(result.Complete);
+        Assert.Null(await rig.Items.GetAsync(wreckId));
+        Assert.Null(await rig.SpaceItems.GetAsync(wreckId));
+
+        var shipId = flying.Session.GetInt("shipid")!.Value;
+        var cargo = (await rig.Items.InLocationAsync(shipId, flying.Character))
+            .Where(item => item.Flag == CharacterShips.CargoFlag).ToArray();
+        await rig.Statics.EnsureTypesAsync(cargo.Select(item => item.TypeId));
+        var product = Assert.Single(cargo, item =>
+        {
+            var type = rig.Statics.Type(item.TypeId);
+            return type is not null && rig.Statics.GroupName(type.GroupId).Equals("Salvaged Materials", StringComparison.OrdinalIgnoreCase);
+        });
+        Assert.Equal(1, product.Quantity);
+        await Rig.UntilAsync(() => Events.Of(flying.Session, clear: false).Any(e => e.Name == "OnItemChange"));
+    }
+
+    private static int SdeTypeId(IReadOnlyList<Eve.Sde.SdeTypeSummary> types, string name) =>
+        Assert.Single(types, type => type.Published && type.Name == name).TypeId;
+
+    private static SimDroneWorkCycle DroneWorkCycle(Flying flying, long targetId, byte command, ulong cycleId, double roll = 0)
+    {
+        var profile = Assert.Single(flying.Rig.Sim.Heard.OfType<SimLaunchDrone>()).Work;
+        return new SimDroneWorkCycle(
+            (ulong)flying.Session.SessionId, flying.Character, flying.Session.GetInt("shipid")!.Value, flying.System,
+            flying.Drone, targetId, cycleId, command, profile.MiningAmountM3, profile.MiningWasteVolumeMultiplier,
+            profile.MiningWasteProbability, profile.SalvageAccessDifficultyBonus, roll);
     }
 
     private static double Numeric(PyValue value) => value switch

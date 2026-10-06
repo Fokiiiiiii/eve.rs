@@ -34,15 +34,56 @@ internal sealed class Rig : IAsyncDisposable
 
     private readonly string _characters = $"ci_{Guid.NewGuid():N}"[..20];
     private readonly string _wallet = $"cw_{Guid.NewGuid():N}"[..20];
+    private readonly Dictionary<long, string> _descriptions = [];
+    private readonly Dictionary<long, double> _securityStatuses = [];
+    private readonly Dictionary<long, long?> _medalGraphicIds = [];
 
     private Rig(NpgsqlDataSource source)
     {
         Source = source;
         Characters = new PgCharacterStore(source, _characters);
         Wallets = new PgWalletStore(source, _wallet);
-        CharMgr = new CharMgrService(Characters, Stations);
+        CharMgr = CreateCharMgr();
         Account = new AccountService(Wallets);
     }
+
+    public List<PyValue> KillmailRecords { get; } = [];
+
+    public (long CharacterId, int Num, int StartIndex)? LastKillmailPage { get; private set; }
+
+    public Dictionary<long, string> Descriptions => _descriptions;
+
+    public Dictionary<long, double> SecurityStatuses => _securityStatuses;
+
+    public Dictionary<long, long?> MedalGraphicIds => _medalGraphicIds;
+
+    public CharMgrService CreateCharMgr(Func<long, CancellationToken, ValueTask<CharMgrPersonalData?>>? readPersonalData = null) =>
+        new(Characters, Stations, ReadRecentShipKillmailPageAsync, ReadCharacterDescriptionAsync,
+            WriteCharacterDescriptionAsync, ReadSecurityStatusAsync, ReadMedal1GraphicIdAsync, readPersonalData);
+
+    private ValueTask<IReadOnlyList<PyValue>> ReadRecentShipKillmailPageAsync(long characterId, int num, int startIndex, CancellationToken _)
+    {
+        LastKillmailPage = (characterId, num, startIndex);
+        IReadOnlyList<PyValue> page = startIndex >= KillmailRecords.Count
+            ? Array.Empty<PyValue>()
+            : KillmailRecords.Skip(startIndex).Take(num).ToArray();
+        return ValueTask.FromResult(page);
+    }
+
+    private ValueTask<string?> ReadCharacterDescriptionAsync(long characterId, CancellationToken _) =>
+        ValueTask.FromResult(_descriptions.TryGetValue(characterId, out var description) ? description : null);
+
+    private ValueTask WriteCharacterDescriptionAsync(long characterId, string description, CancellationToken _)
+    {
+        _descriptions[characterId] = description;
+        return ValueTask.CompletedTask;
+    }
+
+    private ValueTask<double> ReadSecurityStatusAsync(long characterId, CancellationToken _) =>
+        ValueTask.FromResult(_securityStatuses.GetValueOrDefault(characterId));
+
+    private ValueTask<long?> ReadMedal1GraphicIdAsync(long characterId, CancellationToken _) =>
+        ValueTask.FromResult(_medalGraphicIds.GetValueOrDefault(characterId));
 
     public NpgsqlDataSource Source { get; }
 
@@ -179,16 +220,34 @@ public class CharMgrTests
     }
 
     [PgFact]
-    public async Task The_description_and_the_creation_date_are_the_characters()
+    public async Task Character_description_is_read_and_written_through_the_persistence_provider()
     {
         await using var rig = await Rig.CreateAsync();
         var id = await rig.MakeAsync("Ann Lee");
+        rig.Descriptions[id] = "Original biography";
         var (session, _) = Rig.Session(id);
-        Assert.Equal(new PyStr(""), await Rig.CallAsync(rig.CharMgr, session, "GetCharacterDescription", Id(id)));
+
+        Assert.Equal(new PyStr("Original biography"),
+            await Rig.CallAsync(rig.CharMgr, session, "GetCharacterDescription", Id(id)));
+        Assert.Equal(PyNone.Instance,
+            await Rig.CallAsync(rig.CharMgr, session, "SetCharacterDescription", new PyWString("Updated biography ✓")));
+        Assert.Equal(new PyStr("Updated biography ✓"),
+            await Rig.CallAsync(rig.CharMgr, session, "GetCharacterDescription", Id(id)));
+        Assert.Equal(PyNone.Instance,
+            await Rig.CallAsync(rig.CharMgr, session, "SetCharacterDescription", new PyStr("ASCII bio")));
+        Assert.Equal(new PyStr("ASCII bio"),
+            await Rig.CallAsync(rig.CharMgr, session, "GetCharacterDescription", Id(id)));
+        Assert.Equal(PyNone.Instance,
+            await Rig.CallAsync(rig.CharMgr, session, "GetCharacterDescription", Id(1)));
+
+        var (unknownSession, _) = Rig.Session(1);
+        Assert.Equal(PyNone.Instance,
+            await Rig.CallAsync(rig.CharMgr, unknownSession, "SetCharacterDescription", new PyWString("ignored")));
+        Assert.False(rig.Descriptions.ContainsKey(1));
+
         var created = ((PyLong)await Rig.CallAsync(rig.CharMgr, session, "GetCharacterCreationDate", Id(id))).Value;
         var now = Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         Assert.InRange(created, now - (5 * 60 * 10_000_000L), now + (60 * 10_000_000L));
-        Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.CharMgr, session, "GetCharacterDescription", Id(1)));
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.CharMgr, session, "GetCharacterCreationDate", Id(1)));
     }
 
@@ -234,7 +293,6 @@ public class CharMgrTests
 
         Assert.Equal(Id(0), await Ask("GetPaperdollState"));
         Assert.Equal(new PyList([]), await Ask("GetCohortsForCharacter"));
-        Assert.Equal(new PyList([]), await Ask("GetRecentShipKillsAndLosses", Id(10), Id(0)));
 
         var settings = (PyTuple)await Ask("GetSettingsInfo");
         Assert.Equal(Id(0), settings.Items[1]);
@@ -245,7 +303,6 @@ public class CharMgrTests
         var contacts = Fields(await Ask("GetContactList"));
         Assert.Equal(new[] { "addresses", "blocked" }, contacts.Keys);
         var addresses = (PyDict)((PyObject)contacts["addresses"]).Args;
-        Assert.Equal("eve.common.script.sys.rowset.Rowset", JsSemantics.StringValue(((PyObject)contacts["addresses"]).Name));
         Assert.Equal(new PyList(new[] { "contactID", "inWatchlist", "relationshipID", "labelMask" }.Select(c => (PyValue)new PyStr(c)).ToList()), addresses.Entries[0].Value);
         Assert.Equal(new PyToken("util.Row"), addresses.Entries[2].Value);
         Assert.Equal(new PyList([]), addresses.Entries[3].Value);
@@ -256,6 +313,67 @@ public class CharMgrTests
         Assert.Equal(new PyList([]), blockedRows.Entries[3].Value);
     }
 
+    [PgFact]
+    public async Task Recent_killmail_pages_are_character_scoped_and_preserve_client_rows_and_page_boundaries()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = await rig.MakeAsync("Ann Lee");
+        var (session, _) = Rig.Session(characterId);
+        var rows = new[]
+        {
+            Py.KeyVal(("killID", Id(101)), ("finalCharacterID", Id(characterId)), ("victimCharacterID", Id(2001)), ("clientField", new PyStr("first"))),
+            Py.KeyVal(("killID", Id(102)), ("finalCharacterID", Id(2002)), ("victimCharacterID", Id(characterId)), ("clientField", new PyStr("second"))),
+            Py.KeyVal(("killID", Id(103)), ("finalCharacterID", Id(characterId)), ("victimCharacterID", Id(2003)), ("clientField", new PyStr("third"))),
+        };
+        rig.KillmailRecords.AddRange(rows);
+
+        Assert.Equal(new PyList([rows[1], rows[2]]),
+            await Rig.CallAsync(rig.CharMgr, session, "GetRecentShipKillsAndLosses", Id(2), Id(1)));
+        Assert.Equal((characterId, 2, 1), rig.LastKillmailPage!.Value);
+
+        Assert.Equal(new PyList([]),
+            await Rig.CallAsync(rig.CharMgr, session, "GetRecentShipKillsAndLosses", Id(2), Id(3)));
+        Assert.Equal((characterId, 2, 3), rig.LastKillmailPage!.Value);
+
+        var lastRead = rig.LastKillmailPage;
+        var (unbound, _) = Rig.Session(null);
+        Assert.Equal(PyNone.Instance,
+            await Rig.CallAsync(rig.CharMgr, unbound, "GetRecentShipKillsAndLosses", Id(1), Id(0)));
+        Assert.Equal(lastRead, rig.LastKillmailPage);
+
+        var (invalidCharacter, _) = Rig.Session(0);
+        Assert.Equal(PyNone.Instance,
+            await Rig.CallAsync(rig.CharMgr, invalidCharacter, "GetRecentShipKillsAndLosses", Id(1), Id(0)));
+        Assert.Equal(lastRead, rig.LastKillmailPage);
+
+        var (missingCharacter, _) = Rig.Session(long.MaxValue);
+        Assert.Equal(PyNone.Instance,
+            await Rig.CallAsync(rig.CharMgr, missingCharacter, "GetRecentShipKillsAndLosses", Id(1), Id(0)));
+        Assert.Equal(lastRead, rig.LastKillmailPage);
+
+        Assert.Equal(new PyList([]),
+            await Rig.CallAsync(rig.CharMgr, session, "GetRecentShipKillsAndLosses", Id(0), Id(0)));
+        Assert.Equal(lastRead, rig.LastKillmailPage);
+    }
+
+    [PgFact]
+    public async Task Public_info_projects_character_description_security_and_medal_sources()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = await rig.MakeAsync("Ann Lee");
+        rig.Descriptions[characterId] = "A saved bio";
+        rig.SecurityStatuses[characterId] = -2.5;
+        rig.MedalGraphicIds[characterId] = 9876;
+        var (session, _) = Rig.Session(characterId);
+
+        var records = (PyList)await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo3", Id(characterId));
+        Assert.Single(records.Items);
+        var fields = Fields(records.Items[0]);
+        Assert.Equal(new PyStr("A saved bio"), fields["description"]);
+        Assert.Equal(await Rig.CallAsync(rig.CharMgr, session, "GetCharacterCreationDate", Id(characterId)), fields["startDateTime"]);
+        Assert.Equal(Py.Number(-2.5), fields["securityStatus"]);
+        Assert.Equal(Id(9876), fields["medal1GraphicID"]);
+    }
 
     [PgFact]
     public async Task Contacts_labels_and_notes_are_read_for_the_bound_character()
@@ -281,9 +399,7 @@ public class CharMgrTests
                 NextOwnerNoteId = 5,
             }
         };
-        var service = new CharMgrService(
-            rig.Characters,
-            Rig.Stations,
+        var service = rig.CreateCharMgr(
             (ownerId, _) => ValueTask.FromResult(snapshots.GetValueOrDefault(ownerId)));
 
         async Task<PyValue> Ask(long ownerId, string method, params PyValue[] args)

@@ -181,8 +181,15 @@ public class StationRecordTests
 
 public class StationServiceTests
 {
-    private static StationService Make(OnlineCharacters? online = null, PgCharacterStore? characters = null) =>
-        new(Data.Stations, characters ?? new PgCharacterStore(NpgsqlDataSource.Create("Host=localhost"), "characters"), online ?? new OnlineCharacters(), () => Data.ClockMs);
+    private static StationService Make(
+        OnlineCharacters? online = null,
+        PgCharacterStore? characters = null,
+        Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null) =>
+        new(Data.Stations,
+            characters ?? new PgCharacterStore(NpgsqlDataSource.Create("Host=localhost"), "characters"),
+            online ?? new OnlineCharacters(),
+            () => Data.ClockMs,
+            sovereigntySystemsForAlliance);
 
     [Fact]
     public async Task An_unknown_station_or_a_bad_id_is_answered_with_none()
@@ -236,11 +243,33 @@ public class StationServiceTests
     }
 
     [Fact]
-    public async Task No_alliance_holds_a_system_yet()
+    public async Task Alliance_system_queries_return_the_systems_claimed_by_that_alliance()
     {
+        const long allianceId = 99000001;
+        var systemClaims = new Dictionary<long, long?>
+        {
+            [30000142] = allianceId,
+            [30000143] = allianceId,
+            [30000144] = 99000002,
+            [30000145] = null,
+        };
+
+        ValueTask<IReadOnlyList<long>> SystemsForAlliance(long requestedAllianceId, CancellationToken _) =>
+            ValueTask.FromResult<IReadOnlyList<long>>(systemClaims
+                .Where(claim => claim.Value == requestedAllianceId)
+                .Select(claim => claim.Key)
+                .OrderBy(systemId => systemId)
+                .ToArray());
+
+        var service = Make(sovereigntySystemsForAlliance: SystemsForAlliance);
         var (session, _) = Data.Session(60015249);
-        Assert.Equal(new PyList([]), await Data.CallAsync(Make(), session, "GetAllianceSystems"));
-        Assert.Equal(new PyList([]), await Data.CallAsync(Make(), session, "GetSystemsForAlliance", new PyInt(0)));
+        session.Set("allianceid", new PyInt(allianceId));
+
+        var mySystems = await Data.CallAsync(service, session, "GetAllianceSystems");
+        var requestedSystems = await Data.CallAsync(service, session, "GetSystemsForAlliance", new PyInt(allianceId));
+        Assert.Equal(new PyList([new PyInt(30000142), new PyInt(30000143)]), mySystems);
+        Assert.Equal(mySystems, requestedSystems);
+        Assert.Equal(new PyList([]), await Data.CallAsync(service, session, "GetSystemsForAlliance", new PyInt(0)));
     }
 
     [Fact]

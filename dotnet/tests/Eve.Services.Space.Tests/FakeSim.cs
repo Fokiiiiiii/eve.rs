@@ -85,6 +85,12 @@ internal sealed class FakeSim : ISimulation
 
     public void PlaceWreck(SimPlaceWreck wreck) => Heard.Add(wreck);
 
+    public void PlaceAsteroid(SimPlaceAsteroid asteroid) => Heard.Add(asteroid);
+
+    public void DroneWorkResult(SimDroneWorkResult result) => Heard.Add(result);
+
+    public void RemoteRepairCycleResult(SimRemoteRepairCycleResult result) => Heard.Add(result);
+
     /// <summary>What a can that is placed is answered with: where it lies (the test's own place when none is set), or why not.</summary>
     public CommandReply? PlaceContainerAnswer { get; set; }
 

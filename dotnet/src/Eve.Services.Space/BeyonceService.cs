@@ -32,6 +32,17 @@ public sealed class FleetStore(System.Data.Common.DbDataSource source, string sc
     public const int MaxSquadsPerWing = 25;
     public const int MaxNameLength = 10;
 
+
+    public static readonly Eve.Data.Migration FleetFinderAllowedEntitiesMigration = new(
+        "005_fleet_finder_allowed_entities",
+        """
+        CREATE TABLE fleet_advert_allowed_entities (
+            fleet_id bigint NOT NULL REFERENCES fleets(fleet_id) ON DELETE CASCADE,
+            entity_id bigint NOT NULL CHECK (entity_id > 0),
+            PRIMARY KEY (fleet_id, entity_id)
+        );
+        """);
+
     private readonly string _schema = System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]*$")
         ? schema : throw new ArgumentException("not a usable fleet schema name", nameof(schema));
 
@@ -705,6 +716,381 @@ public sealed class FleetStore(System.Data.Common.DbDataSource source, string sc
             command.Parameters.Add(parameter);
         }
         return command;
+    }
+
+
+    public async Task<PyValue?> FleetFinderAdvertOperationAsync(string operation, long characterId,
+        IReadOnlyList<PyValue> args, ClientSession session, CancellationToken cancellationToken = default)
+    {
+        if (characterId <= 0) return PyNone.Instance;
+        if (operation == "GetAvailableFleetAds")
+        {
+            var adverts = await ReadFleetAdvertsAsync(null, includeInactive: false, availableOnly: true, cancellationToken);
+            var visible = adverts.Where(advert => IsVisibleTo(advert, characterId, session));
+            return new PyDict(visible.Select(advert => new KeyValuePair<PyValue, PyValue>(
+                new PyLong(advert.FleetId), AdvertValue(advert))).ToArray());
+        }
+        if (operation == "GetMyFleetFinderAdvert")
+        {
+            await using var connection = await source.OpenConnectionAsync(cancellationToken);
+            await using var member = Command(connection, null,
+                $"SELECT f.fleet_id FROM {_schema}.fleet_members m JOIN {_schema}.fleets f USING (fleet_id) WHERE m.character_id = $1 AND (m.role = $2 OR (m.job & $3::smallint) <> 0)",
+                characterId, Leader, (short)CreatorJob);
+            var value = await member.ExecuteScalarAsync(cancellationToken);
+            if (value is null or DBNull) return PyNone.Instance;
+            var myFleetId = Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+            var advert = (await ReadFleetAdvertsAsync(myFleetId, includeInactive: false, availableOnly: false, cancellationToken))
+                .SingleOrDefault();
+            return advert is null ? PyNone.Instance : AdvertValue(advert);
+        }
+
+        if (operation is not ("AddFleetFinderAdvert" or "UpdateFleetAdvertWithNewLeader" or
+            "RemoveFleetFinderAdvert" or "UpdateAdvertInfo" or "UpdateAdvertAllowedEntities"))
+            throw new ArgumentOutOfRangeException(nameof(operation), operation, "Unknown FleetFinder operation.");
+
+        await using var writeConnection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await writeConnection.BeginTransactionAsync(cancellationToken);
+        var fleetIdForMutation = await LockFleetAdvertManagerAsync(
+            writeConnection, transaction, characterId, cancellationToken);
+        if (fleetIdForMutation is not { } fleetId) return PyNone.Instance;
+
+        switch (operation)
+        {
+            case "AddFleetFinderAdvert":
+                if (args.Count == 0 || !TryAdvertInput(args[0], out var input)) return PyNone.Instance;
+                var memberCount = Convert.ToInt32(await ScalarAsync(writeConnection, transaction,
+                    $"SELECT count(*) FROM {_schema}.fleet_members WHERE fleet_id = $1", cancellationToken, fleetId),
+                    System.Globalization.CultureInfo.InvariantCulture);
+                if (input.MaxMemberCount < memberCount) return PyNone.Instance;
+                await using (var update = Command(writeConnection, transaction,
+                    $"UPDATE {_schema}.fleets SET advert_active = TRUE, fleet_name = $1, description = $2, invite_scope = $3, join_needs_approval = $4, hide_info = $5, advert_join_limit = $6, public_min_standing = $7, max_member_count = $8 WHERE fleet_id = $9",
+                    input.FleetName, input.Description, input.InviteScope, input.JoinNeedsApproval, input.HideInfo,
+                    input.AdvertJoinLimit, input.PublicMinStanding, (short)input.MaxMemberCount, fleetId))
+                    if (await update.ExecuteNonQueryAsync(cancellationToken) != 1) return PyNone.Instance;
+                if (input.AllowedEntities is { } allowedEntities)
+                    await ReplaceAdvertAllowedEntitiesAsync(writeConnection, transaction, fleetId, allowedEntities, cancellationToken);
+                break;
+
+            case "UpdateFleetAdvertWithNewLeader":
+                if (args.Count == 0 || !TryReadLong(args[0], out var newLeaderId) || newLeaderId <= 0)
+                    return PyNone.Instance;
+                var newLeader = await MemberAsync(writeConnection, transaction, fleetId, newLeaderId, cancellationToken, forUpdate: true);
+                if (newLeader is null) return PyNone.Instance;
+                var currentLeader = await MemberAsync(writeConnection, transaction, fleetId, characterId, cancellationToken, forUpdate: true);
+                if (currentLeader is null) return PyNone.Instance;
+                if (newLeaderId != characterId)
+                {
+                    await using (var demote = Command(writeConnection, transaction,
+                        $"UPDATE {_schema}.fleet_members SET role = $1, wing_id = -1, squad_id = -1 WHERE fleet_id = $2 AND role = $3",
+                        Member, fleetId, Leader))
+                        await demote.ExecuteNonQueryAsync(cancellationToken);
+                    await using (var promote = Command(writeConnection, transaction,
+                        $"UPDATE {_schema}.fleet_members SET role = $1, wing_id = -1, squad_id = -1 WHERE fleet_id = $2 AND character_id = $3",
+                        Leader, fleetId, newLeaderId))
+                        if (await promote.ExecuteNonQueryAsync(cancellationToken) != 1) return PyNone.Instance;
+                    await using (var updateLeader = Command(writeConnection, transaction,
+                        $"UPDATE {_schema}.fleets SET leader_character_id = $1 WHERE fleet_id = $2",
+                        newLeaderId, fleetId))
+                        if (await updateLeader.ExecuteNonQueryAsync(cancellationToken) != 1) return PyNone.Instance;
+                }
+                break;
+
+            case "RemoveFleetFinderAdvert":
+                await using (var remove = Command(writeConnection, transaction,
+                    $"UPDATE {_schema}.fleets SET advert_active = FALSE WHERE fleet_id = $1", fleetId))
+                    if (await remove.ExecuteNonQueryAsync(cancellationToken) != 1) return PyNone.Instance;
+                await using (var clearAllowed = Command(writeConnection, transaction,
+                    $"DELETE FROM {_schema}.fleet_advert_allowed_entities WHERE fleet_id = $1", fleetId))
+                    await clearAllowed.ExecuteNonQueryAsync(cancellationToken);
+                break;
+
+            case "UpdateAdvertInfo":
+                if (args.Count < 2 || !TryReadText(args[0], out var name) || !TryReadText(args[1], out var description))
+                    return PyNone.Instance;
+                await using (var updateInfo = Command(writeConnection, transaction,
+                    $"UPDATE {_schema}.fleets SET fleet_name = $1, description = $2 WHERE fleet_id = $3 AND advert_active",
+                    name, description, fleetId))
+                    if (await updateInfo.ExecuteNonQueryAsync(cancellationToken) != 1) return PyNone.Instance;
+                break;
+
+            case "UpdateAdvertAllowedEntities":
+                if (args.Count == 0 || !TryReadEntityIds(args[0], out var entities)) return PyNone.Instance;
+                if (!await AdvertIsActiveAsync(writeConnection, transaction, fleetId, cancellationToken))
+                    return PyNone.Instance;
+                await ReplaceAdvertAllowedEntitiesAsync(writeConnection, transaction, fleetId, entities, cancellationToken);
+                break;
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return PyNone.Instance;
+    }
+
+    private sealed record FleetAdvert(
+        long FleetId, string FleetName, string Description, int InviteScope, bool JoinNeedsApproval,
+        bool HideInfo, int AdvertJoinLimit, double PublicMinStanding, int MaxMemberCount,
+        int MemberCount, IReadOnlyList<long> AllowedEntities);
+
+    private sealed record FleetAdvertInput(
+        string FleetName, string Description, int InviteScope, bool JoinNeedsApproval,
+        bool HideInfo, int AdvertJoinLimit, double PublicMinStanding, int MaxMemberCount,
+        IReadOnlyList<long>? AllowedEntities);
+
+    private async Task<IReadOnlyList<FleetAdvert>> ReadFleetAdvertsAsync(long? fleetId, bool includeInactive,
+        bool availableOnly, CancellationToken cancellationToken)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        var rows = new List<FleetAdvert>();
+        await using (var command = Command(connection, null,
+            $@"SELECT f.fleet_id, f.fleet_name, f.description, f.invite_scope, f.join_needs_approval,
+                      f.hide_info, f.advert_join_limit, f.public_min_standing, f.max_member_count,
+                      count(m.character_id)
+               FROM {_schema}.fleets f
+               LEFT JOIN {_schema}.fleet_members m ON m.fleet_id = f.fleet_id
+               WHERE ($1::bigint IS NULL OR f.fleet_id = $1)
+                 AND ($2::boolean OR f.advert_active)
+                 AND f.leader_character_id IS NOT NULL
+                 AND EXISTS (SELECT 1 FROM {_schema}.fleet_members leader
+                             WHERE leader.fleet_id = f.fleet_id AND leader.character_id = f.leader_character_id)
+               GROUP BY f.fleet_id
+               HAVING NOT $3::boolean OR count(m.character_id) < LEAST(f.max_member_count, f.advert_join_limit)
+               ORDER BY f.fleet_id", fleetId, includeInactive, availableOnly))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+                rows.Add(new FleetAdvert(reader.GetInt64(0), reader.GetString(1), reader.GetString(2),
+                    reader.GetInt32(3), reader.GetBoolean(4), reader.GetBoolean(5), reader.GetInt32(6),
+                    reader.GetDouble(7), reader.GetInt16(8), checked((int)reader.GetInt64(9)), []));
+        }
+
+        if (rows.Count == 0) return rows;
+        var allowed = rows.ToDictionary(row => row.FleetId, _ => new List<long>());
+        await using (var command = Command(connection, null,
+            $"SELECT fleet_id, entity_id FROM {_schema}.fleet_advert_allowed_entities WHERE ($1::bigint IS NULL OR fleet_id = $1) ORDER BY fleet_id, entity_id",
+            fleetId))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+                if (allowed.TryGetValue(reader.GetInt64(0), out var ids)) ids.Add(reader.GetInt64(1));
+        }
+        return rows.Select(row => row with { AllowedEntities = allowed[row.FleetId] }).ToArray();
+    }
+
+    private async Task<long?> LockFleetAdvertManagerAsync(System.Data.Common.DbConnection connection,
+        System.Data.Common.DbTransaction transaction, long characterId, CancellationToken cancellationToken)
+    {
+        var value = await ScalarAsync(connection, transaction,
+            $"SELECT fleet_id FROM {_schema}.fleet_members WHERE character_id = $1", cancellationToken, characterId);
+        if (value is null or DBNull) return null;
+        var fleetId = Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+        await using (var fleet = Command(connection, transaction,
+            $"SELECT fleet_id FROM {_schema}.fleets WHERE fleet_id = $1 FOR UPDATE", fleetId))
+            if (await fleet.ExecuteScalarAsync(cancellationToken) is null) return null;
+        var member = await MemberAsync(connection, transaction, fleetId, characterId, cancellationToken, forUpdate: true);
+        return member is { } current && (current.Role == Leader || HasBossJob(current.Job)) ? fleetId : null;
+    }
+
+    private async Task<bool> AdvertIsActiveAsync(System.Data.Common.DbConnection connection,
+        System.Data.Common.DbTransaction transaction, long fleetId, CancellationToken cancellationToken)
+    {
+        var value = await ScalarAsync(connection, transaction,
+            $"SELECT advert_active FROM {_schema}.fleets WHERE fleet_id = $1", cancellationToken, fleetId);
+        return value is true;
+    }
+
+    private async Task ReplaceAdvertAllowedEntitiesAsync(System.Data.Common.DbConnection connection,
+        System.Data.Common.DbTransaction transaction, long fleetId, IReadOnlyList<long> entityIds,
+        CancellationToken cancellationToken)
+    {
+        await using (var delete = Command(connection, transaction,
+            $"DELETE FROM {_schema}.fleet_advert_allowed_entities WHERE fleet_id = $1", fleetId))
+            await delete.ExecuteNonQueryAsync(cancellationToken);
+        foreach (var entityId in entityIds)
+        {
+            await using var insert = Command(connection, transaction,
+                $"INSERT INTO {_schema}.fleet_advert_allowed_entities (fleet_id, entity_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                fleetId, entityId);
+            await insert.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    private static bool IsVisibleTo(FleetAdvert advert, long characterId, ClientSession session) =>
+        advert.AllowedEntities.Count == 0 ||
+        advert.AllowedEntities.Contains(characterId) ||
+        advert.AllowedEntities.Contains(session.GetInt("corpid") ?? session.GetInt("corporationID") ?? 0) ||
+        advert.AllowedEntities.Contains(session.GetInt("allianceid") ?? 0);
+
+    private static PyValue AdvertValue(FleetAdvert advert) => Py.KeyVal([
+        ("fleetID", new PyLong(advert.FleetId)),
+        ("fleetName", new PyWString(advert.FleetName)),
+        ("description", new PyWString(advert.Description)),
+        ("fleetMemberCount", new PyInt(advert.MemberCount)),
+        ("maxMemberCount", new PyInt(advert.MaxMemberCount)),
+        ("inviteScope", new PyInt(advert.InviteScope)),
+        ("joinNeedsApproval", advert.JoinNeedsApproval ? PyBool.True : PyBool.False),
+        ("hideInfo", advert.HideInfo ? PyBool.True : PyBool.False),
+        ("advertJoinLimit", new PyInt(advert.AdvertJoinLimit)),
+        ("publicMinStanding", new PyReal(advert.PublicMinStanding)),
+        ("allowedEntities", new PyList(advert.AllowedEntities.Select(id => (PyValue)new PyLong(id)).ToArray()))
+    ]);
+
+    private static bool TryAdvertInput(PyValue value, out FleetAdvertInput input)
+    {
+        var fleetName = "";
+        var description = "";
+        var inviteScope = 0;
+        var joinNeedsApproval = false;
+        var hideInfo = false;
+        var advertJoinLimit = MaxMembers;
+        var publicMinStanding = -10d;
+        var maxMemberCount = MaxMembers;
+        IReadOnlyList<long>? allowedEntities = null;
+
+        if (!TryOptionalText(value, ["fleetName", "name", "fleet_name"], ref fleetName) ||
+            !TryOptionalText(value, ["description", "fleetDescription", "fleet_description"], ref description) ||
+            !TryOptionalInt(value, ["inviteScope", "invite_scope"], ref inviteScope, 0, int.MaxValue) ||
+            !TryOptionalBool(value, ["joinNeedsApproval", "join_needs_approval"], ref joinNeedsApproval) ||
+            !TryOptionalBool(value, ["hideInfo", "hide_info"], ref hideInfo) ||
+            !TryOptionalInt(value, ["advertJoinLimit", "joinLimit", "advert_join_limit"], ref advertJoinLimit, 0, MaxMembers) ||
+            !TryOptionalDouble(value, ["publicMinStanding", "minStanding", "public_min_standing"], ref publicMinStanding) ||
+            !TryOptionalInt(value, ["maxMemberCount", "max_member_count"], ref maxMemberCount, 1, MaxMembers))
+        {
+            input = new FleetAdvertInput("", "", 0, false, false, MaxMembers, -10, MaxMembers, null);
+            return false;
+        }
+        if (TryGetField(value, ["allowedEntities", "allowedEntityIDs", "allowed_entities"], out var entities))
+        {
+            if (!TryReadEntityIds(entities, out var ids))
+            {
+                input = new FleetAdvertInput("", "", 0, false, false, MaxMembers, -10, MaxMembers, null);
+                return false;
+            }
+            allowedEntities = ids;
+        }
+        input = new FleetAdvertInput(fleetName, description, inviteScope, joinNeedsApproval, hideInfo,
+            advertJoinLimit, publicMinStanding, maxMemberCount, allowedEntities);
+        return true;
+    }
+
+    private static bool TryOptionalText(PyValue data, string[] names, ref string value)
+    {
+        if (!TryGetField(data, names, out var field)) return true;
+        return TryReadText(field, out value);
+    }
+
+    private static bool TryOptionalInt(PyValue data, string[] names, ref int value, int minimum, int maximum)
+    {
+        if (!TryGetField(data, names, out var field)) return true;
+        if (!TryReadLong(field, out var number) || number < minimum || number > maximum) return false;
+        value = (int)number;
+        return true;
+    }
+
+    private static bool TryOptionalBool(PyValue data, string[] names, ref bool value)
+    {
+        if (!TryGetField(data, names, out var field)) return true;
+        return TryReadBool(field, out value);
+    }
+
+    private static bool TryOptionalDouble(PyValue data, string[] names, ref double value)
+    {
+        if (!TryGetField(data, names, out var field)) return true;
+        if (field is PyReal real) value = real.Value;
+        else if (TryReadLong(field, out var number)) value = number;
+        else return false;
+        return double.IsFinite(value);
+    }
+
+    private static bool TryGetField(PyValue data, string[] names, out PyValue value)
+    {
+        var entries = data switch
+        {
+            PyDict dict => dict.Entries,
+            PyObjectEx objectEx => objectEx.Dict,
+            PyObject { Name: PyStr { Value: "util.KeyVal" }, Args: PyDict keyVal } => keyVal.Entries,
+            _ => Array.Empty<KeyValuePair<PyValue, PyValue>>()
+        };
+        foreach (var entry in entries)
+        {
+            var key = entry.Key switch
+            {
+                PyStr text => text.Value,
+                PyWString text => text.Value,
+                _ => null
+            };
+            if (key is not null && names.Contains(key, StringComparer.OrdinalIgnoreCase))
+            {
+                value = entry.Value;
+                return true;
+            }
+        }
+        value = PyNone.Instance;
+        return false;
+    }
+
+    private static bool TryReadText(PyValue value, out string text)
+    {
+        switch (value)
+        {
+            case PyStr narrow: text = narrow.Value; return true;
+            case PyWString wide: text = wide.Value; return true;
+            default: text = ""; return false;
+        }
+    }
+
+    private static bool TryReadLong(PyValue value, out long number)
+    {
+        switch (value)
+        {
+            case PyInt integer: number = integer.Value; return true;
+            case PyLong integer: number = integer.Value; return true;
+            default: number = 0; return false;
+        }
+    }
+
+    private static bool TryReadBool(PyValue value, out bool boolean)
+    {
+        switch (value)
+        {
+            case PyBool flag: boolean = flag.Value; return true;
+            case PyInt integer: boolean = integer.Value != 0; return true;
+            case PyLong integer: boolean = integer.Value != 0; return true;
+            default: boolean = false; return false;
+        }
+    }
+
+    private static bool TryReadEntityIds(PyValue value, out IReadOnlyList<long> ids)
+    {
+        var values = value switch
+        {
+            PyList list => list.Items,
+            PyTuple tuple => tuple.Items,
+            _ => null
+        };
+        if (values is null)
+        {
+            ids = [];
+            return false;
+        }
+        var parsed = new List<long>(values.Count);
+        foreach (var item in values)
+        {
+            if (!TryReadLong(item, out var id) || id <= 0)
+            {
+                ids = [];
+                return false;
+            }
+            parsed.Add(id);
+        }
+        ids = parsed.Distinct().Order().ToArray();
+        return true;
+    }
+
+    private static async Task<object?> ScalarAsync(System.Data.Common.DbConnection connection,
+        System.Data.Common.DbTransaction? transaction, string sql, CancellationToken cancellationToken,
+        params object?[] args)
+    {
+        await using var command = Command(connection, transaction, sql, args);
+        return await command.ExecuteScalarAsync(cancellationToken);
     }
 }
 
@@ -1780,7 +2166,7 @@ public sealed partial class FleetProxyService
             await store.FleetIdForCharacterAsync(characterId, call.Cancellation) is not { } fleetId ||
             await store.SnapshotAsync(fleetId, call.Cancellation) is not { } snapshot ||
             snapshot.Members.FirstOrDefault(member => member.CharacterId == characterId) is not { } member ||
-            !FleetStore.HasBossJob(member.Job))
+            (member.Role != FleetStore.Leader && !FleetStore.HasBossJob(member.Job)))
             return null;
         return (fleetId, snapshot);
     }
@@ -1795,7 +2181,7 @@ public sealed partial class FleetProxyService
 }
 
 [Service("beyonce")]
-public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUnixMs) : IBoundObjectReleaseHandler
+public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUnixMs, FleetStore? fleetStore = null, Func<long, ClientSession?>? sessionForCharacter = null) : IBoundObjectReleaseHandler
 {
     private readonly Binding _binding = new(nowUnixMs);
 
@@ -1936,14 +2322,129 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
         {
             return None;
         }
+
         var type = JsSemantics.PlainText(call.Arg(0));
-        if ((type != "item" && type != "bookmark") || Number(call.Arg(1)) is not { } target)
+        var requestedTarget = Number(call.Arg(1));
+        if (type is not ("item" or "bookmark" or "char")
+            || requestedTarget is not { } targetNumber
+            || !double.IsFinite(targetNumber)
+            || targetNumber <= 0
+            || targetNumber > long.MaxValue
+            || targetNumber != Math.Truncate(targetNumber))
         {
-            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You cannot warp there right now.")));
+            throw WarpRefusal();
         }
+        var targetId = (long)targetNumber;
         var range = call.Kwarg("minRange") is { } named ? Number(named) ?? 0 : 0;
-        return await space.WarpAsync(call.Session, (long)target, range, call.Cancellation);
+        var fleetWarp = call.Kwarg("fleet") switch
+        {
+            PyBool flag => flag.Value,
+            PyInt integer => integer.Value != 0,
+            PyLong integer => integer.Value != 0,
+            _ => false
+        };
+        var characterId = call.Session.CharacterId ?? call.Session.GetInt("charid") ?? 0;
+
+        FleetSnapshot? fleet = null;
+        FleetMemberSnapshot? requester = null;
+        if (fleetWarp || type == "char")
+        {
+            if (fleetStore is null || characterId <= 0
+                || await fleetStore.FleetIdForCharacterAsync(characterId, call.Cancellation) is not { } fleetId
+                || await fleetStore.SnapshotAsync(fleetId, call.Cancellation) is not { } snapshot)
+            {
+                throw WarpRefusal();
+            }
+            fleet = snapshot;
+            requester = snapshot.Members.FirstOrDefault(member => member.CharacterId == characterId);
+            if (requester is null)
+            {
+                throw WarpRefusal();
+            }
+            if (fleetWarp && requester.Role is not (FleetStore.Leader or FleetStore.WingCommander or FleetStore.SquadCommander))
+            {
+                throw WarpRefusal();
+            }
+        }
+
+        var callerSystem = space.SolarSystemOf(call.Session);
+        if (type == "char")
+        {
+            var targetCharacterId = targetId;
+            if (fleet is null || fleet.Members.All(member => member.CharacterId != targetCharacterId)
+                || sessionForCharacter?.Invoke(targetCharacterId) is not { } targetSession
+                || targetSession.CharacterId != targetCharacterId
+                || callerSystem is not { } system
+                || space.SolarSystemOf(targetSession) != system
+                || space.ShipIdOf(targetSession) is not { } targetShipId)
+            {
+                throw WarpRefusal();
+            }
+            targetId = targetShipId;
+        }
+
+        if (!fleetWarp)
+        {
+            return await space.WarpAsync(call.Session, targetId, range, call.Cancellation);
+        }
+        if (fleet is null || requester is null || sessionForCharacter is null || callerSystem is not { } warpSystem)
+        {
+            throw WarpRefusal();
+        }
+
+        var scopedMembers = fleet.Members.Where(member => requester.Role switch
+        {
+            FleetStore.Leader => true,
+            FleetStore.WingCommander => member.WingId == requester.WingId,
+            FleetStore.SquadCommander => member.WingId == requester.WingId && member.SquadId == requester.SquadId,
+            _ => false
+        });
+        if (!scopedMembers.Any(member => member.CharacterId == characterId))
+        {
+            throw WarpRefusal();
+        }
+
+        var recipients = scopedMembers
+            .Where(member => member.CharacterId == characterId || member.AcceptsFleetWarp)
+            .Select(member => (
+                Member: member,
+                Session: member.CharacterId == characterId ? call.Session : sessionForCharacter(member.CharacterId)))
+            .Where(recipient => recipient.Session is { } session && space.SolarSystemOf(session) == warpSystem)
+            .OrderBy(recipient => recipient.Member.CharacterId == characterId ? 0 : 1)
+            .ToArray();
+
+        MachoWrappedException? requesterRefusal = null;
+        foreach (var recipient in recipients)
+        {
+            if (recipient.Session is not { } session)
+            {
+                continue;
+            }
+            try
+            {
+                await space.WarpAsync(session, targetId, range, call.Cancellation);
+            }
+            catch (MachoWrappedException error) when (recipient.Member.CharacterId == characterId)
+            {
+                requesterRefusal = error;
+            }
+            catch (MachoWrappedException)
+            {
+                // A single member's warp refusal must not stop the rest of the command scope.
+            }
+        }
+        if (requesterRefusal is not null)
+        {
+            throw requesterRefusal;
+        }
+        return None;
     }
+
+
+    private static MachoWrappedException WarpRefusal() =>
+        MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You cannot warp there right now.")));
+
+
 
 
     /// <summary>Autopilot uses the same warp command but arrives 10 km from its destination.</summary>

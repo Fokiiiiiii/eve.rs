@@ -92,7 +92,10 @@ public sealed class Harness : IAsyncDisposable
             Accounts, Characters, Items, SkillStore, Wallets,
             new CharacterCreation(source, Characters, Items, SkillStore, Skills, Wallets, new StartingWallet(), Catalog, new PgModuleStateStore(source, _fittingSchema)), Catalog, Online,
             [new SkillsLoginHook(Training, Skills, Sessions, Announcer, () => ClockUnixMs), new Eve.Services.Corporations.CorporationLoginHook(Corporations,Characters)], new Random(7));
-        Handler = new SkillHandlerService(SkillStore, Skills, Training, Characters, Announcer, () => ClockUnixMs);
+        var dogma = new Eve.Dogma.DogmaStatic([], [], []);
+        Handler = new SkillHandlerService(
+            SkillStore, Skills, Training, Characters, Items, dogma, Announcer, () => ClockUnixMs,
+            SkillHandlerService.CreateAugmentationReader(Items, dogma, SkillStore, () => ClockUnixMs, () => 0d));
         Door = new SkillMgr2Service();
     }
 

@@ -100,6 +100,13 @@ public interface ISimulation
     /// <summary>Puts a wreck the host made in space (where the ship was destroyed), in the scene of its system if there is one.</summary>
     void PlaceWreck(SimPlaceWreck wreck);
 
+    void PlaceAsteroid(SimPlaceAsteroid asteroid);
+
+    void DroneWorkResult(SimDroneWorkResult result);
+
+    /// <summary>Returns the host-calculated repair amount for one pending mutadaptive remote-repair cycle.</summary>
+    void RemoteRepairCycleResult(SimRemoteRepairCycleResult result);
+
     /// <summary>Puts a can the host made ahead of a pilot's ship and waits for the answer: where it lies (<see cref="CommandReply.Position"/>), or why it could not be done.</summary>
     Task<CommandReply> PlaceContainerAsync(SimPlaceContainer can, CancellationToken cancellationToken = default);
 

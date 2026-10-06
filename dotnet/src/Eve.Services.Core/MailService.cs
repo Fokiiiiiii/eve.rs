@@ -20,22 +20,27 @@ namespace Eve.Services.Core;
 /// </param>
 public sealed class MailService(
     Func<CancellationToken, Task<JsonObject>> readMail,
-    Func<long, long, ClientSession, CancellationToken, Task> markAsRead) : IService
+    Func<long, long, ClientSession, CancellationToken, Task> markAsRead,
+    Func<MailSendRequest, ClientSession, CancellationToken, Task<long?>>? sendMail = null) : IService
 {
     private readonly Func<CancellationToken, Task<JsonObject>> _readMail =
         readMail ?? throw new ArgumentNullException(nameof(readMail));
     private readonly Func<long, long, ClientSession, CancellationToken, Task> _markAsRead =
         markAsRead ?? throw new ArgumentNullException(nameof(markAsRead));
+    private readonly Func<MailSendRequest, ClientSession, CancellationToken, Task<long?>>? _sendMail = sendMail;
 
     public string Name => "mailMgr";
 
-    public bool HasMethod(string method) => method is "SyncMail" or "GetMailHeaders" or "GetBody" or "GetLabels";
+    public bool HasMethod(string method) => method is "SyncMail" or "GetMailHeaders" or "GetBody" or "GetLabels" or "SendMail";
 
     public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
         if (!HasMethod(call.Method))
             return PyNone.Instance;
         call.Cancellation.ThrowIfCancellationRequested();
+
+        if (call.Method == "SendMail")
+            return await SendMailAsync(call);
 
         var characterId = call.Session.CharacterId.GetValueOrDefault();
         var state = characterId > 0 ? await _readMail(call.Cancellation) : new JsonObject();
@@ -82,6 +87,48 @@ public sealed class MailService(
                 return PyNone.Instance;
         }
     }
+
+private async ValueTask<PyValue> SendMailAsync(ServiceCall call)
+    {
+        var characterId = call.Session.CharacterId.GetValueOrDefault();
+        if (characterId <= 0)
+            return PyNone.Instance;
+        if (_sendMail is null)
+            throw new InvalidOperationException("mailMgr.SendMail requires a durable persistence callback.");
+
+        var request = new MailSendRequest(
+            characterId,
+            RecipientIds(call.Arg(0)),
+            OptionalPositiveId(call.Arg(1)),
+            OptionalRecipientIds(call.Arg(2)),
+            StringArgument(call.Arg(3)),
+            StringArgument(call.Arg(4)),
+            OptionalPositiveId(call.Arg(5)),
+            OptionalPositiveId(call.Arg(6)));
+        var messageId = await _sendMail(request, call.Session, call.Cancellation);
+        return messageId is > 0 ? new PyLong(messageId.Value) : PyNone.Instance;
+    }
+
+    private static IReadOnlyList<long> RecipientIds(PyValue value)
+    {
+        IReadOnlyList<PyValue> values = value switch
+        {
+            PyList list => list.Items,
+            PyTuple tuple => tuple.Items,
+            PyNone => [],
+            _ => [value],
+        };
+        return [.. values.Select(PositiveId).Where(id => id > 0).Distinct()];
+    }
+
+private static IReadOnlyList<long>? OptionalRecipientIds(PyValue value) =>
+        value is PyNone ? null : RecipientIds(value);
+
+    private static long? OptionalPositiveId(PyValue value) =>
+        PositiveId(value) is > 0 and var id ? id : null;
+
+    private static string StringArgument(PyValue value) =>
+        value is PyStr text ? text.Value : "";
 
     private static PyValue SyncMail(JsonObject? messages, JsonObject? statuses, PyValue first, PyValue last)
     {
@@ -134,7 +181,7 @@ public sealed class MailService(
             ("toCharacterIDs", recipients is { Count: > 0 }
                 ? new PyStr(string.Join(",", recipients.Select(Text))) : PyNone.Instance),
             ("toListID", OptionalId(message["toListID"])),
-            ("toCorpOrAllianceID", OptionalId(message["toCorpOrAllianceID"])),
+            ("toCorpOrAllianceID", OptionalIds(message["toCorpOrAllianceID"])),
             ("title", new PyStr(Text(message["title"]))),
             ("sentDate", new PyLong(FileTime(message["sentDate"]))));
     }
@@ -153,6 +200,10 @@ public sealed class MailService(
 
     private static PyValue OptionalId(JsonNode? value) =>
         value is null ? PyNone.Instance : new PyInt(Math.Max(0, Integer(value)));
+
+private static PyValue OptionalIds(JsonNode? value) => value is JsonArray ids
+        ? new PyList([.. ids.Select(Integer).Where(id => id > 0).Select(id => (PyValue)new PyInt(id))])
+        : OptionalId(value);
 
     private static IReadOnlyList<PyValue> Items(PyValue value) => value switch
     {
@@ -186,3 +237,13 @@ public sealed class MailService(
     private static string Text(JsonNode? value) =>
         value is JsonValue scalar && scalar.TryGetValue<string>(out var text) ? text : value?.ToJsonString() ?? "";
 }
+
+public sealed record MailSendRequest(
+    long SenderCharacterId,
+    IReadOnlyList<long> CharacterRecipientIds,
+    long? MailingListId,
+    IReadOnlyList<long>? CorporationOrAllianceRecipientIds,
+    string Title,
+    string Body,
+    long? ReplyToMessageId,
+    long? ForwardedFromMessageId);

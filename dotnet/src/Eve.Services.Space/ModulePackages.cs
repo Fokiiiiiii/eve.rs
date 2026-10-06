@@ -65,10 +65,6 @@ internal static class ModulePackages
         };
         var handlerContext = ReferenceEquals(handlerEffect, effect) ? context : context with { Effect = handlerEffect };
         var handler = ModuleEffects.Default.Find(handlerContext);
-        if (effect.Name.Trim().Equals("sensorBoost", StringComparison.OrdinalIgnoreCase))
-        {
-            handler = ModuleEffects.SensorBooster;
-        }
         // the handler may refuse before the target is asked for (a gun with nothing to shoot is refused first: the reference's order)
         if (handler?.Refusal(handlerContext) is { } reason)
         {
@@ -99,7 +95,7 @@ internal static class ModulePackages
         return new Result(package, null, module.TypeId, name);
     }
 
-    private static double FueledArmorRepairAmount(ModuleEffectContext module)
+    internal static double FueledArmorRepairAmount(ModuleEffectContext module)
     {
         var baseAmount = Math.Max(0, module.Value(ModuleAttributes.ArmorDamageAmount, 0));
         var multiplier = Math.Max(1, module.Value(ChargedArmorDamageMultiplier, 1));

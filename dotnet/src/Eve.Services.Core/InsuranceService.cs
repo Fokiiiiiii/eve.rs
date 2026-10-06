@@ -26,6 +26,163 @@ public sealed record InsuranceContractSnapshot(
     long EndDateFileTime,
     string Status);
 
+public sealed record InsuranceActorSnapshot(
+    long CharacterId,
+    long CorporationId,
+    long CorporationRoleMask,
+    long StationId,
+    long StructureId,
+    long SolarSystemId)
+{
+    public bool IsDocked => StationId > 0 || StructureId > 0;
+}
+
+public sealed record InsuranceQuote(int FractionPercent, long PremiumCents, long PayoutCents);
+
+/// <summary>
+    /// Maps the authoritative full payout value to CCP's published insurance tiers.
+    /// Premiums follow the published schedule: each 10-point increase above the 40% base
+    /// costs 5% of the full payout value.
+    /// </summary>
+    public static class InsuranceQuotes
+    {
+        private static readonly int[] FractionPercents = [50, 60, 70, 80, 90, 100];
+
+        public static IReadOnlyList<InsuranceQuote> ForFullPayoutValue(long fullPayoutValueCents)
+        {
+            if (fullPayoutValueCents <= 0)
+            {
+                return [];
+            }
+
+            return FractionPercents.Select(fractionPercent => new InsuranceQuote(
+                fractionPercent,
+                RoundCents((decimal)fullPayoutValueCents * (fractionPercent - 40) / 200m),
+                RoundCents((decimal)fullPayoutValueCents * fractionPercent / 100m))).ToArray();
+        }
+
+        public static InsuranceQuote? ForPremium(long fullPayoutValueCents, long premiumCents)
+        {
+            if (premiumCents < 0)
+            {
+                return null;
+            }
+
+            var matches = ForFullPayoutValue(fullPayoutValueCents)
+                .Where(quote => quote.PremiumCents == premiumCents)
+                .Take(2)
+                .ToArray();
+            return matches.Length == 1 ? matches[0] : null;
+        }
+
+        private static long RoundCents(decimal cents) =>
+            checked((long)decimal.Round(cents, 0, MidpointRounding.AwayFromZero));
+    }
+
+public sealed record InsurancePurchaseCommand(
+    InsuranceActorSnapshot Actor,
+    long ShipId,
+    long PremiumCents,
+    bool IsCorporation,
+    bool ReplaceExisting,
+    long StartDateFileTime,
+    long EndDateFileTime);
+
+public sealed record InsuranceCancellationCommand(
+    InsuranceActorSnapshot Actor,
+    long ShipId,
+    long RequestedAtFileTime);
+
+public sealed record InsuranceLossSettlementRequest(
+    long LossId,
+    long ShipId,
+    long LossDateFileTime,
+    bool IsConcordDestruction,
+    long FinalOwnerId,
+    long FinalOwnerCorporationId);
+
+public enum InsuranceMutationStatus
+{
+    Applied,
+    AlreadyApplied,
+    AlreadyInsured,
+    NoActiveContract,
+    NotAuthorized,
+    InvalidRequest,
+    NotEligible
+}
+
+public sealed record InsuranceMutationResult(
+    InsuranceMutationStatus Status,
+    long RelatedOwnerId = 0,
+    long AmountCents = 0);
+
+/// <summary>
+/// Host callbacks must perform each mutation in one database transaction. Purchase debits the
+/// selected owner through WalletTransactions and updates the existing insuranceContracts table;
+/// settlement credits the recorded contract owner and claims payoutLedgerByLossID in that same
+/// transaction. Each callback must re-read and validate the authoritative ship, price, and contract
+/// rows under the write transaction. No parallel insurance ledger is introduced.
+/// </summary>
+/// <summary>
+    /// Implements insurance changes against existing GameStore/wallet authorities. Each mutation
+    /// must read, validate, update the contract/history/payout maps, and write any wallet journal
+    /// entry in one database transaction; a journal or persistence failure must roll the entire
+    /// operation back.
+    ///
+    /// Purchase must revalidate ship ownership/location and the existing shipInsurancePrices row
+    /// inside the transaction, map PremiumCents with InsuranceQuotes.ForPremium, debit the
+    /// character or corporation wallet, and update insuranceContracts.contractsByShipID and
+    /// contractHistoryByID. Replacement with voidOld must void the old policy and buy the new one
+    /// in that same transaction.
+    ///
+    /// Cancellation voids the active row and appends its history in one transaction. CCP/Wiki do
+    /// not publish a manual-cancellation refund formula, so implementations must not invent a
+    /// prorated credit.
+    ///
+    /// Loss settlement must use payoutLedgerByLossID as the idempotency authority, enforce the
+    /// existing contract's term and void conditions (including CONCORD and corporation boarding),
+    /// credit the contract owner, and update the contract, history, and payout ledger atomically.
+    /// The insuranceContracts grouped table already provides all three maps; no parallel insurance
+    /// table or SQL migration is required.
+    /// </summary>
+    /// <summary>
+    /// Implements insurance changes against existing GameStore/wallet authorities. Each mutation
+    /// must read, validate, update the contract/history/payout maps, and write any wallet journal
+    /// entry in one database transaction; a journal or persistence failure must roll the entire
+    /// operation back. Use WalletTransactions.AdjustAsync with that same connection and transaction.
+    ///
+    /// Purchase must revalidate ship ownership/location and the existing shipInsurancePrices row
+    /// inside the transaction, map PremiumCents with InsuranceQuotes.ForPremium, debit the
+    /// character or corporation wallet, and update insuranceContracts.contractsByShipID and
+    /// contractHistoryByID. Replacement with voidOld must void the old policy and buy the new one
+    /// in that same transaction.
+    ///
+    /// Cancellation voids the active row and appends its history in one transaction. CCP/Wiki do
+    /// not publish a manual-cancellation refund formula, so implementations must not invent a
+    /// prorated credit.
+    ///
+    /// Loss settlement must use payoutLedgerByLossID as the idempotency authority, enforce the
+    /// existing contract's term and void conditions (including CONCORD and corporation boarding),
+    /// credit the contract owner, and update the contract, history, and payout ledger atomically.
+    /// The insuranceContracts grouped table already provides all three maps; no parallel insurance
+    /// table or SQL migration is required.
+    /// </summary>
+    public interface IInsuranceWriteModel
+    {
+        ValueTask<InsuranceMutationResult> InsureShipAsync(
+            InsurancePurchaseCommand command,
+            CancellationToken cancellationToken);
+
+        ValueTask<InsuranceMutationResult> UnInsureShipAsync(
+            InsuranceCancellationCommand command,
+            CancellationToken cancellationToken);
+
+        ValueTask<InsuranceMutationResult> SettleShipLossAsync(
+            InsuranceLossSettlementRequest request,
+            CancellationToken cancellationToken);
+    }
+
 /// <summary>Host-owned read model for insurance price authority and live contracts.</summary>
 public interface IInsuranceReadModel
 {
@@ -52,12 +209,17 @@ public sealed partial class InsuranceService
 
     private static readonly Regex PickledIntegers = new(@"(?:^|\n)(?:I(-?\d+)\na|L(-?\d+)L\na)", RegexOptions.CultureInvariant);
 
+private readonly IInsuranceWriteModel? _writeModel;
     private readonly IInsuranceReadModel _readModel;
     private readonly Func<long> _nowUnixMs;
 
-    public InsuranceService(IInsuranceReadModel readModel, Func<long> nowUnixMs)
+    public InsuranceService(
+        IInsuranceReadModel readModel,
+        Func<long> nowUnixMs,
+        IInsuranceWriteModel? writeModel = null)
     {
         _readModel = readModel;
+        _writeModel = writeModel;
         _nowUnixMs = nowUnixMs;
     }
 
@@ -138,6 +300,162 @@ public sealed partial class InsuranceService
         }
 
         return ToClientContract(contract);
+    }
+
+
+    [Method("InsureShip")]
+    public async ValueTask<PyValue> InsureShip(ServiceCall call)
+    {
+        var shipId = PositiveId(call.Arg(0));
+        if (shipId == 0 || !TryIskAmountCents(call.Arg(1), out var premiumCents) ||
+            !TryBoolean(call.Arg(2), out var isCorporation))
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("InsureShipFailed");
+        }
+
+        var replaceValue = call.Arg(3);
+        var replaceExisting = false;
+        if (replaceValue is not null && replaceValue is not PyNone &&
+            !TryBoolean(replaceValue, out replaceExisting))
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("InsureShipFailed");
+        }
+
+        var actor = Actor(call.Session);
+        if (!actor.IsDocked || actor.CharacterId <= 0 ||
+            (isCorporation && (actor.CorporationId <= 0 || !HasCorporationInsuranceRole(call.Session))))
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("InsureShipFailed");
+        }
+
+        var nowUnixMs = _nowUnixMs();
+        var nowFileTime = Py.FileTimeFromUnixMs(nowUnixMs);
+        var endFileTime = Py.FileTimeFromUnixMs(checked(nowUnixMs + 84L * 24 * 60 * 60 * 1000));
+        var result = await WriteModel().InsureShipAsync(
+            new InsurancePurchaseCommand(
+                actor,
+                shipId,
+                premiumCents,
+                isCorporation,
+                replaceExisting,
+                nowFileTime,
+                endFileTime),
+            call.Cancellation);
+        return PurchaseResult(result);
+    }
+
+    [Method("UnInsureShip")]
+    public async ValueTask<PyValue> UnInsureShip(ServiceCall call)
+    {
+        var shipId = PositiveId(call.Arg(0));
+        var actor = Actor(call.Session);
+        if (shipId == 0 || !actor.IsDocked || actor.CharacterId <= 0)
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("UnInsureShipFailed");
+        }
+
+        var result = await WriteModel("UnInsureShipFailed").UnInsureShipAsync(
+            new InsuranceCancellationCommand(actor, shipId, Py.FileTimeFromUnixMs(_nowUnixMs())),
+            call.Cancellation);
+        return result.Status is InsuranceMutationStatus.Applied or InsuranceMutationStatus.AlreadyApplied
+            ? PyNone.Instance
+            : throw Eve.Services.MachoErrors.ThrowUserError("UnInsureShipFailed");
+    }
+
+    /// <summary>Called by the authoritative ship-loss path; not exposed as a client RPC.</summary>
+    public ValueTask<InsuranceMutationResult> SettleShipLossAsync(
+        InsuranceLossSettlementRequest request,
+        CancellationToken cancellationToken) =>
+        WriteModel().SettleShipLossAsync(request, cancellationToken);
+
+    private IInsuranceWriteModel WriteModel(string errorName = "InsureShipFailed") =>
+        _writeModel ?? throw Eve.Services.MachoErrors.ThrowUserError(errorName);
+
+    private static PyValue PurchaseResult(InsuranceMutationResult result) =>
+        result.Status switch
+        {
+            InsuranceMutationStatus.Applied or InsuranceMutationStatus.AlreadyApplied => PyNone.Instance,
+            InsuranceMutationStatus.AlreadyInsured => throw Eve.Services.MachoErrors.ThrowUserError(
+                "InsureShipFailedSingleContract",
+                ("ownerName", Py.Number(result.RelatedOwnerId))),
+            _ => throw Eve.Services.MachoErrors.ThrowUserError("InsureShipFailed")
+        };
+
+    private static InsuranceActorSnapshot Actor(ClientSession session)
+    {
+        var roleMask = IntegerValue(session.Get("corprole"));
+        if (roleMask == 0)
+        {
+            roleMask = IntegerValue(session.Get("corpRole"));
+        }
+
+        return new InsuranceActorSnapshot(
+            PositiveSessionValue(session, "characterID", "charID", "charid"),
+            PositiveSessionValue(session, "corporationID", "corpid"),
+            roleMask,
+            PositiveSessionValue(session, "stationid"),
+            PositiveSessionValue(session, "structureid"),
+            PositiveSessionValue(session, "solarsystemid2", "solarsystemid"));
+    }
+
+    private static bool TryBoolean(PyValue? value, out bool result)
+    {
+        switch (value)
+        {
+            case PyBool boolean:
+                result = boolean.Value;
+                return true;
+            case PyInt integer when integer.Value is 0 or 1:
+                result = integer.Value == 1;
+                return true;
+            case PyLong integer when integer.Value is 0 or 1:
+                result = integer.Value == 1;
+                return true;
+            default:
+                result = false;
+                return false;
+        }
+    }
+
+    private static bool TryIskAmountCents(PyValue? value, out long cents)
+    {
+        cents = 0;
+        decimal isk;
+        try
+        {
+            switch (value)
+            {
+                case PyInt integer:
+                    isk = integer.Value;
+                    break;
+                case PyLong integer:
+                    isk = integer.Value;
+                    break;
+                case PyReal real when double.IsFinite(real.Value):
+                    isk = (decimal)real.Value;
+                    break;
+                default:
+                    return false;
+            }
+
+            if (isk < 0)
+            {
+                return false;
+            }
+
+            var amount = decimal.Round(isk * 100m, 0, MidpointRounding.AwayFromZero);
+            if (amount > long.MaxValue)
+            {
+                return false;
+            }
+
+            cents = (long)amount;
+            return true;
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
     }
 
     private static PyValue ToClientContract(InsuranceContractSnapshot contract) => Py.KeyVal(

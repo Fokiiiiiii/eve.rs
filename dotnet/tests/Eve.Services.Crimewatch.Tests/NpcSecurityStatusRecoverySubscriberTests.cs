@@ -1,3 +1,4 @@
+using Eve.Crimewatch;
 using Eve.Data;
 using Eve.Events;
 using Eve.Relations;
@@ -14,10 +15,11 @@ public sealed class NpcSecurityStatusRecoverySubscriberTests
         var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(connectionString));
         var suffix = Guid.NewGuid().ToString("N")[..12];
-        string[] schemas = ["nsr_sched_" + suffix, "nsr_events_" + suffix, "nsr_rel_" + suffix];
+        string[] schemas = ["nsr_sched_" + suffix, "nsr_events_" + suffix, "nsr_rel_" + suffix, "nsr_cw_" + suffix];
         await DurableScheduler.MigrateAsync(source, schemas[0]);
         await EventBus.MigrateAsync(source, schemas[1]);
         await RelationStore.MigrateAsync(source, schemas[2]);
+        await PgCrimewatchStore.MigrateAsync(source, schemas[3]);
 
         var scheduler = new DurableScheduler(source, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             new SchedulerOptions { Concurrency = 1 }, schemas[0]);
@@ -27,6 +29,10 @@ public sealed class NpcSecurityStatusRecoverySubscriberTests
                 new EventBusOptions { BackoffBaseMs = 1, BackoffMaxMs = 1 }, schemas[1]);
             var relations = new RelationStore(source, scheduler, events, schemas[2]);
             const long characterId = 90_001;
+            const long npcCorporationId = 1_000_035;
+            const int npcFactionId = 500_001;
+            const int npcTypeId = 1_001;
+            const long solarSystemId = 30_000_001;
             await using (var connection = await source.OpenConnectionAsync())
             await using (var transaction = await connection.BeginTransactionAsync())
             {
@@ -37,7 +43,9 @@ public sealed class NpcSecurityStatusRecoverySubscriberTests
 
             var fastTalkContexts = new Dictionary<long, EventContext>();
             var subscriber = new NpcSecurityStatusRecoverySubscriber<EventContext>(
-                profile => profile == "profile" ? 250_000m : null,
+                profile => profile == "profile"
+                    ? new NpcSecurityStatusProfile(250_000m, npcCorporationId, npcFactionId, npcTypeId)
+                    : null,
                 async (context, id, token) =>
                 {
                     Assert.Equal(characterId, id);
@@ -46,7 +54,11 @@ public sealed class NpcSecurityStatusRecoverySubscriberTests
                     fastTalkContexts[context.Event.Id] = context;
                     return 1.25;
                 },
-                (previous, bounty, fastTalk) => previous + (double)(bounty / 1_000_000m) * fastTalk,
+                (previous, bounty, fastTalk) =>
+                {
+                    var modifier = (double)(bounty / 1_000_000m) * fastTalk;
+                    return previous + (10 - previous) * modifier;
+                },
                 async (context, id, token) =>
                 {
                     Assert.Same(fastTalkContexts[context.Event.Id], context);
@@ -56,14 +68,24 @@ public sealed class NpcSecurityStatusRecoverySubscriberTests
                 async (context, change, token) =>
                 {
                     Assert.Same(fastTalkContexts[change.SourceEventId], context);
+                    Assert.Equal(solarSystemId, change.SolarSystemId);
+                    Assert.Equal(npcCorporationId, change.NpcCorporationId);
+                    Assert.Equal(npcFactionId, change.NpcFactionId);
+                    Assert.Equal(npcTypeId, change.NpcTypeId);
+                    Assert.Equal(0.3125, change.Modification, 12);
                     await relations.SetAsync(context.Connection, context.Transaction,
                         RelationKinds.SecurityStatus.Name, change.CharacterId, RelationStore.World, change.NextStatus,
                         reason: NpcSecurityStatusRecoverySubscriber<EventContext>.HistoryReason,
                         attrs: new
                         {
+                            eventTypeID = change.EventTypeID,
+                            otherOwnerID = change.NpcCorporationId,
+                            otherTypeID = change.NpcTypeId,
+                            locationID = change.SolarSystemId,
+                            modification = change.Modification,
                             sourceEventId = change.SourceEventId,
                             npcShipId = change.NpcShipId,
-                            npcTypeId = change.NpcTypeId,
+                            npcFactionId = change.NpcFactionId,
                             npcProfile = change.ProfileId,
                             bounty = change.Bounty,
                             fastTalkMultiplier = change.FastTalkMultiplier,
@@ -85,11 +107,11 @@ public sealed class NpcSecurityStatusRecoverySubscriberTests
                 }, StartAt.Beginning);
 
             await events.PublishAsync("npc.killed",
-                new { characterId, typeId = 1001, profile = "profile", solarSystemId = 30_000_001, shipId = 900_001 },
-                "system:30000001");
+                new { characterId, typeId = npcTypeId, profile = "profile", solarSystemId, shipId = 900_001 },
+                $"system:{solarSystemId}");
             await events.PublishAsync("npc.killed",
-                new { characterId, typeId = 1001, profile = "profile", solarSystemId = 30_000_001, shipId = 900_002 },
-                "system:30000001");
+                new { characterId, typeId = npcTypeId, profile = "profile", solarSystemId, shipId = 900_002 },
+                $"system:{solarSystemId}");
 
             var failed = await events.PumpAsync();
             Assert.Equal(0, failed.Delivered);
@@ -103,11 +125,25 @@ public sealed class NpcSecurityStatusRecoverySubscriberTests
 
             var afterRetry = (await relations.GetAsync(RelationKinds.SecurityStatus.Name,
                 characterId, RelationStore.World))?.Value;
-            Assert.InRange(Math.Abs(afterRetry.GetValueOrDefault() - 5.625), 0, 1e-10);
+            Assert.InRange(Math.Abs(afterRetry.GetValueOrDefault() - 7.63671875), 0, 1e-10);
 
             await events.PumpAsync();
             Assert.Equal(afterRetry, (await relations.GetAsync(RelationKinds.SecurityStatus.Name,
                 characterId, RelationStore.World))?.Value);
+
+            var history = await relations.HistoryAsync(RelationKinds.SecurityStatus.Name, characterId, RelationStore.World);
+            var killRows = history.Where(entry => entry.Reason == NpcSecurityStatusRecoverySubscriber<EventContext>.HistoryReason).ToArray();
+            Assert.Equal(2, killRows.Length);
+            Assert.All(killRows, entry =>
+            {
+                Assert.True(entry.Attrs.HasValue);
+                var attrs = entry.Attrs.Value;
+                Assert.Equal(SecurityStatusEventTypeIds.KillPirateNpc, attrs.GetProperty("eventTypeID").GetInt32());
+                Assert.Equal(npcCorporationId, attrs.GetProperty("otherOwnerID").GetInt64());
+                Assert.Equal(npcTypeId, attrs.GetProperty("otherTypeID").GetInt32());
+                Assert.Equal(solarSystemId, attrs.GetProperty("locationID").GetInt64());
+                Assert.Equal(0.3125, attrs.GetProperty("modification").GetDouble(), 12);
+            });
 
             await using var verify = await source.OpenConnectionAsync();
             await using var command = new NpgsqlCommand(

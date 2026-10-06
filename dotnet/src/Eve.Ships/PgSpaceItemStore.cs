@@ -40,14 +40,23 @@ public sealed class PgSpaceItemStore
     /// <summary>Records where an item lies (a second record of the same item replaces the first).</summary>
     public async Task SaveAsync(SpaceItem item, CancellationToken cancellationToken = default)
     {
-        await using var command = _source.CreateCommand(
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await SaveAsync(connection, transaction, item, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task SaveAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, SpaceItem item, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
             $"""
             INSERT INTO {_schema}.space_items ({Columns}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             ON CONFLICT (item_id) DO UPDATE SET
                 solar_system_id = EXCLUDED.solar_system_id, x = EXCLUDED.x, y = EXCLUDED.y, z = EXCLUDED.z, dx = EXCLUDED.dx, dy = EXCLUDED.dy, dz = EXCLUDED.dz,
                 radius = EXCLUDED.radius, group_id = EXCLUDED.group_id, launcher_id = EXCLUDED.launcher_id, character_id = EXCLUDED.character_id,
                 corporation_id = EXCLUDED.corporation_id, alliance_id = EXCLUDED.alliance_id, war_faction_id = EXCLUDED.war_faction_id, expires_at_ms = EXCLUDED.expires_at_ms
-            """);
+            """,
+            connection, transaction);
         foreach (var value in new object[]
         {
             item.ItemId, item.SolarSystemId, item.Position[0], item.Position[1], item.Position[2], item.Direction[0], item.Direction[1], item.Direction[2], item.Radius, item.GroupId,
@@ -62,7 +71,16 @@ public sealed class PgSpaceItemStore
     /// <summary>Forgets where an item lies (it is gone). Returns whether it was recorded.</summary>
     public async Task<bool> RemoveAsync(long itemId, CancellationToken cancellationToken = default)
     {
-        await using var command = _source.CreateCommand($"DELETE FROM {_schema}.space_items WHERE item_id = $1");
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var removed = await RemoveAsync(connection, transaction, itemId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return removed;
+    }
+
+    public async Task<bool> RemoveAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long itemId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"DELETE FROM {_schema}.space_items WHERE item_id = $1", connection, transaction);
         command.Parameters.Add(new NpgsqlParameter { Value = itemId });
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }

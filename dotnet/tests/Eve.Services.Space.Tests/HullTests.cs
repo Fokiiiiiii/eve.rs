@@ -5,10 +5,12 @@ namespace Eve.Services.Space.Tests;
 /// <summary><c>/deathtest</c>: hulls nobody flies come into space around the pilot and are destroyed a moment later.</summary>
 public class HullTests
 {
+    private const int Ibis = 601;
+
     private static async Task<(Rig Rig, Eve.Characters.Created Character, ClientSession Session)> InSpaceAsync()
     {
         var rig = await Rig.CreateAsync();
-        var character = await rig.NewCharacterAsync();
+        var character = await rig.NewCharacterAsync(shipTypeId: Ibis);
         var session = await rig.SessionAsync(character);
         var oid = await rig.BindShipAsync(session);
         await rig.ShipCallAsync(session, "Undock", oid, new Eve.Marshal.PyLong(session.GetInt("shipid")!.Value), Eve.Marshal.PyBool.False);

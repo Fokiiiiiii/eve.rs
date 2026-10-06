@@ -13,12 +13,14 @@ using Npgsql;
 /// </summary>
 internal sealed class Foundations : IAsyncDisposable
 {
-    private Foundations(DurableScheduler scheduler, EventBus events, RelationStore relations, ContentRuntime content, RowsetReaderHolder reads)
+    private Foundations(DurableScheduler scheduler, EventBus events, RelationStore relations, ContentRuntime content,
+        Eve.Scheduler.LocalTimers localTimers, RowsetReaderHolder reads)
     {
         Scheduler = scheduler;
         Events = events;
         Relations = relations;
         Content = content;
+        LocalTimers = localTimers;
         Reads = reads.Reader;
     }
 
@@ -27,6 +29,7 @@ internal sealed class Foundations : IAsyncDisposable
     public RelationStore Relations { get; }
     public ContentRuntime Content { get; }
     public Eve.ReadSide.ReadSide Reads { get; }
+    public Eve.Scheduler.LocalTimers LocalTimers { get; }
 
     /// <summary>Only to name the read side's type once (the type and its namespace share a name).</summary>
     internal sealed record RowsetReaderHolder(Eve.ReadSide.ReadSide Reader);
@@ -46,8 +49,10 @@ internal sealed class Foundations : IAsyncDisposable
         var events = new EventBus(source, scheduler, null, eventsSchema, message => log($"events: {message}"));
         var relations = new RelationStore(source, scheduler, events, relationsSchema);
         var content = new ContentRuntime(source, scheduler, events, contentSchema);
+        var localTimers = new Eve.Scheduler.LocalTimers(message => log($"local timers: {message}"));
         log($"foundations in PostgreSQL, schemas {schedulerSchema}, {eventsSchema}, {relationsSchema} and {contentSchema}");
-        return new Foundations(scheduler, events, relations, content, new RowsetReaderHolder(new Eve.ReadSide.ReadSide(source, new Dictionary<string, string> { ["relations"] = relationsSchema })));
+        return new Foundations(scheduler, events, relations, content, localTimers,
+            new RowsetReaderHolder(new Eve.ReadSide.ReadSide(source, new Dictionary<string, string> { ["relations"] = relationsSchema })));
     }
 
     /// <summary>
@@ -65,5 +70,6 @@ internal sealed class Foundations : IAsyncDisposable
     {
         await Events.StopAsync();
         await Scheduler.DisposeAsync();
+        LocalTimers.Dispose();
     }
 }

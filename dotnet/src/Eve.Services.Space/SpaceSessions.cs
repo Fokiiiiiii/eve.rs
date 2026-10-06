@@ -90,9 +90,10 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
 
     /// <param name="protection">How long a ship that has just undocked is protected if its pilot does not fly it first (the client is told when it ends); <see cref="Timeout.InfiniteTimeSpan"/> for never.</param>
     /// <param name="jumpCloak">How long a ship that has come through a stargate stays cloaked if its pilot does not fly it first.</param>
-    public SpaceSessions(ISimulation sim, CharacterShips ships, DogmaStatic statics, StationCatalog stations, SolarSystemCatalog systems, Func<long> nowUnixMs, Action<string>? log = null, TimeSpan? protection = null, TimeSpan? jumpCloak = null)
+    public SpaceSessions(ISimulation sim, CharacterShips ships, DogmaStatic statics, StationCatalog stations, SolarSystemCatalog systems, Func<long> nowUnixMs, Action<string>? log = null, TimeSpan? protection = null, TimeSpan? jumpCloak = null, Eve.Scheduler.LocalTimers? localTimers = null)
     {
-        _timers = new LocalTimers(log);
+        _timers = localTimers ?? new LocalTimers(log);
+        _ownsTimers = localTimers is null;
         _protection = protection ?? TimeSpan.FromTicks(UndockInvulnerabilityTicks);
         _jumpCloak = jumpCloak ?? TimeSpan.FromTicks(JumpCloakTicks);
         _sim = sim;
@@ -239,13 +240,14 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     public ServiceRegistry? Registry { get; set; }
 
     public void Dispose()
-    {
-        _timers.Dispose();
-        _sim.Received -= OnReceived;
-        _sim.Lost -= OnLost;
-        // the host stops: the rounds that were spent are written first
-        _charges.CloseAllAsync().GetAwaiter().GetResult();
-    }
+{
+    if (_ownsTimers) _timers.Dispose();
+    _sim.Received -= OnReceived;
+    _sim.Lost -= OnLost;
+    Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.ResetAll();
+    // the host stops: the rounds that were spent are written first
+    _charges.CloseAllAsync().GetAwaiter().GetResult();
+}
 
     private static PyValue None => PyNone.Instance;
 
@@ -256,6 +258,18 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
 
     /// <summary>The solar system the session's ship is in, or null when it is not in space.</summary>
     public int? SolarSystemOf(ClientSession session) => _pilots.TryGetValue((ulong)session.SessionId, out var pilot) ? pilot.SolarSystemId : null;
+
+
+    public long? ShipIdOf(ClientSession session) =>
+        _pilots.TryGetValue((ulong)session.SessionId, out var pilot) ? pilot.ShipId : null;
+
+
+
+
+    public ClientSession? ClientSessionOf(ulong sessionId) =>
+        _pilots.TryGetValue(sessionId, out var pilot) ? pilot.Session : null;
+
+    public double? SecurityOfSystem(int solarSystemId) => _systems.Get(solarSystemId)?.Security;
 
     private static MachoWrappedException Notify(string text) => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(text)));
 
@@ -435,6 +449,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
 
     /// <summary>The time is up and the pilot has not flown the ship: the client is told, as when a movement ends it.</summary>
     private readonly LocalTimers _timers;
+    private readonly bool _ownsTimers;
     private long _protectionTimers;
 
     /// <summary>Ends the pilot's protection after <paramref name="span"/> unless it has ended before (every pilot's timer has a key of its own, so a ship that jumped does not cancel the timer of the one that arrived).</summary>
@@ -531,8 +546,9 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         }
         var assistance = package.Action is SimAction.Remote
         {
-            What: SimRemote.Repair or SimRemote.Transfer
+            What: SimRemote.Repair or SimRemote.MutadaptiveRepair or SimRemote.Transfer
                 or SimRemote.Damp { RangePercent: >= 0, ResolutionPercent: >= 0, GravimetricStrengthPercent: >= 0, LadarStrengthPercent: >= 0, MagnetometricStrengthPercent: >= 0, RadarStrengthPercent: >= 0 }
+                or SimRemote.Disrupt { RangePercent: >= 0, FalloffPercent: >= 0, TrackingPercent: >= 0 }
         };
         if (assistance)
         {
@@ -553,7 +569,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             }
         }
         // the safety of the pilot: a weapon is not started at the ship of another pilot where that would be a crime the safety the pilot has set does not allow
-        var attack = package.Turret is not null || package.Action is SimAction.Remote { What: SimRemote.Neutralize or SimRemote.Drain or SimRemote.Web or SimRemote.Paint or SimRemote.Damp { RangePercent: < 0 } or SimRemote.Damp { ResolutionPercent: < 0 } or SimRemote.Damp { GravimetricStrengthPercent: < 0 } or SimRemote.Damp { LadarStrengthPercent: < 0 } or SimRemote.Damp { MagnetometricStrengthPercent: < 0 } or SimRemote.Damp { RadarStrengthPercent: < 0 } or SimRemote.Scramble or SimRemote.Jam or SimRemote.Disrupt };
+        var attack = package.Turret is not null || package.Action is SimAction.Remote { What: SimRemote.Neutralize or SimRemote.Drain or SimRemote.Web or SimRemote.Paint or SimRemote.Damp { RangePercent: < 0 } or SimRemote.Damp { ResolutionPercent: < 0 } or SimRemote.Damp { GravimetricStrengthPercent: < 0 } or SimRemote.Damp { LadarStrengthPercent: < 0 } or SimRemote.Damp { MagnetometricStrengthPercent: < 0 } or SimRemote.Damp { RadarStrengthPercent: < 0 } or SimRemote.Scramble or SimRemote.Jam or SimRemote.Disrupt { RangePercent: < 0 } or SimRemote.Disrupt { FalloffPercent: < 0 } or SimRemote.Disrupt { TrackingPercent: < 0 } };
         var securityClass = _systems.Get(pilot.SolarSystemId) is { } where ? Security.ClassFromLevel(where.Security) : (SecurityClass?)null;
         var victim = attack ? _pilots.Values.FirstOrDefault(other => other.ShipId == package.TargetId && other.CharacterId != characterId) : null;
         if (securityClass is { } empire && (attack || package.Action is SimAction.Smartbomb))
@@ -585,6 +601,10 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             return reply.Reason == "TARGET_OUT_OF_RANGE"
                 ? refusal with { TargetType = reply.TargetType, ShipType = snapshot.Ship.TypeId, DesiredRange = reply.DesiredRange, ActualDistance = reply.ActualDistance }
                 : refusal;
+        }
+        if (effectName.Equals("ShipModuleRemoteArmorMutadaptiveRepairer", StringComparison.OrdinalIgnoreCase))
+        {
+            Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Start(moduleId, package.TargetId);
         }
         EndInvulnerability(pilot);
         if (victim is not null && securityClass is { } crimeWhere && Aggression is { } record)
@@ -680,6 +700,10 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         var module = snapshot?.Fitted.FirstOrDefault(m => m.Id == moduleId);
         var type = module is null ? null : _statics.Type(module.TypeId);
         var reply = await AskSimAsync(id, () => _sim.CommandAsync(id, SimCommands.Deactivate, [moduleId], cancellationToken), session);
+        if (reply.Accepted)
+        {
+            Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.StopAfterCurrentCycle(moduleId);
+        }
         return reply.Accepted ? ModuleResult.Done : ModuleResult.Refusal(reply.Reason == "NOT_ACTIVE" ? "MODULE_NOT_ACTIVE" : reply.Reason ?? "REFUSED", module?.TypeId ?? 0, type?.Name ?? "");
     }
 
@@ -692,6 +716,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         if (snapshot is not null)
             await _sim.SetHeatProfileAsync(id, SimShips.HeatProfileOf(snapshot, _statics), cancellationToken);
         await _sim.OfflineModuleAsync(id, moduleId, cancellationToken);
+        Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Reset(moduleId);
         return ModuleResult.Done;
     }
 
@@ -1394,6 +1419,9 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         {
             switch (message)
             {
+                case SimRemoteRepairCycle cycle:
+                    HandleMutadaptiveRepairCycle(cycle);
+                    break;
                 case SimNotify notify when _pilots.TryGetValue(notify.SessionId, out var pilot):
                     Forward(pilot.Session, notify);
                     break;
@@ -1441,6 +1469,35 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             _log?.Invoke($"a message of the simulation could not be handled: {error}");
         }
     }
+
+
+    private void HandleMutadaptiveRepairCycle(SimRemoteRepairCycle cycle)
+    {
+        var amount = 0d;
+        var sessionExists = _pilots.ContainsKey(cycle.SessionId);
+        var accepted = sessionExists
+            && Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.TryNextCycle(
+                cycle.ModuleId,
+                cycle.TargetId,
+                cycle.CycleId,
+                cycle.CycleNumber,
+                cycle.BaseAmount,
+                cycle.RepairMultiplierBonusPerCycle,
+                cycle.RepairMultiplierBonusMax,
+                cycle.CycleAtMs,
+                cycle.CycleDurationMs,
+                out amount);
+        var reason = accepted ? string.Empty : sessionExists ? "STALE_CYCLE" : "STALE_SESSION";
+        _sim.RemoteRepairCycleResult(new SimRemoteRepairCycleResult(
+            cycle.SessionId, cycle.ModuleId, cycle.TargetId, cycle.CycleId, accepted, reason, amount));
+        if (cycle.EndsEffectAfterCycle)
+        {
+            Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.CompleteCycle(cycle.ModuleId, cycle.CycleId);
+        }
+    }
+
+
+
 
     private static void Forward(ClientSession session, SimNotify notify)
     {
@@ -1818,6 +1875,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// <summary>The simulation was lost: every ship it held is gone, so each is brought home to the station its character last was at.</summary>
     private void OnLost()
     {
+        Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.ResetAll();
         foreach (var pilot in _pilots.Values.ToArray())
         {
             _ = Task.Run(async () =>

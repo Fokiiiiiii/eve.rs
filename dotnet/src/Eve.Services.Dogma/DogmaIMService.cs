@@ -13,15 +13,24 @@ namespace Eve.Services.Dogma;
 /// the client needs to know about the character's ship, its fitting and the character. Working out attribute values is the job
 /// of <c>Eve.Dogma</c>; this only loads what a character has, asks, and puts the answer in the shapes the client reads.
 /// </summary>
+public delegate ValueTask<bool?> SkillBoosterActivationHandler(
+    long characterId,
+    long itemId,
+    string effectName,
+    long? stationId,
+    long? shipId,
+    CancellationToken cancellationToken);
+
 [Service("dogmaIM")]
 public sealed partial class DogmaIMService(
-    DogmaStatic statics, CharacterShips ships, Func<long> nowUnixMs, CharacterDogmaSync? sync = null, ISpaceTargeting? space = null, ISpaceModules? modules = null, ISpaceHealth? health = null,
-    ISpaceRounds? rounds = null, Func<TimeSpan, CancellationToken, Task>? delay = null, Action<string>? log = null) : IBoundObjectReleaseHandler
+    DogmaStatic statics, CharacterShips ships, Func<long> nowUnixMs, SkillBoosterActivationHandler activateBooster,
+    CharacterDogmaSync? sync = null, ISpaceTargeting? space = null, ISpaceModules? modules = null, ISpaceHealth? health = null,
+    ISpaceRounds? rounds = null, Func<TimeSpan, CancellationToken, Task>? delay = null, Action<string>? log = null, Eve.Scheduler.LocalTimers? localTimers = null) : IBoundObjectReleaseHandler
 {
     private readonly CharacterDogmaSync _sync = sync ?? new CharacterDogmaSync(statics, ships, nowUnixMs);
 
     /// <summary>The waits of this service (a module reloading): the one in-memory timer service of the server.</summary>
-    private readonly Eve.Scheduler.LocalTimers _timers = new(log, delay);
+    private readonly Eve.Scheduler.LocalTimers _timers = localTimers ?? new(log, delay);
 
     private DogmaInfo _info => _sync.Info;
 

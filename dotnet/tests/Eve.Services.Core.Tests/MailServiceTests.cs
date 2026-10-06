@@ -37,6 +37,28 @@ public sealed class MailServiceTests
         Assert.Equal(7, Assert.IsType<PyDict>(Assert.IsType<PyObject>(header).Args).Entries.Count);
     }
 
+[Fact]
+    public async Task Headers_preserve_corporation_or_alliance_recipient_arrays()
+    {
+        var data = JsonNode.Parse("""
+            {
+              "messages": {
+                "43": { "messageID":43, "senderID":90000002, "toCharacterIDs":[],
+                  "toCorpOrAllianceID":[98000001,98000002], "title":"Alliance",
+                  "sentDate":"134100000000000001", "body":"Body" }
+              },
+              "mailboxes": { "90000001": { "statuses": { "43": { "statusMask":0, "labelMask":0 } } } }
+            }
+            """)!.AsObject();
+
+        var result = Assert.IsType<PyList>(await Service(data).CallAsync(
+            Request("GetMailHeaders", new PyList([new PyInt(43)]))));
+        var header = Assert.Single(result.Items);
+        var recipients = Assert.IsType<PyList>(Field(header, "toCorpOrAllianceID"));
+
+        Assert.Equal(new PyValue[] { new PyInt(98000001), new PyInt(98000002) }, recipients.Items);
+    }
+
     [Fact]
     public async Task Initial_sync_returns_only_mailbox_entries_newest_first_including_trash()
     {
@@ -206,10 +228,15 @@ public sealed class MailServiceTests
 
         var result = await service.CallAsync(call);
         Assert.Empty(Ids(Field(result, "newMail")));
-        Assert.Equal(PyNone.Instance, await service.CallAsync(Request("SendMail")));
+
+        var sendCall = Request("SendMail");
+        sendCall.Session.Set("charid", PyNone.Instance);
+        Assert.Equal(PyNone.Instance, await service.CallAsync(sendCall));
+        Assert.Equal(PyNone.Instance, await service.CallAsync(Request("UnlistedMethod")));
         Assert.Equal("mailMgr", service.Name);
         Assert.All(new[] { "SyncMail", "GetMailHeaders", "GetBody", "GetLabels" }, method => Assert.True(service.HasMethod(method)));
-        Assert.False(service.HasMethod("SendMail"));
+        Assert.True(service.HasMethod("SendMail"));
+        Assert.False(service.HasMethod("UnlistedMethod"));
     }
 
     [Fact]
@@ -486,14 +513,94 @@ public sealed class MailServiceTests
         Assert.Empty(Ids(Field(await unauthenticated.CallAsync(request), "newMail")));
     }
 
+[Fact]
+    public async Task SendMail_forwards_each_client_recipient_route_and_reply_forward_reference()
+    {
+        var sent = new List<MailSendRequest>();
+        var service = new MailService(
+            _ => throw new InvalidOperationException("SendMail must not read the mailbox."),
+            (_, _, _, _) => throw new InvalidOperationException("SendMail must not mark a message read."),
+            (request, _, ct) =>
+            {
+                ct.ThrowIfCancellationRequested();
+                sent.Add(request);
+                return Task.FromResult<long?>((long)(700 + sent.Count));
+            });
+
+        var direct = Request("SendMail",
+            new PyList([new PyInt(90000003), new PyInt(90000002), new PyInt(90000003)]),
+            PyNone.Instance, PyNone.Instance, new PyStr("Direct"), new PyStr("<b>body</b>"),
+            new PyInt(5), new PyInt(6));
+        var mailingList = Request("SendMail",
+            new PyList([]), new PyInt(500000001), new PyList([]),
+            new PyStr("List"), new PyStr("List body"), new PyInt(0), new PyInt(0));
+        var corporation = Request("SendMail",
+            new PyList([]), PyNone.Instance, new PyList([new PyInt(98000001)]),
+            new PyStr("Corp"), new PyStr("Corp body"), new PyInt(0), new PyInt(0));
+
+        Assert.Equal(new PyLong(701), await service.CallAsync(direct));
+        Assert.Equal(new PyLong(702), await service.CallAsync(mailingList));
+        Assert.Equal(new PyLong(703), await service.CallAsync(corporation));
+
+        Assert.Equal(90000001, sent[0].SenderCharacterId);
+        Assert.Equal(new long[] { 90000003, 90000002 }, sent[0].CharacterRecipientIds);
+        Assert.Null(sent[0].MailingListId);
+        Assert.Null(sent[0].CorporationOrAllianceRecipientIds);
+        Assert.Equal("Direct", sent[0].Title);
+        Assert.Equal("<b>body</b>", sent[0].Body);
+        Assert.Equal(5, sent[0].ReplyToMessageId);
+        Assert.Equal(6, sent[0].ForwardedFromMessageId);
+        Assert.Equal(500000001, sent[1].MailingListId);
+        Assert.Equal(new long[] { 98000001 }, sent[2].CorporationOrAllianceRecipientIds);
+    }
+
+    [Fact]
+    public async Task SendMail_waits_for_durable_writer_before_returning_message_id()
+    {
+        var persisted = new TaskCompletionSource<long?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var service = new MailService(
+            _ => throw new InvalidOperationException("SendMail must not read the mailbox."),
+            (_, _, _, _) => throw new InvalidOperationException("SendMail must not mark a message read."),
+            (_, _, _) => persisted.Task);
+
+        var response = service.CallAsync(Request("SendMail",
+            new PyList([]), PyNone.Instance, new PyList([]),
+            new PyStr("Subject"), new PyStr("Body"),
+            new PyInt(0), new PyInt(0))).AsTask();
+
+        Assert.False(response.IsCompleted);
+        persisted.SetResult(987654321);
+        Assert.Equal(new PyLong(987654321), await response);
+    }
+
+    [Fact]
+    public async Task SendMail_returns_none_when_writer_declines_and_propagates_persistence_errors()
+    {
+        var declined = new MailService(
+            _ => throw new InvalidOperationException("SendMail must not read the mailbox."),
+            (_, _, _, _) => throw new InvalidOperationException("SendMail must not mark a message read."),
+            (_, _, _) => Task.FromResult<long?>(null));
+        Assert.IsType<PyNone>(await declined.CallAsync(Request("SendMail",
+            new PyList([]), PyNone.Instance, new PyList([]),
+            new PyStr("Subject"), new PyStr("Body"), new PyInt(0), new PyInt(0))));
+
+        var failure = new IOException("mail persistence failed");
+        var failing = new MailService(
+            _ => throw new InvalidOperationException("SendMail must not read the mailbox."),
+            (_, _, _, _) => throw new InvalidOperationException("SendMail must not mark a message read."),
+            (_, _, _) => Task.FromException<long?>(failure));
+        Assert.Same(failure, await Assert.ThrowsAsync<IOException>(() => failing.CallAsync(
+            Request("SendMail", new PyList([]), PyNone.Instance, new PyList([]),
+                new PyStr("Subject"), new PyStr("Body"), new PyInt(0), new PyInt(0))).AsTask()));
+    }
+
     [Fact]
     public async Task Service_exposes_read_contracts_and_passes_cancellation_and_storage_errors_through()
     {
         var service = Service(State());
         Assert.Equal("mailMgr", service.Name);
-        Assert.All(new[] { "SyncMail", "GetMailHeaders", "GetBody", "GetLabels" }, name => Assert.True(service.HasMethod(name)));
-        Assert.False(service.HasMethod("SendMail"));
-        Assert.IsType<PyNone>(await service.CallAsync(Request("SendMail")));
+        Assert.All(new[] { "SyncMail", "GetMailHeaders", "GetBody", "GetLabels", "SendMail" },
+            name => Assert.True(service.HasMethod(name)));
         var failure = new IOException("read unavailable");
         var failing = new MailService(_ => Task.FromException<JsonObject>(failure), (_, _, _, _) => Task.CompletedTask);
         Assert.Same(failure, await Assert.ThrowsAsync<IOException>(() => failing.CallAsync(Request("SyncMail")).AsTask()));

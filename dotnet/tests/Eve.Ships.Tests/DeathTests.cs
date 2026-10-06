@@ -7,10 +7,12 @@ public class DeathTests
 {
     private const int FrigateWreck = 26506;
 
+    private const int Ibis = 601;
+
     private static async Task<(Rig Rig, Eve.Characters.Created Character)> InSpaceAsync()
     {
         var rig = await Rig.CreateAsync();
-        var character = await rig.NewCharacterAsync();
+        var character = await rig.NewCharacterAsync(shipTypeId: Ibis);
         await rig.Ships.UndockAsync(character.CharacterId);
         return (rig, character);
     }
@@ -115,7 +117,7 @@ public class DeathTests
     public async Task A_ship_that_is_docked_or_not_the_characters_active_ship_or_already_destroyed_is_not_destroyed()
     {
         await using var rig = await Rig.CreateAsync();
-        var c = await rig.NewCharacterAsync();
+        var c = await rig.NewCharacterAsync(shipTypeId: Ibis);
         Assert.Null(await rig.Ships.DestroyShipAsync(c.CharacterId, c.ShipId, FrigateWreck, "seed")); // docked
         await rig.Ships.UndockAsync(c.CharacterId);
         Assert.Null(await rig.Ships.DestroyShipAsync(c.CharacterId, c.ShipId + 12345, FrigateWreck, "seed")); // not the active ship
@@ -125,7 +127,7 @@ public class DeathTests
     }
 
     private const int CorpseMale = 25;
-    private const int Ibis = 601;
+    private const int Cockroach = 11019;
 
     /// <summary>A character in a capsule in space (its ship was destroyed), and where its clone is.</summary>
     private static async Task<(Rig Rig, Eve.Characters.Created Character, long CapsuleId, HomePlace Home)> InCapsuleAsync()
@@ -137,22 +139,21 @@ public class DeathTests
     }
 
     [PgFact]
-    public async Task A_pilot_whose_capsule_is_destroyed_wakes_in_a_rookie_ship_at_the_home_station_and_leaves_a_corpse_where_the_capsule_was()
+    public async Task A_pilot_whose_capsule_is_destroyed_wakes_in_the_Cockroach_at_the_home_station_and_leaves_a_corpse_where_the_capsule_was()
     {
         var (rig, c, capsule, home) = await InCapsuleAsync();
         await using var _ = rig;
         var system = home.SolarSystemId;
 
-        var pod = await rig.Ships.DestroyCapsuleAsync(c.CharacterId, capsule, CorpseMale, "Ship Tester", Ibis, home);
+        var pod = await rig.Ships.DestroyCapsuleAsync(c.CharacterId, capsule, CorpseMale, "Ship Tester", Cockroach, home);
 
         Assert.NotNull(pod);
         Assert.Null(await rig.Items.GetAsync(capsule));
         var corpse = (await rig.Items.GetAsync(pod.Corpse!.Id))!;
         Assert.Equal((CorpseMale, c.CharacterId, (long)system, 0, "Ship Tester", true), (corpse.TypeId, corpse.OwnerId, corpse.LocationId, corpse.Flag, corpse.CustomName, corpse.Singleton));
         var ship = (await rig.Items.GetAsync(pod.Ship.Id))!;
-        Assert.Equal((Ibis, c.CharacterId, Rig.Station, ItemFlags.Hangar), (ship.TypeId, ship.OwnerId, ship.LocationId, ship.Flag));
-        Assert.Equal(3, (await rig.InShipAsync(c.CharacterId, ship.Id)).Count);
-        Assert.All(await rig.InShipAsync(c.CharacterId, ship.Id), module => Assert.Equal(Eve.Dogma.ItemState.Online, module.State));
+        Assert.Equal((Cockroach, c.CharacterId, Rig.Station, ItemFlags.Hangar), (ship.TypeId, ship.OwnerId, ship.LocationId, ship.Flag));
+        Assert.Empty(await rig.InShipAsync(c.CharacterId, ship.Id));
         var woke = (await rig.Characters.GetAsync(c.CharacterId))!;
         Assert.Equal((ship.Id, Rig.Station), (woke.ShipId, woke.StationId));
         Assert.Equal((ship.Id, Rig.Station), (pod.Character.ShipId, pod.Character.StationId));
@@ -165,7 +166,7 @@ public class DeathTests
         await using var _ = rig;
         var elsewhere = new HomePlace(60003760, 30000142, 20000020, 10000002);
 
-        var pod = (await rig.Ships.DestroyCapsuleAsync(c.CharacterId, capsule, null, "Ship Tester", Ibis, elsewhere))!;
+        var pod = (await rig.Ships.DestroyCapsuleAsync(c.CharacterId, capsule, null, "Ship Tester", Cockroach, elsewhere))!;
 
         Assert.Null(pod.Corpse);
         var woke = (await rig.Characters.GetAsync(c.CharacterId))!;
@@ -180,7 +181,7 @@ public class DeathTests
         await using var _ = rig;
         var left = await rig.GiveAsync(c.CharacterId, 34, false, 10, capsule, CharacterShips.CargoFlag);
 
-        var pod = (await rig.Ships.DestroyCapsuleAsync(c.CharacterId, capsule, CorpseMale, "Ship Tester", Ibis, home))!;
+        var pod = (await rig.Ships.DestroyCapsuleAsync(c.CharacterId, capsule, CorpseMale, "Ship Tester", Cockroach, home))!;
 
         Assert.Equal([left], pod.Held.Select(i => i.Id));
         Assert.Null(await rig.Items.GetAsync(left));
@@ -195,15 +196,15 @@ public class DeathTests
         {
             var place = (await rig0.Characters.GetAsync(c0.CharacterId))!;
             var away = new HomePlace(Rig.Station, place.SolarSystemId, place.ConstellationId, place.RegionId);
-            Assert.Null(await rig0.Ships.DestroyCapsuleAsync(c0.CharacterId, c0.ShipId, CorpseMale, "x", Ibis, away));
+            Assert.Null(await rig0.Ships.DestroyCapsuleAsync(c0.CharacterId, c0.ShipId, CorpseMale, "x", Cockroach, away));
             Assert.NotNull(await rig0.Items.GetAsync(c0.ShipId));
         }
 
         var (rig, c, capsule, home) = await InCapsuleAsync();
         await using var _ = rig;
         Assert.Null(await rig.Ships.DestroyShipAsync(c.CharacterId, capsule, FrigateWreck, "seed")); // a capsule is not destroyed as a ship is
-        Assert.Null(await rig.Ships.DestroyCapsuleAsync(999, capsule, CorpseMale, "x", Ibis, home)); // not a character
-        Assert.NotNull(await rig.Ships.DestroyCapsuleAsync(c.CharacterId, capsule, CorpseMale, "x", Ibis, home));
-        Assert.Null(await rig.Ships.DestroyCapsuleAsync(c.CharacterId, capsule, CorpseMale, "x", Ibis, home)); // once
+        Assert.Null(await rig.Ships.DestroyCapsuleAsync(999, capsule, CorpseMale, "x", Cockroach, home)); // not a character
+        Assert.NotNull(await rig.Ships.DestroyCapsuleAsync(c.CharacterId, capsule, CorpseMale, "x", Cockroach, home));
+        Assert.Null(await rig.Ships.DestroyCapsuleAsync(c.CharacterId, capsule, CorpseMale, "x", Cockroach, home)); // once
     }
 }

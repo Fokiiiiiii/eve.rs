@@ -39,18 +39,43 @@ internal sealed class Rig : IAsyncDisposable
 
     private readonly string _schema = $"sks_{Guid.NewGuid():N}"[..20];
 
-    private Rig(NpgsqlDataSource source, TrainingSettings? settings = null)
+    private Rig(NpgsqlDataSource source, TrainingSettings? settings = null,
+        Eve.Scheduler.LocalTimers? localTimers = null, bool scheduleAnnouncer = false)
     {
         Source = source;
         Store = new PgSkillStore(source, _schema);
+        ItemStore = new Eve.Inventory.PgItemStore(source, _schema + "i");
+        Dogma = TestDogma();
         Training = new CharacterTraining(source, Catalog, Store, new PgTrainingStore(source, _schema), settings ?? new TrainingSettings(), () => Now);
         Sessions = new CharacterSessions();
-        Announcer = new TrainingAnnouncer(Training, Catalog, Sessions, null, () => Now, schedule: false);
+        Announcer = new TrainingAnnouncer(Training, Catalog, Sessions, null, () => Now,
+            schedule: scheduleAnnouncer, localTimers: localTimers);
         Announcer.Attach();
-        Handler = new SkillHandlerService(Store, Catalog, Training, new Eve.Characters.PgCharacterStore(source, _schema + "c"), Announcer, () => Now);
+        Handler = new SkillHandlerService(
+            Store, Catalog, Training, new Eve.Characters.PgCharacterStore(source, _schema + "c"), ItemStore, Dogma, Announcer, () => Now,
+            SkillHandlerService.CreateAugmentationReader(ItemStore, Dogma, Store, () => Now, () => 0d),
+            () => 0d);
         Door = new SkillMgr2Service();
         Hook = new SkillsLoginHook(Training, Catalog, Sessions, Announcer, () => Now);
     }
+
+    private static Eve.Dogma.DogmaStatic TestDogma() => new([], [
+        new Eve.Dogma.EffectDef(7000, "implantMemory", Eve.Dogma.EffectDef.Passive,
+            [new Eve.Dogma.Modifier(Eve.Dogma.ModifierFunc.Item, "charID", Eve.Dogma.Operation.ModAdd, 166, 177)]),
+        new Eve.Dogma.EffectDef(7001, "boosterPrimary", Eve.Dogma.EffectDef.Activation,
+            [new Eve.Dogma.Modifier(Eve.Dogma.ModifierFunc.Item, "charID", Eve.Dogma.Operation.ModAdd, 164, 1126)]),
+        new Eve.Dogma.EffectDef(7002, "boosterSideEffect", Eve.Dogma.EffectDef.Activation,
+            [new Eve.Dogma.Modifier(Eve.Dogma.ModifierFunc.Item, "charID", Eve.Dogma.Operation.ModAdd, 165, 1127)])
+            { ChanceAttributeId = 9999 },
+    ], [
+        // SDE 3396210: Memory Augmentation - Basic (9941), categoryImplant, implantness=2, memoryBonus=3.
+        new Eve.Dogma.TypeDef(9941, 745, 20, new Dictionary<int, double> { [331] = 2, [177] = 3 }, [7000]),
+        // Pinned client dogma constants: boosterness=1087 and boosterDuration=330.
+        new Eve.Dogma.TypeDef(2838, 988, 20, new Dictionary<int, double>
+        {
+            [1087] = 1, [330] = 60_000, [1126] = 4, [1127] = -2, [9999] = 0.5,
+        }, [7001, 7002]),
+    ]);
 
     /// <summary>The clock of the rig: it stands still until a test moves it.</summary>
     public long Now = ClockMs;
@@ -67,18 +92,24 @@ internal sealed class Rig : IAsyncDisposable
 
     public PgSkillStore Store { get; }
 
+    public Eve.Inventory.PgItemStore ItemStore { get; }
+
+    public Eve.Dogma.DogmaStatic Dogma { get; }
+
     public SkillHandlerService Handler { get; }
 
     public SkillMgr2Service Door { get; }
 
     public SkillsLoginHook Hook { get; }
 
-    public static async Task<Rig> CreateAsync(TrainingSettings? settings = null)
+    public static async Task<Rig> CreateAsync(TrainingSettings? settings = null,
+        Eve.Scheduler.LocalTimers? localTimers = null, bool scheduleAnnouncer = false)
     {
         var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
-        var rig = new Rig(source, settings);
+        var rig = new Rig(source, settings, localTimers, scheduleAnnouncer);
         await PgSkillStore.MigrateAsync(source, rig._schema);
         await Eve.Characters.PgCharacterStore.MigrateAsync(source, rig._schema + "c");
+        await Eve.Inventory.PgItemStore.MigrateAsync(source, rig._schema + "i");
         return rig;
     }
 
@@ -88,6 +119,26 @@ internal sealed class Rig : IAsyncDisposable
         await using var transaction = await connection.BeginTransactionAsync();
         await Store.GrantAsync(connection, transaction, characterId, skills.Select(s => new CharacterSkill(s.Type, s.Level, s.Points)).ToList());
         await transaction.CommitAsync();
+    }
+
+    public async Task<long> GrantFreeSkillPointsAsync(long characterId, long points)
+    {
+        await using var connection = await Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var balance = await Store.GrantFreeSkillPointsAsync(connection, transaction, characterId, points);
+        await transaction.CommitAsync();
+        return balance;
+    }
+
+
+
+    public async Task<long> CreateItemAsync(Eve.Inventory.NewItem item)
+    {
+        await using var connection = await Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var itemId = await ItemStore.CreateAsync(connection, transaction, item);
+        await transaction.CommitAsync();
+        return itemId;
     }
 
     public static (ClientSession Session, Capture Sink) Session(long? characterId, long userId = 34)
@@ -106,7 +157,7 @@ internal sealed class Rig : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS {_schema} CASCADE; DROP SCHEMA IF EXISTS {_schema}c CASCADE");
+        await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS {_schema} CASCADE; DROP SCHEMA IF EXISTS {_schema}c CASCADE; DROP SCHEMA IF EXISTS {_schema}i CASCADE");
         await command.ExecuteNonQueryAsync();
         await Source.DisposeAsync();
     }
@@ -279,6 +330,192 @@ public class SkillHandlerTests
         Assert.Equal(new PyDict([]), await Ask("GetFreeSkillPointsAppliedToSkills"));
         var respec = ((PyDict)((PyObject)await Ask("GetRespecInfo")).Args).Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
         Assert.Equal((new PyInt(3), PyNone.Instance, PyNone.Instance), ((PyValue)respec["freeRespecs"], respec["lastRespecDate"], respec["nextTimedRespec"]));
+    }
+
+    [PgFact]
+    public async Task Booster_activation_persists_side_effects_and_expiry_and_the_real_reader_returns_them()
+    {
+        const long characterId = 1, stationId = 600001;
+        await using var rig = await Rig.CreateAsync();
+        var implantId = await rig.CreateItemAsync(new Eve.Inventory.NewItem(9941, characterId, characterId, 89, Singleton: true));
+        var boosterStackId = await rig.CreateItemAsync(new Eve.Inventory.NewItem(
+            2838, characterId, stationId, 4, Quantity: 3, Singleton: false));
+
+        Assert.Equal(true, await rig.Handler.TryActivateBoosterAsync(
+            characterId, boosterStackId, "boosterPrimary", stationId, null));
+
+        var remainder = await rig.ItemStore.GetAsync(boosterStackId);
+        Assert.Equal(2, remainder!.Quantity);
+        var activeItem = Assert.Single(await rig.ItemStore.InLocationAsync(characterId, characterId), item => item.Flag == 88);
+        var nowFileTime = Py.FileTimeFromUnixMs(rig.Now);
+        var state = await rig.Store.ActiveSkillBoosterAsync(characterId, activeItem.Id, nowFileTime);
+        Assert.NotNull(state);
+        Assert.Equal(new[] { 7002 }, state.SideEffectIds);
+
+        var (session, _) = Rig.Session(characterId);
+        async Task<PyValue> Ask(string method, params PyValue[] args) =>
+            await Rig.CallAsync(rig.Handler, session, method, args);
+
+        Assert.Equal(
+            new PyDict([new KeyValuePair<PyValue, PyValue>(
+                new PyInt(2),
+                Py.KeyVal(("typeID", new PyInt(9941)), ("itemID", new PyLong(implantId))))]),
+            await Ask("GetImplants"));
+        Assert.Equal(
+            new PyDict([new KeyValuePair<PyValue, PyValue>(
+                new PyInt(2838),
+                Py.KeyVal(
+                    ("boosterTypeID", new PyInt(2838)),
+                    ("expiryTime", new PyLong(state.ExpiryFileTime)),
+                    ("sideEffectIDs", new PyList([new PyInt(7002)]))))]),
+            await Ask("GetBoosters"));
+        Assert.Equal(new PyList([Py.Tuple(
+                new PyLong(activeItem.Id), new PyInt(2838), new PyInt((int)Eve.Dogma.Operation.ModAdd), Py.Number(4))]),
+            await Ask("GetCharacterAttributeModifiers", new PyInt(164)));
+        Assert.Equal(new PyList([Py.Tuple(
+                new PyLong(activeItem.Id), new PyInt(2838), new PyInt((int)Eve.Dogma.Operation.ModAdd), Py.Number(-2))]),
+            await Ask("GetCharacterAttributeModifiers", new PyInt(165)));
+        Assert.Equal(new PyList([Py.Tuple(
+                new PyLong(implantId), new PyInt(9941), new PyInt((int)Eve.Dogma.Operation.ModAdd), Py.Number(3))]),
+            await Ask("GetCharacterAttributeModifiers", new PyInt(166)));
+        var allModifiers = Assert.IsType<PyList>(await Ask("GetCharacterAttributeModifiers"));
+        Assert.Equal(3, allModifiers.Items.Count);
+
+        rig.Wait(TimeSpan.FromMinutes(2));
+        Assert.Equal(new PyDict([]), await Ask("GetBoosters"));
+        Assert.Null(await rig.ItemStore.GetAsync(activeItem.Id));
+        Assert.Null(await rig.Store.ActiveSkillBoosterAsync(
+            characterId, activeItem.Id, Py.FileTimeFromUnixMs(rig.Now)));
+    }
+
+    [PgFact]
+    public async Task Empty_augmentation_ownership_returns_the_empty_wire_shapes()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _) = Rig.Session(1);
+
+        Assert.Equal(new PyDict([]), await Rig.CallAsync(rig.Handler, session, "GetImplants"));
+        Assert.Equal(new PyDict([]), await Rig.CallAsync(rig.Handler, session, "GetBoosters"));
+        Assert.Equal(new PyList([]), await Rig.CallAsync(rig.Handler, session, "GetCharacterAttributeModifiers", new PyInt(164)));
+
+        var (unbound, _) = Rig.Session(null);
+        Assert.Equal(new PyList([]), await Rig.CallAsync(rig.Handler, unbound, "GetCharacterAttributeModifiers", new PyInt(164)));
+    }
+
+    [PgFact]
+    public async Task A_live_legacy_booster_is_materialized_from_Dogma_instead_of_becoming_an_empty_snapshot()
+    {
+        const long characterId = 1;
+        await using var rig = await Rig.CreateAsync();
+        var activeItemId = await rig.CreateItemAsync(new Eve.Inventory.NewItem(
+            2838, characterId, characterId, 88, Singleton: true));
+        var (session, _) = Rig.Session(characterId);
+
+        var boosters = await Rig.CallAsync(rig.Handler, session, "GetBoosters");
+        var state = await rig.Store.ActiveSkillBoosterAsync(
+            characterId, activeItemId, Py.FileTimeFromUnixMs(rig.Now));
+
+        Assert.NotNull(state);
+        Assert.True(state.ExpiryFileTime > Py.FileTimeFromUnixMs(rig.Now));
+        Assert.Equal(new[] { 7002 }, state.SideEffectIds);
+        Assert.Equal(
+            new PyDict([new KeyValuePair<PyValue, PyValue>(
+                new PyInt(2838),
+                Py.KeyVal(
+                    ("boosterTypeID", new PyInt(2838)),
+                    ("expiryTime", new PyLong(state.ExpiryFileTime)),
+                    ("sideEffectIDs", new PyList([new PyInt(7002)]))))]),
+            boosters);
+    }
+
+    [PgFact]
+    public async Task Activation_rejects_a_same_slot_legacy_booster_before_consuming_the_cargo_stack()
+    {
+        const long characterId = 1, stationId = 600001;
+        await using var rig = await Rig.CreateAsync();
+        var legacyActiveId = await rig.CreateItemAsync(new Eve.Inventory.NewItem(
+            2838, characterId, characterId, 88, Singleton: true));
+        var cargoStackId = await rig.CreateItemAsync(new Eve.Inventory.NewItem(
+            2838, characterId, stationId, 4, Quantity: 2, Singleton: false));
+
+        Assert.Null(await rig.Store.ActiveSkillBoosterAsync(
+            characterId, legacyActiveId, Py.FileTimeFromUnixMs(rig.Now)));
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(async () =>
+            await rig.Handler.TryActivateBoosterAsync(
+                characterId, cargoStackId, "boosterPrimary", stationId, null));
+        Assert.NotNull(await rig.Store.ActiveSkillBoosterAsync(
+            characterId, legacyActiveId, Py.FileTimeFromUnixMs(rig.Now)));
+
+        var legacyItem = await rig.ItemStore.GetAsync(legacyActiveId);
+        var cargoItem = await rig.ItemStore.GetAsync(cargoStackId);
+        Assert.NotNull(legacyItem);
+        Assert.Equal(88, legacyItem.Flag);
+        Assert.NotNull(cargoItem);
+        Assert.Equal(2, cargoItem.Quantity);
+        Assert.Equal(stationId, cargoItem.LocationId);
+        Assert.Equal(4, cargoItem.Flag);
+        Assert.Null(await rig.Store.ActiveSkillBoosterAsync(
+            characterId, cargoStackId, Py.FileTimeFromUnixMs(rig.Now)));
+    }
+
+    [PgFact]
+    public async Task Free_skill_point_balance_previews_and_selected_application_are_durable_and_atomic()
+    {
+        const long characterId = 7;
+        await using var rig = await Rig.CreateAsync();
+        await rig.GrantAsync(characterId, (3301, 1, 250));
+        await rig.GrantFreeSkillPointsAsync(characterId, 2_000);
+        var (session, _) = Rig.Session(characterId);
+        var selected = new PyList([Py.Tuple(new PyInt(3301), new PyInt(2))]);
+
+        Assert.Equal(new PyInt(2_000), await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPoints"));
+        Assert.Equal(
+            new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(3301), new PyInt(1_165))]),
+            await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToSkills", selected));
+
+        Assert.Equal(new PyInt(835), await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToSkills", selected));
+        Assert.Equal(new PyInt(835), await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPoints"));
+        Assert.Equal(new PyInt(1_415), await Rig.CallAsync(rig.Handler, session, "GetSkillPoints"));
+
+        var info = ((PyDict)((PyObject)await Rig.CallAsync(rig.Handler, session, "GetMySkillInfo")).Args)
+            .Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
+        Assert.Equal(new PyInt(835), info["freeSkillPoints"]);
+        Assert.Equal(new PyDict([]), await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToSkills", selected));
+
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(3301), new PyInt(836)));
+        Assert.Equal(new PyInt(835), await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPoints"));
+        Assert.Equal(new PyInt(1_415), await Rig.CallAsync(rig.Handler, session, "GetSkillPoints"));
+    }
+
+    [PgFact]
+    public async Task Queue_free_skill_points_follow_saved_order_and_apply_with_the_balance()
+    {
+        const long characterId = 8;
+        await using var rig = await Rig.CreateAsync();
+        await rig.GrantAsync(characterId, (3300, 1, 250), (3301, 1, 250));
+        await rig.GrantFreeSkillPointsAsync(characterId, 1_500);
+        var saved = await rig.Training.SaveQueueAsync(
+            characterId, 34, [new QueueEntry(3300, 2), new QueueEntry(3301, 2)], activate: false, [characterId]);
+        Assert.IsType<QueueSaved>(saved);
+
+        var (session, _) = Rig.Session(characterId);
+        Assert.Equal(
+            new PyDict([
+                new KeyValuePair<PyValue, PyValue>(new PyInt(3300), new PyInt(1_165)),
+                new KeyValuePair<PyValue, PyValue>(new PyInt(3301), new PyInt(335)),
+            ]),
+            await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToQueue"));
+
+        Assert.Equal(new PyInt(0), await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToQueue"));
+        var remainingQueue = (PyList)await Rig.CallAsync(rig.Handler, session, "GetMySkillQueue");
+        Assert.Single(remainingQueue.Items);
+        var remainingLine = ((PyDict)((PyObject)remainingQueue.Items[0]).Args).Entries
+            .ToDictionary(entry => JsSemantics.StringValue(entry.Key)!, entry => entry.Value);
+        Assert.Equal((new PyInt(3301), new PyInt(2)),
+            ((PyValue)remainingLine["trainingTypeID"], (PyValue)remainingLine["trainingToLevel"]));
+        Assert.Equal(new PyInt(0), await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPoints"));
+        Assert.Equal(new PyInt(2_000), await Rig.CallAsync(rig.Handler, session, "GetSkillPoints"));
+        Assert.Equal(new PyDict([]), await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToQueue"));
     }
 
     [PgFact]

@@ -311,6 +311,9 @@ public abstract record SimRemote
     /// <summary>A layer of the target is mended by <paramref name="Amount"/> points (a remote shield booster, armor repairer or hull repairer).</summary>
     public sealed record Repair(SimLayer Layer, double Amount) : SimRemote;
 
+    /// <summary>A mutadaptive repairer asks the host for its current per-cycle repair amount so target-specific spool state stays authoritative there.</summary>
+    public sealed record MutadaptiveRepair(SimLayer Layer, double Amount, double RepairMultiplierBonusPerCycle, double RepairMultiplierBonusMax) : SimRemote;
+
     /// <summary>The target's capacitor is given <paramref name="Amount"/> GJ (a remote capacitor transmitter).</summary>
     public sealed record Transfer(double Amount) : SimRemote;
 
@@ -387,7 +390,7 @@ public sealed record SimSpawn(
 /// Launches a drone beside the ship of a pilot (<paramref name="SessionId"/>): the drone's ship, the weapon it fights with (its module is the ship), the graphic of its type, how far it
 /// circles (500 to 5,000 m) and the fraction of its top speed it flies at while it only follows its controller. Answered with <see cref="SimSpawnReply"/>.
 /// </summary>
-public sealed record SimLaunchDrone(ulong RequestId, ulong SessionId, SimShip Ship, SimNpcWeapon Weapon, int GraphicId, double OrbitDistance, double AttackRange, double CruiseFraction) : SimMessage;
+public sealed record SimLaunchDrone(ulong RequestId, ulong SessionId, SimShip Ship, SimNpcWeapon? Weapon, int GraphicId, double OrbitDistance, double AttackRange, double CruiseFraction, SimDroneWorkProfile Work = default) : SimMessage;
 
 /// <summary>The codes of the orders to drones (<see cref="SimDroneCommand"/>).</summary>
 public static class SimDroneCommands
@@ -396,6 +399,10 @@ public static class SimDroneCommands
     public const byte ReturnHome = 2;
     public const byte ReturnBay = 3;
     public const byte Abandon = 4;
+    public const byte Assist = 5;
+    public const byte Guard = 6;
+    public const byte MineRepeatedly = 7;
+    public const byte Salvage = 8;
 
     /// <summary>The key an order is answered under in <see cref="CommandReply"/>s: an order to drones shares the codes of the commands, so it is told apart by this offset.</summary>
     public static byte Key(byte command) => (byte)(0xE0 + command);
@@ -409,6 +416,43 @@ public sealed record SimDroneResult(long DroneId, string Reason);
 
 /// <summary>What each drone did with an order.</summary>
 public sealed record SimDroneResults(ulong SessionId, byte Command, IReadOnlyList<SimDroneResult> Results) : SimMessage;
+
+public readonly record struct SimDroneWorkProfile(
+    double MiningAmountM3,
+    double CycleTimeMs,
+    double MiningWasteVolumeMultiplier,
+    double MiningWasteProbability,
+    double SalvageAccessDifficultyBonus);
+
+/// <summary>Host-authored SDE/dogma work capabilities attached to a launched drone.</summary>
+public sealed record SimDroneWorkCycle(
+    ulong SessionId, long CharacterId, long ShipId, int SolarSystemId, long DroneId, long TargetId, ulong CycleId, byte Command,
+    double MiningAmountM3, double WasteVolumeMultiplier, double WasteProbability, double AccessDifficultyBonus, double Roll) : SimMessage;
+
+/// <summary>Inventory authority's decision for one completed drone cycle.</summary>
+public sealed record SimDroneWorkResult(
+    ulong SessionId, long DroneId, long TargetId, ulong CycleId, bool Accepted, string Reason, long UnitsRemaining, long DeliveredUnits, bool Complete) : SimMessage;
+
+/// <summary>
+/// One eligible mutadaptive remote-repair cycle. CycleNumber is 1-based within the current running effect; CycleAtMs is the simulation-clock cycle-end time, and CycleDurationMs is that effect's SDE duration.
+/// Continue only for the same target, the next cycle number, and a time delta in [0, CycleDurationMs]. Exactly one duration remains consecutive; a larger gap expires the spool, and the current request then starts at one spool step. Ignore duplicate or older CycleId values. EndsEffectAfterCycle means Rust will not start another cycle after this result; target loss sends the normal effect-ended notification without a repair request.
+/// </summary>
+public sealed record SimRemoteRepairCycle(
+    ulong SessionId, long ModuleId, long TargetId, ulong CycleId, int CycleNumber, long CycleAtMs, long CycleDurationMs, bool EndsEffectAfterCycle, double BaseAmount,
+    double RepairMultiplierBonusPerCycle, double RepairMultiplierBonusMax) : SimMessage;
+
+/// <summary>Completes one pending mutadaptive remote-repair cycle. Amount is the host's spooled HP amount before Rust applies range falloff.</summary>
+public sealed record SimRemoteRepairCycleResult(
+    ulong SessionId, long ModuleId, long TargetId, ulong CycleId, bool Accepted, string Reason, double Amount) : SimMessage;
+
+/// <summary>An SDE-typed mineable asteroid rock with host-owned remaining units.</summary>
+public sealed record SimPlaceAsteroid(
+    int SolarSystemId, long AsteroidId, int TypeId, int GroupId, int CategoryId, string Name, int? GraphicId,
+    IReadOnlyList<double> Position, IReadOnlyList<double> Direction, double Radius, long UnitsRemaining) : SimMessage;
+
+public sealed record SimChangeAsteroid(long AsteroidId, long UnitsRemaining) : SimMessage;
+
+public sealed record SimRemoveAsteroid(long AsteroidId, bool Depleted) : SimMessage;
 
 /// <summary>A drone came within reach of its ship after an order to return to the bay and was taken in: the host moves its item back into the drone bay.</summary>
 public sealed record SimDroneScooped(ulong SessionId, long DroneId) : SimMessage;

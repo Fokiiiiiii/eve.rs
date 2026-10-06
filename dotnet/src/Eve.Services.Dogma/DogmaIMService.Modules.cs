@@ -71,11 +71,16 @@ public sealed partial class DogmaIMService
     [Method("Activate")]
     public async ValueTask<PyValue> Activate(ServiceCall call)
     {
-        var module = IdOf(call.Arg(0)) ?? 0;
+        var itemId = IdOf(call.Arg(0)) ?? 0;
         var effect = JsSemantics.StringValue(call.Arg(1)) ?? "";
         var target = IdOf(call.Arg(2)) ?? 0;
         var repeat = (int)Math.Clamp(IdOf(call.Arg(3)) ?? 1, 1, int.MaxValue);
-        await ModuleOrderAsync(call, m => m.ActivateAsync(call.Session, module, effect, target, repeat, call.Cancellation), starting: true);
+        if (BoundContextOf(call) is not null && call.Session.CharacterId is { } character &&
+            await activateBooster(character, itemId, effect, call.Session.GetInt("stationid"), call.Session.GetInt("shipid"), call.Cancellation) is true)
+        {
+            return new PyInt(1);
+        }
+        await ModuleOrderAsync(call, m => m.ActivateAsync(call.Session, itemId, effect, target, repeat, call.Cancellation), starting: true);
         return new PyInt(1);
     }
 

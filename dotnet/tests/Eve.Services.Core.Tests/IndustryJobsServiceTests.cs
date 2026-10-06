@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
+using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
@@ -190,7 +191,7 @@ public sealed class IndustryJobsServiceTests
         {
             reads++;
             return ValueTask.FromResult<JsonObject?>(table);
-        }, () => Now);
+        }, new RecordingIndustryJobOperations(), () => Now);
 
         var initial = table.ToJsonString();
         Assert.Empty(Assert.IsType<PyList>(await service.CallAsync(Call("GetJobsByOwner", [new PyInt(1001)]))).Items);
@@ -211,7 +212,7 @@ public sealed class IndustryJobsServiceTests
         {
             reads++;
             return ValueTask.FromException<JsonObject?>(new InvalidOperationException("storage failed"));
-        }, () => Now);
+        }, new RecordingIndustryJobOperations(), () => Now);
         using var source = new CancellationTokenSource();
         source.Cancel();
 
@@ -222,8 +223,120 @@ public sealed class IndustryJobsServiceTests
             await service.CallAsync(Call("GetJobsByOwner", [new PyInt(1001)])));
     }
 
+[Fact]
+    public async Task Install_job_uses_the_typed_port_and_returns_only_the_committed_job_id()
+    {
+        var operations = new RecordingIndustryJobOperations { InstallResult = 52001 };
+        var service = Service(null, operations: operations);
+        var job = Py.KeyVal(
+            ("activityID", new PyInt(1)),
+            ("blueprintID", new PyInt(50001)),
+            ("blueprintTypeID", new PyInt(34)),
+            ("blueprintCopy", PyValue.Of(true)),
+            ("blueprintLocationID", new PyInt(60001)),
+            ("blueprintLocationFlagID", new PyInt(4)),
+            ("facilityID", new PyInt(70001)),
+            ("ownerID", new PyInt(2002)),
+            ("solarSystemID", new PyInt(30000142)),
+            ("stationID", new PyInt(70001)),
+            ("inputLocationID", new PyInt(60002)),
+            ("inputLocationFlagID", new PyInt(5)),
+            ("outputLocationID", new PyInt(60003)),
+            ("outputFlagID", new PyInt(6)),
+            ("runs", new PyInt(3)),
+            ("licensedRuns", new PyInt(3)),
+            ("productTypeID", new PyInt(34)),
+            ("optionalTypeID", PyNone.Instance),
+            ("optionalTypeID2", new PyInt(35)),
+            ("account", PyTuple.Of(new PyInt(1001), new PyInt(1000))),
+            ("cost", new PyInt(1)),
+            ("timeInSeconds", new PyInt(1)));
+
+        var result = await service.CallAsync(Call(
+            "InstallJob", [job], corporationId: 2002, corporationRole: 1024, corporationAccountKey: 1004, callId: 41));
+
+        Assert.Equal(new PyInt(52001), result);
+        var request = Assert.IsType<IndustryJobInstallRequest>(operations.InstallRequest);
+        Assert.Equal("industry:1001:InstallJob:41", request.Context.OperationId);
+        Assert.Equal(new IndustryJobActor(1001, 2002, 1024, 1004), request.Context.Actor);
+        Assert.Equal(1, request.Job.ActivityId);
+        Assert.Equal(50001, request.Job.BlueprintId);
+        Assert.Equal(34, request.Job.BlueprintTypeId);
+        Assert.True(request.Job.BlueprintCopy);
+        Assert.Equal(new IndustryJobLocation(60002, 5), request.Job.InputLocation);
+        Assert.Equal(new IndustryJobLocation(60003, 6), request.Job.OutputLocation);
+        Assert.Equal(3, request.Job.Runs);
+        Assert.Equal(3, request.Job.LicensedRuns);
+        Assert.Equal(new IndustryJobWallet(1001, 1000), request.Job.Wallet);
+    }
+
     [Fact]
-    public void Only_read_rpc_methods_are_exposed()
+    public async Task Complete_and_cancel_use_two_client_arguments_and_return_none_after_commit()
+    {
+        var operations = new RecordingIndustryJobOperations();
+        var service = Service(null, operations: operations);
+
+        var completed = await service.CallAsync(Call("CompleteJob", [new PyInt(52001), new PyInt(30000142)], callId: 42));
+        var cancelled = await service.CallAsync(Call("CancelJob", [new PyInt(52002), new PyInt(30000142)], callId: 43));
+
+        Assert.Same(PyNone.Instance, completed);
+        Assert.Same(PyNone.Instance, cancelled);
+        Assert.Equal(new IndustryJobAction(
+            new IndustryJobOperationContext(new IndustryJobActor(1001, 0, 0, 1000), "industry:1001:CompleteJob:42"),
+            52001,
+            30000142), operations.Completed);
+        Assert.Equal(new IndustryJobAction(
+            new IndustryJobOperationContext(new IndustryJobActor(1001, 0, 0, 1000), "industry:1001:CancelJob:43"),
+            52002,
+            30000142), operations.Cancelled);
+    }
+
+    [Fact]
+    public async Task Complete_many_preserves_client_pairs_and_rejects_duplicate_jobs_before_domain_dispatch()
+    {
+        var operations = new RecordingIndustryJobOperations();
+        var service = Service(null, operations: operations);
+        var pairs = new PyList([
+            PyTuple.Of(new PyInt(52001), new PyInt(30000142)),
+            PyTuple.Of(new PyInt(52002), new PyInt(30000143)),
+        ]);
+
+        var result = await service.CallAsync(Call("CompleteManyJobs", [pairs], callId: 44));
+
+        Assert.Same(PyNone.Instance, result);
+        var batch = Assert.IsType<IndustryJobBatch>(operations.CompletedBatch);
+        Assert.Equal([52001L, 52002L], batch.Jobs.Select(job => job.JobId));
+        Assert.Equal([30000142L, 30000143L], batch.Jobs.Select(job => job.SolarSystemId));
+        Assert.All(batch.Jobs, job => Assert.Same(batch.Context, job.Context));
+
+        var duplicate = new PyList([
+            PyTuple.Of(new PyInt(52001), new PyInt(30000142)),
+            PyTuple.Of(new PyInt(52001), new PyInt(30000142)),
+        ]);
+        await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("CompleteManyJobs", [duplicate], callId: 45)).AsTask());
+        Assert.Equal(1, operations.CompleteManyCalls);
+    }
+
+    [Fact]
+    public async Task Domain_user_errors_keep_the_macho_user_error_envelope_and_failed_writes_do_not_return_success()
+    {
+        var operations = new RecordingIndustryJobOperations
+        {
+            NextError = new IndustryJobUserErrorException("IndustryNotEnoughMaterials"),
+        };
+        var service = Service(null, operations: operations);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("CancelJob", [new PyInt(52001), new PyInt(30000142)], callId: 46)).AsTask());
+
+        Assert.True(error.Error.IsUserError);
+        var cancelled = Assert.IsType<IndustryJobAction>(operations.Cancelled);
+        Assert.Equal((52001L, 30000142L), (cancelled.JobId, cancelled.SolarSystemId));
+    }
+
+    [Fact]
+    public void Lifecycle_rpc_methods_are_exposed()
     {
         var service = Service(null);
 
@@ -231,9 +344,10 @@ public sealed class IndustryJobsServiceTests
         Assert.True(service.HasMethod("GetJob"));
         Assert.True(service.HasMethod("GetJobsByOwner"));
         Assert.True(service.HasMethod("GetJobCounts"));
-        Assert.False(service.HasMethod("InstallJob"));
-        Assert.False(service.HasMethod("CompleteJob"));
-        Assert.False(service.HasMethod("CancelJob"));
+        Assert.True(service.HasMethod("InstallJob"));
+        Assert.True(service.HasMethod("CompleteJob"));
+        Assert.True(service.HasMethod("CompleteManyJobs"));
+        Assert.True(service.HasMethod("CancelJob"));
     }
 
     private static IndustryJobsService Service(
@@ -241,8 +355,9 @@ public sealed class IndustryJobsServiceTests
         long now = Now,
         Func<ServiceCall, JsonObject, bool>? canViewStarbaseJob = null,
         Func<long, bool>? isStarbaseFacilityOnline = null,
-        Func<long, long, long, long>? resolveBlueprintLocationFlagID = null) =>
-        new(_ => ValueTask.FromResult(table), () => now, canViewStarbaseJob, isStarbaseFacilityOnline, resolveBlueprintLocationFlagID);
+        Func<long, long, long, long>? resolveBlueprintLocationFlagID = null,
+        IIndustryJobOperations? operations = null) =>
+        new(_ => ValueTask.FromResult(table), operations ?? new RecordingIndustryJobOperations(), () => now, canViewStarbaseJob, isStarbaseFacilityOnline, resolveBlueprintLocationFlagID);
 
     private static JsonObject Table(params (long Id, JsonObject Record)[] records)
     {
@@ -304,16 +419,20 @@ public sealed class IndustryJobsServiceTests
         long characterId = 1001,
         long corporationId = 0,
         long corporationRole = 0,
+        int corporationAccountKey = 1000,
+        long callId = 77,
         CancellationToken cancellation = default)
     {
         var session = new ClientSession();
         session.Set("charid", new PyInt(characterId));
         session.Set("corpid", new PyInt(corporationId));
         session.Set("corprole", new PyLong(corporationRole));
+        session.Set("corpAccountKey", new PyInt(corporationAccountKey));
         return new ServiceCall
         {
             Method = method,
             Args = args ?? [],
+            CallId = new PyInt(callId),
             Session = session,
             Cancellation = cancellation,
         };
@@ -332,4 +451,42 @@ public sealed class IndustryJobsServiceTests
     private static string[] Fields(PyValue row) =>
         Assert.IsType<PyDict>(Assert.IsType<PyObject>(row).Args).Entries
             .Select(pair => Assert.IsType<PyStr>(pair.Key).Value).ToArray();
+
+private sealed class RecordingIndustryJobOperations : IIndustryJobOperations
+    {
+        public long InstallResult { get; init; } = 42050;
+        public Exception? NextError { get; init; }
+        public IndustryJobInstallRequest? InstallRequest { get; private set; }
+        public IndustryJobAction? Completed { get; private set; }
+        public IndustryJobBatch? CompletedBatch { get; private set; }
+        public IndustryJobAction? Cancelled { get; private set; }
+        public int CompleteManyCalls { get; private set; }
+
+        public ValueTask<long> InstallJobAsync(IndustryJobInstallRequest request, CancellationToken cancellationToken)
+        {
+            InstallRequest = request;
+            return NextError is { } error
+                ? ValueTask.FromException<long>(error)
+                : ValueTask.FromResult(InstallResult);
+        }
+
+        public ValueTask CompleteJobAsync(IndustryJobAction request, CancellationToken cancellationToken)
+        {
+            Completed = request;
+            return NextError is { } error ? ValueTask.FromException(error) : ValueTask.CompletedTask;
+        }
+
+        public ValueTask CompleteManyJobsAsync(IndustryJobBatch request, CancellationToken cancellationToken)
+        {
+            CompletedBatch = request;
+            CompleteManyCalls++;
+            return NextError is { } error ? ValueTask.FromException(error) : ValueTask.CompletedTask;
+        }
+
+        public ValueTask CancelJobAsync(IndustryJobAction request, CancellationToken cancellationToken)
+        {
+            Cancelled = request;
+            return NextError is { } error ? ValueTask.FromException(error) : ValueTask.CompletedTask;
+        }
+    }
 }

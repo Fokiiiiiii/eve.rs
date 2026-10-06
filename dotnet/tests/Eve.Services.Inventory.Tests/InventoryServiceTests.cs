@@ -36,7 +36,7 @@ internal sealed class Rig : IAsyncDisposable
     public const long Station = 60015249;
     public const long OtherStation = 60000610;
 
-    public const int Ibis = 601;
+    public const int Cockroach = 11019;
     public const int Tritanium = 34;
 
     public static readonly StationCatalog Stations = new([
@@ -138,7 +138,7 @@ public class InventoryWireTests
     [Fact]
     public void A_packed_row_survives_the_wire_and_the_client_can_work_out_the_stack_and_the_singleton()
     {
-        var ship = new ItemRow(1_990_000_001, 601, 140_000_001, 60015249, 4, -1, 237, 6);
+        var ship = new ItemRow(1_990_000_001, Rig.Cockroach, 140_000_001, 60015249, 4, -1, 25, 6);
         var stack = new ItemRow(1_990_000_002, 34, 140_000_001, 60015249, 4, 1000, 18, 4);
         foreach (var (item, stackSize, singleton) in new[] { (ship, 1L, 1L), (stack, 1000L, 0L) })
         {
@@ -175,12 +175,12 @@ public class InventoryWireTests
     [Fact]
     public void A_rowset_has_a_header_the_row_class_and_a_tuple_for_each_line()
     {
-        var rowset = (PyObject)InventoryWire.Rowset([new ItemRow(5, 601, 7, 9, 4, -1, 237, 6)]);
+        var rowset = (PyObject)InventoryWire.Rowset([new ItemRow(5, Rig.Cockroach, 7, 9, 4, -1, 25, 6)]);
         var parts = ((PyDict)rowset.Args).Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
         Assert.Equal(["header", "RowClass", "lines"], ((PyDict)rowset.Args).Entries.Select(e => JsSemantics.StringValue(e.Key)!));
         Assert.Equal(new PyToken("util.Row"), parts["RowClass"]);
         Assert.Equal(
-            new PyList([new PyTuple([new PyInt(5), new PyInt(601), new PyInt(7), new PyInt(9), new PyInt(4), new PyInt(-1), new PyInt(237), new PyInt(6), new PyStr(""), new PyInt(1), new PyInt(1)])]),
+            new PyList([new PyTuple([new PyInt(5), new PyInt(Rig.Cockroach), new PyInt(7), new PyInt(9), new PyInt(4), new PyInt(-1), new PyInt(25), new PyInt(6), new PyStr(""), new PyInt(1), new PyInt(1)])]),
             parts["lines"]);
     }
 
@@ -231,17 +231,17 @@ public class InvBrokerTests
     public async Task The_hangar_lists_the_characters_items_at_the_station_as_rows()
     {
         await using var rig = await Rig.CreateAsync();
-        var ship = await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.Station, singleton: true);
+        var ship = await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
         var tritanium = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.Station, quantity: 1000);
-        await rig.AddAsync(Rig.Ibis, 140_000_002, Rig.Station, singleton: true);      // another character's
-        await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.OtherStation, singleton: true); // in another station
+        await rig.AddAsync(Rig.Cockroach, 140_000_002, Rig.Station, singleton: true);      // another character's
+        await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.OtherStation, singleton: true); // in another station
         var session = Rig.Session();
         var hangar = await rig.HangarAsync(session);
 
         var rows = Rows(await rig.CallAsync(session, "List", hangar));
         Assert.Equal([ship, tritanium], rows.Select(r => ((PyLong)r.Values[0]).Value));
         Assert.Equal(
-            new PyValue[] { new PyLong(ship), new PyInt(601), new PyInt(Rig.Character), new PyLong(Rig.Station), new PyInt(4), new PyInt(-1), new PyInt(237), new PyInt(6), new PyStr("") },
+            new PyValue[] { new PyLong(ship), new PyInt(Rig.Cockroach), new PyInt(Rig.Character), new PyLong(Rig.Station), new PyInt(4), new PyInt(-1), new PyInt(25), new PyInt(6), new PyStr("") },
             Values(rows[0]));
         Assert.Equal(new PyInt(1000), rows[1].Values[5]);
         Assert.Equal((new PyInt(18), new PyInt(4)), (rows[1].Values[6], rows[1].Values[7])); // minerals: group 18 of category 4
@@ -251,7 +251,7 @@ public class InvBrokerTests
     public async Task A_flag_with_items_lists_a_flag_without_gives_an_empty_set_and_no_flag_means_all()
     {
         await using var rig = await Rig.CreateAsync();
-        await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.Station, singleton: true);
+        await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
         var session = Rig.Session();
         var hangar = await rig.HangarAsync(session);
 
@@ -281,7 +281,7 @@ public class InvBrokerTests
     public async Task Listing_by_flags_answers_a_list_even_when_nothing_is_there()
     {
         await using var rig = await Rig.CreateAsync();
-        await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.Station, singleton: true);
+        await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
         var session = Rig.Session();
         var hangar = await rig.HangarAsync(session);
         Assert.Single(Rows(await rig.CallAsync(session, "ListByFlags", hangar, new PyTuple([new PyInt(4), new PyInt(5)]))));
@@ -295,8 +295,8 @@ public class InvBrokerTests
     public async Task Items_can_be_fetched_by_id_from_the_inventory_they_are_in()
     {
         await using var rig = await Rig.CreateAsync();
-        var ship = await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.Station, singleton: true);
-        var other = await rig.AddAsync(Rig.Ibis, 140_000_002, Rig.Station, singleton: true);
+        var ship = await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
+        var other = await rig.AddAsync(Rig.Cockroach, 140_000_002, Rig.Station, singleton: true);
         var session = Rig.Session();
         var hangar = await rig.HangarAsync(session);
         var rows = Rows(await rig.CallAsync(session, "GetItems", hangar, new PyList([new PyLong(ship), new PyLong(other), new PyInt(1)])));
@@ -327,12 +327,12 @@ public class InvBrokerTests
     public async Task The_contents_come_as_a_rowset_of_the_same_rows()
     {
         await using var rig = await Rig.CreateAsync();
-        var ship = await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.Station, singleton: true);
+        var ship = await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
         var session = Rig.Session();
         var hangar = await rig.HangarAsync(session);
         var lines = (PyList)((PyDict)((PyObject)await rig.CallAsync(session, "GetContainerContents", hangar)).Args).Entries.Single(e => JsSemantics.StringValue(e.Key) == "lines").Value;
         Assert.Equal(
-            new PyTuple([new PyInt(ship), new PyInt(601), new PyInt(Rig.Character), new PyInt(Rig.Station), new PyInt(4), new PyInt(-1), new PyInt(237), new PyInt(6), new PyStr(""), new PyInt(1), new PyInt(1)]),
+            new PyTuple([new PyInt(ship), new PyInt(Rig.Cockroach), new PyInt(Rig.Character), new PyInt(Rig.Station), new PyInt(4), new PyInt(-1), new PyInt(25), new PyInt(6), new PyStr(""), new PyInt(1), new PyInt(1)]),
             Assert.Single(lines.Items));
     }
 
@@ -340,10 +340,10 @@ public class InvBrokerTests
     public async Task The_station_and_a_ship_of_the_character_can_be_opened_by_their_ids()
     {
         await using var rig = await Rig.CreateAsync();
-        var ship = await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.Station, singleton: true);
+        var ship = await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
         var cargo = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.Station, quantity: 5);
-        var foreign = await rig.AddAsync(Rig.Ibis, 140_000_002, Rig.Station, singleton: true);
-        var away = await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.OtherStation, singleton: true);
+        var foreign = await rig.AddAsync(Rig.Cockroach, 140_000_002, Rig.Station, singleton: true);
+        var away = await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.OtherStation, singleton: true);
         var session = Rig.Session();
 
         var station = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyInt(Rig.Station)));
@@ -362,7 +362,7 @@ public class InvBrokerTests
     public async Task An_empty_ship_lists_nothing_and_is_its_own_item()
     {
         await using var rig = await Rig.CreateAsync();
-        var ship = await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.Station, singleton: true);
+        var ship = await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
         var session = Rig.Session();
         var inventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
 
@@ -374,7 +374,7 @@ public class InvBrokerTests
         Assert.Equal(new PyList([]), lines);
 
         var self = (PyTuple)((PyDict)((PyObject)await rig.CallAsync(session, "GetItem", inventory)).Args).Entries[1].Value;
-        Assert.Equal((new PyInt(ship), new PyInt(601), new PyInt(Rig.Character), new PyInt(Rig.Station), new PyInt(4), new PyInt(-1)), (self.Items[0], self.Items[1], self.Items[2], self.Items[3], self.Items[4], self.Items[5]));
+        Assert.Equal((new PyInt(ship), new PyInt(Rig.Cockroach), new PyInt(Rig.Character), new PyInt(Rig.Station), new PyInt(4), new PyInt(-1)), (self.Items[0], self.Items[1], self.Items[2], self.Items[3], self.Items[4], self.Items[5]));
         Assert.Equal(new PyInt(ship), (await rig.CallAsync(session, "GetSelfInvItem", inventory) is PyPackedRow row ? row.Values[0] : null) is PyLong l ? new PyInt(l.Value) : null);
     }
 
@@ -382,8 +382,8 @@ public class InvBrokerTests
     public async Task A_ship_lists_what_is_fitted_to_it_and_what_it_carries_but_not_the_hangar_or_another_ships()
     {
         await using var rig = await Rig.CreateAsync();
-        var ship = await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.Station, singleton: true);
-        var other = await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.Station, singleton: true);
+        var ship = await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
+        var other = await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
         var afterburner = await rig.AddAsync(21857, Rig.Character, ship, flag: 19, singleton: true);
         var weapon = await rig.AddAsync(3638, Rig.Character, ship, flag: 27, singleton: true);
         var cargo = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, flag: 5, quantity: 40);
@@ -411,7 +411,7 @@ public class InvBrokerTests
     public async Task StackAll_joins_what_can_be_joined_and_answers_nothing_when_there_is_nothing()
     {
         await using var rig = await Rig.CreateAsync();
-        var ship = await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.Station, singleton: true);
+        var ship = await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
         var first = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, flag: 5, quantity: 100);
         var second = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, flag: 5, quantity: 15);
         var session = Rig.Session();
@@ -430,7 +430,7 @@ public class InvBrokerTests
     public async Task A_bound_inventory_answers_only_the_session_that_opened_it_and_only_until_it_is_released()
     {
         await using var rig = await Rig.CreateAsync();
-        await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.Station, singleton: true);
+        await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
         var mine = Rig.Session(id: 1);
         var theirs = Rig.Session(id: 2);
         var hangar = await rig.HangarAsync(mine);
@@ -448,7 +448,7 @@ public class InvBrokerTests
     public async Task A_bound_inventory_is_forgotten_when_the_connection_that_opened_it_ends()
     {
         await using var rig = await Rig.CreateAsync();
-        await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.Station, singleton: true);
+        await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
         var session = Rig.Session();
         var hangar = await rig.HangarAsync(session);
         Assert.NotEqual(PyNone.Instance, await rig.CallAsync(session, "List", hangar));
@@ -460,7 +460,7 @@ public class InvBrokerTests
     public async Task Binding_by_the_inventorys_own_name_opens_it_and_makes_the_nested_call()
     {
         await using var rig = await Rig.CreateAsync();
-        await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.Station, singleton: true);
+        await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
         var session = Rig.Session();
         Assert.Equal(new PyInt(MachoMessage.ProxyNodeId), await rig.CallAsync(session, "MachoResolveObject", null, new PyInt(Rig.Station), new PyInt(0)));
 
@@ -478,7 +478,7 @@ public class InvBrokerTests
     public async Task Undocked_or_without_a_character_nothing_is_in_the_hangar()
     {
         await using var rig = await Rig.CreateAsync();
-        await rig.AddAsync(Rig.Ibis, Rig.Character, Rig.Station, singleton: true);
+        await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
         var docked = Rig.Session();
         var hangar = await rig.HangarAsync(docked);
         docked.Set("stationid", PyNone.Instance);
@@ -507,14 +507,20 @@ public class InvBrokerTests
             Assert.NotNull(await sde.BuildAsync());
             CharacterNames.EnsureUnicodeSupport();
             var statics = await DogmaStatic.LoadAsync(sde);
+            await statics.EnsureTypesAsync([Rig.Cockroach, 21857, 3636, 2454]);
+            var catalog = await CreationCatalog.LoadAsync(sde, Rig.Station);
+            var cockroachCatalog = new CreationCatalog(
+                catalog.Races.Select(r => r.Id == 1 ? r with { ShipTypeId = Rig.Cockroach, ShipName = "Cockroach" } : r),
+                catalog.Bloodlines,
+                CreationCatalog.Schools.Select(s => catalog.StarterFor(s.CorporationId)!));
             var creation = new CharacterCreation(
                 rig.Source, characters, rig.Items, skills, await SkillCatalog.LoadAsync(sde), wallets,
-                new StartingWallet(), await CreationCatalog.LoadAsync(sde, Rig.Station), modules);
+                new StartingWallet(), cockroachCatalog, modules);
             var created = Assert.IsType<Created>(await creation.CreateAsync(
-                new CreationRequest(1, "Drone Bay RPC Tester", 1, 1, 1, 10, 35, [1], [2])));
+                new CreationRequest(1, "Drone Bay Tester", 1, 1, 1, 10, 35, [1], [2])));
             var ships = new CharacterShips(rig.Source, statics, characters, rig.Items, skills, modules);
             var service = new InvBrokerService(rig.Items, new ItemTypeCatalog(sde), Rig.Stations, ships, statics, () => Rig.ClockMs);
-            var drones = await rig.AddAsync(2454, created.CharacterId, Rig.Station, quantity: 2);
+            var drones = await rig.AddAsync(2454, created.CharacterId, Rig.Station, quantity: 100_001);
             var tritanium = await rig.AddAsync(Rig.Tritanium, created.CharacterId, Rig.Station);
             var session = Rig.Session(character: created.CharacterId);
 
@@ -543,7 +549,7 @@ public class InvBrokerTests
             var hangar = Rig.OidOf(await Call(null, "GetInventory", [new PyInt(InvBrokerService.ContainerHangar)]));
             var empty = Assert.IsType<PyObject>(await Call(shipInventory, "GetCapacity", [new PyInt(CharacterShips.DroneBayFlag)]));
             var emptyRoom = Assert.IsType<PyDict>(empty.Args);
-            Assert.Equal(Py.Number(5), emptyRoom.Entries.Single(e => e.Key == new PyStr("capacity")).Value);
+            Assert.Equal(Py.Number(500_000), emptyRoom.Entries.Single(e => e.Key == new PyStr("capacity")).Value);
             Assert.Equal(Py.Number(0), emptyRoom.Entries.Single(e => e.Key == new PyStr("used")).Value);
 
             var wrongLocation = await Call(shipInventory, "Add", [new PyLong(drones), new PyLong(Rig.OtherStation)],
@@ -566,13 +572,13 @@ public class InvBrokerTests
             Assert.Equal(PyNone.Instance, undocked);
 
             await Call(shipInventory, "Add", [new PyLong(drones), new PyLong(Rig.Station)],
-                ("flag", new PyInt(CharacterShips.DroneBayFlag)), ("qty", new PyInt(1)));
+                ("flag", new PyInt(CharacterShips.DroneBayFlag)), ("qty", new PyInt(100_000)));
             var bayDrone = (await rig.Items.InLocationAsync(created.ShipId, created.CharacterId))
                 .Single(item => item.Flag == CharacterShips.DroneBayFlag);
             var full = Assert.IsType<PyObject>(await Call(shipInventory, "GetCapacity", [new PyInt(CharacterShips.DroneBayFlag)]));
             var fullRoom = Assert.IsType<PyDict>(full.Args);
-            Assert.Equal(Py.Number(5), fullRoom.Entries.Single(e => e.Key == new PyStr("capacity")).Value);
-            Assert.Equal(Py.Number(5), fullRoom.Entries.Single(e => e.Key == new PyStr("used")).Value);
+            Assert.Equal(Py.Number(500_000), fullRoom.Entries.Single(e => e.Key == new PyStr("capacity")).Value);
+            Assert.Equal(Py.Number(500_000), fullRoom.Entries.Single(e => e.Key == new PyStr("used")).Value);
             await Assert.ThrowsAsync<MachoWrappedException>(async () =>
                 await Call(shipInventory, "Add", [new PyLong(drones), new PyLong(Rig.Station)],
                     ("flag", new PyInt(CharacterShips.DroneBayFlag))));
@@ -704,11 +710,27 @@ public class InvBrokerTests
             Assert.NotNull(await sde.BuildAsync());
             CharacterNames.EnsureUnicodeSupport();
             var statics = await DogmaStatic.LoadAsync(sde);
+            await statics.EnsureTypesAsync([Rig.Cockroach, 21857, 3636, 2454]);
+            var catalog = await CreationCatalog.LoadAsync(sde, Rig.Station);
+            var turretCatalog = new CreationCatalog(
+                catalog.Races.Select(r => r.Id == 2 ? r with { ShipTypeId = Rig.Cockroach, ShipName = "Cockroach" } : r),
+                catalog.Bloodlines,
+                CreationCatalog.Schools.Select(s => catalog.StarterFor(s.CorporationId)!));
             var creation = new CharacterCreation(
                 rig.Source, characters, rig.Items, skills, await SkillCatalog.LoadAsync(sde), wallets,
-                new StartingWallet(), await CreationCatalog.LoadAsync(sde, Rig.Station), modules);
+                new StartingWallet(), turretCatalog, modules);
             var created = Assert.IsType<Created>(await creation.CreateAsync(
                 new CreationRequest(1, "Turret RPC Tester", 2, 3, 1, 10, 33, [1], [2])));
+            await using (var connection = await rig.Source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                foreach (var (typeId, flag) in new[] { (21857, 19), (3636, 27) })
+                {
+                    var itemId = await rig.Items.CreateAsync(connection, transaction, new NewItem(typeId, created.CharacterId, created.ShipId, flag, 1, true));
+                    await modules.SetAsync(connection, transaction, itemId, Eve.Dogma.ItemState.Online);
+                }
+                await transaction.CommitAsync();
+            }
             var ships = new CharacterShips(rig.Source, statics, characters, rig.Items, skills, modules);
             var service = new InvBrokerService(
                 rig.Items, new ItemTypeCatalog(sde), Rig.Stations, ships, statics, () => 1);

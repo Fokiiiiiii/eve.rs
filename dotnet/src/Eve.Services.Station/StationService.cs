@@ -10,7 +10,7 @@ namespace Eve.Services.Station;
 /// is docked here, and the solar system it is in.
 /// </summary>
 [Service("stationSvc", Aliases = ["station"])]
-public sealed partial class StationService(StationCatalog stations, PgCharacterStore characters, OnlineCharacters online, Func<long> nowUnixMs)
+public sealed partial class StationService(StationCatalog stations, PgCharacterStore characters, OnlineCharacters online, Func<long> nowUnixMs, Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null, Eve.Services.Corporations.OfficeManagerService? officeManager = null)
 {
     /// <summary>The station services (repair, reprocessing, market, ...) every NPC station offers, as the client's bit mask.</summary>
     public const long AllServicesMask = 1_143_312;
@@ -114,10 +114,57 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
 
     /// <summary>No alliance holds a system until sovereignty exists.</summary>
     [Method("GetAllianceSystems")]
-    public PyValue GetAllianceSystems(ServiceCall call) => new PyList([]);
+    public async ValueTask<PyValue> GetAllianceSystems(ServiceCall call)
+    {
+        var allianceId = call.Session.GetInt("allianceid") ?? 0;
+        if (allianceId <= 0 || sovereigntySystemsForAlliance is null)
+            return new PyList([]);
+        var systems = await sovereigntySystemsForAlliance(allianceId, call.Cancellation);
+        return new PyList([.. systems.Select(systemId => (PyValue)new PyInt(systemId))]);
+    }
 
     [Method("GetSystemsForAlliance")]
-    public PyValue GetSystemsForAlliance(ServiceCall call) => new PyList([]);
+    public async ValueTask<PyValue> GetSystemsForAlliance(ServiceCall call)
+    {
+        var allianceId = IdOf(call.Arg(0)) ?? 0;
+        if (allianceId <= 0 || sovereigntySystemsForAlliance is null)
+            return new PyList([]);
+        var systems = await sovereigntySystemsForAlliance(allianceId, call.Cancellation);
+        return new PyList([.. systems.Select(systemId => (PyValue)new PyInt(systemId))]);
+    }
+
+
+    private Eve.Services.Corporations.OfficeManagerService RequireOfficeManager() =>
+        officeManager ?? throw new InvalidOperationException(
+            "StationService requires the shared OfficeManagerService for office station-moniker calls.");
+
+    [Method("GetCorporationsWithOffices")]
+    public ValueTask<PyValue> GetCorporationsWithOffices(ServiceCall call) =>
+        RequireOfficeManager().GetCorporationsWithOffices(call);
+
+    [Method("GetEmptyOfficeCount")]
+    public ValueTask<PyValue> GetEmptyOfficeCount(ServiceCall call) =>
+        RequireOfficeManager().GetEmptyOfficeCount(call);
+
+    [Method("HasCorpImpoundedItems")]
+    public ValueTask<PyValue> HasCorpImpoundedItems(ServiceCall call) =>
+        RequireOfficeManager().HasCorpImpoundedItems(call);
+
+    [Method("GetImpoundReleasePrice")]
+    public ValueTask<PyValue> GetImpoundReleasePrice(ServiceCall call) =>
+        RequireOfficeManager().GetImpoundReleasePrice(call);
+
+    [Method("TrashImpoundedOffice")]
+    public ValueTask<PyValue> TrashImpoundedOffice(ServiceCall call) =>
+        RequireOfficeManager().TrashImpoundedOffice(call);
+
+    [Method("PrimeOfficeItem")]
+    public ValueTask<PyValue> PrimeOfficeItem(ServiceCall call) =>
+        RequireOfficeManager().PrimeOfficeItem(call);
+
+    [Method("UnrentOffice")]
+    public ValueTask<PyValue> UnrentOffice(ServiceCall call) =>
+        RequireOfficeManager().UnrentOffice(call);
 }
 
 [Service("map")]

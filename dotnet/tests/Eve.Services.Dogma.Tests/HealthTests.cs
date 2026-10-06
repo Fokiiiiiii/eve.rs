@@ -37,7 +37,7 @@ public class HealthTests
     private static async Task<(Rig Rig, Created Character, ClientSession Session, string Oid, long ShipId, long[] Modules)> DockedAsync()
     {
         var rig = await Rig.CreateAsync();
-        var character = await rig.NewCharacterAsync();
+        var character = await rig.NewCharacterAsync(shipTypeId: Rig.Ibis);
         var session = Rig.Session(character.CharacterId);
         var oid = await rig.BindAsync(session);
         var snapshot = (await rig.Ships.LoadAsync(character.CharacterId))!;

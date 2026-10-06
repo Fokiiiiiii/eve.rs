@@ -19,8 +19,11 @@ public sealed class DogmaStatic
     private readonly Dictionary<int, EffectDef> _effects;
     private readonly Dictionary<int, int> _categoryOfGroup;
     private readonly Dictionary<int, string> _groupNames;
+    private readonly Dictionary<int, string> _categoryNames;
+    private readonly Dictionary<int, string> _factionNames;
+    private readonly Dictionary<string, int> _attributeIdsByName;
 
-    public DogmaStatic(IEnumerable<AttributeDef> attributes, IEnumerable<EffectDef> effects, IEnumerable<TypeDef> types, SdeReader? sde = null, IReadOnlyDictionary<int, int>? categoryOfGroup = null, IReadOnlyDictionary<int, string>? groupNames = null)
+    public DogmaStatic(IEnumerable<AttributeDef> attributes, IEnumerable<EffectDef> effects, IEnumerable<TypeDef> types, SdeReader? sde = null, IReadOnlyDictionary<int, int>? categoryOfGroup = null, IReadOnlyDictionary<int, string>? groupNames = null, IReadOnlyDictionary<int, string>? categoryNames = null, IReadOnlyDictionary<int, string>? factionNames = null)
     {
         _attributes = attributes.ToDictionary(a => a.Id);
         _effects = effects.ToDictionary(e => e.Id);
@@ -31,6 +34,12 @@ public sealed class DogmaStatic
         _sde = sde;
         _categoryOfGroup = categoryOfGroup is null ? [] : new Dictionary<int, int>(categoryOfGroup);
         _groupNames = groupNames is null ? [] : new Dictionary<int, string>(groupNames);
+        _categoryNames = categoryNames is null ? [] : new Dictionary<int, string>(categoryNames);
+        _factionNames = factionNames is null ? [] : new Dictionary<int, string>(factionNames);
+        _attributeIdsByName = _attributes.Values
+            .Where(a => a.Name.Length > 0)
+            .GroupBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.OrdinalIgnoreCase);
     }
 
     public AttributeDef? Attribute(int id) => _attributes.GetValueOrDefault(id);
@@ -41,6 +50,20 @@ public sealed class DogmaStatic
 
     /// <summary>The English name of a group (an empty string when the data has none).</summary>
     public string GroupName(int groupId) => _groupNames.GetValueOrDefault(groupId, "");
+
+    /// <summary>The SDE category name for a group category identifier.</summary>
+    public string CategoryName(int categoryId) => _categoryNames.GetValueOrDefault(categoryId, "");
+
+    public string FactionName(int factionId) => _factionNames.GetValueOrDefault(factionId, "");
+
+    /// <summary>The SDE identifier for a category name.</summary>
+    public int? CategoryId(string name) => _categoryNames
+        .Where(pair => pair.Value.Equals(name, StringComparison.OrdinalIgnoreCase))
+        .Select(pair => (int?)pair.Key)
+        .FirstOrDefault();
+
+    /// <summary>The SDE identifier for a dogma attribute name.</summary>
+    public int? AttributeId(string name) => _attributeIdsByName.TryGetValue(name, out var id) ? id : null;
 
     public int AttributeCount => _attributes.Count;
 
@@ -94,6 +117,59 @@ public sealed class DogmaStatic
             var graphic = row.Doc.TryGetProperty("graphicID", out var graphicId) && graphicId.ValueKind == JsonValueKind.Number ? graphicId.GetInt32() : 0;
             _types[(int)row.Key] = new TypeDef((int)row.Key, group, _categoryOfGroup.GetValueOrDefault(group), attributes, effects, name, graphic);
         }
+    }
+
+    /// <summary>Published SDE types in the named groups, with their dogma loaded.</summary>
+    public async Task<IReadOnlyList<TypeDef>> TypesInGroupsAsync(IEnumerable<string> groupNames, CancellationToken cancellationToken = default)
+    {
+        if (_sde is null)
+        {
+            return [];
+        }
+        var names = groupNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (names.Count == 0)
+        {
+            return [];
+        }
+        var groups = (await _sde.ReadAsync("groups", cancellationToken: cancellationToken))
+            .Where(row => row.Doc.TryGetProperty("name", out var n)
+                && names.Contains(SdeReader.English(n))
+                && row.Doc.TryGetProperty("published", out var published)
+                && published.ValueKind == JsonValueKind.True)
+            .Select(row => row.Key)
+            .ToArray();
+        if (groups.Length == 0)
+        {
+            return [];
+        }
+        var types = (await _sde.ReadByFieldAsync("types", "groupID", groups, cancellationToken))
+            .Where(row => !row.Doc.TryGetProperty("published", out var published)
+                || published.ValueKind != JsonValueKind.False)
+            .Select(row => (int)row.Key)
+            .ToArray();
+        await EnsureTypesAsync(types, cancellationToken);
+        return types.Select(Type).OfType<TypeDef>().ToArray();
+    }
+
+    /// <summary>Published SDE types in a named category, with dogma loaded.</summary>
+    public async Task<IReadOnlyList<TypeDef>> TypesInCategoryAsync(string categoryName, CancellationToken cancellationToken = default)
+    {
+        if (_sde is null || CategoryId(categoryName) is not { } categoryId)
+        {
+            return [];
+        }
+        var groups = _categoryOfGroup.Where(pair => pair.Value == categoryId).Select(pair => (long)pair.Key).ToArray();
+        if (groups.Length == 0)
+        {
+            return [];
+        }
+        var types = (await _sde.ReadByFieldAsync("types", "groupID", groups, cancellationToken))
+            .Where(row => !row.Doc.TryGetProperty("published", out var published)
+                || published.ValueKind != JsonValueKind.False)
+            .Select(row => (int)row.Key)
+            .ToArray();
+        await EnsureTypesAsync(types, cancellationToken);
+        return types.Select(Type).OfType<TypeDef>().ToArray();
     }
 
     public static async Task<DogmaStatic> LoadAsync(SdeReader sde, CancellationToken cancellationToken = default)
@@ -151,12 +227,17 @@ public sealed class DogmaStatic
                 Guid = row.Doc.TryGetProperty("guid", out var guid) && guid.ValueKind == JsonValueKind.String ? guid.GetString() ?? "" : "",
                 DurationAttributeId = row.Doc.TryGetProperty("durationAttributeID", out var duration) && duration.ValueKind == JsonValueKind.Number ? duration.GetInt32() : 0,
                 DischargeAttributeId = row.Doc.TryGetProperty("dischargeAttributeID", out var discharge) && discharge.ValueKind == JsonValueKind.Number ? discharge.GetInt32() : 0,
+                ChanceAttributeId = row.Doc.TryGetProperty("chanceAttributeID", out var chance) && chance.ValueKind == JsonValueKind.Number ? chance.GetInt32() : 0,
             };
         }).ToList();
 
         var groupRows = await sde.ReadAsync("groups", cancellationToken: cancellationToken);
         var groups = groupRows.ToDictionary(g => (int)g.Key, g => g.Doc.GetProperty("categoryID").GetInt32());
         var groupNames = groupRows.ToDictionary(g => (int)g.Key, g => g.Doc.TryGetProperty("name", out var n) ? SdeReader.English(n) : "");
-        return new DogmaStatic(attributes, BuiltInEffects.Merge(effects), [], sde, groups, groupNames);
+        var categoryNames = (await sde.ReadAsync("categories", cancellationToken: cancellationToken))
+            .ToDictionary(c => (int)c.Key, c => c.Doc.TryGetProperty("name", out var n) ? SdeReader.English(n) : "");
+        var factionNames = (await sde.ReadAsync("factions", cancellationToken: cancellationToken))
+            .ToDictionary(f => (int)f.Key, f => f.Doc.TryGetProperty("name", out var n) ? SdeReader.English(n) : "");
+        return new DogmaStatic(attributes, BuiltInEffects.Merge(effects), [], sde, groups, groupNames, categoryNames, factionNames);
     }
 }

@@ -356,15 +356,25 @@ public sealed class RelationStore
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var command = Sql.Command(connection, null, Q("""
-            SELECT id, kind, subject, object, old_value, new_value, reason, at_ms FROM {schema}.relation_history
+            SELECT id, kind, subject, object, old_value, new_value, reason, at_ms, attrs FROM {schema}.relation_history
             WHERE kind = $1 AND subject = $2 AND ($3::bigint IS NULL OR object = $3) ORDER BY id DESC LIMIT $4
             """), kind, subject, obj, limit);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var list = new List<RelationHistoryEntry>();
         while (await reader.ReadAsync(cancellationToken))
         {
+            JsonElement? attrs = null;
+            if (!reader.IsDBNull(8))
+            {
+                using var document = JsonDocument.Parse(reader.GetString(8));
+                attrs = document.RootElement.Clone();
+            }
             list.Add(new RelationHistoryEntry(reader.GetInt64(0), reader.GetString(1), reader.GetInt64(2), reader.GetInt64(3),
-                reader.IsDBNull(4) ? null : reader.GetDouble(4), reader.IsDBNull(5) ? null : reader.GetDouble(5), reader.IsDBNull(6) ? null : reader.GetString(6), reader.GetInt64(7)));
+                reader.IsDBNull(4) ? null : reader.GetDouble(4), reader.IsDBNull(5) ? null : reader.GetDouble(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6), reader.GetInt64(7))
+            {
+                Attrs = attrs,
+            });
         }
         return list;
     }

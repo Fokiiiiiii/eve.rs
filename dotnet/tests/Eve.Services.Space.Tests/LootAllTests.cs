@@ -98,11 +98,14 @@ public class LootAllTests
     public async Task What_does_not_fit_together_is_refused_whole_with_the_room_that_is_left_and_the_room_it_takes_and_nothing_moves()
     {
         await using var rig = await Rig.CreateAsync();
-        // 11,000 tritanium (110 m3) and 1,400 pyerite (14 m3) fit the hold of 125 together only when nothing else is in it: put 20 m3 of something else in first
+        await rig.Statics.EnsureTypesAsync([Rig.Cockroach]);
+        var capacity = rig.Statics.Type(Rig.Cockroach)!.Attributes[38];
+        // The batch takes 124 m3; leave only 105 m3 free in the Cockroach hold.
         var f = await WithACanAsync(rig, tritanium: 11_000, pyerite: 1_400);
         await using var connection = await rig.Source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
-        var filler = await rig.Items.CreateAsync(connection, transaction, new NewItem(Tritanium, f.Character.CharacterId, f.Character.ShipId, Eve.Ships.CharacterShips.CargoFlag, 2_000));
+        var fillerQuantity = checked((long)Math.Round((capacity - 105) / 0.01));
+        var filler = await rig.Items.CreateAsync(connection, transaction, new NewItem(Tritanium, f.Character.CharacterId, f.Character.ShipId, Eve.Ships.CharacterShips.CargoFlag, fillerQuantity));
         await transaction.CommitAsync();
         Events.Of(f.Session);
         var heard = rig.Sim.Heard.Count;
@@ -111,7 +114,6 @@ public class LootAllTests
 
         var (name, values) = UserError(refused);
         Assert.Equal("NotEnoughCargoSpace", name);
-        // 125 - 20 = 105 left; the batch takes 110 + 14 = 124
         Assert.Equal((105L, 124L), (Events.Number(values["available"]), Events.Number(values["volume"])));
         Assert.Equal(f.Can, (await rig.Items.GetAsync(f.First))!.LocationId);
         Assert.Equal(f.Can, (await rig.Items.GetAsync(f.Second))!.LocationId);

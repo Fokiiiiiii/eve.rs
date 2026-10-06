@@ -4,6 +4,8 @@ namespace Eve.Services.Core.Tests;
 /// <summary>The catalog of the core services.</summary>
 
 /// <summary>Wire contracts for the legacy client's lookupSvc owner searches.</summary>
+using Eve.Marshal;
+
 public sealed class LookupSvcTests
 {
     [Fact]
@@ -196,6 +198,327 @@ public sealed class LookupSvcTests
         public ValueTask<IReadOnlyList<LookupCorporation>> CorporationsAsync(CancellationToken cancellationToken) => ValueTask.FromResult(Corporations);
         public ValueTask<IReadOnlyList<LookupAlliance>> AlliancesAsync(CancellationToken cancellationToken) => ValueTask.FromResult(Alliances);
         public ValueTask<IReadOnlyList<LookupFaction>> FactionsAsync(CancellationToken cancellationToken) => ValueTask.FromResult(Factions);
+    }
+}
+
+public sealed class SkyhookResourceServiceTests
+{
+
+[Fact]
+    public async Task Reads_reject_non_skyhook_static_structure_types()
+    {
+        var staticStructure = Site() with { TypeId = 35832 };
+        var service = Create(
+            (_, _) => ValueTask.FromResult<SkyhookResourceSnapshot?>(staticStructure),
+            (_, _) => ValueTask.FromResult<IReadOnlyList<SkyhookResourceSnapshot>>([]),
+            (_, _, _, _) => ValueTask.FromResult(true),
+            (_, _, _, _) => ValueTask.FromResult<SkyhookResourceSnapshot?>(null));
+
+        var result = await service.GetSkyhookAsync(Call(7), staticStructure.SkyhookId);
+
+        Assert.Equal(SkyhookResourceResultCode.NotFound, result.Code);
+    }
+
+    [Fact]
+    public async Task Activation_and_deactivation_require_owner_role_and_persist_state()
+    {
+        var stored = Site(active: false);
+        var mayManage = false;
+        var writes = 0;
+        var service = Create(
+            (_, _) => ValueTask.FromResult<SkyhookResourceSnapshot?>(stored),
+            (_, _) => ValueTask.FromResult<IReadOnlyList<SkyhookResourceSnapshot>>([stored]),
+            (_, _, permission, _) => ValueTask.FromResult(
+                permission == SkyhookResourcePermission.Read || mayManage),
+            (_, _, active, _) =>
+            {
+                writes++;
+                stored = stored with { ProductionActive = active };
+                return ValueTask.FromResult<SkyhookResourceSnapshot?>(stored);
+            });
+
+        var foreignCorporation = await service.ActivateAsync(Call(8), stored.SkyhookId);
+        Assert.Equal(SkyhookResourceResultCode.Forbidden, foreignCorporation.Code);
+        Assert.Equal(0, writes);
+
+        var ownerWithoutRole = await service.ActivateAsync(Call(7), stored.SkyhookId);
+        Assert.Equal(SkyhookResourceResultCode.Forbidden, ownerWithoutRole.Code);
+        Assert.Equal(0, writes);
+
+        mayManage = true;
+        var activated = await service.ActivateAsync(Call(7), stored.SkyhookId);
+        Assert.Equal(SkyhookResourceResultCode.Ok, activated.Code);
+        Assert.True(activated.Value!.ProductionActive);
+
+        var deactivated = await service.DeactivateAsync(Call(7), stored.SkyhookId);
+        Assert.Equal(SkyhookResourceResultCode.Ok, deactivated.Code);
+        Assert.False(deactivated.Value!.ProductionActive);
+        Assert.Equal(2, writes);
+    }
+
+    [Fact]
+    public async Task Current_reagent_read_uses_authoritative_stock_without_inventing_flat_yield()
+    {
+        var site = Site(
+            vulnerability: new SkyhookTheftVulnerability(true, 1030, 1090),
+            reagents:
+            [
+                new SkyhookReagentResource(
+                    TypeId: 81100,
+                    SecureStock: 0,
+                    InsecureStock: 95),
+            ]);
+        var service = Create(
+            (_, _) => ValueTask.FromResult<SkyhookResourceSnapshot?>(site),
+            (_, _) => ValueTask.FromResult<IReadOnlyList<SkyhookResourceSnapshot>>([]),
+            (_, resource, permission, _) =>
+            {
+                if (permission == SkyhookResourcePermission.Read)
+                    Assert.Equal(site.TheftVulnerability, resource.TheftVulnerability);
+                return ValueTask.FromResult(true);
+            },
+            (_, _, _, _) => ValueTask.FromResult<SkyhookResourceSnapshot?>(null));
+
+        var current = await service.GetReagentsInSkyhookNowAsync(Call(7), site.SkyhookId);
+
+        Assert.Equal(SkyhookResourceResultCode.Ok, current.Code);
+        Assert.Equal(new SkyhookReagentAmounts(0, 95), current.Value);
+    }
+
+    [Fact]
+    public async Task Corporation_listing_filters_to_rows_owned_by_the_requesting_corporation()
+    {
+        var owned = Site(id: 9001, corporationId: 7);
+        var otherCorporation = Site(id: 9002, corporationId: 8);
+        var service = Create(
+            (_, _) => ValueTask.FromResult<SkyhookResourceSnapshot?>(null),
+            (_, _) => ValueTask.FromResult<IReadOnlyList<SkyhookResourceSnapshot>>([otherCorporation, owned]),
+            (_, _, _, _) => ValueTask.FromResult(true),
+            (_, _, _, _) => ValueTask.FromResult<SkyhookResourceSnapshot?>(null));
+
+        var result = await service.GetAllByCorporationAsync(Call(7), 7);
+
+        Assert.Equal(SkyhookResourceResultCode.Ok, result.Code);
+        Assert.Equal(owned, Assert.Single(result.Value!));
+    }
+
+    [Fact]
+    public async Task Workforce_read_distinguishes_known_empty_workforce_from_missing_skyhook()
+    {
+        var site = Site(workforce: null);
+        var service = Create(
+            (_, _) => ValueTask.FromResult<SkyhookResourceSnapshot?>(site),
+            (_, _) => ValueTask.FromResult<IReadOnlyList<SkyhookResourceSnapshot>>([]),
+            (_, _, _, _) => ValueTask.FromResult(true),
+            (_, _, _, _) => ValueTask.FromResult<SkyhookResourceSnapshot?>(null));
+
+        var result = await service.GetCurrentWorkforceForSkyhookAsync(Call(7), site.SkyhookId);
+
+        Assert.Equal(SkyhookResourceResultCode.Ok, result.Code);
+        Assert.Null(result.Value!.Amount);
+    }
+
+    private static SkyhookResourceService Create(
+        Func<long, CancellationToken, ValueTask<SkyhookResourceSnapshot?>> read,
+        Func<long, CancellationToken, ValueTask<IReadOnlyList<SkyhookResourceSnapshot>>> readByCorporation,
+        Func<ServiceCall, SkyhookResourceSnapshot, SkyhookResourcePermission, CancellationToken, ValueTask<bool>> authorize,
+        Func<ServiceCall, SkyhookResourceSnapshot, bool, CancellationToken, ValueTask<SkyhookResourceSnapshot?>> persist) =>
+        new(read, readByCorporation, authorize, persist);
+
+    private static ServiceCall Call(long corporationId)
+    {
+        var session = new ClientSession { CharacterId = 7001 };
+        session.Set("corpid", new Eve.Marshal.PyInt(corporationId));
+        return new ServiceCall
+        {
+            Method = "SkyhookResourceTest",
+            Args = [],
+            Session = session,
+        };
+    }
+
+    private static SkyhookResourceSnapshot Site(
+        long id = 9001,
+        long corporationId = 7,
+        bool active = true,
+        long? workforce = 250,
+        IReadOnlyList<SkyhookReagentResource>? reagents = null,
+        SkyhookTheftVulnerability? vulnerability = null) =>
+        new(
+            SkyhookId: id,
+            TypeId: 81080,
+            SolarSystemId: 30000142,
+            PlanetId: 4000001,
+            CorporationId: corporationId,
+            AllianceId: 9900001,
+            ProductionActive: active,
+            Workforce: workforce,
+            ResourceVersion: "1.0.0",
+            Reagents: reagents ?? [],
+            TheftVulnerability: vulnerability);
+}
+
+public sealed class SkyhookResourceMgrProtocolTests
+{
+    [Fact]
+    public async Task Corporation_skyhook_rpc_uses_session_corporation_and_returns_client_keyvals()
+    {
+        var skyhook = Site() with { State = 213 };
+        var other = skyhook with
+        {
+            SkyhookId = 9000,
+            PlanetId = 4000002,
+            State = null,
+            AllianceId = null,
+        };
+        long requestedCorporation = 0;
+        var service = CreateService(
+            (_, _, _, _) => ValueTask.FromResult(true),
+            (corporationId, _) =>
+            {
+                requestedCorporation = corporationId;
+                return ValueTask.FromResult<IReadOnlyList<SkyhookResourceSnapshot>>([other, skyhook]);
+            },
+            skyhook);
+
+        Assert.Equal("colonyResourcesMgr", service.Name);
+        Assert.True(service.HasMethod("GetMyCorporationSkyhooks"));
+        foreach (var localOnly in new[]
+        {
+            "GetSkyhook",
+            "GetCurrentWorkforceForSkyhook",
+            "GetTheftVulnerabilityForSkyhook",
+            "IsProductionActiveAtSkyhook",
+            "ActivateSkyhook",
+            "DeactivateSkyhook",
+            "GetReagentsInSkyhookNow",
+        })
+            Assert.False(service.HasMethod(localOnly), localOnly);
+
+        var result = Assert.IsType<PyList>(
+            await service.CallAsync(Call("GetMyCorporationSkyhooks", 7, corporationKey: "corporationID")));
+
+        Assert.Equal(7L, requestedCorporation);
+        Assert.Equal(2, result.Items.Count);
+        var row = result.Items[0];
+        Assert.Equal(
+            ["skyhookID", "itemID", "solarSystemID", "planetID", "typeID", "state",
+                "corporationID", "ownerCorpID", "allianceID"],
+            Keys(row));
+        Assert.Equal(new PyInt(skyhook.SkyhookId), Field(row, "skyhookID"));
+        Assert.Equal(new PyInt(skyhook.SkyhookId), Field(row, "itemID"));
+        Assert.Equal(new PyInt(skyhook.SolarSystemId), Field(row, "solarSystemID"));
+        Assert.Equal(new PyInt(skyhook.PlanetId), Field(row, "planetID"));
+        Assert.Equal(new PyInt(81080), Field(row, "typeID"));
+        Assert.Equal(new PyInt(213), Field(row, "state"));
+        Assert.Equal(new PyInt(7), Field(row, "corporationID"));
+        Assert.Equal(new PyInt(7), Field(row, "ownerCorpID"));
+        Assert.Equal(new PyInt(9900001), Field(row, "allianceID"));
+
+        var unknownStateRow = result.Items[1];
+        Assert.Equal(new PyInt(other.SkyhookId), Field(unknownStateRow, "skyhookID"));
+        Assert.Equal(new PyInt(0), Field(unknownStateRow, "state"));
+        Assert.Equal(new PyInt(0), Field(unknownStateRow, "allianceID"));
+    }
+
+    [Fact]
+    public async Task Corporation_skyhook_rpc_maps_forbidden_to_the_standard_macho_user_error()
+    {
+        var skyhook = Site();
+        var service = CreateService(
+            (_, _, _, _) => ValueTask.FromResult(true),
+            (_, _) => ValueTask.FromResult<IReadOnlyList<SkyhookResourceSnapshot>>([skyhook]),
+            skyhook);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(
+            () => service.CallAsync(Call("GetMyCorporationSkyhooks", 7, characterId: 0)).AsTask());
+
+        Assert.True(error.Error.IsUserError);
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+    }
+
+    [Fact]
+    public async Task Corporation_skyhook_rpc_returns_empty_list_without_session_corporation()
+    {
+        var reads = 0;
+        var service = CreateService(
+            (_, _, _, _) => ValueTask.FromResult(true),
+            (_, _) =>
+            {
+                reads++;
+                return ValueTask.FromResult<IReadOnlyList<SkyhookResourceSnapshot>>([]);
+            },
+            Site());
+
+        var result = Assert.IsType<PyList>(
+            await service.CallAsync(Call("GetMyCorporationSkyhooks", 0)));
+
+        Assert.Empty(result.Items);
+        Assert.Equal(0, reads);
+    }
+
+    private static SkyhookResourceMgrService CreateService(
+        Func<ServiceCall, SkyhookResourceSnapshot, SkyhookResourcePermission, CancellationToken, ValueTask<bool>> authorize,
+        Func<long, CancellationToken, ValueTask<IReadOnlyList<SkyhookResourceSnapshot>>> readCorporation,
+        SkyhookResourceSnapshot skyhook) =>
+        new(new SkyhookResourceService(
+            (_, _) => ValueTask.FromResult<SkyhookResourceSnapshot?>(skyhook),
+            readCorporation,
+            authorize,
+            (_, current, active, _) =>
+                ValueTask.FromResult<SkyhookResourceSnapshot?>(current with { ProductionActive = active })));
+
+    private static ServiceCall Call(
+        string method,
+        long corporationId,
+        long characterId = 7001,
+        string corporationKey = "corpid")
+    {
+        var session = new ClientSession { CharacterId = characterId };
+        session.Set(corporationKey, new PyInt(corporationId));
+        return new ServiceCall
+        {
+            Method = method,
+            Args = [],
+            Session = session,
+        };
+    }
+
+    private static SkyhookResourceSnapshot Site() =>
+        new(
+            SkyhookId: 9001,
+            TypeId: 81080,
+            SolarSystemId: 30000142,
+            PlanetId: 4000001,
+            CorporationId: 7,
+            AllianceId: 9900001,
+            ProductionActive: true,
+            Workforce: 250,
+            ResourceVersion: "1.0.0",
+            Reagents:
+            [
+                new SkyhookReagentResource(
+                    TypeId: 81100,
+                    SecureStock: 4,
+                    InsecureStock: 6),
+            ],
+            TheftVulnerability: new SkyhookTheftVulnerability(true, 1030, 1090));
+
+    private static PyValue Field(PyValue value, string name)
+    {
+        var obj = Assert.IsType<PyObject>(value);
+        var dictionary = Assert.IsType<PyDict>(obj.Args);
+        return dictionary.Entries.Single(
+            entry => Assert.IsType<PyStr>(entry.Key).Value == name).Value;
+    }
+
+    private static IReadOnlyList<string> Keys(PyValue value)
+    {
+        var obj = Assert.IsType<PyObject>(value);
+        var dictionary = Assert.IsType<PyDict>(obj.Args);
+        Assert.Equal("util.KeyVal", Assert.IsType<PyStr>(obj.Name).Value);
+        return dictionary.Entries.Select(
+            entry => Assert.IsType<PyStr>(entry.Key).Value).ToArray();
     }
 }
 

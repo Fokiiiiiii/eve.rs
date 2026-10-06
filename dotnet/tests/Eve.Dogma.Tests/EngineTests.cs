@@ -439,4 +439,28 @@ public class EngineTests
         Assert.Equal(10.33, world.Get(1, 15), 9); // 10 * 1.03333 = 10.3333 -> 10.33
         Assert.Equal(7, world.Get(1, 7));         // an attribute of a whole-number kind is cut, not rounded
     }
+
+    [Fact]
+    public void An_active_booster_runs_only_server_selected_side_effects()
+    {
+        const int positive = 810, sideEffect = 811, unselectedSideEffect = 812, booster = 105;
+        var effects = new[]
+        {
+            new EffectDef(positive, "booster", EffectDef.Activation, [Mod(ModifierFunc.Item, "charID", Operation.ModAdd, 164, 400)]),
+            new EffectDef(sideEffect, "boosterSideEffectA", EffectDef.Activation, [Mod(ModifierFunc.Item, "charID", Operation.ModAdd, 164, 401)]),
+            new EffectDef(unselectedSideEffect, "boosterSideEffectB", EffectDef.Activation, [Mod(ModifierFunc.Item, "charID", Operation.ModAdd, 165, 402)]),
+        };
+        var statics = new DogmaStatic(Attributes, effects,
+        [
+            new TypeDef(booster, 303, 20, new Dictionary<int, double> { [400] = 3, [401] = -2, [402] = -5 }, [positive, sideEffect, unselectedSideEffect]),
+        ]);
+        var world = new DogmaWorld(statics, Char);
+        world.Add(new DogmaItem(Char, 0, Char, 0));
+        world.SetValue(Char, 164, 20);
+        world.SetValue(Char, 165, 10);
+        world.Add(new DogmaItem(9000, booster, Char, Char, 88, ItemState.Active, new HashSet<int> { positive, sideEffect }));
+
+        Assert.Equal(21, world.Get(Char, 164), 9);
+        Assert.Equal(10, world.Get(Char, 165), 9);
+    }
 }

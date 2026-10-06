@@ -18,7 +18,8 @@ internal sealed class TurretEffect : ShipEffect
 {
     private const string TurretFitted = "turretfitted";
 
-    public override IReadOnlyCollection<string> EffectNames { get; } = ["targetAttack", "projectileFired"];
+    // ponytail: SimTurret carries static volley damage; entropic per-target spool needs cycle state in the simulator contract.
+    public override IReadOnlyCollection<string> EffectNames { get; } = ["targetAttack", "projectileFired", "barrage", "targetDisintegratorAttack"];
 
     protected override bool Handles(ModuleEffectContext module) =>
         module.Type.EffectIds.Select(module.Statics.Effect).Any(e => e is not null && e.Name.Trim().Equals(TurretFitted, StringComparison.OrdinalIgnoreCase));

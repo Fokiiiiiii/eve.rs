@@ -13,9 +13,9 @@ public class RepairHostTests
 
     /// <summary>A pilot in space whose ship carries the module (online), fitted to the slot.</summary>
     internal static async Task<(ClientSession Session, Eve.Characters.Created Character, long Module)> InSpaceWithAsync(
-        Rig rig, int typeId, int flag, int? shipTypeId = null)
+        Rig rig, int typeId, int flag, int? shipTypeId = null, string characterName = "Space Tester", int sessionId = 1)
     {
-        var character = await rig.NewCharacterAsync();
+        var character = await rig.NewCharacterAsync(characterName);
         long shipId = character.ShipId;
         if (shipTypeId is { } replacementTypeId)
         {
@@ -41,7 +41,7 @@ public class RepairHostTests
         }
         Changed(await rig.Ships.MoveAsync(character.CharacterId, granted.Id, Rig.Station, shipId, flag, 1), $"type {typeId} flag {flag}");
         Changed(await rig.Ships.SetOnlineAsync(character.CharacterId, shipId, granted.Id, true));
-        var session = await rig.SessionAsync(character, 1);
+        var session = await rig.SessionAsync(character, sessionId);
         var oid = await rig.BindShipAsync(session);
         await rig.ShipCallAsync(session, "Undock", oid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
         await rig.BindBeyonceAsync(session);
@@ -126,12 +126,15 @@ public class ProjectedHostTests
     {
         var (rig, session, character, module) = await ReadyAsync(RemoteArmorRepairer);
         await using var _ = rig;
+        var targetCharacter = await rig.NewCharacterAsync("Remote armor target", 2);
+        var targetSession = await WeaponHostTests.InSpaceAsync(rig, targetCharacter, 2);
+        var targetId = targetSession.GetInt("shipid")!.Value;
 
-        var answer = await rig.Space.ActivateAsync(session, module, "shipModuleRemoteArmorRepairer", Target, 1000, CancellationToken.None);
+        var answer = await rig.Space.ActivateAsync(session, module, "shipModuleRemoteArmorRepairer", targetId, 1000, CancellationToken.None);
 
         Assert.Equal(ModuleResult.Done, answer);
         var effect = Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect;
-        Assert.Equal((module, Target), (effect.ModuleId, effect.TargetId));
+        Assert.Equal((module, targetId), (effect.ModuleId, effect.TargetId));
         Assert.Null(effect.Turret);
         var remote = Assert.IsType<SimAction.Remote>(effect.Action);
         // the armor comes as the cycle ends, as many points as the module says (49 for a small one), up to its range (7 km) and over its falloff (2.5 km)
@@ -150,7 +153,10 @@ public class ProjectedHostTests
     {
         var (rig, session, character, booster) = await ReadyAsync(RemoteShieldBooster);
         await using var _ = rig;
-        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, booster, "shipModuleRemoteShieldBooster", Target, 1000, CancellationToken.None));
+        var targetCharacter = await rig.NewCharacterAsync("Remote shield target", 2);
+        var targetSession = await WeaponHostTests.InSpaceAsync(rig, targetCharacter, 2);
+        var targetId = targetSession.GetInt("shipid")!.Value;
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, booster, "shipModuleRemoteShieldBooster", targetId, 1000, CancellationToken.None));
         var effect = Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect;
         var remote = Assert.IsType<SimAction.Remote>(effect.Action);
         Assert.False(remote.AtCycleEnd);
@@ -159,7 +165,10 @@ public class ProjectedHostTests
 
         var (other, session2, character2, transmitter) = await ReadyAsync(CapacitorTransmitter);
         await using var _other = other;
-        Assert.Equal(ModuleResult.Done, await other.Space.ActivateAsync(session2, transmitter, "shipModuleRemoteCapacitorTransmitter", Target, 1000, CancellationToken.None));
+        var targetCharacter2 = await other.NewCharacterAsync("Capacitor target", 2);
+        var targetSession2 = await WeaponHostTests.InSpaceAsync(other, targetCharacter2, 2);
+        var targetId2 = targetSession2.GetInt("shipid")!.Value;
+        Assert.Equal(ModuleResult.Done, await other.Space.ActivateAsync(session2, transmitter, "shipModuleRemoteCapacitorTransmitter", targetId2, 1000, CancellationToken.None));
         var transmit = Assert.IsType<SimAction.Remote>(Assert.IsType<SimActivate>(other.Sim.Heard.Last()).Effect.Action);
         Assert.False(transmit.AtCycleEnd);
         Assert.Equal(new SimRemote.Transfer(Math.Round(await ValueAsync(other, character2, transmitter, 90), 6)), transmit.What);
@@ -193,15 +202,18 @@ public class ProjectedHostTests
     {
         var (rig, session, _, module) = await ReadyAsync(RemoteArmorRepairer);
         await using var _ = rig;
+        var targetCharacter = await rig.NewCharacterAsync("Projected range target", 2);
+        var targetSession = await WeaponHostTests.InSpaceAsync(rig, targetCharacter, 2);
+        var targetId = targetSession.GetInt("shipid")!.Value;
         var heard = rig.Sim.Heard.Count;
         var none = await rig.Space.ActivateAsync(session, module, "shipModuleRemoteArmorRepairer", 0, 1000, CancellationToken.None);
         Assert.Equal("TARGET_REQUIRED", none!.Reason);
         Assert.Equal(heard, rig.Sim.Heard.Count);
 
-        rig.Sim.ActivateAnswer = new CommandReply(false, 0, "TARGET_OUT_OF_RANGE") { TargetType = 601, DesiredRange = 9500, ActualDistance = 12_345.6 };
-        var far = await rig.Space.ActivateAsync(session, module, "shipModuleRemoteArmorRepairer", Target, 1000, CancellationToken.None);
+        rig.Sim.ActivateAnswer = new CommandReply(false, 0, "TARGET_OUT_OF_RANGE") { TargetType = Rig.Cockroach, DesiredRange = 9500, ActualDistance = 12_345.6 };
+        var far = await rig.Space.ActivateAsync(session, module, "shipModuleRemoteArmorRepairer", targetId, 1000, CancellationToken.None);
         Assert.Equal("TARGET_OUT_OF_RANGE", far!.Reason);
-        Assert.Equal((601, 9500d, 12_345.6), (far.TargetType, far.DesiredRange, far.ActualDistance));
+        Assert.Equal((Rig.Cockroach, 9500d, 12_345.6), (far.TargetType, far.DesiredRange, far.ActualDistance));
         Assert.True(far.ShipType > 0);
     }
 
@@ -423,14 +435,189 @@ public class ProjectedHostTests
         var boost = Assert.IsType<SimRemote.Damp>(remote.What);
         Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 309), 6), boost.RangePercent);
         Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 566), 6), boost.ResolutionPercent);
-        Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 238), 6), boost.GravimetricStrengthPercent);
-        Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 239), 6), boost.LadarStrengthPercent);
-        Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 240), 6), boost.MagnetometricStrengthPercent);
-        Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 241), 6), boost.RadarStrengthPercent);
+        Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 1027), 6), boost.GravimetricStrengthPercent);
+        Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 1028), 6), boost.LadarStrengthPercent);
+        Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 1029), 6), boost.MagnetometricStrengthPercent);
+        Assert.Equal(Math.Round(await ValueAsync(rig, character, module, 1030), 6), boost.RadarStrengthPercent);
         Assert.True(boost.RangePercent > 0 && boost.ResolutionPercent > 0);
         Assert.All(
             new[] { boost.GravimetricStrengthPercent, boost.LadarStrengthPercent, boost.MagnetometricStrengthPercent, boost.RadarStrengthPercent },
             percent => Assert.True(percent > 0));
+        Assert.Equal(0, safetyChecks);
+        Assert.Empty(aggression);
+    }
+
+
+    [PgFact]
+    public async Task Remote_tracking_computer_assistance_avoids_crimewatch_while_tracking_disruption_is_an_attack()
+    {
+        var rig = await Rig.CreateAsync();
+        await using var _ = rig;
+        var sde = new Eve.Sde.SdeReader(rig.Source);
+        var catalogBuild = await sde.BuildAsync()
+            ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
+        var moduleGroupIds = (await sde.ReadAsync("groups"))
+            .Where(row => row.Doc.GetProperty("categoryID").GetInt32() == 7)
+            .Select(row => row.Key)
+            .ToArray();
+        var publishedModuleTypeIds = (await sde.ReadByFieldAsync("types", "groupID", moduleGroupIds))
+            .Where(row => row.Doc.TryGetProperty("published", out var published) && published.ValueKind == System.Text.Json.JsonValueKind.True)
+            .Select(row => row.Key)
+            .ToArray();
+        var moduleDogma = await sde.ReadAsync("typeDogma", publishedModuleTypeIds);
+        var remoteTrackingEffect = Assert.Single(rig.Statics.Effects, effect =>
+            effect.Name.Equals("shipModuleRemoteTrackingComputer", StringComparison.OrdinalIgnoreCase));
+        var trackingDisruptorEffect = Assert.Single(rig.Statics.Effects, effect =>
+            effect.Name.Equals("shipModuleTrackingDisruptor", StringComparison.OrdinalIgnoreCase));
+        int TypeIdFor(Eve.Dogma.EffectDef effect)
+        {
+            var matchingTypes = moduleDogma.Where(row =>
+                row.Doc.TryGetProperty("dogmaEffects", out var effects)
+                && effects.ValueKind == System.Text.Json.JsonValueKind.Array
+                && effects.EnumerateArray().Any(item => item.GetProperty("effectID").GetInt32() == effect.Id))
+                .ToArray();
+            Assert.True(matchingTypes.Length > 0, "SDE build " + catalogBuild + " has no published module for " + effect.Name + ".");
+            return checked((int)matchingTypes[0].Key);
+        }
+        var remoteTrackingTypeId = TypeIdFor(remoteTrackingEffect);
+        var trackingDisruptorTypeId = TypeIdFor(trackingDisruptorEffect);
+
+        var (supportSession, _, remoteModule) =
+            await RepairHostTests.InSpaceWithAsync(rig, remoteTrackingTypeId, MidSlot);
+        var victimCharacter = await rig.NewCharacterAsync("Remote tracking target", 2);
+        var victimSession = await WeaponHostTests.InSpaceAsync(rig, victimCharacter, 2);
+        var victimShipId = victimSession.GetInt("shipid")!.Value;
+        var safetyChecks = 0;
+        List<Eve.Crimewatch.AggressionRequest> aggression = [];
+        rig.Space.SafetyLevelOf = (_, _) =>
+        {
+            safetyChecks++;
+            return Task.FromResult(2);
+        };
+        rig.Space.Aggression = (request, _) =>
+        {
+            aggression.Add(request);
+            return Task.CompletedTask;
+        };
+
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(
+            supportSession, remoteModule, "shipModuleRemoteTrackingComputer", victimShipId, 1000, CancellationToken.None));
+        var assist = Assert.IsType<SimAction.Remote>(Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect.Action);
+        var assistBonus = Assert.IsType<SimRemote.Disrupt>(assist.What);
+        Assert.True(assistBonus.RangePercent > 0 && assistBonus.FalloffPercent > 0 && assistBonus.TrackingPercent > 0);
+        Assert.Equal(0, safetyChecks);
+        Assert.Empty(aggression);
+
+        var (attackerSession, _, disruptorModule) =
+            await RepairHostTests.InSpaceWithAsync(rig, trackingDisruptorTypeId, MidSlot, characterName: "Tracking disruptor attacker", sessionId: 3);
+        safetyChecks = 0;
+        aggression.Clear();
+        rig.Space.SafetyLevelOf = (_, _) =>
+        {
+            safetyChecks++;
+            return Task.FromResult(0);
+        };
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(
+            attackerSession, disruptorModule, "shipModuleTrackingDisruptor", victimShipId, 1000, CancellationToken.None));
+        var attack = Assert.IsType<SimAction.Remote>(Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect.Action);
+        var disruption = Assert.IsType<SimRemote.Disrupt>(attack.What);
+        Assert.True(disruption.RangePercent < 0 || disruption.FalloffPercent < 0 || disruption.TrackingPercent < 0);
+        Assert.Equal(1, safetyChecks);
+        Assert.Single(aggression);
+    }
+
+
+    [PgFact]
+    public async Task Mutadaptive_cycle_requests_receive_the_spooled_amount_and_clear_after_the_final_response()
+    {
+        var rig = await Rig.CreateAsync();
+        await using var _ = rig;
+        var sde = new Eve.Sde.SdeReader(rig.Source);
+        var catalogBuild = await sde.BuildAsync()
+            ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
+        var effect = Assert.Single(rig.Statics.Effects, candidate =>
+            candidate.Name.Equals("ShipModuleRemoteArmorMutadaptiveRepairer", StringComparison.OrdinalIgnoreCase));
+        var moduleGroupIds = (await sde.ReadAsync("groups"))
+            .Where(row => row.Doc.GetProperty("categoryID").GetInt32() == 7)
+            .Select(row => row.Key)
+            .ToArray();
+        var publishedModuleTypeIds = (await sde.ReadByFieldAsync("types", "groupID", moduleGroupIds))
+            .Where(row => row.Doc.TryGetProperty("published", out var published) && published.ValueKind == System.Text.Json.JsonValueKind.True)
+            .Select(row => row.Key)
+            .ToArray();
+        var moduleDogma = await sde.ReadAsync("typeDogma", publishedModuleTypeIds);
+        var moduleTypeId = checked((int)moduleDogma.First(row =>
+            row.Doc.TryGetProperty("dogmaEffects", out var effects)
+            && effects.ValueKind == System.Text.Json.JsonValueKind.Array
+            && effects.EnumerateArray().Any(typeEffect => typeEffect.GetProperty("effectID").GetInt32() == effect.Id)).Key);
+        await rig.Statics.EnsureTypesAsync([moduleTypeId]);
+        var moduleType = rig.Statics.Type(moduleTypeId)
+            ?? throw new InvalidOperationException("SDE build " + catalogBuild + " has no mutadaptive module type.");
+        var amountAttribute = rig.Statics.AttributeId("armorDamageAmount")
+            ?? throw new InvalidOperationException("The SDE is missing armorDamageAmount.");
+        var rateAttribute = rig.Statics.AttributeId("repairMultiplierBonusPerCycle")
+            ?? throw new InvalidOperationException("The SDE is missing repairMultiplierBonusPerCycle.");
+        var maximumAttribute = rig.Statics.AttributeId("repairMultiplierBonusMax")
+            ?? throw new InvalidOperationException("The SDE is missing repairMultiplierBonusMax.");
+        var durationAttribute = rig.Statics.AttributeId("duration")
+            ?? throw new InvalidOperationException("The SDE is missing duration.");
+        Assert.True(moduleType.Attributes.TryGetValue(amountAttribute, out var baseAmount));
+        Assert.True(moduleType.Attributes.TryGetValue(rateAttribute, out var bonusPerCycle));
+        Assert.True(moduleType.Attributes.TryGetValue(maximumAttribute, out var maximumBonus));
+        Assert.True(moduleType.Attributes.TryGetValue(durationAttribute, out var durationMs) && durationMs > 0);
+
+        const int Rodiva = 49712;
+        var (session, character, moduleId) = await RepairHostTests.InSpaceWithAsync(rig, moduleTypeId, HighSlot, shipTypeId: Rodiva);
+        baseAmount = await ValueAsync(rig, character, moduleId, amountAttribute);
+        var targetCharacter = await rig.NewCharacterAsync("Mutadaptive target", 2);
+        var targetSession = await WeaponHostTests.InSpaceAsync(rig, targetCharacter, 2);
+        var targetId = targetSession.GetInt("shipid")!.Value;
+        var safetyChecks = 0;
+        List<Eve.Crimewatch.AggressionRequest> aggression = [];
+        rig.Space.SafetyLevelOf = (_, _) =>
+        {
+            safetyChecks++;
+            return Task.FromResult(2);
+        };
+        rig.Space.Aggression = (request, _) =>
+        {
+            aggression.Add(request);
+            return Task.CompletedTask;
+        };
+
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(
+            session, moduleId, "ShipModuleRemoteArmorMutadaptiveRepairer", targetId, 1000, CancellationToken.None));
+        var activation = Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect;
+        var remote = Assert.IsType<SimAction.Remote>(activation.Action);
+        var repair = Assert.IsType<SimRemote.MutadaptiveRepair>(remote.What);
+        Assert.Equal(baseAmount, repair.Amount);
+        Assert.Equal(bonusPerCycle, repair.RepairMultiplierBonusPerCycle);
+        Assert.Equal(maximumBonus, repair.RepairMultiplierBonusMax);
+        Assert.True(remote.AtCycleEnd);
+
+        var cycleDurationMs = checked((long)Math.Round(durationMs));
+        var firstCycle = new SimRemoteRepairCycle(
+            (ulong)session.SessionId, moduleId, targetId, 1, 1, cycleDurationMs, cycleDurationMs,
+            false, baseAmount, bonusPerCycle, maximumBonus);
+        rig.Sim.Say(firstCycle);
+        var firstResponse = Assert.IsType<SimRemoteRepairCycleResult>(rig.Sim.Heard.Last());
+        Assert.True(firstResponse.Accepted);
+        Assert.Equal(Eve.Services.Space.Effects.ModuleAttributes.Six(baseAmount * (1 + bonusPerCycle)), firstResponse.Amount);
+
+        Assert.Equal(ModuleResult.Done, await rig.Space.DeactivateAsync(
+            session, moduleId, "ShipModuleRemoteArmorMutadaptiveRepairer", CancellationToken.None));
+        var finalCycle = new SimRemoteRepairCycle(
+            (ulong)session.SessionId, moduleId, targetId, 2, 2, cycleDurationMs * 2, cycleDurationMs,
+            true, baseAmount, bonusPerCycle, maximumBonus);
+        rig.Sim.Say(finalCycle);
+        var finalResponse = Assert.IsType<SimRemoteRepairCycleResult>(rig.Sim.Heard.Last());
+        Assert.True(finalResponse.Accepted);
+        Assert.Equal(Eve.Services.Space.Effects.ModuleAttributes.Six(baseAmount * (1 + Math.Min(2 * bonusPerCycle, maximumBonus))), finalResponse.Amount);
+
+        rig.Sim.Say(finalCycle);
+        var staleResponse = Assert.IsType<SimRemoteRepairCycleResult>(rig.Sim.Heard.Last());
+        Assert.False(staleResponse.Accepted);
+        Assert.Equal("STALE_CYCLE", staleResponse.Reason);
         Assert.Equal(0, safetyChecks);
         Assert.Empty(aggression);
     }

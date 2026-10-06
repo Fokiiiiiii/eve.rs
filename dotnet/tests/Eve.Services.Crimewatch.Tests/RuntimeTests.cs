@@ -70,6 +70,7 @@ public class RuntimeTests : IAsyncLifetime
     private long _now = Start;
     private readonly Waits _waits = new();
     private readonly CharacterSessions _sessions = new();
+    private readonly CrimewatchPersistenceFake _persistence = new();
     private readonly Dictionary<long, Capture> _sinks = [];
 
     public async Task InitializeAsync()
@@ -97,7 +98,7 @@ public class RuntimeTests : IAsyncLifetime
 
     private PgCrimewatchStore Store => new(_source!, _schema);
 
-    private CrimewatchRuntime Runtime() => new(Store, _sessions, () => _now, delay: _waits.Delay);
+    private CrimewatchRuntime Runtime(Eve.Scheduler.LocalTimers? localTimers = null) => new(Store, _sessions, () => _now, _persistence, delay: _waits.Delay, localTimers: localTimers);
 
     /// <summary>A pilot in space in a system (a docked one has a station instead).</summary>
     private void Pilot(long character, long system, bool docked = false)
@@ -180,6 +181,21 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal(["OnWeaponsTimerUpdate", "OnPvpTimerUpdate", "OnCriminalTimerUpdate"], attacker.Select(n => n.Name));
         Assert.Equal([new PyInt(102), new PyLong(FileTime(Start + 70_000))], attacker[0].Args);
         Assert.Empty(Told(2));   // the system is flagged as before
+    }
+
+    [PgFact]
+    public async Task Crimewatch_uses_an_injected_shared_timer_without_disposing_it()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        using var shared = new Eve.Scheduler.LocalTimers(delay: _waits.Delay);
+        var runtime = Runtime(shared);
+
+        await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false));
+
+        Assert.True(shared.Count > 0);
+        runtime.Dispose();
+        Assert.True(shared.Count > 0);
     }
 
     [PgFact]
@@ -289,6 +305,7 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal(AggressionReason.Legal, result.Outcome.Reason);
         var allyResult = await runtime.RecordAggressionAsync(Attack(1, 3, SecurityClass.HighSec, System, false));
         Assert.Equal(AggressionReason.Legal, allyResult.Outcome.Reason);
+        Assert.Empty(_persistence.Writes);   // a legal war attack does not create an LE
         _now += 1_000;
         Assert.False(await wars.AreAtWarAsync(1, 3, _now));
 
@@ -345,7 +362,7 @@ public class RuntimeTests : IAsyncLifetime
         Pilot(2, System);
         using var runtime = Runtime();
         await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false));
-        var service = new CrimewatchService(Store, () => _now);
+        var service = new CrimewatchService(Store, runtime, () => _now);
 
         async Task<PyTuple> StatesOf(long character)
         {
@@ -367,6 +384,252 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal(InventoryWire.Set([new PyInt(1)]), flagged.Items[0]);
         Assert.Equal(InventoryWire.Set([]), flagged.Items[1]);
     }
+
+    [PgFact]
+    public async Task GetSecurityStatusTransactions_returns_attribute_accessible_packed_rows_with_filetimes()
+    {
+        Pilot(1, System);
+        _persistence.History[1] =
+        [
+            new SecurityStatusTransaction(SecurityStatusEventTypeIds.KillPirateNpc, Start + 2_000, null, null, null, null, 5.0),
+            new SecurityStatusTransaction(SecurityStatusEventTypeIds.IllegalAggression, Start + 1_000, 2, 587, System, -0.025, -0.25),
+        ];
+        using var runtime = Runtime();
+        var service = new CrimewatchService(Store, runtime, () => _now);
+
+        var result = await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "GetSecurityStatusTransactions",
+            Args = [],
+            Session = _sessions.Of(1)!,
+        });
+
+        var rowset = Assert.IsType<PyObjectEx>(result);
+        Assert.Equal(ObjectExKind.Ex2, rowset.Kind);
+        Assert.Equal(new PyToken("carbon.common.script.sys.crowset.CRowset"), ((PyTuple)((PyTuple)rowset.Header).Items[0]).Items[0]);
+        Assert.Equal(2, rowset.List.Count);
+        var newest = Assert.IsType<PyPackedRow>(rowset.List[0]);
+        Assert.Equal(
+            ["eventTypeID", "eventDate", "otherOwnerID", "otherTypeID", "locationID", "modification", "newValue"],
+            newest.Columns.Select(column => column.Name).ToArray());
+        var newestFields = newest.Fields().ToDictionary(field => field.Key, field => field.Value);
+        Assert.Equal(new PyInt(SecurityStatusEventTypeIds.KillPirateNpc), newestFields["eventTypeID"]);
+        Assert.Equal(new PyLong(FileTime(Start + 2_000)), newestFields["eventDate"]);
+        Assert.Equal(PyNone.Instance, newestFields["otherOwnerID"]);
+        Assert.Equal(PyNone.Instance, newestFields["otherTypeID"]);
+        Assert.Equal(PyNone.Instance, newestFields["locationID"]);
+        Assert.Equal(PyNone.Instance, newestFields["modification"]);
+        Assert.Equal(Py.Number(5.0), newestFields["newValue"]);
+
+        var crimeFields = Assert.IsType<PyPackedRow>(rowset.List[1]).Fields().ToDictionary(field => field.Key, field => field.Value);
+        Assert.Equal(new PyInt(SecurityStatusEventTypeIds.IllegalAggression), crimeFields["eventTypeID"]);
+        Assert.Equal(InventoryWire.Id(2), crimeFields["otherOwnerID"]);
+        Assert.Equal(new PyInt(587), crimeFields["otherTypeID"]);
+        Assert.Equal(InventoryWire.Id(System), crimeFields["locationID"]);
+        Assert.Equal(Py.Number(-0.025), crimeFields["modification"]);
+        Assert.Equal(Py.Number(-0.25), crimeFields["newValue"]);
+    }
+
+    [PgFact]
+    public async Task GetClientStates_projects_the_shared_active_engagement_pair_to_the_peer_FILETIME()
+    {
+        Pilot(1, System);
+        _persistence.Engagements[(1, 2)] = Start + 300_000;
+        using var runtime = Runtime();
+        var service = new CrimewatchService(Store, runtime, () => _now);
+
+        var result = (PyTuple)await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "GetClientStates",
+            Args = [],
+            Session = _sessions.Of(1)!,
+        });
+
+        var expected = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(InventoryWire.Id(2), new PyLong(FileTime(Start + 300_000))),
+        ]);
+        Assert.Equal(expected, result.Items[1]);
+    }
+
+    [PgFact]
+    public async Task Attacking_a_suspect_creates_and_combat_renews_the_five_minute_pair_but_wars_do_not()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        var flagged = Aggression.Record(CombatState.Idle, CombatState.Idle, SecurityClass.LowSec, System, false, false, _now).Attacker;
+        await Store.UpdateAsync(2, _ => flagged, _now);
+
+        using var runtime = Runtime();
+        runtime.Legal = (_, _, _, _) => Task.FromResult(true);
+        var first = await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false));
+        Assert.Equal(AggressionReason.Legal, first.Outcome.Reason);
+        Assert.Equal(Start + CrimewatchRuntime.LimitedEngagementDurationMs, _persistence.Engagements[(1, 2)]);
+        Assert.Contains(Told(1), note => note.Name == "OnCrimewatchEngagementCreated");
+        Assert.Contains(Told(2), note => note.Name == "OnCrimewatchEngagementCreated");
+
+        _now += 120_000;
+        await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false));
+        Assert.Equal(_now + CrimewatchRuntime.LimitedEngagementDurationMs, _persistence.Engagements[(1, 2)]);
+        Assert.Contains(Told(1), note => note.Name == "OnCrimewatchEngagementStartTimeout");
+        Assert.Contains(Told(2), note => note.Name == "OnCrimewatchEngagementStartTimeout");
+    }
+
+    [PgFact]
+    public async Task A_persisted_engagement_expires_once_and_notifies_both_online_pilots()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        _persistence.Engagements[(1, 2)] = Start + 300_000;
+        using var runtime = Runtime();
+        await runtime.ResumeAsync();
+
+        var expiry = Assert.Single(_waits.Made);
+        Assert.Equal(TimeSpan.FromMilliseconds(300_005), expiry.After);
+        _now = Start + 300_005;
+        expiry.Done.SetResult();
+        await Settle(() => _persistence.Engagements.Count == 0);
+
+        Assert.Contains(Told(1), note => note.Name == "OnCrimewatchEngagementEnded");
+        Assert.Contains(Told(2), note => note.Name == "OnCrimewatchEngagementEnded");
+    }
+
+    [PgFact]
+    public async Task Duel_challenges_use_host_expiry_and_acceptance_or_decline_consumes_the_pending_request()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        Pilot(3, System);
+        var challenger = _sessions.Of(1)!;
+        challenger.Set("corpid", new PyLong(98_000_001));
+        challenger.Set("allianceid", new PyLong(99_000_001));
+        using var runtime = Runtime();
+        var service = new CrimewatchService(Store, runtime, () => _now);
+
+        Assert.Equal(PyNone.Instance, await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "StartDuelChallenge",
+            Args = [new PyLong(2)],
+            Session = challenger,
+        }));
+        Assert.Equal([(1L, 2L, 98_000_001L, 99_000_001L)], _persistence.ChallengesStarted);
+        var expiry = _persistence.ChallengeExpiryFileTime;
+        await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "RespondToDuelChallenge",
+            Args = [new PyLong(1), new PyLong(expiry), PyBool.True],
+            Session = _sessions.Of(2)!,
+        });
+
+        Assert.Equal(Start + CrimewatchRuntime.LimitedEngagementDurationMs, _persistence.Engagements[(1, 2)]);
+        Assert.Contains(Told(1), note => note.Name == "OnCrimewatchEngagementCreated");
+        Assert.Contains(Told(2), note => note.Name == "OnCrimewatchEngagementCreated");
+
+        await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "StartDuelChallenge",
+            Args = [new PyLong(3)],
+            Session = challenger,
+        });
+        await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "RespondToDuelChallenge",
+            Args = [new PyLong(1), new PyLong(_persistence.ChallengeExpiryFileTime), PyBool.False],
+            Session = _sessions.Of(3)!,
+        });
+
+        Assert.DoesNotContain((1L, 3L), _persistence.Engagements.Keys);
+        Assert.Equal([true, false], _persistence.ChallengesAnswered.Select(response => response.Accepted));
+    }
+}
+
+internal sealed class CrimewatchPersistenceFake : ICrimewatchPersistenceCallbacks
+{
+    public Dictionary<long, List<SecurityStatusTransaction>> History { get; } = [];
+    public Dictionary<(long First, long Second), long> Engagements { get; } = [];
+    public List<(long First, long Second, long ExpiresAtUnixMs)> Writes { get; } = [];
+    public List<(long Challenger, long Target, long Corporation, long Alliance)> ChallengesStarted { get; } = [];
+    public List<(long Responder, long Challenger, long ExpiryFileTime, bool Accepted)> ChallengesAnswered { get; } = [];
+    public long ChallengeExpiryFileTime { get; set; } = Py.FileTimeFromUnixMs(1_700_000_120_000);
+    public bool ChallengeValid { get; set; } = true;
+    private (long Challenger, long Target, long ExpiryFileTime)? _pending;
+
+    public Task<IReadOnlyList<SecurityStatusTransaction>> SecurityStatusTransactionsOfAsync(long characterId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<SecurityStatusTransaction>>(History.GetValueOrDefault(characterId) ?? []);
+
+    public Task<long?> StartDuelChallengeAsync(
+        long challengerCharacterId,
+        long targetCharacterId,
+        long challengerCorporationId,
+        long challengerAllianceId,
+        CancellationToken cancellationToken)
+    {
+        ChallengesStarted.Add((challengerCharacterId, targetCharacterId, challengerCorporationId, challengerAllianceId));
+        if (!ChallengeValid)
+        {
+            return Task.FromResult<long?>(null);
+        }
+        _pending = (challengerCharacterId, targetCharacterId, ChallengeExpiryFileTime);
+        return Task.FromResult<long?>(ChallengeExpiryFileTime);
+    }
+
+    public Task<IReadOnlyList<LimitedEngagement>> LimitedEngagementsAsync(long nowUnixMs, long? characterId, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<LimitedEngagement> rows = [.. Engagements
+            .Where(entry => entry.Value > nowUnixMs &&
+                (characterId is null || entry.Key.First == characterId || entry.Key.Second == characterId))
+            .OrderBy(entry => entry.Key.First)
+            .ThenBy(entry => entry.Key.Second)
+            .Select(entry => new LimitedEngagement(entry.Key.First, entry.Key.Second, entry.Value))];
+        return Task.FromResult(rows);
+    }
+
+    public Task UpsertLimitedEngagementAsync(long firstCharacterId, long secondCharacterId, long expiresAtUnixMs, CancellationToken cancellationToken)
+    {
+        var first = Math.Min(firstCharacterId, secondCharacterId);
+        var second = Math.Max(firstCharacterId, secondCharacterId);
+        Engagements[(first, second)] = expiresAtUnixMs;
+        Writes.Add((first, second, expiresAtUnixMs));
+        return Task.CompletedTask;
+    }
+
+    public Task<bool> ExpireLimitedEngagementAsync(long firstCharacterId, long secondCharacterId, long expectedExpiresAtUnixMs, long nowUnixMs, CancellationToken cancellationToken)
+    {
+        var key = (Math.Min(firstCharacterId, secondCharacterId), Math.Max(firstCharacterId, secondCharacterId));
+        if (Engagements.TryGetValue(key, out var expires) && expires == expectedExpiresAtUnixMs && expires <= nowUnixMs)
+        {
+            Engagements.Remove(key);
+            return Task.FromResult(true);
+        }
+        return Task.FromResult(false);
+    }
+
+    public Task<bool> RespondToDuelChallengeAsync(
+        long responderCharacterId,
+        long challengerCharacterId,
+        long challengeExpiresAtFileTime,
+        bool accept,
+        long? engagementExpiresAtUnixMs,
+        CancellationToken cancellationToken)
+    {
+        ChallengesAnswered.Add((responderCharacterId, challengerCharacterId, challengeExpiresAtFileTime, accept));
+        if (!ChallengeValid || _pending is not { } pending ||
+            pending.Challenger != challengerCharacterId ||
+            pending.Target != responderCharacterId ||
+            pending.ExpiryFileTime != challengeExpiresAtFileTime)
+        {
+            return Task.FromResult(false);
+        }
+        _pending = null; // declines also consume the pending challenge
+        if (!accept || engagementExpiresAtUnixMs is not { } expiresAt)
+        {
+            return Task.FromResult(false);
+        }
+        var first = Math.Min(responderCharacterId, challengerCharacterId);
+        var second = Math.Max(responderCharacterId, challengerCharacterId);
+        Engagements[(first, second)] = expiresAt;
+        Writes.Add((first, second, expiresAt));
+        return Task.FromResult(true);
+    }
 }
 
 public class PenaltyTests : IAsyncLifetime
@@ -378,8 +641,10 @@ public class PenaltyTests : IAsyncLifetime
     private NpgsqlDataSource? _source;
     private long _now = Start;
     private readonly CharacterSessions _sessions = new();
+    private readonly CrimewatchPersistenceFake _persistence = new();
     private readonly Dictionary<long, double> _status = [];
     private readonly List<(long Character, double Value, string Reason)> _written = [];
+    private readonly List<SecurityStatusPenaltyChange> _changes = [];
     private readonly List<long> _shipsRefreshed = [];
     private Capture _attacker = new();
 
@@ -408,14 +673,16 @@ public class PenaltyTests : IAsyncLifetime
 
     private (CrimewatchRuntime Runtime, SecurityStatusPenalties Penalties) Rig()
     {
-        var runtime = new CrimewatchRuntime(new PgCrimewatchStore(_source!, _schema), _sessions, () => _now, delay: new Waits().Delay);
+        var runtime = new CrimewatchRuntime(new PgCrimewatchStore(_source!, _schema), _sessions, () => _now, _persistence, delay: new Waits().Delay);
         var penalties = new SecurityStatusPenalties(
             runtime, _sessions,
             (id, _) => Task.FromResult(_status.GetValueOrDefault(id)),
-            (id, value, reason, _) =>
+            (request, _) => Task.FromResult<int?>(request.TargetIsCapsule ? 670 : 587),
+            (change, _) =>
             {
-                _status[id] = value;
-                _written.Add((id, value, reason));
+                _status[change.CharacterId] = change.NextStatus;
+                _written.Add((change.CharacterId, change.NextStatus, change.Reason));
+                _changes.Add(change);
                 return Task.CompletedTask;
             },
             () => _now,
@@ -445,6 +712,13 @@ public class PenaltyTests : IAsyncLifetime
         await runtime.RecordAggressionAsync(Attack());
 
         Assert.Equal([(1L, -0.25, "aggression")], _written);   // recorded: −0.25 from 0.0 for a ship in a 1.0 system
+        var transaction = Assert.Single(_changes);
+        Assert.Equal(SecurityStatusEventTypeIds.IllegalAggression, transaction.EventTypeID);
+        Assert.Equal(2, transaction.OtherOwnerID);
+        Assert.Equal(587, transaction.OtherTypeID);
+        Assert.Equal(System, transaction.LocationID);
+        Assert.Equal(-0.025, transaction.Modification, 12);
+        Assert.Equal(9_988_400_003_311, transaction.TargetShipItemId);
         Assert.Equal([1L], _shipsRefreshed);
         var told = Notes.Of(_attacker);
         Assert.Equal(["OnModuleAttributeChanges", "OnSecurityStatusUpdate", "OnWeaponsTimerUpdate", "OnPvpTimerUpdate", "OnCriminalTimerUpdate", "OnSystemCriminalFlagUpdates"], told.Select(n => n.Name));

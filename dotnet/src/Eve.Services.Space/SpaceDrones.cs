@@ -41,7 +41,7 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
     private const int EntityAttackRangeAttribute = 247;
     // The current SDE has no Drone Control Unit type; do not synthesize a max-active-drone bonus.
     private const int MaxActiveDronesAttribute = 352;
-    private const int DroneControlRangeBonusAttribute = 459;
+    private const int DroneControlDistanceAttribute = 458;
     private const double DefaultDroneControlRange = 20_000;
     private const int DroneBandwidthAttribute = 1271;
     private const int DroneBandwidthUsedAttribute = 1272;
@@ -198,9 +198,13 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
                     results.Add(Refusal("Not enough drone bandwidth to launch that drone."));
                     break;
                 }
-                if (NpcArmament.HullWeapon(type, source.Id, _statics) is null)
+                var previewWeapon = NpcArmament.HullWeapon(type, source.Id, _statics);
+                var cycleMs = StaticDogma(type, "duration");
+                var workCapable = cycleMs > 0
+                    && (StaticDogma(type, "miningAmount") > 0 || StaticDogma(type, "accessDifficultyBonus") > 0);
+                if (previewWeapon is null && !workCapable)
                 {
-                    results.Add(Refusal("That drone has no supported engage profile."));
+                    results.Add(Refusal("That drone has no supported operation profile."));
                     break;
                 }
                 var launch = await _ships.LaunchDroneAsync(characterId, shipId, source.Id, system, cancellationToken).ConfigureAwait(false);
@@ -220,7 +224,7 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
                 var baseDamageMultiplier = type.Attributes.GetValueOrDefault(NpcArmament.DamageMultiplier, 1d);
                 var damageMultiplier = snapshot.World.Get(drone.Id, NpcArmament.DamageMultiplier);
                 var damageScale = baseDamageMultiplier > 0 ? damageMultiplier / baseDamageMultiplier : 0;
-                var weapon = NpcArmament.HullWeapon(type, drone.Id, _statics, damageScale)!;
+                var weapon = previewWeapon is null ? null : NpcArmament.HullWeapon(type, drone.Id, _statics, damageScale);
                 if (!await SpawnAsync(session, snapshot, drone, type, weapon, cancellationToken).ConfigureAwait(false))
                 {
                     results.Add(Refusal("Unable to materialize drone in space."));
@@ -245,7 +249,7 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
         return Dict(answer);
     }
 
-    private async Task<bool> SpawnAsync(ClientSession session, ShipSnapshot snapshot, Item drone, TypeDef type, SimNpcWeapon weapon, CancellationToken cancellationToken)
+    private async Task<bool> SpawnAsync(ClientSession session, ShipSnapshot snapshot, Item drone, TypeDef type, SimNpcWeapon? weapon, CancellationToken cancellationToken)
     {
         var character = snapshot.Character;
         var hull = SimShips.OfType(drone.Id, type);
@@ -254,8 +258,9 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
         var cruise = type.Attributes.TryGetValue(CruiseSpeedAttribute, out var speed) ? Math.Max(0, speed) : maxVelocity;
         var fraction = maxVelocity > 0 ? Math.Clamp(cruise / maxVelocity, 0, 1) : 0;
         // how far it can shoot: its type's attack range, at least what its weapon reaches (`resolveDroneCombatSnapshot`)
-        var attackRange = Math.Max(type.Attributes.GetValueOrDefault(EntityAttackRangeAttribute, 0), weapon.OptimalRange);
-        var launch = new SimLaunchDrone((ulong)Interlocked.Increment(ref _requests), (ulong)session.SessionId, ship, weapon, type.GraphicId, OrbitOf(type), attackRange, fraction);
+        var attackRange = Math.Max(type.Attributes.GetValueOrDefault(EntityAttackRangeAttribute, 0), weapon?.OptimalRange ?? 0);
+        var work = new SimDroneWorkProfile(Dogma(snapshot, drone.Id, "miningAmount"), Dogma(snapshot, drone.Id, "duration"), Dogma(snapshot, drone.Id, "miningWastedVolumeMultiplier"), Dogma(snapshot, drone.Id, "miningWasteProbability"), Dogma(snapshot, drone.Id, "accessDifficultyBonus"));
+        var launch = new SimLaunchDrone((ulong)Interlocked.Increment(ref _requests), (ulong)session.SessionId, ship, weapon, type.GraphicId, OrbitOf(type), attackRange, fraction, work);
         try
         {
             var reply = await _sim.LaunchDroneAsync(launch, cancellationToken).ConfigureAwait(false);
@@ -272,6 +277,16 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
             return false;
         }
     }
+
+    private double Dogma(ShipSnapshot snapshot, long itemId, string attributeName) =>
+        _statics.AttributeId(attributeName) is { } attribute
+            ? snapshot.World.Get(itemId, attribute)
+            : 0d;
+
+    private double StaticDogma(TypeDef type, string attributeName) =>
+        _statics.AttributeId(attributeName) is { } attribute
+            ? type.Attributes.GetValueOrDefault(attribute, _statics.Attribute(attribute)?.DefaultValue ?? 0d)
+            : 0d;
 
     /// <summary>How far a drone circles (<c>resolveDroneMovementProfile</c>): its type's fly range, else its orbit range, else the least.</summary>
     internal static double OrbitOf(TypeDef type)
@@ -357,10 +372,10 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
             && await _ships.LoadAsync(characterId, cancellationToken).ConfigureAwait(false) is { } snapshot
             && snapshot.Ship.Id == shipId)
         {
-            var bonus = snapshot.World.Get(shipId, DroneControlRangeBonusAttribute);
-            if (double.IsFinite(bonus) && bonus > 0 && double.IsFinite(controlRange + bonus))
+            var range = snapshot.World.Get(characterId, DroneControlDistanceAttribute);
+            if (double.IsFinite(range) && range > 0)
             {
-                controlRange += bonus;
+                controlRange = range;
             }
         }
         CommandReply reply;
@@ -385,6 +400,8 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
     private static string Describe(string reason, byte command) => reason switch
     {
         "NOT_CONTROLLED" => NotUnderControl,
+        "NO_PILOT" => "That pilot is not in space.",
+        "NO_WRECK" => "No salvageable wreck was found.",
         "NO_TARGET" when command == SimDroneCommands.Engage => "That target cannot be engaged by drones.",
         "OUT_OF_RANGE" => "That target is out of drone control range.",
         // an order to engage that named nothing: the drones looked and found no one to attack

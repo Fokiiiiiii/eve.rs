@@ -81,6 +81,7 @@ public class ReloadServiceTests
         await using var f = await InSpaceAsync();
 
         await LoadAsync(f);
+        Assert.True(f.Rig.Timers.IsSet($"dogma.reload:{f.Gun}"));
 
         // the module is ready at a moment (its next activation time), then a charge is being loaded for the module's reload time
         var told = Events.Of(f.Session);

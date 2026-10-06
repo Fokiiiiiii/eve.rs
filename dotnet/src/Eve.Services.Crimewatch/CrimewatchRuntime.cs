@@ -7,6 +7,63 @@ using Eve.Universe;
 namespace Eve.Services.Crimewatch;
 
 /// <summary>An attack on the ship of another pilot, and what it made of the attacker (see <see cref="Aggression"/>).</summary>
+/// <summary>A canonical (FirstCharacterID &lt; SecondCharacterID) crimewatch pair row.</summary>
+/// <summary>One persisted security-status history row projected to the client's exact field names.</summary>
+public sealed record SecurityStatusTransaction(
+    int? EventTypeID,
+    long EventDateUnixMs,
+    long? OtherOwnerID,
+    int? OtherTypeID,
+    long? LocationID,
+    double? Modification,
+    double? NewValue);
+
+public sealed record LimitedEngagement(long FirstCharacterID, long SecondCharacterID, long ExpiresAtUnixMs);
+
+/// <summary>
+/// Host persistence boundary for the actual security-status relation history and shared
+/// crimewatchRuntime limited-engagement rows. Engagement reads return only rows whose expiry is
+/// greater than nowUnixMs, optionally restricted to a character.
+/// </summary>
+public interface ICrimewatchPersistenceCallbacks
+{
+    /// <summary>Host should call RelationStore.HistoryAsync for security_status, RelationStore.World and int.MaxValue. Project AtMs, NewValue and exact Attrs keys eventTypeID/otherOwnerID/otherTypeID/locationID/modification; if eventTypeID is absent, use SecurityStatusEventTypeIds.FromHistoryReason(entry.Reason). Missing metadata stays null.</summary>
+    Task<IReadOnlyList<SecurityStatusTransaction>> SecurityStatusTransactionsOfAsync(long characterId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Creates a pending challenge with a Host-selected expiry and delivers OnDuelChallenge to the target.
+    /// Returns that exact expiry FILETIME, or null when the Host rejects the invitation.
+    /// </summary>
+    Task<long?> StartDuelChallengeAsync(
+        long challengerCharacterId,
+        long targetCharacterId,
+        long challengerCorporationId,
+        long challengerAllianceId,
+        CancellationToken cancellationToken);
+
+    /// <summary>Reads active pair rows in the same store used by weapon legality.</summary>
+    Task<IReadOnlyList<LimitedEngagement>> LimitedEngagementsAsync(long nowUnixMs, long? characterId, CancellationToken cancellationToken);
+
+    /// <summary>Upserts key le:min:max with kind=limitedEngagement, firstCharacterID, secondCharacterID and engagement.expiresAtMs.</summary>
+    Task UpsertLimitedEngagementAsync(long firstCharacterId, long secondCharacterId, long expiresAtUnixMs, CancellationToken cancellationToken);
+
+    /// <summary>Deletes only the pair whose stored expiry equals expectedExpiresAtUnixMs and is due by nowUnixMs.</summary>
+    Task<bool> ExpireLimitedEngagementAsync(long firstCharacterId, long secondCharacterId, long expectedExpiresAtUnixMs, long nowUnixMs, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Validates and consumes the pending duel challenge in one transaction. A decline consumes the challenge
+    /// without creating an engagement; an accepted challenge writes the shared pair row with the supplied expiry.
+    /// Returns true only when an accepted, unexpired challenge was committed.
+    /// </summary>
+    Task<bool> RespondToDuelChallengeAsync(
+        long responderCharacterId,
+        long challengerCharacterId,
+        long challengeExpiresAtFileTime,
+        bool accept,
+        long? engagementExpiresAtUnixMs,
+        CancellationToken cancellationToken);
+}
+
 public sealed record AggressionResult(AggressionRequest Request, AggressionOutcome Outcome);
 
 /// <summary>Resolves active war relations and their accepted allies for crimewatch.</summary>
@@ -112,9 +169,10 @@ public sealed class RelationWars(Eve.Relations.RelationStore relations) : Eve.Se
 /// for its end is <see cref="LocalTimers"/> (a process-local wait; a process that starts takes it up again with <see cref="ResumeAsync"/>). One step at a time: crimewatch is told of
 /// an attack and of an end by the same door, and what it told last is what it compares with.
 /// </summary>
-public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions sessions, Func<long> nowUnixMs, Action<string>? log = null, Func<TimeSpan, CancellationToken, Task>? delay = null) : IDisposable
+public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions sessions, Func<long> nowUnixMs, ICrimewatchPersistenceCallbacks persistence, Action<string>? log = null, Func<TimeSpan, CancellationToken, Task>? delay = null, LocalTimers? localTimers = null) : IDisposable
 {
-    private readonly LocalTimers _timers = new(log, delay);
+    private readonly bool _ownsTimers = localTimers is null;
+    private readonly LocalTimers _timers = localTimers ?? new(log, delay);
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentDictionary<long, CombatTimers> _told = new();
     private readonly Dictionary<long, (IReadOnlyList<long> Criminals, IReadOnlyList<long> Suspects)> _flagsTold = [];
@@ -125,22 +183,184 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
     /// <summary>Raised after an attack was recorded and before the clients are told the timers: what a crime brings (the security status, a kill right, CONCORD) hangs here.</summary>
     public event Func<AggressionResult, Task>? Aggressed;
 
+    public const long LimitedEngagementDurationMs = 5 * 60_000;
+
     private static string Key(long characterId) => $"crimewatch.end:{characterId}";
 
     /// <summary>
     /// A pilot attacked the ship of another pilot: its timers run and it may be flagged; what a crime brings (<see cref="Aggressed"/>) is done, and then the clients are told the timers
     /// (as in the reference, whose security status and kill right come before the timers).
     /// </summary>
+    /// <summary>Active peer-to-expiry Unix-ms values for one character.</summary>
+    public Task<IReadOnlyList<SecurityStatusTransaction>> SecurityStatusTransactionsOfAsync(
+        long characterId,
+        CancellationToken cancellationToken = default) =>
+        persistence.SecurityStatusTransactionsOfAsync(characterId, cancellationToken);
+
+    public async Task<IReadOnlyDictionary<long, long>> LimitedEngagementsOfAsync(
+        long characterId,
+        long nowUnixMs,
+        CancellationToken cancellationToken = default)
+    {
+        if (characterId <= 0)
+        {
+            return new Dictionary<long, long>();
+        }
+        var result = new Dictionary<long, long>();
+        foreach (var engagement in await persistence.LimitedEngagementsAsync(nowUnixMs, characterId, cancellationToken))
+        {
+            if (engagement.ExpiresAtUnixMs <= nowUnixMs)
+            {
+                continue;
+            }
+            if (engagement.FirstCharacterID == characterId)
+            {
+                result[engagement.SecondCharacterID] = engagement.ExpiresAtUnixMs;
+            }
+            else if (engagement.SecondCharacterID == characterId)
+            {
+                result[engagement.FirstCharacterID] = engagement.ExpiresAtUnixMs;
+            }
+        }
+        return result;
+    }
+
+    /// <summary>Resolves an accepted duel challenge into the shared five-minute pair row.</summary>
+    public Task<long?> StartDuelChallengeAsync(
+        long challengerCharacterId,
+        long targetCharacterId,
+        long challengerCorporationId,
+        long challengerAllianceId,
+        CancellationToken cancellationToken = default) =>
+        persistence.StartDuelChallengeAsync(
+            challengerCharacterId,
+            targetCharacterId,
+            challengerCorporationId,
+            challengerAllianceId,
+            cancellationToken);
+
+    public async Task<bool> RespondToDuelChallengeAsync(
+        long responderCharacterId,
+        long challengerCharacterId,
+        long challengeExpiresAtFileTime,
+        bool accept,
+        CancellationToken cancellationToken = default)
+    {
+        if (responderCharacterId <= 0 || challengerCharacterId <= 0 ||
+            responderCharacterId == challengerCharacterId || challengeExpiresAtFileTime <= 0)
+        {
+            return false;
+        }
+        var now = nowUnixMs();
+        var engagementExpiresAt = accept ? now + LimitedEngagementDurationMs : (long?)null;
+        var accepted = await persistence.RespondToDuelChallengeAsync(
+            responderCharacterId,
+            challengerCharacterId,
+            challengeExpiresAtFileTime,
+            accept,
+            engagementExpiresAt,
+            cancellationToken);
+        if (!accept || !accepted)
+        {
+            return false;
+        }
+
+        var (first, second) = Pair(responderCharacterId, challengerCharacterId);
+        var engagement = new LimitedEngagement(first, second, engagementExpiresAt!.Value);
+        ScheduleLimitedEngagementExpiry(engagement);
+        TellEngagement(engagement, created: true);
+        return true;
+    }
+
+    private async Task RefreshLimitedEngagementAsync(
+        long firstCharacterId,
+        long secondCharacterId,
+        long nowUnixMs,
+        bool alreadyActive,
+        CancellationToken cancellationToken)
+    {
+        var (first, second) = Pair(firstCharacterId, secondCharacterId);
+        var engagement = new LimitedEngagement(first, second, nowUnixMs + LimitedEngagementDurationMs);
+        await persistence.UpsertLimitedEngagementAsync(first, second, engagement.ExpiresAtUnixMs, cancellationToken);
+        ScheduleLimitedEngagementExpiry(engagement);
+        TellEngagement(engagement, created: !alreadyActive);
+    }
+
+    private void ScheduleLimitedEngagementExpiry(LimitedEngagement engagement)
+    {
+        var (first, second) = Pair(engagement.FirstCharacterID, engagement.SecondCharacterID);
+        var afterMs = Math.Max(5, engagement.ExpiresAtUnixMs - nowUnixMs() + 5);
+        _timers.Set(EngagementKey(first, second), TimeSpan.FromMilliseconds(afterMs),
+            () => ExpireLimitedEngagementAsync(first, second, engagement.ExpiresAtUnixMs));
+    }
+
+    private async Task ExpireLimitedEngagementAsync(long firstCharacterId, long secondCharacterId, long expectedExpiresAtUnixMs)
+    {
+        var now = nowUnixMs();
+        if (await persistence.ExpireLimitedEngagementAsync(
+                firstCharacterId, secondCharacterId, expectedExpiresAtUnixMs, now, CancellationToken.None))
+        {
+            TellEngagementEnded(firstCharacterId, secondCharacterId);
+            return;
+        }
+
+        foreach (var active in await persistence.LimitedEngagementsAsync(now, firstCharacterId, CancellationToken.None))
+        {
+            if (active.FirstCharacterID == firstCharacterId &&
+                active.SecondCharacterID == secondCharacterId &&
+                active.ExpiresAtUnixMs > now)
+            {
+                ScheduleLimitedEngagementExpiry(active);
+                return;
+            }
+        }
+    }
+
+    private void TellEngagement(LimitedEngagement engagement, bool created)
+    {
+        var method = created ? "OnCrimewatchEngagementCreated" : "OnCrimewatchEngagementStartTimeout";
+        var timeout = new PyLong(Py.FileTimeFromUnixMs(engagement.ExpiresAtUnixMs));
+        sessions.Of(engagement.FirstCharacterID)?.SendNotification(method, "charid", InventoryWire.Id(engagement.SecondCharacterID), timeout);
+        sessions.Of(engagement.SecondCharacterID)?.SendNotification(method, "charid", InventoryWire.Id(engagement.FirstCharacterID), timeout);
+    }
+
+    private void TellEngagementEnded(long firstCharacterId, long secondCharacterId)
+    {
+        sessions.Of(firstCharacterId)?.SendNotification("OnCrimewatchEngagementEnded", "charid", InventoryWire.Id(secondCharacterId));
+        sessions.Of(secondCharacterId)?.SendNotification("OnCrimewatchEngagementEnded", "charid", InventoryWire.Id(firstCharacterId));
+    }
+
+    private static bool IsEmpire(SecurityClass where) =>
+        Security.IsHighSecOrHigher(where) || Security.IsLowSec(where);
+
+    private static (long First, long Second) Pair(long first, long second) =>
+        first <= second ? (first, second) : (second, first);
+
+    private static string EngagementKey(long first, long second) => $"crimewatch.engagement:{first}:{second}";
+
     public async Task<AggressionResult> RecordAggressionAsync(AggressionRequest request, CancellationToken cancellationToken = default)
     {
         var now = nowUnixMs();
         var targetState = await store.StateOfAsync(request.Target, cancellationToken);
+        var targetFlag = targetState.FlagAt(now);
+        var canPair = request.Attacker > 0 && request.Target > 0 && request.Attacker != request.Target;
+        var activeEngagements = canPair
+            ? await LimitedEngagementsOfAsync(request.Attacker, now, cancellationToken)
+            : new Dictionary<long, long>();
+        var alreadyEngaged = activeEngagements.ContainsKey(request.Target);
+        // An LE is created by attacking a suspect/criminal in empire space. A legal war attack alone never creates one.
+        var startsOrRenewsEngagement = canPair &&
+            (alreadyEngaged || (IsEmpire(request.Where) && targetFlag is Flag.Suspect or Flag.Criminal));
         var legal = Legal is { } checkLegal && await checkLegal(request.Attacker, request.Target, now, cancellationToken);
         AggressionOutcome? outcome = null;
         await store.UpdateAsync(request.Attacker, state => (outcome = Aggression.Record(state, targetState, request.Where, request.SolarSystemId, request.TargetIsCapsule, legal, now)).Attacker, now, cancellationToken);
         var result = new AggressionResult(request, outcome!);
         try
         {
+            if (startsOrRenewsEngagement)
+            {
+                await RefreshLimitedEngagementAsync(request.Attacker, request.Target, now, alreadyEngaged, cancellationToken);
+            }
             if (Aggressed is { } handlers)
             {
                 foreach (var handler in handlers.GetInvocationList().Cast<Func<AggressionResult, Task>>())
@@ -205,7 +425,15 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
     /// <summary>A process that starts: takes up the wait for the end of every timer and flag that still runs.</summary>
     public async Task ResumeAsync(CancellationToken cancellationToken = default)
     {
-        foreach (var (characterId, _) in await store.ActiveAsync(nowUnixMs(), cancellationToken))
+        var now = nowUnixMs();
+        foreach (var engagement in await persistence.LimitedEngagementsAsync(now, null, cancellationToken))
+        {
+            if (engagement.ExpiresAtUnixMs > now)
+            {
+                ScheduleLimitedEngagementExpiry(engagement);
+            }
+        }
+        foreach (var (characterId, _) in await store.ActiveAsync(now, cancellationToken))
         {
             await SyncAsync(characterId, cancellationToken);
         }
@@ -253,5 +481,8 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
 
     private static PyValue Ids(IEnumerable<long> ids) => Py.Tuple([.. ids.Select(InventoryWire.Id)]);
 
-    public void Dispose() => _timers.Dispose();
+    public void Dispose()
+    {
+        if (_ownsTimers) _timers.Dispose();
+    }
 }

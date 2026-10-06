@@ -35,10 +35,13 @@ public sealed record CharMgrPersonalData(
 public sealed partial class CharMgrService(
     PgCharacterStore characters,
     StationCatalog stations,
+    Func<long, int, int, CancellationToken, ValueTask<IReadOnlyList<PyValue>>> readRecentShipKillmailPage,
+    Func<long, CancellationToken, ValueTask<string?>> readCharacterDescription,
+    Func<long, string, CancellationToken, ValueTask> writeCharacterDescription,
+    Func<long, CancellationToken, ValueTask<double>> readCharacterSecurityStatus,
+    Func<long, CancellationToken, ValueTask<long?>> readMedal1GraphicId,
     Func<long, CancellationToken, ValueTask<CharMgrPersonalData?>>? readPersonalData = null)
 {
-    /// <summary>The reference's default text for the character description is its own branding; a new character has none.</summary>
-    private const string NoDescription = "";
 
     /// <summary>
     /// The empire a corporation's members are shown under. The reference names four of the starting corporations and
@@ -68,12 +71,25 @@ public sealed partial class CharMgrService(
         _ => null,
     };
 
+    private static bool PageValue(PyValue value, out int pageValue)
+    {
+        pageValue = 0;
+        var number = IdOf(value);
+        if (number is null || number < 0 || number > int.MaxValue)
+        {
+            return false;
+        }
+
+        pageValue = (int)number.Value;
+        return true;
+    }
+
     private static PyValue FileTime(DateTimeOffset time) => new PyLong(Py.FileTimeFromUnixMs(time.ToUnixTimeMilliseconds()));
 
     private static PyValue Nullable(long? value) => value is { } id ? new PyInt(id) : None;
 
     /// <summary>The public record of a character: <c>util.KeyVal</c> of the fields the client's character windows read.</summary>
-    internal static PyValue PublicInfo(Character c)
+    internal static PyValue PublicInfo(Character c, string description, double securityStatus, long? medal1GraphicId)
     {
         var empire = EmpireOf(c.CorporationId, c.FactionId);
         return Py.KeyVal(
@@ -91,16 +107,16 @@ public sealed partial class CharMgrService(
             ("gender", new PyInt(c.Gender)),
             ("createDateTime", FileTime(c.CreatedAt)),
             ("startDateTime", FileTime(c.CreatedAt)),
-            ("description", new PyStr(NoDescription)),
+            ("description", new PyStr(description)),
             ("securityRating", new PyInt(0)),
-            ("securityStatus", new PyInt(0)),
+            ("securityStatus", Py.Number(securityStatus)),
             ("bounty", new PyInt(0)),
             ("title", new PyStr("")),
             ("shortName", new PyStr("none")),
             ("stationID", new PyInt(c.StationId)),
             ("solarSystemID", new PyInt(c.SolarSystemId)),
             ("militiaFactionID", None),
-            ("medal1GraphicID", None));
+            ("medal1GraphicID", Nullable(medal1GraphicId)));
     }
 
     private async ValueTask<Character?> CharacterAsync(ServiceCall call)
@@ -109,18 +125,57 @@ public sealed partial class CharMgrService(
         return id is null ? null : await characters.GetAsync(id.Value, call.Cancellation);
     }
 
+    private async ValueTask<PyValue> PublicInfoAsync(Character character, CancellationToken cancellationToken)
+    {
+        var description = await readCharacterDescription(character.Id, cancellationToken) ?? "";
+        var securityStatus = await readCharacterSecurityStatus(character.Id, cancellationToken);
+        var medal1GraphicId = await readMedal1GraphicId(character.Id, cancellationToken);
+        return PublicInfo(character, description, securityStatus, medal1GraphicId);
+    }
+
     [Method("GetPublicInfo")]
     public async ValueTask<PyValue> GetPublicInfo(ServiceCall call) =>
-        await CharacterAsync(call) is { } character ? PublicInfo(character) : None;
+        await CharacterAsync(call) is { } character
+            ? await PublicInfoAsync(character, call.Cancellation)
+            : None;
 
     /// <summary>The same record in a list (the client asks for it with a second argument for the character window).</summary>
     [Method("GetPublicInfo3")]
     public async ValueTask<PyValue> GetPublicInfo3(ServiceCall call) =>
-        await CharacterAsync(call) is { } character ? new PyList([PublicInfo(character)]) : None;
+        await CharacterAsync(call) is { } character
+            ? new PyList([await PublicInfoAsync(character, call.Cancellation)])
+            : None;
 
     [Method("GetCharacterDescription")]
-    public async ValueTask<PyValue> GetCharacterDescription(ServiceCall call) =>
-        await CharacterAsync(call) is not null ? new PyStr(NoDescription) : None;
+    public async ValueTask<PyValue> GetCharacterDescription(ServiceCall call)
+    {
+        if (await CharacterAsync(call) is not { } character)
+        {
+            return None;
+        }
+
+        return new PyStr(await readCharacterDescription(character.Id, call.Cancellation) ?? "");
+    }
+
+    [Method("SetCharacterDescription")]
+    public async ValueTask<PyValue> SetCharacterDescription(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } characterId || characterId <= 0 ||
+            call.Args.Count == 0 ||
+            await characters.GetAsync(characterId, call.Cancellation) is null)
+        {
+            return None;
+        }
+
+        var description = Eve.Macho.JsSemantics.StringValue(call.Arg(0));
+        if (description is null)
+        {
+            return None;
+        }
+
+        await writeCharacterDescription(characterId, description, call.Cancellation);
+        return None;
+    }
 
     [Method("GetCharacterCreationDate")]
     public async ValueTask<PyValue> GetCharacterCreationDate(ServiceCall call) =>
@@ -290,5 +345,22 @@ public sealed partial class CharMgrService(
     }
 
     [Method("GetRecentShipKillsAndLosses")]
-    public PyValue GetRecentShipKillsAndLosses(ServiceCall call) => new PyList([]);
+    public async ValueTask<PyValue> GetRecentShipKillsAndLosses(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } characterId || characterId <= 0 ||
+            await characters.GetAsync(characterId, call.Cancellation) is null)
+        {
+            return None;
+        }
+
+        if (call.Args.Count < 2 ||
+            !PageValue(call.Arg(0), out var num) ||
+            !PageValue(call.Arg(1), out var startIndex) ||
+            num == 0)
+        {
+            return new PyList([]);
+        }
+
+        return new PyList(await readRecentShipKillmailPage(characterId, num, startIndex, call.Cancellation));
+    }
 }

@@ -9,7 +9,7 @@ namespace Eve.Services.Dogma.Tests;
 /// <summary>What the client shows when a ship refuses: the error names and the words are the reference's.</summary>
 public class ShipErrorTests
 {
-    private const int Skill = 3300, Module = 5001, Ship = 601;
+    private const int Skill = 3300, Module = 5001, Ship = 11019;
 
     private static readonly DogmaStatic Statics = new(
         [], [],

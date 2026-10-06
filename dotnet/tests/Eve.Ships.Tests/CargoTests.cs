@@ -8,8 +8,7 @@ public class CargoTests
 {
     private const int Tritanium = 34, Pyerite = 35;
 
-    // the ibis holds 125 cubic metres; a unit of tritanium is 0.01
-    private const double IbisHold = 125;
+    // Tritanium and pyerite each occupy 0.01 cubic metres.
 
     private static async Task<long> StackAsync(Rig rig, Created c, int type, long quantity) => await rig.GiveAsync(c.CharacterId, type, singleton: false, quantity: quantity);
 
@@ -59,18 +58,21 @@ public class CargoTests
     {
         await using var rig = await Rig.CreateAsync();
         var c = await rig.NewCharacterAsync();
-        var held = await StackAsync(rig, c, Tritanium, 115);
+        var capacity = rig.Statics.Type(Rig.Cockroach)!.Attributes[38];
+        const double volumePerUnit = 0.01;
+        var heldQuantity = checked((long)Math.Round((capacity - volumePerUnit) / volumePerUnit));
+        var held = await StackAsync(rig, c, Tritanium, heldQuantity);
         Assert.IsType<ShipChanged>(await IntoHoldAsync(rig, c, held, null));
-        var big = await StackAsync(rig, c, Pyerite, 20000);
+        var big = await StackAsync(rig, c, Pyerite, 2);
 
-        var refused = Assert.IsType<ShipRefused>(await IntoHoldAsync(rig, c, big, 20000));
+        var refused = Assert.IsType<ShipRefused>(await IntoHoldAsync(rig, c, big, 2));
 
-        // 125 - 115 x 0.01 is left; 20000 pyerite (0.01 each) need 200
         Assert.Equal(ShipRefusal.NotEnoughCargoSpace, refused.Reason);
-        Assert.Equal((123.85, 200d), (refused.Available, refused.Volume));
+        Assert.Equal((0.01, 0.02), (Math.Round(refused.Available, 6), Math.Round(refused.Volume, 6)));
         Assert.Equal(Rig.Station, (await rig.Items.GetAsync(big))!.LocationId);
         var room = Assert.NotNull(await rig.Ships.RoomAsync(c.CharacterId, c.ShipId, CharacterShips.CargoFlag));
-        Assert.Equal((IbisHold, 1.15), (room.Capacity, Math.Round(room.Used, 9)));
+        Assert.Equal(capacity, room.Capacity);
+        Assert.Equal(capacity - volumePerUnit, Math.Round(room.Used, 6));
     }
 
     [PgFact]
@@ -159,11 +161,12 @@ public class CargoTests
         var cargo = Assert.NotNull(await rig.Ships.RoomAsync(c.CharacterId, c.ShipId, CharacterShips.CargoFlag));
         var drones = Assert.NotNull(await rig.Ships.RoomAsync(c.CharacterId, c.ShipId, CharacterShips.DroneBayFlag));
         var nothing = Assert.NotNull(await rig.Ships.RoomAsync(c.CharacterId, c.ShipId, 99));
+        var type = rig.Statics.Type(Rig.Cockroach)!;
 
-        Assert.Equal((IbisHold, 0d), (cargo.Capacity, cargo.Used));
-        Assert.Equal(5d, drones.Capacity); // the ibis has a drone bay of five cubic metres
+        Assert.Equal((type.Attributes[38], 0d), (cargo.Capacity, cargo.Used));
+        Assert.Equal(type.Attributes[283], drones.Capacity);
         Assert.Equal(0d, nothing.Capacity);
-        Assert.Null(await rig.Ships.RoomAsync(c.CharacterId + 1, c.ShipId, CharacterShips.CargoFlag)); // not the character's ship
+        Assert.Null(await rig.Ships.RoomAsync(c.CharacterId + 1, c.ShipId, CharacterShips.CargoFlag));
     }
 }
 
@@ -226,11 +229,15 @@ public class SpaceCargoTests
     {
         await using var rig = await Rig.CreateAsync();
         var (c, can) = await InSpaceWithACanAsync(rig);
-        var big = await InAsync(rig, c.CharacterId, can.Id, CharacterShips.ContainerFlag, Tritanium, 20_000);
+        var capacity = rig.Statics.Type(Rig.Cockroach)!.Attributes[38];
+        var quantity = checked((long)Math.Round(capacity / 0.01) + 1);
+        var big = await InAsync(rig, c.CharacterId, can.Id, CharacterShips.ContainerFlag, Tritanium, quantity);
 
         var refused = Assert.IsType<ShipRefused>(await rig.Ships.MoveInSpaceAsync(c.CharacterId, big, can.Id, c.ShipId, null));
 
-        Assert.Equal((ShipRefusal.NotEnoughCargoSpace, 125d, 200d), (refused.Reason, refused.Available, refused.Volume));
+        Assert.Equal(ShipRefusal.NotEnoughCargoSpace, refused.Reason);
+        Assert.Equal(capacity, refused.Available);
+        Assert.Equal(Math.Round(quantity * 0.01, 6), Math.Round(refused.Volume, 6));
         Assert.Equal(can.Id, (await rig.Items.GetAsync(big))!.LocationId);
     }
 

@@ -59,9 +59,13 @@ internal sealed class Rig : IAsyncDisposable
     private readonly List<string> _extraSchemas = [];
     private readonly string _suffix;
 
+private readonly Dictionary<long, ClientSession> _fleetSessions = new();
+    public Eve.Services.Space.FleetStore FleetStore { get; }
+
     private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, CreationCatalog catalog, StationCatalog stations, SolarSystemCatalog systems, PgModuleStateStore modules, TimeSpan protection, TimeSpan jumpCloak, bool npcLoot, Eve.Npc.BeltRatConfig? beltRats, Eve.Scheduler.LocalTimers? localTimers)
     {
         Source = source;
+        FleetStore = new Eve.Services.Space.FleetStore(source);
         _suffix = suffix;
         _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}", $"pp_{suffix}"];
         SpaceItems = new PgSpaceItemStore(source, _schemas[6]);
@@ -82,7 +86,7 @@ internal sealed class Rig : IAsyncDisposable
         Drones = new SpaceDrones(Sim, Ships, statics, Space, () => Now, Log.Add);
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Ships, statics, () => Now, Containers, Drones);
         Ship = new ShipService(Space, () => ClockMs, Containers, Drones);
-        Beyonce = new BeyonceService(Space, () => ClockMs);
+        Beyonce = new BeyonceService(Space, () => ClockMs, FleetStore, characterId => _fleetSessions.GetValueOrDefault(characterId));
         Entity = new EntityService(Drones, () => ClockMs);
         Registry.Register(Ship);
         Registry.Register(Beyonce);
@@ -145,6 +149,15 @@ internal sealed class Rig : IAsyncDisposable
     /// <param name="npcLoot">Whether an NPC that is destroyed leaves a wreck the host makes with <see cref="LootTable"/> in it.</param>
     /// <param name="beltRats">How the rats of the belts are rolled (none: the belts have none).</param>
     public InvBrokerService Inventory { get; }
+
+    public const int Cockroach = 11019;
+    private const int CaldariRookieShip = 601;
+
+    private static CreationCatalog CockroachCatalog(CreationCatalog source) =>
+        new(
+            source.Races.Select(r => r.Id == 1 ? r with { ShipTypeId = Cockroach, ShipName = "Cockroach" } : r),
+            source.Bloodlines,
+            CreationCatalog.Schools.Select(s => source.StarterFor(s.CorporationId)!));
 
     public static async Task<Rig> CreateAsync(TimeSpan? protection = null, TimeSpan? jumpCloak = null, bool npcLoot = false, Eve.Npc.BeltRatConfig? beltRats = null, Eve.Scheduler.LocalTimers? localTimers = null)
     {
@@ -245,9 +258,10 @@ internal sealed class Rig : IAsyncDisposable
                     ADD COLUMN IF NOT EXISTS accepts_conduit_jumps boolean NOT NULL DEFAULT true,
                     ADD COLUMN IF NOT EXISTS accepts_fleet_regroups boolean NOT NULL DEFAULT true,
                     ADD COLUMN IF NOT EXISTS ship_type_id bigint;
-                """)
+                """),
+            Eve.Services.Space.FleetStore.FleetFinderAllowedEntitiesMigration
         ], CancellationToken.None);
-        var catalog = await CreationCatalog.LoadAsync(sde, Station);
+        var catalog = CockroachCatalog(await CreationCatalog.LoadAsync(sde, Station));
         var creation = new CharacterCreation(
             source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), catalog, modules);
         return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation, catalog, await StationCatalog.LoadAsync(sde), await SolarSystemCatalog.LoadAsync(sde), modules, protection ?? Timeout.InfiniteTimeSpan, jumpCloak ?? Timeout.InfiniteTimeSpan, npcLoot, beltRats, localTimers);
@@ -264,10 +278,33 @@ internal sealed class Rig : IAsyncDisposable
         return id;
     }
 
-    public async Task<Created> NewCharacterAsync(string name = "Space Tester", int account = 1)
+    public async Task<Created> NewCharacterAsync(string name = "Space Tester", int account = 1, int shipTypeId = Cockroach)
     {
+        await Statics.EnsureTypesAsync([Cockroach, 21857, 3638, 3651]);
         var made = await Creation.CreateAsync(new CreationRequest(account, name, 1, 1, 1, 10, 35, [1], [2]));
-        return Assert.IsType<Created>(made);
+        var character = Assert.IsType<Created>(made);
+        if (shipTypeId != Cockroach)
+        {
+            var replacement = (await Ships.GrantAsync(character.CharacterId, shipTypeId, 1, singleton: true))!.Single().After;
+            await using var connection = await Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await Characters.SetShipAsync(connection, transaction, character.CharacterId, replacement.Id);
+            await transaction.CommitAsync();
+            character = character with { ShipId = replacement.Id };
+        }
+        var kit = StarterKits.For(shipTypeId == Cockroach ? CaldariRookieShip : shipTypeId);
+        if (kit.Count != 0)
+        {
+            await using var connection = await Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            foreach (var module in kit)
+            {
+                var moduleId = await Items.CreateAsync(connection, transaction, new NewItem(module.TypeId, character.CharacterId, character.ShipId, module.Flag, 1, true));
+                await Modules.SetAsync(connection, transaction, moduleId, ItemState.Online);
+            }
+            await transaction.CommitAsync();
+        }
+        return character;
     }
 
     /// <summary>A session as choosing the character leaves it: docked at the station.</summary>
@@ -283,6 +320,7 @@ internal sealed class Rig : IAsyncDisposable
         session.Set("regionid", new PyInt(character.RegionId));
         session.Set("locationid", new PyInt(character.StationId));
         session.Set("shipid", new PyLong(created.ShipId));
+        _fleetSessions[created.CharacterId] = session;
         return session;
     }
 

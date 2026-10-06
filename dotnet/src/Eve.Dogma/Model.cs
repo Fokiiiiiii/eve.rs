@@ -87,6 +87,9 @@ public sealed record EffectDef(int Id, string Name, int Category, IReadOnlyList<
 
     /// <summary>The attribute that holds the capacitor a cycle takes (0 when it needs none).</summary>
     public int DischargeAttributeId { get; init; }
+
+    /// <summary>The type attribute containing the chance for this effect to trigger (0 when guaranteed).</summary>
+    public int ChanceAttributeId { get; init; }
 }
 
 /// <summary>What an attribute is: its default, whether stacking penalties apply to it, its cap and floor, and its kind of number.</summary>

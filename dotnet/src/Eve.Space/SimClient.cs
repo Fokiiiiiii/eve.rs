@@ -48,6 +48,24 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         }
     }, log);
 
+    /// <summary>A client of a simulation listening on a local TCP endpoint.</summary>
+    public static SimClient ToTcpSocket(string address, Action<string>? log = null) => new(async cancellationToken =>
+    {
+        if (!System.Net.IPEndPoint.TryParse(address, out var endpoint))
+            throw new ArgumentException("Expected a TCP endpoint in address:port form.", nameof(address));
+        var socket = new Socket(endpoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+        try
+        {
+            await socket.ConnectAsync(endpoint, cancellationToken);
+            return new NetworkStream(socket, ownsSocket: true);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    }, log);
+
     public bool IsConnected => _connected;
 
     public event Action<SimMessage>? Received;
@@ -372,6 +390,12 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         AwaitAsync(_entering, respawn.SessionId, respawn, cancellationToken);
 
     public void PlaceWreck(SimPlaceWreck wreck) => Send(wreck);
+
+    public void PlaceAsteroid(SimPlaceAsteroid asteroid) => Send(asteroid);
+
+    public void DroneWorkResult(SimDroneWorkResult result) => Send(result);
+
+    public void RemoteRepairCycleResult(SimRemoteRepairCycleResult result) => Send(result);
 
     public Task<CommandReply> PlaceContainerAsync(SimPlaceContainer can, CancellationToken cancellationToken = default) =>
         AwaitAsync(_answered, (can.SessionId, SimCommands.PlaceContainer), can, cancellationToken);

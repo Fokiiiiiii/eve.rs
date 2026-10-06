@@ -4,6 +4,25 @@ using Npgsql;
 namespace Eve.Crimewatch;
 
 /// <summary>What crimewatch keeps in PostgreSQL: the ship safety level of each character, and the combat timers and flags that must outlast a session.</summary>
+/// <summary>Security-status event ids from the pinned eve-logic appLogConst.py.</summary>
+public static class SecurityStatusEventTypeIds
+{
+    public const int KillPirateNpc = 378;
+    public const int IllegalAggression = 379;
+    public const int GmModification = 380;
+    public const int HandInTags = 385;
+    public const int GmRollback = 386;
+
+    /// <summary>Known persisted relation reasons only; unrecognized reasons have no invented event id.</summary>
+    public static int? FromHistoryReason(string? reason) => reason switch
+    {
+        "aggression" => IllegalAggression,
+        "npc_bounty_recovery" or "npc-kill-security-status-recovery" => KillPirateNpc,
+        _ => null,
+    };
+}
+
+/// <summary>A real relations.relation_history row projected to the security-status client fields.</summary>
 public sealed class PgCrimewatchStore
 {
     public const string DefaultSchema = "crimewatch";
@@ -115,4 +134,9 @@ public sealed class PgCrimewatchStore
             """), cancellationToken, characterId, (short)level, nowMs);
         return level;
     }
+
+    /// <summary>
+    /// Reads the real security_status relation history, including attrs that RelationStore.HistoryAsync
+    /// intentionally omits. The order is newest first, matching RelationStore.HistoryAsync.
+    /// </summary>
 }

@@ -13,11 +13,25 @@ namespace Eve.Services.Crimewatch;
 /// </summary>
 [Service("crimewatch")]
 public sealed partial class CrimewatchService(
-    PgCrimewatchStore store, Func<long> nowUnixMs, Func<long, CancellationToken, Task<double>>? securityStatusOf = null) : IBoundObjectReleaseHandler
+    PgCrimewatchStore store, CrimewatchRuntime runtime, Func<long> nowUnixMs,
+    Func<long, CancellationToken, Task<double>>? securityStatusOf = null) : IBoundObjectReleaseHandler
 {
     private readonly ConcurrentDictionary<long, string> _boundOfSession = new();
 
     private static PyValue None => PyNone.Instance;
+
+    private static readonly Descriptor SecurityStatusTransactionDescriptor = Descriptor.FromHeader(new PyObjectEx(
+        ObjectExKind.Ex1,
+        Py.Tuple(new PyToken("blue.DBRowDescriptor"), Py.Tuple(
+            Py.Tuple(
+                Py.Tuple(new PyStr("eventTypeID"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("eventDate"), new PyInt(0x40)),
+                Py.Tuple(new PyStr("otherOwnerID"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("otherTypeID"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("locationID"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("modification"), new PyInt(0x06)),
+                Py.Tuple(new PyStr("newValue"), new PyInt(0x06))))),
+        [], []));
 
     public void OnBoundObjectReleased(string oid, ClientSession? session)
     {
@@ -67,7 +81,7 @@ public sealed partial class CrimewatchService(
 
     /// <summary>
     /// <c>GetClientStates()</c>: <c>((weapons, pvp, npc, criminal, disapproval), engagements, (criminals, suspects), safetyLevel)</c>. Each timer is <c>(state, expiry)</c>, idle with no
-    /// expiry while it does not run; the engagements are a dictionary of the other character to when it ends (none yet); the flagged are two sets of the character ids flagged in the
+    /// expiry while it does not run; the engagements are a dictionary of the other character to the FILETIME when it ends; the flagged are two sets of the character ids flagged in the
     /// system the pilot is in.
     /// </summary>
     [Method("GetClientStates")]
@@ -79,10 +93,17 @@ public sealed partial class CrimewatchService(
         var timers = (character is { } own ? await store.StateOfAsync(own, call.Cancellation) : CombatState.Idle).TimersAt(now);
         var system = call.Session.GetInt("solarsystemid") ?? call.Session.GetInt("solarsystemid2") ?? 0;
         var (criminals, suspects) = system > 0 ? await store.FlaggedInAsync(system, now, call.Cancellation) : ([], []);
+        var engagements = character is { } pilot
+            ? await runtime.LimitedEngagementsOfAsync(pilot, now, call.Cancellation)
+            : new Dictionary<long, long>();
+        var engagementWire = new PyDict([.. engagements.OrderBy(entry => entry.Key).Select(entry =>
+            new KeyValuePair<PyValue, PyValue>(
+                InventoryWire.Id(entry.Key),
+                new PyLong(Py.FileTimeFromUnixMs(entry.Value))))]);
         static PyValue Timer(TimerView timer) => Py.Tuple(new PyInt(timer.State), CrimewatchRuntime.Expiry(timer));
         return Py.Tuple(
             Py.Tuple(Timer(timers.Weapons), Timer(timers.Pvp), Timer(timers.Npc), Timer(timers.Criminal), Timer(timers.Disapproval)),
-            new PyDict([]),
+            engagementWire,
             Py.Tuple(InventoryWire.Set(criminals.Select(InventoryWire.Id)), InventoryWire.Set(suspects.Select(InventoryWire.Id))),
             new PyInt(safety));
     }
@@ -115,7 +136,68 @@ public sealed partial class CrimewatchService(
     [Method("GetCharacterSecurityStatus")]
     public ValueTask<PyValue> GetCharacterSecurityStatus(ServiceCall call) => SecurityStatus(Number(call.Arg(0)) is { } named and > 0 ? named : call.Session.CharacterId, call.Cancellation);
 
-    /// <summary><c>GetSecurityStatusTransactions()</c>: what changed the security status (nothing has yet).</summary>
+    /// <summary><c>GetSecurityStatusTransactions()</c>: the character's persisted security_status relation history as the client's CRowset.</summary>
+    /// <summary>Consumes a duel response; an accepted, valid challenge creates the pair LE in the shared crimewatchRuntime store.</summary>
+    /// <summary>Requests a Host-validated duel challenge; the Host owns pending state, expiry, and invite delivery.</summary>
+    [Method("StartDuelChallenge")]
+    public async ValueTask<PyValue> StartDuelChallenge(ServiceCall call)
+    {
+        if (call.Session.CharacterId is { } challengerCharacterId &&
+            Number(call.Arg(0)) is { } targetCharacterId &&
+            targetCharacterId > 0 &&
+            targetCharacterId != challengerCharacterId)
+        {
+            await runtime.StartDuelChallengeAsync(
+                challengerCharacterId,
+                targetCharacterId,
+                call.Session.GetInt("corpid") ?? 0,
+                call.Session.GetInt("allianceid") ?? 0,
+                call.Cancellation);
+        }
+        return None;
+    }
+
+    [Method("RespondToDuelChallenge")]
+    public async ValueTask<PyValue> RespondToDuelChallenge(ServiceCall call)
+    {
+        if (call.Session.CharacterId is { } responderCharacterId &&
+            Number(call.Arg(0)) is { } challengerCharacterId &&
+            Number(call.Arg(1)) is { } challengeExpiresAtFileTime)
+        {
+            await runtime.RespondToDuelChallengeAsync(
+                responderCharacterId,
+                challengerCharacterId,
+                challengeExpiresAtFileTime,
+                JsSemantics.Truthy(call.Arg(2)),
+                call.Cancellation);
+        }
+        return None;
+    }
+
+    private static PyValue SecurityStatusTransactionRow(SecurityStatusTransaction transaction) =>
+        new PyPackedRow(SecurityStatusTransactionDescriptor, [
+            transaction.EventTypeID is { } eventTypeId ? new PyInt(eventTypeId) : PyNone.Instance,
+            new PyLong(Py.FileTimeFromUnixMs(transaction.EventDateUnixMs)),
+            transaction.OtherOwnerID is { } ownerId ? InventoryWire.Id(ownerId) : PyNone.Instance,
+            transaction.OtherTypeID is { } typeId ? new PyInt(typeId) : PyNone.Instance,
+            transaction.LocationID is { } locationId ? InventoryWire.Id(locationId) : PyNone.Instance,
+            transaction.Modification is { } modification ? Py.Number(modification) : PyNone.Instance,
+            transaction.NewValue is { } newValue ? Py.Number(newValue) : PyNone.Instance,
+        ]);
+
     [Method("GetSecurityStatusTransactions")]
-    public PyValue GetSecurityStatusTransactions(ServiceCall call) => new PyList([]);
+    public async ValueTask<PyValue> GetSecurityStatusTransactions(ServiceCall call)
+    {
+        var transactions = call.Session.CharacterId is { } characterId
+            ? await runtime.SecurityStatusTransactionsOfAsync(characterId, call.Cancellation)
+            : [];
+        var rows = transactions.Select(SecurityStatusTransactionRow).ToArray();
+        return new PyObjectEx(
+            ObjectExKind.Ex2,
+            Py.Tuple(
+                Py.Tuple(new PyToken("carbon.common.script.sys.crowset.CRowset")),
+                Py.Dict(("header", SecurityStatusTransactionDescriptor.Header))),
+            rows,
+            []);
+    }
 }

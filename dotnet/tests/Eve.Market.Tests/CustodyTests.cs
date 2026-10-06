@@ -86,6 +86,90 @@ public class CustodyTests
     }
 
     [PgFact]
+    public async Task Corporate_blueprint_lock_blocks_item_mutations_until_unlocked()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "market_blueprint_lock_" + Guid.NewGuid().ToString("N");
+        await PgItemStore.MigrateAsync(source, schema);
+        var items = new PgItemStore(source, schema);
+        try
+        {
+            const long corporationId = 98_000_001;
+            const long locationId = 60_000_001;
+            long blueprintId;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                blueprintId = await items.CreateAsync(connection, transaction,
+                    new NewItem(810, corporationId, locationId, ItemFlags.CorpSAG1, Singleton: true));
+                await transaction.CommitAsync();
+            }
+
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await items.SetBlueprintLockedAsync(connection, transaction, corporationId, blueprintId, locked: true);
+                await transaction.CommitAsync();
+            }
+            Assert.True((await items.GetAsync(blueprintId))!.BlueprintLocked);
+
+            async Task AssertBlocked(Func<NpgsqlConnection, NpgsqlTransaction, Task> mutation)
+            {
+                await using var connection = await source.OpenConnectionAsync();
+                await using var transaction = await connection.BeginTransactionAsync();
+                await Assert.ThrowsAsync<InvalidOperationException>(() => mutation(connection, transaction));
+                await transaction.RollbackAsync();
+            }
+
+            await AssertBlocked((connection, transaction) =>
+                items.MoveAsync(connection, transaction, blueprintId, locationId + 1, ItemFlags.CorpSAG2));
+            await AssertBlocked((connection, transaction) =>
+                items.MoveToOwnerAsync(connection, transaction, blueprintId, 98_000_002, locationId, ItemFlags.CorpSAG1));
+            await AssertBlocked((connection, transaction) =>
+                items.SetQuantityAsync(connection, transaction, blueprintId, 2));
+            await AssertBlocked((connection, transaction) =>
+                items.DeleteAsync(connection, transaction, blueprintId));
+            var lockedItem = (await items.GetAsync(blueprintId))!;
+            await AssertBlocked(async (connection, transaction) =>
+            {
+                await items.MoveStackAsync(connection, transaction, lockedItem, 1, corporationId,
+                    locationId + 1, ItemFlags.CorpSAG1);
+            });
+
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await items.SetBlueprintLockedAsync(connection, transaction, corporationId, blueprintId, locked: false);
+                await items.MoveAsync(connection, transaction, blueprintId, locationId + 1, ItemFlags.CorpSAG1);
+                await transaction.CommitAsync();
+            }
+            Assert.False((await items.GetAsync(blueprintId))!.BlueprintLocked);
+
+            long copyId;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                copyId = await items.CreateAsync(connection, transaction,
+                    new NewItem(810, corporationId, locationId, ItemFlags.CorpSAG1, Singleton: true, BlueprintCopy: true));
+                await transaction.CommitAsync();
+            }
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    items.SetBlueprintLockedAsync(connection, transaction, corporationId, copyId, locked: true));
+                Assert.Equal("ITEM_NOT_CORPORATION_BLUEPRINT_ORIGINAL", error.Message);
+                await transaction.RollbackAsync();
+            }
+        }
+        finally
+        {
+            await using var drop = source.CreateCommand($"DROP SCHEMA {schema} CASCADE");
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PgFact]
     public async Task The_pinned_sde_stargates_load_as_market_routes()
     {
         await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));

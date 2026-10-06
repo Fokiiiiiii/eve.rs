@@ -16,12 +16,12 @@ public interface ICharacterDogmaSync
 /// Turns what happens to a character's training into what the client is told, in the order the reference tells it, and wakes the character's
 /// queue when its running line is due so the client hears about a level as it finishes.
 /// </summary>
-public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog catalog, CharacterSessions sessions, ICharacterDogmaSync? dogma, Func<long> nowUnixMs, bool schedule = true)
+public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog catalog, CharacterSessions sessions, ICharacterDogmaSync? dogma, Func<long> nowUnixMs, bool schedule = true, LocalTimers? localTimers = null)
 {
     /// <summary>How long after a line is due the queue is settled (the clock and the timer may not agree to the millisecond).</summary>
     private const int GraceMs = 100;
 
-    private readonly LocalTimers _timers = new();
+    private readonly LocalTimers _timers = localTimers ?? new();
 
     private static string TimerKey(long characterId) => $"skills.training:{characterId}";
 

@@ -12,10 +12,12 @@ public class SpaceEventsTests
     private static readonly double[] Facing = [0, 1, 0];
     private static readonly SimWreckKind FrigateWreck = new(26506, "Caldari Frigate Wreck", 3117);
 
-    private static async Task<(Rig Rig, Created Character, ClientSession Session)> InSpaceAsync(Rig? shared = null, string name = "Space Tester", int account = 1, long sessionId = 1)
+    private const int Ibis = 601;
+
+    private static async Task<(Rig Rig, Created Character, ClientSession Session)> InSpaceAsync(Rig? shared = null, string name = "Space Tester", int account = 1, long sessionId = 1, int shipTypeId = Rig.Cockroach)
     {
         var rig = shared ?? await Rig.CreateAsync();
-        var character = await rig.NewCharacterAsync(name, account);
+        var character = await rig.NewCharacterAsync(name, account, shipTypeId);
         var session = await rig.SessionAsync(character, sessionId);
         var oid = await rig.BindShipAsync(session);
         await rig.ShipCallAsync(session, "Undock", oid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
@@ -100,7 +102,7 @@ public class SpaceEventsTests
     [PgFact]
     public async Task A_ship_destroyed_by_an_npc_is_raised_as_lost_with_its_type_and_the_cause()
     {
-        var (rig, c, session) = await InSpaceAsync();
+        var (rig, c, session) = await InSpaceAsync(shipTypeId: Ibis);
         await using var _ = rig;
         var lost = new List<ShipLoss>();
         rig.Space.ShipLost += lost.Add;
@@ -116,7 +118,7 @@ public class SpaceEventsTests
     [PgFact]
     public async Task A_ship_nobody_is_known_to_have_destroyed_is_lost_for_an_unknown_cause_and_self_destruction_says_so()
     {
-        var (rig, c, session) = await InSpaceAsync();
+        var (rig, c, session) = await InSpaceAsync(shipTypeId: Ibis);
         await using var _ = rig;
         var lost = new List<ShipLoss>();
         rig.Space.ShipLost += lost.Add;
@@ -137,7 +139,7 @@ public class SpaceEventsTests
     [PgFact]
     public async Task A_ship_destroyed_by_another_pilot_names_the_killers_character_and_a_handler_that_fails_does_not_stop_the_loss_being_told()
     {
-        var (rig, victim, victimSession) = await InSpaceAsync();
+        var (rig, victim, victimSession) = await InSpaceAsync(shipTypeId: Ibis);
         await using var _ = rig;
         var (_, killer, killerSession) = await InSpaceAsync(rig, "Killer Pilot", 2, 2);
         var lost = new List<ShipLoss>();
@@ -151,7 +153,7 @@ public class SpaceEventsTests
         Assert.Equal((victim.CharacterId, ShipLossCause.Player, killer.CharacterId), (loss.CharacterId, loss.Cause, loss.KillerCharacterId));
         Assert.Contains(rig.Log, line => line.Contains("a handler of ShipLost failed: an insurance that failed"));
         // and the client was still told: the pilot is in a capsule
-        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimRespawn>().Any());
+        Assert.Contains(Events.Of(victimSession, clear: false), e => e.Name == "OnItemChange");
     }
 
     // ── a pilot's affiliation changed ────────────────────────────────────────
@@ -233,7 +235,7 @@ public class SpaceEventsTests
     [PgFact]
     public async Task A_lost_ship_is_announced_on_the_events_bus_with_its_cause()
     {
-        var (rig, c, session) = await InSpaceAsync();
+        var (rig, c, session) = await InSpaceAsync(shipTypeId: Ibis);
         await using var _ = rig;
         await rig.UseBusAsync();
         var spawn = await SpawnAsync(rig, session);

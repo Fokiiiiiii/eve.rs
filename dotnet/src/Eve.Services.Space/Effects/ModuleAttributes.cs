@@ -26,6 +26,8 @@ internal static class ModuleAttributes
     public const int ShieldBonus = 68;
     public const int StructureDamageAmount = 83;
     public const int ArmorDamageAmount = 84;
+    public const int RepairMultiplierBonusPerCycle = 2796;
+    public const int RepairMultiplierBonusMax = 2797;
     public const int PowerTransferAmount = 90;
     public const int EnergyNeutralizerAmount = 97;
     public const int FalloffEffectiveness = 2044;
@@ -44,6 +46,10 @@ internal static class ModuleAttributes
     public const int ScanLadarStrengthBonus = 239;
     public const int ScanMagnetometricStrengthBonus = 240;
     public const int ScanRadarStrengthBonus = 241;
+    public const int ScanGravimetricStrengthPercent = 1027;
+    public const int ScanLadarStrengthPercent = 1028;
+    public const int ScanMagnetometricStrengthPercent = 1029;
+    public const int ScanRadarStrengthPercent = 1030;
     public const int PainterSignatureBonus = 554;
     public const int MaxTargetRangeBonus = 309;
     public const int ScanResolutionBonus = 566;

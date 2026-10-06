@@ -53,7 +53,7 @@ public class ConditionTests
     public async Task A_preset_damages_the_ship_and_every_fitted_module_and_says_what_each_was()
     {
         await using var rig = await Rig.CreateAsync();
-        var c = await rig.NewCharacterAsync();
+        var c = await rig.NewCharacterAsync(shipTypeId: Ibis);
 
         var changed = (await rig.Ships.DamageDockedAsync(c.CharacterId, HealthPresets.Light))!;
 
@@ -80,11 +80,13 @@ public class ConditionTests
         await Task.CompletedTask;
     }
 
+    private const int Ibis = 601;
+
     [PgFact]
     public async Task A_ship_that_is_not_in_a_hangar_cannot_be_damaged_and_one_that_is_not_there_cannot_be_healed()
     {
         await using var rig = await Rig.CreateAsync();
-        var c = await rig.NewCharacterAsync();
+        var c = await rig.NewCharacterAsync(shipTypeId: Ibis);
         Assert.Null(await rig.Ships.DamageDockedAsync(999_999_999, HealthPresets.Light));
         Assert.Null(await rig.Ships.HealAsync(999_999_999));
 
@@ -98,7 +100,7 @@ public class ConditionTests
     public async Task A_heal_makes_the_ship_whole_and_mends_the_modules_that_are_not_and_says_which()
     {
         await using var rig = await Rig.CreateAsync();
-        var c = await rig.NewCharacterAsync();
+        var c = await rig.NewCharacterAsync(shipTypeId: Ibis);
         await rig.Ships.DamageDockedAsync(c.CharacterId, HealthPresets.Heavy);
 
         var healed = (await rig.Ships.HealAsync(c.CharacterId))!;

@@ -106,7 +106,7 @@ public class DogmaServiceTests
         Assert.Empty(Dict(Field(ship, "activeEffects")).Entries);
         var shipAttributes = Dict(Field(ship, "attributes"));
         Assert.Equal(shipAttributes.Entries.Select(e => Id(e.Key)).Order(), shipAttributes.Entries.Select(e => Id(e.Key))); // in the order of the ids
-        Assert.Equal(new PyReal(201.25), shipAttributes.Entries.Single(e => Id(e.Key) == 9).Value); // hit points with the skill that raises them
+        Assert.Equal(new PyInt(33_810), shipAttributes.Entries.Single(e => Id(e.Key) == 9).Value); // Cockroach structure hit points
 
         foreach (var (module, expectedType, expectedFlag) in new[] { (1, 21857, 19), (2, 3638, 27), (3, 3651, 28) })
         {
@@ -229,6 +229,7 @@ public class DogmaServiceTests
         var snapshot = await rig.Ships.LoadAsync(character.CharacterId);
         Assert.NotNull(snapshot);
         var world = snapshot.World;
+        await rig.Statics.EnsureTypesAsync([520, 484, 2363, 453, 9944, 564]);
         var shipId = snapshot.Ship.Id;
         var nextItemId = long.MaxValue - 1_000;
 
@@ -264,6 +265,7 @@ public class DogmaServiceTests
         var snapshot = await rig.Ships.LoadAsync(character.CharacterId);
         Assert.NotNull(snapshot);
         var world = snapshot.World;
+        await rig.Statics.EnsureTypesAsync([12274]);
         var shipId = snapshot.Ship.Id;
         var nextItemId = long.MaxValue - 2_000;
 

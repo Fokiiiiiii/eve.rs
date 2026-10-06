@@ -12,7 +12,19 @@ public sealed record Relation(long Id, string Kind, long Subject, long Object, d
 public sealed record RelationChange(long RelationId, string Kind, long Subject, long Object, double? OldValue, double? NewValue, string? Reason, long AtMs);
 
 /// <summary>One line of the history of a relation.</summary>
-public sealed record RelationHistoryEntry(long Id, string Kind, long Subject, long Object, double? OldValue, double? NewValue, string? Reason, long AtMs);
+public sealed record RelationHistoryEntry(
+    long Id,
+    string Kind,
+    long Subject,
+    long Object,
+    double? OldValue,
+    double? NewValue,
+    string? Reason,
+    long AtMs)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public JsonElement? Attrs { get; init; }
+}
 
 /// <summary>Where a character belongs: its corporation, the corporation's alliance, and the faction (of the corporation, the alliance or the character).</summary>
 public sealed record Affiliation(long? Corporation, long? Alliance, long? Faction);

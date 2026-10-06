@@ -7,12 +7,85 @@ using Eve.Services;
 namespace Eve.Services.Core;
 
 /// <summary>
-/// Read-only industry job RPCs backed only by the persisted <c>industryJobs.jobs</c> table.
-/// Completed history is exposed from stored rows only when requested; no jobs or history are synthesized.
+/// Industry manager protocol adapter. Job reads are snapshots; mutations cross the typed lifecycle port
+/// and must commit authoritative inventory, wallet, job, and outbox changes before reporting success.
 /// Starbase visibility/lifecycle and legacy inventory-flag resolution are supplied by Host callbacks.
-/// Mirrors EVE.js <c>industryManagerService</c>/<c>industryRuntimeState</c>; the client Job Browser
-/// requests owner-scoped active and completed job lists.
+/// The client Job Browser requests owner-scoped active and completed job lists.
 /// </summary>
+
+/// <summary>The authenticated session facts needed by the industry domain; never copied from the job payload.</summary>
+public sealed record IndustryJobActor(long CharacterId, long CorporationId, long CorporationRoles, int CorporationAccountKey);
+
+public sealed record IndustryJobLocation(long LocationId, int FlagId);
+
+public sealed record IndustryJobWallet(long OwnerId, int AccountKey);
+
+/// <summary>Client-selected job inputs. Costs, duration, materials, outcomes, and resulting status are always recomputed from authoritative data.</summary>
+public sealed record IndustryJobInstallSubmission(
+    int ActivityId,
+    long BlueprintId,
+    int BlueprintTypeId,
+    bool BlueprintCopy,
+    long BlueprintLocationId,
+    int BlueprintLocationFlagId,
+    long FacilityId,
+    long OwnerId,
+    long SolarSystemId,
+    long StationId,
+    IndustryJobLocation InputLocation,
+    IndustryJobLocation OutputLocation,
+    int Runs,
+    int LicensedRuns,
+    int? ProductTypeId,
+    int? OptionalTypeId,
+    int? OptionalTypeId2,
+    IndustryJobWallet Wallet);
+
+/// <summary>A retry key scoped to the authenticated character, RPC and Macho call id.</summary>
+public sealed record IndustryJobOperationContext(IndustryJobActor Actor, string OperationId);
+
+public sealed record IndustryJobInstallRequest(IndustryJobOperationContext Context, IndustryJobInstallSubmission Job);
+public sealed record IndustryJobAction(IndustryJobOperationContext Context, long JobId, long SolarSystemId);
+public sealed record IndustryJobBatch(IndustryJobOperationContext Context, IReadOnlyList<IndustryJobAction> Jobs);
+
+public sealed record IndustryJobChangedEvent(
+    long JobId,
+    long OwnerId,
+    long BlueprintId,
+    long InstallerId,
+    int Status,
+    long? SuccessfulRuns,
+    string OperationId);
+
+public static class IndustryJobEvents
+{
+    public const string Changed = "industry.job.changed";
+}
+
+/// <summary>A localized, client-visible industry error returned by an authoritative domain operation.</summary>
+public sealed class IndustryJobUserErrorException : Exception
+{
+    public IndustryJobUserErrorException(string messageKey) : base(messageKey)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(messageKey);
+        MessageKey = messageKey;
+    }
+
+    public string MessageKey { get; }
+}
+
+/// <summary>
+/// Typed use-case port implemented by Host composition. Each operation must commit job rows, custody,
+/// wallet settlement and the matching outbox event atomically before returning. OperationId makes safe
+/// retries explicit; CompleteManyJobsAsync is all-or-nothing.
+/// </summary>
+public interface IIndustryJobOperations
+{
+    ValueTask<long> InstallJobAsync(IndustryJobInstallRequest request, CancellationToken cancellationToken);
+    ValueTask CompleteJobAsync(IndustryJobAction request, CancellationToken cancellationToken);
+    ValueTask CompleteManyJobsAsync(IndustryJobBatch request, CancellationToken cancellationToken);
+    ValueTask CancelJobAsync(IndustryJobAction request, CancellationToken cancellationToken);
+}
 
 public sealed class IndustryJobsService : IService
 {
@@ -33,15 +106,20 @@ public sealed class IndustryJobsService : IService
     private readonly Func<long, bool>? isStarbaseFacilityOnline;
     private readonly Func<long, long, long, long>? resolveBlueprintLocationFlagID;
 
+private readonly IIndustryJobOperations operations;
+
     public IndustryJobsService(
         Func<CancellationToken, ValueTask<JsonObject?>> readJobs,
+        IIndustryJobOperations operations,
         Func<long>? currentFileTime = null,
         Func<ServiceCall, JsonObject, bool>? canViewStarbaseJob = null,
         Func<long, bool>? isStarbaseFacilityOnline = null,
         Func<long, long, long, long>? resolveBlueprintLocationFlagID = null)
     {
         ArgumentNullException.ThrowIfNull(readJobs);
+        ArgumentNullException.ThrowIfNull(operations);
         this.readJobs = readJobs;
+        this.operations = operations;
         this.currentFileTime = currentFileTime ?? (() => DateTime.UtcNow.ToFileTimeUtc());
         this.canViewStarbaseJob = canViewStarbaseJob;
         this.isStarbaseFacilityOnline = isStarbaseFacilityOnline;
@@ -50,12 +128,15 @@ public sealed class IndustryJobsService : IService
 
     public string Name => "industryManager";
 
-    public bool HasMethod(string method) => method is "GetJob" or "GetJobsByOwner" or "GetJobCounts";
+    public bool HasMethod(string method) => method is "GetJob" or "GetJobsByOwner" or "GetJobCounts" or "InstallJob" or "CompleteJob" or "CompleteManyJobs" or "CancelJob";
 
     public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
         if (!HasMethod(call.Method)) return PyNone.Instance;
         call.Cancellation.ThrowIfCancellationRequested();
+
+        if (call.Method is "InstallJob" or "CompleteJob" or "CompleteManyJobs" or "CancelJob")
+            return await MutateAsync(call);
 
         if (call.Method == "GetJobCounts")
         {
@@ -91,6 +172,244 @@ public sealed class IndustryJobsService : IService
             }
         return new PyList([.. rows.OrderBy(row => row.Id).Select(row => row.Value)]);
     }
+
+private async ValueTask<PyValue> MutateAsync(ServiceCall call)
+    {
+        var context = OperationContext(call);
+        try
+        {
+            switch (call.Method)
+            {
+                case "InstallJob":
+                {
+                    if (call.Args.Count != 1) throw InvalidIndustryJob();
+                    var jobId = await operations.InstallJobAsync(
+                        new IndustryJobInstallRequest(context, InstallSubmission(call.Arg(0), context.Actor)),
+                        call.Cancellation);
+                    if (jobId <= 0) throw new InvalidOperationException("Industry install returned no committed job ID.");
+                    return new PyInt(jobId);
+                }
+                case "CompleteJob":
+                {
+                    if (call.Args.Count != 2) throw InvalidIndustryJob();
+                    await operations.CompleteJobAsync(ActionRequest(context, call.Arg(0), call.Arg(1)), call.Cancellation);
+                    return PyNone.Instance;
+                }
+                case "CompleteManyJobs":
+                {
+                    if (call.Args.Count != 1 || call.Arg(0) is not PyList rows) throw InvalidIndustryJob();
+                    var jobs = new List<IndustryJobAction>(rows.Items.Count);
+                    var seen = new HashSet<long>();
+                    foreach (var row in rows.Items)
+                    {
+                        if (row is not PyTuple { Items.Count: 2 } pair) throw InvalidIndustryJob();
+                        var jobId = RequiredPositive(pair.Items[0]);
+                        var systemId = RequiredPositive(pair.Items[1]);
+                        if (!seen.Add(jobId)) throw InvalidIndustryJob();
+                        jobs.Add(new IndustryJobAction(context, jobId, systemId));
+                    }
+                    if (jobs.Count > 0)
+                        await operations.CompleteManyJobsAsync(new IndustryJobBatch(context, jobs), call.Cancellation);
+                    return PyNone.Instance;
+                }
+                case "CancelJob":
+                {
+                    if (call.Args.Count != 2) throw InvalidIndustryJob();
+                    await operations.CancelJobAsync(ActionRequest(context, call.Arg(0), call.Arg(1)), call.Cancellation);
+                    return PyNone.Instance;
+                }
+                default:
+                    return PyNone.Instance;
+            }
+        }
+        catch (IndustryJobUserErrorException error)
+        {
+            throw MachoErrors.ThrowUserError(error.MessageKey);
+        }
+    }
+
+    private static IndustryJobAction ActionRequest(IndustryJobOperationContext context, PyValue jobId, PyValue solarSystemId) =>
+        new(context, RequiredPositive(jobId), RequiredPositive(solarSystemId));
+
+    private static IndustryJobOperationContext OperationContext(ServiceCall call)
+    {
+        var actor = new IndustryJobActor(
+            SessionId(call, "charid"),
+            SessionId(call, "corpid"),
+            RoleValue(call.Session.Get("corprole")),
+            checked((int)Math.Min(Positive(call.Session.Get("corpAccountKey")), int.MaxValue)));
+        var callId = Positive(call.CallId);
+        if (actor.CharacterId <= 0 || callId <= 0) throw InvalidIndustryJob();
+        return new IndustryJobOperationContext(actor, $"industry:{actor.CharacterId}:{call.Method}:{callId}");
+    }
+
+    private static IndustryJobInstallSubmission InstallSubmission(PyValue payload, IndustryJobActor actor)
+    {
+        var activityId = RequiredInt(payload, "activityID");
+        var blueprintId = RequiredLong(payload, "blueprintID");
+        var blueprintTypeId = RequiredInt(payload, "blueprintTypeID");
+        var ownerId = RequiredLong(payload, "ownerID");
+        if (ownerId != actor.CharacterId && (actor.CorporationId <= 0 || ownerId != actor.CorporationId))
+            throw MachoErrors.ThrowUserError("IndustryInvalidOwner");
+
+        var blueprintLocationId = RequiredLong(payload, "blueprintLocationID");
+        var blueprintLocationFlagId = NonNegativeInt(payload, "blueprintLocationFlagID", 0);
+        var input = Location(payload, "inputLocation", "inputLocationID", "inputLocationFlagID",
+            blueprintLocationId, blueprintLocationFlagId);
+        var output = Location(payload, "outputLocation", "outputLocationID", "outputFlagID",
+            input.LocationId, input.FlagId);
+        var wallet = Wallet(payload, ownerId, actor);
+
+        return new IndustryJobInstallSubmission(
+            activityId,
+            blueprintId,
+            blueprintTypeId,
+            JsSemantics.Truthy(WireField(payload, "blueprintCopy")),
+            blueprintLocationId,
+            blueprintLocationFlagId,
+            RequiredLong(payload, "facilityID"),
+            ownerId,
+            RequiredLong(payload, "solarSystemID"),
+            NonNegativeLong(payload, "stationID", 0),
+            input,
+            output,
+            RequiredInt(payload, "runs"),
+            NonNegativeInt(payload, "licensedRuns", 0),
+            OptionalInt(payload, "productTypeID"),
+            OptionalInt(payload, "optionalTypeID"),
+            OptionalInt(payload, "optionalTypeID2"),
+            wallet);
+    }
+
+    private static IndustryJobLocation Location(
+        PyValue payload,
+        string nestedName,
+        string idName,
+        string flagName,
+        long defaultId,
+        int defaultFlag)
+    {
+        var nested = WireField(payload, nestedName);
+        var locationId = OptionalPositiveField(payload, idName)
+            ?? OptionalPositiveField(nested, "itemID")
+            ?? defaultId;
+        var flagId = OptionalIntField(payload, flagName)
+            ?? OptionalIntField(nested, "flagID")
+            ?? defaultFlag;
+        return new IndustryJobLocation(locationId, flagId);
+    }
+
+    private static IndustryJobWallet Wallet(PyValue payload, long ownerId, IndustryJobActor actor)
+    {
+        var account = WireField(payload, "account");
+        PyValue? accountOwner = null;
+        PyValue? accountKey = null;
+        if (account is PyTuple tuple && tuple.Items.Count == 2)
+        {
+            accountOwner = tuple.Items[0];
+            accountKey = tuple.Items[1];
+        }
+        else if (account is PyList list && list.Items.Count == 2)
+        {
+            accountOwner = list.Items[0];
+            accountKey = list.Items[1];
+        }
+
+        var walletOwnerId = Positive(WireField(payload, "accountOwnerID") ?? accountOwner) is var suppliedOwner && suppliedOwner > 0
+            ? suppliedOwner
+            : ownerId;
+        var defaultKey = walletOwnerId == actor.CorporationId && actor.CorporationAccountKey is >= 1000 and <= 1006
+            ? actor.CorporationAccountKey
+            : 1000;
+        var division = OptionalIntField(payload, "accountKey")
+            ?? OptionalIntValue(accountKey)
+            ?? defaultKey;
+        if (walletOwnerId != actor.CharacterId && walletOwnerId != actor.CorporationId ||
+            walletOwnerId == actor.CharacterId && division != 1000 ||
+            walletOwnerId == actor.CorporationId && division is < 1000 or > 1006)
+            throw MachoErrors.ThrowUserError("IndustryInvalidAccount");
+        return new IndustryJobWallet(walletOwnerId, division);
+    }
+
+    private static PyValue? WireField(PyValue? payload, string name)
+    {
+        var dictionary = payload switch
+        {
+            PyDict direct => direct,
+            PyObject objectValue when objectValue.Args is PyDict args => args,
+            _ => null,
+        };
+        if (dictionary is null) return null;
+        foreach (var (key, value) in dictionary.Entries)
+            if (key is PyStr text && text.Value == name) return value;
+        return null;
+    }
+
+    private static long RequiredLong(PyValue payload, string name) =>
+        RequiredPositive(WireField(payload, name));
+
+    private static long RequiredPositive(PyValue? value)
+    {
+        var number = Positive(value);
+        if (number <= 0) throw InvalidIndustryJob();
+        return number;
+    }
+
+    private static int RequiredInt(PyValue payload, string name)
+    {
+        var value = RequiredLong(payload, name);
+        if (value > int.MaxValue) throw InvalidIndustryJob();
+        return (int)value;
+    }
+
+    private static int NonNegativeInt(PyValue payload, string name, int fallback)
+    {
+        var value = WireField(payload, name);
+        if (value is null or PyNone) return fallback;
+        var number = Integer(JsSemantics.ToNumber(value));
+        if (number < 0 || number > int.MaxValue) throw InvalidIndustryJob();
+        return (int)number;
+    }
+
+    private static long NonNegativeLong(PyValue payload, string name, long fallback)
+    {
+        var value = WireField(payload, name);
+        if (value is null or PyNone) return fallback;
+        var number = Integer(JsSemantics.ToNumber(value));
+        if (number < 0) throw InvalidIndustryJob();
+        return number;
+    }
+
+    private static int? OptionalInt(PyValue payload, string name) =>
+        OptionalIntField(payload, name);
+
+    private static int? OptionalIntField(PyValue? payload, string name)
+    {
+        var value = WireField(payload, name);
+        return OptionalIntValue(value);
+    }
+
+    private static int? OptionalIntValue(PyValue? value)
+    {
+        if (value is null or PyNone) return null;
+        var number = Integer(JsSemantics.ToNumber(value));
+        if (number <= 0 || number > int.MaxValue) throw InvalidIndustryJob();
+        return (int)number;
+    }
+
+    private static long? OptionalPositiveField(PyValue? payload, string name)
+    {
+        var value = WireField(payload, name);
+        if (value is null or PyNone) return null;
+        var number = Positive(value);
+        if (number <= 0) throw InvalidIndustryJob();
+        return number;
+    }
+
+    private static MachoWrappedException InvalidIndustryJob() =>
+        MachoErrors.ThrowUserError("IndustryInvalidJob");
+
+
 
     private PyValue Counts(JsonObject? table, long installerId)
     {

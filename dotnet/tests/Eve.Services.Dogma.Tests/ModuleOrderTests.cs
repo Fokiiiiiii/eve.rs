@@ -9,9 +9,10 @@ public class ModuleOrderTests
     private const long System = 30100032;
     private const long Module = 9988400002220, Target = 9988400002215;
 
-    private static async Task<(Rig Rig, ClientSession Session, string Oid)> InSpaceAsync()
+    private static async Task<(Rig Rig, ClientSession Session, string Oid)> InSpaceAsync(
+        SkillBoosterActivationHandler? activateBooster = null)
     {
-        var rig = await Rig.CreateAsync();
+        var rig = await Rig.CreateAsync(activateBooster);
         var character = await rig.NewCharacterAsync();
         var session = Rig.Session(character.CharacterId, station: null);
         session.Set("solarsystemid", new PyInt(System));
@@ -50,6 +51,24 @@ public class ModuleOrderTests
         Assert.Equal(
             [$"activate {Module} moduleBonusAfterburner 0 1000", $"activate {Module} targetAttack {Target} 5", $"activate {Module} miningLaser {Target} 1", $"activate {Module} miningLaser {Target} 1"],
             rig.SpaceModules.Asked);
+    }
+
+    [PgFact]
+    public async Task Client_activate_routes_boosters_to_the_skills_callback_before_module_orders()
+    {
+        (long CharacterId, long ItemId, string EffectName, long? StationId, long? ShipId)? called = null;
+        var (rig, session, oid) = await InSpaceAsync((characterId, itemId, effectName, stationId, shipId, _) =>
+        {
+            called = (characterId, itemId, effectName, stationId, shipId);
+            return ValueTask.FromResult<bool?>(true);
+        });
+        await using var _ = rig;
+        const long boosterItemId = 7000001;
+
+        Assert.Equal(new PyInt(1), await rig.CallAsync(
+            session, "Activate", oid, new PyLong(boosterItemId), new PyStr("boosterPrimary"), PyNone.Instance, new PyInt(1)));
+        Assert.Equal((session.CharacterId!.Value, boosterItemId, "boosterPrimary", (long?)null, (long?)null), called);
+        Assert.Empty(rig.SpaceModules.Asked);
     }
 
     [PgFact]

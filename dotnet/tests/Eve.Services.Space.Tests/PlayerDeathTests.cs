@@ -12,10 +12,12 @@ public class PlayerDeathTests
     private static readonly double[] Facing = [0.6159, 0.01306, 0.78769];
     private static readonly SimWreckKind FrigateWreck = new(26506, "Caldari Frigate Wreck", 3117);
 
+    private const int Ibis = 601;
+
     private static async Task<(Rig Rig, Eve.Characters.Created Character, ClientSession Session)> InSpaceAsync()
     {
         var rig = await Rig.CreateAsync();
-        var character = await rig.NewCharacterAsync();
+        var character = await rig.NewCharacterAsync(shipTypeId: Ibis);
         var session = await rig.SessionAsync(character);
         var oid = await rig.BindShipAsync(session);
         await rig.ShipCallAsync(session, "Undock", oid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
@@ -276,7 +278,7 @@ public class PlayerDeathTests
         Assert.Equal(["$sessionchange", "OnItemChange", "OnItemChange", "OnCfgDataChanged"], Sequence.Of(session, clear: false));
         var woke = (await rig.Characters.GetAsync(c.CharacterId))!;
         var ship = (await rig.Items.GetAsync(woke.ShipId!.Value))!;
-        Assert.Equal((601, Rig.Station, ItemFlags.Hangar), (ship.TypeId, ship.LocationId, ship.Flag));
+        Assert.Equal((Rig.Cockroach, Rig.Station, ItemFlags.Hangar), (ship.TypeId, ship.LocationId, ship.Flag));
         Assert.Equal((Rig.Station, ship.Id), (session.GetInt("stationid"), session.GetInt("shipid")));
         Assert.Equal(Rig.Station, session.GetInt("locationid"));
         Assert.Null(session.GetInt("solarsystemid"));
@@ -326,7 +328,7 @@ public class PlayerDeathTests
         var name = woke.Name;
         Assert.Equal(capsule, done.ShipId);
         Assert.Equal(new SelfDestructPart("Corpse", name, rig.Sim.Heard.OfType<SimPlaceWreck>().Single().WreckId), done.Left);
-        Assert.Equal(new SelfDestructPart("Ship", "Ibis", woke.ShipId), done.Now);
+        Assert.Equal(new SelfDestructPart("Ship", "Cockroach", woke.ShipId), done.Now);
     }
 
     [PgFact]

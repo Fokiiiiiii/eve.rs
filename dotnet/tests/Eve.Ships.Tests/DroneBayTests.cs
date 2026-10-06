@@ -16,12 +16,12 @@ public class DroneBayTests
     }
 
     [PgFact]
-    public async Task The_drone_bay_of_a_rookie_ship_holds_one_drone_and_what_is_put_in_it_is_split_off_a_stack_as_for_the_hold()
+    public async Task The_cockroach_bay_splits_a_drone_stack_and_tracks_its_large_capacity()
     {
         await using var rig = await Rig.CreateAsync();
         var (c, drones) = await WithDronesAsync(rig);
         var empty = Assert.IsType<CharacterShips.Room>(await rig.Ships.RoomAsync(c.CharacterId, c.ShipId, CharacterShips.DroneBayFlag));
-        Assert.Equal((5d, 0d), (empty.Capacity, empty.Used));
+        Assert.Equal((500_000d, 0d), (empty.Capacity, empty.Used));
 
         var changed = Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(c.CharacterId, drones, Rig.Station, c.ShipId, CharacterShips.DroneBayFlag, 1));
 
@@ -31,20 +31,20 @@ public class DroneBayTests
         Assert.Equal((c.ShipId, CharacterShips.DroneBayFlag, 1L, 0L), (stacks[1].After.LocationId, stacks[1].After.Flag, stacks[1].After.Quantity, stacks[1].PreviousQuantity));
         Assert.Equal(stacks[1].After.Id, changed.ItemId);
         var full = Assert.IsType<CharacterShips.Room>(await rig.Ships.RoomAsync(c.CharacterId, c.ShipId, CharacterShips.DroneBayFlag));
-        Assert.Equal((5d, 5d), (full.Capacity, full.Used));
+        Assert.Equal((500_000d, 5d), (full.Capacity, full.Used));
     }
 
     [PgFact]
-    public async Task A_second_drone_does_not_fit_and_is_refused_with_the_room_that_is_left_and_the_room_it_needs()
+    public async Task The_cockroach_bay_refuses_drones_only_when_its_actual_capacity_is_full()
     {
         await using var rig = await Rig.CreateAsync();
-        var (c, drones) = await WithDronesAsync(rig);
-        Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(c.CharacterId, drones, Rig.Station, c.ShipId, CharacterShips.DroneBayFlag, 1));
+        var (c, drones) = await WithDronesAsync(rig, quantity: 100_001);
+        Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(c.CharacterId, drones, Rig.Station, c.ShipId, CharacterShips.DroneBayFlag, 100_000));
 
         var refused = Assert.IsType<ShipRefused>(await rig.Ships.MoveAsync(c.CharacterId, drones, Rig.Station, c.ShipId, CharacterShips.DroneBayFlag, 1));
 
         Assert.Equal((ShipRefusal.NotEnoughDroneBaySpace, Hobgoblin, 0d, 5d), (refused.Reason, refused.ModuleTypeId, refused.Available, refused.Volume));
-        Assert.Equal(1, (await rig.Items.GetAsync(drones))!.Quantity); // nothing moved
+        Assert.Equal(1, (await rig.Items.GetAsync(drones))!.Quantity);
     }
 
     [PgFact]
@@ -53,7 +53,7 @@ public class DroneBayTests
         await using var rig = await Rig.CreateAsync();
         var (c, drones) = await WithDronesAsync(rig, quantity: 1);
         var tritanium = (await rig.Ships.GrantAsync(c.CharacterId, Tritanium, 10, singleton: false))!.Single().After.Id;
-        Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(c.CharacterId, drones, Rig.Station, c.ShipId, CharacterShips.DroneBayFlag, null)); // the bay is full
+        Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(c.CharacterId, drones, Rig.Station, c.ShipId, CharacterShips.DroneBayFlag, null));
 
         var refused = Assert.IsType<ShipRefused>(await rig.Ships.MoveAsync(c.CharacterId, tritanium, Rig.Station, c.ShipId, CharacterShips.DroneBayFlag, 5));
         Assert.Equal(ShipRefusal.NotADrone, refused.Reason);
@@ -70,9 +70,9 @@ public class DroneBayTests
     {
         await using var rig = await Rig.CreateAsync();
         const int system = 30000142;
-        var (c, drones) = await WithDronesAsync(rig, quantity: 2);
+        var (c, drones) = await WithDronesAsync(rig, quantity: 100_001);
         Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(
-            c.CharacterId, drones, Rig.Station, c.ShipId, CharacterShips.DroneBayFlag, 1));
+            c.CharacterId, drones, Rig.Station, c.ShipId, CharacterShips.DroneBayFlag, 100_000));
 
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
@@ -81,10 +81,9 @@ public class DroneBayTests
             await transaction.CommitAsync();
         }
 
-        var stillOut = await rig.GiveAsync(c.CharacterId, Hobgoblin, location: system, flag: 0);
         var returning = await rig.GiveAsync(c.CharacterId, Hobgoblin, location: system, flag: 0);
         var refusal = Assert.IsType<DroneBayFull>(await rig.Ships.ScoopDroneAsync(
-            c.CharacterId, c.ShipId, returning, system, [stillOut]));
+            c.CharacterId, c.ShipId, returning, system, [drones]));
 
         Assert.Equal((Hobgoblin, 0d, 5d), (refusal.TypeId, refusal.Available, refusal.Volume));
         Assert.Equal((system, CharacterShips.InSpaceFlag), ((await rig.Items.GetAsync(returning))!.LocationId, (await rig.Items.GetAsync(returning))!.Flag));

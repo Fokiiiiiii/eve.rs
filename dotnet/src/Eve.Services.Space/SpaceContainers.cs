@@ -47,6 +47,7 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
     private readonly Func<long> _nowUnixMs;
     private readonly Action<string>? _log;
     private readonly ConcurrentDictionary<long, byte> _placed = new();
+    private readonly ConcurrentDictionary<(int SystemId, long BeltId), byte> _seededAsteroidBelts = new();
     private readonly ConcurrentDictionary<ulong, long> _cooldownUntil = new();
 
     private readonly System.Collections.Concurrent.ConcurrentDictionary<long, byte> _abandonedLoot = new();
@@ -57,6 +58,7 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
     {
         (_sim, _ships, _items, _spaceItems, _statics, _space, _nowUnixMs, _log) = (sim, ships, items, spaceItems, statics, space, nowUnixMs, log);
         // what the simulation held is gone with it; a scene that is made gets what lies in its system, and a wreck the host puts in space is kept
+        _sim.Received += OnReceived;
         _sim.Lost += Forgotten;
         _space.SystemEntered += SystemEntered;
         _space.WreckPlaced += WreckPlaced;
@@ -64,6 +66,7 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
 
     public void Dispose()
     {
+        _sim.Received -= OnReceived;
         _sim.Lost -= Forgotten;
         _space.SystemEntered -= SystemEntered;
         _space.WreckPlaced -= WreckPlaced;
@@ -454,6 +457,445 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
     // ── keeping what lies in space ───────────────────────────────────────────
 
     /// <summary>The host put the wreck of a destroyed ship (or a corpse) in space: where it lies is kept, for two hours.</summary>
+private void OnReceived(SimMessage message)
+    {
+        if (message is SimDroneWorkCycle cycle)
+        {
+            _ = HandleDroneWorkCycleAsync(cycle);
+        }
+        else if (message is SimArrived arrived)
+        {
+            _ = SeedAsteroidBeltAsync(arrived);
+        }
+    }
+
+
+    private async Task SeedAsteroidBeltAsync(SimArrived arrived)
+    {
+        if (arrived.BeltId <= 0 || arrived.Position.Count != 3 || arrived.Position.Any(position => !double.IsFinite(position)))
+        {
+            return;
+        }
+        var session = _space.ClientSessionOf(arrived.SessionId);
+        if (session is null || !_space.IsInSpace(session))
+        {
+            return;
+        }
+        if (_space.SolarSystemOf(session) is not { } system || system <= 0)
+        {
+            return;
+        }
+
+        var belt = (system, arrived.BeltId);
+        try
+        {
+            foreach (var spaceItem in await _spaceItems.InSystemAsync(system))
+            {
+                if (spaceItem.LauncherId != arrived.BeltId
+                    || await _items.GetAsync(spaceItem.ItemId) is not { } stored)
+                {
+                    continue;
+                }
+                await _statics.EnsureTypesAsync([stored.TypeId]);
+                var storedType = _statics.Type(stored.TypeId);
+                if (storedType is null || _statics.CategoryName(storedType.CategoryId) != "Asteroid")
+                {
+                    continue;
+                }
+
+                _seededAsteroidBelts.TryAdd(belt, 0);
+                if (stored.Quantity <= 0)
+                {
+                    _placed.TryAdd(stored.Id, 0);
+                    return;
+                }
+                if (_placed.TryAdd(stored.Id, 0))
+                {
+                    try
+                    {
+                        _sim.PlaceAsteroid(new SimPlaceAsteroid(
+                            system, stored.Id, stored.TypeId, storedType.GroupId, storedType.CategoryId,
+                            stored.CustomName ?? storedType.Name ?? "Asteroid", storedType.GraphicId,
+                            spaceItem.Position, spaceItem.Direction, spaceItem.Radius, stored.Quantity));
+                    }
+                    catch (Exception error)
+                    {
+                        _placed.TryRemove(stored.Id, out _);
+                        _log?.Invoke($"asteroid {stored.Id} in belt {arrived.BeltId} could not be placed: {error.Message}");
+                    }
+                }
+                return;
+            }
+
+            if (!_seededAsteroidBelts.TryAdd(belt, 0))
+            {
+                return;
+            }
+
+            var type = (await _statics.TypesInCategoryAsync("Asteroid"))
+                .FirstOrDefault(candidate => candidate.Name.Equals("Veldspar", StringComparison.OrdinalIgnoreCase));
+            if (type is null)
+            {
+                _seededAsteroidBelts.TryRemove(belt, out _);
+                _log?.Invoke($"no published Veldspar asteroid type is available for belt {arrived.BeltId}");
+                return;
+            }
+
+            var radiusId = _statics.AttributeId("radius");
+            var radius = radiusId is { } id ? type.Attributes.GetValueOrDefault(id, 25d) : 25d;
+            if (!double.IsFinite(radius) || radius <= 0)
+            {
+                radius = 25d;
+            }
+            var position = arrived.Position.ToArray();
+            position[0] += Math.Max(1_000d, radius * 2d);
+
+            // ponytail: seed one belt rock with 1,000 units; replace this cap when authoritative per-rock stock data is available.
+            const long initialUnits = 1_000;
+            var created = await _ships.CreateAsteroidAsync(
+                type.TypeId, system, arrived.BeltId, initialUnits, position, [1d, 0d, 0d], radius, _spaceItems);
+            if (_placed.TryAdd(created.Item.Id, 0))
+            {
+                try
+                {
+                    _sim.PlaceAsteroid(new SimPlaceAsteroid(
+                        system, created.Item.Id, type.TypeId, type.GroupId, type.CategoryId, type.Name, type.GraphicId,
+                        created.SpaceItem.Position, created.SpaceItem.Direction, created.SpaceItem.Radius, created.Item.Quantity));
+                }
+                catch (Exception error)
+                {
+                    _placed.TryRemove(created.Item.Id, out _);
+                    _log?.Invoke($"seed asteroid {created.Item.Id} was saved but could not be placed: {error.Message}");
+                }
+            }
+        }
+        catch (Exception error)
+        {
+            _seededAsteroidBelts.TryRemove(belt, out _);
+            _log?.Invoke($"asteroids for belt {arrived.BeltId} could not be seeded: {error.Message}");
+        }
+    }
+
+    private async Task HandleDroneWorkCycleAsync(SimDroneWorkCycle cycle)
+    {
+        try
+        {
+            await SettleDroneWorkCycleAsync(cycle);
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"drone work cycle {cycle.CycleId} was not settled: {error.Message}");
+            ReplyToDroneWorkCycle(cycle, false, "WORK_FAILED", 0, 0, true);
+        }
+    }
+
+    private void ReplyToDroneWorkCycle(SimDroneWorkCycle cycle, bool accepted, string reason, long remaining, long delivered, bool complete)
+    {
+        try
+        {
+            _sim.DroneWorkResult(new SimDroneWorkResult(
+                cycle.SessionId, cycle.DroneId, cycle.TargetId, cycle.CycleId, accepted, reason, remaining, delivered, complete));
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"drone work cycle {cycle.CycleId} response was not sent: {error.Message}");
+        }
+    }
+
+    private async Task SettleDroneWorkCycleAsync(SimDroneWorkCycle cycle)
+    {
+        void Reply(bool accepted, string reason, long remaining = 0, long delivered = 0, bool complete = true) =>
+            ReplyToDroneWorkCycle(cycle, accepted, reason, remaining, delivered, complete);
+
+        if (cycle.Command is not (SimDroneCommands.MineRepeatedly or SimDroneCommands.Salvage))
+        {
+            Reply(false, "UNSUPPORTED_COMMAND");
+            return;
+        }
+        if (cycle.DroneId <= 0 || cycle.TargetId <= 0
+            || !double.IsFinite(cycle.Roll) || cycle.Roll < 0 || cycle.Roll >= 1
+            || !double.IsFinite(cycle.AccessDifficultyBonus) || cycle.AccessDifficultyBonus < 0)
+        {
+            Reply(false, "INVALID_PROFILE");
+            return;
+        }
+        if (cycle.Command == SimDroneCommands.MineRepeatedly
+            && (!double.IsFinite(cycle.MiningAmountM3) || cycle.MiningAmountM3 <= 0
+                || !double.IsFinite(cycle.WasteVolumeMultiplier) || !double.IsFinite(cycle.WasteProbability)))
+        {
+            Reply(false, "INVALID_PROFILE");
+            return;
+        }
+
+        var session = _space.ClientSessionOf(cycle.SessionId);
+        if (session is null || session.CharacterId != cycle.CharacterId
+            || session.GetInt("shipid") is not { } shipId || shipId != cycle.ShipId
+            || !_space.IsInSpace(session) || _space.SolarSystemOf(session) != cycle.SolarSystemId)
+        {
+            Reply(false, "NO_PILOT");
+            return;
+        }
+
+        var ship = await _ships.LoadAsync(cycle.CharacterId);
+        if (ship is null || ship.Ship.Id != cycle.ShipId
+            || ship.Ship.LocationId != cycle.SolarSystemId || ship.Ship.Flag != CharacterShips.InSpaceFlag)
+        {
+            Reply(false, "NO_SHIP");
+            return;
+        }
+        const int DroneControlDistanceAttribute = 458;
+        var controlRange = 20_000d;
+        var range = ship.World.Get(cycle.CharacterId, DroneControlDistanceAttribute);
+        if (double.IsFinite(range) && range > 0)
+        {
+            controlRange = range;
+        }
+
+        var drone = await _items.GetAsync(cycle.DroneId);
+        if (drone is null || drone.OwnerId != cycle.CharacterId || drone.LocationId != cycle.SolarSystemId
+            || drone.Flag != CharacterShips.InSpaceFlag)
+        {
+            Reply(false, "NOT_CONTROLLED");
+            return;
+        }
+        var target = await _items.GetAsync(cycle.TargetId);
+        var targetSpace = await _spaceItems.GetAsync(cycle.TargetId);
+        if (target is null || target.LocationId != cycle.SolarSystemId || target.Flag != CharacterShips.InSpaceFlag
+            || targetSpace is null || targetSpace.SolarSystemId != cycle.SolarSystemId)
+        {
+            Reply(false, "NO_TARGET");
+            return;
+        }
+
+        await _statics.EnsureTypesAsync([drone.TypeId, target.TypeId]);
+        var droneType = _statics.Type(drone.TypeId);
+        var targetType = _statics.Type(target.TypeId);
+        var expectedDroneGroup = cycle.Command == SimDroneCommands.MineRepeatedly ? "Mining Drone" : "Salvage Drone";
+        if (droneType is null || _statics.CategoryName(droneType.CategoryId) != "Drone"
+            || !_statics.GroupName(droneType.GroupId).Equals(expectedDroneGroup, StringComparison.OrdinalIgnoreCase))
+        {
+            Reply(false, "NOT_CONTROLLED");
+            return;
+        }
+        if (targetType is null
+            || (cycle.Command == SimDroneCommands.MineRepeatedly
+                ? _statics.CategoryName(targetType.CategoryId) != "Asteroid"
+                : !_statics.GroupName(targetType.GroupId).Contains("Wreck", StringComparison.OrdinalIgnoreCase)))
+        {
+            Reply(false, cycle.Command == SimDroneCommands.MineRepeatedly ? "NO_TARGET" : "NO_WRECK");
+            return;
+        }
+
+        var measured = await _sim.CommandAsync(cycle.SessionId, SimCommands.Measure, [cycle.TargetId]);
+        if (!measured.Accepted || measured.Distance is not { } distance || !double.IsFinite(distance))
+        {
+            Reply(false, cycle.Command == SimDroneCommands.MineRepeatedly ? "NO_TARGET" : "NO_WRECK");
+            return;
+        }
+        if (distance > controlRange)
+        {
+            Reply(false, "OUT_OF_RANGE");
+            return;
+        }
+
+        if (cycle.Command == SimDroneCommands.MineRepeatedly)
+        {
+            var mined = await _ships.MineAsteroidAsync(
+                cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.DroneId, cycle.TargetId,
+                cycle.MiningAmountM3, cycle.WasteVolumeMultiplier, cycle.WasteProbability, cycle.Roll, _spaceItems);
+            if (mined.Accepted && mined.Depleted)
+            {
+                _placed.TryRemove(cycle.TargetId, out _);
+            }
+            if (mined.Accepted && mined.Change is { } changed)
+            {
+                try
+                {
+                    await _statics.EnsureTypesAsync([.. changed.Items.Select(item => item.After.TypeId).Distinct()]);
+                    Eve.Services.Ships.ShipNotifications.Send(
+                        session, cycle.CharacterId, changed, RowOf, Py.FileTimeFromUnixMs(_nowUnixMs()));
+                }
+                catch (Exception error)
+                {
+                    _log?.Invoke($"mined cargo for cycle {cycle.CycleId} was saved but its item notification failed: {error.Message}");
+                }
+            }
+            Reply(mined.Accepted, mined.Reason, mined.UnitsRemaining, mined.DeliveredUnits, mined.Depleted);
+            return;
+        }
+
+        var difficultyId = _statics.AttributeId("accessDifficulty");
+        var baseChance = difficultyId is { } id ? targetType.Attributes.GetValueOrDefault(id, 0d) : 0d;
+        var chance = Math.Clamp(baseChance + cycle.AccessDifficultyBonus, 0d, 100d);
+        if (!double.IsFinite(chance))
+        {
+            Reply(false, "INVALID_PROFILE");
+            return;
+        }
+        if (cycle.Roll * 100d >= chance)
+        {
+            Reply(true, "", 1, 0, false);
+            return;
+        }
+
+        var salvageProducts = await _statics.TypesInGroupsAsync(["Salvaged Materials"]);
+        var salvageTypeId = SelectSalvageProductTypeId(targetType, targetSpace, salvageProducts);
+        if (salvageTypeId is null)
+        {
+            Reply(false, "NO_SALVAGE_PRODUCTS");
+            return;
+        }
+        var salvaged = await _ships.SalvageWreckAsync(
+            cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.DroneId, cycle.TargetId, salvageTypeId,
+            targetSpace, _nowUnixMs() + (long)CanLifetime.TotalMilliseconds, _spaceItems);
+        if (!salvaged.Accepted)
+        {
+            Reply(false, salvaged.Reason);
+            return;
+        }
+
+        _placed.TryRemove(cycle.TargetId, out _);
+        if (salvaged.Change is { } salvageChange)
+        {
+            try
+            {
+                await _statics.EnsureTypesAsync([.. salvageChange.Items.Select(item => item.After.TypeId).Distinct()]);
+                Eve.Services.Ships.ShipNotifications.Send(
+                    session, cycle.CharacterId, salvageChange, RowOf, Py.FileTimeFromUnixMs(_nowUnixMs()));
+            }
+            catch (Exception error)
+            {
+                _log?.Invoke($"salvage for cycle {cycle.CycleId} was saved but its item notification failed: {error.Message}");
+            }
+        }
+        if (salvaged.Container is { } container && salvaged.ContainerSpaceItem is { } containerSpace)
+        {
+            _placed[container.Id] = 0;
+            var containerType = _statics.Type(container.TypeId);
+            try
+            {
+                _sim.PlaceWreck(new SimPlaceWreck(
+                    cycle.SolarSystemId, container.Id, containerSpace.GroupId,
+                    new SimWreckKind(container.TypeId, container.CustomName ?? containerType?.Name ?? "Cargo Container", containerType?.GraphicId ?? 0),
+                    containerSpace.Position, containerSpace.Direction, containerSpace.Radius, containerSpace.LauncherId,
+                    new SimCredit(containerSpace.CharacterId, containerSpace.CorporationId, containerSpace.AllianceId, containerSpace.WarFactionId), false));
+            }
+            catch (Exception error)
+            {
+                _placed.TryRemove(container.Id, out _);
+                _log?.Invoke($"loot container {container.Id} was saved but not placed in the simulation: {error.Message}");
+            }
+        }
+        Reply(true, "", 0, 1, true);
+    }
+
+
+
+    private int? SelectSalvageProductTypeId(TypeDef wreckType, SpaceItem wreckSpace, IReadOnlyList<TypeDef> products)
+    {
+        if (products.Count == 0)
+        {
+            return null;
+        }
+
+        var factionName = wreckSpace.WarFactionId > 0 && wreckSpace.WarFactionId <= int.MaxValue
+            ? _statics.FactionName((int)wreckSpace.WarFactionId)
+            : "";
+        var identity = $"{factionName} {wreckType.Name}";
+        var difficultyId = _statics.AttributeId("accessDifficulty");
+        var advanced = identity.Contains("Tech II", StringComparison.OrdinalIgnoreCase)
+            || identity.Contains("T2", StringComparison.OrdinalIgnoreCase)
+            || identity.Contains("Officer", StringComparison.OrdinalIgnoreCase)
+            || identity.Contains("Faction Wreck", StringComparison.OrdinalIgnoreCase);
+        if (difficultyId is { } attributeId
+            && wreckType.Attributes.TryGetValue(attributeId, out var baseChance)
+            && baseChance <= 0)
+        {
+            advanced = true;
+        }
+
+        // EVE University maps salvage families by wreck faction; unknown families fall back to published SDE salvage types.
+        var materialNames = SalvageMaterialNames(identity, advanced);
+        IReadOnlyList<TypeDef> pool = materialNames is null
+            ? products
+            : products.Where(product => materialNames.Contains(product.Name, StringComparer.OrdinalIgnoreCase)).ToArray();
+        if (pool.Count == 0)
+        {
+            pool = products;
+        }
+        var ordered = pool.OrderBy(product => product.TypeId).ToArray();
+        return ordered[(int)(wreckSpace.ItemId % ordered.Length)].TypeId;
+    }
+
+    private static string[]? SalvageMaterialNames(string identity, bool advanced)
+    {
+        static bool Has(string text, string value) => text.Contains(value, StringComparison.OrdinalIgnoreCase);
+
+        if (advanced)
+        {
+            if (Has(identity, "Angel"))
+            {
+                return ["Artificial Neural Network", "Impetus Console", "Interface Circuit", "Logic Circuit",
+                    "Micro Circuit", "Power Circuit", "Single-crystal Superalloy I-beam", "Trigger Unit"];
+            }
+            if (Has(identity, "Blood"))
+            {
+                return ["Artificial Neural Network", "Capacitor Console", "Interface Circuit", "Logic Circuit",
+                    "Micro Circuit", "Power Circuit", "Power Conduit"];
+            }
+            if (Has(identity, "Guristas"))
+            {
+                return ["Artificial Neural Network", "Enhanced Ward Console", "Intact Shield Emitter",
+                    "Interface Circuit", "Logic Circuit", "Micro Circuit", "Power Circuit", "Telemetry Processor"];
+            }
+            if (Has(identity, "Sansha"))
+            {
+                return ["Artificial Neural Network", "Current Pump", "Intact Armor Plates", "Interface Circuit",
+                    "Logic Circuit", "Micro Circuit", "Nanite Compound", "Power Circuit"];
+            }
+            if (Has(identity, "Serpentis"))
+            {
+                return ["Conductive Thermoplastic", "Drone Transceiver", "Interface Circuit", "Logic Circuit",
+                    "Lorentz Fluid", "Micro Circuit", "Power Circuit"];
+            }
+            return null;
+        }
+
+        if (Has(identity, "Rogue Drone"))
+        {
+            return ["Alloyed Tritanium Bar", "Armor Plates", "Broken Drone Transceiver", "Burned Logic Circuit",
+                "Charred Micro Circuit", "Conductive Polymer", "Contaminated Lorentz Fluid", "Contaminated Nanite Compound",
+                "Defective Current Pump", "Fried Interface Circuit", "Malfunctioning Shield Emitter", "Melted Capacitor Console",
+                "Scorched Telemetry Processor", "Smashed Trigger Unit", "Tangled Power Conduit", "Thruster Console",
+                "Tripped Power Circuit", "Ward Console"];
+        }
+        if (Has(identity, "Minmatar") || Has(identity, "Angel"))
+        {
+            return ["Alloyed Tritanium Bar", "Armor Plates", "Burned Logic Circuit", "Charred Micro Circuit",
+                "Contaminated Nanite Compound", "Fried Interface Circuit", "Malfunctioning Shield Emitter",
+                "Smashed Trigger Unit", "Thruster Console", "Tripped Power Circuit"];
+        }
+        if (Has(identity, "Caldari") || Has(identity, "Guristas"))
+        {
+            return ["Burned Logic Circuit", "Charred Micro Circuit", "Conductive Polymer",
+                "Damaged Artificial Neural Network", "Fried Interface Circuit", "Malfunctioning Shield Emitter",
+                "Scorched Telemetry Processor", "Tripped Power Circuit", "Ward Console"];
+        }
+        if (Has(identity, "Gallente") || Has(identity, "Serpentis"))
+        {
+            return ["Armor Plates", "Broken Drone Transceiver", "Burned Logic Circuit", "Charred Micro Circuit",
+                "Conductive Polymer", "Contaminated Lorentz Fluid", "Contaminated Nanite Compound",
+                "Damaged Artificial Neural Network", "Fried Interface Circuit", "Tripped Power Circuit"];
+        }
+        if (Has(identity, "Amarr") || Has(identity, "Blood") || Has(identity, "Sansha"))
+        {
+            return ["Armor Plates", "Burned Logic Circuit", "Charred Micro Circuit",
+                "Contaminated Nanite Compound", "Defective Current Pump", "Fried Interface Circuit",
+                "Melted Capacitor Console", "Tangled Power Conduit", "Tripped Power Circuit"];
+        }
+        return null;
+    }
+
     private void WreckPlaced(SimPlaceWreck wreck)
     {
         _placed[wreck.WreckId] = 0;
@@ -493,27 +935,51 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
             var now = _nowUnixMs();
             foreach (var item in await _spaceItems.InSystemAsync(system))
             {
-                if (_placed.ContainsKey(item.ItemId))
+                if (!_placed.TryAdd(item.ItemId, 0))
                 {
                     continue;
                 }
-                if (item.ExpiresAtMs <= now || await _items.GetAsync(item.ItemId) is not { } stored)
+                try
                 {
-                    // out of time, or the item is gone: the row goes (an expired one with what is in it)
-                    if (item.ExpiresAtMs <= now)
+                    if (item.ExpiresAtMs <= now || await _items.GetAsync(item.ItemId) is not { } stored)
                     {
-                        await _ships.RemoveContainerAsync(item.ItemId, withContents: true);
+                        // out of time, or the item is gone: the row goes (an expired one with what is in it)
+                        if (item.ExpiresAtMs <= now)
+                        {
+                            await _ships.RemoveContainerAsync(item.ItemId, withContents: true);
+                        }
+                        await ForgetAsync(item.ItemId);
+                        continue;
                     }
-                    await ForgetAsync(item.ItemId);
-                    continue;
+                    await _statics.EnsureTypesAsync([stored.TypeId]);
+                    var type = _statics.Type(stored.TypeId);
+                    if (type is not null && _statics.CategoryName(type.CategoryId) == "Asteroid")
+                    {
+                        if (item.LauncherId > 0)
+                        {
+                            _seededAsteroidBelts.TryAdd((system, item.LauncherId), 0);
+                        }
+                        if (stored.Quantity <= 0)
+                        {
+                            continue;
+                        }
+                        _sim.PlaceAsteroid(new SimPlaceAsteroid(
+                            system, item.ItemId, stored.TypeId, type.GroupId, type.CategoryId, stored.CustomName ?? type.Name ?? "",
+                            type.GraphicId, item.Position, item.Direction, item.Radius, stored.Quantity));
+                        continue;
+                    }
+                    var empty = (await _items.InContainerAsync(item.ItemId)).Count == 0;
+                    _sim.PlaceWreck(new SimPlaceWreck(
+                        system, item.ItemId, item.GroupId,
+                        new SimWreckKind(stored.TypeId, stored.CustomName ?? type?.Name ?? "", type?.GraphicId ?? 0),
+                        item.Position, item.Direction, item.Radius, item.LauncherId,
+                        new SimCredit(item.CharacterId, item.CorporationId, item.AllianceId, item.WarFactionId), empty));
                 }
-                await _statics.EnsureTypesAsync([stored.TypeId]);
-                var type = _statics.Type(stored.TypeId);
-                var empty = (await _items.InContainerAsync(item.ItemId)).Count == 0;
-                _placed[item.ItemId] = 0;
-                _sim.PlaceWreck(new SimPlaceWreck(
-                    system, item.ItemId, item.GroupId, new SimWreckKind(stored.TypeId, stored.CustomName ?? type?.Name ?? "", type?.GraphicId ?? 0), item.Position, item.Direction, item.Radius,
-                    item.LauncherId, new SimCredit(item.CharacterId, item.CorporationId, item.AllianceId, item.WarFactionId), empty));
+                catch
+                {
+                    _placed.TryRemove(item.ItemId, out _);
+                    throw;
+                }
             }
         }
         catch (Exception error)

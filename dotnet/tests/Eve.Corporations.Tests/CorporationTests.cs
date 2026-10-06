@@ -220,3 +220,215 @@ public class CorporationTests
         }
     }
 }
+
+
+public sealed class CorporationOfficeTests
+{
+    private static readonly CorporationOfficeStation Station = new(60000001, 1529, 1000125, 30000142, 0.9, 24);
+
+    [PgFact]
+    public async Task Rent_quote_charges_once_and_creates_the_next_30_day_bill()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (actor, corporation) = await CreateCorporationAsync(rig);
+        await SetOfficeRoleAsync(rig, actor, CorporationRoles.RentOffice);
+        var service = CreateService(rig);
+        var quote = await QuoteAsync(service, actor, corporation.Id);
+        var before = (await rig.Wallets.GetAsync(corporation.Id))!.Isk;
+        var call = Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyReal((double)quote));
+
+        await service.RentOffice(call);
+        await service.RentOffice(call);
+
+        var offices = await rig.OfficeStore.ForCorporationAsync(corporation.Id);
+        var office = Assert.Single(offices);
+        Assert.Equal(quote, office.RentIsk);
+        Assert.Equal(CorporationOfficeStore.OfficeFolderTypeId, (await rig.Items.GetAsync(office.OfficeFolderId))!.TypeId);
+        Assert.Equal(rig.Now + CorporationOfficeStore.RentalCycleMs, office.ExpiresAtMs);
+        Assert.Equal(before - quote, (await rig.Wallets.GetAsync(corporation.Id))!.Isk);
+
+        await using var bill = rig.Source.CreateCommand(
+            $"SELECT amount_isk,due_at_ms,status FROM {rig.CorporationSchema}.office_rent_bills WHERE corporation_id=$1");
+        bill.Parameters.Add(new Npgsql.NpgsqlParameter { Value = corporation.Id });
+        await using var reader = await bill.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(quote, reader.GetDecimal(0));
+        Assert.Equal(rig.Now + CorporationOfficeStore.RentalCycleMs, reader.GetInt64(1));
+        Assert.Equal((short)0, reader.GetInt16(2));
+        Assert.False(await reader.ReadAsync());
+    }
+
+    [PgFact]
+    public async Task Rent_office_requires_the_station_service_role()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (actor, corporation) = await CreateCorporationAsync(rig);
+        await SetOfficeRoleAsync(rig, actor, 0);
+        var service = CreateService(rig);
+        var quote = await QuoteAsync(service, actor, corporation.Id);
+        var before = (await rig.Wallets.GetAsync(corporation.Id))!.Isk;
+
+        var error = await Assert.ThrowsAsync<CorporationError>(async () =>
+        {
+            await service.RentOffice(Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyReal((double)quote)));
+        });
+
+        Assert.Equal("CORPORATION_ACCESS_DENIED", error.Code);
+        Assert.Empty(await rig.OfficeStore.ForCorporationAsync(corporation.Id));
+        Assert.Equal(before, (await rig.Wallets.GetAsync(corporation.Id))!.Isk);
+    }
+
+    [PgFact]
+    public async Task Station_office_limit_is_enforced_and_empty_count_matches()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await rig.OfficeStore.WriteAsync(async (connection, transaction) =>
+        {
+            await rig.OfficeStore.LockStationAsync(connection, transaction, Station.Id);
+            for (var i = 0; i < Station.OfficeCapacity; i++)
+            {
+                var corporationId = 80_000_000L + i;
+                var officeFolderId = await rig.Items.CreateAsync(connection, transaction,
+                    new Eve.Inventory.NewItem(CorporationOfficeStore.OfficeFolderTypeId, corporationId, Station.Id,
+                        Eve.Inventory.ItemFlags.Hangar, Singleton: true));
+                await rig.OfficeStore.RentAsync(connection, transaction, corporationId, officeFolderId, Station,
+                    CorporationOfficeStore.MinimumRentIsk, rig.Now);
+            }
+            return 0;
+        });
+
+        var (actor, corporation) = await CreateCorporationAsync(rig);
+        await SetOfficeRoleAsync(rig, actor, CorporationRoles.RentOffice);
+        var service = CreateService(rig);
+        var empty = await service.GetEmptyOfficeCount(Call("GetEmptyOfficeCount", actor, corporation.Id));
+
+        Assert.Equal(0L, Assert.IsType<Eve.Marshal.PyInt>(empty).Value);
+        var error = await Assert.ThrowsAsync<CorporationError>(async () =>
+        {
+            await service.RentOffice(Call("RentOffice", actor, corporation.Id,
+                new Eve.Marshal.PyReal((double)CorporationOfficeStore.MinimumRentIsk)));
+        });
+        Assert.Equal("OFFICE_SLOTS_FULL", error.Code);
+    }
+
+    [PgFact]
+    public async Task Unrent_impounds_corp_hangars_and_rerent_restores_them_without_release_fee()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (actor, corporation) = await CreateCorporationAsync(rig);
+        var service = CreateService(rig);
+        var quote = await QuoteAsync(service, actor, corporation.Id);
+        await service.RentOffice(Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyReal((double)quote)));
+        var originalOffice = Assert.Single(await rig.OfficeStore.ForCorporationAsync(corporation.Id));
+        Assert.NotNull(await rig.Items.GetAsync(originalOffice.OfficeFolderId));
+        var itemId = await CreateItemAsync(rig, corporation.Id, Station.Id, Eve.Inventory.ItemFlags.CorpSAG3);
+
+        await service.UnrentOffice(Call("UnrentOffice", actor, corporation.Id));
+        Assert.Null(await rig.Items.GetAsync(originalOffice.OfficeFolderId));
+
+        Assert.Equal(CorporationOfficeStore.ImpoundedFlag, (await rig.Items.GetAsync(itemId))!.Flag);
+        Assert.Empty(await rig.OfficeStore.ForCorporationAsync(corporation.Id));
+
+        var nextQuote = await QuoteAsync(service, actor, corporation.Id);
+        await service.RentOffice(Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyReal((double)nextQuote)));
+        Assert.Equal(Eve.Inventory.ItemFlags.CorpSAG1, (await rig.Items.GetAsync(itemId))!.Flag);
+        var activeOffice = Assert.Single(await rig.OfficeStore.ForCorporationAsync(corporation.Id));
+        Assert.NotEqual(originalOffice.OfficeFolderId, activeOffice.OfficeFolderId);
+        Assert.NotNull(await rig.Items.GetAsync(activeOffice.OfficeFolderId));
+    }
+
+    [PgFact]
+    public async Task Impound_release_costs_half_the_current_rent_and_moves_assets_to_division_one()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (actor, corporation) = await CreateCorporationAsync(rig);
+        var service = CreateService(rig);
+        var itemId = await CreateItemAsync(rig, corporation.Id, Station.Id, CorporationOfficeStore.ImpoundedFlag);
+        var expectedFee = decimal.Round((await QuoteAsync(service, actor, corporation.Id)) / 2m, 2,
+            MidpointRounding.AwayFromZero);
+        var quote = await service.GetImpoundReleasePrice(Call("GetImpoundReleasePrice", actor, corporation.Id));
+        Assert.Equal(expectedFee, (decimal)Assert.IsType<Eve.Marshal.PyReal>(quote).Value);
+        var before = (await rig.Wallets.GetAsync(corporation.Id))!.Isk;
+
+        await service.GetItemsFromImpound(Call("GetItemsFromImpound", actor, corporation.Id,
+            new Eve.Marshal.PyReal((double)expectedFee)));
+
+        Assert.Equal(before - expectedFee, (await rig.Wallets.GetAsync(corporation.Id))!.Isk);
+        Assert.Equal(Eve.Inventory.ItemFlags.CorpSAG1, (await rig.Items.GetAsync(itemId))!.Flag);
+    }
+
+    [PgFact]
+    public async Task Director_can_trash_impounded_assets_at_the_bound_station()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (actor, corporation) = await CreateCorporationAsync(rig);
+        var service = CreateService(rig);
+        var itemId = await CreateItemAsync(rig, corporation.Id, Station.Id, CorporationOfficeStore.ImpoundedFlag);
+
+        await service.TrashImpoundedOffice(Call("TrashImpoundedOffice", actor, corporation.Id));
+
+        Assert.Null(await rig.Items.GetAsync(itemId));
+    }
+
+    private static Eve.Services.Corporations.OfficeManagerService CreateService(Rig rig) =>
+        new(rig.OfficeStore, rig.Store, rig.Characters, rig.Items, rig.Transactions,
+            id => id == Station.Id ? Station : null, () => rig.Now);
+
+    private static Eve.Services.ServiceCall Call(string method, long actor, long corporationId,
+        params Eve.Marshal.PyValue[] args)
+    {
+        var session = new Eve.Services.ClientSession { CharacterId = actor };
+        session.Set("corpid", new Eve.Marshal.PyLong(corporationId));
+        session.Set("corporationID", new Eve.Marshal.PyLong(corporationId));
+        session.Set("stationid", new Eve.Marshal.PyLong(Station.Id));
+        return new Eve.Services.ServiceCall { Method = method, Args = args, Session = session };
+    }
+
+    private static async Task<decimal> QuoteAsync(Eve.Services.Corporations.OfficeManagerService service,
+        long actor, long corporationId)
+    {
+        var result = await service.GetPriceQuote(Call("GetPriceQuote", actor, corporationId,
+            new Eve.Marshal.PyLong(corporationId)));
+        return decimal.Round((decimal)Assert.IsType<Eve.Marshal.PyReal>(result).Value, 2);
+    }
+
+    private static async Task<(long Actor, Corporation Corporation)> CreateCorporationAsync(Rig rig)
+    {
+        var actor = await rig.CharacterAsync("Office Manager CEO");
+        var corporation = await rig.Store.CreateAsync(actor,
+            new NewCorporation("Office Operations", "OFFOP", "Office test.", "https://example.invalid", 0.05m,
+                Settings: JsonSerializer.SerializeToElement(new { shape1 = 1, color1 = 2 })),
+            "office-test-founding");
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await rig.Transactions.TransferAsync(connection, transaction, actor, corporation.Id, 2_000_000m,
+            1, "Office test funding", rig.Now, $"office-test-funding:{corporation.Id}");
+        await transaction.CommitAsync();
+        return (actor, corporation);
+    }
+
+    private static async Task SetOfficeRoleAsync(Rig rig, long characterId, long roleMask)
+    {
+        await using (var roles = rig.Source.CreateCommand(
+            $"UPDATE {rig.CorporationSchema}.members SET roles=$2 WHERE character_id=$1"))
+        {
+            roles.Parameters.Add(new Npgsql.NpgsqlParameter { Value = characterId });
+            roles.Parameters.Add(new Npgsql.NpgsqlParameter { Value = roleMask });
+            Assert.Equal(1, await roles.ExecuteNonQueryAsync());
+        }
+        await using var suspended = rig.Source.CreateCommand(
+            $"UPDATE {rig.CorporationSchema}.corporations SET ceo_roles_suspended=true WHERE ceo_id=$1");
+        suspended.Parameters.Add(new Npgsql.NpgsqlParameter { Value = characterId });
+        Assert.Equal(1, await suspended.ExecuteNonQueryAsync());
+    }
+
+    private static async Task<long> CreateItemAsync(Rig rig, long corporationId, long stationId, int flag)
+    {
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var id = await rig.Items.CreateAsync(connection, transaction,
+            new Eve.Inventory.NewItem(34, corporationId, stationId, flag, Singleton: true));
+        await transaction.CommitAsync();
+        return id;
+    }
+}

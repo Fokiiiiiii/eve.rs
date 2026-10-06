@@ -66,6 +66,15 @@ internal sealed class Rig : IAsyncDisposable
 
     public CharacterShips Ships { get; }
 
+    public const int Cockroach = 11019;
+    private const int CaldariRookieShip = 601;
+
+    private static CreationCatalog CockroachCatalog(CreationCatalog source) =>
+        new(
+            source.Races.Select(r => r.Id == 1 ? r with { ShipTypeId = Cockroach, ShipName = "Cockroach" } : r),
+            source.Bloodlines,
+            CreationCatalog.Schools.Select(s => source.StarterFor(s.CorporationId)!));
+
     public static async Task<Rig> CreateAsync()
     {
         CharacterNames.EnsureUnicodeSupport();
@@ -84,15 +93,38 @@ internal sealed class Rig : IAsyncDisposable
         await PgWalletStore.MigrateAsync(source, $"sw_{suffix}");
         await PgModuleStateStore.MigrateAsync(source, $"sf_{suffix}");
         var creation = new CharacterCreation(
-            source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), await CreationCatalog.LoadAsync(sde, Station), modules);
+            source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), CockroachCatalog(await CreationCatalog.LoadAsync(sde, Station)), modules);
         return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation);
     }
 
-    /// <summary>A new Caldari character in its rookie ship in the station.</summary>
-    public async Task<Created> NewCharacterAsync(string name = "Ship Tester", int account = 1)
+    /// <summary>A new test character on the Cockroach hull with the starter modules fitted.</summary>
+    public async Task<Created> NewCharacterAsync(string name = "Ship Tester", int account = 1, int shipTypeId = Cockroach)
     {
+        await Statics.EnsureTypesAsync([Cockroach, Afterburner, Railgun, Miner]);
         var made = await Creation.CreateAsync(new CreationRequest(account, name, 1, 1, 1, 10, 35, [1], [2]));
-        return Assert.IsType<Created>(made);
+        var character = Assert.IsType<Created>(made);
+        if (shipTypeId != Cockroach)
+        {
+            var replacement = (await Ships.GrantAsync(character.CharacterId, shipTypeId, 1, singleton: true))!.Single().After;
+            await using var connection = await Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await Characters.SetShipAsync(connection, transaction, character.CharacterId, replacement.Id);
+            await transaction.CommitAsync();
+            character = character with { ShipId = replacement.Id };
+        }
+        var kit = StarterKits.For(shipTypeId == Cockroach ? CaldariRookieShip : shipTypeId);
+        if (kit.Count != 0)
+        {
+            await using var connection = await Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            foreach (var module in kit)
+            {
+                var moduleId = await Items.CreateAsync(connection, transaction, new NewItem(module.TypeId, character.CharacterId, character.ShipId, module.Flag, 1, true));
+                await Modules.SetAsync(connection, transaction, moduleId, ItemState.Online);
+            }
+            await transaction.CommitAsync();
+        }
+        return character;
     }
 
     /// <summary>An item of a type in the character's hangar (a module, packaged goods).</summary>

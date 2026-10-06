@@ -10,11 +10,25 @@ namespace Eve.Services.Crimewatch;
 /// its ship, then <c>OnSecurityStatusUpdate</c>) and the ship in space is given its new status, which those who see it are shown in its slim item. A pilot that lost for a ship loses nothing more
 /// for the same ship for a minute (the reference's window: a gun that fires at a target all the while costs one penalty, not one per cycle).
 /// </summary>
+/// <summary>The exact source values the Host writer must persist in relations.relation_history.attrs.</summary>
+public sealed record SecurityStatusPenaltyChange(
+    long CharacterId,
+    double PreviousStatus,
+    double NextStatus,
+    string Reason,
+    int EventTypeID,
+    long OtherOwnerID,
+    int? OtherTypeID,
+    long LocationID,
+    double Modification,
+    long TargetShipItemId);
+
 public sealed class SecurityStatusPenalties(
     CrimewatchRuntime runtime,
     CharacterSessions sessions,
     Func<long, CancellationToken, Task<double>> statusOf,
-    Func<long, double, string, CancellationToken, Task> setStatus,
+    Func<AggressionRequest, CancellationToken, Task<int?>> targetTypeIdOf,
+    Func<SecurityStatusPenaltyChange, CancellationToken, Task> setStatus,
     Func<long> nowUnixMs,
     Func<long, CancellationToken, Task>? changed = null)
 {
@@ -53,13 +67,29 @@ public sealed class SecurityStatusPenalties(
         var previous = SecurityPenalty.Clamp(await statusOf(request.Attacker, CancellationToken.None));
         var theirs = SecurityPenalty.Clamp(await statusOf(request.Target, CancellationToken.None));
         var next = SecurityPenalty.Next(previous, theirs, request.Security, request.TargetIsCapsule);
-        // whatever comes of it, the window is open: the shots that follow at this ship cost nothing more
-        _recent[target] = now + SecurityPenalty.DuplicateWindowMs;
         if (next == previous)
         {
+            _recent[target] = now + SecurityPenalty.DuplicateWindowMs;
             return;
         }
-        await setStatus(request.Attacker, next, Reason, CancellationToken.None);
+
+        var modification = (request.TargetIsCapsule ? SecurityPenalty.CapsuleModifier : SecurityPenalty.ShipModifier)
+            * SecurityPenalty.PseudoSecurity(request.Security)
+            * (1 + (theirs - previous) / 100);
+        var typeId = await targetTypeIdOf(request, CancellationToken.None);
+        await setStatus(new SecurityStatusPenaltyChange(
+            request.Attacker,
+            previous,
+            next,
+            Reason,
+            SecurityStatusEventTypeIds.IllegalAggression,
+            request.Target,
+            typeId,
+            request.SolarSystemId,
+            modification,
+            request.TargetShipId), CancellationToken.None);
+        // Start the duplicate window only once the status history and value were persisted.
+        _recent[target] = now + SecurityPenalty.DuplicateWindowMs;
         if (changed is not null)
         {
             await changed(request.Attacker, CancellationToken.None);

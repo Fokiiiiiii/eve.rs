@@ -10,9 +10,10 @@ public class SpaceServiceTests
 {
     private static long Id(PyValue value) => Events.Number(value);
 
-    private static async Task<(Rig Rig, Eve.Characters.Created Character, ClientSession Session)> DockedAsync(TimeSpan? protection = null)
+    private static async Task<(Rig Rig, Eve.Characters.Created Character, ClientSession Session)> DockedAsync(
+        TimeSpan? protection = null, Eve.Scheduler.LocalTimers? localTimers = null)
     {
-        var rig = await Rig.CreateAsync(protection);
+        var rig = await Rig.CreateAsync(protection, localTimers: localTimers);
         var character = await rig.NewCharacterAsync();
         return (rig, character, await rig.SessionAsync(character));
     }
@@ -1154,6 +1155,25 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task Space_sessions_leave_a_shared_local_timer_owned_by_the_foundations()
+    {
+        using var shared = new Eve.Scheduler.LocalTimers(delay: (_, token) =>
+            Task.Delay(Timeout.InfiniteTimeSpan, token));
+        var (rig, _, session) = await DockedAsync(Timeout.InfiniteTimeSpan, shared);
+        try
+        {
+            await InSpaceAsync(rig, session);
+            Assert.True(shared.Count > 0);
+        }
+        finally
+        {
+            await rig.DisposeAsync();
+        }
+
+        Assert.True(shared.Count > 0);
+    }
+
+    [PgFact]
     public async Task A_pilot_who_flew_before_the_time_was_up_is_not_told_again_when_it_is()
     {
         var (rig, _, session) = await DockedAsync(TimeSpan.FromMilliseconds(400));
@@ -1599,6 +1619,498 @@ public class SpaceServiceTests
         Assert.Equal(new SimLeave((ulong)session.SessionId, LeaveWhy.LoggedOff), rig.Sim.Heard.Last());
         await Rig.UntilAsync(() => rig.Items.GetAsync(character.ShipId).GetAwaiter().GetResult() is { LocationId: Rig.Station });
         Assert.False(rig.Space.IsInSpace(session));
+    }
+
+    [Fact]
+    public void Fleet_roles_are_limited_to_valid_hierarchy_positions()
+    {
+        Assert.Equal(25, Eve.Services.Space.FleetStore.MaxWings);
+        Assert.Equal(25, Eve.Services.Space.FleetStore.MaxSquadsPerWing);
+        Assert.Equal(256, Eve.Services.Space.FleetStore.MaxMembers);
+        Assert.True(Eve.Services.Space.FleetStore.HasBossJob(Eve.Services.Space.FleetStore.CreatorJob));
+        Assert.True(Eve.Services.Space.FleetStore.HasBossJob(Eve.Services.Space.FleetStore.CreatorJob | 4));
+        Assert.False(Eve.Services.Space.FleetStore.HasBossJob(4));
+        Assert.True(Eve.Services.Space.FleetStore.IsValidAssignment(Eve.Services.Space.FleetStore.Leader, -1, -1));
+        Assert.True(Eve.Services.Space.FleetStore.IsValidAssignment(Eve.Services.Space.FleetStore.WingCommander, 10, -1));
+        Assert.True(Eve.Services.Space.FleetStore.IsValidAssignment(Eve.Services.Space.FleetStore.SquadCommander, 10, 20));
+        Assert.True(Eve.Services.Space.FleetStore.IsValidAssignment(Eve.Services.Space.FleetStore.Member, -1, -1));
+        Assert.False(Eve.Services.Space.FleetStore.IsValidAssignment(Eve.Services.Space.FleetStore.WingCommander, -1, -1));
+        Assert.False(Eve.Services.Space.FleetStore.IsValidAssignment(Eve.Services.Space.FleetStore.SquadCommander, 10, -1));
+        Assert.False(Eve.Services.Space.FleetStore.IsValidAssignment(Eve.Services.Space.FleetStore.Leader, 10, 20));
+    }
+
+    [PgFact]
+    public async Task Fleet_invite_join_and_leave_are_persisted_with_the_member_hierarchy()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var reloaded = new Eve.Services.Space.FleetStore(rig.Source);
+        var leaderId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
+        var memberId = leaderId + 1;
+        var fleetId = await store.CreateAsync(leaderId);
+        try
+        {
+            Assert.True(fleetId > 0);
+            var wingId = await store.CreateWingAsync(fleetId, leaderId);
+            var squadId = await store.CreateSquadAsync(fleetId, leaderId, wingId);
+            Assert.True(wingId > 0);
+            Assert.True(squadId > 0);
+            Assert.True(await store.InviteAsync(fleetId, leaderId, memberId, wingId, squadId, Eve.Services.Space.FleetStore.SquadCommander));
+
+            var joined = await store.JoinAsync(fleetId, memberId);
+            Assert.NotNull(joined);
+            Assert.Equal(Eve.Services.Space.FleetStore.SquadCommander, joined.Role);
+            Assert.Equal(wingId, joined.WingId);
+            Assert.Equal(squadId, joined.SquadId);
+            Assert.Equal(fleetId, await store.FleetIdForCharacterAsync(leaderId));
+            Assert.Equal(fleetId, await store.FleetIdForCharacterAsync(memberId));
+
+            var persisted = await reloaded.SnapshotAsync(fleetId);
+            Assert.NotNull(persisted);
+            Assert.Equal(2, persisted.Members.Count);
+            Assert.Single(persisted.Wings);
+            Assert.Single(persisted.Wings[0].Squads);
+            Assert.Equal(joined, persisted.Members.Single(member => member.CharacterId == memberId));
+
+            Assert.NotNull(await store.LeaveAsync(fleetId, memberId));
+            Assert.Null(await reloaded.MemberForCharacterAsync(memberId));
+            Assert.Null(await reloaded.FleetIdForCharacterAsync(memberId));
+        }
+        finally
+        {
+            if (fleetId > 0) await store.DisbandAsync(fleetId, leaderId);
+        }
+    }
+
+    [PgFact]
+    public async Task Fleet_boss_leaving_transfers_the_boss_job_to_the_fleet_commander()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var bossId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
+        var commanderId = bossId + 1;
+        var fleetId = await store.CreateAsync(bossId);
+        try
+        {
+            Assert.True(await store.InviteAsync(fleetId, bossId, commanderId,
+                Eve.Services.Space.FleetStore.NoUnit, Eve.Services.Space.FleetStore.NoUnit,
+                Eve.Services.Space.FleetStore.Member));
+            Assert.NotNull(await store.JoinAsync(fleetId, commanderId));
+            Assert.True(await store.MakeLeaderAsync(fleetId, bossId, commanderId));
+
+            Assert.NotNull(await store.LeaveAsync(fleetId, bossId));
+
+            var current = await store.SnapshotAsync(fleetId);
+            Assert.NotNull(current);
+            Assert.DoesNotContain(current.Members, member => member.CharacterId == bossId);
+            var commander = current.Members.Single(member => member.CharacterId == commanderId);
+            Assert.Equal(Eve.Services.Space.FleetStore.Leader, commander.Role);
+            Assert.True(Eve.Services.Space.FleetStore.HasBossJob(commander.Job));
+        }
+        finally
+        {
+            if (fleetId > 0 &&
+                !await store.DisbandAsync(fleetId, commanderId))
+                await store.DisbandAsync(fleetId, bossId);
+        }
+    }
+
+    [PgFact]
+    public async Task Fleet_boss_who_is_commander_leaves_and_promotes_a_member_in_the_top_squad()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var bossId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
+        var memberId = bossId + 1;
+        var fleetId = await store.CreateAsync(bossId);
+        try
+        {
+            var wingId = await store.CreateWingAsync(fleetId, bossId);
+            var squadId = await store.CreateSquadAsync(fleetId, bossId, wingId);
+            Assert.True(await store.InviteAsync(fleetId, bossId, memberId, wingId, squadId,
+                Eve.Services.Space.FleetStore.Member));
+            Assert.NotNull(await store.JoinAsync(fleetId, memberId));
+
+            Assert.NotNull(await store.LeaveAsync(fleetId, bossId));
+
+            var current = await store.SnapshotAsync(fleetId);
+            Assert.NotNull(current);
+            Assert.DoesNotContain(current.Members, member => member.CharacterId == bossId);
+            var successor = current.Members.Single(member => member.CharacterId == memberId);
+            Assert.Equal(Eve.Services.Space.FleetStore.Member, successor.Role);
+            Assert.True(Eve.Services.Space.FleetStore.HasBossJob(successor.Job));
+        }
+        finally
+        {
+            if (fleetId > 0) await store.DisbandAsync(fleetId, memberId);
+        }
+    }
+
+
+    [Fact]
+    public void Fleet_added_bound_manager_and_proxy_rpcs_are_registered_for_dispatch()
+    {
+        using var source = Npgsql.NpgsqlDataSource.Create("Host=127.0.0.1;Database=unused;Username=unused;Password=unused");
+        var store = new Eve.Services.Space.FleetStore(source);
+        Eve.Services.IService bound = new Eve.Services.Space.FleetObjectService(store, () => Rig.ClockMs);
+        Eve.Services.IService manager = new Eve.Services.Space.FleetManagerService(store);
+        Eve.Services.IService proxy = new Eve.Services.Space.FleetProxyService(store);
+
+        string[] boundMethods =
+        [
+            "SetTakesFleetWarp", "SetAcceptsConduitJumpsValue", "SetAcceptsRegroupValue", "SetOptions",
+            "GetFleetComposition", "SendBroadcast", "GetWings", "UpdateMemberInfo", "SetMotdEx", "GetMotd",
+            "GetFleetMaxSize", "LoadFleetSetup", "SetFleetMaxSize"
+        ];
+        string[] managerMethods =
+        [
+            "AddToWatchlist", "RemoveFromWatchlist", "RegisterForDamageUpdates",
+            "BroadcastToBubble", "BroadcastToSystem"
+        ];
+        string[] proxyMethods =
+        [
+            "GetAvailableFleetAds", "AddFleetFinderAdvert", "UpdateFleetAdvertWithNewLeader",
+            "RemoveFleetFinderAdvert", "GetMyFleetFinderAdvert", "UpdateAdvertInfo",
+            "UpdateAdvertAllowedEntities"
+        ];
+
+        Assert.Equal(25, boundMethods.Length + managerMethods.Length + proxyMethods.Length);
+        Assert.All(boundMethods, method => Assert.True(bound.HasMethod(method), method));
+        Assert.All(managerMethods, method => Assert.True(manager.HasMethod(method), method));
+        Assert.All(proxyMethods, method => Assert.True(proxy.HasMethod(method), method));
+    }
+
+    [PgFact]
+    public async Task Fleet_max_member_count_wire_limits_joins_and_init_state_tracks_members()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var leader = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(leader);
+        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var fleetId = await store.CreateAsync(leader.CharacterId);
+        var memberOne = Random.Shared.NextInt64(8_000_000_000_000, 9_000_000_000_000);
+        var memberTwo = memberOne + 1;
+        var fleet = new Eve.Services.Space.FleetObjectService(store, () => Rig.ClockMs);
+
+        try
+        {
+            Assert.Equal(PyNone.Instance, await FleetObjectCallAsync(
+                fleet, fleetId, session, "SetFleetMaxSize", [new PyInt(2)]));
+            Assert.Equal(new PyInt(2), await FleetObjectCallAsync(
+                fleet, fleetId, session, "GetFleetMaxSize", []));
+
+            var wingId = await store.CreateWingAsync(fleetId, leader.CharacterId);
+            var squadId = await store.CreateSquadAsync(fleetId, leader.CharacterId, wingId);
+            Assert.True(wingId > 0);
+            Assert.True(squadId > 0);
+            Assert.True(await store.InviteAsync(fleetId, leader.CharacterId, memberOne,
+                wingId, squadId, Eve.Services.Space.FleetStore.Member));
+            Assert.True(await store.InviteAsync(fleetId, leader.CharacterId, memberTwo,
+                wingId, squadId, Eve.Services.Space.FleetStore.Member));
+
+            Assert.NotNull(await store.JoinAsync(fleetId, memberOne));
+            Assert.Null(await store.JoinAsync(fleetId, memberTwo));
+
+            var snapshot = await store.SnapshotAsync(fleetId);
+            Assert.NotNull(snapshot);
+            Assert.Equal(2, snapshot!.Members.Count);
+            Assert.Equal(2, await store.MaxMemberCountAsync(fleetId));
+            Assert.Contains(snapshot.Members, member => member.CharacterId == leader.CharacterId);
+            Assert.Contains(snapshot.Members, member => member.CharacterId == memberOne);
+            Assert.DoesNotContain(snapshot.Members, member => member.CharacterId == memberTwo);
+
+            var initState = Assert.IsType<PyObject>(await FleetObjectCallAsync(
+                fleet, fleetId, session, "GetInitState", []));
+            Assert.Equal(new PyStr("util.KeyVal"), initState.Name);
+            var fields = Assert.IsType<PyDict>(initState.Args).Entries
+                .ToDictionary(entry => JsSemantics.StringValue(entry.Key)!, entry => entry.Value);
+            var members = Assert.IsType<PyDict>(fields["members"]);
+            Assert.Equal(2, members.Entries.Count);
+            Assert.Contains(members.Entries, entry => entry.Key == new PyLong(leader.CharacterId));
+            Assert.Contains(members.Entries, entry => entry.Key == new PyLong(memberOne));
+        }
+        finally
+        {
+            if (fleetId > 0) await store.DisbandAsync(fleetId, leader.CharacterId);
+        }
+    }
+
+    [PgFact]
+    public async Task Fleet_join_requests_and_invites_remain_consistent_through_acceptance_and_replay()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var leaderId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
+        var applicantId = leaderId + 1;
+        var fleetId = await store.CreateAsync(leaderId);
+        try
+        {
+            Assert.True(await store.RequestJoinAsync(fleetId, applicantId));
+            Assert.Contains((await store.SnapshotAsync(fleetId))!.JoinRequests, request => request.CharacterId == applicantId);
+
+            Assert.True(await store.InviteAsync(fleetId, leaderId, applicantId,
+                Eve.Services.Space.FleetStore.NoUnit, Eve.Services.Space.FleetStore.NoUnit, Eve.Services.Space.FleetStore.Member));
+            Assert.DoesNotContain((await store.SnapshotAsync(fleetId))!.JoinRequests, request => request.CharacterId == applicantId);
+            Assert.False(await store.RequestJoinAsync(fleetId, applicantId), "an outstanding invite excludes a join request");
+
+            Assert.NotNull(await store.JoinAsync(fleetId, applicantId));
+            Assert.Null(await store.JoinAsync(fleetId, applicantId));
+            Assert.Equal(fleetId, await store.FleetIdForCharacterAsync(applicantId));
+            Assert.DoesNotContain((await store.SnapshotAsync(fleetId))!.JoinRequests, request => request.CharacterId == applicantId);
+        }
+        finally
+        {
+            if (fleetId > 0) await store.DisbandAsync(fleetId, leaderId);
+        }
+    }
+
+    [PgFact]
+    public async Task Fleet_parallel_accepts_across_fleets_preserve_one_membership_without_throwing()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var leaderOne = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
+        var leaderTwo = leaderOne + 10;
+        var memberId = leaderOne + 20;
+        var fleetOne = await store.CreateAsync(leaderOne);
+        var fleetTwo = await store.CreateAsync(leaderTwo);
+        try
+        {
+            Assert.True(await store.InviteAsync(fleetOne, leaderOne, memberId,
+                Eve.Services.Space.FleetStore.NoUnit, Eve.Services.Space.FleetStore.NoUnit, Eve.Services.Space.FleetStore.Member));
+            Assert.True(await store.InviteAsync(fleetTwo, leaderTwo, memberId,
+                Eve.Services.Space.FleetStore.NoUnit, Eve.Services.Space.FleetStore.NoUnit, Eve.Services.Space.FleetStore.Member));
+
+            var joins = await Task.WhenAll(store.JoinAsync(fleetOne, memberId), store.JoinAsync(fleetTwo, memberId));
+            Assert.Single(joins, member => member is not null);
+            var joinedFleet = await store.FleetIdForCharacterAsync(memberId);
+            Assert.Contains(joinedFleet, new long?[] { fleetOne, fleetTwo });
+            var snapshots = await Task.WhenAll(store.SnapshotAsync(fleetOne), store.SnapshotAsync(fleetTwo));
+            Assert.Equal(1, snapshots.Sum(snapshot => snapshot!.Members.Count(member => member.CharacterId == memberId)));
+            Assert.Null(await store.JoinAsync(joinedFleet == fleetOne ? fleetTwo : fleetOne, memberId));
+            Assert.Equal(joinedFleet, await store.FleetIdForCharacterAsync(memberId));
+        }
+        finally
+        {
+            if (fleetOne > 0) await store.DisbandAsync(fleetOne, leaderOne);
+            if (fleetTwo > 0) await store.DisbandAsync(fleetTwo, leaderTwo);
+        }
+    }
+
+    [PgFact]
+    public async Task Fleet_parallel_joins_do_not_exceed_the_member_limit()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var leaderId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
+        var memberOne = leaderId + 1;
+        var memberTwo = leaderId + 2;
+        var fleetId = await store.CreateAsync(leaderId);
+        try
+        {
+            Assert.True(await store.SetMaxMemberCountAsync(fleetId, leaderId, 2));
+            Assert.True(await store.InviteAsync(fleetId, leaderId, memberOne,
+                Eve.Services.Space.FleetStore.NoUnit, Eve.Services.Space.FleetStore.NoUnit, Eve.Services.Space.FleetStore.Member));
+            Assert.True(await store.InviteAsync(fleetId, leaderId, memberTwo,
+                Eve.Services.Space.FleetStore.NoUnit, Eve.Services.Space.FleetStore.NoUnit, Eve.Services.Space.FleetStore.Member));
+
+            var joins = await Task.WhenAll(store.JoinAsync(fleetId, memberOne), store.JoinAsync(fleetId, memberTwo));
+            Assert.Single(joins, member => member is not null);
+            var snapshot = await store.SnapshotAsync(fleetId);
+            Assert.NotNull(snapshot);
+            Assert.Equal(2, snapshot.Members.Count);
+            Assert.Equal(2, await store.MaxMemberCountAsync(fleetId));
+        }
+        finally
+        {
+            if (fleetId > 0) await store.DisbandAsync(fleetId, leaderId);
+        }
+    }
+
+    [PgFact]
+    public async Task Fleet_invite_authorization_waits_for_a_manager_revocation()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var bossId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
+        var commanderId = bossId + 1;
+        var inviteeId = bossId + 2;
+        var fleetId = await store.CreateAsync(bossId);
+        try
+        {
+            Assert.True(await store.InviteAsync(fleetId, bossId, commanderId,
+                Eve.Services.Space.FleetStore.NoUnit, Eve.Services.Space.FleetStore.NoUnit, Eve.Services.Space.FleetStore.Member));
+            Assert.NotNull(await store.JoinAsync(fleetId, commanderId));
+            Assert.True(await store.MakeLeaderAsync(fleetId, bossId, commanderId));
+
+            var invite = false;
+            await using (var connection = await rig.Source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await using (var revoke = connection.CreateCommand())
+                {
+                    revoke.Transaction = transaction;
+                    revoke.CommandText = "UPDATE fleet.fleet_members SET job = 0 WHERE fleet_id = $1 AND character_id = $2";
+                    var fleetParameter = revoke.CreateParameter();
+                    fleetParameter.Value = fleetId;
+                    revoke.Parameters.Add(fleetParameter);
+                    var bossParameter = revoke.CreateParameter();
+                    bossParameter.Value = bossId;
+                    revoke.Parameters.Add(bossParameter);
+                    Assert.Equal(1, await revoke.ExecuteNonQueryAsync());
+                }
+
+                var inviteTask = store.InviteAsync(fleetId, bossId, inviteeId,
+                    Eve.Services.Space.FleetStore.NoUnit, Eve.Services.Space.FleetStore.NoUnit, Eve.Services.Space.FleetStore.Member);
+                await Task.Delay(250);
+                var waitedForRevocation = !inviteTask.IsCompleted;
+                await transaction.CommitAsync();
+                invite = await inviteTask;
+                Assert.True(waitedForRevocation, "invite authorization must wait for the manager row lock");
+            }
+
+            Assert.False(invite);
+        }
+        finally
+        {
+            if (fleetId > 0)
+            {
+                await using var connection = await rig.Source.OpenConnectionAsync();
+                await using var restore = connection.CreateCommand();
+                restore.CommandText = "UPDATE fleet.fleet_members SET job = $1 WHERE fleet_id = $2 AND character_id = $3";
+                var job = restore.CreateParameter();
+                job.Value = Eve.Services.Space.FleetStore.CreatorJob;
+                restore.Parameters.Add(job);
+                var fleet = restore.CreateParameter();
+                fleet.Value = fleetId;
+                restore.Parameters.Add(fleet);
+                var boss = restore.CreateParameter();
+                boss.Value = bossId;
+                restore.Parameters.Add(boss);
+                await restore.ExecuteNonQueryAsync();
+                await store.DisbandAsync(fleetId, bossId);
+            }
+        }
+    }
+
+    [PgFact]
+    public async Task Fleet_setup_and_advert_rpcs_forward_client_data_to_host_callbacks()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var leader = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(leader);
+        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var fleetId = await store.CreateAsync(leader.CharacterId);
+        var setupCalls = new List<(long FleetId, long CharacterId, string Name, ClientSession Session)>();
+        var createAdvertCalls = new List<(long FleetId, long CharacterId, PyValue Data, ClientSession Session)>();
+
+        Task<PyValue?> LoadSetup(long id, long characterId, string name, ClientSession callbackSession, CancellationToken cancellationToken)
+        {
+            setupCalls.Add((id, characterId, name, callbackSession));
+            return Task.FromResult<PyValue?>(null);
+        }
+
+        Task<PyValue?> CreateAdvert(long id, long characterId, PyValue data, ClientSession callbackSession, CancellationToken cancellationToken)
+        {
+            createAdvertCalls.Add((id, characterId, data, callbackSession));
+            return Task.FromResult<PyValue?>(new PyStr("advert-persisted"));
+        }
+
+        var fleet = new Eve.Services.Space.FleetObjectService(
+            store, () => Rig.ClockMs, loadFleetSetup: LoadSetup, createFleetAdvert: CreateAdvert);
+        var advertData = new PyDict([]);
+        var kwargs = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("adInfoData"), advertData)
+        ]);
+
+        try
+        {
+            Assert.Equal(new PyStr("advert-persisted"), await FleetObjectCallAsync(
+                fleet, fleetId, session, "Init", [new PyInt(1234), new PyStr("Saved setup")], kwargs));
+            var initSetup = Assert.Single(setupCalls);
+            Assert.Equal((fleetId, leader.CharacterId, "Saved setup"), (initSetup.FleetId, initSetup.CharacterId, initSetup.Name));
+            Assert.Same(session, initSetup.Session);
+            var advert = Assert.Single(createAdvertCalls);
+            Assert.Equal((fleetId, leader.CharacterId), (advert.FleetId, advert.CharacterId));
+            Assert.Same(advertData, advert.Data);
+            Assert.Same(session, advert.Session);
+
+            Assert.Equal(PyNone.Instance, await FleetObjectCallAsync(
+                fleet, fleetId, session, "LoadFleetSetup", [new PyStr("Second setup")]));
+            Assert.Equal(["Saved setup", "Second setup"], setupCalls.Select(call => call.Name));
+
+            var finderCalls = new List<(string Operation, long CharacterId, PyValue[] Args, ClientSession Session)>();
+            Task<PyValue?> FleetFinder(string operation, long characterId, IReadOnlyList<PyValue> args,
+                ClientSession callbackSession, CancellationToken cancellationToken)
+            {
+                finderCalls.Add((operation, characterId, [.. args], callbackSession));
+                return Task.FromResult<PyValue?>(operation == "GetAvailableFleetAds"
+                    ? new PyDict([])
+                    : new PyStr(operation));
+            }
+
+            Eve.Services.IService proxy = new Eve.Services.Space.FleetProxyService(
+                store, FleetFinder, _ => session);
+            (string Method, PyValue[] Args)[] requests =
+            [
+                ("GetAvailableFleetAds", []),
+                ("AddFleetFinderAdvert", [advertData]),
+                ("UpdateFleetAdvertWithNewLeader", [new PyLong(leader.CharacterId + 1)]),
+                ("RemoveFleetFinderAdvert", []),
+                ("GetMyFleetFinderAdvert", []),
+                ("UpdateAdvertInfo", [new PyStr("Fleet name"), new PyStr("Fleet description")]),
+                ("UpdateAdvertAllowedEntities", [new PyList([new PyLong(leader.CharacterId + 1)])])
+            ];
+
+            for (var i = 0; i < requests.Length; i++)
+            {
+                var (method, args) = requests[i];
+                var reply = await proxy.CallAsync(new Eve.Services.ServiceCall
+                {
+                    Method = method,
+                    Args = args,
+                    Session = session,
+                    CallId = new PyInt(1)
+                });
+                if (method == "GetAvailableFleetAds")
+                    Assert.IsType<PyDict>(reply);
+                else
+                    Assert.Equal(new PyStr(method), reply);
+
+                Assert.Equal(method, finderCalls[i].Operation);
+                Assert.Equal(leader.CharacterId, finderCalls[i].CharacterId);
+                Assert.Equal(args, finderCalls[i].Args);
+                Assert.Same(session, finderCalls[i].Session);
+            }
+            Assert.Equal(requests.Length, finderCalls.Count);
+        }
+        finally
+        {
+            if (fleetId > 0) await store.DisbandAsync(fleetId, leader.CharacterId);
+        }
+    }
+
+    private static async Task<PyValue> FleetObjectCallAsync(
+        Eve.Services.Space.FleetObjectService service,
+        long fleetId,
+        ClientSession session,
+        string method,
+        IReadOnlyList<PyValue> args,
+        PyValue? kwargs = null)
+    {
+        var nestedCall = Eve.Services.Py.Tuple(
+            new PyStr(method),
+            new PyTuple(args),
+            kwargs ?? PyNone.Instance);
+        var reply = Assert.IsType<PyTuple>(await ((Eve.Services.IService)service).CallAsync(
+            new Eve.Services.ServiceCall
+            {
+                Method = "MachoBindObject",
+                Args = [new PyLong(fleetId), nestedCall],
+                Session = session,
+                CallId = new PyInt(1)
+            }));
+        return reply.Items[1];
     }
 
 

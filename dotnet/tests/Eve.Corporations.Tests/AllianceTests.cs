@@ -6,10 +6,12 @@ namespace Eve.Corporations.Tests;
 public class AllianceTests
 {
     private static readonly NewAlliance Request = new("Orbital Alliance","ORB","An alliance.","");
-    private static async Task<(long Actor,Corporation Corp)> Founder(Rig rig,string name,string ticker,decimal money = 2000000000m,bool skill = true)
+    private static async Task<(long Actor,Corporation Corp)> Founder(
+        Rig rig,string name,string ticker,decimal money = 2000000000m,bool skill = true,CorporationStore? store = null)
     {
+        store ??= rig.Store;
         var actor = await rig.CharacterAsync(name,money);
-        var corp = await rig.Store.CreateAsync(actor,new(name+" Corporation",ticker,"","",0),"corp-"+actor);
+        var corp = await store.CreateAsync(actor,new(name+" Corporation",ticker,"","",0),"corp-"+actor);
         if (skill)
         {
             await using var connection = await rig.Source.OpenConnectionAsync();
@@ -145,27 +147,42 @@ public class AllianceTests
     public async Task Alliance_public_member_rows_bind_and_private_votes_match_the_client_contract()
     {
         await using var rig = await Rig.CreateAsync();
-        var (actor,corp) = await Founder(rig,"Founder One","FIRST");
-        var alliance = await rig.Store.CreateAllianceAsync(actor,Request,"first");
-        var session = new Eve.Services.ClientSession { SessionId=77 };
-        session.Set("charid",new Eve.Marshal.PyInt(actor));
-        var service = new Eve.Services.Corporations.AllianceRegistryService(rig.Store,rig.Characters,() => rig.Now);
-        Eve.Services.ServiceCall Call(string name,params Eve.Marshal.PyValue[] args) => new() { Session=session,Method=name,Args=args };
-        var info = await service.GetAlliance(Call("GetAlliance",new Eve.Marshal.PyInt(alliance.Id)));
-        var fields = Assert.IsType<Eve.Marshal.PyDict>(Assert.IsType<Eve.Marshal.PyObject>(info).Args);
-        Assert.Equal(new Eve.Marshal.PyInt(1),fields.Entries.Single(e => e.Key == new Eve.Marshal.PyStr("memberCount")).Value);
-        Assert.Equal(new Eve.Marshal.PyInt(corp.Id),fields.Entries.Single(e => e.Key == new Eve.Marshal.PyStr("executorCorpID")).Value);
-        var publicRows = Assert.IsType<Eve.Marshal.PyObject>(await service.GetAllianceMembers(Call("GetAllianceMembers",new Eve.Marshal.PyInt(alliance.Id))));
-        var publicFields = Assert.IsType<Eve.Marshal.PyDict>(publicRows.Args);
-        var lines = Assert.IsType<Eve.Marshal.PyList>(publicFields.Entries.Single(e => e.Key == new Eve.Marshal.PyStr("lines")).Value);
-        Assert.IsType<Eve.Marshal.PyNone>(Assert.IsType<Eve.Marshal.PyList>(Assert.Single(lines.Items)).Items[2]);
-        var own = Assert.IsType<Eve.Marshal.PyObjectEx>(Eve.Marshal.MarshalCodec.Decode(Eve.Marshal.MarshalCodec.Encode(await service.GetMembers(Call("GetMembers")))));
-        var packed = Assert.IsType<Eve.Marshal.PyPackedRow>(Assert.Single(own.Dict).Value);
-        Assert.Equal(new Eve.Marshal.PyInt(corp.Id),packed.Values[2]);
-        var bound = Assert.IsType<Eve.Marshal.PyTuple>(await service.MachoBindObject(Call("MachoBindObject",new Eve.Marshal.PyInt(alliance.Id),
-            Eve.Services.Py.Tuple(new Eve.Marshal.PyStr("GetAlliance"),Eve.Services.Py.Tuple(),Eve.Marshal.PyNone.Instance))));
-        Assert.Equal(Eve.Marshal.MarshalCodec.Encode(info),Eve.Marshal.MarshalCodec.Encode(bound.Items[1]));
-        Assert.IsType<Eve.Marshal.PySubStruct>(bound.Items[0]);
+        var schema = "alliance_public_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await CorporationStore.MigrateAsync(rig.Source,schema);
+
+
+            var store = new CorporationStore(rig.Source,rig.Characters,rig.Wallets,rig.Transactions,rig.Skills,() => rig.Now,schema);
+            var (actor,corp) = await Founder(rig,"Founder One","FIRST",store:store);
+            var alliance = await store.CreateAllianceAsync(actor,Request,"first");
+            var session = new Eve.Services.ClientSession { SessionId=77 };
+            session.Set("charid",new Eve.Marshal.PyInt(actor));
+            var service = new Eve.Services.Corporations.AllianceRegistryService(store,rig.Characters,() => rig.Now);
+            Eve.Services.ServiceCall Call(string name,params Eve.Marshal.PyValue[] args) => new() { Session=session,Method=name,Args=args };
+            var info = await service.GetAlliance(Call("GetAlliance",new Eve.Marshal.PyInt(alliance.Id)));
+            var fields = Assert.IsType<Eve.Marshal.PyDict>(Assert.IsType<Eve.Marshal.PyObject>(info).Args);
+            Assert.Equal(new Eve.Marshal.PyInt(1),fields.Entries.Single(e => e.Key == new Eve.Marshal.PyStr("memberCount")).Value);
+            Assert.Equal(new Eve.Marshal.PyInt(corp.Id),fields.Entries.Single(e => e.Key == new Eve.Marshal.PyStr("executorCorpID")).Value);
+            Assert.Equal(new Eve.Marshal.PyInt(0),fields.Entries.Single(e => e.Key == new Eve.Marshal.PyStr("currentPrimeHour")).Value);
+            Assert.Equal(Eve.Marshal.PyNone.Instance,fields.Entries.Single(e => e.Key == new Eve.Marshal.PyStr("currentCapital")).Value);
+            var publicRows = Assert.IsType<Eve.Marshal.PyObject>(await service.GetAllianceMembers(Call("GetAllianceMembers",new Eve.Marshal.PyInt(alliance.Id))));
+            var publicFields = Assert.IsType<Eve.Marshal.PyDict>(publicRows.Args);
+            var lines = Assert.IsType<Eve.Marshal.PyList>(publicFields.Entries.Single(e => e.Key == new Eve.Marshal.PyStr("lines")).Value);
+            Assert.IsType<Eve.Marshal.PyNone>(Assert.IsType<Eve.Marshal.PyList>(Assert.Single(lines.Items)).Items[2]);
+            var own = Assert.IsType<Eve.Marshal.PyObjectEx>(Eve.Marshal.MarshalCodec.Decode(Eve.Marshal.MarshalCodec.Encode(await service.GetMembers(Call("GetMembers")))));
+            var packed = Assert.IsType<Eve.Marshal.PyPackedRow>(Assert.Single(own.Dict).Value);
+            Assert.Equal(new Eve.Marshal.PyInt(corp.Id),packed.Values[2]);
+            var bound = Assert.IsType<Eve.Marshal.PyTuple>(await service.MachoBindObject(Call("MachoBindObject",new Eve.Marshal.PyInt(alliance.Id),
+                Eve.Services.Py.Tuple(new Eve.Marshal.PyStr("GetAlliance"),Eve.Services.Py.Tuple(),Eve.Marshal.PyNone.Instance))));
+            Assert.Equal(Eve.Marshal.MarshalCodec.Encode(info),Eve.Marshal.MarshalCodec.Encode(bound.Items[1]));
+            Assert.IsType<Eve.Marshal.PySubStruct>(bound.Items[0]);
+        }
+        finally
+        {
+            await using var cleanup = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
+        }
     }
 
     [Fact]
@@ -389,12 +406,275 @@ public class AllianceTests
         foreach (var method in new[]
         {
             "IsAllianceLocal","GetRankedAlliances","GetEmploymentRecord","GetDaysInAlliance",
-            "GetAllianceMembersOlderThan","UpdateAlliance","GetAlliancePublicInfo"
+            "GetAllianceMembersOlderThan","UpdateAlliance","GetAlliancePublicInfo",
+            "GetRelationships","SetRelationship","DeleteRelationship","GetContactList","GetAllianceContacts",
+            "AddAllianceContact","EditAllianceContact","RemoveAllianceContacts","EditContactsRelationshipID",
+            "GetLabels","CreateLabel","DeleteLabel","EditLabel","AssignLabels","RemoveLabels",
+            "SetPrimeHour","GetPrimeTimeInfo","GetCapitalSystemInfo","SetCapitalSystem","CancelCapitalSystemTransition"
         }) Assert.True(alliance.HasMethod(method),method);
 
         var corporation = (Eve.Services.IService)new Eve.Services.Corporations.CorpRegistryService(null!,null!,() => 0);
         foreach (var method in new[] { "CreateAlliance","GetAllianceApplications","GetSuggestedAllianceShortNames" })
             Assert.True(corporation.HasMethod(method),method);
+    }
+
+    [PgFact]
+    public async Task Alliance_social_contacts_labels_and_relationships_persist_with_executor_checks()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var corporationSchema = "alliance_social_corp_" + suffix;
+        var schedulerSchema = "alliance_social_sched_" + suffix;
+        var eventsSchema = "alliance_social_events_" + suffix;
+        var relationsSchema = "alliance_social_relations_" + suffix;
+        try
+        {
+            await CorporationStore.MigrateAsync(rig.Source,corporationSchema);
+
+
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(rig.Source,schedulerSchema);
+            await Eve.Events.EventBus.MigrateAsync(rig.Source,eventsSchema);
+            await Eve.Relations.RelationStore.MigrateAsync(rig.Source,relationsSchema);
+            var store = new CorporationStore(rig.Source,rig.Characters,rig.Wallets,rig.Transactions,rig.Skills,() => rig.Now,corporationSchema);
+            var scheduler = new Eve.Scheduler.DurableScheduler(rig.Source,() => rig.Now,schema:schedulerSchema);
+            var events = new Eve.Events.EventBus(rig.Source,scheduler,schema:eventsSchema);
+            var relations = new Eve.Relations.RelationStore(rig.Source,scheduler,events,relationsSchema);
+            var (executor,_) = await Founder(rig,"Social Executor","SOCEX",store:store);
+            var (outsider,outsiderCorp) = await Founder(rig,"Social Outsider","SOCOUT",store:store);
+            var alliance = await store.CreateAllianceAsync(executor,Request,"social");
+            var service = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
+                store,rig.Characters,() => rig.Now,relations:relations);
+
+            Eve.Services.ServiceCall Call(long actor,string method,params Eve.Marshal.PyValue[] args)
+            {
+                var session = new Eve.Services.ClientSession { SessionId=actor };
+                session.Set("charid",new Eve.Marshal.PyInt(actor));
+                return new() { Session=session,Method=method,Args=args };
+            }
+
+            Assert.IsType<Eve.Marshal.PyNone>(await service.CallAsync(Call(executor,"SetRelationship",
+                new Eve.Marshal.PyInt(8),new Eve.Marshal.PyInt(outsiderCorp.Id))));
+            var relationships = Assert.IsType<Eve.Marshal.PyObjectEx>(
+                await service.CallAsync(Call(executor,"GetRelationships")));
+            var relationshipRow = Assert.IsType<Eve.Marshal.PyPackedRow>(Assert.Single(relationships.Dict).Value);
+            Assert.Equal(new Eve.Marshal.PyInt(outsiderCorp.Id),relationships.Dict.Single().Key);
+            Assert.Equal(new Eve.Marshal.PyInt(8),relationshipRow.Values[1]);
+            await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(Call(outsider,"SetRelationship",
+                new Eve.Marshal.PyInt(3),new Eve.Marshal.PyInt(outsiderCorp.Id))).AsTask());
+            Assert.IsType<Eve.Marshal.PyNone>(await service.CallAsync(Call(executor,"DeleteRelationship",
+                new Eve.Marshal.PyInt(outsiderCorp.Id))));
+            Assert.Null(await relations.GetAsync(Eve.Relations.RelationKinds.Standing.Name,alliance.Id,outsiderCorp.Id));
+
+            await service.CallAsync(Call(executor,"AddAllianceContact",new Eve.Marshal.PyInt(outsiderCorp.Id),new Eve.Marshal.PyInt(5)));
+            await service.CallAsync(Call(executor,"EditAllianceContact",new Eve.Marshal.PyInt(outsiderCorp.Id),new Eve.Marshal.PyInt(6)));
+            await service.CallAsync(Call(executor,"EditContactsRelationshipID",
+                new Eve.Marshal.PyList([new Eve.Marshal.PyInt(outsiderCorp.Id)]),new Eve.Marshal.PyInt(7)));
+            var labelId = Assert.IsType<Eve.Marshal.PyInt>(await service.CallAsync(Call(executor,"CreateLabel",
+                new Eve.Marshal.PyWString("operations"),new Eve.Marshal.PyInt(0x123456)))).Value;
+            var labelMask = 1L << ((int)labelId - 1);
+            await service.CallAsync(Call(executor,"AssignLabels",
+                new Eve.Marshal.PyList([new Eve.Marshal.PyInt(outsiderCorp.Id)]),new Eve.Marshal.PyInt(labelMask)));
+            var contact = Assert.Single(await store.AllianceContactsAsync(alliance.Id));
+            Assert.Equal(7,contact.RelationshipId);
+            Assert.Equal(labelMask,contact.LabelMask);
+            Assert.Single(Assert.IsType<Eve.Marshal.PyDict>(await service.CallAsync(Call(executor,"GetLabels"))).Entries);
+            await service.CallAsync(Call(executor,"EditLabel",new Eve.Marshal.PyInt(labelId),
+                new Eve.Marshal.PyWString("operations edited"),new Eve.Marshal.PyInt(0x654321)));
+            var edited = Assert.Single(await store.AllianceContactLabelsAsync(alliance.Id));
+            Assert.Equal("operations edited",edited.Name);
+            Assert.Equal(0x654321,edited.Color);
+
+            var contacts = await service.CallAsync(Call(executor,"GetAllianceContacts"));
+            Assert.Equal(Eve.Marshal.MarshalCodec.Encode(contacts),
+                Eve.Marshal.MarshalCodec.Encode(await service.CallAsync(Call(executor,"GetContactList"))));
+            await service.CallAsync(Call(executor,"RemoveLabels",
+                new Eve.Marshal.PyList([new Eve.Marshal.PyInt(outsiderCorp.Id)]),new Eve.Marshal.PyInt(labelMask)));
+            Assert.Equal(0,Assert.Single(await store.AllianceContactsAsync(alliance.Id)).LabelMask);
+            await service.CallAsync(Call(executor,"AssignLabels",
+                new Eve.Marshal.PyList([new Eve.Marshal.PyInt(outsiderCorp.Id)]),new Eve.Marshal.PyInt(labelMask)));
+            await service.CallAsync(Call(executor,"DeleteLabel",new Eve.Marshal.PyInt(labelId)));
+            Assert.Equal(0,Assert.Single(await store.AllianceContactsAsync(alliance.Id)).LabelMask);
+            Assert.Empty(await store.AllianceContactLabelsAsync(alliance.Id));
+            await service.CallAsync(Call(executor,"RemoveAllianceContacts",
+                new Eve.Marshal.PyList([new Eve.Marshal.PyInt(outsiderCorp.Id)])));
+            Assert.Empty(await store.AllianceContactsAsync(alliance.Id));
+        }
+        finally
+        {
+            foreach (var schema in new[] { corporationSchema, schedulerSchema, eventsSchema, relationsSchema })
+            {
+                await using var command = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
+
+    [PgFact]
+    public async Task Alliance_registry_SetPrimeHour_uses_the_next_vulnerability_window()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schema = "alliance_prime_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await CorporationStore.MigrateAsync(rig.Source,schema);
+
+
+            var store = new CorporationStore(rig.Source,rig.Characters,rig.Wallets,rig.Transactions,rig.Skills,() => rig.Now,schema);
+            var actor = await rig.CharacterAsync("Prime Executor",2_000_000_000m);
+            await store.CreateAsync(actor,new("Prime Executor Corporation","PRIMEX","","",0),"prime-corp-"+actor);
+            await using (var connection = await rig.Source.OpenConnectionAsync())
+            await using (var tx = await connection.BeginTransactionAsync())
+            {
+                await rig.Skills.GrantAsync(connection,tx,actor,[new CharacterSkill(3732,5,1024000)]);
+                await tx.CommitAsync();
+            }
+            var alliance = await store.CreateAllianceAsync(actor,Request,"prime-alliance-"+actor);
+            var windowEnd = checked(store.VoteNowFiletime + TimeSpan.FromHours(5).Ticks);
+            var sov = new Eve.Services.Corporations.AllianceSovSnapshot(
+                new Dictionary<long,long?>(),
+                new Dictionary<long,(long? AllianceId,long? HubId)>(),
+                windowEnd);
+            var service = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
+                store,rig.Characters,() => rig.Now,
+                readSovSnapshot: (_, _) => Task.FromResult<Eve.Services.Corporations.AllianceSovSnapshot?>(sov));
+
+            Eve.Services.ServiceCall Call(long character,string method,params Eve.Marshal.PyValue[] args)
+            {
+                var session = new Eve.Services.ClientSession { SessionId=character };
+                session.Set("charid",new Eve.Marshal.PyInt(character));
+                return new() { Session=session,Method=method,Args=args };
+            }
+
+            Assert.IsType<Eve.Marshal.PyNone>(await service.CallAsync(Call(actor,"SetPrimeHour",new Eve.Marshal.PyInt(17))));
+            await using (var state = rig.Source.CreateCommand($"SELECT current_prime_hour,new_prime_hour,new_prime_hour_valid_after_filetime FROM {schema}.alliances WHERE id=$1"))
+            {
+                state.Parameters.Add(new Npgsql.NpgsqlParameter { Value=alliance.Id });
+                await using var reader = await state.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal((short)0,reader.GetInt16(0));
+                Assert.Equal((short)17,reader.GetInt16(1));
+                Assert.Equal(windowEnd,reader.GetInt64(2));
+            }
+
+            var primeInfo = Assert.IsType<Eve.Marshal.PyObject>(await service.CallAsync(Call(actor,"GetPrimeTimeInfo")));
+            var primeFields = Assert.IsType<Eve.Marshal.PyDict>(primeInfo.Args);
+            Assert.Equal(new Eve.Marshal.PyInt(0),primeFields.Entries.Single(entry => entry.Key == new Eve.Marshal.PyStr("currentPrimeHour")).Value);
+            Assert.Equal(new Eve.Marshal.PyInt(17),primeFields.Entries.Single(entry => entry.Key == new Eve.Marshal.PyStr("newPrimeHour")).Value);
+            Assert.Equal(new Eve.Marshal.PyLong(windowEnd),primeFields.Entries.Single(entry => entry.Key == new Eve.Marshal.PyStr("newPrimeHourValidAfter")).Value);
+
+            await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(Call(actor,"SetPrimeHour",new Eve.Marshal.PyInt(24))).AsTask());
+            var outsider = await rig.CharacterAsync("Prime Outsider");
+            await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(Call(outsider,"SetPrimeHour",new Eve.Marshal.PyInt(18))).AsTask());
+            var unwired = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(store,rig.Characters,() => rig.Now);
+            await Assert.ThrowsAnyAsync<Exception>(() => unwired.CallAsync(Call(actor,"SetPrimeHour",new Eve.Marshal.PyInt(18))).AsTask());
+        }
+        finally
+        {
+            await using var cleanup = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
+[PgFact]
+    public async Task Alliance_registry_capital_transition_uses_seven_days_and_the_single_system_exception()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schema = "alliance_capital_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await CorporationStore.MigrateAsync(rig.Source,schema);
+
+
+            var store = new CorporationStore(rig.Source,rig.Characters,rig.Wallets,rig.Transactions,rig.Skills,() => rig.Now,schema);
+            var actor = await rig.CharacterAsync("Capital Executor",2_000_000_000m);
+            await store.CreateAsync(actor,new("Capital Executor Corporation","CAPEX","","",0),"capital-corp-"+actor);
+            await using (var connection = await rig.Source.OpenConnectionAsync())
+            await using (var tx = await connection.BeginTransactionAsync())
+            {
+                await rig.Skills.GrantAsync(connection,tx,actor,[new CharacterSkill(3732,5,1024000)]);
+                await tx.CommitAsync();
+            }
+            var alliance = await store.CreateAllianceAsync(actor,Request,"capital-alliance-"+actor);
+            var sov = new Eve.Services.Corporations.AllianceSovSnapshot(
+                new Dictionary<long,long?> { [30000142] = alliance.Id, [30000144] = alliance.Id },
+                new Dictionary<long,(long? AllianceId,long? HubId)>
+                {
+                    [30000142] = (alliance.Id,90001),
+                    [30000144] = (alliance.Id,90002)
+                },
+                null);
+            var service = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
+                store,rig.Characters,() => rig.Now,
+                readSovSnapshot: (_, _) => Task.FromResult<Eve.Services.Corporations.AllianceSovSnapshot?>(sov));
+
+            Eve.Services.ServiceCall Call(string method,params Eve.Marshal.PyValue[] args)
+            {
+                var session = new Eve.Services.ClientSession { SessionId=actor };
+                session.Set("charid",new Eve.Marshal.PyInt(actor));
+                return new() { Session=session,Method=method,Args=args };
+            }
+
+            Assert.IsType<Eve.Marshal.PyNone>(await service.CallAsync(Call("SetCapitalSystem",new Eve.Marshal.PyInt(30000142))));
+            var due = checked(store.VoteNowFiletime + 7 * TimeSpan.TicksPerDay);
+            await using (var state = rig.Source.CreateCommand($"SELECT current_capital_system_id,new_capital_system_id,new_capital_system_valid_after_filetime FROM {schema}.alliances WHERE id=$1"))
+            {
+                state.Parameters.Add(new Npgsql.NpgsqlParameter { Value=alliance.Id });
+                await using var reader = await state.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.True(reader.IsDBNull(0));
+                Assert.Equal(30000142L,reader.GetInt64(1));
+                Assert.Equal(due,reader.GetInt64(2));
+            }
+
+            var info = Assert.IsType<Eve.Marshal.PyObject>(await service.CallAsync(Call("GetCapitalSystemInfo")));
+            var fields = Assert.IsType<Eve.Marshal.PyDict>(info.Args);
+            Assert.Equal(new Eve.Marshal.PyLong(30000142),fields.Entries.Single(entry => entry.Key == new Eve.Marshal.PyStr("newCapitalSystem")).Value);
+            Assert.Equal(new Eve.Marshal.PyLong(due),fields.Entries.Single(entry => entry.Key == new Eve.Marshal.PyStr("newCapitalSystemValidAfter")).Value);
+
+            Assert.IsType<Eve.Marshal.PyNone>(await service.CallAsync(Call("CancelCapitalSystemTransition")));
+            await using (var state = rig.Source.CreateCommand($"SELECT current_capital_system_id,new_capital_system_id,new_capital_system_valid_after_filetime FROM {schema}.alliances WHERE id=$1"))
+            {
+                state.Parameters.Add(new Npgsql.NpgsqlParameter { Value=alliance.Id });
+                await using var reader = await state.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.True(reader.IsDBNull(0));
+                Assert.True(reader.IsDBNull(1));
+                Assert.Equal(0L,reader.GetInt64(2));
+            }
+
+            sov = new Eve.Services.Corporations.AllianceSovSnapshot(
+                new Dictionary<long,long?> { [30000142] = alliance.Id },
+                new Dictionary<long,(long? AllianceId,long? HubId)> { [30000142] = (alliance.Id,90001) },
+                null);
+            Assert.IsType<Eve.Marshal.PyNone>(await service.CallAsync(Call("SetCapitalSystem",new Eve.Marshal.PyInt(30000142))));
+            await using (var state = rig.Source.CreateCommand($"SELECT current_capital_system_id,new_capital_system_id,new_capital_system_valid_after_filetime FROM {schema}.alliances WHERE id=$1"))
+            {
+                state.Parameters.Add(new Npgsql.NpgsqlParameter { Value=alliance.Id });
+                await using var reader = await state.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal(30000142L,reader.GetInt64(0));
+                Assert.True(reader.IsDBNull(1));
+                Assert.Equal(0L,reader.GetInt64(2));
+            }
+
+            sov = new Eve.Services.Corporations.AllianceSovSnapshot(
+                new Dictionary<long,long?> { [30000142] = alliance.Id, [30000144] = alliance.Id },
+                new Dictionary<long,(long? AllianceId,long? HubId)>
+                {
+                    [30000142] = (alliance.Id,90001),
+                    [30000144] = (alliance.Id,90002),
+                    [999999999] = (alliance.Id,90003)
+                },
+                null);
+            await Assert.ThrowsAnyAsync<Exception>(() =>
+                service.CallAsync(Call("SetCapitalSystem",new Eve.Marshal.PyLong(999999999))).AsTask());
+        }
+        finally
+        {
+            await using var cleanup = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
+        }
     }
 
     [PgFact]

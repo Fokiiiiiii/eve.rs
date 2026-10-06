@@ -298,10 +298,11 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     [Method("ApplyToJoinAlliance")]
     public async ValueTask<PyValue> ApplyToJoinAlliance(ServiceCall call)
     {
-        if (call.Session.CharacterId is not { } actor ||
+        var actor = call.Session.CharacterId ?? 0;
+        if (actor <= 0 ||
             await characters.GetAsync(actor,call.Cancellation) is not { } character ||
             await store.GetAsync(character.CorporationId,call.Cancellation) is not { IsNpc:false } corporation ||
-            corporation.CeoId != actor)
+            corporation.CeoId != actor || corporation.CeoRolesSuspended)
             throw CorporationAccessDenied();
 
         var alliance = Number(call.Arg(0));
@@ -342,6 +343,257 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     public async ValueTask<PyValue> GetMember(ServiceCall call) => call.Arg(0) is PyInt id &&
         await Current(call) is { } c && await store.MemberAsync(id.Value,call.Cancellation) is { } m && m.CorporationId == c.Id
             ? CorporationWire.Member(m,(await characters.GetAsync(m.CharacterId,call.Cancellation))!.Name) : PyNone.Instance;
+
+    [Method("MoveCompanyShares")]
+    public ValueTask<PyValue> MoveCompanyShares(ServiceCall call) => MoveShareholding(call,true);
+
+    [Method("MovePrivateShares")]
+    public ValueTask<PyValue> MovePrivateShares(ServiceCall call) => MoveShareholding(call,false);
+
+    private async ValueTask<PyValue> MoveShareholding(ServiceCall call,bool companyShares)
+    {
+        var corporationId = Number(call.Arg(0));
+        var toShareholderId = Number(call.Arg(1));
+        var numberOfShares = Number(call.Arg(2));
+        var actorId = call.Session.CharacterId ?? 0;
+        if (corporationId <= 0 || toShareholderId <= 0 || actorId <= 0)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        if (numberOfShares <= 0)
+            throw new CorporationError("CORPORATION_INVALID_SHARE_TRANSFER");
+
+        var callId = Number(call.CallId);
+        var operationKey = callId > 0
+            ? $"corporation-share:{corporationId}:{actorId}:{callId}"
+            : Guid.NewGuid().ToString("N");
+        if (companyShares)
+            await store.MoveCompanySharesAsync(corporationId,actorId,toShareholderId,numberOfShares,operationKey,call.Cancellation);
+        else
+            await store.MovePrivateSharesAsync(corporationId,actorId,toShareholderId,numberOfShares,operationKey,call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    [Method("GetShareholders")]
+    public async ValueTask<PyValue> GetShareholders(ServiceCall call)
+    {
+        var corporationId = Number(call.Arg(0));
+        if (corporationId <= 0 ||
+            await Current(call) is not { IsNpc:false,Deleted:false } corporation ||
+            corporation.Id != corporationId ||
+            !await CanAdminister(call))
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+
+        var holdings = await store.ShareholdersAsync(corporationId,call.Cancellation);
+        return CorporationWire.ShareholdersRowset(holdings.Select(holding =>
+            (holding.ShareholderId,holding.CorporationId,holding.Shares)));
+    }
+
+    [Method("GetSharesByShareholder")]
+    public async ValueTask<PyValue> GetSharesByShareholder(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } actor ||
+            await characters.GetAsync(actor,call.Cancellation) is null)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+
+        var ownerId = actor;
+        long? corporationFilter = null;
+        if (call.Args.Count > 0 && Number(call.Arg(0)) == 1)
+        {
+            if (await Current(call) is not { IsNpc:false,Deleted:false } corporation ||
+                !await CanAdminister(call))
+                throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            ownerId = corporation.Id;
+            corporationFilter = corporation.Id;
+        }
+
+        var holdings = await store.SharesByShareholderAsync(ownerId,corporationFilter,call.Cancellation);
+        return CorporationWire.ShareholderCRowset(holdings.Select(holding =>
+            (holding.ShareholderId,holding.CorporationId,holding.Shares)));
+    }
+
+    [Method("GetEveOwners")]
+    public async ValueTask<PyValue> GetEveOwners(ServiceCall call)
+    {
+        var corporation = await Current(call);
+        if (corporation is null)
+            return Py.List([]);
+
+        var rows = new List<PyValue>();
+        foreach (var member in await store.MembersAsync(corporation.Id,call.Cancellation))
+        {
+            var character = await characters.GetAsync(member.CharacterId,call.Cancellation);
+            var ownerName = string.IsNullOrEmpty(character?.Name) ? $"Character {member.CharacterId}" : character.Name;
+            rows.Add(new PyObject(new PyStr("util.Row"),Py.Dict(
+                ("header",Py.Tuple([
+                    new PyStr("ownerID"),new PyStr("ownerName"),new PyStr("typeID"),
+                    new PyStr("gender"),new PyStr("ownerNameID")
+                ])),
+                ("line",Py.Tuple([
+                    new PyInt(member.CharacterId),new PyWString(ownerName),
+                    new PyInt(character is { TypeId: > 0 } ? character.TypeId : 1373),
+                    new PyInt(character?.Gender ?? 0),PyNone.Instance
+                ])))));
+        }
+        return Py.List([.. rows]);
+    }
+
+    [Method("ExecuteActions")]
+    public async ValueTask<PyValue> ExecuteActions(ServiceCall call)
+    {
+        const long ctvAdd = 1;
+        const long ctvRemove = 2;
+        const long ctvSet = 3;
+        const long ctvGive = 4;
+
+        if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+
+        var targetValues = Items(call.Arg(0));
+        var targetIDs = new long[targetValues.Count];
+        var distinctTargets = new HashSet<long>();
+        for (var index = 0; index < targetValues.Count; index++)
+        {
+            var target = Number(targetValues[index]);
+            if (target <= 0 || !distinctTargets.Add(target))
+                throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            targetIDs[index] = target;
+        }
+
+        var actions = new List<(long Verb,PyValue Property,PyValue Value)>();
+        foreach (var rawAction in Items(call.Arg(1)))
+        {
+            var values = Items(rawAction);
+            if (values.Count < 3)
+                throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            actions.Add((Number(values[0]),values[1],values[2]));
+        }
+
+        var hasGive = actions.Any(action => action.Verb == ctvGive);
+        if (hasGive && actions.Any(action => action.Verb != ctvGive))
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+
+        var members = await store.MembersAsync(corp.Id,call.Cancellation);
+        var membersById = members.ToDictionary(member => member.CharacterId);
+        if (targetIDs.Any(target => !membersById.ContainsKey(target)))
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        if (actions.Count == 0)
+            return PyNone.Instance;
+
+        if (hasGive)
+        {
+            var grants = new List<Eve.Corporations.CorporationMemberGrant>(actions.Count);
+            foreach (var action in actions)
+            {
+                var property = Number(action.Property);
+                if (action.Verb != ctvGive || property != 6 ||
+                    action.Value is not PyInt and not PyLong and not PyReal)
+                    throw new CorporationError("CORPORATION_ACCESS_DENIED");
+                if (action.Value is PyReal real && !double.IsFinite(real.Value))
+                    throw new CorporationError("CORPORATION_ACCESS_DENIED");
+
+                decimal amount;
+                try { amount = DecimalValue(action.Value); }
+                catch (OverflowException) { throw new CorporationError("CORPORATION_ACCESS_DENIED"); }
+                if (amount <= 0m)
+                    throw new CorporationError("CORPORATION_INVALID_MEMBER_GRANT");
+                grants.Add(new Eve.Corporations.CorporationMemberGrant((int)property,amount));
+            }
+
+            if (grants.Count == 0)
+                throw new CorporationError("CORPORATION_INVALID_MEMBER_GRANT");
+            var walletAccountKey = CorporationWalletKey(new PyInt(
+                call.Session.GetInt("corpAccountKey") ?? call.Session.GetInt("corpaccountkey") ?? 1000));
+            var callId = Number(call.CallId);
+            var operationKey = callId > 0
+                ? $"corporation-share:{corp.Id}:{actor}:{callId}"
+                : Guid.NewGuid().ToString("N");
+            await store.ExecuteMemberGrantsAsync(corp.Id,actor,targetIDs,grants,walletAccountKey,operationKey,call.Cancellation);
+            return PyNone.Instance;
+        }
+
+        if (targetIDs.Length == 0)
+            return PyNone.Instance;
+
+        var updates = new List<Member>();
+        var beforeById = new Dictionary<long,Member>();
+        foreach (var target in targetIDs)
+        {
+            var member = membersById[target];
+            var row = new List<PyValue>
+            {
+                new PyInt(target),PyNone.Instance,PyNone.Instance,PyNone.Instance,
+                new PyLong(member.Masks.Roles),new PyLong(member.Masks.GrantableRoles),
+                new PyLong(member.Masks.AtHq),new PyLong(member.Masks.GrantableHq),
+                new PyLong(member.Masks.AtBase),new PyLong(member.Masks.GrantableBase),
+                new PyLong(member.Masks.AtOther),new PyLong(member.Masks.GrantableOther),
+                CorporationWire.Id(member.BaseId),new PyInt(member.TitleMask),PyNone.Instance
+            };
+
+            foreach (var action in actions)
+            {
+                var (index,allowed) = Text(action.Property) switch
+                {
+                    "roles" => (4,CorporationRoles.Administrative),
+                    "grantableRoles" => (5,CorporationRoles.Grantable),
+                    "rolesAtHQ" => (6,CorporationRoles.Locational),
+                    "grantableRolesAtHQ" => (7,CorporationRoles.Locational),
+                    "rolesAtBase" => (8,CorporationRoles.Locational),
+                    "grantableRolesAtBase" => (9,CorporationRoles.Locational),
+                    "rolesAtOther" => (10,CorporationRoles.Locational),
+                    "grantableRolesAtOther" => (11,CorporationRoles.Locational),
+                    _ => (-1,0L)
+                };
+                if (index >= 0)
+                {
+                    var current = RoleMask(row[index],allowed);
+                    var value = action.Value is PyNone ? 0 : RoleMask(action.Value,allowed);
+                    row[index] = new PyLong(action.Verb switch
+                    {
+                        ctvAdd => current | value,
+                        ctvRemove => current & ~value,
+                        ctvSet => value,
+                        _ => throw new CorporationError("CORPORATION_ACCESS_DENIED")
+                    });
+                }
+                else if (Text(action.Property) == "titleMask")
+                {
+                    var current = RoleMask(row[13],65535);
+                    var value = action.Value is PyNone ? 0 : RoleMask(action.Value,65535);
+                    row[13] = new PyInt((int)(action.Verb switch
+                    {
+                        ctvAdd => current | value,
+                        ctvRemove => current & ~value,
+                        ctvSet => value,
+                        _ => throw new CorporationError("CORPORATION_ACCESS_DENIED")
+                    }));
+                }
+                else if (Text(action.Property) == "baseID" && action.Verb == ctvSet)
+                    row[12] = new PyInt(PositiveId(action.Value) ?? 0);
+                else
+                    throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            }
+
+            var (before,after) = await MemberUpdate(target,row,true,corp.Id,call.Cancellation);
+            beforeById.Add(target,before);
+            updates.Add(after);
+        }
+
+        var changed = await store.UpdateMembersAsync(actor,updates,call.Cancellation);
+        foreach (var member in changed)
+            CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,member.CharacterId,beforeById[member.CharacterId],member);
+        if (updates.Any(member => member.CharacterId == actor))
+            await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    [Method("GetNumberOfPotentialCEOs")]
+    public async ValueTask<PyValue> GetNumberOfPotentialCEOs(ServiceCall call)
+    {
+        var corporation = await Current(call);
+        if (corporation is null)
+            return Py.List([]);
+        var members = await store.MembersAsync(corporation.Id,call.Cancellation);
+        return Py.List([.. members.Select(member => (PyValue)new PyInt(member.CharacterId))]);
+    }
     [Method("GetMembersByIds")]
     public async ValueTask<PyValue> GetMembersByIds(ServiceCall call)
     {
@@ -417,6 +669,28 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
                 await store.TitlesAsync(corporation.Id,call.Cancellation)).AtAll & CorporationRoles.PersonnelManager) == 0)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
         return corporation;
+    }
+
+
+    [Method("GetCorpWelcomeMail")]
+    public async ValueTask<PyValue> GetCorpWelcomeMail(ServiceCall call)
+    {
+        var corporation = await Current(call);
+        if (corporation is null || corporation.Deleted || call.Session.CharacterId is not { } actor)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var member = await store.MemberAsync(actor,call.Cancellation);
+        if (member is null || member.CorporationId != corporation.Id)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        return new PyWString(await store.GetCorpWelcomeMailAsync(corporation.Id,call.Cancellation));
+    }
+
+    [Method("SetCorpWelcomeMail")]
+    public async ValueTask<PyValue> SetCorpWelcomeMail(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corporation)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        await store.SetCorpWelcomeMailAsync(actor,corporation.Id,Text(call.Arg(0)),call.Cancellation);
+        return PyNone.Instance;
     }
 
     [Method("GetMyApplications")]
@@ -697,7 +971,8 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     [Method("ResignFromCEO")]
     public async ValueTask<PyValue> ResignFromCEO(ServiceCall call)
     {
-        if (call.Session.CharacterId is not { } actor || await Current(call) is not { CeoId: var ceo } corp || ceo != actor)
+        if (call.Session.CharacterId is not { } actor ||
+            await Current(call) is not { CeoId: var ceo,CeoRolesSuspended:false } corp || ceo != actor)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
         if (PositiveId(call.Arg(0)) is { } successor)
         {
@@ -824,7 +1099,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             await store.GetAsync(character.CorporationId,call.Cancellation) is not { IsNpc: false,Deleted: false } corp ||
             await store.MemberAsync(actor,call.Cancellation) is not { } member || member.CorporationId != corp.Id)
             return false;
-        if (corp.CeoId == actor) return true;
+        if (corp.CeoId == actor && !corp.CeoRolesSuspended) return true;
         return (CorporationRoles.Session(corp,member,character.StationId,await store.TitlesAsync(corp.Id,call.Cancellation)).AtAll & CorporationRoles.Director) != 0;
     }
 

@@ -207,8 +207,26 @@ public class CorporationProtocolTests
     private static ServiceCall Call(ClientSession session,string method,params PyValue[] args) => new() { Session=session,Method=method,Args=args };
     private static PyValue Field(PyValue value,string key) => Assert.IsType<PyDict>(Assert.IsType<PyObject>(value).Args).Entries.Single(e => e.Key == new PyStr(key)).Value;
 
+private static PyValue RowField(PyValue value,string key)
+{
+    var row = Assert.IsType<PyObject>(value);
+    Assert.Equal("util.Row",Assert.IsType<PyStr>(row.Name).Value);
+    var header = Assert.IsType<PyTuple>(Field(value,"header")).Items;
+    var values = Assert.IsType<PyTuple>(Field(value,"line")).Items;
+    var index = header.Select((field,index) => (field,index))
+        .Single(pair => pair.field == new PyStr(key)).index;
+    return values[index];
+}
+
     private static IReadOnlyList<PyValue> Lines(PyValue rowset) =>
         Assert.IsType<PyList>(Field(rowset, "lines")).Items;
+
+    private static IReadOnlyList<PyValue> RowValues(PyValue row) => row switch
+    {
+        PyList list => list.Items,
+        PyPackedRow packed => packed.Values,
+        _ => Assert.IsType<PyPackedRow>(MarshalCodec.Decode(MarshalCodec.Encode(row))).Values
+    };
 
     private static PyValue CachedPayload(PyValue value) =>
         Assert.IsType<PySubStream>(Assert.IsType<PyTuple>(Assert.IsType<PyObject>(value).Args).Items[1]).Decoded!;
@@ -468,6 +486,10 @@ public class CorporationProtocolTests
         var schema = $"corp_invite_upgrade_{Guid.NewGuid():N}";
         try
         {
+            var legacyMigrations = CorporationStore.MigrationSet().Take(3).ToArray();
+            var initial = await Eve.Data.Migrations.ApplyAsync(rig.Source,schema,legacyMigrations);
+            Assert.Equal(new[] { "001_corporations","002_npc_corporations","003_alliance_governance" },initial);
+
             await using (var connection = await rig.Source.OpenConnectionAsync())
             {
                 async Task Execute(string sql)
@@ -476,28 +498,45 @@ public class CorporationProtocolTests
                     command.CommandText = sql;
                     await command.ExecuteNonQueryAsync();
                 }
-                await Execute($"CREATE SCHEMA {schema}");
-                await Execute($"CREATE TABLE {schema}.migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())");
-                await Execute($"INSERT INTO {schema}.migrations(name) VALUES ('001_corporations'),('002_npc_corporations'),('003_alliance_governance')");
+
+                await Execute($"INSERT INTO {schema}.owner_names(owner_id,name_key,ticker_key) VALUES (1,'legacy corporation','legacy')");
                 await Execute($"""
-                    CREATE TABLE {schema}.applications(
-                        id bigint PRIMARY KEY,corporation_id bigint NOT NULL,character_id bigint NOT NULL,
-                        text text NOT NULL,status integer NOT NULL,created_ms bigint NOT NULL,updated_ms bigint NOT NULL,
-                        response text NOT NULL DEFAULT '',archived boolean NOT NULL DEFAULT false)
+                    INSERT INTO {schema}.corporations(
+                        id,name,ticker,ceo_id,creator_id,station_id,solar_system_id,
+                        tax_rate,lp_tax_rate,description,url,member_limit,created_ms)
+                    VALUES (1,'Legacy Corporation','LEG',2,2,60003760,30000142,0,0,'','',20,1)
                     """);
-                await Execute($"CREATE UNIQUE INDEX applications_active ON {schema}.applications(corporation_id,character_id) WHERE NOT archived");
-                await Execute($"INSERT INTO {schema}.applications(id,corporation_id,character_id,text,status,created_ms,updated_ms,response,archived) VALUES (42,1,2,'',8,1,1,'',false),(99,1,3,'',0,1,1,'',false)");
+                await Execute($"INSERT INTO {schema}.owner_names(owner_id,name_key,ticker_key) VALUES (2,'legacy alliance','la')");
+                await Execute($"ALTER TABLE {schema}.alliances ADD COLUMN current_prime_hour smallint NOT NULL DEFAULT 17 CHECK (current_prime_hour BETWEEN 0 AND 23)");
                 await Execute($"""
-                    CREATE TABLE {schema}.medal_awards(
-                        medal_id bigint NOT NULL,character_id bigint NOT NULL,issuer_id bigint NOT NULL,
-                        reason text NOT NULL,created_ms bigint NOT NULL,status integer NOT NULL DEFAULT 2,
-                        PRIMARY KEY(medal_id,character_id))
+                    INSERT INTO {schema}.alliances(
+                        id,name,short_name,description,url,executor_corporation_id,
+                        creator_corporation_id,creator_character_id,created_ms,founding_key)
+                    VALUES (2,'Legacy Alliance','LA','legacy','',1,1,2,1,'legacy-alliance')
+                    """);
+                await Execute($"""
+                    INSERT INTO {schema}.applications(
+                        id,corporation_id,character_id,text,status,created_ms,updated_ms,response,archived)
+                    OVERRIDING SYSTEM VALUE
+                    VALUES (42,1,2,'',8,1,1,'',false),(99,1,3,'',0,1,1,'',false)
+                    """);
+                await Execute($"""
+                    INSERT INTO {schema}.medals(
+                        id,corporation_id,creator_id,title,description,data,created_ms)
+                    OVERRIDING SYSTEM VALUE
+                    VALUES (7,1,9,'Legacy medal','',jsonb_build_object(),10)
                     """);
                 await Execute($"INSERT INTO {schema}.medal_awards(medal_id,character_id,issuer_id,reason,created_ms) VALUES (7,8,9,'legacy',10)");
             }
 
             var applied = await Eve.Data.Migrations.ApplyAsync(rig.Source,schema,CorporationStore.MigrationSet());
-            Assert.Equal(new[] { "004_invitation_ids","005_medal_award_occurrences" },applied);
+            Assert.Equal(new[] {
+                "004_invitation_ids",
+                "005_medal_award_occurrences",
+                "006_alliance_shares_votes",
+                "007_corporation_welcome_mail"
+            },applied);
+
             await using var read = await rig.Source.OpenConnectionAsync();
             await using (var backfill = read.CreateCommand())
             {
@@ -513,6 +552,21 @@ public class CorporationProtocolTests
             {
                 award.CommandText = $"SELECT award_id FROM {schema}.medal_awards WHERE medal_id=7 AND character_id=8";
                 Assert.True((long)(await award.ExecuteScalarAsync())! > 0);
+            }
+            await using (var ceoState = read.CreateCommand())
+            {
+                ceoState.CommandText = $"SELECT ceo_roles_suspended FROM {schema}.corporations WHERE id=1";
+                Assert.False((bool)(await ceoState.ExecuteScalarAsync())!);
+            }
+            await using (var allianceState = read.CreateCommand())
+            {
+                allianceState.CommandText = $"SELECT current_prime_hour,current_capital_system_id,new_capital_system_id,new_capital_system_valid_after_filetime FROM {schema}.alliances WHERE id=2";
+                await using var state = await allianceState.ExecuteReaderAsync();
+                Assert.True(await state.ReadAsync());
+                Assert.Equal((short)17,state.GetInt16(0));
+                Assert.True(state.IsDBNull(1));
+                Assert.True(state.IsDBNull(2));
+                Assert.Equal(0L,state.GetInt64(3));
             }
         }
         finally
@@ -1165,5 +1219,775 @@ public class CorporationProtocolTests
             "GetWarsByOwnerID", "GetWarsByOwners", "GetWarsRequiringAssistance",
             "GetTop50", "GetPublicWarInfo", "GetWarsForStructure",
         }, methods);
+    }
+
+
+    [PgFact]
+    public async Task Vote_manager_replaces_ballots_and_uses_live_share_weight()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schema = "vote_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await CorporationStore.MigrateAsync(rig.Source,schema);
+
+            var store = new CorporationStore(rig.Source,rig.Characters,rig.Wallets,rig.Transactions,rig.Skills,() => rig.Now,schema);
+            var founder = await rig.CharacterAsync("Vote Founder");
+            var member = await rig.CharacterAsync("Vote Member");
+            var corporation = await store.CreateAsync(founder,new("Vote Works","VOTE","","",0m),"vote-manager");
+            var application = await store.ApplyAsync(member,corporation.Id,"");
+            await store.RespondAsync(founder,application,6,"","");
+            await store.RespondAsync(member,application,2,"","");
+
+            var service = new VoteManagerService(store);
+            var founderSession = new ClientSession { CharacterId = founder };
+            founderSession.Set("corporationID",new PyInt(corporation.Id));
+            founderSession.Set("corpid",new PyInt(corporation.Id));
+            var memberSession = new ClientSession { CharacterId = member };
+            memberSession.Set("corporationID",new PyInt(corporation.Id));
+            memberSession.Set("corpid",new PyInt(corporation.Id));
+            ValueTask<PyValue> Rpc(ClientSession session,string method,params PyValue[] args)
+            {
+                var call = Call(session,method,args);
+                return method switch
+                {
+                    "GetVoteCasesByCorporation" => service.GetVoteCasesByCorporation(call),
+                    "GetVoteCase" => service.GetVoteCase(call),
+                    "GetVoteCaseOptions" => service.GetVoteCaseOptions(call),
+                    "GetVotes" => service.GetVotes(call),
+                    "CanViewVotes" => service.CanViewVotes(call),
+                    "CanRunForCEO" => service.CanRunForCEO(call),
+                    "InsertVoteCase" => service.InsertVoteCase(call),
+                    "InsertVote" => service.InsertVote(call),
+                    "GetCorpSanctionedActions" => service.GetCorpSanctionedActions(call),
+                    "ActivateSanctionedAction" => service.ActivateSanctionedAction(call),
+                    _ => throw new Xunit.Sdk.XunitException($"Unexpected vote RPC: {method}"),
+                };
+            }
+            ValueTask<PyValue> FounderRpc(string method,params PyValue[] args) => Rpc(founderSession,method,args);
+            ValueTask<PyValue> MemberRpc(string method,params PyValue[] args) => Rpc(memberSession,method,args);
+            var registry = (IService)new CorpRegistryService(store,rig.Characters,() => rig.Now);
+            ValueTask<PyValue> SharesRpc(ClientSession session,string method,params PyValue[] args) =>
+                registry.CallAsync(Call(session,method,args));
+            var initialCompanyShares = Assert.Single(Lines(await SharesRpc(founderSession,"GetSharesByShareholder",new PyInt(1))));
+            Assert.Equal(new PyInt(1000),RowValues(initialCompanyShares)[2]);
+            Assert.IsType<PyNone>(await SharesRpc(founderSession,"MoveCompanyShares",
+                new PyInt(corporation.Id),new PyInt(founder),new PyInt(1000)));
+
+            var caseId = Assert.IsType<PyInt>(await FounderRpc("InsertVoteCase",
+                new PyWString("General vote"),new PyWString("Choose"),new PyInt(4),
+                new PyList([new PyWString("For"),new PyWString("Against")]),new PyInt(1))).Value;
+            Assert.IsType<PyNone>(await SharesRpc(founderSession,"MovePrivateShares",
+                new PyInt(corporation.Id),new PyInt(member),new PyInt(400)));
+            var memberShares = Assert.Single(Lines(await SharesRpc(memberSession,"GetSharesByShareholder",new PyInt(0))));
+            Assert.Equal(new PyInt(member),RowValues(memberShares)[0]);
+            Assert.Equal(new PyInt(400),RowValues(memberShares)[2]);
+            var shareholderRows = Lines(await SharesRpc(founderSession,"GetShareholders",new PyInt(corporation.Id)));
+            var shareholderBalances = shareholderRows.Select(RowValues).ToDictionary(
+                row => Assert.IsType<PyInt>(row[0]).Value,
+                row => Assert.IsType<PyInt>(row[2]).Value);
+            Assert.Equal(1000,shareholderBalances.Values.Sum());
+            Assert.Equal(600,shareholderBalances[founder]);
+            Assert.Equal(400,shareholderBalances[member]);
+            Assert.Equal(PyBool.False,await MemberRpc("CanRunForCEO"));
+            await using (var skillConnection = await rig.Source.OpenConnectionAsync())
+            await using (var skillTransaction = await skillConnection.BeginTransactionAsync())
+            {
+                await rig.Skills.GrantAsync(skillConnection,skillTransaction,member,
+                    [new Eve.Skills.CharacterSkill(3363,1,250)]);
+                await skillTransaction.CommitAsync();
+            }
+            Assert.Equal(PyBool.True,await MemberRpc("CanViewVotes",new PyInt(corporation.Id)));
+            Assert.Equal(PyBool.True,await MemberRpc("CanRunForCEO"));
+            Assert.Equal(PyBool.False,await FounderRpc("CanRunForCEO"));
+            var memberCaseId = Assert.IsType<PyInt>(await MemberRpc("InsertVoteCase",
+                new PyWString("Member vote"),new PyWString("Shareholder can create"),new PyInt(4),
+                new PyList([new PyWString("For"),new PyWString("Against")]),new PyInt(1))).Value;
+            Assert.True(memberCaseId > 0);
+            var cases = Assert.IsType<PyDict>(await MemberRpc("GetVoteCasesByCorporation",new PyInt(corporation.Id)));
+            Assert.Equal(2,cases.Entries.Count);
+            var openByStatus = Assert.IsType<PyDict>(await MemberRpc("GetVoteCasesByCorporation",new PyInt(corporation.Id),new PyInt(2)));
+            var openEntry = Assert.Single(openByStatus.Entries);
+            Assert.Equal(new PyInt(2),openEntry.Key);
+            Assert.Equal(2,Lines(openEntry.Value).Count);
+            var closedByStatus = Assert.IsType<PyDict>(await MemberRpc("GetVoteCasesByCorporation",new PyInt(corporation.Id),new PyInt(1)));
+            var closedEntry = Assert.Single(closedByStatus.Entries);
+            Assert.Equal(new PyInt(1),closedEntry.Key);
+            Assert.Empty(Lines(closedEntry.Value));
+            Assert.Equal(new PyInt(caseId),RowField(await MemberRpc("GetVoteCase",new PyInt(corporation.Id),new PyInt(caseId)),"voteCaseID"));
+            var generalOptions = Lines(await MemberRpc("GetVoteCaseOptions",new PyInt(corporation.Id),new PyInt(caseId)));
+            Assert.Equal(2,generalOptions.Count);
+            Assert.Equal(new PyInt(0),Assert.IsType<PyList>(generalOptions[0]).Items[1]);
+            Assert.Equal(new PyInt(1),Assert.IsType<PyList>(generalOptions[1]).Items[1]);
+
+            Assert.IsType<PyNone>(await MemberRpc("InsertVote",new PyInt(corporation.Id),new PyInt(caseId),new PyInt(0)));
+            Assert.IsType<PyNone>(await SharesRpc(memberSession,"MovePrivateShares",
+                new PyInt(corporation.Id),new PyInt(founder),new PyInt(100)));
+            Assert.IsType<PyNone>(await MemberRpc("InsertVote",new PyInt(corporation.Id),new PyInt(caseId),new PyInt(1)));
+            Assert.Equal((1L,300L),await ReadBallot(member));
+            Assert.IsType<PyNone>(await FounderRpc("InsertVote",new PyInt(corporation.Id),new PyInt(caseId),new PyInt(0)));
+            Assert.Equal((0L,700L),await ReadBallot(founder));
+            var personalBallot = Assert.IsType<PyList>(Assert.Single(Lines(await MemberRpc("GetVotes",new PyInt(caseId)))));
+            Assert.Equal(new PyInt(1),personalBallot.Items[0]);
+
+            async Task<(long OptionId,long VotingPower)> ReadBallot(long shareholderId)
+            {
+                await using var query = rig.Source.CreateCommand($"SELECT option_id,voting_power FROM {schema}.vote_ballots WHERE vote_case_id=$1 AND shareholder_id=$2");
+                query.Parameters.AddWithValue(caseId);
+                query.Parameters.AddWithValue(shareholderId);
+                await using var reader = await query.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                return (reader.GetInt64(0),reader.GetInt64(1));
+            }
+
+            var itemId = 987654321L;
+            const long typeId = 15001;
+            var unlockId = Assert.IsType<PyInt>(await FounderRpc("InsertVoteCase",
+                new PyWString("Unlock blueprint"),new PyWString("Unlock"),new PyInt(6),
+                Py.Tuple(
+                    Py.Tuple(new PyWString("UI/Corporations/CorporationWindow/Politics/UnlockItem"),
+                        Py.Dict(("item",new PyInt(typeId)))),
+                    Py.Tuple(new PyWString("UI/Corporations/CorporationWindow/Politics/DontUnlockItem"),
+                        Py.Dict(("item",new PyInt(typeId)))),
+                    new PyInt(itemId),new PyInt(typeId),new PyInt(60000001)),
+                new PyInt(1))).Value;
+            var optionRows = Lines(await MemberRpc("GetVoteCaseOptions",new PyInt(corporation.Id),new PyInt(unlockId)));
+            Assert.Equal(2,optionRows.Count);
+            Assert.Equal(new PyInt(itemId),Assert.IsType<PyList>(optionRows[0]).Items[3]);
+            Assert.Equal(new PyInt(0),Assert.IsType<PyList>(optionRows[1]).Items[3]);
+            Assert.IsType<PyNone>(await MemberRpc("InsertVote",new PyInt(corporation.Id),new PyInt(unlockId),new PyInt(0)));
+
+            rig.Now += 86_400_001L;
+            var pending = Assert.IsType<PyDict>(await MemberRpc("GetCorpSanctionedActions"));
+            var action = Assert.Single(pending.Entries,entry => entry.Key.Equals(new PyInt(unlockId))).Value;
+            Assert.Equal(new PyInt(6),Field(action,"voteType"));
+            Assert.Equal(new PyInt(itemId),Field(action,"parameter"));
+            Assert.Equal(new PyInt(0),Field(action,"inEffect"));
+            var unapplied = Assert.Single(
+                Assert.IsType<PyDict>(await FounderRpc("GetCorpSanctionedActions")).Entries,
+                entry => entry.Key.Equals(new PyInt(unlockId))).Value;
+            Assert.Equal(new PyInt(0),Field(unapplied,"inEffect"));
+
+            await using (var seedClosed = rig.Source.CreateCommand($"""
+                INSERT INTO {schema}.vote_cases
+                    (corporation_id,creator_id,vote_case_text,description,vote_type,options_payload,option_count,
+                     start_filetime,end_filetime,sanction_in_effect,sanction_expires_filetime)
+                SELECT $1,$2,'Closed test case','',4,$3,2,0,1,false,0 FROM generate_series(1,21)
+                """))
+            {
+                seedClosed.Parameters.AddWithValue(corporation.Id);
+                seedClosed.Parameters.AddWithValue(founder);
+                seedClosed.Parameters.AddWithValue(new byte[] { 0 });
+                await seedClosed.ExecuteNonQueryAsync();
+            }
+            var cappedClosed = Assert.IsType<PyDict>(await MemberRpc(
+                "GetVoteCasesByCorporation",new PyInt(corporation.Id),new PyInt(1)));
+            Assert.Equal(20,Lines(Assert.Single(cappedClosed.Entries).Value).Count);
+        }
+        finally
+        {
+            await using var drop = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
+    public void Vote_manager_exposes_the_fixed_client_rpc_names()
+    {
+        var type = typeof(CorporationService).Assembly.GetType("Eve.Services.Corporations.VoteManagerService");
+        Assert.NotNull(type);
+        var expectedMethods = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "GetVoteCasesByCorporation","GetVoteCase","GetVoteCaseOptions","GetVotes","CanViewVotes",
+            "CanRunForCEO","InsertVoteCase","InsertVote","GetCorpSanctionedActions","ActivateSanctionedAction"
+        };
+        Assert.Equal(expectedMethods,type!.GetMethods().Where(method => Attribute.IsDefined(method,typeof(MethodAttribute)))
+            .Select(method => method.Name).ToHashSet(StringComparer.Ordinal));
+
+        var service = (IService)new VoteManagerService(null!);
+        Assert.All(new[]
+        {
+            "GetVoteCasesByCorporation","GetVoteCaseOptions","GetVotes",
+            "CanViewVotes","CanRunForCEO","InsertVoteCase",
+        },method => Assert.True(service.HasMethod(method),method));
+    }
+
+    [PgFact]
+    public async Task Corporation_share_rpcs_move_company_and_private_shares_without_changing_supply()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var ceo = await rig.CharacterAsync("Share CEO");
+        var recipient = await rig.CharacterAsync("Share Recipient");
+        var otherCeo = await rig.CharacterAsync("Other Share CEO");
+        var nonManager = await rig.CharacterAsync("Share Non Manager");
+        var corporation = await rig.Store.CreateAsync(ceo,new("Share Works","SHARE","","",0m),"share-rpc-" + Guid.NewGuid().ToString("N"));
+        var otherCorporation = await rig.Store.CreateAsync(otherCeo,new("Other Shares","OSHARE","","",0m),"other-share-rpc-" + Guid.NewGuid().ToString("N"));
+        var memberApplication = await rig.Store.ApplyAsync(nonManager,corporation.Id,"");
+        await rig.Store.RespondAsync(ceo,memberApplication,6,"","");
+        await rig.Store.RespondAsync(nonManager,memberApplication,2,"","");
+        var registry = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+        var registryMethods = typeof(CorpRegistryService).GetMethods()
+            .Where(method => Attribute.IsDefined(method,typeof(MethodAttribute)))
+            .Select(method => method.Name).ToHashSet(StringComparer.Ordinal);
+        Assert.Contains("GetSharesByShareholder",registryMethods);
+        Assert.Contains("GetShareholders",registryMethods);
+        Assert.Contains("MoveCompanyShares",registryMethods);
+        Assert.Contains("MovePrivateShares",registryMethods);
+        var session = new ClientSession { CharacterId=ceo };
+        session.Set("corporationID",new PyInt(corporation.Id));
+        session.Set("corpid",new PyInt(corporation.Id));
+        ValueTask<PyValue> Rpc(string method,params PyValue[] args) => registry.CallAsync(Call(session,method,args));
+        var otherSession = new ClientSession { CharacterId=otherCeo };
+        otherSession.Set("corporationID",new PyInt(otherCorporation.Id));
+        otherSession.Set("corpid",new PyInt(otherCorporation.Id));
+        ValueTask<PyValue> OtherCorpRpc(string method,params PyValue[] args) => registry.CallAsync(Call(otherSession,method,args));
+
+        var companyShares = Assert.Single(Lines(await Rpc("GetSharesByShareholder",new PyInt(1))));
+        Assert.Equal(new PyInt(corporation.Id),RowValues(companyShares)[0]);
+        Assert.Equal(new PyInt(corporation.Id),RowValues(companyShares)[1]);
+        Assert.Equal(new PyInt(1000),RowValues(companyShares)[2]);
+        Assert.Single(Lines(await Rpc("GetShareholders",new PyInt(corporation.Id))));
+
+        Assert.IsType<PyNone>(await Rpc("MoveCompanyShares",new PyInt(corporation.Id),new PyInt(ceo),new PyInt(300)));
+        Assert.IsType<PyNone>(await Rpc("MovePrivateShares",new PyInt(corporation.Id),new PyInt(recipient),new PyInt(100)));
+        Assert.IsType<PyNone>(await OtherCorpRpc("MoveCompanyShares",new PyInt(otherCorporation.Id),new PyInt(ceo),new PyInt(150)));
+        var personalShares = Lines(await Rpc("GetSharesByShareholder",new PyInt(0)));
+        var personalByCorporation = personalShares.Select(RowValues).ToDictionary(
+            row => Assert.IsType<PyInt>(row[1]).Value,
+            row => Assert.IsType<PyInt>(row[2]).Value);
+        Assert.Equal(2,personalByCorporation.Count);
+        Assert.Equal(200,personalByCorporation[corporation.Id]);
+        Assert.Equal(150,personalByCorporation[otherCorporation.Id]);
+        var remainingCompanyShares = Assert.Single(Lines(await Rpc("GetSharesByShareholder",new PyInt(1))));
+        Assert.Equal(new PyInt(corporation.Id),RowValues(remainingCompanyShares)[1]);
+        Assert.Equal(new PyInt(700),RowValues(remainingCompanyShares)[2]);
+        var nonManagerSession = new ClientSession { CharacterId=nonManager };
+        nonManagerSession.Set("corporationID",new PyInt(corporation.Id));
+        nonManagerSession.Set("corpid",new PyInt(corporation.Id));
+        await Assert.ThrowsAnyAsync<Exception>(async () => await registry.CallAsync(
+            Call(nonManagerSession,"GetSharesByShareholder",new PyInt(1))));
+
+        var rows = Lines(await Rpc("GetShareholders",new PyInt(corporation.Id)));
+        var balances = rows.Select(RowValues).ToDictionary(
+            row => Assert.IsType<PyInt>(row[0]).Value,
+            row => Assert.IsType<PyInt>(row[2]).Value);
+        Assert.Equal(1000,balances.Values.Sum());
+        Assert.Equal(700,balances[corporation.Id]);
+        Assert.Equal(200,balances[ceo]);
+        Assert.Equal(100,balances[recipient]);
+    }
+
+    [PgFact]
+    public async Task Private_share_rpc_retry_is_idempotent_and_changed_arguments_conflict()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schema = "share_retry_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await CorporationStore.MigrateAsync(rig.Source,schema);
+            var store = new CorporationStore(rig.Source,rig.Characters,rig.Wallets,rig.Transactions,rig.Skills,() => rig.Now,schema);
+            var owner = await rig.CharacterAsync("Retry Share Owner");
+            var recipient = await rig.CharacterAsync("Retry Share Recipient");
+            var corporation = await store.CreateAsync(owner,new("Retry Shares","RTRY","","",0m),
+                "share-retry-" + Guid.NewGuid().ToString("N"));
+            await store.MoveCompanySharesAsync(corporation.Id,owner,owner,1000,"share-retry-seed");
+
+            var registry = (IService)new CorpRegistryService(store,rig.Characters,() => rig.Now);
+            var session = new ClientSession { CharacterId=owner };
+            session.Set("corporationID",new PyInt(corporation.Id));
+            session.Set("corpid",new PyInt(corporation.Id));
+            ServiceCall Retry(long amount) => new()
+            {
+                Session=session,
+                Method="MovePrivateShares",
+                Args=[new PyInt(corporation.Id),new PyInt(recipient),new PyInt(amount)],
+                CallId=new PyInt(812345)
+            };
+            var ownerBefore = Assert.Single(await store.SharesByShareholderAsync(owner,corporation.Id)).Shares;
+
+            Assert.IsType<PyNone>(await registry.CallAsync(Retry(25)));
+            Assert.IsType<PyNone>(await registry.CallAsync(Retry(25)));
+
+            var ownerAfter = Assert.Single(await store.SharesByShareholderAsync(owner,corporation.Id)).Shares;
+            var recipientAfter = Assert.Single(await store.SharesByShareholderAsync(recipient,corporation.Id)).Shares;
+            Assert.Equal(ownerBefore - 25,ownerAfter);
+            Assert.Equal(25,recipientAfter);
+
+            var conflict = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(async () =>
+                await registry.CallAsync(Retry(26)));
+            Assert.Equal("CORPORATION_OPERATION_CONFLICT",conflict.Code);
+            Assert.Equal(ownerAfter,Assert.Single(await store.SharesByShareholderAsync(owner,corporation.Id)).Shares);
+            Assert.Equal(recipientAfter,Assert.Single(await store.SharesByShareholderAsync(recipient,corporation.Id)).Shares);
+        }
+        finally
+        {
+            await using var drop = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Execute_actions_give_cash_and_move_shares_through_the_share_rpc_with_short_wallet_rollback()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var ceo = await rig.CharacterAsync("Grant CEO");
+        var first = await rig.CharacterAsync("Grant First");
+        var second = await rig.CharacterAsync("Grant Second");
+        var corporation = await rig.Store.CreateAsync(ceo,new("Grant Works","GRANT","","",0m),"grant-" + Guid.NewGuid().ToString("N"));
+        foreach (var member in new[] { first,second })
+        {
+            var application = await rig.Store.ApplyAsync(member,corporation.Id,"");
+            await rig.Store.RespondAsync(ceo,application,6,"","");
+            await rig.Store.RespondAsync(member,application,2,"","");
+        }
+
+        var registry = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+        var session = new ClientSession { CharacterId=ceo };
+        session.Set("corporationID",new PyInt(corporation.Id));
+        session.Set("corpid",new PyInt(corporation.Id));
+        session.Set("corpAccountKey",new PyInt(1000));
+        ValueTask<PyValue> Rpc(string method,params PyValue[] args) => registry.CallAsync(Call(session,method,args));
+        var fromCorpWallet = new Eve.Wallet.WalletAccount(corporation.Id,1000);
+        var firstWallet = new Eve.Wallet.WalletAccount(first);
+        var secondWallet = new Eve.Wallet.WalletAccount(second);
+        async Task FundAsync(decimal amount,string operationKey)
+        {
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await rig.Transactions.TransferAsync(connection,transaction,new Eve.Wallet.WalletAccount(ceo),fromCorpWallet,
+                amount,10,"Share grant test",rig.Now,operationKey,"test");
+            await transaction.CommitAsync();
+        }
+        async Task<Dictionary<long,long>> ShareBalancesAsync()
+        {
+            var rows = Lines(await Rpc("GetShareholders",new PyInt(corporation.Id)));
+            return rows.Select(RowValues).ToDictionary(
+                row => Assert.IsType<PyInt>(row[0]).Value,
+                row => Assert.IsType<PyInt>(row[2]).Value);
+        }
+
+        var cashActions = new PyList([
+            Py.Tuple(new PyInt(4),new PyInt(6),new PyInt(10))
+        ]);
+        var mixedActions = new PyList([
+            Py.Tuple(new PyInt(4),new PyInt(6),new PyInt(10)),
+            Py.Tuple(new PyInt(4),new PyInt(7),new PyInt(100))
+        ]);
+        await FundAsync(15m,"share-grant-short-" + Guid.NewGuid().ToString("N"));
+        var beforeCorp = await rig.Transactions.AccountBalanceAsync(fromCorpWallet);
+        var beforeFirst = await rig.Transactions.AccountBalanceAsync(firstWallet);
+        var beforeSecond = await rig.Transactions.AccountBalanceAsync(secondWallet);
+        var targets = new PyList([new PyInt(first),new PyInt(second)]);
+
+        var emptyTargetError = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(async () =>
+            await Rpc("ExecuteActions",new PyList([]),cashActions));
+        Assert.Equal("CORPORATION_INVALID_MEMBER_GRANT",emptyTargetError.Code);
+        Assert.Equal(beforeCorp,await rig.Transactions.AccountBalanceAsync(fromCorpWallet));
+        Assert.Equal(beforeFirst,await rig.Transactions.AccountBalanceAsync(firstWallet));
+        Assert.Equal(beforeSecond,await rig.Transactions.AccountBalanceAsync(secondWallet));
+
+        var mixedShareError = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(async () =>
+            await Rpc("ExecuteActions",targets,mixedActions));
+        Assert.Equal("CORPORATION_ACCESS_DENIED",mixedShareError.Code);
+        Assert.Equal(beforeCorp,await rig.Transactions.AccountBalanceAsync(fromCorpWallet));
+        Assert.Equal(beforeFirst,await rig.Transactions.AccountBalanceAsync(firstWallet));
+        Assert.Equal(beforeSecond,await rig.Transactions.AccountBalanceAsync(secondWallet));
+        var beforeRejectedShares = await ShareBalancesAsync();
+        Assert.Equal(1000,beforeRejectedShares.Values.Sum());
+        Assert.Equal(1000,beforeRejectedShares[corporation.Id]);
+        Assert.DoesNotContain(first,beforeRejectedShares.Keys);
+        Assert.DoesNotContain(second,beforeRejectedShares.Keys);
+
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await Rpc("ExecuteActions",targets,cashActions));
+        Assert.Equal(beforeCorp,await rig.Transactions.AccountBalanceAsync(fromCorpWallet));
+        Assert.Equal(beforeFirst,await rig.Transactions.AccountBalanceAsync(firstWallet));
+        Assert.Equal(beforeSecond,await rig.Transactions.AccountBalanceAsync(secondWallet));
+        var afterRollback = await ShareBalancesAsync();
+        Assert.Equal(1000,afterRollback.Values.Sum());
+        Assert.Equal(1000,afterRollback[corporation.Id]);
+        Assert.DoesNotContain(first,afterRollback.Keys);
+        Assert.DoesNotContain(second,afterRollback.Keys);
+
+        await FundAsync(100m,"share-grant-fund-" + Guid.NewGuid().ToString("N"));
+        var afterFundingCorp = await rig.Transactions.AccountBalanceAsync(fromCorpWallet);
+        var afterFundingFirst = await rig.Transactions.AccountBalanceAsync(firstWallet);
+        var afterFundingSecond = await rig.Transactions.AccountBalanceAsync(secondWallet);
+        Assert.IsType<PyNone>(await Rpc("ExecuteActions",targets,cashActions));
+        Assert.Equal(beforeCorp + 80m,await rig.Transactions.AccountBalanceAsync(fromCorpWallet));
+        Assert.Equal(beforeFirst + 10m,await rig.Transactions.AccountBalanceAsync(firstWallet));
+        Assert.Equal(beforeSecond + 10m,await rig.Transactions.AccountBalanceAsync(secondWallet));
+        Assert.Equal(afterFundingCorp - 20m,await rig.Transactions.AccountBalanceAsync(fromCorpWallet));
+        Assert.Equal(afterFundingFirst + 10m,await rig.Transactions.AccountBalanceAsync(firstWallet));
+        Assert.Equal(afterFundingSecond + 10m,await rig.Transactions.AccountBalanceAsync(secondWallet));
+
+        Assert.IsType<PyNone>(await Rpc("MoveCompanyShares",
+            new PyInt(corporation.Id),new PyInt(first),new PyInt(100)));
+        Assert.IsType<PyNone>(await Rpc("MoveCompanyShares",
+            new PyInt(corporation.Id),new PyInt(second),new PyInt(100)));
+        var afterGrant = await ShareBalancesAsync();
+        Assert.Equal(1000,afterGrant.Values.Sum());
+        Assert.Equal(800,afterGrant[corporation.Id]);
+        Assert.Equal(100,afterGrant[first]);
+        Assert.Equal(100,afterGrant[second]);
+    }
+
+    [PgFact]
+    public async Task Corporation_votes_apply_official_sanctions_and_restore_roles_after_failed_votes()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schema = "vote_effects_" + Guid.NewGuid().ToString("N")[..12];
+        var blueprintEffects = new List<(long CorporationId,long ItemId,long TypeId,long LocationId,bool Locked)>();
+        Task RecordBlueprintLock(Npgsql.NpgsqlConnection connection,Npgsql.NpgsqlTransaction transaction,
+            long corporationId,long itemId,long typeId,long locationId,bool locked,CancellationToken cancellationToken)
+        {
+            Assert.NotNull(connection);
+            Assert.NotNull(transaction);
+            cancellationToken.ThrowIfCancellationRequested();
+            blueprintEffects.Add((corporationId,itemId,typeId,locationId,locked));
+            return Task.CompletedTask;
+        }
+
+        try
+        {
+            await CorporationStore.MigrateAsync(rig.Source,schema);
+            var store = new CorporationStore(rig.Source,rig.Characters,rig.Wallets,rig.Transactions,rig.Skills,
+                () => rig.Now,schema,RecordBlueprintLock);
+            await store.SeedNpcAsync(new Eve.Sde.SdeReader(rig.Source));
+            var ceo = await rig.CharacterAsync("Vote CEO");
+            var candidate = await rig.CharacterAsync("Vote Candidate");
+            var target = await rig.CharacterAsync("Vote Target");
+            var targetCharacter = (await rig.Characters.GetAsync(target))!;
+            var expectedNpcCorporationId = Eve.Characters.CreationCatalog
+                .ResolveSchool(targetCharacter.SchoolId,targetCharacter.RaceId)!.CorporationId;
+            var corporation = await store.CreateAsync(ceo,new("Vote Effects","VEFX","","",0m),"vote-effects-" + Guid.NewGuid().ToString("N"));
+            foreach (var member in new[] { candidate,target })
+            {
+                var application = await store.ApplyAsync(member,corporation.Id,"");
+                await store.RespondAsync(ceo,application,6,"","");
+                await store.RespondAsync(member,application,2,"","");
+            }
+            var targetRecord = (await store.MemberAsync(target))!;
+            await store.UpdateMemberAsync(ceo,targetRecord with { Masks=new RoleMasks(CorporationRoles.PersonnelManager) });
+            await using (var connection = await rig.Source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await rig.Skills.GrantAsync(connection,transaction,candidate,[new Eve.Skills.CharacterSkill(3363,1,250)]);
+                await transaction.CommitAsync();
+            }
+
+            var registry = (IService)new CorpRegistryService(store,rig.Characters,() => rig.Now);
+            var votes = (IService)new VoteManagerService(store);
+            ClientSession Session(long characterId)
+            {
+                var session = new ClientSession { CharacterId=characterId };
+                session.Set("corporationID",new PyInt(corporation.Id));
+                session.Set("corpid",new PyInt(corporation.Id));
+                return session;
+            }
+            var ceoSession = Session(ceo);
+            var candidateSession = Session(candidate);
+            var targetSession = Session(target);
+            ValueTask<PyValue> ShareRpc(ClientSession session,string method,params PyValue[] args) =>
+                registry.CallAsync(Call(session,method,args));
+            ValueTask<PyValue> VoteRpc(ClientSession session,string method,params PyValue[] args) =>
+                votes.CallAsync(Call(session,method,args));
+            async Task<long> CreateVote(ClientSession session,string title,int voteType,PyValue options)
+            {
+                var result = await VoteRpc(session,"InsertVoteCase",new PyWString(title),new PyWString(title),
+                    new PyInt(voteType),options,new PyInt(1));
+                return Assert.IsType<PyInt>(result).Value;
+            }
+            async Task CastVote(ClientSession session,long voteCaseId,long optionId)
+            {
+                Assert.IsType<PyNone>(await VoteRpc(session,"InsertVote",new PyInt(corporation.Id),
+                    new PyInt(voteCaseId),new PyInt(optionId)));
+            }
+            async Task CloseVote(ClientSession session)
+            {
+                rig.Now += 86_400_001L;
+                _ = await VoteRpc(session,"GetVoteCasesByCorporation",new PyInt(corporation.Id));
+            }
+            async Task<Dictionary<long,long>> SharesAsync(ClientSession session)
+            {
+                var rows = Lines(await ShareRpc(session,"GetShareholders",new PyInt(corporation.Id)));
+                return rows.Select(RowValues).ToDictionary(
+                    row => Assert.IsType<PyInt>(row[0]).Value,
+                    row => Assert.IsType<PyInt>(row[2]).Value);
+            }
+
+            var createShares = await CreateVote(ceoSession,"Create shares",2,Py.Tuple(
+                Py.Tuple(new PyWString("UI/Corporations/CorporationWindow/Politics/CreateShares"),
+                    Py.Dict(("shares",new PyInt(200)))),
+                Py.Tuple(new PyWString("UI/Corporations/CorporationWindow/Politics/DoNotCreateShares")),
+                new PyInt(200),PyNone.Instance,PyNone.Instance));
+            await CastVote(ceoSession,createShares,0);
+            await CloseVote(ceoSession);
+            var pendingShares = Assert.IsType<PyDict>(await VoteRpc(ceoSession,"GetCorpSanctionedActions"));
+            Assert.Contains(pendingShares.Entries,entry => entry.Key.Equals(new PyInt(createShares)));
+            var pendingCreateShares = Assert.Single(pendingShares.Entries,
+                entry => entry.Key.Equals(new PyInt(createShares))).Value;
+            Assert.Equal(new PyInt(2),Field(pendingCreateShares,"voteType"));
+            Assert.IsType<PyNone>(await VoteRpc(ceoSession,"ActivateSanctionedAction",new PyInt(createShares)));
+            var afterIssue = await SharesAsync(ceoSession);
+            Assert.Equal(1200,afterIssue.Values.Sum());
+            Assert.Equal(1200,afterIssue[corporation.Id]);
+
+            Assert.IsType<PyNone>(await ShareRpc(ceoSession,"MoveCompanyShares",new PyInt(corporation.Id),new PyInt(candidate),new PyInt(100)));
+            Assert.IsType<PyNone>(await ShareRpc(ceoSession,"MoveCompanyShares",new PyInt(corporation.Id),new PyInt(target),new PyInt(700)));
+            Assert.IsType<PyNone>(await ShareRpc(ceoSession,"MoveCompanyShares",new PyInt(corporation.Id),new PyInt(ceo),new PyInt(100)));
+            Assert.Equal(100L,(await store.ShareholdersAsync(corporation.Id)).Single(share => share.ShareholderId==ceo).Shares);
+            Assert.Equal(PyBool.True,await VoteRpc(candidateSession,"CanRunForCEO"));
+            var ceoRolesBefore = (await store.MemberAsync(ceo))!.Masks;
+            async Task AssertCeoVoteSuspendsIncumbent()
+            {
+                var duringVote = (await store.GetAsync(corporation.Id))!;
+                Assert.Equal(ceo,duringVote.CeoId);
+                Assert.True(duringVote.CeoRolesSuspended);
+                var incumbent = (await store.MemberAsync(ceo))!;
+                Assert.Equal(0L,incumbent.Masks.Roles);
+                Assert.Equal(0L,incumbent.Masks.GrantableRoles);
+                Assert.Equal(0L,incumbent.Masks.AtHq);
+                Assert.Equal(0L,incumbent.Masks.GrantableHq);
+                Assert.Equal(0L,incumbent.Masks.AtBase);
+                Assert.Equal(0L,incumbent.Masks.GrantableBase);
+                Assert.Equal(0L,incumbent.Masks.AtOther);
+                Assert.Equal(0L,incumbent.Masks.GrantableOther);
+                Assert.Equal(0,incumbent.TitleMask);
+                await Assert.ThrowsAnyAsync<Exception>(async () => await ShareRpc(ceoSession,"UpdateCorporation",
+                    new PyWString("Suspended CEO must not edit"),new PyWString(""),Py.Number(0.05),new PyInt(1),Py.Number(0)));
+            }
+            PyValue CEOOptions() => Py.Tuple(
+                Py.Tuple(new PyWString("UI/Corporations/CorporationWindow/Politics/SomeoneForCEO"),
+                    Py.Dict(("char",new PyInt(candidate)))),
+                Py.Tuple(new PyWString("UI/Corporations/CorporationWindow/Politics/DontChangeCEO")),
+                new PyInt(candidate),PyNone.Instance,PyNone.Instance);
+            var failedCeoVote = await CreateVote(candidateSession,"Failed CEO vote",0,CEOOptions());
+            await AssertCeoVoteSuspendsIncumbent();
+            Assert.Equal(0,(await store.MemberAsync(ceo))!.Masks.Roles);
+            await CastVote(candidateSession,failedCeoVote,0);
+            await CastVote(ceoSession,failedCeoVote,1);
+            await CloseVote(candidateSession);
+            var afterFailedCeoVote = (await store.GetAsync(corporation.Id))!;
+            Assert.Equal(ceo,afterFailedCeoVote.CeoId);
+            Assert.False(afterFailedCeoVote.CeoRolesSuspended);
+            Assert.Equal(ceoRolesBefore,(await store.MemberAsync(ceo))!.Masks);
+            Assert.IsType<PyNone>(await ShareRpc(ceoSession,"UpdateCorporation",
+                new PyWString("CEO restored after failed vote"),new PyWString(""),Py.Number(0.05),new PyInt(1),Py.Number(0)));
+
+            var passedCeoVote = await CreateVote(candidateSession,"Successful CEO vote",0,CEOOptions());
+            await AssertCeoVoteSuspendsIncumbent();
+            await CastVote(candidateSession,passedCeoVote,0);
+            await CloseVote(candidateSession);
+            var afterPassedCeoVote = (await store.GetAsync(corporation.Id))!;
+            Assert.Equal(candidate,afterPassedCeoVote.CeoId);
+            Assert.False(afterPassedCeoVote.CeoRolesSuspended);
+            await Assert.ThrowsAnyAsync<Exception>(async () => await ShareRpc(ceoSession,"UpdateCorporation",
+                new PyWString("Former CEO must not retain authority"),new PyWString(""),Py.Number(0.05),new PyInt(1),Py.Number(0)));
+            Assert.IsType<PyNone>(await ShareRpc(candidateSession,"UpdateCorporation",
+                new PyWString("New CEO has authority"),new PyWString(""),Py.Number(0.05),new PyInt(1),Py.Number(0)));
+
+            const long blueprintId = 987654321;
+            const long blueprintTypeId = 15001;
+            const long officeId = 60000001;
+            PyValue BlueprintOptions(bool unlock) => Py.Tuple(
+                Py.Tuple(new PyWString(unlock
+                    ? "UI/Corporations/CorporationWindow/Politics/UnlockItem"
+                    : "UI/Corporations/CorporationWindow/Politics/LockdownItem"),
+                    Py.Dict(("item",new PyInt(blueprintTypeId)))),
+                Py.Tuple(new PyWString(unlock
+                    ? "UI/Corporations/CorporationWindow/Politics/DontUnlockItem"
+                    : "UI/Corporations/CorporationWindow/Politics/DontLockdownItem"),
+                    Py.Dict(("item",new PyInt(blueprintTypeId)))),
+                new PyInt(blueprintId),new PyInt(blueprintTypeId),new PyInt(officeId));
+            var lockVote = await CreateVote(candidateSession,"Lock blueprint",5,BlueprintOptions(false));
+            Assert.Equal((corporation.Id,blueprintId,blueprintTypeId,officeId,true),Assert.Single(blueprintEffects));
+            await CastVote(candidateSession,lockVote,0);
+            await CloseVote(candidateSession);
+            Assert.Equal((corporation.Id,blueprintId,blueprintTypeId,officeId,true),Assert.Single(blueprintEffects));
+
+            var unlockVote = await CreateVote(candidateSession,"Unlock blueprint",6,BlueprintOptions(true));
+            await CastVote(candidateSession,unlockVote,0);
+            await CloseVote(candidateSession);
+            var pendingUnlock = Assert.IsType<PyDict>(await VoteRpc(candidateSession,"GetCorpSanctionedActions"));
+            Assert.Contains(pendingUnlock.Entries,entry => entry.Key.Equals(new PyInt(unlockVote)));
+            Assert.IsType<PyNone>(await VoteRpc(candidateSession,"ActivateSanctionedAction",new PyInt(unlockVote)));
+            Assert.Equal(new[] { (corporation.Id,blueprintId,blueprintTypeId,officeId,true),(corporation.Id,blueprintId,blueprintTypeId,officeId,false) },blueprintEffects);
+
+            var expelOptions = Py.Tuple(
+                Py.Tuple(new PyWString("UI/Corporations/CorporationWindow/Politics/ExpelFromCorporation"),
+                    Py.Dict(("char",new PyInt(target)))),
+                Py.Tuple(new PyWString("UI/Corporations/CorporationWindow/Politics/DontExpelFromCorporation"),
+                    Py.Dict(("memberName",new PyWString("Vote Target")))),
+                new PyInt(target),PyNone.Instance,PyNone.Instance);
+            var targetRoles = (await store.MemberAsync(target))!.Masks;
+            var failedExpel = await CreateVote(candidateSession,"Failed expel",3,expelOptions);
+            Assert.Equal(0,(await store.MemberAsync(target))!.Masks.Roles);
+            await CastVote(candidateSession,failedExpel,0);
+            await CastVote(targetSession,failedExpel,1);
+            await CloseVote(candidateSession);
+            Assert.Equal(targetRoles,(await store.MemberAsync(target))!.Masks);
+
+            var passedExpel = await CreateVote(candidateSession,"Passed expel",3,expelOptions);
+            await CastVote(candidateSession,passedExpel,0);
+            await CloseVote(candidateSession);
+            Assert.IsType<PyNone>(await VoteRpc(candidateSession,"ActivateSanctionedAction",new PyInt(passedExpel)));
+            var expelled = await store.MemberAsync(target);
+            Assert.NotNull(expelled);
+            Assert.Equal(expectedNpcCorporationId,expelled.CorporationId);
+            Assert.True((await store.GetAsync(expectedNpcCorporationId))!.IsNpc);
+            Assert.Equal(700,(await SharesAsync(candidateSession))[target]);
+        }
+        finally
+        {
+            await using var drop = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Outside_corporation_shareholders_can_read_and_vote_using_the_case_corporation_ledger()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schema = "external_vote_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await CorporationStore.MigrateAsync(rig.Source,schema);
+            var store = new CorporationStore(rig.Source,rig.Characters,rig.Wallets,rig.Transactions,rig.Skills,() => rig.Now,schema);
+            var founder = await rig.CharacterAsync("Issuer CEO");
+            var outsideShareholder = await rig.CharacterAsync("Outside Shareholder");
+            var issuer = await store.CreateAsync(founder,new("Issuer Corp","ISSUE","","",0m),"issuer-" + Guid.NewGuid().ToString("N"));
+            var shareholderCorp = await store.CreateAsync(outsideShareholder,new("Shareholder Corp","SHOLD","","",0m),"holder-" + Guid.NewGuid().ToString("N"));
+
+            var registry = (IService)new CorpRegistryService(store,rig.Characters,() => rig.Now);
+            var votes = (IService)new VoteManagerService(store);
+            var founderSession = new ClientSession { CharacterId=founder };
+            founderSession.Set("corporationID",new PyInt(issuer.Id));
+            founderSession.Set("corpid",new PyInt(issuer.Id));
+            var founderVotes = votes.CallAsync(Call(founderSession,"InsertVoteCase",new PyWString("External holder vote"),
+                new PyWString("All shareholders may vote"),new PyInt(4),
+                new PyList([new PyWString("For"),new PyWString("Against")]),new PyInt(1)));
+            var voteCaseId = Assert.IsType<PyInt>(await founderVotes).Value;
+            Assert.IsType<PyNone>(await registry.CallAsync(Call(founderSession,"MoveCompanyShares",
+                new PyInt(issuer.Id),new PyInt(outsideShareholder),new PyInt(1000))));
+
+            var outsideSession = new ClientSession { CharacterId=outsideShareholder };
+            outsideSession.Set("corporationID",new PyInt(shareholderCorp.Id));
+            outsideSession.Set("corpid",new PyInt(shareholderCorp.Id));
+            ValueTask<PyValue> VoteRpc(string method,params PyValue[] args) => votes.CallAsync(Call(outsideSession,method,args));
+            var nonShareholder = await rig.CharacterAsync("Non Shareholder");
+            var nonShareholderSession = new ClientSession { CharacterId=nonShareholder };
+            nonShareholderSession.Set("corporationID",new PyInt(shareholderCorp.Id));
+            nonShareholderSession.Set("corpid",new PyInt(shareholderCorp.Id));
+            Assert.Equal(PyBool.False,await votes.CallAsync(Call(nonShareholderSession,"CanViewVotes",new PyInt(issuer.Id))));
+            Assert.Equal(PyBool.True,await VoteRpc("CanViewVotes",new PyInt(issuer.Id)));
+            var openCases = Assert.IsType<PyDict>(await VoteRpc("GetVoteCasesByCorporation",new PyInt(issuer.Id),new PyInt(2)));
+            Assert.NotEmpty(Lines(Assert.Single(openCases.Entries).Value));
+            Assert.Equal(new PyInt(voteCaseId),RowField(await VoteRpc("GetVoteCase",new PyInt(issuer.Id),new PyInt(voteCaseId)),"voteCaseID"));
+            Assert.Equal(2,Lines(await VoteRpc("GetVoteCaseOptions",new PyInt(issuer.Id),new PyInt(voteCaseId))).Count);
+
+            Assert.IsType<PyNone>(await VoteRpc("InsertVote",new PyInt(issuer.Id),new PyInt(voteCaseId),new PyInt(0)));
+            var ownVotes = Lines(await VoteRpc("GetVotes",new PyInt(voteCaseId)));
+            Assert.Single(ownVotes);
+            await using var query = rig.Source.CreateCommand($"SELECT shareholder_id,voting_power FROM {schema}.vote_ballots WHERE vote_case_id=$1");
+            query.Parameters.AddWithValue(voteCaseId);
+            await using var reader = await query.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(outsideShareholder,reader.GetInt64(0));
+            Assert.Equal(1000,reader.GetInt64(1));
+            Assert.False(await reader.ReadAsync());
+        }
+        finally
+        {
+            await using var drop = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+
+    [PgFact]
+    public async Task Corporation_store_persists_welcome_mail_per_corporation()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schema = "corp_welcome_mail_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await CorporationStore.MigrateAsync(rig.Source,schema);
+            var store = new CorporationStore(rig.Source,rig.Characters,rig.Wallets,rig.Transactions,rig.Skills,() => rig.Now,schema);
+            var founder = await rig.CharacterAsync("Welcome Mail Founder");
+            var otherFounder = await rig.CharacterAsync("Other Welcome Mail Founder");
+            var corporation = await store.CreateAsync(founder,new("Welcome Mail","WMAIL","","",0m),"welcome-" + Guid.NewGuid().ToString("N"));
+            var otherCorporation = await store.CreateAsync(otherFounder,new("Other Welcome Mail","OWML","","",0m),"welcome-other-" + Guid.NewGuid().ToString("N"));
+            const string welcomeMail = "Welcome, capsuleer! <b>Fly safe.</b>";
+
+            await store.SetCorpWelcomeMailAsync(founder,corporation.Id,welcomeMail);
+
+            Assert.Equal(welcomeMail,await store.GetCorpWelcomeMailAsync(corporation.Id));
+            Assert.Equal(string.Empty,await store.GetCorpWelcomeMailAsync(otherCorporation.Id));
+            var reopened = new CorporationStore(rig.Source,rig.Characters,rig.Wallets,rig.Transactions,rig.Skills,() => rig.Now,schema);
+            Assert.Equal(welcomeMail,await reopened.GetCorpWelcomeMailAsync(corporation.Id));
+
+            var outsider = await rig.CharacterAsync("Welcome Mail Outsider");
+            await Assert.ThrowsAnyAsync<Exception>(() =>
+                store.SetCorpWelcomeMailAsync(outsider,corporation.Id,"unauthorized"));
+            Assert.Equal(welcomeMail,await store.GetCorpWelcomeMailAsync(corporation.Id));
+        }
+        finally
+        {
+            await using var drop = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Corp_registry_welcome_mail_rpc_returns_raw_text_and_requires_personnel_manager_to_set()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schema = "corp_welcome_rpc_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await CorporationStore.MigrateAsync(rig.Source,schema);
+            var store = new CorporationStore(rig.Source,rig.Characters,rig.Wallets,rig.Transactions,rig.Skills,() => rig.Now,schema);
+            var ceo = await rig.CharacterAsync("Welcome RPC CEO");
+            var personnelManager = await rig.CharacterAsync("Welcome RPC Manager");
+            var ordinaryMember = await rig.CharacterAsync("Welcome RPC Member");
+            var corporation = await store.CreateAsync(ceo,new("Welcome RPC","WRPC","","",0m),"welcome-rpc-" + Guid.NewGuid().ToString("N"));
+            foreach (var character in new[] { personnelManager,ordinaryMember })
+            {
+                var application = await store.ApplyAsync(character,corporation.Id,"");
+                await store.RespondAsync(ceo,application,6,"","");
+                await store.RespondAsync(character,application,2,"","");
+            }
+            var manager = (await store.MemberAsync(personnelManager))!;
+            await store.UpdateMemberAsync(ceo,manager with { Masks=new RoleMasks(CorporationRoles.PersonnelManager) });
+
+            var registry = (IService)new CorpRegistryService(store,rig.Characters,() => rig.Now);
+            Assert.True(registry.HasMethod("GetCorpWelcomeMail"));
+            Assert.True(registry.HasMethod("SetCorpWelcomeMail"));
+            ClientSession Session(long characterId)
+            {
+                var session = new ClientSession { CharacterId=characterId };
+                session.Set("corporationID",new PyInt(corporation.Id));
+                session.Set("corpid",new PyInt(corporation.Id));
+                return session;
+            }
+
+            var managerSession = Session(personnelManager);
+            Assert.Equal("",Assert.IsType<PyWString>(await registry.CallAsync(Call(managerSession,"GetCorpWelcomeMail"))).Value);
+            const string welcomeMail = "Welcome to <i>New Eden</i>, capsuleer!";
+            Assert.IsType<PyNone>(await registry.CallAsync(Call(managerSession,"SetCorpWelcomeMail",new PyWString(welcomeMail))));
+            Assert.Equal(welcomeMail,Assert.IsType<PyWString>(await registry.CallAsync(Call(managerSession,"GetCorpWelcomeMail"))).Value);
+
+            var ordinarySession = Session(ordinaryMember);
+            Assert.Equal(welcomeMail,Assert.IsType<PyWString>(await registry.CallAsync(Call(ordinarySession,"GetCorpWelcomeMail"))).Value);
+            await Assert.ThrowsAnyAsync<Exception>(async () =>
+                await registry.CallAsync(Call(ordinarySession,"SetCorpWelcomeMail",new PyWString("unauthorized"))));
+            Assert.Equal(welcomeMail,Assert.IsType<PyWString>(await registry.CallAsync(Call(managerSession,"GetCorpWelcomeMail"))).Value);
+        }
+        finally
+        {
+            await using var drop = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await drop.ExecuteNonQueryAsync();
+        }
     }
 }

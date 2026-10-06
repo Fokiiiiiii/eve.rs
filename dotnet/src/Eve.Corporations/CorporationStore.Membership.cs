@@ -20,7 +20,7 @@ public sealed partial class CorporationStore
     {
         var character = await _characters.LockAndGetAsync(connection,tx,actor,token);
         if (character is null || character.CorporationId != corp.Id || corp.IsNpc || corp.Deleted) return false;
-        if (corp.CeoId == actor) return true;
+        if (corp.CeoId == actor && !corp.CeoRolesSuspended) return true;
         var member = await MemberAsync(connection,tx,actor,token);
         if (member is null || member.CorporationId != corp.Id) return false;
         var titles = await TitlesAsync(connection,tx,corp.Id,token);
@@ -185,4 +185,5 @@ public sealed partial class CorporationStore
             if (affected != 2) throw new CorporationError("CORPORATION_ACCESS_DENIED");
             return 0;
         },token);
+
 }

@@ -8,6 +8,9 @@ public sealed partial class CorporationStore
 {
     private const string AllianceColumns = "id,name,short_name,description,url,executor_corporation_id,creator_corporation_id,creator_character_id,created_ms,deleted,suspended,dictatorial";
     private const string AllianceApplicationColumns = "id,alliance_id,corporation_id,text,status,created_ms,updated_ms,archived,due_ms";
+    public sealed record AllianceContact(long ContactId,long RelationshipId,long LabelMask);
+    public sealed record AllianceContactLabel(long LabelId,string Name,int Color);
+
     private static Alliance ReadAlliance(NpgsqlDataReader r) => new(r.GetInt64(0),r.GetString(1),r.GetString(2),r.GetString(3),r.GetString(4),
         r.IsDBNull(5) ? null : r.GetInt64(5),r.GetInt64(6),r.GetInt64(7),r.GetInt64(8),r.GetBoolean(9),r.GetBoolean(10),r.GetBoolean(11));
     private static AllianceApplication ReadAllianceApplication(NpgsqlDataReader r) => new(r.GetInt64(0),r.GetInt64(1),r.GetInt64(2),r.GetString(3),
@@ -433,15 +436,435 @@ public sealed partial class CorporationStore
         if (description.Length > 5000 || url.Length > 2048) throw new CorporationError("ALLIANCE_PUBLIC_INFO_INVALID_LENGTH");
         return WriteAsync(async (connection,tx) =>
         {
-            var character = await _characters.LockAndGetAsync(connection,tx,actor,token) ?? throw new CorporationError("CHARACTER_NOT_FOUND");
-            var corporation = await RequireRoleAsync(connection,tx,character.CorporationId,actor,CorporationRoles.Director,token);
-            if (corporation.AllianceId != alliance) throw new CorporationError("CORPORATION_ACCESS_DENIED");
-            var current = await AllianceAsync(connection,tx,alliance,true,token);
-            if (current is not { Deleted:false } || current.ActiveExecutorId != corporation.Id)
-                throw new CorporationError("ALLIANCE_EXECUTOR_REQUIRED");
+            var current = await RequireAllianceExecutorAsync(connection,tx,actor,alliance,token);
             await using var command = Command(connection,tx,$"UPDATE {_schema}.alliances SET description=$2,url=$3 WHERE id=$1",alliance,description,url);
             await command.ExecuteNonQueryAsync(token);
             return current with { Description=description,Url=url };
         },token);
+    }
+
+
+    public async Task SetAlliancePrimeHourAsync(long actor,long alliance,int hour,long validAfterFileTime,CancellationToken token = default)
+    {
+        if (hour is < 0 or > 23) throw new CorporationError("ALLIANCE_PRIME_HOUR_INVALID");
+        await WriteAsync(async (connection,tx) =>
+        {
+            await RequireAllianceExecutorAsync(connection,tx,actor,alliance,token);
+            short currentHour;
+            short newHour;
+            long validAfter;
+            await using (var state = Command(connection,tx,$"SELECT current_prime_hour,new_prime_hour,new_prime_hour_valid_after_filetime FROM {_schema}.alliances WHERE id=$1 FOR UPDATE",alliance))
+            await using (var reader = await state.ExecuteReaderAsync(token))
+            {
+                if (!await reader.ReadAsync(token)) throw new CorporationError("ALLIANCE_NOT_FOUND");
+                currentHour = reader.GetInt16(0);
+                newHour = reader.GetInt16(1);
+                validAfter = reader.GetInt64(2);
+            }
+
+            var now = VoteNowFiletime;
+            if (validAfter > 0 && validAfter <= now)
+            {
+                currentHour = newHour;
+                newHour = currentHour;
+                validAfter = 0;
+            }
+            if (validAfterFileTime <= now)
+                throw new CorporationError("ALLIANCE_PRIME_TIME_WINDOW_UNAVAILABLE");
+            if (currentHour == hour && validAfter == 0) return true;
+            if (newHour == hour && validAfter > 0) return true;
+
+            newHour = (short)hour;
+            validAfter = validAfterFileTime;
+            await using var update = Command(connection,tx,$"UPDATE {_schema}.alliances SET current_prime_hour=$2,new_prime_hour=$3,new_prime_hour_valid_after_filetime=$4 WHERE id=$1",
+                alliance,currentHour,newHour,validAfter);
+            await update.ExecuteNonQueryAsync(token);
+            return true;
+        },token);
+    }
+
+public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> AlliancePrimeTimeAsync(
+        long alliance, CancellationToken token = default) =>
+        await WriteAsync(async (connection, tx) =>
+        {
+            short currentHour;
+            short newHour;
+            long validAfter;
+            await using (var state = Command(connection, tx,
+                $"SELECT current_prime_hour,new_prime_hour,new_prime_hour_valid_after_filetime FROM {_schema}.alliances WHERE id=$1 FOR UPDATE", alliance))
+            await using (var reader = await state.ExecuteReaderAsync(token))
+            {
+                if (!await reader.ReadAsync(token)) throw new CorporationError("ALLIANCE_NOT_FOUND");
+                currentHour = reader.GetInt16(0);
+                newHour = reader.GetInt16(1);
+                validAfter = reader.GetInt64(2);
+            }
+
+            if (validAfter > 0 && validAfter <= VoteNowFiletime)
+            {
+                currentHour = newHour;
+                newHour = currentHour;
+                validAfter = 0;
+                await using var update = Command(connection, tx,
+                    $"UPDATE {_schema}.alliances SET current_prime_hour=$2,new_prime_hour=$3,new_prime_hour_valid_after_filetime=0 WHERE id=$1",
+                    alliance, currentHour, newHour);
+                await update.ExecuteNonQueryAsync(token);
+            }
+            return (currentHour, newHour, validAfter);
+        }, token);
+
+    public async Task<(long? CurrentSystemId, long? NewSystemId, long ValidAfterFileTime)> AllianceCapitalSystemAsync(
+        long alliance, long? soleSystemId = null, CancellationToken token = default) =>
+        await WriteAsync(async (connection, tx) =>
+        {
+            long? current;
+            long? pending;
+            long validAfter;
+            await using (var state = Command(connection, tx,
+                $"SELECT current_capital_system_id,new_capital_system_id,new_capital_system_valid_after_filetime FROM {_schema}.alliances WHERE id=$1 FOR UPDATE",
+                alliance))
+            await using (var reader = await state.ExecuteReaderAsync(token))
+            {
+                if (!await reader.ReadAsync(token)) throw new CorporationError("ALLIANCE_NOT_FOUND");
+                current = reader.IsDBNull(0) ? null : reader.GetInt64(0);
+                pending = reader.IsDBNull(1) ? null : reader.GetInt64(1);
+                validAfter = reader.GetInt64(2);
+            }
+
+            var now = VoteNowFiletime;
+            if (soleSystemId is > 0)
+            {
+                if (!await SolarSystemExistsAsync(connection, tx, soleSystemId.Value, token))
+                    throw new CorporationError("ALLIANCE_CAPITAL_SYSTEM_INVALID");
+                if (current != soleSystemId || pending is not null || validAfter != 0)
+                {
+                    current = soleSystemId;
+                    pending = null;
+                    validAfter = 0;
+                    await using var update = Command(connection, tx,
+                        $"UPDATE {_schema}.alliances SET current_capital_system_id=$2,new_capital_system_id=NULL,new_capital_system_valid_after_filetime=0 WHERE id=$1",
+                        alliance, current);
+                    await update.ExecuteNonQueryAsync(token);
+                }
+            }
+            else if (validAfter > 0 && validAfter <= now)
+            {
+                current = pending;
+                pending = null;
+                validAfter = 0;
+                await using var update = Command(connection, tx,
+                    $"UPDATE {_schema}.alliances SET current_capital_system_id=$2,new_capital_system_id=NULL,new_capital_system_valid_after_filetime=0 WHERE id=$1",
+                    alliance, current);
+                await update.ExecuteNonQueryAsync(token);
+            }
+            return (current, pending, validAfter);
+        }, token);
+
+    public async Task SetAllianceCapitalSystemAsync(
+        long actor, long alliance, long solarSystemId, long? soleSystemId, CancellationToken token = default)
+    {
+        if (solarSystemId <= 0) throw new CorporationError("ALLIANCE_CAPITAL_SYSTEM_INVALID");
+        await WriteAsync(async (connection, tx) =>
+        {
+            await RequireAllianceExecutorAsync(connection, tx, actor, alliance, token);
+            if (!await SolarSystemExistsAsync(connection, tx, solarSystemId, token))
+                throw new CorporationError("ALLIANCE_CAPITAL_SYSTEM_INVALID");
+            if (soleSystemId is > 0 && soleSystemId.Value != solarSystemId)
+                throw new CorporationError("ALLIANCE_CAPITAL_SYSTEM_NOT_SOV_HUB");
+
+            long? current;
+            long? pending;
+            long validAfter;
+            await using (var state = Command(connection, tx,
+                $"SELECT current_capital_system_id,new_capital_system_id,new_capital_system_valid_after_filetime FROM {_schema}.alliances WHERE id=$1 FOR UPDATE",
+                alliance))
+            await using (var reader = await state.ExecuteReaderAsync(token))
+            {
+                if (!await reader.ReadAsync(token)) throw new CorporationError("ALLIANCE_NOT_FOUND");
+                current = reader.IsDBNull(0) ? null : reader.GetInt64(0);
+                pending = reader.IsDBNull(1) ? null : reader.GetInt64(1);
+                validAfter = reader.GetInt64(2);
+            }
+
+            var now = VoteNowFiletime;
+            if (soleSystemId is > 0)
+            {
+                current = soleSystemId;
+                pending = null;
+                validAfter = 0;
+            }
+            else
+            {
+                if (validAfter > 0 && validAfter <= now)
+                {
+                    current = pending;
+                    pending = null;
+                    validAfter = 0;
+                }
+                if (pending == solarSystemId || (current == solarSystemId && pending is null && validAfter == 0))
+                    return true;
+                pending = solarSystemId;
+                validAfter = checked(now + 7 * VoteTicksPerDay);
+            }
+
+            await using var update = Command(connection, tx,
+                $"UPDATE {_schema}.alliances SET current_capital_system_id=$2,new_capital_system_id=$3,new_capital_system_valid_after_filetime=$4 WHERE id=$1",
+                alliance, current, pending, validAfter);
+            await update.ExecuteNonQueryAsync(token);
+            return true;
+        }, token);
+    }
+
+    public async Task CancelAllianceCapitalSystemTransitionAsync(
+        long actor, long alliance, long? soleSystemId, CancellationToken token = default)
+    {
+        await WriteAsync(async (connection, tx) =>
+        {
+            await RequireAllianceExecutorAsync(connection, tx, actor, alliance, token);
+            if (soleSystemId is > 0 && !await SolarSystemExistsAsync(connection, tx, soleSystemId.Value, token))
+                throw new CorporationError("ALLIANCE_CAPITAL_SYSTEM_INVALID");
+
+            long? current;
+            long? pending;
+            long validAfter;
+            await using (var state = Command(connection, tx,
+                $"SELECT current_capital_system_id,new_capital_system_id,new_capital_system_valid_after_filetime FROM {_schema}.alliances WHERE id=$1 FOR UPDATE",
+                alliance))
+            await using (var reader = await state.ExecuteReaderAsync(token))
+            {
+                if (!await reader.ReadAsync(token)) throw new CorporationError("ALLIANCE_NOT_FOUND");
+                current = reader.IsDBNull(0) ? null : reader.GetInt64(0);
+                pending = reader.IsDBNull(1) ? null : reader.GetInt64(1);
+                validAfter = reader.GetInt64(2);
+            }
+
+            if (soleSystemId is > 0)
+            {
+                current = soleSystemId;
+                pending = null;
+                validAfter = 0;
+            }
+            else if (validAfter > 0 && validAfter <= VoteNowFiletime)
+            {
+                current = pending;
+                pending = null;
+                validAfter = 0;
+            }
+            else if (pending is not null)
+            {
+                pending = null;
+                validAfter = 0;
+            }
+            else
+            {
+                return true;
+            }
+
+            await using var update = Command(connection, tx,
+                $"UPDATE {_schema}.alliances SET current_capital_system_id=$2,new_capital_system_id=$3,new_capital_system_valid_after_filetime=$4 WHERE id=$1",
+                alliance, current, pending, validAfter);
+            await update.ExecuteNonQueryAsync(token);
+            return true;
+        }, token);
+    }
+
+    private static async Task<bool> SolarSystemExistsAsync(
+        NpgsqlConnection connection, NpgsqlTransaction? transaction, long solarSystemId, CancellationToken token)
+    {
+        var key = solarSystemId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        await using var command = Command(connection, transaction,
+            "SELECT EXISTS (SELECT 1 FROM sde.\"mapSolarSystems\" WHERE key=$1)", key);
+        return await command.ExecuteScalarAsync(token) is true;
+    }
+
+
+    private async Task<Alliance> RequireAllianceExecutorAsync(NpgsqlConnection connection,NpgsqlTransaction tx,long actor,long alliance,CancellationToken token)
+    {
+        var character = await _characters.LockAndGetAsync(connection,tx,actor,token) ?? throw new CorporationError("CHARACTER_NOT_FOUND");
+        var corporation = await RequireRoleAsync(connection,tx,character.CorporationId,actor,CorporationRoles.Director,token);
+        if (corporation.AllianceId != alliance) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var current = await AllianceAsync(connection,tx,alliance,true,token);
+        if (current is not { Deleted:false } || current.ActiveExecutorId != corporation.Id)
+            throw new CorporationError("ALLIANCE_EXECUTOR_REQUIRED");
+        return current;
+    }
+
+    public Task WriteAllianceRelationshipAsync(long actor,long alliance,Func<NpgsqlConnection,NpgsqlTransaction,Task> write,CancellationToken token = default) =>
+        WriteAsync(async (connection,tx) =>
+        {
+            await RequireAllianceExecutorAsync(connection,tx,actor,alliance,token);
+            await write(connection,tx);
+            return true;
+        },token);
+
+    public async Task<IReadOnlyList<AllianceContact>> AllianceContactsAsync(long alliance,CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection,null,$"SELECT contact_id,relationship_id,label_mask FROM {_schema}.alliance_contacts WHERE alliance_id=$1 ORDER BY contact_id",alliance);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        var contacts = new List<AllianceContact>();
+        while (await reader.ReadAsync(token))
+            contacts.Add(new AllianceContact(reader.GetInt64(0),reader.GetInt64(1),reader.GetInt64(2)));
+        return contacts;
+    }
+
+    public async Task<IReadOnlyList<AllianceContactLabel>> AllianceContactLabelsAsync(long alliance,CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection,null,$"SELECT label_id,name,color FROM {_schema}.alliance_contact_labels WHERE alliance_id=$1 ORDER BY label_id",alliance);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        var labels = new List<AllianceContactLabel>();
+        while (await reader.ReadAsync(token))
+            labels.Add(new AllianceContactLabel(reader.GetInt64(0),reader.GetString(1),reader.GetInt32(2)));
+        return labels;
+    }
+
+    public Task AddAllianceContactAsync(long actor,long alliance,long contact,long relationshipId,CancellationToken token = default)
+    {
+        ValidateAllianceContact(alliance,contact,relationshipId);
+        return WriteAsync(async (connection,tx) =>
+        {
+            await RequireAllianceExecutorAsync(connection,tx,actor,alliance,token);
+            await using var command = Command(connection,tx,$"INSERT INTO {_schema}.alliance_contacts (alliance_id,contact_id,relationship_id) VALUES ($1,$2,$3) ON CONFLICT (alliance_id,contact_id) DO UPDATE SET relationship_id=EXCLUDED.relationship_id",alliance,contact,relationshipId);
+            await command.ExecuteNonQueryAsync(token);
+            return true;
+        },token);
+    }
+
+    public Task EditAllianceContactAsync(long actor,long alliance,long contact,long relationshipId,CancellationToken token = default)
+    {
+        ValidateAllianceContact(alliance,contact,relationshipId);
+        return WriteAsync(async (connection,tx) =>
+        {
+            await RequireAllianceExecutorAsync(connection,tx,actor,alliance,token);
+            await using var command = Command(connection,tx,$"UPDATE {_schema}.alliance_contacts SET relationship_id=$3 WHERE alliance_id=$1 AND contact_id=$2",alliance,contact,relationshipId);
+            if (await command.ExecuteNonQueryAsync(token) == 0) throw new CorporationError("ALLIANCE_CONTACT_NOT_FOUND");
+            return true;
+        },token);
+    }
+
+    public Task RemoveAllianceContactsAsync(long actor,long alliance,IReadOnlyCollection<long> contacts,CancellationToken token = default)
+    {
+        if (contacts.Any(contact => contact <= 0)) throw new CorporationError("ALLIANCE_CONTACT_INVALID");
+        if (contacts.Count == 0) return Task.CompletedTask;
+        var ids = contacts.Distinct().ToArray();
+        return WriteAsync(async (connection,tx) =>
+        {
+            await RequireAllianceExecutorAsync(connection,tx,actor,alliance,token);
+            await using var command = Command(connection,tx,$"DELETE FROM {_schema}.alliance_contacts WHERE alliance_id=$1 AND contact_id=ANY($2)",alliance,ids);
+            await command.ExecuteNonQueryAsync(token);
+            return true;
+        },token);
+    }
+
+    public Task EditAllianceContactsRelationshipAsync(long actor,long alliance,IReadOnlyCollection<long> contacts,long relationshipId,CancellationToken token = default)
+    {
+        if (relationshipId is < -10 or > 10 || contacts.Any(contact => contact <= 0))
+            throw new CorporationError("ALLIANCE_CONTACT_INVALID");
+        if (contacts.Count == 0) return Task.CompletedTask;
+        var ids = contacts.Distinct().ToArray();
+        return WriteAsync(async (connection,tx) =>
+        {
+            await RequireAllianceExecutorAsync(connection,tx,actor,alliance,token);
+            await using var command = Command(connection,tx,$"UPDATE {_schema}.alliance_contacts SET relationship_id=$3 WHERE alliance_id=$1 AND contact_id=ANY($2)",alliance,ids,relationshipId);
+            await command.ExecuteNonQueryAsync(token);
+            return true;
+        },token);
+    }
+
+    public Task<AllianceContactLabel> CreateAllianceContactLabelAsync(long actor,long alliance,string name,int color,CancellationToken token = default)
+    {
+        ValidateAllianceLabel(name,color);
+        return WriteAsync(async (connection,tx) =>
+        {
+            await RequireAllianceExecutorAsync(connection,tx,actor,alliance,token);
+            await using var nextCommand = Command(connection,tx,$"SELECT COALESCE(MAX(label_id),0)+1 FROM {_schema}.alliance_contact_labels WHERE alliance_id=$1",alliance);
+            var labelId = Convert.ToInt64(await nextCommand.ExecuteScalarAsync(token));
+            if (labelId > 63) throw new CorporationError("ALLIANCE_LABEL_LIMIT");
+            await using var command = Command(connection,tx,$"INSERT INTO {_schema}.alliance_contact_labels (alliance_id,label_id,name,color) VALUES ($1,$2,$3,$4)",alliance,labelId,name,color);
+            await command.ExecuteNonQueryAsync(token);
+            return new AllianceContactLabel(labelId,name,color);
+        },token);
+    }
+
+    public Task DeleteAllianceContactLabelAsync(long actor,long alliance,long labelId,CancellationToken token = default)
+    {
+        ValidateAllianceLabelId(labelId);
+        return WriteAsync(async (connection,tx) =>
+        {
+            await RequireAllianceExecutorAsync(connection,tx,actor,alliance,token);
+            await using var command = Command(connection,tx,$"DELETE FROM {_schema}.alliance_contact_labels WHERE alliance_id=$1 AND label_id=$2",alliance,labelId);
+            if (await command.ExecuteNonQueryAsync(token) > 0)
+            {
+                var bit = 1L << ((int)labelId - 1);
+                await using var clear = Command(connection,tx,$"UPDATE {_schema}.alliance_contacts SET label_mask=label_mask & $2 WHERE alliance_id=$1",alliance,~bit);
+                await clear.ExecuteNonQueryAsync(token);
+            }
+            return true;
+        },token);
+    }
+
+    public Task EditAllianceContactLabelAsync(long actor,long alliance,long labelId,string? name,int? color,CancellationToken token = default)
+    {
+        ValidateAllianceLabelId(labelId);
+        if ((name is not null && (string.IsNullOrWhiteSpace(name) || name.Length > 100)) || color is < 0 or > 16777215)
+            throw new CorporationError("ALLIANCE_LABEL_INVALID");
+        return WriteAsync(async (connection,tx) =>
+        {
+            await RequireAllianceExecutorAsync(connection,tx,actor,alliance,token);
+            await using var command = Command(connection,tx,$"UPDATE {_schema}.alliance_contact_labels SET name=COALESCE($3,name),color=COALESCE($4,color) WHERE alliance_id=$1 AND label_id=$2",alliance,labelId,name,color);
+            if (await command.ExecuteNonQueryAsync(token) == 0) throw new CorporationError("ALLIANCE_LABEL_NOT_FOUND");
+            return true;
+        },token);
+    }
+
+    public Task AssignAllianceContactLabelsAsync(long actor,long alliance,IReadOnlyCollection<long> contacts,long labelMask,CancellationToken token = default) =>
+        ChangeAllianceContactLabelsAsync(actor,alliance,contacts,labelMask,true,token);
+
+    public Task RemoveAllianceContactLabelsAsync(long actor,long alliance,IReadOnlyCollection<long> contacts,long labelMask,CancellationToken token = default) =>
+        ChangeAllianceContactLabelsAsync(actor,alliance,contacts,labelMask,false,token);
+
+    private Task ChangeAllianceContactLabelsAsync(long actor,long alliance,IReadOnlyCollection<long> contacts,long labelMask,bool add,CancellationToken token)
+    {
+        if (labelMask < 0 || contacts.Any(contact => contact <= 0)) throw new CorporationError("ALLIANCE_LABEL_INVALID");
+        if (contacts.Count == 0 || labelMask == 0) return Task.CompletedTask;
+        var ids = contacts.Distinct().ToArray();
+        return WriteAsync(async (connection,tx) =>
+        {
+            await RequireAllianceExecutorAsync(connection,tx,actor,alliance,token);
+            var allowed = await AllianceContactLabelMaskAsync(connection,tx,alliance,token);
+            if ((labelMask & ~allowed) != 0) throw new CorporationError("ALLIANCE_LABEL_NOT_FOUND");
+            var operation = add ? "|" : "& ~";
+            await using var command = Command(connection,tx,$"UPDATE {_schema}.alliance_contacts SET label_mask=label_mask {operation} $3 WHERE alliance_id=$1 AND contact_id=ANY($2)",alliance,ids,labelMask);
+            await command.ExecuteNonQueryAsync(token);
+            return true;
+        },token);
+    }
+
+    private async Task<long> AllianceContactLabelMaskAsync(NpgsqlConnection connection,NpgsqlTransaction tx,long alliance,CancellationToken token)
+    {
+        await using var command = Command(connection,tx,$"SELECT label_id FROM {_schema}.alliance_contact_labels WHERE alliance_id=$1 ORDER BY label_id",alliance);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        long mask = 0;
+        while (await reader.ReadAsync(token))
+            mask |= 1L << (reader.GetInt16(0) - 1);
+        return mask;
+    }
+
+    private static void ValidateAllianceContact(long alliance,long contact,long relationshipId)
+    {
+        if (contact <= 0 || contact == alliance || relationshipId is < -10 or > 10)
+            throw new CorporationError("ALLIANCE_CONTACT_INVALID");
+    }
+
+    private static void ValidateAllianceLabel(string name,int color)
+    {
+        if (string.IsNullOrWhiteSpace(name) || name.Length > 100 || color is < 0 or > 16777215)
+            throw new CorporationError("ALLIANCE_LABEL_INVALID");
+    }
+
+    private static void ValidateAllianceLabelId(long labelId)
+    {
+        if (labelId is < 1 or > 63) throw new CorporationError("ALLIANCE_LABEL_INVALID");
     }
 }

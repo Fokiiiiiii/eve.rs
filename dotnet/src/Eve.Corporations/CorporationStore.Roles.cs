@@ -89,7 +89,7 @@ public sealed partial class CorporationStore
             if (corp.IsNpc || corp.Deleted) throw new CorporationError("CORPORATION_ACCESS_DENIED");
             var actorMember = await MemberAsync(connection,tx,actor,token) ?? throw new CorporationError("CORPORATION_ACCESS_DENIED");
             var titles = await TitlesAsync(connection,tx,corp.Id,token);
-            var ceo = corp.CeoId == actor;
+            var ceo = corp.CeoId == actor && !corp.CeoRolesSuspended;
             var administrator = ceo || (CorporationRoles.Session(corp,actorMember,actorCharacter.StationId,titles).AtAll & CorporationRoles.Director) != 0;
             var grantables = Masks(CorporationRoles.GrantableFor(corp,actorMember,actorCharacter.CorporationId,titles));
             var results = new List<Member>();

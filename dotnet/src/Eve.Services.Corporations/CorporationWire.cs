@@ -64,6 +64,20 @@ public static class CorporationWire
 
     internal static Descriptor DescriptorOf(params (string Name,int Type)[] columns) => Descriptor.FromHeader(new PyObjectEx(ObjectExKind.Ex1,
         Py.Tuple(new PyToken("blue.DBRowDescriptor"),Py.Tuple(Py.Tuple([.. columns.Select(c => (PyValue)Py.Tuple(new PyStr(c.Name),new PyInt(c.Type)))]))),[],[]));
+
+    private static readonly string[] ShareholderColumns = ["shareholderID","corporationID","shares"];
+    private static readonly Descriptor ShareholderDescriptor = DescriptorOf(
+        ("shareholderID",3),("corporationID",3),("shares",3));
+
+    public static PyValue ShareholdersRowset(IEnumerable<(long ShareholderId,long CorporationId,long Shares)> holdings) =>
+        Py.Rowset(ShareholderColumns,holdings.Select(holding => (PyValue)Py.List(
+            new PyInt(holding.ShareholderId),new PyInt(holding.CorporationId),new PyInt(holding.Shares))));
+
+    public static PyValue ShareholderCRowset(IEnumerable<(long ShareholderId,long CorporationId,long Shares)> holdings) =>
+        new PyObject(new PyStr("carbon.common.script.sys.crowset.CRowset"),Py.Dict(
+            ("header",ShareholderDescriptor.Header),("RowClass",new PyToken("util.Row")),
+            ("lines",new PyList([.. holdings.Select(holding => (PyValue)new PyPackedRow(ShareholderDescriptor,
+                [new PyInt(holding.ShareholderId),new PyInt(holding.CorporationId),new PyInt(holding.Shares)]))]))));
     private static readonly Descriptor MemberDescriptor = DescriptorOf(
         ("characterID",3),("corporationID",3),("divisionID",3),("squadronID",3),("title",130),("roles",64),("grantableRoles",64),
         ("startDateTime",64),("baseID",3),("rolesAtHQ",64),("grantableRolesAtHQ",64),("rolesAtBase",64),("grantableRolesAtBase",64),
@@ -83,4 +97,217 @@ public static class CorporationWire
             Py.Dict(("header",TitleDescriptor.Header),("idName",new PyStr("titleID")),("columnName",new PyStr("titleID")))),[],
         [.. titles.Select(t => new KeyValuePair<PyValue,PyValue>(new PyInt(t.Id),
             new PyPackedRow(TitleDescriptor,[new PyInt(t.Id),new PyWString(t.Name),.. Masks(t.Masks)])))]);
+}
+
+
+[Eve.Services.Service("voteManager")]
+public sealed partial class VoteManagerService(Eve.Corporations.CorporationStore store)
+{
+    private const int VoteCaseStatusAll = 0;
+    private const int VoteCaseStatusClosed = 1;
+    private const int VoteCaseStatusOpen = 2;
+    private const int VoteGeneral = 4;
+
+    [Eve.Services.Method("GetVoteCasesByCorporation")]
+
+    public async ValueTask<PyValue> GetVoteCasesByCorporation(Eve.Services.ServiceCall call)
+    {
+        var corporationId = Number(call.Arg(0));
+        var actorId = call.Session.CharacterId ?? 0;
+        var requestedStatus = call.Args.Count > 1 && call.Arg(1) is not PyNone
+            ? Number(call.Arg(1))
+            : VoteCaseStatusAll;
+        IReadOnlyList<Eve.Corporations.CorporationStore.CorporationVoteCase> cases = corporationId > 0
+            ? await store.VoteCasesAsync(corporationId,actorId,call.Cancellation)
+            : Array.Empty<Eve.Corporations.CorporationStore.CorporationVoteCase>();
+        var now = store.VoteNowFiletime;
+        var open = cases.Where(vote => vote.EndDateTime > now).ToArray();
+        var closed = cases.Where(vote => vote.EndDateTime <= now).Take(20).ToArray();
+        if (requestedStatus == VoteCaseStatusOpen)
+            return new PyDict([new(new PyInt(VoteCaseStatusOpen),VoteCasesRowset(open))]);
+        if (requestedStatus == VoteCaseStatusClosed)
+            return new PyDict([new(new PyInt(VoteCaseStatusClosed),VoteCasesRowset(closed))]);
+        return new PyDict([
+            new(new PyInt(VoteCaseStatusOpen),VoteCasesRowset(open)),
+            new(new PyInt(VoteCaseStatusClosed),VoteCasesRowset(closed)),
+        ]);
+    }
+
+    [Eve.Services.Method("GetVoteCase")]
+    public async ValueTask<PyValue> GetVoteCase(Eve.Services.ServiceCall call)
+    {
+        var corporationId = Number(call.Arg(0));
+        var voteCaseId = Number(call.Arg(1));
+        var vote = await store.VoteCaseAsync(corporationId,voteCaseId,call.Session.CharacterId ?? 0,call.Cancellation);
+        return vote is null ? PyNone.Instance : VoteCaseRow(vote);
+    }
+
+    [Eve.Services.Method("GetVoteCaseOptions")]
+
+    public async ValueTask<PyValue> GetVoteCaseOptions(Eve.Services.ServiceCall call)
+    {
+        var corporationId = Number(call.Arg(0));
+        var voteCaseId = Number(call.Arg(1));
+        var vote = await store.VoteCaseAsync(corporationId,voteCaseId,call.Session.CharacterId ?? 0,call.Cancellation);
+        if (vote is null) return VoteOptionsRowset([]);
+        var options = Eve.Marshal.MarshalCodec.DecodeExact(vote.OptionsMarshal);
+        var rows = new List<PyValue>();
+        if (vote.VoteType == VoteGeneral && options is PyList list)
+        {
+            for (var index = 0; index < list.Items.Count; index++)
+                rows.Add(OptionRow(vote,index,list.Items[index],null,null,null));
+        }
+        else if (options is PyTuple tuple && tuple.Items.Count == 5)
+        {
+            rows.Add(OptionRow(vote,0,tuple.Items[0],vote.Parameter,vote.Parameter1,vote.Parameter2));
+            rows.Add(OptionRow(vote,1,tuple.Items[1],0L,vote.Parameter1,vote.Parameter2));
+        }
+        return VoteOptionsRowset(rows);
+    }
+
+    [Eve.Services.Method("GetVotes")]
+
+    public async ValueTask<PyValue> GetVotes(Eve.Services.ServiceCall call)
+    {
+        var actorId = call.Session.CharacterId ?? 0;
+        if (actorId <= 0) throw new Eve.Corporations.CorporationError("CORPORATION_ACCESS_DENIED");
+
+        var voteCaseId = Number(call.Arg(0));
+        var ballot = await store.VoteBallotAsync(voteCaseId,actorId,call.Cancellation);
+        IEnumerable<PyValue> rows = ballot is null
+            ? []
+            : [(PyValue)Py.List(new PyInt(ballot.OptionId))];
+        return Eve.Services.Py.Rowset(["optionID"],rows);
+    }
+
+    [Eve.Services.Method("CanViewVotes")]
+
+    public async ValueTask<PyValue> CanViewVotes(Eve.Services.ServiceCall call)
+    {
+        var corporationId = Number(call.Arg(0));
+        return await store.CanViewVotesAsync(corporationId,call.Session.CharacterId ?? 0,call.Cancellation)
+            ? PyBool.True : PyBool.False;
+    }
+
+    [Eve.Services.Method("CanRunForCEO")]
+
+    public async ValueTask<PyValue> CanRunForCEO(Eve.Services.ServiceCall call) =>
+        await store.CanRunForCEOAsync(CurrentCorporation(call.Session),call.Session.CharacterId ?? 0,call.Cancellation)
+            ? PyBool.True : PyBool.False;
+
+    [Eve.Services.Method("InsertVoteCase")]
+    public async ValueTask<PyValue> InsertVoteCase(Eve.Services.ServiceCall call)
+    {
+        var actorId = call.Session.CharacterId ?? 0;
+        var corporationId = CurrentCorporation(call.Session);
+        if (actorId <= 0 || corporationId <= 0) throw new Eve.Corporations.CorporationError("CORPORATION_ACCESS_DENIED");
+        var voteCaseText = Text(call.Arg(0));
+        var description = Text(call.Arg(1));
+        var voteType = checked((int)Number(call.Arg(2)));
+        var options = call.Arg(3);
+        var (optionCount,parameter,parameter1,parameter2) = VoteOptions(voteType,options);
+        var voteCaseId = await store.InsertVoteCaseAsync(corporationId,actorId,voteCaseText,description,voteType,
+            Eve.Marshal.MarshalCodec.Encode(options),optionCount,parameter,parameter1,parameter2,
+            OptionalNumber(call.Arg(4)) ?? 1L,call.Cancellation);
+        return new PyInt(voteCaseId);
+    }
+
+    [Eve.Services.Method("InsertVote")]
+    public async ValueTask<PyValue> InsertVote(Eve.Services.ServiceCall call)
+    {
+        var corporationId = Number(call.Arg(0));
+        var voteCaseId = Number(call.Arg(1));
+        var actorId = call.Session.CharacterId ?? 0;
+        if (corporationId <= 0 || voteCaseId <= 0 || actorId <= 0)
+            throw new Eve.Corporations.CorporationError("CORPORATION_ACCESS_DENIED");
+        await store.InsertVoteAsync(corporationId,voteCaseId,actorId,
+            Number(call.Arg(2)),call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    [Eve.Services.Method("GetCorpSanctionedActions")]
+    public async ValueTask<PyValue> GetCorpSanctionedActions(Eve.Services.ServiceCall call)
+    {
+        var corporationId = CurrentCorporation(call.Session);
+        IReadOnlyList<Eve.Corporations.CorporationStore.CorporationVoteSanction> actions = corporationId > 0
+            ? await store.VoteSanctionedActionsAsync(corporationId,call.Session.CharacterId ?? 0,call.Cancellation)
+            : Array.Empty<Eve.Corporations.CorporationStore.CorporationVoteSanction>();
+        return new PyDict([.. actions.Select(action => new KeyValuePair<PyValue,PyValue>(
+            new PyInt(action.VoteCaseId),
+            Eve.Services.Py.KeyVal(
+                ("voteCaseID",new PyInt(action.VoteCaseId)),
+                ("corporationID",new PyInt(action.CorporationId)),
+                ("voteType",new PyInt(action.VoteType)),
+                ("parameter",Optional(action.Parameter)),
+                ("parameter1",Optional(action.Parameter1)),
+                ("parameter2",Optional(action.Parameter2)),
+                ("inEffect",new PyInt(action.InEffect ? 1 : 0)),
+                ("expires",new PyLong(action.Expires)))) )]);
+    }
+
+    [Eve.Services.Method("ActivateSanctionedAction")]
+    public async ValueTask<PyValue> ActivateSanctionedAction(Eve.Services.ServiceCall call)
+    {
+        await store.ActivateSanctionedVoteAsync(CurrentCorporation(call.Session),call.Session.CharacterId ?? 0,
+            Number(call.Arg(0)),call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    private static PyValue VoteCasesRowset(IReadOnlyList<Eve.Corporations.CorporationStore.CorporationVoteCase> cases) =>
+        Eve.Services.Py.Rowset(VoteCaseHeader,cases.Select(vote => (PyValue)Py.List(
+            new PyInt(vote.VoteCaseId),new PyInt(vote.CorporationId),new PyWString(vote.VoteCaseText),
+            new PyWString(vote.Description),new PyInt(vote.VoteType),new PyLong(vote.StartDateTime),
+            new PyLong(vote.EndDateTime))));
+
+    private static PyValue VoteCaseRow(Eve.Corporations.CorporationStore.CorporationVoteCase vote) =>
+        new PyObject(new PyStr("util.Row"),Py.Dict(
+            ("header",Py.Tuple([.. VoteCaseHeader.Select(name => (PyValue)new PyStr(name))])),
+            ("line",Py.Tuple(
+                new PyInt(vote.VoteCaseId),new PyInt(vote.CorporationId),new PyWString(vote.VoteCaseText),
+                new PyWString(vote.Description),new PyInt(vote.VoteType),new PyLong(vote.StartDateTime),
+                new PyLong(vote.EndDateTime)))));
+
+    private static readonly string[] VoteCaseHeader =
+        ["voteCaseID","corporationID","voteCaseText","description","voteType","startDateTime","endDateTime"];
+
+    private static PyValue VoteOptionsRowset(IEnumerable<PyValue> rows) =>
+        Eve.Services.Py.Rowset(["voteCaseID","optionID","optionText","parameter","parameter1","parameter2"],rows);
+
+    private static PyValue OptionRow(Eve.Corporations.CorporationStore.CorporationVoteCase vote,long optionId,
+        PyValue text,long? parameter,long? parameter1,long? parameter2) =>
+        Py.List(new PyInt(vote.VoteCaseId),new PyInt(optionId),text,Optional(parameter),Optional(parameter1),Optional(parameter2));
+
+    private static (int Count,long? Parameter,long? Parameter1,long? Parameter2) VoteOptions(int voteType,PyValue options)
+    {
+        if (voteType == VoteGeneral)
+        {
+            if (options is not PyList list || list.Items.Count is < 2 or > 50 ||
+                list.Items.Any(option => option is not PyStr and not PyWString))
+                throw new Eve.Corporations.CorporationError("CORPORATION_INVALID_VOTE_OPTIONS");
+            return (list.Items.Count,null,null,null);
+        }
+        if (voteType is < 0 or > 6 || options is not PyTuple tuple || tuple.Items.Count != 5)
+            throw new Eve.Corporations.CorporationError("CORPORATION_INVALID_VOTE_OPTIONS");
+        return (2,OptionalNumber(tuple.Items[2]),OptionalNumber(tuple.Items[3]),OptionalNumber(tuple.Items[4]));
+    }
+
+    private static long? OptionalNumber(PyValue value) => value is PyNone ? null : Number(value);
+    private static PyValue Optional(long? value) => value is { } number ? new PyInt(number) : PyNone.Instance;
+    private static long Number(PyValue value) => value switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        PyBool boolean => boolean.Value ? 1 : 0,
+        PyReal real when double.IsFinite(real.Value) && Math.Truncate(real.Value) == real.Value &&
+                         real.Value >= long.MinValue && real.Value <= long.MaxValue => (long)real.Value,
+        _ => throw new Eve.Corporations.CorporationError("CORPORATION_INVALID_VOTE_ARGUMENT"),
+    };
+    private static string Text(PyValue value) => value switch
+    {
+        PyStr text => text.Value,
+        PyWString text => text.Value,
+        _ => throw new Eve.Corporations.CorporationError("CORPORATION_INVALID_VOTE_ARGUMENT"),
+    };
+    private static long CurrentCorporation(Eve.Services.ClientSession session) =>
+        session.GetInt("corporationID") ?? session.GetInt("corpid") ?? 0;
 }

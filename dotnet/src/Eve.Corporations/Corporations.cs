@@ -12,7 +12,8 @@ public sealed record NewCorporation(string Name, string Ticker, string Descripti
     decimal LoyaltyPointTaxRate = 0, bool ApplicationsEnabled = true, bool FriendlyFire = false, JsonElement Settings = default);
 public sealed record Corporation(long Id, string Name, string Ticker, long CeoId, long CreatorId, long? AllianceId,
     long StationId, int SolarSystemId, decimal TaxRate, decimal LoyaltyPointTaxRate, string Description, string Url,
-    int MemberLimit, bool IsNpc, bool FriendlyFire, long CreatedMs, JsonElement Settings, bool Deleted = false);
+    int MemberLimit, bool IsNpc, bool FriendlyFire, long CreatedMs, JsonElement Settings, bool Deleted = false,
+    bool CeoRolesSuspended = false);
 public sealed record RoleMasks(long Roles = 0, long GrantableRoles = 0, long AtHq = 0, long GrantableHq = 0,
     long AtBase = 0, long GrantableBase = 0, long AtOther = 0, long GrantableOther = 0);
 public sealed record Member(long CharacterId, long CorporationId, long StartedMs, string Title, RoleMasks Masks,
@@ -60,7 +61,8 @@ public static class CorporationRoles
             ? titles.Where(t => t.Id > 0 && (t.Id & (t.Id - 1)) == 0 && (member.TitleMask & t.Id) == t.Id).ToArray()
             : [];
         var all = Effective(member.Masks.Roles, Administrative, assigned.Select(t => t.Masks.Roles), Grantable);
-        var director = corporation.CeoId == member.CharacterId || (all & Director) != 0;
+        var director = !corporation.CeoRolesSuspended && corporation.CeoId == member.CharacterId ||
+            (all & Director) != 0;
         var hq = director ? Locational : Effective(member.Masks.AtHq, Locational, assigned.Select(t => t.Masks.AtHq));
         var atBase = director ? Locational : Effective(member.Masks.AtBase, Locational, assigned.Select(t => t.Masks.AtBase));
         var other = director ? Locational : Effective(member.Masks.AtOther, Locational, assigned.Select(t => t.Masks.AtOther));
@@ -72,7 +74,7 @@ public static class CorporationRoles
     public static RoleMasks GrantableFor(Corporation corporation, Member member, long characterCorporationId, IReadOnlyList<CorporationTitle> titles)
     {
         if (corporation.IsNpc || characterCorporationId != corporation.Id || member.CorporationId != corporation.Id) return new RoleMasks();
-        var ceo = corporation.CeoId == member.CharacterId;
+        var ceo = !corporation.CeoRolesSuspended && corporation.CeoId == member.CharacterId;
         if (ceo || (IsKnown(member.Masks.Roles, Administrative) && (member.Masks.Roles & Director) != 0))
             return new RoleMasks(0, ceo ? Administrative : Grantable, 0, Locational, 0, Locational, 0, Locational);
         if (!IsKnown(member.Masks.Roles, Administrative)) return new RoleMasks();

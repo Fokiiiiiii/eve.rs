@@ -547,11 +547,16 @@ fn message_of(case: &Value) -> Message {
             request_id: wide(case, "requestId") as u64,
             session_id: session_id(),
             ship: ship_of(&case["ship"]),
-            weapon: weapon_of(&case["weapon"]),
+            weapon: case.get("weapon").filter(|weapon| !weapon.is_null()).map(weapon_of),
             graphic_id: number("graphicId") as i32,
             orbit_distance: case["orbitDistance"].as_f64().unwrap(),
             attack_range: case["attackRange"].as_f64().unwrap(),
             cruise_fraction: case["cruiseFraction"].as_f64().unwrap(),
+            mining_amount_m3: case.get("miningAmountM3").and_then(Value::as_f64).unwrap_or(0.0),
+            work_cycle_ms: case.get("workCycleMs").and_then(Value::as_f64).unwrap_or(0.0),
+            mining_waste_multiplier: case.get("miningWasteMultiplier").and_then(Value::as_f64).unwrap_or(0.0),
+            mining_waste_probability: case.get("miningWasteProbability").and_then(Value::as_f64).unwrap_or(0.0),
+            salvage_access_bonus: case.get("salvageAccessBonus").and_then(Value::as_f64).unwrap_or(0.0),
         })),
         "DroneCommand" => Message::DroneCommand {
             session_id: session_id(),
@@ -627,6 +632,18 @@ fn every_valid_frame_encodes_to_its_bytes_and_decodes_back() {
 }
 
 #[test]
+fn a_launch_drone_without_a_weapon_roundtrips_with_the_empty_weapon_record() {
+    let mut case = fixtures()["valid"].as_array().unwrap().iter()
+        .find(|case| text(case, "name") == "launch of a drone")
+        .unwrap()
+        .clone();
+    case["weapon"] = Value::Null;
+    let message = message_of(&case);
+    let encoded = message.encode();
+    assert_eq!(Message::decode(&encoded[4..]).unwrap(), message);
+}
+
+#[test]
 fn a_heat_profile_roundtrips_through_the_link() {
     let profile = HeatProfile {
         generation_multiplier: 0.75,
@@ -698,6 +715,68 @@ fn module_offline_and_rack_overheat_orders_roundtrip_through_the_link() {
         assert_eq!(Message::decode(&frame[4..]).unwrap(), message);
     }
 }
+
+    #[test]
+    fn mutadaptive_remote_repair_action_and_cycle_messages_roundtrip_through_the_link() {
+        let effect = eve_space::modules::Effect {
+            module_id: 700,
+            module_type: 35298,
+            effect_id: 8,
+            fx: "effects.RemoteArmorRepair".to_string(),
+            duration_ms: 6_000.0,
+            capacitor_need: 513.0,
+            repeat: i32::MAX,
+            target_id: 701,
+            turret: None,
+            action: Some(eve_space::modules::Action::Remote {
+                what: eve_space::modules::Remote::MutadaptiveRepair {
+                    layer: eve_space::health::Layer::Armor,
+                    amount: 256.0,
+                    bonus_per_cycle: 0.1,
+                    bonus_max: 1.5,
+                },
+                reach: eve_space::modules::Reach { optimal: 12_000.0, falloff: 0.0 },
+                when: eve_space::modules::Applies::CycleEnd,
+                jam: "remoteArmorRepair".to_string(),
+            }),
+            on: None,
+            off: None,
+            on_changes: Vec::new(),
+            off_changes: Vec::new(),
+        };
+        let activation = Message::Activate { session_id: 42, effect: Box::new(effect) };
+        let frame = activation.encode();
+        assert_eq!(Message::decode(&frame[4..]).unwrap(), activation);
+
+        let messages = [
+            Message::RemoteRepairCycle {
+                session_id: 42,
+                module_id: 700,
+                target_id: 701,
+                cycle_id: 9,
+                cycle_number: 15,
+                cycle_at_ms: 123_456,
+                cycle_duration_ms: 6_000,
+                ends_effect_after_cycle: true,
+                base_amount: 256.0,
+                bonus_per_cycle: 0.1,
+                bonus_max: 1.5,
+            },
+            Message::RemoteRepairCycleResult {
+                session_id: 42,
+                module_id: 700,
+                target_id: 701,
+                cycle_id: 9,
+                accepted: true,
+                reason: String::new(),
+                amount: 640.0,
+            },
+        ];
+        for message in messages {
+            let frame = message.encode();
+            assert_eq!(Message::decode(&frame[4..]).unwrap(), message);
+        }
+    }
 
 #[test]
 fn every_invalid_frame_is_refused_for_the_stated_reason() {

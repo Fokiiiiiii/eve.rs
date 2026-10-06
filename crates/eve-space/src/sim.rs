@@ -228,6 +228,13 @@ impl Sim {
                     .map(|(drone, reason)| (drone, reason.unwrap_or("").to_string()))
                     .collect(),
             },
+            Out::DroneWorkCycle { session, character_id, ship_id, solar_system_id, drone_id, target_id, cycle_id, command, mining_amount_m3, waste_multiplier, waste_probability, access_difficulty_bonus, roll } => Message::DroneWorkCycle {
+                session_id: session, character_id, ship_id, solar_system_id, drone_id, target_id, cycle_id, command,
+                mining_amount_m3, waste_multiplier, waste_probability, access_difficulty_bonus, roll,
+            },
+            Out::RemoteRepairCycle { session, module_id, target_id, cycle_id, cycle_number, cycle_at_ms, cycle_duration_ms, ends_effect_after_cycle, base_amount, bonus_per_cycle, bonus_max } => Message::RemoteRepairCycle {
+                session_id: session, module_id, target_id, cycle_id, cycle_number, cycle_at_ms, cycle_duration_ms, ends_effect_after_cycle, base_amount, bonus_per_cycle, bonus_max,
+            },
             Out::TargetRefused { session, command, reason, target_type, desired_range, actual_distance } => {
                 Message::TargetRefused {
                     session_id: session,
@@ -436,6 +443,10 @@ impl Sim {
                     2 => DroneCommand::ReturnHome,
                     3 => DroneCommand::ReturnBay,
                     4 => DroneCommand::Abandon,
+                    5 => DroneCommand::Assist { character_id: target_id },
+                    6 => DroneCommand::Guard { character_id: target_id },
+                    7 => DroneCommand::MineRepeatedly { target: target_id },
+                    8 => DroneCommand::Salvage { target: (target_id > 0).then_some(target_id) },
                     other => {
                         return Err(ProtocolError(format!("unknown drone command {other}")));
                     }
@@ -495,6 +506,24 @@ impl Sim {
                     }
                 });
             }
+            Message::PlaceAsteroid(placement) => match self.scenes.get_mut(&placement.solar_system_id) {
+                Some(scene) => {
+                    let p = *placement;
+                    scene.place_asteroid(crate::wreck::Asteroid {
+                        id: p.asteroid_id,
+                        type_id: p.type_id,
+                        group_id: p.group_id,
+                        category_id: p.category_id,
+                        name: p.name,
+                        graphic_id: p.graphic_id,
+                        position: Vec3::new(p.position[0], p.position[1], p.position[2]),
+                        direction: Vec3::new(p.direction[0], p.direction[1], p.direction[2]),
+                        radius: p.radius,
+                        units_remaining: p.units_remaining,
+                    }, now)
+                }
+                None => Vec::new(),
+            },
             Message::PlaceWreck(placement) => match self.scenes.get_mut(&placement.solar_system_id) {
                 Some(scene) => {
                     let placement = *placement;
@@ -570,6 +599,17 @@ impl Sim {
                 .find(|scene| scene.wreck(wreck_id).is_some())
                 .map(|scene| scene.remove_wreck(wreck_id, i64::from(effect), now))
                 .unwrap_or_default(),
+            Message::DroneWorkResult { session_id, drone_id, target_id, cycle_id, accepted, reason: _, units_remaining, delivered_units: _, complete } => {
+                self.scenes.values_mut()
+                    .find(|scene| scene.session_of(drone_id).is_some())
+                    .map(|scene| scene.drone_work_result(session_id, drone_id, target_id, cycle_id, accepted, units_remaining, complete, now))
+                    .unwrap_or_default()
+            },
+            Message::RemoteRepairCycleResult { session_id, module_id, target_id, cycle_id, accepted, reason: _, amount } => {
+                self.scene_of(session_id)
+                    .map(|scene| scene.remote_repair_cycle_result(session_id, module_id, target_id, cycle_id, accepted, amount))
+                    .unwrap_or_default()
+            },
             Message::AdjustCharge { request_id, session_id, module_id, charge_type, op } => {
                 match self.scene_of(session_id) {
                     Some(scene) => scene.adjust_charge(request_id, session_id, module_id, charge_type, op),
@@ -670,6 +710,11 @@ impl Sim {
             orbit_distance,
             attack_range,
             cruise_fraction,
+            mining_amount_m3,
+            work_cycle_ms,
+            mining_waste_multiplier,
+            mining_waste_probability,
+            salvage_access_bonus,
         } = launch;
         let reply = |outcome| Message::SpawnReply { request_id, outcome };
         let Some(scene) = self.scene_of(session_id) else {
@@ -678,7 +723,13 @@ impl Sim {
         match scene.launch_drone(
             session_id,
             ship,
-            DroneFlight { weapon, graphic_id, orbit_distance, attack_range, cruise_fraction },
+            DroneFlight {
+                weapon, graphic_id, orbit_distance, attack_range, cruise_fraction,
+                work: crate::drones::DroneWorkProfile {
+                    mining_amount_m3, cycle_ms: work_cycle_ms, waste_multiplier: mining_waste_multiplier,
+                    waste_probability: mining_waste_probability, salvage_access_bonus,
+                },
+            },
             now,
         ) {
             Ok((session, told)) => {

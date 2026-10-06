@@ -68,6 +68,7 @@ impl Scene {
                     bound: pilot.bound,
                     sees: pilot.sees.clone(),
                     sees_wrecks: pilot.sees_wrecks.clone(),
+            sees_asteroids: pilot.sees_asteroids.clone(),
                 },
             );
         }

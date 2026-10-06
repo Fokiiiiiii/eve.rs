@@ -158,6 +158,36 @@ pub enum Out {
     DroneReleased { session: SessionId, drone_id: i64, position: Vec3 },
     /// The answer to an order to drones: for each drone `None` when it took the order, the reason when it did not.
     DroneResults { session: SessionId, command: u8, results: Vec<(i64, Option<&'static str>)> },
+    /// A completed drone work cycle waiting for authoritative inventory/cargo settlement by the host.
+    DroneWorkCycle {
+        session: SessionId,
+        character_id: i64,
+        ship_id: i64,
+        solar_system_id: i32,
+        drone_id: i64,
+        target_id: i64,
+        cycle_id: u64,
+        command: u8,
+        mining_amount_m3: f64,
+        waste_multiplier: f64,
+        waste_probability: f64,
+        access_difficulty_bonus: f64,
+        roll: f64,
+    },
+    /// A mutadaptive remote-repair cycle waits for the host's target-specific repair amount.
+    RemoteRepairCycle {
+        session: SessionId,
+        module_id: i64,
+        target_id: i64,
+        cycle_id: u64,
+        cycle_number: i32,
+        cycle_at_ms: i64,
+        cycle_duration_ms: i64,
+        ends_effect_after_cycle: bool,
+        base_amount: f64,
+        bonus_per_cycle: f64,
+        bonus_max: f64,
+    },
     /// A targeting order the scene refused, with what the client is told about the target.
     TargetRefused {
         session: SessionId,
@@ -189,6 +219,8 @@ impl Out {
             | Out::Measured { session, .. }
             | Out::DroneScooped { session, .. }
             | Out::DroneReleased { session, .. }
+            | Out::DroneWorkCycle { session, .. }
+            | Out::RemoteRepairCycle { session, .. }
             | Out::DroneResults { session, .. }
             | Out::TargetRefused { session, .. } => *session,
         }
@@ -331,6 +363,7 @@ pub(crate) struct Pilot {
     pub(crate) sees: BTreeSet<SessionId>,
     /// The wrecks this pilot has been told of and not told to forget.
     pub(crate) sees_wrecks: BTreeSet<i64>,
+    pub(crate) sees_asteroids: BTreeSet<i64>,
     /// What the ship has locked and is locking.
     pub(crate) targeting: Targeting,
     /// The capacitor and the effects of the ship's modules that run.
@@ -359,6 +392,7 @@ impl Pilot {
             entered,
             sees: BTreeSet::new(),
             sees_wrecks: BTreeSet::new(),
+            sees_asteroids: BTreeSet::new(),
             targeting: Targeting::default(),
             modules,
             protected_until,
@@ -433,6 +467,8 @@ pub struct Scene {
     pub(crate) brains: Option<crate::brains::Brains>,
     /// The wrecks in the scene, by item id (`crate::wreck`).
     pub(crate) wrecks: BTreeMap<i64, Wreck>,
+    /// Mineable asteroid rocks in this system; their remaining stock is authoritative in the host inventory.
+    pub(crate) asteroids: BTreeMap<i64, crate::wreck::Asteroid>,
     /// How many wrecks of ships that died in this scene have been given an id by it (`crate::wreck::TRANSIENT_ID_BASE`).
     pub(crate) wreck_sequence: u64,
     /// The ships destroyed since the brains last looked (`crate::brains` tells the trees that watched them).
@@ -449,6 +485,7 @@ pub(crate) struct Widow {
     pub(crate) bound: bool,
     pub(crate) sees: BTreeSet<SessionId>,
     pub(crate) sees_wrecks: BTreeSet<i64>,
+    pub(crate) sees_asteroids: BTreeSet<i64>,
 }
 
 /// The destiny stamp of a moment: whole seconds of the Unix clock.
@@ -477,11 +514,16 @@ impl Scene {
             drone_threats: BTreeMap::new(),
             brains: None,
             wrecks: BTreeMap::new(),
+            asteroids: BTreeMap::new(),
             wreck_sequence: 0,
             destroyed: Vec::new(),
             widowed: BTreeMap::new(),
             wreck_catalog: None,
         }
+    }
+
+pub(crate) fn solar_system_id(&self) -> i32 {
+        self.system.id
     }
 
     /// Gives the scene the item types the wreck rules look up, so that a ship that is destroyed leaves the wreck of its type.
@@ -731,6 +773,9 @@ impl Scene {
         } else if let Some(wreck) = course_target.and_then(|target| self.wrecks.get(&target)) {
             // a wreck or a can does not move
             ship_target = Some(Target::at_rest(wreck.position, wreck.radius));
+        } else if let Some(asteroid) = course_target.and_then(|target| self.asteroids.get(&target)) {
+            // mineable rocks are stationary targets in this scene.
+            ship_target = Some(Target::at_rest(asteroid.position, asteroid.radius));
         }
         let Some(pilot) = self.pilots.get_mut(&session) else { return };
         let milestones = settle(pilot, &system, ship_target, now);
@@ -1627,6 +1672,7 @@ impl Scene {
         told.extend(self.advance_drones(now));
         told.extend(self.reconcile(now));
         told.extend(self.reconcile_wrecks(now));
+        told.extend(self.reconcile_asteroids(now));
         told.extend(self.expire_wrecks(now));
         self.with_backlog(told)
     }

@@ -49,6 +49,10 @@ pub enum DroneCommand {
     ReturnBay,
     /// Let the drone go: it stays in space under nobody's control.
     Abandon,
+    Assist { character_id: i64 },
+    Guard { character_id: i64 },
+    MineRepeatedly { target: i64 },
+    Salvage { target: Option<i64> },
 }
 
 impl DroneCommand {
@@ -59,6 +63,10 @@ impl DroneCommand {
             Self::ReturnHome => 2,
             Self::ReturnBay => 3,
             Self::Abandon => 4,
+            Self::Assist { .. } => 5,
+            Self::Guard { .. } => 6,
+            Self::MineRepeatedly { .. } => 7,
+            Self::Salvage { .. } => 8,
         }
     }
 }
@@ -75,24 +83,58 @@ pub(crate) enum Task {
     Home,
     /// Coming back to be scooped.
     Bay,
+    MineRepeatedly {
+        target: i64,
+    },
+    Salvage {
+        target: Option<i64>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum DroneFollow {
+    Assist { character_id: i64, control_range: f64 },
+    Guard { character_id: i64, control_range: f64 },
+}
+impl DroneFollow {
+    fn character_id(self) -> i64 {
+        match self {
+            Self::Assist { character_id, .. } | Self::Guard { character_id, .. } => character_id,
+        }
+    }
+
+    fn control_range(self) -> f64 {
+        match self {
+            Self::Assist { control_range, .. } | Self::Guard { control_range, .. } => control_range,
+        }
+    }
 }
 
 /// What the scene keeps of a drone besides its ship.
 #[derive(Debug, Clone)]
 pub(crate) struct DroneAi {
     pub(crate) task: Task,
+    pub(crate) follow: Option<DroneFollow>,
     /// The next moment its weapon fires.
     next_shot: i64,
     /// How far it can shoot (metres off its target's surface), how near it circles its target, and how far it follows one that runs.
     engagement_range: f64,
     movement_range: f64,
     chase_range: f64,
+    work: DroneWorkProfile,
+    can_combat: bool,
+    work_control_range: f64,
+    work_ready_at: i64,
+    work_cycle_id: u64,
+    awaiting_work: bool,
+    auto_salvage: bool,
+    work_phase: DroneWorkPhase,
 }
 
 /// What a drone fights with and how it flies, as the host works them out from its type.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DroneFlight {
-    pub weapon: NpcWeapon,
+    pub weapon: Option<NpcWeapon>,
     pub graphic_id: i32,
     /// How far off its controller (or its target) it circles, metres.
     pub orbit_distance: f64,
@@ -100,6 +142,25 @@ pub struct DroneFlight {
     pub attack_range: f64,
     /// The fraction of its top speed it flies at while it only follows its controller.
     pub cruise_fraction: f64,
+    pub work: DroneWorkProfile,
+}
+
+/// Effective mining/salvage dogma values, resolved by SDE attribute names by the host.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct DroneWorkProfile {
+    pub mining_amount_m3: f64,
+    pub cycle_ms: f64,
+    pub waste_multiplier: f64,
+    pub waste_probability: f64,
+    pub salvage_access_bonus: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum DroneWorkPhase {
+    #[default]
+    ToTarget,
+    Cycling,
+    Returning,
 }
 
 /// A unit vector perpendicular to `direction`.
@@ -124,7 +185,7 @@ impl Scene {
         flight: DroneFlight,
         now: i64,
     ) -> Result<(SessionId, Vec<Out>), &'static str> {
-        let DroneFlight { weapon, graphic_id, orbit_distance, attack_range, cruise_fraction } = flight;
+        let DroneFlight { weapon, graphic_id, orbit_distance, attack_range, cruise_fraction, work } = flight;
         self.settle_pilot(controller, now);
         let index = self.drones_of(controller).len();
         let (controller_ship, position, direction, controller_radius) = {
@@ -151,8 +212,9 @@ impl Scene {
             // the ball is told as it flies round the ship at no distance; the order that follows gives the distance
             course: Course::Orbit { target: controller_ship, distance: 0.0 },
         };
-        let optimal = weapon.turret.optimal_range;
-        let falloff = weapon.turret.falloff;
+        let optimal = weapon.as_ref().map_or(0.0, |weapon| weapon.turret.optimal_range);
+        let falloff = weapon.as_ref().map_or(0.0, |weapon| weapon.turret.falloff);
+        let can_combat = weapon.is_some();
         // `resolveDroneEngagementRanges`: the drone fights inside its attack range, circles at the least of that and its orbit, and chases what runs out past the falloff of its weapon
         let engagement_range = if attack_range > 0.0 {
             attack_range.max(optimal)
@@ -160,7 +222,7 @@ impl Scene {
             optimal.max(orbit_distance.min(optimal.max(1.0)))
         };
         let identity = NpcIdentity {
-            combat: NpcCombat { weapons: vec![weapon], aggression_range: 0.0 },
+            combat: NpcCombat { weapons: weapon.into_iter().collect(), aggression_range: 0.0 },
             drone: Some(DroneLink {
                 controller,
                 controller_ship_id: controller_ship,
@@ -176,10 +238,19 @@ impl Scene {
             session,
             DroneAi {
                 task: Task::Idle,
+                follow: None,
                 next_shot: 0,
                 engagement_range,
                 movement_range: orbit_distance.min(engagement_range),
                 chase_range: engagement_range.max(engagement_range + falloff),
+                work,
+                can_combat,
+                work_control_range: CONTROL_RANGE,
+                work_ready_at: 0,
+                work_cycle_id: 0,
+                awaiting_work: false,
+                auto_salvage: false,
+                work_phase: DroneWorkPhase::ToTarget,
             },
         );
 
@@ -241,15 +312,29 @@ impl Scene {
         payload::action(stamp, "OnDroneStateChange", self.drone_state_args(session))
     }
 
+fn ship_of_character(&self, character_id: i64) -> Option<i64> {
+        self.pilots
+            .iter()
+            .find(|(session, pilot)| {
+                !crate::npc::is_npc_session(**session) && pilot.ship.spec.character_id == character_id
+            })
+            .map(|(_, pilot)| pilot.ship.spec.ship_id)
+    }
+
     fn drone_state_args(&self, session: SessionId) -> Vec<Value> {
         let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
         let Some(link) = pilot.ship.npc.as_ref().and_then(|npc| npc.drone.as_ref()) else {
             return Vec::new();
         };
-        let target = match self.drones.get(&session).map(|ai| ai.task) {
+        let ai = self.drones.get(&session);
+        let target = match ai.map(|ai| ai.task) {
             Some(Task::Engage { target }) => id(target),
+            Some(Task::MineRepeatedly { target }) | Some(Task::Salvage { target: Some(target) }) => Value::Long(target),
             Some(Task::Home | Task::Bay) => id(link.controller_ship_id),
-            _ => Value::None,
+            _ => ai
+                .and_then(|ai| ai.follow)
+                .and_then(|follow| self.ship_of_character(follow.character_id()))
+                .map_or(Value::None, id),
         };
         let owner = int(pilot.ship.spec.owner_id);
         vec![
@@ -373,14 +458,22 @@ impl Scene {
                 results.push((drone_id, Some("NOT_CONTROLLED")));
                 continue;
             };
+            if matches!(command, DroneCommand::Engage { .. })
+                && self.drones.get(&session).is_some_and(|ai| !ai.can_combat)
+            {
+                results.push((drone_id, Some("NO_WEAPON")));
+                continue;
+            }
             match command {
                 DroneCommand::Engage { .. } if searching => {
-                    // each drone takes the next opponent found (the last for the drones that are more than they): spread over what is there, as the drones of a pilot who does not focus their fire are
                     let Some(&target) = found.get(asked.min(found.len().saturating_sub(1))) else {
                         results.push((drone_id, Some("NO_OPPONENT")));
                         continue;
                     };
                     asked += 1;
+                    if let Some(ai) = self.drones.get_mut(&session) {
+                        ai.follow = None;
+                    }
                     out.extend(self.engage(session, target, now));
                 }
                 DroneCommand::Engage { target } => {
@@ -388,33 +481,145 @@ impl Scene {
                         results.push((drone_id, Some("NO_TARGET")));
                         continue;
                     };
-                    // a pilot does not send its drones at itself or at one of its own
-                    if target_session == controller
-                        || self.controller_of_drone(target_session) == Some(controller)
-                    {
+                    if target_session == controller || self.controller_of_drone(target_session) == Some(controller) {
                         results.push((drone_id, Some("NO_TARGET")));
                         continue;
                     }
-                    // a target beyond the Dogma control range is refused; a drone already given the target keeps chasing it
                     if self.apart(controller, target_session).is_some_and(|apart| apart > control_range) {
                         results.push((drone_id, Some("OUT_OF_RANGE")));
                         continue;
+                    }
+                    if let Some(ai) = self.drones.get_mut(&session) {
+                        ai.follow = None;
                     }
                     out.extend(self.engage(session, target, now));
                 }
                 DroneCommand::ReturnHome => {
                     if let Some(ai) = self.drones.get_mut(&session) {
                         ai.task = Task::Home;
+                        ai.follow = None;
                     }
                     out.extend(self.go_home(session, DEPARTING, now));
                 }
                 DroneCommand::ReturnBay => {
                     if let Some(ai) = self.drones.get_mut(&session) {
                         ai.task = Task::Bay;
+                        ai.follow = None;
                     }
                     out.extend(self.go_home(session, DEPARTING, now));
                 }
                 DroneCommand::Abandon => out.extend(self.abandon(session, now)),
+                DroneCommand::Assist { character_id } | DroneCommand::Guard { character_id } => {
+                    if self.ship_of_character(character_id).is_none() {
+                        results.push((drone_id, Some("NO_PILOT")));
+                        continue;
+                    }
+                    let follow = match command {
+                        DroneCommand::Assist { .. } =>
+                            DroneFollow::Assist { character_id, control_range },
+                        DroneCommand::Guard { .. } =>
+                            DroneFollow::Guard { character_id, control_range },
+                        _ => unreachable!(),
+                    };
+                    if let Some(ai) = self.drones.get_mut(&session) {
+                        ai.task = Task::Idle;
+                        ai.follow = Some(follow);
+                    }
+                    out.extend(self.go_home(session, IDLE, now));
+                }
+                DroneCommand::MineRepeatedly { target } => {
+                    if !self.asteroids.get(&target).is_some_and(|asteroid| asteroid.units_remaining > 0) {
+                        results.push((drone_id, Some("NO_TARGET")));
+                        continue;
+                    }
+                    if self.distance_to_asteroid(controller, target, now).is_none_or(|apart| apart > control_range) {
+                        results.push((drone_id, Some("OUT_OF_RANGE")));
+                        continue;
+                    }
+                    let cycle_ms = self.drones[&session].work.cycle_ms;
+                    if self.drones[&session].work.mining_amount_m3 <= 0.0 || !cycle_ms.is_finite() || cycle_ms <= 0.0 {
+                        results.push((drone_id, Some("NOT_MINING_DRONE")));
+                        continue;
+                    }
+                    let range = self.pilots[&session].ship.npc.as_ref().and_then(|npc| npc.drone.as_ref())
+                        .map(|link| link.orbit_distance).unwrap_or(0.0);
+                    if let Some(ai) = self.drones.get_mut(&session) {
+                        ai.task = Task::MineRepeatedly { target };
+                        ai.follow = None;
+                        ai.work_control_range = control_range;
+                        ai.work_ready_at = 0;
+                        ai.work_cycle_id = 0;
+                        ai.awaiting_work = false;
+                        ai.auto_salvage = false;
+                        ai.work_phase = DroneWorkPhase::ToTarget;
+                    }
+                    out.extend(self.circle(session, target, range, 1.0, now));
+                    self.set_activity(session, APPROACHING);
+                    out.extend(self.told_state(session));
+                }
+                DroneCommand::Salvage { target } => {
+                    let auto_salvage = target.is_none();
+                    let target = match target {
+                        Some(id) => {
+                            if !self.wreck(id).is_some_and(|wreck| wreck.group_id == crate::wreck::WRECK_GROUP) {
+                                results.push((drone_id, Some("NO_WRECK")));
+                                continue;
+                            }
+                            if self.distance_to_wreck(controller, id, now).is_none_or(|apart| apart > control_range) {
+                                results.push((drone_id, Some("OUT_OF_RANGE")));
+                                continue;
+                            }
+                            id
+                        }
+                        None => {
+                            let Some(pilot) = self.pilots.get(&controller) else {
+                                results.push((drone_id, Some("NO_WRECK")));
+                                continue;
+                            };
+                            let character_id = pilot.ship.spec.character_id;
+                            let corporation_id = i64::from(pilot.ship.spec.corporation_id);
+                            let candidates: Vec<i64> = self.wrecks.values()
+                                .filter(|wreck| {
+                                    wreck.group_id == crate::wreck::WRECK_GROUP
+                                        && (wreck.rights.character_id == character_id
+                                            || (corporation_id > 0 && wreck.rights.corporation_id == corporation_id))
+                                })
+                                .map(|wreck| wreck.id)
+                                .collect();
+                            let mut reachable: Vec<(f64, i64)> = candidates.into_iter()
+                                .filter_map(|id| self.distance_to_wreck(controller, id, now)
+                                    .filter(|apart| *apart <= control_range)
+                                    .map(|apart| (apart, id)))
+                                .collect();
+                            reachable.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+                            let Some((_, id)) = reachable.first().copied() else {
+                                results.push((drone_id, Some("NO_WRECK")));
+                                continue;
+                            };
+                            id
+                        }
+                    };
+                    let cycle_ms = self.drones[&session].work.cycle_ms;
+                    if self.drones[&session].work.salvage_access_bonus <= 0.0 || !cycle_ms.is_finite() || cycle_ms <= 0.0 {
+                        results.push((drone_id, Some("NOT_SALVAGE_DRONE")));
+                        continue;
+                    }
+                    let range = self.pilots[&session].ship.npc.as_ref().and_then(|npc| npc.drone.as_ref())
+                        .map(|link| link.orbit_distance).unwrap_or(0.0);
+                    if let Some(ai) = self.drones.get_mut(&session) {
+                        ai.task = Task::Salvage { target: Some(target) };
+                        ai.follow = None;
+                        ai.work_control_range = control_range;
+                        ai.work_ready_at = 0;
+                        ai.work_cycle_id = 0;
+                        ai.awaiting_work = false;
+                        ai.auto_salvage = auto_salvage;
+                        ai.work_phase = DroneWorkPhase::ToTarget;
+                    }
+                    out.extend(self.circle(session, target, range, 1.0, now));
+                    self.set_activity(session, APPROACHING);
+                    out.extend(self.told_state(session));
+                }
             }
             results.push((drone_id, None));
         }
@@ -482,9 +687,7 @@ impl Scene {
         found
     }
 
-    /// The idle drones of a pilot that has been attacked take up the fight by themselves (a pilot's drones are aggressive unless it says otherwise: the reference's default): each goes at
-    /// who attacked lately, the newest first, and the last of them for the drones that are more than the attackers. What a pilot sends its drones to do is theirs to do first: only a
-    /// drone with nothing to do is taken. The acts that were done since the last poll are what is read.
+    /// Idle drones take up the fight when the controller or a followed pilot is attacked.
     pub(crate) fn note_drone_threats(&mut self, now: i64) -> Vec<Out> {
         if self.drones.is_empty() || self.aggressions.is_empty() {
             return Vec::new();
@@ -493,7 +696,27 @@ impl Scene {
             self.aggressions.iter().map(|a| (a.attacker_ship, a.target_ship)).collect();
         let mut out = Vec::new();
         for (attacker, target) in acts {
-            // an attack on a pilot's ship (not on a drone, and not a pilot's own act: its drones' shots are told as its own)
+            let following: Vec<(SessionId, i64)> = self.drones.iter().filter_map(|(drone, ai)| {
+                let follow = ai.follow?;
+                let followed_ship = self.ship_of_character(follow.character_id())?;
+                let target_ship = match follow {
+                    DroneFollow::Assist { .. } if attacker == followed_ship => target,
+                    DroneFollow::Guard { .. } if target == followed_ship => attacker,
+                    _ => return None,
+                };
+                let controller = self.controller_of_drone(*drone)?;
+                let target_session = self.session_of(target_ship)?;
+                if target_session == controller || self.controller_of_drone(target_session) == Some(controller) {
+                    return None;
+                }
+                self.apart(controller, target_session)
+                    .filter(|apart| *apart <= follow.control_range())?;
+                Some((*drone, target_ship))
+            }).collect();
+            for (drone, target) in following {
+                out.extend(self.engage(drone, target, now));
+            }
+
             let Some(controller) = self.session_of(target).filter(|s| !crate::npc::is_npc_session(*s)) else {
                 continue;
             };
@@ -513,7 +736,9 @@ impl Scene {
                 .drones
                 .iter()
                 .filter(|(session, ai)| {
-                    ai.task == Task::Idle && self.controller_of_drone(**session) == Some(controller)
+                    ai.task == Task::Idle
+                        && ai.follow.is_none()
+                        && self.controller_of_drone(**session) == Some(controller)
                 })
                 .map(|(session, _)| *session)
                 .collect();
@@ -539,6 +764,9 @@ impl Scene {
 
     /// The drone is sent at a target: it circles it at full speed and is told as pursuing, approaching or fighting by how far off it is.
     fn engage(&mut self, session: SessionId, target: i64, now: i64) -> Vec<Out> {
+        if self.drones.get(&session).is_some_and(|ai| !ai.can_combat) {
+            return Vec::new();
+        }
         let Some(target_session) = self.session_of(target) else { return Vec::new() };
         let Some((engagement, movement, chase)) =
             self.drones.get(&session).map(|ai| (ai.engagement_range, ai.movement_range, ai.chase_range))
@@ -606,8 +834,6 @@ impl Scene {
                 self.drones.remove(&session);
                 continue;
             }
-            // A controller may have been destroyed and replaced by a capsule in the same session.
-            // The session still exists then, but it no longer owns the ship that launched this drone.
             let controller_lost = self
                 .pilots
                 .get(&session)
@@ -625,10 +851,271 @@ impl Scene {
             let Some(task) = self.drones.get(&session).map(|ai| ai.task) else { continue };
             match task {
                 Task::Idle | Task::Home => {}
+                Task::MineRepeatedly { target } => out.extend(self.advance_drone_work(session, target, 7, now)),
+                Task::Salvage { target: Some(target) } => out.extend(self.advance_drone_work(session, target, 8, now)),
+                Task::Salvage { target: None } => {},
                 Task::Bay => out.extend(self.scoop_if_near(session, now)),
                 Task::Engage { target } => out.extend(self.fight(session, target, now)),
             }
         }
+        out
+    }
+
+    fn work_round_trip_ms(&mut self, session: SessionId, target: i64, command: u8, now: i64) -> i64 {
+        let Some(controller) = self.controller_of_drone(session) else { return 0 };
+        let distance = if command == 7 {
+            self.distance_to_asteroid(controller, target, now)
+        } else {
+            self.distance_to_wreck(controller, target, now)
+        }.unwrap_or(0.0);
+        let speed = self.pilots.get(&session)
+            .and_then(|pilot| {
+                pilot.ship.npc.as_ref()?.drone.as_ref()
+                    .map(|link| pilot.ship.spec.max_velocity * link.cruise_fraction.max(0.01))
+            })
+            .unwrap_or(0.0);
+        if speed.is_finite() && speed > 0.0 {
+            (distance * 2_000.0 / speed).ceil().clamp(0.0, i64::MAX as f64) as i64
+        } else {
+            0
+        }
+    }
+
+    fn advance_drone_work(&mut self, session: SessionId, target: i64, command: u8, now: i64) -> Vec<Out> {
+        let Some(ai) = self.drones.get(&session) else { return Vec::new() };
+        if ai.awaiting_work {
+            return Vec::new();
+        }
+        let Some(link) = self.pilots.get(&session)
+            .and_then(|pilot| pilot.ship.npc.as_ref())
+            .and_then(|npc| npc.drone.as_ref()) else { return Vec::new() };
+        let (controller, orbit_distance) = (link.controller, link.orbit_distance);
+        let (phase, range, cycle_ms, control_range) = {
+            let ai = &self.drones[&session];
+            (ai.work_phase, orbit_distance.max(0.0), ai.work.cycle_ms.ceil().max(1.0).min(i64::MAX as f64) as i64, ai.work_control_range)
+        };
+        match phase {
+            DroneWorkPhase::ToTarget => {
+                let distance = if command == 7 {
+                    self.distance_to_asteroid(session, target, now)
+                } else {
+                    self.distance_to_wreck(session, target, now)
+                };
+                let Some(distance) = distance else {
+                    if let Some(ai) = self.drones.get_mut(&session) {
+                        ai.task = Task::Idle;
+                    }
+                    return self.go_home(session, IDLE, now);
+                };
+                if distance > range {
+                    let mut out = self.circle(session, target, range, 1.0, now);
+                    self.set_activity(session, APPROACHING);
+                    out.extend(self.told_state(session));
+                    return out;
+                }
+                if let Some(ai) = self.drones.get_mut(&session) {
+                    ai.work_phase = DroneWorkPhase::Cycling;
+                    ai.work_ready_at = now.saturating_add(cycle_ms);
+                }
+                self.set_activity(session, COMBAT);
+                self.told_state(session)
+            }
+            DroneWorkPhase::Cycling => {
+                if now < self.drones[&session].work_ready_at {
+                    return Vec::new();
+                }
+                let target_live = match command {
+                    7 => self.asteroids.get(&target).is_some_and(|asteroid| asteroid.units_remaining > 0),
+                    8 => self.wreck(target).is_some_and(|wreck| wreck.group_id == crate::wreck::WRECK_GROUP),
+                    _ => false,
+                };
+                let control_distance = if command == 7 {
+                    self.distance_to_asteroid(controller, target, now)
+                } else {
+                    self.distance_to_wreck(controller, target, now)
+                };
+                if !target_live || control_distance.is_none_or(|distance| distance > control_range) {
+                    let depleted = command == 7
+                        && self.asteroids.get(&target).is_some_and(|asteroid| asteroid.units_remaining <= 0);
+                    if let Some(ai) = self.drones.get_mut(&session) {
+                        ai.task = Task::Idle;
+                        ai.follow = None;
+                    }
+                    let mut out = if depleted { self.remove_asteroid(target, true, now) } else { Vec::new() };
+                    out.extend(self.go_home(session, IDLE, now));
+                    return out;
+                }
+                if let Some(ai) = self.drones.get_mut(&session) {
+                    ai.work_phase = DroneWorkPhase::Returning;
+                }
+                self.go_home(session, DEPARTING, now)
+            }
+            DroneWorkPhase::Returning => {
+                if self.apart(session, controller).is_none_or(|distance| distance > SCOOP_DISTANCE) {
+                    return Vec::new();
+                }
+                let Some(pilot) = self.pilots.get(&controller) else { return Vec::new() };
+                let (character_id, ship_id, solar_system_id) =
+                    (pilot.ship.spec.character_id, pilot.ship.spec.ship_id, self.solar_system_id());
+                let drone_id = self.ship_id_of(session);
+                let (profile, cycle_id) = {
+                    let ai = self.drones.get_mut(&session).expect("drone was found");
+                    ai.awaiting_work = true;
+                    ai.work_cycle_id = ai.work_cycle_id.wrapping_add(1);
+                    (ai.work, ai.work_cycle_id)
+                };
+                vec![Out::DroneWorkCycle {
+                    session: controller,
+                    character_id,
+                    ship_id,
+                    solar_system_id,
+                    drone_id,
+                    target_id: target,
+                    cycle_id,
+                    command,
+                    mining_amount_m3: profile.mining_amount_m3,
+                    waste_multiplier: profile.waste_multiplier,
+                    waste_probability: profile.waste_probability,
+                    access_difficulty_bonus: profile.salvage_access_bonus,
+                    roll: self.rng.random(),
+                }]
+            }
+        }
+    }
+
+    pub fn drone_work_result(
+        &mut self,
+        controller: SessionId,
+        drone_id: i64,
+        target_id: i64,
+        cycle_id: u64,
+        accepted: bool,
+        units_remaining: i64,
+        complete: bool,
+        now: i64,
+    ) -> Vec<Out> {
+        let Some(session) = self.session_of(drone_id)
+            .filter(|session| self.controller_of_drone(*session) == Some(controller)) else {
+            return Vec::new();
+        };
+        let (operation, auto_salvage, control_range, movement_range) = {
+            let Some(ai) = self.drones.get(&session) else { return Vec::new() };
+            let operation = match ai.task {
+                Task::MineRepeatedly { target } if target == target_id => 7,
+                Task::Salvage { target: Some(target) } if target == target_id => 8,
+                _ => return Vec::new(),
+            };
+            if !ai.awaiting_work || ai.work_cycle_id != cycle_id {
+                return Vec::new();
+            }
+            (operation, ai.auto_salvage, ai.work_control_range, ai.movement_range)
+        };
+        if accepted && units_remaining < 0 {
+            if let Some(ai) = self.drones.get_mut(&session) {
+                ai.awaiting_work = false;
+                ai.task = Task::Idle;
+                ai.follow = None;
+            }
+            return self.go_home(session, IDLE, now);
+        }
+        if let Some(ai) = self.drones.get_mut(&session) {
+            ai.awaiting_work = false;
+        }
+        if !accepted {
+            if let Some(ai) = self.drones.get_mut(&session) {
+                ai.task = Task::Idle;
+                ai.follow = None;
+            }
+            return self.go_home(session, IDLE, now);
+        }
+        if operation == 7 && units_remaining <= 0 {
+            if let Some(ai) = self.drones.get_mut(&session) {
+                ai.task = Task::Idle;
+                ai.follow = None;
+            }
+            let mut out = self.remove_asteroid(target_id, true, now);
+            out.extend(self.go_home(session, IDLE, now));
+            return out;
+        }
+        if operation == 7 {
+            if !self.asteroids.get(&target_id).is_some_and(|asteroid| asteroid.units_remaining > 0) {
+                if let Some(ai) = self.drones.get_mut(&session) {
+                    ai.task = Task::Idle;
+                    ai.follow = None;
+                }
+                return self.go_home(session, IDLE, now);
+            }
+            let remaining = self.asteroids[&target_id].units_remaining.min(units_remaining);
+            let mut out = self.change_asteroid(target_id, remaining, now);
+            if let Some(ai) = self.drones.get_mut(&session) {
+                ai.work_phase = DroneWorkPhase::ToTarget;
+                ai.work_ready_at = 0;
+            }
+            out.extend(self.circle(session, target_id, movement_range, 1.0, now));
+            self.set_activity(session, APPROACHING);
+            out.extend(self.told_state(session));
+            return out;
+        }
+        if operation == 8 && complete {
+            let mut out = self.remove_wreck(target_id, 0, now);
+            let next = if auto_salvage {
+                let Some(pilot) = self.pilots.get(&controller) else {
+                    return out;
+                };
+                let character_id = pilot.ship.spec.character_id;
+                let corporation_id = i64::from(pilot.ship.spec.corporation_id);
+                let candidates: Vec<i64> = self.wrecks.values()
+                    .filter(|wreck| {
+                        wreck.group_id == crate::wreck::WRECK_GROUP
+                            && (wreck.rights.character_id == character_id
+                                || (corporation_id > 0 && wreck.rights.corporation_id == corporation_id))
+                    })
+                    .map(|wreck| wreck.id)
+                    .collect();
+                let mut reachable: Vec<(f64, i64)> = candidates.into_iter()
+                    .filter_map(|id| self.distance_to_wreck(controller, id, now)
+                        .filter(|distance| *distance <= control_range)
+                        .map(|distance| (distance, id)))
+                    .collect();
+                reachable.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+                reachable.first().map(|(_, id)| *id)
+            } else {
+                None
+            };
+            if let Some(next) = next {
+                if let Some(ai) = self.drones.get_mut(&session) {
+                    ai.task = Task::Salvage { target: Some(next) };
+                    ai.work_phase = DroneWorkPhase::ToTarget;
+                    ai.work_ready_at = 0;
+                }
+                out.extend(self.circle(session, next, movement_range, 1.0, now));
+                self.set_activity(session, APPROACHING);
+                out.extend(self.told_state(session));
+            } else {
+                if let Some(ai) = self.drones.get_mut(&session) {
+                    ai.task = Task::Idle;
+                    ai.follow = None;
+                }
+                out.extend(self.go_home(session, IDLE, now));
+            }
+            return out;
+        }
+        if operation == 8
+            && !self.wreck(target_id).is_some_and(|wreck| wreck.group_id == crate::wreck::WRECK_GROUP)
+        {
+            if let Some(ai) = self.drones.get_mut(&session) {
+                ai.task = Task::Idle;
+                ai.follow = None;
+            }
+            return self.go_home(session, IDLE, now);
+        }
+        if let Some(ai) = self.drones.get_mut(&session) {
+            ai.work_phase = DroneWorkPhase::ToTarget;
+            ai.work_ready_at = 0;
+        }
+        let mut out = self.circle(session, target_id, movement_range, 1.0, now);
+        self.set_activity(session, APPROACHING);
+        out.extend(self.told_state(session));
         out
     }
 
@@ -842,14 +1329,42 @@ mod tests {
     fn launched() -> (Scene, SessionId, Vec<Out>) {
         let mut scene = scene_with_a_player();
         let flight = DroneFlight {
-            weapon: laser(),
+            weapon: Some(laser()),
             graphic_id: 1_099,
             orbit_distance: 700.0,
             attack_range: 2_800.0,
             cruise_fraction: 660.0 / 2_800.0,
+            work: DroneWorkProfile::default(),
         };
         let (drone, told) = scene.launch_drone(PLAYER, hobgoblin(), flight, LATER).unwrap();
         (scene, drone, told)
+    }
+
+fn work_drone() -> (Scene, SessionId, Vec<Out>) {
+        let (mut scene, drone, outputs) = launched();
+        scene.drones.get_mut(&drone).expect("launched drone").work = DroneWorkProfile {
+            mining_amount_m3: 25.0,
+            cycle_ms: 60_000.0,
+            waste_multiplier: 0.0,
+            waste_probability: 0.0,
+            salvage_access_bonus: 3.0,
+        };
+        (scene, drone, outputs)
+    }
+
+    fn ore_asteroid(id: i64, position: Vec3, units_remaining: i64) -> crate::wreck::Asteroid {
+        crate::wreck::Asteroid {
+            id,
+            type_id: 0,
+            group_id: 0,
+            category_id: 0,
+            name: "Test ore".into(),
+            graphic_id: None,
+            position,
+            direction: Vec3::new(1.0, 0.0, 0.0),
+            radius: 10.0,
+            units_remaining,
+        }
     }
 
     fn for_the_player(told: &[Out]) -> Vec<Out> {
@@ -1164,11 +1679,12 @@ mod tests {
             let mut spec = hobgoblin();
             spec.ship_id = ship;
             let flight = DroneFlight {
-                weapon: laser(),
+                weapon: Some(laser()),
                 graphic_id: 1_099,
                 orbit_distance: 700.0,
                 attack_range: 2_800.0,
                 cruise_fraction: 0.2357,
+                work: DroneWorkProfile::default(),
             };
             scene.launch_drone(PLAYER, spec, flight, LATER).unwrap();
         }
@@ -1197,11 +1713,12 @@ mod tests {
         let mut other = hobgoblin();
         other.ship_id = DRONE_SHIP + 1;
         let flight = DroneFlight {
-            weapon: laser(),
+            weapon: Some(laser()),
             graphic_id: 1_099,
             orbit_distance: 700.0,
             attack_range: 2_800.0,
             cruise_fraction: 0.2357,
+            work: DroneWorkProfile::default(),
         };
         let (second, _) = scene.launch_drone(PLAYER, other, flight, LATER).unwrap();
         scene.drone_command(PLAYER, &[DRONE_SHIP + 1], DroneCommand::ReturnHome, LATER);
@@ -1332,5 +1849,249 @@ mod tests {
         );
         assert!(scene.session_of(DRONE_SHIP).is_none());
         assert!(scene.drones.is_empty());
+    }
+
+#[test]
+    fn assist_and_guard_follow_the_designated_pilots_combat_target() {
+        let (mut scene, drone, _) = launched();
+        let character_id = scene.pilots[&PLAYER].ship.spec.character_id;
+        let pilot_ship = scene.pilots[&PLAYER].ship.spec.ship_id;
+        spawn_rat_at(&mut scene, RAT_SHIP, 1_500.0);
+
+        let assist = scene.drone_command(
+            PLAYER, &[DRONE_SHIP], DroneCommand::Assist { character_id }, LATER);
+        assert_eq!(assist.iter().find_map(|out| match out {
+            Out::DroneResults { command, results, .. } => Some((*command, results.clone())),
+            _ => None,
+        }), Some((5, vec![(DRONE_SHIP, None)])));
+        assert_eq!(target_of_the_state(&assist), Some(Value::Long(pilot_ship)));
+        assert_eq!(scene.drones[&drone].follow, Some(DroneFollow::Assist { character_id, control_range: CONTROL_RANGE }));
+
+        scene.aggressions.push(crate::weapons::Aggression {
+            attacker_ship: pilot_ship,
+            target_ship: RAT_SHIP,
+            module_type_id: 0,
+            source_owner_id: character_id,
+            target_type_id: 0,
+        });
+        let assisted = for_the_player(&scene.note_drone_threats(LATER + SECOND));
+        assert!(states(&assisted).contains(&(COMBAT as i64)));
+        assert_eq!(scene.drones[&drone].task, Task::Engage { target: RAT_SHIP });
+
+        let guard = scene.drone_command(
+            PLAYER, &[DRONE_SHIP], DroneCommand::Guard { character_id }, LATER + SECOND);
+        assert_eq!(guard.iter().find_map(|out| match out {
+            Out::DroneResults { command, results, .. } => Some((*command, results.clone())),
+            _ => None,
+        }), Some((6, vec![(DRONE_SHIP, None)])));
+        assert_eq!(target_of_the_state(&guard), Some(Value::Long(pilot_ship)));
+        assert_eq!(scene.drones[&drone].follow, Some(DroneFollow::Guard { character_id, control_range: CONTROL_RANGE }));
+
+        scene.aggressions.push(crate::weapons::Aggression {
+            attacker_ship: RAT_SHIP,
+            target_ship: pilot_ship,
+            module_type_id: 0,
+            source_owner_id: 0,
+            target_type_id: 0,
+        });
+        let guarded = for_the_player(&scene.note_drone_threats(LATER + 2 * SECOND));
+        assert!(states(&guarded).contains(&(COMBAT as i64)));
+        assert_eq!(scene.drones[&drone].task, Task::Engage { target: RAT_SHIP });
+    }
+
+    #[test]
+    fn mining_and_salvage_orders_are_visible_on_the_drone_state() {
+        let (mut scene, drone, _) = work_drone();
+        let mine_target = 90_001;
+        let pilot_position = scene.ship(PLAYER, LATER).unwrap().position;
+        scene.place_asteroid(ore_asteroid(mine_target, pilot_position, 1_000), LATER);
+        let mined = scene.drone_command(
+            PLAYER, &[DRONE_SHIP], DroneCommand::MineRepeatedly { target: mine_target }, LATER);
+        assert_eq!(scene.drones[&drone].task, Task::MineRepeatedly { target: mine_target });
+        assert_eq!(target_of_the_state(&mined), Some(Value::Long(mine_target)));
+        assert!(mined.iter().any(|out| matches!(out, Out::DroneResults { command: 7, results, .. } if results == &[(DRONE_SHIP, None)])));
+
+        let character_id = scene.pilots[&PLAYER].ship.spec.character_id;
+        let corporation_id = i64::from(scene.pilots[&PLAYER].ship.spec.corporation_id);
+        let wreck_id = 90_002;
+        scene.place_wreck(crate::wreck::Wreck {
+            id: wreck_id,
+            group_id: crate::wreck::WRECK_GROUP,
+            kind: crate::wreck::WreckKind { type_id: 1, name: "Wreck".into(), graphic_id: None },
+            position: pilot_position,
+            direction: Vec3::new(1.0, 0.0, 0.0),
+            radius: 20.0,
+            owner_id: character_id,
+            corporation_id,
+            alliance_id: 0,
+            war_faction_id: 0,
+            rights: crate::wreck::LootRights { character_id, corporation_id },
+            launcher_id: 0,
+            is_empty: false,
+            rights_known: true,
+            expires_at: LATER + 60 * SECOND,
+        }, LATER);
+        let salvaged = scene.drone_command(
+            PLAYER, &[DRONE_SHIP], DroneCommand::Salvage { target: None }, LATER + SECOND);
+        assert_eq!(scene.drones[&drone].task, Task::Salvage { target: Some(wreck_id) });
+        assert_eq!(target_of_the_state(&salvaged), Some(Value::Long(wreck_id)));
+        assert!(salvaged.iter().any(|out| matches!(out, Out::DroneResults { command: 8, results, .. } if results == &[(DRONE_SHIP, None)])));
+    }
+
+
+    #[test]
+    fn a_mining_drone_emits_one_host_cycle_after_its_timed_pass_and_return() {
+        let (mut scene, drone, _) = work_drone();
+        scene.drones.get_mut(&drone).expect("launched drone").work.cycle_ms = 1.0;
+        let target = 90_003;
+        let drone_position = scene.ship(drone, LATER).unwrap().position;
+        scene.place_asteroid(ore_asteroid(target, drone_position, 100), LATER);
+        let order = scene.drone_command(
+            PLAYER, &[DRONE_SHIP], DroneCommand::MineRepeatedly { target }, LATER);
+        assert!(order.iter().any(|out| matches!(out, Out::DroneResults { command: 7, results, .. } if results == &[(DRONE_SHIP, None)])));
+
+        let _ = scene.advance_drones(LATER);
+        assert_eq!(scene.drones[&drone].work_phase, DroneWorkPhase::Cycling);
+        let ready_at = scene.drones[&drone].work_ready_at;
+        let _ = scene.advance_drones(ready_at);
+        assert_eq!(scene.drones[&drone].work_phase, DroneWorkPhase::Returning);
+        let completed = scene.advance_drones(ready_at + SECOND);
+        let cycles: Vec<_> = completed.iter().filter_map(|out| match out {
+            Out::DroneWorkCycle { command, target_id, cycle_id, .. } => Some((*command, *target_id, *cycle_id)),
+            _ => None,
+        }).collect();
+        assert_eq!(cycles, [(7, target, 1)]);
+        assert!(scene.drones[&drone].awaiting_work);
+        assert!(scene.advance_drones(ready_at + 2 * SECOND).iter().all(|out| !matches!(out, Out::DroneWorkCycle { .. })));
+    }
+
+    #[test]
+    fn mining_results_mirror_stock_monotonically_then_remove_depleted_rocks() {
+        let (mut scene, drone, _) = work_drone();
+        let target = 90_004;
+        let pilot_position = scene.ship(PLAYER, LATER).unwrap().position;
+        scene.place_asteroid(ore_asteroid(target, pilot_position, 100), LATER);
+        let order = scene.drone_command(
+            PLAYER, &[DRONE_SHIP], DroneCommand::MineRepeatedly { target }, LATER);
+        assert!(order.iter().any(|out| matches!(out, Out::DroneResults { results, .. } if results == &[(DRONE_SHIP, None)])));
+        {
+            let ai = scene.drones.get_mut(&drone).expect("launched drone");
+            ai.awaiting_work = true;
+            ai.work_cycle_id = 1;
+        }
+
+        assert!(scene.drone_work_result(u64::MAX, DRONE_SHIP, target, 1, true, 40, false, LATER + SECOND).is_empty());
+        assert!(scene.drone_work_result(PLAYER, DRONE_SHIP, target + 1, 1, true, 40, false, LATER + SECOND).is_empty());
+        assert_eq!(scene.asteroids[&target].units_remaining, 100);
+        assert!(scene.drones[&drone].awaiting_work);
+
+        let _ = scene.drone_work_result(PLAYER, DRONE_SHIP, target, 1, true, 40, false, LATER + SECOND);
+        assert_eq!(scene.asteroids[&target].units_remaining, 40);
+        assert_eq!(scene.drones[&drone].task, Task::MineRepeatedly { target });
+        assert!(scene.drone_work_result(PLAYER, DRONE_SHIP, target, 1, true, 20, false, LATER + SECOND).is_empty());
+        assert_eq!(scene.asteroids[&target].units_remaining, 40);
+
+        {
+            let ai = scene.drones.get_mut(&drone).expect("launched drone");
+            ai.awaiting_work = true;
+            ai.work_cycle_id = 2;
+        }
+        let _ = scene.drone_work_result(PLAYER, DRONE_SHIP, target, 2, true, 60, false, LATER + 2 * SECOND);
+        assert_eq!(scene.asteroids[&target].units_remaining, 40);
+
+        {
+            let ai = scene.drones.get_mut(&drone).expect("launched drone");
+            ai.awaiting_work = true;
+            ai.work_cycle_id = 3;
+        }
+        let _ = scene.drone_work_result(PLAYER, DRONE_SHIP, target, 3, true, 0, true, LATER + 3 * SECOND);
+        assert!(!scene.asteroids.contains_key(&target));
+        assert_eq!(scene.drones[&drone].task, Task::Idle);
+    }
+
+    #[test]
+    fn auto_salvage_rejects_foreign_wrecks_but_manual_salvage_repeats_until_complete_even_if_empty() {
+        let (mut scene, drone, _) = work_drone();
+        let character_id = scene.pilots[&PLAYER].ship.spec.character_id;
+        let corporation_id = i64::from(scene.pilots[&PLAYER].ship.spec.corporation_id);
+        let target = 90_005;
+        let pilot_position = scene.ship(PLAYER, LATER).unwrap().position;
+        scene.place_wreck(crate::wreck::Wreck {
+            id: target,
+            group_id: crate::wreck::WRECK_GROUP,
+            kind: crate::wreck::WreckKind { type_id: 1, name: "Foreign wreck".into(), graphic_id: None },
+            position: pilot_position,
+            direction: Vec3::new(1.0, 0.0, 0.0),
+            radius: 20.0,
+            owner_id: character_id + 1,
+            corporation_id: corporation_id + 1,
+            alliance_id: 0,
+            war_faction_id: 0,
+            rights: crate::wreck::LootRights { character_id: character_id + 1, corporation_id: corporation_id + 1 },
+            launcher_id: 0,
+            is_empty: true,
+            rights_known: true,
+            expires_at: LATER + 60 * SECOND,
+        }, LATER);
+
+        let automatic = scene.drone_command(
+            PLAYER, &[DRONE_SHIP], DroneCommand::Salvage { target: None }, LATER);
+        assert!(automatic.iter().any(|out| matches!(out, Out::DroneResults { command: 8, results, .. } if results == &[(DRONE_SHIP, Some("NO_WRECK"))])));
+        assert_eq!(scene.drones[&drone].task, Task::Idle);
+
+        let manual = scene.drone_command(
+            PLAYER, &[DRONE_SHIP], DroneCommand::Salvage { target: Some(target) }, LATER + SECOND);
+        assert!(manual.iter().any(|out| matches!(out, Out::DroneResults { command: 8, results, .. } if results == &[(DRONE_SHIP, None)])));
+        assert_eq!(scene.drones[&drone].task, Task::Salvage { target: Some(target) });
+        {
+            let ai = scene.drones.get_mut(&drone).expect("launched drone");
+            ai.awaiting_work = true;
+            ai.work_cycle_id = 1;
+        }
+
+        let _ = scene.drone_work_result(PLAYER, DRONE_SHIP, target, 1, true, 1, false, LATER + 2 * SECOND);
+        assert!(scene.wreck(target).is_some_and(|wreck| wreck.is_empty));
+        assert_eq!(scene.drones[&drone].task, Task::Salvage { target: Some(target) });
+
+        {
+            let ai = scene.drones.get_mut(&drone).expect("launched drone");
+            ai.awaiting_work = true;
+            ai.work_cycle_id = 2;
+        }
+        let _ = scene.drone_work_result(PLAYER, DRONE_SHIP, target, 2, true, 0, true, LATER + 3 * SECOND);
+        assert!(scene.wreck(target).is_none());
+        assert_eq!(scene.drones[&drone].task, Task::Idle);
+    }
+
+
+    #[test]
+    fn mine_repeatedly_rejects_depleted_rocks_and_cancels_when_control_range_is_lost() {
+        let (mut scene, drone, _) = work_drone();
+        let pilot_position = scene.ship(PLAYER, LATER).unwrap().position;
+        let depleted = 90_006;
+        scene.place_asteroid(ore_asteroid(depleted, pilot_position, 0), LATER);
+        let refused = scene.drone_command(
+            PLAYER, &[DRONE_SHIP], DroneCommand::MineRepeatedly { target: depleted }, LATER);
+        assert!(refused.iter().any(|out| matches!(out, Out::DroneResults { command: 7, results, .. } if results == &[(DRONE_SHIP, Some("NO_TARGET"))])));
+        assert_eq!(scene.drones[&drone].task, Task::Idle);
+
+        let target = 90_007;
+        let drone_position = scene.ship(drone, LATER + SECOND).unwrap().position;
+        scene.place_asteroid(ore_asteroid(target, drone_position, 100), LATER + SECOND);
+        let accepted = scene.drone_command(
+            PLAYER, &[DRONE_SHIP], DroneCommand::MineRepeatedly { target }, LATER + SECOND);
+        assert!(accepted.iter().any(|out| matches!(out, Out::DroneResults { command: 7, results, .. } if results == &[(DRONE_SHIP, None)])));
+        let controller_distance = scene.distance_to_asteroid(PLAYER, target, LATER + SECOND).unwrap();
+        assert!(controller_distance > 0.0);
+        {
+            let ai = scene.drones.get_mut(&drone).expect("launched drone");
+            ai.work_phase = DroneWorkPhase::Cycling;
+            ai.work_ready_at = LATER + 2 * SECOND;
+            ai.work_control_range = controller_distance / 2.0;
+        }
+
+        let cancelled = scene.advance_drone_work(drone, target, 7, LATER + 2 * SECOND);
+        assert!(cancelled.iter().all(|out| !matches!(out, Out::DroneWorkCycle { .. })));
+        assert_eq!(scene.drones[&drone].task, Task::Idle);
     }
 }

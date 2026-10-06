@@ -63,6 +63,51 @@ pub struct Wreck {
     pub expires_at: i64,
 }
 
+/// A mineable ore rock. Its stock is mirrored from the host inventory item; it is independent of wreck loot state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Asteroid {
+    pub id: i64,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub category_id: i32,
+    pub name: String,
+    pub graphic_id: Option<i32>,
+    pub position: Vec3,
+    pub direction: Vec3,
+    pub radius: f64,
+    pub units_remaining: i64,
+}
+
+impl Asteroid {
+    pub fn ball(&self) -> BallEntity {
+        BallEntity {
+            item_id: IdRef::Valid(self.id),
+            kind: Kind::Other,
+            radius: self.radius,
+            position: self.position,
+            direction: self.direction,
+            owner_positive: false,
+            ..BallEntity::default()
+        }
+    }
+
+    pub fn slim_entries(&self) -> Vec<(&'static str, Value)> {
+        let mut entries = vec![
+            ("itemID", id(self.id)),
+            ("typeID", int(i64::from(self.type_id))),
+            ("ownerID", id(0)),
+            ("name", text(self.name.clone())),
+            ("groupID", int(i64::from(self.group_id))),
+            ("categoryID", int(i64::from(self.category_id))),
+            ("quantity", int(self.units_remaining)),
+        ];
+        if let Some(graphic) = self.graphic_id {
+            entries.push(("graphicID", int(i64::from(graphic))));
+        }
+        entries
+    }
+}
+
 impl Wreck {
     /// Whether this is a can a pilot jettisoned cargo into (what it holds is the host's, and it is told as a container, not as a ship's wreck).
     pub fn is_container(&self) -> bool {

@@ -58,6 +58,11 @@ pub mod kind {
     pub const DRONE_RESULTS: u8 = 38;
     pub const DRONE_SCOOPED: u8 = 39;
     pub const DRONE_RELEASED: u8 = 40;
+    pub const PLACE_ASTEROID: u8 = 45;
+    pub const DRONE_WORK_CYCLE: u8 = 46;
+    pub const DRONE_WORK_RESULT: u8 = 47;
+    pub const REMOTE_REPAIR_CYCLE: u8 = 48;
+    pub const REMOTE_REPAIR_CYCLE_RESULT: u8 = 49;
     pub const HEAT_PROFILE: u8 = 41;
     pub const MODULE_OVERHEAT: u8 = 42;
     pub const MODULE_OFFLINE: u8 = 43;
@@ -107,12 +112,17 @@ pub struct LaunchDrone {
     pub request_id: u64,
     pub session_id: u64,
     pub ship: ShipSpec,
-    pub weapon: NpcWeapon,
+    pub weapon: Option<NpcWeapon>,
     pub graphic_id: i32,
     pub orbit_distance: f64,
     /// How far off its target the drone can shoot, metres (the type's `entityAttackRange`, at least the weapon's optimal range): inside it the drone fights.
     pub attack_range: f64,
     pub cruise_fraction: f64,
+    pub mining_amount_m3: f64,
+    pub work_cycle_ms: f64,
+    pub mining_waste_multiplier: f64,
+    pub mining_waste_probability: f64,
+    pub salvage_access_bonus: f64,
 }
 
 /// A wreck the host made, to be put in space: the item it is (the host's own id), what it is, where, and who may take what is in it.
@@ -131,6 +141,21 @@ pub struct WreckPlacement {
     pub credit: Credit,
     /// Nothing in it to take.
     pub is_empty: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AsteroidPlacement {
+    pub solar_system_id: i32,
+    pub asteroid_id: i64,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub category_id: i32,
+    pub name: String,
+    pub graphic_id: Option<i32>,
+    pub position: [f64; 3],
+    pub direction: [f64; 3],
+    pub radius: f64,
+    pub units_remaining: i64,
 }
 
 /// A can the host made (an item of its own) for a pilot who jettisons cargo: the scene puts it `distance` metres ahead of the pilot's ship.
@@ -332,6 +357,21 @@ pub enum Message {
         drone_id: i64,
         position: [f64; 3],
     },
+    DroneWorkCycle {
+        session_id: u64,
+        character_id: i64,
+        ship_id: i64,
+        solar_system_id: i32,
+        drone_id: i64,
+        target_id: i64,
+        cycle_id: u64,
+        command: u8,
+        mining_amount_m3: f64,
+        waste_multiplier: f64,
+        waste_probability: f64,
+        access_difficulty_bonus: f64,
+        roll: f64,
+    },
     /// The host asks for the ship to be destroyed: its pilot's session is told of it (`Destroyed`) and the ship's wreck is made, for `credit` to loot.
     Destroy {
         ship_id: i64,
@@ -346,6 +386,7 @@ pub enum Message {
     },
     /// The host has made a wreck (an item with contents) of a ship that was destroyed, and asks the scene to put it in space.
     PlaceWreck(Box<WreckPlacement>),
+    PlaceAsteroid(Box<AsteroidPlacement>),
     /// The host has made a can for cargo a pilot jettisons, and asks the scene to put it ahead of the pilot's ship (answered with `ContainerPlaced`).
     PlaceContainer(Box<ContainerPlacement>),
     /// A can the host asked for is in space: where it is and how it lies.
@@ -366,6 +407,41 @@ pub enum Message {
     RemoveWreck {
         wreck_id: i64,
         effect: i32,
+    },
+    DroneWorkResult {
+        session_id: u64,
+        drone_id: i64,
+        target_id: i64,
+        cycle_id: u64,
+        accepted: bool,
+        reason: String,
+        units_remaining: i64,
+        delivered_units: i64,
+        complete: bool,
+    },
+    /// A mutadaptive remote-repair cycle whose amount the host calculates from its target-specific spool state.
+    RemoteRepairCycle {
+        session_id: u64,
+        module_id: i64,
+        target_id: i64,
+        cycle_id: u64,
+        cycle_number: i32,
+        cycle_at_ms: i64,
+        cycle_duration_ms: i64,
+        ends_effect_after_cycle: bool,
+        base_amount: f64,
+        bonus_per_cycle: f64,
+        bonus_max: f64,
+    },
+    /// The host's result for one pending mutadaptive remote-repair cycle.
+    RemoteRepairCycleResult {
+        session_id: u64,
+        module_id: i64,
+        target_id: i64,
+        cycle_id: u64,
+        accepted: bool,
+        reason: String,
+        amount: f64,
     },
     /// The answer to `COMMAND_MEASURE`: metres from the centre of the ship to the surface of the wreck or can, or none when there is no such wreck.
     Measured {
@@ -904,6 +980,13 @@ fn put_action(out: &mut Vec<u8>, action: &Action) {
                     out.push(layer_byte(layer));
                     out.extend_from_slice(&amount.to_le_bytes());
                 }
+                Remote::MutadaptiveRepair { layer, amount, bonus_per_cycle, bonus_max } => {
+                    out.push(11);
+                    out.push(layer_byte(layer));
+                    out.extend_from_slice(&amount.to_le_bytes());
+                    out.extend_from_slice(&bonus_per_cycle.to_le_bytes());
+                    out.extend_from_slice(&bonus_max.to_le_bytes());
+                }
                 Remote::Transfer { amount } => {
                     out.push(1);
                     out.extend_from_slice(&amount.to_le_bytes());
@@ -1009,6 +1092,16 @@ fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
                     let layer = read_layer(reader)?;
                     Remote::Repair { layer, amount: reader.f64()? }
                 }
+                11 => {
+                    let layer = read_layer(reader)?;
+                    let amount = reader.f64()?;
+                    let bonus_per_cycle = reader.f64()?;
+                    let bonus_max = reader.f64()?;
+                    if !amount.is_finite() || amount < 0.0 || !bonus_per_cycle.is_finite() || bonus_per_cycle < 0.0 || !bonus_max.is_finite() || bonus_max < 0.0 {
+                        return Err(DecodeError::BadValue("mutadaptive repair"));
+                    }
+                    Remote::MutadaptiveRepair { layer, amount, bonus_per_cycle, bonus_max }
+                }
                 1 => Remote::Transfer { amount: reader.f64()? },
                 2 => Remote::Neutralize { amount: reader.f64()?, signature_resolution: reader.f64()? },
                 3 => Remote::Drain { amount: reader.f64()?, signature_resolution: reader.f64()? },
@@ -1044,6 +1137,9 @@ fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
                 8 => Remote::Jam { strength: [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?] },
                 _ => return Err(DecodeError::BadValue("remote")),
             };
+            if matches!(&what, Remote::MutadaptiveRepair { .. }) && when != Applies::CycleEnd {
+                return Err(DecodeError::BadValue("mutadaptive repair timing"));
+            }
             Ok(Action::Remote { what, reach, when, jam })
         }
         2 => {
@@ -1343,14 +1439,19 @@ impl Message {
             Self::DroneResults { .. } => kind::DRONE_RESULTS,
             Self::DroneScooped { .. } => kind::DRONE_SCOOPED,
             Self::DroneReleased { .. } => kind::DRONE_RELEASED,
+            Self::DroneWorkCycle { .. } => kind::DRONE_WORK_CYCLE,
             Self::Destroy { .. } => kind::DESTROY,
             Self::Respawn { .. } => kind::RESPAWN,
             Self::PlaceWreck(_) => kind::PLACE_WRECK,
+            Self::PlaceAsteroid(_) => kind::PLACE_ASTEROID,
             Self::ChargeSpent { .. } => kind::CHARGE_SPENT,
             Self::PlaceContainer(_) => kind::PLACE_CONTAINER,
             Self::ContainerPlaced { .. } => kind::CONTAINER_PLACED,
             Self::ChangeWreck { .. } => kind::CHANGE_WRECK,
             Self::RemoveWreck { .. } => kind::REMOVE_WRECK,
+            Self::DroneWorkResult { .. } => kind::DRONE_WORK_RESULT,
+            Self::RemoteRepairCycle { .. } => kind::REMOTE_REPAIR_CYCLE,
+            Self::RemoteRepairCycleResult { .. } => kind::REMOTE_REPAIR_CYCLE_RESULT,
             Self::Measured { .. } => kind::MEASURED,
             Self::AdjustCharge { .. } => kind::ADJUST_CHARGE,
             Self::ChargeAdjusted { .. } => kind::CHARGE_ADJUSTED,
@@ -1536,6 +1637,26 @@ impl Message {
                 out.extend_from_slice(&wreck_id.to_le_bytes());
                 out.extend_from_slice(&effect.to_le_bytes());
             }
+            Self::DroneWorkResult { session_id, drone_id, target_id, cycle_id, accepted, reason, units_remaining, delivered_units, complete } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&drone_id.to_le_bytes());
+                out.extend_from_slice(&target_id.to_le_bytes());
+                out.extend_from_slice(&cycle_id.to_le_bytes());
+                out.push(u8::from(*accepted));
+                put_text(&mut out, reason);
+                out.extend_from_slice(&units_remaining.to_le_bytes());
+                out.extend_from_slice(&delivered_units.to_le_bytes());
+                out.push(u8::from(*complete));
+            }
+            Self::RemoteRepairCycleResult { session_id, module_id, target_id, cycle_id, accepted, reason, amount } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&module_id.to_le_bytes());
+                out.extend_from_slice(&target_id.to_le_bytes());
+                out.extend_from_slice(&cycle_id.to_le_bytes());
+                out.push(u8::from(*accepted));
+                put_text(&mut out, reason);
+                out.extend_from_slice(&amount.to_le_bytes());
+            }
             Self::Measured { session_id, command, distance } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.push(*command);
@@ -1584,6 +1705,22 @@ impl Message {
                 put_credit(&mut out, &placement.credit);
                 out.push(u8::from(placement.is_empty));
             }
+            Self::PlaceAsteroid(asteroid) => {
+                out.extend_from_slice(&asteroid.solar_system_id.to_le_bytes());
+                out.extend_from_slice(&asteroid.asteroid_id.to_le_bytes());
+                out.extend_from_slice(&asteroid.type_id.to_le_bytes());
+                out.extend_from_slice(&asteroid.group_id.to_le_bytes());
+                out.extend_from_slice(&asteroid.category_id.to_le_bytes());
+                put_text(&mut out, &asteroid.name);
+                match asteroid.graphic_id {
+                    Some(id) => { out.push(1); out.extend_from_slice(&id.to_le_bytes()); }
+                    None => out.push(0),
+                }
+                put_vector(&mut out, &asteroid.position);
+                put_vector(&mut out, &asteroid.direction);
+                out.extend_from_slice(&asteroid.radius.to_le_bytes());
+                out.extend_from_slice(&asteroid.units_remaining.to_le_bytes());
+            }
             Self::Spawn(spawn) => {
                 out.extend_from_slice(&spawn.request_id.to_le_bytes());
                 out.extend_from_slice(&spawn.solar_system_id.to_le_bytes());
@@ -1612,11 +1749,35 @@ impl Message {
                 out.extend_from_slice(&launch.request_id.to_le_bytes());
                 out.extend_from_slice(&launch.session_id.to_le_bytes());
                 put_ship(&mut out, &launch.ship);
-                put_weapon(&mut out, &launch.weapon);
+                match &launch.weapon {
+                    Some(weapon) => put_weapon(&mut out, weapon),
+                    None => put_weapon(&mut out, &NpcWeapon {
+                        module_id: 0,
+                        effect_id: 0,
+                        cycle_ms: 0.0,
+                        capacitor_need: 0.0,
+                        turret: Turret {
+                            weapon_type_id: 0,
+                            fx: String::new(),
+                            raw_damage: [0.0; 4],
+                            optimal_range: 0.0,
+                            falloff: 0.0,
+                            tracking_speed: 0.0,
+                            signature_resolution: 0.0,
+                            charge: None,
+                            missile: None,
+                        },
+                    }),
+                }
                 out.extend_from_slice(&launch.graphic_id.to_le_bytes());
                 out.extend_from_slice(&launch.orbit_distance.to_le_bytes());
                 out.extend_from_slice(&launch.attack_range.to_le_bytes());
                 out.extend_from_slice(&launch.cruise_fraction.to_le_bytes());
+                out.extend_from_slice(&launch.mining_amount_m3.to_le_bytes());
+                out.extend_from_slice(&launch.work_cycle_ms.to_le_bytes());
+                out.extend_from_slice(&launch.mining_waste_multiplier.to_le_bytes());
+                out.extend_from_slice(&launch.mining_waste_probability.to_le_bytes());
+                out.extend_from_slice(&launch.salvage_access_bonus.to_le_bytes());
             }
             Self::DroneCommand { session_id, command, target_id, drone_ids, control_range } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
@@ -1645,6 +1806,34 @@ impl Message {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&drone_id.to_le_bytes());
                 put_vector(&mut out, position);
+            }
+            Self::DroneWorkCycle { session_id, character_id, ship_id, solar_system_id, drone_id, target_id, cycle_id, command, mining_amount_m3, waste_multiplier, waste_probability, access_difficulty_bonus, roll } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&character_id.to_le_bytes());
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.extend_from_slice(&drone_id.to_le_bytes());
+                out.extend_from_slice(&target_id.to_le_bytes());
+                out.extend_from_slice(&cycle_id.to_le_bytes());
+                out.push(*command);
+                out.extend_from_slice(&mining_amount_m3.to_le_bytes());
+                out.extend_from_slice(&waste_multiplier.to_le_bytes());
+                out.extend_from_slice(&waste_probability.to_le_bytes());
+                out.extend_from_slice(&access_difficulty_bonus.to_le_bytes());
+                out.extend_from_slice(&roll.to_le_bytes());
+            }
+            Self::RemoteRepairCycle { session_id, module_id, target_id, cycle_id, cycle_number, cycle_at_ms, cycle_duration_ms, ends_effect_after_cycle, base_amount, bonus_per_cycle, bonus_max } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&module_id.to_le_bytes());
+                out.extend_from_slice(&target_id.to_le_bytes());
+                out.extend_from_slice(&cycle_id.to_le_bytes());
+                out.extend_from_slice(&cycle_number.to_le_bytes());
+                out.extend_from_slice(&cycle_at_ms.to_le_bytes());
+                out.extend_from_slice(&cycle_duration_ms.to_le_bytes());
+                out.push(u8::from(*ends_effect_after_cycle));
+                out.extend_from_slice(&base_amount.to_le_bytes());
+                out.extend_from_slice(&bonus_per_cycle.to_le_bytes());
+                out.extend_from_slice(&bonus_max.to_le_bytes());
             }
             Self::Destroy { ship_id, credit } => {
                 out.extend_from_slice(&ship_id.to_le_bytes());
@@ -1856,6 +2045,31 @@ impl Message {
                 Message::ChangeWreck { session_id, wreck_id, is_empty }
             }
             kind::REMOVE_WRECK => Message::RemoveWreck { wreck_id: r.i64()?, effect: r.i32()? },
+            kind::DRONE_WORK_RESULT => {
+                let session_id = r.u64()?;
+                let drone_id = r.i64()?;
+                let target_id = r.i64()?;
+                let cycle_id = r.u64()?;
+                let accepted = match r.u8()? { 0 => false, 1 => true, _ => return Err(DecodeError::BadValue("accepted")) };
+                let reason = r.text()?;
+                let units_remaining = r.i64()?;
+                let delivered_units = r.i64()?;
+                let complete = match r.u8()? { 0 => false, 1 => true, _ => return Err(DecodeError::BadValue("complete")) };
+                Message::DroneWorkResult { session_id, drone_id, target_id, cycle_id, accepted, reason, units_remaining, delivered_units, complete }
+            }
+            kind::REMOTE_REPAIR_CYCLE_RESULT => {
+                let session_id = r.u64()?;
+                let module_id = r.i64()?;
+                let target_id = r.i64()?;
+                let cycle_id = r.u64()?;
+                let accepted = match r.u8()? { 0 => false, 1 => true, _ => return Err(DecodeError::BadValue("accepted")) };
+                let reason = r.text()?;
+                let amount = r.f64()?;
+                if cycle_id == 0 || !amount.is_finite() || amount < 0.0 {
+                    return Err(DecodeError::BadValue("remote repair cycle result"));
+                }
+                Message::RemoteRepairCycleResult { session_id, module_id, target_id, cycle_id, accepted, reason, amount }
+            }
             kind::MEASURED => {
                 let session_id = r.u64()?;
                 let command = r.u8()?;
@@ -1895,6 +2109,26 @@ impl Message {
                 position: read_vector(&mut r)?,
                 direction: read_vector(&mut r)?,
             },
+            kind::PLACE_ASTEROID => {
+                let solar_system_id = r.i32()?;
+                let asteroid_id = r.i64()?;
+                let type_id = r.i32()?;
+                let group_id = r.i32()?;
+                let category_id = r.i32()?;
+                let name = r.text()?;
+                let graphic_id = match r.u8()? {
+                    0 => None,
+                    1 => Some(r.i32()?),
+                    _ => return Err(DecodeError::BadValue("graphic_id")),
+                };
+                let position = read_vector(&mut r)?;
+                let direction = read_vector(&mut r)?;
+                let radius = r.f64()?;
+                let units_remaining = r.i64()?;
+                Message::PlaceAsteroid(Box::new(AsteroidPlacement {
+                    solar_system_id, asteroid_id, type_id, group_id, category_id, name, graphic_id, position, direction, radius, units_remaining,
+                }))
+            }
             kind::PLACE_WRECK => {
                 let solar_system_id = r.i32()?;
                 let wreck_id = r.i64()?;
@@ -1959,11 +2193,19 @@ impl Message {
                 request_id: r.u64()?,
                 session_id: r.u64()?,
                 ship: read_ship(&mut r)?,
-                weapon: read_weapon(&mut r)?,
+                weapon: {
+                    let weapon = read_weapon(&mut r)?;
+                    (weapon.module_id != 0).then_some(weapon)
+                },
                 graphic_id: r.i32()?,
                 orbit_distance: r.f64()?,
                 attack_range: r.f64()?,
                 cruise_fraction: r.f64()?,
+                mining_amount_m3: r.f64()?,
+                work_cycle_ms: r.f64()?,
+                mining_waste_multiplier: r.f64()?,
+                mining_waste_probability: r.f64()?,
+                salvage_access_bonus: r.f64()?,
             })),
             kind::DRONE_COMMAND => {
                 let (session_id, command, target_id) = (r.u64()?, r.u8()?, r.i64()?);
@@ -1991,6 +2233,38 @@ impl Message {
                 drone_id: r.i64()?,
                 position: read_vector(&mut r)?,
             },
+            kind::DRONE_WORK_CYCLE => Message::DroneWorkCycle {
+                session_id: r.u64()?,
+                character_id: r.i64()?,
+                ship_id: r.i64()?,
+                solar_system_id: r.i32()?,
+                drone_id: r.i64()?,
+                target_id: r.i64()?,
+                cycle_id: r.u64()?,
+                command: r.u8()?,
+                mining_amount_m3: r.f64()?,
+                waste_multiplier: r.f64()?,
+                waste_probability: r.f64()?,
+                access_difficulty_bonus: r.f64()?,
+                roll: r.f64()?,
+            },
+            kind::REMOTE_REPAIR_CYCLE => {
+                let session_id = r.u64()?;
+                let module_id = r.i64()?;
+                let target_id = r.i64()?;
+                let cycle_id = r.u64()?;
+                let cycle_number = r.i32()?;
+                let cycle_at_ms = r.i64()?;
+                let cycle_duration_ms = r.i64()?;
+                let ends_effect_after_cycle = match r.u8()? { 0 => false, 1 => true, _ => return Err(DecodeError::BadValue("ends effect after cycle")) };
+                let base_amount = r.f64()?;
+                let bonus_per_cycle = r.f64()?;
+                let bonus_max = r.f64()?;
+                if cycle_id == 0 || cycle_number <= 0 || cycle_duration_ms <= 0 || !base_amount.is_finite() || base_amount < 0.0 || !bonus_per_cycle.is_finite() || bonus_per_cycle < 0.0 || !bonus_max.is_finite() || bonus_max < 0.0 {
+                    return Err(DecodeError::BadValue("remote repair cycle"));
+                }
+                Message::RemoteRepairCycle { session_id, module_id, target_id, cycle_id, cycle_number, cycle_at_ms, cycle_duration_ms, ends_effect_after_cycle, base_amount, bonus_per_cycle, bonus_max }
+            }
             kind::DESTROY => Message::Destroy { ship_id: r.i64()?, credit: read_credit(&mut r)? },
             kind::TARGET_REFUSED => Message::TargetRefused {
                 session_id: r.u64()?,

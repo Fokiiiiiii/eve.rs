@@ -82,9 +82,29 @@ pub fn add_wreck(stamp: u32, wreck: &Wreck, now: i64) -> Result<Value, BallError
     Ok(action(stamp, "AddBalls2", [tuple([buffer, list([tuple([slim, wreck_damage_state(now)])])])]))
 }
 
+/// `AddBalls2` for a mineable asteroid rock.
+pub fn add_asteroid(stamp: u32, asteroid: &crate::wreck::Asteroid, now: i64) -> Result<Value, BallError> {
+    let buffer = state_buffer(ADD_BALLS, stamp, &[asteroid.ball()])?;
+    let slim = Value::Dict(asteroid.slim_entries().into_iter().map(|(k, v)| (word(k), v)).collect());
+    Ok(action(stamp, "AddBalls2", [tuple([buffer, list([tuple([slim, wreck_damage_state(now)])])])]))
+}
+
+/// A depleted asteroid dissolves before the client removes its ball.
+pub fn dissolve(stamp: u32, asteroid_id: i64) -> Vec<Value> {
+    vec![
+        action(stamp, "TerminalPlayDestructionEffect", [id(asteroid_id), int(crate::destruction::DISSOLVE)]),
+        remove_ships(stamp, [asteroid_id]),
+    ]
+}
+
 /// `OnSlimItemChange`: the slim item of a wreck or a can is told again (what is in it, who may take it), as an object.
 pub fn slim_item_change(stamp: u32, wreck: &Wreck) -> Value {
     action(stamp, "OnSlimItemChange", [id(wreck.id), slim_object(wreck.slim_entries())])
+}
+
+/// `OnSlimItemChange` for an asteroid: stock is distinct from wreck loot flags.
+pub fn slim_asteroid_change(stamp: u32, asteroid: &crate::wreck::Asteroid) -> Value {
+    action(stamp, "OnSlimItemChange", [id(asteroid.id), slim_object(asteroid.slim_entries())])
 }
 
 /// `OnSlimItemChange` for a ship: its slim item is told again, as an object, to whoever has the ship in view (a pilot whose security status changed, for one).

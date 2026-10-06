@@ -89,6 +89,8 @@ impl Reach {
 pub enum Remote {
     /// A layer of the target is mended by `amount` points (a remote shield booster, armor repairer or hull repairer).
     Repair { layer: Layer, amount: f64 },
+    /// The host settles one target-specific cycle and returns its spooled repair amount.
+    MutadaptiveRepair { layer: Layer, amount: f64, bonus_per_cycle: f64, bonus_max: f64 },
     /// The target's capacitor is given `amount` GJ (a remote capacitor transmitter).
     Transfer { amount: f64 },
     /// `amount` GJ are taken from the target's capacitor (an energy neutralizer); one that is built for bigger ships is weaker against a target whose signature
@@ -132,7 +134,7 @@ pub enum Remote {
 impl Remote {
     pub fn hostile(&self) -> bool {
         match self {
-            Self::Repair { .. } | Self::Transfer { .. } => false,
+            Self::Repair { .. } | Self::MutadaptiveRepair { .. } | Self::Transfer { .. } => false,
             Self::Damp {
                 range_percent,
                 resolution_percent,
@@ -436,6 +438,13 @@ pub(crate) enum Ending {
     NoRounds,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PendingRemoteRepairCycle {
+    cycle_id: u64,
+    at: i64,
+    range_share: f64,
+}
+
 /// An effect that is running.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Running {
@@ -449,6 +458,7 @@ pub(crate) struct Running {
     rounds: Option<i64>,
     /// Whether the cycle in progress started with a charge available.
     charged_this_cycle: bool,
+    pending_remote_repair: Option<PendingRemoteRepairCycle>,
 }
 
 /// The modules of a ship that run, and its capacitor.
@@ -457,6 +467,14 @@ pub(crate) struct Modules {
     pub(crate) capacitor: Option<Capacitor>,
     running: Vec<Running>,
     mjd_cooldowns: Vec<(i64, i64)>,
+    next_remote_repair_cycle_id: u64,
+}
+
+impl Modules {
+    fn allocate_remote_repair_cycle_id(&mut self) -> u64 {
+        self.next_remote_repair_cycle_id = self.next_remote_repair_cycle_id.wrapping_add(1).max(1);
+        self.next_remote_repair_cycle_id
+    }
 }
 
 impl Modules {
@@ -466,6 +484,7 @@ impl Modules {
             capacitor: Some(Capacitor::filled(capacity, recharge_s, ratio, now)),
             running: Vec::new(),
             mjd_cooldowns: Vec::new(),
+            next_remote_repair_cycle_id: 0,
         }
     }
 
@@ -844,7 +863,7 @@ impl Scene {
         });
         let charged_this_cycle = rounds.is_some_and(|left| left > 0);
         let run =
-            Running { effect, cycle_start: now, cycles: 1, stopping: false, rounds, charged_this_cycle };
+            Running { effect, cycle_start: now, cycles: 1, stopping: false, rounds, charged_this_cycle, pending_remote_repair: None };
         let (before, after) = match pilot.modules.capacitor.as_mut() {
             Some(capacitor) => capacitor.draw(now, run.effect.capacitor_need),
             None => (0.0, 0.0),
@@ -1021,6 +1040,9 @@ impl Scene {
             }
         };
         for (index, run) in pilot.modules.running.iter().enumerate() {
+            if run.pending_remote_repair.is_some() {
+                continue;
+            }
             consider(
                 run.cycle_start + (run.effect.duration_ms * TICKS_PER_SECOND as f64 / 1000.0) as i64,
                 Moment::CycleEnd(index),
@@ -1123,9 +1145,62 @@ impl Scene {
         } else {
             true
         };
+        if target_ok
+            && let Some(Action::Remote {
+                what: Remote::MutadaptiveRepair { amount, bonus_per_cycle, bonus_max, .. },
+                when: Applies::CycleEnd,
+                ..
+            }) = run.effect.action.as_ref()
+        {
+            let range_share = run.effect.remote().and_then(|(_, reach, _)| {
+                self.session_of(run.effect.target_id)
+                    .and_then(|target| self.apart(session, target))
+                    .and_then(|apart| reach.share(apart))
+            }).expect("a valid remote-repair target has a range share");
+            let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+            let Some(running_index) =
+                pilot.modules.running.iter().position(|current| current.effect.module_id == run.effect.module_id)
+            else {
+                return Vec::new();
+            };
+            let current = &pilot.modules.running[running_index];
+            if current.pending_remote_repair.is_some() {
+                return Vec::new();
+            }
+            let cycle_number = current.cycles;
+            let ends_effect_after_cycle = current.stopping
+                || current.cycles >= current.effect.repeat
+                || !pilot.modules.capacitor.as_ref().is_some_and(|c| c.charge_at(at) >= run.effect.capacitor_need);
+            let cycle_id = pilot.modules.allocate_remote_repair_cycle_id();
+            pilot.modules.running[running_index].pending_remote_repair =
+                Some(PendingRemoteRepairCycle { cycle_id, at, range_share });
+            let cycle_at_ms = (i128::from(at) * 1_000 / i128::from(TICKS_PER_SECOND)) as i64;
+            let cycle_duration_ms = run.effect.duration_ms.round().max(1.0) as i64;
+            return vec![Out::RemoteRepairCycle {
+                session,
+                module_id: run.effect.module_id,
+                target_id: run.effect.target_id,
+                cycle_id,
+                cycle_number,
+                cycle_at_ms,
+                cycle_duration_ms,
+                ends_effect_after_cycle,
+                base_amount: *amount,
+                bonus_per_cycle: *bonus_per_cycle,
+                bonus_max: *bonus_max,
+            }];
+        }
         // what the cycle that ends does at its end is done before the effect goes on or ends
         let mut out = self.act(session, &run.effect, Applies::CycleEnd, at);
+        self.finish_cycle(session, run.effect.module_id, at, out, target_ok)
+    }
+
+    fn finish_cycle(&mut self, session: SessionId, module_id: i64, at: i64, mut out: Vec<Out>, target_ok: bool) -> Vec<Out> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return out };
+        let Some(index) = pilot.modules.running.iter().position(|run| run.effect.module_id == module_id) else {
+            return out;
+        };
+        let run = pilot.modules.running[index].clone();
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
         let affordable =
             pilot.modules.capacitor.as_ref().is_some_and(|c| c.charge_at(at) >= run.effect.capacitor_need);
@@ -1161,6 +1236,7 @@ impl Scene {
         next.cycle_start = at;
         next.cycles += 1;
         next.charged_this_cycle = next.rounds.is_some_and(|left| left > 0);
+        next.pending_remote_repair = None;
         let next = next.clone();
         out.push(Self::charge_told(session, owner, ship_id, at, after, before));
         if next.effect.turret.is_none() {
@@ -1193,11 +1269,60 @@ impl Scene {
             }
         } else if let Some(pilot) = self.pilots.get_mut(&session)
             && let Some(position) =
-                pilot.modules.running.iter().position(|r| r.effect.module_id == next.effect.module_id)
+                pilot.modules.running.iter().position(|run| run.effect.module_id == next.effect.module_id)
         {
             let run = pilot.modules.running.remove(position);
             out.extend(self.effect_ended(session, run, owner, ship_id, at, Ending::NoRounds));
         }
+        out
+    }
+
+    /// Settles the host's amount for the exact pending module/target cycle; stale or replayed results do nothing.
+    pub fn remote_repair_cycle_result(
+        &mut self,
+        session: SessionId,
+        module_id: i64,
+        target_id: i64,
+        cycle_id: u64,
+        accepted: bool,
+        amount: f64,
+    ) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
+        let Some(index) = pilot.modules.running.iter().position(|run| {
+            run.effect.module_id == module_id
+                && run.effect.target_id == target_id
+                && run.pending_remote_repair.is_some_and(|pending| pending.cycle_id == cycle_id)
+        }) else {
+            return Vec::new();
+        };
+        let run = pilot.modules.running[index].clone();
+        let pending = run.pending_remote_repair.expect("matched pending remote-repair cycle");
+        if !accepted || !amount.is_finite() || amount < 0.0 {
+            let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+            let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+            let run = pilot.modules.running.remove(index);
+            return self.effect_ended(session, run, owner, ship_id, pending.at, Ending::Done);
+        }
+        let Some(Action::Remote {
+            what: Remote::MutadaptiveRepair { layer, .. },
+            ..
+        }) = run.effect.action.as_ref()
+        else {
+            let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+            let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+            let run = pilot.modules.running.remove(index);
+            return self.effect_ended(session, run, owner, ship_id, pending.at, Ending::Done);
+        };
+        let mut out = self.mend(target_id, *layer, amount * pending.range_share, pending.at);
+        if let Some(pilot) = self.pilots.get_mut(&session)
+            && let Some(current) = pilot.modules.running.get_mut(index)
+            && current.pending_remote_repair.is_some_and(|current| current.cycle_id == cycle_id)
+        {
+            current.pending_remote_repair = None;
+        } else {
+            return out;
+        }
+        out.extend(self.finish_cycle(session, module_id, pending.at, Vec::new(), true));
         out
     }
 
@@ -1326,6 +1451,7 @@ impl Scene {
             }
             Remote::Jam { strength } => self.jam(session, effect, strength, share, at),
             Remote::Repair { layer, amount } => self.mend(effect.target_id, *layer, amount * share, at),
+            Remote::MutadaptiveRepair { .. } => Vec::new(),
             Remote::Transfer { amount } => self.give_capacitor(target, amount * share, at),
             Remote::Neutralize { amount, signature_resolution } => {
                 let strength = amount * share * resolved(*signature_resolution);
@@ -2459,6 +2585,127 @@ pub(crate) mod tests {
         assert!(!told.iter().any(|l| l.starts_with("7:attributes[") && l.contains("266")), "{told:?}");
         // its own armor is not what is mended
         assert_eq!(layers(&scene, after).armor, 137.5);
+    }
+
+    fn remote_repair_cycle_request(out: &[Out]) -> (u64, i32, i64, i64, bool) {
+        out.iter()
+            .find_map(|item| match item {
+                Out::RemoteRepairCycle { cycle_id, cycle_number, cycle_at_ms, cycle_duration_ms, ends_effect_after_cycle, .. } => {
+                    Some((*cycle_id, *cycle_number, *cycle_at_ms, *cycle_duration_ms, *ends_effect_after_cycle))
+                }
+                _ => None,
+            })
+            .expect("remote repair cycle request")
+    }
+
+    #[test]
+    fn mutadaptive_remote_repair_waits_for_host_amount_on_every_cycle_and_marks_the_final_one() {
+        let (mut scene, t) = reaching(10_000.0);
+        hurt_partner(&mut scene, t);
+        let before = partner_layers(&scene, t).armor;
+        let mut effect = projected(
+            Remote::MutadaptiveRepair { layer: Layer::Armor, amount: 10.0, bonus_per_cycle: 0.1, bonus_max: 1.5 },
+            Applies::CycleEnd,
+            partner(),
+        );
+        effect.duration_ms = 6_000.0;
+        effect.capacitor_need = 0.0;
+        effect.repeat = 3;
+        let started = scene.activate(A, effect, t);
+        assert!(matches!(started.first(), Some(Out::Accepted { command: 17, .. })), "{started:?}");
+
+        let (out1, at1) = poll_until(&mut scene, t, 6.0);
+        let (cycle1, number1, cycle_at1, duration1, ends1) = remote_repair_cycle_request(&out1);
+        assert_eq!((number1, duration1, ends1), (1, 6_000, false));
+        assert_eq!(partner_layers(&scene, at1).armor, before, "repair waits for the host result");
+        assert!(scene.remote_repair_cycle_result(A, MODULE, partner(), cycle1 + 10, true, 999.0).is_empty());
+        assert_eq!(partner_layers(&scene, at1).armor, before, "a stale result is ignored");
+        scene.remote_repair_cycle_result(A, MODULE, partner(), cycle1, true, 11.0);
+        assert!((partner_layers(&scene, at1).armor - (before + 11.0)).abs() < 1e-3);
+        assert!(scene.remote_repair_cycle_result(A, MODULE, partner(), cycle1, true, 999.0).is_empty());
+        assert!((partner_layers(&scene, at1).armor - (before + 11.0)).abs() < 1e-3, "a replay cannot settle twice");
+
+        let (out2, at2) = poll_until(&mut scene, at1, 6.0);
+        let (cycle2, number2, cycle_at2, duration2, ends2) = remote_repair_cycle_request(&out2);
+        assert_eq!((number2, duration2, ends2), (2, 6_000, false));
+        assert_eq!(cycle_at2 - cycle_at1, 6_000, "cycle timestamps use simulation milliseconds");
+        scene.remote_repair_cycle_result(A, MODULE, partner(), cycle2, true, 12.0);
+        let after_cycle2 = partner_layers(&scene, at2).armor;
+        assert!((after_cycle2 - (before + 23.0)).abs() < 1e-3, "before={before}, after_cycle2={after_cycle2}");
+
+        let (out3, at3) = poll_until(&mut scene, at2, 6.0);
+        let (cycle3, number3, _, duration3, ends3) = remote_repair_cycle_request(&out3);
+        assert_eq!((number3, duration3, ends3), (3, 6_000, true));
+        scene.remote_repair_cycle_result(A, MODULE, partner(), cycle3, true, 13.0);
+        assert!((partner_layers(&scene, at3).armor - (before + 36.0)).abs() < 1e-3);
+        assert!(matches!(scene.deactivate(A, MODULE, at3).first(), Some(Out::Refused { reason: "NOT_ACTIVE", .. })));
+    }
+
+    #[test]
+    fn deactivation_during_a_pending_mutadaptive_cycle_finishes_that_cycle_before_stopping() {
+        let (mut scene, t) = reaching(10_000.0);
+        hurt_partner(&mut scene, t);
+        let before = partner_layers(&scene, t).armor;
+        let mut effect = projected(
+            Remote::MutadaptiveRepair { layer: Layer::Armor, amount: 100.0, bonus_per_cycle: 0.1, bonus_max: 1.5 },
+            Applies::CycleEnd,
+            partner(),
+        );
+        effect.duration_ms = 6_000.0;
+        effect.capacitor_need = 0.0;
+        let started = scene.activate(A, effect, t);
+        assert!(matches!(started.first(), Some(Out::Accepted { .. })));
+        let (out, at) = poll_until(&mut scene, t, 6.0);
+        let (cycle_id, _, _, _, ends_after_cycle) = remote_repair_cycle_request(&out);
+        assert!(!ends_after_cycle, "the stop request arrives after the cycle was dispatched");
+        assert!(matches!(scene.deactivate(A, MODULE, at).first(), Some(Out::Accepted { command: 16, .. })));
+        scene.remote_repair_cycle_result(A, MODULE, partner(), cycle_id, true, 110.0);
+        assert!((partner_layers(&scene, at).armor - (before + 110.0)).abs() < 1e-3);
+        assert!(matches!(scene.deactivate(A, MODULE, at).first(), Some(Out::Refused { reason: "NOT_ACTIVE", .. })));
+    }
+
+    #[test]
+    fn deactivation_before_cycle_dispatch_marks_the_request_as_final() {
+        let (mut scene, t) = reaching(10_000.0);
+        hurt_partner(&mut scene, t);
+        let before = partner_layers(&scene, t).armor;
+        let mut effect = projected(
+            Remote::MutadaptiveRepair { layer: Layer::Armor, amount: 100.0, bonus_per_cycle: 0.1, bonus_max: 1.5 },
+            Applies::CycleEnd,
+            partner(),
+        );
+        effect.duration_ms = 6_000.0;
+        effect.capacitor_need = 0.0;
+        let started = scene.activate(A, effect, t);
+        assert!(matches!(started.first(), Some(Out::Accepted { .. })));
+        assert!(matches!(scene.deactivate(A, MODULE, t + SECOND).first(), Some(Out::Accepted { .. })));
+        let (out, at) = poll_until(&mut scene, t, 6.0);
+        let (cycle_id, _, _, _, ends_after_cycle) = remote_repair_cycle_request(&out);
+        assert!(ends_after_cycle);
+        scene.remote_repair_cycle_result(A, MODULE, partner(), cycle_id, true, 110.0);
+        assert!((partner_layers(&scene, at).armor - (before + 110.0)).abs() < 1e-3);
+        assert!(matches!(scene.deactivate(A, MODULE, at).first(), Some(Out::Refused { reason: "NOT_ACTIVE", .. })));
+    }
+
+    #[test]
+    fn offlining_a_mutadaptive_repairer_cancels_its_pending_callback_immediately() {
+        let (mut scene, t) = reaching(10_000.0);
+        hurt_partner(&mut scene, t);
+        let before = partner_layers(&scene, t).armor;
+        let mut effect = projected(
+            Remote::MutadaptiveRepair { layer: Layer::Armor, amount: 100.0, bonus_per_cycle: 0.1, bonus_max: 1.5 },
+            Applies::CycleEnd,
+            partner(),
+        );
+        effect.duration_ms = 6_000.0;
+        effect.capacitor_need = 0.0;
+        let started = scene.activate(A, effect, t);
+        assert!(matches!(started.first(), Some(Out::Accepted { .. })));
+        let (out, at) = poll_until(&mut scene, t, 6.0);
+        let (cycle_id, ..) = remote_repair_cycle_request(&out);
+        scene.offline_module(A, MODULE, at);
+        assert!(scene.remote_repair_cycle_result(A, MODULE, partner(), cycle_id, true, 999.0).is_empty());
+        assert_eq!(partner_layers(&scene, at).armor, before, "offline cancels the in-flight repair immediately");
     }
 
     #[test]

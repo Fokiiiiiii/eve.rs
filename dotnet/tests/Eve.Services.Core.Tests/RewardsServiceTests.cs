@@ -32,6 +32,12 @@ public sealed class RewardsServiceTests
     }
 
     [Fact]
+    public void Login_campaign_manager_requires_authoritative_callbacks()
+    {
+        Assert.Throws<ArgumentNullException>(() => new LoginCampaignMgrService(null!));
+    }
+
+    [Fact]
     public async Task Login_campaign_claim_waits_until_the_authoritative_next_reward_time()
     {
         var backend = new Backend { LoginState = LoginState(Time(Now.AddSeconds(1))) };
@@ -123,6 +129,12 @@ public sealed class RewardsServiceTests
     }
 
     [Fact]
+    public void Seasonal_login_campaign_manager_requires_authoritative_callbacks()
+    {
+        Assert.Throws<ArgumentNullException>(() => new SeasonalLoginCampaignMgrService(null!));
+    }
+
+    [Fact]
     public async Task Seasonal_claim_grants_current_tracks_and_only_missing_omega_days()
     {
         var backend = new Backend { SeasonalState = SeasonalState() };
@@ -205,6 +217,57 @@ public sealed class RewardsServiceTests
             PyNone.Instance, PyNone.Instance, PyNone.Instance, PyNone.Instance)), MarshalCodec.Encode(active));
         Assert.Equal(MarshalCodec.Encode(PyBool.False), MarshalCodec.Encode(claim));
         Assert.Equal(0, backend.SeasonalClaimCalls);
+    }
+
+    [Fact]
+    public async Task Seasonal_claim_ignores_future_history_when_selecting_reward_days()
+    {
+        var state = SeasonalState() with
+        {
+            ClaimHistory =
+            [
+                new(Ordinal(new DateOnly(2026, 10, 3)), 5, false),
+                new(Ordinal(new DateOnly(2026, 10, 6)), 5, false)
+            ]
+        };
+        var backend = new Backend { SeasonalState = state };
+        var service = new SeasonalLoginCampaignMgrService(backend, () => Now);
+
+        var result = await service.CallAsync(Call("claim_reward"));
+
+        Assert.Equal(MarshalCodec.Encode(PyBool.True), MarshalCodec.Encode(result));
+        Assert.Contains(new SeasonalRewardGrant(1, SeasonalLoginRewardTrack.Alpha, false, 101, 11), backend.LastSeasonalClaim!.Rewards);
+        Assert.Contains(new SeasonalRewardGrant(1, SeasonalLoginRewardTrack.Omega, false, 201, 2), backend.LastSeasonalClaim.Rewards);
+        Assert.Contains(new SeasonalRewardGrant(0, SeasonalLoginRewardTrack.Omega, true, 200, 2), backend.LastSeasonalClaim.Rewards);
+        Assert.DoesNotContain(backend.LastSeasonalClaim.Rewards, reward => reward.DayIndex == 2);
+        Assert.DoesNotContain(backend.LastSeasonalClaim.Rewards, reward => reward.Retroactive && reward.DayIndex == 1);
+    }
+
+    [Fact]
+    public async Task Seasonal_claim_after_campaign_end_is_rejected_before_host_claim()
+    {
+        var backend = new Backend
+        {
+            SeasonalState = SeasonalState() with { EndDate = new DateOnly(2026, 10, 4) }
+        };
+        var service = new SeasonalLoginCampaignMgrService(backend, () => Now);
+
+        var result = await service.CallAsync(Call("claim_reward"));
+
+        Assert.Equal(MarshalCodec.Encode(PyBool.False), MarshalCodec.Encode(result));
+        Assert.Equal(0, backend.SeasonalClaimCalls);
+    }
+
+    [Fact]
+    public async Task Login_campaign_claim_is_not_ready_at_the_exact_reward_timestamp()
+    {
+        var backend = new Backend { LoginState = LoginState(Time(Now)) };
+        var service = new LoginCampaignMgrService(backend, () => Now);
+
+        var result = await service.CallAsync(Call("claim_reward"));
+
+        Assert.IsType<PyNone>(result);
+        Assert.Equal(0, backend.LoginClaimCalls);
     }
 
     private static LoginCampaignSnapshot LoginState(long nextRewardTimestamp) =>

@@ -18,6 +18,8 @@ public sealed class StoreOffersService(
     private readonly Func<CancellationToken, ValueTask<JsonObject?>> readStoreState =
         readStoreState ?? throw new ArgumentNullException(nameof(readStoreState));
 
+private const long RealMoneyStoreId = 9;
+
     public string Name => "storeManager";
 
     public bool HasMethod(string method) => method is
@@ -54,29 +56,69 @@ public sealed class StoreOffersService(
 
     private async ValueTask<PyValue> PurchaseAsync(ServiceCall call)
     {
-        if (call.Args.Count != 8)
-            throw new ArgumentException("buy_offer requires exactly eight positional arguments.", nameof(call));
+        var requestedStoreId = call.Kwarg("store_id");
+        var storeId = requestedStoreId is null ? DefaultStoreId : PositiveId(requestedStoreId, 0);
+        var state = await readStoreState(call.Cancellation).ConfigureAwait(false);
+        var store = (state?["stores"] as JsonObject)?[storeId.ToString(CultureInfo.InvariantCulture)] as JsonObject;
+        var offer = FindOffer(store?["offers"] as JsonArray, call.Arg(0));
+        if (offer is null || !HasValidProducts(offer))
+            throw new InvalidOperationException("Store offer or product data is unavailable.");
+        var skipPayment = IsPaidOffer(call.Arg(1), storeId);
+
+        if (call.Session.UserId is not { } authenticatedUserId || authenticatedUserId <= 0)
+            throw new UnauthorizedAccessException("An authenticated account is required to buy a store offer.");
         if (call.Session.CharacterId is not { } authenticatedCharacterId || authenticatedCharacterId <= 0)
             throw new UnauthorizedAccessException("An authenticated character is required to buy a store offer.");
         if (purchaseOffer is null)
-            throw new InvalidOperationException("Store offer purchase settlement provider is unavailable.");
+            throw new InvalidOperationException("Store offer fulfillment provider is unavailable.");
 
         var request = new StoreOfferPurchaseRequest(
             authenticatedCharacterId,
             call.Arg(0),
             call.Arg(1),
             call.Arg(2),
-            call.Arg(3),
-            call.Arg(4),
-            call.Arg(5),
-            call.Arg(6),
-            call.Arg(7));
+            call.Kwarg("from_character_id") ?? new PyInt(authenticatedCharacterId),
+            call.Kwarg("to_character_id") ?? PyNone.Instance,
+            call.Kwarg("message") ?? PyNone.Instance,
+            call.Kwarg("is_game_time") ?? PyBool.False,
+            requestedStoreId ?? new PyInt(DefaultStoreId))
+        {
+            AuthenticatedUserId = authenticatedUserId,
+            OperationId = call.CallId,
+            SkipPayment = skipPayment,
+            Products = OfferProducts(offer),
+            ThirdPartyGoodsId = ToPyValue((offer["thirdpartyinfo"] as JsonObject)?["goodsid"]),
+        };
         var result = await purchaseOffer(request, call.Cancellation).ConfigureAwait(false);
         if (!JsSemantics.Truthy(result))
-            throw new InvalidOperationException("Store offer purchase was not settled.");
+            throw new InvalidOperationException("Store offer fulfillment was not committed.");
 
         return result;
     }
+
+    private static bool IsPaidOffer(PyValue requestedCurrency, long storeId)
+    {
+        if (storeId != RealMoneyStoreId)
+            return false;
+
+        return JsString(requestedCurrency).Trim().ToUpperInvariant() is
+            "CNY" or "JPY" or "EUR" or "GBP" or "USD" or "RUB";
+    }
+
+    private static bool HasValidProducts(JsonObject offer) =>
+        offer["products"] is JsonArray { Count: > 0 } products &&
+        products.All(product =>
+            product is JsonObject item &&
+            PositiveId(item["id"], 0) > 0 &&
+            PositiveId(item["typeId"], 0) > 0 &&
+            PositiveId(item["quantity"], 0) > 0);
+
+    private static PyValue OfferProducts(JsonObject? offer) =>
+        offer?["products"] is JsonArray products
+            ? new PyList([.. products.Select(ToPyValue)])
+            : new PyList([]);
+
+
 
     private static PyValue List(JsonNode? node) => node is JsonArray values
         ? new PyList([.. values.Select(ToPyValue)])
@@ -219,4 +261,126 @@ public sealed record StoreOfferPurchaseRequest(
     PyValue Recipient,
     PyValue Message,
     PyValue GameTime,
-    PyValue Store);
+    PyValue Store)
+{
+    public long AuthenticatedUserId { get; init; }
+
+    /// <summary>Original ServiceCall.CallId; pair with AuthenticatedUserId for idempotent settlement.</summary>
+    public required PyValue OperationId { get; init; }
+
+    /// <summary>When true, skip only the in-game currency debit; redeem fulfillment still must commit.</summary>
+    public bool SkipPayment { get; init; }
+
+    /// <summary>The offer JSON products array, preserved with id, typeId, quantity and optional display fields.</summary>
+    public PyValue Products { get; init; } = new PyList([]);
+
+    /// <summary>The optional offer thirdpartyinfo.goodsid value, preserved for the Host fulfillment provider.</summary>
+    public PyValue ThirdPartyGoodsId { get; init; } = PyNone.Instance;
+}
+
+
+public interface IRedeemCallbacks
+{
+    ValueTask<PyValue> GetRedeemTokensAsync(
+        long authenticatedUserId,
+        CancellationToken cancellationToken);
+
+    ValueTask<PyValue> ClaimRedeemTokensAsync(
+        long authenticatedUserId,
+        PyValue tokens,
+        long characterId,
+        bool useHomeStation,
+        CancellationToken cancellationToken);
+
+    ValueTask ReverseRedeemAsync(
+        long authenticatedUserId,
+        PyValue itemId,
+        CancellationToken cancellationToken);
+
+    ValueTask TrashRedeemTokensAsync(
+        long authenticatedUserId,
+        PyValue tokens,
+        CancellationToken cancellationToken);
+}
+
+[Service("userSvc")]
+public sealed partial class RedeemService(IRedeemCallbacks callbacks)
+{
+    private readonly IRedeemCallbacks _callbacks = callbacks ?? throw new ArgumentNullException(nameof(callbacks));
+
+    [Method("GetRedeemTokens")]
+    public ValueTask<PyValue> GetRedeemTokens(ServiceCall call) =>
+        _callbacks.GetRedeemTokensAsync(AuthenticatedUserId(call), call.Cancellation);
+
+    [Method("ClaimRedeemTokens")]
+    public ValueTask<PyValue> ClaimRedeemTokens(ServiceCall call)
+    {
+        var tokens = call.Arg(0);
+        var characterId = PositiveId(call.Arg(1));
+        var useHomeStation = call.Kwarg("useHomeStation") is { } homeStation && JsSemantics.Truthy(homeStation);
+        return _callbacks.ClaimRedeemTokensAsync(
+            AuthenticatedUserId(call),
+            tokens,
+            characterId,
+            useHomeStation,
+            call.Cancellation);
+    }
+
+    [Method("ReverseRedeem")]
+    public async ValueTask<PyValue> ReverseRedeem(ServiceCall call)
+    {
+        await _callbacks.ReverseRedeemAsync(
+            AuthenticatedUserId(call),
+            call.Arg(0),
+            call.Cancellation).ConfigureAwait(false);
+        return PyNone.Instance;
+    }
+
+    [Method("TrashRedeemTokens")]
+    public async ValueTask<PyValue> TrashRedeemTokens(ServiceCall call)
+    {
+        await _callbacks.TrashRedeemTokensAsync(
+            AuthenticatedUserId(call),
+            call.Arg(0),
+            call.Cancellation).ConfigureAwait(false);
+        return PyNone.Instance;
+    }
+
+    private static long AuthenticatedUserId(ServiceCall call) =>
+        call.Session.UserId is { } userId && userId > 0
+            ? userId
+            : throw new UnauthorizedAccessException("An authenticated account is required to access redeeming items.");
+
+    private static long PositiveId(PyValue value)
+    {
+        var number = JsSemantics.ToNumber(value);
+        return double.IsFinite(number) && number > 0 && number == Math.Truncate(number) && number < long.MaxValue
+            ? (long)number
+            : throw new ArgumentException("A positive character ID is required.", nameof(value));
+    }
+}
+
+
+public interface IVaultManagerCallbacks
+{
+    ValueTask<long> GetPlexBalanceAsync(long authenticatedUserId, CancellationToken cancellationToken);
+}
+
+[Service("vaultManager")]
+public sealed partial class VaultManagerService(IVaultManagerCallbacks callbacks)
+{
+    private readonly IVaultManagerCallbacks _callbacks = callbacks ?? throw new ArgumentNullException(nameof(callbacks));
+
+    [Method("get_account_balance")]
+    public async ValueTask<PyValue> GetAccountBalance(ServiceCall call)
+    {
+        if (call.Arg(0) is not PyStr { Value: "PLX" })
+            throw new NotSupportedException("Only PLX account balances are supported.");
+
+        var authenticatedUserId = call.Session.UserId is { } userId && userId > 0
+            ? userId
+            : throw new UnauthorizedAccessException("An authenticated account is required to read the PLEX balance.");
+        var balance = await _callbacks.GetPlexBalanceAsync(authenticatedUserId, call.Cancellation).ConfigureAwait(false);
+        return new PyLong(balance);
+    }
+}

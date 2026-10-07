@@ -75,6 +75,35 @@ public sealed record InsuranceQuote(int FractionPercent, long PremiumCents, long
             return matches.Length == 1 ? matches[0] : null;
         }
 
+        public static long PayoutForLoss(
+            long fullPayoutValueCents,
+            InsuranceContractSnapshot? contract,
+            long lossDateFileTime,
+            bool isConcordDestruction)
+        {
+            if (fullPayoutValueCents <= 0 || lossDateFileTime <= 0 || isConcordDestruction)
+            {
+                return 0;
+            }
+
+            var fraction = IsActiveAt(contract, lossDateFileTime) ? contract!.Fraction : 0.4d;
+            return RoundCents((decimal)fullPayoutValueCents * (decimal)fraction);
+        }
+
+        internal static bool IsCoverageFraction(double fraction) =>
+            double.IsFinite(fraction) &&
+            FractionPercents.Any(percent => Math.Abs(fraction - percent / 100d) < 1e-9);
+
+        internal static bool IsActiveAt(InsuranceContractSnapshot? contract, long fileTime) =>
+            fileTime > 0 &&
+            contract is { ShipId: > 0, TypeId: > 0, OwnerId: > 0 } &&
+            Enum.IsDefined(contract.OwnerKind) &&
+            IsCoverageFraction(contract.Fraction) &&
+            string.Equals(contract.Status, "active", StringComparison.OrdinalIgnoreCase) &&
+            contract.StartDateFileTime > 0 &&
+            contract.StartDateFileTime <= fileTime &&
+            contract.EndDateFileTime > fileTime;
+
         private static long RoundCents(decimal cents) =>
             checked((long)decimal.Round(cents, 0, MidpointRounding.AwayFromZero));
     }
@@ -111,6 +140,28 @@ public enum InsuranceMutationStatus
     InvalidRequest,
     NotEligible
 }
+
+public enum InsuranceInvalidationReason
+{
+    Repackaged,
+    OwnerChanged,
+    PlacedInCorporationHangar,
+    Boarded
+}
+
+/// <summary>
+/// Reports a ship lifecycle event that can void an active insurance contract.
+/// For <see cref="InsuranceInvalidationReason.Boarded"/>, the actor corporation is
+/// compared with the insured corporation; a same-corporation or character-owned
+/// contract must not be invalidated.
+/// </summary>
+
+public sealed record InsuranceInvalidationRequest(
+    long ShipId,
+    InsuranceInvalidationReason Reason,
+    long InvalidatedAtFileTime,
+    long ActorCharacterId = 0,
+    long? ActorCorporationId = null);
 
 public sealed record InsuranceMutationResult(
     InsuranceMutationStatus Status,
@@ -180,6 +231,10 @@ public sealed record InsuranceMutationResult(
 
         ValueTask<InsuranceMutationResult> SettleShipLossAsync(
             InsuranceLossSettlementRequest request,
+            CancellationToken cancellationToken);
+
+        ValueTask<InsuranceMutationResult> InvalidateShipAsync(
+            InsuranceInvalidationRequest request,
             CancellationToken cancellationToken);
     }
 
@@ -365,8 +420,33 @@ private readonly IInsuranceWriteModel? _writeModel;
     /// <summary>Called by the authoritative ship-loss path; not exposed as a client RPC.</summary>
     public ValueTask<InsuranceMutationResult> SettleShipLossAsync(
         InsuranceLossSettlementRequest request,
-        CancellationToken cancellationToken) =>
-        WriteModel().SettleShipLossAsync(request, cancellationToken);
+        CancellationToken cancellationToken)
+    {
+        if (request.LossId <= 0 || request.ShipId <= 0 || request.LossDateFileTime <= 0)
+            return ValueTask.FromResult(new InsuranceMutationResult(InsuranceMutationStatus.InvalidRequest));
+        if (request.IsConcordDestruction)
+            return ValueTask.FromResult(new InsuranceMutationResult(InsuranceMutationStatus.NotEligible));
+
+        return WriteModel().SettleShipLossAsync(request, cancellationToken);
+    }
+
+    public ValueTask<InsuranceMutationResult> InvalidateShipAsync(
+        InsuranceInvalidationRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.ShipId <= 0 ||
+            request.InvalidatedAtFileTime <= 0 ||
+            !Enum.IsDefined<InsuranceInvalidationReason>(request.Reason) ||
+            (request.Reason == InsuranceInvalidationReason.Boarded &&
+                (request.ActorCharacterId <= 0 ||
+                    request.ActorCorporationId is null ||
+                    request.ActorCorporationId < 0)))
+        {
+            return ValueTask.FromResult(new InsuranceMutationResult(InsuranceMutationStatus.InvalidRequest));
+        }
+
+        return WriteModel().InvalidateShipAsync(request, cancellationToken);
+    }
 
     private IInsuranceWriteModel WriteModel(string errorName = "InsureShipFailed") =>
         _writeModel ?? throw Eve.Services.MachoErrors.ThrowUserError(errorName);
@@ -474,8 +554,12 @@ private readonly IInsuranceWriteModel? _writeModel;
             return null;
         }
 
-        var fraction = Math.Floor(contract.Fraction * 10 + 0.5) / 10;
-        if (!double.IsFinite(fraction) || fraction < 0.5 || fraction > 1.0 || !Enum.IsDefined(contract.OwnerKind))
+        var status = string.IsNullOrWhiteSpace(contract.Status)
+            ? "active"
+            : contract.Status.Trim().ToLowerInvariant();
+        if (!InsuranceQuotes.IsCoverageFraction(contract.Fraction) ||
+            !Enum.IsDefined(contract.OwnerKind) ||
+            status is not ("active" or "paid" or "void"))
         {
             return null;
         }
@@ -483,14 +567,12 @@ private readonly IInsuranceWriteModel? _writeModel;
         return contract with
         {
             ContractId = contract.ContractId > 0 ? contract.ContractId : contract.ShipId,
-            Fraction = fraction,
-            Status = contract.Status is "paid" or "void" ? contract.Status : "active"
+            Status = status
         };
     }
 
     private static bool IsActive(InsuranceContractSnapshot contract, long nowFileTime) =>
-        string.Equals(contract.Status, "active", StringComparison.Ordinal) &&
-        contract.EndDateFileTime > nowFileTime;
+        InsuranceQuotes.IsActiveAt(contract, nowFileTime);
 
     private static double ToIsk(long cents) => Math.Max(0, cents) / 100d;
 

@@ -3,7 +3,6 @@ using Eve.Services;
 
 namespace Eve.Services.Core;
 
-/// <summary>Empty read-side contract for reward data not yet backed by persistence.</summary>
 /// <summary>Authenticated identity used by reward callbacks; campaign state is per user, with character context when present.</summary>
 public sealed record LoginRewardPlayer(long UserId, long? CharacterId)
 {
@@ -109,16 +108,17 @@ public sealed class RewardsService : IService
     };
 }
 
-/// <summary>Read-only login campaign RPCs; no campaign is advertised without campaign data.</summary>
+/// <summary>Login campaign read and claim RPCs; no campaign is advertised without campaign data.</summary>
 public sealed class LoginCampaignMgrService : IService
 {
-    private readonly ILoginRewardCallbacks? _callbacks;
+    private readonly ILoginRewardCallbacks _callbacks;
     private readonly Func<DateTimeOffset> _utcNow;
 
     public LoginCampaignMgrService(
-        ILoginRewardCallbacks? callbacks = null,
+        ILoginRewardCallbacks callbacks,
         Func<DateTimeOffset>? utcNow = null)
     {
+        ArgumentNullException.ThrowIfNull(callbacks);
         _callbacks = callbacks;
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
     }
@@ -138,7 +138,7 @@ public sealed class LoginCampaignMgrService : IService
 
     private async ValueTask<PyValue> GetClientCampaignStateAsync(ServiceCall call)
     {
-        if (_callbacks is null || LoginRewardPlayer.From(call) is not { } player)
+        if (LoginRewardPlayer.From(call) is not { } player)
             return PyNone.Instance;
 
         var state = await _callbacks.GetLoginCampaignStateAsync(player, call.Cancellation);
@@ -147,7 +147,7 @@ public sealed class LoginCampaignMgrService : IService
 
     private async ValueTask<PyValue> ClaimRewardAsync(ServiceCall call)
     {
-        if (_callbacks is null || LoginRewardPlayer.From(call) is not { } player)
+        if (LoginRewardPlayer.From(call) is not { } player)
             return PyNone.Instance;
 
         var state = await _callbacks.GetLoginCampaignStateAsync(player, call.Cancellation);
@@ -174,16 +174,17 @@ public sealed class LoginCampaignMgrService : IService
     }
 }
 
-/// <summary>Read-only seasonal login campaign RPCs.</summary>
+/// <summary>Seasonal login campaign state and reward-claim RPCs.</summary>
 public sealed class SeasonalLoginCampaignMgrService : IService
 {
-    private readonly ILoginRewardCallbacks? _callbacks;
+    private readonly ILoginRewardCallbacks _callbacks;
     private readonly Func<DateTimeOffset> _utcNow;
 
     public SeasonalLoginCampaignMgrService(
-        ILoginRewardCallbacks? callbacks = null,
+        ILoginRewardCallbacks callbacks,
         Func<DateTimeOffset>? utcNow = null)
     {
+        ArgumentNullException.ThrowIfNull(callbacks);
         _callbacks = callbacks;
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
     }
@@ -236,17 +237,20 @@ public sealed class SeasonalLoginCampaignMgrService : IService
             return PyBool.False;
 
         var rewardDate = DateOnly.FromDateTime(_utcNow().UtcDateTime - state.TurnoverTimeUtc.ToTimeSpan());
+        if (rewardDate > state.EndDate)
+            return PyBool.False;
+
         var claimDateOrdinal = rewardDate.DayNumber + 1;
         var todaysClaim = state.ClaimHistory.FirstOrDefault(claim => claim.DateOrdinal == claimDateOrdinal);
         var priorClaims = state.ClaimHistory
-            .Where(claim => claim.DateOrdinal != claimDateOrdinal)
+            .Where(claim => claim.DateOrdinal < claimDateOrdinal)
             .OrderBy(claim => claim.DateOrdinal)
             .ToArray();
-        var retroClaimAvailable = state.IsOmega &&
+        var retroactiveOmegaAvailable = state.IsOmega &&
             state.RetroClaimEnabled &&
-            state.ClaimHistory.Any(claim => !claim.WasOmega);
+            (todaysClaim is { WasOmega: false } || priorClaims.Any(claim => !claim.WasOmega));
 
-        if (todaysClaim is not null && !retroClaimAvailable)
+        if (todaysClaim is not null && !retroactiveOmegaAvailable)
             return PyBool.False;
 
         var grants = new List<SeasonalRewardGrant>();
@@ -278,13 +282,13 @@ public sealed class SeasonalLoginCampaignMgrService : IService
             state.CampaignId,
             claimDateOrdinal,
             grants);
-        var claimed = await _callbacks!.TryClaimSeasonalLoginCampaignAsync(request, call.Cancellation);
+        var claimed = await _callbacks.TryClaimSeasonalLoginCampaignAsync(request, call.Cancellation);
         return claimed ? PyBool.True : PyBool.False;
     }
 
     private async ValueTask<SeasonalLoginCampaignSnapshot?> GetStateAsync(ServiceCall call)
     {
-        if (_callbacks is null || LoginRewardPlayer.From(call) is not { } player)
+        if (LoginRewardPlayer.From(call) is not { } player)
             return null;
         return await _callbacks.GetSeasonalLoginCampaignAsync(player, call.Cancellation);
     }

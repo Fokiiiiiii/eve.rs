@@ -90,7 +90,6 @@ public sealed class InsuranceServiceTests
         Assert.Single(Assert.IsType<PyList>(await service.CallAsync(Call(corporation, "GetContracts", new PyInt(1)))).Items);
     }
 
-
     [Fact]
     public void Insurance_quotes_match_the_official_coverage_levels_and_wiki_example()
     {
@@ -103,6 +102,39 @@ public sealed class InsuranceServiceTests
         Assert.Equal(712_023_300, quotes[^1].PayoutCents);
         Assert.Equal(quotes[0], InsuranceQuotes.ForPremium(712_023_300, 35_601_165));
         Assert.Null(InsuranceQuotes.ForPremium(712_023_300, 1));
+    }
+
+    [Fact]
+    public void Loss_payout_uses_active_coverage_and_suppresses_concord_losses()
+    {
+        var lossDate = Eve.Services.Py.FileTimeFromUnixMs(NowUnixMs);
+        const long fullPayoutValueCents = 712_023_300;
+        var activeBasic = Contract(
+            1, 500, 587, 100, InsuranceOwnerKind.Character, 0.5, lossDate - 1, lossDate + 1);
+
+        Assert.Equal(
+            356_011_650,
+            InsuranceQuotes.PayoutForLoss(fullPayoutValueCents, activeBasic, lossDate, false));
+        Assert.Equal(
+            284_809_320,
+            InsuranceQuotes.PayoutForLoss(
+                fullPayoutValueCents,
+                activeBasic with { EndDateFileTime = lossDate },
+                lossDate,
+                false));
+        Assert.Equal(
+            284_809_320,
+            InsuranceQuotes.PayoutForLoss(
+                fullPayoutValueCents,
+                activeBasic with { Fraction = 0.55 },
+                lossDate,
+                false));
+        Assert.Equal(
+            284_809_320,
+            InsuranceQuotes.PayoutForLoss(fullPayoutValueCents, null, lossDate, false));
+        Assert.Equal(
+            0,
+            InsuranceQuotes.PayoutForLoss(fullPayoutValueCents, activeBasic, lossDate, true));
     }
 
     [Fact]
@@ -137,6 +169,31 @@ public sealed class InsuranceServiceTests
     }
 
     [Fact]
+    public async Task Corporation_insurance_forwards_corporation_owner_and_role_context()
+    {
+        var writer = new FakeInsuranceWriteModel();
+        IService service = Create(new FakeInsuranceReadModel(), writer);
+        var session = Session(
+            ("charid", new PyInt(100)),
+            ("corpid", new PyInt(200)),
+            ("corprole", new PyLong(256)),
+            ("stationid", new PyInt(300)),
+            ("solarsystemid2", new PyInt(400)));
+
+        var result = await service.CallAsync(Call(
+            session,
+            "InsureShip",
+            new PyInt(500),
+            new PyReal(356_011.65),
+            PyBool.True));
+
+        Assert.Same(PyNone.Instance, result);
+        Assert.True(writer.Purchase!.IsCorporation);
+        Assert.Equal(200L, writer.Purchase.Actor.CorporationId);
+        Assert.Equal(100L, writer.Purchase.Actor.CharacterId);
+    }
+
+    [Fact]
     public async Task UnInsureShip_forwards_the_ship_and_actor_to_the_atomic_writer()
     {
         var writer = new FakeInsuranceWriteModel();
@@ -167,6 +224,121 @@ public sealed class InsuranceServiceTests
         await service.SettleShipLossAsync(loss, CancellationToken.None);
 
         Assert.Equal(loss, writer.Loss);
+    }
+
+    [Fact]
+    public async Task Concord_losses_are_not_sent_to_insurance_settlement_even_for_the_base_payout()
+    {
+        var writer = new FakeInsuranceWriteModel();
+        var service = new InsuranceService(new FakeInsuranceReadModel(), () => NowUnixMs, writer);
+        var loss = new InsuranceLossSettlementRequest(
+            901, 500, Eve.Services.Py.FileTimeFromUnixMs(NowUnixMs), true, 100, 200);
+
+        var result = await service.SettleShipLossAsync(loss, CancellationToken.None);
+
+        Assert.Equal(InsuranceMutationStatus.NotEligible, result.Status);
+        Assert.Null(writer.Loss);
+    }
+
+    [Theory]
+    [InlineData(InsuranceInvalidationReason.Repackaged)]
+    [InlineData(InsuranceInvalidationReason.OwnerChanged)]
+    [InlineData(InsuranceInvalidationReason.PlacedInCorporationHangar)]
+    [InlineData(InsuranceInvalidationReason.Boarded)]
+    public async Task Insurance_invalidation_events_forward_reason_time_and_actor_to_writer(
+        InsuranceInvalidationReason reason)
+    {
+        var writer = new FakeInsuranceWriteModel();
+        var service = new InsuranceService(new FakeInsuranceReadModel(), () => NowUnixMs, writer);
+        var request = new InsuranceInvalidationRequest(
+            500, reason, Eve.Services.Py.FileTimeFromUnixMs(NowUnixMs), 101, 200);
+
+        var result = await service.InvalidateShipAsync(request, CancellationToken.None);
+
+        Assert.Equal(InsuranceMutationStatus.Applied, result.Status);
+        Assert.Equal(request, writer.Invalidation);
+    }
+
+    [Fact]
+    public async Task Board_invalidation_preserves_zero_for_a_boarder_without_a_corporation()
+    {
+        var writer = new FakeInsuranceWriteModel();
+        var service = new InsuranceService(new FakeInsuranceReadModel(), () => NowUnixMs, writer);
+        var request = new InsuranceInvalidationRequest(
+            500,
+            InsuranceInvalidationReason.Boarded,
+            Eve.Services.Py.FileTimeFromUnixMs(NowUnixMs),
+            101,
+            0);
+
+        var result = await service.InvalidateShipAsync(request, CancellationToken.None);
+
+        Assert.Equal(InsuranceMutationStatus.Applied, result.Status);
+        Assert.Equal(request, writer.Invalidation);
+        Assert.Equal(0L, writer.Invalidation!.ActorCorporationId);
+    }
+
+    [Fact]
+    public async Task Invalid_insurance_invalidation_request_is_rejected_before_writer()
+    {
+        var writer = new FakeInsuranceWriteModel();
+        var service = new InsuranceService(new FakeInsuranceReadModel(), () => NowUnixMs, writer);
+        var timestamp = Eve.Services.Py.FileTimeFromUnixMs(NowUnixMs);
+
+        var invalidShip = await service.InvalidateShipAsync(
+            new InsuranceInvalidationRequest(0, InsuranceInvalidationReason.Repackaged, timestamp),
+            CancellationToken.None);
+        var missingBoarderCharacter = await service.InvalidateShipAsync(
+            new InsuranceInvalidationRequest(500, InsuranceInvalidationReason.Boarded, timestamp, 0, 200),
+            CancellationToken.None);
+        var missingBoarderCorporation = await service.InvalidateShipAsync(
+            new InsuranceInvalidationRequest(500, InsuranceInvalidationReason.Boarded, timestamp, 101),
+            CancellationToken.None);
+        var negativeBoarderCorporation = await service.InvalidateShipAsync(
+            new InsuranceInvalidationRequest(500, InsuranceInvalidationReason.Boarded, timestamp, 101, -1),
+            CancellationToken.None);
+
+        Assert.Equal(InsuranceMutationStatus.InvalidRequest, invalidShip.Status);
+        Assert.Equal(InsuranceMutationStatus.InvalidRequest, missingBoarderCharacter.Status);
+        Assert.Equal(InsuranceMutationStatus.InvalidRequest, missingBoarderCorporation.Status);
+        Assert.Equal(InsuranceMutationStatus.InvalidRequest, negativeBoarderCorporation.Status);
+        Assert.Null(writer.Invalidation);
+    }
+
+    [Fact]
+    public async Task Invalid_loss_settlement_is_rejected_before_calling_the_writer()
+    {
+        var writer = new FakeInsuranceWriteModel();
+        var service = new InsuranceService(new FakeInsuranceReadModel(), () => NowUnixMs, writer);
+        var invalid = new InsuranceLossSettlementRequest(
+            0, 500, Eve.Services.Py.FileTimeFromUnixMs(NowUnixMs), false, 100, 200);
+
+        var result = await service.SettleShipLossAsync(invalid, CancellationToken.None);
+
+        Assert.Equal(InsuranceMutationStatus.InvalidRequest, result.Status);
+        Assert.Null(writer.Loss);
+    }
+
+    [Fact]
+    public async Task Contracts_are_not_active_before_start_or_with_unknown_status()
+    {
+        var now = Eve.Services.Py.FileTimeFromUnixMs(NowUnixMs);
+        var model = new FakeInsuranceReadModel(contracts:
+        [
+            Contract(1, 500, 587, 100, InsuranceOwnerKind.Character, 0.7, now, now + 1),
+            Contract(2, 501, 587, 100, InsuranceOwnerKind.Character, 0.7, now + 1, now + 10_000),
+            Contract(3, 502, 587, 100, InsuranceOwnerKind.Character, 0.7, now - 1, now + 10_000, "pending"),
+            Contract(4, 503, 587, 100, InsuranceOwnerKind.Character, 0.7, now - 1, now)
+        ]);
+        IService service = Create(model);
+        var session = Session(("charid", new PyInt(100)));
+
+        var contracts = Assert.IsType<PyList>(await service.CallAsync(Call(session, "GetContracts")));
+        Assert.Equal([500L], contracts.Items.Select(item => Long(Field(KeyVal(item), "shipID"))));
+        foreach (var shipId in new long[] { 501, 502, 503 })
+        {
+            Assert.Same(PyNone.Instance, await service.CallAsync(Call(session, "GetContractForShip", new PyInt(shipId))));
+        }
     }
 
     private static IService Create(FakeInsuranceReadModel model, FakeInsuranceWriteModel? writer = null) =>
@@ -229,9 +401,11 @@ private sealed class FakeInsuranceWriteModel : IInsuranceWriteModel
         public InsurancePurchaseCommand? Purchase { get; private set; }
         public InsuranceCancellationCommand? Cancellation { get; private set; }
         public InsuranceLossSettlementRequest? Loss { get; private set; }
+        public InsuranceInvalidationRequest? Invalidation { get; private set; }
         public InsuranceMutationResult PurchaseResult { get; set; } = new(InsuranceMutationStatus.Applied);
         public InsuranceMutationResult CancellationResult { get; set; } = new(InsuranceMutationStatus.Applied);
         public InsuranceMutationResult LossResult { get; set; } = new(InsuranceMutationStatus.Applied);
+        public InsuranceMutationResult InvalidationResult { get; set; } = new(InsuranceMutationStatus.Applied);
 
         public ValueTask<InsuranceMutationResult> InsureShipAsync(
             InsurancePurchaseCommand command,
@@ -258,6 +432,15 @@ private sealed class FakeInsuranceWriteModel : IInsuranceWriteModel
             cancellationToken.ThrowIfCancellationRequested();
             Loss = request;
             return ValueTask.FromResult(LossResult);
+        }
+
+        public ValueTask<InsuranceMutationResult> InvalidateShipAsync(
+            InsuranceInvalidationRequest request,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Invalidation = request;
+            return ValueTask.FromResult(InvalidationResult);
         }
     }
 

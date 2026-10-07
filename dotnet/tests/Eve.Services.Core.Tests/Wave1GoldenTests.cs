@@ -69,6 +69,36 @@ public class Wave1GoldenTests
     }
 
     [Theory]
+    [InlineData("alpha", 0)]
+    [InlineData("omega", 1)]
+    public async Task Login_reward_facilities_returns_the_existing_clone_grade(string cloneGrade, long expected)
+    {
+        var settings = new SubscriptionSettings
+        {
+            CloneGradeOverride = cloneGrade,
+            OmegaLicenseEnabled = true,
+        };
+        var nowUnixMs = 1_700_000_000_000L;
+        var subscriptions = new SubscriptionMgrService(
+            settings,
+            new OmegaLicenses(settings, new FakeAccounts(new JsonObject()), () => nowUnixMs));
+        IService service = (IService)(object)new LoginRewardFacilitiesService(subscriptions);
+        var session = new ClientSession();
+        session.Set("userid", new PyLong(90000001));
+
+        Assert.Equal("loginRewardFacilities", service.Name);
+        Assert.True(service.HasMethod("get_my_clone_grade"));
+        var result = await service.CallAsync(new ServiceCall
+        {
+            Method = "get_my_clone_grade",
+            Args = [],
+            Session = session,
+        });
+
+        Assert.Equal(new PyInt(expected), result);
+    }
+
+    [Theory]
     [MemberData(nameof(Ids))]
     public async Task The_csharp_services_answer_like_the_recorded_javascript_ones(string id)
     {

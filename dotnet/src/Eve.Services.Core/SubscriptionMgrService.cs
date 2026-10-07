@@ -169,3 +169,14 @@ public sealed partial class SubscriptionMgrService(SubscriptionSettings settings
     [Method("GetCloneGrade")]
     public PyValue GetCloneGrade(ServiceCall call) => new PyInt(State(call).CloneGrade);
 }
+
+
+[Service("loginRewardFacilities")]
+public sealed partial class LoginRewardFacilitiesService(SubscriptionMgrService subscriptions)
+{
+    private readonly SubscriptionMgrService _subscriptions =
+        subscriptions ?? throw new ArgumentNullException(nameof(subscriptions));
+
+    [Method("get_my_clone_grade")]
+    public PyValue GetMyCloneGrade(ServiceCall call) => _subscriptions.GetCloneGrade(call);
+}

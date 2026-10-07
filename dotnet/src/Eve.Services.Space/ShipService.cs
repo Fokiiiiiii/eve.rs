@@ -112,4 +112,21 @@ public sealed partial class ShipService(SpaceSessions space, Func<long> nowUnixM
         }
         return await space.LeaveShipAsync(call.Session, shipId, call.Cancellation);
     }
+
+
+    /// <summary><c>SafeLogoff()</c> starts the space logoff countdown when all server-side conditions allow it.</summary>
+    [Method("SafeLogoff")]
+    public ValueTask<PyValue> SafeLogoff(ServiceCall call) =>
+        _binding.Owns(call) ? space.SafeLogoffAsync(call.Session, call.Cancellation) : ValueTask.FromResult<PyValue>(None);
+
+    /// <summary><c>AbortSafeLogoff()</c> cancels a pending safe logoff countdown.</summary>
+    [Method("AbortSafeLogoff")]
+    public PyValue AbortSafeLogoff(ServiceCall call) =>
+        _binding.Owns(call) ? space.AbortSafeLogoff(call.Session) : None;
+
+
+    /// <summary><c>Eject()</c> leaves the piloted hull in space and continues in a capsule.</summary>
+    [Method("Eject")]
+    public ValueTask<PyValue> Eject(ServiceCall call) =>
+        _binding.Owns(call) ? space.EjectAsync(call.Session, call.Cancellation) : ValueTask.FromResult<PyValue>(None);
 }

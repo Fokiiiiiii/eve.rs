@@ -60,7 +60,8 @@ impl Scene {
             told_of_it.insert(0, session);
         }
         let Some(pilot) = self.pilots.remove(&session) else { return Vec::new() };
-        if !is_npc_session(session) {
+        let unpiloted = self.unpiloted.values().any(|candidate| *candidate == session);
+        if !is_npc_session(session) && !unpiloted {
             // the client keeps its ballpark: what it is given next (a capsule) is added to it
             self.widowed.insert(
                 session,
@@ -80,6 +81,7 @@ impl Scene {
         }
         let ship = &pilot.ship;
         let ship_id = ship.spec.ship_id;
+        self.unpiloted.remove(&ship_id);
         let mut out = self.drop_targeting(ship_id, &pilot.targeting, now);
         self.destroyed.push(ship_id);
         let stamp = self.next_stamp(now);
@@ -162,8 +164,7 @@ impl Scene {
         out
     }
 
-    /// A session whose ship was destroyed is given another, the capsule the host made for its pilot: it comes into the scene at rest at `position`, and
-    /// the client, which kept its ballpark, is sent the ball of its new ship as it is sent any (as those who see it are).
+    /// A session whose ship was destroyed is given a capsule; a transition may instead rebind a ship left in space.
     pub fn respawn(
         &mut self,
         session: SessionId,
@@ -178,6 +179,30 @@ impl Scene {
         let Some(widow) = self.widowed.remove(&session) else {
             return Err(SceneError::NotDestroyed(session));
         };
+
+        if let Some(unpiloted_session) = self.unpiloted.remove(&spec.ship_id)
+            && let Some(mut pilot) = self.pilots.remove(&unpiloted_session)
+        {
+            let ship_id = spec.ship_id;
+            // Keep the hull's current position, velocity, and damage while applying
+            // the new pilot's ship specification and ownership.
+            pilot.ship.spec = spec;
+            pilot.bound = widow.bound;
+            pilot.entered = self.next_entry();
+            pilot.sees = widow.sees;
+            pilot.sees_wrecks = widow.sees_wrecks;
+            pilot.sees_asteroids = widow.sees_asteroids;
+            self.pilots.insert(session, pilot);
+            let mut out = self.announce_departure(unpiloted_session, ship_id, now);
+            if widow.bound
+                && let Some(actions) = self.introduction(session, now)
+            {
+                out.push(Self::update(session, actions));
+            }
+            out.extend(self.announce_arrival(session, now));
+            return Ok(out);
+        }
+
         let modules = Modules::with_charge(
             spec.capacitor_capacity,
             spec.capacitor_recharge_s,
@@ -190,6 +215,7 @@ impl Scene {
         pilot.bound = widow.bound;
         pilot.sees = widow.sees;
         pilot.sees_wrecks = widow.sees_wrecks;
+        pilot.sees_asteroids = widow.sees_asteroids;
         self.pilots.insert(session, pilot);
         let mut out = Vec::new();
         if widow.bound
@@ -453,6 +479,44 @@ mod tests {
             scene.respawn(PLAYER + 1, capsule_spec(), place, direction, LATER),
             Err(SceneError::NotDestroyed(PLAYER + 1))
         );
+    }
+
+    #[test]
+    fn ejecting_and_boarding_keeps_both_ships_in_space() {
+        let (mut scene, _) = scene_with_a_mortal_rat();
+        let ship = scene.pilots[&PLAYER].ship.spec.clone();
+        let capsule = capsule_spec();
+        let place = Vec3::new(0.0, 0.0, 0.0);
+        let direction = Vec3::new(1.0, 0.0, 0.0);
+
+        scene.leave(PLAYER, crate::scene::Departure::Ejected, LATER).unwrap();
+        scene.respawn(PLAYER, capsule.clone(), place, direction, LATER + SECOND).unwrap();
+        assert_eq!(scene.pilots[&PLAYER].ship.spec.ship_id, capsule.ship_id);
+        assert!(scene.pilots.values().any(|pilot| pilot.ship.spec.ship_id == ship.ship_id));
+
+        scene.leave(PLAYER, crate::scene::Departure::Boarded, LATER + 2 * SECOND).unwrap();
+        scene.respawn(PLAYER, ship.clone(), place, direction, LATER + 3 * SECOND).unwrap();
+        assert_eq!(scene.pilots[&PLAYER].ship.spec.ship_id, ship.ship_id);
+        assert!(scene.pilots.values().any(|pilot| pilot.ship.spec.ship_id == capsule.ship_id));
+    }
+
+    #[test]
+    fn ejecting_and_boarding_keeps_hulls_in_space() {
+        let (mut scene, _) = scene_with_a_mortal_rat();
+        let ship = scene.pilots[&PLAYER].ship.spec.clone();
+        let capsule = capsule_spec();
+        let place = Vec3::new(0.0, 0.0, 0.0);
+        let direction = Vec3::new(1.0, 0.0, 0.0);
+
+        scene.leave(PLAYER, crate::scene::Departure::Ejected, LATER).unwrap();
+        scene.respawn(PLAYER, capsule.clone(), place, direction, LATER + SECOND).unwrap();
+        assert_eq!(scene.pilots[&PLAYER].ship.spec.ship_id, capsule.ship_id);
+        assert!(scene.pilots.values().any(|pilot| pilot.ship.spec.ship_id == ship.ship_id));
+
+        scene.leave(PLAYER, crate::scene::Departure::Boarded, LATER + 2 * SECOND).unwrap();
+        scene.respawn(PLAYER, ship.clone(), place, direction, LATER + 3 * SECOND).unwrap();
+        assert_eq!(scene.pilots[&PLAYER].ship.spec.ship_id, ship.ship_id);
+        assert!(scene.pilots.values().any(|pilot| pilot.ship.spec.ship_id == capsule.ship_id));
     }
 
     #[test]

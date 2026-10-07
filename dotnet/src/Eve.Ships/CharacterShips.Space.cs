@@ -4,6 +4,12 @@ using Eve.Inventory;
 namespace Eve.Ships;
 
 /// <summary>A ship that went into space or came out of it: where it is now and where it was.</summary>
+using Eve.Dogma;
+
+public sealed record ShipEjection(Item Ship, Item Capsule, IReadOnlyList<DogmaEvent> Events);
+
+public sealed record ShipBoarding(long ShipId, long PreviousOwnerId, long BoarderCharacterId, long BoarderCorporationId);
+
 public sealed record SpaceMove(Item Ship, long PreviousLocationId, int PreviousFlag, Character Character);
 
 /// <summary>What happened to an undock or a dock: the move, or why the ship stayed where it was.</summary>
@@ -197,6 +203,80 @@ public sealed partial class CharacterShips
     /// A ship left in space (the simulation was lost, the host restarted) is put back in the hangar of the station the character last was at,
     /// so that a character never wakes up in a ship the simulation does not have. Returns whether anything was moved.
     /// </summary>
+    /// <summary>Ejects the pilot into a newly-created capsule while leaving the owned hull in its solar system.</summary>
+    public async Task<ShipEjection?> EjectAsync(long characterId, long shipId, CancellationToken cancellationToken = default)
+    {
+        var fitting = await LoadAsync(characterId, cancellationToken);
+        if (fitting is null || fitting.Ship.Id != shipId || fitting.Ship.TypeId == CapsuleTypeId
+            || fitting.Ship.LocationId != fitting.Character.SolarSystemId || fitting.Ship.Flag != InSpaceFlag)
+            return null;
+
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        if (await characters.GetAsync(characterId, cancellationToken) is not { ShipId: { } activeShipId } character
+            || activeShipId != shipId
+            || await items.LockAndGetAsync(connection, transaction, shipId, cancellationToken) is not { } ship
+            || ship.OwnerId != characterId || ship.LocationId != character.SolarSystemId || ship.Flag != InSpaceFlag || ship.TypeId == CapsuleTypeId)
+            return null;
+
+        var events = new List<DogmaEvent>();
+        var shipBefore = fitting.World.Attributes(ship.Id);
+        var switchedOff = fitting.Fitted.Select(module => (module, Online: fitting.World.Get(module.Id, IsOnline))).ToList();
+        foreach (var (module, _) in switchedOff)
+            fitting.World.Remove(module.Id);
+        events.AddRange(ShipChanges(ship.Id, shipBefore, fitting.World.Attributes(ship.Id)));
+        foreach (var (module, online) in switchedOff)
+        {
+            if (Changed(module.Id, IsOnline, online, 0) is { } switched)
+                events.Add(switched);
+            events.Add(new EffectChanged(module.Id, BuiltInEffects.Online, Started: false));
+            await modules.SetAsync(connection, transaction, module.Id, ItemState.Offline, cancellationToken);
+        }
+
+        var capsuleId = await items.CreateAsync(connection, transaction,
+            new NewItem(CapsuleTypeId, characterId, ship.LocationId, InSpaceFlag, 1, true), cancellationToken);
+        var capsule = new Item(capsuleId, CapsuleTypeId, characterId, ship.LocationId, InSpaceFlag, 1, true, null);
+        await characters.SetShipAsync(connection, transaction, characterId, capsuleId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new ShipEjection(ship, capsule, events);
+    }
+
+    /// <summary>Boards an unpiloted ship in the same solar system and transfers its hull and contents to the pilot.</summary>
+    public async Task<ShipBoarding?> BoardInSpaceAsync(long characterId, int solarSystemId, long currentShipId, long shipId, CancellationToken cancellationToken = default)
+    {
+        if (currentShipId <= 0 || shipId <= 0 || currentShipId == shipId)
+            return null;
+
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        var character = await characters.GetAsync(characterId, cancellationToken);
+        if (character is not { ShipId: { } activeShipId, SolarSystemId: { } currentSystem }
+            || activeShipId != currentShipId || currentSystem != solarSystemId
+            || await items.LockAndGetAsync(connection, transaction, currentShipId, cancellationToken) is not { } current
+            || await items.LockAndGetAsync(connection, transaction, shipId, cancellationToken) is not { } next
+            || current.OwnerId != characterId || current.LocationId != solarSystemId || current.Flag != InSpaceFlag || current.TypeId != CapsuleTypeId
+            || next.LocationId != solarSystemId || next.Flag != InSpaceFlag || !next.Singleton || next.TypeId == CapsuleTypeId)
+            return null;
+
+        await statics.EnsureTypesAsync([current.TypeId, next.TypeId], cancellationToken);
+        if (statics.Type(current.TypeId)?.CategoryId != 6 || statics.Type(next.TypeId)?.CategoryId != 6)
+            return null;
+
+        var previousOwnerId = next.OwnerId;
+        var contents = new Dictionary<long, Item>();
+        await TreeAsync(next.Id, contents, cancellationToken);
+        foreach (var item in contents.Values)
+        {
+            await items.MoveToOwnerAsync(connection, transaction, item.Id, characterId, item.LocationId, item.Flag, cancellationToken);
+        }
+        await items.MoveToOwnerAsync(connection, transaction, next.Id, characterId, solarSystemId, InSpaceFlag, cancellationToken);
+        await characters.SetShipAsync(connection, transaction, characterId, next.Id, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new ShipBoarding(next.Id, previousOwnerId, characterId, character.CorporationId);
+    }
+
     public Task<bool> RecoverFromSpaceAsync(long characterId, CancellationToken cancellationToken = default) => RecoverFromSpaceAsync(characterId, null, cancellationToken);
 
     /// <summary>

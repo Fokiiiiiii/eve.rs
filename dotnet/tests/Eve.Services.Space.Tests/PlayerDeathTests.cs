@@ -272,8 +272,12 @@ public class PlayerDeathTests
         var system = session.GetInt("solarsystemid")!.Value;
         var character = (await rig.Characters.GetAsync(c.CharacterId))!;
 
+        var logStart = rig.Log.Count;
         rig.Sim.Say(Destroyed(session, capsule, null));
-        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimPlaceWreck>().Any());
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (!rig.Sim.Heard.OfType<SimPlaceWreck>().Any() && rig.Log.Count == logStart && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.True(rig.Sim.Heard.OfType<SimPlaceWreck>().Any(), $"the pod corpse was not placed: {string.Join(Environment.NewLine, rig.Log.Skip(logStart))}");
 
         Assert.Equal(["$sessionchange", "OnItemChange", "OnItemChange", "OnCfgDataChanged"], Sequence.Of(session, clear: false));
         var woke = (await rig.Characters.GetAsync(c.CharacterId))!;

@@ -1729,6 +1729,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         new CharUnboundMgrService(accounts, characters, items, skills, wallets, creation, catalog, online, [new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now), corporationLogin], Random.Shared),
         new MultiLoginBlockerService(),
         new PopulationCapService(characters),
+        new Eve.Services.CharacterInfo.ConfigService(characters, corporations, stations, solarSystems),
         // security status is the character's relation of that kind (Eve.Relations); crimewatch only asks for it
         new Eve.Services.Crimewatch.CrimewatchService(
             crimewatchStore, crimewatchRuntime, now,

@@ -41,6 +41,7 @@ public sealed partial class PopulationCapService(PgCharacterStore characters)
                 Session = call.Session,
                 CallId = call.CallId,
                 BoundObjectId = oid,
+                BoundObjectParameters = call.Arg(0),
                 Cancellation = call.Cancellation,
             });
             if (traceLogin)
@@ -54,18 +55,26 @@ public sealed partial class PopulationCapService(PgCharacterStore characters)
     [Method("GetCharacterLoadSlot")]
     public async ValueTask<PyValue> GetCharacterLoadSlot(ServiceCall call)
     {
-        if (call.Session.UserId is not { } userId || CharacterId(call.Arg(0)) is not { } characterId)
+        var boundCharacterId = CharacterId(call.BoundObjectParameters);
+        var requestedCharacterId = CharacterId(call.Arg(0));
+        if (boundCharacterId is { } bound && requestedCharacterId is { } requested && bound != requested)
+            return new PyDict([]);
+        if (call.Session.UserId is not { } userId
+            || (requestedCharacterId ?? boundCharacterId) is not { } characterId)
             return new PyDict([]);
 
         var character = await characters.GetAsync(characterId, call.Cancellation);
         if (character is null || character.AccountId != userId)
             return new PyDict([]);
 
+        var solarSystemId = character.SolarSystemId > 0
+            ? character.SolarSystemId
+            : call.Session.GetInt("solarsystemid2") ?? call.Session.GetInt("solarsystemid") ?? 30000142;
         return new PyDict([new KeyValuePair<PyValue, PyValue>(
-            new PyInt(character.SolarSystemId), new PyStr(LoadSlotKey(character.Id, character.SolarSystemId)))]);
+            new PyInt(solarSystemId), new PyStr(LoadSlotKey(character.Id, solarSystemId)))]);
     }
 
-    private static string LoadSlotKey(long characterId, int solarSystemId)
+    private static string LoadSlotKey(long characterId, long solarSystemId)
     {
         var hash = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes($"{characterId}:{solarSystemId}:populationCap")))
             .ToLowerInvariant();
@@ -73,10 +82,12 @@ public sealed partial class PopulationCapService(PgCharacterStore characters)
         return $"{hash[..8]}-{hash.Substring(8, 4)}-4{hash.Substring(13, 3)}-{variant:x2}{hash.Substring(18, 2)}-{hash.Substring(20, 12)}";
     }
 
-    private static long? CharacterId(PyValue value) => value switch
+    private static long? CharacterId(PyValue? value) => value switch
     {
         PyInt number => number.Value,
         PyLong number => number.Value,
+        PyTuple tuple when tuple.Items.Count > 0 => CharacterId(tuple.Items[0]),
+        PyList list when list.Items.Count > 0 => CharacterId(list.Items[0]),
         _ => null,
     };
 }

@@ -956,6 +956,7 @@ public class HostServerTests : IAsyncLifetime
             (_, _) => ValueTask.FromResult<IReadOnlyCollection<long>>([]));
         var multiLoginBlocker = new Eve.Services.CharacterSelect.MultiLoginBlockerService();
         var populationCap = new Eve.Services.CharacterSelect.PopulationCapService(null!);
+        var config = new Eve.Services.CharacterInfo.ConfigService(null!, null!, null!, null!);
         var mailingLists = new Eve.Services.Core.MailingListService(
             _ => ValueTask.FromResult<System.Text.Json.Nodes.JsonObject?>(new System.Text.Json.Nodes.JsonObject()),
             (_, _) => ValueTask.FromResult<Eve.Marshal.PyValue>(Eve.Marshal.PyNone.Instance));
@@ -997,7 +998,7 @@ public class HostServerTests : IAsyncLifetime
         foreach (var service in new Eve.Services.IService[]
         {
             mail, notifications, calendar, calendarProxy, wars, voteManager, online, mailingLists, rewards,
-            storeOffers, industryJobs, characterMining, corporationMining, agents, insurance, multiLoginBlocker, populationCap,
+            storeOffers, industryJobs, characterMining, corporationMining, agents, insurance, multiLoginBlocker, populationCap, config,
             structureDirectory, structureSettings, skyhookMgr, map, tales, scanning, fleetObject, fleetManager, fleetProxy,
         }.Concat(sovereignty))
             registry.Register(service);
@@ -1015,6 +1016,7 @@ public class HostServerTests : IAsyncLifetime
         Assert.Same(multiLoginBlocker, registry.Lookup("multiLoginBlocker"));
         Assert.Same(PyBool.True, multiLoginBlocker.Login(null!));
         Assert.Same(populationCap, registry.Lookup("populationCap"));
+        Assert.Same(config, registry.Lookup("config"));
         Assert.Equal(Eve.Macho.MachoMessage.ProxyNodeId, ((PyInt)populationCap.MachoResolveObject(null!)).Value);
         Assert.Same(mailingLists, registry.Lookup("mailingListsMgr"));
         Assert.Same(rewards, registry.Lookup("rewardMgr"));
@@ -1032,7 +1034,7 @@ public class HostServerTests : IAsyncLifetime
         Assert.Same(scanning, registry.Lookup("scanMgr"));
         Assert.Same(sovereignty[0], registry.Lookup("sovMgr"));
         Assert.Same(sovereignty[1], registry.Lookup("fwWarzoneSolarsystem"));
-        Assert.Equal(28, registry.Count);
+        Assert.Equal(29, registry.Count);
     }
 
 

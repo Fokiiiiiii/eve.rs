@@ -20,6 +20,9 @@ public sealed class ServiceCall
     /// <summary>The bound object the call was addressed to (its OID), or null.</summary>
     public string? BoundObjectId { get; init; }
 
+    /// <summary>The bind parameters that created the bound object, or null for an unbound call.</summary>
+    public PyValue? BoundObjectParameters { get; init; }
+
     public CancellationToken Cancellation { get; init; }
 
     public PyValue Arg(int index) => index < Args.Count ? Args[index] : PyNone.Instance;

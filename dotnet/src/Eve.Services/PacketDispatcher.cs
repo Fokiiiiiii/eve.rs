@@ -114,6 +114,9 @@ public sealed class PacketDispatcher
                 Session = session,
                 CallId = packet.CallId,
                 BoundObjectId = session.CurrentBoundObjectId,
+                BoundObjectParameters = session.CurrentBoundObjectId is { } oid
+                    ? _registry.GetBoundObjectParams(oid)
+                    : null,
                 Cancellation = ct,
             });
             if (traceLogin)
@@ -130,7 +133,11 @@ public sealed class PacketDispatcher
                 return true;
             }
 
-            RegisterBoundObjects(result, service, session);
+            RegisterBoundObjects(
+                result,
+                service,
+                session,
+                call.Method == "MachoBindObject" && call.Args.Count > 0 ? call.Args[0] : null);
             SendCallResponse(packet, result, session, service.Name);
             session.RunAfterResponse();
             return true;
@@ -175,7 +182,7 @@ public sealed class PacketDispatcher
     /// A result that hands out a bound object (<c>[substruct(substream((oid, refID))), callResult]</c>, or the
     /// substruct itself) registers the object so later calls to its OID reach this service.
     /// </summary>
-    private void RegisterBoundObjects(PyValue result, IService service, ClientSession session)
+    private void RegisterBoundObjects(PyValue result, IService service, ClientSession session, PyValue? bindParameters)
     {
         if (!JsSemantics.Truthy(result))
         {
@@ -187,10 +194,10 @@ public sealed class PacketDispatcher
             {
                 foreach (var element in tuple.Items)
                 {
-                    TryRegister(element, service, session);
+                    TryRegister(element, service, session, bindParameters);
                 }
             }
-            TryRegister(result, service, session);
+            TryRegister(result, service, session, bindParameters);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -198,11 +205,15 @@ public sealed class PacketDispatcher
         }
     }
 
-    private void TryRegister(PyValue value, IService service, ClientSession session)
+    private void TryRegister(PyValue value, IService service, ClientSession session, PyValue? bindParameters)
     {
         if (value is PySubStruct substruct && BoundObjects.TryRegistration(substruct, out var registration))
         {
             _registry.RegisterBoundObject(registration.Oid, service, registration.RefId);
+            if (bindParameters is not null)
+            {
+                _registry.RegisterBoundObjectParams(registration.Oid, bindParameters);
+            }
             session.RememberBoundObject(registration.Oid);
         }
     }

@@ -75,32 +75,44 @@ public sealed class PacketDispatcher
 
         if (string.IsNullOrEmpty(serviceName))
         {
+            if (string.Equals(Environment.GetEnvironmentVariable("EVE_TRACE_RPC"), "1", StringComparison.Ordinal))
+                Console.Error.WriteLine($"[rpc-trace] unhandled session={session.SessionId} service=<none> method={call.Method} reason=missing-service-address");
             SendCallResponse(packet, PyNone.Instance, session, null);
             return true;
         }
 
         var service = _registry.Lookup(serviceName);
+        var traceRpc = string.Equals(Environment.GetEnvironmentVariable("EVE_TRACE_RPC"), "1", StringComparison.Ordinal);
         var traceLogin = string.Equals(
             Environment.GetEnvironmentVariable("EVE_TRACE_LOGIN"), "1", StringComparison.Ordinal);
-        if (traceLogin)
+        var trace = traceRpc || traceLogin;
+        var traceLabel = traceRpc ? "rpc-trace" : "login-trace";
+        if (trace)
         {
             Console.Error.WriteLine(
-                $"[login-trace] request session={session.SessionId} service={service?.Name ?? serviceName} " +
+                $"[{traceLabel}] request session={session.SessionId} service={service?.Name ?? serviceName} " +
                 $"method={call.Method} args={call.Args.Count} bound={call.RemoteObject is not null}");
         }
         if (service is null)
         {
             if (serviceName.StartsWith(BoundObjects.OidPrefix, StringComparison.Ordinal))
             {
+                if (traceRpc)
+                    Console.Error.WriteLine($"[rpc-trace] unhandled session={session.SessionId} service={serviceName} method={call.Method} reason=released-bound-object");
                 // A released bound object. Answering None would be read as the call's result (a colony
                 // that dies on None.level); UnMachoDestination makes the client unresolve, rebind and
                 // retry once.
                 SendError(packet, MachoErrors.UserError("UnMachoDestination"), session, serviceName);
                 return true;
             }
+            if (traceRpc)
+                Console.Error.WriteLine($"[rpc-trace] unhandled session={session.SessionId} service={serviceName} method={call.Method} reason=service-not-registered result=PyNone");
             SendCallResponse(packet, PyNone.Instance, session, serviceName);
             return true;
         }
+
+        if (traceRpc && !service.HasMethod(call.Method))
+            Console.Error.WriteLine($"[rpc-trace] unhandled session={session.SessionId} service={service.Name} method={call.Method} reason=method-not-registered");
 
         var previousBoundObjectId = session.CurrentBoundObjectId;
         try
@@ -119,17 +131,22 @@ public sealed class PacketDispatcher
                     : null,
                 Cancellation = ct,
             });
-            if (traceLogin)
+            if (trace)
             {
                 Console.Error.WriteLine(
-                    $"[login-trace] response session={session.SessionId} service={service.Name} " +
+                    $"[{traceLabel}] response session={session.SessionId} service={service.Name} " +
                     $"method={call.Method} result={result.GetType().Name}");
             }
 
             if (result is PyDeferred deferred)
             {
                 await deferred.Start(new DeferredContext(
-                    packet, session, service.Name, reply => SendCallResponse(packet, reply, session, service.Name)));
+                    packet, session, service.Name, reply =>
+                    {
+                        if (traceRpc)
+                            Console.Error.WriteLine($"[rpc-trace] deferred-response session={session.SessionId} service={service.Name} method={call.Method} result={reply.GetType().Name}");
+                        SendCallResponse(packet, reply, session, service.Name);
+                    }));
                 return true;
             }
 
@@ -145,6 +162,8 @@ public sealed class PacketDispatcher
         catch (MachoWrappedException wrapped)
         {
             session.DropAfterResponse();
+            if (traceRpc)
+                Console.Error.WriteLine($"[rpc-trace] error session={session.SessionId} service={service.Name} method={call.Method} class={wrapped.Error.ClassName}");
             if (!wrapped.Error.IsUserError)
             {
                 OnProblem?.Invoke($"{service.Name}.{call.Method}: wrapped exception {wrapped.Error.ClassName}", wrapped);
@@ -155,10 +174,10 @@ public sealed class PacketDispatcher
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // The reference answers a failing handler with a None result rather than an error.
-            if (traceLogin)
+            if (trace)
             {
                 Console.Error.WriteLine(
-                    $"[login-trace] exception session={session.SessionId} service={service.Name} " +
+                    $"[{traceLabel}] exception session={session.SessionId} service={service.Name} " +
                     $"method={call.Method} error={ex.GetType().Name}");
             }
             session.DropAfterResponse();

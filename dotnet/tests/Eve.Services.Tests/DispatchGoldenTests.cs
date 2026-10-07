@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using Eve.Macho;
 using Eve.Marshal;
 
 namespace Eve.Services.Tests;
@@ -69,10 +70,104 @@ public class DispatchGoldenTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Unhandled_rpc_is_logged_when_full_rpc_tracing_is_enabled(bool registeredService)
+    {
+        var priorFlag = Environment.GetEnvironmentVariable("EVE_TRACE_RPC");
+        var priorError = Console.Error;
+        var capture = new Capture();
+        using var log = new StringWriter();
+        try
+        {
+            Environment.SetEnvironmentVariable("EVE_TRACE_RPC", "1");
+            Console.SetError(log);
+            var registry = new ServiceRegistry();
+            if (registeredService)
+                registry.Register(new NoMethodsService());
+            var session = new ClientSession(capture) { SessionId = 88, UserId = 90000002 };
+
+            Assert.True(await new PacketDispatcher(registry).DispatchAsync(
+                CallRequestPacket(registeredService ? "knownSvc" : "missingSvc", "missingMethod"), session));
+
+            Assert.Single(capture.Sent);
+            Assert.Contains("[rpc-trace] request", log.ToString());
+            Assert.Contains(registeredService ? "reason=method-not-registered" : "reason=service-not-registered", log.ToString());
+            Assert.Contains("missingMethod", log.ToString());
+            Assert.Contains(registeredService ? "knownSvc" : "missingSvc", log.ToString());
+        }
+        finally
+        {
+            Console.SetError(priorError);
+            Environment.SetEnvironmentVariable("EVE_TRACE_RPC", priorFlag);
+        }
+    }
+
+    [Fact]
+    public async Task Rpc_trace_logs_successful_service_responses()
+    {
+        var priorFlag = Environment.GetEnvironmentVariable("EVE_TRACE_RPC");
+        var priorError = Console.Error;
+        var capture = new Capture();
+        using var log = new StringWriter();
+        try
+        {
+            Environment.SetEnvironmentVariable("EVE_TRACE_RPC", "1");
+            Console.SetError(log);
+            var registry = new ServiceRegistry();
+            registry.Register(new KnownService());
+            var session = new ClientSession(capture) { SessionId = 89, UserId = 90000003 };
+
+            await new PacketDispatcher(registry).DispatchAsync(CallRequestPacket("knownSvc", "Known"), session);
+
+            Assert.Contains("[rpc-trace] request", log.ToString());
+            Assert.Contains("[rpc-trace] response", log.ToString());
+            Assert.Contains("result=PyInt", log.ToString());
+        }
+        finally
+        {
+            Console.SetError(priorError);
+            Environment.SetEnvironmentVariable("EVE_TRACE_RPC", priorFlag);
+        }
+    }
+
+    private static PyValue CallRequestPacket(string service, string method)
+    {
+        var source = new PyTuple([new PyInt(MachoAddress.TypeClient), new PyLong(7), new PyInt(9), PyNone.Instance]);
+        var body = new PyTuple([new PyInt(1), new PyStr(method), new PyTuple([]), PyNone.Instance]);
+        var payload = new PyTuple([new PyTuple([new PyInt(0), new PySubStream(body)])]);
+        var head = new PyValue[]
+        {
+            new PyInt(6), source, MachoAddress.Any(service).Encode(), new PyInt(90000002), payload, PyNone.Instance,
+        };
+        return new PyObject(
+            new PyStr("carbon.common.script.net.machoNetPacket.CallReq"),
+            new PyTuple([.. head, .. Enumerable.Repeat<PyValue>(PyNone.Instance, 14 - head.Length)]));
+    }
+
     private static string Clip(string text) => text.Length > 120 ? text[..120] + "…" : text;
 
     private sealed class EmptyProvider : IServiceProvider
     {
         public object? GetService(Type serviceType) => null;
+    }
+
+    private sealed class NoMethodsService : IService
+    {
+        public string Name => "knownSvc";
+
+        public bool HasMethod(string method) => false;
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call) => ValueTask.FromResult<PyValue>(PyNone.Instance);
+    }
+
+    private sealed class KnownService : IService
+    {
+        public string Name => "knownSvc";
+
+        public bool HasMethod(string method) => method == "Known";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call) => ValueTask.FromResult<PyValue>(new PyInt(42));
     }
 }

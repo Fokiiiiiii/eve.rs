@@ -182,7 +182,15 @@ class MockServer:
         method = bytes(method).decode() if isinstance(method, bytes) else method
         service = pkt.destination.service
 
-        if (service, method) == ("machoNet", "GetTime"):
+        if (service, method) == ("machoNet", "GetServiceInfo"):
+            result = m.Dict([
+                ("machoNet", None),
+                ("echo", None),
+                ("stationSvc", "station"),
+                ("invbroker", "station"),
+                ("beyonce", "solarsystem2"),
+            ])
+        elif (service, method) == ("machoNet", "GetTime"):
             result = m.Long(int(time.time() * 1e7) + FILETIME_UNIX_EPOCH)
         elif (service, method) == ("echo", "Echo"):
             result = (args, kwargs if isinstance(kwargs, m.Dict) else None)

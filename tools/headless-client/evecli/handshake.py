@@ -109,6 +109,31 @@ class SessionInfo:
     handshake: dict = field(default_factory=dict)
     signed_func: Any = None
 
+    def apply_session_change(self, session_id, changes) -> None:
+        if session_id is not None:
+            self.session_id = session_id
+        values = m.plain(changes)
+        if not isinstance(values, dict):
+            values = _as_dict(changes)
+        for key, old_new in values.items():
+            name = _text(key)
+            new_value = old_new[1] if isinstance(old_new, (tuple, list)) and len(old_new) >= 2 else old_new
+            self.session_init[name] = new_value
+        self._sync_identity()
+
+    def apply_initial_state(self, session_id, initial_state) -> None:
+        if session_id is not None:
+            self.session_id = session_id
+        values = m.plain(initial_state)
+        if not isinstance(values, dict):
+            values = _as_dict(initial_state)
+        self.session_init = {_text(key): value for key, value in values.items()}
+        self._sync_identity()
+
+    def _sync_identity(self) -> None:
+        self.user_id = self.session_init.get("userid", self.user_id)
+        self.role = self.session_init.get("role", self.role)
+
 
 def _text(value) -> str:
     if isinstance(value, (bytes, bytearray)):

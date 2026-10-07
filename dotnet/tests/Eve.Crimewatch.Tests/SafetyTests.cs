@@ -50,4 +50,82 @@ public class SafetyTests
             await Sql.ExecuteAsync(connection, null, $"DROP SCHEMA {schema} CASCADE", CancellationToken.None);
         }
     }
+
+    [Theory]
+    [InlineData(Eve.Universe.SecurityClass.HighSec, false, 2, Flag.Criminal, 0, false)]
+    [InlineData(Eve.Universe.SecurityClass.HighSec, false, 0, Flag.Criminal, 0, true)]
+    [InlineData(Eve.Universe.SecurityClass.LowSec, false, 2, Flag.Suspect, 1, false)]
+    [InlineData(Eve.Universe.SecurityClass.LowSec, false, 1, Flag.Suspect, 1, true)]
+    [InlineData(Eve.Universe.SecurityClass.LowSec, true, 0, Flag.Criminal, 0, true)]
+    [InlineData(Eve.Universe.SecurityClass.ZeroSec, false, 2, Flag.None, null, true)]
+    public void Attack_policy_boundaries_match_crimewatch_and_safety(
+        Eve.Universe.SecurityClass securityClass,
+        bool targetIsCapsule,
+        int safetyLevel,
+        Flag expectedConsequence,
+        int? expectedSafetyThreshold,
+        bool expectedAllowed)
+    {
+        const long now = 1000;
+        var facts = new PolicyFacts(
+            AttackerIsPlayer: true,
+            TargetIsPlayerProperty: true,
+            TargetIsCapsule: targetIsCapsule);
+
+        var decision = PolicyEngine.Evaluate(new PolicyRequest(
+            PolicyAction.Attack, securityClass, facts, safetyLevel));
+
+        Assert.Equal(expectedConsequence, decision.Consequence);
+        Assert.Equal(expectedSafetyThreshold, decision.SafetyThreshold);
+        Assert.Equal(expectedAllowed, decision.Allowed);
+        Assert.Equal(expectedAllowed ? PolicyBlockReason.None : PolicyBlockReason.Safety, decision.BlockReason);
+
+        var outcome = Aggression.Record(
+            CombatState.Idle, CombatState.Idle, securityClass, 30000142,
+            targetIsCapsule, facts, now);
+        Assert.Equal(expectedConsequence, outcome.Attacker.FlagAt(now));
+    }
+
+    [Theory]
+    [InlineData(Flag.Suspect, false)]
+    [InlineData(Flag.Criminal, false)]
+    [InlineData(Flag.None, true)]
+    public void Null_security_remote_assistance_has_no_crime_consequence(Flag targetFlag, bool targetIsOutlaw)
+    {
+        var facts = new PolicyFacts(
+            AttackerIsPlayer: true,
+            TargetIsPlayerProperty: true,
+            TargetFlag: targetFlag,
+            TargetIsOutlaw: targetIsOutlaw);
+
+        var decision = PolicyEngine.Evaluate(new PolicyRequest(
+            PolicyAction.RemoteAssistance, Eve.Universe.SecurityClass.ZeroSec, facts));
+
+        Assert.True(decision.Allowed);
+        Assert.True(decision.Lawful);
+        Assert.Equal(Flag.None, decision.Consequence);
+        Assert.Null(decision.SafetyThreshold);
+    }
+
+    [Theory]
+    [InlineData(PolicyAction.Dock)]
+    [InlineData(PolicyAction.GateJump)]
+    [InlineData(PolicyAction.CynoJump)]
+    [InlineData(PolicyAction.Warp)]
+    public void Criminal_timer_blocks_high_security_movement_except_for_capsules(PolicyAction action)
+    {
+        var facts = new PolicyFacts(HasCriminalTimer: true);
+
+        var blocked = PolicyEngine.Evaluate(new PolicyRequest(
+            action, Eve.Universe.SecurityClass.HighSec, facts));
+        Assert.False(blocked.Allowed);
+        Assert.Equal(PolicyBlockReason.CriminalTimer, blocked.BlockReason);
+
+        Assert.True(PolicyEngine.Evaluate(new PolicyRequest(
+            action, Eve.Universe.SecurityClass.HighSec, facts with { ActorIsCapsule = true })).Allowed);
+        Assert.True(PolicyEngine.Evaluate(new PolicyRequest(
+            action, Eve.Universe.SecurityClass.LowSec, facts)).Allowed);
+        Assert.True(PolicyEngine.Evaluate(new PolicyRequest(
+            action, Eve.Universe.SecurityClass.ZeroSec, facts)).Allowed);
+    }
 }

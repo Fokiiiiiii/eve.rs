@@ -51,7 +51,9 @@ def _prepare_headless_client():
 def _launch_official_client(launcher_root):
     executable = _find_official_exefile(launcher_root)
     _prepare_headless_client()
-    return subprocess.Popen([str(executable), "/thinclient"], cwd=str(executable.parent))
+    environment = os.environ.copy()
+    environment["EO_REMOTEFILECACHEFOLDER"] = str(executable.parent.parent.parent / "ResFiles")
+    return subprocess.Popen([str(executable), "/thinclient"], cwd=str(executable.parent.parent), env=environment)
 
 
 def main(argv=None) -> int:

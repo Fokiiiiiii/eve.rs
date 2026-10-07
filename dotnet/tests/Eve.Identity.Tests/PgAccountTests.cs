@@ -48,9 +48,9 @@ public class PgAccountTests
     public async Task Accounts_survive_a_new_directory_over_the_same_database()
     {
         await using var schema = await PgSchema.CreateAsync();
-        var first = new PgAccountDirectory(schema.Source, new AccountOptions(), schema.Name);
+        var first = new PgAccountDirectory(schema.Source, new AccountOptions { AutoCreate = true }, schema.Name);
         var created = await first.LoginAsync(new LoginAttempt("pilot", new byte[] { 1, 2 }, "EN", "x"), CancellationToken.None);
-        var second = new PgAccountDirectory(schema.Source, new AccountOptions(), schema.Name);
+        var second = new PgAccountDirectory(schema.Source, new AccountOptions { AutoCreate = true }, schema.Name);
         Assert.Equal(created, await second.LoginAsync(new LoginAttempt("pilot", new byte[] { 1, 2 }, "EN", "x"), CancellationToken.None));
         Assert.IsType<LoginRefused>(await second.LoginAsync(new LoginAttempt("pilot", new byte[] { 3 }, "EN", "x"), CancellationToken.None));
     }
@@ -59,7 +59,7 @@ public class PgAccountTests
     public async Task A_successful_login_is_stamped_and_a_refused_one_is_not()
     {
         await using var schema = await PgSchema.CreateAsync();
-        var directory = new PgAccountDirectory(schema.Source, new AccountOptions(), schema.Name);
+        var directory = new PgAccountDirectory(schema.Source, new AccountOptions { AutoCreate = true }, schema.Name);
         await directory.LoginAsync(new LoginAttempt("pilot", new byte[] { 1 }, "EN", "x"), CancellationToken.None);
         Assert.False(await schema.ScalarAsync<bool>($"SELECT last_login_at IS NULL FROM {schema.Name}.accounts WHERE user_name = 'pilot'"));
 
@@ -72,7 +72,7 @@ public class PgAccountTests
     public async Task The_full_role_range_round_trips_through_a_signed_column()
     {
         await using var schema = await PgSchema.CreateAsync();
-        var directory = new PgAccountDirectory(schema.Source, new AccountOptions { NewAccountRole = ulong.MaxValue }, schema.Name);
+        var directory = new PgAccountDirectory(schema.Source, new AccountOptions { AutoCreate = true, NewAccountRole = ulong.MaxValue }, schema.Name);
         var login = Assert.IsType<LoggedIn>(await directory.LoginAsync(new LoginAttempt("all", new byte[] { 1 }, "EN", "x"), CancellationToken.None));
         Assert.Equal(ulong.MaxValue, login.Role);
         var again = Assert.IsType<LoggedIn>(await directory.LoginAsync(new LoginAttempt("all", new byte[] { 1 }, "EN", "x"), CancellationToken.None));

@@ -249,4 +249,159 @@ public class SpaceEventsTests
         var root = document.RootElement;
         Assert.Equal((c.CharacterId, c.ShipId, (long)type, "Npc"), (root.GetProperty("characterId").GetInt64(), root.GetProperty("shipId").GetInt64(), root.GetProperty("shipTypeId").GetInt64(), root.GetProperty("cause").GetString()));
     }
+
+    [Fact]
+    public async Task Transition_runtime_persists_before_simulation_session_and_notification()
+    {
+        using var timers = new Eve.Scheduler.LocalTimers();
+        var runtime = new Eve.Services.Space.TransitionRuntime(timers);
+        var order = new List<string>();
+
+        var result = await runtime.ExecuteAsync(
+            _ =>
+            {
+                order.Add("persist");
+                return Task.FromResult(true);
+            },
+            committed => committed,
+            (_, _) =>
+            {
+                order.Add("simulation");
+                return Task.CompletedTask;
+            },
+            (_, _) =>
+            {
+                order.Add("session");
+                return Task.FromResult(true);
+            },
+            (_, _) =>
+            {
+                order.Add("notification");
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+
+        Assert.True(result);
+        Assert.Equal(new[] { "persist", "simulation", "session", "notification" }, order);
+    }
+
+    [Fact]
+    public async Task Transition_runtime_does_not_apply_side_effects_when_persistence_did_not_commit()
+    {
+        using var timers = new Eve.Scheduler.LocalTimers();
+        var runtime = new Eve.Services.Space.TransitionRuntime(timers);
+        var order = new List<string>();
+
+        var result = await runtime.ExecuteAsync(
+            _ =>
+            {
+                order.Add("persist");
+                return Task.FromResult(false);
+            },
+            committed => committed,
+            (_, _) =>
+            {
+                order.Add("simulation");
+                return Task.CompletedTask;
+            },
+            (_, _) =>
+            {
+                order.Add("session");
+                return Task.FromResult(true);
+            },
+            (_, _) =>
+            {
+                order.Add("notification");
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+
+        Assert.False(result);
+        Assert.Equal(new[] { "persist" }, order);
+    }
+
+    [PgFact]
+    public async Task Transition_runtime_session_refusal_suppresses_notification_and_wakes_the_event_bus()
+    {
+        var (rig, _, _) = await InSpaceAsync();
+        await using var rigCleanup = rig;
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var schedulerSchema = $"sc_transition_{suffix}";
+        var eventsSchema = $"ev_transition_{suffix}";
+        Eve.Events.EventBus? events = null;
+
+        try
+        {
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(rig.Source, schedulerSchema);
+            await Eve.Events.EventBus.MigrateAsync(rig.Source, eventsSchema);
+            var scheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now, schema: schedulerSchema);
+            var bus = new Eve.Events.EventBus(
+                rig.Source,
+                scheduler,
+                new Eve.Events.EventBusOptions { PollMs = 60_000 },
+                eventsSchema);
+            events = bus;
+
+            var delivered = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            bus.Subscribe("transition-runtime-test", ["transition.runtime"], (context, _) =>
+            {
+                delivered.TrySetResult(context.Event.Topic);
+                return Task.CompletedTask;
+            });
+            await bus.PumpAsync();
+            await bus.StartAsync();
+
+            using var timers = new Eve.Scheduler.LocalTimers();
+            var runtime = new Eve.Services.Space.TransitionRuntime(timers, bus);
+            var order = new List<string>();
+            var result = await runtime.ExecuteAsync(
+                async token =>
+                {
+                    order.Add("persist");
+                    await using var connection = await rig.Source.OpenConnectionAsync(token);
+                    await using var transaction = await connection.BeginTransactionAsync(token);
+                    await bus.PublishAsync(
+                        connection,
+                        transaction,
+                        "transition.runtime",
+                        new { transitionId = 1 },
+                        "transition-runtime-test",
+                        token);
+                    await transaction.CommitAsync(token);
+                    return true;
+                },
+                committed => committed,
+                (_, _) =>
+                {
+                    order.Add("simulation");
+                    return Task.CompletedTask;
+                },
+                (_, _) =>
+                {
+                    order.Add("session");
+                    return Task.FromResult(false);
+                },
+                (_, _) =>
+                {
+                    order.Add("notification");
+                    return Task.CompletedTask;
+                },
+                CancellationToken.None);
+
+            Assert.True(result);
+            Assert.Equal(new[] { "persist", "simulation", "session" }, order);
+            Assert.Equal("transition.runtime", await delivered.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        finally
+        {
+            if (events is not null)
+                await events.StopAsync();
+
+            await using (var dropEvents = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {eventsSchema} CASCADE"))
+                await dropEvents.ExecuteNonQueryAsync();
+            await using (var dropScheduler = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schedulerSchema} CASCADE"))
+                await dropScheduler.ExecuteNonQueryAsync();
+        }
+    }
 }

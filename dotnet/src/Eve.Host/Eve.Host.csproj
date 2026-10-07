@@ -46,4 +46,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Eve.Host.Tests" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Sentry" />
+  </ItemGroup>
 </Project>

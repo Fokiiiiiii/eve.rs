@@ -18,6 +18,7 @@ using Eve.Skills;
 using Eve.Universe;
 using Eve.Wallet;
 using Npgsql;
+using Sentry;
 using Eve.Services;
 using Eve.Services.CharacterSelect;
 using Eve.Services.Core;
@@ -85,6 +86,13 @@ static Socket Listen(string endpoint)
     unix.Listen(128);
     return unix;
 }
+
+using var sentry = SentrySdk.Init(options =>
+{
+    options.Dsn = Env("SENTRY_DSN", "");
+    options.Environment = Env("SENTRY_ENVIRONMENT", "development");
+    options.SendDefaultPii = false;
+});
 
 var endpoint = Env("EVE_HOST", "/tmp/eve-host.sock");
 var options = new ClusterOptions { ImageServerUrl = Env("EVE_IMAGE_SERVER_URL", "http://127.0.0.1:26001/") };
@@ -164,7 +172,12 @@ var info = new HostMachoNetInfo(registry, config);
 registry.Register(new MachoNetService(info, now));
 
 var dispatcher = new PacketDispatcher(registry, now);
-dispatcher.OnProblem = (message, error) => Console.Error.WriteLine($"eve-host: {message}{(error is null ? "" : ": " + error.Message)}");
+dispatcher.OnProblem = (message, error) =>
+{
+    Console.Error.WriteLine($"eve-host: {message}{(error is null ? "" : ": " + error.Message)}");
+    if (error is not null)
+        SentrySdk.CaptureException(error);
+};
 var clusterConfig = MarshalCodec.Encode(config);
 var server = new HostServer(
     new HostOptions

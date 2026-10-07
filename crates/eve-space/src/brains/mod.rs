@@ -785,6 +785,7 @@ mod tests {
     #[test]
     fn the_world_measures_between_balls_and_lists_what_is_in_range() {
         let mut scene = scene_with_a_player();
+        let body_id = scene.system().bodies.first().expect("test system has a body").id;
         let place = place_near(&mut scene, 5_000.0);
         scene.spawn_npc(npc_spec(), NpcIdentity::default(), place, NOON);
         with_world(&mut scene, NOON, |world| {
@@ -800,6 +801,13 @@ mod tests {
                 "{near:?}"
             );
             assert!(near.iter().all(|(_, id)| *id != NPC_SHIP), "not itself");
+            let npc_near_player = world.ball_ids_and_dist_in_range(spec().ship_id, 6_000.0);
+            assert!(
+                npc_near_player
+                    .iter()
+                    .any(|(squared, id)| *id == NPC_SHIP && (squared - 25_000_000.0).abs() < 1.0),
+                "{npc_near_player:?}"
+            );
             assert!(
                 world
                     .ball_ids_and_dist_in_range(NPC_SHIP, 1_000.0)
@@ -810,6 +818,8 @@ mod tests {
             assert!(exactly.iter().any(|(_, id)| *id == spec().ship_id), "a ball at the range is in it");
             let short = world.ball_ids_and_dist_in_range(NPC_SHIP, 4_999.0);
             assert!(short.iter().all(|(_, id)| *id != spec().ship_id), "and one a little beyond is not");
+            let all_balls = world.ball_ids_and_dist_in_range(NPC_SHIP, f64::MAX);
+            assert!(all_balls.iter().any(|(_, id)| *id == body_id), "{all_balls:?}");
         });
     }
 

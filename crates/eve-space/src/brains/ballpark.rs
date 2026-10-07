@@ -214,14 +214,45 @@ impl Ballpark for SceneWorld<'_> {
 
     fn ball_ids_and_dist_in_range(&self, ball_id: i64, range: f64) -> Vec<(f64, i64)> {
         let Some(from) = self.ball_position(ball_id) else { return Vec::new() };
-        self.all_ball_ids()
-            .into_iter()
-            .filter(|id| *id != ball_id)
-            .filter_map(|id| {
-                let squared = distance(from, self.ball_position(id)?).powi(2);
-                (squared <= range * range).then_some((squared, id))
+        let candidates = self.all_ball_ids().into_iter().enumerate().filter_map(|(order, id)| {
+            let order = order as u64;
+            let position = self.ball_position(id)?;
+            if let Some(session) = self.session_of(id) {
+                if let Some(pilot) = self.scene.pilots.get(&session) {
+                    let mut entity = self.scene.spatial_ship(session, pilot);
+                    entity.position = position;
+                    entity.item = order;
+                    return Some(entity);
+                }
+            }
+            let (kind, radius) = match self.scene.system().body(id) {
+                Some(body) => (crate::geo::SpatialKind::SystemBody, body.radius),
+                None => (crate::geo::SpatialKind::Ship, self.ball_radius(id).unwrap_or(0.0)),
+            };
+            Some(crate::geo::SpatialEntity {
+                id,
+                kind,
+                character_id: None,
+                owner_id: None,
+                corporation_id: None,
+                alliance_id: None,
+                type_id: None,
+                group_id: None,
+                category_id: None,
+                position,
+                radius,
+                warping: false,
+                item: order,
             })
-            .collect()
+        });
+        let mut hits = crate::geo::SpatialQuery::radius(
+            from,
+            range,
+            crate::geo::SpatialFilter { exclude_id: Some(ball_id), ..crate::geo::SpatialFilter::default() },
+        )
+        .execute(candidates);
+        hits.sort_by_key(|hit| hit.item);
+        hits.into_iter().map(|hit| (hit.distance.powi(2), hit.id)).collect()
     }
 
     fn ships_in_same_bubble(&self, item_id: i64) -> Vec<i64> {

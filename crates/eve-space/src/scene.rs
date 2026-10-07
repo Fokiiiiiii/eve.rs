@@ -19,7 +19,7 @@ use crate::ship::{Course, Ship, ShipSpec};
 use crate::targeting::{Targeting, UNDOCK_PROTECTION};
 use crate::warp::{self, PythonRandom};
 use crate::wire::{filetime, id, int, real, text, tuple, vector};
-use crate::world::{Body, BodyKind, Detail, SolarSystem};
+use crate::world::{BodyKind, Detail, SolarSystem};
 use crate::wreck::{Wreck, WreckKind};
 
 /// The host's name for a player's connection.
@@ -1008,18 +1008,32 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         {
             return Some((belt.id, belt.position));
         }
-        let away = |body: &Body| {
-            ((body.position.x - position.x).powi(2)
-                + (body.position.y - position.y).powi(2)
-                + (body.position.z - position.z).powi(2))
-            .sqrt()
-        };
-        system
-            .bodies
-            .iter()
-            .filter(|body| body.kind == BodyKind::Belt && away(body) <= BELT_LANDING_RADIUS + body.radius)
-            .min_by(|a, b| away(a).total_cmp(&away(b)).then(a.id.cmp(&b.id)))
-            .map(|body| (body.id, body.position))
+        let candidates = system.bodies.iter().filter(|body| body.kind == BodyKind::Belt).map(|body| {
+            crate::geo::SpatialEntity {
+                id: body.id,
+                kind: crate::geo::SpatialKind::SystemBody,
+                character_id: None,
+                owner_id: None,
+                corporation_id: None,
+                alliance_id: None,
+                type_id: None,
+                group_id: None,
+                category_id: None,
+                position: [body.position.x, body.position.y, body.position.z],
+                radius: body.radius,
+                warping: false,
+                item: body,
+            }
+        });
+        crate::geo::SpatialQuery::radius(
+            [position.x, position.y, position.z],
+            f64::MAX,
+            crate::geo::SpatialFilter::default(),
+        )
+        .execute(candidates)
+        .into_iter()
+        .find(|hit| hit.distance <= BELT_LANDING_RADIUS + hit.item.radius)
+        .map(|hit| (hit.id, hit.item.position))
     }
 
     /// `CmdWarpToStuff`: the ship lines up with where it is to end and goes into warp. The client is told at once (`WarpTo` with the point and

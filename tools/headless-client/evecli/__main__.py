@@ -1,8 +1,12 @@
 """python -m evecli --host 127.0.0.1 --port 26000 --user U --password P"""
 
 import argparse
+import importlib
+import os
+import subprocess
 import sys
 import time
+from pathlib import Path
 
 from . import handshake, packet
 from .client import Client, filetime_to_unix
@@ -13,6 +17,43 @@ def _show(value, limit=200) -> str:
     return text if len(text) <= limit else text[:limit] + "..."
 
 
+def _find_official_exefile(launcher_root):
+    if not launcher_root:
+        raise FileNotFoundError(
+            "Pass --launcher-root or set EVE_LAUNCHER_ROOT to the EVE Launcher installation directory."
+        )
+
+    root = Path(launcher_root).expanduser()
+    candidates = (
+        root / "SharedCache" / "tq" / "bin64" / "exefile.exe",
+        root / "SharedCache" / "tq" / "bin" / "exefile.exe",
+        root / "bin64" / "exefile.exe",
+        root / "bin" / "exefile.exe",
+        root / "exefile.exe",
+    )
+    for executable in candidates:
+        if executable.is_file():
+            return executable.resolve()
+    raise FileNotFoundError(f"No Launcher-managed exefile.exe found under {root}")
+
+
+def _prepare_headless_client():
+    try:
+        thinclients = importlib.import_module("thinclients")
+        thinclients.HEADLESS = True
+        clientsetup = importlib.import_module("thinclients.clientsetup")
+        patch_all = clientsetup.patch_all
+    except (ImportError, AttributeError) as error:
+        raise RuntimeError("thinclients headless bootstrap is unavailable in this Python environment.") from error
+    patch_all()
+
+
+def _launch_official_client(launcher_root):
+    executable = _find_official_exefile(launcher_root)
+    _prepare_headless_client()
+    return subprocess.Popen([str(executable), "/thinclient"], cwd=str(executable.parent))
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="evecli", description="A headless EVE client.")
     parser.add_argument("--host", default="127.0.0.1")
@@ -20,9 +61,27 @@ def main(argv=None) -> int:
     parser.add_argument("--user", default="evecli")
     parser.add_argument("--password", default="evecli")
     parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument(
+        "--official-client",
+        action="store_true",
+        help="launch the Launcher-managed official client headlessly",
+    )
+    parser.add_argument(
+        "--launcher-root",
+        default=os.environ.get("EVE_LAUNCHER_ROOT"),
+        help="EVE Launcher installation root (or EVE_LAUNCHER_ROOT)",
+    )
     parser.add_argument("--call", action="append", default=[], metavar="SERVICE.METHOD",
                         help="also call a service method without arguments (repeatable)")
     args = parser.parse_args(argv)
+    if args.official_client:
+        try:
+            process = _launch_official_client(args.launcher_root)
+        except (OSError, RuntimeError) as error:
+            print(f"official client launch failed: {error}", file=sys.stderr)
+            return 4
+        print(f"official client pid: {process.pid}")
+        return 0
 
     with Client(args.host, args.port, args.timeout) as client:
         try:

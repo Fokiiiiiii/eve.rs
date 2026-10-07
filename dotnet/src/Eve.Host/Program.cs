@@ -539,6 +539,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     // Codex-owned corporation registration; keep combat/NPC construction in its own block below.
     var corporationSchema = Env("EVE_CORPORATIONS_SCHEMA", Eve.Corporations.CorporationStore.DefaultSchema);
     await Eve.Corporations.CorporationStore.MigrateAsync(source, corporationSchema);
+    await Eve.Corporations.CorporationOfficeStore.MigrateAsync(source, corporationSchema);
     var economyWallets = new WalletTransactions(source, walletSchema);
     var economyAnnouncer = new WalletAnnouncer(economyWallets, characterSessions);
     var insuranceReadModel = new PersistenceInsuranceReadModel(mailStore);
@@ -1724,12 +1725,25 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             return Task.CompletedTask;
         });
 
+    var officeManager = new Eve.Services.Corporations.OfficeManagerService(
+        new Eve.Corporations.CorporationOfficeStore(source, corporationSchema), corporations, characters, items,
+        economyWallets,
+        id => stations.Get(id) is { } station
+            ? new Eve.Corporations.CorporationOfficeStation(
+                station.Id, station.TypeId, station.OwnerId, station.SolarSystemId, station.Security)
+            : null,
+        now);
+    var emptyLoginRewards = new Eve.Services.Core.EmptyLoginRewardCallbacks();
     IReadOnlyList<IService> services =
     [
         new CharUnboundMgrService(accounts, characters, items, skills, wallets, creation, catalog, online, [new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now), corporationLogin], Random.Shared),
         new MultiLoginBlockerService(),
         new PopulationCapService(characters),
         new Eve.Services.CharacterInfo.ConfigService(characters, corporations, stations, solarSystems),
+        new Eve.Services.Core.SecurityMgrService(),
+        new Eve.Services.Core.AlertService(),
+        new Eve.Services.Core.FighterMgrService(),
+        new Eve.Services.Core.ShipKillCounterService(),
         // security status is the character's relation of that kind (Eve.Relations); crimewatch only asks for it
         new Eve.Services.Crimewatch.CrimewatchService(
             crimewatchStore, crimewatchRuntime, now,
@@ -1746,7 +1760,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             charMgrReadModel.ReadMedal1GraphicIdAsync,
             charMgrReadModel.ReadAsync),
         new Eve.Services.CharacterInfo.OnlineStatusService(characterSessions, ReadWatchlistAsync),
-        new StationService(stations, characters, online, now, sovereigntyReadModel.ReadAllianceSystemsAsync),
+        new StationService(stations, characters, online, now, sovereigntyReadModel.ReadAllianceSystemsAsync, officeManager: officeManager),
         .. Eve.Services.Core.SovFwService.Create(
             sovereigntyReadModel.ReadSnapshotAsync,
             sovereigntyReadModel.IsOnLocalFuelAccessGroupAsync,
@@ -1794,6 +1808,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         {
             AllianceAffiliationWriter = allianceDue.WriteAffiliationAsync
         },
+        officeManager,
         new Eve.Services.Corporations.StandingMgrService(foundations.Reads, corporations, now),
         new Eve.Services.Corporations.WarsInfoMgrService(foundations.Relations, now),
         new Eve.Services.Corporations.VoteManagerService(corporations),
@@ -1850,6 +1865,8 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             },
             mutateMailingList),
         new RewardsService(),
+        new Eve.Services.Core.LoginCampaignMgrService(emptyLoginRewards),
+        new Eve.Services.Core.SeasonalLoginCampaignMgrService(emptyLoginRewards),
         new StoreOffersService(
             async ct => await ReadGameStoreTableAsync("newEdenStore", ct),
             storeRuntime.PurchaseAsync),

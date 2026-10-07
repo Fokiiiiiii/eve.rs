@@ -10,6 +10,15 @@ public class SpaceServiceTests
 {
     private static long Id(PyValue value) => Events.Number(value);
 
+    [Fact]
+    public void Ship_dirt_timestamp_is_a_current_EVE_filetime()
+    {
+        const long nowUnixMs = 1_000;
+        var service = new ShipService(null!, () => nowUnixMs);
+
+        Assert.Equal(new PyLong(116444736000000000L + nowUnixMs * 10_000L), service.GetDirtTimestamp(null!));
+    }
+
     private static async Task<(Rig Rig, Eve.Characters.Created Character, ClientSession Session)> DockedAsync(
         TimeSpan? protection = null, Eve.Scheduler.LocalTimers? localTimers = null)
     {

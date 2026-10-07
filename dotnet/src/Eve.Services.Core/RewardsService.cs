@@ -92,6 +92,22 @@ public interface ILoginRewardCallbacks
         SeasonalLoginCampaignClaimRequest request, CancellationToken cancellationToken = default);
 }
 
+/// <summary>The local host has no configured login campaigns; return the client's no-campaign state.</summary>
+public sealed class EmptyLoginRewardCallbacks : ILoginRewardCallbacks
+{
+    public ValueTask<LoginCampaignSnapshot?> GetLoginCampaignStateAsync(
+        LoginRewardPlayer player, CancellationToken cancellationToken = default) => ValueTask.FromResult<LoginCampaignSnapshot?>(null);
+
+    public ValueTask<LoginCampaignClaimResult?> TryClaimLoginCampaignRewardAsync(
+        LoginCampaignClaimRequest request, CancellationToken cancellationToken = default) => ValueTask.FromResult<LoginCampaignClaimResult?>(null);
+
+    public ValueTask<SeasonalLoginCampaignSnapshot?> GetSeasonalLoginCampaignAsync(
+        LoginRewardPlayer player, CancellationToken cancellationToken = default) => ValueTask.FromResult<SeasonalLoginCampaignSnapshot?>(null);
+
+    public ValueTask<bool> TryClaimSeasonalLoginCampaignAsync(
+        SeasonalLoginCampaignClaimRequest request, CancellationToken cancellationToken = default) => ValueTask.FromResult(false);
+}
+
 public sealed class RewardsService : IService
 {
     public string Name => "rewardMgr";

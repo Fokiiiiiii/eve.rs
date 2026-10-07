@@ -17,6 +17,11 @@ public sealed partial class ShipService(SpaceSessions space, Func<long> nowUnixM
 
     public void OnBoundObjectReleased(string oid, ClientSession? session) => _binding.Release(oid);
 
+    /// <summary>Returns the current EVE FILETIME when a ship has no stored dirt record yet.</summary>
+    [Method("GetDirtTimestamp")]
+    public PyValue GetDirtTimestamp(ServiceCall call) =>
+        new PyLong(checked(116444736000000000L + nowUnixMs() * 10_000L));
+
     /// <summary>The proxy node serves every ship object.</summary>
     [Method("MachoResolveObject")]
     public PyValue MachoResolveObject(ServiceCall call) => new PyInt(MachoMessage.ProxyNodeId);

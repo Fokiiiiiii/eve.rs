@@ -957,6 +957,12 @@ public class HostServerTests : IAsyncLifetime
         var multiLoginBlocker = new Eve.Services.CharacterSelect.MultiLoginBlockerService();
         var populationCap = new Eve.Services.CharacterSelect.PopulationCapService(null!);
         var config = new Eve.Services.CharacterInfo.ConfigService(null!, null!, null!, null!);
+        var securityMgr = new Eve.Services.Core.SecurityMgrService();
+        var alert = new Eve.Services.Core.AlertService();
+        var fighterMgr = new Eve.Services.Core.FighterMgrService();
+        var shipKillCounter = new Eve.Services.Core.ShipKillCounterService();
+        var officeManager = new Eve.Services.Corporations.OfficeManagerService(
+            null!, null!, null!, null!, null!, static _ => null, () => FixedNowMs);
         var mailingLists = new Eve.Services.Core.MailingListService(
             _ => ValueTask.FromResult<System.Text.Json.Nodes.JsonObject?>(new System.Text.Json.Nodes.JsonObject()),
             (_, _) => ValueTask.FromResult<Eve.Marshal.PyValue>(Eve.Marshal.PyNone.Instance));
@@ -974,6 +980,9 @@ public class HostServerTests : IAsyncLifetime
             (_, _) => ValueTask.FromResult<System.Text.Json.Nodes.JsonObject?>(null),
             (_, _, _) => ValueTask.FromResult<IReadOnlyDictionary<long, System.Text.Json.Nodes.JsonObject>>(new Dictionary<long, System.Text.Json.Nodes.JsonObject>()),
             (_, _) => ValueTask.FromResult<System.Text.Json.Nodes.JsonArray?>(null));
+        var emptyLoginRewards = new Eve.Services.Core.EmptyLoginRewardCallbacks();
+        var loginCampaigns = new Eve.Services.Core.LoginCampaignMgrService(emptyLoginRewards);
+        var seasonalCampaigns = new Eve.Services.Core.SeasonalLoginCampaignMgrService(emptyLoginRewards);
         var insurance = new Eve.Services.Core.InsuranceService(new EmptyInsuranceReadModel(), () => FixedNowMs);
         var structureReadCallbacks = new EmptyStructureDirectoryReadCallbacks();
         var structureDirectory = new Eve.Services.Core.StructureDirectoryService(structureReadCallbacks);
@@ -999,6 +1008,8 @@ public class HostServerTests : IAsyncLifetime
         {
             mail, notifications, calendar, calendarProxy, wars, voteManager, online, mailingLists, rewards,
             storeOffers, industryJobs, characterMining, corporationMining, agents, insurance, multiLoginBlocker, populationCap, config,
+            loginCampaigns, seasonalCampaigns,
+            securityMgr, alert, fighterMgr, shipKillCounter, officeManager,
             structureDirectory, structureSettings, skyhookMgr, map, tales, scanning, fleetObject, fleetManager, fleetProxy,
         }.Concat(sovereignty))
             registry.Register(service);
@@ -1017,6 +1028,13 @@ public class HostServerTests : IAsyncLifetime
         Assert.Same(PyBool.True, multiLoginBlocker.Login(null!));
         Assert.Same(populationCap, registry.Lookup("populationCap"));
         Assert.Same(config, registry.Lookup("config"));
+        Assert.Same(loginCampaigns, registry.Lookup("loginCampaignManager"));
+        Assert.Same(seasonalCampaigns, registry.Lookup("seasonalLoginCampaignManager"));
+        Assert.Same(securityMgr, registry.Lookup("securityMgr"));
+        Assert.Same(alert, registry.Lookup("alert"));
+        Assert.Same(fighterMgr, registry.Lookup("fighterMgr"));
+        Assert.Same(shipKillCounter, registry.Lookup("shipKillCounter"));
+        Assert.Same(officeManager, registry.Lookup("officeManager"));
         Assert.Equal(Eve.Macho.MachoMessage.ProxyNodeId, ((PyInt)populationCap.MachoResolveObject(null!)).Value);
         Assert.Same(mailingLists, registry.Lookup("mailingListsMgr"));
         Assert.Same(rewards, registry.Lookup("rewardMgr"));
@@ -1034,7 +1052,7 @@ public class HostServerTests : IAsyncLifetime
         Assert.Same(scanning, registry.Lookup("scanMgr"));
         Assert.Same(sovereignty[0], registry.Lookup("sovMgr"));
         Assert.Same(sovereignty[1], registry.Lookup("fwWarzoneSolarsystem"));
-        Assert.Equal(29, registry.Count);
+        Assert.Equal(36, registry.Count);
     }
 
 

@@ -209,6 +209,11 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
             case SimAccepted accepted when _answered.TryRemove((accepted.SessionId, accepted.Command), out var accepting):
                 accepting.TrySetResult(new CommandReply(true, accepted.At, null));
                 break;
+            case SimPosition position when _answered.TryRemove((position.SessionId, position.Command), out var resolving):
+                resolving.TrySetResult(new CommandReply(true, 0, null) { Position = position.Position });
+                break;
+            case SimPosition:
+                break; // nobody is waiting for it
             case SimRefused refused when _answered.TryRemove((refused.SessionId, refused.Command), out var refusing):
                 refusing.TrySetResult(new CommandReply(false, 0, refused.Reason));
                 break;

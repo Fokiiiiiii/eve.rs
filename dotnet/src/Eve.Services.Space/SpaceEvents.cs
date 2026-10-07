@@ -24,6 +24,9 @@ public enum ShipLossCause
 
     /// <summary>Nobody is known to have dealt it.</summary>
     Unknown,
+
+    /// <summary>CONCORD enforced a criminal offense by destroying the ship.</summary>
+    Concord,
 }
 
 /// <summary>A pilot's ship (not its capsule) was destroyed in space: whose it was, what it was and where (for an insurance payout, a kill record).</summary>

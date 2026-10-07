@@ -200,4 +200,62 @@ public sealed partial class CrimewatchService(
             rows,
             []);
     }
+
+    /// <summary><c>GetKillRights(toIDs)</c>: the caller's active kill rights against the requested characters.</summary>
+}
+
+
+[Service("killRightMgr")]
+public sealed partial class KillRightMgrService(PgCrimewatchStore store)
+{
+    /// <summary>
+    /// <c>GetKillRights(toIDs)</c>: active rights owned by the caller for the requested targets.
+    /// Client 1dbb5711a072a146e1d228365668ac05655eefe1 caches records by <c>toID</c>
+    /// and reads <c>killRightID</c> and <c>restrictedTo</c>.
+    /// </summary>
+    [Method("GetKillRights")]
+    public async ValueTask<PyValue> GetKillRights(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } ownerCharacterId || ownerCharacterId <= 0)
+        {
+            return new PyList([]);
+        }
+
+        var targetIds = call.Arg(0) switch
+        {
+            PyList list => list.Items,
+            PyTuple tuple => tuple.Items,
+            _ => [],
+        };
+        var requestedTargets = targetIds
+            .Select(Number)
+            .Where(id => id is > 0)
+            .Select(id => id!.Value)
+            .ToHashSet();
+        if (requestedTargets.Count == 0)
+        {
+            return new PyList([]);
+        }
+
+        var rights = await store.KillRightsOfAsync(ownerCharacterId, call.Cancellation);
+        return new PyList([.. rights
+            .Where(right => requestedTargets.Contains(right.TargetCharacterId))
+            .OrderBy(right => right.TargetCharacterId)
+            .ThenBy(right => right.KillRightId)
+            .Select(right => Py.KeyVal(
+                ("killRightID", new PyLong(right.KillRightId)),
+                ("fromID", InventoryWire.Id(right.OwnerCharacterId)),
+                ("toID", InventoryWire.Id(right.TargetCharacterId)),
+                ("restrictedTo", InventoryWire.Id(right.OwnerCharacterId)),
+                ("price", PyNone.Instance),
+                ("solarSystemID", InventoryWire.Id(right.SolarSystemId))))]);
+    }
+
+    private static long? Number(PyValue value) => value switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        PyReal real when double.IsFinite(real.Value) && real.Value == Math.Truncate(real.Value) => (long)real.Value,
+        _ => null,
+    };
 }

@@ -85,6 +85,7 @@ public static class SimCodec
         public const byte DroneWorkResult = 47;
         public const byte RemoteRepairCycle = 48;
         public const byte RemoteRepairCycleResult = 49;
+        public const byte Position = 50;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)
@@ -571,6 +572,9 @@ public static class SimCodec
                 break;
             case Kind.Accepted:
                 message = new SimAccepted(r.U64(), r.U8(), r.I64());
+                break;
+            case Kind.Position:
+                message = new SimPosition(r.U64(), r.U8(), ReadVector(ref r));
                 break;
             case Kind.Approaching:
                 message = new SimApproaching(r.U64(), r.U8(), r.F64());
@@ -1287,6 +1291,12 @@ private static void WriteAction(Writer w, SimAction action)
                 w.U64(m.SessionId);
                 w.U8(m.Command);
                 w.I64(m.At);
+                break;
+            case SimPosition m:
+                w.U8(Kind.Position);
+                w.U64(m.SessionId);
+                w.U8(m.Command);
+                WriteVector(w, m.Position);
                 break;
             case SimApproaching m:
                 w.U8(Kind.Approaching);

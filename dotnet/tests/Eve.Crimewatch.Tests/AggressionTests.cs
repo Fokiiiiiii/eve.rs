@@ -157,6 +157,42 @@ public class AggressionTests
         }
     }
 
+
+    [PgFact]
+    public async Task Kill_rights_persist_once_per_pair_and_can_be_consumed()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "cw_" + Guid.NewGuid().ToString("N")[..12];
+        await PgCrimewatchStore.MigrateAsync(source, schema);
+        try
+        {
+            var store = new PgCrimewatchStore(source, schema);
+            var created = await store.CreateKillRightAsync(2, 1, System, Now);
+            Assert.NotNull(created);
+            Assert.Null(await store.CreateKillRightAsync(2, 1, System, Now + 1));
+
+            var rights = await store.KillRightsOfAsync(2);
+            var right = Assert.Single(rights);
+            Assert.Equal((created, 2L, 1L, System, Now),
+                ((long?)right.KillRightId, right.OwnerCharacterId, right.TargetCharacterId, right.SolarSystemId, right.CreatedAtUnixMs));
+
+            Assert.False(await store.MarkKillRightUsedAsync(3, created.Value, Now + 2));
+            Assert.True(await store.MarkKillRightUsedAsync(2, created.Value, Now + 2));
+            Assert.False(await store.MarkKillRightUsedAsync(2, created.Value, Now + 3));
+            Assert.Empty(await store.KillRightsOfAsync(2));
+
+            var replacement = await store.CreateKillRightAsync(2, 1, System, Now + 4);
+            Assert.NotNull(replacement);
+            Assert.NotEqual(created.Value, replacement.Value);
+            Assert.Equal(replacement.Value, Assert.Single(await store.KillRightsOfAsync(2)).KillRightId);
+        }
+        finally
+        {
+            await using var connection = await source.OpenConnectionAsync();
+            await Sql.ExecuteAsync(connection, null, $"DROP SCHEMA {schema} CASCADE", CancellationToken.None);
+        }
+    }
+
     [PgFact]
     public async Task Two_changes_of_one_character_at_once_both_count()
     {

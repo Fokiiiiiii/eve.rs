@@ -52,6 +52,7 @@ pub mod kind {
     pub const MEASURED: u8 = 32;
     pub const ADJUST_CHARGE: u8 = 33;
     pub const CHARGE_ADJUSTED: u8 = 34;
+    pub const POSITION: u8 = 50;
     pub const ARRIVED: u8 = 35;
     pub const LAUNCH_DRONE: u8 = 36;
     pub const DRONE_COMMAND: u8 = 37;
@@ -269,6 +270,13 @@ pub enum Message {
         session_id: u64,
         command: u8,
         at: i64,
+    },
+
+    /// The result of a host position query.
+    Position {
+        session_id: u64,
+        command: u8,
+        position: [f64; 3],
     },
     Approaching {
         session_id: u64,
@@ -1424,6 +1432,7 @@ impl Message {
             Self::Arrived { .. } => kind::ARRIVED,
             Self::Refused { .. } => kind::REFUSED,
             Self::Accepted { .. } => kind::ACCEPTED,
+            Self::Position { .. } => kind::POSITION,
             Self::Approaching { .. } => kind::APPROACHING,
             Self::Jumping { .. } => kind::JUMPING,
             Self::Jumped { .. } => kind::JUMPED,
@@ -1557,6 +1566,11 @@ impl Message {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.push(*command);
                 out.extend_from_slice(&at.to_le_bytes());
+            }
+            Self::Position { session_id, command, position } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.push(*command);
+                put_vector(&mut out, position);
             }
             Self::Approaching { session_id, command, distance } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
@@ -1961,6 +1975,7 @@ impl Message {
             },
             kind::REFUSED => Message::Refused { session_id: r.u64()?, command: r.u8()?, reason: r.text()? },
             kind::ACCEPTED => Message::Accepted { session_id: r.u64()?, command: r.u8()?, at: r.i64()? },
+            kind::POSITION => Message::Position { session_id: r.u64()?, command: r.u8()?, position: read_vector(&mut r)? },
             kind::APPROACHING => {
                 Message::Approaching { session_id: r.u64()?, command: r.u8()?, distance: r.f64()? }
             }

@@ -39,6 +39,8 @@ public sealed class SecurityStatusPenalties(
     public const string Reason = "aggression";
 
     private readonly ConcurrentDictionary<(long Attacker, string Target), long> _recent = new();
+    // ponytail: one process-local gate closes read/modify/write races; multiple hosts need atomic persistence.
+    private readonly SemaphoreSlim _penaltyGate = new(1, 1);
 
     /// <summary>Starts listening to the crimes crimewatch records.</summary>
     public void Attach() => runtime.Aggressed += OnAggressionAsync;
@@ -51,50 +53,61 @@ public sealed class SecurityStatusPenalties(
             return;
         }
         var request = result.Request;
-        var now = nowUnixMs();
-        foreach (var (key, until) in _recent)
+        long now;
+        double previous;
+        double next;
+        await _penaltyGate.WaitAsync();
+        try
         {
-            if (until <= now)
+            now = nowUnixMs();
+            foreach (var (key, until) in _recent)
             {
-                _recent.TryRemove(new KeyValuePair<(long, string), long>(key, until));
+                if (until <= now)
+                {
+                    _recent.TryRemove(new KeyValuePair<(long, string), long>(key, until));
+                }
             }
-        }
-        var target = (request.Attacker, $"{request.TargetShipId}:{(request.TargetIsCapsule ? "capsule" : "ship")}");
-        if (_recent.TryGetValue(target, out var window) && window > now)
-        {
-            return;
-        }
-        var previous = SecurityPenalty.Clamp(await statusOf(request.Attacker, CancellationToken.None));
-        var theirs = SecurityPenalty.Clamp(await statusOf(request.Target, CancellationToken.None));
-        var next = SecurityPenalty.Next(previous, theirs, request.Security, request.TargetIsCapsule);
-        if (next == previous)
-        {
-            _recent[target] = now + SecurityPenalty.DuplicateWindowMs;
-            return;
-        }
+            var target = (request.Attacker, $"{request.TargetShipId}:{(request.TargetIsCapsule ? "capsule" : "ship")}");
+            if (_recent.TryGetValue(target, out var window) && window > now)
+            {
+                return;
+            }
+            previous = SecurityPenalty.Clamp(await statusOf(request.Attacker, CancellationToken.None));
+            var theirs = SecurityPenalty.Clamp(await statusOf(request.Target, CancellationToken.None));
+            next = SecurityPenalty.Next(previous, theirs, request.Security, request.TargetIsCapsule);
+            if (next == previous)
+            {
+                _recent[target] = now + SecurityPenalty.DuplicateWindowMs;
+                return;
+            }
 
-        var modification = (request.TargetIsCapsule ? SecurityPenalty.CapsuleModifier : SecurityPenalty.ShipModifier)
-            * SecurityPenalty.PseudoSecurity(request.Security)
-            * (1 + (theirs - previous) / 100);
-        var typeId = await targetTypeIdOf(request, CancellationToken.None);
-        await setStatus(new SecurityStatusPenaltyChange(
-            request.Attacker,
-            previous,
-            next,
-            Reason,
-            SecurityStatusEventTypeIds.IllegalAggression,
-            request.Target,
-            typeId,
-            request.SolarSystemId,
-            modification,
-            request.TargetShipId), CancellationToken.None);
-        // Start the duplicate window only once the status history and value were persisted.
-        _recent[target] = now + SecurityPenalty.DuplicateWindowMs;
-        if (changed is not null)
-        {
-            await changed(request.Attacker, CancellationToken.None);
+            var modification = (request.TargetIsCapsule ? SecurityPenalty.CapsuleModifier : SecurityPenalty.ShipModifier)
+                * SecurityPenalty.PseudoSecurity(request.Security)
+                * (1 + (theirs - previous) / 100);
+            var typeId = await targetTypeIdOf(request, CancellationToken.None);
+            await setStatus(new SecurityStatusPenaltyChange(
+                request.Attacker,
+                previous,
+                next,
+                Reason,
+                SecurityStatusEventTypeIds.IllegalAggression,
+                request.Target,
+                typeId,
+                request.SolarSystemId,
+                modification,
+                request.TargetShipId), CancellationToken.None);
+            // Start the duplicate window only once the status history and value were persisted.
+            _recent[target] = now + SecurityPenalty.DuplicateWindowMs;
+            if (changed is not null)
+            {
+                await changed(request.Attacker, CancellationToken.None);
+            }
+            Tell(request.Attacker, previous, next, now);
         }
-        Tell(request.Attacker, previous, next, now);
+        finally
+        {
+            _penaltyGate.Release();
+        }
     }
 
     private void Tell(long character, double previous, double next, long nowMs)

@@ -169,6 +169,26 @@ public sealed class RelationWars(Eve.Relations.RelationStore relations) : Eve.Se
 /// for its end is <see cref="LocalTimers"/> (a process-local wait; a process that starts takes it up again with <see cref="ResumeAsync"/>). One step at a time: crimewatch is told of
 /// an attack and of an end by the same door, and what it told last is what it compares with.
 /// </summary>
+public sealed record KillRightGrantRequest(
+    long OwnerCharacterId,
+    long TargetCharacterId,
+    long SolarSystemId,
+    long CreatedAtUnixMs);
+
+public sealed record KillRightCreated(
+    long KillRightId,
+    long OwnerCharacterId,
+    long TargetCharacterId,
+    long SolarSystemId,
+    long CreatedAtUnixMs);
+
+public sealed record ConcordResponseRequest(
+    long AttackerCharacterId,
+    long AttackerShipId,
+    long SolarSystemId,
+    double Security,
+    long CrimeAtUnixMs);
+
 public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions sessions, Func<long> nowUnixMs, ICrimewatchPersistenceCallbacks persistence, Action<string>? log = null, Func<TimeSpan, CancellationToken, Task>? delay = null, LocalTimers? localTimers = null) : IDisposable
 {
     private readonly bool _ownsTimers = localTimers is null;
@@ -176,12 +196,26 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentDictionary<long, CombatTimers> _told = new();
     private readonly Dictionary<long, (IReadOnlyList<long> Criminals, IReadOnlyList<long> Suspects)> _flagsTold = [];
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(long CharacterId, long SolarSystemId), byte> _concordResponses = new();
 
     /// <summary>Whether the law lets the first pilot attack the second at this time (a war, a limited engagement, a corporation that may shoot its own). Nothing is legal until something says so.</summary>
     public Func<long, long, long, CancellationToken, Task<bool>>? Legal { get; set; }
 
+
+    /// <summary>Host persistence hook for a new kill right. Return its ID only when a new right was persisted.</summary>
+    public Func<KillRightGrantRequest, CancellationToken, Task<long?>>? CreateKillRight { get; set; }
+
+    /// <summary>Resolves system security when criminal timers are restored after a host restart.</summary>
+    public Func<long, CancellationToken, Task<double?>>? SecurityOfSystem { get; set; }
+
     /// <summary>Raised after an attack was recorded and before the clients are told the timers: what a crime brings (the security status, a kill right, CONCORD) hangs here.</summary>
     public event Func<AggressionResult, Task>? Aggressed;
+
+    /// <summary>Raised after a persisted illegal aggression has granted a kill right.</summary>
+    public event Func<KillRightCreated, Task>? KillRightGranted;
+
+    /// <summary>Raised when a delayed high-security response is due. The host connects this to SpaceSessions/NPC dispatch.</summary>
+    public event Func<ConcordResponseRequest, Task>? ConcordResponseDue;
 
     public const long LimitedEngagementDurationMs = 5 * 60_000;
 
@@ -361,6 +395,10 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
             {
                 await RefreshLimitedEngagementAsync(request.Attacker, request.Target, now, alreadyEngaged, cancellationToken);
             }
+            if (result.Outcome.IsCriminalOffense)
+            {
+                await RecordCriminalConsequencesAsync(result.Request, result.Outcome.Attacker, now, cancellationToken);
+            }
             if (Aggressed is { } handlers)
             {
                 foreach (var handler in handlers.GetInvocationList().Cast<Func<AggressionResult, Task>>())
@@ -374,6 +412,184 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
             await SyncAsync(request.Attacker, cancellationToken);
         }
         return result;
+    }
+
+
+    private async Task RecordCriminalConsequencesAsync(
+        AggressionRequest request,
+        CombatState state,
+        long now,
+        CancellationToken cancellationToken)
+    {
+        if (CreateKillRight is { } createKillRight
+            && request.Attacker > 0 && request.Target > 0 && request.Attacker != request.Target)
+        {
+            try
+            {
+                if (await createKillRight(new KillRightGrantRequest(
+                        request.Target,
+                        request.Attacker,
+                        request.SolarSystemId,
+                        now), cancellationToken) is { } killRightId)
+                {
+                    var created = new KillRightCreated(
+                        killRightId,
+                        request.Target,
+                        request.Attacker,
+                        request.SolarSystemId,
+                        now);
+                    if (KillRightGranted is { } handlers)
+                    {
+                        foreach (var handler in handlers.GetInvocationList().Cast<Func<KillRightCreated, Task>>())
+                        {
+                            try
+                            {
+                                await handler(created);
+                            }
+                            catch (Exception error)
+                            {
+                                log?.Invoke($"crimewatch could not notify of kill right {killRightId}: {error.Message}");
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                log?.Invoke($"crimewatch could not persist a kill right for {request.Attacker}: {error.Message}");
+            }
+        }
+
+        if (Security.IsHighSecOrHigher(request.Where))
+        {
+            var attackerShipId = sessions.Of(request.Attacker)?.GetInt("shipid") ?? 0;
+            var response = new ConcordResponseRequest(
+                request.Attacker,
+                attackerShipId,
+                request.SolarSystemId,
+                request.Security,
+                now);
+            ScheduleConcordResponse(response, now + ConcordResponseDelayMs(request.Security), now);
+        }
+    }
+
+    /// <summary>Restores the delayed consequence for an active high-security criminal timer after a process restart.</summary>
+    public async Task ResumeCriminalResponseAsync(
+        long characterId,
+        CancellationToken cancellationToken = default)
+    {
+        var now = nowUnixMs();
+        var state = await store.StateOfAsync(characterId, cancellationToken);
+        if (!state.IsCriminal(now) || state.SolarSystemId <= 0 || SecurityOfSystem is not { } securityOfSystem)
+        {
+            return;
+        }
+        var security = await securityOfSystem(state.SolarSystemId, cancellationToken);
+        if (security is not { } level || level < 0.5)
+        {
+            return;
+        }
+
+        var attackerShipId = sessions.Of(characterId)?.GetInt("shipid") ?? 0;
+        var response = new ConcordResponseRequest(characterId, attackerShipId, state.SolarSystemId, level, state.FlagUntilMs - CombatState.FlagDurationMs);
+        var dueAt = response.CrimeAtUnixMs + ConcordResponseDelayMs(level);
+        ScheduleConcordResponse(response, dueAt, now);
+    }
+
+    /// <summary>Applies CONCORD response when a criminal with an active timer enters high-security space.</summary>
+    public async Task RespondToCriminalEntryAsync(
+        long characterId,
+        long solarSystemId,
+        double security,
+        CancellationToken cancellationToken = default)
+    {
+        if (characterId <= 0 || solarSystemId <= 0 || security < 0.5)
+        {
+            return;
+        }
+        var now = nowUnixMs();
+        var state = await store.StateOfAsync(characterId, cancellationToken);
+        if (!state.IsCriminal(now))
+        {
+            return;
+        }
+        var attackerShipId = sessions.Of(characterId)?.GetInt("shipid") ?? 0;
+        ScheduleConcordResponse(
+            new ConcordResponseRequest(characterId, attackerShipId, solarSystemId, security, now),
+            now,
+            now);
+    }
+
+    private void ScheduleConcordResponse(ConcordResponseRequest response, long dueAtUnixMs, long now)
+    {
+        if (!_concordResponses.TryAdd((response.AttackerCharacterId, response.SolarSystemId), 0))
+        {
+            return;
+        }
+        var delayMs = Math.Max(5, dueAtUnixMs - now + 5);
+        _timers.Set(
+            ConcordKey(response.AttackerCharacterId, response.SolarSystemId),
+            TimeSpan.FromMilliseconds(delayMs),
+            () => DispatchConcordResponseAsync(response));
+    }
+
+    private async Task DispatchConcordResponseAsync(ConcordResponseRequest response)
+    {
+        if (ConcordResponseDue is not { } handlers)
+        {
+            log?.Invoke($"crimewatch has no CONCORD response handler for {response.AttackerCharacterId} in {response.SolarSystemId}");
+            return;
+        }
+        foreach (var handler in handlers.GetInvocationList().Cast<Func<ConcordResponseRequest, Task>>())
+        {
+            try
+            {
+                await handler(response);
+            }
+            catch (Exception error)
+            {
+                log?.Invoke($"CONCORD response for {response.AttackerCharacterId} in {response.SolarSystemId} failed: {error.Message}");
+            }
+        }
+    }
+
+    /// <summary>Estimated base delays from observed EVE University response times; CCP publishes no fixed response seconds.</summary>
+    internal static long ConcordResponseDelayMs(double security) =>
+        security >= 0.9 ? 6_000
+        : security >= 0.8 ? 7_000
+        : security >= 0.7 ? 10_000
+        : security >= 0.6 ? 14_000
+        : 19_000;
+
+    private static string ConcordKey(long characterId, long solarSystemId) =>
+        $"crime:concord:{characterId}:{solarSystemId}";
+
+    /// <summary>Starts or extends the five-minute NPC timer and tells the pilot of the change.</summary>
+    public Task RecordNpcTimerAsync(long characterId, CancellationToken cancellationToken = default) =>
+        UpdateTimerAsync(
+            characterId,
+            (state, now) => state with { NpcUntilMs = Math.Max(state.NpcUntilMs, now + CombatState.NpcDurationMs) },
+            cancellationToken);
+
+    /// <summary>Starts or extends the five-minute disapproval timer and tells the pilot of the change.</summary>
+    public Task RecordDisapprovalTimerAsync(long characterId, CancellationToken cancellationToken = default) =>
+        UpdateTimerAsync(
+            characterId,
+            (state, now) => state with { DisapprovalUntilMs = Math.Max(state.DisapprovalUntilMs, now + CombatState.DisapprovalDurationMs) },
+            cancellationToken);
+
+    private async Task UpdateTimerAsync(
+        long characterId,
+        Func<CombatState, long, CombatState> update,
+        CancellationToken cancellationToken)
+    {
+        if (characterId <= 0)
+        {
+            return;
+        }
+        var now = nowUnixMs();
+        await store.UpdateAsync(characterId, state => update(state, now), now, cancellationToken);
+        await SyncAsync(characterId, cancellationToken);
     }
 
     /// <summary>The pilot's state at this time (what <c>GetClientStates</c> answers from).</summary>
@@ -433,9 +649,13 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
                 ScheduleLimitedEngagementExpiry(engagement);
             }
         }
-        foreach (var (characterId, _) in await store.ActiveAsync(now, cancellationToken))
+        foreach (var (characterId, state) in await store.ActiveAsync(now, cancellationToken))
         {
             await SyncAsync(characterId, cancellationToken);
+            if (state.IsCriminal(now))
+            {
+                await ResumeCriminalResponseAsync(characterId, cancellationToken);
+            }
         }
     }
 
@@ -484,5 +704,6 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
     public void Dispose()
     {
         if (_ownsTimers) _timers.Dispose();
+        _concordResponses.Clear();
     }
 }

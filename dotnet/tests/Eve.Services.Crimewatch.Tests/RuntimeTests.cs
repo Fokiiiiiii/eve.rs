@@ -59,6 +59,20 @@ internal sealed class Waits
     }
 }
 
+public sealed class ConcordResponseDelayTests
+{
+    [Theory]
+    [InlineData(0.5, 19_000)]
+    [InlineData(0.6, 14_000)]
+    [InlineData(0.7, 10_000)]
+    [InlineData(0.8, 7_000)]
+    [InlineData(0.9, 6_000)]
+    public void Response_delay_uses_the_community_observed_base_table(double security, long expectedMs)
+    {
+        Assert.Equal(expectedMs, CrimewatchRuntime.ConcordResponseDelayMs(security));
+    }
+}
+
 public class RuntimeTests : IAsyncLifetime
 {
     private const long Start = 1_700_000_000_000;
@@ -162,6 +176,81 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal([[], [], [1L]], victim[0].Args.Select(Ids));
         Assert.Empty(Told(3));
         Assert.Empty(Told(4));
+    }
+
+
+    [PgFact]
+    public async Task Criminal_aggression_grants_a_persisted_kill_right_and_schedules_one_concord_response()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        using var runtime = Runtime();
+        var created = new List<KillRightCreated>();
+        var responses = new List<ConcordResponseRequest>();
+        runtime.CreateKillRight = (request, ct) =>
+            Store.CreateKillRightAsync(request.OwnerCharacterId, request.TargetCharacterId, request.SolarSystemId, request.CreatedAtUnixMs, ct);
+        runtime.KillRightGranted += right =>
+        {
+            created.Add(right);
+            return Task.CompletedTask;
+        };
+        runtime.ConcordResponseDue += response =>
+        {
+            responses.Add(response);
+            return Task.CompletedTask;
+        };
+
+        var offense = Attack(1, 2, SecurityClass.HighSec, System, capsule: false);
+        var result = await runtime.RecordAggressionAsync(offense);
+        await runtime.RecordAggressionAsync(offense);
+
+        Assert.Equal(AggressionReason.Criminal, result.Outcome.Reason);
+        var rights = await Store.KillRightsOfAsync(2);
+        var right = Assert.Single(rights);
+        Assert.Equal((2L, 1L, System, Start),
+            (right.OwnerCharacterId, right.TargetCharacterId, right.SolarSystemId, right.CreatedAtUnixMs));
+        Assert.Equal([new KillRightCreated(right.KillRightId, 2, 1, System, Start)], created);
+        var responseWait = Assert.Single(_waits.Made, wait => wait.After == TimeSpan.FromMilliseconds(10_005));
+        Assert.Empty(responses);
+
+        _now = Start + 10_005;
+        responseWait.Done.TrySetResult();
+        await Settle(() => responses.Count == 1);
+
+        var response = Assert.Single(responses);
+        Assert.Equal((1L, System, 0.7), (response.AttackerCharacterId, response.SolarSystemId, response.Security));
+        Assert.Equal(Start, response.CrimeAtUnixMs);
+    }
+
+
+    [PgFact]
+    public async Task Low_security_grants_a_kill_right_only_for_a_criminal_capsule_attack_without_concord()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        Pilot(3, System);
+        using var runtime = Runtime();
+        var grants = new List<KillRightGrantRequest>();
+        var responses = new List<ConcordResponseRequest>();
+        runtime.CreateKillRight = (request, _) =>
+        {
+            grants.Add(request);
+            return Task.FromResult<long?>(8_001);
+        };
+        runtime.KillRightGranted += _ => Task.CompletedTask;
+        runtime.ConcordResponseDue += response =>
+        {
+            responses.Add(response);
+            return Task.CompletedTask;
+        };
+
+        var shipAttack = await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.LowSec, System, capsule: false));
+        var capsuleAttack = await runtime.RecordAggressionAsync(Attack(1, 3, SecurityClass.LowSec, System, capsule: true));
+
+        Assert.Equal(AggressionReason.Suspect, shipAttack.Outcome.Reason);
+        Assert.Equal(AggressionReason.Criminal, capsuleAttack.Outcome.Reason);
+        Assert.Equal([(3L, 1L)], grants.Select(request => (request.OwnerCharacterId, request.TargetCharacterId)));
+        Assert.Empty(responses);
     }
 
     [PgFact]
@@ -355,6 +444,37 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Contains("OnWeaponsTimerUpdate", Told(1).Select(n => n.Name));
     }
 
+
+    [PgFact]
+    public async Task An_active_criminal_timer_replays_the_concord_response_after_restart()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        using (var first = Runtime())
+        {
+            first.SecurityOfSystem = (_, _) => Task.FromResult<double?>(0.7);
+            await first.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, capsule: false));
+        }
+        _waits.Made.Clear();
+
+        _now = Start + 20_000;
+        using var resumed = Runtime();
+        resumed.SecurityOfSystem = (_, _) => Task.FromResult<double?>(0.7);
+        var responses = new List<ConcordResponseRequest>();
+        resumed.ConcordResponseDue += response =>
+        {
+            responses.Add(response);
+            return Task.CompletedTask;
+        };
+
+        await resumed.ResumeAsync();
+
+        var replay = Assert.Single(_waits.Made, wait => wait.After == TimeSpan.FromMilliseconds(5));
+        replay.Done.TrySetResult();
+        await Settle(() => responses.Count == 1);
+        Assert.Equal((1L, System), (Assert.Single(responses).AttackerCharacterId, responses[0].SolarSystemId));
+    }
+
     [PgFact]
     public async Task GetClientStates_answers_the_timers_and_who_is_flagged_in_the_system_of_the_pilot()
     {
@@ -428,6 +548,55 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal(InventoryWire.Id(System), crimeFields["locationID"]);
         Assert.Equal(Py.Number(-0.025), crimeFields["modification"]);
         Assert.Equal(Py.Number(-0.25), crimeFields["newValue"]);
+    }
+
+    [Fact]
+    public async Task GetKillRights_without_requested_targets_returns_an_empty_list()
+    {
+        Pilot(1, System);
+        var service = new KillRightMgrService(Store);
+
+        var result = await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "GetKillRights",
+            Args = [new PyList([])],
+            Session = _sessions.Of(1)!,
+        });
+
+        Assert.Empty(Assert.IsType<PyList>(result).Items);
+    }
+
+    [PgFact]
+    public async Task GetKillRights_returns_only_the_callers_active_rights_for_requested_targets()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        var owned = await Store.CreateKillRightAsync(1, 2, System, Start);
+        var consumed = await Store.CreateKillRightAsync(1, 3, System, Start + 1);
+        Assert.NotNull(owned);
+        Assert.NotNull(consumed);
+        Assert.True(await Store.MarkKillRightUsedAsync(1, consumed.Value, Start + 2));
+        Assert.NotNull(await Store.CreateKillRightAsync(2, 2, System, Start + 3));
+
+        var service = new KillRightMgrService(Store);
+        var result = await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "GetKillRights",
+            Args = [new PyList([InventoryWire.Id(2), InventoryWire.Id(3)])],
+            Session = _sessions.Of(1)!,
+        });
+
+        var rights = Assert.IsType<PyList>(result);
+        var right = Assert.IsType<PyObject>(Assert.Single(rights.Items));
+        Assert.Equal(new PyStr("util.KeyVal"), right.Name);
+        var fields = Assert.IsType<PyDict>(right.Args).Entries
+            .ToDictionary(entry => ((PyStr)entry.Key).Value, entry => entry.Value);
+        Assert.Equal(new PyLong(owned.Value), fields["killRightID"]);
+        Assert.Equal(InventoryWire.Id(1), fields["fromID"]);
+        Assert.Equal(InventoryWire.Id(2), fields["toID"]);
+        Assert.Equal(InventoryWire.Id(1), fields["restrictedTo"]);
+        Assert.Equal(PyNone.Instance, fields["price"]);
+        Assert.Equal(InventoryWire.Id(System), fields["solarSystemID"]);
     }
 
     [PgFact]
@@ -539,6 +708,40 @@ public class RuntimeTests : IAsyncLifetime
 
         Assert.DoesNotContain((1L, 3L), _persistence.Engagements.Keys);
         Assert.Equal([true, false], _persistence.ChallengesAnswered.Select(response => response.Accepted));
+    }
+
+    [PgFact]
+    public async Task Npc_and_disapproval_timers_persist_renew_and_expire()
+    {
+        Pilot(1, System);
+        using var runtime = Runtime();
+
+        await runtime.RecordNpcTimerAsync(1);
+        var started = Told(1);
+        Assert.Equal(["OnNpcTimerUpdate"], started.Select(note => note.Name));
+        Assert.Equal([new PyInt(402), new PyLong(FileTime(Start + CombatState.NpcDurationMs))], started[0].Args);
+
+        _now += 10_000;
+        await runtime.RecordNpcTimerAsync(1);
+        await runtime.RecordDisapprovalTimerAsync(1);
+
+        var active = Told(1);
+        var state = await Store.StateOfAsync(1);
+        Assert.Equal(Start + 10_000 + CombatState.NpcDurationMs, state.NpcUntilMs);
+        Assert.Equal(Start + 10_000 + CombatState.DisapprovalDurationMs, state.DisapprovalUntilMs);
+        Assert.Equal(
+            ["OnNpcTimerUpdate", "OnDisapprovalTimerUpdate"],
+            active.Select(note => note.Name));
+        Assert.Equal(TimeSpan.FromMilliseconds(300_005), _waits.Made[^1].After);
+
+        _now = Start + 310_005;
+        _waits.Made[^1].Done.SetResult();
+        await Settle(() => _sinks[1].Sent.OfType<PyObject>().Count() >= 2);
+
+        var ended = Told(1);
+        Assert.Equal(["OnNpcTimerUpdate", "OnDisapprovalTimerUpdate"], ended.Select(note => note.Name));
+        Assert.Equal([new PyInt(400), PyNone.Instance], ended[0].Args);
+        Assert.Equal([new PyInt(500), PyNone.Instance], ended[1].Args);
     }
 }
 
@@ -782,6 +985,91 @@ public class PenaltyTests : IAsyncLifetime
         Assert.Empty(_written);
         Assert.Empty(_shipsRefreshed);
         Assert.DoesNotContain(Notes.Of(_attacker), n => n.Name == "OnSecurityStatusUpdate");
+    }
+
+    [PgFact]
+    public async Task Concurrent_penalties_for_one_pilot_keep_each_distinct_ships_penalty()
+    {
+        var (runtime, _) = Rig();
+        using var _ = runtime;
+        var current = 0d;
+        var sync = new object();
+        var changes = new List<SecurityStatusPenaltyChange>();
+        var penalties = new SecurityStatusPenalties(
+            runtime, _sessions,
+            async (id, _) =>
+            {
+                await Task.Delay(50);
+                lock (sync)
+                {
+                    return id == 1 ? current : 0;
+                }
+            },
+            (_, _) => Task.FromResult<int?>(587),
+            (change, _) =>
+            {
+                lock (sync)
+                {
+                    current = change.NextStatus;
+                    changes.Add(change);
+                }
+                return Task.CompletedTask;
+            },
+            () => _now);
+        var offense = new AggressionOutcome(CombatState.Idle, AggressionReason.Criminal);
+
+        await Task.WhenAll(
+            penalties.OnAggressionAsync(new AggressionResult(Attack(ship: 9_988_400_004_001), offense)),
+            penalties.OnAggressionAsync(new AggressionResult(Attack(ship: 9_988_400_004_002), offense)));
+
+        Assert.Equal(2, changes.Count);
+        Assert.Equal(0, changes[0].PreviousStatus);
+        Assert.Equal(changes[0].NextStatus, changes[1].PreviousStatus);
+        Assert.True(changes[1].NextStatus < changes[0].NextStatus);
+    }
+
+    [PgFact]
+    public async Task Concurrent_penalties_for_the_same_ship_are_applied_once()
+    {
+        var (runtime, _) = Rig();
+        using var _ = runtime;
+        var current = 0d;
+        var sync = new object();
+        var written = 0;
+        var writesReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reachedWrites = 0;
+        var penalties = new SecurityStatusPenalties(
+            runtime, _sessions,
+            (id, _) =>
+            {
+                lock (sync)
+                {
+                    return Task.FromResult(id == 1 ? current : 0);
+                }
+            },
+            (_, _) => Task.FromResult<int?>(587),
+            async (change, _) =>
+            {
+                if (Interlocked.Increment(ref reachedWrites) == 2)
+                {
+                    writesReady.TrySetResult();
+                }
+                await Task.WhenAny(writesReady.Task, Task.Delay(50));
+                lock (sync)
+                {
+                    current = change.NextStatus;
+                    written++;
+                }
+            },
+            () => _now);
+        var offense = new AggressionOutcome(CombatState.Idle, AggressionReason.Criminal);
+        var result = new AggressionResult(Attack(), offense);
+
+        await Task.WhenAll(
+            penalties.OnAggressionAsync(result),
+            penalties.OnAggressionAsync(result));
+
+        Assert.Equal(1, written);
     }
 }
 

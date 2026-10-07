@@ -529,7 +529,8 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     announcer.Attach();
     var readAugmentations = SkillHandlerService.CreateAugmentationReader(items, dogma, skills, now);
     var skillHandler = new SkillHandlerService(
-        skills, skillCatalog, training, characters, items, dogma, announcer, now, readAugmentations);
+        skills, skillCatalog, training, characters, items, dogma, announcer, now, readAugmentations,
+        isAlphaClone: accountId => !omega.Resolve(new PyInt(accountId)).HasLicense);
     var startingWallet = new StartingWallet(
         decimal.Parse(Env("EVE_START_ISK", "100000"), System.Globalization.CultureInfo.InvariantCulture),
         long.Parse(Env("EVE_START_PLEX", "2222"), System.Globalization.CultureInfo.InvariantCulture));
@@ -1770,7 +1771,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             incursionAnomalyReadModel.ReadIncursionsAsync,
             incursionAnomalyReadModel.ReadAnomaliesAsync,
             nowUnixMs: now),
-        HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones),
+        HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations),
         new DogmaIMService(
             dogma, ships, now,
             skillHandler.TryActivateBoosterAsync,
@@ -6777,8 +6778,38 @@ public static class HostInventoryServiceFactory
         DogmaStatic statics,
         Func<long> nowUnixMs,
         Eve.Services.Ships.ISpaceContainers? space,
-        Eve.Services.Ships.ISpaceDroneBays? droneBays) =>
-        new(items, types, stations, ships, statics, nowUnixMs, space, droneBays);
+        Eve.Services.Ships.ISpaceDroneBays? droneBays,
+        Eve.Corporations.CorporationStore corporations) =>
+        new(
+            items,
+            types,
+            stations,
+            ships,
+            statics,
+            nowUnixMs,
+            space,
+            droneBays,
+            corporationHangarAccess: async (characterId, corporationId, stationId, divisionFlag, operation, token) =>
+            {
+                if (await corporations.GetAsync(corporationId, token) is not { IsNpc: false } corporation
+                    || await corporations.MemberAsync(characterId, token) is not { } member
+                    || member.CorporationId != corporationId)
+                    return false;
+
+                if (operation == Eve.Services.Inventory.CorporationHangarOperation.Deposit)
+                    return true;
+
+                var roles = Eve.Corporations.CorporationRoles.Session(
+                    corporation,
+                    member,
+                    stationId,
+                    await corporations.TitlesAsync(corporationId, token));
+                return Eve.Corporations.CorporationRoles.HasHangarAccess(
+                    roles,
+                    stationId,
+                    divisionFlag,
+                    take: operation == Eve.Services.Inventory.CorporationHangarOperation.Take);
+            });
 }
 
 

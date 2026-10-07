@@ -975,7 +975,8 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
         var dailyAlphaTypeId = catalog.ItemTypeId("Daily Alpha Skill Injector");
         if (current is null || current.OwnerId != character || !IsSkillInjectorType(current.TypeId)
             || current.Singleton && quantity != 1 || !current.Singleton && quantity > current.Quantity
-            || current.TypeId == dailyAlphaTypeId && (quantity != 1 || isAlphaClone?.Invoke(character) != true))
+            || current.TypeId == dailyAlphaTypeId
+                && (quantity != 1 || isAlphaClone?.Invoke(AccountOf(call)) != true))
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
 
         var balance = await store.InTransactionAsync(async (connection, transaction, token) =>
@@ -1050,7 +1051,7 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Select skills to extract.")));
 
         var alphaRaceId = 0;
-        if (isAlphaClone?.Invoke(character) == true)
+        if (isAlphaClone?.Invoke(AccountOf(call)) == true)
         {
             if (await characters.GetAsync(character, call.Cancellation) is not { } characterRecord)
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The character's Alpha skill limits could not be verified.")));

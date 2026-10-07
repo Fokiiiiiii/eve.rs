@@ -96,6 +96,32 @@ public class CorporationTests
         Assert.Equal(0,CorporationRoles.WalletTakeRole(1007));
     }
 
+    [Fact]
+    public void Corporate_hangar_query_and_take_roles_map_by_division_and_location()
+    {
+        var corporation = new Corporation(
+            98000000, "Corp", "CORP", 1, 1, null, 10, 100, 0, 0, "", "", 20, false, false, 0,
+            JsonSerializer.SerializeToElement(new { }));
+        var masks = new RoleMasks(
+            AtHq: (1L << 20) | (1L << 13),
+            AtBase: 1L << 21,
+            AtOther: 1L << 22);
+        var member = new Member(3, corporation.Id, 0, "", masks, 30, 0, false, 1000);
+
+        var hq = CorporationRoles.Session(corporation, member, corporation.StationId, []);
+        Assert.True(CorporationRoles.HasHangarAccess(hq, corporation.StationId, 115, take: false));
+        Assert.True(CorporationRoles.HasHangarAccess(hq, corporation.StationId, 115, take: true));
+        Assert.False(CorporationRoles.HasHangarAccess(hq, corporation.StationId, 116, take: true));
+
+        var baseRoles = CorporationRoles.Session(corporation, member, member.BaseId, []);
+        Assert.True(CorporationRoles.HasHangarAccess(baseRoles, member.BaseId!.Value, 116, take: false));
+        Assert.False(CorporationRoles.HasHangarAccess(baseRoles, member.BaseId.Value, 116, take: true));
+
+        var other = CorporationRoles.Session(corporation, member, 999_999, []);
+        Assert.True(CorporationRoles.HasHangarAccess(other, 999_999, 117, take: false));
+        Assert.False(CorporationRoles.HasHangarAccess(other, 999_999, 114, take: false));
+    }
+
 
     [PgFact]
     public async Task Corporation_membership_projects_affiliation_without_an_alliance_zero_sentinel()

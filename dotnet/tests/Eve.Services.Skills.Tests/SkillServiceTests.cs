@@ -319,11 +319,17 @@ public class SkillHandlerTests
     {
         var dailyAlphaType = Rig.Catalog.ItemTypeId("Daily Alpha Skill Injector");
         Assert.NotNull(dailyAlphaType);
-        await using (var alphaRig = await Rig.CreateAsync(isAlphaClone: _ => true))
+        long? seenAlphaAccount = null;
+        await using (var alphaRig = await Rig.CreateAsync(isAlphaClone: accountId =>
         {
-            var session = Rig.Session(1).Session;
+            seenAlphaAccount = accountId;
+            return true;
+        }))
+        {
+            var session = Rig.Session(1, userId: 77_001).Session;
             var first = await alphaRig.CreateItemAsync(new Eve.Inventory.NewItem(dailyAlphaType.Value, 1, 60_000_001, 4, 1, true));
             Assert.Equal(new PyInt(50_000), await Rig.CallAsync(alphaRig.Handler, session, "InjectSkillpoints", new PyLong(first), new PyInt(1)));
+            Assert.Equal(77_001, seenAlphaAccount);
             var second = await alphaRig.CreateItemAsync(new Eve.Inventory.NewItem(dailyAlphaType.Value, 1, 60_000_001, 4, 1, true));
             var cooldown = await Assert.ThrowsAnyAsync<Exception>(async () =>
                 await Rig.CallAsync(alphaRig.Handler, session, "InjectSkillpoints", new PyLong(second), new PyInt(1)));

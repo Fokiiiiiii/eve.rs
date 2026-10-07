@@ -85,13 +85,8 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             throw new MarketError("MARKET_SETTLEMENT_RECONCILIATION_REQUIRED");
     }
 
-    private static bool HasCorporateHangarTakeRole(SessionRoles? roles,long stationId,int flag)
-    {
-        if (roles is null || flag is < 115 or > 121) return false;
-        var scoped=stationId==roles.HqId ? roles.AtHq : stationId==roles.BaseId ? roles.AtBase : roles.AtOther;
-        // EVE appConst.corpHangarTakeRolesByFlag: flag 115..121 maps to role bits 13..19.
-        return (scoped & (1L << (flag-102))) != 0;
-    }
+    private static bool HasCorporateHangarTakeRole(SessionRoles? roles, long stationId, int flag) =>
+        Eve.Corporations.CorporationRoles.HasHangarAccess(roles, stationId, flag, take: true);
 
     public Task<MarketReceipt> PlaceAsync(MarketRequest request,string operationKey,CancellationToken token = default)
     {

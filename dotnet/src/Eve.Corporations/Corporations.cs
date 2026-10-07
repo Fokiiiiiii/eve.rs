@@ -56,6 +56,18 @@ public static class CorporationRoles
         return titles.Where(role => IsKnown(role, titleAllowed ?? allowed)).Aggregate(direct, (mask, role) => mask | role);
     }
 
+    public static bool HasHangarAccess(SessionRoles? roles, long stationId, int flag, bool take)
+    {
+        if (roles is null || flag is < 115 or > 121)
+            return false;
+        var scoped = stationId == roles.HqId
+            ? roles.AtHq
+            : stationId == roles.BaseId ? roles.AtBase : roles.AtOther;
+        // EVE hangar division 1..7: Query uses role bits 20..26; Take uses 13..19.
+        var roleBit = flag - (take ? 102 : 95);
+        return (scoped & (1L << roleBit)) != 0;
+    }
+
     public static SessionRoles Session(Corporation corporation, Member member, long? stationId, IReadOnlyList<CorporationTitle> titles)
     {
         var assigned = member.TitleMask is >= 0 and <= 65535

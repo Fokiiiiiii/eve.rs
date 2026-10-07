@@ -182,13 +182,24 @@ impl Health {
         }
     }
 
-    /// The ship has new numbers: what it has taken stays as fractions of them.
+    /// The ship has new numbers: its absolute damage stays the same, while capacitor charge keeps its fraction.
     pub fn respec(&mut self, vitals: Vitals, shield_recharge_ms: f64, now: i64) {
         let condition = self.condition_at(now);
+        let before = self.vitals.layers();
+        let after = vitals.layers();
+        let shield_damage = (before.shield * (1.0 - condition.shield_charge)).max(0.0);
+        let armor_damage = (before.armor * condition.armor_damage).max(0.0);
+        let hull_damage = (before.structure * condition.damage).max(0.0);
+
         self.vitals = vitals;
         self.recharge_s = shield_recharge_ms / 1000.0;
         self.tau_ms = shield_recharge_ms / 5.0;
-        self.condition = condition;
+        self.condition = Condition {
+            damage: if after.structure > 0.0 { hull_damage / after.structure } else { 0.0 },
+            armor_damage: if after.armor > 0.0 { armor_damage / after.armor } else { 0.0 },
+            shield_charge: if after.shield > 0.0 { 1.0 - shield_damage / after.shield } else { 1.0 },
+            charge: condition.charge,
+        };
         self.at = now;
     }
 
@@ -771,15 +782,51 @@ mod tests {
     }
 
     #[test]
-    fn new_numbers_keep_what_the_ship_has_taken_as_fractions() {
+    fn new_numbers_keep_absolute_layer_damage_and_capacitor_fraction() {
         let mut health = health();
         health.apply(0, [0.0, 0.0, 0.0, 1_000.0]);
-        let armor = health.condition_at(0).armor_damage;
-        let mut bigger = frigate();
+        let before = health.condition_at(SECOND);
+        let old = health.vitals.layers();
+        let hull_damage = old.structure * before.damage;
+        let armor_damage = old.armor * before.armor_damage;
+        let shield_damage = old.shield * (1.0 - before.shield_charge);
+        let capacitor_fraction = before.charge;
+        let mut bigger = health.vitals;
+        bigger.shield_capacity *= 2.0;
         bigger.armor_hp *= 2.0;
+        bigger.structure_hp *= 2.0;
+
         health.respec(bigger, 860_000.0, SECOND);
-        assert_eq!(health.condition_at(SECOND).armor_damage, armor);
-        assert!((health.layers_at(SECOND).armor - 275.0 * (1.0 - armor)).abs() < 1e-9);
+
+        let after = health.condition_at(SECOND);
+        let new = health.vitals.layers();
+        assert!((new.structure * after.damage - hull_damage).abs() < 1e-9);
+        assert!((new.armor * after.armor_damage - armor_damage).abs() < 1e-9);
+        assert!((new.shield * (1.0 - after.shield_charge) - shield_damage).abs() < 1e-9);
+        assert_eq!(after.charge, capacitor_fraction);
+    }
+
+
+    #[test]
+    fn negative_hull_after_respec_waits_until_the_next_hull_damage()
+    {
+        let condition = Condition {
+            damage: 0.9,
+            armor_damage: 1.0,
+            shield_charge: 0.0,
+            charge: 1.0,
+        };
+        let original = frigate();
+        let mut health = Health::new(original, 860_000.0, condition, 0);
+        let mut smaller = health.vitals;
+        smaller.structure_hp *= 0.8;
+
+        health.respec(smaller, 860_000.0, 0);
+
+        assert!(health.condition_at(0).damage > 1.0);
+        assert_eq!(health.layers_at(0).structure, 0.0);
+        let hit = health.apply(SECOND, [1.0, 0.0, 0.0, 0.0]).expect("the next hull hit is processed");
+        assert!(hit.destroyed);
     }
 
     #[test]
@@ -1077,16 +1124,29 @@ mod tests {
     }
 
     #[test]
-    fn new_numbers_for_a_ship_in_space_keep_what_it_has_taken_as_fractions_of_them() {
+    fn new_numbers_for_a_ship_in_space_keep_absolute_damage_and_capacitor_fraction() {
         let (mut scene, t) = crowd();
         scene.damage(ship_of(&spec()), [0.0, 0.0, 0.0, 1_000.0], t);
-        let armor = scene.pilots[&A].ship.health.condition_at(t).armor_damage;
+        let before = scene.pilots[&A].ship.health.condition_at(t + SECOND);
+        let old = scene.pilots[&A].ship.health.vitals.layers();
+        let hull_damage = old.structure * before.damage;
+        let armor_damage = old.armor * before.armor_damage;
+        let shield_damage = old.shield * (1.0 - before.shield_charge);
+        let capacitor_fraction = before.charge;
         let mut bigger = spec();
+        bigger.vitals.shield_capacity *= 2.0;
         bigger.vitals.armor_hp *= 2.0;
+        bigger.vitals.structure_hp *= 2.0;
+
         scene.respec(A, bigger, t + SECOND);
+
         let health = &scene.pilots[&A].ship.health;
-        assert_eq!(health.condition_at(t + SECOND).armor_damage, armor);
-        assert!((health.layers_at(t + SECOND).armor - 275.0 * (1.0 - armor)).abs() < 1e-9);
+        let after = health.condition_at(t + SECOND);
+        let new = health.vitals.layers();
+        assert!((new.structure * after.damage - hull_damage).abs() < 1e-9);
+        assert!((new.armor * after.armor_damage - armor_damage).abs() < 1e-9);
+        assert!((new.shield * (1.0 - after.shield_charge) - shield_damage).abs() < 1e-9);
+        assert_eq!(after.charge, capacitor_fraction);
     }
 
     #[test]

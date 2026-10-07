@@ -9,10 +9,10 @@ public class DeathTests
 
     private const int Ibis = 601;
 
-    private static async Task<(Rig Rig, Eve.Characters.Created Character)> InSpaceAsync()
+    private static async Task<(Rig Rig, Eve.Characters.Created Character)> InSpaceAsync(int shipTypeId = Ibis)
     {
         var rig = await Rig.CreateAsync();
-        var character = await rig.NewCharacterAsync(shipTypeId: Ibis);
+        var character = await rig.NewCharacterAsync(shipTypeId: shipTypeId);
         await rig.Ships.UndockAsync(character.CharacterId);
         return (rig, character);
     }
@@ -20,6 +20,27 @@ public class DeathTests
     /// <summary>A seed under which the item with this id drops (or does not).</summary>
     private static string SeedWhere(params (long Id, bool Drops)[] items) =>
         Enumerable.Range(0, 10_000).Select(n => $"probe:{n}").First(seed => items.All(item => DeathOutcome.HashToDrop(seed, item.Id, 0) == item.Drops));
+
+    [PgFact]
+    public async Task DestroyShip_publishes_transition_within_the_death_transaction()
+    {
+        var (rig, character) = await InSpaceAsync();
+        await using var _ = rig;
+        Eve.Ships.ShipTransitionEvent? observed = null;
+        rig.Ships.TransitionEventWriter = (connection, transaction, transition, _) =>
+        {
+            Assert.Same(connection, transaction.Connection);
+            observed = transition;
+            return Task.CompletedTask;
+        };
+
+        var death = await rig.Ships.DestroyShipAsync(character.CharacterId, character.ShipId, FrigateWreck, "transition");
+        Assert.NotNull(death);
+        var system = (await rig.Characters.GetAsync(character.CharacterId))!.SolarSystemId;
+        Assert.Equal(new Eve.Ships.ShipTransitionEvent(
+            "ship-destroyed", character.CharacterId, character.ShipId, death.Character.ShipId,
+            system, CharacterShips.InSpaceFlag, system, CharacterShips.InSpaceFlag), observed);
+    }
 
     [PgFact]
     public async Task A_destroyed_ship_is_gone_its_pilot_is_in_a_capsule_where_it_was_and_a_wreck_is_there_too()
@@ -33,12 +54,46 @@ public class DeathTests
         Assert.NotNull(death);
         Assert.Null(await rig.Items.GetAsync(c.ShipId));
         Assert.Equal(c.ShipId, death.Ship.Id);
-        var capsule = (await rig.Items.GetAsync(death.Capsule.Id))!;
+        var capsule = (await rig.Items.GetAsync(death.Capsule!.Id))!;
         Assert.Equal((CharacterShips.CapsuleTypeId, c.CharacterId, system, CharacterShips.InSpaceFlag, true), (capsule.TypeId, capsule.OwnerId, capsule.LocationId, capsule.Flag, capsule.Singleton));
         Assert.Equal(capsule.Id, (await rig.Characters.GetAsync(c.CharacterId))!.ShipId);
         Assert.Equal(capsule.Id, death.Character.ShipId);
         var wreck = (await rig.Items.GetAsync(death.Wreck!.Id))!;
         Assert.Equal((FrigateWreck, c.CharacterId, system, CharacterShips.InSpaceFlag, true), (wreck.TypeId, wreck.OwnerId, wreck.LocationId, wreck.Flag, wreck.Singleton));
+    }
+
+
+    [PgFact]
+    public async Task A_valid_frigate_escape_bay_ship_survives_battleship_death_and_is_not_wreck_loot()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var escapeCapacityId = rig.Statics.AttributeId("frigateEscapeBayCapacity");
+        Assert.NotNull(escapeCapacityId);
+        var battleship = (await rig.Statics.TypesInGroupsAsync(["Battleship"]))
+            .First(type => type.Attributes.GetValueOrDefault(escapeCapacityId.Value) > 0);
+        var frigate = (await rig.Statics.TypesInGroupsAsync(["Frigate", "Assault Frigate", "Electronic Attack Ship", "Logistics Frigate"]))
+            .First(type => type.CategoryId == 6);
+
+        var character = await rig.NewCharacterAsync(shipTypeId: battleship.TypeId);
+        await rig.Ships.UndockAsync(character.CharacterId);
+        var system = (await rig.Characters.GetAsync(character.CharacterId))!.SolarSystemId;
+        foreach (var skillId in frigate.RequiredSkills)
+            await rig.SetSkillAsync(character.CharacterId, skillId, 5);
+        var frigateId = await rig.GiveAsync(character.CharacterId, frigate.TypeId, singleton: true,
+            location: character.ShipId, flag: CharacterShips.FrigateEscapeBayFlag);
+        var cargoModuleId = await rig.GiveAsync(character.CharacterId, Rig.Afterburner, singleton: true,
+            location: frigateId, flag: CharacterShips.CargoFlag);
+
+        var death = await rig.Ships.DestroyShipAsync(character.CharacterId, character.ShipId, FrigateWreck, "escape-bay");
+        Assert.NotNull(death);
+        Assert.Null(death.Capsule);
+        Assert.Equal(frigateId, death.EscapeShip!.Id);
+        Assert.Equal(frigateId, death.PilotShip.Id);
+        Assert.Equal(frigateId, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
+        var survivor = (await rig.Items.GetAsync(frigateId))!;
+        Assert.Equal((character.CharacterId, system, CharacterShips.InSpaceFlag), (survivor.OwnerId, survivor.LocationId, survivor.Flag));
+        Assert.DoesNotContain(death.Changes, change => change.Item.Id == frigateId || change.Item.Id == cargoModuleId);
+        Assert.DoesNotContain((await rig.Items.InContainerAsync(death.Wreck!.Id)).Select(item => item.Id), id => id == frigateId || id == cargoModuleId);
     }
 
     [PgFact]
@@ -135,7 +190,28 @@ public class DeathTests
         var (rig, c) = await InSpaceAsync();
         var character = (await rig.Characters.GetAsync(c.CharacterId))!;
         var death = (await rig.Ships.DestroyShipAsync(c.CharacterId, c.ShipId, FrigateWreck, "seed"))!;
-        return (rig, c, death.Capsule.Id, new HomePlace(Rig.Station, character.SolarSystemId, character.ConstellationId, character.RegionId));
+        return (rig, c, death.Capsule!.Id, new HomePlace(Rig.Station, character.SolarSystemId, character.ConstellationId, character.RegionId));
+    }
+
+    [PgFact]
+    public async Task DestroyCapsule_publishes_transition_to_the_home_station_in_the_same_transaction()
+    {
+        var (rig, character, capsuleId, home) = await InCapsuleAsync();
+        await using var _ = rig;
+        Eve.Ships.ShipTransitionEvent? observed = null;
+        rig.Ships.TransitionEventWriter = (connection, transaction, transition, _) =>
+        {
+            Assert.Same(connection, transaction.Connection);
+            observed = transition;
+            return Task.CompletedTask;
+        };
+
+        var death = await rig.Ships.DestroyCapsuleAsync(
+            character.CharacterId, capsuleId, CorpseMale, "Ship Tester", Cockroach, home);
+        Assert.NotNull(death);
+        Assert.Equal(new Eve.Ships.ShipTransitionEvent(
+            "capsule-destroyed", character.CharacterId, capsuleId, death.Ship.Id,
+            home.SolarSystemId, CharacterShips.InSpaceFlag, home.StationId, ItemFlags.Hangar), observed);
     }
 
     [PgFact]

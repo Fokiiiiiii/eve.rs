@@ -105,6 +105,47 @@ public static class FittingRules
         return null;
     }
 
+    /// <summary>Removes the pilot and skill sources, then keeps legal online modules while taking illegal ones offline.</summary>
+    public static IReadOnlyList<(long ModuleId, ItemState Before, ItemState After)> RemovePilotModifiersAndRevalidate(
+        DogmaWorld world, DogmaStatic statics, long characterId, long shipId,
+        IEnumerable<long> skillSourceItemIds, IEnumerable<long> fittedModuleIds)
+    {
+        world.Remove(characterId);
+        foreach (var skillId in skillSourceItemIds)
+        {
+            world.Remove(skillId);
+        }
+
+        var modules = fittedModuleIds.Distinct()
+            .Select(id => (Id: id, State: world.Item(id)?.State ?? ItemState.Offline))
+            .ToArray();
+        foreach (var module in modules)
+        {
+            world.SetState(module.Id, ItemState.Offline);
+        }
+
+        var changes = new List<(long ModuleId, ItemState Before, ItemState After)>();
+        foreach (var module in modules)
+        {
+            if (module.State < ItemState.Online || world.Item(module.Id) is not { } item)
+            {
+                continue;
+            }
+
+            var type = statics.Type(item.TypeId);
+            var invalid = type is null
+                || MissingSkill(world, characterId, type) is not null
+                || OnlineShortage(world, shipId, module.Id) is not null;
+            var next = invalid ? ItemState.Offline : ItemState.Online;
+            world.SetState(module.Id, next);
+            if (module.State != next)
+            {
+                changes.Add((module.Id, module.State, next));
+            }
+        }
+        return changes;
+    }
+
     /// <summary>
     /// Whether <paramref name="candidate"/> (not yet in the ship's fitting: the world holds what is already fitted) can be fitted to the
     /// ship in the slot <paramref name="flag"/>. The first rule broken is the one reported.

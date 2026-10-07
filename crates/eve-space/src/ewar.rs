@@ -33,7 +33,8 @@ pub(crate) fn jam_chance(strength: &[f64; 4], sensor: &[f64; 4], resistance: f64
     (jammer_strength / held.max(1e-6) * reach * resistance).clamp(0.0, 1.0)
 }
 
-/// Whether the ships' surfaces fall within an ECM burst's radius. The extra metre matches the EVE.js boundary tolerance.
+#[cfg(test)]
+
 fn burst_reaches(
     source_position: [f64; 3],
     source_radius: f64,
@@ -41,22 +42,10 @@ fn burst_reaches(
     target_radius: f64,
     burst_radius: f64,
 ) -> bool {
-    if !burst_radius.is_finite()
-        || burst_radius <= 0.0
-        || !source_radius.is_finite()
-        || !target_radius.is_finite()
-        || source_position.iter().chain(&target_position).any(|coordinate| !coordinate.is_finite())
-    {
-        return false;
-    }
-    let distance = (source_position[0] - target_position[0])
-        .hypot(source_position[1] - target_position[1])
-        .hypot(source_position[2] - target_position[2]);
-    if !distance.is_finite() {
-        return false;
-    }
-    let surface_distance = (distance - source_radius.max(0.0) - target_radius.max(0.0)).max(0.0);
-    surface_distance <= burst_radius + 1.0
+    burst_radius.is_finite()
+        && burst_radius > 0.0
+        && crate::geo::surface_gap(source_position, source_radius, target_position, target_radius)
+            .is_some_and(|distance| distance <= burst_radius + 1.0)
 }
 
 /// A draw in `[0, 1)` is a jam when it falls under the chance.
@@ -435,8 +424,6 @@ impl Scene {
         out
     }
 
-    /// An ECM burst independently rolls against each other ship in the surface-radius and breaks its locks on a success.
-    /// Unlike a targeted ECM cycle, a burst leaves no lasting jam and does not stop future target locks.
     pub(crate) fn jam_burst(
         &mut self,
         source: SessionId,
@@ -444,30 +431,30 @@ impl Scene {
         radius: f64,
         at: i64,
     ) -> Vec<Out> {
-        let Some((source_position, source_radius)) = self.pilots.get(&source).map(|pilot| {
-            ([pilot.ship.position.x, pilot.ship.position.y, pilot.ship.position.z], pilot.ship.spec.radius)
-        }) else {
+        if !radius.is_finite() || radius <= 0.0 {
             return Vec::new();
-        };
-        let mut targets: Vec<(u64, SessionId)> = self
-            .pilots
-            .iter()
-            .filter_map(|(target, pilot)| {
-                if *target == source {
-                    return None;
-                }
-                let ship = &pilot.ship;
-                burst_reaches(
-                    source_position,
-                    source_radius,
-                    [ship.position.x, ship.position.y, ship.position.z],
-                    ship.spec.radius,
-                    radius,
-                )
-                .then_some((pilot.entered, *target))
-            })
-            .collect();
+        }
+        let Some(source_pilot) = self.pilots.get(&source) else { return Vec::new() };
+        let source_ship_id = source_pilot.ship.spec.ship_id;
+        let source_position =
+            [source_pilot.ship.position.x, source_pilot.ship.position.y, source_pilot.ship.position.z];
+        let source_radius = source_pilot.ship.spec.radius;
+        let candidates = self.pilots.iter().map(|(target, pilot)| self.spatial_ship(*target, pilot));
         // Keep the random rolls in arrival order, matching the order of EVE.js dynamic entities.
+        let mut targets: Vec<(u64, SessionId)> = crate::geo::SpatialQuery::surface_radius(
+            source_position,
+            source_radius,
+            radius,
+            1.0,
+            crate::geo::SpatialFilter {
+                exclude_id: Some(source_ship_id),
+                ..crate::geo::SpatialFilter::default()
+            },
+        )
+        .execute(candidates)
+        .into_iter()
+        .filter_map(|hit| self.pilots.get(&hit.item).map(|pilot| (pilot.entered, hit.item)))
+        .collect();
         targets.sort_unstable();
 
         let mut out = Vec::new();

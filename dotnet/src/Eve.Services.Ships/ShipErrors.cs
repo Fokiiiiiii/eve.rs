@@ -27,6 +27,8 @@ public static class ShipErrors
                 return MachoErrors.ThrowUserError("NotEnoughCargoSpace", ("available", Py.Number(refused.Available)), ("volume", Py.Number(refused.Volume)));
             case ShipRefusal.NotEnoughDroneBaySpace:
                 return MachoErrors.ThrowUserError("NotEnoughDroneBaySpace", ("type", new PyInt(refused.ModuleTypeId)), ("free", Py.Number(refused.Available)), ("required", Py.Number(refused.Volume)));
+            case ShipRefusal.NotAllowedInHold:
+                return MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That item cannot be placed in that ship hold.")));
             case ShipRefusal.NotADrone:
                 return Notify("Only drones can be placed in the Drone Bay.");
             case ShipRefusal.NoSpaceForThat:

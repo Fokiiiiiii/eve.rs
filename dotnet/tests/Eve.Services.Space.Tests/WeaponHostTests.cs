@@ -285,4 +285,24 @@ public class WeaponHostTests
         var one = Assert.Single(aggression);
         Assert.Equal((attacker.CharacterId, victim.CharacterId, target), (one.Attacker, one.Target, one.TargetShipId));
     }
+
+
+    [Fact]
+    public void Weapon_safety_uses_the_shared_attack_policy_facts()
+    {
+        var target = new Eve.Services.Space.WeaponTargetContext(
+            AttackerIsPlayer: true,
+            TargetIsPlayerProperty: true,
+            ActiveWar: true);
+        var facts = Eve.Services.Space.WeaponSafety.PolicyFactsOf(target);
+        var decision = Eve.Crimewatch.PolicyEngine.Evaluate(new Eve.Crimewatch.PolicyRequest(
+            Eve.Crimewatch.PolicyAction.Attack,
+            Eve.Universe.SecurityClass.HighSec,
+            facts));
+
+        Assert.True(facts.ActiveWar);
+        Assert.True(decision.Allowed);
+        Assert.True(decision.Lawful);
+        Assert.Equal(Eve.Crimewatch.Flag.None, decision.Consequence);
+    }
 }

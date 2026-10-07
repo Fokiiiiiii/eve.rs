@@ -98,19 +98,23 @@ pub struct NpcCombat {
     pub aggression_range: f64,
 }
 
-/// What makes an NPC's ship a drone: it is a companion of the ship that controls it (`crate::drones`), launched from that ship's drone bay.
+/// What makes an NPC's ship a drone: it is a companion of the ship that controls it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DroneLink {
-    /// The session of the pilot whose ship controls the drone, and that ship.
+    /// The session of the pilot whose ship controls the drone, or zero while personally abandoned.
     pub controller: crate::scene::SessionId,
+    /// The character who launched it, retained while abandoned so only that pilot can reconnect.
+    pub owner_character_id: i64,
+    /// The ship that first launched the drone; reconnect is only possible from that ship.
+    pub launched_from_ship_id: i64,
     pub controller_ship_id: i64,
     /// The graphic of the drone's type (its slim item names it).
     pub graphic_id: i32,
-    /// How far off the controller (or its target) the drone circles, metres (`entityFlyRange`, 500 to 5,000).
+    /// How far off the controller (or its target) the drone circles, metres.
     pub orbit_distance: f64,
-    /// The fraction of its top speed it flies at while it only follows its controller (`entityCruiseSpeed` over `maxVelocity`).
+    /// The fraction of its top speed it flies at while it only follows its controller.
     pub cruise_fraction: f64,
-    /// What the drone is doing, as the client numbers it (`activityState` of its slim item: 0 idle, 1 fighting, 3 approaching, 4 returning, 6 pursuing).
+    /// What the drone is doing, as the client numbers it.
     pub activity: i32,
 }
 

@@ -17,8 +17,17 @@ public sealed record DeathChange(Item Item, long PreviousLocationId, int Previou
 /// <param name="Events">What dogma reports of the ship's modules leaving it: the ship's attributes that changed, and each module's, in the order of the slots.</param>
 public sealed record AbandonedShipDeath(Item Ship, Item? Wreck, IReadOnlyList<DeathChange> Changes);
 
-public sealed record ShipDeath(Item Ship, Character Character, Item Capsule, Item? Wreck, IReadOnlyList<DeathChange> Changes, IReadOnlyList<DogmaEvent> Events)
+public sealed record ShipDeath(
+    Item Ship,
+    Character Character,
+    Item? Capsule,
+    Item? EscapeShip,
+    Item? Wreck,
+    IReadOnlyList<DeathChange> Changes,
+    IReadOnlyList<DogmaEvent> Events)
 {
+    public Item PilotShip => EscapeShip ?? Capsule ?? throw new InvalidOperationException("ship death has no surviving pilot hull");
+
     /// <summary>What is in the wreck now.</summary>
     public IReadOnlyList<ItemMoved> Moved => [.. Changes.Where(c => !c.Destroyed).Select(c => new ItemMoved(c.Item, c.PreviousLocationId, c.PreviousFlag))];
 
@@ -46,29 +55,38 @@ public sealed partial class CharacterShips
             || await items.GetAsync(shipId, cancellationToken) is not { } ship || ship.OwnerId != characterId
             || ship.LocationId != character.SolarSystemId || ship.Flag != InSpaceFlag || ship.TypeId == CapsuleTypeId)
         {
-            return null; // a capsule is not left in a capsule: what becomes of a pilot whose capsule is destroyed is not done here
+            return null;
         }
 
-        // what dogma says of the modules leaving: the ship before and after the fitted modules are taken off it
         var events = new List<DogmaEvent>();
-        if (await LoadAsync(characterId, cancellationToken) is { } fitting && fitting.Ship.Id == ship.Id)
+        var fitting = await LoadAsync(characterId, cancellationToken);
+        if (fitting is not null && fitting.Ship.Id == ship.Id)
         {
             var world = fitting.World;
             var shipBefore = world.Attributes(ship.Id);
             var switchedOff = fitting.Fitted.Select(module => (module, Online: world.Get(module.Id, IsOnline))).ToList();
             foreach (var (module, _) in switchedOff)
-            {
                 world.Remove(module.Id);
-            }
             events.AddRange(ShipChanges(ship.Id, shipBefore, world.Attributes(ship.Id)));
             foreach (var (module, online) in switchedOff)
             {
                 if (Changed(module.Id, IsOnline, online, 0) is { } switched)
-                {
                     events.Add(switched);
-                }
                 events.Add(new EffectChanged(module.Id, BuiltInEffects.Online, Started: false));
             }
+        }
+
+        Item? escapeShip = fitting is not null && fitting.Ship.Id == ship.Id
+            ? await EscapeBayShipAsync(ship, fitting.World, characterId, cancellationToken)
+            : null;
+        if (escapeShip is not null)
+        {
+            if (await items.LockAndGetAsync(connection, transaction, escapeShip.Id, cancellationToken) is not { } lockedEscape
+                || lockedEscape.OwnerId != characterId || lockedEscape.LocationId != ship.Id
+                || lockedEscape.Flag != FrigateEscapeBayFlag || !lockedEscape.Singleton || lockedEscape.Quantity != 1)
+                escapeShip = null;
+            else
+                escapeShip = lockedEscape;
         }
 
         Item? wreck = null;
@@ -80,6 +98,21 @@ public sealed partial class CharacterShips
 
         var snapshot = new Dictionary<long, Item>();
         var tree = await TreeAsync(ship.Id, snapshot, cancellationToken);
+        if (escapeShip is not null)
+        {
+            var escapeContents = new Dictionary<long, Item>();
+            await TreeAsync(escapeShip.Id, escapeContents, cancellationToken);
+            if (escapeContents.Values.Any(item => item.OwnerId != characterId))
+                escapeShip = null;
+            else
+            {
+                foreach (var id in escapeContents.Keys)
+                    snapshot.Remove(id);
+                snapshot.Remove(escapeShip.Id);
+                tree = [.. tree.Where(node => node.ItemId != escapeShip.Id)];
+            }
+        }
+
         var actions = DeathOutcome.Resolve(tree, seed, new DeathOptions(ForceAllDestroyed: wreck is null));
         var changes = new List<DeathChange>();
         foreach (var action in actions)
@@ -96,7 +129,6 @@ public sealed partial class CharacterShips
                     }
                     else
                     {
-                        // a stack that drops in part: the units that drop are a stack of their own in the wreck, what is left of the stack is destroyed by the next action
                         snapshot[item.Id] = item with { Quantity = item.Quantity - move.Quantity };
                         var stack = await items.CreateAsync(connection, transaction, new NewItem(item.TypeId, characterId, wreck.Id, ItemFlags.Hangar, move.Quantity, false, item.CustomName), cancellationToken);
                         changes.Add(new DeathChange(item with { Id = stack, LocationId = wreck.Id, Flag = ItemFlags.Hangar, Quantity = move.Quantity }, item.LocationId, item.Flag, false));
@@ -111,15 +143,27 @@ public sealed partial class CharacterShips
         }
 
         await items.DeleteAsync(connection, transaction, ship.Id, cancellationToken);
-        var capsuleId = await items.CreateAsync(connection, transaction, new NewItem(CapsuleTypeId, characterId, ship.LocationId, InSpaceFlag, 1, true), cancellationToken);
-        var capsule = new Item(capsuleId, CapsuleTypeId, characterId, ship.LocationId, InSpaceFlag, 1, true, null);
-        await characters.SetShipAsync(connection, transaction, characterId, capsuleId, cancellationToken);
+        Item? capsule = null;
+        var pilotShipId = escapeShip?.Id ?? 0;
+        if (escapeShip is not null)
+        {
+            await items.MoveAsync(connection, transaction, escapeShip.Id, ship.LocationId, InSpaceFlag, cancellationToken);
+        }
+        else
+        {
+            var capsuleId = await items.CreateAsync(connection, transaction, new NewItem(CapsuleTypeId, characterId, ship.LocationId, InSpaceFlag, 1, true), cancellationToken);
+            capsule = new Item(capsuleId, CapsuleTypeId, characterId, ship.LocationId, InSpaceFlag, 1, true, null);
+            pilotShipId = capsuleId;
+        }
+        await characters.SetShipAsync(connection, transaction, characterId, pilotShipId, cancellationToken);
+        await WriteTransitionAsync(connection, transaction,
+            new ShipTransitionEvent("ship-destroyed", characterId, ship.Id, pilotShipId,
+                ship.LocationId, InSpaceFlag, ship.LocationId, InSpaceFlag), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
-        // what the dead ship and what is destroyed had taken is not kept
         await modules.SetShipConditionAsync(ship.Id, ShipCondition.Full, cancellationToken);
         await modules.SetModuleConditionsAsync(changes.Where(c => c.Destroyed).ToDictionary(c => c.Item.Id, _ => ModuleCondition.Untouched), cancellationToken);
-        return new ShipDeath(ship, character with { ShipId = capsuleId }, capsule, wreck, changes, events);
+        return new ShipDeath(ship, character with { ShipId = pilotShipId }, capsule, escapeShip, wreck, changes, events);
     }
 
     /// <summary>What is in a place and in what is in it, as the death rules look at it (the ids of the snapshot are those of the items).</summary>
@@ -259,6 +303,9 @@ public sealed partial class CharacterShips
         {
             await characters.SetLocationAsync(connection, transaction, characterId, home.SolarSystemId, home.ConstellationId, home.RegionId, cancellationToken);
         }
+        await WriteTransitionAsync(connection, transaction,
+            new ShipTransitionEvent("capsule-destroyed", characterId, capsule.Id, shipId,
+                capsule.LocationId, InSpaceFlag, home.StationId, ItemFlags.Hangar), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
         await modules.SetShipConditionAsync(capsule.Id, ShipCondition.Full, cancellationToken);

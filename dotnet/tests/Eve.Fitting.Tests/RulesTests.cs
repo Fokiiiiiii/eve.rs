@@ -270,11 +270,13 @@ public class RulesTests
         [
             new TypeDef(ShipType, ShipGroup, 6, new Dictionary<int, double> { [48] = 100, [11] = 50, [14] = 4 }, []),
             new TypeDef(1373, 1, 1, new Dictionary<int, double>(), []),
-            Module(7101, 53, 7, new Dictionary<int, double> { [50] = 60, [30] = 10 }, 12, BuiltInEffects.Online),  // running: 60 of 100 processor, 10 of 50 power
-            Module(7102, 53, 7, new Dictionary<int, double> { [50] = 40, [30] = 40 }, 12, BuiltInEffects.Online),  // fills both to the last point
-            Module(7103, 53, 7, new Dictionary<int, double> { [50] = 40.5 }, 12, BuiltInEffects.Online),           // over the processor by half a point
-            Module(7104, 53, 7, new Dictionary<int, double> { [30] = 40.5 }, 12, BuiltInEffects.Online),           // over the power by half a point
-            Module(7105, 53, 7, null, 12, BuiltInEffects.Online),                                                  // costs nothing
+            new TypeDef(Skill, 255, 16, new Dictionary<int, double>(), []),
+            Module(7101, 53, 7, new Dictionary<int, double> { [50] = 60, [30] = 10 }, 12, BuiltInEffects.Online),
+            Module(7102, 53, 7, new Dictionary<int, double> { [50] = 40, [30] = 40 }, 12, BuiltInEffects.Online),
+            Module(7103, 53, 7, new Dictionary<int, double> { [50] = 40.5 }, 12, BuiltInEffects.Online),
+            Module(7104, 53, 7, new Dictionary<int, double> { [30] = 40.5 }, 12, BuiltInEffects.Online),
+            Module(7105, 53, 7, null, 12, BuiltInEffects.Online),
+            Module(7106, 53, 7, new Dictionary<int, double> { [182] = Skill, [277] = 3, [50] = 1 }, 12, BuiltInEffects.Online),
         ]);
         var (world, _) = Ship(statics: statics);
         world.Add(new DogmaItem(3000, 7101, Char, ShipId, Slots.HighFirst, ItemState.Online));
@@ -372,5 +374,112 @@ public class RulesTests
     public void Other_flags_are_no_slot(int flag)
     {
         Assert.Null(Slots.FamilyOfFlag(flag));
+    }
+
+    [Fact]
+    public void Pilot_exit_removes_skill_sources_and_offlines_only_illegal_or_overbudget_modules()
+    {
+        var (world, statics) = Loaded();
+        world.Add(new DogmaItem(50, Skill, Char, Char, 7));
+        world.SetValue(50, DogmaWorld.SkillLevel, 3);
+        world.SetState(3001, ItemState.Online);
+        world.SetState(3002, ItemState.Online);
+        world.SetState(3003, ItemState.Online);
+        world.SetState(3004, ItemState.Active);
+        world.Add(new DogmaItem(3005, 7106, Char, ShipId, Slots.HighFirst + 5, ItemState.Online));
+
+        var changes = FittingRules.RemovePilotModifiersAndRevalidate(
+            world, statics, Char, ShipId, [50], [3000, 3001, 3002, 3003, 3004, 3005]);
+
+        Assert.Null(world.Item(Char));
+        Assert.Null(world.Item(50));
+        Assert.Equal(ItemState.Online, world.Item(3000)!.State);
+        Assert.Equal(ItemState.Online, world.Item(3001)!.State);
+        Assert.Equal(ItemState.Offline, world.Item(3002)!.State);
+        Assert.Equal(ItemState.Offline, world.Item(3003)!.State);
+        Assert.Equal(ItemState.Online, world.Item(3004)!.State);
+        Assert.Equal(ItemState.Offline, world.Item(3005)!.State);
+        Assert.Equal([3002L, 3003L, 3004L, 3005L], changes.Select(change => change.ModuleId));
+    }
+
+
+    [Fact]
+    public void Rebased_hitpoints_keep_absolute_layer_damage_and_identify_hull_collapse()
+    {
+        var prior = new ShipCondition(0.9, 0.25, 0.75, 0.4, false);
+
+        var (collapsed, hullCollapsed) = prior.RebaseHitpoints(
+            oldHull: 100, oldArmor: 200, oldShield: 300,
+            newHull: 80, newArmor: 250, newShield: 400);
+
+        Assert.True(hullCollapsed);
+        Assert.Equal(1.125, collapsed.Damage, 10);
+        Assert.Equal(0.32, collapsed.ArmorDamage, 10);
+        Assert.Equal(0.8125, collapsed.ShieldCharge, 10);
+        Assert.Equal(prior.Charge, collapsed.Charge);
+        Assert.False(collapsed.Incapacitated);
+
+        var (surviving, stillAlive) = new ShipCondition(0.5, 0.4, 0.9, 0.2, false)
+            .RebaseHitpoints(oldHull: 100, oldArmor: 200, oldShield: 300, newHull: 150, newArmor: 250, newShield: 400);
+        Assert.False(stillAlive);
+        Assert.Equal(50, surviving.Damage * 150, 10);
+        Assert.Equal(40, surviving.ArmorDamage * 250, 10);
+        Assert.Equal(30, (1 - surviving.ShieldCharge) * 400, 10);
+        Assert.Equal(0.4, surviving.Charge);
+    }
+
+    [Fact]
+    public void Ship_condition_rebases_absolute_layer_damage_but_keeps_capacitor_fraction()
+    {
+        var before = new ShipCondition(0.6, 0.37, 0.4, 0.5, false);
+
+        var (after, hullCollapsed) = before.RebaseHitpoints(
+            oldHull: 1_000, oldArmor: 2_000, oldShield: 1_200,
+            newHull: 800, newArmor: 1_500, newShield: 900);
+
+        Assert.False(hullCollapsed);
+        Assert.InRange(Math.Abs(after.Damage - 0.75), 0, 1e-9);
+        Assert.InRange(Math.Abs(after.ArmorDamage - (2.0 / 3.0)), 0, 1e-9);
+        Assert.InRange(Math.Abs(after.ShieldCharge - 0.2), 0, 1e-9);
+        Assert.Equal(before.Charge, after.Charge);
+    }
+
+    [Fact]
+    public void Ship_condition_marks_hull_at_zero_or_below_for_eject_destruction()
+    {
+        var nearlyDestroyed = new ShipCondition(0.8, 0.5, 0.5, 0.5, false);
+
+        var (after, hullCollapsed) = nearlyDestroyed.RebaseHitpoints(
+            oldHull: 1_250, oldArmor: 1_000, oldShield: 1_000,
+            newHull: 1_000, newArmor: 1_000, newShield: 1_000);
+
+        Assert.True(hullCollapsed);
+        Assert.Equal(1.0, after.Damage);
+    }
+
+    [Fact]
+    public void Pilot_exit_removes_skills_and_offlines_only_modules_that_no_longer_fit()
+    {
+        var (world, statics) = Loaded();
+        world.Add(new DogmaItem(50, Skill, Char, Char, 7));
+        world.SetValue(50, DogmaWorld.SkillLevel, 3);
+        world.SetState(3001, ItemState.Online);
+        world.SetState(3002, ItemState.Online);
+        world.SetState(3003, ItemState.Online);
+        world.SetState(3004, ItemState.Active);
+        world.Add(new DogmaItem(3005, 7106, Char, ShipId, Slots.HighFirst + 5, ItemState.Online));
+
+        var changes = FittingRules.RemovePilotModifiersAndRevalidate(
+            world, statics, Char, ShipId, [50], [3000, 3001, 3002, 3003, 3004, 3005]);
+
+        Assert.Null(world.Item(Char));
+        Assert.Null(world.Item(50));
+        Assert.Equal(ItemState.Online, world.Item(3000)!.State);
+        Assert.Equal(ItemState.Online, world.Item(3001)!.State);
+        Assert.Equal(ItemState.Offline, world.Item(3002)!.State);
+        Assert.Equal(ItemState.Offline, world.Item(3003)!.State);
+        Assert.Equal(ItemState.Online, world.Item(3004)!.State);
+        Assert.Equal(ItemState.Offline, world.Item(3005)!.State);
+        Assert.Equal([3002L, 3003L, 3004L, 3005L], changes.Select(change => change.ModuleId));
     }
 }

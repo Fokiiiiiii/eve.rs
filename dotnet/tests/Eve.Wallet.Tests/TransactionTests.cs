@@ -26,6 +26,38 @@ public class TransactionTests
         Assert.Equal(12.34m, (await rig.Transfers.JournalAsync(2)).Single().Amount);
     }
 
+
+    [PgFact]
+    public async Task PLEX_adjustment_uses_the_caller_transaction()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await rig.OpenAsync(1, 100m, 7);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var tx = await connection.BeginTransactionAsync())
+            Assert.Equal(4, await rig.Store.AdjustPlexAsync(connection, tx, 1, -3));
+        Assert.Equal(7, (await rig.Store.GetAsync(1))!.Plex);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var tx = await connection.BeginTransactionAsync())
+        {
+            Assert.Equal(2, await rig.Store.AdjustPlexAsync(connection, tx, 1, -5));
+            await tx.CommitAsync();
+        }
+        Assert.Equal(2, (await rig.Store.GetAsync(1))!.Plex);
+    }
+
+    [PgFact]
+    public async Task PLEX_adjustment_refuses_an_overdraft()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await rig.OpenAsync(1, 100m, 7);
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var tx = await connection.BeginTransactionAsync();
+        await Assert.ThrowsAsync<InsufficientFundsException>(
+            () => rig.Store.AdjustPlexAsync(connection, tx, 1, -8));
+        Assert.Equal(7, (await rig.Store.GetAsync(1))!.Plex);
+    }
+
     [PgFact]
     public async Task An_uncommitted_transfer_and_its_journal_are_rolled_back()
     {

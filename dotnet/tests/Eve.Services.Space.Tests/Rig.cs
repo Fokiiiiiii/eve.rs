@@ -87,6 +87,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Ships, statics, () => Now, Containers, Drones);
         Ship = new ShipService(Space, () => ClockMs, Containers, Drones);
         Beyonce = new BeyonceService(Space, () => ClockMs, FleetStore, characterId => _fleetSessions.GetValueOrDefault(characterId));
+        Beyonce.SkillLevelOfCharacter = (_, _, _) => Task.FromResult(5);
         Entity = new EntityService(Drones, () => ClockMs);
         Registry.Register(Ship);
         Registry.Register(Beyonce);

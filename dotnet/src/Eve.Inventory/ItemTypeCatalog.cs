@@ -4,7 +4,7 @@ using Eve.Sde;
 namespace Eve.Inventory;
 
 /// <summary>An item type as the client sorts it: the group and category it belongs to.</summary>
-public sealed record ItemType(int TypeId, int GroupId, int CategoryId);
+public sealed record ItemType(int TypeId, int GroupId, int CategoryId, decimal BasePrice = 0m);
 
 /// <summary>
 /// The group and category of item types, read from the static data when first asked for and kept. A type the data does not
@@ -29,7 +29,8 @@ public sealed class ItemTypeCatalog(SdeReader sde)
                 var group = row.Doc.GetProperty("groupID").GetInt32();
                 if (groups.TryGetValue(group, out var category))
                 {
-                    _types[(int)row.Key] = new ItemType((int)row.Key, group, category);
+                    var basePrice = row.Doc.TryGetProperty("basePrice", out var price) && price.TryGetDecimal(out var amount) ? amount : 0m;
+                    _types[(int)row.Key] = new ItemType((int)row.Key, group, category, basePrice);
                 }
             }
         }

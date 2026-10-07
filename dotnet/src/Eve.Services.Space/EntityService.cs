@@ -74,7 +74,8 @@ private static long NumberOf(PyValue value) => value switch
 
     /// <summary><c>CmdReconnectToDrones(droneIDs)</c>: drones that were let go and are still in space are taken up again; none are (a drone that is let go leaves the scene), so nothing is refused or done.</summary>
     [Method("CmdReconnectToDrones")]
-    public ValueTask<PyValue> CmdReconnectToDrones(ServiceCall call) => new(_binding.Owns(call) ? new PyDict([]) : None);
+    public async ValueTask<PyValue> CmdReconnectToDrones(ServiceCall call) =>
+        _binding.Owns(call) ? await drones.ReconnectAsync(call.Session, call.Cancellation) : None;
 
     /// <summary><c>CmdAbandonDrone(droneIDs)</c>: the drones are let go.</summary>
     [Method("CmdAbandonDrone")]

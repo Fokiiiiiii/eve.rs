@@ -95,6 +95,20 @@ public sealed partial class DogmaIMService
     }
 
     /// <summary><c>Overload(itemID, effectID)</c>: starts one fitted module's Dogma overload effect.</summary>
+[Method("InjectSkillIntoBrain")]
+    public ValueTask<PyValue> InjectSkillIntoBrain(ServiceCall call)
+    {
+        var ids = call.Arg(0) switch
+        {
+            PyList list => list.Items.Select(IdOf).OfType<long>().ToArray(),
+            PyTuple tuple => tuple.Items.Select(IdOf).OfType<long>().ToArray(),
+            _ => [],
+        };
+        return injectSkillBooks is null
+            ? ValueTask.FromResult(None)
+            : new ValueTask<PyValue>(injectSkillBooks(call.Session, ids, call.Cancellation));
+    }
+
     [Method("Overload")]
     public async ValueTask<PyValue> Overload(ServiceCall call)
     {

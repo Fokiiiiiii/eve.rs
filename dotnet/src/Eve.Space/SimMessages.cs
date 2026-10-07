@@ -83,6 +83,8 @@ public enum LeaveWhy : byte
     Docked = 0,
     LoggedOff = 1,
     Jumped = 2,
+    Ejected = 3,
+    Boarded = 4,
 }
 
 public sealed record SimLeave(ulong SessionId, LeaveWhy Why) : SimMessage;
@@ -139,6 +141,15 @@ public static class SimCommands
     /// <summary>How far a wreck or a can is (its id), answered with <see cref="SimMeasured"/>.</summary>
     public const byte Measure = 20;
 
+    /// <summary>Warp to an explicit coordinate, with x, y, z, and arrival range.</summary>
+    public const byte WarpToPoint = 21;
+
+    /// <summary>Resolve a target's warp-in point without beginning a warp.</summary>
+    public const byte ResolveWarpTarget = 22;
+
+    /// <summary>Read a body's or ship's current coordinates.</summary>
+    public const byte PositionOf = 23;
+
     /// <summary>The code a <see cref="SimPlaceContainer"/> is answered under (<see cref="SimContainerPlaced"/>, or <see cref="SimRefused"/>).</summary>
     public const byte PlaceContainer = 28;
 
@@ -165,6 +176,10 @@ public sealed record SimRefused(ulong SessionId, byte Command, string Reason) : 
 
 /// <summary>A command was accepted, after the update it made. A <c>Dock</c> is answered with the time (a FILETIME).</summary>
 public sealed record SimAccepted(ulong SessionId, byte Command, long At) : SimMessage;
+
+
+/// A requested target coordinate was resolved by the simulation.
+public sealed record SimPosition(ulong SessionId, byte Command, IReadOnlyList<double> Position) : SimMessage;
 
 /// <summary>A <c>Dock</c> could not be done from where the ship is: it now approaches the station, <paramref name="Distance"/> metres off its surface.</summary>
 public sealed record SimApproaching(ulong SessionId, byte Command, double Distance) : SimMessage;
@@ -405,6 +420,8 @@ public static class SimDroneCommands
     public const byte Salvage = 8;
 
     /// <summary>The key an order is answered under in <see cref="CommandReply"/>s: an order to drones shares the codes of the commands, so it is told apart by this offset.</summary>
+public const byte Reconnect = 9;
+
     public static byte Key(byte command) => (byte)(0xE0 + command);
 }
 

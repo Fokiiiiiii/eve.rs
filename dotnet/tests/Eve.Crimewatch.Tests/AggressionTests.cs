@@ -212,4 +212,101 @@ public class AggressionTests
             await Sql.ExecuteAsync(connection, null, $"DROP SCHEMA {schema} CASCADE", CancellationToken.None);
         }
     }
+
+
+    [Fact]
+    public void Weapon_safety_and_crimewatch_share_attack_legality_and_consequences()
+    {
+        var facts = new PolicyFacts(AttackerIsPlayer: true, TargetIsPlayerProperty: true);
+        var safe = PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.Attack, SecurityClass.HighSec, facts, SafetyLevel.Full));
+        var safetyDisabled = PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.Attack, SecurityClass.HighSec, facts, SafetyLevel.None));
+
+        Assert.False(safe.Allowed);
+        Assert.Equal(PolicyBlockReason.Safety, safe.BlockReason);
+        Assert.Equal(Flag.Criminal, safe.Consequence);
+        Assert.True(safetyDisabled.Allowed);
+        Assert.False(safetyDisabled.Lawful);
+
+        var outcome = Aggression.Record(CombatState.Idle, CombatState.Idle, SecurityClass.HighSec, System, false, facts, Now);
+        Assert.Equal(Flag.Criminal, outcome.Attacker.FlagAt(Now));
+    }
+
+    [Fact]
+    public void War_limited_engagement_and_friendly_fire_are_one_lawful_policy()
+    {
+        foreach (var facts in new[]
+        {
+            new PolicyFacts(AttackerIsPlayer: true, TargetIsPlayerProperty: true, ActiveWar: true),
+            new PolicyFacts(AttackerIsPlayer: true, TargetIsPlayerProperty: true, ActiveLimitedEngagement: true),
+            new PolicyFacts(AttackerIsPlayer: true, TargetIsPlayerProperty: true, FriendlyFireAllowed: true),
+        })
+        {
+            var decision = PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.Attack, SecurityClass.HighSec, facts));
+
+            Assert.True(decision.Allowed);
+            Assert.True(decision.Lawful);
+            Assert.Equal(Flag.None, decision.Consequence);
+        }
+    }
+
+    [Fact]
+    public void Remote_assistance_uses_security_class_and_combat_permissions()
+    {
+        var suspect = new PolicyFacts(AttackerIsPlayer: true, TargetIsPlayerProperty: true, TargetFlag: Flag.Suspect);
+        var criminal = suspect with { TargetFlag = Flag.Criminal };
+        var outlaw = suspect with { TargetFlag = Flag.None, TargetIsOutlaw = true };
+        var interference = new PolicyFacts(
+            AttackerIsPlayer: true,
+            TargetIsPlayerProperty: true,
+            LimitedEngagementInterference: true);
+        var authorizedFight = interference with { OtherLegalPermission = true };
+
+        Assert.Equal(Flag.Criminal, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.HighSec, suspect)).Consequence);
+        Assert.Equal(Flag.Suspect, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.LowSec, suspect)).Consequence);
+        Assert.Equal(Flag.None, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.LowSec, outlaw)).Consequence);
+        Assert.Equal(Flag.Criminal, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.LowSec, criminal)).Consequence);
+        Assert.Equal(Flag.Criminal, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.HighSec, interference)).Consequence);
+        Assert.Equal(Flag.Suspect, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.LowSec, interference)).Consequence);
+        Assert.Equal(Flag.None, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.HighSec, authorizedFight)).Consequence);
+    }
+
+
+    [Fact]
+    public void Remote_assistance_inherits_combat_timers_and_applies_the_shared_policy_result()
+    {
+        var recipient = CombatState.Idle with
+        {
+            WeaponsUntilMs = Now + 10_000,
+            PvpUntilMs = Now + 20_000,
+            NpcUntilMs = Now + 30_000,
+            DisapprovalUntilMs = Now + 40_000,
+            Flag = Flag.Suspect,
+            FlagUntilMs = Now + 60_000,
+        };
+        var facts = new PolicyFacts(AttackerIsPlayer: true, TargetIsPlayerProperty: true);
+
+        var outcome = Aggression.Assist(
+            CombatState.Idle, recipient, SecurityClass.HighSec, System, facts, Now);
+
+        Assert.Equal(Now + 10_000, outcome.Attacker.WeaponsUntilMs);
+        Assert.Equal(Now + 20_000, outcome.Attacker.PvpUntilMs);
+        Assert.Equal(Now + 30_000, outcome.Attacker.NpcUntilMs);
+        Assert.Equal(Now + 40_000, outcome.Attacker.DisapprovalUntilMs);
+        Assert.Equal(Flag.Criminal, outcome.Attacker.FlagAt(Now));
+    }
+
+    [Fact]
+    public void Dock_and_jump_restrictions_share_timer_rules_with_capsule_exception()
+    {
+        var weapons = new PolicyFacts(HasWeaponsTimer: true);
+        var criminalShip = new PolicyFacts(HasCriminalTimer: true);
+        var criminalCapsule = criminalShip with { ActorIsCapsule = true };
+
+        Assert.Equal(PolicyBlockReason.WeaponsTimer, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.Dock, SecurityClass.HighSec, weapons)).BlockReason);
+        Assert.Equal(PolicyBlockReason.WeaponsTimer, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.GateJump, SecurityClass.HighSec, weapons)).BlockReason);
+        Assert.Equal(PolicyBlockReason.CriminalTimer, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.GateJump, SecurityClass.HighSec, criminalShip)).BlockReason);
+        Assert.True(PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.GateJump, SecurityClass.HighSec, criminalCapsule)).Allowed);
+        Assert.True(PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.Dock, SecurityClass.ZeroSec, criminalShip)).Allowed);
+        Assert.True(PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.Warp, SecurityClass.HighSec, weapons)).Allowed);
+    }
 }

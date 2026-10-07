@@ -92,6 +92,29 @@ public class DroneHostTests
         Assert.Equal(["OnGodmaPrimeItem", "OnItemChange"], told.Take(2));
     }
 
+
+    [PgFact]
+    public async Task A_pilot_reconnects_to_a_nearby_abandoned_drone()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await FlyingWithADroneAsync(rig);
+        await LaunchAsync(flying);
+
+        await rig.Drones.CommandAsync(flying.Session, SimDroneCommands.Abandon, 0, [flying.Drone], CancellationToken.None);
+        rig.Sim.Say(new Eve.Space.SimDroneReleased((ulong)flying.Session.SessionId, flying.Drone, [0, 0, 0]));
+        var item = (await rig.Items.GetAsync(flying.Drone))!;
+        Assert.Equal((flying.System, CharacterShips.InSpaceFlag), (item.LocationId, item.Flag));
+
+        var result = Assert.IsType<PyDict>(await rig.EntityCallAsync(flying.Session, "CmdReconnectToDrones", flying.Entity));
+        Assert.Empty(result.Entries);
+        var reconnect = Assert.Single(rig.Sim.Heard.OfType<SimDroneCommand>(), command => command.Command == SimDroneCommands.Reconnect);
+        Assert.Equal((ulong)flying.Session.SessionId, reconnect.SessionId);
+        Assert.Equal([flying.Drone], reconnect.DroneIds);
+
+        await rig.Drones.CommandAsync(flying.Session, SimDroneCommands.ReturnHome, flying.Session.GetInt("shipid")!.Value, [flying.Drone], CancellationToken.None);
+        Assert.Contains(rig.Sim.Heard.OfType<SimDroneCommand>(), command => command.Command == SimDroneCommands.ReturnHome && command.DroneIds.Contains(flying.Drone));
+    }
+
     [PgFact]
     public async Task An_online_drone_damage_amplifier_increases_hobgoblin_weapon_damage_by_ten_percent()
     {

@@ -51,7 +51,12 @@ public static class Aggression
     /// <param name="where">The security class of the system.</param>
     /// <param name="targetIsCapsule">Whether the target's ship is a capsule (a crime in low security too).</param>
     /// <param name="legal">Whether the law allows the attack (a war, a limited engagement, the same corporation).</param>
-    public static AggressionOutcome Record(CombatState attacker, CombatState target, SecurityClass where, long solarSystemId, bool targetIsCapsule, bool legal, long nowMs)
+    public static AggressionOutcome Record(CombatState attacker, CombatState target, SecurityClass where, long solarSystemId, bool targetIsCapsule, bool legal, long nowMs) =>
+        Record(attacker, target, where, solarSystemId, targetIsCapsule,
+            new PolicyFacts(AttackerIsPlayer: true, TargetIsPlayerProperty: true, OtherLegalPermission: legal), nowMs);
+
+
+    public static AggressionOutcome Record(CombatState attacker, CombatState target, SecurityClass where, long solarSystemId, bool targetIsCapsule, PolicyFacts facts, long nowMs)
     {
         var timed = attacker with
         {
@@ -59,21 +64,170 @@ public static class Aggression
             PvpUntilMs = Math.Max(attacker.PvpUntilMs, nowMs + CombatState.PvpDurationMs),
             SolarSystemId = solarSystemId,
         };
-        if (legal)
+        facts = facts with { TargetIsCapsule = targetIsCapsule, TargetFlag = target.FlagAt(nowMs) };
+        var decision = PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.Attack, where, facts, SafetyLevel.None));
+        if (decision.Lawful)
         {
-            return new AggressionOutcome(timed, AggressionReason.Legal);
+            return new AggressionOutcome(timed,
+                target.FlagAt(nowMs) == Flag.None ? AggressionReason.Legal : AggressionReason.TargetFlagged);
         }
-        var crime = Security.IsHighSecOrHigher(where) ? Flag.Criminal
-            : Security.IsLowSec(where) ? (targetIsCapsule ? Flag.Criminal : Flag.Suspect)
-            : Flag.None;
-        if (crime == Flag.None)
+        if (decision.Consequence == Flag.None)
         {
             return new AggressionOutcome(timed, AggressionReason.NoCrime);
         }
-        if (target.FlagAt(nowMs) != Flag.None)
-        {
-            return new AggressionOutcome(timed, AggressionReason.TargetFlagged);
-        }
-        return new AggressionOutcome(timed.Flagged(crime, nowMs), crime == Flag.Criminal ? AggressionReason.Criminal : AggressionReason.Suspect);
+        return new AggressionOutcome(timed.Flagged(decision.Consequence, nowMs),
+            decision.Consequence == Flag.Criminal ? AggressionReason.Criminal : AggressionReason.Suspect);
     }
+
+
+    public static AggressionOutcome Assist(
+        CombatState assistant,
+        CombatState recipient,
+        SecurityClass where,
+        long solarSystemId,
+        PolicyFacts facts,
+        long nowMs)
+    {
+        facts = facts with { TargetFlag = recipient.FlagAt(nowMs) };
+        var decision = PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, where, facts, SafetyLevel.None));
+        var timed = assistant with
+        {
+            WeaponsUntilMs = Math.Max(assistant.WeaponsUntilMs, recipient.WeaponsUntilMs),
+            PvpUntilMs = Math.Max(assistant.PvpUntilMs, recipient.PvpUntilMs),
+            NpcUntilMs = Math.Max(assistant.NpcUntilMs, recipient.NpcUntilMs),
+            DisapprovalUntilMs = Math.Max(assistant.DisapprovalUntilMs, recipient.DisapprovalUntilMs),
+            SolarSystemId = solarSystemId,
+        };
+        if (decision.Consequence == Flag.None)
+        {
+            return new AggressionOutcome(timed, decision.Lawful ? AggressionReason.Legal : AggressionReason.NoCrime);
+        }
+        return new AggressionOutcome(timed.Flagged(decision.Consequence, nowMs),
+            decision.Consequence == Flag.Criminal ? AggressionReason.Criminal : AggressionReason.Suspect);
+    }
+}
+
+public enum PolicyAction
+{
+    Attack,
+    RemoteAssistance,
+    Dock,
+    GateJump,
+    CynoJump,
+    Warp,
+}
+
+public enum PolicyBlockReason
+{
+    None,
+    Safety,
+    SessionChangeTimer,
+    WeaponsTimer,
+    CriminalTimer,
+}
+
+public readonly record struct PolicyFacts(
+    bool AttackerIsPlayer = false,
+    bool TargetIsPlayerProperty = false,
+    bool SamePilot = false,
+    bool TargetIsCapsule = false,
+    Flag TargetFlag = Flag.None,
+    bool TargetIsOutlaw = false,
+    bool ActiveWar = false,
+    bool ActiveLimitedEngagement = false,
+    bool LimitedEngagementInterference = false,
+    bool FriendlyFireAllowed = false,
+    bool WarInterference = false,
+    bool HasWeaponsTimer = false,
+    bool HasCriminalTimer = false,
+    bool ActorIsCapsule = false,
+    bool HasSessionChangeTimer = false,
+    bool OtherLegalPermission = false);
+
+public readonly record struct PolicyRequest(
+    PolicyAction Action,
+    SecurityClass SecurityClass,
+    PolicyFacts Facts = default,
+    int SafetyLevel = SafetyLevel.Full);
+
+public readonly record struct PolicyDecision(
+    bool Allowed,
+    bool Lawful,
+    Flag Consequence,
+    int? SafetyThreshold,
+    PolicyBlockReason BlockReason);
+
+/// <summary>One source of truth for Crimewatch legality and movement restrictions.</summary>
+public static class PolicyEngine
+{
+    public static PolicyDecision Evaluate(PolicyRequest request) => request.Action switch
+    {
+        PolicyAction.Attack => Attack(request),
+        PolicyAction.RemoteAssistance => RemoteAssistance(request),
+        PolicyAction.Dock or PolicyAction.GateJump or PolicyAction.CynoJump or PolicyAction.Warp => Movement(request),
+        _ => throw new ArgumentOutOfRangeException(nameof(request), request.Action, null),
+    };
+
+    private static PolicyDecision Attack(PolicyRequest request)
+    {
+        var facts = request.Facts;
+        var playerCombat = facts.AttackerIsPlayer && facts.TargetIsPlayerProperty && !facts.SamePilot;
+        var lawful = !playerCombat || facts.TargetFlag is Flag.Criminal or Flag.Suspect
+            || facts.TargetIsOutlaw || facts.ActiveWar || facts.ActiveLimitedEngagement
+            || facts.FriendlyFireAllowed || facts.OtherLegalPermission;
+        var consequence = lawful ? Flag.None : AggressionFlag(request.SecurityClass, facts.TargetIsCapsule);
+        return WithSafety(request.SafetyLevel, lawful, consequence);
+    }
+
+    private static PolicyDecision RemoteAssistance(PolicyRequest request)
+    {
+        var facts = request.Facts;
+        var playerAssistance = facts.AttackerIsPlayer && facts.TargetIsPlayerProperty && !facts.SamePilot;
+        var interference = (facts.LimitedEngagementInterference || facts.WarInterference)
+            && !facts.OtherLegalPermission;
+        var criminalTarget = facts.TargetFlag == Flag.Criminal;
+        var suspectTarget = facts.TargetFlag == Flag.Suspect && !facts.OtherLegalPermission;
+        var outlawTarget = facts.TargetIsOutlaw && !facts.OtherLegalPermission;
+        var consequence = !playerAssistance ? Flag.None
+            : Security.IsHighSecOrHigher(request.SecurityClass)
+                ? (criminalTarget || suspectTarget || outlawTarget || interference ? Flag.Criminal : Flag.None)
+            : Security.IsLowSec(request.SecurityClass)
+                ? (criminalTarget ? Flag.Criminal : suspectTarget || interference ? Flag.Suspect : Flag.None)
+            : Flag.None;
+        return WithSafety(request.SafetyLevel, consequence == Flag.None, consequence);
+    }
+
+    private static PolicyDecision Movement(PolicyRequest request)
+    {
+        var facts = request.Facts;
+        var action = request.Action;
+        var needsSessionChange = action is PolicyAction.Dock or PolicyAction.GateJump or PolicyAction.CynoJump;
+        var needsWeaponTimer = needsSessionChange;
+
+        var reason = needsSessionChange && facts.HasSessionChangeTimer ? PolicyBlockReason.SessionChangeTimer
+            : needsWeaponTimer && facts.HasWeaponsTimer ? PolicyBlockReason.WeaponsTimer
+            : action is PolicyAction.Dock or PolicyAction.GateJump or PolicyAction.CynoJump or PolicyAction.Warp
+                && Security.IsHighSecOrHigher(request.SecurityClass)
+                && facts.HasCriminalTimer && !facts.ActorIsCapsule
+                    ? PolicyBlockReason.CriminalTimer
+            : PolicyBlockReason.None;
+        return new(reason == PolicyBlockReason.None, true, Flag.None, null, reason);
+    }
+
+    private static PolicyDecision WithSafety(int safetyLevel, bool lawful, Flag consequence)
+    {
+        var threshold = consequence switch
+        {
+            Flag.Criminal => SafetyLevel.None,
+            Flag.Suspect => SafetyLevel.Partial,
+            _ => (int?)null,
+        };
+        var blocked = threshold is { } required && SafetyLevel.Normalize(safetyLevel) > required;
+        return new(!blocked, lawful, consequence, threshold, blocked ? PolicyBlockReason.Safety : PolicyBlockReason.None);
+    }
+
+    private static Flag AggressionFlag(SecurityClass securityClass, bool targetIsCapsule) =>
+        Security.IsHighSecOrHigher(securityClass) ? Flag.Criminal
+        : Security.IsLowSec(securityClass) ? (targetIsCapsule ? Flag.Criminal : Flag.Suspect)
+        : Flag.None;
 }

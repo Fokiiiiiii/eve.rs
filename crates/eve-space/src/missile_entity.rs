@@ -560,15 +560,38 @@ impl Scene {
             .collect()
     }
 
-    /// The missiles on their way within `range` of a place (metres, centre to the missile), in the order they were fired.
     pub fn missiles_within(&self, centre: Vec3, range: f64) -> Vec<i64> {
-        self.missiles
-            .values()
-            .filter(|missile| {
-                missile.is_flying() && length(sub(missile.position, centre)) <= range + MISSILE_RANGE_GRACE
-            })
-            .map(|missile| missile.id)
-            .collect()
+        let candidates = self.missiles.values().filter(|missile| missile.is_flying()).map(|missile| {
+            crate::geo::SpatialEntity {
+                id: missile.id,
+                kind: crate::geo::SpatialKind::Missile,
+                character_id: None,
+                owner_id: Some(missile.shooter.owner_id),
+                corporation_id: Some(missile.shooter.corporation_id),
+                alliance_id: Some(missile.shooter.alliance_id),
+                type_id: None,
+                group_id: None,
+                category_id: None,
+                position: [missile.position.x, missile.position.y, missile.position.z],
+                radius: 0.0,
+                warping: false,
+                item: missile.id,
+            }
+        });
+        let mut missiles: Vec<i64> = crate::geo::SpatialQuery::radius(
+            [centre.x, centre.y, centre.z],
+            range + MISSILE_RANGE_GRACE,
+            crate::geo::SpatialFilter {
+                kinds: Some(&[crate::geo::SpatialKind::Missile]),
+                ..crate::geo::SpatialFilter::default()
+            },
+        )
+        .execute(candidates)
+        .into_iter()
+        .map(|hit| hit.item)
+        .collect();
+        missiles.sort_unstable();
+        missiles
     }
 
     /// A missile is shot down: it is gone with the explosion played, and does nothing to its target. What shot it down does not touch the ships: the missile is the only thing it hurt.

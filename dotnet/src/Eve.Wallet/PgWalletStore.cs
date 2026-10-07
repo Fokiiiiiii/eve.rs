@@ -40,6 +40,97 @@ public sealed class PgWalletStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+
+    public async Task<long> AdjustPlexAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long ownerId,
+        long delta,
+        CancellationToken cancellationToken = default)
+    {
+        if (ownerId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(ownerId));
+        if (delta == 0)
+            throw new ArgumentOutOfRangeException(nameof(delta));
+        await using var read = new NpgsqlCommand(
+            $"SELECT plex FROM {_schema}.balances WHERE owner_id = $1 AND account_key = 1000 FOR UPDATE",
+            connection, transaction)
+        {
+            Parameters = { new() { Value = ownerId } },
+        };
+        var balanceValue = await read.ExecuteScalarAsync(cancellationToken);
+        if (balanceValue is not long balance)
+            throw new WalletNotFoundException(ownerId);
+
+        long next;
+        try { next = checked(balance + delta); }
+        catch (OverflowException) { throw new MoneyLimitException(); }
+        if (next < 0)
+            throw new InsufficientFundsException(ownerId);
+
+        await using var update = new NpgsqlCommand(
+            $"UPDATE {_schema}.balances SET plex = $2 WHERE owner_id = $1 AND account_key = 1000",
+            connection, transaction)
+        {
+            Parameters = { new() { Value = ownerId }, new() { Value = next } },
+        };
+        if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
+            throw new WalletNotFoundException(ownerId);
+        return next;
+    }
+
+    public async Task<IReadOnlyDictionary<long, long>> ReadPlexBalancesAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        IReadOnlyCollection<long> ownerIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        return await ReadPlexBalancesCoreAsync(connection, transaction, ownerIds, lockRows: true, cancellationToken);
+    }
+
+    public async Task<IReadOnlyDictionary<long, long>> ReadPlexBalancesAsync(
+        IReadOnlyCollection<long> ownerIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ownerIds);
+        var ids = ownerIds.Distinct().Order().ToArray();
+        if (ids.Length == 0)
+            return new Dictionary<long, long>();
+
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        return await ReadPlexBalancesCoreAsync(connection, null, ids, lockRows: false, cancellationToken);
+    }
+
+    private async Task<IReadOnlyDictionary<long, long>> ReadPlexBalancesCoreAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        IReadOnlyCollection<long> ownerIds,
+        bool lockRows,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(ownerIds);
+        if (ownerIds.Any(ownerId => ownerId <= 0))
+            throw new ArgumentOutOfRangeException(nameof(ownerIds));
+        var ids = ownerIds.Distinct().Order().ToArray();
+        if (ids.Length == 0)
+            return new Dictionary<long, long>();
+
+        var suffix = lockRows ? " FOR UPDATE" : string.Empty;
+        await using var command = new NpgsqlCommand(
+            $"SELECT owner_id, plex FROM {_schema}.balances WHERE account_key = 1000 AND owner_id = ANY($1) ORDER BY owner_id{suffix}",
+            connection, transaction)
+        {
+            Parameters = { new() { Value = ids } },
+        };
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var balances = new Dictionary<long, long>(ids.Length);
+        while (await reader.ReadAsync(cancellationToken))
+            balances.Add(reader.GetInt64(0), reader.GetInt64(1));
+        return balances;
+    }
+
     public async Task<Balance?> GetAsync(long ownerId, CancellationToken cancellationToken = default) =>
         (await ForOwnersAsync([ownerId], cancellationToken)).GetValueOrDefault(ownerId);
 

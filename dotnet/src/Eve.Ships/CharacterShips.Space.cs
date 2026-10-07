@@ -1,4 +1,5 @@
 using Eve.Characters;
+using Eve.Fitting;
 using Eve.Inventory;
 
 namespace Eve.Ships;
@@ -6,7 +7,17 @@ namespace Eve.Ships;
 /// <summary>A ship that went into space or came out of it: where it is now and where it was.</summary>
 using Eve.Dogma;
 
-public sealed record ShipEjection(Item Ship, Item Capsule, IReadOnlyList<DogmaEvent> Events);
+public sealed record ShipEjection(
+    Item Ship,
+    Item? Capsule,
+    Item? EscapeShip,
+    IReadOnlyList<DogmaEvent> Events,
+    ShipSnapshot EjectedSnapshot,
+    IReadOnlyList<long> ModulesToStop,
+    bool HullCollapsed)
+{
+    public Item PilotShip => EscapeShip ?? Capsule ?? throw new InvalidOperationException("ejection has no pilot hull");
+}
 
 public sealed record ShipBoarding(long ShipId, long PreviousOwnerId, long BoarderCharacterId, long BoarderCorporationId);
 
@@ -22,6 +33,16 @@ public sealed record SpaceTransition(SpaceMove? Moved, string? Refusal)
 
 
 /// <summary>The active ship changed while its previous and next ships remain in the same hangar.</summary>
+public sealed record ShipTransitionEvent(
+    string Kind,
+    long CharacterId,
+    long ShipId,
+    long? RelatedShipId,
+    long? FromLocationId,
+    int? FromFlag,
+    long? ToLocationId,
+    int? ToFlag);
+
 public sealed partial class CharacterShips
 {
     /// <summary>The flag of an item that is in space, not in any inventory place.</summary>
@@ -31,6 +52,15 @@ public sealed partial class CharacterShips
     /// The character's active ship leaves the hangar of the station the character is at and is in the solar system, in space. The character's
     /// station stays what it was (it is where the ship docks again if the simulation loses it).
     /// </summary>
+public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEvent, CancellationToken, Task>? TransitionEventWriter { get; set; }
+
+    private Task WriteTransitionAsync(
+        Npgsql.NpgsqlConnection connection,
+        Npgsql.NpgsqlTransaction transaction,
+        ShipTransitionEvent transition,
+        CancellationToken cancellationToken) =>
+        TransitionEventWriter?.Invoke(connection, transaction, transition, cancellationToken) ?? Task.CompletedTask;
+
     public async Task<SpaceTransition> UndockAsync(long characterId, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
@@ -47,12 +77,23 @@ public sealed partial class CharacterShips
             return SpaceTransition.Refused(ship.LocationId == character.SolarSystemId ? "ALREADY_IN_SPACE" : "NOT_DOCKED");
         }
         await items.MoveAsync(connection, transaction, ship.Id, character.SolarSystemId, InSpaceFlag, cancellationToken);
+        await WriteTransitionAsync(connection, transaction,
+            new ShipTransitionEvent("undock", characterId, ship.Id, null, ship.LocationId, ship.Flag,
+                character.SolarSystemId, InSpaceFlag), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return SpaceTransition.Done(new SpaceMove(ship with { LocationId = character.SolarSystemId, Flag = InSpaceFlag }, ship.LocationId, ship.Flag, character));
     }
 
     /// <summary>The character's active ship, in space, is put in the hangar of a station of the solar system it is in, and the character is there.</summary>
-    public async Task<SpaceTransition> DockAsync(long characterId, long stationId, CancellationToken cancellationToken = default)
+    public Task<SpaceTransition> DockAsync(long characterId, long stationId, CancellationToken cancellationToken = default) =>
+        DockAsync(characterId, stationId, null, cancellationToken);
+
+
+    public async Task<SpaceTransition> DockAsync(
+        long characterId,
+        long stationId,
+        ShipCondition? condition,
+        CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -69,8 +110,17 @@ public sealed partial class CharacterShips
         }
         await items.MoveAsync(connection, transaction, ship.Id, stationId, ItemFlags.Hangar, cancellationToken);
         await characters.SetStationAsync(connection, transaction, characterId, stationId, cancellationToken);
+        if (condition is not null)
+            await modules.SetShipConditionAsync(connection, transaction, ship.Id, condition, cancellationToken);
+        await WriteTransitionAsync(connection, transaction,
+            new ShipTransitionEvent("dock", characterId, ship.Id, null, ship.LocationId, ship.Flag,
+                stationId, ItemFlags.Hangar), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return SpaceTransition.Done(new SpaceMove(ship with { LocationId = stationId, Flag = ItemFlags.Hangar }, ship.LocationId, ship.Flag, character with { StationId = stationId }));
+        return SpaceTransition.Done(new SpaceMove(
+            ship with { LocationId = stationId, Flag = ItemFlags.Hangar },
+            ship.LocationId,
+            ship.Flag,
+            character with { StationId = stationId }));
     }
 
     /// <summary>Changes the active ship to another ship in the same station hangar without moving either item.</summary>
@@ -85,7 +135,7 @@ public sealed partial class CharacterShips
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockAsync(connection, transaction, characterId, cancellationToken);
 
-        if (await characters.GetAsync(characterId, cancellationToken) is not { ShipId: { } activeShipId, StationId: { } currentStationId }
+        if (await characters.GetAsync(characterId, cancellationToken) is not { ShipId: { } activeShipId, StationId: { } currentStationId } character
             || activeShipId != currentShipId || currentStationId != stationId
             || await items.LockAndGetAsync(connection, transaction, currentShipId, cancellationToken) is not { } current
             || await items.LockAndGetAsync(connection, transaction, shipId, cancellationToken) is not { } next
@@ -104,6 +154,9 @@ public sealed partial class CharacterShips
         }
 
         await characters.SetShipAsync(connection, transaction, characterId, shipId, cancellationToken);
+        await WriteTransitionAsync(connection, transaction,
+            new ShipTransitionEvent("board", characterId, shipId, currentShipId, stationId, ItemFlags.Hangar,
+                stationId, ItemFlags.Hangar), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return true;
     }
@@ -128,6 +181,9 @@ public sealed partial class CharacterShips
         }
         await items.MoveAsync(connection, transaction, ship.Id, solarSystemId, InSpaceFlag, cancellationToken);
         await characters.SetLocationAsync(connection, transaction, characterId, solarSystemId, constellationId, regionId, cancellationToken);
+        await WriteTransitionAsync(connection, transaction,
+            new ShipTransitionEvent("gate-jump", characterId, ship.Id, null, ship.LocationId, ship.Flag,
+                solarSystemId, InSpaceFlag), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return SpaceTransition.Done(new SpaceMove(
             ship with { LocationId = solarSystemId },
@@ -177,6 +233,9 @@ public sealed partial class CharacterShips
             capsule = new Item(capsuleId, CapsuleTypeId, characterId, stationId, ItemFlags.Hangar, 1, true, null);
         }
 
+        await WriteTransitionAsync(connection, transaction,
+            new ShipTransitionEvent("leave-ship", characterId, shipId, capsule.Id, stationId, ItemFlags.Hangar,
+                stationId, ItemFlags.Hangar), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return capsule;
     }
@@ -220,26 +279,86 @@ public sealed partial class CharacterShips
             || ship.OwnerId != characterId || ship.LocationId != character.SolarSystemId || ship.Flag != InSpaceFlag || ship.TypeId == CapsuleTypeId)
             return null;
 
+        var hullAttribute = statics.AttributeId("hp");
+        var armorAttribute = statics.AttributeId("armorHP");
+        var shieldAttribute = statics.AttributeId("shieldCapacity");
+        if (hullAttribute is not { } hull || armorAttribute is not { } armor || shieldAttribute is not { } shield)
+            return null;
+
+        var before = fitting.World.Attributes(ship.Id);
+        var oldHull = fitting.World.Get(ship.Id, hull);
+        var oldArmor = fitting.World.Get(ship.Id, armor);
+        var oldShield = fitting.World.Get(ship.Id, shield);
+        var escapeCandidate = await EscapeBayShipAsync(ship, fitting.World, characterId, cancellationToken);
+        var moduleChanges = FittingRules.RemovePilotModifiersAndRevalidate(
+            fitting.World,
+            statics,
+            characterId,
+            ship.Id,
+            fitting.Skills.Select(skill => ShipSnapshot.SkillItemId(characterId, skill.TypeId)),
+            fitting.Fitted.Select(module => module.Id));
+
         var events = new List<DogmaEvent>();
-        var shipBefore = fitting.World.Attributes(ship.Id);
-        var switchedOff = fitting.Fitted.Select(module => (module, Online: fitting.World.Get(module.Id, IsOnline))).ToList();
-        foreach (var (module, _) in switchedOff)
-            fitting.World.Remove(module.Id);
-        events.AddRange(ShipChanges(ship.Id, shipBefore, fitting.World.Attributes(ship.Id)));
-        foreach (var (module, online) in switchedOff)
+        foreach (var change in moduleChanges)
         {
-            if (Changed(module.Id, IsOnline, online, 0) is { } switched)
+            var module = fitting.Fitted.FirstOrDefault(item => item.Id == change.ModuleId);
+            var wasOnline = change.Before >= ItemState.Online ? 1d : 0d;
+            var isOnline = change.After >= ItemState.Online ? 1d : 0d;
+            if (Changed(change.ModuleId, IsOnline, wasOnline, isOnline) is { } switched)
                 events.Add(switched);
-            events.Add(new EffectChanged(module.Id, BuiltInEffects.Online, Started: false));
-            await modules.SetAsync(connection, transaction, module.Id, ItemState.Offline, cancellationToken);
+            if (change.After == ItemState.Offline)
+                events.Add(new EffectChanged(change.ModuleId, BuiltInEffects.Online, Started: false));
+            if (change.Before >= ItemState.Active && module is not null && statics.Type(module.TypeId) is { } type)
+            {
+                foreach (var effectId in type.EffectIds)
+                {
+                    if (statics.Effect(effectId)?.Category is EffectDef.Activation or EffectDef.Overload)
+                        events.Add(new EffectChanged(change.ModuleId, effectId, Started: false));
+                }
+            }
+            await modules.SetAsync(connection, transaction, change.ModuleId, change.After, cancellationToken);
+        }
+        var after = fitting.World.Attributes(ship.Id);
+        events.AddRange(ShipChanges(ship.Id, before, after));
+
+        var (condition, hullCollapsed) = fitting.Condition.RebaseHitpoints(
+            oldHull,
+            oldArmor,
+            oldShield,
+            fitting.World.Get(ship.Id, hull),
+            fitting.World.Get(ship.Id, armor),
+            fitting.World.Get(ship.Id, shield));
+        await modules.SetShipConditionAsync(connection, transaction, ship.Id, condition, cancellationToken);
+
+        Item? escapeShip = escapeCandidate;
+        if (escapeShip is not null)
+        {
+            if (await items.LockAndGetAsync(connection, transaction, escapeShip.Id, cancellationToken) is not { } lockedEscape
+                || lockedEscape.OwnerId != characterId || lockedEscape.LocationId != ship.Id
+                || lockedEscape.Flag != FrigateEscapeBayFlag || !lockedEscape.Singleton || lockedEscape.Quantity != 1)
+                return null;
+            escapeShip = lockedEscape;
+            await items.MoveAsync(connection, transaction, lockedEscape.Id, ship.LocationId, InSpaceFlag, cancellationToken);
+            await characters.SetShipAsync(connection, transaction, characterId, lockedEscape.Id, cancellationToken);
         }
 
-        var capsuleId = await items.CreateAsync(connection, transaction,
-            new NewItem(CapsuleTypeId, characterId, ship.LocationId, InSpaceFlag, 1, true), cancellationToken);
-        var capsule = new Item(capsuleId, CapsuleTypeId, characterId, ship.LocationId, InSpaceFlag, 1, true, null);
-        await characters.SetShipAsync(connection, transaction, characterId, capsuleId, cancellationToken);
+        Item? capsule = null;
+        if (escapeShip is null)
+        {
+            var capsuleId = await items.CreateAsync(connection, transaction,
+                new NewItem(CapsuleTypeId, characterId, ship.LocationId, InSpaceFlag, 1, true), cancellationToken);
+            capsule = new Item(capsuleId, CapsuleTypeId, characterId, ship.LocationId, InSpaceFlag, 1, true, null);
+            await characters.SetShipAsync(connection, transaction, characterId, capsuleId, cancellationToken);
+        }
+        var nextShipId = escapeShip?.Id ?? capsule?.Id ?? 0;
+        await WriteTransitionAsync(connection, transaction,
+            new ShipTransitionEvent("eject", characterId, ship.Id, nextShipId, ship.LocationId, ship.Flag,
+                ship.LocationId, InSpaceFlag), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return new ShipEjection(ship, capsule, events);
+
+        var ejectedSnapshot = fitting.WithDogma(fitting.World, condition, []);
+        return new ShipEjection(ship, capsule, escapeShip, events, ejectedSnapshot,
+            [.. moduleChanges.Select(change => change.ModuleId)], hullCollapsed);
     }
 
     /// <summary>Boards an unpiloted ship in the same solar system and transfers its hull and contents to the pilot.</summary>
@@ -273,6 +392,9 @@ public sealed partial class CharacterShips
         }
         await items.MoveToOwnerAsync(connection, transaction, next.Id, characterId, solarSystemId, InSpaceFlag, cancellationToken);
         await characters.SetShipAsync(connection, transaction, characterId, next.Id, cancellationToken);
+        await WriteTransitionAsync(connection, transaction,
+            new ShipTransitionEvent("board-in-space", characterId, next.Id, currentShipId,
+                current.LocationId, current.Flag, next.LocationId, next.Flag), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new ShipBoarding(next.Id, previousOwnerId, characterId, character.CorporationId);
     }

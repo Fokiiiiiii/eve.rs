@@ -91,6 +91,29 @@ public sealed partial class PersistenceStore
         return changed;
     }
 
+
+    public async Task<int> ApplyChangesAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string table,
+        IEnumerable<RowUpsert>? upserts,
+        IEnumerable<string>? deletes,
+        OwnerFence fence,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        var name = TableNames.RequirePersistence(table);
+        var validatedUpserts = ValidateUpserts(upserts);
+        var validatedDeletes = ValidateDeletes(deletes);
+        if (validatedUpserts.Count == 0 && validatedDeletes.Count == 0)
+            return 0;
+
+        await AssertActiveAsync(connection, transaction, fence, ct);
+        await CreateTableAsync(connection, transaction, name, ct);
+        return await ApplyChangesCoreAsync(connection, transaction, name, validatedUpserts, validatedDeletes, ct);
+    }
+
     /// <summary>
     /// Replaces the whole table with <paramref name="table"/>'s rows, using COPY.
     /// Returns the number of stored rows.

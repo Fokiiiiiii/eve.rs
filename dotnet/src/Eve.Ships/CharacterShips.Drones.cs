@@ -98,8 +98,9 @@ public sealed partial class CharacterShips
                 reserved.Add(other);
             }
         }
-        var required = ItemVolumes.Of(drone, type.GroupId, type.Attributes.GetValueOrDefault(VolumeAttribute, 0));
-        var room = new Room(snapshot.World.Get(shipId, DroneCapacityAttribute), await VolumeOfAsync([.. bay, .. reserved], cancellationToken));
+        var required = ItemVolumes.Of(drone, type.GroupId, ItemVolumeOf(type));
+        var room = new Room(CapacityAttributeOf(DroneBayFlag) is { } capacityAttribute ? snapshot.World.Get(shipId, capacityAttribute) : 0,
+            await VolumeOfAsync([.. bay, .. reserved], cancellationToken));
         if (required > room.Free + RoomTolerance)
         {
             return new DroneBayFull(drone.TypeId, Math.Round(room.Free, 6), Math.Round(required, 6));
@@ -158,7 +159,8 @@ public sealed partial class CharacterShips
         }
 
         var contents = (await items.InContainerAsync(shipId, cancellationToken)).Where(i => i.Flag == DroneBayFlag);
-        return new Room(snapshot.World.Get(shipId, DroneCapacityAttribute), await VolumeOfAsync(contents, cancellationToken));
+        return new Room(CapacityAttributeOf(DroneBayFlag) is { } capacityAttribute ? snapshot.World.Get(shipId, capacityAttribute) : 0,
+            await VolumeOfAsync(contents, cancellationToken));
     }
 
     /// <summary>The in-space <c>invbroker.Add</c> destination for a drone bay. A valid Add moves one owned drone item into the active ship's bay.</summary>

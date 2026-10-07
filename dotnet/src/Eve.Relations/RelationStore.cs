@@ -276,6 +276,21 @@ public sealed class RelationStore
             return await reader.ReadAsync(cancellationToken) ? ReadRelation(reader) : null;
         }, cancellationToken);
 
+
+    public Task<Relation?> GetByIdAsync(
+        long id,
+        NpgsqlConnection? connection = null,
+        NpgsqlTransaction? transaction = null,
+        CancellationToken cancellationToken = default) =>
+        WithConnection(connection, async c =>
+        {
+            await using var command = Sql.Command(c, transaction,
+                Q($"SELECT {Columns} FROM {{schema}}.relations WHERE id = $1"), id);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            return await reader.ReadAsync(cancellationToken) ? ReadRelation(reader) : null;
+        }, cancellationToken);
+
+
     /// <summary>The value of the relation, or <paramref name="fallback"/> when it does not hold.</summary>
     public async Task<double> ValueAsync(string kind, long subject, long obj, double fallback = 0, NpgsqlConnection? connection = null, NpgsqlTransaction? transaction = null, CancellationToken cancellationToken = default) =>
         (await GetAsync(kind, subject, obj, connection, transaction, cancellationToken))?.Value ?? fallback;

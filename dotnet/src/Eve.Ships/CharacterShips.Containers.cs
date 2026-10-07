@@ -1,3 +1,4 @@
+using Eve.Dogma;
 using Eve.Inventory;
 
 namespace Eve.Ships;
@@ -10,20 +11,21 @@ namespace Eve.Ships;
 public sealed partial class CharacterShips
 {
     /// <summary>The type of the can cargo is jettisoned into (<c>Cargo Container</c>).</summary>
-    public const int CargoContainerType = 23;
+    public const int CargoContainerTypeId = 23;
 
     /// <summary>The flag what is in a can (or a wreck) is kept under.</summary>
     public const int ContainerFlag = 0;
 
     /// <summary>The holds of a ship that can be emptied into a can in space: the cargo hold (the reference lists the specialised holds too).</summary>
-    public static bool IsJettisonable(int flag) => flag == CargoFlag;
+    /// <summary>The item flags the pinned client allows a pilot to empty into a can in space.</summary>
+    public static bool IsJettisonable(int flag) => flag is CargoFlag or 134 or 135 or 136 or 143 or 149 or 172 or 181 or 182 or 185 or 188;
 
     /// <summary>The can for cargo a pilot jettisons: an item of the character's, in the solar system, with nothing in it yet.</summary>
     public async Task<Item> CreateCanAsync(long characterId, int solarSystemId, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        var id = await items.CreateAsync(connection, transaction, new NewItem(CargoContainerType, characterId, solarSystemId, InSpaceFlag, 1, Singleton: true), cancellationToken);
+        var id = await items.CreateAsync(connection, transaction, new NewItem(CargoContainerTypeId, characterId, solarSystemId, InSpaceFlag, 1, Singleton: true), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return (await items.GetAsync(id, cancellationToken))!;
     }
@@ -77,16 +79,140 @@ public sealed partial class CharacterShips
         return moved;
     }
 
+
+    private bool IsCargoContainerType(TypeDef type)
+    {
+        if (type.TypeId == CargoContainerTypeId) return true;
+        var capacityAttribute = statics.AttributeId("capacity");
+        return statics.GroupName(type.GroupId).Contains("container", StringComparison.OrdinalIgnoreCase)
+            && capacityAttribute is { } attribute
+            && type.Attributes.GetValueOrDefault(attribute, 0) > 0;
+    }
+
     /// <summary>How big a can or a wreck is (its type's capacity) and how much is in it.</summary>
     public async Task<Room?> ContainerRoomAsync(long containerId, CancellationToken cancellationToken = default)
     {
-        if (await items.GetAsync(containerId, cancellationToken) is not { } container)
-        {
+        if (await items.GetAsync(containerId, cancellationToken) is not { Singleton: true, Quantity: 1 } container)
             return null;
-        }
         await statics.EnsureTypesAsync([container.TypeId], cancellationToken);
-        var capacity = statics.Type(container.TypeId)?.Attributes.GetValueOrDefault(CapacityAttribute, 0) ?? 0;
+        if (statics.Type(container.TypeId) is not { } type || !IsCargoContainerType(type))
+            return null;
+        var capacity = statics.AttributeId("capacity") is { } attribute
+            ? type.Attributes.GetValueOrDefault(attribute, 0)
+            : 0;
         return new Room(capacity, await VolumeOfAsync(await items.InContainerAsync(containerId, cancellationToken), cancellationToken));
+    }
+
+
+    private async Task<bool> IsOwnedDockedInventoryAsync(long itemId, long ownerId, long stationId, CancellationToken cancellationToken)
+    {
+        var seen = new HashSet<long>();
+        var current = itemId;
+        for (var depth = 0; depth < 32; depth++)
+        {
+            if (current == stationId) return true;
+            if (!seen.Add(current)
+                || await items.GetAsync(current, cancellationToken) is not { OwnerId: var owner, LocationId: var parentLocation, TypeId: var typeId }
+                || owner != ownerId)
+                return false;
+            await statics.EnsureTypesAsync([typeId], cancellationToken);
+            if (statics.Type(typeId) is not { } type
+                || (!string.Equals(statics.CategoryName(type.CategoryId), "Ship", StringComparison.OrdinalIgnoreCase)
+                    && !IsCargoContainerType(type)))
+                return false;
+            current = parentLocation;
+        }
+        return false;
+    }
+
+
+    public async Task<bool> IsOwnedDockedContainerAsync(long containerId, long ownerId, long stationId, CancellationToken cancellationToken = default)
+    {
+        if (await items.GetAsync(containerId, cancellationToken) is not { OwnerId: var owner, Singleton: true, Quantity: 1, TypeId: var typeId }
+            || owner != ownerId)
+            return false;
+        await statics.EnsureTypesAsync([typeId], cancellationToken);
+        return statics.Type(typeId) is { } type && IsCargoContainerType(type)
+            && await IsOwnedDockedInventoryAsync(containerId, ownerId, stationId, cancellationToken);
+    }
+
+
+    private async Task<bool> IsNestedUnderAsync(long itemId, long ancestorId, CancellationToken cancellationToken)
+    {
+        var current = itemId;
+        for (var depth = 0; depth < 32; depth++)
+        {
+            if (current == ancestorId) return true;
+            if (current <= 0 || await items.GetAsync(current, cancellationToken) is not { } item)
+                return false;
+            current = item.LocationId;
+        }
+        return false;
+    }
+
+    /// <summary>Moves an owned item between the docked hangar and an owned cargo container in one transaction.</summary>
+    public async Task<ShipOutcome> MoveContainerAsync(
+        long characterId, long itemId, long sourceLocationId, long destinationLocationId,
+        long? quantity, int? requestedFlag = null, CancellationToken cancellationToken = default, long? sourceOwnerId = null, long? destinationOwnerId = null)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        if (await characters.GetAsync(characterId, cancellationToken) is not { StationId: { } station }
+            || station <= 0
+            || await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken) is not { } item
+            || (item.OwnerId != characterId && item.OwnerId != sourceOwnerId) || item.LocationId != sourceLocationId
+            || sourceLocationId == destinationLocationId || item.Id == sourceLocationId || item.Id == destinationLocationId
+            || sourceLocationId != station && !await IsOwnedDockedInventoryAsync(sourceLocationId, sourceOwnerId ?? characterId, station, cancellationToken))
+            return new NothingHappened();
+
+        var toHangar = destinationLocationId == station;
+        var destinationItemOwnerId = destinationOwnerId ?? characterId;
+        Item? container = null;
+        var destinationFlag = ItemFlags.Hangar;
+        if (toHangar)
+        {
+            if (requestedFlag is not null and not 0 and not ItemFlags.Hangar)
+                return new NothingHappened();
+        }
+        else
+        {
+            if (requestedFlag is not null and not 0
+                || await items.LockAndGetAsync(connection, transaction, destinationLocationId, cancellationToken) is not { } target
+                || (target.OwnerId != characterId && target.OwnerId != destinationOwnerId)
+                || !target.Singleton || target.Quantity != 1
+                || !await IsOwnedDockedInventoryAsync(target.Id, destinationOwnerId ?? characterId, station, cancellationToken)
+                || target.Id == item.Id)
+                return new NothingHappened();
+            await statics.EnsureTypesAsync([target.TypeId], cancellationToken);
+            if (statics.Type(target.TypeId) is not { } targetType || !IsCargoContainerType(targetType)
+                || await IsNestedUnderAsync(target.Id, item.Id, cancellationToken))
+                return new NothingHappened();
+            await items.LockContainerAsync(connection, transaction, target.Id, cancellationToken);
+            container = target;
+            destinationFlag = ContainerFlag;
+        }
+
+        if (quantity is { } asked && !item.Singleton && (asked <= 0 || asked > item.Quantity))
+            return new NothingHappened();
+        var splits = quantity is { } some && !item.Singleton && some < item.Quantity;
+        var moving = splits ? quantity!.Value : item.Quantity;
+        if (container is not null && await RefuseWhatDoesNotFitContainerAsync(container, item, moving, cancellationToken) is { } full)
+            return full;
+
+        Item? split = null;
+        if (splits)
+            split = await items.MoveStackAsync(connection, transaction, item, moving, destinationItemOwnerId, destinationLocationId, destinationFlag, cancellationToken);
+        else if (item.OwnerId == destinationItemOwnerId)
+            await items.MoveAsync(connection, transaction, item.Id, destinationLocationId, destinationFlag, cancellationToken);
+        else
+            await items.MoveToOwnerAsync(connection, transaction, item.Id, destinationItemOwnerId, destinationLocationId, destinationFlag, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        var stacks = split is { } created
+            ? new List<ItemChanged> { new(item with { Quantity = item.Quantity - created.Quantity }, item.LocationId, item.Flag, item.Quantity), new(created, 0, created.Flag, 0) }
+            : [new ItemChanged(item with { OwnerId = destinationItemOwnerId, LocationId = destinationLocationId, Flag = destinationFlag }, item.LocationId, item.Flag, item.Quantity)];
+        return new ShipChanged(split?.Id ?? item.Id, 0, [], [], stacks);
     }
 
     /// <summary>
@@ -96,7 +222,7 @@ public sealed partial class CharacterShips
     /// character's to put, is nothing.
     /// </summary>
     public async Task<ShipOutcome> MoveInSpaceAsync(
-        long characterId, long itemId, long sourceId, long destinationId, long? quantity, CancellationToken cancellationToken = default)
+        long characterId, long itemId, long sourceId, long destinationId, long? quantity, int? requestedFlag = null, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -104,56 +230,48 @@ public sealed partial class CharacterShips
 
         if (await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Flag != InSpaceFlag
             || await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken) is not { } item)
-        {
             return new NothingHappened();
-        }
         var ship = snapshot.Ship;
         var toShip = destinationId == ship.Id;
         var fromShip = sourceId == ship.Id;
         if (toShip == fromShip || item.LocationId != sourceId || item.Id == ship.Id || item.Id == destinationId)
-        {
             return new NothingHappened();
-        }
         var containerId = toShip ? sourceId : destinationId;
         if (await items.GetAsync(containerId, cancellationToken) is not { } container || container.LocationId != ship.LocationId || container.Id == ship.Id)
-        {
             return new NothingHappened();
-        }
-        if (fromShip && (item.OwnerId != characterId || item.Flag != CargoFlag))
-        {
-            return new NothingHappened(); // what is fitted or not the character's is not put in a can
-        }
+        if (fromShip && (item.OwnerId != characterId || !IsJettisonable(item.Flag)))
+            return new NothingHappened();
         await statics.EnsureTypesAsync([item.TypeId], cancellationToken);
         if (quantity is { } asked && !item.Singleton && (asked <= 0 || asked > item.Quantity))
-        {
             return new NothingHappened();
-        }
         var splits = quantity is { } some && !item.Singleton && some < item.Quantity;
         var moving = splits ? quantity!.Value : item.Quantity;
+        var destinationFlag = toShip ? requestedFlag ?? CargoFlag : ContainerFlag;
+        if (toShip && !IsShipHoldFlag(destinationFlag))
+            return new NothingHappened();
+        if (toShip && statics.Type(item.TypeId) is { } type
+            && !CanAddToShipHold(destinationFlag, type, item.Singleton, moving))
+            return new ShipRefused(ShipRefusal.NotAllowedInHold, ModuleTypeId: item.TypeId, ShipTypeId: ship.TypeId);
+        if (toShip && statics.Type(item.TypeId) is null && destinationFlag != CargoFlag)
+            return new ShipRefused(ShipRefusal.NotAllowedInHold, ModuleTypeId: item.TypeId, ShipTypeId: ship.TypeId);
+        if (toShip && (destinationFlag is ShipMaintenanceBayFlag or FrigateEscapeBayFlag)
+            && !await ShipContentsAllowedInBayAsync(item, destinationFlag, snapshot.World, characterId, cancellationToken))
+            return new ShipRefused(ShipRefusal.NotAllowedInHold, ModuleTypeId: item.TypeId, ShipTypeId: ship.TypeId);
 
         if (toShip)
         {
-            if (await RefuseWhatDoesNotFitAsync(snapshot, item, moving, CargoFlag, cancellationToken) is { } full)
-            {
+            if (await RefuseWhatDoesNotFitAsync(snapshot, item, moving, destinationFlag, cancellationToken) is { } full)
                 return full;
-            }
         }
         else if (await RefuseWhatDoesNotFitContainerAsync(container, item, moving, cancellationToken) is { } crowded)
-        {
             return crowded;
-        }
 
-        var destinationFlag = toShip ? CargoFlag : ContainerFlag;
         var owner = toShip ? characterId : item.OwnerId;
         Item? split = null;
         if (splits)
-        {
             split = await items.MoveStackAsync(connection, transaction, item, moving, owner, destinationId, destinationFlag, cancellationToken);
-        }
         else
-        {
             await items.MoveToOwnerAsync(connection, transaction, item.Id, owner, destinationId, destinationFlag, cancellationToken);
-        }
         await transaction.CommitAsync(cancellationToken);
 
         var stacks = split is { } created
@@ -167,7 +285,8 @@ public sealed partial class CharacterShips
     /// character's from then on). It is all or nothing for room: what the batch takes in all is checked against what is left of the hold, and when it does not fit nothing moves
     /// (<c>NotEnoughCargoSpace</c> with the room left and the room it takes). An id that is not in the container is left out of the batch; when none is, nothing happens.
     /// </summary>
-    public async Task<ShipOutcome> MoveAllInSpaceAsync(long characterId, IReadOnlyList<long> itemIds, long containerId, CancellationToken cancellationToken = default)
+    public async Task<ShipOutcome> MoveAllInSpaceAsync(long characterId, IReadOnlyList<long> itemIds, long containerId, int? requestedFlag = null,
+        CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -175,36 +294,34 @@ public sealed partial class CharacterShips
 
         if (await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Flag != InSpaceFlag
             || await items.GetAsync(containerId, cancellationToken) is not { } container || container.LocationId != snapshot.Ship.LocationId || container.Id == snapshot.Ship.Id)
-        {
             return new NothingHappened();
-        }
         var ship = snapshot.Ship;
+        var destinationFlag = requestedFlag ?? CargoFlag;
+        if (!IsShipHoldFlag(destinationFlag)) return new NothingHappened();
         var batch = new List<Item>();
         foreach (var id in itemIds.Distinct())
         {
-            // read under the row lock: what moved or went since the pilot's window was drawn is left out
             if (id != ship.Id && id != containerId && await items.LockAndGetAsync(connection, transaction, id, cancellationToken) is { } item && item.LocationId == containerId)
-            {
                 batch.Add(item);
-            }
         }
-        if (batch.Count == 0)
-        {
-            return new NothingHappened();
-        }
+        if (batch.Count == 0) return new NothingHappened();
         await statics.EnsureTypesAsync(batch.Select(i => i.TypeId), cancellationToken);
-        if (await RefuseWhatDoesNotFitTogetherAsync(snapshot, batch, CargoFlag, cancellationToken) is { } full)
-        {
-            return full;
-        }
         foreach (var item in batch)
         {
-            await items.MoveToOwnerAsync(connection, transaction, item.Id, characterId, ship.Id, CargoFlag, cancellationToken);
+            if (statics.Type(item.TypeId) is not { } type && destinationFlag != CargoFlag)
+                return new ShipRefused(ShipRefusal.NotAllowedInHold, ModuleTypeId: item.TypeId, ShipTypeId: ship.TypeId);
+            if (statics.Type(item.TypeId) is { } itemType
+                && (!CanAddToShipHold(destinationFlag, itemType, item.Singleton, item.Quantity)
+                    || !await ShipContentsAllowedInBayAsync(item, destinationFlag, snapshot.World, characterId, cancellationToken)))
+                return new ShipRefused(ShipRefusal.NotAllowedInHold, ModuleTypeId: item.TypeId, ShipTypeId: ship.TypeId);
         }
+        if (await RefuseWhatDoesNotFitTogetherAsync(snapshot, batch, destinationFlag, cancellationToken) is { } full)
+            return full;
+        foreach (var item in batch)
+            await items.MoveToOwnerAsync(connection, transaction, item.Id, characterId, ship.Id, destinationFlag, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return new ShipChanged(
-            batch[0].Id, ship.Id, [], [],
-            [.. batch.Select(item => new ItemChanged(item with { OwnerId = characterId, LocationId = ship.Id, Flag = CargoFlag }, item.LocationId, item.Flag, item.Quantity))]);
+        return new ShipChanged(batch[0].Id, ship.Id, [], [],
+            [.. batch.Select(item => new ItemChanged(item with { OwnerId = characterId, LocationId = ship.Id, Flag = destinationFlag }, item.LocationId, item.Flag, item.Quantity))]);
     }
 
     /// <summary>What a batch takes in all is more than is left of a hold: refused whole, with the room that is left and the room the batch takes.</summary>
@@ -214,16 +331,29 @@ public sealed partial class CharacterShips
         {
             return null;
         }
+        var contents = (await items.InContainerAsync(snapshot.Ship.Id, cancellationToken))
+            .Where(i => i.Flag == flag)
+            .ToArray();
+        if (flag == FrigateEscapeBayFlag)
+        {
+            var capacity = snapshot.World.Get(snapshot.Ship.Id, attribute);
+            var used = contents.Sum(item => Math.Max(1, item.Quantity));
+            var requiredShips = batch.Sum(item => Math.Max(1, item.Quantity));
+            var room = new Room(capacity, used);
+            if (requiredShips <= room.Free)
+                return null;
+            return new ShipRefused(ShipRefusal.NotEnoughCargoSpace, ModuleTypeId: batch[0].TypeId, ShipTypeId: snapshot.Ship.TypeId,
+                Available: Math.Max(0, room.Free), Volume: requiredShips);
+        }
         var required = batch.Sum(item => statics.Type(item.TypeId) is { } type
-            ? ItemVolumes.Unit(item.TypeId, type.GroupId, item.Singleton, type.Attributes.GetValueOrDefault(VolumeAttribute, 0)) * Math.Max(1, item.Quantity)
+            ? ItemVolumes.Unit(item.TypeId, type.GroupId, item.Singleton, ItemVolumeOf(type)) * Math.Max(1, item.Quantity)
             : 0);
-        var contents = (await items.InContainerAsync(snapshot.Ship.Id, cancellationToken)).Where(i => i.Flag == flag);
-        var room = new Room(snapshot.World.Get(snapshot.Ship.Id, attribute), await VolumeOfAsync(contents, cancellationToken));
-        if (required <= 0 || required <= room.Free + RoomTolerance)
+        var roomByVolume = new Room(snapshot.World.Get(snapshot.Ship.Id, attribute), await VolumeOfAsync(contents, cancellationToken));
+        if (required <= 0 || required <= roomByVolume.Free + RoomTolerance)
         {
             return null;
         }
-        return new ShipRefused(ShipRefusal.NotEnoughCargoSpace, ModuleTypeId: batch[0].TypeId, ShipTypeId: snapshot.Ship.TypeId, Available: Math.Round(room.Free, 6), Volume: Math.Round(required, 6));
+        return new ShipRefused(ShipRefusal.NotEnoughCargoSpace, ModuleTypeId: batch[0].TypeId, ShipTypeId: snapshot.Ship.TypeId, Available: Math.Round(roomByVolume.Free, 6), Volume: Math.Round(required, 6));
     }
 
     /// <summary>A container takes what its capacity allows: what does not fit is refused as the reference does for a container (<c>NoSpaceForThat</c>, with the type and the room).</summary>
@@ -233,7 +363,7 @@ public sealed partial class CharacterShips
         {
             return null;
         }
-        var required = ItemVolumes.Unit(item.TypeId, type.GroupId, item.Singleton, type.Attributes.GetValueOrDefault(VolumeAttribute, 0)) * Math.Max(1, quantity);
+        var required = ItemVolumes.Unit(item.TypeId, type.GroupId, item.Singleton, ItemVolumeOf(type)) * Math.Max(1, quantity);
         if (required <= 0 || required <= room.Free + RoomTolerance)
         {
             return null;

@@ -133,6 +133,8 @@ internal sealed class FakeSim : ISimulation
 
     public void Destroy(long shipId, SimCredit credit) => Heard.Add(new SimDestroy(shipId, credit));
 
+    public void Report(SimMessage message) => Received?.Invoke(message);
+
     public Task SetHeatProfileAsync(ulong sessionId, SimHeatProfile profile, CancellationToken cancellationToken = default)
     {
         Heard.Add(new SimSetHeatProfile(sessionId, profile));
@@ -199,11 +201,27 @@ internal sealed class FakeSim : ISimulation
         {
             return Task.FromResult(new CommandReply(true, 0, null) { Distance = MeasureAnswer });
         }
-        return Task.FromResult(code switch { SimCommands.WarpTo => WarpAnswer, SimCommands.Jump => JumpAnswer, _ => DockAnswer });
+        if (code == SimCommands.ResolveWarpTarget)
+        {
+            return Task.FromResult(new CommandReply(true, 0, null) { Position = WarpDestinationAnswer });
+        }
+        if (code == SimCommands.PositionOf)
+        {
+            var targetId = (long)args[0];
+            return Task.FromResult(new CommandReply(true, 0, null)
+            {
+                Position = PositionAnswers.GetValueOrDefault(targetId, [0, 0, 0])
+            });
+        }
+        return Task.FromResult(code switch { SimCommands.WarpTo or SimCommands.WarpToPoint => WarpAnswer, SimCommands.Jump => JumpAnswer, _ => DockAnswer });
     }
 
     /// <summary>How far a wreck or can is said to be (null: there is none).</summary>
     public double? MeasureAnswer { get; set; } = 100;
+
+    public IReadOnlyList<double> WarpDestinationAnswer { get; set; } = [1_000_000, 0, 0];
+
+    public Dictionary<long, IReadOnlyList<double>> PositionAnswers { get; } = [];
 
     /// <summary>What the ship is said to have taken.</summary>
     public SimCondition ConditionAnswer { get; set; } = SimCondition.Full;

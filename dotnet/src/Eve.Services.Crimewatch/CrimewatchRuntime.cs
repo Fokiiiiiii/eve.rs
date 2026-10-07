@@ -70,6 +70,9 @@ public sealed record AggressionResult(AggressionRequest Request, AggressionOutco
 public sealed class RelationWars(Eve.Relations.RelationStore relations) : Eve.Services.IWars
 {
     private enum WarSide { Aggressor, Defender }
+
+
+    public readonly record struct AssistanceFacts(bool TargetInWar, bool HelperInWar, bool SameSide);
     private sealed record WarAllyAttributes(string? Side);
 
     public async Task<bool> AreAtWarAsync(long attackerCharacterId, long targetCharacterId, long nowUnixMs, CancellationToken cancellationToken = default)
@@ -140,6 +143,59 @@ public sealed class RelationWars(Eve.Relations.RelationStore relations) : Eve.Se
         return false;
     }
 
+
+    public async Task<AssistanceFacts> AssistanceFactsAsync(
+        long assistantCharacterId,
+        long targetCharacterId,
+        long nowUnixMs,
+        CancellationToken cancellationToken = default)
+    {
+        if (assistantCharacterId <= 0 || targetCharacterId <= 0 || assistantCharacterId == targetCharacterId)
+            return default;
+
+        var chains = await Task.WhenAll(
+            relations.ChainOfAsync(assistantCharacterId, cancellationToken),
+            relations.ChainOfAsync(targetCharacterId, cancellationToken));
+        var assistantOwners = chains[0];
+        var targetOwners = chains[1];
+        var owners = assistantOwners.Concat(targetOwners).Distinct().ToArray();
+        var warReads = owners.SelectMany(owner => new[]
+        {
+            relations.FromAsync(Eve.Relations.RelationKinds.War.Name, owner, cancellationToken: cancellationToken),
+            relations.ToAsync(Eve.Relations.RelationKinds.War.Name, owner, cancellationToken: cancellationToken),
+        });
+        var allyBatches = await Task.WhenAll(owners.Select(owner =>
+            relations.FromAsync(Eve.Relations.RelationKinds.WarAlly.Name, owner, cancellationToken: cancellationToken)));
+        var allies = allyBatches.SelectMany(rows => rows)
+            .Where(ally => Active(ally, nowUnixMs))
+            .DistinctBy(ally => ally.Id)
+            .ToArray();
+        var referencedWars = await Task.WhenAll(allies.Select(ally =>
+            relations.GetByIdAsync(ally.Object, cancellationToken: cancellationToken)));
+        var warBatches = await Task.WhenAll(warReads);
+        var wars = warBatches.SelectMany(rows => rows)
+            .Concat(referencedWars.Where(war => war?.Kind == Eve.Relations.RelationKinds.War.Name).Select(war => war!))
+            .Where(war => Active(war, nowUnixMs))
+            .DistinctBy(war => war.Id)
+            .ToArray();
+
+        bool OnSide(IReadOnlyList<long> chain, Eve.Relations.Relation war, WarSide side) =>
+            chain.Contains(side == WarSide.Aggressor ? war.Subject : war.Object)
+            || allies.Any(ally => chain.Contains(ally.Subject) && ally.Object == war.Id && SideOf(ally) == side);
+
+        var targetWars = wars.Where(war =>
+            OnSide(targetOwners, war, WarSide.Aggressor) || OnSide(targetOwners, war, WarSide.Defender)).ToArray();
+        if (targetWars.Length == 0)
+            return default;
+
+        var helperInEveryWar = targetWars.All(war =>
+            OnSide(assistantOwners, war, WarSide.Aggressor) || OnSide(assistantOwners, war, WarSide.Defender));
+        var onSameSideInEveryWar = targetWars.All(war =>
+            (OnSide(targetOwners, war, WarSide.Aggressor) && OnSide(assistantOwners, war, WarSide.Aggressor))
+            || (OnSide(targetOwners, war, WarSide.Defender) && OnSide(assistantOwners, war, WarSide.Defender)));
+        return new(true, helperInEveryWar, onSameSideInEveryWar);
+    }
+
     private static bool Active(Eve.Relations.Relation relation, long nowUnixMs) =>
         relation.SinceMs <= nowUnixMs && (relation.UntilMs is null || relation.UntilMs > nowUnixMs);
 
@@ -200,6 +256,12 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
 
     /// <summary>Whether the law lets the first pilot attack the second at this time (a war, a limited engagement, a corporation that may shoot its own). Nothing is legal until something says so.</summary>
     public Func<long, long, long, CancellationToken, Task<bool>>? Legal { get; set; }
+
+
+    public Func<AggressionRequest, long, CancellationToken, Task<PolicyFacts>>? AttackPolicyFactsOf { get; set; }
+
+
+    public Func<long, long, long, CancellationToken, Task<RelationWars.AssistanceFacts>>? WarAssistanceFactsOf { get; set; }
 
 
     /// <summary>Host persistence hook for a new kill right. Return its ID only when a new right was persisted.</summary>
@@ -385,9 +447,29 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
         // An LE is created by attacking a suspect/criminal in empire space. A legal war attack alone never creates one.
         var startsOrRenewsEngagement = canPair &&
             (alreadyEngaged || (IsEmpire(request.Where) && targetFlag is Flag.Suspect or Flag.Criminal));
-        var legal = Legal is { } checkLegal && await checkLegal(request.Attacker, request.Target, now, cancellationToken);
+        PolicyFacts policyFacts;
+        if (AttackPolicyFactsOf is { } readPolicyFacts)
+        {
+            policyFacts = await readPolicyFacts(request, now, cancellationToken);
+        }
+        else
+        {
+            var activeWar = Legal is { } checkLegal &&
+                await checkLegal(request.Attacker, request.Target, now, cancellationToken);
+            policyFacts = new PolicyFacts(ActiveWar: activeWar);
+        }
+        policyFacts = policyFacts with
+        {
+            AttackerIsPlayer = request.Attacker > 0,
+            TargetIsPlayerProperty = request.Target > 0,
+            SamePilot = request.Attacker == request.Target,
+            TargetIsCapsule = request.TargetIsCapsule,
+            TargetFlag = targetFlag,
+            ActiveLimitedEngagement = alreadyEngaged || policyFacts.ActiveLimitedEngagement,
+        };
         AggressionOutcome? outcome = null;
-        await store.UpdateAsync(request.Attacker, state => (outcome = Aggression.Record(state, targetState, request.Where, request.SolarSystemId, request.TargetIsCapsule, legal, now)).Attacker, now, cancellationToken);
+        await store.UpdateAsync(request.Attacker, state => (outcome = Aggression.Record(
+            state, targetState, request.Where, request.SolarSystemId, request.TargetIsCapsule, policyFacts, now)).Attacker, now, cancellationToken);
         var result = new AggressionResult(request, outcome!);
         try
         {
@@ -412,6 +494,106 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
             await SyncAsync(request.Attacker, cancellationToken);
         }
         return result;
+    }
+
+
+    public async Task<PolicyDecision> EvaluateRemoteAssistanceAsync(
+        AggressionRequest request,
+        int safetyLevel,
+        CancellationToken cancellationToken = default)
+    {
+        var now = nowUnixMs();
+        var (recipient, facts) = await RemoteAssistanceFactsAsync(request, now, cancellationToken);
+        return PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, request.Where, facts, safetyLevel));
+    }
+
+    public async Task<AggressionResult> RecordRemoteAssistanceAsync(
+        AggressionRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var now = nowUnixMs();
+        var (recipient, facts) = await RemoteAssistanceFactsAsync(request, now, cancellationToken);
+        AggressionOutcome? outcome = null;
+        await store.UpdateAsync(request.Attacker, state =>
+            (outcome = Aggression.Assist(state, recipient, request.Where, request.SolarSystemId, facts, now)).Attacker,
+            now, cancellationToken);
+        var result = new AggressionResult(request, outcome!);
+        try
+        {
+            if (result.Outcome.IsCriminalOffense)
+            {
+                ScheduleConcordResponseForAggression(request, now);
+            }
+            if (Aggressed is { } handlers)
+            {
+                foreach (var handler in handlers.GetInvocationList().Cast<Func<AggressionResult, Task>>())
+                    await handler(result);
+            }
+        }
+        finally
+        {
+            await SyncAsync(request.Attacker, cancellationToken);
+        }
+        return result;
+    }
+
+    private async Task<(CombatState Recipient, PolicyFacts Facts)> RemoteAssistanceFactsAsync(
+        AggressionRequest request,
+        long now,
+        CancellationToken cancellationToken)
+    {
+        var recipient = await store.StateOfAsync(request.Target, cancellationToken);
+        PolicyFacts facts;
+        if (AttackPolicyFactsOf is { } readPolicyFacts)
+        {
+            facts = await readPolicyFacts(request, now, cancellationToken);
+        }
+        else
+        {
+            var activeWar = Legal is { } checkLegal
+                && await checkLegal(request.Attacker, request.Target, now, cancellationToken);
+            facts = new PolicyFacts(ActiveWar: activeWar);
+        }
+
+        var assistantEngagements = request.Attacker > 0
+            ? await LimitedEngagementsOfAsync(request.Attacker, now, cancellationToken)
+            : new Dictionary<long, long>();
+        var recipientEngagements = request.Target > 0
+            ? await LimitedEngagementsOfAsync(request.Target, now, cancellationToken)
+            : new Dictionary<long, long>();
+        var sharedEngagements = recipientEngagements.Count != 0
+            && recipientEngagements.Keys.All(assistantEngagements.ContainsKey);
+        var war = WarAssistanceFactsOf is { } readWarFacts
+            ? await readWarFacts(request.Attacker, request.Target, now, cancellationToken)
+            : default;
+
+        return (recipient, facts with
+        {
+            AttackerIsPlayer = request.Attacker > 0,
+            TargetIsPlayerProperty = request.Target > 0,
+            SamePilot = request.Attacker == request.Target,
+            TargetIsCapsule = request.TargetIsCapsule,
+            TargetFlag = recipient.FlagAt(now),
+            ActiveLimitedEngagement = assistantEngagements.ContainsKey(request.Target),
+            LimitedEngagementInterference = facts.LimitedEngagementInterference
+                || (recipientEngagements.Count != 0 && !sharedEngagements),
+            WarInterference = facts.WarInterference || (war.TargetInWar && !war.HelperInWar),
+            OtherLegalPermission = facts.OtherLegalPermission || sharedEngagements || war.SameSide,
+        });
+    }
+
+    private void ScheduleConcordResponseForAggression(AggressionRequest request, long now)
+    {
+        if (!Security.IsHighSecOrHigher(request.Where))
+            return;
+        var attackerShipId = sessions.Of(request.Attacker)?.GetInt("shipid") ?? 0;
+        var response = new ConcordResponseRequest(
+            request.Attacker,
+            attackerShipId,
+            request.SolarSystemId,
+            request.Security,
+            now);
+        ScheduleConcordResponse(response, now + ConcordResponseDelayMs(request.Security), now);
     }
 
 
@@ -460,17 +642,7 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
             }
         }
 
-        if (Security.IsHighSecOrHigher(request.Where))
-        {
-            var attackerShipId = sessions.Of(request.Attacker)?.GetInt("shipid") ?? 0;
-            var response = new ConcordResponseRequest(
-                request.Attacker,
-                attackerShipId,
-                request.SolarSystemId,
-                request.Security,
-                now);
-            ScheduleConcordResponse(response, now + ConcordResponseDelayMs(request.Security), now);
-        }
+        ScheduleConcordResponseForAggression(request, now);
     }
 
     /// <summary>Restores the delayed consequence for an active high-security criminal timer after a process restart.</summary>

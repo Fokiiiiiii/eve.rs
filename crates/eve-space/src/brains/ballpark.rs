@@ -52,18 +52,35 @@ impl SceneWorld<'_> {
         Some(distance(pa, pb) - self.ball_radius(a)? - self.ball_radius(b)?)
     }
 
-    /// The ships within the range of a sensor (never the ship the sensor is of).
     pub(crate) fn ships_in_sensor_range(&self, item_id: i64) -> BTreeSet<i64> {
         let Some(sensor) = self.state.sensors.get(&item_id) else { return BTreeSet::new() };
         let Some(from) = self.ball_position(item_id) else { return BTreeSet::new() };
-        self.scene
-            .in_entry_order_ships()
-            .into_iter()
-            .filter(|ship| *ship != item_id)
-            .filter(|ship| {
-                self.ball_position(*ship).is_some_and(|at| distance(from, at) <= sensor.detection_range)
+        let candidates = self.scene.in_entry_order_ships().into_iter().filter_map(|ship| {
+            Some(crate::geo::SpatialEntity {
+                id: ship,
+                kind: crate::geo::SpatialKind::Ship,
+                character_id: None,
+                owner_id: None,
+                corporation_id: None,
+                alliance_id: None,
+                type_id: None,
+                group_id: None,
+                category_id: None,
+                position: self.ball_position(ship)?,
+                radius: self.ball_radius(ship).unwrap_or(0.0),
+                warping: false,
+                item: ship,
             })
-            .collect()
+        });
+        crate::geo::SpatialQuery::radius(
+            from,
+            sensor.detection_range,
+            crate::geo::SpatialFilter { exclude_id: Some(item_id), ..crate::geo::SpatialFilter::default() },
+        )
+        .execute(candidates)
+        .into_iter()
+        .map(|hit| hit.item)
+        .collect()
     }
 
     fn sensor_of(&self, item_id: i64) -> Option<ProximitySensor> {

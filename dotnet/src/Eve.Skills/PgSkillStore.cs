@@ -47,6 +47,26 @@ public sealed class PgSkillStore
                 CREATE INDEX IF NOT EXISTS active_skill_boosters_character_expiry
                     ON active_skill_boosters (character_id, expiry_filetime);
                 """),
+            new Migration("0005_daily_alpha_skill_injectors", """
+                CREATE TABLE IF NOT EXISTS daily_alpha_skill_injector_uses (
+                    character_id bigint NOT NULL CHECK (character_id > 0),
+                    item_type_id integer NOT NULL CHECK (item_type_id > 0),
+                    used_at_unix_ms bigint NOT NULL CHECK (used_at_unix_ms > 0),
+                    PRIMARY KEY (character_id, item_type_id)
+                );
+                """),
+            new Migration("0006_recent_skill_point_changes", """
+                CREATE TABLE IF NOT EXISTS recent_skill_point_changes (
+                    character_id bigint NOT NULL CHECK (character_id > 0),
+                    type_id integer NOT NULL CHECK (type_id > 0),
+                    point_change bigint NOT NULL CHECK (point_change > 0),
+                    PRIMARY KEY (character_id, type_id)
+                );
+                CREATE TABLE IF NOT EXISTS skill_isis_fetch_budget (
+                    character_id bigint PRIMARY KEY CHECK (character_id > 0),
+                    fetch_budget smallint NOT NULL DEFAULT 0 CHECK (fetch_budget BETWEEN 0 AND 4)
+                );
+                """),
         ];
 
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
@@ -66,10 +86,28 @@ public sealed class PgSkillStore
     }
 
     /// <summary>Gives a character skills inside the caller's transaction (a skill it already has is replaced).</summary>
-    public async Task GrantAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, IEnumerable<CharacterSkill> skills, CancellationToken cancellationToken = default)
+    public async Task GrantAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long characterId,
+        IEnumerable<CharacterSkill> skills,
+        CancellationToken cancellationToken = default,
+        bool trackRecentChanges = false)
     {
         foreach (var skill in skills)
         {
+            var previous = 0L;
+            if (trackRecentChanges)
+            {
+                await using var previousCommand = new NpgsqlCommand(
+                    $"SELECT skill_points FROM {_schema}.character_skills WHERE character_id = $1 AND type_id = $2",
+                    connection, transaction)
+                {
+                    Parameters = { new() { Value = characterId }, new() { Value = skill.TypeId } },
+                };
+                previous = await previousCommand.ExecuteScalarAsync(cancellationToken) is long points ? points : 0L;
+            }
+
             await using var command = new NpgsqlCommand(
                 $"INSERT INTO {_schema}.character_skills (character_id, type_id, level, skill_points) VALUES ($1, $2, $3, $4) " +
                 "ON CONFLICT (character_id, type_id) DO UPDATE SET level = EXCLUDED.level, skill_points = EXCLUDED.skill_points",
@@ -78,7 +116,106 @@ public sealed class PgSkillStore
                 Parameters = { new() { Value = characterId }, new() { Value = skill.TypeId }, new() { Value = (short)skill.Level }, new() { Value = skill.SkillPoints } },
             };
             await command.ExecuteNonQueryAsync(cancellationToken);
+
+            var gained = skill.SkillPoints - previous;
+            if (trackRecentChanges && gained > 0)
+                await RecordRecentSkillPointChangeAsync(connection, transaction, characterId, skill.TypeId, gained, cancellationToken);
         }
+    }
+
+    private async Task RecordRecentSkillPointChangeAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long characterId,
+        int typeId,
+        long pointChange,
+        CancellationToken cancellationToken)
+    {
+        await using (var change = new NpgsqlCommand(
+            $"INSERT INTO {_schema}.recent_skill_point_changes AS stored (character_id, type_id, point_change) VALUES ($1, $2, $3) " +
+            "ON CONFLICT (character_id, type_id) DO UPDATE SET point_change = stored.point_change + EXCLUDED.point_change",
+            connection, transaction))
+        {
+            change.Parameters.Add(new NpgsqlParameter { Value = characterId });
+            change.Parameters.Add(new NpgsqlParameter { Value = typeId });
+            change.Parameters.Add(new NpgsqlParameter { Value = pointChange });
+            await change.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using var budget = new NpgsqlCommand(
+            $"INSERT INTO {_schema}.skill_isis_fetch_budget (character_id, fetch_budget) VALUES ($1, 4) " +
+            "ON CONFLICT (character_id) DO UPDATE SET fetch_budget = 4",
+            connection, transaction)
+        {
+            Parameters = { new() { Value = characterId } },
+        };
+        await budget.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<(int TypeId, long PointChange)>> ConsumeRecentSkillPointChangesAsync(
+        long characterId, CancellationToken cancellationToken = default)
+    {
+        if (characterId <= 0) return Array.Empty<(int, long)>();
+
+        return await InTransactionAsync(async (connection, transaction, token) =>
+        {
+            await using (var characterLock = new NpgsqlCommand(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", connection, transaction))
+            {
+                characterLock.Parameters.Add(new NpgsqlParameter { Value = $"skill-isis:{characterId}" });
+                await characterLock.ExecuteScalarAsync(token);
+            }
+
+            short fetchBudget;
+            await using (var readBudget = new NpgsqlCommand(
+                $"SELECT fetch_budget FROM {_schema}.skill_isis_fetch_budget WHERE character_id = $1 FOR UPDATE",
+                connection, transaction))
+            {
+                readBudget.Parameters.Add(new NpgsqlParameter { Value = characterId });
+                fetchBudget = await readBudget.ExecuteScalarAsync(token) is short value ? value : (short)0;
+            }
+
+            var changes = new List<(int TypeId, long PointChange)>();
+            await using (var readChanges = new NpgsqlCommand(
+                $"SELECT type_id, point_change FROM {_schema}.recent_skill_point_changes WHERE character_id = $1 ORDER BY type_id",
+                connection, transaction))
+            {
+                readChanges.Parameters.Add(new NpgsqlParameter { Value = characterId });
+                await using var reader = await readChanges.ExecuteReaderAsync(token);
+                while (await reader.ReadAsync(token))
+                    changes.Add((reader.GetInt32(0), reader.GetInt64(1)));
+            }
+            if (changes.Count == 0) return (IReadOnlyList<(int TypeId, long PointChange)>)changes;
+
+            if (fetchBudget <= 1)
+            {
+                await using (var clear = new NpgsqlCommand(
+                    $"DELETE FROM {_schema}.recent_skill_point_changes WHERE character_id = $1",
+                    connection, transaction))
+                {
+                    clear.Parameters.Add(new NpgsqlParameter { Value = characterId });
+                    await clear.ExecuteNonQueryAsync(token);
+                }
+                await using var reset = new NpgsqlCommand(
+                    $"UPDATE {_schema}.skill_isis_fetch_budget SET fetch_budget = 0 WHERE character_id = $1",
+                    connection, transaction)
+                {
+                    Parameters = { new() { Value = characterId } },
+                };
+                await reset.ExecuteNonQueryAsync(token);
+            }
+            else
+            {
+                await using var decrement = new NpgsqlCommand(
+                    $"UPDATE {_schema}.skill_isis_fetch_budget SET fetch_budget = $2 WHERE character_id = $1",
+                    connection, transaction)
+                {
+                    Parameters = { new() { Value = characterId }, new() { Value = (short)(fetchBudget - 1) } },
+                };
+                await decrement.ExecuteNonQueryAsync(token);
+            }
+            return (IReadOnlyList<(int TypeId, long PointChange)>)changes;
+        }, cancellationToken);
     }
 
     /// <summary>The character's skills, by type.</summary>
@@ -146,6 +283,27 @@ public sealed class PgSkillStore
         return await command.ExecuteScalarAsync(cancellationToken) is long points ? points : 0L;
     }
 
+
+    public async Task<long> FreeSkillPointsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT points FROM {_schema}.character_free_skill_points WHERE character_id = $1", connection, transaction)
+        {
+            Parameters = { new() { Value = characterId } },
+        };
+        return (long?)await command.ExecuteScalarAsync(cancellationToken) ?? 0;
+    }
+
+    public async Task<long> TotalPointsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT COALESCE(sum(skill_points), 0)::bigint FROM {_schema}.character_skills WHERE character_id = $1", connection, transaction)
+        {
+            Parameters = { new() { Value = characterId } },
+        };
+        return (long)(await command.ExecuteScalarAsync(cancellationToken) ?? 0L);
+    }
+
     /// <summary>Credits unallocated points inside the caller's transaction, for reward and injector providers.</summary>
     public async Task<long> GrantFreeSkillPointsAsync(
         NpgsqlConnection connection,
@@ -166,6 +324,35 @@ public sealed class PgSkillStore
         };
         return (long)(await command.ExecuteScalarAsync(cancellationToken)
             ?? throw new InvalidOperationException("free skill point grant did not return a balance"));
+    }
+
+
+    public async Task<bool> TryUseDailyAlphaSkillInjectorAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long characterId,
+        int itemTypeId,
+        long nowUnixMs,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"""
+            INSERT INTO {_schema}.daily_alpha_skill_injector_uses AS usage
+                (character_id, item_type_id, used_at_unix_ms)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (character_id, item_type_id) DO UPDATE
+                SET used_at_unix_ms = EXCLUDED.used_at_unix_ms
+                WHERE usage.used_at_unix_ms <= EXCLUDED.used_at_unix_ms - 86400000
+            RETURNING 1
+            """, connection, transaction)
+        {
+            Parameters =
+            {
+                new() { Value = characterId },
+                new() { Value = itemTypeId },
+                new() { Value = nowUnixMs },
+            },
+        };
+        return await command.ExecuteScalarAsync(cancellationToken) is not null;
     }
 
     /// <summary>Reads and locks the balance row, creating its zero row inside the caller's transaction if absent.</summary>
@@ -252,7 +439,7 @@ public sealed class PgSkillStore
             return null;
         }
 
-        await GrantAsync(connection, transaction, characterId, after, cancellationToken);
+        await GrantAsync(connection, transaction, characterId, after, cancellationToken, trackRecentChanges: true);
         await using var debit = new NpgsqlCommand(
             $"UPDATE {_schema}.character_free_skill_points SET points = points - $2 WHERE character_id = $1 AND points >= $2 RETURNING points",
             connection, transaction)

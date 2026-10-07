@@ -86,7 +86,7 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
         return new ItemRow(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, item.Singleton ? -1 : item.Quantity, type?.GroupId ?? 0, type?.CategoryId ?? 0);
     }
 
-    private bool IsCan(Item container) => container.TypeId == CharacterShips.CargoContainerType;
+    private bool IsCan(Item container) => container.TypeId == CharacterShips.CargoContainerTypeId;
 
     // ── opening ──────────────────────────────────────────────────────────────
 
@@ -182,114 +182,100 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
 
     // ── moving goods ─────────────────────────────────────────────────────────
 
-    public async Task<long?> MoveAsync(ClientSession session, long itemId, long sourceId, long destinationId, long? quantity, CancellationToken cancellationToken)
+    public Task<long?> MoveAsync(ClientSession session, long itemId, long sourceId, long destinationId, long? quantity, CancellationToken cancellationToken) =>
+        MoveAsync(session, itemId, sourceId, destinationId, quantity, null, cancellationToken);
+
+public async Task<long?> MoveAsync(ClientSession session, long itemId, long sourceId, long destinationId, long? quantity,
+        int? destinationFlag, CancellationToken cancellationToken)
     {
         if (session.CharacterId is not { } characterId || session.GetInt("shipid") is not { } shipId || !_space.IsInSpace(session))
-        {
             return null;
-        }
         var toShip = destinationId == shipId;
-        if (toShip == (sourceId == shipId))
-        {
-            return null; // goods go between the ship and a container, not within one of them
-        }
+        if (toShip == (sourceId == shipId)) return null;
         var containerId = toShip ? sourceId : destinationId;
-        if (await OpenAsync(session, containerId, cancellationToken) is not { } container)
-        {
-            return null;
-        }
+        if (await OpenAsync(session, containerId, cancellationToken) is not { } container) return null;
         if (toShip && !await MayTakeFromAsync(characterId, container, cancellationToken))
-        {
             throw MachoErrors.ThrowUserError("SafetyActivated");
-        }
         var wasEmpty = (await _items.InContainerAsync(containerId, cancellationToken)).Count == 0;
-        switch (await _ships.MoveInSpaceAsync(characterId, itemId, sourceId, destinationId, quantity, cancellationToken))
+        var targetFlag = toShip ? destinationFlag ?? CargoFlag : CharacterShips.ContainerFlag;
+        switch (await _ships.MoveInSpaceAsync(characterId, itemId, sourceId, destinationId, quantity, targetFlag, cancellationToken))
         {
             case ShipRefused refused:
                 throw ShipErrors.Of(refused, _statics);
             case ShipChanged { Stacks: { } stacks } changed:
-                await TellMoveAsync(session, shipId, container, toShip, wasEmpty, stacks, cancellationToken);
+                await TellMoveAsync(session, shipId, container, toShip, wasEmpty, stacks, targetFlag, cancellationToken);
                 return changed.ItemId;
             default:
                 return null;
         }
     }
 
-    private async Task TellMoveAsync(ClientSession session, long shipId, Item container, bool toShip, bool wasEmpty, IReadOnlyList<ItemChanged> stacks, CancellationToken cancellationToken)
+
+
+    private async Task TellMoveAsync(ClientSession session, long shipId, Item container, bool toShip, bool wasEmpty,
+        IReadOnlyList<ItemChanged> stacks, int destinationFlag, CancellationToken cancellationToken)
     {
         var ulongSession = (ulong)session.SessionId;
         var context = Py.Tuple(new PyStr("Ship"), InventoryWire.Id(shipId), new PyStr("ShipCargo"));
         foreach (var stack in stacks)
         {
             if (toShip)
-            {
                 Eve.Services.Ships.ShipNotifications.SendItemsChanged(session, stack, RowOf, context);
-            }
             else
-            {
                 Eve.Services.Ships.ShipNotifications.SendItemChange(session, stack, RowOf);
-            }
         }
         var empty = (await _items.InContainerAsync(container.Id, cancellationToken)).Count == 0;
         var disposed = toShip && empty && IsCan(container);
         if (!disposed && (toShip || wasEmpty))
-        {
             await TellChangeAsync(ulongSession, container.Id, empty);
-        }
         if (toShip)
-        {
-            session.SendNotification("OnClientEvent_MoveFromCargoToHangar", "clientID", InventoryWire.Id(container.Id), InventoryWire.Id(shipId), new PyInt(CargoFlag));
-        }
+            session.SendNotification("OnClientEvent_MoveFromCargoToHangar", "clientID", InventoryWire.Id(container.Id), InventoryWire.Id(shipId), new PyInt(destinationFlag));
         if (disposed)
-        {
             await RemoveEmptyCanAsync(session, container, cancellationToken);
-        }
     }
 
-    public async Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long> itemIds, long sourceId, long destinationId, CancellationToken cancellationToken)
+    public Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long> itemIds, long sourceId, long destinationId, CancellationToken cancellationToken) =>
+        MoveAllAsync(session, itemIds, sourceId, destinationId, null, cancellationToken);
+
+public async Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long> itemIds, long sourceId, long destinationId,
+        int? destinationFlag, CancellationToken cancellationToken)
     {
-        if (session.CharacterId is not { } characterId || session.GetInt("shipid") is not { } shipId || !_space.IsInSpace(session) || destinationId != shipId || sourceId == shipId)
-        {
+        if (session.CharacterId is not { } characterId || session.GetInt("shipid") is not { } shipId || !_space.IsInSpace(session)
+            || destinationId != shipId || sourceId == shipId)
             return null;
-        }
-        if (await OpenAsync(session, sourceId, cancellationToken) is not { } container)
-        {
-            return null;
-        }
+        if (await OpenAsync(session, sourceId, cancellationToken) is not { } container) return null;
         if (!await MayTakeFromAsync(characterId, container, cancellationToken))
-        {
             throw MachoErrors.ThrowUserError("SafetyActivated");
-        }
-        switch (await _ships.MoveAllInSpaceAsync(characterId, itemIds, sourceId, cancellationToken))
+        var flag = destinationFlag ?? CargoFlag;
+        switch (await _ships.MoveAllInSpaceAsync(characterId, itemIds, sourceId, flag, cancellationToken))
         {
             case ShipRefused refused:
                 throw ShipErrors.Of(refused, _statics);
             case ShipChanged { Stacks: { } stacks }:
-                await TellMoveAllAsync(session, shipId, container, stacks, cancellationToken);
+                await TellMoveAllAsync(session, shipId, container, stacks, flag, cancellationToken);
                 return true;
             default:
                 return false;
         }
     }
 
+
+
     /// <summary>
     /// What the client is told of a batch that was taken from a can or a wreck (recorded: <c>loot.json</c>): each stack that moved (<c>OnItemsChanged</c>, to the character, with no place for the
     /// loot window), the scene's word for each of them of what is in the container now, the single <c>OnClientEvent_MoveFromCargoToHangar</c>, and when nothing is left the single
     /// <c>OnWreckLootAll</c> with every item that was taken; last a can that is empty goes.
     /// </summary>
-    private async Task TellMoveAllAsync(ClientSession session, long shipId, Item container, IReadOnlyList<ItemChanged> stacks, CancellationToken cancellationToken)
+    private async Task TellMoveAllAsync(ClientSession session, long shipId, Item container, IReadOnlyList<ItemChanged> stacks,
+        int destinationFlag, CancellationToken cancellationToken)
     {
         var ulongSession = (ulong)session.SessionId;
         foreach (var stack in stacks)
-        {
             Eve.Services.Ships.ShipNotifications.SendItemsChanged(session, stack, RowOf, idType: "charid");
-        }
         var empty = (await _items.InContainerAsync(container.Id, cancellationToken)).Count == 0;
         foreach (var _ in stacks)
-        {
             await TellChangeAsync(ulongSession, container.Id, empty);
-        }
-        session.SendNotification("OnClientEvent_MoveFromCargoToHangar", "clientID", InventoryWire.Id(container.Id), InventoryWire.Id(shipId), new PyInt(CargoFlag));
+        session.SendNotification("OnClientEvent_MoveFromCargoToHangar", "clientID", InventoryWire.Id(container.Id), InventoryWire.Id(shipId), new PyInt(destinationFlag));
         if (empty)
         {
             session.SendNotification(
@@ -297,9 +283,7 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
                 Py.Tuple([.. stacks.Select(stack => InventoryWire.Tuple(RowOf(stack.After with { LocationId = stack.PreviousLocationId, Flag = stack.PreviousFlag, Quantity = stack.PreviousQuantity })))]));
         }
         if (empty && IsCan(container))
-        {
             await RemoveEmptyCanAsync(session, container, cancellationToken);
-        }
     }
 
     /// <summary>The scene is told what is in the wreck now; a scene that is not reached is no reason to fail what was moved.</summary>
@@ -349,8 +333,8 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
         {
             return [];
         }
-        await _statics.EnsureTypesAsync([CharacterShips.CargoContainerType], cancellationToken);
-        var canType = _statics.Type(CharacterShips.CargoContainerType);
+        await _statics.EnsureTypesAsync([CharacterShips.CargoContainerTypeId], cancellationToken);
+        var canType = _statics.Type(CharacterShips.CargoContainerTypeId);
         var can = await _ships.CreateCanAsync(characterId, system, cancellationToken);
 
         // the can comes into space first (the client is told the ball and the effect), then the stacks go into it
@@ -358,7 +342,7 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
         try
         {
             placed = await _sim.PlaceContainerAsync(new SimPlaceContainer(
-                id, can.Id, new SimWreckKind(CharacterShips.CargoContainerType, canType?.Name ?? "Cargo Container", canType?.GraphicId ?? 0),
+                id, can.Id, new SimWreckKind(CharacterShips.CargoContainerTypeId, canType?.Name ?? "Cargo Container", canType?.GraphicId ?? 0),
                 canType?.Attributes.GetValueOrDefault(162, CanRadiusFallback) ?? CanRadiusFallback, shipId,
                 new SimCredit(pilot.Id, pilot.CorporationId, pilot.AllianceId ?? 0, 0), JettisonDistance), cancellationToken);
         }

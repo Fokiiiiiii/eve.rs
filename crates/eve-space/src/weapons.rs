@@ -281,17 +281,26 @@ impl Scene {
         })
     }
 
-    /// The ships of the scene within `range` of the surface of the ship of `session`, not its own and not in warp: `(session, ship id)`, by ship id.
     pub(crate) fn in_smartbomb_range(&self, session: SessionId, range: f64) -> Vec<(SessionId, i64)> {
-        let mut inside: Vec<(SessionId, i64)> = self
-            .pilots
-            .iter()
-            .filter(|(other, pilot)| {
-                **other != session && !pilot.flight.as_ref().is_some_and(|flight| flight.is_warping())
-            })
-            .filter(|(other, _)| self.apart(session, **other).is_some_and(|apart| apart <= range + 1e-6))
-            .map(|(other, pilot)| (*other, pilot.ship.spec.ship_id))
-            .collect();
+        let Some(source) = self.pilots.get(&session) else { return Vec::new() };
+        let source_ship_id = source.ship.spec.ship_id;
+        let position = [source.ship.position.x, source.ship.position.y, source.ship.position.z];
+        let candidates = self.pilots.iter().map(|(other, pilot)| self.spatial_ship(*other, pilot));
+        let mut inside: Vec<_> = crate::geo::SpatialQuery::surface_radius(
+            position,
+            source.ship.spec.radius,
+            range,
+            1e-6,
+            crate::geo::SpatialFilter {
+                exclude_id: Some(source_ship_id),
+                exclude_warping: true,
+                ..crate::geo::SpatialFilter::default()
+            },
+        )
+        .execute(candidates)
+        .into_iter()
+        .filter_map(|hit| self.pilots.get(&hit.item).map(|pilot| (hit.item, pilot.ship.spec.ship_id)))
+        .collect();
         inside.sort_by_key(|(_, ship_id)| *ship_id);
         inside
     }

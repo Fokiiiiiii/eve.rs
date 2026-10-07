@@ -26,6 +26,8 @@ public interface ISpaceContainers
     /// reference's order. Answers the id of the item that moved (a stack split off is a new one), or null when nothing was done. Throws the client's error for what is refused.
     /// </summary>
     Task<long?> MoveAsync(ClientSession session, long itemId, long sourceId, long destinationId, long? quantity, CancellationToken cancellationToken);
+    Task<long?> MoveAsync(ClientSession session, long itemId, long sourceId, long destinationId, long? quantity, int? destinationFlag, CancellationToken cancellationToken) =>
+        MoveAsync(session, itemId, sourceId, destinationId, quantity, cancellationToken);
 
     /// <summary>
     /// "Loot All": takes everything of <paramref name="itemIds"/> that is in a can or a wreck into the ship's hold in one go (all or nothing for room), and tells the pilot's client as the
@@ -33,6 +35,8 @@ public interface ISpaceContainers
     /// for what is refused (<c>SafetyActivated</c>, <c>NotEnoughCargoSpace</c>, out of range).
     /// </summary>
     Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long> itemIds, long sourceId, long destinationId, CancellationToken cancellationToken);
+    Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long> itemIds, long sourceId, long destinationId, int? destinationFlag, CancellationToken cancellationToken) =>
+        MoveAllAsync(session, itemIds, sourceId, destinationId, cancellationToken);
 
 
     /// <summary>Abandons loot rights for owned cans or wrecks without moving their contents.</summary>

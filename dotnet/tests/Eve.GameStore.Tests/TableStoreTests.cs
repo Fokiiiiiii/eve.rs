@@ -23,6 +23,31 @@ public class TableStoreTests
     }
 
     [PgFact]
+    public async Task Changes_join_the_caller_transaction_and_rollback_with_it()
+    {
+        await using var pg = await PgScope.CreateAsync();
+        var fence = await World(pg);
+        await using var source = Npgsql.NpgsqlDataSource.Create(pg.ConnectionString);
+        await using var connection = await source.OpenConnectionAsync();
+
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await pg.Store.ApplyChangesAsync(connection, transaction, "characters", [Up("rolled-back", "1")], [], fence);
+            Assert.Equal(0, await pg.Store.RowCountAsync("characters"));
+            await transaction.RollbackAsync();
+        }
+
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await pg.Store.ApplyChangesAsync(connection, transaction, "characters", [Up("committed", "2")], [], fence);
+            await transaction.CommitAsync();
+        }
+
+        var row = Assert.Single(await pg.Store.LoadRowsAsync("characters"));
+        Assert.Equal("committed", row.Key);
+    }
+
+    [PgFact]
     public async Task A_key_that_is_both_upserted_and_deleted_ends_up_deleted()
     {
         await using var pg = await PgScope.CreateAsync();

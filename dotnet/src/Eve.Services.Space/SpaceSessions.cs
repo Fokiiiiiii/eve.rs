@@ -20,6 +20,20 @@ namespace Eve.Services.Space;
 /// the notifications), forwarding what the simulation says to the client that plays the ship, and bringing the ship home when it docks, or
 /// when the simulation is lost. What happens in space itself (motion, the balls, the stamps) is the simulation's (ADR 0007).
 /// </summary>
+public enum ShipLifecycleAction
+{
+    SafeLogoff,
+    Eject,
+    Board
+}
+
+public sealed record ShipBoarded(
+    long ShipId,
+    long PreviousOwnerCharacterId,
+    long ActorCharacterId,
+    long ActorCorporationId,
+    long BoardedAtFileTime);
+
 public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules, ISpaceHealth, ISpaceHulls, ISpaceNpcs, ISpaceDeath, ISpaceRounds
 {
     /// <summary>How long a ship that has undocked cannot be hurt (the reference's: 30 seconds).</summary>
@@ -78,8 +92,10 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     private readonly Action<string>? _log;
     private readonly ConcurrentDictionary<ulong, Pilot> _pilots = new();
     private readonly ConcurrentDictionary<ulong, SemaphoreSlim> _targeting = new();
-    /// <summary>The sessions whose ship's destruction is being told (each is told once).</summary>
-    private readonly ConcurrentDictionary<ulong, byte> _dying = new();
+    private readonly ConcurrentDictionary<ulong, IReadOnlySet<long>> _lockedTargets = new();
+    /// <summary>The ship ids whose destruction is being processed (each ship is handled once).</summary>
+    private readonly ConcurrentDictionary<long, byte> _dying = new();
+    private readonly ConcurrentDictionary<long, byte> _concordDestroyed = new();
     /// <summary>Who waits to hear what became of a ship they had destroyed (<c>/suicide</c>), by ship.</summary>
     private readonly ConcurrentDictionary<long, TaskCompletionSource<SelfDestruct?>> _deaths = new();
     private readonly TimeSpan _protection;
@@ -90,9 +106,23 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
 
     /// <param name="protection">How long a ship that has just undocked is protected if its pilot does not fly it first (the client is told when it ends); <see cref="Timeout.InfiniteTimeSpan"/> for never.</param>
     /// <param name="jumpCloak">How long a ship that has come through a stargate stays cloaked if its pilot does not fly it first.</param>
+    private readonly ConcurrentDictionary<ulong, byte> _safeLogoffs = new();
+
+    /// <summary>Blockers owned by adjacent systems (crime timers, targeting, fleet, drone and movement state).</summary>
+    public Func<ShipLifecycleAction, ClientSession, long?, CancellationToken, ValueTask<IReadOnlyList<string>>>? LifecycleBlockers { get; set; }
+
+    /// <summary>Invalidates the former owner's insurance after an outsider successfully boards their ejected ship.</summary>
+    public Func<ShipBoarded, CancellationToken, ValueTask>? InvalidateInsuranceForBoarding { get; set; }
+
+    private sealed record EjectedShip(long OwnerCharacterId, long OwnerCorporationId, int ShipTypeId, int SolarSystemId);
+    private readonly ConcurrentDictionary<long, EjectedShip> _ejectedShips = new();
+
+private readonly TransitionRuntime _transitions;
+
     public SpaceSessions(ISimulation sim, CharacterShips ships, DogmaStatic statics, StationCatalog stations, SolarSystemCatalog systems, Func<long> nowUnixMs, Action<string>? log = null, TimeSpan? protection = null, TimeSpan? jumpCloak = null, Eve.Scheduler.LocalTimers? localTimers = null)
     {
         _timers = localTimers ?? new LocalTimers(log);
+        _transitions = new TransitionRuntime(_timers);
         _ownsTimers = localTimers is null;
         _protection = protection ?? TimeSpan.FromTicks(UndockInvulnerabilityTicks);
         _jumpCloak = jumpCloak ?? TimeSpan.FromTicks(JumpCloakTicks);
@@ -193,7 +223,14 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// The domain events bus (set by the host that has one). What happens in space is announced on it as well (<c>npc.killed</c>, <c>ship.lost</c>, <c>bounty.paid</c>) so that
     /// missions, crimewatch and the rest subscribe instead of hooking this class; the C# events above stay for the code that needs a synchronous call.
     /// </summary>
-    public EventBus? Events { get; set; }
+    public EventBus? Events
+    {
+        get => _transitions.Events;
+        set => _transitions.Events = value;
+    }
+
+
+    public TransitionRuntime Transitions => _transitions;
 
     /// <summary>Publishes an event on the bus without waiting for it; a failure is logged (the thing it announces has happened already).</summary>
     private void Announce(string topic, object payload, string key)
@@ -273,6 +310,16 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
 
     private static MachoWrappedException Notify(string text) => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(text)));
 
+
+    private static MachoWrappedException MovementRefused(PolicyDecision decision, string action) =>
+        Notify(decision.BlockReason switch
+        {
+            PolicyBlockReason.WeaponsTimer => $"You cannot {action} while your weapons timer is active.",
+            PolicyBlockReason.CriminalTimer => $"You cannot {action} while your criminal timer is active in high-security space.",
+            PolicyBlockReason.SessionChangeTimer => $"You cannot {action} while your session change timer is active.",
+            _ => $"You cannot {action} at this time.",
+        });
+
     // ── undocking ────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -298,52 +345,69 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         var spec = SimShips.Of(snapshot, _statics, await SecurityStatusAsync(characterId, cancellationToken));
         spec = spec with { Condition = (spec.Condition ?? SimCondition.Full) with { ShieldCharge = 1, Charge = 1 } };
         var systemId = snapshot.Character.SolarSystemId;
+        var sessionId = (ulong)session.SessionId;
+        Pilot? pilot = null;
 
-        var transition = await _ships.UndockAsync(characterId, cancellationToken);
-        if (transition.Moved is not { } moved)
+        var transition = await _transitions.ExecuteAsync(
+            token => _ships.UndockAsync(characterId, token),
+            result => result.Moved is not null,
+            async (result, token) =>
+            {
+                string? refusal;
+                try
+                {
+                    refusal = await _sim.EnterAsync(new SimEnter(sessionId, systemId, EnterHow.Undock, stationId, spec), token);
+                    if (refusal is null)
+                        await _sim.SetHeatProfileAsync(sessionId, SimShips.HeatProfileOf(snapshot, _statics), token);
+                }
+                catch (SimUnavailableException error)
+                {
+                    refusal = error.Message;
+                }
+                if (refusal is not null)
+                {
+                    _log?.Invoke($"the simulation did not take the ship of character {characterId}: {refusal}");
+                    await _ships.RecoverFromSpaceAsync(characterId, CancellationToken.None);
+                    throw Notify("Space is not available right now. Try again in a moment.");
+                }
+                if (!_pilots.Values.Any(other => other.SolarSystemId == systemId))
+                    ForgetNpcsOf(systemId);
+            },
+            (result, _) =>
+            {
+                var moved = result.Moved!;
+                var now = FileTimeNow();
+                pilot = new Pilot(session, characterId, moved.Ship.Id, moved.Ship.TypeId,
+                    systemId, now + UndockInvulnerabilityTicks, stationId);
+                _pilots[sessionId] = pilot;
+                SystemEntered?.Invoke(systemId);
+                session.Closed += () => OnSessionClosed(session);
+                ArmProtection(pilot, _protection);
+                return Task.FromResult(true);
+            },
+            (result, _) =>
+            {
+                var moved = result.Moved!;
+                var type = _statics.Type(moved.Ship.TypeId);
+                session.SendNotification(
+                    "OnItemsChanged", "charid",
+                    new PyList([InventoryWire.PackedRow(ShipRow(moved.Ship, type), new PyStr($"Undocking:{stationId}"))]),
+                    ChangedFrom(moved), None);
+                ReleaseBoundObjects(session);
+                session.Change(("stationid", None), ("locationid", new PyInt(systemId)), ("solarsystemid", new PyInt(systemId)));
+                session.SendNotification("OnInvulunOnUndockingUpdated", "shipid", InventoryWire.Id(pilot!.ShipId),
+                    new PyLong(pilot.InvulnerableUntil), new PyLong(UndockInvulnerabilityTicks));
+                return Task.CompletedTask;
+            },
+            cancellationToken,
+            sessionId);
+        if (transition.Moved is null)
         {
             _log?.Invoke($"undock of character {characterId} refused: {transition.Refusal}");
             return None;
         }
-
-        string? refusal;
-        try
-        {
-            refusal = await _sim.EnterAsync(new SimEnter((ulong)session.SessionId, systemId, EnterHow.Undock, stationId, spec), cancellationToken);
-            if (refusal is null) await _sim.SetHeatProfileAsync((ulong)session.SessionId, SimShips.HeatProfileOf(snapshot, _statics), cancellationToken);
-        }
-        catch (SimUnavailableException error)
-        {
-            refusal = error.Message;
-        }
-        if (refusal is not null)
-        {
-            _log?.Invoke($"the simulation did not take the ship of character {characterId}: {refusal}");
-            await _ships.RecoverFromSpaceAsync(characterId, CancellationToken.None);
-            throw Notify("Space is not available right now. Try again in a moment.");
-        }
-
-        var now = FileTimeNow();
-        var pilot = new Pilot(session, characterId, moved.Ship.Id, moved.Ship.TypeId, systemId, now + UndockInvulnerabilityTicks, stationId);
-        if (!_pilots.Values.Any(other => other.SolarSystemId == systemId))
-        {
-            ForgetNpcsOf(systemId);
-        }
-        _pilots[(ulong)session.SessionId] = pilot;
-        SystemEntered?.Invoke(systemId);
-        session.Closed += () => OnSessionClosed(session);
-        ArmProtection(pilot, _protection);
-
-        var type = _statics.Type(moved.Ship.TypeId);
-        session.SendNotification(
-            "OnItemsChanged", "charid",
-            new PyList([InventoryWire.PackedRow(ShipRow(moved.Ship, type), new PyStr($"Undocking:{stationId}"))]),
-            ChangedFrom(moved), None);
-        ReleaseBoundObjects(session);
-        session.Change(("stationid", None), ("locationid", new PyInt(systemId)), ("solarsystemid", new PyInt(systemId)));
-        session.SendNotification("OnInvulunOnUndockingUpdated", "shipid", InventoryWire.Id(pilot.ShipId), new PyLong(pilot.InvulnerableUntil), new PyLong(UndockInvulnerabilityTicks));
-
-        return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId), new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + SessionChangeCooldownMs)));
+        return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId),
+            new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + SessionChangeCooldownMs)));
     }
 
 
@@ -351,17 +415,270 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// <summary>Leaves a docked ship, activates the character's capsule, and keeps the ship in the hangar.</summary>
 
     /// <summary>Boards a ship already in the character's station hangar.</summary>
-    public async ValueTask<PyValue> BoardAsync(ClientSession session, long shipId, long currentShipId, CancellationToken cancellationToken)
+    public async ValueTask<PyValue> EjectAsync(ClientSession session, CancellationToken cancellationToken)
     {
-        var locationId = session.GetInt("stationid") ?? session.GetInt("structureid");
-        if (session.CharacterId is not { } characterId || locationId is not { } dockLocationId
-            || session.GetInt("shipid") != currentShipId || IsInSpace(session)
-            || !await _ships.BoardAsync(characterId, dockLocationId, currentShipId, shipId, cancellationToken))
+        var id = (ulong)session.SessionId;
+        CancelSafeLogoff(session);
+        if (LifecycleBlockers is not { } readBlockers
+            || !_pilots.TryGetValue(id, out var pilot)
+            || session.CharacterId != pilot.CharacterId || session.GetInt("shipid") != pilot.ShipId
+            || !IsInSpace(session) || _transitions.SessionChangeActive(id)
+            || await _ships.LoadAsync(pilot.CharacterId, cancellationToken) is not { } fitting
+            || fitting.Ship.Id != pilot.ShipId
+            || fitting.Ship.TypeId == CharacterShips.CapsuleTypeId)
         {
             return None;
         }
 
-        session.Change(("shipid", new PyLong(shipId)));
+        IReadOnlyList<string> blockers;
+        try
+        {
+            blockers = await readBlockers(ShipLifecycleAction.Eject, session, null, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"eject conditions for session {session.SessionId} could not be checked: {error.Message}");
+            return SafeLogoffRefusal();
+        }
+        if (blockers.Count != 0)
+            return new PyList([.. blockers.Select(label => new PyStr(label))]);
+
+        var position = await PositionOfAsync(session, pilot.ShipId, cancellationToken);
+        if (position is not { } place)
+            return None;
+
+        var simulationFailed = false;
+        var transition = await _transitions.ExecuteAsync(
+            token => _ships.EjectAsync(pilot.CharacterId, pilot.ShipId, token),
+            result => result is not null,
+            async (result, token) =>
+            {
+                var ejected = result!;
+                await _charges.CloseAsync(id);
+                foreach (var moduleId in ejected.ModulesToStop)
+                    await _sim.OfflineModuleAsync(id, moduleId, token);
+                _sim.ShipChanged(
+                    id,
+                    SimShips.Of(ejected.EjectedSnapshot, _statics, await SecurityStatusAsync(pilot.CharacterId, token)));
+                _sim.Leave(id, LeaveWhy.Ejected);
+                if (ejected.HullCollapsed)
+                {
+                    _sim.Destroy(ejected.Ship.Id,
+                        new SimCredit(pilot.CharacterId, fitting.Character.CorporationId,
+                            fitting.Character.AllianceId ?? 0, fitting.Character.FactionId ?? 0));
+                }
+
+                if (await _ships.LoadAsync(pilot.CharacterId, token) is not { } capsule
+                    || capsule.Ship.Id != ejected.PilotShip.Id)
+                {
+                    _log?.Invoke($"the capsule of character {pilot.CharacterId} could not be loaded after ejecting");
+                    simulationFailed = true;
+                    session.Close();
+                    return;
+                }
+                var refusal = await _sim.RespawnAsync(new SimRespawn(
+                    id,
+                    SimShips.Of(capsule, _statics, await SecurityStatusAsync(pilot.CharacterId, token)),
+                    [place.X, place.Y, place.Z],
+                    [1.0, 0.0, 0.0]), token);
+                if (refusal is not null)
+                {
+                    _log?.Invoke($"the simulation did not take the capsule of character {pilot.CharacterId} after ejecting: {refusal}");
+                    simulationFailed = true;
+                    session.Close();
+                }
+            },
+            (result, _) =>
+            {
+                if (simulationFailed)
+                    return Task.FromResult(false);
+
+                var ejected = result!;
+                _ejectedShips[ejected.Ship.Id] = new EjectedShip(
+                    pilot.CharacterId, fitting.Character.CorporationId, ejected.Ship.TypeId, pilot.SolarSystemId);
+                pilot.End();
+                var capsulePilot = new Pilot(
+                    session, pilot.CharacterId, ejected.PilotShip.Id, ejected.PilotShip.TypeId, pilot.SolarSystemId, 0);
+                if (!_pilots.TryUpdate(id, capsulePilot, pilot))
+                {
+                    session.Close();
+                    return Task.FromResult(false);
+                }
+                session.Change(("shipid", new PyLong(ejected.PilotShip.Id)));
+                return Task.FromResult(true);
+            },
+            (result, _) =>
+            {
+                var ejected = result!;
+                if (ejected.Events.Count != 0)
+                {
+                    session.SendNotification(
+                        "OnMultiEvent", "clientID",
+                        Eve.Services.Ships.ShipNotifications.MultiEvent(
+                            pilot.CharacterId, pilot.ShipId, ejected.Events, FileTimeNow()));
+                }
+                return Task.CompletedTask;
+            },
+            cancellationToken,
+            id);
+
+        return transition is not null && !simulationFailed
+            ? Py.Tuple(new PyDict([]), new PyDict([]), new PyDict([]), new PyDict([]))
+            : None;
+    }
+
+    public async ValueTask<PyValue> BoardAsync(ClientSession session, long shipId, long currentShipId, CancellationToken cancellationToken)
+    {
+        CancelSafeLogoff(session);
+        var id = (ulong)session.SessionId;
+        if (session.CharacterId is not { } characterId
+            || session.GetInt("shipid") != currentShipId
+            || _transitions.SessionChangeActive(id))
+            return None;
+
+        if (LifecycleBlockers is not { } readBlockers)
+            return SafeLogoffRefusal();
+        IReadOnlyList<string> blockers;
+        try
+        {
+            blockers = await readBlockers(ShipLifecycleAction.Board, session, shipId, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"board conditions for session {session.SessionId} could not be checked: {error.Message}");
+            return SafeLogoffRefusal();
+        }
+        if (blockers.Count != 0)
+            return new PyList([.. blockers.Select(label => new PyStr(label))]);
+
+        var locationId = session.GetInt("stationid") ?? session.GetInt("structureid");
+        if (!IsInSpace(session))
+        {
+            if (locationId is not { } dockLocationId)
+                return None;
+            var changed = await _transitions.ExecuteAsync(
+                token => _ships.BoardAsync(characterId, dockLocationId, currentShipId, shipId, token),
+                result => result,
+                applySimulation: null,
+                applySession: (_, _) =>
+                {
+                    session.Change(("shipid", new PyLong(shipId)));
+                    return Task.FromResult(true);
+                },
+                notify: null,
+                cancellationToken,
+                id);
+            if (!changed)
+                return None;
+            var dockedEmpty = new PyDict([]);
+            return Py.Tuple(dockedEmpty, dockedEmpty, dockedEmpty, dockedEmpty);
+        }
+
+        if (!_pilots.TryGetValue(id, out var currentPilot)
+            || currentPilot.CharacterId != characterId
+            || currentPilot.ShipId != currentShipId
+            || !_ejectedShips.TryGetValue(shipId, out var abandoned)
+            || abandoned.ShipTypeId == CharacterShips.CapsuleTypeId
+            || abandoned.SolarSystemId != currentPilot.SolarSystemId)
+            return None;
+
+        var currentPosition = await PositionOfAsync(session, currentShipId, cancellationToken);
+        var shipPosition = await PositionOfAsync(session, shipId, cancellationToken);
+        if (currentPosition is not { } from || shipPosition is not { } to || from.SolarSystemId != to.SolarSystemId)
+            return None;
+        var dx = from.X - to.X;
+        var dy = from.Y - to.Y;
+        var dz = from.Z - to.Z;
+        if (dx * dx + dy * dy + dz * dz > 6_500d * 6_500d)
+            return None;
+
+        if (abandoned.OwnerCharacterId != characterId && IsTargetedByAnotherPlayer(id, shipId))
+            return None;
+
+        var simulationFailed = false;
+        var nextShipTypeId = 0;
+        var transition = await _transitions.ExecuteAsync(
+            token => _ships.BoardInSpaceAsync(
+                characterId, currentPilot.SolarSystemId, currentShipId, shipId, token),
+            result => result is not null,
+            async (result, token) =>
+            {
+                var boarding = result!;
+                _ejectedShips[currentShipId] = new EjectedShip(
+                    characterId, boarding.BoarderCorporationId, currentPilot.TypeId, currentPilot.SolarSystemId);
+                _ejectedShips.TryRemove(shipId, out _);
+                _sim.Leave(id, LeaveWhy.Boarded);
+
+                if (await _ships.LoadAsync(characterId, token) is not { } fitting || fitting.Ship.Id != shipId)
+                {
+                    _log?.Invoke($"the simulation could not load boarded ship {shipId} for character {characterId}");
+                    simulationFailed = true;
+                    session.Close();
+                    return;
+                }
+
+                nextShipTypeId = fitting.Ship.TypeId;
+                var refusal = await _sim.RespawnAsync(new SimRespawn(
+                    id,
+                    SimShips.Of(fitting, _statics, await SecurityStatusAsync(characterId, token)),
+                    [to.X, to.Y, to.Z],
+                    [1.0, 0.0, 0.0]), token);
+                if (refusal is not null)
+                {
+                    _log?.Invoke($"the simulation did not take ship {shipId} after boarding: {refusal}");
+                    simulationFailed = true;
+                    session.Close();
+                }
+            },
+            (result, _) =>
+            {
+                if (simulationFailed)
+                    return Task.FromResult(false);
+
+                var nextPilot = new Pilot(
+                    session, characterId, shipId, nextShipTypeId, currentPilot.SolarSystemId, 0);
+                currentPilot.End();
+                if (!_pilots.TryUpdate(id, nextPilot, currentPilot))
+                {
+                    session.Close();
+                    return Task.FromResult(false);
+                }
+                session.Change(("shipid", new PyLong(shipId)));
+                return Task.FromResult(true);
+            },
+            async (result, _) =>
+            {
+                var boarding = result!;
+                if (boarding.PreviousOwnerId == characterId || InvalidateInsuranceForBoarding is not { } invalidateInsurance)
+                    return;
+                var boarded = new ShipBoarded(
+                    boarding.ShipId,
+                    boarding.PreviousOwnerId,
+                    boarding.BoarderCharacterId,
+                    boarding.BoarderCorporationId,
+                    FileTimeNow());
+                try
+                {
+                    await invalidateInsurance(boarded, CancellationToken.None);
+                }
+                catch (Exception error)
+                {
+                    _log?.Invoke($"insurance invalidation after ship {shipId} was boarded failed: {error.Message}");
+                }
+            },
+            cancellationToken,
+            id);
+
+        if (transition is null || simulationFailed)
+            return None;
         var empty = new PyDict([]);
         return Py.Tuple(empty, empty, empty, empty);
     }
@@ -376,7 +693,19 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             return None;
         }
 
-        var capsule = await _ships.LeaveShipAsync(characterId, dockLocationId, shipId, cancellationToken);
+        var sessionId = (ulong)session.SessionId;
+        var capsule = await _transitions.ExecuteAsync(
+            token => _ships.LeaveShipAsync(characterId, dockLocationId, shipId, token),
+            result => result is not null,
+            applySimulation: null,
+            applySession: (result, _) =>
+            {
+                session.Change(("shipid", new PyLong(result!.Id)));
+                return Task.FromResult(true);
+            },
+            notify: null,
+            cancellationToken,
+            sessionId);
         return capsule is null ? None : InventoryWire.Id(capsule.Id);
     }
 
@@ -429,6 +758,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// </summary>
     public void Command(ClientSession session, byte code, params double[] args)
     {
+        CancelSafeLogoff(session);
         if (_pilots.ContainsKey((ulong)session.SessionId))
         {
             _sim.Command((ulong)session.SessionId, code, args);
@@ -483,6 +813,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     public async Task<TargetingResult?> OrderAsync(ClientSession session, TargetingOrder order, IReadOnlyList<long> targets, CancellationToken cancellationToken)
     {
         var id = (ulong)session.SessionId;
+        CancelSafeLogoff(session);
         if (!_pilots.TryGetValue(id, out var pilot))
         {
             return null;
@@ -507,8 +838,23 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         {
             return TargetingResult.Refusal(reply.Reason ?? "REFUSED", reply.TargetType, reply.DesiredRange, reply.ActualDistance);
         }
+
+        if (order != TargetingOrder.Targeters)
+        {
+            if (reply.Targets.Count == 0)
+                _lockedTargets.TryRemove(id, out _);
+            else
+                _lockedTargets[id] = new HashSet<long>(reply.Targets);
+        }
+
         if (order == TargetingOrder.Lock)
         {
+            foreach (var targetId in reply.Targets)
+            {
+                var target = _pilots.Values.FirstOrDefault(other => other.ShipId == targetId);
+                if (target is not null)
+                    CancelSafeLogoff(target.Session);
+            }
             EndInvulnerability(pilot);
             session.SendNotification("OnInvulnCancelled", "shipid", InventoryWire.Id(pilot.ShipId));
         }
@@ -521,6 +867,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// </summary>
     public async Task<ModuleResult?> ActivateAsync(ClientSession session, long moduleId, string effectName, long targetId, int repeat, CancellationToken cancellationToken)
     {
+        CancelSafeLogoff(session);
         var id = (ulong)session.SessionId;
         if (!_pilots.TryGetValue(id, out var pilot) || session.CharacterId is not { } characterId)
         {
@@ -544,6 +891,13 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         {
             return ModuleResult.Refusal(made.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
         }
+
+        var targetPilot = _pilots.Values.FirstOrDefault(other => other.ShipId == package.TargetId);
+        var securityClass = _systems.Get(pilot.SolarSystemId) is { } system
+            ? Security.ClassFromLevel(system.Security)
+            : (SecurityClass?)null;
+        AggressionRequest? assistanceRequest = null;
+        Func<AggressionRequest, CancellationToken, Task>? recordAssistance = null;
         var assistance = package.Action is SimAction.Remote
         {
             What: SimRemote.Repair or SimRemote.MutadaptiveRepair or SimRemote.Transfer
@@ -552,7 +906,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         };
         if (assistance)
         {
-            var targetTypeId = _pilots.Values.FirstOrDefault(other => other.ShipId == package.TargetId)?.TypeId;
+            var targetTypeId = targetPilot?.TypeId;
             if (targetTypeId is null && _npcShips.TryGetValue(package.TargetId, out var npc))
             {
                 targetTypeId = npc.TypeId;
@@ -567,11 +921,42 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             {
                 return ModuleResult.Refusal("REFUSED", made.ModuleType, made.ModuleName);
             }
+
+            if (targetPilot is { CharacterId: > 0 } recipient
+                && recipient.CharacterId != characterId
+                && securityClass is { } assistanceWhere)
+            {
+                var request = new AggressionRequest(
+                    characterId,
+                    recipient.CharacterId,
+                    recipient.ShipId,
+                    pilot.SolarSystemId,
+                    _systems.Get(pilot.SolarSystemId)?.Security ?? 0,
+                    assistanceWhere,
+                    await IsCapsuleAsync(recipient, assistanceWhere, cancellationToken));
+                assistanceRequest = request;
+                var policy = RemoteAssistancePolicyOf;
+                recordAssistance = RecordRemoteAssistance;
+                if (policy is null || recordAssistance is null)
+                {
+                    return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
+                }
+                var level = SafetyLevelOf is { } ask
+                    ? await ask(characterId, cancellationToken)
+                    : SafetyLevel.Full;
+                var decision = await policy(request, level, cancellationToken);
+                if (!decision.Allowed)
+                {
+                    return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
+                }
+            }
         }
+
         // the safety of the pilot: a weapon is not started at the ship of another pilot where that would be a crime the safety the pilot has set does not allow
         var attack = package.Turret is not null || package.Action is SimAction.Remote { What: SimRemote.Neutralize or SimRemote.Drain or SimRemote.Web or SimRemote.Paint or SimRemote.Damp { RangePercent: < 0 } or SimRemote.Damp { ResolutionPercent: < 0 } or SimRemote.Damp { GravimetricStrengthPercent: < 0 } or SimRemote.Damp { LadarStrengthPercent: < 0 } or SimRemote.Damp { MagnetometricStrengthPercent: < 0 } or SimRemote.Damp { RadarStrengthPercent: < 0 } or SimRemote.Scramble or SimRemote.Jam or SimRemote.Disrupt { RangePercent: < 0 } or SimRemote.Disrupt { FalloffPercent: < 0 } or SimRemote.Disrupt { TrackingPercent: < 0 } };
-        var securityClass = _systems.Get(pilot.SolarSystemId) is { } where ? Security.ClassFromLevel(where.Security) : (SecurityClass?)null;
-        var victim = attack ? _pilots.Values.FirstOrDefault(other => other.ShipId == package.TargetId && other.CharacterId != characterId) : null;
+        var victim = attack && targetPilot is { CharacterId: > 0 } && targetPilot.CharacterId != characterId
+            ? targetPilot
+            : null;
         if (securityClass is { } empire && (attack || package.Action is SimAction.Smartbomb))
         {
             var level = SafetyLevelOf is { } ask ? await ask(characterId, cancellationToken) : SafetyLevel.Full;
@@ -607,6 +992,17 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Start(moduleId, package.TargetId);
         }
         EndInvulnerability(pilot);
+        if (assistanceRequest is { } remoteRequest && recordAssistance is { } recordRemoteAssistance)
+        {
+            try
+            {
+                await recordRemoteAssistance(remoteRequest, cancellationToken);
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                _log?.Invoke($"crimewatch could not record remote assistance by {characterId} on {remoteRequest.Target}: {error.Message}");
+            }
+        }
         if (victim is not null && securityClass is { } crimeWhere && Aggression is { } record)
         {
             // what the attack makes of the attacker is crimewatch's; the module runs whatever it keeps
@@ -628,6 +1024,18 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// Crimewatch (timers, flags, what a crime brings) hangs here.
     /// </summary>
     public Func<AggressionRequest, CancellationToken, Task>? Aggression { get; set; }
+
+
+    public Func<AggressionRequest, int, CancellationToken, Task<PolicyDecision>>? RemoteAssistancePolicyOf { get; set; }
+
+    public Func<AggressionRequest, CancellationToken, Task>? RecordRemoteAssistance { get; set; }
+
+
+    /// <summary>Host supplies the persisted Crimewatch state used to enforce criminal movement restrictions.</summary>
+    public Func<long, CancellationToken, Task<CombatState>>? CrimewatchStateOf { get; set; }
+
+    /// <summary>Host calls this after a criminal with an active timer enters high-security space.</summary>
+    public Func<long, long, double, CancellationToken, Task>? CriminalEnteredSystem { get; set; }
 
     /// <summary>The security status of a character (its relation of that kind; 0 when it is not set). The ship in space shows it in its slim item.</summary>
     public Func<long, CancellationToken, Task<double>>? SecurityStatusOf { get; set; }
@@ -1114,7 +1522,12 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// Spawns the NPCs of <paramref name="profiles"/> around <paramref name="anchor"/>, each armed with what its hull carries, and remembers what the host must know of
     /// them. What came into space is told: a batch that was cut short by the simulation is as long as what it spawned.
     /// </summary>
-    private async Task<(List<(string Name, int Count)> Composition, int Unarmed)> SpawnGroupAsync(IReadOnlyList<NpcProfile> profiles, SpawnAnchor anchor, CancellationToken cancellationToken)
+    private async Task<(List<(string Name, int Count)> Composition, int Unarmed)> SpawnGroupAsync(
+        IReadOnlyList<NpcProfile> profiles,
+        SpawnAnchor anchor,
+        CancellationToken cancellationToken,
+        long hostileResponseThreshold = NpcHostileThreshold,
+        double aggressionRangeOverride = 0)
     {
         var composition = new List<(string Name, int Count)>();
         var unarmed = 0;
@@ -1124,8 +1537,8 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             var type = _statics.Type(profile.ShipTypeId)!;
             var shipId = NpcIdBase + Interlocked.Increment(ref _npcs);
             var weapon = NpcArmament.HullWeapon(type, shipId, _statics);
-            var aggression = NpcArmament.AggressionRange(type, _statics);
-            var identity = new SimNpcIdentity(NpcHostileThreshold, NpcFriendlyThreshold, aggression, weapon is null ? [] : [weapon], null, HostWreck: NpcWrecks is not null);
+            var aggression = Math.Max(NpcArmament.AggressionRange(type, _statics), aggressionRangeOverride);
+            var identity = new SimNpcIdentity(hostileResponseThreshold, NpcFriendlyThreshold, aggression, weapon is null ? [] : [weapon], null, HostWreck: NpcWrecks is not null);
             var hull = SimShips.OfType(shipId, type);
             var ship = hull with
             {
@@ -1248,6 +1661,99 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             : new NpcSpawnReport(null, [], selection.Name, composition, plan.Profiles.Count, unarmed);
     }
 
+
+    /// <summary>Spawns the authored response pool around an active high-sec criminal; its response timer guarantees the criminal ship is lost.</summary>
+    public async Task<bool> RespondToCriminalAsync(
+        long attackerCharacterId,
+        long solarSystemId,
+        long attackerShipId,
+        CancellationToken cancellationToken = default)
+    {
+        var pilot = _pilots.Values.FirstOrDefault(candidate =>
+            candidate.CharacterId == attackerCharacterId
+            && candidate.SolarSystemId == solarSystemId
+            && (attackerShipId <= 0 || candidate.ShipId == attackerShipId));
+        if (pilot is null || pilot.TypeId == CharacterShips.CapsuleTypeId
+            || Npcs is not { } selector)
+        {
+            return false;
+        }
+
+        var (selection, error, suggestions) = selector.Select("concord_response_fleet");
+        if (selection is null)
+        {
+            _log?.Invoke($"CONCORD response pool is unavailable: {error}; {string.Join(", ", suggestions)}");
+            return false;
+        }
+        await EnsureNpcTypesAsync(selection.ShipTypes, cancellationToken);
+        var plan = selector.Roll(
+            selection,
+            3,
+            type => NpcHull.HasHitPoints(_statics.Type(type)),
+            Random.Shared.NextDouble);
+        if (!plan.Succeeded)
+        {
+            _log?.Invoke($"CONCORD response could not be rolled: {plan.Error}");
+            return false;
+        }
+
+        var position = await PositionOfAsync(pilot.Session, pilot.ShipId, cancellationToken);
+        if (position is not { } targetPoint)
+        {
+            return false;
+        }
+        var (composition, _) = await SpawnGroupAsync(
+            plan.Profiles,
+            new SpawnAnchor(
+                pilot.SolarSystemId,
+                pilot.ShipId,
+                [targetPoint.X, targetPoint.Y, targetPoint.Z],
+                BaseDistance: 8_000,
+                Window: 4_000),
+            cancellationToken,
+            hostileResponseThreshold: 0,
+            aggressionRangeOverride: 50_000);
+        if (composition.Count == 0)
+        {
+            return false;
+        }
+
+        var markedShip = pilot.ShipId;
+        _concordDestroyed[markedShip] = 0;
+        _timers.Set($"space:concord:mark:{markedShip}", TimeSpan.FromMinutes(2), () =>
+        {
+            _concordDestroyed.TryRemove(markedShip, out _);
+        });
+        var creditProfile = plan.Profiles[0];
+        _timers.Set(
+            $"space:concord:punishment:{attackerCharacterId}:{solarSystemId}",
+            TimeSpan.FromSeconds(15),
+            () => FinishConcordPunishmentAsync(
+                attackerCharacterId,
+                solarSystemId,
+                new SimCredit(0, creditProfile.CorporationId, creditProfile.AllianceId, creditProfile.FactionId)));
+        return true;
+    }
+
+    private Task FinishConcordPunishmentAsync(long characterId, long solarSystemId, SimCredit credit)
+    {
+        var current = _pilots.Values.FirstOrDefault(pilot =>
+            pilot.CharacterId == characterId
+            && pilot.SolarSystemId == solarSystemId
+            && pilot.TypeId != CharacterShips.CapsuleTypeId);
+        if (current is null)
+        {
+            return Task.CompletedTask;
+        }
+        _concordDestroyed[current.ShipId] = 0;
+        _sim.Destroy(current.ShipId, credit);
+        return Task.CompletedTask;
+    }
+
+
+    /// <summary>Spawns the configured CONCORD response fleet around an active criminal and schedules the ship loss after the response ships engage.</summary>
+
+
     /// <summary>One order about a pilot's modules or targets is asked of the simulation at a time (the answers are matched by what was asked); an unreachable simulation is a message the client shows.</summary>
     private async Task<CommandReply> AskSimAsync(ulong id, Func<Task<CommandReply>> ask, ClientSession session)
     {
@@ -1271,13 +1777,19 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// <summary>Asks the simulation to dock the ship; the answer to the client's call is the time the docking was accepted, or nothing when it was not.</summary>
     public async Task<PyValue> DockAsync(ClientSession session, long stationId, CancellationToken cancellationToken)
     {
-        if (!_pilots.ContainsKey((ulong)session.SessionId))
+        var id = (ulong)session.SessionId;
+        if (!_pilots.TryGetValue(id, out var pilot))
         {
             return None;
         }
+        var policy = await MovementPolicyAsync(pilot, PolicyAction.Dock, cancellationToken);
+        if (!policy.Allowed)
+        {
+            throw MovementRefused(policy, "dock");
+        }
         try
         {
-            var reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.Dock, [stationId], cancellationToken);
+            var reply = await _sim.CommandAsync(id, SimCommands.Dock, [stationId], cancellationToken);
             if (reply.Accepted)
             {
                 return new PyLong(reply.At);
@@ -1301,16 +1813,78 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// the client shows ("You cannot warp there right now."). A ship that is in warp already is told so and nothing else happens. The first movement
     /// the simulation accepts ends the undocking protection, and a warp is one.
     /// </summary>
-    public async Task<PyValue> WarpAsync(ClientSession session, long targetId, double range, CancellationToken cancellationToken)
+    public Task<PyValue> WarpAsync(ClientSession session, long targetId, double range, CancellationToken cancellationToken) =>
+        WarpCommandAsync(session, SimCommands.WarpTo, [targetId, range], $"to {targetId}", cancellationToken);
+
+
+    public Task<PyValue> WarpToPointAsync(
+        ClientSession session,
+        double x,
+        double y,
+        double z,
+        double range,
+        CancellationToken cancellationToken) =>
+        WarpCommandAsync(session, SimCommands.WarpToPoint, [x, y, z, range], "to coordinates", cancellationToken);
+
+
+    public Task<WarpCoordinates?> WarpTargetPointAsync(
+        ClientSession session,
+        long targetId,
+        double range,
+        CancellationToken cancellationToken) =>
+        QueryPositionAsync(session, SimCommands.ResolveWarpTarget, [targetId, range], cancellationToken);
+
+    public Task<WarpCoordinates?> PositionOfAsync(
+        ClientSession session,
+        long targetId,
+        CancellationToken cancellationToken) =>
+        QueryPositionAsync(session, SimCommands.PositionOf, [targetId], cancellationToken);
+
+    private async Task<WarpCoordinates?> QueryPositionAsync(
+        ClientSession session,
+        byte command,
+        double[] args,
+        CancellationToken cancellationToken)
+    {
+        if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
+        {
+            return null;
+        }
+        CommandReply reply;
+        try
+        {
+            reply = await _sim.CommandAsync((ulong)session.SessionId, command, args, cancellationToken);
+        }
+        catch (SimUnavailableException error)
+        {
+            _log?.Invoke($"position query of session {session.SessionId}: {error.Message}");
+            throw Notify("Space is not available right now. Try again in a moment.");
+        }
+        return reply.Accepted && reply.Position.Count >= 3
+            ? new WarpCoordinates(pilot.SolarSystemId, reply.Position[0], reply.Position[1], reply.Position[2])
+            : null;
+    }
+
+    private async Task<PyValue> WarpCommandAsync(
+        ClientSession session,
+        byte command,
+        double[] args,
+        string destination,
+        CancellationToken cancellationToken)
     {
         if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
         {
             return None;
         }
+        var policy = await MovementPolicyAsync(pilot, PolicyAction.Warp, cancellationToken);
+        if (!policy.Allowed)
+        {
+            throw MovementRefused(policy, "warp");
+        }
         CommandReply reply;
         try
         {
-            reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.WarpTo, [targetId, range], cancellationToken);
+            reply = await _sim.CommandAsync((ulong)session.SessionId, command, args, cancellationToken);
         }
         catch (SimUnavailableException error)
         {
@@ -1322,7 +1896,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             EndInvulnerability(pilot);
             return None;
         }
-        _log?.Invoke($"warp of session {session.SessionId} to {targetId} refused: {reply.Reason}");
+        _log?.Invoke($"warp of session {session.SessionId} {destination} refused: {reply.Reason}");
         if (reply.Reason == "IN_WARP")
         {
             TellShipInWarp(session);
@@ -1333,6 +1907,26 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
             throw Notify("You cannot warp because you are warp scrambled.");
         }
         throw Notify("You cannot warp there right now.");
+    }
+
+
+    private async Task<PolicyDecision> MovementPolicyAsync(Pilot pilot, PolicyAction action, CancellationToken cancellationToken)
+    {
+        var securityClass = _systems.Get(pilot.SolarSystemId) is { } system
+            ? Security.ClassFromLevel(system.Security)
+            : SecurityClass.ZeroSec;
+        var now = _nowUnixMs();
+        var state = CrimewatchStateOf is { } readState
+            ? await readState(pilot.CharacterId, cancellationToken)
+            : CombatState.Idle;
+        return PolicyEngine.Evaluate(new PolicyRequest(
+            action,
+            securityClass,
+            new PolicyFacts(
+                HasWeaponsTimer: state.HasWeaponsTimer(now),
+                HasCriminalTimer: state.IsCriminal(now),
+                ActorIsCapsule: pilot.TypeId == CharacterShips.CapsuleTypeId,
+                HasSessionChangeTimer: _transitions.SessionChangeActive((ulong)pilot.Session.SessionId))));
     }
 
     // ── jumping ──────────────────────────────────────────────────────────────
@@ -1351,6 +1945,11 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         if (shipId > 0 && shipId != pilot.ShipId)
         {
             throw JumpRefused("SHIP_ID_MISMATCH");
+        }
+        var policy = await MovementPolicyAsync(pilot, PolicyAction.GateJump, cancellationToken);
+        if (!policy.Allowed)
+        {
+            throw MovementRefused(policy, "jump");
         }
         CommandReply reply;
         try
@@ -1413,6 +2012,25 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
 
     // ── what the simulation says ─────────────────────────────────────────────
 
+    private void ForgetLockedTarget(long shipId)
+    {
+        foreach (var pair in _lockedTargets.ToArray())
+        {
+            if (!pair.Value.Contains(shipId))
+                continue;
+
+            var remaining = pair.Value.Where(target => target != shipId).ToHashSet();
+            if (remaining.Count == 0)
+            {
+                ((ICollection<KeyValuePair<ulong, IReadOnlySet<long>>>)_lockedTargets).Remove(pair);
+            }
+            else
+            {
+                _lockedTargets.TryUpdate(pair.Key, remaining, pair.Value);
+            }
+        }
+    }
+
     private void OnReceived(SimMessage message)
     {
         try
@@ -1448,9 +2066,16 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                     _ = Task.Run(() => FinishJumpAsync(jumper, jumped));
                     break;
                 case SimDestroyed destroyed when _pilots.TryGetValue(destroyed.SessionId, out var victim) && victim.ShipId == destroyed.ShipId:
+                    ForgetLockedTarget(destroyed.ShipId);
+                    _lockedTargets.TryRemove(destroyed.SessionId, out _);
                     _ = Task.Run(() => FinishDeathAsync(victim, destroyed));
                     break;
+                case SimDestroyed destroyed when _ejectedShips.TryRemove(destroyed.ShipId, out var abandoned):
+                    ForgetLockedTarget(destroyed.ShipId);
+                    _ = Task.Run(() => FinishAbandonedShipDeathAsync(abandoned, destroyed));
+                    break;
                 case SimDestroyed destroyed when _npcShips.TryRemove(destroyed.ShipId, out var npc):
+                    ForgetLockedTarget(destroyed.ShipId);
                     _ = Task.Run(() => FinishNpcDeathAsync(npc, destroyed));
                     break;
                 case SimChargeSpent spent when _pilots.TryGetValue(spent.SessionId, out var shooter):
@@ -1514,45 +2139,81 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// </summary>
     private async Task FinishJumpAsync(Pilot pilot, SimJumped jumped)
     {
+        var session = pilot.Session;
+        var arrivalFileTime = 0L;
         try
         {
-            var session = pilot.Session;
-            var place = _systems.Get(jumped.ToSystem);
-            var transition = await _ships.JumpAsync(pilot.CharacterId, jumped.ToSystem, place?.ConstellationId ?? 0, place?.RegionId ?? 0);
-            if (transition.Moved is not { } moved)
-            {
+            var transition = await _transitions.ExecuteAsync(
+                token =>
+                {
+                    var place = _systems.Get(jumped.ToSystem);
+                    return _ships.JumpAsync(
+                        pilot.CharacterId,
+                        jumped.ToSystem,
+                        place?.ConstellationId ?? 0,
+                        place?.RegionId ?? 0,
+                        token);
+                },
+                result => result.Moved is not null,
+                async (_, token) =>
+                {
+                    if (!_pilots.Values.Any(other => other.SolarSystemId == jumped.ToSystem))
+                        ForgetNpcsOf(jumped.ToSystem);
+                    if (_systems.Get(jumped.ToSystem) is { } enteredSystem
+                        && Security.IsHighSecOrHigher(Security.ClassFromLevel(enteredSystem.Security))
+                        && CriminalEnteredSystem is { } criminalEntered)
+                    {
+                        try
+                        {
+                            await criminalEntered(pilot.CharacterId, jumped.ToSystem, enteredSystem.Security, CancellationToken.None);
+                        }
+                        catch (Exception error) when (error is not OperationCanceledException)
+                        {
+                            _log?.Invoke($"criminal timer entry response for character {pilot.CharacterId} could not be dispatched: {error.Message}");
+                        }
+                    }
+                },
+                (result, _) =>
+                {
+                    var moved = result.Moved!;
+                    arrivalFileTime = FileTimeNow();
+                    var arrived = new Pilot(session, pilot.CharacterId, pilot.ShipId, pilot.TypeId,
+                        jumped.ToSystem, arrivalFileTime + JumpCloakTicks, pilot.UndockedFrom, jumpCloak: true);
+                    if (!_pilots.TryUpdate((ulong)session.SessionId, arrived, pilot))
+                        return Task.FromResult(false);
+                    pilot.End();
+                    ArmProtection(arrived, _jumpCloak);
+                    SystemEntered?.Invoke(jumped.ToSystem);
+                    ReleaseBoundObjects(session);
+                    var system = new PyInt(jumped.ToSystem);
+                    session.Change(
+                        ("solarsystemid", system),
+                        ("solarsystemid2", system),
+                        ("constellationid", new PyInt(moved.Character.ConstellationId)),
+                        ("regionid", new PyInt(moved.Character.RegionId)),
+                        ("locationid", system));
+                    return Task.FromResult(true);
+                },
+                (result, _) =>
+                {
+                    var moved = result.Moved!;
+                    var type = _statics.Type(moved.Ship.TypeId);
+                    session.SendNotification(
+                        "OnItemChange", "clientID",
+                        InventoryWire.PackedRow(ShipRow(moved.Ship, type), new PyStr($"Undocking:{pilot.UndockedFrom}")),
+                        new PyDict([new(new PyInt(3), InventoryWire.Id(moved.PreviousLocationId))]),
+                        None);
+                    session.SendNotification(
+                        "OnJumpCloakUpdated", "shipid",
+                        InventoryWire.Id(pilot.ShipId),
+                        new PyLong(arrivalFileTime + JumpCloakTicks),
+                        new PyLong(JumpCloakTicks));
+                    return Task.CompletedTask;
+                },
+                CancellationToken.None,
+                (ulong)session.SessionId);
+            if (transition.Moved is null)
                 _log?.Invoke($"jump of character {pilot.CharacterId} to system {jumped.ToSystem} failed: {transition.Refusal}");
-                return;
-            }
-            var now = FileTimeNow();
-            var arrived = new Pilot(session, pilot.CharacterId, pilot.ShipId, pilot.TypeId, jumped.ToSystem, now + JumpCloakTicks, pilot.UndockedFrom, jumpCloak: true);
-            if (!_pilots.Values.Any(other => other.SolarSystemId == jumped.ToSystem))
-            {
-                ForgetNpcsOf(jumped.ToSystem);
-            }
-            if (!_pilots.TryUpdate((ulong)session.SessionId, arrived, pilot))
-            {
-                return; // the pilot went away meanwhile
-            }
-            pilot.End();
-            ArmProtection(arrived, _jumpCloak);
-            SystemEntered?.Invoke(jumped.ToSystem);
-
-            ReleaseBoundObjects(session);
-            var type = _statics.Type(moved.Ship.TypeId);
-            session.SendNotification(
-                "OnItemChange", "clientID",
-                InventoryWire.PackedRow(ShipRow(moved.Ship, type), new PyStr($"Undocking:{pilot.UndockedFrom}")),
-                new PyDict([new(new PyInt(3), InventoryWire.Id(moved.PreviousLocationId))]),
-                None);
-            session.SendNotification("OnJumpCloakUpdated", "shipid", InventoryWire.Id(pilot.ShipId), new PyLong(now + JumpCloakTicks), new PyLong(JumpCloakTicks));
-            var system = new PyInt(jumped.ToSystem);
-            session.Change(
-                ("solarsystemid", system),
-                ("solarsystemid2", system),
-                ("constellationid", new PyInt(moved.Character.ConstellationId)),
-                ("regionid", new PyInt(moved.Character.RegionId)),
-                ("locationid", system));
         }
         catch (Exception error)
         {
@@ -1568,37 +2229,48 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// </summary>
     private async Task FinishDockingAsync(Pilot pilot, long stationId, SimCondition? condition)
     {
-        if (!_pilots.TryRemove((ulong)pilot.Session.SessionId, out _))
-        {
-            return; // finished already
-        }
         try
         {
             var session = pilot.Session;
-            pilot.End();
-            // the hangar shows what the guns hold: the rounds spent in space are written before the ship is moved
-            await _charges.CloseAsync((ulong)session.SessionId).ConfigureAwait(false);
-            pilot.Session.SendNotification("OnInvulnCancelled", "shipid", InventoryWire.Id(pilot.ShipId));
-            ReleaseBoundObjects(session);
-            var transition = await _ships.DockAsync(pilot.CharacterId, stationId);
-            if (transition.Moved is not { } moved)
+            var transition = await _transitions.ExecuteAsync(
+                async cancellationToken =>
+                {
+                    await _charges.CloseAsync((ulong)session.SessionId).ConfigureAwait(false);
+                    var shipCondition = condition is null
+                        ? null
+                        : new ShipCondition(condition.Damage, condition.Charge, condition.ShieldCharge, condition.ArmorDamage, false);
+                    return await _ships.DockAsync(pilot.CharacterId, stationId, shipCondition, cancellationToken);
+                },
+                result => result.Moved is not null,
+                applySimulation: null,
+                applySession: (result, token) =>
+                {
+                    if (!_pilots.TryRemove((ulong)session.SessionId, out _))
+                        return Task.FromResult(false);
+                    pilot.End();
+                    ReleaseBoundObjects(session);
+                    session.Change(("stationid", new PyInt(stationId)), ("locationid", new PyInt(stationId)), ("solarsystemid", None));
+                    return Task.FromResult(true);
+                },
+                notify: (result, _) =>
+                {
+                    var moved = result.Moved!;
+                    var type = _statics.Type(moved.Ship.TypeId);
+                    session.SendNotification("OnInvulnCancelled", "shipid", InventoryWire.Id(pilot.ShipId));
+                    session.SendNotification(
+                        "OnItemsChanged", "charid",
+                        new PyList([InventoryWire.PackedRow(ShipRow(moved.Ship, type))]),
+                        ChangedFrom(moved),
+                        Py.Tuple(new PyStr("Station"), InventoryWire.Id(stationId), new PyStr("StationHangar")));
+                    session.SendNotification("OnDockingFinished", "charid", InventoryWire.Id(stationId));
+                    return Task.CompletedTask;
+                },
+                cancellationToken: CancellationToken.None,
+                sessionId: (ulong)session.SessionId);
+            if (transition.Moved is null)
             {
                 _log?.Invoke($"docking of character {pilot.CharacterId} at {stationId} failed: {transition.Refusal}");
-                return;
             }
-            if (condition is not null)
-            {
-                // what the ship has taken is kept with it in the hangar
-                await _ships.SetShipConditionAsync(pilot.ShipId, new ShipCondition(condition.Damage, condition.Charge, condition.ShieldCharge, condition.ArmorDamage, false));
-            }
-            var type = _statics.Type(moved.Ship.TypeId);
-            session.SendNotification(
-                "OnItemsChanged", "charid",
-                new PyList([InventoryWire.PackedRow(ShipRow(moved.Ship, type))]),
-                ChangedFrom(moved),
-                Py.Tuple(new PyStr("Station"), InventoryWire.Id(stationId), new PyStr("StationHangar")));
-            session.Change(("stationid", new PyInt(stationId)), ("locationid", new PyInt(stationId)), ("solarsystemid", None));
-            session.SendNotification("OnDockingFinished", "charid", InventoryWire.Id(stationId));
         }
         catch (Exception error)
         {
@@ -1657,100 +2329,293 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     /// capsule where the ship was, and the client is told, in the reference's order, of the objects that let go, the capsule, the modules that left, the items,
     /// the session change and the capsule's ball; then the wreck is put in space. What the simulation needs to go on (the capsule) is given to it first.
     /// </summary>
+    private async Task FinishAbandonedShipDeathAsync(EjectedShip abandoned, SimDestroyed destroyed)
+    {
+        try
+        {
+            var seed = string.Create(
+                System.Globalization.CultureInfo.InvariantCulture,
+                $"ship:{destroyed.ShipId}:{_nowUnixMs()}");
+            var wreckTypeId = abandoned.ShipTypeId == CharacterShips.CapsuleTypeId
+                ? null
+                : destroyed.WreckKind?.TypeId;
+            var death = await _ships.DestroyAbandonedShipAsync(
+                abandoned.OwnerCharacterId,
+                abandoned.SolarSystemId,
+                destroyed.ShipId,
+                wreckTypeId,
+                seed);
+            if (death is null)
+            {
+                _log?.Invoke($"unpiloted ship {destroyed.ShipId} was destroyed in space but is no longer owned by character {abandoned.OwnerCharacterId} at system {abandoned.SolarSystemId}");
+                return;
+            }
+
+            if (abandoned.ShipTypeId != CharacterShips.CapsuleTypeId)
+            {
+                await _statics.EnsureTypesAsync([
+                    .. death.Changes.Select(change => change.Item.TypeId),
+                    .. death.Wreck is { } wreck ? new[] { wreck.TypeId } : []
+                ]);
+
+                var killer = destroyed.KillerShipId == 0
+                    ? null
+                    : _pilots.Values.FirstOrDefault(other => other.ShipId == destroyed.KillerShipId);
+                var npcKiller = destroyed.KillerShipId != 0
+                    && _npcShips.TryGetValue(destroyed.KillerShipId, out var npc)
+                    ? npc
+                    : null;
+                var cause = npcKiller?.Profile.Id.Contains("concord_response", StringComparison.OrdinalIgnoreCase) == true
+                    ? ShipLossCause.Concord
+                    : killer is not null
+                        ? ShipLossCause.Player
+                        : npcKiller is not null
+                            ? ShipLossCause.Npc
+                            : ShipLossCause.Unknown;
+                var loss = new ShipLoss(
+                    abandoned.OwnerCharacterId,
+                    death.Ship.Id,
+                    death.Ship.TypeId,
+                    cause,
+                    abandoned.SolarSystemId,
+                    cause == ShipLossCause.Player ? killer!.CharacterId : 0);
+                Raise(ShipLost, loss, nameof(ShipLost));
+                Announce(
+                    "ship.lost",
+                    new
+                    {
+                        characterId = loss.CharacterId,
+                        shipId = loss.ShipId,
+                        shipTypeId = loss.ShipTypeId,
+                        cause = loss.Cause.ToString(),
+                        solarSystemId = loss.SolarSystemId,
+                        killerCharacterId = loss.KillerCharacterId
+                    },
+                    $"char:{loss.CharacterId}");
+            }
+
+            if (death.Wreck is { } left && destroyed.WreckKind is { } kind)
+            {
+                PlaceWreck(new SimPlaceWreck(
+                    abandoned.SolarSystemId,
+                    left.Id,
+                    WreckGroup,
+                    kind,
+                    destroyed.Position,
+                    destroyed.Direction,
+                    destroyed.Radius,
+                    destroyed.ShipId,
+                    new SimCredit(abandoned.OwnerCharacterId, abandoned.OwnerCorporationId, 0, 0),
+                    death.Changes.All(change => change.Destroyed)));
+            }
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"the loss of unpiloted ship {destroyed.ShipId} of character {abandoned.OwnerCharacterId} could not be processed: {error}");
+        }
+    }
+
     private async Task FinishDeathAsync(Pilot pilot, SimDestroyed destroyed)
     {
         var id = (ulong)pilot.Session.SessionId;
-        if (!_dying.TryAdd(id, 0))
-        {
-            return; // being told already
-        }
+        if (!_dying.TryAdd(pilot.ShipId, 0))
+            return;
         pilot.End();
         ShipDeath? death = null;
         SelfDestruct? done = null;
         var handedOver = false;
+        var simulationFailed = false;
         try
         {
             var session = pilot.Session;
-            // what the ship dropped is what it held when it died: the rounds spent in space are written first
             await _charges.CloseAsync(id).ConfigureAwait(false);
-            if (await _ships.LoadAsync(pilot.CharacterId) is { } held && held.Ship.Id == pilot.ShipId && held.Ship.TypeId == CharacterShips.CapsuleTypeId)
+            if (await _ships.LoadAsync(pilot.CharacterId) is { } held
+                && held.Ship.Id == pilot.ShipId
+                && held.Ship.TypeId == CharacterShips.CapsuleTypeId)
             {
                 done = await FinishPodDeathAsync(pilot, destroyed);
                 handedOver = done is not null;
                 return;
             }
-            var seed = string.Create(System.Globalization.CultureInfo.InvariantCulture, $"ship:{pilot.ShipId}:{_nowUnixMs()}");
-            death = await _ships.DestroyShipAsync(pilot.CharacterId, pilot.ShipId, destroyed.WreckKind?.TypeId, seed);
+
+            var seed = string.Create(
+                System.Globalization.CultureInfo.InvariantCulture,
+                $"ship:{pilot.ShipId}:{_nowUnixMs()}");
+            death = await _transitions.ExecuteAsync(
+                token => _ships.DestroyShipAsync(
+                    pilot.CharacterId, pilot.ShipId, destroyed.WreckKind?.TypeId, seed, token),
+                result => result is not null,
+                async (result, token) =>
+                {
+                    var lost = result!;
+                    var survivor = lost.PilotShip;
+                    await _statics.EnsureTypesAsync([
+                        CharacterShips.CapsuleTypeId,
+                        survivor.TypeId,
+                        .. lost.Changes.Select(change => change.Item.TypeId),
+                        .. lost.Wreck is { } wreck ? new[] { wreck.TypeId } : []
+                    ]);
+
+                    if (await _ships.LoadAsync(pilot.CharacterId, token) is not { } flown
+                        || flown.Ship.Id != survivor.Id)
+                    {
+                        _log?.Invoke($"surviving ship {survivor.Id} of character {pilot.CharacterId} could not be loaded after death");
+                        simulationFailed = true;
+                        await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation);
+                        return;
+                    }
+
+                    try
+                    {
+                        var refusal = await _sim.RespawnAsync(new SimRespawn(
+                            id,
+                            SimShips.Of(flown, _statics, await SecurityStatusAsync(pilot.CharacterId, token)),
+                            destroyed.Position,
+                            destroyed.Direction), token);
+                        if (refusal is not null)
+                        {
+                            _log?.Invoke($"the simulation did not take surviving ship {survivor.Id} of character {pilot.CharacterId}: {refusal}");
+                            simulationFailed = true;
+                            await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation);
+                            return;
+                        }
+                    }
+                    catch (Exception error)
+                    {
+                        _log?.Invoke($"the simulation could not respawn surviving ship {survivor.Id} of character {pilot.CharacterId}: {error.Message}");
+                        simulationFailed = true;
+                        await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation);
+                        return;
+                    }
+
+                    if (lost.Wreck is { } wreckItem && destroyed.WreckKind is { } kind)
+                    {
+                        PlaceWreck(new SimPlaceWreck(
+                            pilot.SolarSystemId,
+                            wreckItem.Id,
+                            WreckGroup,
+                            kind,
+                            destroyed.Position,
+                            destroyed.Direction,
+                            destroyed.Radius,
+                            pilot.ShipId,
+                            new SimCredit(
+                                lost.Character.Id,
+                                lost.Character.CorporationId,
+                                lost.Character.AllianceId ?? 0,
+                                lost.Character.FactionId ?? 0),
+                            lost.Changes.All(change => change.Destroyed)));
+                    }
+                },
+                async (result, _) =>
+                {
+                    var lost = result!;
+                    ReleaseBoundObjects(session);
+                    if (simulationFailed)
+                    {
+                        session.Close();
+                        return true;
+                    }
+
+                    var survivor = lost.PilotShip;
+                    var flying = new Pilot(
+                        session, pilot.CharacterId, survivor.Id, survivor.TypeId, pilot.SolarSystemId, 0);
+                    flying.End();
+                    if (!_pilots.TryUpdate(id, flying, pilot))
+                    {
+                        await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation);
+                        session.Close();
+                        return true;
+                    }
+                    session.Change(("shipid", new PyLong(survivor.Id)));
+                    handedOver = true;
+                    return true;
+                },
+                (result, _) =>
+                {
+                    var lost = result!;
+                    RaiseShipLost(pilot, lost, destroyed);
+                    if (lost.Capsule is { } capsule)
+                        session.SendNotification(
+                            "OnPodOrCorvetteAssembly", "charid",
+                            InventoryWire.Id(capsule.Id), new PyInt(capsule.TypeId));
+                    if (lost.EscapeShip is { } escapeShip)
+                    {
+                        var fromEscapeBay = new PyDict([
+                            new(new PyInt(3), InventoryWire.Id(lost.Ship.Id)),
+                            new(new PyInt(4), new PyInt(CharacterShips.FrigateEscapeBayFlag))
+                        ]);
+                        session.SendNotification(
+                            "OnItemsChanged", "charid",
+                            new PyList([InventoryWire.PackedRow(RowOf(escapeShip, _statics.Type(escapeShip.TypeId)))]),
+                            fromEscapeBay,
+                            None);
+                    }
+                    var now = FileTimeNow();
+                    if (lost.Events.Count > 0)
+                        session.SendNotification(
+                            "OnMultiEvent", "clientID",
+                            Eve.Services.Ships.ShipNotifications.MultiEvent(
+                                pilot.CharacterId, pilot.ShipId, lost.Events, now));
+                    foreach (var change in lost.Changes)
+                    {
+                        var type = _statics.Type(change.Item.TypeId);
+                        var row = change.Destroyed ? change.Item with { LocationId = Junkyard } : change.Item;
+                        var from = change.Destroyed
+                            ? new PyDict([new(new PyInt(3), InventoryWire.Id(change.PreviousLocationId))])
+                            : new PyDict([
+                                new(new PyInt(3), InventoryWire.Id(change.PreviousLocationId)),
+                                new(new PyInt(4), new PyInt(change.PreviousFlag))
+                            ]);
+                        session.SendNotification(
+                            "OnItemsChanged", "charid",
+                            new PyList([InventoryWire.PackedRow(RowOf(row, type))]), from, None);
+                    }
+                    var shipType = _statics.Type(lost.Ship.TypeId);
+                    session.SendNotification(
+                        "OnItemsChanged", "charid",
+                        new PyList([InventoryWire.PackedRow(
+                            RowOf(lost.Ship with { LocationId = Junkyard }, shipType),
+                            new PyStr($"Undocking:{pilot.UndockedFrom}"))]),
+                        new PyDict([new(new PyInt(3), InventoryWire.Id(lost.Ship.LocationId))]),
+                        None);
+                    session.SendNotification(
+                        "OnShipCosmeticsChanged", "clientID", InventoryWire.Id(pilot.ShipId), new PyDict([]));
+                    session.SendNotification(
+                        "OnShipCosmeticsChanged", "clientID", InventoryWire.Id(lost.PilotShip.Id), new PyDict([]));
+                    session.SendNotification(
+                        "OnCurrentShipSkinChange", "clientID", InventoryWire.Id(lost.PilotShip.Id), new PyInt(0));
+
+                    if (lost.Wreck is { } wreckItem && destroyed.WreckKind is not null)
+                    {
+                        session.SendNotification(
+                            "OnItemChange", "clientID",
+                            InventoryWire.PackedRow(RowOf(wreckItem, _statics.Type(wreckItem.TypeId)), new PyStr("")),
+                            new PyDict([new(new PyInt(3), new PyInt(0))]),
+                            None);
+                    }
+                    return Task.CompletedTask;
+                },
+                CancellationToken.None,
+                id);
+
             if (death is null)
             {
                 _log?.Invoke($"the ship {pilot.ShipId} of character {pilot.CharacterId} was destroyed in space but is not the character's ship in space any more");
                 return;
             }
-            await _statics.EnsureTypesAsync([CharacterShips.CapsuleTypeId, .. death.Changes.Select(c => c.Item.TypeId), .. death.Wreck is { } w ? new[] { w.TypeId } : []]);
-            RaiseShipLost(pilot, death, destroyed);
-            var capsule = death.Capsule;
-            var character = death.Character;
-
-            ReleaseBoundObjects(session);
-            session.SendNotification("OnPodOrCorvetteAssembly", "charid", InventoryWire.Id(capsule.Id), new PyInt(capsule.TypeId));
-            var now = FileTimeNow();
-            if (death.Events.Count > 0)
+            if (handedOver)
             {
-                session.SendNotification("OnMultiEvent", "clientID", Eve.Services.Ships.ShipNotifications.MultiEvent(pilot.CharacterId, pilot.ShipId, death.Events, now));
-            }
-            foreach (var change in death.Changes)
-            {
-                var type = _statics.Type(change.Item.TypeId);
-                var row = change.Destroyed ? change.Item with { LocationId = Junkyard } : change.Item;
-                var from = change.Destroyed
-                    ? new PyDict([new(new PyInt(3), InventoryWire.Id(change.PreviousLocationId))])
-                    : new PyDict([new(new PyInt(3), InventoryWire.Id(change.PreviousLocationId)), new(new PyInt(4), new PyInt(change.PreviousFlag))]);
-                session.SendNotification("OnItemsChanged", "charid", new PyList([InventoryWire.PackedRow(RowOf(row, type))]), from, None);
-            }
-            var shipType = _statics.Type(death.Ship.TypeId);
-            session.SendNotification(
-                "OnItemsChanged", "charid",
-                new PyList([InventoryWire.PackedRow(RowOf(death.Ship with { LocationId = Junkyard }, shipType), new PyStr($"Undocking:{pilot.UndockedFrom}"))]),
-                new PyDict([new(new PyInt(3), InventoryWire.Id(death.Ship.LocationId))]), None);
-            session.Change(("shipid", new PyLong(capsule.Id)));
-            session.SendNotification("OnShipCosmeticsChanged", "clientID", InventoryWire.Id(pilot.ShipId), new PyDict([]));
-            session.SendNotification("OnShipCosmeticsChanged", "clientID", InventoryWire.Id(capsule.Id), new PyDict([]));
-            session.SendNotification("OnCurrentShipSkinChange", "clientID", InventoryWire.Id(capsule.Id), new PyInt(0));
-
-            // the pilot flies the capsule where the ship was: the simulation adds its ball (it answers after the client has been sent it)
-            if (await _ships.LoadAsync(pilot.CharacterId) is { } flown && flown.Ship.Id == capsule.Id)
-            {
-                var flying = new Pilot(session, pilot.CharacterId, capsule.Id, flown.Ship.TypeId, pilot.SolarSystemId, 0);
-                flying.End();
-                if (!_pilots.TryUpdate(id, flying, pilot))
-                {
-                    // the client went away while its ship was being destroyed: the capsule is brought home like any ship left in space
-                    await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation);
-                    return;
-                }
-                var refusal = await _sim.RespawnAsync(new SimRespawn(id, SimShips.Of(flown, _statics, await SecurityStatusAsync(pilot.CharacterId, CancellationToken.None)), destroyed.Position, destroyed.Direction));
-                if (refusal is not null)
-                {
-                    _log?.Invoke($"the simulation did not take the capsule of character {pilot.CharacterId}: {refusal}");
-                    return;
-                }
-                handedOver = true;
-            }
-            done = new SelfDestruct(
-                death.Ship.Id,
-                new SelfDestructPart("Wreck", death.Wreck is { } left ? _statics.Type(left.TypeId)?.Name : null, death.Wreck?.Id),
-                new SelfDestructPart("Capsule", _statics.Type(capsule.TypeId)?.Name ?? "Capsule", capsule.Id));
-
-            if (death.Wreck is { } wreck && destroyed.WreckKind is { } kind)
-            {
-                var wreckType = _statics.Type(wreck.TypeId);
-                session.SendNotification(
-                    "OnItemChange", "clientID",
-                    InventoryWire.PackedRow(RowOf(wreck, wreckType), new PyStr("")),
-                    new PyDict([new(new PyInt(3), new PyInt(0))]), None);
-                PlaceWreck(new SimPlaceWreck(
-                    pilot.SolarSystemId, wreck.Id, WreckGroup, kind, destroyed.Position, destroyed.Direction, destroyed.Radius, pilot.ShipId,
-                    new SimCredit(character.Id, character.CorporationId, character.AllianceId ?? 0, character.FactionId ?? 0), death.Changes.All(c => c.Destroyed)));
+                done = new SelfDestruct(
+                    death.Ship.Id,
+                    new SelfDestructPart(
+                        "Wreck",
+                        death.Wreck is { } wreck ? _statics.Type(wreck.TypeId)?.Name : null,
+                        death.Wreck?.Id),
+                    new SelfDestructPart(
+                        death.Capsule is null ? "Frigate Escape Bay" : "Capsule",
+                        _statics.Type(death.PilotShip.TypeId)?.Name ?? "Capsule",
+                        death.PilotShip.Id));
             }
         }
         catch (Exception error)
@@ -1760,22 +2625,22 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         finally
         {
             if (!handedOver && _pilots.TryRemove(id, out _))
-            {
-                // no ship in space for this session: it is out of the simulation (which keeps its ballpark until it leaves)
                 _sim.Leave(id, LeaveWhy.LoggedOff);
-            }
-            _dying.TryRemove(id, out _);
+            _dying.TryRemove(pilot.ShipId, out _);
             if (_deaths.TryRemove(pilot.ShipId, out var waiting))
-            {
                 waiting.TrySetResult(done);
-            }
         }
     }
 
     private void RaiseShipLost(Pilot pilot, ShipDeath death, SimDestroyed destroyed)
     {
         var killer = destroyed.KillerShipId == 0 ? null : _pilots.Values.FirstOrDefault(other => other.ShipId == destroyed.KillerShipId);
+        var concord = _concordDestroyed.TryRemove(pilot.ShipId, out _)
+            || (destroyed.KillerShipId != 0
+                && _npcShips.TryGetValue(destroyed.KillerShipId, out var npc)
+                && npc.Profile.Id.Contains("concord_response", StringComparison.OrdinalIgnoreCase));
         var cause = _deaths.ContainsKey(pilot.ShipId) ? ShipLossCause.SelfDestruct
+            : concord ? ShipLossCause.Concord
             : killer is not null ? ShipLossCause.Player
             : destroyed.KillerShipId != 0 && _npcShips.ContainsKey(destroyed.KillerShipId) ? ShipLossCause.Npc
             : ShipLossCause.Unknown;
@@ -1800,12 +2665,15 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     {
         var id = (ulong)pilot.Session.SessionId;
         var session = pilot.Session;
-        if (await _ships.CharacterAsync(pilot.CharacterId) is not { } character || RookieShipOfRace?.Invoke(character.RaceId) is not { } rookie)
+        if (await _ships.CharacterAsync(pilot.CharacterId) is not { } character
+            || RookieShipOfRace?.Invoke(character.RaceId) is not { } rookie)
         {
             _log?.Invoke($"the capsule of character {pilot.CharacterId} was destroyed but there is no rookie ship to wake the pilot in");
             return null;
         }
-        var stationId = character.HomeStationId > 0 && _stations.Get(character.HomeStationId) is not null ? character.HomeStationId : character.StationId;
+        var stationId = character.HomeStationId > 0 && _stations.Get(character.HomeStationId) is not null
+            ? character.HomeStationId
+            : character.StationId;
         if (_stations.Get(stationId) is not { } station)
         {
             _log?.Invoke($"the capsule of character {pilot.CharacterId} was destroyed but its clone's station {stationId} is not known");
@@ -1813,47 +2681,97 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         }
         var corpseType = character.Gender == 0 ? CorpseTypeFemale : CorpseTypeMale;
         await _statics.EnsureTypesAsync([CharacterShips.CapsuleTypeId, corpseType, rookie]);
-        var pod = await _ships.DestroyCapsuleAsync(
-            pilot.CharacterId, pilot.ShipId, corpseType, character.Name, rookie, new HomePlace(station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId));
-        if (pod is null)
-        {
-            _log?.Invoke($"the capsule {pilot.ShipId} of character {pilot.CharacterId} was destroyed in space but is not the character's capsule in space any more");
-            return null;
-        }
 
-        // the pilot is out of space: the ballpark of the simulation is let go
-        _pilots.TryRemove(id, out _);
-        _sim.Leave(id, LeaveWhy.Docked);
-        ReleaseBoundObjects(session);
-        var system = new PyInt(station.SolarSystemId);
-        session.Change(
-            ("stationid", new PyInt(station.Id)), ("stationid2", new PyInt(station.Id)), ("solarsystemid", None), ("solarsystemid2", system),
-            ("constellationid", new PyInt(station.ConstellationId)), ("regionid", new PyInt(station.RegionId)), ("shipid", new PyLong(pod.Ship.Id)), ("locationid", new PyInt(station.Id)));
-        if (pod.Corpse is { } corpse)
-        {
-            session.SendNotification(
-                "OnItemChange", "clientID", InventoryWire.PackedRow(RowOf(corpse, _statics.Type(corpse.TypeId)), new PyStr("")), new PyDict([new(new PyInt(3), new PyInt(0))]), None);
-        }
-        session.SendNotification(
-            "OnItemChange", "clientID", InventoryWire.PackedRow(RowOf(pod.Capsule with { LocationId = Junkyard }, _statics.Type(pod.Capsule.TypeId)), new PyStr("")),
-            new PyDict([new(new PyInt(3), InventoryWire.Id(pod.Capsule.LocationId))]), None);
-        session.SendNotification(
-            "OnCfgDataChanged", "charid", new PyStr("evelocations"),
-            new PyList([InventoryWire.Id(pod.Capsule.Id), new PyStr(_statics.Type(pod.Capsule.TypeId)?.Name ?? "Capsule"), new PyInt(pod.Capsule.LocationId), new PyInt(0), new PyInt(0), new PyInt(0), None]));
+        var pod = await _transitions.ExecuteAsync(
+            token => _ships.DestroyCapsuleAsync(
+                pilot.CharacterId,
+                pilot.ShipId,
+                corpseType,
+                character.Name,
+                rookie,
+                new HomePlace(station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId),
+                token),
+            result => result is not null,
+            (result, token) =>
+            {
+                var death = result!;
+                _pilots.TryRemove(id, out _);
+                _sim.Leave(id, LeaveWhy.Docked);
+                if (death.Corpse is { } corpse)
+                {
+                    var type = _statics.Type(corpse.TypeId);
+                    var kind = new SimWreckKind(corpse.TypeId, corpse.CustomName ?? character.Name, type?.GraphicId ?? 0);
+                    var radius = type?.Attributes.GetValueOrDefault(162) ?? 0;
+                    PlaceWreck(new SimPlaceWreck(
+                        pilot.SolarSystemId,
+                        corpse.Id,
+                        CorpseGroup,
+                        kind,
+                        destroyed.Position,
+                        destroyed.Direction,
+                        radius > 0 ? radius : 1.0,
+                        0,
+                        new SimCredit(character.Id, 0, 0, 0),
+                        true));
+                }
+                return Task.CompletedTask;
+            },
+            (result, _) =>
+            {
+                var death = result!;
+                ReleaseBoundObjects(session);
+                var system = new PyInt(station.SolarSystemId);
+                session.Change(
+                    ("stationid", new PyInt(station.Id)),
+                    ("stationid2", new PyInt(station.Id)),
+                    ("solarsystemid", None),
+                    ("solarsystemid2", system),
+                    ("constellationid", new PyInt(station.ConstellationId)),
+                    ("regionid", new PyInt(station.RegionId)),
+                    ("shipid", new PyLong(death.Ship.Id)),
+                    ("locationid", new PyInt(station.Id)));
+                return Task.FromResult(true);
+            },
+            (result, _) =>
+            {
+                var death = result!;
+                if (death.Corpse is { } corpse)
+                {
+                    session.SendNotification(
+                        "OnItemChange", "clientID",
+                        InventoryWire.PackedRow(RowOf(corpse, _statics.Type(corpse.TypeId)), new PyStr("")),
+                        new PyDict([new(new PyInt(3), new PyInt(0))]),
+                        None);
+                }
+                session.SendNotification(
+                    "OnItemChange", "clientID",
+                    InventoryWire.PackedRow(
+                        RowOf(death.Capsule with { LocationId = Junkyard }, _statics.Type(death.Capsule.TypeId)),
+                        new PyStr("")),
+                    new PyDict([new(new PyInt(3), InventoryWire.Id(death.Capsule.LocationId))]),
+                    None);
+                session.SendNotification(
+                    "OnCfgDataChanged", "charid", new PyStr("evelocations"),
+                    new PyList([
+                        InventoryWire.Id(death.Capsule.Id),
+                        new PyStr(_statics.Type(death.Capsule.TypeId)?.Name ?? "Capsule"),
+                        new PyInt(death.Capsule.LocationId),
+                        new PyInt(0),
+                        new PyInt(0),
+                        new PyInt(0),
+                        None
+                    ]));
+                return Task.CompletedTask;
+            },
+            CancellationToken.None,
+            id);
 
-        if (pod.Corpse is { } left)
-        {
-            var type = _statics.Type(left.TypeId);
-            var kind = new SimWreckKind(left.TypeId, left.CustomName ?? character.Name, type?.GraphicId ?? 0);
-            var radius = type?.Attributes.GetValueOrDefault(162) ?? 0; // the type's radius; a corpse has none in the static data and is one metre
-            PlaceWreck(new SimPlaceWreck(
-                pilot.SolarSystemId, left.Id, CorpseGroup, kind, destroyed.Position, destroyed.Direction, radius > 0 ? radius : 1.0, 0,
-                new SimCredit(character.Id, 0, 0, 0), true));
-        }
-        return new SelfDestruct(
-            pod.Capsule.Id,
-            new SelfDestructPart("Corpse", pod.Corpse?.CustomName, pod.Corpse?.Id),
-            new SelfDestructPart("Ship", _statics.Type(pod.Ship.TypeId)?.Name, pod.Ship.Id));
+        return pod is null
+            ? null
+            : new SelfDestruct(
+                pod.Capsule.Id,
+                new SelfDestructPart("Corpse", pod.Corpse?.CustomName, pod.Corpse?.Id),
+                new SelfDestructPart("Ship", _statics.Type(pod.Ship.TypeId)?.Name, pod.Ship.Id));
     }
 
     /// <summary>
@@ -1895,19 +2813,100 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     private (int SolarSystemId, int ConstellationId, int RegionId)? PlaceOfStation(long stationId) =>
         _stations.Get(stationId) is { } station ? (station.SolarSystemId, station.ConstellationId, station.RegionId) : null;
 
+    private const string SafeLogoffBlockedLabel = "UI/Inflight/SafeLogoff/ConditionsFailedHeader";
+    private static readonly TimeSpan SafeLogoffDuration = TimeSpan.FromSeconds(30);
+
+    private static PyValue SafeLogoffRefusal() => new PyList([new PyStr(SafeLogoffBlockedLabel)]);
+
+    public async ValueTask<PyValue> SafeLogoffAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        var id = (ulong)session.SessionId;
+        var readBlockers = LifecycleBlockers;
+        if (readBlockers is null
+            || !_pilots.TryGetValue(id, out var pilot) || !IsInSpace(session)
+            || session.GetInt("shipid") != pilot.ShipId
+            || _dying.ContainsKey(pilot.ShipId) || _deaths.ContainsKey(pilot.ShipId)
+            || pilot.JumpCloak || _transitions.SessionChangeActive(id) || HasTargetLocks(id, pilot.ShipId)
+            || await _ships.LoadAsync(pilot.CharacterId, cancellationToken) is not { } snapshot
+            || snapshot.Ship.Id != pilot.ShipId
+            || snapshot.Fitted.Any(module => snapshot.StateOf(module.Id) is ItemState.Active or ItemState.Overloaded))
+        {
+            return SafeLogoffRefusal();
+        }
+
+        IReadOnlyList<string> blockers;
+        try
+        {
+            blockers = await readBlockers(ShipLifecycleAction.SafeLogoff, session, null, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"safe logoff conditions for session {session.SessionId} could not be checked: {error.Message}");
+            return SafeLogoffRefusal();
+        }
+        if (blockers.Count != 0)
+            return new PyList([.. blockers.Select(label => new PyStr(label))]);
+
+        if (_safeLogoffs.TryAdd(id, 0))
+        {
+            _timers.Set($"space.safe-logoff:{id}", SafeLogoffDuration, () =>
+            {
+                if (_safeLogoffs.TryRemove(id, out _))
+                    session.Close();
+            });
+        }
+        return new PyList([]);
+    }
+
+    public PyValue AbortSafeLogoff(ClientSession session)
+    {
+        CancelSafeLogoff(session);
+        return None;
+    }
+
+    public bool CancelSafeLogoff(ClientSession session)
+    {
+        var id = (ulong)session.SessionId;
+        if (!_safeLogoffs.TryRemove(id, out _))
+            return false;
+        _timers.Cancel($"space.safe-logoff:{id}");
+        return true;
+    }
+
+    private bool HasTargetLocks(ulong sessionId, long shipId) =>
+        _lockedTargets.TryGetValue(sessionId, out var own) && own.Count > 0
+        || _lockedTargets.Any(entry => entry.Key != sessionId
+            && _pilots.ContainsKey(entry.Key)
+            && entry.Value.Contains(shipId));
+
+    private bool IsTargetedByAnotherPlayer(ulong sessionId, long shipId) =>
+        _lockedTargets.Any(entry => entry.Key != sessionId
+            && _pilots.ContainsKey(entry.Key)
+            && entry.Value.Contains(shipId));
+
+    private void StartShipSessionChange(ulong sessionId) => _transitions.StartSessionChange(sessionId);
+
     private void OnSessionClosed(ClientSession session)
     {
-        _targeting.TryRemove((ulong)session.SessionId, out _); // not disposed: an order may still be waiting on it
-        if (_pilots.TryRemove((ulong)session.SessionId, out var pilot))
+        var id = (ulong)session.SessionId;
+        CancelSafeLogoff(session);
+        _transitions.EndSessionChange(id);
+        _lockedTargets.TryRemove(id, out _);
+        _targeting.TryRemove(id, out _); // not disposed: an order may still be waiting on it
+        if (_pilots.TryRemove(id, out var pilot))
         {
             pilot.End();
-            _sim.Leave((ulong)session.SessionId, LeaveWhy.LoggedOff);
+            _sim.Leave(id, LeaveWhy.LoggedOff);
             _ = Task.Run(async () =>
             {
                 try
                 {
                     // the ship is put back with what its guns hold: the rounds spent in space are written first
-                    await _charges.CloseAsync((ulong)session.SessionId).ConfigureAwait(false);
+                    await _charges.CloseAsync(id).ConfigureAwait(false);
                     await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation);
                 }
                 catch (Exception error)
@@ -1915,6 +2914,86 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
                     _log?.Invoke($"the ship of character {pilot.CharacterId} could not be put back after the session ended: {error.Message}");
                 }
             });
+        }
+    }
+}
+
+
+public sealed class TransitionRuntime
+{
+    private static readonly TimeSpan SessionChangeDuration = TimeSpan.FromSeconds(10);
+    private readonly LocalTimers _timers;
+    private readonly ConcurrentDictionary<ulong, byte> _sessionChanges = new();
+
+    public TransitionRuntime(LocalTimers timers, EventBus? events = null)
+    {
+        _timers = timers;
+        Events = events;
+    }
+
+    public EventBus? Events { get; set; }
+
+    public bool SessionChangeActive(ulong sessionId) => _sessionChanges.ContainsKey(sessionId);
+
+    public void StartSessionChange(ulong sessionId)
+    {
+        _sessionChanges[sessionId] = 0;
+        _timers.Set($"space.transition.session-change:{sessionId}", SessionChangeDuration,
+            () => _sessionChanges.TryRemove(sessionId, out _));
+    }
+
+    public void EndSessionChange(ulong sessionId)
+    {
+        _timers.Cancel($"space.transition.session-change:{sessionId}");
+        _sessionChanges.TryRemove(sessionId, out _);
+    }
+
+    public async Task WriteEventAsync(
+        Npgsql.NpgsqlConnection connection,
+        Npgsql.NpgsqlTransaction transaction,
+        Eve.Ships.ShipTransitionEvent transition,
+        CancellationToken cancellationToken)
+    {
+        if (Events is { } events)
+        {
+            await events.PublishAsync(
+                connection,
+                transaction,
+                "space.transition",
+                transition,
+                $"{transition.Kind}:{transition.CharacterId}:{transition.ShipId}:{transition.RelatedShipId}",
+                cancellationToken);
+        }
+    }
+
+    public async Task<T> ExecuteAsync<T>(
+        Func<CancellationToken, Task<T>> persist,
+        Func<T, bool> committed,
+        Func<T, CancellationToken, Task>? applySimulation,
+        Func<T, CancellationToken, Task<bool>>? applySession,
+        Func<T, CancellationToken, Task>? notify,
+        CancellationToken cancellationToken,
+        ulong? sessionId = null)
+    {
+        var result = await persist(cancellationToken);
+        if (!committed(result))
+            return result;
+
+        try
+        {
+            if (applySimulation is not null)
+                await applySimulation(result, cancellationToken);
+            if (applySession is not null && !await applySession(result, cancellationToken))
+                return result;
+            if (sessionId is { } id)
+                StartSessionChange(id);
+            if (notify is not null)
+                await notify(result, cancellationToken);
+            return result;
+        }
+        finally
+        {
+            Events?.Wake();
         }
     }
 }

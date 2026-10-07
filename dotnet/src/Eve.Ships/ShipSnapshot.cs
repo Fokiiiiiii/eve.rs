@@ -73,6 +73,13 @@ public sealed class ShipSnapshot
         Character = Character, Ship = Ship, Fitted = Fitted, Charges = Charges, Skills = Skills, World = World, Condition = condition, ModuleConditions = ModuleConditions,
     };
 
+
+    /// <summary>The same ship after its dogma sources and module states have changed.</summary>
+    public ShipSnapshot WithDogma(DogmaWorld world, ShipCondition condition, IReadOnlyList<CharacterSkill> skills) => new()
+    {
+        Character = Character, Ship = Ship, Fitted = Fitted, Charges = Charges, Skills = skills, World = world, Condition = condition, ModuleConditions = ModuleConditions,
+    };
+
     /// <summary>What a fitted module has taken.</summary>
     public ModuleCondition ConditionOf(long moduleId) => ModuleConditions.TryGetValue(moduleId, out var condition) ? condition : ModuleCondition.Untouched;
 
@@ -87,9 +94,14 @@ public sealed class ShipSnapshot
     /// </summary>
     internal static async Task<ShipSnapshot?> LoadAsync(
         DogmaStatic statics, PgCharacterStore characters, PgItemStore items, PgSkillStore skills, PgModuleStateStore modules, long characterId,
-        Func<int, double>? learningAttribute, IReadOnlyList<CharacterSkill>? skillsOverride, CancellationToken cancellationToken)
+        Func<int, double>? learningAttribute, IReadOnlyList<CharacterSkill>? skillsOverride, CancellationToken cancellationToken, long? shipIdOverride = null)
     {
-        if (await characters.GetAsync(characterId, cancellationToken) is not { ShipId: { } shipId } character
+        if (await characters.GetAsync(characterId, cancellationToken) is not { } character)
+        {
+            return null;
+        }
+        var selectedShipId = shipIdOverride ?? character.ShipId;
+        if (selectedShipId is not { } shipId
             || await items.GetAsync(shipId, cancellationToken) is not { } ship || ship.OwnerId != characterId)
         {
             return null;

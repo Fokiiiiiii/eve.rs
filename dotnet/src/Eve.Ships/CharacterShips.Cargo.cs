@@ -1,3 +1,4 @@
+using Eve.Dogma;
 using Eve.Fitting;
 using Eve.Inventory;
 
@@ -15,12 +16,13 @@ public sealed partial class CharacterShips
 {
     /// <summary>The drone bay of a ship: it holds drones (category 18) and nothing else, up to its drone capacity (<c>NotEnoughDroneBaySpace</c> when they do not fit).</summary>
     public const int DroneBayFlag = 87;
+    public const int FighterBayFlag = 158;
+    public const int FrigateEscapeBayFlag = 179;
+    public const int ShipMaintenanceBayFlag = 90;
+    public const int FleetHangarFlag = 155;
 
     private const int DroneCategory = 18;
 
-    private const int CapacityAttribute = 38;
-    private const int DroneCapacityAttribute = 283;
-    private const int VolumeAttribute = 161;
 
     /// <summary>The room that is left in a hold is not worked out finer than this (the volumes are sums of floats).</summary>
     private const double RoomTolerance = 1e-7;
@@ -32,12 +34,127 @@ public sealed partial class CharacterShips
     }
 
     /// <summary>The attribute that says how big a bay is (a bay the ship has no word for holds nothing).</summary>
-    private static int? CapacityAttributeOf(int flag) => flag switch
+private sealed record ShipHoldRule(
+        string AttributeName,
+        string[]? Categories = null,
+        string[]? Groups = null,
+        string[]? BlockedGroups = null,
+        string[]? Types = null,
+        string[]? BlockedTypes = null);
+
+    // Flags, attributes, categories, groups, and types match the pinned client inventoryFlagsCommon.ShouldAllowAdd table.
+    private static readonly IReadOnlyDictionary<int, ShipHoldRule> ShipHoldRules = new Dictionary<int, ShipHoldRule>
     {
-        CargoFlag => CapacityAttribute,
-        DroneBayFlag => DroneCapacityAttribute,
-        _ => null,
+        [5] = new("capacity"),
+        [87] = new("droneCapacity", Categories: ["Drone"]),
+        [158] = new("fighterCapacity", Categories: ["Fighter"]),
+        [179] = new("frigateEscapeBayCapacity", Groups: ["Frigate", "Assault Frigate", "Logistics Frigate", "Electronic Attack Ship"], BlockedGroups: ["Capsule"]),
+        [90] = new("shipMaintenanceBayCapacity", Categories: ["Ship"], BlockedGroups: ["Capsule"]),
+        [155] = new("fleetHangarCapacity"),
+        [133] = new("specialFuelBayCapacity", Groups: ["Ice Product", "Fuel Block"]),
+        [134] = new("generalMiningHoldCapacity", Categories: ["Asteroid"], Groups: ["Harvestable Cloud", "Compressed Gas", "Prismaticite"], BlockedGroups: ["Scalable Decorative Asteroid", "Terran Artifacts", "Non-Interactable Asteroids"]),
+        [182] = new("specialAsteroidHoldCapacity", Categories: ["Asteroid"], Groups: ["Prismaticite"], BlockedGroups: ["Scalable Decorative Asteroid", "Terran Artifacts", "Ancient Compressed Ice", "Temporal Resources", "Ice", "Non-Interactable Asteroids"]),
+        [181] = new("specialIceHoldCapacity", Groups: ["Ice", "Temporal Resources", "Ancient Compressed Ice"]),
+        [135] = new("specialGasHoldCapacity", Groups: ["Harvestable Cloud", "Compressed Gas"]),
+        [136] = new("specialMineralHoldCapacity", Groups: ["Mineral", "Unrefined Mineral"]),
+        [137] = new("specialSalvageHoldCapacity", Groups: ["Ancient Salvage", "Salvaged Materials", "Refinables"]),
+        [138] = new("specialShipHoldCapacity", Categories: ["Ship"]),
+        [139] = new("specialSmallShipHoldCapacity", Groups: ["Frigate", "Assault Frigate", "Destroyer", "Interdictor", "Interceptor", "Covert Ops", "Electronic Attack Ship", "Stealth Bomber", "Expedition Frigate", "Tactical Destroyer", "Logistics Frigate", "Command Destroyer"]),
+        [140] = new("specialMediumShipHoldCapacity", Groups: ["Cruiser", "Combat Recon Ship", "Command Ship", "Heavy Assault Cruiser", "Heavy Interdiction Cruiser", "Logistics", "Strategic Cruiser", "Combat Battlecruiser", "Attack Battlecruiser", "Force Recon Ship", "Flag Cruiser", "Expedition Command Ship", "Special Edition Yachts"]),
+        [141] = new("specialLargeShipHoldCapacity", Groups: ["Battleship", "Black Ops", "Marauder"]),
+        [142] = new("specialIndustrialShipHoldCapacity", Groups: ["Blockade Runner", "Exhumer", "Hauler", "Mining Barge", "Deep Space Transport", "Expedition Frigate"]),
+        [143] = new("specialAmmoHoldCapacity", Categories: ["Charge"], Types: ["Nanite Repair Paste"]),
+        [148] = new("specialCommandCenterHoldCapacity", Groups: ["Command Centers"]),
+        [149] = new("specialPlanetaryCommoditiesHoldCapacity", Categories: ["Planetary Commodities", "Planetary Resources"], Types: ["Water", "Oxygen"]),
+        [151] = new("specialMaterialBayCapacity", Categories: ["Planetary Commodities", "Commodity", "Material"]),
+        [154] = new("specialQuafeHoldCapacity", Types: ["Large Crates of Quafe", "Quafe", "Quafe Ultra", "Quafe Ultra Special Edition", "Quafe Zero Classic", "Spiked Quafe", "Quafe Hyper"]),
+        [174] = new("specialCorpseHoldCapacity", Types: ["Corpse Male", "Corpse Female"]),
+        [176] = new("specialMobileDepotHoldCapacity", Groups: ["Mobile Depot"]),
+        [177] = new("specialBoosterHoldCapacity", Groups: ["Booster", "Drugs", "Biochemical Material"]),
+        [183] = new("specialSubsystemHoldCapacity", Categories: ["Subsystem"]),
+        [185] = new("specialColonyResourcesHoldCapacity", Categories: ["Planetary Commodities", "Planetary Resources", "Infrastructure Upgrades", "Orbitals", "Sovereignty Structures", "Structure", "Deployable", "Structure Module"], Groups: ["Colony Reagents", "Moon Materials", "Fuel Block", "Ice Product", "Structure Light Fighter", "Structure Support Fighter", "Structure Heavy Fighter", "Guided Bomb", "Structure Anti-Subcapital Missile", "Structure Anti-Capital Missile", "Structure ECM script", "Structure Area Denial Ammunition", "Command Centers", "Structure Warp Disruptor Script"], Types: ["Water", "Oxygen"]),
+        [186] = new("outputMoonMaterialBayCapacity", Groups: ["Moon Materials", "Mineral"]),
+        [188] = new("specialExpeditionHoldCapacity", Categories: ["Deployable", "Blueprint", "Personalization", "SKINs", "Commodity", "Apparel", "Skill", "Special Edition Assets", "Ancient Relics"], Groups: ["Harvestable Cloud", "Compressed Gas", "Generic Decryptor", "Salvaged Materials", "Ancient Salvage", "Booster", "Festival Charges", "Scanner Probe", "Survey Probe", "Structure Festival Charges", "Armor Command Burst Charges", "Expedition Command Burst Charges", "Information Command Burst Charges", "Mining Foreman Burst Charges", "Shield Command Burst Charges", "Skirmish Command Burst Charges", "Capacitor Booster Charge", "Rogue Drone Components", "Refinables", "Named Components"], Types: ["Nanite Repair Paste"]),
     };
+
+    public static bool IsShipHoldFlag(int flag) => ShipHoldRules.ContainsKey(flag);
+
+    private bool CanAddToShipHold(int flag, TypeDef? type, bool singleton, long quantity)
+    {
+        if (!ShipHoldRules.TryGetValue(flag, out var rule)) return false;
+        if ((flag is ShipMaintenanceBayFlag or FrigateEscapeBayFlag) && (!singleton || quantity != 1)) return false;
+        if (rule.Categories is null && rule.Groups is null && rule.Types is null) return true;
+        if (type is null) return false;
+
+        var category = statics.CategoryName(type.CategoryId);
+        var group = statics.GroupName(type.GroupId);
+        var categoryAllowed = rule.Categories?.Contains(category, StringComparer.OrdinalIgnoreCase) == true;
+        var groupAllowed = rule.Groups?.Contains(group, StringComparer.OrdinalIgnoreCase) == true;
+        var typeAllowed = rule.Types?.Contains(type.Name, StringComparer.OrdinalIgnoreCase) == true;
+        if (!categoryAllowed && !groupAllowed && !typeAllowed)
+            return false;
+
+        if (categoryAllowed
+            && (rule.BlockedGroups?.Contains(group, StringComparer.OrdinalIgnoreCase) == true
+                || rule.BlockedTypes?.Contains(type.Name, StringComparer.OrdinalIgnoreCase) == true))
+            return false;
+        return true;
+    }
+
+
+    private async Task<bool> ShipContentsAllowedInBayAsync(Item candidate, int flag, DogmaWorld world, long ownerId, CancellationToken cancellationToken)
+    {
+        if (flag is not ShipMaintenanceBayFlag and not FrigateEscapeBayFlag) return true;
+        if (!candidate.Singleton || candidate.Quantity != 1) return false;
+        await statics.EnsureTypesAsync([candidate.TypeId], cancellationToken);
+        if (statics.Type(candidate.TypeId) is not { CategoryId: 6 } shipType) return false;
+        if (flag == FrigateEscapeBayFlag && FittingRules.MissingSkill(world, ownerId, shipType) is not null)
+            return false;
+
+        var cargo = (await items.InContainerAsync(candidate.Id, cancellationToken))
+            .Where(item => item.Flag == CargoFlag)
+            .ToArray();
+        await statics.EnsureTypesAsync(cargo.Select(item => item.TypeId), cancellationToken);
+        return cargo.All(item => statics.Type(item.TypeId) is { } type && IsAllowedMaintenanceBayCargo(type));
+    }
+
+
+    private async Task<Item?> EscapeBayShipAsync(Item battleship, DogmaWorld pilotWorld, long ownerId, CancellationToken cancellationToken)
+    {
+        if (CapacityAttributeOf(FrigateEscapeBayFlag) is not { } capacityAttribute)
+            return null;
+        await statics.EnsureTypesAsync([battleship.TypeId], cancellationToken);
+        if ((statics.Type(battleship.TypeId)?.Attributes.GetValueOrDefault(capacityAttribute, 0) ?? 0) < 1)
+            return null;
+
+        var contents = (await items.InContainerAsync(battleship.Id, cancellationToken))
+            .Where(item => item.Flag == FrigateEscapeBayFlag)
+            .Take(2)
+            .ToArray();
+        if (contents.Length != 1)
+            return null;
+        var frigate = contents[0];
+        await statics.EnsureTypesAsync([frigate.TypeId], cancellationToken);
+        if (statics.Type(frigate.TypeId) is not { } type
+            || !CanAddToShipHold(FrigateEscapeBayFlag, type, frigate.Singleton, frigate.Quantity)
+            || !await ShipContentsAllowedInBayAsync(frigate, FrigateEscapeBayFlag, pilotWorld, ownerId, cancellationToken))
+            return null;
+        return frigate;
+    }
+
+    private static bool IsAllowedMaintenanceBayCargo(TypeDef type) =>
+        type.CategoryId is 7 or 8 or 22
+        || type.Name.Contains("isotope", StringComparison.OrdinalIgnoreCase)
+        || type.Name.Contains("strontium", StringComparison.OrdinalIgnoreCase)
+        || type.Name.Contains("mobile warp disruptor", StringComparison.OrdinalIgnoreCase);
+
+    private int? CapacityAttributeOf(int flag) => ShipHoldRules.TryGetValue(flag, out var rule) ? statics.AttributeId(rule.AttributeName) : null;
+
+
+    private double ItemVolumeOf(TypeDef type) =>
+        statics.AttributeId("volume") is { } attribute
+            ? type.Attributes.GetValueOrDefault(attribute, 0)
+            : 0;
 
     /// <summary>The volume of what these items take.</summary>
     public async Task<double> VolumeOfAsync(IEnumerable<Item> contents, CancellationToken cancellationToken = default)
@@ -49,7 +166,7 @@ public sealed partial class CharacterShips
         {
             if (statics.Type(item.TypeId) is { } type)
             {
-                used += ItemVolumes.Of(item, type.GroupId, type.Attributes.GetValueOrDefault(VolumeAttribute, 0));
+                used += ItemVolumes.Of(item, type.GroupId, ItemVolumeOf(type));
             }
         }
         return used;
@@ -73,8 +190,11 @@ public sealed partial class CharacterShips
                 ? snapshot.World.Get(shipId, attribute)
                 : statics.Type(ship.TypeId)?.Attributes.GetValueOrDefault(attribute, 0) ?? 0;
         }
-        var contents = (await items.InContainerAsync(shipId, cancellationToken)).Where(i => i.Flag == flag);
-        return new Room(capacity, await VolumeOfAsync(contents, cancellationToken));
+        var contents = (await items.InContainerAsync(shipId, cancellationToken)).Where(i => i.Flag == flag).ToArray();
+        var used = flag == FrigateEscapeBayFlag
+            ? contents.Sum(item => Math.Max(1, item.Quantity))
+            : await VolumeOfAsync(contents, cancellationToken);
+        return new Room(capacity, used);
     }
 
     public async Task<(Item Item, SpaceItem SpaceItem)> CreateAsteroidAsync(
@@ -217,14 +337,14 @@ public sealed partial class CharacterShips
         SpaceItem? containerSpace = null;
         if (contents.Count > 0)
         {
-            await statics.EnsureTypesAsync([CargoContainerType], cancellationToken);
-            if (statics.Type(CargoContainerType) is not { } canType)
+            await statics.EnsureTypesAsync([CargoContainerTypeId], cancellationToken);
+            if (statics.Type(CargoContainerTypeId) is not { } canType)
             {
                 return new(false, "NO_CONTAINER_TYPE", null, null, null);
             }
             var canId = await items.CreateAsync(connection, transaction, new NewItem(
-                CargoContainerType, wreck.OwnerId, solarSystemId, InSpaceFlag, 1, true), cancellationToken);
-            container = new Item(canId, CargoContainerType, wreck.OwnerId, solarSystemId, InSpaceFlag, 1, true, null);
+                CargoContainerTypeId, wreck.OwnerId, solarSystemId, InSpaceFlag, 1, true), cancellationToken);
+            container = new Item(canId, CargoContainerTypeId, wreck.OwnerId, solarSystemId, InSpaceFlag, 1, true, null);
             foreach (var content in contents)
             {
                 await items.MoveAsync(connection, transaction, content.Id, canId, ItemFlags.Hangar, cancellationToken);
@@ -258,14 +378,28 @@ public sealed partial class CharacterShips
         {
             return null;
         }
-        var required = ItemVolumes.Unit(item.TypeId, type.GroupId, item.Singleton, type.Attributes.GetValueOrDefault(VolumeAttribute, 0)) * Math.Max(1, quantity);
-        var contents = (await items.InContainerAsync(snapshot.Ship.Id, cancellationToken)).Where(i => i.Flag == flag);
-        var room = new Room(snapshot.World.Get(snapshot.Ship.Id, attribute), await VolumeOfAsync(contents, cancellationToken));
-        if (required <= 0 || required <= room.Free + RoomTolerance)
+        var contents = (await items.InContainerAsync(snapshot.Ship.Id, cancellationToken)).Where(i => i.Flag == flag).ToArray();
+        var capacity = snapshot.Character.ShipId == snapshot.Ship.Id
+            ? snapshot.World.Get(snapshot.Ship.Id, attribute)
+            : statics.Type(snapshot.Ship.TypeId)?.Attributes.GetValueOrDefault(attribute, 0) ?? 0;
+        if (flag == FrigateEscapeBayFlag)
+        {
+            var room = new Room(capacity, contents.Length);
+            var requiredShips = Math.Max(1, quantity);
+            if (requiredShips <= room.Free)
+            {
+                return null;
+            }
+            return new ShipRefused(ShipRefusal.NotEnoughCargoSpace, ModuleTypeId: item.TypeId, ShipTypeId: snapshot.Ship.TypeId,
+                Available: Math.Max(0, room.Free), Volume: requiredShips);
+        }
+        var required = ItemVolumes.Unit(item.TypeId, type.GroupId, item.Singleton, ItemVolumeOf(type)) * Math.Max(1, quantity);
+        var cargoRoom = new Room(capacity, await VolumeOfAsync(contents, cancellationToken));
+        if (required <= 0 || required <= cargoRoom.Free + RoomTolerance)
         {
             return null;
         }
-        return new ShipRefused(flag == DroneBayFlag ? ShipRefusal.NotEnoughDroneBaySpace : ShipRefusal.NotEnoughCargoSpace, ModuleTypeId: item.TypeId, ShipTypeId: snapshot.Ship.TypeId, Available: Math.Round(room.Free, 6), Volume: Math.Round(required, 6));
+        return new ShipRefused(flag == DroneBayFlag ? ShipRefusal.NotEnoughDroneBaySpace : ShipRefusal.NotEnoughCargoSpace, ModuleTypeId: item.TypeId, ShipTypeId: snapshot.Ship.TypeId, Available: Math.Round(cargoRoom.Free, 6), Volume: Math.Round(required, 6));
     }
 
     /// <summary>

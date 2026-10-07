@@ -2,6 +2,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Characters;
 using Eve.Skills;
+using Npgsql;
 
 namespace Eve.Services.Skills;
 
@@ -27,7 +28,7 @@ public delegate ValueTask<SkillAugmentationSnapshot> SkillAugmentationReader(lon
 [Service("skillHandler", Aliases = ["skillMgr"])]
 public sealed partial class SkillHandlerService(
     PgSkillStore store, SkillCatalog catalog, CharacterTraining training, PgCharacterStore characters, Eve.Inventory.PgItemStore items, Eve.Dogma.DogmaStatic dogmaStatic, TrainingAnnouncer announcer, Func<long> nowUnixMs,
-    SkillAugmentationReader readAugmentations, Func<double>? nextBoosterRoll = null)
+    SkillAugmentationReader readAugmentations, Func<double>? nextBoosterRoll = null, Eve.Wallet.WalletTransactions? walletTransactions = null, Func<long, bool>? isAlphaClone = null)
 {
     /// <summary>The five attributes a character trains with (charisma, intelligence, memory, perception, willpower).</summary>
     private static readonly int[] AttributeIds = [164, 165, 166, 167, 168];
@@ -423,6 +424,17 @@ public static SkillAugmentationReader CreateAugmentationReader(
     public async ValueTask<PyValue> GetFreeSkillPoints(ServiceCall call) =>
         new PyInt(CharacterOf(call) is { } id ? await store.FreeSkillPointsAsync(id, call.Cancellation) : 0L);
 
+
+    [Method("GetSkillChangesForISIS")]
+    public async ValueTask<PyValue> GetSkillChangesForISIS(ServiceCall call)
+    {
+        if (CharacterOf(call) is not { } character)
+            return new PyList([]);
+        var changes = await store.ConsumeRecentSkillPointChangesAsync(character, call.Cancellation);
+        return new PyList([.. changes.Select(change =>
+            (PyValue)Py.Tuple(new PyInt(change.TypeId), new PyInt(change.PointChange)))]);
+    }
+
     [Method("GetSkillQueue")]
     public async ValueTask<PyValue> GetSkillQueue(ServiceCall call) => SkillNotifications.Queue((await ViewOf(call))?.Queue ?? []);
 
@@ -786,6 +798,392 @@ public static SkillAugmentationReader CreateAugmentationReader(
     }
 
     /// <summary>The proxy node that serves this object: the one the client is connected to.</summary>
+[Method("IsSkillAvailableForPurchase")]
+    public PyValue IsSkillAvailableForPurchase(ServiceCall call) =>
+        IdOf(call.Arg(0)) is { } id && id is >= 0 and <= int.MaxValue
+            && catalog.Get((int)id) is { Published: true, AvailableForPurchase: true }
+                ? PyBool.True
+                : PyBool.False;
+
+    [Method("GetDirectPurchasePrice")]
+    public PyValue GetDirectPurchasePrice(ServiceCall call)
+    {
+        if (IdOf(call.Arg(0)) is not { } id || id is < 0 or > int.MaxValue || catalog.Get((int)id) is not { Published: true } skill)
+            throw MachoErrors.ThrowUserError("ItemNotASkill", ("skillName", call.Arg(0)));
+        if (!skill.AvailableForPurchase)
+            throw MachoErrors.ThrowUserError("SkillUnavailableForPurchase", ("type", new PyInt(skill.TypeId)));
+        return Py.Number((double)(skill.BasePrice * 1.3m));
+    }
+
+    [Method("PurchaseSkills")]
+    public async ValueTask<PyValue> PurchaseSkills(ServiceCall call)
+    {
+        if (CharacterOf(call) is not { } character) return None;
+        if (walletTransactions is null)
+            throw MachoErrors.ThrowUserError("SkillPurchaseDisabled");
+        var ids = call.Arg(0) switch
+        {
+            PyList list => list.Items.Select(IdOf).OfType<long>().Distinct().ToArray(),
+            PyTuple tuple => tuple.Items.Select(IdOf).OfType<long>().Distinct().ToArray(),
+            _ => [],
+        };
+        if (ids.Length == 0) return new PyList([]);
+        var requested = new List<SkillType>(ids.Length);
+        foreach (var id in ids)
+        {
+            if (id is < 0 or > int.MaxValue || catalog.Get((int)id) is not { Published: true } skill)
+                throw MachoErrors.ThrowUserError("ItemNotASkill", ("skillName", Py.Number(id)));
+            if (!skill.AvailableForPurchase)
+                throw MachoErrors.ThrowUserError("SkillUnavailableForPurchase", ("type", new PyInt(skill.TypeId)));
+            requested.Add(skill);
+        }
+        var cost = requested.Sum(skill => decimal.Round(skill.BasePrice * 1.3m, 2, MidpointRounding.AwayFromZero));
+        if (cost <= 0)
+            throw MachoErrors.ThrowUserError("SkillPurchaseUnknownError");
+        var operationKey = $"skill-purchase:{character}:{call.Session.SessionId}:{IdOf(call.CallId) ?? nowUnixMs()}";
+        try
+        {
+            await store.InTransactionAsync(async (connection, transaction, token) =>
+            {
+                await using (var characterLock = new NpgsqlCommand(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", connection, transaction))
+                {
+                    characterLock.Parameters.Add(new NpgsqlParameter { Value = $"skill-purchase:{character}" });
+                    await characterLock.ExecuteScalarAsync(token);
+                }
+                var current = await store.ForCharacterAsync(connection, transaction, character, token);
+                if (requested.Any(skill => current.Any(have => have.TypeId == skill.TypeId)))
+                    throw MachoErrors.ThrowUserError("CharacterAlreadyKnowsSkill", ("skillName", new PyInt(requested.First(skill => current.Any(have => have.TypeId == skill.TypeId)).TypeId)));
+                await walletTransactions.AdjustAsync(connection, transaction, character, -cost, 0, 57, "Direct skill purchase",
+                    nowUnixMs(), operationKey, token);
+                await store.GrantAsync(connection, transaction, character, requested.Select(skill => new CharacterSkill(skill.TypeId, 0, 0)), token);
+                return true;
+            }, call.Cancellation);
+        }
+        catch (Eve.Wallet.InsufficientFundsException)
+        {
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Not enough ISK to purchase these skills.")));
+        }
+        return new PyList([.. requested.Select(skill => (PyValue)new PyInt(skill.TypeId))]);
+    }
+
+    [Method("InjectSkillIntoBrain")]
+    public async ValueTask<PyValue> InjectSkillIntoBrain(ServiceCall call) =>
+        await InjectSkillBooksAsync(call.Session, [.. ItemsOf(call.Arg(0)).Select(IdOf).OfType<long>()], call.Cancellation);
+
+
+    public async Task<PyValue> InjectSkillBooksAsync(ClientSession session, IReadOnlyList<long> itemIds, CancellationToken cancellationToken)
+    {
+        if (session.CharacterId is not { } character || session.GetInt("stationid") is not { } station)
+            throw MachoErrors.ThrowUserError("SkillExtractorNotDockedInStation");
+        var shipId = session.GetInt("shipid");
+        var requested = itemIds.Distinct().ToArray();
+        if (requested.Length == 0) return None;
+        var injected = await store.InTransactionAsync(async (connection, transaction, token) =>
+        {
+            await using (var characterLock = new NpgsqlCommand(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", connection, transaction))
+            {
+                characterLock.Parameters.Add(new NpgsqlParameter { Value = $"skill-inject:{character}" });
+                await characterLock.ExecuteScalarAsync(token);
+            }
+            var current = (await store.ForCharacterAsync(connection, transaction, character, token)).Select(skill => skill.TypeId).ToHashSet();
+            var result = new List<int>();
+            foreach (var itemId in requested)
+            {
+                if (await items.LockAndGetAsync(connection, transaction, itemId, token) is not { } item
+                    || item.OwnerId != character
+                    || (item.LocationId != station && !(shipId is { } ship && item.LocationId == ship && item.Flag == CargoFlag))
+                    || catalog.Get(item.TypeId) is not { Published: true } skill)
+                    throw MachoErrors.ThrowUserError("ItemNotASkill", ("skillName", new PyLong(itemId)));
+                if (current.Contains(skill.TypeId))
+                    throw MachoErrors.ThrowUserError("CharacterAlreadyKnowsSkill", ("skillName", new PyInt(skill.TypeId)));
+                await store.GrantAsync(connection, transaction, character, [new CharacterSkill(skill.TypeId, 0, 0)], token);
+                if (item.Singleton || item.Quantity <= 1)
+                    await items.DeleteAsync(connection, transaction, itemId, token);
+                else
+                    await items.SetQuantityAsync(connection, transaction, itemId, item.Quantity - 1, token);
+                current.Add(skill.TypeId);
+                result.Add(skill.TypeId);
+            }
+            return result;
+        }, cancellationToken);
+        return new PyList([.. injected.Select(typeId => (PyValue)new PyInt(typeId))]);
+    }
+
+private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long nonDiminishing)
+    {
+        var dailyAlpha = catalog.ItemTypeId("Daily Alpha Skill Injector");
+        if (dailyAlpha == typeId) return quantity == 1 ? 50_000L : 0L;
+        var large = catalog.ItemTypeId("Large Skill Injector");
+        var standard = catalog.ItemTypeId("Skill Injector");
+        var small = catalog.ItemTypeId("Small Skill Injector");
+        var unitsPerItem = large == typeId ? 3 : standard == typeId || small == typeId ? 1 : 0;
+        if (unitsPerItem == 0 || quantity is <= 0 or > 1_000) return 0;
+        var units = quantity * unitsPerItem;
+        var total = 0L;
+        for (var i = 0L; i < units; i++)
+        {
+            var gained = nonDiminishing > 0 ? 500_000L
+                : totalSp < 5_000_000 ? 500_000L
+                : totalSp < 50_000_000 ? 400_000L
+                : totalSp < 80_000_000 ? 300_000L
+                : 150_000L;
+            if (nonDiminishing > 0) nonDiminishing--;
+            totalSp = checked(totalSp + gained);
+            total = checked(total + gained);
+        }
+        return total;
+    }
+
+    private bool IsSkillInjectorType(int typeId) =>
+        catalog.ItemTypeId("Skill Injector") == typeId
+        || catalog.ItemTypeId("Small Skill Injector") == typeId
+        || catalog.ItemTypeId("Large Skill Injector") == typeId
+        || catalog.ItemTypeId("Daily Alpha Skill Injector") == typeId;
+
+    [Method("GetDiminishedSpFromInjectors")]
+    public async ValueTask<PyValue> GetDiminishedSpFromInjectors(ServiceCall call)
+    {
+        if (CharacterOf(call) is not { } character || IdOf(call.Arg(0)) is not { } typeId
+            || IdOf(call.Arg(1)) is not { } quantity)
+            return new PyInt(0);
+        var allocated = (await store.TotalPointsAsync([character], call.Cancellation)).GetValueOrDefault(character);
+        var free = await store.FreeSkillPointsAsync(character, call.Cancellation);
+        return new PyInt(DiminishedInjectorSp(allocated + free, (int)typeId, quantity, IdOf(call.Arg(2)) ?? 0));
+    }
+
+    [Method("CheckInjectionConstraints")]
+    public async ValueTask<PyValue> CheckInjectionConstraints(ServiceCall call)
+    {
+        if (CharacterOf(call) is not { } character || IdOf(call.Arg(0)) is not { } itemId
+            || IdOf(call.Arg(1)) is not { } quantity || quantity <= 0
+            || await items.GetAsync(itemId, call.Cancellation) is not { } item
+            || item.OwnerId != character || !IsSkillInjectorType(item.TypeId)
+            || item.Singleton && quantity != 1 || !item.Singleton && quantity > item.Quantity)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
+        return None;
+    }
+
+    [Method("InjectSkillpoints")]
+    public async ValueTask<PyValue> InjectSkillpoints(ServiceCall call)
+    {
+        if (CharacterOf(call) is not { } character || IdOf(call.Arg(0)) is not { } itemId
+            || IdOf(call.Arg(1)) is not { } quantity || quantity <= 0)
+            return None;
+        var current = await items.GetAsync(itemId, call.Cancellation);
+        var dailyAlphaTypeId = catalog.ItemTypeId("Daily Alpha Skill Injector");
+        if (current is null || current.OwnerId != character || !IsSkillInjectorType(current.TypeId)
+            || current.Singleton && quantity != 1 || !current.Singleton && quantity > current.Quantity
+            || current.TypeId == dailyAlphaTypeId && (quantity != 1 || isAlphaClone?.Invoke(character) != true))
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
+
+        var balance = await store.InTransactionAsync(async (connection, transaction, token) =>
+        {
+            await using (var characterLock = new NpgsqlCommand("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", connection, transaction))
+            {
+                characterLock.Parameters.Add(new NpgsqlParameter { Value = $"skill-inject:{character}" });
+                await characterLock.ExecuteScalarAsync(token);
+            }
+            if (await items.LockAndGetAsync(connection, transaction, itemId, token) is not { } item
+                || item.OwnerId != character || item.TypeId != current.TypeId
+                || item.Singleton && quantity != 1 || !item.Singleton && quantity > item.Quantity)
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
+            if (item.TypeId == dailyAlphaTypeId
+                && !await store.TryUseDailyAlphaSkillInjectorAsync(connection, transaction, character, item.TypeId, nowUnixMs(), token))
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("A Daily Alpha Skill Injector can only be used once per day.")));
+            var total = await store.TotalPointsAsync(connection, transaction, character, token);
+            var free = await store.FreeSkillPointsAsync(connection, transaction, character, token);
+            var award = DiminishedInjectorSp(total + free, item.TypeId, quantity, 0);
+            if (award <= 0) throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
+            var newBalance = await store.GrantFreeSkillPointsAsync(connection, transaction, character, award, token);
+            if (item.Singleton || quantity == item.Quantity)
+                await items.DeleteAsync(connection, transaction, itemId, token);
+            else
+                await items.SetQuantityAsync(connection, transaction, itemId, item.Quantity - quantity, token);
+            return newBalance;
+        }, call.Cancellation);
+        return new PyInt(balance);
+    }
+
+
+    [Method("ExtractSkills")]
+    public async ValueTask<PyValue> ExtractSkills(ServiceCall call)
+    {
+        if (CharacterOf(call) is not { } character
+            || call.Session.GetInt("stationid") is not { } station
+            || call.Session.GetInt("shipid") is not { } shipId
+            || catalog.ItemTypeId("Capsule") is not { } capsuleTypeId
+            || await items.GetAsync(shipId, call.Cancellation) is not { TypeId: var shipTypeId }
+            || shipTypeId != capsuleTypeId)
+            throw MachoErrors.ThrowUserError("SkillExtractorNotDockedInStation");
+
+        var extractorTypeId = catalog.ItemTypeId("Skill Extractor");
+        var injectorTypeId = catalog.ItemTypeId("Large Skill Injector") ?? catalog.ItemTypeId("Skill Injector");
+        if (extractorTypeId is null || injectorTypeId is null)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Skill extraction is unavailable.")));
+
+        Eve.Inventory.Item? extractor = null;
+        var extractorArgument = -1;
+        for (var index = 0; index < call.Args.Count; index++)
+        {
+            if (IdOf(call.Args[index]) is not { } candidateId
+                || await items.GetAsync(candidateId, call.Cancellation) is not { } candidate
+                || candidate.TypeId != extractorTypeId.Value)
+                continue;
+            extractor = candidate;
+            extractorArgument = index;
+            break;
+        }
+        if (extractor is null || extractorArgument < 0 || extractor.OwnerId != character
+            || extractor.LocationId != station || extractor.Flag != HangarFlag || extractor.Quantity < 1)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill extractor cannot be used.")));
+
+        var requested = call.Args
+            .Where((_, index) => index != extractorArgument)
+            .SelectMany(ExtractionTargetsOf)
+            .Where(target => target.SkillTypeId is >= 0 and <= int.MaxValue && target.Points > 0)
+            .GroupBy(target => (int)target.SkillTypeId)
+            .Select(group => (SkillTypeId: group.Key, Points: group.Aggregate(0L, (sum, target) => target.Points == long.MaxValue ? long.MaxValue : Math.Min(long.MaxValue, sum + target.Points))))
+            .ToArray();
+        if (requested.Length == 0)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Select skills to extract.")));
+
+        var alphaRaceId = 0;
+        if (isAlphaClone?.Invoke(character) == true)
+        {
+            if (await characters.GetAsync(character, call.Cancellation) is not { } characterRecord)
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The character's Alpha skill limits could not be verified.")));
+            alphaRaceId = characterRecord.RaceId;
+        }
+        var view = await training.ViewAsync(character, AccountOf(call), call.Cancellation);
+        var queue = view?.Queue ?? [];
+        var extractorPoints = 500_000L;
+        var updated = await store.InTransactionAsync(async (connection, transaction, token) =>
+        {
+            await using (var characterLock = new NpgsqlCommand(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", connection, transaction))
+            {
+                characterLock.Parameters.Add(new NpgsqlParameter { Value = $"skill-inject:{character}" });
+                await characterLock.ExecuteScalarAsync(token);
+            }
+            if (await items.LockAndGetAsync(connection, transaction, extractor.Id, token) is not { } locked
+                || locked.OwnerId != character || locked.TypeId != extractorTypeId.Value
+                || locked.LocationId != station || locked.Flag != HangarFlag || locked.Quantity < 1)
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill extractor cannot be used.")));
+
+            var skills = await store.ForCharacterAsync(connection, transaction, character, token);
+            var byId = skills.ToDictionary(skill => skill.TypeId);
+            var total = await store.TotalPointsAsync(connection, transaction, character, token);
+            if (total < 5_500_000 || total - extractorPoints < 5_000_000)
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("A character must retain at least 5,000,000 trained skill points to extract skills.")));
+
+            var deductions = new Dictionary<int, long>();
+            var remaining = extractorPoints;
+            foreach (var target in requested)
+            {
+                if (!byId.TryGetValue(target.SkillTypeId, out var skill) || skill.SkillPoints <= 0)
+                    throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("A selected skill is not trained.")));
+                if (queue.Any(entry => entry.TypeId == target.SkillTypeId))
+                    throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("A skill in the training queue cannot be extracted.")));
+                var take = Math.Min(remaining, Math.Min(skill.SkillPoints, target.Points));
+                if (take > 0)
+                {
+                    deductions[target.SkillTypeId] = take;
+                    remaining -= take;
+                }
+                if (remaining == 0) break;
+            }
+            if (remaining != 0)
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Selected skills do not contain 500,000 extractable skill points.")));
+
+            var afterPoints = skills.ToDictionary(
+                skill => skill.TypeId,
+                skill => skill.SkillPoints - deductions.GetValueOrDefault(skill.TypeId));
+            var selected = deductions.Keys.ToHashSet();
+            var lockedSkills = new HashSet<int>();
+            foreach (var dependent in skills)
+            {
+                if (afterPoints.GetValueOrDefault(dependent.TypeId) <= 0
+                    || catalog.Get(dependent.TypeId)?.Requirements is not { } requirements)
+                    continue;
+                foreach (var requirement in requirements)
+                    if (selected.Contains(requirement.TypeId))
+                        lockedSkills.Add(requirement.TypeId);
+            }
+            foreach (var entry in queue)
+                if (catalog.Get(entry.TypeId)?.Requirements is { } requirements)
+                    foreach (var requirement in requirements)
+                        if (selected.Contains(requirement.TypeId))
+                            lockedSkills.Add(requirement.TypeId);
+            if (deductions.Keys.Any(lockedSkills.Contains))
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("A skill required by another trained or queued skill cannot be extracted.")));
+
+            var changed = new List<CharacterSkill>(deductions.Count);
+            foreach (var (skillTypeId, points) in deductions)
+            {
+                var skillType = catalog.Get(skillTypeId);
+                if (skillType is null)
+                    throw MachoErrors.ThrowUserError("ItemNotASkill", ("skillName", new PyInt(skillTypeId)));
+                var current = byId[skillTypeId];
+                var newPoints = current.SkillPoints - points;
+                var alphaMaxLevel = alphaRaceId > 0 ? catalog.AlphaMaxLevel(alphaRaceId, skillTypeId) : 0;
+                if (alphaRaceId > 0
+                    && SkillPoints.LevelAt(skillType.Rank, newPoints) < alphaMaxLevel)
+                    throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Alpha clones cannot extract skill points below their clone-grade skill limits.")));
+                changed.Add(current with { SkillPoints = newPoints, Level = SkillPoints.LevelAt(skillType.Rank, newPoints) });
+            }
+            await store.GrantAsync(connection, transaction, character, changed, token);
+            if (locked.Singleton || locked.Quantity == 1)
+                await items.DeleteAsync(connection, transaction, locked.Id, token);
+            else
+                await items.SetQuantityAsync(connection, transaction, locked.Id, locked.Quantity - 1, token);
+            await items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(injectorTypeId.Value, character, station, HangarFlag, 1, Singleton: false), token);
+            return changed;
+        }, call.Cancellation);
+
+        return PyNone.Instance;
+    }
+
+    [Method("SplitSkillInjector")]
+    public ValueTask<PyValue> SplitSkillInjector(ServiceCall call) => TransformSkillInjectorsAsync(call, splitting: true);
+
+    [Method("CombineSkillInjector")]
+    public ValueTask<PyValue> CombineSkillInjector(ServiceCall call) => TransformSkillInjectorsAsync(call, splitting: false);
+
+    private async ValueTask<PyValue> TransformSkillInjectorsAsync(ServiceCall call, bool splitting)
+    {
+        if (CharacterOf(call) is not { } character || call.Session.GetInt("stationid") is not { } station
+            || IdOf(call.Arg(0)) is not { } itemId || IdOf(call.Arg(1)) is not { } quantity || quantity <= 0)
+            return None;
+        var smallType = catalog.ItemTypeId("Skill Injector");
+        var largeType = catalog.ItemTypeId("Large Skill Injector");
+        if (smallType is null || largeType is null)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Skill injector splitting is unavailable.")));
+        var fromType = splitting ? largeType.Value : smallType.Value;
+        var toType = splitting ? smallType.Value : largeType.Value;
+        if (!splitting && (quantity < 3 || quantity % 3 != 0))
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Three small skill injectors are required to combine.")));
+
+        await store.InTransactionAsync(async (connection, transaction, token) =>
+        {
+            if (await items.LockAndGetAsync(connection, transaction, itemId, token) is not { } item
+                || item.OwnerId != character || item.LocationId != station || item.TypeId != fromType
+                || item.Singleton && quantity != 1 || !item.Singleton && quantity > item.Quantity)
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector stack cannot be transformed.")));
+            var outputQuantity = splitting ? checked(quantity * 3) : quantity / 3;
+            if (item.Singleton || quantity == item.Quantity)
+                await items.DeleteAsync(connection, transaction, itemId, token);
+            else
+                await items.SetQuantityAsync(connection, transaction, itemId, item.Quantity - quantity, token);
+            await items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(toType, character, station, HangarFlag, outputQuantity, Singleton: false), token);
+            return true;
+        }, call.Cancellation);
+        return None;
+    }
+
     [Method("MachoResolveObject")]
     public PyValue MachoResolveObject(ServiceCall call) => new PyInt(MachoMessage.ProxyNodeId);
 
@@ -819,4 +1217,33 @@ public static SkillAugmentationReader CreateAugmentationReader(
         PyList list => list.Items,
         _ => [],
     };
+
+
+    private static IEnumerable<(long SkillTypeId, long Points)> ExtractionTargetsOf(PyValue value)
+    {
+        if (value is PyDict dictionary)
+        {
+            foreach (var entry in dictionary.Entries)
+                if (IdOf(entry.Key) is { } skillId)
+                    yield return (skillId, IdOf(entry.Value) ?? long.MaxValue);
+            yield break;
+        }
+
+        if (value is PyList or PyTuple)
+        {
+            var entries = ItemsOf(value);
+            if (entries.Count >= 2 && IdOf(entries[0]) is { } skillTypeId && IdOf(entries[^1]) is { } points)
+            {
+                yield return (skillTypeId, points);
+                yield break;
+            }
+            foreach (var entry in entries)
+                foreach (var target in ExtractionTargetsOf(entry))
+                    yield return target;
+            yield break;
+        }
+
+        if (IdOf(value) is { } typeId)
+            yield return (typeId, long.MaxValue);
+    }
 }

@@ -383,6 +383,18 @@ mod tests {
     }
 
     #[test]
+    fn point_defense_leads_a_moving_missile() {
+        let target =
+            MissileThreat { radius_m: 1.0, ..threat([100.0, 0.0, 0.0], [10.0, 0.0, 0.0], 90.0, 4.0) };
+        let shot = PointDefenseProjectile { projectile_speed_mps: 50.0, max_range_m: 124.0, damage: 90.0 };
+
+        let hit = shot.intercept([0.0; 3], &target).unwrap();
+        assert!((hit.time_seconds - 2.475).abs() < 1e-9);
+        assert!((hit.distance_m - 123.75).abs() < 1e-9);
+        assert!((hit.position[0] - 124.75).abs() < 1e-9);
+    }
+
+    #[test]
     fn an_interceptor_arriving_at_the_warhead_deadline_is_too_late() {
         let shot = PointDefenseProjectile { projectile_speed_mps: 50.0, max_range_m: 200.0, damage: 90.0 };
         let target = threat([100.0, 0.0, 0.0], [0.0; 3], 90.0, 2.0);

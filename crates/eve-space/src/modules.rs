@@ -1412,12 +1412,43 @@ impl Scene {
         }
     }
 
-    /// How far apart the surfaces of two ships of the scene are (0 when they touch).
     pub(crate) fn apart(&self, a: SessionId, b: SessionId) -> Option<f64> {
         let (a, b) = (&self.pilots.get(&a)?.ship, &self.pilots.get(&b)?.ship);
-        let (p, q) = (a.position, b.position);
-        let centres = ((p.x - q.x).powi(2) + (p.y - q.y).powi(2) + (p.z - q.z).powi(2)).sqrt();
-        Some((centres - a.spec.radius - b.spec.radius).max(0.0))
+        crate::geo::surface_gap(
+            [a.position.x, a.position.y, a.position.z],
+            a.spec.radius,
+            [b.position.x, b.position.y, b.position.z],
+            b.spec.radius,
+        )
+    }
+
+    pub(crate) fn spatial_ship(
+        &self,
+        session: SessionId,
+        pilot: &crate::scene::Pilot,
+    ) -> crate::geo::SpatialEntity<SessionId> {
+        let spec = &pilot.ship.spec;
+        crate::geo::SpatialEntity {
+            id: spec.ship_id,
+            kind: if self.drones.contains_key(&session) {
+                crate::geo::SpatialKind::Drone
+            } else if pilot.ship.npc.is_some() {
+                crate::geo::SpatialKind::NpcShip
+            } else {
+                crate::geo::SpatialKind::PlayerShip
+            },
+            character_id: (spec.character_id > 0).then_some(spec.character_id),
+            owner_id: (spec.owner_id > 0).then_some(spec.owner_id),
+            corporation_id: (spec.corporation_id > 0).then_some(spec.corporation_id),
+            alliance_id: (spec.alliance_id > 0).then_some(spec.alliance_id),
+            type_id: Some(spec.type_id),
+            group_id: Some(spec.group_id),
+            category_id: Some(spec.category_id),
+            position: [pilot.ship.position.x, pilot.ship.position.y, pilot.ship.position.z],
+            radius: spec.radius,
+            warping: pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()),
+            item: session,
+        }
     }
 
     /// A cycle of an effect that is projected at a ship: what lands is `what` weakened by how far the target is (nothing when it is out of reach). An attack is

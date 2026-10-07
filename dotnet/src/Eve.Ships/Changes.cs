@@ -35,7 +35,7 @@ public enum ShipRefusal
     /// <summary>No free slot suits the module.</summary>
     NoSuitableSlot,
 
-    /// <summary>What was moved does not fit in the hold (see <see cref="ShipRefused.Available"/> and <see cref="ShipRefused.Volume"/>).</summary>
+    /// <summary>What was moved does not fit in the hold.</summary>
     NotEnoughCargoSpace,
 
     /// <summary>What was moved does not fit in the can or wreck it was put in (the same room figures).</summary>
@@ -46,6 +46,9 @@ public enum ShipRefusal
 
     /// <summary>What was put in the drone bay is not a drone.</summary>
     NotADrone,
+
+    /// <summary>The item type is not accepted by the selected ship hold.</summary>
+    NotAllowedInHold,
 }
 
 public abstract record ShipOutcome;

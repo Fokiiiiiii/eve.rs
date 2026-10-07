@@ -33,9 +33,30 @@ public sealed record Item(long Id, int TypeId, long OwnerId, long LocationId, in
     bool Singleton, string? CustomName, bool BlueprintCopy = false, bool BlueprintLocked = false,
     int? BlueprintRuns = null, int MaterialEfficiency = 0, int TimeEfficiency = 0);
 
+
+public sealed record ItemMergeResult(Item SourceBefore, Item DestinationBefore, Item DestinationAfter, Item? SourceAfter);
+
 public sealed record NewItem(int TypeId, long OwnerId, long LocationId, int Flag, long Quantity = 1,
     bool Singleton = false, string? CustomName = null, bool BlueprintCopy = false, bool BlueprintLocked = false,
     int? BlueprintRuns = null, int MaterialEfficiency = 0, int TimeEfficiency = 0);
+
+
+public enum ShipContractInvalidationReason
+{
+    OwnerChanged,
+    CorporationHangar,
+    Repackaged,
+}
+
+public interface IShipInsuranceInvalidator
+{
+    ValueTask InvalidateAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long itemId,
+        ShipContractInvalidationReason reason,
+        CancellationToken cancellationToken);
+}
 
 /// <summary>Items in PostgreSQL, in the module's own schema (<c>inventory</c> unless told otherwise).</summary>
 public sealed class PgItemStore
@@ -47,7 +68,9 @@ public sealed class PgItemStore
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
 
-    public PgItemStore(NpgsqlDataSource source, string schema = DefaultSchema)
+private readonly IShipInsuranceInvalidator? _shipInsuranceInvalidator;
+
+    public PgItemStore(NpgsqlDataSource source, string schema = DefaultSchema, IShipInsuranceInvalidator? shipInsuranceInvalidator = null)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]{0,62}$"))
         {
@@ -55,6 +78,7 @@ public sealed class PgItemStore
         }
         _source = source;
         _schema = schema;
+        _shipInsuranceInvalidator = shipInsuranceInvalidator;
     }
 
     public static IReadOnlyList<Migration> MigrationSet() =>
@@ -120,6 +144,8 @@ public sealed class PgItemStore
             Parameters = { new() { Value = id }, new() { Value = locationId }, new() { Value = flag } },
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
+        if (ItemFlags.IsCorporationHangar(flag) && _shipInsuranceInvalidator is { } invalidator)
+            await invalidator.InvalidateAsync(connection, transaction, id, ShipContractInvalidationReason.CorporationHangar, cancellationToken);
     }
 
     /// <summary>Puts an item somewhere else and gives it another owner (what is taken out of a can or a wreck is the taker's), inside the caller's transaction.</summary>
@@ -135,6 +161,8 @@ public sealed class PgItemStore
             Parameters = { new() { Value = id }, new() { Value = ownerId }, new() { Value = locationId }, new() { Value = flag } },
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
+        if (item.OwnerId != ownerId && _shipInsuranceInvalidator is { } invalidator)
+            await invalidator.InvalidateAsync(connection, transaction, id, ShipContractInvalidationReason.OwnerChanged, cancellationToken);
     }
 
     /// <summary>Gives a stack another quantity, inside the caller's transaction.</summary>
@@ -165,6 +193,24 @@ public sealed class PgItemStore
             Parameters = { new() { Value = id } },
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+
+    public async Task<bool> SetCustomNameAsync(long id, string? customName, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var item = await LockAndGetAsync(connection, transaction, id, cancellationToken);
+        if (item is null) return false;
+        EnsureUnlocked(item);
+        await using var command = new NpgsqlCommand(
+            $"UPDATE {_schema}.items SET custom_name = $2 WHERE id = $1", connection, transaction)
+        {
+            Parameters = { new() { Value = id }, new() { Value = (object?)customName ?? DBNull.Value } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return true;
     }
 
     /// <summary>Who owns something with this flag, once each (what a sweep for items that are in space asks: a ship, a can or a wreck has the flag of no place).</summary>
@@ -318,13 +364,71 @@ private static void EnsureUnlocked(Item? item)
               INSERT INTO {_schema}.items(type_id,owner_id,location_id,flag,quantity,singleton,custom_name,blueprint_copy)
               SELECT type_id,$3,$4,$5,$2,false,custom_name,blueprint_copy FROM reduced RETURNING {Columns}
               """;
-        await using var command = new NpgsqlCommand(sql,connection,transaction)
+        Item moved;
+        await using (var command = new NpgsqlCommand(sql,connection,transaction)
         {
             Parameters = { new() { Value=item.Id },new() { Value=quantity },new() { Value=ownerId },new() { Value=locationId },new() { Value=flag } },
-        };
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken)) throw new InvalidOperationException("ITEM_CHANGED");
-        return Read(reader);
+        })
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await reader.ReadAsync(cancellationToken)) throw new InvalidOperationException("ITEM_CHANGED");
+            moved = Read(reader);
+        }
+        var reason = item.OwnerId != ownerId
+            ? ShipContractInvalidationReason.OwnerChanged
+            : ItemFlags.IsCorporationHangar(flag) ? ShipContractInvalidationReason.CorporationHangar : (ShipContractInvalidationReason?)null;
+        if (reason is { } invalidationReason && _shipInsuranceInvalidator is { } invalidator)
+            await invalidator.InvalidateAsync(connection, transaction, moved.Id, invalidationReason, cancellationToken);
+        return moved;
+    }
+
+
+    public async Task<ItemMergeResult?> MergeAsync(
+        long sourceId, long destinationId, long quantity, long ownerId, long sourceLocationId, long destinationLocationId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var merged = await MergeAsync(connection, transaction, sourceId, destinationId, quantity, ownerId, sourceLocationId, destinationLocationId, cancellationToken);
+        if (merged is null) return null;
+        await transaction.CommitAsync(cancellationToken);
+        return merged;
+    }
+
+    public async Task<ItemMergeResult?> MergeAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long sourceId, long destinationId, long quantity,
+        long ownerId, long sourceLocationId, long destinationLocationId, CancellationToken cancellationToken = default)
+    {
+        if (sourceId <= 0 || destinationId <= 0 || sourceId == destinationId || ownerId <= 0
+            || sourceLocationId <= 0 || destinationLocationId <= 0)
+            return null;
+
+        var firstId = Math.Min(sourceId, destinationId);
+        var secondId = Math.Max(sourceId, destinationId);
+        var first = await LockAndGetAsync(connection, transaction, firstId, cancellationToken);
+        var second = await LockAndGetAsync(connection, transaction, secondId, cancellationToken);
+        var sourceItem = sourceId == firstId ? first : second;
+        var destinationItem = destinationId == firstId ? first : second;
+        if (sourceItem is null || destinationItem is null || sourceItem.OwnerId != ownerId || destinationItem.OwnerId != ownerId
+            || sourceItem.LocationId != sourceLocationId || destinationItem.LocationId != destinationLocationId
+            || sourceItem.TypeId != destinationItem.TypeId || sourceItem.Singleton || destinationItem.Singleton
+            || sourceItem.Quantity <= 0 || destinationItem.Quantity <= 0)
+            return null;
+        EnsureUnlocked(sourceItem);
+        EnsureUnlocked(destinationItem);
+        var moved = quantity <= 0 ? sourceItem.Quantity : quantity;
+        if (moved > sourceItem.Quantity || destinationItem.Quantity > long.MaxValue - moved) return null;
+
+        await SetQuantityAsync(connection, transaction, destinationItem.Id, destinationItem.Quantity + moved, cancellationToken);
+        Item? sourceAfter = null;
+        if (moved == sourceItem.Quantity)
+            await DeleteAsync(connection, transaction, sourceItem.Id, cancellationToken);
+        else
+        {
+            await SetQuantityAsync(connection, transaction, sourceItem.Id, sourceItem.Quantity - moved, cancellationToken);
+            sourceAfter = sourceItem with { Quantity = sourceItem.Quantity - moved };
+        }
+        return new ItemMergeResult(sourceItem, destinationItem, destinationItem with { Quantity = destinationItem.Quantity + moved }, sourceAfter);
     }
 
     public async Task<Item?> GetAsync(long id, CancellationToken cancellationToken = default)

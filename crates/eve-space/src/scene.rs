@@ -76,6 +76,20 @@ pub enum Command {
         target_id: i64,
         range: f64,
     },
+    /// Warp to an explicit coordinate, ending `range` metres short of it.
+    WarpToPoint {
+        destination: Vec3,
+        range: f64,
+    },
+    /// Resolve a body's warp-in point without beginning the warp (host query).
+    ResolveWarpTarget {
+        target_id: i64,
+        range: f64,
+    },
+    /// Read a body's or ship's current position (host query).
+    PositionOf {
+        target_id: i64,
+    },
     /// Jump through a stargate; `destination_gate` is the gate the client says it leads to (0 when it does not say).
     Jump {
         gate_id: i64,
@@ -96,6 +110,9 @@ impl Command {
             Self::AlignTo { .. } => 7,
             Self::WarpTo { .. } => 8,
             Self::Jump { .. } => 9,
+            Self::WarpToPoint { .. } => 21,
+            Self::ResolveWarpTarget { .. } => 22,
+            Self::PositionOf { .. } => 23,
         }
     }
 }
@@ -106,6 +123,8 @@ pub enum Departure {
     Docked,
     LoggedOff,
     Jumped,
+    Ejected,
+    Boarded,
 }
 
 /// What the scene has to tell the host.
@@ -115,6 +134,9 @@ pub enum Out {
     Notify { session: SessionId, name: &'static str, id_type: &'static str, args: Vec<Value> },
     /// A command was accepted, after the update it made (a `Dock` is answered with the time it was accepted at).
     Accepted { session: SessionId, command: u8, at: i64 },
+
+    /// The result of a host position query; it does not move the ship.
+    Position { session: SessionId, command: u8, position: Vec3 },
     /// A `Dock` could not be done from here: the ship now approaches the station, `distance` metres off its surface.
     Approaching { session: SessionId, command: u8, distance: f64 },
     /// A `Jump` was accepted: the ship's jump-out effect has begun and it will be in `destination_system` a few seconds on (the host is then told
@@ -222,7 +244,8 @@ impl Out {
             | Out::DroneWorkCycle { session, .. }
             | Out::RemoteRepairCycle { session, .. }
             | Out::DroneResults { session, .. }
-            | Out::TargetRefused { session, .. } => *session,
+            | Out::TargetRefused { session, .. }
+            | Out::Position { session, .. } => *session,
         }
     }
 }
@@ -477,6 +500,8 @@ pub struct Scene {
     pub(crate) wreck_catalog: Option<Arc<crate::wreck_types::WreckCatalog>>,
     /// The sessions whose ship was destroyed and have no other yet (the host gives them a capsule with `respawn`): what they had bound and seen.
     pub(crate) widowed: BTreeMap<SessionId, Widow>,
+    /// Unpiloted ships stay in the scene under synthetic sessions until someone boards or destroys them.
+    pub(crate) unpiloted: BTreeMap<i64, SessionId>,
 }
 
 /// What the client of a destroyed ship still has of the ballpark: it keeps it when it is given a new ship.
@@ -518,6 +543,7 @@ impl Scene {
             wreck_sequence: 0,
             destroyed: Vec::new(),
             widowed: BTreeMap::new(),
+            unpiloted: BTreeMap::new(),
             wreck_catalog: None,
         }
     }
@@ -605,15 +631,38 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         Ok(self.announce_arrival(session, now))
     }
 
-    /// The ship leaves the scene (docked, gone offline, jumped): the ones who had it in view are told. None when it was not here.
-    pub fn leave(&mut self, session: SessionId, _why: Departure, now: i64) -> Option<Vec<Out>> {
-        let pilot = self.pilots.remove(&session)?;
+    pub fn leave(&mut self, session: SessionId, why: Departure, now: i64) -> Option<Vec<Out>> {
+        let mut pilot = self.pilots.remove(&session)?;
         if let Some(brains) = self.brains.as_mut() {
             brains.forget(session);
         }
-        let mut out = self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting, now);
-        out.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
+        let ship_id = pilot.ship.spec.ship_id;
+        let mut out = self.drop_targeting(ship_id, &pilot.targeting, now);
         out.extend(self.release_drones(session, now));
+
+        if matches!(why, Departure::Ejected | Departure::Boarded) {
+            // Preserve the client's ballpark while its active ship changes.
+            self.widowed.insert(session, Widow {
+                bound: pilot.bound,
+                sees: pilot.sees.clone(),
+                sees_wrecks: pilot.sees_wrecks.clone(),
+                sees_asteroids: pilot.sees_asteroids.clone(),
+            });
+            // An ejected hull (or the capsule left when boarding) remains a moving,
+            // targetable ship. Give it a simulation-only session until it is boarded.
+            let fake_session = (1_u64 << 61).saturating_add(self.next_entry());
+            pilot.bound = false;
+            pilot.sees.clear();
+            pilot.sees_wrecks.clear();
+            pilot.sees_asteroids.clear();
+            self.unpiloted.insert(ship_id, fake_session);
+            self.pilots.insert(fake_session, pilot);
+            out.extend(self.announce_departure(session, ship_id, now));
+            out.extend(self.announce_arrival(fake_session, now));
+            return Some(out);
+        }
+
+        out.extend(self.announce_departure(session, ship_id, now));
         Some(out)
     }
 
@@ -723,6 +772,9 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         let told = match command {
             Command::Dock { station_id } => self.dock(session, station_id, now),
             Command::WarpTo { target_id, range } => self.warp_to(session, target_id, range, now),
+            Command::WarpToPoint { destination, range } => self.warp_to_point(session, destination, range, now),
+            Command::ResolveWarpTarget { target_id, range } => self.resolve_warp_target(session, target_id, range, now),
+            Command::PositionOf { target_id } => self.position_of(session, target_id),
             Command::Jump { gate_id, destination_gate } => self.jump(session, gate_id, destination_gate, now),
             other => self.steer_pilot(session, other, now),
         };
@@ -1036,12 +1088,41 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         .map(|hit| (hit.id, hit.item.position))
     }
 
-    /// `CmdWarpToStuff`: the ship lines up with where it is to end and goes into warp. The client is told at once (`WarpTo` with the point and
-    /// the warp factor); it works out the warp itself, and this side keeps its own copy of it to know where the ship is.
+    /// `CmdWarpToStuff`: resolve a body or ship to its warp-in point and start a warp.
     fn warp_to(&mut self, session: SessionId, target_id: i64, range: f64, now: i64) -> Vec<Out> {
         let code = Command::WarpTo { target_id, range }.code();
-        let refused = |reason: &'static str| vec![Out::Refused { session, command: code, reason }];
-        let system = Arc::clone(&self.system);
+        let refused = |reason| vec![Out::Refused { session, command: code, reason }];
+        if !range.is_finite() {
+            return refused("BAD_RANGE");
+        }
+        let Some(pilot) = self.pilots.get(&session) else { return refused("NO_SHIP_IN_SPACE") };
+        let Some((raw, stop)) = self.warp_target_point(pilot, target_id, range, now) else {
+            return refused("TARGET_NOT_FOUND");
+        };
+        self.begin_warp(session, code, Some(target_id), raw, stop, now)
+    }
+
+
+    /// Warp to an explicit point, used by saved coordinates and formation placements.
+    fn warp_to_point(&mut self, session: SessionId, destination: Vec3, range: f64, now: i64) -> Vec<Out> {
+        let code = Command::WarpToPoint { destination, range }.code();
+        let refused = |reason| vec![Out::Refused { session, command: code, reason }];
+        if !finite_vector(destination) || !range.is_finite() {
+            return refused("BAD_WARP_POINT");
+        }
+        self.begin_warp(session, code, None, destination, range.max(0.0), now)
+    }
+
+    fn begin_warp(
+        &mut self,
+        session: SessionId,
+        code: u8,
+        target_id: Option<i64>,
+        raw: Vec3,
+        stop: f64,
+        now: i64,
+    ) -> Vec<Out> {
+        let refused = |reason| vec![Out::Refused { session, command: code, reason }];
         let Some(pilot) = self.pilots.get(&session) else { return refused("NO_SHIP_IN_SPACE") };
         if pilot.docking.is_some() {
             return refused("DOCKING");
@@ -1052,20 +1133,10 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         if pilot.flight.is_some() {
             return refused("IN_WARP");
         }
-        // a ship that other ships' scramblers or disruptors hold cannot warp
         if pilot.incoming.scrambled() {
             return refused("WARP_SCRAMBLED");
         }
-        let Some(body) = system.body(target_id) else { return refused("TARGET_NOT_FOUND") };
         let ship = &pilot.ship;
-        let (raw, stop) = match warp::warp_in_point(body) {
-            Some(point) => (point, range.max(0.0)),
-            None if body.kind == BodyKind::Stargate => {
-                let mut random = PythonRandom::new(seed_of(ship.spec.ship_id, target_id, now));
-                gate::warp_landing(body, ship.position, ship.direction, range, &mut random)
-            }
-            None => (body.position, warp::stop_distance(body, ship.spec.radius, range)),
-        };
         let toward = motion::unit(Vec3::new(
             raw.x - ship.position.x,
             raw.y - ship.position.y,
@@ -1097,7 +1168,7 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         pilot.ship.speed_fraction = 1.0;
         pilot.ship.direction = toward;
         pilot.flight = Some(Flight::begin(now, raw, stop));
-        pilot.warp_target = Some(target_id);
+        pilot.warp_target = target_id;
         let own = vec![
             payload::action(stamp, "SetMaxSpeed", [ship_id.clone(), real(boosted)]),
             payload::action(
@@ -1108,7 +1179,6 @@ pub(crate) fn solar_system_id(&self) -> i32 {
             warping_effect(stamp, &ship_id),
             payload::action(stamp, "SetSpeedFraction", [ship_id.clone(), real(1.0)]),
         ];
-        // those who watch see the ship turn towards the place at once and go into warp when it does (`Milestone::Entered`)
         let watchers = vec![payload::action(
             stamp,
             "GotoDirection",
@@ -1117,6 +1187,69 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         let mut out = self.tell_split(session, own, watchers);
         out.push(Out::Accepted { session, command: code, at: now });
         out
+    }
+
+
+    fn warp_target_point(&self, pilot: &Pilot, target_id: i64, range: f64, now: i64) -> Option<(Vec3, f64)> {
+        if let Some(body) = self.system.body(target_id) {
+            let ship = &pilot.ship;
+            return Some(match warp::warp_in_point(body) {
+                Some(point) => (point, range.max(0.0)),
+                None if body.kind == BodyKind::Stargate => {
+                    let mut random = PythonRandom::new(seed_of(ship.spec.ship_id, target_id, now));
+                    gate::warp_landing(body, ship.position, ship.direction, range, &mut random)
+                }
+                None => (body.position, warp::stop_distance(body, ship.spec.radius, range)),
+            });
+        }
+
+        self.pilots
+            .values()
+            .find(|target| target.ship.spec.ship_id == target_id)
+            .map(|target| (
+                target.ship.position,
+                range.max(0.0) + target.ship.spec.radius + pilot.ship.spec.radius,
+            ))
+    }
+
+    fn resolve_warp_target(&self, session: SessionId, target_id: i64, range: f64, now: i64) -> Vec<Out> {
+        let command = Command::ResolveWarpTarget { target_id, range }.code();
+        let refused = |reason| vec![Out::Refused { session, command, reason }];
+        if !range.is_finite() {
+            return refused("BAD_RANGE");
+        }
+        let Some(pilot) = self.pilots.get(&session) else { return refused("NO_SHIP_IN_SPACE") };
+        let Some((raw, stop)) = self.warp_target_point(pilot, target_id, range, now) else {
+            return refused("TARGET_NOT_FOUND");
+        };
+        let toward = motion::unit(Vec3::new(
+            raw.x - pilot.ship.position.x,
+            raw.y - pilot.ship.position.y,
+            raw.z - pilot.ship.position.z,
+        ))
+        .unwrap_or(pilot.ship.direction);
+        let position = Vec3::new(raw.x - toward.x * stop, raw.y - toward.y * stop, raw.z - toward.z * stop);
+        let distance = ((position.x - pilot.ship.position.x).powi(2)
+            + (position.y - pilot.ship.position.y).powi(2)
+            + (position.z - pilot.ship.position.z).powi(2))
+        .sqrt();
+        if distance < warp::MINIMUM_WARP_DISTANCE {
+            return refused("WARP_DISTANCE_TOO_CLOSE");
+        }
+        vec![Out::Position { session, command, position }]
+    }
+
+    fn position_of(&self, session: SessionId, target_id: i64) -> Vec<Out> {
+        let command = Command::PositionOf { target_id }.code();
+        let refused = |reason| vec![Out::Refused { session, command, reason }];
+        let Some(position) = self.system.body(target_id).map(|body| body.position).or_else(|| {
+            self.pilots.values()
+                .find(|pilot| pilot.ship.spec.ship_id == target_id)
+                .map(|pilot| pilot.ship.position)
+        }) else {
+            return refused("TARGET_NOT_FOUND");
+        };
+        vec![Out::Position { session, command, position }]
     }
 
     /// A movement command of a ship that is in the scene (settled first, at `now`).
@@ -2265,9 +2398,12 @@ fn steer(ship: &mut Ship, target: Option<Target>, command: Command) -> Steering 
             Steering::Actions(actions)
         }
         Command::Stop => stop(ship),
-        Command::Dock { .. } | Command::WarpTo { .. } | Command::Jump { .. } => {
-            Steering::Refused("NOT_A_MOVEMENT")
-        }
+        Command::Dock { .. }
+        | Command::WarpTo { .. }
+        | Command::WarpToPoint { .. }
+        | Command::ResolveWarpTarget { .. }
+        | Command::PositionOf { .. }
+        | Command::Jump { .. } => Steering::Refused("NOT_A_MOVEMENT"),
         Command::FollowBall { target_id, range } => {
             if !range.is_finite() {
                 return Steering::Refused("BAD_RANGE");
@@ -3635,6 +3771,72 @@ pub(crate) mod tests {
         );
         // and nothing was set going
         assert!(!matches!(scene.ship(SESSION, NOON).unwrap().course, Course::Warp { .. }));
+    }
+
+
+    #[test]
+    fn a_warp_to_an_arbitrary_coordinate_uses_the_supplied_point() {
+        let mut scene = scene_with_a_planet();
+        let destination = Vec3::new(2_000_000.0, 3_000_000.0, 4_000_000.0);
+
+        let told = scene.command(
+            SESSION,
+            Command::WarpToPoint { destination, range: 0.0 },
+            NOON,
+        );
+
+        assert!(matches!(told.last(), Some(Out::Accepted { command: 21, .. })));
+        assert!(matches!(
+            scene.ship(SESSION, NOON).unwrap().course,
+            Course::Warp { raw_destination, target_point, .. }
+                if raw_destination == destination && target_point == destination
+        ));
+    }
+
+
+    #[test]
+    fn fleet_warp_queries_return_positions_without_moving_the_commander() {
+        let mut scene = scene_with_a_planet();
+        let body_position = scene.system.body(PLANET).unwrap().position;
+
+        assert!(matches!(
+            scene.command(SESSION, Command::PositionOf { target_id: PLANET }, NOON).last(),
+            Some(Out::Position { command: 23, position, .. }) if *position == body_position
+        ));
+        let resolved = scene.command(
+            SESSION,
+            Command::ResolveWarpTarget { target_id: PLANET, range: 0.0 },
+            NOON,
+        );
+        assert!(matches!(resolved.last(), Some(Out::Position { command: 22, .. })));
+        assert!(!matches!(scene.ship(SESSION, NOON).unwrap().course, Course::Warp { .. }));
+    }
+
+    #[test]
+    fn a_fleet_member_ship_is_a_warp_target_in_its_system() {
+        let mut scene = scene_with_a_planet();
+        let mut target_spec = spec();
+        target_spec.ship_id += 1;
+        target_spec.character_id += 1;
+        target_spec.owner_id += 1;
+        target_spec.modules.clear();
+        scene.undock(SESSION + 1, target_spec.clone(), STATION, NOON).unwrap();
+
+        let start = scene.ship(SESSION, NOON).unwrap().position;
+        let target_position = Vec3::new(start.x + 2_000_000.0, start.y, start.z);
+        scene.pilots.get_mut(&(SESSION + 1)).unwrap().ship.position = target_position;
+
+        let result = scene.command(
+            SESSION,
+            Command::WarpTo { target_id: target_spec.ship_id, range: 0.0 },
+            NOON,
+        );
+
+        assert!(matches!(result.last(), Some(Out::Accepted { command: 8, .. })));
+        assert!(matches!(
+            scene.ship(SESSION, NOON).unwrap().course,
+            Course::Warp { raw_destination, .. } if raw_destination == target_position
+        ));
     }
 
     #[test]

@@ -2,6 +2,7 @@
   <ItemGroup>
     <ProjectReference Include="../Eve.Services/Eve.Services.csproj" />
     <ProjectReference Include="../Eve.Skills/Eve.Skills.csproj" />
+    <ProjectReference Include="../Eve.Wallet/Eve.Wallet.csproj" />
     <ProjectReference Include="../Eve.Inventory/Eve.Inventory.csproj" />
     <ProjectReference Include="../Eve.Dogma/Eve.Dogma.csproj" />
     <ProjectReference Include="../Eve.Characters/Eve.Characters.csproj" />

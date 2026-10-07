@@ -22,7 +22,21 @@ public sealed class PgModuleStateStore
         _schema = schema;
     }
 
-    public static IReadOnlyList<Migration> MigrationSet() => Migrations.Embedded(typeof(PgModuleStateStore).Assembly, "Migrations");
+    public static IReadOnlyList<Migration> MigrationSet() =>
+    [
+        .. Migrations.Embedded(typeof(PgModuleStateStore).Assembly, "Migrations"),
+        new Migration("0003_absolute_damage", """
+            ALTER TABLE ship_condition DROP CONSTRAINT ship_condition_damage_check;
+            ALTER TABLE ship_condition ADD CONSTRAINT ship_condition_damage_nonnegative
+                CHECK (damage >= 0 AND damage < 'Infinity'::double precision);
+            ALTER TABLE ship_condition DROP CONSTRAINT ship_condition_shield_charge_check;
+            ALTER TABLE ship_condition ADD CONSTRAINT ship_condition_shield_charge_finite
+                CHECK (shield_charge <= 1 AND shield_charge > '-Infinity'::double precision);
+            ALTER TABLE ship_condition DROP CONSTRAINT ship_condition_armor_damage_check;
+            ALTER TABLE ship_condition ADD CONSTRAINT ship_condition_armor_damage_nonnegative
+                CHECK (armor_damage >= 0 AND armor_damage < 'Infinity'::double precision);
+            """)
+    ];
 
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
@@ -73,21 +87,46 @@ public sealed class PgModuleStateStore
     /// <summary>Keeps what a ship has taken. A ship that has taken nothing has no row.</summary>
     public async Task SetShipConditionAsync(long shipId, ShipCondition condition, CancellationToken cancellationToken = default)
     {
-        await using var command = condition == ShipCondition.Full
-            ? _source.CreateCommand($"DELETE FROM {_schema}.ship_condition WHERE item_id = $1")
-            : _source.CreateCommand(
-                $"INSERT INTO {_schema}.ship_condition (item_id, damage, charge, shield_charge, armor_damage, incapacitated) VALUES ($1, $2, $3, $4, $5, $6) " +
-                "ON CONFLICT (item_id) DO UPDATE SET damage = EXCLUDED.damage, charge = EXCLUDED.charge, shield_charge = EXCLUDED.shield_charge, armor_damage = EXCLUDED.armor_damage, incapacitated = EXCLUDED.incapacitated");
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await SetShipConditionAsync(connection, transaction, shipId, condition, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+
+    public async Task SetShipConditionAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long shipId,
+        ShipCondition condition,
+        CancellationToken cancellationToken = default)
+    {
+        var sql = condition == ShipCondition.Full
+            ? $"DELETE FROM {_schema}.ship_condition WHERE item_id = $1"
+            : $"INSERT INTO {_schema}.ship_condition (item_id, damage, charge, shield_charge, armor_damage, incapacitated) VALUES ($1, $2, $3, $4, $5, $6) " +
+              "ON CONFLICT (item_id) DO UPDATE SET damage = EXCLUDED.damage, charge = EXCLUDED.charge, shield_charge = EXCLUDED.shield_charge, armor_damage = EXCLUDED.armor_damage, incapacitated = EXCLUDED.incapacitated";
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.Add(new NpgsqlParameter { Value = shipId });
         if (condition != ShipCondition.Full)
         {
-            foreach (var value in new object[] { Clamp(condition.Damage), Clamp(condition.Charge), Clamp(condition.ShieldCharge), Clamp(condition.ArmorDamage), condition.Incapacitated })
+            foreach (var value in new object[]
+            {
+                FiniteNonNegative(condition.Damage),
+                Clamp(condition.Charge),
+                FiniteAtMostOne(condition.ShieldCharge),
+                FiniteNonNegative(condition.ArmorDamage),
+                condition.Incapacitated,
+            })
             {
                 command.Parameters.Add(new NpgsqlParameter { Value = value });
             }
         }
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
+
+    private static double FiniteNonNegative(double value) => double.IsFinite(value) ? Math.Max(0, value) : 0;
+
+    private static double FiniteAtMostOne(double value) => double.IsFinite(value) ? Math.Min(1, value) : 0;
 
     private static double Clamp(double fraction) => Math.Clamp(fraction, 0, 1);
 

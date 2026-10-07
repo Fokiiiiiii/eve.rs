@@ -155,6 +155,7 @@ impl Sim {
                 }
             }
             Out::Accepted { session, command, at } => Message::Accepted { session_id: session, command, at },
+            Out::Position { session, command, position } => Message::Position { session_id: session, command, position: [position.x, position.y, position.z] },
             Out::Approaching { session, command, distance } => {
                 Message::Approaching { session_id: session, command, distance }
             }
@@ -352,13 +353,21 @@ impl Sim {
                 let why = match why {
                     0 => Departure::Docked,
                     1 => Departure::LoggedOff,
-                    _ => Departure::Jumped,
+                    2 => Departure::Jumped,
+                    3 => Departure::Ejected,
+                    _ => Departure::Boarded,
                 };
                 let told = match self.scene_of(session_id) {
                     Some(scene) => scene.leave(session_id, why, now).unwrap_or_default(),
                     None => Vec::new(),
                 };
-                self.forget(session_id);
+                if matches!(why, Departure::Ejected | Departure::Boarded) {
+                    if let Some(system) = self.sessions.remove(&session_id) {
+                        self.widowed.insert(session_id, system);
+                    }
+                } else {
+                    self.forget(session_id);
+                }
                 told
             }
             Message::Bind { session_id } => {
@@ -447,6 +456,7 @@ impl Sim {
                     6 => DroneCommand::Guard { character_id: target_id },
                     7 => DroneCommand::MineRepeatedly { target: target_id },
                     8 => DroneCommand::Salvage { target: (target_id > 0).then_some(target_id) },
+                    9 => DroneCommand::Reconnect,
                     other => {
                         return Err(ProtocolError(format!("unknown drone command {other}")));
                     }

@@ -27,6 +27,7 @@ const LAUNCH_OFFSET: f64 = 75.0;
 
 /// How far from its controller a drone may be sent at a target it finds by itself or takes up on its own (the reference's base drone control range: 20 km).
 const CONTROL_RANGE: f64 = 20_000.0;
+const DRONE_RECONNECT_RANGE: f64 = 250_000.0;
 
 /// How long a drone remembers who attacked its controller (the reference's `DRONE_AGGRESSION_THREAT_RETENTION_MS`: 30 s), in ticks.
 const THREAT_MEMORY: i64 = 30 * crate::scene::TICKS_PER_SECOND;
@@ -53,6 +54,8 @@ pub enum DroneCommand {
     Guard { character_id: i64 },
     MineRepeatedly { target: i64 },
     Salvage { target: Option<i64> },
+    /// Reconnect to an owned abandoned drone that is still nearby in this scene.
+    Reconnect,
 }
 
 impl DroneCommand {
@@ -67,6 +70,7 @@ impl DroneCommand {
             Self::Guard { .. } => 6,
             Self::MineRepeatedly { .. } => 7,
             Self::Salvage { .. } => 8,
+            Self::Reconnect => 9,
         }
     }
 }
@@ -188,9 +192,9 @@ impl Scene {
         let DroneFlight { weapon, graphic_id, orbit_distance, attack_range, cruise_fraction, work } = flight;
         self.settle_pilot(controller, now);
         let index = self.drones_of(controller).len();
-        let (controller_ship, position, direction, controller_radius) = {
+        let (controller_ship, owner_character_id, position, direction, controller_radius) = {
             let ship = &self.pilots.get(&controller).ok_or("NO_CONTROLLER")?.ship;
-            (ship.spec.ship_id, ship.position, ship.direction, ship.spec.radius)
+            (ship.spec.ship_id, ship.spec.character_id, ship.position, ship.direction, ship.spec.radius)
         };
         let orbit_distance = orbit_distance.clamp(500.0, 5_000.0);
         let ahead = controller_radius.max(1.0) + LAUNCH_OFFSET;
@@ -225,6 +229,8 @@ impl Scene {
             combat: NpcCombat { weapons: weapon.into_iter().collect(), aggression_range: 0.0 },
             drone: Some(DroneLink {
                 controller,
+                owner_character_id,
+                launched_from_ship_id: controller_ship,
                 controller_ship_id: controller_ship,
                 graphic_id,
                 orbit_distance,
@@ -432,6 +438,20 @@ fn ship_of_character(&self, character_id: i64) -> Option<i64> {
         self.drone_command_with_range(controller, drones, command, CONTROL_RANGE, now)
     }
 
+fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool {
+        let Some(controller_pilot) = self.pilots.get(&controller) else { return false };
+        let owner = controller_pilot.ship.spec.character_id;
+        let controller_ship_id = controller_pilot.ship.spec.ship_id;
+        let Some(drone) = self.pilots.get(&drone_session) else { return false };
+        let is_abandoned = drone.ship.npc.as_ref().and_then(|npc| npc.drone.as_ref())
+            .is_some_and(|link| {
+                link.controller == 0
+                    && link.owner_character_id == owner
+                    && link.launched_from_ship_id == controller_ship_id
+            });
+        is_abandoned && self.apart(controller, drone_session).is_some_and(|distance| distance <= DRONE_RECONNECT_RANGE)
+    }
+
     /// A pilot gives its drones an order using the fitted Dogma control range.
     pub fn drone_command_with_range(
         &mut self,
@@ -452,8 +472,10 @@ fn ship_of_character(&self, character_id: i64) -> Option<i64> {
             if searching { self.opponents_of_with_range(controller, now, control_range) } else { Vec::new() };
         let mut asked = 0;
         for &drone_id in drones {
-            let session =
-                self.session_of(drone_id).filter(|s| self.controller_of_drone(*s) == Some(controller));
+            let session = self.session_of(drone_id).filter(|session| match command {
+                DroneCommand::Reconnect => self.can_reconnect(controller, *session),
+                _ => self.controller_of_drone(*session) == Some(controller),
+            });
             let Some(session) = session else {
                 results.push((drone_id, Some("NOT_CONTROLLED")));
                 continue;
@@ -504,6 +526,32 @@ fn ship_of_character(&self, character_id: i64) -> Option<i64> {
                 DroneCommand::ReturnBay => {
                     if let Some(ai) = self.drones.get_mut(&session) {
                         ai.task = Task::Bay;
+                        ai.follow = None;
+                    }
+                    out.extend(self.go_home(session, DEPARTING, now));
+                }
+                DroneCommand::Reconnect => {
+                    let Some(controller_ship) = self.pilots.get(&controller).map(|pilot| pilot.ship.spec.ship_id) else {
+                        results.push((drone_id, Some("NO_CONTROLLER")));
+                        continue;
+                    };
+                    let linked = if let Some(pilot) = self.pilots.get_mut(&session) {
+                        if let Some(link) = pilot.ship.npc.as_mut().and_then(|npc| npc.drone.as_mut()) {
+                            link.controller = controller;
+                            link.controller_ship_id = controller_ship;
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if !linked {
+                        results.push((drone_id, Some("NOT_RECONNECTABLE")));
+                        continue;
+                    }
+                    if let Some(ai) = self.drones.get_mut(&session) {
+                        ai.task = Task::Home;
                         ai.follow = None;
                     }
                     out.extend(self.go_home(session, DEPARTING, now));
@@ -791,21 +839,31 @@ fn ship_of_character(&self, character_id: i64) -> Option<i64> {
         out
     }
 
-    /// The drone is let go: it stays in space where it is, under nobody's control (the host keeps it as an item of the pilot that anyone may scoop or shoot).
+    /// The drone is left in this scene under nobody's control; the host keeps it as the pilot's item and may reconnect it later.
     fn abandon(&mut self, session: SessionId, now: i64) -> Vec<Out> {
         let Some(ship_id) = self.pilots.get(&session).map(|pilot| pilot.ship.spec.ship_id) else {
             return Vec::new();
         };
-        let controller = self.controller_of_drone(session);
-        self.drones.remove(&session);
-        let mut out = Vec::new();
-        if let Some(controller) = controller {
-            let position = self.pilots[&session].ship.position;
-            out.extend(self.announce_departure(session, ship_id, now));
-            self.pilots.remove(&session);
-            out.push(Out::DroneReleased { session: controller, drone_id: ship_id, position });
+        let Some(controller) = self.controller_of_drone(session).filter(|controller| *controller != 0) else {
+            return Vec::new();
+        };
+        let position = self.pilots[&session].ship.position;
+        if let Some(pilot) = self.pilots.get_mut(&session) {
+            if let Some(link) = pilot.ship.npc.as_mut().and_then(|npc| npc.drone.as_mut()) {
+                link.controller = 0;
+                link.controller_ship_id = 0;
+            }
+            pilot.ship.course = Course::Stop;
+            pilot.ship.speed_fraction = 0.0;
         }
-        out
+        if let Some(ai) = self.drones.get_mut(&session) {
+            ai.task = Task::Idle;
+            ai.follow = None;
+            ai.awaiting_work = false;
+            ai.auto_salvage = false;
+        }
+        let _ = now;
+        vec![Out::DroneReleased { session: controller, drone_id: ship_id, position }]
     }
 
     /// The drones of a pilot that has left the scene (docked, jumped, gone offline or been destroyed) are let go: they are taken out of the scene and the host is told of each.
@@ -840,9 +898,10 @@ fn ship_of_character(&self, character_id: i64) -> Option<i64> {
                 .and_then(|pilot| pilot.ship.npc.as_ref())
                 .and_then(|npc| npc.drone.as_ref())
                 .is_some_and(|link| {
-                    self.pilots
-                        .get(&link.controller)
-                        .is_none_or(|controller| controller.ship.spec.ship_id != link.controller_ship_id)
+                    link.controller != 0
+                        && self.pilots
+                            .get(&link.controller)
+                            .is_none_or(|controller| controller.ship.spec.ship_id != link.controller_ship_id)
                 });
             if controller_lost {
                 out.extend(self.abandon(session, now));
@@ -1814,27 +1873,58 @@ fn work_drone() -> (Scene, SessionId, Vec<Out>) {
         let (mut scene, _, _) = launched();
         let told = scene.leave(PLAYER, Departure::Docked, LATER + SECOND).unwrap();
         assert!(told.iter().any(|o| matches!(o, Out::DroneReleased { drone_id, session, .. } if *drone_id == DRONE_SHIP && *session == PLAYER)));
-        assert!(scene.session_of(DRONE_SHIP).is_none());
-        assert!(scene.drones.is_empty());
+        let drone = scene.session_of(DRONE_SHIP).expect("the abandoned drone remains in the scene");
+        assert_eq!(scene.controller_of_drone(drone), Some(0));
+        assert!(scene.drones_of(PLAYER).is_empty());
+        assert_eq!(scene.drones.len(), 1);
     }
 
     #[test]
     fn a_drone_is_released_when_its_controller_ship_is_destroyed() {
         let (mut scene, _, _) = launched();
         let destroyed = scene.destroy(PLAYER, None, LATER + SECOND);
-        assert!(
-            destroyed.iter().any(|out| matches!(out, Out::Destroyed { session, .. } if *session == PLAYER))
-        );
-        // The controller session has left the scene; the next drone tick must notify the host to settle its bay item.
-        assert!(scene.session_of(DRONE_SHIP).is_some());
+        assert!(destroyed.iter().any(|out| matches!(out, Out::Destroyed { session, .. } if *session == PLAYER)));
         let released = scene.advance_drones(LATER + 2 * SECOND);
-        assert!(
-            released.iter().any(|out| matches!(out, Out::DroneReleased { session, drone_id, .. } if *session == PLAYER && *drone_id == DRONE_SHIP)),
-            "{released:?}"
+        assert!(released.iter().any(|out| matches!(out, Out::DroneReleased { session, drone_id, .. } if *session == PLAYER && *drone_id == DRONE_SHIP)), "{released:?}");
+        let drone = scene.session_of(DRONE_SHIP).expect("the released drone remains in the scene");
+        assert_eq!(scene.controller_of_drone(drone), Some(0));
+        assert!(scene.drones_of(PLAYER).is_empty());
+        assert!(scene.advance_drones(LATER + 3 * SECOND).is_empty(), "the release event is emitted once");
+    }
+
+
+    #[test]
+    fn a_pilot_cannot_reconnect_a_drone_from_a_different_ship() {
+        let (mut scene, _, _) = launched();
+        scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Abandon, LATER);
+        let drone_session = scene.session_of(DRONE_SHIP).unwrap();
+        let launched_from = scene.pilots.get(&PLAYER).unwrap().ship.spec.ship_id;
+        scene.pilots.get_mut(&PLAYER).unwrap().ship.spec.ship_id = launched_from + 1;
+
+        let result = scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Reconnect, LATER + SECOND);
+        assert!(result.iter().any(|out| matches!(
+            out,
+            Out::DroneResults { session, command: 9, results }
+                if *session == PLAYER && results == &[(DRONE_SHIP, Some("NOT_CONTROLLED"))]
+        )), "{result:?}");
+        assert_eq!(
+            scene.pilots.get(&drone_session).unwrap().ship.npc.as_ref().unwrap().drone.as_ref().unwrap().controller,
+            0
         );
-        assert!(scene.session_of(DRONE_SHIP).is_none());
-        assert!(scene.drones.is_empty());
-        assert!(scene.advance_drones(LATER + 3 * SECOND).is_empty(), "the lifecycle event is emitted once");
+    }
+
+    #[test]
+    fn a_pilot_can_reconnect_to_a_drone_they_abandoned_while_it_remains_in_the_scene() {
+        let (mut scene, _, _) = launched();
+        let released = scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Abandon, LATER);
+        assert!(released.iter().any(|out| matches!(out, Out::DroneReleased { session, drone_id, .. } if *session == PLAYER && *drone_id == DRONE_SHIP)));
+        assert!(scene.session_of(DRONE_SHIP).is_some());
+
+        let reconnected = scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Reconnect, LATER + SECOND);
+        assert!(reconnected.iter().any(|out| matches!(out, Out::DroneResults { session, command: 9, results } if *session == PLAYER && results == &[(DRONE_SHIP, None)])), "{reconnected:?}");
+        let drone_session = scene.session_of(DRONE_SHIP).unwrap();
+        assert_eq!(scene.controller_of_drone(drone_session), Some(PLAYER));
+        assert_eq!(scene.drones_of(PLAYER), [DRONE_SHIP]);
     }
 
     #[test]
@@ -1843,12 +1933,10 @@ fn work_drone() -> (Scene, SessionId, Vec<Out>) {
         let old_ship_id = scene.pilots[&PLAYER].ship.spec.ship_id;
         scene.pilots.get_mut(&PLAYER).unwrap().ship.spec.ship_id = old_ship_id + 1;
         let released = scene.advance_drones(LATER + SECOND);
-        assert!(
-            released.iter().any(|out| matches!(out, Out::DroneReleased { session, drone_id, .. } if *session == PLAYER && *drone_id == DRONE_SHIP)),
-            "{released:?}"
-        );
-        assert!(scene.session_of(DRONE_SHIP).is_none());
-        assert!(scene.drones.is_empty());
+        assert!(released.iter().any(|out| matches!(out, Out::DroneReleased { session, drone_id, .. } if *session == PLAYER && *drone_id == DRONE_SHIP)), "{released:?}");
+        let drone = scene.session_of(DRONE_SHIP).expect("the released drone remains in the scene");
+        assert_eq!(scene.controller_of_drone(drone), Some(0));
+        assert!(scene.drones_of(PLAYER).is_empty());
     }
 
 #[test]

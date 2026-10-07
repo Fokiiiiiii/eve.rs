@@ -388,13 +388,24 @@ public class RuntimeTests : IAsyncLifetime
         await relations.Set(Eve.Relations.RelationKinds.WarAlly.Name, allyCorporation, activeWar.Id, attrs: new { side = "defender" }, until: _now + 1_000);
         Assert.True(await wars.AreAtWarAsync(1, 3, _now));
 
+        var opponentSupport = await wars.AssistanceFactsAsync(1, 2, _now);
+        Assert.Equal(new RelationWars.AssistanceFacts(true, true, false), opponentSupport);
+        var allySupport = await wars.AssistanceFactsAsync(3, 2, _now);
+        Assert.Equal(new RelationWars.AssistanceFacts(true, true, true), allySupport);
+
+        var stranger = 8L;
+        var strangerCorporation = 98_000_110L;
+        await relations.Set(Eve.Relations.RelationKinds.CorporationMember.Name, stranger, strangerCorporation);
+        var thirdPartySupport = await wars.AssistanceFactsAsync(stranger, 2, _now);
+        Assert.Equal(new RelationWars.AssistanceFacts(true, false, false), thirdPartySupport);
+
         using var runtime = Runtime();
         runtime.Legal = wars.AreAtWarAsync;
         var result = await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false));
         Assert.Equal(AggressionReason.Legal, result.Outcome.Reason);
         var allyResult = await runtime.RecordAggressionAsync(Attack(1, 3, SecurityClass.HighSec, System, false));
         Assert.Equal(AggressionReason.Legal, allyResult.Outcome.Reason);
-        Assert.Empty(_persistence.Writes);   // a legal war attack does not create an LE
+        Assert.Empty(_persistence.Writes); // a legal war attack does not create an LE
         _now += 1_000;
         Assert.False(await wars.AreAtWarAsync(1, 3, _now));
 

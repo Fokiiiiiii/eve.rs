@@ -129,7 +129,7 @@ if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
     await mailCache.LoadAsync("crimewatchRuntime");
     await mailCache.LoadAsync("characters");
     await mailCache.LoadAsync("sovereignty");
-    (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience) = await CharacterServicesAsync(source, directory, online, clock, foundations, mailStore, mailCache);
+    (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience) = await CharacterServicesAsync(source, directory, online, clock, foundations, mailStore, mailStoreOwner, mailCache);
     // every feature has registered its job handlers by now: the scheduler may start running jobs
     await foundations.StartAsync();
 }
@@ -204,7 +204,7 @@ return 0;
 /// The character-side modules (characters, inventory, skills) and their services, or none (with the reason logged) when
 /// the static data they need is not in the database.
 /// </summary>
-static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience)> CharacterServicesAsync(NpgsqlDataSource source, IAccountLookup accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, GameStoreCache mailCache)
+static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience)> CharacterServicesAsync(NpgsqlDataSource source, IAccountLookup accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache)
 {
     CharacterNames.EnsureUnicodeSupport();
     var characterSchema = Env("EVE_CHARACTERS_SCHEMA", PgCharacterStore.DefaultSchema);
@@ -518,8 +518,13 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         crimewatchStore, characterSessions, now, crimewatchPersistence,
         message => Console.Error.WriteLine($"eve-host: crimewatch: {message}"),
         localTimers: foundations.LocalTimers);
-    crimewatchRuntime.Legal = new Eve.Services.Crimewatch.RelationWars(foundations.Relations).AreAtWarAsync;
-    await crimewatchRuntime.ResumeAsync();
+    var relationWars = new Eve.Services.Crimewatch.RelationWars(foundations.Relations);
+    crimewatchRuntime.Legal = relationWars.AreAtWarAsync;
+    crimewatchRuntime.WarAssistanceFactsOf = relationWars.AssistanceFactsAsync;
+    crimewatchRuntime.SecurityOfSystem = (systemId, _) => Task.FromResult(
+        systemId is > 0 and <= int.MaxValue ? solarSystems.Get((int)systemId)?.Security : null);
+    crimewatchRuntime.CreateKillRight = (request, token) => crimewatchStore.CreateKillRightAsync(
+        request.OwnerCharacterId, request.TargetCharacterId, request.SolarSystemId, request.CreatedAtUnixMs, token);
     var announcer = new TrainingAnnouncer(training, skillCatalog, characterSessions, dogmaSync, now, localTimers: foundations.LocalTimers);
     announcer.Attach();
     var readAugmentations = SkillHandlerService.CreateAugmentationReader(items, dogma, skills, now);
@@ -535,6 +540,13 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     await Eve.Corporations.CorporationStore.MigrateAsync(source, corporationSchema);
     var economyWallets = new WalletTransactions(source, walletSchema);
     var economyAnnouncer = new WalletAnnouncer(economyWallets, characterSessions);
+    var insuranceReadModel = new PersistenceInsuranceReadModel(mailStore);
+    var insuranceWriteModel = new PersistenceInsuranceWriteModel(
+        source, items, mailStore, mailStoreOwner.Fence, economyWallets, insuranceReadModel, now);
+    var insuranceService = new Eve.Services.Core.InsuranceService(insuranceReadModel, now, insuranceWriteModel);
+    var storeRuntime = new PersistenceNewEdenStoreRuntime(
+        source, mailStore, mailStoreOwner.Fence, wallets, characters, items, itemTypes,
+        characterSessions, now, ct => ReadGameStoreTableAsync("newEdenStore", ct));
     async Task SetCorporationBlueprintLockAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -681,9 +693,66 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         // the periodic work of the space features is jobs of the shared scheduler, not timers of their own
         spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")));
         spaceSessions.Events = foundations.Events;   // what happens in space is announced on the bus as well
+        ships.TransitionEventWriter = spaceSessions.Transitions.WriteEventAsync;
         spaceSessions.SafetyLevelOf = (character, token) => crimewatchStore.SafetyOfAsync(character, token);   // the ship safety the pilot has set
         spaceSessions.Aggression = async (request, token) => await crimewatchRuntime.RecordAggressionAsync(request, token);   // what an attack makes of the attacker
         spaceSessions.SecurityStatusOf = securityStatusOf;   // the ship in space shows it
+        spaceSessions.CrimewatchStateOf = crimewatchRuntime.StateOfAsync;
+        spaceSessions.CriminalEnteredSystem = crimewatchRuntime.RespondToCriminalEntryAsync;
+        spaceSessions.LifecycleBlockers = async (action, session, _, token) =>
+        {
+            if (session.CharacterId is not { } characterId || characterId <= 0)
+                return Array.Empty<string>();
+            var state = await crimewatchRuntime.StateOfAsync(characterId, token);
+            var currentTime = now();
+            var blockers = new List<string>();
+            if (state.HasWeaponsTimer(currentTime))
+                blockers.Add("weapon_timer");
+            if (action == Eve.Services.Space.ShipLifecycleAction.SafeLogoff &&
+                (state.PvpUntilMs > currentTime || state.NpcUntilMs > currentTime))
+                blockers.Add("combat_timer");
+            if ((action is Eve.Services.Space.ShipLifecycleAction.Board or Eve.Services.Space.ShipLifecycleAction.Eject) &&
+                state.IsCriminal(currentTime) && state.SolarSystemId is > 0 and <= int.MaxValue &&
+                solarSystems.Get((int)state.SolarSystemId)?.Security >= 0.5)
+                blockers.Add("concord_pursuit");
+            return blockers;
+        };
+        spaceSessions.InvalidateInsuranceForBoarding = async (boarded, token) =>
+        {
+            await insuranceService.InvalidateShipAsync(new Eve.Services.Core.InsuranceInvalidationRequest(
+                boarded.ShipId, Eve.Services.Core.InsuranceInvalidationReason.Boarded,
+                boarded.BoardedAtFileTime, boarded.ActorCharacterId,
+                boarded.ActorCorporationId > 0 ? boarded.ActorCorporationId : null), token);
+        };
+        spaceSessions.ShipLost += loss =>
+        {
+            if (loss.ShipTypeId == Eve.Ships.CharacterShips.CapsuleTypeId)
+                return;
+            try
+            {
+                insuranceService.SettleShipLossAsync(new Eve.Services.Core.InsuranceLossSettlementRequest(
+                    loss.ShipId, loss.ShipId,
+                    checked(116444736000000000L + now() * 10_000L),
+                    loss.Cause == Eve.Services.Space.ShipLossCause.Concord,
+                    loss.CharacterId, 0), CancellationToken.None).AsTask().GetAwaiter().GetResult();
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine($"eve-host: insurance loss {loss.ShipId} could not be settled: {error}");
+            }
+        };
+        crimewatchRuntime.ConcordResponseDue += async request =>
+        {
+            if (spaceSessions is not null)
+                await spaceSessions.RespondToCriminalAsync(
+                    request.AttackerCharacterId, request.SolarSystemId, request.AttackerShipId).ConfigureAwait(false);
+        };
+        crimewatchRuntime.Aggressed += result =>
+        {
+            if (characterSessions.Of(result.Request.Attacker) is { } activeSession)
+                spaceSessions.CancelSafeLogoff(activeSession);
+            return Task.CompletedTask;
+        };
         var weaponSafetyReadModel = new PersistenceWeaponTargetContextReadModel(
             AffiliationOfAsync,
             async (attacker, target, at, token) => crimewatchRuntime.Legal is { } legal && await legal(attacker, target, at, token),
@@ -692,6 +761,14 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             ReadGameStoreTableAsync,
             now);
         spaceSessions.WeaponTargetContextOf = weaponSafetyReadModel.ReadAsync;
+        crimewatchRuntime.AttackPolicyFactsOf = async (request, _, token) =>
+        {
+            var facts = Eve.Services.Space.WeaponSafety.PolicyFactsOf(
+                await weaponSafetyReadModel.ReadAsync(request.Attacker, request.Target, token));
+            return facts with { TargetIsCapsule = request.TargetIsCapsule };
+        };
+        spaceSessions.RemoteAssistancePolicyOf = crimewatchRuntime.EvaluateRemoteAssistanceAsync;
+        spaceSessions.RecordRemoteAssistance = crimewatchRuntime.RecordRemoteAssistanceAsync;
         // a crime costs security status: written to the relation, told to the pilot, shown on the ship in space
         new Eve.Services.Crimewatch.SecurityStatusPenalties(
             crimewatchRuntime,
@@ -731,6 +808,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         await foundations.Scheduler.EnsureRecurringAsync("space.containers.sweep", "sweep", TimeSpan.FromSeconds(30));
         Console.Error.WriteLine($"eve-host: the space simulation is expected at {Env("EVE_SIM_SOCKET", "/tmp/eve-sim.sock")}");
     }
+    await crimewatchRuntime.ResumeAsync();
     Func<long, CancellationToken, Task> allianceAffiliationNotify = spaceSessions is null
         ? static (_, _) => Task.CompletedTask
         : spaceSessions.AffiliationChangedAsync;
@@ -1726,7 +1804,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         new Eve.Services.Space.FleetProxyService(
             fleetStore,
             sessionForCharacter: FleetSessionForCharacter),
-        new Eve.Services.Core.InsuranceService(new PersistenceInsuranceReadModel(mailStore), now),
+        insuranceService,
         new MailService(
             ct => ReadGameStoreTableAsync("mail", ct),
             async (characterId, messageId, requestingSession, ct) =>
@@ -1767,8 +1845,11 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             },
             mutateMailingList),
         new RewardsService(),
-        new StoreOffersService(async ct =>
-            await ReadGameStoreTableAsync("newEdenStore", ct)),
+        new StoreOffersService(
+            async ct => await ReadGameStoreTableAsync("newEdenStore", ct),
+            storeRuntime.PurchaseAsync),
+        new Eve.Services.Core.RedeemService(storeRuntime),
+        new Eve.Services.Core.VaultManagerService(storeRuntime),
         new IndustryJobsService(
             industryJobOperations.ReadJobsAsync,
             industryJobOperations,
@@ -1832,6 +1913,516 @@ sealed class HostMachoNetInfo(ServiceRegistry registry, PyDict config) : IMachoN
     public PyDict GlobalConfig() => config;
 
     public int UserCount() => 0;
+}
+
+
+public sealed class PersistenceNewEdenStoreRuntime(
+    NpgsqlDataSource source,
+    PersistenceStore store,
+    OwnerFence ownerFence,
+    PgWalletStore plexWallets,
+    PgCharacterStore characters,
+    PgItemStore items,
+    ItemTypeCatalog itemTypes,
+    CharacterSessions sessions,
+    Func<long> nowUnixMs,
+    Func<CancellationToken, Task<JsonObject>> readStoreState)
+    : Eve.Services.Core.IRedeemCallbacks, Eve.Services.Core.IVaultManagerCallbacks
+{
+    private const string ReceiptsTable = "newEdenStorePurchaseSettlements";
+    private const string ReceiptsRow = "purchasesByOperationID";
+    private const string RedeemTable = "redeemTokens";
+    private const string RedeemRow = "accounts";
+    private readonly SemaphoreSlim _gate = new(1, 1);
+
+    public async ValueTask<PyValue> PurchaseAsync(
+        Eve.Services.Core.StoreOfferPurchaseRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.AuthenticatedUserId <= 0 || request.AuthenticatedCharacterId <= 0)
+            throw new UnauthorizedAccessException("An authenticated account and character are required.");
+        var operationId = Text(request.OperationId);
+        if (operationId.Length == 0)
+            throw new InvalidOperationException("A store purchase operation ID is required.");
+        var operationKey = $"{request.AuthenticatedUserId}:{operationId}";
+        var storeId = Positive(request.Store);
+        var currency = Text(request.Currency).Trim().ToUpperInvariant();
+        var purchaseQuantity = Positive(request.Qty);
+        if (storeId <= 0 || purchaseQuantity <= 0)
+            throw new InvalidOperationException("The store or purchase quantity is invalid.");
+
+        var state = await readStoreState(cancellationToken);
+        var storeCatalog = (state["stores"] as JsonObject)?[storeId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
+        var offer = FindOffer(storeCatalog?["offers"] as JsonArray, request.Offer);
+        if (offer is null || offer["products"] is not JsonArray products || products.Count == 0)
+            throw new InvalidOperationException("The selected store offer is unavailable.");
+
+        var unitPrice = PriceFor(offer, currency);
+        var cashPurchase = IsFiat(currency) && unitPrice is > 0;
+        if (request.SkipPayment && !cashPurchase)
+            throw new InvalidOperationException("Payment may only be skipped for a positive fiat-priced offer.");
+        long plexCost = 0;
+        if (!cashPurchase)
+        {
+            if (currency != "PLX" || unitPrice is not { } plexPrice || plexPrice <= 0)
+                throw new NotSupportedException($"The store currency {currency} has no normal settlement provider.");
+            var total = checked(plexPrice * purchaseQuantity);
+            if (decimal.Truncate(total) != total || total > long.MaxValue)
+                throw new InvalidOperationException("PLEX prices must be positive whole units.");
+            plexCost = decimal.ToInt64(total);
+        }
+
+        var recipientCharacterId = request.Recipient is PyNone
+            ? request.AuthenticatedCharacterId
+            : Positive(request.Recipient);
+        var recipient = await characters.GetAsync(recipientCharacterId, cancellationToken);
+        if (recipient is null)
+            throw new InvalidOperationException("The recipient character does not exist.");
+
+        var createdAt = ToFileTime(nowUnixMs());
+        var newTokens = new JsonObject();
+        var tokenIds = new List<long>();
+        var productIndex = 0;
+        foreach (var product in products.OfType<JsonObject>())
+        {
+            var typeId = checked((int)Integer(product["typeId"]));
+            var quantity = checked(Integer(product["quantity"]) * purchaseQuantity);
+            if (typeId <= 0 || quantity <= 0)
+                throw new InvalidOperationException("The selected offer contains an invalid product.");
+            var productName = String(product["productName"]);
+            var description = Text(request.Message);
+            if (description.Length == 0)
+                description = productName;
+            var tokenId = TokenId(operationKey, productIndex++);
+            tokenIds.Add(tokenId);
+            newTokens[tokenId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new JsonObject
+            {
+                ["tokenID"] = tokenId,
+                ["massTokenID"] = 0,
+                ["typeID"] = typeId,
+                ["quantity"] = quantity,
+                ["stationID"] = 0,
+                ["expireDateTime"] = 0,
+                ["dateTime"] = createdAt,
+                ["description"] = description,
+                ["isAutoInject"] = false,
+                ["status"] = "pending",
+            };
+        }
+        if (!newTokens.Any())
+            throw new InvalidOperationException("The selected offer contains no fulfillable products.");
+
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var receiptState = await PersistenceReadHelpers.ReadOptionalTableAsync(store, ReceiptsTable, cancellationToken);
+            var receipts = receiptState[ReceiptsRow] as JsonObject ?? new JsonObject();
+            if (receipts[operationKey] is JsonObject)
+                return PyBool.True;
+
+            var redeemState = await PersistenceReadHelpers.ReadOptionalTableAsync(store, RedeemTable, cancellationToken);
+            var accounts = redeemState[RedeemRow] as JsonObject ?? new JsonObject();
+            var recipientAccountId = recipient.AccountId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var accountTokens = accounts[recipientAccountId] as JsonObject ?? new JsonObject();
+            foreach (var (key, token) in newTokens)
+            {
+                if (accountTokens.ContainsKey(key))
+                    throw new InvalidOperationException("A store fulfillment token already exists.");
+                accountTokens[key] = token?.DeepClone();
+            }
+            accounts[recipientAccountId] = accountTokens;
+
+            await using var connection = await source.OpenConnectionAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            if (plexCost > 0)
+            {
+                var accountCharacters = await characters.ForAccountAsync(
+                    checked((int)request.AuthenticatedUserId), cancellationToken);
+                var characterIds = accountCharacters.Select(character => character.Id).Order().ToArray();
+                var balances = await plexWallets.ReadPlexBalancesAsync(
+                    connection, transaction, characterIds, cancellationToken);
+                var totalBalance = balances.Values.Aggregate(0L, (sum, balance) => checked(sum + balance));
+                if (totalBalance < plexCost)
+                    throw new Eve.Wallet.InsufficientFundsException(request.AuthenticatedCharacterId);
+
+                var remaining = plexCost;
+                foreach (var characterId in characterIds)
+                {
+                    if (!balances.TryGetValue(characterId, out var balance) || balance <= 0)
+                        continue;
+                    var debit = Math.Min(balance, remaining);
+                    await plexWallets.AdjustPlexAsync(
+                        connection, transaction, characterId, -debit, cancellationToken);
+                    remaining -= debit;
+                    if (remaining == 0)
+                        break;
+                }
+            }
+
+            receipts[operationKey] = new JsonObject
+            {
+                ["accountID"] = request.AuthenticatedUserId,
+                ["characterID"] = request.AuthenticatedCharacterId,
+                ["recipientCharacterID"] = recipientCharacterId,
+                ["offerID"] = Text(request.Offer),
+                ["currency"] = currency,
+                ["quantity"] = purchaseQuantity,
+                ["plexDebited"] = plexCost,
+                ["tokenIDs"] = new JsonArray([.. tokenIds.Select(tokenId => (JsonNode?)JsonValue.Create(tokenId))]),
+                ["createdAt"] = createdAt,
+            };
+            await store.ApplyChangesAsync(
+                connection, transaction, ReceiptsTable,
+                [new RowUpsert(ReceiptsRow, receipts.ToJsonString())], [], ownerFence, cancellationToken);
+            await store.ApplyChangesAsync(
+                connection, transaction, RedeemTable,
+                [new RowUpsert(RedeemRow, accounts.ToJsonString())], [], ownerFence, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return PyBool.True;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async ValueTask<long> GetPlexBalanceAsync(long authenticatedUserId, CancellationToken cancellationToken)
+    {
+        var accountCharacters = await characters.ForAccountAsync(checked((int)authenticatedUserId), cancellationToken);
+        var balances = await plexWallets.ReadPlexBalancesAsync(
+            accountCharacters.Select(character => character.Id).ToArray(), cancellationToken);
+        return balances.Values.Aggregate(0L, (sum, balance) => checked(sum + balance));
+    }
+
+    public async ValueTask<PyValue> GetRedeemTokensAsync(
+    long authenticatedUserId,
+    CancellationToken cancellationToken)
+{
+    RequireAccount(authenticatedUserId);
+    var state = await PersistenceReadHelpers.ReadOptionalTableAsync(store, RedeemTable, cancellationToken);
+    var rows = (state[RedeemRow] as JsonObject)?[
+        authenticatedUserId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
+    if (rows is null)
+        return new PyList([]);
+    return new PyList([.. rows
+        .Where(entry =>
+            long.TryParse(entry.Key, System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out _) &&
+            entry.Value is JsonObject row && String(row["status"]) is "" or "pending")
+        .OrderBy(entry => Integer((entry.Value as JsonObject)?["dateTime"]))
+        .Select(entry => ToRedeemToken((JsonObject)entry.Value!, entry.Key))]);
+}
+
+    public async ValueTask<PyValue> ClaimRedeemTokensAsync(
+        long authenticatedUserId,
+        PyValue tokens,
+        long characterId,
+        bool useHomeStation,
+        CancellationToken cancellationToken)
+    {
+        RequireAccount(authenticatedUserId);
+        var character = await characters.GetAsync(characterId, cancellationToken);
+        if (character is null || character.AccountId != checked((int)authenticatedUserId))
+            throw new UnauthorizedAccessException("The requested character does not belong to this account.");
+        var stationId = useHomeStation
+            ? character.HomeStationId
+            : sessions.Of(characterId)?.GetInt("stationid") ?? sessions.Of(characterId)?.GetInt("structureid") ?? 0;
+        if (stationId <= 0)
+            throw new InvalidOperationException("Redeem items can only be claimed at a station or structure.");
+        var requested = TokenPairs(tokens);
+        if (requested.Length == 0)
+            return RedeemResult(stationId, []);
+
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var state = await PersistenceReadHelpers.ReadOptionalTableAsync(store, RedeemTable, cancellationToken);
+            var accounts = state[RedeemRow] as JsonObject ?? new JsonObject();
+            var accountKey = authenticatedUserId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var accountTokens = accounts[accountKey] as JsonObject ?? new JsonObject();
+            var claimed = accountTokens["claimed"] as JsonObject ?? new JsonObject();
+            var pending = new List<(long TokenId, JsonObject Token, ItemType Type)>();
+            var replayItems = new List<(long ItemId, int TypeId, long Quantity)>();
+            foreach (var pair in requested.Distinct())
+            {
+                var key = pair.TokenId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                if (claimed[key] is JsonObject prior)
+                {
+                    foreach (var item in prior["itemsCreated"] as JsonArray ?? [])
+                        if (item is JsonObject row)
+                            replayItems.Add((Integer(row["itemID"]), checked((int)Integer(row["typeID"])), Integer(row["quantity"])));
+                    continue;
+                }
+                if (accountTokens[key] is not JsonObject token ||
+                    String(token["status"]) is not ("" or "pending") ||
+                    (pair.MassTokenId > 0 && Integer(token["massTokenID"]) != pair.MassTokenId))
+                    throw new InvalidOperationException("A redeem token is unavailable or does not belong to this account.");
+                var typeId = checked((int)Integer(token["typeID"]));
+                var type = await itemTypes.GetAsync(typeId, cancellationToken);
+                if (type is null || Integer(token["quantity"]) <= 0)
+                    throw new InvalidOperationException("A redeem token contains an invalid item.");
+                pending.Add((pair.TokenId, token, type));
+            }
+
+            var newCreated = new List<(long ItemId, int TypeId, long Quantity)>();
+            await using (var connection = await source.OpenConnectionAsync(cancellationToken))
+            await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
+            {
+                foreach (var entry in pending)
+                {
+                    var quantity = Integer(entry.Token["quantity"]);
+                    var singleton = entry.Type.CategoryId is 6 or 9;
+                    var itemCount = singleton ? quantity : 1;
+                    var stackQuantity = singleton ? 1 : quantity;
+                    var tokenItems = new JsonArray();
+                    for (var index = 0L; index < itemCount; index++)
+                    {
+                        var itemId = await items.CreateAsync(
+                            connection, transaction,
+                            new NewItem(entry.Type.TypeId, characterId, stationId, Eve.Inventory.ItemFlags.Hangar,
+                                stackQuantity, singleton),
+                            cancellationToken);
+                        newCreated.Add((itemId, entry.Type.TypeId, stackQuantity));
+                        tokenItems.Add(new JsonObject
+                        {
+                            ["itemID"] = itemId,
+                            ["typeID"] = entry.Type.TypeId,
+                            ["quantity"] = stackQuantity,
+                        });
+                    }
+                    claimed[entry.TokenId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new JsonObject
+                    {
+                        ["stationID"] = stationId,
+                        ["itemsCreated"] = tokenItems,
+                        ["claimedAt"] = ToFileTime(nowUnixMs()),
+                    };
+                    accountTokens.Remove(entry.TokenId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                }
+                accountTokens["claimed"] = claimed;
+                accounts[accountKey] = accountTokens;
+                await store.ApplyChangesAsync(
+                    connection, transaction, RedeemTable,
+                    [new RowUpsert(RedeemRow, accounts.ToJsonString())], [], ownerFence, cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+            }
+
+            return RedeemResult(stationId, [.. replayItems, .. newCreated]);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async ValueTask ReverseRedeemAsync(
+        long authenticatedUserId,
+        PyValue itemId,
+        CancellationToken cancellationToken)
+    {
+        await MutatePendingTokensAsync(authenticatedUserId, [new TokenPair(Positive(itemId), 0)], "reversed", cancellationToken);
+    }
+
+    public ValueTask TrashRedeemTokensAsync(
+        long authenticatedUserId,
+        PyValue tokens,
+        CancellationToken cancellationToken) =>
+        MutatePendingTokensAsync(authenticatedUserId, TokenPairs(tokens), "trashed", cancellationToken);
+
+    private async ValueTask MutatePendingTokensAsync(
+        long authenticatedUserId,
+        IReadOnlyList<TokenPair> requested,
+        string status,
+        CancellationToken cancellationToken)
+    {
+        RequireAccount(authenticatedUserId);
+        if (requested.Count == 0)
+            return;
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var state = await PersistenceReadHelpers.ReadOptionalTableAsync(store, RedeemTable, cancellationToken);
+            var accounts = state[RedeemRow] as JsonObject ?? new JsonObject();
+            var accountKey = authenticatedUserId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var accountTokens = accounts[accountKey] as JsonObject ?? new JsonObject();
+            var changed = false;
+            foreach (var pair in requested.Distinct())
+            {
+                var key = pair.TokenId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                if (accountTokens[key] is not JsonObject token || String(token["status"]) is not ("" or "pending"))
+                    continue;
+                token["status"] = status;
+                token["updatedAt"] = ToFileTime(nowUnixMs());
+                changed = true;
+            }
+            if (!changed)
+                return;
+            accounts[accountKey] = accountTokens;
+            await using var connection = await source.OpenConnectionAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            await store.ApplyChangesAsync(
+                connection, transaction, RedeemTable,
+                [new RowUpsert(RedeemRow, accounts.ToJsonString())], [], ownerFence, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private static TokenPair[] TokenPairs(PyValue value)
+    {
+        if (value is not PyList list)
+            return [];
+        var result = new List<TokenPair>();
+        foreach (var item in list.Items)
+        {
+            if (item is PyTuple tuple && tuple.Items.Count >= 2)
+            {
+                var tokenId = Positive(tuple.Items[0]);
+                var massTokenId = PositiveOrZero(tuple.Items[1]);
+                if (tokenId > 0)
+                    result.Add(new TokenPair(tokenId, massTokenId));
+            }
+            else if (item is PyDict dict)
+            {
+                var tokenId = Positive(Get(dict, "tokenID"));
+                var massTokenId = PositiveOrZero(Get(dict, "massTokenID"));
+                if (tokenId > 0)
+                    result.Add(new TokenPair(tokenId, massTokenId));
+            }
+            else
+            {
+                var tokenId = Positive(item);
+                if (tokenId > 0)
+                    result.Add(new TokenPair(tokenId, 0));
+            }
+        }
+        return [.. result];
+    }
+
+    private static PyValue ToRedeemToken(JsonObject row, string tokenKey) =>
+        Py.Dict(
+            ("tokenID", new PyLong(Integer(row["tokenID"], long.TryParse(tokenKey, out var key) ? key : 0))),
+            ("massTokenID", Integer(row["massTokenID"]) > 0 ? new PyLong(Integer(row["massTokenID"])) : PyNone.Instance),
+            ("typeID", new PyInt(checked((int)Integer(row["typeID"])))),
+            ("quantity", new PyLong(Integer(row["quantity"]))),
+            ("stationID", Integer(row["stationID"]) > 0 ? new PyLong(Integer(row["stationID"])) : PyNone.Instance),
+            ("expireDateTime", Integer(row["expireDateTime"]) > 0 ? new PyLong(Integer(row["expireDateTime"])) : PyNone.Instance),
+            ("dateTime", new PyLong(Integer(row["dateTime"]))),
+            ("description", new PyStr(String(row["description"]))),
+            ("isAutoInject", row["isAutoInject"] is JsonValue autoInject && autoInject.TryGetValue<bool>(out var enabled) && enabled
+                ? PyBool.True : PyBool.False));
+
+    private static PyDict RedeemResult(
+        long stationId,
+        IReadOnlyList<(long ItemId, int TypeId, long Quantity)> itemsCreated) =>
+        Py.Dict(
+            ("errors", new PyList([])),
+            ("stationID", new PyLong(stationId)),
+            ("itemsCreated", new PyList([.. itemsCreated.Select(item => Py.Dict(
+                ("itemID", new PyLong(item.ItemId)),
+                ("typeID", new PyInt(item.TypeId)),
+                ("quantity", new PyLong(item.Quantity))))])));
+
+    private static JsonObject? FindOffer(JsonArray? offers, PyValue requested)
+    {
+        var raw = Text(requested).Trim();
+        if (raw.Length == 0)
+            return null;
+        var lookup = raw.StartsWith("VEVC-", StringComparison.OrdinalIgnoreCase) ? raw[5..] : raw;
+        foreach (var offer in offers?.OfType<JsonObject>() ?? [])
+        {
+            var id = String(offer["id"]);
+            var storeOfferId = String(offer["storeOfferID"]);
+            if (id == lookup || storeOfferId.Equals(lookup, StringComparison.OrdinalIgnoreCase))
+                return offer;
+        }
+        return null;
+    }
+
+    private static decimal? PriceFor(JsonObject offer, string currency)
+    {
+        foreach (var pricing in (offer["offerPricings"] as JsonArray)?.OfType<JsonObject>() ?? [])
+        {
+            if (!String(pricing["currency"]).Equals(currency, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (decimal.TryParse(pricing["price"]?.ToString(), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var price) && price > 0)
+                return price;
+        }
+        return null;
+    }
+
+    private static bool IsFiat(string currency) =>
+        currency is "CNY" or "JPY" or "EUR" or "GBP" or "USD" or "RUB";
+
+    private static long TokenId(string operationKey, int productIndex)
+    {
+        var bytes = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes($"{operationKey}:{productIndex}"));
+        var value = System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(bytes) & long.MaxValue;
+        return value == 0 ? 1 : value;
+    }
+
+    private static long ToFileTime(long unixMilliseconds) =>
+        checked(116444736000000000L + unixMilliseconds * 10_000L);
+
+    private static void RequireAccount(long accountId)
+    {
+        if (accountId <= 0 || accountId > int.MaxValue)
+            throw new UnauthorizedAccessException("A valid authenticated account is required.");
+    }
+
+    private static PyValue Get(PyDict dict, string key) =>
+        dict.Entries.FirstOrDefault(entry => entry.Key is PyStr name && name.Value == key).Value ?? PyNone.Instance;
+
+    private static long Positive(PyValue? value)
+{
+    var number = value switch
+    {
+        PyInt integer => (double)integer.Value,
+        PyLong integer => integer.Value,
+        PyReal real => real.Value,
+        _ => double.NaN,
+    };
+    return double.IsFinite(number) && number > 0 && number == Math.Truncate(number) && number < long.MaxValue
+        ? (long)number
+        : 0;
+}
+
+    private static long PositiveOrZero(PyValue? value)
+{
+    if (value is PyNone)
+        return 0;
+    var number = value switch
+    {
+        PyInt integer => (double)integer.Value,
+        PyLong integer => integer.Value,
+        PyReal real => real.Value,
+        _ => double.NaN,
+    };
+    return double.IsFinite(number) && number >= 0 && number == Math.Truncate(number) && number < long.MaxValue
+        ? (long)number
+        : 0;
+}
+
+    private static string Text(PyValue? value) => value switch
+    {
+        PyStr text => text.Value,
+        PyInt number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        PyLong number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        _ => string.Empty,
+    };
+
+    private static long Integer(JsonNode? value, long fallback = 0) =>
+        long.TryParse(value?.ToString(), System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? parsed : fallback;
+
+    private static string String(JsonNode? value) =>
+        value is JsonValue scalar && scalar.TryGetValue<string>(out var text) ? text : value?.ToString() ?? string.Empty;
+
+    private readonly record struct TokenPair(long TokenId, long MassTokenId);
 }
 
 sealed class PersistenceInsuranceReadModel(PersistenceStore store) : Eve.Services.Core.IInsuranceReadModel
@@ -1910,6 +2501,348 @@ sealed class PersistenceInsuranceReadModel(PersistenceStore store) : Eve.Service
 
     private static string Text(JsonNode? value) =>
         value is JsonValue scalar && scalar.TryGetValue<string>(out var text) ? text : "";
+}
+
+
+sealed class PersistenceInsuranceWriteModel(
+    NpgsqlDataSource source,
+    PgItemStore items,
+    PersistenceStore store,
+    OwnerFence ownerFence,
+    WalletTransactions wallets,
+    Eve.Services.Core.IInsuranceReadModel readModel,
+    Func<long> nowUnixMs) : Eve.Services.Core.IInsuranceWriteModel
+{
+    private const string Table = "insuranceContracts";
+    private const string ContractsRow = "contractsByShipID";
+    private const string SettlementsRow = "settlementsByLossID";
+    private const int InsuranceRefType = 0;
+    // ponytail: serialize the single GameStore contract document; shard rows if claim volume requires concurrency.
+    private readonly SemaphoreSlim _gate = new(1, 1);
+
+    public async ValueTask<Eve.Services.Core.InsuranceMutationResult> InsureShipAsync(
+        Eve.Services.Core.InsurancePurchaseCommand command,
+        CancellationToken cancellationToken)
+    {
+        if (command.ShipId <= 0 || command.PremiumCents <= 0 ||
+            command.StartDateFileTime <= 0 || command.EndDateFileTime <= command.StartDateFileTime ||
+            !command.Actor.IsDocked || command.Actor.CharacterId <= 0 ||
+            (command.IsCorporation && !CanInsureForCorporation(command.Actor)))
+            return Result(Eve.Services.Core.InsuranceMutationStatus.InvalidRequest);
+
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            await using var connection = await source.OpenConnectionAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            var ship = await items.LockAndGetAsync(connection, transaction, command.ShipId, cancellationToken);
+            var ownerKind = command.IsCorporation
+                ? Eve.Services.Core.InsuranceOwnerKind.Corporation
+                : Eve.Services.Core.InsuranceOwnerKind.Character;
+            var ownerId = command.IsCorporation ? command.Actor.CorporationId : command.Actor.CharacterId;
+            if (ship is null || ship.OwnerId != ownerId || !AtActorLocation(ship.LocationId, command.Actor) ||
+                !CorrectHangar(command.IsCorporation, ship.Flag))
+                return Result(Eve.Services.Core.InsuranceMutationStatus.NotEligible, ownerId);
+
+            var prices = await readModel.GetInsurancePricesCentsAsync([ship.TypeId], cancellationToken);
+            if (!prices.TryGetValue(ship.TypeId, out var fullPayoutCents) || fullPayoutCents <= 0 ||
+                Eve.Services.Core.InsuranceQuotes.ForPremium(fullPayoutCents, command.PremiumCents) is not { } quote)
+                return Result(Eve.Services.Core.InsuranceMutationStatus.NotEligible, ownerId);
+
+            var state = await store.LoadTableAsync(Table, ct: cancellationToken);
+            var contracts = state[ContractsRow] as JsonObject ?? new JsonObject();
+            var shipKey = Key(command.ShipId);
+            var current = contracts[shipKey] as JsonObject;
+            var currentContract = Contract(current, command.ShipId);
+            if (ActiveAt(currentContract, command.StartDateFileTime))
+            {
+                if (!command.ReplaceExisting)
+                    return Result(Eve.Services.Core.InsuranceMutationStatus.AlreadyInsured, currentContract!.OwnerId);
+                current!["status"] = "void";
+            }
+
+            var contractId = NextContractId(contracts);
+            if (contractId <= 0)
+                return Result(Eve.Services.Core.InsuranceMutationStatus.NotEligible, ownerId);
+            contracts[shipKey] = new JsonObject
+            {
+                ["contractID"] = contractId,
+                ["shipID"] = command.ShipId,
+                ["typeID"] = ship.TypeId,
+                ["ownerID"] = ownerId,
+                ["ownerKind"] = ownerKind == Eve.Services.Core.InsuranceOwnerKind.Corporation ? "corporation" : "character",
+                ["fraction"] = quote.FractionPercent / 100d,
+                ["startDate"] = command.StartDateFileTime,
+                ["endDate"] = command.EndDateFileTime,
+                ["status"] = "active",
+            };
+
+            var balance = await wallets.AdjustAsync(
+                connection, transaction, ownerId, -command.PremiumCents / 100m, 0,
+                InsuranceRefType, "Insurance premium", nowUnixMs(),
+                $"insurance:premium:{command.ShipId}:{contractId}", cancellationToken);
+            await store.ApplyChangesAsync(
+                connection, transaction, Table,
+                [new RowUpsert(ContractsRow, contracts.ToJsonString())], [], ownerFence, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            wallets.AnnounceCommitted(new WalletBalanceChange(ownerId, 1000, balance));
+            return Result(Eve.Services.Core.InsuranceMutationStatus.Applied, ownerId, command.PremiumCents);
+        }
+        catch (Exception error) when (error is Eve.Wallet.InsufficientFundsException or
+                                      Eve.Wallet.WalletNotFoundException or
+                                      Eve.Wallet.MoneyLimitException or
+                                      Eve.Wallet.WalletOperationConflictException)
+        {
+            return Result(Eve.Services.Core.InsuranceMutationStatus.NotEligible);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async ValueTask<Eve.Services.Core.InsuranceMutationResult> UnInsureShipAsync(
+        Eve.Services.Core.InsuranceCancellationCommand command,
+        CancellationToken cancellationToken)
+    {
+        if (command.ShipId <= 0 || command.RequestedAtFileTime <= 0 || !command.Actor.IsDocked || command.Actor.CharacterId <= 0)
+            return Result(Eve.Services.Core.InsuranceMutationStatus.InvalidRequest);
+
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            await using var connection = await source.OpenConnectionAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            var ship = await items.LockAndGetAsync(connection, transaction, command.ShipId, cancellationToken);
+            if (ship is null || !AtActorLocation(ship.LocationId, command.Actor))
+                return Result(Eve.Services.Core.InsuranceMutationStatus.NotEligible);
+
+            var state = await store.LoadTableAsync(Table, ct: cancellationToken);
+            var contracts = state[ContractsRow] as JsonObject;
+            var key = Key(command.ShipId);
+            if (contracts?[key] is not JsonObject row || Contract(row, command.ShipId) is not { } contract)
+                return Result(Eve.Services.Core.InsuranceMutationStatus.NoActiveContract);
+            if (string.Equals(contract.Status, "void", StringComparison.OrdinalIgnoreCase))
+                return Result(Eve.Services.Core.InsuranceMutationStatus.AlreadyApplied, contract.OwnerId);
+            if (!ActiveAt(contract, command.RequestedAtFileTime))
+                return Result(Eve.Services.Core.InsuranceMutationStatus.NoActiveContract, contract.OwnerId);
+            if (contract.OwnerKind == Eve.Services.Core.InsuranceOwnerKind.Character &&
+                contract.OwnerId != command.Actor.CharacterId ||
+                contract.OwnerKind == Eve.Services.Core.InsuranceOwnerKind.Corporation &&
+                (contract.OwnerId != command.Actor.CorporationId || !CanInsureForCorporation(command.Actor)))
+                return Result(Eve.Services.Core.InsuranceMutationStatus.NotAuthorized, contract.OwnerId);
+
+            row["status"] = "void";
+            await store.ApplyChangesAsync(
+                connection, transaction, Table,
+                [new RowUpsert(ContractsRow, contracts!.ToJsonString())], [], ownerFence, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return Result(Eve.Services.Core.InsuranceMutationStatus.Applied, contract.OwnerId);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async ValueTask<Eve.Services.Core.InsuranceMutationResult> SettleShipLossAsync(
+        Eve.Services.Core.InsuranceLossSettlementRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.LossId <= 0 || request.ShipId <= 0 || request.LossDateFileTime <= 0)
+            return Result(Eve.Services.Core.InsuranceMutationStatus.InvalidRequest);
+
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            await using var connection = await source.OpenConnectionAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            var ship = await items.LockAndGetAsync(connection, transaction, request.ShipId, cancellationToken);
+            var state = await store.LoadTableAsync(Table, ct: cancellationToken);
+            var contracts = state[ContractsRow] as JsonObject ?? new JsonObject();
+            var settlements = state[SettlementsRow] as JsonObject ?? new JsonObject();
+            var lossKey = Key(request.LossId);
+            if (settlements[lossKey] is JsonObject settled)
+                return Result(Eve.Services.Core.InsuranceMutationStatus.AlreadyApplied,
+                    Number(settled["ownerID"]), Number(settled["amountCents"]));
+
+            var shipKey = Key(request.ShipId);
+            var contractRow = contracts[shipKey] as JsonObject;
+            var contract = Contract(contractRow, request.ShipId);
+            var typeId = ship?.TypeId ?? contract?.TypeId ?? 0;
+            if (typeId <= 0)
+                return Result(Eve.Services.Core.InsuranceMutationStatus.NotEligible);
+            var prices = await readModel.GetInsurancePricesCentsAsync([typeId], cancellationToken);
+            if (!prices.TryGetValue(typeId, out var fullPayoutCents) || fullPayoutCents <= 0)
+                return Result(Eve.Services.Core.InsuranceMutationStatus.NotEligible);
+
+            if (contract is not null && ship is not null &&
+                (ship.OwnerId != contract.OwnerId ||
+                 !CorrectHangar(contract.OwnerKind == Eve.Services.Core.InsuranceOwnerKind.Corporation, ship.Flag)))
+                contract = null;
+            var payoutCents = Eve.Services.Core.InsuranceQuotes.PayoutForLoss(
+                fullPayoutCents, contract, request.LossDateFileTime, request.IsConcordDestruction);
+            var ownerId = ship?.OwnerId ?? contract?.OwnerId ??
+                (request.FinalOwnerId > 0 ? request.FinalOwnerId : request.FinalOwnerCorporationId);
+            if (payoutCents > 0 && ownerId <= 0)
+                return Result(Eve.Services.Core.InsuranceMutationStatus.NotEligible);
+
+            decimal balance = 0;
+            if (payoutCents > 0)
+                balance = await wallets.AdjustAsync(
+                    connection, transaction, ownerId, payoutCents / 100m, 0,
+                    InsuranceRefType, "Insurance payout", nowUnixMs(),
+                    $"insurance:payout:{request.LossId}", cancellationToken);
+
+            if (contractRow is not null)
+                contractRow["status"] = contract is not null && payoutCents > 0 ? "paid" : "void";
+            settlements[lossKey] = new JsonObject
+            {
+                ["lossID"] = request.LossId,
+                ["shipID"] = request.ShipId,
+                ["ownerID"] = ownerId,
+                ["amountCents"] = payoutCents,
+                ["isConcordDestruction"] = request.IsConcordDestruction,
+                ["settledAtFiletime"] = checked(116444736000000000L + nowUnixMs() * 10_000L),
+                ["contractID"] = contract?.ContractId ?? 0,
+            };
+            await store.ApplyChangesAsync(
+                connection, transaction, Table,
+                [new RowUpsert(ContractsRow, contracts.ToJsonString()),
+                 new RowUpsert(SettlementsRow, settlements.ToJsonString())], [], ownerFence, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            if (payoutCents > 0)
+                wallets.AnnounceCommitted(new WalletBalanceChange(ownerId, 1000, balance));
+            return Result(Eve.Services.Core.InsuranceMutationStatus.Applied, ownerId, payoutCents);
+        }
+        catch (Exception error) when (error is Eve.Wallet.WalletNotFoundException or
+                                      Eve.Wallet.MoneyLimitException or
+                                      Eve.Wallet.WalletOperationConflictException)
+        {
+            return Result(Eve.Services.Core.InsuranceMutationStatus.NotEligible);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+
+    public async ValueTask<Eve.Services.Core.InsuranceMutationResult> InvalidateShipAsync(
+        Eve.Services.Core.InsuranceInvalidationRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.ShipId <= 0 || request.InvalidatedAtFileTime <= 0 ||
+            !Enum.IsDefined(request.Reason) ||
+            (request.Reason == Eve.Services.Core.InsuranceInvalidationReason.Boarded &&
+             (request.ActorCharacterId <= 0 || request.ActorCorporationId is null)))
+            return Result(Eve.Services.Core.InsuranceMutationStatus.InvalidRequest);
+
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            await using var connection = await source.OpenConnectionAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            var state = await store.LoadTableAsync(Table, ct: cancellationToken);
+            var contracts = state[ContractsRow] as JsonObject;
+            var key = Key(request.ShipId);
+            if (contracts?[key] is not JsonObject row || Contract(row, request.ShipId) is not { } contract)
+                return Result(Eve.Services.Core.InsuranceMutationStatus.NoActiveContract);
+            if (!string.Equals(contract.Status, "active", StringComparison.OrdinalIgnoreCase))
+                return Result(Eve.Services.Core.InsuranceMutationStatus.AlreadyApplied, contract.OwnerId);
+
+            var shouldInvalidate = request.Reason switch
+            {
+                Eve.Services.Core.InsuranceInvalidationReason.Repackaged => true,
+                Eve.Services.Core.InsuranceInvalidationReason.OwnerChanged => true,
+                Eve.Services.Core.InsuranceInvalidationReason.PlacedInCorporationHangar =>
+                    contract.OwnerKind == Eve.Services.Core.InsuranceOwnerKind.Character,
+                Eve.Services.Core.InsuranceInvalidationReason.Boarded =>
+                    contract.OwnerKind == Eve.Services.Core.InsuranceOwnerKind.Corporation &&
+                    request.ActorCorporationId != contract.OwnerId,
+                _ => false,
+            };
+            if (!shouldInvalidate)
+                return Result(Eve.Services.Core.InsuranceMutationStatus.AlreadyApplied, contract.OwnerId);
+
+            row["status"] = "void";
+            row["invalidatedAt"] = request.InvalidatedAtFileTime;
+            row["invalidationReason"] = request.Reason.ToString();
+            await store.ApplyChangesAsync(
+                connection, transaction, Table,
+                [new RowUpsert(ContractsRow, contracts!.ToJsonString())], [], ownerFence, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return Result(Eve.Services.Core.InsuranceMutationStatus.Applied, contract.OwnerId);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private static Eve.Services.Core.InsuranceMutationResult Result(
+        Eve.Services.Core.InsuranceMutationStatus status, long ownerId = 0, long amountCents = 0) =>
+        new(status, ownerId, amountCents);
+
+    private static bool CanInsureForCorporation(Eve.Services.Core.InsuranceActorSnapshot actor) =>
+        actor.CorporationId > 0 &&
+        (actor.CorporationRoleMask &
+            (Eve.Corporations.CorporationRoles.Accountant | Eve.Corporations.CorporationRoles.JuniorAccountant)) != 0;
+
+    private static bool AtActorLocation(long locationId, Eve.Services.Core.InsuranceActorSnapshot actor) =>
+        locationId > 0 && (locationId == actor.StationId || locationId == actor.StructureId);
+
+
+    private static bool CorrectHangar(bool corporationInsurance, int flag) =>
+        Eve.Inventory.ItemFlags.IsCorporationHangar(flag) == corporationInsurance;
+
+    private static long NextContractId(JsonObject contracts)
+    {
+        var highest = contracts.Select(pair => pair.Value as JsonObject)
+            .Where(row => row is not null)
+            .Select(row => Number(row!["contractID"]))
+            .DefaultIfEmpty(0)
+            .Max();
+        return highest == long.MaxValue ? 0 : highest + 1;
+    }
+
+    private static Eve.Services.Core.InsuranceContractSnapshot? Contract(JsonObject? row, long fallbackShipId)
+    {
+        if (row is null)
+            return null;
+        var shipId = Number(row["shipID"]);
+        if (shipId <= 0) shipId = fallbackShipId;
+        var ownerKind = string.Equals(Text(row["ownerKind"]), "corporation", StringComparison.OrdinalIgnoreCase)
+            ? Eve.Services.Core.InsuranceOwnerKind.Corporation
+            : Eve.Services.Core.InsuranceOwnerKind.Character;
+        var ownerId = Number(row["ownerID"]);
+        var typeId = Number(row["typeID"]);
+        if (shipId <= 0 || ownerId <= 0 || typeId <= 0)
+            return null;
+        return new Eve.Services.Core.InsuranceContractSnapshot(
+            Number(row["contractID"]), shipId, typeId, ownerId, ownerKind,
+            NumberDouble(row["fraction"]), Number(row["startDate"]), Number(row["endDate"]),
+            Text(row["status"]) is { Length: > 0 } status ? status : "active");
+    }
+
+    private static bool ActiveAt(Eve.Services.Core.InsuranceContractSnapshot? contract, long fileTime) =>
+        fileTime > 0 && contract is { ShipId: > 0, TypeId: > 0, OwnerId: > 0 } &&
+        Enum.IsDefined(contract.OwnerKind) && contract.Fraction > 0 && contract.Fraction <= 1 &&
+        string.Equals(contract.Status, "active", StringComparison.OrdinalIgnoreCase) &&
+        contract.StartDateFileTime > 0 && contract.StartDateFileTime <= fileTime && contract.EndDateFileTime > fileTime;
+
+    private static long Number(JsonNode? value) =>
+        long.TryParse(value?.ToString(), System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var number) ? number : 0;
+
+    private static double NumberDouble(JsonNode? value) =>
+        double.TryParse(value?.ToString(), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var number) && double.IsFinite(number) ? number : 0;
+
+    private static string Text(JsonNode? value) =>
+        value is JsonValue scalar && scalar.TryGetValue<string>(out var text) ? text : "";
+
+    private static string Key(long value) => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
 }
 
 public sealed class PersistenceStructureAssetSafetyReadModel : Eve.Services.Core.IStructureAssetSafetyReadCallbacks

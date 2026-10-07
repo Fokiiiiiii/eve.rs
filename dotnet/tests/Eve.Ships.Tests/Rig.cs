@@ -34,12 +34,12 @@ internal sealed class Rig : IAsyncDisposable
 
     private readonly string[] _schemas;
 
-    private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation)
+    private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, IShipInsuranceInvalidator? shipInsuranceInvalidator)
     {
         Source = source;
         _schemas = [$"sc_{suffix}", $"si_{suffix}", $"ss_{suffix}", $"sw_{suffix}", $"sf_{suffix}"];
         Characters = new PgCharacterStore(source, _schemas[0]);
-        Items = new PgItemStore(source, _schemas[1]);
+        Items = new PgItemStore(source, _schemas[1], shipInsuranceInvalidator);
         Skills = new PgSkillStore(source, _schemas[2]);
         Modules = new PgModuleStateStore(source, _schemas[4]);
         Statics = statics;
@@ -75,7 +75,7 @@ internal sealed class Rig : IAsyncDisposable
             source.Bloodlines,
             CreationCatalog.Schools.Select(s => source.StarterFor(s.CorporationId)!));
 
-    public static async Task<Rig> CreateAsync()
+    public static async Task<Rig> CreateAsync(IShipInsuranceInvalidator? shipInsuranceInvalidator = null)
     {
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
@@ -94,7 +94,7 @@ internal sealed class Rig : IAsyncDisposable
         await PgModuleStateStore.MigrateAsync(source, $"sf_{suffix}");
         var creation = new CharacterCreation(
             source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), CockroachCatalog(await CreationCatalog.LoadAsync(sde, Station)), modules);
-        return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation);
+        return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation, shipInsuranceInvalidator);
     }
 
     /// <summary>A new test character on the Cockroach hull with the starter modules fitted.</summary>

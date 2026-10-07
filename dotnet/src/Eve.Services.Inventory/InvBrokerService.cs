@@ -14,9 +14,20 @@ namespace Eve.Services.Inventory;
 /// the hangar) as bound objects, and each of them lists what is in it. Only reading is here: moving, stacking and fitting
 /// items come later.
 /// </summary>
+public enum CorporationHangarOperation
+{
+    Query,
+    Take,
+    Deposit,
+}
+
+public delegate ValueTask<bool> CorporationHangarAccess(
+    long characterId, long corporationId, long stationId, int divisionFlag,
+    CorporationHangarOperation operation, CancellationToken cancellationToken);
+
 [Service("invbroker")]
 public sealed partial class InvBrokerService(
-    PgItemStore items, ItemTypeCatalog types, StationCatalog stations, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs, ISpaceContainers? space = null, ISpaceDroneBays? droneBays = null) : IBoundObjectReleaseHandler
+    PgItemStore items, ItemTypeCatalog types, StationCatalog stations, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs, ISpaceContainers? space = null, ISpaceDroneBays? droneBays = null, CorporationHangarAccess? corporationHangarAccess = null) : IBoundObjectReleaseHandler
 {
     /// <summary>The container the client asks for to get the hangar of the station it is docked at.</summary>
     public const int ContainerHangar = 10004;
@@ -90,19 +101,99 @@ public sealed partial class InvBrokerService(
         new(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, item.Singleton ? -1 : item.Quantity, type.GroupId, type.CategoryId);
 
     /// <summary>What is in the character's hangar at its station.</summary>
-    private async Task<IReadOnlyList<ItemRow>> HangarAsync(ClientSession session, CancellationToken cancellationToken) =>
-        StationOf(session) is { } station && session.CharacterId is { } character
-            ? await RowsAsync(await items.InLocationAsync(station, character, cancellationToken), cancellationToken)
-            : [];
+    private static long CorporationIdOf(ClientSession session) =>
+        session.GetInt("corporationID") is { } corporationId && corporationId != 0
+            ? corporationId
+            : session.GetInt("corpid") ?? 0;
+
+    private ValueTask<bool> CorporationAccessAsync(
+        long characterId, long corporationId, long stationId, int flag,
+        CorporationHangarOperation operation, CancellationToken cancellationToken) =>
+        corporationHangarAccess is { } authorize
+            ? authorize(characterId, corporationId, stationId, flag, operation, cancellationToken)
+            : ValueTask.FromResult(false);
+
+    private async Task<(long StationId, int DivisionFlag)?> CorporationDivisionOfItemAsync(
+        Item item, long corporationId, CancellationToken cancellationToken)
+    {
+        if (item.OwnerId != corporationId)
+            return null;
+        if (ItemFlags.IsCorporationHangar(item.Flag) && stations.Get(item.LocationId) is not null)
+            return (item.LocationId, item.Flag);
+
+        var location = item.LocationId;
+        var seen = new HashSet<long>();
+        for (var depth = 0; depth < 32 && location > 0 && seen.Add(location); depth++)
+        {
+            if (await items.GetAsync(location, cancellationToken) is not { OwnerId: var owner, LocationId: var parentLocation, Flag: var flag } parent
+                || owner != corporationId)
+                return null;
+            if (ItemFlags.IsCorporationHangar(flag) && stations.Get(parentLocation) is not null)
+                return (parentLocation, flag);
+            location = parentLocation;
+        }
+        return null;
+    }
+
+    private async ValueTask<bool> CanAccessCorporationItemAsync(
+        ClientSession session, Item item, CorporationHangarOperation operation, CancellationToken cancellationToken)
+    {
+        if (session.CharacterId is not { } character)
+            return false;
+        var corporationId = CorporationIdOf(session);
+        if (corporationId <= 0 || corporationId != item.OwnerId)
+            return false;
+        var division = await CorporationDivisionOfItemAsync(item, corporationId, cancellationToken);
+        return division is { } location
+            && await CorporationAccessAsync(character, corporationId, location.StationId, location.DivisionFlag, operation, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<Item>> StationItemsAsync(
+        ClientSession session, long characterId, long stationId, CancellationToken cancellationToken)
+    {
+        var visible = new List<Item>(await items.InLocationAsync(stationId, characterId, cancellationToken));
+        var corporationId = CorporationIdOf(session);
+        if (corporationId <= 0 || corporationId == characterId || corporationHangarAccess is null)
+            return visible;
+
+        var divisions = (await items.InLocationAsync(stationId, corporationId, cancellationToken))
+            .Where(item => ItemFlags.IsCorporationHangar(item.Flag))
+            .GroupBy(item => item.Flag);
+        foreach (var division in divisions)
+        {
+            if (await CorporationAccessAsync(characterId, corporationId, stationId, division.Key,
+                    CorporationHangarOperation.Query, cancellationToken))
+                visible.AddRange(division);
+        }
+        return visible;
+    }
+
+    private async Task<IReadOnlyList<ItemRow>> HangarAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        if (StationOf(session) is not { } station || session.CharacterId is not { } character)
+            return [];
+        return await RowsAsync(await StationItemsAsync(session, character, station, cancellationToken), cancellationToken);
+    }
 
     /// <summary>What is in the bound inventory: the hangar's ships, a ship's fitted modules and cargo, or what a can or a wreck holds.</summary>
-    private async Task<IReadOnlyList<ItemRow>> ContentsAsync(Context context, ClientSession session, CancellationToken cancellationToken) => context.Kind switch
+    private async Task<IReadOnlyList<ItemRow>> ContentsAsync(Context context, ClientSession session, CancellationToken cancellationToken)
     {
-        Kind.Hangar => await HangarAsync(session, cancellationToken),
-        Kind.Container => await RowsAsync(await items.InContainerAsync(context.ItemId, cancellationToken), cancellationToken),
-        Kind.Space => [],
-        _ => session.CharacterId is { } character ? await RowsAsync(await items.InLocationAsync(context.ItemId, character, cancellationToken), cancellationToken) : [],
-    };
+        if (context.Kind == Kind.Hangar)
+            return await HangarAsync(session, cancellationToken);
+        if (context.Kind == Kind.Space || session.CharacterId is not { } character)
+            return [];
+        if (context.Kind is not (Kind.Container or Kind.Ship))
+            return [];
+
+        if (await items.GetAsync(context.ItemId, cancellationToken) is not { } container)
+            return [];
+        var contents = await items.InContainerAsync(context.ItemId, cancellationToken);
+        if (container.OwnerId == character)
+            return await RowsAsync(contents.Where(item => item.OwnerId == character), cancellationToken);
+        if (await CanAccessCorporationItemAsync(session, container, CorporationHangarOperation.Query, cancellationToken))
+            return await RowsAsync(contents.Where(item => item.OwnerId == container.OwnerId || item.OwnerId == character), cancellationToken);
+        return [];
+    }
 
     /// <summary>The station as an item of its own: the "container" the hangar is in.</summary>
     private async Task<ItemRow?> StationRowAsync(ClientSession session, CancellationToken cancellationToken)
@@ -154,23 +245,30 @@ public sealed partial class InvBrokerService(
     public async ValueTask<PyValue> GetInventoryFromId(ServiceCall call)
     {
         if (IdOf(call.Arg(0)) is not { } id)
-        {
             return None;
-        }
         if (StationOf(call.Session) is not { } station)
-        {
             return await OpenInSpaceAsync(call, id);
-        }
         if (id == station)
-        {
             return Bind(new Context(Kind.Hangar, station, 0), call.Session);
-        }
-        if (call.Session.CharacterId is { } character && await items.GetAsync(id, call.Cancellation) is { } item
-            && item.OwnerId == character && item.LocationId == station
+
+        if (call.Session.CharacterId is not { } character
+            || await items.GetAsync(id, call.Cancellation) is not { } item)
+            return None;
+        if (item.LocationId == station
             && await types.GetAsync(item.TypeId, call.Cancellation) is { CategoryId: ShipCategory })
         {
-            return Bind(new Context(Kind.Ship, item.Id, 0), call.Session);
+            if (item.OwnerId == character
+                || await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Query, call.Cancellation))
+                return Bind(new Context(Kind.Ship, item.Id, 0), call.Session);
+            return None;
         }
+
+        if (item.OwnerId == character
+            && await ships.IsOwnedDockedContainerAsync(id, character, station, call.Cancellation))
+            return Bind(new Context(Kind.Container, id, CharacterShips.ContainerFlag), call.Session);
+        if (await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Query, call.Cancellation)
+            && await ships.IsOwnedDockedContainerAsync(id, item.OwnerId, station, call.Cancellation))
+            return Bind(new Context(Kind.Container, id, CharacterShips.ContainerFlag), call.Session);
         return None;
     }
 
@@ -280,13 +378,89 @@ public sealed partial class InvBrokerService(
     /// cargo hold. A hangar holds a million cubic metres whatever is in it; asked for the cargo hold it answers what the reference does for an inventory that is no
     /// ship (5,000).
     /// </summary>
+[Method("ListStations")]
+    public async ValueTask<PyValue> ListStations(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } character) return new PyList([]);
+        var owned = await items.OwnedByAsync(character, call.Cancellation);
+        var ids = owned.Select(item => item.LocationId).Where(id => stations.Get(id) is not null).ToHashSet();
+        var corporationId = CorporationIdOf(call.Session);
+        if (corporationId > 0 && corporationId != character && corporationHangarAccess is not null)
+        {
+            var corpItems = await items.OwnedByAsync(corporationId, call.Cancellation);
+            foreach (var group in corpItems.Where(item => ItemFlags.IsCorporationHangar(item.Flag) && stations.Get(item.LocationId) is not null)
+                         .GroupBy(item => (item.LocationId, item.Flag)))
+            {
+                if (await CorporationAccessAsync(character, corporationId, group.Key.LocationId, group.Key.Flag,
+                        CorporationHangarOperation.Query, call.Cancellation))
+                    ids.Add(group.Key.LocationId);
+            }
+        }
+        return new PyList([.. ids.Order().Select(InventoryWire.Id)]);
+    }
+
+    [Method("ListStationItems")]
+    public async ValueTask<PyValue> ListStationItems(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } character || IdOf(call.Arg(0)) is not { } station || stations.Get(station) is null)
+            return new PyList([]);
+        var itemsAtStation = await StationItemsAsync(call.Session, character, station, call.Cancellation);
+        var rows = await RowsAsync(itemsAtStation, call.Cancellation);
+        return new PyList([.. rows.Select(row => InventoryWire.PackedRow(row))]);
+    }
+
+    [Method("ListIncludingContainers")]
+    public async ValueTask<PyValue> ListIncludingContainers(ServiceCall call)
+    {
+        if (ContextOf(call) is not { } context || call.Session.CharacterId is not { } character) return None;
+        var pending = new Queue<ItemRow>(await ContentsAsync(context, call.Session, call.Cancellation));
+        var seen = new HashSet<long>();
+        var rows = new List<ItemRow>();
+        while (pending.TryDequeue(out var row))
+        {
+            if (!seen.Add(row.ItemId)) continue;
+            rows.Add(row);
+            var contents = await items.InContainerAsync(row.ItemId, call.Cancellation);
+            var visible = new List<Item>();
+            foreach (var item in contents)
+            {
+                if (item.OwnerId == character
+                    || await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Query, call.Cancellation))
+                    visible.Add(item);
+            }
+            foreach (var child in await RowsAsync(visible, call.Cancellation))
+                pending.Enqueue(child);
+        }
+        return new PyList([.. rows.Select(row => InventoryWire.PackedRow(row))]);
+    }
+
+    [Method("GetAssetWorth")]
+    public async ValueTask<PyValue> GetAssetWorth(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } character) return Py.Number(0d);
+        var owned = await items.OwnedByAsync(character, call.Cancellation);
+        var typesById = await types.GetAsync(owned.Select(item => item.TypeId), call.Cancellation);
+        var worth = owned.Sum(item => typesById.GetValueOrDefault(item.TypeId)?.BasePrice
+            * Math.Max(1, item.Singleton ? 1 : item.Quantity) ?? 0m);
+        return Py.Number((double)worth);
+    }
+
+    [Method("IsMyItemAtDockableLocation")]
+    public async ValueTask<PyValue> IsMyItemAtDockableLocation(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } character || IdOf(call.Arg(0)) is not { } itemId
+            || await items.GetAsync(itemId, call.Cancellation) is not { OwnerId: var owner, LocationId: var location }
+            || owner != character || stations.Get(location) is null)
+            return PyBool.False;
+        var askedLocation = IdOf(call.Arg(1));
+        return askedLocation is null || stations.Get(askedLocation.Value) is null || askedLocation == location ? PyBool.True : PyBool.False;
+    }
+
     [Method("GetCapacity")]
     public async ValueTask<PyValue> GetCapacity(ServiceCall call)
     {
         if (ContextOf(call) is not { } context || call.Session.CharacterId is not { } character)
-        {
             return None;
-        }
         var flag = FlagOf(call);
         if (context.Kind == Kind.Ship)
         {
@@ -297,23 +471,33 @@ public sealed partial class InvBrokerService(
                     ? KeyVal(inSpaceRoom.Capacity, inSpaceRoom.Used)
                     : None;
             }
-            if (flag == CharacterShips.DroneBayFlag
-                && !await IsDockedShipContextAsync(call.Session, character, context.ItemId, call.Cancellation))
-            {
+            if (await items.GetAsync(context.ItemId, call.Cancellation) is not { } hull)
                 return None;
-            }
-            return await ships.RoomAsync(character, context.ItemId, flag ?? CharacterShips.CargoFlag, call.Cancellation) is { } room ? KeyVal(room.Capacity, room.Used) : None;
+            if (hull.OwnerId != character
+                && !await CanAccessCorporationItemAsync(call.Session, hull, CorporationHangarOperation.Query, call.Cancellation))
+                return None;
+            if (flag == CharacterShips.DroneBayFlag && hull.OwnerId == character
+                && !await IsDockedShipContextAsync(call.Session, character, context.ItemId, call.Cancellation))
+                return None;
+            return await ships.RoomAsync(hull.OwnerId, context.ItemId, flag ?? CharacterShips.CargoFlag, call.Cancellation) is { } room
+                ? KeyVal(room.Capacity, room.Used)
+                : None;
         }
         if (context.Kind == Kind.Space)
-        {
             return None;
-        }
         if (context.Kind == Kind.Container)
         {
-            return await ships.ContainerRoomAsync(context.ItemId, call.Cancellation) is { } inside ? KeyVal(inside.Capacity, inside.Used) : None;
+            if (await items.GetAsync(context.ItemId, call.Cancellation) is not { } container
+                || container.OwnerId != character
+                    && !await CanAccessCorporationItemAsync(call.Session, container, CorporationHangarOperation.Query, call.Cancellation))
+                return None;
+            return await ships.ContainerRoomAsync(context.ItemId, call.Cancellation) is { } inside
+                ? KeyVal(inside.Capacity, inside.Used)
+                : None;
         }
-        var inHangar = StationOf(call.Session) is { } station ? await items.InLocationAsync(station, character, call.Cancellation) : [];
-        var used = await ships.VolumeOfAsync(inHangar.Where(i => flag is null || i.Flag == flag), call.Cancellation);
+        var station = StationOf(call.Session);
+        var inHangar = station is { } at ? await StationItemsAsync(call.Session, character, at, call.Cancellation) : [];
+        var used = await ships.VolumeOfAsync(inHangar.Where(item => flag is null || item.Flag == flag), call.Cancellation);
         return KeyVal(flag == CharacterShips.CargoFlag ? BareCargoCapacity : HangarCapacity, used);
     }
 
@@ -336,6 +520,85 @@ public sealed partial class InvBrokerService(
     /// <c>StackAll(flag)</c>: the stacks of one type in the inventory become one. Answers True when something was stacked and None when nothing was; the client
     /// is told each stack that grew and each that went.
     /// </summary>
+[Method("SetLabel")]
+    public async ValueTask<PyValue> SetLabel(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } character || IdOf(call.Arg(0)) is not { } itemId
+            || await items.GetAsync(itemId, call.Cancellation) is not { } item)
+            return None;
+
+        var owner = item.OwnerId;
+        var typeId = item.TypeId;
+        var canEdit = owner == character
+            || await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Take, call.Cancellation);
+        if (!canEdit) return None;
+
+        var station = StationOf(call.Session);
+        var isShip = await types.GetAsync(typeId, call.Cancellation) is { CategoryId: ShipCategory };
+        var isDockedContainer = station is { } at
+            && await ships.IsOwnedDockedContainerAsync(itemId, owner, at, call.Cancellation);
+        if (!isShip && !isDockedContainer)
+            return None;
+
+        var label = call.Arg(1) is PyNone ? null : JsSemantics.StringValue(call.Arg(1));
+        await items.SetCustomNameAsync(itemId, label, call.Cancellation);
+        return None;
+    }
+
+[Method("MultiMerge")]
+    public async ValueTask<PyValue> MultiMerge(ServiceCall call)
+    {
+        if (ContextOf(call) is not { } context || call.Session.CharacterId is not { } character
+            || StationOf(call.Session) is not { } station || IdOf(call.Arg(1)) is not { } sourceContainer)
+            return None;
+        var destination = context.Kind switch
+        {
+            Kind.Hangar => station,
+            Kind.Ship or Kind.Container => context.ItemId,
+            _ => 0,
+        };
+        if (destination <= 0) return None;
+        var corporationId = CorporationIdOf(call.Session);
+        var operations = call.Arg(0) switch
+        {
+            PyList list => list.Items,
+            PyTuple tuple => tuple.Items,
+            _ => [],
+        };
+        var mergedAny = false;
+        foreach (var operation in operations)
+        {
+            if (operation is not PyTuple { Items.Count: >= 3 } triple
+                || IdOf(triple.Items[0]) is not { } sourceId || IdOf(triple.Items[1]) is not { } destinationId)
+                continue;
+            var quantity = IdOf(triple.Items[2]) ?? 0;
+            if (await items.GetAsync(sourceId, call.Cancellation) is not { } sourceItem
+                || await items.GetAsync(destinationId, call.Cancellation) is not { } destinationItem)
+                continue;
+
+            var ownerId = character;
+            if (sourceItem.OwnerId != character || destinationItem.OwnerId != character)
+            {
+                if (corporationId <= 0 || sourceItem.OwnerId != corporationId || destinationItem.OwnerId != corporationId
+                    || !await CanAccessCorporationItemAsync(call.Session, sourceItem, CorporationHangarOperation.Take, call.Cancellation)
+                    || !await CanAccessCorporationItemAsync(call.Session, destinationItem, CorporationHangarOperation.Take, call.Cancellation))
+                    continue;
+                ownerId = corporationId;
+            }
+            var merged = await items.MergeAsync(sourceId, destinationId, quantity, ownerId, sourceContainer, destination, call.Cancellation);
+            if (merged is null) continue;
+            ShipNotifications.SendItemChange(call.Session,
+                new ItemChanged(merged.DestinationAfter, merged.DestinationBefore.LocationId, merged.DestinationBefore.Flag, merged.DestinationBefore.Quantity),
+                item => DogmaRow(item));
+            var sourceAfter = merged.SourceAfter ?? merged.SourceBefore with { LocationId = CharacterShips.JunkLocation };
+            ShipNotifications.SendItemChange(call.Session,
+                new ItemChanged(sourceAfter, merged.SourceBefore.LocationId, merged.SourceBefore.Flag, merged.SourceBefore.Quantity),
+                item => DogmaRow(item));
+            mergedAny = true;
+        }
+        return mergedAny ? PyBool.True : None;
+    }
+
     [Method("StackAll")]
     public async ValueTask<PyValue> StackAll(ServiceCall call)
     {
@@ -388,37 +651,89 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
     [Method("Add")]
     public async ValueTask<PyValue> Add(ServiceCall call)
     {
-        if (ContextOf(call) is not { } context || call.Session.CharacterId is not { } character || IdOf(call.Arg(0)) is not { } itemId || context.Kind == Kind.Space)
-        {
+        if (ContextOf(call) is not { } context
+            || call.Session.CharacterId is not { } character
+            || IdOf(call.Arg(0)) is not { } itemId
+            || context.Kind == Kind.Space)
             return None;
-        }
         long? quantity = (call.Kwarg("qty") ?? call.Kwarg("quantity")) is { } asked ? IdOf(asked) : null;
-        int? flag = call.Kwarg("flag") is { } named ? Flag(named) : null;
+        int? flag = call.Kwarg("flag") is { } flagValue ? Flag(flagValue) : null;
+        var source = IdOf(call.Arg(1)) ?? 0;
         if (space is not null && space.IsInSpace(call.Session))
         {
             if (context.Kind == Kind.Ship && flag == CharacterShips.DroneBayFlag)
             {
                 return droneBays is not null
-                    && await droneBays.AddAsync(call.Session, itemId, IdOf(call.Arg(1)) ?? 0, context.ItemId, flag.Value, quantity, call.Cancellation) is { } drone
+                    && await droneBays.AddAsync(call.Session, itemId, source, context.ItemId, flag.Value, quantity, call.Cancellation) is { } drone
                     ? InventoryWire.Id(drone)
                     : None;
             }
-            return await space.MoveAsync(call.Session, itemId, IdOf(call.Arg(1)) ?? 0, context.ItemId, quantity, call.Cancellation) is { } moved ? InventoryWire.Id(moved) : None;
+            if (context.Kind == Kind.Ship && source == context.ItemId && flag is { } hold && CharacterShips.IsShipHoldFlag(hold))
+            {
+                switch (await ships.MoveAsync(character, itemId, source, context.ItemId, hold, quantity, call.Cancellation))
+                {
+                    case ShipChanged changed:
+                        ShipNotifications.Send(call.Session, character, changed, DogmaRow, Py.FileTimeFromUnixMs(nowUnixMs()));
+                        return InventoryWire.Id(changed.ItemId);
+                    case ShipRefused refused:
+                        throw ShipErrors.Of(refused, statics);
+                    default:
+                        return None;
+                }
+            }
+            return await space.MoveAsync(call.Session, itemId, source, context.ItemId, quantity, flag, call.Cancellation) is { } moved
+                ? InventoryWire.Id(moved)
+                : None;
+        }
+
+        if (StationOf(call.Session) is not { } station
+            || await items.GetAsync(itemId, call.Cancellation) is not { } item
+            || item.LocationId != source)
+            return None;
+        var corporationId = CorporationIdOf(call.Session);
+        long? sourceOwnerId = null;
+        if (item.OwnerId != character)
+        {
+            if (corporationId <= 0 || item.OwnerId != corporationId
+                || !await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Take, call.Cancellation))
+                return None;
+            sourceOwnerId = corporationId;
+        }
+        long? destinationOwnerId = null;
+        if (context.Kind == Kind.Hangar && flag is { } corpDivision && ItemFlags.IsCorporationHangar(corpDivision))
+        {
+            if (corporationId <= 0
+                || !await CorporationAccessAsync(character, corporationId, station, corpDivision, CorporationHangarOperation.Deposit, call.Cancellation))
+                return None;
+            destinationOwnerId = corporationId;
+        }
+        else if (context.Kind is Kind.Container or Kind.Ship
+            && await items.GetAsync(context.ItemId, call.Cancellation) is { OwnerId: var targetOwner }
+            && targetOwner != character)
+        {
+            if (corporationId <= 0 || targetOwner != corporationId
+                || await items.GetAsync(context.ItemId, call.Cancellation) is not { } targetContainer
+                || !await CanAccessCorporationItemAsync(call.Session, targetContainer, CorporationHangarOperation.Deposit, call.Cancellation))
+                return None;
+            destinationOwnerId = corporationId;
         }
         if (context.Kind == Kind.Ship && flag == CharacterShips.DroneBayFlag
             && !await IsDockedShipContextAsync(call.Session, character, context.ItemId, call.Cancellation))
-        {
             return None;
-        }
-        var destination = context.Kind == Kind.Hangar ? StationOf(call.Session) : context.ItemId;
-        if (destination is not { } location)
+        ShipOutcome outcome;
+        if (context.Kind == Kind.Container)
         {
-            return None;
+            outcome = await ships.MoveContainerAsync(character, itemId, source, context.ItemId, quantity, flag, call.Cancellation, sourceOwnerId, destinationOwnerId);
         }
-        switch (await ships.MoveAsync(character, itemId, IdOf(call.Arg(1)) ?? 0, location, flag, quantity, call.Cancellation))
+        else
+        {
+            var destination = context.Kind == Kind.Hangar ? station : context.ItemId;
+            outcome = await ships.MoveAsync(character, itemId, source, destination, flag, quantity, call.Cancellation, sourceOwnerId, destinationOwnerId);
+        }
+        switch (outcome)
         {
             case ShipChanged changed:
-                ShipNotifications.Send(call.Session, character, changed, item => DogmaRow(item), Py.FileTimeFromUnixMs(nowUnixMs()));
+                ShipNotifications.Send(call.Session, character, changed, DogmaRow, Py.FileTimeFromUnixMs(nowUnixMs()));
                 return InventoryWire.Id(changed.ItemId);
             case ShipRefused refused:
                 throw ShipErrors.Of(refused, statics);
@@ -434,47 +749,79 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
     [Method("MultiAdd")]
     public async ValueTask<PyValue> MultiAdd(ServiceCall call)
     {
-        if (ContextOf(call) is not { Kind: Kind.Ship } context || IdOf(call.Arg(1)) is not { } source)
-        {
+        if (ContextOf(call) is not { } context
+            || context.Kind is not (Kind.Ship or Kind.Container or Kind.Hangar)
+            || IdOf(call.Arg(1)) is not { } source)
             return None;
-        }
         IReadOnlyList<long> ids = call.Arg(0) switch
         {
-            PyList list => [.. list.Items.Select(IdOf).OfType<long>()],
-            PyTuple tuple => [.. tuple.Items.Select(IdOf).OfType<long>()],
+            PyList list => [.. list.Items.Select(IdOf).OfType<long>().Distinct()],
+            PyTuple tuple => [.. tuple.Items.Select(IdOf).OfType<long>().Distinct()],
             _ => [],
         };
-        if (ids.Count == 0)
-        {
+        if (ids.Count == 0) return None;
+        var flagValue = call.Kwarg("flag");
+        var requestedFlag = flagValue is null or PyNone ? 0L : IdOf(flagValue);
+        if (requestedFlag is not { } flag)
             return None;
-        }
+        var corporationId = CorporationIdOf(call.Session);
+        var corporationDestination = context.Kind == Kind.Hangar && ItemFlags.IsCorporationHangar((int)flag);
+        if (flag != 0 && !CharacterShips.IsShipHoldFlag((int)flag) && !corporationDestination)
+            return None;
+
         if (space is not null && space.IsInSpace(call.Session))
         {
-            if (call.Kwarg("flag") is { } named && Flag(named) is { } flag && flag != CharacterShips.CargoFlag)
-            {
-                return None;
-            }
-            return await space.MoveAllAsync(call.Session, ids, source, context.ItemId, call.Cancellation) switch
+            if (context.Kind != Kind.Ship || flag == 0) return None;
+            return await space.MoveAllAsync(call.Session, ids, source, context.ItemId, (int)flag, call.Cancellation) switch
             {
                 true => PyBool.True,
                 false => throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("None of the selected items could be moved."))),
                 null => None,
             };
         }
-        if (StationOf(call.Session) is null || call.Session.CharacterId is not { } character
-            || call.Kwarg("flag") is not { } autoFit || IdOf(autoFit) != 0)
+        if (StationOf(call.Session) is not { } station || call.Session.CharacterId is not { } character) return None;
+
+        long? destinationOwnerId = null;
+        if (corporationDestination)
         {
-            return None;
+            if (corporationId <= 0
+                || !await CorporationAccessAsync(character, corporationId, station, (int)flag,
+                    CorporationHangarOperation.Deposit, call.Cancellation))
+                return None;
+            destinationOwnerId = corporationId;
+        }
+        else if (context.Kind is Kind.Ship or Kind.Container
+            && await items.GetAsync(context.ItemId, call.Cancellation) is { } destination
+            && destination.OwnerId != character)
+        {
+            if (!await CanAccessCorporationItemAsync(call.Session, destination, CorporationHangarOperation.Deposit, call.Cancellation))
+                return None;
+            destinationOwnerId = destination.OwnerId;
         }
 
-        // ponytail: one transaction per item; add batch fitting only if measured MultiAdd latency warrants it.
+        var destinationId = context.Kind == Kind.Hangar ? station : context.ItemId;
         var moved = false;
         foreach (var itemId in ids)
         {
-            switch (await ships.MoveAsync(character, itemId, source, context.ItemId, 0, null, call.Cancellation))
+            if (await items.GetAsync(itemId, call.Cancellation) is not { } item || item.LocationId != source)
+                continue;
+            long? sourceOwnerId = null;
+            if (item.OwnerId != character)
+            {
+                if (corporationId <= 0 || item.OwnerId != corporationId
+                    || !await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Take, call.Cancellation))
+                    return None;
+                sourceOwnerId = corporationId;
+            }
+            var outcome = context.Kind == Kind.Container
+                ? await ships.MoveContainerAsync(character, itemId, source, destinationId, null, (int)flag,
+                    call.Cancellation, sourceOwnerId, destinationOwnerId)
+                : await ships.MoveAsync(character, itemId, source, destinationId, (int)flag, null,
+                    call.Cancellation, sourceOwnerId, destinationOwnerId);
+            switch (outcome)
             {
                 case ShipChanged changed:
-                    ShipNotifications.Send(call.Session, character, changed, item => DogmaRow(item), Py.FileTimeFromUnixMs(nowUnixMs()));
+                    ShipNotifications.Send(call.Session, character, changed, DogmaRow, Py.FileTimeFromUnixMs(nowUnixMs()));
                     moved = true;
                     break;
                 case ShipRefused refused:

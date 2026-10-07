@@ -28,13 +28,20 @@ public sealed partial class CharacterShips(
         training is null ? null : attribute => training.Settings.Attribute(characterId, attribute) * training.Settings.Speed;
 
     /// <summary>The character's active ship, or null when it has none. What the character's training has finished is settled into its skills first.</summary>
-    public async Task<ShipSnapshot?> LoadAsync(long characterId, CancellationToken cancellationToken = default)
+    public Task<ShipSnapshot?> LoadAsync(long characterId, CancellationToken cancellationToken = default) =>
+        LoadSelectedShipAsync(characterId, null, cancellationToken);
+
+
+    public Task<ShipSnapshot?> LoadShipAsync(long characterId, long shipId, CancellationToken cancellationToken = default) =>
+        LoadSelectedShipAsync(characterId, shipId, cancellationToken);
+
+    private async Task<ShipSnapshot?> LoadSelectedShipAsync(long characterId, long? shipId, CancellationToken cancellationToken)
     {
         if (training is not null && await characters.GetAsync(characterId, cancellationToken) is { } owner)
         {
             await training.SettleAsync(characterId, owner.AccountId, cancellationToken);
         }
-        return await ShipSnapshot.LoadAsync(statics, characters, items, skills, modules, characterId, LearningOf(characterId), null, cancellationToken);
+        return await ShipSnapshot.LoadAsync(statics, characters, items, skills, modules, characterId, LearningOf(characterId), null, cancellationToken, shipId);
     }
 
     /// <summary>
@@ -80,26 +87,62 @@ public sealed partial class CharacterShips(
     /// for, or the first that suits), taking it out of its slot, or putting it in the cargo hold.
     /// </summary>
     public async Task<ShipOutcome> MoveAsync(
-        long characterId, long itemId, long sourceLocationId, long destinationLocationId, int? flag, long? quantity, CancellationToken cancellationToken = default)
+        long characterId, long itemId, long sourceLocationId, long destinationLocationId, int? flag, long? quantity, CancellationToken cancellationToken = default, long? sourceOwnerId = null, long? destinationOwnerId = null)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockAsync(connection, transaction, characterId, cancellationToken);
 
-        // the item is read under its row lock (as the market does), so what is decided is what is moved
-        if (await LoadAsync(characterId, cancellationToken) is not { } snapshot || await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken) is not { } item
-            || item.OwnerId != characterId || item.Id == snapshot.Ship.Id)
+        var activeSnapshot = await LoadAsync(characterId, cancellationToken);
+        if (activeSnapshot is null
+            || await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken) is not { } item
+            || (item.OwnerId != characterId && item.OwnerId != sourceOwnerId) || item.Id == activeSnapshot.Ship.Id)
         {
             return new NothingHappened();
         }
-        await statics.EnsureTypesAsync([item.TypeId], cancellationToken);
+
+        var activeShip = activeSnapshot.Ship;
+        var station = activeShip.LocationId;
+        var selectedShipId = destinationLocationId != station && destinationLocationId != activeShip.Id
+            ? destinationLocationId
+            : sourceLocationId != station && sourceLocationId != activeShip.Id
+                ? sourceLocationId
+                : activeShip.Id;
+        var snapshot = activeSnapshot;
+        if (selectedShipId != activeShip.Id)
+        {
+            if (await items.LockAndGetAsync(connection, transaction, selectedShipId, cancellationToken) is not { } selectedShip
+                || (selectedShip.OwnerId != characterId && selectedShip.OwnerId != destinationOwnerId)
+                || selectedShip.LocationId != station
+                || (selectedShip.Flag != ItemFlags.Hangar && !ItemFlags.IsCorporationHangar(selectedShip.Flag))
+                || selectedShip.Quantity != 1)
+            {
+                return new NothingHappened();
+            }
+            await statics.EnsureTypesAsync([selectedShip.TypeId], cancellationToken);
+            if (statics.Type(selectedShip.TypeId)?.CategoryId != 6)
+            {
+                return new NothingHappened();
+            }
+            snapshot = await LoadShipAsync(characterId, selectedShipId, cancellationToken);
+            if (snapshot is null)
+            {
+                return new NothingHappened();
+            }
+        }
+
         var ship = snapshot.Ship;
-        var station = ship.LocationId;
+        if (item.Id == ship.Id)
+        {
+            return new NothingHappened();
+        }
         var inShip = item.LocationId == ship.Id;
         var inHangar = item.LocationId == station;
+        var inContainer = !inShip && !inHangar && activeSnapshot.Character.StationId == station
+            && await IsOwnedDockedInventoryAsync(item.LocationId, sourceOwnerId ?? characterId, station, cancellationToken);
         var toShip = destinationLocationId == ship.Id;
         var toHangar = destinationLocationId == station;
-        if ((!inShip && !inHangar) || (!toShip && !toHangar) || (sourceLocationId != item.LocationId && !(inShip && sourceLocationId == station)))
+        if ((!inShip && !inHangar && !inContainer) || (!toShip && !toHangar) || (sourceLocationId != item.LocationId && !(inShip && sourceLocationId == station)))
         {
             return new NothingHappened();
         }
@@ -108,11 +151,16 @@ public sealed partial class CharacterShips(
             return new NothingHappened();
         }
         var splits = quantity is { } some && !item.Singleton && some < item.Quantity;
+        if (inShip && !ship.Singleton)
+        {
+            return new NothingHappened();
+        }
         if (inShip && Slots.FamilyOfFlag(item.Flag) == SlotFamily.Rig && !toShip)
         {
             return new NothingHappened(); // a rig cannot be taken out: it has to be destroyed
         }
 
+        var unpack = toShip && !ship.Singleton;
         var world = snapshot.World;
         var type = statics.Type(item.TypeId);
         var wasInSlot = inShip && Slots.IsSlotFlag(item.Flag);
@@ -127,11 +175,20 @@ public sealed partial class CharacterShips(
         int destinationFlag;
         if (toHangar)
         {
-            if (flag is not null and not 0 && flag != ItemFlags.Hangar)
+            if (flag is { } requestedHangarFlag && ItemFlags.IsCorporationHangar(requestedHangarFlag))
             {
-                return new NothingHappened();
+                if (destinationOwnerId is not { } corporationId || corporationId <= 0 || corporationId == characterId)
+                    return new NothingHappened();
+                destinationFlag = requestedHangarFlag;
             }
-            destinationFlag = ItemFlags.Hangar;
+            else
+            {
+                if (flag is not null and not 0 && flag != ItemFlags.Hangar)
+                    return new NothingHappened();
+                if (destinationOwnerId is { } unexpectedOwner && unexpectedOwner != characterId)
+                    return new NothingHappened();
+                destinationFlag = ItemFlags.Hangar;
+            }
         }
         else if (flag is { } slot and > 0 && Slots.IsSlotFlag(slot))
         {
@@ -158,6 +215,12 @@ public sealed partial class CharacterShips(
             }
             destinationFlag = DroneBayFlag;
         }
+        else if (toShip && flag is { } hold && IsShipHoldFlag(hold))
+        {
+            if (!CanAddToShipHold(hold, type, item.Singleton, item.Quantity))
+                return new ShipRefused(ShipRefusal.NotAllowedInHold, ModuleTypeId: item.TypeId, ShipTypeId: ship.TypeId);
+            destinationFlag = hold;
+        }
         else if (flag is null or 0 || flag == CargoFlag)
         {
             destinationFlag = CargoFlag;
@@ -167,13 +230,19 @@ public sealed partial class CharacterShips(
             return new NothingHappened();
         }
 
+        if (toShip && (destinationFlag is ShipMaintenanceBayFlag or FrigateEscapeBayFlag)
+            && !await ShipContentsAllowedInBayAsync(item, destinationFlag, world, characterId, cancellationToken))
+            return new ShipRefused(ShipRefusal.NotAllowedInHold, ModuleTypeId: item.TypeId, ShipTypeId: ship.TypeId);
+
+        var destinationItemOwnerId = toHangar ? destinationOwnerId ?? characterId : characterId;
+
         // what the ship is once the item is where it goes
         var landsInSlot = toShip && Slots.IsSlotFlag(destinationFlag);
         if (splits && landsInSlot)
         {
             return new NothingHappened(); // a stack of modules is not split into a slot
         }
-        if (toShip && destinationFlag is CargoFlag or DroneBayFlag && !(inShip && item.Flag == destinationFlag)
+        if (toShip && IsShipHoldFlag(destinationFlag) && !(inShip && item.Flag == destinationFlag)
             && await RefuseWhatDoesNotFitAsync(snapshot, item, splits ? quantity!.Value : item.Quantity, destinationFlag, cancellationToken) is { } full)
         {
             return full;
@@ -186,15 +255,23 @@ public sealed partial class CharacterShips(
         }
         var shipAfter = world.Attributes(ship.Id);
 
+        if (unpack)
+        {
+            await items.MakeSingletonAsync(connection, transaction, ship.Id, cancellationToken);
+        }
+
         // part of a stack is split off into a stack of its own where it goes; a whole stack goes as it is
         Item? split = null;
         if (splits)
         {
-            split = await items.MoveStackAsync(connection, transaction, item, quantity!.Value, characterId, destinationLocationId, destinationFlag, cancellationToken);
+            split = await items.MoveStackAsync(connection, transaction, item, quantity!.Value, destinationItemOwnerId, destinationLocationId, destinationFlag, cancellationToken);
         }
         else
         {
-            await items.MoveAsync(connection, transaction, item.Id, destinationLocationId, destinationFlag, cancellationToken);
+            if (item.OwnerId == destinationItemOwnerId)
+                await items.MoveAsync(connection, transaction, item.Id, destinationLocationId, destinationFlag, cancellationToken);
+            else
+                await items.MoveToOwnerAsync(connection, transaction, item.Id, destinationItemOwnerId, destinationLocationId, destinationFlag, cancellationToken);
         }
         if (wasInSlot || landsInSlot)
         {
@@ -216,16 +293,21 @@ public sealed partial class CharacterShips(
                 events.Add(new EffectChanged(item.Id, BuiltInEffects.Online, Started: false));
             }
         }
+        ItemChanged? assembled = unpack
+            ? new ItemChanged(ship with { Singleton = true, Quantity = 1 }, ship.LocationId, ship.Flag, ship.Quantity)
+            : null;
         if (!wasInSlot && !landsInSlot)
         {
-            // what is not a fitting move is told as the stacks that changed: the one that gave, then the one that took
-            var stacks = split is { } created
-                ? new List<ItemChanged> { new(item with { Quantity = item.Quantity - created.Quantity }, item.LocationId, item.Flag, item.Quantity), new(created, 0, created.Flag, 0) }
-                : [new ItemChanged(item with { LocationId = destinationLocationId, Flag = destinationFlag }, item.LocationId, item.Flag, item.Quantity)];
+            var stacks = new List<ItemChanged>();
+            if (assembled is not null) stacks.Add(assembled);
+            if (split is { } created)
+                stacks.AddRange([new(item with { Quantity = item.Quantity - created.Quantity }, item.LocationId, item.Flag, item.Quantity), new(created, 0, created.Flag, 0)]);
+            else
+                stacks.Add(new(item with { OwnerId = destinationItemOwnerId, LocationId = destinationLocationId, Flag = destinationFlag }, item.LocationId, item.Flag, item.Quantity));
             return new ShipChanged(split?.Id ?? item.Id, ship.Id, [], events, stacks);
         }
-        var moved = new ItemMoved(item with { LocationId = destinationLocationId, Flag = destinationFlag }, item.LocationId, item.Flag);
-        return new ShipChanged(item.Id, ship.Id, [moved], events);
+        var moved = new ItemMoved(item with { OwnerId = destinationItemOwnerId, LocationId = destinationLocationId, Flag = destinationFlag }, item.LocationId, item.Flag);
+        return new ShipChanged(item.Id, ship.Id, [moved], events, assembled is null ? null : [assembled]);
     }
 
     /// <summary>Switches a module fitted to the character's ship on or off.</summary>

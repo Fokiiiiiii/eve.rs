@@ -24,6 +24,9 @@ public interface ISpaceDrones
     Task<PyValue> CommandAsync(ClientSession session, byte command, long targetId, IReadOnlyList<long> droneIds, CancellationToken cancellationToken);
 
     /// <summary>Takes drones that have nobody to command them into the bay (<c>ship.ScoopDrone</c>); answers a dictionary of the drones that could not be.</summary>
+/// <summary>Reconnects the character's nearby abandoned drones in the current solar system.</summary>
+    Task<PyValue> ReconnectAsync(ClientSession session, CancellationToken cancellationToken);
+
     Task<PyValue> ScoopAsync(ClientSession session, IReadOnlyList<long> droneIds, CancellationToken cancellationToken);
 }
 
@@ -73,6 +76,7 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
     private readonly Func<long> _nowUnixMs;
     private readonly Action<string>? _log;
     private readonly ConcurrentDictionary<long, Launched> _launched = new();
+private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
     private readonly ConcurrentDictionary<long, byte> _letGo = new();
     private long _requests;
 
@@ -403,11 +407,83 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
         "NO_PILOT" => "That pilot is not in space.",
         "NO_WRECK" => "No salvageable wreck was found.",
         "NO_TARGET" when command == SimDroneCommands.Engage => "That target cannot be engaged by drones.",
+        "OUT_OF_RANGE" when command == SimDroneCommands.Reconnect => "That drone is too far away to reconnect.",
         "OUT_OF_RANGE" => "That target is out of drone control range.",
-        // an order to engage that named nothing: the drones looked and found no one to attack
         "NO_OPPONENT" => "The drones found nothing to attack.",
         _ => "The drone cannot do that.",
     };
+
+public async Task<PyValue> ReconnectAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        if (!_space.IsInSpace(session) || session.CharacterId is not { } characterId || session.GetInt("shipid") is not { } shipId
+            || _space.SolarSystemOf(session) is not { } system
+            || await _ships.LoadAsync(characterId, cancellationToken).ConfigureAwait(false) is not { } snapshot
+            || snapshot.Ship.Id != shipId)
+        {
+            return Dict([]);
+        }
+
+        var controller = (ulong)session.SessionId;
+        var maxActive = Math.Max(0, (int)Math.Max(
+            snapshot.World.Get(shipId, MaxActiveDronesAttribute),
+            snapshot.World.Get(snapshot.Character.Id, MaxActiveDronesAttribute)));
+        var controlled = _launched.Values.Where(drone => drone.Controller == controller).ToList();
+        var controlSlots = Math.Max(0, maxActive - controlled.Count);
+        if (controlSlots == 0) return Dict([]);
+
+        await _statics.EnsureTypesAsync(controlled.Select(drone => drone.TypeId), cancellationToken).ConfigureAwait(false);
+        var bandwidth = Math.Max(0, snapshot.World.Get(shipId, DroneBandwidthAttribute));
+        var usedBandwidth = controlled.Sum(drone => BandwidthOf(drone.TypeId));
+        var candidates = new List<Launched>(controlSlots);
+        foreach (var drone in _abandoned.Values
+                     .Where(drone => drone.CharacterId == characterId && drone.SolarSystemId == system && drone.ShipId == shipId)
+                     .OrderBy(drone => drone.ItemId))
+        {
+            if (candidates.Count >= controlSlots) break;
+            await _statics.EnsureTypesAsync([drone.TypeId], cancellationToken).ConfigureAwait(false);
+            var droneBandwidth = BandwidthOf(drone.TypeId);
+            if (droneBandwidth > 0 && (bandwidth <= 0 || usedBandwidth + droneBandwidth > bandwidth)) continue;
+            candidates.Add(drone);
+            usedBandwidth += droneBandwidth;
+        }
+        if (candidates.Count == 0) return Dict([]);
+
+        foreach (var drone in candidates)
+        {
+            var item = new Item(drone.ItemId, drone.TypeId, characterId, system, CharacterShips.InSpaceFlag, 1, true, null);
+            SendPrime(session, InventoryWire.Id(shipId), item with { LocationId = shipId, Flag = CharacterShips.DroneBayFlag }, drone.TypeId);
+        }
+
+        var controlRange = snapshot.World.Get(characterId, DroneControlDistanceAttribute);
+        if (!double.IsFinite(controlRange) || controlRange <= 0)
+            controlRange = DefaultDroneControlRange;
+
+        CommandReply reply;
+        try
+        {
+            reply = await _sim.DroneCommandAsync(controller, SimDroneCommands.Reconnect, 0,
+                candidates.Select(drone => drone.ItemId).ToArray(), controlRange, cancellationToken).ConfigureAwait(false);
+        }
+        catch (SimUnavailableException error)
+        {
+            _log?.Invoke($"drones: {error.Message}");
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Space is not available right now. Try again in a moment.")));
+        }
+
+        var refused = new List<KeyValuePair<PyValue, PyValue>>();
+        foreach (var result in reply.Drones)
+        {
+            if (result.Reason.Length == 0 && _abandoned.TryRemove(result.DroneId, out var drone))
+            {
+                _launched[result.DroneId] = drone with { ShipId = shipId, Controller = controller, Pilot = session };
+            }
+            else
+            {
+                refused.Add(new(InventoryWire.Id(result.DroneId), Refusal(Describe(result.Reason.Length == 0 ? "NOT_RECONNECTABLE" : result.Reason, SimDroneCommands.Reconnect))));
+            }
+        }
+        return Dict(refused);
+    }
 
     public Task<PyValue> ScoopAsync(ClientSession session, IReadOnlyList<long> droneIds, CancellationToken cancellationToken)
     {
@@ -469,9 +545,13 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
                     Run(() => TakeInAsync(taken), scooped.DroneId, "taken into the bay");
                     break;
                 case SimDroneReleased released when _launched.TryRemove(released.DroneId, out var gone):
-                    Run(() => ReleaseAsync(gone), released.DroneId, "released");
+                    _letGo.TryRemove(released.DroneId, out _);
+                    _abandoned[released.DroneId] = gone;
                     break;
                 case SimDestroyed destroyed when _launched.TryRemove(destroyed.ShipId, out var lost):
+                    Run(() => LoseAsync(lost), destroyed.ShipId, "destroyed");
+                    break;
+                case SimDestroyed destroyed when _abandoned.TryRemove(destroyed.ShipId, out var lost):
                     Run(() => LoseAsync(lost), destroyed.ShipId, "destroyed");
                     break;
             }
@@ -495,7 +575,11 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
     });
 
     /// <summary>The simulation lost its scenes: every drone that was out is gone with them, and its item is where it was (the next sweep takes it into the bay of its ship).</summary>
-    private void OnLost() => _launched.Clear();
+    private void OnLost()
+    {
+        _launched.Clear();
+        _abandoned.Clear();
+    }
 
     /// <summary>A drone came into reach after it was told to return to the bay: the item goes back into the bay and the client is told.</summary>
     private async Task TakeInAsync(Launched drone)
@@ -521,16 +605,6 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
     /// A drone is out of the scene without having been taken in. One the pilot let go is lost (its item is deleted, the client is told it went to the junkyard); one whose ship left the scene (it docked,
     /// jumped, logged off or was destroyed) is taken into the bay when there is room, as the reference does for a pilot that goes offline, and stays in space otherwise.
     /// </summary>
-    private async Task ReleaseAsync(Launched drone)
-    {
-        if (_letGo.TryRemove(drone.ItemId, out _))
-        {
-            await LoseAsync(drone).ConfigureAwait(false);
-            return;
-        }
-        await TakeInAsync(drone).ConfigureAwait(false);
-    }
-
     /// <summary>A drone was destroyed (or let go): its item is deleted and the client is told it is gone.</summary>
     private async Task LoseAsync(Launched drone)
     {

@@ -347,7 +347,7 @@ public sealed class CharacterTraining(
             {
                 return null; // another call settled it while this one waited
             }
-            await skills.GrantAsync(connection, transaction, characterId, settled.Finished, cancellationToken);
+            await skills.GrantAsync(connection, transaction, characterId, settled.Finished, cancellationToken, trackRecentChanges: true);
             await store.SaveAsync(connection, transaction, characterId, settled.State, cancellationToken);
             await store.AppendHistoryAsync(connection, transaction, characterId, settled.History, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
@@ -406,7 +406,7 @@ public sealed class CharacterTraining(
             rebased = Training.Rebase(line, running, catalog.Get(line.TypeId)?.Rank ?? 1, now);
             rebaseChanged = rebased != running;
             owned[line.TypeId] = rebased;
-            await skills.GrantAsync(connection, transaction, characterId, [rebased], cancellationToken);
+            await skills.GrantAsync(connection, transaction, characterId, [rebased], cancellationToken, trackRecentChanges: true);
             state = previous with { ActiveStart = now };
         }
 
@@ -456,7 +456,7 @@ public sealed class CharacterTraining(
             rebased = Training.Rebase(line, running, catalog.Get(line.TypeId)?.Rank ?? 1, now);
             changed = rebased != running;
             owned[line.TypeId] = rebased;
-            await skills.GrantAsync(connection, transaction, characterId, [rebased], cancellationToken);
+            await skills.GrantAsync(connection, transaction, characterId, [rebased], cancellationToken, trackRecentChanges: true);
             await store.AppendHistoryAsync(connection, transaction, characterId, [new HistoryEntry(now, SkillEvents.TrainingCancelled, line.TypeId, rebased.SkillPoints, line.ToLevel)], cancellationToken);
         }
         var stopped = state with { Active = false, ActiveStart = null };

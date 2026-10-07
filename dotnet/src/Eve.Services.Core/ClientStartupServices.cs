@@ -51,6 +51,67 @@ public sealed partial class FighterMgrService
         new PyList([]),
         new PyDict([]),
     ]);
+
+    // The current space protocol controls drones, not player fighter squadrons. Keep the fighterMgr wire contract available until a fighter backend is exposed.
+    private const string FighterBackendUnavailable = "Fighter commands are not connected to the space simulation.";
+
+    [Method("CmdAbandonFighter")]
+    public PyValue CmdAbandonFighter(ServiceCall call) => PyBool.False;
+
+    [Method("CmdScoopAbandonedFighterFromSpace")]
+    public PyValue CmdScoopAbandonedFighterFromSpace(ServiceCall call) => PyBool.False;
+
+    [Method("ExecuteMovementCommandOnFighters")]
+    public PyValue ExecuteMovementCommandOnFighters(ServiceCall call) => PyNone.Instance;
+
+    [Method("LaunchFightersFromTubes")]
+    public PyValue LaunchFightersFromTubes(ServiceCall call) => UnavailableErrors(call, 0);
+
+    [Method("LoadFightersToTube")]
+    public PyValue LoadFightersToTube(ServiceCall call) => PyBool.False;
+
+    [Method("RecallFightersToTubes")]
+    public PyValue RecallFightersToTubes(ServiceCall call) => UnavailableErrors(call, 0);
+
+    [Method("UnloadTubeToFighterBay")]
+    public PyValue UnloadTubeToFighterBay(ServiceCall call) => PyBool.False;
+
+    private static PyDict UnavailableErrors(ServiceCall call, int argumentIndex)
+    {
+        var error = new PyTuple([
+            new PyStr("CustomNotify"),
+            new PyDict([new KeyValuePair<PyValue, PyValue>(
+                new PyStr("notify"), new PyStr(FighterBackendUnavailable))]),
+        ]);
+        var entries = RequestedIds(call.Arg(argumentIndex))
+            .Select(id => new KeyValuePair<PyValue, PyValue>(FighterId(id), error))
+            .ToArray();
+        return new PyDict(entries);
+    }
+
+    private static IReadOnlyList<long> RequestedIds(PyValue value)
+    {
+        var values = value switch
+        {
+            PyList list => list.Items,
+            PyTuple tuple => tuple.Items,
+            _ => Array.Empty<PyValue>(),
+        };
+        return values
+            .Select(value => value switch
+            {
+                PyInt integer => (long)integer.Value,
+                PyLong integer => integer.Value,
+                _ => 0,
+            })
+            .Where(id => id > 0)
+            .Distinct()
+            .ToArray();
+    }
+
+    private static PyValue FighterId(long id) => id <= int.MaxValue
+        ? new PyInt((int)id)
+        : new PyLong(id);
 }
 
 [Service("shipKillCounter")]

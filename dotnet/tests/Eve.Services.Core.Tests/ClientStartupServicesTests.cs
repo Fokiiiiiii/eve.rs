@@ -50,6 +50,66 @@ public sealed class ClientStartupServicesTests
     }
 
     [Fact]
+    public void Fighter_manager_exposes_all_EveLogic_fighter_rpc_methods()
+    {
+        var methods = typeof(FighterMgrService).GetMethods()
+            .Where(method => method.DeclaringType == typeof(FighterMgrService))
+            .Select(method => method.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.Contains("CmdAbandonFighter", methods);
+        Assert.Contains("CmdScoopAbandonedFighterFromSpace", methods);
+        Assert.Contains("ExecuteMovementCommandOnFighters", methods);
+        Assert.Contains("LaunchFightersFromTubes", methods);
+        Assert.Contains("LoadFightersToTube", methods);
+        Assert.Contains("RecallFightersToTubes", methods);
+        Assert.Contains("UnloadTubeToFighterBay", methods);
+    }
+
+    [Fact]
+    public void Fighter_manager_keeps_EveJS_wire_shapes_until_the_fighter_backend_is_wired()
+    {
+        var service = new FighterMgrService();
+        static ServiceCall Call(string method, params PyValue[] args) => new()
+        {
+            Method = method,
+            Args = args,
+            Session = new ClientSession(),
+        };
+        static void AssertUnavailable(PyDict errors, int id)
+        {
+            var entry = Assert.Single(errors.Entries, entry => entry.Key.Equals(new PyInt(id)));
+            var error = Assert.IsType<PyTuple>(entry.Value);
+            Assert.Equal(new PyStr("CustomNotify"), error.Items[0]);
+            var details = Assert.IsType<PyDict>(error.Items[1]);
+            Assert.Contains(new KeyValuePair<PyValue, PyValue>(
+                new PyStr("notify"),
+                new PyStr("Fighter commands are not connected to the space simulation.")), details.Entries);
+        }
+
+        var launchErrors = Assert.IsType<PyDict>(service.LaunchFightersFromTubes(Call(
+            "LaunchFightersFromTubes", new PyList([new PyInt(901), new PyInt(902)]))));
+        Assert.Equal(2, launchErrors.Entries.Count);
+        AssertUnavailable(launchErrors, 901);
+        AssertUnavailable(launchErrors, 902);
+
+        var recallErrors = Assert.IsType<PyDict>(service.RecallFightersToTubes(Call(
+            "RecallFightersToTubes", new PyList([new PyInt(903)]))));
+        AssertUnavailable(recallErrors, 903);
+
+        Assert.Same(PyNone.Instance, service.ExecuteMovementCommandOnFighters(Call(
+            "ExecuteMovementCommandOnFighters",
+            new PyList([new PyInt(903)]), new PyStr("ORBIT"), new PyInt(901), new PyInt(5000))));
+        Assert.Same(PyBool.False, service.CmdAbandonFighter(Call("CmdAbandonFighter", new PyInt(903))));
+        Assert.Same(PyBool.False, service.CmdScoopAbandonedFighterFromSpace(Call(
+            "CmdScoopAbandonedFighterFromSpace", new PyInt(903), new PyInt(5))));
+        Assert.Same(PyBool.False, service.LoadFightersToTube(Call(
+            "LoadFightersToTube", new PyInt(903), new PyInt(5))));
+        Assert.Same(PyBool.False, service.UnloadTubeToFighterBay(Call(
+            "UnloadTubeToFighterBay", new PyInt(5))));
+    }
+
+    [Fact]
     public void Missing_ship_kill_counter_returns_zero_for_hangar_rendering()
     {
         Assert.Equal(new PyInt(0), new ShipKillCounterService().GetItemKillCountPlayer(null!));

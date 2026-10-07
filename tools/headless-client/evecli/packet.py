@@ -42,10 +42,23 @@ ADDR_CLIENT = 2
 ADDR_BROADCAST = 4
 ADDR_ANY = 8
 
+_ADDRESS_GUID = "macho.MachoAddress"
+_GENERIC_PACKET_GUID = "macho.MachoPacket"
+
+# These are the concrete GUIDs used by the official client's MachoPacket classes.
 _GUID = {
-    CALL_REQ: "carbon.common.script.net.machoNetPacket.CallReq",
-    PING_REQ: "carbon.common.script.net.machoNetPacket.PingReq",
-    NOTIFICATION: "carbon.common.script.net.machoNetPacket.Notification",
+    AUTHENTICATION_REQ: "macho.AuthenticationReq",
+    IDENTIFICATION_REQ: "macho.IdentificationReq",
+    IDENTIFICATION_RSP: "macho.IdentificationRsp",
+    CALL_REQ: "macho.CallReq",
+    CALL_RSP: "macho.CallRsp",
+    TRANSPORTCLOSED: "macho.TransportClosed",
+    NOTIFICATION: "macho.Notification",
+    ERRORRESPONSE: "macho.ErrorResponse",
+    SESSIONCHANGENOTIFICATION: "macho.SessionChangeNotification",
+    SESSIONINITIALSTATENOTIFICATION: "macho.SessionInitialStateNotification",
+    PING_REQ: "macho.PingReq",
+    PING_RSP: "macho.PingRsp",
 }
 
 _STATE_LENGTH = 14  # (command, source, destination, userID, payload, oob, contextKey, ... 14 in all)
@@ -59,6 +72,14 @@ def client_address(client_id, call_id: Optional[int] = None, service: Optional[s
     return (ADDR_CLIENT, client_id, call_id, service)
 
 
+def node_address(node_id, service: Optional[str] = None, call_id: Optional[int] = None) -> tuple:
+    return (ADDR_NODE, node_id, service, call_id)
+
+
+def broadcast_address(broadcast_id=None, narrowcast=(), id_type: Optional[str] = None) -> tuple:
+    return (ADDR_BROADCAST, broadcast_id, list(narrowcast), id_type)
+
+
 @dataclass
 class Address:
     kind: int
@@ -66,6 +87,9 @@ class Address:
     call_id: Optional[int] = None
     node_id: Any = None
     client_id: Any = None
+    broadcast_id: Any = None
+    narrowcast: Any = None
+    id_type: Optional[str] = None
 
     @staticmethod
     def parse(value) -> "Address":
@@ -87,9 +111,28 @@ class Address:
             return Address(kind, text(at(2)), at(3), node_id=at(1))
         if kind == ADDR_CLIENT:
             return Address(kind, text(at(3)), at(2), client_id=at(1))
+        if kind == ADDR_BROADCAST:
+            narrowcast = at(2)
+            return Address(
+                kind,
+                broadcast_id=at(1),
+                narrowcast=list(narrowcast or []),
+                id_type=text(at(3)),
+            )
         if kind == ADDR_ANY:
             return Address(kind, text(at(1)), at(2))
         return Address(kind)
+
+    def to_wire(self) -> tuple:
+        if self.kind == ADDR_NODE:
+            return (ADDR_NODE, self.node_id, self.service, self.call_id)
+        if self.kind == ADDR_CLIENT:
+            return (ADDR_CLIENT, self.client_id, self.call_id, self.service)
+        if self.kind == ADDR_BROADCAST:
+            return (ADDR_BROADCAST, self.broadcast_id, list(self.narrowcast or []), self.id_type)
+        if self.kind == ADDR_ANY:
+            return (ADDR_ANY, self.service, self.call_id)
+        raise ValueError(f"unsupported MachoNet address type {self.kind}")
 
 
 @dataclass
@@ -102,12 +145,22 @@ class Packet:
     named_payload: Any = None
     context_key: Any = None
     raw: Any = None
+    journey_id: Any = None
+    trace_id: Any = None
+    parent_span_id: Any = None
+    sampled: Any = None
+    ingress_id: Any = None
+    sample_rate: Any = None
+    cut_parent: Any = None
+    compressed_part: int = 0
 
     @staticmethod
     def parse(value) -> "Packet":
         state = value.args if isinstance(value, m.Object) else value
         if not isinstance(state, tuple) or len(state) < 6:
             raise m.MarshalError(f"not a MachoNet packet: {type(state).__name__}")
+        named_payload = state[5]
+        compressed_part = named_payload.get("compressedPart", 0) if hasattr(named_payload, "get") else 0
         return Packet(
             command=int(state[0]),
             source=Address.parse(state[1]),
@@ -117,29 +170,103 @@ class Packet:
             named_payload=state[5],
             context_key=state[6] if len(state) > 6 else None,
             raw=state,
+            journey_id=state[7] if len(state) > 7 else None,
+            trace_id=state[8] if len(state) > 8 else None,
+            parent_span_id=state[9] if len(state) > 9 else None,
+            sampled=state[10] if len(state) > 10 else None,
+            ingress_id=state[11] if len(state) > 11 else None,
+            sample_rate=state[12] if len(state) > 12 else None,
+            cut_parent=state[13] if len(state) > 13 else None,
+            compressed_part=compressed_part,
         )
 
 
-def build_packet(command: int, source: tuple, destination: tuple, user_id, payload, named_payload=None,
-                 context_key=None) -> m.Object:
-    state = [command, source, destination, user_id, payload, named_payload, context_key]
+def _wire_address(value) -> m.Object:
+    if isinstance(value, Address):
+        value = value.to_wire()
+    if isinstance(value, m.Object):
+        return value
+    return m.Object(_ADDRESS_GUID, tuple(value))
+
+
+def build_packet(
+    command: int,
+    source,
+    destination,
+    user_id,
+    payload,
+    named_payload=None,
+    context_key=None,
+    journey_id=None,
+    trace_id=None,
+    parent_span_id=None,
+    sampled=None,
+    ingress_id=None,
+    sample_rate=None,
+    cut_parent=None,
+    compressed_part: int = 0,
+) -> m.Object:
+    if command == PING_REQ and payload == ():
+        payload = ([],)
+    if compressed_part:
+        if isinstance(named_payload, dict):
+            oob = list(named_payload.items())
+        else:
+            oob = list(named_payload or [])
+        replaced = False
+        for index, (key, _) in enumerate(oob):
+            key_text = key.decode("utf-8", "replace") if isinstance(key, (bytes, bytearray)) else key
+            if key_text == "compressedPart":
+                oob[index] = (key, compressed_part)
+                replaced = True
+        if not replaced:
+            oob.append(("compressedPart", compressed_part))
+        named_payload = m.Dict(oob)
+    elif not named_payload:
+        named_payload = None
+
+    state = [
+        command,
+        _wire_address(source),
+        _wire_address(destination),
+        user_id,
+        payload,
+        named_payload,
+        context_key,
+        journey_id,
+        trace_id,
+        parent_span_id,
+        sampled,
+        ingress_id,
+        sample_rate,
+        cut_parent,
+    ]
     state += [None] * (_STATE_LENGTH - len(state))
-    return m.Object(_GUID.get(command, "carbon.common.script.net.machoNetPacket.Packet"), tuple(state))
+    return m.Object(_GUID.get(command, _GENERIC_PACKET_GUID), tuple(state))
 
 
-def call_payload(method: str, args: tuple = (), kwargs: Optional[dict] = None) -> tuple:
-    """The payload of a CallReq: (isBound, SubStream((1, method, args, kwargs)))."""
+def call_payload(method: str, args: tuple = (), kwargs: Optional[dict] = None, *, is_bound: bool = True) -> tuple:
+    """The CallReq body; a direct service/object call has its official isBound flag set."""
     keywords = m.Dict(list((kwargs or {}).items()))
-    return ((0, m.SubStream(value=(1, method, tuple(args), keywords if keywords else None))),)
+    return ((1 if is_bound else 0, m.SubStream(value=(1, method, tuple(args), keywords if keywords else None))),)
+
+
+def _substream_value(value):
+    if isinstance(value, m.SubStream):
+        return value.value
+    if isinstance(value, tuple) and len(value) == 1 and isinstance(value[0], m.SubStream):
+        return value[0].value
+    return value
 
 
 def result_of(packet: Packet):
-    """The value a CALL_RSP carries: its payload is (SubStream(result),) or (result,)."""
+    """Unwrap the official CallDown flag and marshal stream, or the legacy result shape."""
     payload = packet.payload
-    if isinstance(payload, tuple) and payload:
-        first = payload[0]
-        return first.value if isinstance(first, m.SubStream) else first
-    return payload
+    if isinstance(payload, tuple) and len(payload) == 1:
+        payload = payload[0]
+    if isinstance(payload, tuple) and len(payload) == 2 and type(payload[0]) is int and payload[0] in (0, 1):
+        payload = payload[1]
+    return _substream_value(payload)
 
 
 class MachoError(Exception):
@@ -154,9 +281,6 @@ class MachoError(Exception):
     @staticmethod
     def from_packet(packet: Packet) -> "MachoError":
         body = packet.payload
-        if isinstance(body, tuple) and len(body) >= 3:
-            detail = body[2]
-            if isinstance(detail, tuple) and detail and isinstance(detail[0], m.SubStream):
-                detail = detail[0].value
-            return MachoError(body[1], detail, body[0])
-        return MachoError(None, body)
+        if isinstance(body, (tuple, list)) and len(body) >= 3:
+            return MachoError(_substream_value(body[1]), _substream_value(body[2]), body[0])
+        return MachoError(None, _substream_value(body))

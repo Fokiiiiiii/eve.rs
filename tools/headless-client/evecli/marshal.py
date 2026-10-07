@@ -28,7 +28,7 @@ import struct
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from .string_table import STRING_TABLE
+from .string_table import OFFICIAL_STRING_TABLE, STRING_TABLE
 
 MARSHAL_HEADER = 0x7E
 SAVE_MASK = 0x40
@@ -38,6 +38,16 @@ MAX_DEPTH = 256
 _TABLE_INDEX = {}
 for _position, _text in enumerate(STRING_TABLE):
     _TABLE_INDEX.setdefault(_text, _position + 1)  # first occurrence wins
+
+_OFFICIAL_TABLE_INDEX = {text: position + 1 for position, text in enumerate(OFFICIAL_STRING_TABLE)}
+
+
+def _table_index(table):
+    if table is STRING_TABLE:
+        return _TABLE_INDEX
+    if table is OFFICIAL_STRING_TABLE:
+        return _OFFICIAL_TABLE_INDEX
+    return {text: position + 1 for position, text in enumerate(table)}
 
 
 class Op:
@@ -489,22 +499,24 @@ def decompress_rle(data: bytes, expected: int) -> bytearray:
 _INT64 = 2**63
 
 
-def encode(value) -> bytes:
+def encode(value, *, string_table: tuple = STRING_TABLE) -> bytes:
     """Encode `value` as a marshal stream (0x7E, zero save count, value)."""
     out = bytearray(b"\x7e\x00\x00\x00\x00")
-    _Encoder(out).value(value)
+    _Encoder(out, string_table).value(value)
     return bytes(out)
 
 
-def encode_packet(value) -> bytes:
-    """A marshal stream prefixed with its 4-byte little-endian length."""
-    payload = encode(value)
+def encode_packet(value, *, string_table: tuple = STRING_TABLE) -> bytes:
+    """A marshal stream with its 4-byte little-endian length prefix."""
+    payload = encode(value, string_table=string_table)
     return struct.pack("<I", len(payload)) + payload
 
 
 class _Encoder:
-    def __init__(self, out: bytearray):
+    def __init__(self, out: bytearray, string_table: tuple):
         self.out = out
+        self.string_table = string_table
+        self.string_table_index = _table_index(string_table)
         self.depth = 0
 
     def size(self, size: int) -> None:
@@ -548,7 +560,7 @@ class _Encoder:
         elif len(data) == 1:
             self.out += bytes((Op.CHAR_STRING, data[0]))
         else:
-            index = _TABLE_INDEX.get(text)
+            index = self.string_table_index.get(text)
             if index is not None:
                 self.out += bytes((Op.STRING_TABLE_ITEM, index))
             else:
@@ -614,7 +626,17 @@ class _Encoder:
         elif isinstance(value, str):
             self.string(value)
         elif isinstance(value, PyString):
-            self.byte_string(bytes(value))
+            data = bytes(value)
+            if self.string_table is OFFICIAL_STRING_TABLE:
+                try:
+                    table_text = data.decode("utf-8")
+                except UnicodeDecodeError:
+                    table_text = None
+                index = self.string_table_index.get(table_text) if table_text is not None else None
+                if index is not None:
+                    out += bytes((Op.STRING_TABLE_ITEM, index))
+                    return
+            self.byte_string(data)
         elif isinstance(value, CPickled):
             self.sized(Op.CPICKLED, bytes(value))
         elif isinstance(value, (bytes, bytearray)):
@@ -625,7 +647,13 @@ class _Encoder:
             for key, item in value:  # the wire stores the value first, then the key
                 self.value(item)
                 self.value(key)
-        elif isinstance(value, List):
+        elif isinstance(value, dict):
+            out.append(Op.DICT)
+            self.size(len(value))
+            for key, item in value.items():
+                self.value(item)
+                self.value(key)
+        elif isinstance(value, list):
             if len(value) == 0:
                 out.append(Op.EMPTY_LIST)
             elif len(value) == 1:
@@ -673,7 +701,7 @@ class _Encoder:
                 out += value.raw
             else:
                 inner = bytearray(b"\x7e\x00\x00\x00\x00")
-                inner_encoder = _Encoder(inner)
+                inner_encoder = _Encoder(inner, self.string_table)
                 inner_encoder.depth = self.depth
                 inner_encoder.value(value.value)
                 self.size(len(inner))
@@ -821,14 +849,14 @@ def _clamp_float32(number: float) -> float:
 # ─── Decoding ───────────────────────────────────────────────────────────────
 
 
-def decode(data: bytes) -> Any:
-    """Decode a marshal stream, tolerating bytes after the root value."""
-    return _decode_stream(bytes(data), False, 0)
+def decode(data: bytes, *, string_table: tuple = STRING_TABLE) -> Any:
+    """Decode a marshal stream using the selected 1-based wire string table."""
+    return _decode_stream(bytes(data), False, 0, string_table)
 
 
-def decode_exact(data: bytes) -> Any:
-    """Decode a marshal stream and require that it is consumed exactly."""
-    return _decode_stream(bytes(data), True, 0)
+def decode_exact(data: bytes, *, string_table: tuple = STRING_TABLE) -> Any:
+    """Decode one complete marshal stream using the selected string table."""
+    return _decode_stream(bytes(data), True, 0, string_table)
 
 
 def split_packet(data: bytes):
@@ -843,8 +871,8 @@ def split_packet(data: bytes):
     return data[4 : 4 + length], data[4 + length :]
 
 
-def _decode_stream(data: bytes, require_exact: bool, depth: int) -> Any:
-    decoder = _Decoder(data, depth)
+def _decode_stream(data: bytes, require_exact: bool, depth: int, string_table: tuple = STRING_TABLE) -> Any:
+    decoder = _Decoder(data, depth, string_table)
     header = decoder.u8()
     if header != MARSHAL_HEADER:
         raise MarshalError(f"invalid marshal header 0x{header:02x} (expected 0x7e)")
@@ -868,8 +896,9 @@ def _decode_stream(data: bytes, require_exact: bool, depth: int) -> Any:
 
 
 class _Decoder:
-    def __init__(self, data: bytes, depth: int):
+    def __init__(self, data: bytes, depth: int, string_table: tuple):
         self.buf = data
+        self.string_table = string_table
         self.pos = 0
         self.stored: list = []
         self.save_pos: Optional[int] = None
@@ -983,8 +1012,9 @@ class _Decoder:
             return PyString(self.chunk(self.size()))
         if opcode == Op.STRING_TABLE_ITEM:
             index = self.u8()
-            if 1 <= index <= len(STRING_TABLE):
-                return STRING_TABLE[index - 1]
+            if 1 <= index <= len(self.string_table):
+                value = self.string_table[index - 1]
+                return PyString(value.encode("utf-8")) if self.string_table is OFFICIAL_STRING_TABLE else value
             return f"<stringtable:{index}>"
         if opcode == Op.EMPTY_WSTRING:
             return WString("")
@@ -1029,7 +1059,7 @@ class _Decoder:
         if opcode == Op.SUB_STREAM:
             data = self.chunk(self.size())
             try:
-                return SubStream(value=_decode_stream(data, False, self.depth))
+                return SubStream(value=_decode_stream(data, False, self.depth, self.string_table))
             except MarshalError:
                 return SubStream(raw=data)
         if opcode == Op.CHECKSUMMED_STREAM:

@@ -838,6 +838,94 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
 
     // ── binding by the inventory's own name ──────────────────────────────────
 
+    /// <summary>Processes station-hangar repackaging requests.</summary>
+
+    internal async ValueTask<PyValue> RepackageItems(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } characterId
+            || StationOf(call.Session) is not { } dockedStation
+            || call.Arg(0) is not PyDict byStation)
+            return None;
+
+        var requests = new List<RepackageItemRequest>();
+        var corporationId = CorporationIdOf(call.Session);
+        foreach (var (stationKey, rawItems) in byStation.Entries)
+        {
+            if (IdOf(stationKey) != dockedStation)
+                continue;
+            var requestedStation = dockedStation;
+            var values = rawItems switch
+            {
+                PyList list => list.Items,
+                PyTuple tuple => tuple.Items,
+                _ => [],
+            };
+            foreach (var raw in values)
+            {
+                var parts = raw switch
+                {
+                    PyTuple tuple => tuple.Items,
+                    PyList list => list.Items,
+                    _ => [],
+                };
+                if (parts.Count == 0 || IdOf(parts[0]) is not { } itemId || itemId <= 0)
+                    continue;
+                var itemLocationId = parts.Count > 1
+                    ? IdOf(parts[1]) ?? requestedStation
+                    : requestedStation;
+                if (await items.GetAsync(itemId, call.Cancellation) is not { } item
+                    || item.LocationId != itemLocationId)
+                    continue;
+
+                var personalHangar = item.OwnerId == characterId
+                    && item.LocationId == dockedStation
+                    && item.Flag == ItemFlags.Hangar;
+                var corporationHangar = false;
+                if (!personalHangar && corporationId > 0 && item.OwnerId == corporationId
+                    && ItemFlags.IsCorporationHangar(item.Flag)
+                    && await CorporationDivisionOfItemAsync(item, corporationId, call.Cancellation) is { } division
+                    && division.StationId == dockedStation
+                    && division.DivisionFlag == item.Flag)
+                {
+                    corporationHangar = await CorporationAccessAsync(
+                        characterId, corporationId, dockedStation, item.Flag,
+                        CorporationHangarOperation.Take, call.Cancellation);
+                }
+                if (!personalHangar && !corporationHangar)
+                    continue;
+
+                requests.Add(new RepackageItemRequest(
+                    itemId, requestedStation, item.OwnerId, item.LocationId, item.Flag));
+            }
+        }
+
+        if (requests.Count == 0)
+            return None;
+        var destroyable = call.Kwarg("destroyable") switch
+        {
+            PyBool value => value.Value,
+            PyInt value => value.Value == 1,
+            PyLong value => value.Value == 1,
+            _ => false,
+        };
+        var (changes, confirmationItemIds) = await ships.RepackageItemsAsync(
+            characterId, requests, destroyable, call.Cancellation);
+        foreach (var changed in changes)
+            ShipNotifications.Send(call.Session, characterId, changed, DogmaRow, Py.FileTimeFromUnixMs(nowUnixMs()));
+
+        if (confirmationItemIds.Count == 1)
+            throw MachoErrors.ThrowUserError("ConfirmRepackageSomethingWithUpgrades");
+        if (confirmationItemIds.Count > 1)
+        {
+            throw MachoErrors.ThrowUserError(
+                "ConfirmRepackageMultipleItemsWithUpgrades",
+                ("itemIDs", new PyList([.. confirmationItemIds.Select(InventoryWire.Id)])));
+        }
+        return None;
+    }
+
+
+
     /// <summary>The proxy node serves every inventory.</summary>
     [Method("MachoResolveObject")]
     public PyValue MachoResolveObject(ServiceCall call) => new PyInt(MachoMessage.ProxyNodeId);
@@ -879,4 +967,11 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
         }
         return Py.Tuple(opened, result);
     }
+}
+
+[Service("repackagingSvc")]
+public sealed partial class RepackagingService(InvBrokerService inventory)
+{
+    [Method("RepackageItems")]
+    public ValueTask<PyValue> RepackageItems(ServiceCall call) => inventory.RepackageItems(call);
 }

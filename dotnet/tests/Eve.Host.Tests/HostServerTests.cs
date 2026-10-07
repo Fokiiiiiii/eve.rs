@@ -1339,7 +1339,14 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             statics,
             () => FixedNowMs,
             space,
-            droneBays);
+            droneBays,
+            new Eve.Corporations.CorporationStore(
+                source,
+                new Eve.Characters.PgCharacterStore(source),
+                new Eve.Wallet.PgWalletStore(source),
+                new Eve.Wallet.WalletTransactions(source),
+                new Eve.Skills.PgSkillStore(source),
+                () => FixedNowMs));
 
         var session = new Eve.Services.ClientSession();
         session.Set("charid", new Eve.Marshal.PyInt(characterId));
@@ -1650,8 +1657,10 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         public static async Task<AssetSafetyPgRig> CreateAsync()
         {
             var suffix = Guid.NewGuid().ToString("N")[..8];
-            var source = new Npgsql.NpgsqlDataSourceBuilder(
-                "Host=127.0.0.1;Port=55432;Database=eve;Username=postgres;Pooling=false").Build();
+            var connectionBuilder = new Npgsql.NpgsqlConnectionStringBuilder(
+                Eve.Data.PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!))
+            { Pooling = false };
+            var source = new Npgsql.NpgsqlDataSourceBuilder(connectionBuilder.ConnectionString).Build();
             var inventorySchema = $"as_i_{suffix}";
             var walletSchema = $"as_w_{suffix}";
             var spaceSchema = $"as_s_{suffix}";

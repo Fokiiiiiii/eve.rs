@@ -17,6 +17,7 @@ public static class ItemFlags
     public const int CorpSAG5 = 120;
     public const int CorpSAG6 = 121;
     public const int CorpSAG7 = 122;
+    public const int HiddenModifiers = 156;
     public static bool IsCorporationHangar(int flag) => flag is >= CorpSAG1 and <= CorpSAG7;
 
     /// <summary>The first of the eight low slots of a ship (11 to 18).</summary>
@@ -68,7 +69,7 @@ public sealed class PgItemStore
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
 
-private readonly IShipInsuranceInvalidator? _shipInsuranceInvalidator;
+    public IShipInsuranceInvalidator? ShipInsuranceInvalidator { get; set; }
 
     public PgItemStore(NpgsqlDataSource source, string schema = DefaultSchema, IShipInsuranceInvalidator? shipInsuranceInvalidator = null)
     {
@@ -78,7 +79,7 @@ private readonly IShipInsuranceInvalidator? _shipInsuranceInvalidator;
         }
         _source = source;
         _schema = schema;
-        _shipInsuranceInvalidator = shipInsuranceInvalidator;
+        ShipInsuranceInvalidator = shipInsuranceInvalidator;
     }
 
     public static IReadOnlyList<Migration> MigrationSet() =>
@@ -144,7 +145,7 @@ private readonly IShipInsuranceInvalidator? _shipInsuranceInvalidator;
             Parameters = { new() { Value = id }, new() { Value = locationId }, new() { Value = flag } },
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
-        if (ItemFlags.IsCorporationHangar(flag) && _shipInsuranceInvalidator is { } invalidator)
+        if (ItemFlags.IsCorporationHangar(flag) && ShipInsuranceInvalidator is { } invalidator)
             await invalidator.InvalidateAsync(connection, transaction, id, ShipContractInvalidationReason.CorporationHangar, cancellationToken);
     }
 
@@ -161,7 +162,7 @@ private readonly IShipInsuranceInvalidator? _shipInsuranceInvalidator;
             Parameters = { new() { Value = id }, new() { Value = ownerId }, new() { Value = locationId }, new() { Value = flag } },
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
-        if (item.OwnerId != ownerId && _shipInsuranceInvalidator is { } invalidator)
+        if (item.OwnerId != ownerId && ShipInsuranceInvalidator is { } invalidator)
             await invalidator.InvalidateAsync(connection, transaction, id, ShipContractInvalidationReason.OwnerChanged, cancellationToken);
     }
 
@@ -377,7 +378,7 @@ private static void EnsureUnlocked(Item? item)
         var reason = item.OwnerId != ownerId
             ? ShipContractInvalidationReason.OwnerChanged
             : ItemFlags.IsCorporationHangar(flag) ? ShipContractInvalidationReason.CorporationHangar : (ShipContractInvalidationReason?)null;
-        if (reason is { } invalidationReason && _shipInsuranceInvalidator is { } invalidator)
+        if (reason is { } invalidationReason && ShipInsuranceInvalidator is { } invalidator)
             await invalidator.InvalidateAsync(connection, transaction, moved.Id, invalidationReason, cancellationToken);
         return moved;
     }
@@ -429,6 +430,39 @@ private static void EnsureUnlocked(Item? item)
             sourceAfter = sourceItem with { Quantity = sourceItem.Quantity - moved };
         }
         return new ItemMergeResult(sourceItem, destinationItem, destinationItem with { Quantity = destinationItem.Quantity + moved }, sourceAfter);
+    }
+
+
+    public async Task<Item?> RepackageAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long id,
+        bool ship,
+        CancellationToken cancellationToken = default)
+    {
+        var item = await LockAndGetAsync(connection, transaction, id, cancellationToken);
+        if (item is null || !item.Singleton) return null;
+        EnsureUnlocked(item);
+
+        var resetName = ship ? ", custom_name = NULL" : string.Empty;
+        await using var command = new NpgsqlCommand(
+            $"UPDATE {_schema}.items SET singleton = false, quantity = 1{resetName} WHERE id = $1 AND singleton = true RETURNING {Columns}",
+            connection,
+            transaction)
+        {
+            Parameters = { new() { Value = id } },
+        };
+        Item packaged;
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await reader.ReadAsync(cancellationToken)) return null;
+            packaged = Read(reader);
+        }
+
+        // Persist the void in the same transaction so it is visible only if the repackage commits.
+        if (ship && ShipInsuranceInvalidator is { } invalidator)
+            await invalidator.InvalidateAsync(connection, transaction, id, ShipContractInvalidationReason.Repackaged, cancellationToken);
+        return packaged;
     }
 
     public async Task<Item?> GetAsync(long id, CancellationToken cancellationToken = default)

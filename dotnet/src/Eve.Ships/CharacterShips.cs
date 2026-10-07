@@ -310,6 +310,188 @@ public sealed partial class CharacterShips(
         return new ShipChanged(item.Id, ship.Id, [moved], events, assembled is null ? null : [assembled]);
     }
 
+    /// <summary>Repackages eligible items in the active station hangar.</summary>
+
+    public async Task<(IReadOnlyList<ShipChanged> Changes, IReadOnlyList<long> ConfirmationItemIds)> RepackageItemsAsync(
+        long characterId,
+        IReadOnlyList<RepackageItemRequest> requests,
+        bool destroyable,
+        CancellationToken cancellationToken = default)
+    {
+        if (characterId <= 0 || requests.Count == 0) return ([], []);
+        var active = await LoadAsync(characterId, cancellationToken);
+        if (active is null || active.Character.StationId <= 0) return ([], []);
+        var unique = requests.Where(request => request.ItemId > 0).DistinctBy(request => request.ItemId).ToArray();
+
+        if (!destroyable)
+        {
+            var confirm = new List<long>();
+            foreach (var request in unique)
+                if (await NeedsRigConfirmationAsync(characterId, active, request, cancellationToken))
+                    confirm.Add(request.ItemId);
+            if (confirm.Count > 0) return ([], confirm);
+        }
+
+        var changes = new List<ShipChanged>();
+        var confirmations = new List<long>();
+        foreach (var request in unique)
+        {
+            var (change, confirmationRequired) = await RepackageItemAsync(characterId, request, destroyable, cancellationToken);
+            if (change is not null) changes.Add(change);
+            if (confirmationRequired) confirmations.Add(request.ItemId);
+        }
+        return (changes, confirmations);
+    }
+
+    private async Task<bool> NeedsRigConfirmationAsync(
+        long characterId,
+        ShipSnapshot active,
+        RepackageItemRequest request,
+        CancellationToken cancellationToken)
+    {
+        var stationId = active.Character.StationId;
+        if (request.StationId != stationId || request.OwnerId != characterId
+            || request.LocationId != stationId || request.Flag != ItemFlags.Hangar
+            || await items.GetAsync(request.ItemId, cancellationToken) is not { } item
+            || item.OwnerId != characterId || item.LocationId != stationId
+            || item.Flag != ItemFlags.Hangar || !item.Singleton || item.Id == active.Ship.Id)
+            return false;
+
+        await statics.EnsureTypesAsync([item.TypeId], cancellationToken);
+        var type = statics.Type(item.TypeId);
+        if (type is null || type.CategoryId != 6 ||
+            string.Equals(statics.GroupName(type.GroupId), "Strategic Cruiser", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var ship = await LoadShipAsync(characterId, item.Id, cancellationToken);
+        if (ship is null || ship.Condition.Damage > 0 || ship.Condition.ArmorDamage > 0 || ship.Condition.Incapacitated)
+            return false;
+        var contents = await items.InContainerAsync(item.Id, cancellationToken);
+        return contents.All(content => content.OwnerId == characterId)
+            && contents.Any(content => Slots.FamilyOfFlag(content.Flag) == SlotFamily.Rig);
+    }
+
+    private async Task<(ShipChanged? Change, bool ConfirmationRequired)> RepackageItemAsync(
+        long characterId,
+        RepackageItemRequest request,
+        bool destroyable,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+
+        var active = await LoadAsync(characterId, cancellationToken);
+        if (active is null || active.Character.StationId <= 0 || request.StationId != active.Character.StationId)
+            return (null, false);
+
+        var item = await items.LockAndGetAsync(connection, transaction, request.ItemId, cancellationToken);
+        if (item is null || item.OwnerId != request.OwnerId
+            || item.LocationId != request.LocationId || item.Flag != request.Flag || !item.Singleton)
+            return (null, false);
+
+        var personalHangar = item.OwnerId == characterId
+            && item.LocationId == request.StationId && item.Flag == ItemFlags.Hangar;
+        var corporationHangar = item.OwnerId != characterId
+            && ItemFlags.IsCorporationHangar(item.Flag);
+        if (!personalHangar && !corporationHangar)
+            return (null, false);
+
+        await statics.EnsureTypesAsync([item.TypeId], cancellationToken);
+        var type = statics.Type(item.TypeId);
+        if (type is null) return (null, false);
+        var category = statics.CategoryName(type.CategoryId);
+        var isShip = string.Equals(category, "Ship", StringComparison.OrdinalIgnoreCase);
+        var isDrone = string.Equals(category, "Drone", StringComparison.OrdinalIgnoreCase);
+        if (corporationHangar &&
+            (isShip || string.Equals(category, "Blueprint", StringComparison.OrdinalIgnoreCase)))
+            return (null, false);
+        if (isShip && (item.OwnerId != characterId || item.Id == active.Ship.Id))
+            return (null, false);
+
+        var contents = await items.LockContainerAsync(connection, transaction, item.Id, cancellationToken);
+        if (contents.Any(content => content.OwnerId != item.OwnerId))
+            return (null, false);
+
+        ShipSnapshot? ship = null;
+        var returnRigs = false;
+        if (isShip)
+        {
+            ship = await LoadShipAsync(characterId, item.Id, cancellationToken);
+            if (ship is null || ship.Condition.Damage > 0 || ship.Condition.ArmorDamage > 0 || ship.Condition.Incapacitated)
+                return (null, false);
+            returnRigs = string.Equals(statics.GroupName(type.GroupId), "Strategic Cruiser", StringComparison.OrdinalIgnoreCase);
+            if (!destroyable && !returnRigs && contents.Any(content => Slots.FamilyOfFlag(content.Flag) == SlotFamily.Rig))
+                return (null, true);
+        }
+        else
+        {
+            if (contents.Count != 0)
+                return (null, false);
+            var conditions = await modules.ModuleConditionsAsync([item.Id], cancellationToken);
+            if (conditions.TryGetValue(item.Id, out var condition)
+                && (condition.Damage > 0 || (isDrone && condition.ArmorDamage > 0)))
+                return (null, false);
+        }
+
+        if (!isShip)
+        {
+            var packaged = await items.RepackageAsync(connection, transaction, item.Id, ship: false, cancellationToken);
+            if (packaged is null) return (null, false);
+            await transaction.CommitAsync(cancellationToken);
+            return (new ShipChanged(item.Id, active.Ship.Id, [], [],
+                [new ItemChanged(packaged, item.LocationId, item.Flag, item.Quantity)]), false);
+        }
+
+        var world = ship!.World;
+        var shipBefore = world.Attributes(item.Id);
+        var movedItems = new List<ItemMoved>();
+        var stoppedEffects = new List<DogmaEvent>();
+        foreach (var content in contents)
+        {
+            var family = Slots.FamilyOfFlag(content.Flag);
+            var slotted = Slots.IsSlotFlag(content.Flag);
+            if (world.Item(content.Id) is not null)
+                world.Remove(content.Id);
+            if (slotted || content.Flag == ItemFlags.HiddenModifiers)
+                await modules.SetAsync(connection, transaction, content.Id, ItemState.Offline, cancellationToken);
+            if (slotted)
+                stoppedEffects.Add(new EffectChanged(content.Id, BuiltInEffects.Online, Started: false));
+
+            var destroy = content.Flag == ItemFlags.HiddenModifiers
+                || (!returnRigs && family == SlotFamily.Rig);
+            if (destroy)
+            {
+                await items.DeleteAsync(connection, transaction, content.Id, cancellationToken);
+                movedItems.Add(new ItemMoved(
+                    content with { LocationId = JunkLocation },
+                    content.LocationId,
+                    content.Flag));
+            }
+            else
+            {
+                await items.MoveAsync(connection, transaction, content.Id,
+                    active.Character.StationId, ItemFlags.Hangar, cancellationToken);
+                movedItems.Add(new ItemMoved(
+                    content with { OwnerId = characterId, LocationId = active.Character.StationId, Flag = ItemFlags.Hangar },
+                    content.LocationId,
+                    content.Flag));
+            }
+        }
+
+        var events = new List<DogmaEvent>(ShipChanges(item.Id, shipBefore, world.Attributes(item.Id)));
+        events.AddRange(stoppedEffects);
+        var packagedShip = await items.RepackageAsync(connection, transaction, item.Id, ship: true, cancellationToken);
+        if (packagedShip is null) return (null, false);
+        await transaction.CommitAsync(cancellationToken);
+        return (new ShipChanged(
+            item.Id,
+            item.Id,
+            movedItems,
+            events,
+            [new ItemChanged(packagedShip, item.LocationId, item.Flag, item.Quantity)]), false);
+    }
+
     /// <summary>Switches a module fitted to the character's ship on or off.</summary>
     public async Task<ShipOutcome> SetOnlineAsync(long characterId, long shipId, long moduleId, bool online, CancellationToken cancellationToken = default)
     {

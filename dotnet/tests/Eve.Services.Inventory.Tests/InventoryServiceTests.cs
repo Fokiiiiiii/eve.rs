@@ -32,7 +32,7 @@ internal sealed class Rig : IAsyncDisposable
     public static readonly string? Url = Environment.GetEnvironmentVariable("EVE_PG_URL");
 
     public const long ClockMs = 1_700_000_000_123;
-    public const long Character = 1;
+    public const long Character = 140_000_001;
     public const long Station = 60015249;
     public const long OtherStation = 60000610;
 
@@ -395,6 +395,32 @@ public class InvBrokerTests
         Assert.True((await rig.Items.GetAsync(ship))!.Singleton);
         Assert.Equal(ship, (await rig.Items.GetAsync(heavyWater))!.LocationId);
         Assert.Equal(133, (await rig.Items.GetAsync(heavyWater))!.Flag);
+    }
+
+    [PgFact]
+    public async Task Repackaging_service_accepts_station_grouped_client_requests()
+    {
+        await using var rig = await Rig.CreateAsync(activeShip: true);
+        var itemId = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.Station, singleton: true);
+        var service = new RepackagingService(rig.Service);
+        var dispatcher = (IService)service;
+        Assert.Equal("repackagingSvc", dispatcher.Name);
+        Assert.True(dispatcher.HasMethod("RepackageItems"));
+
+        var request = new PyDict([
+            new(new PyLong(Rig.Station), new PyList([
+                PyTuple.Of(new PyLong(itemId), new PyLong(Rig.Station)),
+            ])),
+        ]);
+        var result = await dispatcher.CallAsync(new ServiceCall
+        {
+            Method = "RepackageItems",
+            Session = Rig.Session(),
+            Args = [request],
+        });
+
+        Assert.Equal(PyNone.Instance, result);
+        Assert.False((await rig.Items.GetAsync(itemId))!.Singleton);
     }
 
 

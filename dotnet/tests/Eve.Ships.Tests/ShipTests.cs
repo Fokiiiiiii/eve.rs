@@ -311,6 +311,58 @@ public class ShipTests
         Assert.All(hook.Events, e => Assert.True(e.TransactionWasActive));
     }
 
+    [PgFact]
+    public async Task Repackaging_a_rigged_ship_requires_confirmation_then_offloads_contents_and_voids_insurance()
+    {
+        var hook = new RecordingShipInsuranceInvalidator();
+        await using var rig = await Rig.CreateAsync(hook);
+        var character = await rig.NewCharacterAsync();
+        var shipId = await rig.GiveAsync(character.CharacterId, Rig.Cockroach);
+        var rigType = (await rig.Statics.TypesInCategoryAsync("Module"))
+            .First(type => Eve.Fitting.Slots.FamilyOfType(type) == Eve.Fitting.SlotFamily.Rig);
+        var rigId = await rig.GiveAsync(
+            character.CharacterId,
+            rigType.TypeId,
+            location: shipId,
+            flag: Eve.Fitting.Slots.FirstFlag(Eve.Fitting.SlotFamily.Rig));
+        var moduleId = await rig.GiveAsync(
+            character.CharacterId,
+            Rig.Afterburner,
+            location: shipId,
+            flag: ItemFlags.HiSlot0);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Modules.SetAsync(connection, transaction, moduleId, ItemState.Online);
+            await transaction.CommitAsync();
+        }
+
+        var request = new RepackageItemRequest(
+            shipId, Rig.Station, character.CharacterId, Rig.Station, ItemFlags.Hangar);
+        var (unchanged, confirmation) = await rig.Ships.RepackageItemsAsync(
+            character.CharacterId, [request], destroyable: false);
+        Assert.Empty(unchanged);
+        Assert.Equal([shipId], confirmation);
+        Assert.True((await rig.Items.GetAsync(shipId))!.Singleton);
+        Assert.Empty(hook.Events);
+
+        var (changes, secondConfirmation) = await rig.Ships.RepackageItemsAsync(
+            character.CharacterId, [request], destroyable: true);
+        var changed = Assert.Single(changes);
+        Assert.Empty(secondConfirmation);
+        Assert.False((await rig.Items.GetAsync(shipId))!.Singleton);
+        Assert.Null(await rig.Items.GetAsync(rigId));
+        var returnedModule = await rig.Items.GetAsync(moduleId);
+        Assert.Equal(Rig.Station, returnedModule!.LocationId);
+        Assert.Equal(ItemFlags.Hangar, returnedModule.Flag);
+        Assert.Equal(ItemState.Offline, (await rig.Modules.StatesAsync([moduleId]))[moduleId]);
+        Assert.Contains(changed.Events, effect => effect is EffectChanged);
+        var invalidation = Assert.Single(hook.Events);
+        Assert.Equal(shipId, invalidation.ItemId);
+        Assert.Equal(ShipContractInvalidationReason.Repackaged, invalidation.Reason);
+        Assert.True(invalidation.TransactionWasActive);
+    }
+
 
     [PgFact]
     public async Task A_specialized_fuel_hold_uses_the_current_SDE_capacity_and_item_rules()

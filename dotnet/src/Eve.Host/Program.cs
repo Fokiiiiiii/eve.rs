@@ -544,6 +544,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     var insuranceReadModel = new PersistenceInsuranceReadModel(mailStore);
     var insuranceWriteModel = new PersistenceInsuranceWriteModel(
         source, items, mailStore, mailStoreOwner.Fence, economyWallets, insuranceReadModel, now);
+    items.ShipInsuranceInvalidator = insuranceWriteModel;
     var insuranceService = new Eve.Services.Core.InsuranceService(insuranceReadModel, now, insuranceWriteModel);
     var storeRuntime = new PersistenceNewEdenStoreRuntime(
         source, mailStore, mailStoreOwner.Fence, wallets, characters, items, itemTypes,
@@ -1896,6 +1897,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now), new SkillCommands(skillCatalog, skills, source, dogmaSync, now)),
         .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now, spaceContainers, spaceDrones), new BeyonceService(spaceSessions, now, fleetStore, FleetSessionForCharacter), new EntityService(spaceDrones!, now, spaceContainers) },
     ];
+    services = [.. services, new RepackagingService(services.OfType<InvBrokerService>().Single())];
     return (services, spaceSessions, sim, crimewatchRuntime, calendarStore, calendarAudience);
 }
 
@@ -2512,7 +2514,7 @@ sealed class PersistenceInsuranceWriteModel(
     OwnerFence ownerFence,
     WalletTransactions wallets,
     Eve.Services.Core.IInsuranceReadModel readModel,
-    Func<long> nowUnixMs) : Eve.Services.Core.IInsuranceWriteModel
+    Func<long> nowUnixMs) : Eve.Services.Core.IInsuranceWriteModel, Eve.Inventory.IShipInsuranceInvalidator
 {
     private const string Table = "insuranceContracts";
     private const string ContractsRow = "contractsByShipID";
@@ -2545,6 +2547,7 @@ sealed class PersistenceInsuranceWriteModel(
                 !CorrectHangar(command.IsCorporation, ship.Flag))
                 return Result(Eve.Services.Core.InsuranceMutationStatus.NotEligible, ownerId);
 
+            await LockInsuranceContractsAsync(connection, transaction, cancellationToken);
             var prices = await readModel.GetInsurancePricesCentsAsync([ship.TypeId], cancellationToken);
             if (!prices.TryGetValue(ship.TypeId, out var fullPayoutCents) || fullPayoutCents <= 0 ||
                 Eve.Services.Core.InsuranceQuotes.ForPremium(fullPayoutCents, command.PremiumCents) is not { } quote)
@@ -2618,6 +2621,7 @@ sealed class PersistenceInsuranceWriteModel(
             if (ship is null || !AtActorLocation(ship.LocationId, command.Actor))
                 return Result(Eve.Services.Core.InsuranceMutationStatus.NotEligible);
 
+            await LockInsuranceContractsAsync(connection, transaction, cancellationToken);
             var state = await store.LoadTableAsync(Table, ct: cancellationToken);
             var contracts = state[ContractsRow] as JsonObject;
             var key = Key(command.ShipId);
@@ -2659,6 +2663,7 @@ sealed class PersistenceInsuranceWriteModel(
             await using var connection = await source.OpenConnectionAsync(cancellationToken);
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
             var ship = await items.LockAndGetAsync(connection, transaction, request.ShipId, cancellationToken);
+            await LockInsuranceContractsAsync(connection, transaction, cancellationToken);
             var state = await store.LoadTableAsync(Table, ct: cancellationToken);
             var contracts = state[ContractsRow] as JsonObject ?? new JsonObject();
             var settlements = state[SettlementsRow] as JsonObject ?? new JsonObject();
@@ -2729,6 +2734,88 @@ sealed class PersistenceInsuranceWriteModel(
     }
 
 
+
+    public async ValueTask InvalidateAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long itemId,
+        Eve.Inventory.ShipContractInvalidationReason reason,
+        CancellationToken cancellationToken)
+    {
+        var insuranceReason = reason switch
+        {
+            Eve.Inventory.ShipContractInvalidationReason.Repackaged => Eve.Services.Core.InsuranceInvalidationReason.Repackaged,
+            Eve.Inventory.ShipContractInvalidationReason.OwnerChanged => Eve.Services.Core.InsuranceInvalidationReason.OwnerChanged,
+            Eve.Inventory.ShipContractInvalidationReason.CorporationHangar => Eve.Services.Core.InsuranceInvalidationReason.PlacedInCorporationHangar,
+            _ => (Eve.Services.Core.InsuranceInvalidationReason?)null,
+        };
+        if (itemId <= 0 || insuranceReason is not { } mappedReason) return;
+
+        await LockInsuranceContractsAsync(connection, transaction, cancellationToken);
+        await InvalidateShipInTransactionAsync(
+            connection,
+            transaction,
+            new Eve.Services.Core.InsuranceInvalidationRequest(
+                itemId, mappedReason, Py.FileTimeFromUnixMs(nowUnixMs())),
+            cancellationToken);
+    }
+
+    private static async Task LockInsuranceContractsAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        const long lockId = 0x455645494E535552L;
+        await using var command = new NpgsqlCommand("SELECT pg_advisory_xact_lock($1)", connection, transaction)
+        {
+            Parameters = { new() { Value = lockId } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async ValueTask<Eve.Services.Core.InsuranceMutationResult> InvalidateShipInTransactionAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Eve.Services.Core.InsuranceInvalidationRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.ShipId <= 0 || request.InvalidatedAtFileTime <= 0 ||
+            !Enum.IsDefined(request.Reason) ||
+            (request.Reason == Eve.Services.Core.InsuranceInvalidationReason.Boarded &&
+             (request.ActorCharacterId <= 0 || request.ActorCorporationId is null)))
+            return Result(Eve.Services.Core.InsuranceMutationStatus.InvalidRequest);
+
+        var state = await store.LoadTableAsync(Table, ct: cancellationToken);
+        var contracts = state[ContractsRow] as JsonObject;
+        var key = Key(request.ShipId);
+        if (contracts?[key] is not JsonObject row || Contract(row, request.ShipId) is not { } contract)
+            return Result(Eve.Services.Core.InsuranceMutationStatus.NoActiveContract);
+        if (!string.Equals(contract.Status, "active", StringComparison.OrdinalIgnoreCase))
+            return Result(Eve.Services.Core.InsuranceMutationStatus.AlreadyApplied, contract.OwnerId);
+
+        var shouldInvalidate = request.Reason switch
+        {
+            Eve.Services.Core.InsuranceInvalidationReason.Repackaged => true,
+            Eve.Services.Core.InsuranceInvalidationReason.OwnerChanged => true,
+            Eve.Services.Core.InsuranceInvalidationReason.PlacedInCorporationHangar =>
+                contract.OwnerKind == Eve.Services.Core.InsuranceOwnerKind.Character,
+            Eve.Services.Core.InsuranceInvalidationReason.Boarded =>
+                contract.OwnerKind == Eve.Services.Core.InsuranceOwnerKind.Corporation &&
+                request.ActorCorporationId != contract.OwnerId,
+            _ => false,
+        };
+        if (!shouldInvalidate)
+            return Result(Eve.Services.Core.InsuranceMutationStatus.AlreadyApplied, contract.OwnerId);
+
+        row["status"] = "void";
+        row["invalidatedAt"] = request.InvalidatedAtFileTime;
+        row["invalidationReason"] = request.Reason.ToString();
+        await store.ApplyChangesAsync(
+            connection, transaction, Table,
+            [new RowUpsert(ContractsRow, contracts!.ToJsonString())], [], ownerFence, cancellationToken);
+        return Result(Eve.Services.Core.InsuranceMutationStatus.Applied, contract.OwnerId);
+    }
+
     public async ValueTask<Eve.Services.Core.InsuranceMutationResult> InvalidateShipAsync(
         Eve.Services.Core.InsuranceInvalidationRequest request,
         CancellationToken cancellationToken)
@@ -2744,36 +2831,11 @@ sealed class PersistenceInsuranceWriteModel(
         {
             await using var connection = await source.OpenConnectionAsync(cancellationToken);
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-            var state = await store.LoadTableAsync(Table, ct: cancellationToken);
-            var contracts = state[ContractsRow] as JsonObject;
-            var key = Key(request.ShipId);
-            if (contracts?[key] is not JsonObject row || Contract(row, request.ShipId) is not { } contract)
-                return Result(Eve.Services.Core.InsuranceMutationStatus.NoActiveContract);
-            if (!string.Equals(contract.Status, "active", StringComparison.OrdinalIgnoreCase))
-                return Result(Eve.Services.Core.InsuranceMutationStatus.AlreadyApplied, contract.OwnerId);
-
-            var shouldInvalidate = request.Reason switch
-            {
-                Eve.Services.Core.InsuranceInvalidationReason.Repackaged => true,
-                Eve.Services.Core.InsuranceInvalidationReason.OwnerChanged => true,
-                Eve.Services.Core.InsuranceInvalidationReason.PlacedInCorporationHangar =>
-                    contract.OwnerKind == Eve.Services.Core.InsuranceOwnerKind.Character,
-                Eve.Services.Core.InsuranceInvalidationReason.Boarded =>
-                    contract.OwnerKind == Eve.Services.Core.InsuranceOwnerKind.Corporation &&
-                    request.ActorCorporationId != contract.OwnerId,
-                _ => false,
-            };
-            if (!shouldInvalidate)
-                return Result(Eve.Services.Core.InsuranceMutationStatus.AlreadyApplied, contract.OwnerId);
-
-            row["status"] = "void";
-            row["invalidatedAt"] = request.InvalidatedAtFileTime;
-            row["invalidationReason"] = request.Reason.ToString();
-            await store.ApplyChangesAsync(
-                connection, transaction, Table,
-                [new RowUpsert(ContractsRow, contracts!.ToJsonString())], [], ownerFence, cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            return Result(Eve.Services.Core.InsuranceMutationStatus.Applied, contract.OwnerId);
+            await LockInsuranceContractsAsync(connection, transaction, cancellationToken);
+            var result = await InvalidateShipInTransactionAsync(connection, transaction, request, cancellationToken);
+            if (result.Status == Eve.Services.Core.InsuranceMutationStatus.Applied)
+                await transaction.CommitAsync(cancellationToken);
+            return result;
         }
         finally
         {

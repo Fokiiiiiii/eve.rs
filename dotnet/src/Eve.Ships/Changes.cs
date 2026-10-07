@@ -65,3 +65,5 @@ public sealed record ShipRefused(
 /// stacks split and stacked) is told as the items it changed, each with what it was before (<paramref name="Stacks"/>).
 /// </summary>
 public sealed record ShipChanged(long ItemId, long ShipId, IReadOnlyList<ItemMoved> Items, IReadOnlyList<DogmaEvent> Events, IReadOnlyList<ItemChanged>? Stacks = null) : ShipOutcome;
+
+public sealed record RepackageItemRequest(long ItemId, long StationId, long OwnerId, long LocationId, int Flag);

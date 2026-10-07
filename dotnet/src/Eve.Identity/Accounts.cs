@@ -36,8 +36,8 @@ public interface IAccountLookup
 
 public sealed record AccountOptions
 {
-    /// <summary>An unknown user name creates an account with the password hash it presented.</summary>
-    public bool AutoCreate { get; init; } = true;
+    /// <summary>When enabled, an unknown user name creates an account with the password hash it presented.</summary>
+    public bool AutoCreate { get; init; } = false;
 
     /// <summary>Accept any password hash. For development only: it makes every account open to anyone.</summary>
     public bool SkipPasswordCheck { get; init; }

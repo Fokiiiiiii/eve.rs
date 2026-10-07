@@ -53,7 +53,7 @@ public class HostServerTests : IAsyncLifetime
         _server = new HostServer(
             new HostOptions { MaxPendingPacketsPerSession = maxPending, Log = message => { lock (_log) { _log.Add(message); } } },
             dispatcher,
-            accounts ?? new InMemoryAccountDirectory(identity ?? new AccountOptions()),
+            accounts ?? new InMemoryAccountDirectory(identity ?? new AccountOptions { AutoCreate = true }),
             () => encoded);
         _listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         _listener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
@@ -297,7 +297,7 @@ public class HostServerTests : IAsyncLifetime
     [Fact]
     public async Task Development_switches_can_skip_the_password_or_refuse_unknown_users()
     {
-        Start(new AccountOptions { SkipPasswordCheck = true });
+        Start(new AccountOptions { AutoCreate = true, SkipPasswordCheck = true });
         var open = await Handshaken(await ConnectAsync());
         Assert.IsType<Accepted>((await open.AuthenticateAsync("pilot", [1], 1)).Outcome);
         Assert.IsType<Accepted>((await open.AuthenticateAsync("pilot", [2], 2)).Outcome);
@@ -306,7 +306,7 @@ public class HostServerTests : IAsyncLifetime
     [Fact]
     public async Task Unknown_users_are_refused_when_auto_creation_is_off()
     {
-        Start(new AccountOptions { AutoCreate = false });
+        Start(new AccountOptions());
         var front = await Handshaken(await ConnectAsync());
         Assert.Equal("LoginAuthFailed", Assert.IsType<Rejected>((await front.AuthenticateAsync("nobody", [1], 1)).Outcome).Reason);
     }

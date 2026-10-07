@@ -15,7 +15,7 @@ internal static class AccountScenarios
 
     public static async Task First_login_creates_the_account_and_then_needs_the_same_hash(Make make)
     {
-        var directory = make(new AccountOptions());
+        var directory = make(new AccountOptions { AutoCreate = true });
         var created = Assert.IsType<LoggedIn>(await Login(directory, "pilot", 1, 2, 3));
         Assert.Equal(1u, created.AccountId);
         Assert.Equal("GB", created.CountryCode);
@@ -29,7 +29,7 @@ internal static class AccountScenarios
 
     public static async Task An_account_can_be_looked_up_by_its_id(Make make)
     {
-        var directory = make(new AccountOptions());
+        var directory = make(new AccountOptions { AutoCreate = true });
         var lookup = Assert.IsAssignableFrom<IAccountLookup>(directory);
         var before = DateTimeOffset.UtcNow.AddMinutes(-1);
         var pilot = Assert.IsType<LoggedIn>(await Login(directory, "pilot", 1, 2, 3));
@@ -46,7 +46,7 @@ internal static class AccountScenarios
 
     public static async Task A_hash_of_another_length_is_not_the_hash(Make make)
     {
-        var directory = make(new AccountOptions());
+        var directory = make(new AccountOptions { AutoCreate = true });
         await Login(directory, "pilot", 1, 2, 3);
         Assert.IsType<LoginRefused>(await Login(directory, "pilot", 1, 2));
         Assert.IsType<LoginRefused>(await Login(directory, "pilot", 1, 2, 3, 0));
@@ -55,20 +55,20 @@ internal static class AccountScenarios
 
     public static async Task Skipping_the_password_check_accepts_any_hash(Make make)
     {
-        var directory = make(new AccountOptions { SkipPasswordCheck = true });
+        var directory = make(new AccountOptions { SkipPasswordCheck = true, AutoCreate = true });
         var first = Assert.IsType<LoggedIn>(await Login(directory, "pilot", 1));
         Assert.Equal(first, await Login(directory, "pilot", 2));
     }
 
     public static async Task Unknown_users_are_refused_when_auto_creation_is_off(Make make)
     {
-        var directory = make(new AccountOptions { AutoCreate = false });
+        var directory = make(new AccountOptions());
         Assert.Equal(new LoginRefused("LoginAuthFailed"), await Login(directory, "nobody", 1));
     }
 
     public static async Task New_accounts_get_the_configured_role_and_country(Make make)
     {
-        var directory = make(new AccountOptions { NewAccountRole = 0x0100_0000_0000_0040, CountryCode = "JP" });
+        var directory = make(new AccountOptions { AutoCreate = true, NewAccountRole = 0x0100_0000_0000_0040, CountryCode = "JP" });
         var login = Assert.IsType<LoggedIn>(await Login(directory, "gm", 5));
         Assert.Equal(0x0100_0000_0000_0040UL, login.Role);
         Assert.Equal("JP", login.CountryCode);
@@ -76,7 +76,7 @@ internal static class AccountScenarios
 
     public static async Task User_names_are_exact_not_folded(Make make)
     {
-        var directory = make(new AccountOptions());
+        var directory = make(new AccountOptions { AutoCreate = true });
         var lower = Assert.IsType<LoggedIn>(await Login(directory, "pilot", 1));
         var upper = Assert.IsType<LoggedIn>(await Login(directory, "Pilot", 1));
         Assert.NotEqual(lower.AccountId, upper.AccountId);
@@ -84,7 +84,7 @@ internal static class AccountScenarios
 
     public static async Task Names_that_cannot_be_accounts_are_refused(Make make)
     {
-        var directory = make(new AccountOptions());
+        var directory = make(new AccountOptions { AutoCreate = true });
         foreach (var name in new[] { "", "   ", "\t", "a\0b", new string('x', AccountNames.MaxLength + 1) })
         {
             Assert.Equal(new LoginRefused("LoginAuthFailed"), await Login(directory, name, 1));
@@ -95,7 +95,7 @@ internal static class AccountScenarios
 
     public static async Task Concurrent_first_logins_of_one_name_create_one_account(Make make)
     {
-        var directory = make(new AccountOptions());
+        var directory = make(new AccountOptions { AutoCreate = true });
         var results = await Task.WhenAll(Enumerable.Range(0, 40).Select(_ => Login(directory, "racer", 7, 7).AsTask()));
         var ids = results.Select(r => Assert.IsType<LoggedIn>(r).AccountId).Distinct().ToList();
         Assert.Single(ids);
@@ -103,7 +103,7 @@ internal static class AccountScenarios
 
     public static async Task Different_names_get_different_ids_concurrently(Make make)
     {
-        var directory = make(new AccountOptions());
+        var directory = make(new AccountOptions { AutoCreate = true });
         var results = await Task.WhenAll(Enumerable.Range(0, 40).Select(i => Login(directory, $"user{i}", (byte)i).AsTask()));
         var ids = results.Select(r => Assert.IsType<LoggedIn>(r).AccountId).ToList();
         Assert.Equal(40, ids.Distinct().Count());
@@ -112,12 +112,12 @@ internal static class AccountScenarios
 
     public static async Task A_ban_outranks_everything_else(Make make, Func<string, Task> ban)
     {
-        var directory = make(new AccountOptions());
+        var directory = make(new AccountOptions { AutoCreate = true });
         Assert.IsType<LoggedIn>(await Login(directory, "pilot", 1));
         await ban("pilot");
         Assert.Equal(new LoginRefused("ACCOUNTBANNED"), await Login(directory, "pilot", 1));
         Assert.Equal(new LoginRefused("ACCOUNTBANNED"), await Login(directory, "pilot", 2)); // even a wrong password
-        var open = make(new AccountOptions { SkipPasswordCheck = true });
+        var open = make(new AccountOptions { SkipPasswordCheck = true, AutoCreate = true });
         Assert.Equal(new LoginRefused("ACCOUNTBANNED"), await Login(open, "pilot", 3));
     }
 }

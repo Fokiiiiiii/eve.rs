@@ -56,7 +56,7 @@ using Eve.Services.Wallet;
 //                          (defaults scheduler, events, relations, content)
 //   EVE_CRIMEWATCH_SCHEMA  the schema of crimewatch (ship safety levels)                          (default crimewatch)
 //   EVE_DEV_SKIP_PASSWORD  1 accepts any password (development only)                          (default 0)
-//   EVE_DEV_AUTO_CREATE    0 refuses unknown user names                                       (default 1)
+//   EVE_DEV_AUTO_CREATE    0 refuses unknown user names                                       (default 0)
 
 static string Env(string name, string fallback) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : fallback;
 
@@ -91,7 +91,7 @@ var options = new ClusterOptions { ImageServerUrl = Env("EVE_IMAGE_SERVER_URL", 
 var accountOptions = new AccountOptions
 {
     SkipPasswordCheck = Flag("EVE_DEV_SKIP_PASSWORD", false),
-    AutoCreate = Flag("EVE_DEV_AUTO_CREATE", true),
+    AutoCreate = Flag("EVE_DEV_AUTO_CREATE", false),
 };
 IAccountDirectory accounts;
 IReadOnlyList<IService> characterServices = [];

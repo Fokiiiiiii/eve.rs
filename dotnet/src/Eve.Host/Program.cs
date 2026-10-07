@@ -1928,7 +1928,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             }),
         allianceRegistry,
         new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now), new SkillCommands(skillCatalog, skills, source, dogmaSync, now)),
-        .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now, spaceContainers, spaceDrones), new BeyonceService(spaceSessions, now, fleetStore, FleetSessionForCharacter), new EntityService(spaceDrones!, now, spaceContainers) },
+        .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now, spaceContainers, spaceDrones), new BeyonceService(spaceSessions, now, fleetStore, FleetSessionForCharacter), new StructureTravelRpcService("structureCynoBeaconMgr"), new StructureTravelRpcService("structureJumpBridgeMgr"), new EntityService(spaceDrones!, now, spaceContainers) },
     ];
     services = [.. services, new RepackagingService(services.OfType<InvBrokerService>().Single())];
     return (services, spaceSessions, sim, crimewatchRuntime, calendarStore, calendarAudience);

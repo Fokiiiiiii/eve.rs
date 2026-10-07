@@ -913,12 +913,11 @@ public static SkillAugmentationReader CreateAugmentationReader(
 
 private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long nonDiminishing)
     {
-        var dailyAlpha = catalog.ItemTypeId("Daily Alpha Skill Injector");
+        var dailyAlpha = catalog.ItemTypeId("Daily Alpha Injector");
         if (dailyAlpha == typeId) return quantity == 1 ? 50_000L : 0L;
         var large = catalog.ItemTypeId("Large Skill Injector");
-        var standard = catalog.ItemTypeId("Skill Injector");
         var small = catalog.ItemTypeId("Small Skill Injector");
-        var unitsPerItem = large == typeId ? 3 : standard == typeId || small == typeId ? 1 : 0;
+        var unitsPerItem = large == typeId ? 3 : small == typeId ? 1 : 0;
         if (unitsPerItem == 0 || quantity is <= 0 or > 1_000) return 0;
         var units = quantity * unitsPerItem;
         var total = 0L;
@@ -937,10 +936,9 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
     }
 
     private bool IsSkillInjectorType(int typeId) =>
-        catalog.ItemTypeId("Skill Injector") == typeId
-        || catalog.ItemTypeId("Small Skill Injector") == typeId
+        catalog.ItemTypeId("Small Skill Injector") == typeId
         || catalog.ItemTypeId("Large Skill Injector") == typeId
-        || catalog.ItemTypeId("Daily Alpha Skill Injector") == typeId;
+        || catalog.ItemTypeId("Daily Alpha Injector") == typeId;
 
     [Method("GetDiminishedSpFromInjectors")]
     public async ValueTask<PyValue> GetDiminishedSpFromInjectors(ServiceCall call)
@@ -972,7 +970,7 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
             || IdOf(call.Arg(1)) is not { } quantity || quantity <= 0)
             return None;
         var current = await items.GetAsync(itemId, call.Cancellation);
-        var dailyAlphaTypeId = catalog.ItemTypeId("Daily Alpha Skill Injector");
+        var dailyAlphaTypeId = catalog.ItemTypeId("Daily Alpha Injector");
         if (current is null || current.OwnerId != character || !IsSkillInjectorType(current.TypeId)
             || current.Singleton && quantity != 1 || !current.Singleton && quantity > current.Quantity
             || current.TypeId == dailyAlphaTypeId
@@ -992,7 +990,7 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
             if (item.TypeId == dailyAlphaTypeId
                 && !await store.TryUseDailyAlphaSkillInjectorAsync(connection, transaction, character, item.TypeId, nowUnixMs(), token))
-                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("A Daily Alpha Skill Injector can only be used once per day.")));
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("A Daily Alpha Injector can only be used once per day.")));
             var total = await store.TotalPointsAsync(connection, transaction, character, token);
             var free = await store.FreeSkillPointsAsync(connection, transaction, character, token);
             var award = DiminishedInjectorSp(total + free, item.TypeId, quantity, 0);
@@ -1020,7 +1018,7 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
             throw MachoErrors.ThrowUserError("SkillExtractorNotDockedInStation");
 
         var extractorTypeId = catalog.ItemTypeId("Skill Extractor");
-        var injectorTypeId = catalog.ItemTypeId("Large Skill Injector") ?? catalog.ItemTypeId("Skill Injector");
+        var injectorTypeId = catalog.ItemTypeId("Large Skill Injector");
         if (extractorTypeId is null || injectorTypeId is null)
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Skill extraction is unavailable.")));
 
@@ -1050,10 +1048,11 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
         if (requested.Length == 0)
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Select skills to extract.")));
 
+        var alphaAccount = isAlphaClone?.Invoke(AccountOf(call)) == true;
         var alphaRaceId = 0;
-        if (isAlphaClone?.Invoke(AccountOf(call)) == true)
+        if (alphaAccount)
         {
-            if (await characters.GetAsync(character, call.Cancellation) is not { } characterRecord)
+            if (await characters.GetAsync(character, call.Cancellation) is not { RaceId: > 0 } characterRecord)
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The character's Alpha skill limits could not be verified.")));
             alphaRaceId = characterRecord.RaceId;
         }
@@ -1128,10 +1127,8 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
                     throw MachoErrors.ThrowUserError("ItemNotASkill", ("skillName", new PyInt(skillTypeId)));
                 var current = byId[skillTypeId];
                 var newPoints = current.SkillPoints - points;
-                var alphaMaxLevel = alphaRaceId > 0 ? catalog.AlphaMaxLevel(alphaRaceId, skillTypeId) : 0;
-                if (alphaRaceId > 0
-                    && SkillPoints.LevelAt(skillType.Rank, newPoints) < alphaMaxLevel)
-                    throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Alpha clones cannot extract skill points below their clone-grade skill limits.")));
+                if (alphaAccount && catalog.AlphaMaxLevel(alphaRaceId, skillTypeId) > 0)
+                    throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Alpha clones may only extract skills that require Omega clone state.")));
                 changed.Add(current with { SkillPoints = newPoints, Level = SkillPoints.LevelAt(skillType.Rank, newPoints) });
             }
             await store.GrantAsync(connection, transaction, character, changed, token);
@@ -1158,7 +1155,7 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
         if (CharacterOf(call) is not { } character || call.Session.GetInt("stationid") is not { } station
             || IdOf(call.Arg(0)) is not { } itemId || IdOf(call.Arg(1)) is not { } quantity || quantity <= 0)
             return None;
-        var smallType = catalog.ItemTypeId("Skill Injector");
+        var smallType = catalog.ItemTypeId("Small Skill Injector");
         var largeType = catalog.ItemTypeId("Large Skill Injector");
         if (smallType is null || largeType is null)
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Skill injector splitting is unavailable.")));

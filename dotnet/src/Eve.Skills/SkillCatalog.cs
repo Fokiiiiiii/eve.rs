@@ -139,11 +139,12 @@ public int? ItemTypeId(string name) => _itemTypes.TryGetValue(name, out var type
             if (race.Doc.TryGetProperty("skills", out var list) && list.ValueKind == System.Text.Json.JsonValueKind.Array)
                 starting[(int)race.Key] = [.. list.EnumerateArray().Select(e => new StartingSkill(e.GetProperty("_key").GetInt32(), e.GetProperty("_value").GetInt32()))];
         }
-        var injectorNames = new HashSet<string>(["Capsule", "Skill Extractor", "Skill Injector", "Small Skill Injector", "Large Skill Injector", "Alpha Skill Injector", "Daily Alpha Skill Injector"], StringComparer.OrdinalIgnoreCase);
+        var injectorNames = new HashSet<string>(["Capsule", "Skill Extractor", "Small Skill Injector", "Large Skill Injector", "Daily Alpha Injector"], StringComparer.OrdinalIgnoreCase);
         var injectorGroups = (await sde.ReadAsync("groups", cancellationToken: cancellationToken))
             .Where(group => SdeReader.English(group.Doc.GetProperty("name")).Contains("injector", StringComparison.OrdinalIgnoreCase)
                 || SdeReader.English(group.Doc.GetProperty("name")).Contains("extractor", StringComparison.OrdinalIgnoreCase)
-                || SdeReader.English(group.Doc.GetProperty("name")).Equals("capsule", StringComparison.OrdinalIgnoreCase))
+                || SdeReader.English(group.Doc.GetProperty("name")).Equals("capsule", StringComparison.OrdinalIgnoreCase)
+                || SdeReader.English(group.Doc.GetProperty("name")).Equals("services", StringComparison.OrdinalIgnoreCase))
             .Select(group => group.Key).ToArray();
         var itemTypes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var type in await sde.ReadByFieldAsync("types", "groupID", injectorGroups, cancellationToken))

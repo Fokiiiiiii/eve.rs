@@ -39,27 +39,32 @@ internal sealed class Rig : IAsyncDisposable
 
     private readonly string _schema = $"sks_{Guid.NewGuid():N}"[..20];
 
-    private Rig(NpgsqlDataSource source, TrainingSettings? settings = null,
-        Eve.Scheduler.LocalTimers? localTimers = null, bool scheduleAnnouncer = false, Func<long, bool>? isAlphaClone = null)
-    {
-        Source = source;
-        Store = new PgSkillStore(source, _schema);
-        ItemStore = new Eve.Inventory.PgItemStore(source, _schema + "i");
-        WalletStore = new Eve.Wallet.PgWalletStore(source, _schema + "w");
-        Wallet = new Eve.Wallet.WalletTransactions(source, _schema + "w");
-        Dogma = TestDogma();
-        Training = new CharacterTraining(source, Catalog, Store, new PgTrainingStore(source, _schema), settings ?? new TrainingSettings(), () => Now);
-        Sessions = new CharacterSessions();
-        Announcer = new TrainingAnnouncer(Training, Catalog, Sessions, null, () => Now,
-            schedule: scheduleAnnouncer, localTimers: localTimers);
-        Announcer.Attach();
-        Handler = new SkillHandlerService(
-            Store, Catalog, Training, new Eve.Characters.PgCharacterStore(source, _schema + "c"), ItemStore, Dogma, Announcer, () => Now,
-            SkillHandlerService.CreateAugmentationReader(ItemStore, Dogma, Store, () => Now, () => 0d),
-            () => 0d, Wallet, isAlphaClone);
-        Door = new SkillMgr2Service();
-        Hook = new SkillsLoginHook(Training, Catalog, Sessions, Announcer, () => Now);
-    }
+    private Rig(NpgsqlDataSource source, SkillCatalog catalog, TrainingSettings? settings = null,
+            Eve.Scheduler.LocalTimers? localTimers = null, bool scheduleAnnouncer = false, Func<long, bool>? isAlphaClone = null)
+        {
+            Source = source;
+            CatalogForTest = catalog;
+            Store = new PgSkillStore(source, _schema);
+            ItemStore = new Eve.Inventory.PgItemStore(source, _schema + "i");
+            WalletStore = new Eve.Wallet.PgWalletStore(source, _schema + "w");
+            Wallet = new Eve.Wallet.WalletTransactions(source, _schema + "w");
+            Dogma = TestDogma();
+            Training = new CharacterTraining(source, CatalogForTest, Store, new PgTrainingStore(source, _schema), settings ?? new TrainingSettings(), () => Now);
+            Sessions = new CharacterSessions();
+            Announcer = new TrainingAnnouncer(Training, CatalogForTest, Sessions, null, () => Now,
+                schedule: scheduleAnnouncer, localTimers: localTimers);
+            Announcer.Attach();
+            Handler = new SkillHandlerService(
+                Store, CatalogForTest, Training, new Eve.Characters.PgCharacterStore(source, _schema + "c"), ItemStore, Dogma, Announcer, () => Now,
+                SkillHandlerService.CreateAugmentationReader(ItemStore, Dogma, Store, () => Now, () => 0d),
+                () => 0d, Wallet, isAlphaClone);
+            Door = new SkillMgr2Service();
+            Hook = new SkillsLoginHook(Training, CatalogForTest, Sessions, Announcer, () => Now);
+        }
+
+    public long CharacterId { get; private set; }
+
+    public SkillCatalog CatalogForTest { get; }
 
     private static Eve.Dogma.DogmaStatic TestDogma() => new([], [
         new Eve.Dogma.EffectDef(7000, "implantMemory", Eve.Dogma.EffectDef.Passive,
@@ -108,16 +113,26 @@ public Eve.Wallet.PgWalletStore WalletStore { get; }
     public SkillsLoginHook Hook { get; }
 
     public static async Task<Rig> CreateAsync(TrainingSettings? settings = null,
-        Eve.Scheduler.LocalTimers? localTimers = null, bool scheduleAnnouncer = false, Func<long, bool>? isAlphaClone = null)
-    {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
-        var rig = new Rig(source, settings, localTimers, scheduleAnnouncer, isAlphaClone);
-        await PgSkillStore.MigrateAsync(source, rig._schema);
-        await Eve.Characters.PgCharacterStore.MigrateAsync(source, rig._schema + "c");
-        await Eve.Inventory.PgItemStore.MigrateAsync(source, rig._schema + "i");
-        await Eve.Wallet.PgWalletStore.MigrateAsync(source, rig._schema + "w");
-        return rig;
-    }
+            Eve.Scheduler.LocalTimers? localTimers = null, bool scheduleAnnouncer = false,
+            Func<long, bool>? isAlphaClone = null, bool useCurrentSdeCatalog = false, int accountId = 34)
+        {
+            var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
+            var catalog = Catalog;
+            if (useCurrentSdeCatalog)
+            {
+                var sde = new Eve.Sde.SdeReader(source);
+                if (await sde.BuildAsync() is null)
+                    throw new InvalidOperationException("The seeded SDE is required for this skills test.");
+                catalog = await SkillCatalog.LoadAsync(sde);
+            }
+            var rig = new Rig(source, catalog, settings, localTimers, scheduleAnnouncer, isAlphaClone);
+            await PgSkillStore.MigrateAsync(source, rig._schema);
+            await Eve.Characters.PgCharacterStore.MigrateAsync(source, rig._schema + "c");
+            await Eve.Inventory.PgItemStore.MigrateAsync(source, rig._schema + "i");
+            await Eve.Wallet.PgWalletStore.MigrateAsync(source, rig._schema + "w");
+            rig.CharacterId = await rig.CreateCharacterAsync("Skills Test Character", accountId);
+            return rig;
+        }
 
     public async Task GrantAsync(long characterId, params (int Type, int Level, long Points)[] skills)
     {
@@ -156,6 +171,17 @@ public Eve.Wallet.PgWalletStore WalletStore { get; }
         await transaction.CommitAsync();
         return itemId;
     }
+
+    public async Task<long> CreateCharacterAsync(string name, int accountId = 34)
+        {
+            await using var connection = await Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            var characterId = await Characters.InsertAsync(connection, transaction,
+                new Eve.Characters.NewCharacter(accountId, name, 0, 1, 1, 1, 11, 1376,
+                    1000044, null, 60_000_001, 30_000_001, 20_000_001, 10_000_001, null, null));
+            await transaction.CommitAsync();
+            return characterId;
+        }
 
 public async Task FundWalletAsync(long ownerId, decimal isk)
     {
@@ -263,50 +289,81 @@ public class ClientNotificationTests
 
 public class SkillHandlerTests
 {
+
+    private static string CustomNotifyOf(MachoWrappedException error)
+        {
+            var payload = Assert.IsType<PyObjectEx>(error.Error.Payload);
+            var header = Assert.IsType<PyTuple>(payload.Header);
+            var details = Assert.IsType<PyTuple>(header.Items[1]);
+            var values = Assert.IsType<PyDict>(details.Items[1]);
+            var notify = Assert.Single(values.Entries, entry => JsSemantics.StringValue(entry.Key) == "notify").Value;
+            return Assert.IsType<PyStr>(notify).Value;
+        }
+
 [PgFact]
     public async Task Direct_skill_purchase_charges_the_published_list_price_and_injects_the_skill()
     {
-        await using var rig = await Rig.CreateAsync();
-        var skill = Rig.Catalog.Skills.First(type => type.Published && type.AvailableForPurchase && type.BasePrice > 0);
-        await rig.FundWalletAsync(1, 10_000_000m);
-        var session = Rig.Session(1).Session;
+        await using var rig = await Rig.CreateAsync(useCurrentSdeCatalog: true);
+        var characterId = rig.CharacterId;
+        var skill = rig.CatalogForTest.Skills.Single(type => type.TypeId == 3300);
+        Assert.True(skill.AvailableForPurchase);
+        Assert.True(skill.BasePrice > 0);
+        await rig.FundWalletAsync(characterId, 10_000_000m);
+        var session = Rig.Session(characterId).Session;
         var price = decimal.Round(skill.BasePrice * 1.3m, 2, MidpointRounding.AwayFromZero);
         Assert.Equal(PyBool.True, await Rig.CallAsync(rig.Handler, session, "IsSkillAvailableForPurchase", new PyInt(skill.TypeId)));
         Assert.Equal(Py.Number((double)(skill.BasePrice * 1.3m)), await Rig.CallAsync(rig.Handler, session, "GetDirectPurchasePrice", new PyInt(skill.TypeId)));
 
         var result = Assert.IsType<PyList>(await Rig.CallAsync(rig.Handler, session, "PurchaseSkills", new PyList([new PyInt(skill.TypeId)])));
         Assert.Equal([new PyInt(skill.TypeId)], result.Items);
-        Assert.Contains(await rig.Store.ForCharacterAsync(1), trained => trained.TypeId == skill.TypeId && trained.Level == 0);
-        var journal = await rig.Wallet.JournalAsync(1);
+        Assert.Contains(await rig.Store.ForCharacterAsync(characterId), trained => trained.TypeId == skill.TypeId && trained.Level == 0);
+        var journal = await rig.Wallet.JournalAsync(characterId);
         var debit = Assert.Single(journal, entry => entry.OperationKey.Contains("skill-purchase", StringComparison.Ordinal));
         Assert.Equal(-price, debit.Amount);
+    }
+
+    [PgFact]
+    public async Task Skill_catalog_maps_the_current_sde_skill_injector_item_names()
+    {
+        await using var rig = await Rig.CreateAsync(useCurrentSdeCatalog: true);
+        var catalog = rig.CatalogForTest;
+
+        Assert.Equal<int?>(670, catalog.ItemTypeId("Capsule"));
+        Assert.Equal<int?>(40519, catalog.ItemTypeId("Skill Extractor"));
+        Assert.Equal<int?>(40520, catalog.ItemTypeId("Large Skill Injector"));
+        Assert.Equal<int?>(45635, catalog.ItemTypeId("Small Skill Injector"));
+        Assert.Equal<int?>(46375, catalog.ItemTypeId("Daily Alpha Injector"));
+        Assert.Null(catalog.ItemTypeId("Daily Alpha Skill Injector"));
+        Assert.Null(catalog.ItemTypeId("Skill Injector"));
     }
 
 [PgFact]
     public async Task Injecting_a_skill_book_consumes_the_owned_book_and_adds_the_skill()
     {
         await using var rig = await Rig.CreateAsync();
+        var characterId = rig.CharacterId;
         var skill = Rig.Catalog.Skills.First(type => type.Published && type.TypeId != 33092);
-        var book = await rig.CreateItemAsync(new Eve.Inventory.NewItem(skill.TypeId, 1, 60_000_001, 4, 1, true));
-        var session = Rig.Session(1).Session;
+        var book = await rig.CreateItemAsync(new Eve.Inventory.NewItem(skill.TypeId, characterId, 60_000_001, 4, 1, true));
+        var session = Rig.Session(characterId).Session;
         session.Set("stationid", new PyInt(60_000_001));
 
         var result = Assert.IsType<PyList>(await Rig.CallAsync(rig.Handler, session, "InjectSkillIntoBrain", new PyList([new PyLong(book)])));
         Assert.Equal([new PyInt(skill.TypeId)], result.Items);
         Assert.Null(await rig.ItemStore.GetAsync(book));
-        Assert.Contains(await rig.Store.ForCharacterAsync(1), trained => trained.TypeId == skill.TypeId && trained.Level == 0);
+        Assert.Contains(await rig.Store.ForCharacterAsync(characterId), trained => trained.TypeId == skill.TypeId && trained.Level == 0);
     }
 
 [PgFact]
     public async Task Skill_injectors_grant_diminishing_free_points_and_consume_the_stack()
     {
-        await using var rig = await Rig.CreateAsync();
-        var skill = Rig.Catalog.Skills.First().TypeId;
-        await rig.GrantAsync(1, (skill, 5, 4_800_000));
-        var injectorType = Rig.Catalog.ItemTypeId("Skill Injector");
+        await using var rig = await Rig.CreateAsync(useCurrentSdeCatalog: true);
+        var characterId = rig.CharacterId;
+        var skill = rig.CatalogForTest.Skills.Single(type => type.TypeId == 3300).TypeId;
+        await rig.GrantAsync(characterId, (skill, 5, 4_800_000));
+        var injectorType = rig.CatalogForTest.ItemTypeId("Small Skill Injector");
         Assert.NotNull(injectorType);
-        var injector = await rig.CreateItemAsync(new Eve.Inventory.NewItem(injectorType.Value, 1, 60_000_001, 4, 2, false));
-        var session = Rig.Session(1).Session;
+        var injector = await rig.CreateItemAsync(new Eve.Inventory.NewItem(injectorType.Value, characterId, 60_000_001, 4, 2, false));
+        var session = Rig.Session(characterId).Session;
 
         Assert.Equal(new PyInt(900_000), await Rig.CallAsync(rig.Handler, session, "GetDiminishedSpFromInjectors", new PyInt(injectorType.Value), new PyInt(2), new PyInt(0)));
         Assert.Equal(new PyInt(900_000), await Rig.CallAsync(rig.Handler, session, "InjectSkillpoints", new PyLong(injector), new PyInt(2)));
@@ -317,73 +374,136 @@ public class SkillHandlerTests
     [PgFact]
     public async Task Daily_alpha_injector_is_limited_to_alpha_characters_and_once_per_day()
     {
-        var dailyAlphaType = Rig.Catalog.ItemTypeId("Daily Alpha Skill Injector");
-        Assert.NotNull(dailyAlphaType);
         long? seenAlphaAccount = null;
-        await using (var alphaRig = await Rig.CreateAsync(isAlphaClone: accountId =>
+        await using (var alphaRig = await Rig.CreateAsync(
+            isAlphaClone: accountId => { seenAlphaAccount = accountId; return true; },
+            useCurrentSdeCatalog: true,
+            accountId: 77_001))
         {
-            seenAlphaAccount = accountId;
-            return true;
-        }))
-        {
-            var session = Rig.Session(1, userId: 77_001).Session;
-            var first = await alphaRig.CreateItemAsync(new Eve.Inventory.NewItem(dailyAlphaType.Value, 1, 60_000_001, 4, 1, true));
+            var characterId = alphaRig.CharacterId;
+            var dailyAlphaType = alphaRig.CatalogForTest.ItemTypeId("Daily Alpha Injector");
+            Assert.NotNull(dailyAlphaType);
+            var session = Rig.Session(characterId, userId: 77_001).Session;
+            var first = await alphaRig.CreateItemAsync(new Eve.Inventory.NewItem(dailyAlphaType.Value, characterId, 60_000_001, 4, 1, true));
             Assert.Equal(new PyInt(50_000), await Rig.CallAsync(alphaRig.Handler, session, "InjectSkillpoints", new PyLong(first), new PyInt(1)));
             Assert.Equal(77_001, seenAlphaAccount);
-            var second = await alphaRig.CreateItemAsync(new Eve.Inventory.NewItem(dailyAlphaType.Value, 1, 60_000_001, 4, 1, true));
-            var cooldown = await Assert.ThrowsAnyAsync<Exception>(async () =>
+            var second = await alphaRig.CreateItemAsync(new Eve.Inventory.NewItem(dailyAlphaType.Value, characterId, 60_000_001, 4, 1, true));
+            var cooldown = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
                 await Rig.CallAsync(alphaRig.Handler, session, "InjectSkillpoints", new PyLong(second), new PyInt(1)));
-            Assert.Contains("once per day", cooldown.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("A Daily Alpha Injector can only be used once per day.", CustomNotifyOf(cooldown));
         }
 
-        await using (var omegaRig = await Rig.CreateAsync(isAlphaClone: _ => false))
+        await using (var omegaRig = await Rig.CreateAsync(isAlphaClone: _ => false, useCurrentSdeCatalog: true))
         {
-            var session = Rig.Session(1).Session;
-            var item = await omegaRig.CreateItemAsync(new Eve.Inventory.NewItem(dailyAlphaType.Value, 1, 60_000_001, 4, 1, true));
-            var denied = await Assert.ThrowsAnyAsync<Exception>(async () =>
+            var characterId = omegaRig.CharacterId;
+            var dailyAlphaType = omegaRig.CatalogForTest.ItemTypeId("Daily Alpha Injector");
+            Assert.NotNull(dailyAlphaType);
+            var session = Rig.Session(characterId).Session;
+            var item = await omegaRig.CreateItemAsync(new Eve.Inventory.NewItem(dailyAlphaType.Value, characterId, 60_000_001, 4, 1, true));
+            var denied = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
                 await Rig.CallAsync(omegaRig.Handler, session, "InjectSkillpoints", new PyLong(item), new PyInt(1)));
-            Assert.Contains("cannot be used", denied.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("That skill injector cannot be used.", CustomNotifyOf(denied));
         }
     }
 
 
     [PgFact]
-    public async Task ExtractSkills_keeps_alpha_clone_skills_at_the_current_SDE_race_cap()
+    public async Task Alpha_clones_can_extract_only_omega_restricted_skills()
     {
-        await using var rig = await Rig.CreateAsync(isAlphaClone: _ => true);
-        const long characterId = 1;
+        long? seenAlphaAccount = null;
+        await using var rig = await Rig.CreateAsync(
+            isAlphaClone: accountId => { seenAlphaAccount = accountId; return true; },
+            useCurrentSdeCatalog: true,
+            accountId: 77_003);
+        var characterId = rig.CharacterId;
         const long station = 60_000_001;
-        var character = (await rig.Characters.GetAsync(characterId))!;
-        var drones = Rig.Catalog.Skills.Single(skill => skill.Name == "Drones");
-        Assert.Equal(5, Rig.Catalog.AlphaMaxLevel(character.RaceId, drones.TypeId));
-        await rig.GrantAsync(characterId, (drones.TypeId, 5, 5_500_000));
+        var catalog = rig.CatalogForTest;
+        var character = await rig.Characters.GetAsync(characterId)
+            ?? throw new InvalidOperationException("The test character is missing.");
+        var drones = catalog.Skills.Single(skill => skill.Name == "Drones");
+        var gunnery = catalog.Skills.Single(skill => skill.Name == "Gunnery");
+        Assert.Equal(5, catalog.AlphaMaxLevel(character.RaceId, drones.TypeId));
+        Assert.Equal(5, catalog.AlphaMaxLevel(character.RaceId, gunnery.TypeId));
 
-        var capsuleType = Rig.Catalog.ItemTypeId("Capsule");
-        var extractorType = Rig.Catalog.ItemTypeId("Skill Extractor");
+        var alphaSkillIds = new HashSet<int> { drones.TypeId, gunnery.TypeId };
+        var omegaOnly = catalog.Skills.First(skill =>
+            skill.Published
+            && skill.Rank >= 2
+            && catalog.AlphaMaxLevel(character.RaceId, skill.TypeId) == 0
+            && !catalog.Skills.Any(dependent => dependent.Needs.Any(requirement => requirement.TypeId == skill.TypeId))
+            && !skill.Needs.Any(requirement => alphaSkillIds.Contains(requirement.TypeId)));
+        Assert.Equal(0, catalog.AlphaMaxLevel(character.RaceId, omegaOnly.TypeId));
+
+        var dronesPoints = Eve.Skills.SkillPoints.ForTraining(drones.Rank, 5);
+        var gunneryPoints = 500_000L - dronesPoints;
+        Assert.InRange(gunneryPoints, 1, Eve.Skills.SkillPoints.ForTraining(gunnery.Rank, 5));
+        var selected = new HashSet<int> { drones.TypeId, gunnery.TypeId, omegaOnly.TypeId };
+        var dependents = catalog.Skills
+            .Where(skill => skill.Needs.Any(requirement => selected.Contains(requirement.TypeId)))
+            .Select(skill => skill.TypeId)
+            .ToHashSet();
+        var allocations = new List<(int Type, int Level, long Points)>
+        {
+            (drones.TypeId, Eve.Skills.SkillPoints.LevelAt(drones.Rank, dronesPoints), dronesPoints),
+            (gunnery.TypeId, Eve.Skills.SkillPoints.LevelAt(gunnery.Rank, gunneryPoints), gunneryPoints),
+            (omegaOnly.TypeId, Eve.Skills.SkillPoints.LevelAt(omegaOnly.Rank, 500_000), 500_000),
+        };
+        var total = allocations.Sum(skill => skill.Points);
+        foreach (var skill in catalog.Skills.Where(skill =>
+                     !selected.Contains(skill.TypeId) && !dependents.Contains(skill.TypeId)))
+        {
+            if (total >= 5_500_000) break;
+            var points = Math.Min(Eve.Skills.SkillPoints.ForTraining(skill.Rank, 5), 5_500_000 - total);
+            if (points <= 0) continue;
+            allocations.Add((skill.TypeId, Eve.Skills.SkillPoints.LevelAt(skill.Rank, points), points));
+            total += points;
+        }
+        Assert.True(total >= 5_500_000, $"SDE build did not provide enough eligible test skills: {total} SP.");
+        await rig.GrantAsync(characterId, [.. allocations]);
+
+        var capsuleType = catalog.ItemTypeId("Capsule");
+        var extractorType = catalog.ItemTypeId("Skill Extractor");
         Assert.NotNull(capsuleType);
         Assert.NotNull(extractorType);
         var capsule = await rig.CreateItemAsync(new Eve.Inventory.NewItem(capsuleType.Value, characterId, station, 4, 1, true));
-        var extractor = await rig.CreateItemAsync(new Eve.Inventory.NewItem(extractorType.Value, characterId, station, 4, 1, true));
-        var session = Rig.Session(characterId).Session;
+        var alphaExtractor = await rig.CreateItemAsync(new Eve.Inventory.NewItem(extractorType.Value, characterId, station, 4, 1, true));
+        var omegaExtractor = await rig.CreateItemAsync(new Eve.Inventory.NewItem(extractorType.Value, characterId, station, 4, 1, true));
+        var session = Rig.Session(characterId, userId: 77_003).Session;
         session.Set("stationid", new PyInt(station));
         session.Set("shipid", new PyLong(capsule));
 
-        var rejected = await Assert.ThrowsAnyAsync<Exception>(async () =>
+        var denied = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
             await Rig.CallAsync(rig.Handler, session, "ExtractSkills",
-                new PyLong(extractor),
-                new PyDict([new(new PyInt(drones.TypeId), new PyLong(500_000))])));
-        Assert.Contains("Alpha clones cannot extract", rejected.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.NotNull(await rig.ItemStore.GetAsync(extractor));
-        Assert.Equal(5_500_000, (await rig.Store.ForCharacterAsync(characterId)).Single(skill => skill.TypeId == drones.TypeId).SkillPoints);
+                new PyLong(alphaExtractor),
+                new PyDict([
+                    new(new PyInt(drones.TypeId), new PyLong(dronesPoints)),
+                    new(new PyInt(gunnery.TypeId), new PyLong(gunneryPoints))
+                ])));
+        Assert.Equal("Alpha clones may only extract skills that require Omega clone state.", CustomNotifyOf(denied));
+        Assert.NotNull(await rig.ItemStore.GetAsync(alphaExtractor));
+
+        Assert.IsType<PyNone>(await Rig.CallAsync(rig.Handler, session, "ExtractSkills",
+            new PyLong(omegaExtractor),
+            new PyDict([new(new PyInt(omegaOnly.TypeId), new PyLong(500_000))])));
+        Assert.Equal(77_003, seenAlphaAccount);
+        Assert.Null(await rig.ItemStore.GetAsync(omegaExtractor));
+        Assert.Equal(0, (await rig.Store.ForCharacterAsync(characterId)).Single(skill => skill.TypeId == omegaOnly.TypeId).SkillPoints);
     }
 
     [PgFact]
     public async Task ExtractSkills_consumes_an_extractor_and_creates_an_injector_after_removing_exactly_500000_points()
     {
-        await using var rig = await Rig.CreateAsync();
-        var catalogSkills = Rig.Catalog.Skills;
+        long? seenAlphaAccount = null;
+        await using var rig = await Rig.CreateAsync(isAlphaClone: accountId =>
+        {
+            seenAlphaAccount = accountId;
+            return false;
+        }, useCurrentSdeCatalog: true, accountId: 77_002);
+        var characterId = rig.CharacterId;
+        var catalog = rig.CatalogForTest;
+        var catalogSkills = catalog.Skills;
         var target = catalogSkills.First(skill => skill.Rank >= 2
-            && !catalogSkills.Any(dependent => dependent.Requirements?.Any(requirement => requirement.TypeId == skill.TypeId) == true));
+            && !catalogSkills.Any(dependent => dependent.Needs.Any(requirement => requirement.TypeId == skill.TypeId)));
         var allocations = new List<(int Type, int Level, long Points)>();
         var targetPoints = Eve.Skills.SkillPoints.ForTraining(target.Rank, 5);
         allocations.Add((target.TypeId, 5, targetPoints));
@@ -397,42 +517,43 @@ public class SkillHandlerTests
             total += points;
         }
         Assert.True(total >= 5_500_000);
-        await rig.GrantAsync(1, [.. allocations]);
+        await rig.GrantAsync(characterId, [.. allocations]);
 
         const long station = 60_000_001;
-        var capsuleType = Rig.Catalog.ItemTypeId("Capsule");
-        var extractorType = Rig.Catalog.ItemTypeId("Skill Extractor");
-        var injectorType = Rig.Catalog.ItemTypeId("Large Skill Injector") ?? Rig.Catalog.ItemTypeId("Skill Injector");
+        var capsuleType = catalog.ItemTypeId("Capsule");
+        var extractorType = catalog.ItemTypeId("Skill Extractor");
+        var injectorType = catalog.ItemTypeId("Large Skill Injector");
         Assert.NotNull(capsuleType);
         Assert.NotNull(extractorType);
         Assert.NotNull(injectorType);
-        var capsule = await rig.CreateItemAsync(new Eve.Inventory.NewItem(capsuleType.Value, 1, station, 4, 1, true));
-        var extractor = await rig.CreateItemAsync(new Eve.Inventory.NewItem(extractorType.Value, 1, station, 4, 1, true));
-        var session = Rig.Session(1).Session;
+        var capsule = await rig.CreateItemAsync(new Eve.Inventory.NewItem(capsuleType.Value, characterId, station, 4, 1, true));
+        var extractor = await rig.CreateItemAsync(new Eve.Inventory.NewItem(extractorType.Value, characterId, station, 4, 1, true));
+        var session = Rig.Session(characterId, userId: 77_002).Session;
         session.Set("stationid", new PyInt(station));
         session.Set("shipid", new PyLong(capsule));
 
         Assert.IsType<PyNone>(await Rig.CallAsync(rig.Handler, session, "ExtractSkills",
             new PyLong(extractor),
             new PyDict([new(new PyInt(target.TypeId), new PyLong(500_000))])));
+        Assert.Equal(77_002, seenAlphaAccount);
 
         Assert.Null(await rig.ItemStore.GetAsync(extractor));
-        var remaining = (await rig.Store.ForCharacterAsync(1)).Single(skill => skill.TypeId == target.TypeId);
+        var remaining = (await rig.Store.ForCharacterAsync(characterId)).Single(skill => skill.TypeId == target.TypeId);
         Assert.Equal(targetPoints - 500_000, remaining.SkillPoints);
         Assert.Equal(Eve.Skills.SkillPoints.LevelAt(target.Rank, targetPoints - 500_000), remaining.Level);
-        var stationItems = await rig.ItemStore.InLocationAsync(station, 1);
+        var stationItems = await rig.ItemStore.InLocationAsync(station, characterId);
         Assert.Contains(stationItems, item => item.TypeId == injectorType.Value);
     }
 
     [PgFact]
     public async Task Daily_alpha_injector_cooldown_is_atomic_and_expires_after_one_day()
     {
-        await using var rig = await Rig.CreateAsync();
-        var typeId = Rig.Catalog.ItemTypeId("Daily Alpha Skill Injector");
+        await using var rig = await Rig.CreateAsync(useCurrentSdeCatalog: true);
+        var typeId = rig.CatalogForTest.ItemTypeId("Daily Alpha Injector");
         Assert.NotNull(typeId);
         const long now = 1_700_000_000_000;
         Task<bool> Use(long at) => rig.Store.InTransactionAsync(
-            (connection, transaction, token) => rig.Store.TryUseDailyAlphaSkillInjectorAsync(connection, transaction, 1, typeId.Value, at, token),
+            (connection, transaction, token) => rig.Store.TryUseDailyAlphaSkillInjectorAsync(connection, transaction, rig.CharacterId, typeId.Value, at, token),
             CancellationToken.None);
 
         Assert.True(await Use(now));
@@ -444,7 +565,7 @@ public class SkillHandlerTests
     public async Task GetSkillChangesForISIS_answers_an_empty_change_list_when_no_ISIS_skill_changes_are_pending()
     {
         await using var rig = await Rig.CreateAsync();
-        var result = Assert.IsType<PyList>(await Rig.CallAsync(rig.Handler, Rig.Session(1).Session, "GetSkillChangesForISIS"));
+        var result = Assert.IsType<PyList>(await Rig.CallAsync(rig.Handler, Rig.Session(rig.CharacterId).Session, "GetSkillChangesForISIS"));
         Assert.Empty(result.Items);
     }
 
@@ -452,7 +573,7 @@ public class SkillHandlerTests
     public async Task GetSkillChangesForISIS_returns_sorted_cumulative_positive_deltas_for_four_reads_then_clears()
     {
         await using var rig = await Rig.CreateAsync();
-        const long characterId = 1;
+        var characterId = rig.CharacterId;
         await rig.GrantAsync(characterId, (3436, 1, 100), (3300, 1, 50));
         await rig.GrantTrackedAsync(characterId, (3436, 1, 130), (3300, 1, 75));
         await rig.GrantTrackedAsync(characterId, (3436, 1, 150), (3300, 1, 100));
@@ -474,20 +595,21 @@ public class SkillHandlerTests
 [PgFact]
     public async Task Large_skill_injectors_split_and_combine_as_three_small_injectors()
     {
-        await using var rig = await Rig.CreateAsync();
-        var small = Rig.Catalog.ItemTypeId("Skill Injector");
-        var large = Rig.Catalog.ItemTypeId("Large Skill Injector");
+        await using var rig = await Rig.CreateAsync(useCurrentSdeCatalog: true);
+        var characterId = rig.CharacterId;
+        var small = rig.CatalogForTest.ItemTypeId("Small Skill Injector");
+        var large = rig.CatalogForTest.ItemTypeId("Large Skill Injector");
         Assert.NotNull(small);
         Assert.NotNull(large);
-        var original = await rig.CreateItemAsync(new Eve.Inventory.NewItem(large.Value, 1, 60_000_001, 4, 1, true));
-        var session = Rig.Session(1).Session;
+        var original = await rig.CreateItemAsync(new Eve.Inventory.NewItem(large.Value, characterId, 60_000_001, 4, 1, true));
+        var session = Rig.Session(characterId).Session;
         session.Set("stationid", new PyInt(60_000_001));
 
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.Handler, session, "SplitSkillInjector", new PyLong(original), new PyInt(1)));
-        var smallStack = Assert.Single(await rig.ItemStore.InLocationAsync(60_000_001, 1));
+        var smallStack = Assert.Single(await rig.ItemStore.InLocationAsync(60_000_001, characterId));
         Assert.Equal((small.Value, 3L), (smallStack.TypeId, smallStack.Quantity));
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.Handler, session, "CombineSkillInjector", new PyLong(smallStack.Id), new PyInt(3)));
-        var combined = Assert.Single(await rig.ItemStore.InLocationAsync(60_000_001, 1));
+        var combined = Assert.Single(await rig.ItemStore.InLocationAsync(60_000_001, characterId));
         Assert.Equal((large.Value, 1L), (combined.TypeId, combined.Quantity));
     }
 
@@ -495,8 +617,9 @@ public class SkillHandlerTests
     public async Task The_skills_of_a_character_come_as_entries_in_type_order_with_their_item_fields()
     {
         await using var rig = await Rig.CreateAsync();
-        await rig.GrantAsync(140_000_038, (3315, 0, 0), (3300, 4, 45_255), (3301, 1, 250));
-        var (session, _) = Rig.Session(140_000_038);
+        var characterId = rig.CharacterId;
+        await rig.GrantAsync(characterId, (3315, 0, 0), (3300, 4, 45_255), (3301, 1, 250));
+        var (session, _) = Rig.Session(characterId);
 
         var skills = (PyDict)await Rig.CallAsync(rig.Handler, session, "GetSkills");
         Assert.Equal([3300L, 3301, 3315], skills.Entries.Select(e => ((PyInt)e.Key).Value));
@@ -507,8 +630,8 @@ public class SkillHandlerTests
         Assert.Equal(new PyTuple([new PyInt(3300), new PyInt(4), new PyInt(45_255), new PyInt(1), PyNone.Instance]), header.Items[1]);
         var state = ((PyDict)header.Items[2]).Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
         Assert.Equal(["itemID", "ownerID", "locationID", "flagID", "groupID", "categoryID", "groupName", "published", "inTraining"], ((PyDict)header.Items[2]).Entries.Select(e => JsSemantics.StringValue(e.Key)!));
-        Assert.Equal(new PyLong(14_000_003_803_300), state["itemID"]);
-        Assert.Equal((new PyInt(140_000_038), new PyInt(140_000_038), new PyInt(7), new PyInt(255), new PyInt(16)), ((PyValue)state["ownerID"], state["locationID"], state["flagID"], state["groupID"], state["categoryID"]));
+        Assert.Equal(new PyLong(SkillWire.ItemId(characterId, 3300)), state["itemID"]);
+        Assert.Equal((new PyInt(characterId), new PyInt(characterId), new PyInt(7), new PyInt(255), new PyInt(16)), ((PyValue)state["ownerID"], state["locationID"], state["flagID"], state["groupID"], state["categoryID"]));
         Assert.Equal((new PyStr("Gunnery"), PyBool.True, PyBool.False), ((PyValue)state["groupName"], state["published"], state["inTraining"]));
 
         // an unpublished skill says so, and an untrained one is there at level 0
@@ -521,13 +644,15 @@ public class SkillHandlerTests
     public async Task The_whole_list_is_the_same_as_the_trained_list_and_the_skill_info_holds_both_with_the_points()
     {
         await using var rig = await Rig.CreateAsync();
-        await rig.GrantAsync(7, (3300, 4, 45_255), (3301, 1, 250));
-        var (session, _) = Rig.Session(7);
+        var characterId = rig.CharacterId;
+        await rig.GrantAsync(characterId, (3300, 4, 45_255), (3301, 1, 250));
+        var (session, _) = Rig.Session(characterId);
         var skills = await Rig.CallAsync(rig.Handler, session, "GetSkills");
         Assert.Equal(skills, await Rig.CallAsync(rig.Handler, session, "GetAllSkills"));
         Assert.Equal(new PyInt(45_505), await Rig.CallAsync(rig.Handler, session, "GetSkillPoints"));
 
-        var info = ((PyDict)((PyObject)await Rig.CallAsync(rig.Handler, session, "GetMySkillInfo")).Args).Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
+        var info = ((PyDict)((PyObject)await Rig.CallAsync(rig.Handler, session, "GetMySkillInfo")).Args)
+            .Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
         Assert.Equal(skills, info["skills"]);
         Assert.Equal((new PyInt(45_505), new PyInt(0), new PyList([])), ((PyValue)info["skillPoints"], info["freeSkillPoints"], info["queue"]));
     }
@@ -545,10 +670,12 @@ public class SkillHandlerTests
     public async Task Characters_do_not_see_each_others_skills()
     {
         await using var rig = await Rig.CreateAsync();
-        await rig.GrantAsync(1, (3300, 4, 45_255));
-        await rig.GrantAsync(2, (3301, 1, 250));
-        var (two, _) = Rig.Session(2);
-        Assert.Equal([3301L], ((PyDict)await Rig.CallAsync(rig.Handler, two, "GetSkills")).Entries.Select(e => ((PyInt)e.Key).Value));
+        var firstCharacterId = rig.CharacterId;
+        var otherCharacterId = await rig.CreateCharacterAsync("Skills Other Character");
+        await rig.GrantAsync(firstCharacterId, (3300, 4, 45_255));
+        await rig.GrantAsync(otherCharacterId, (3301, 1, 250));
+        var (otherSession, _) = Rig.Session(otherCharacterId);
+        Assert.Equal([3301L], ((PyDict)await Rig.CallAsync(rig.Handler, otherSession, "GetSkills")).Entries.Select(e => ((PyInt)e.Key).Value));
     }
 
     [PgFact]
@@ -566,7 +693,7 @@ public class SkillHandlerTests
     public async Task The_fixed_answers_are_the_recorded_ones()
     {
         await using var rig = await Rig.CreateAsync();
-        var (session, _) = Rig.Session(1);
+        var (session, _) = Rig.Session(rig.CharacterId);
         async Task<PyValue> Ask(string method) => await Rig.CallAsync(rig.Handler, session, method);
 
         Assert.Equal(new PyInt(0), await Ask("GetFreeSkillPoints"));
@@ -587,8 +714,9 @@ public class SkillHandlerTests
     [PgFact]
     public async Task Booster_activation_persists_side_effects_and_expiry_and_the_real_reader_returns_them()
     {
-        const long characterId = 1, stationId = 600001;
         await using var rig = await Rig.CreateAsync();
+        var characterId = rig.CharacterId;
+        const long stationId = 600001;
         var implantId = await rig.CreateItemAsync(new Eve.Inventory.NewItem(9941, characterId, characterId, 89, Singleton: true));
         var boosterStackId = await rig.CreateItemAsync(new Eve.Inventory.NewItem(
             2838, characterId, stationId, 4, Quantity: 3, Singleton: false));
@@ -644,7 +772,7 @@ public class SkillHandlerTests
     public async Task Empty_augmentation_ownership_returns_the_empty_wire_shapes()
     {
         await using var rig = await Rig.CreateAsync();
-        var (session, _) = Rig.Session(1);
+        var (session, _) = Rig.Session(rig.CharacterId);
 
         Assert.Equal(new PyDict([]), await Rig.CallAsync(rig.Handler, session, "GetImplants"));
         Assert.Equal(new PyDict([]), await Rig.CallAsync(rig.Handler, session, "GetBoosters"));
@@ -657,8 +785,8 @@ public class SkillHandlerTests
     [PgFact]
     public async Task A_live_legacy_booster_is_materialized_from_Dogma_instead_of_becoming_an_empty_snapshot()
     {
-        const long characterId = 1;
         await using var rig = await Rig.CreateAsync();
+        var characterId = rig.CharacterId;
         var activeItemId = await rig.CreateItemAsync(new Eve.Inventory.NewItem(
             2838, characterId, characterId, 88, Singleton: true));
         var (session, _) = Rig.Session(characterId);
@@ -683,8 +811,9 @@ public class SkillHandlerTests
     [PgFact]
     public async Task Activation_rejects_a_same_slot_legacy_booster_before_consuming_the_cargo_stack()
     {
-        const long characterId = 1, stationId = 600001;
         await using var rig = await Rig.CreateAsync();
+        var characterId = rig.CharacterId;
+        const long stationId = 600001;
         var legacyActiveId = await rig.CreateItemAsync(new Eve.Inventory.NewItem(
             2838, characterId, characterId, 88, Singleton: true));
         var cargoStackId = await rig.CreateItemAsync(new Eve.Inventory.NewItem(
@@ -713,8 +842,8 @@ public class SkillHandlerTests
     [PgFact]
     public async Task Free_skill_point_balance_previews_and_selected_application_are_durable_and_atomic()
     {
-        const long characterId = 7;
         await using var rig = await Rig.CreateAsync();
+        var characterId = rig.CharacterId;
         await rig.GrantAsync(characterId, (3301, 1, 250));
         await rig.GrantFreeSkillPointsAsync(characterId, 2_000);
         var (session, _) = Rig.Session(characterId);
@@ -742,8 +871,8 @@ public class SkillHandlerTests
     [PgFact]
     public async Task Queue_free_skill_points_follow_saved_order_and_apply_with_the_balance()
     {
-        const long characterId = 8;
         await using var rig = await Rig.CreateAsync();
+        var characterId = rig.CharacterId;
         await rig.GrantAsync(characterId, (3300, 1, 250), (3301, 1, 250));
         await rig.GrantFreeSkillPointsAsync(characterId, 1_500);
         var saved = await rig.Training.SaveQueueAsync(
@@ -774,8 +903,9 @@ public class SkillHandlerTests
     public async Task Knowing_a_skill_and_being_a_skill_are_different_questions()
     {
         await using var rig = await Rig.CreateAsync();
-        await rig.GrantAsync(1, (3300, 1, 250));
-        var (session, _) = Rig.Session(1);
+        var characterId = rig.CharacterId;
+        await rig.GrantAsync(characterId, (3300, 1, 250));
+        var (session, _) = Rig.Session(characterId);
         Assert.Equal(PyBool.True, await Rig.CallAsync(rig.Handler, session, "IsSkillInjected", new PyInt(3300)));
         Assert.Equal(PyBool.False, await Rig.CallAsync(rig.Handler, session, "IsSkillInjected", new PyInt(3301)));
         Assert.Equal(PyBool.True, await Rig.CallAsync(rig.Handler, session, "IsSkill", new PyInt(3301)));

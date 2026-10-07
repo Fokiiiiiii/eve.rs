@@ -66,6 +66,40 @@ def describe(value: Any) -> Any:
     return {"$unknown": repr(value)}
 
 
+def decode_marshaled(data: bytes) -> Any:
+    """Decode a nested EVE marshal stream into its comparison-safe description."""
+    return describe(m.decode(bytes(data)))
+
+
+def buffer_bytes(value: Any) -> bytes | None:
+    if isinstance(value, (bytes, bytearray, m.Buffer)):
+        return bytes(value)
+    if isinstance(value, str) and value.startswith("$bytes:"):
+        try:
+            return bytes.fromhex(value[7:])
+        except ValueError:
+            return None
+    if isinstance(value, dict) and isinstance(value.get("$buffer"), str):
+        try:
+            return bytes.fromhex(value["$buffer"])
+        except ValueError:
+            return None
+    return None
+
+
+def destiny_state_header(value: Any) -> dict | None:
+    """Decode the client-side Destiny state stream's packet type and stamp."""
+    data = buffer_bytes(value)
+    if data is None or len(data) < 5:
+        return None
+    packet_type = data[0]
+    return {
+        "packetType": packet_type,
+        "packetTypeName": {0: "SetState", 1: "AddBalls2"}.get(packet_type, "unknown"),
+        "stamp": int.from_bytes(data[1:5], "little"),
+    }
+
+
 def _text(data: bytes) -> str:
     try:
         return data.decode("utf-8")

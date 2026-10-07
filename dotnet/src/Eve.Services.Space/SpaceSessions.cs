@@ -2247,21 +2247,21 @@ private readonly TransitionRuntime _transitions;
                 {
                     if (!_pilots.TryRemove((ulong)session.SessionId, out _))
                         return Task.FromResult(false);
+                    session.SendNotification("OnInvulnCancelled", "shipid", InventoryWire.Id(pilot.ShipId));
                     pilot.End();
                     ReleaseBoundObjects(session);
-                    session.Change(("stationid", new PyInt(stationId)), ("locationid", new PyInt(stationId)), ("solarsystemid", None));
-                    return Task.FromResult(true);
-                },
-                notify: (result, _) =>
-                {
                     var moved = result.Moved!;
                     var type = _statics.Type(moved.Ship.TypeId);
-                    session.SendNotification("OnInvulnCancelled", "shipid", InventoryWire.Id(pilot.ShipId));
                     session.SendNotification(
                         "OnItemsChanged", "charid",
                         new PyList([InventoryWire.PackedRow(ShipRow(moved.Ship, type))]),
                         ChangedFrom(moved),
                         Py.Tuple(new PyStr("Station"), InventoryWire.Id(stationId), new PyStr("StationHangar")));
+                    session.Change(("stationid", new PyInt(stationId)), ("locationid", new PyInt(stationId)), ("solarsystemid", None));
+                    return Task.FromResult(true);
+                },
+                notify: (_, _) =>
+                {
                     session.SendNotification("OnDockingFinished", "charid", InventoryWire.Id(stationId));
                     return Task.CompletedTask;
                 },

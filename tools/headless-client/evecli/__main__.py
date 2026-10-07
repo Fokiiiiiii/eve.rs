@@ -1,7 +1,6 @@
 """python -m evecli --host 127.0.0.1 --port 26000 --user U --password P"""
 
 import argparse
-import importlib
 import os
 import subprocess
 import sys
@@ -37,23 +36,16 @@ def _find_official_exefile(launcher_root):
     raise FileNotFoundError(f"No Launcher-managed exefile.exe found under {root}")
 
 
-def _prepare_headless_client():
-    try:
-        thinclients = importlib.import_module("thinclients")
-        thinclients.HEADLESS = True
-        clientsetup = importlib.import_module("thinclients.clientsetup")
-        patch_all = clientsetup.patch_all
-    except (ImportError, AttributeError) as error:
-        raise RuntimeError("thinclients headless bootstrap is unavailable in this Python environment.") from error
-    patch_all()
-
-
-def _launch_official_client(launcher_root):
+def _launch_official_client(launcher_root, host, port, user, password, character_id=None):
     executable = _find_official_exefile(launcher_root)
-    _prepare_headless_client()
+    if any(":" in value for value in (host, user, password)):
+        raise ValueError("The official client's /server and /login arguments do not support ':' in these values.")
     environment = os.environ.copy()
     environment["EO_REMOTEFILECACHEFOLDER"] = str(executable.parent.parent.parent / "ResFiles")
-    return subprocess.Popen([str(executable), "/thinclient"], cwd=str(executable.parent.parent), env=environment)
+    command = [str(executable), f"/server:{host}", f"/port:{port}", f"/login:{user}:{password}"]
+    if character_id is not None:
+        command.append(f"/autoSelectCharacter:{character_id}")
+    return subprocess.Popen(command, cwd=str(executable.parent.parent), env=environment)
 
 
 def main(argv=None) -> int:
@@ -66,20 +58,28 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--official-client",
         action="store_true",
-        help="launch the Launcher-managed official client headlessly",
+        help="launch the Launcher-managed official client with the supplied login arguments",
     )
     parser.add_argument(
         "--launcher-root",
         default=os.environ.get("EVE_LAUNCHER_ROOT"),
         help="EVE Launcher installation root (or EVE_LAUNCHER_ROOT)",
     )
+    parser.add_argument("--character-id", type=int, help="select this character after login in official-client mode")
     parser.add_argument("--call", action="append", default=[], metavar="SERVICE.METHOD",
                         help="also call a service method without arguments (repeatable)")
     args = parser.parse_args(argv)
     if args.official_client:
         try:
-            process = _launch_official_client(args.launcher_root)
-        except (OSError, RuntimeError) as error:
+            process = _launch_official_client(
+                args.launcher_root,
+                host=args.host,
+                port=args.port,
+                user=args.user,
+                password=args.password,
+                character_id=args.character_id,
+            )
+        except (OSError, RuntimeError, ValueError) as error:
             print(f"official client launch failed: {error}", file=sys.stderr)
             return 4
         print(f"official client pid: {process.pid}")

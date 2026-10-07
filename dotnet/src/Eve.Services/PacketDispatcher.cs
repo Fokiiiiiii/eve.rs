@@ -80,6 +80,14 @@ public sealed class PacketDispatcher
         }
 
         var service = _registry.Lookup(serviceName);
+        var traceLogin = string.Equals(
+            Environment.GetEnvironmentVariable("EVE_TRACE_LOGIN"), "1", StringComparison.Ordinal);
+        if (traceLogin)
+        {
+            Console.Error.WriteLine(
+                $"[login-trace] request session={session.SessionId} service={service?.Name ?? serviceName} " +
+                $"method={call.Method} args={call.Args.Count} bound={call.RemoteObject is not null}");
+        }
         if (service is null)
         {
             if (serviceName.StartsWith(BoundObjects.OidPrefix, StringComparison.Ordinal))
@@ -108,6 +116,12 @@ public sealed class PacketDispatcher
                 BoundObjectId = session.CurrentBoundObjectId,
                 Cancellation = ct,
             });
+            if (traceLogin)
+            {
+                Console.Error.WriteLine(
+                    $"[login-trace] response session={session.SessionId} service={service.Name} " +
+                    $"method={call.Method} result={result.GetType().Name}");
+            }
 
             if (result is PyDeferred deferred)
             {
@@ -134,6 +148,12 @@ public sealed class PacketDispatcher
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // The reference answers a failing handler with a None result rather than an error.
+            if (traceLogin)
+            {
+                Console.Error.WriteLine(
+                    $"[login-trace] exception session={session.SessionId} service={service.Name} " +
+                    $"method={call.Method} error={ex.GetType().Name}");
+            }
             session.DropAfterResponse();
             OnProblem?.Invoke($"{service.Name}.{call.Method}: {ex.Message}", ex);
             SendCallResponse(packet, PyNone.Instance, session, service.Name);

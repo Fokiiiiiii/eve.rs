@@ -367,7 +367,14 @@ internal sealed class SessionActor
         {
             try
             {
-                var value = MarshalCodec.Decode(payload);
+                if (Environment.GetEnvironmentVariable("EVE_TRACE_LOGIN") == "1"
+                    && !payload.IsEmpty
+                    && payload.Span[0] == 0x78)
+                {
+                    _options.Log?.Invoke(
+                        $"[login-trace] zlib-inbound session={_session.SessionId} bytes={payload.Length}");
+                }
+                var value = MarshalCodec.DecodeInbound(payload);
                 await _dispatcher.DispatchAsync(value, _session, _ct);
             }
             catch (MarshalException error)

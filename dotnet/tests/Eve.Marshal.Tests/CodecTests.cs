@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text.Json.Nodes;
 
 namespace Eve.Marshal.Tests;
@@ -10,6 +11,20 @@ public class CodecTests
     private static byte[] Stream(params byte[] body) => [.. Header, .. body];
 
     private static PyValue Decode(params byte[] body) => MarshalCodec.Decode(Stream(body));
+
+    [Fact]
+    public void An_inbound_zlib_payload_is_inflated_before_marshal_decode()
+    {
+        var expected = new PyInt(42);
+        var encoded = MarshalCodec.Encode(expected);
+        using var compressed = new MemoryStream();
+        using (var zlib = new ZLibStream(compressed, CompressionLevel.Optimal, leaveOpen: true))
+        {
+            zlib.Write(encoded);
+        }
+
+        Assert.Equal(expected, MarshalCodec.DecodeInbound(compressed.ToArray()));
+    }
 
     [Fact]
     public void A_char_string_of_any_byte_decodes_to_that_byte()

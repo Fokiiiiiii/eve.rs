@@ -1,3 +1,5 @@
+using System.IO.Compression;
+
 namespace Eve.Marshal;
 
 /// <summary>
@@ -13,6 +15,8 @@ public static class MarshalCodec
     /// </summary>
     public const int MaxDepth = 256;
 
+    private const int MaxInflatedInboundBytes = 64 << 20;
+
     /// <summary>
     /// Decodes a marshal stream, tolerating bytes after the root value: the same leniency as the JS
     /// reference's <c>marshalDecode</c>. A string or buffer whose declared length runs past the end
@@ -21,6 +25,42 @@ public static class MarshalCodec
     /// are slices of <paramref name="input"/>: keep it alive and unchanged while using them.
     /// </summary>
     public static PyValue Decode(ReadOnlyMemory<byte> input) => MarshalDecoder.DecodeStream(input, false, 0);
+
+    /// <summary>Decodes an inbound client stream, inflating Eve's zlib-wrapped packets when present.</summary>
+    public static PyValue DecodeInbound(ReadOnlyMemory<byte> input)
+    {
+        if (input.IsEmpty || input.Span[0] != 0x78)
+        {
+            return Decode(input);
+        }
+
+        using var source = new MemoryStream(input.ToArray(), writable: false);
+        using var zlib = new ZLibStream(source, CompressionMode.Decompress);
+        using var inflated = new MemoryStream();
+        var buffer = new byte[81920];
+        try
+        {
+            while (true)
+            {
+                var read = zlib.Read(buffer, 0, buffer.Length);
+                if (read == 0)
+                {
+                    break;
+                }
+                if (inflated.Length + read > MaxInflatedInboundBytes)
+                {
+                    throw new MarshalException(MarshalErrorKind.OutOfRange, "zlib inbound packet expands beyond 64 MiB");
+                }
+                inflated.Write(buffer, 0, read);
+            }
+        }
+        catch (InvalidDataException)
+        {
+            throw new MarshalException(MarshalErrorKind.InvalidHeader, "invalid zlib-compressed inbound packet");
+        }
+
+        return Decode(inflated.ToArray());
+    }
 
     /// <summary>Decodes a marshal stream and requires that it is consumed exactly.</summary>
     public static PyValue DecodeExact(ReadOnlyMemory<byte> input) => MarshalDecoder.DecodeStream(input, true, 0);

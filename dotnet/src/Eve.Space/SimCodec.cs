@@ -469,7 +469,41 @@ public static class SimCodec
             1 => ReadSpool(ref r),
             _ => throw new SimLinkException(SimLinkError.BadValue, "bad spool"),
         };
-        return new SimTurret(weaponType, fx, damage, optimal, falloff, tracking, resolution, charge, missile, spool);
+        var aoe = r.U8() switch
+        {
+            0 => null,
+            1 => ReadAoe(ref r),
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad aoe"),
+        };
+        var arc = r.U8() switch
+        {
+            0 => null,
+            1 => ReadArc(ref r),
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad arc"),
+        };
+        return new SimTurret(weaponType, fx, damage, optimal, falloff, tracking, resolution, charge, missile, spool, aoe, arc);
+    }
+
+    private static SimAoe ReadAoe(ref Reader r)
+    {
+        var (radius, velocity) = (r.F64(), r.F64());
+        var (factor, sensitivity) = (r.F64(), r.F64());
+        if (!double.IsFinite(radius) || radius < 0 || !double.IsFinite(velocity) || velocity < 0
+            || !double.IsFinite(factor) || factor < 0 || !double.IsFinite(sensitivity) || sensitivity < 0)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad aoe");
+        }
+        return new SimAoe(radius, velocity, factor, sensitivity);
+    }
+
+    private static SimArc ReadArc(ref Reader r)
+    {
+        var (range, targets) = (r.F64(), r.I32());
+        if (!double.IsFinite(range) || range < 0 || targets < 0)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad arc");
+        }
+        return new SimArc(range, targets);
     }
 
     private static SimSpool ReadSpool(ref Reader r)
@@ -1021,6 +1055,28 @@ public static class SimCodec
             w.U8(1);
             w.F64(spool.PerCycle);
             w.F64(spool.Max);
+        }
+        else
+        {
+            w.U8(0);
+        }
+        if (t.Aoe is { } aoe)
+        {
+            w.U8(1);
+            w.F64(aoe.ExplosionRadius);
+            w.F64(aoe.ExplosionVelocity);
+            w.F64(aoe.DamageReductionFactor);
+            w.F64(aoe.DamageReductionSensitivity);
+        }
+        else
+        {
+            w.U8(0);
+        }
+        if (t.Arc is { } arc)
+        {
+            w.U8(1);
+            w.F64(arc.Range);
+            w.I32(arc.Targets);
         }
         else
         {

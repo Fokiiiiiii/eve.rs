@@ -11,7 +11,7 @@ use crate::missiles::Missile;
 use crate::modules::{Action, Applies, Change, Effect, Numbers, Reach, Remote};
 use crate::scene::{HeatModuleProfile, HeatProfile, HeatRack};
 use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
-use crate::weapons::{Charge, Spool, Turret};
+use crate::weapons::{Arc, Aoe, Charge, Spool, Turret};
 use crate::wreck::WreckKind;
 
 pub const PROTOCOL_VERSION: u16 = 21;
@@ -809,6 +809,30 @@ fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
         }
         _ => return Err(DecodeError::BadValue("spool")),
     };
+    let aoe = match reader.u8()? {
+        0 => None,
+        1 => {
+            let (explosion_radius, explosion_velocity) = (reader.f64()?, reader.f64()?);
+            let (damage_reduction_factor, damage_reduction_sensitivity) = (reader.f64()?, reader.f64()?);
+            let numbers = [explosion_radius, explosion_velocity, damage_reduction_factor, damage_reduction_sensitivity];
+            if numbers.iter().any(|number| !number.is_finite() || *number < 0.0) {
+                return Err(DecodeError::BadValue("aoe"));
+            }
+            Some(Aoe { explosion_radius, explosion_velocity, damage_reduction_factor, damage_reduction_sensitivity })
+        }
+        _ => return Err(DecodeError::BadValue("aoe")),
+    };
+    let arc = match reader.u8()? {
+        0 => None,
+        1 => {
+            let (range, targets) = (reader.f64()?, reader.i32()?);
+            if !range.is_finite() || range < 0.0 || targets < 0 {
+                return Err(DecodeError::BadValue("arc"));
+            }
+            Some(Arc { range, targets })
+        }
+        _ => return Err(DecodeError::BadValue("arc")),
+    };
     Ok(Turret {
         weapon_type_id,
         fx,
@@ -820,6 +844,8 @@ fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
         charge,
         missile,
         spool,
+        aoe,
+        arc,
     })
 }
 
@@ -911,6 +937,28 @@ fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
             out.push(1);
             out.extend_from_slice(&spool.per_cycle.to_le_bytes());
             out.extend_from_slice(&spool.max.to_le_bytes());
+        }
+    }
+    match &turret.aoe {
+        None => out.push(0),
+        Some(aoe) => {
+            out.push(1);
+            for number in [
+                aoe.explosion_radius,
+                aoe.explosion_velocity,
+                aoe.damage_reduction_factor,
+                aoe.damage_reduction_sensitivity,
+            ] {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
+        }
+    }
+    match &turret.arc {
+        None => out.push(0),
+        Some(arc) => {
+            out.push(1);
+            out.extend_from_slice(&arc.range.to_le_bytes());
+            out.extend_from_slice(&arc.targets.to_le_bytes());
         }
     }
 }
@@ -1801,6 +1849,8 @@ impl Message {
                             charge: None,
                             missile: None,
                             spool: None,
+                            aoe: None,
+                            arc: None,
                         },
                     }),
                 }

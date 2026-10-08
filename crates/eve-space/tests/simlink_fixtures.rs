@@ -10,7 +10,7 @@ use eve_space::missiles::Missile;
 use eve_space::modules::{Action, Applies, Change, Effect, Numbers, Reach, Remote};
 use eve_space::scene::{HeatModuleProfile, HeatProfile, HeatRack};
 use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
-use eve_space::weapons::{Charge, Spool, Turret};
+use eve_space::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use eve_space::wreck::WreckKind;
 use serde_json::Value;
 
@@ -155,6 +155,16 @@ fn turret_of(w: &Value) -> Turret {
             .get("spool")
             .filter(|s| !s.is_null())
             .map(|s| Spool { per_cycle: s["perCycle"].as_f64().unwrap(), max: s["max"].as_f64().unwrap() }),
+        aoe: w.get("aoe").filter(|a| !a.is_null()).map(|a| Aoe {
+            explosion_radius: a["explosionRadius"].as_f64().unwrap(),
+            explosion_velocity: a["explosionVelocity"].as_f64().unwrap(),
+            damage_reduction_factor: a["damageReductionFactor"].as_f64().unwrap(),
+            damage_reduction_sensitivity: a["damageReductionSensitivity"].as_f64().unwrap(),
+        }),
+        arc: w.get("arc").filter(|a| !a.is_null()).map(|a| Arc {
+            range: a["range"].as_f64().unwrap(),
+            targets: a["targets"].as_i64().unwrap() as i32,
+        }),
     }
 }
 

@@ -1382,6 +1382,8 @@ mod tests {
                 charge: None,
                 missile: None,
                 spool: None,
+                aoe: None,
+                arc: None,
             },
         }
     }

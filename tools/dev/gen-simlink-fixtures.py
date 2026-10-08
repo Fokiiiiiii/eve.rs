@@ -86,7 +86,13 @@ def turret(t):
                                                     m["explosionRadius"], m["explosionVelocity"], m["damageReductionFactor"], m["damageReductionSensitivity"]))
     # a precursor weapon's damage ramp: the bonus a cycle adds and the most it reaches (absent for the others)
     p = t.get("spool")
-    return body + (bytes([1]) + struct.pack("<2d", p["perCycle"], p["max"]) if p else bytes([0]))
+    body += bytes([1]) + struct.pack("<2d", p["perCycle"], p["max"]) if p else bytes([0])
+    # a vorton's explosion (its cloud and velocity, the damage reduction) and its arc (the range from the target, the ships in all)
+    a = t.get("aoe")
+    body += bytes([1]) + struct.pack("<4d", a["explosionRadius"], a["explosionVelocity"], a["damageReductionFactor"],
+                                     a["damageReductionSensitivity"]) if a else bytes([0])
+    c = t.get("arc")
+    return body + (bytes([1]) + struct.pack("<di", c["range"], c["targets"]) if c else bytes([0]))
 
 
 LAYERS = {"shield": 0, "armor": 1, "structure": 2}
@@ -520,6 +526,22 @@ valid = [
                 "offChanges": [{"itemId": "9988400002720", "attributeId": 6, "value": 4.5},
                                {"itemId": "9988400002720", "attributeId": 51, "value": 3500.0},
                                {"itemId": "9988400002720", "attributeId": 54, "value": 6000.0}]}},
+    {"name": "activate a vorton projector whose explosion needs no roll and whose arc reaches ten ships", "kind": "Activate",
+     "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002721", "moduleType": 54739, "effectId": 8037, "fx": "effects.AttackMode",
+                "durationMs": 6000.0, "capacitorNeed": 7.0, "repeat": 1000, "targetId": "980050000108",
+                "turret": {"weaponTypeId": 54739, "fx": "effects.AttackMode", "rawDamage": [116.0, 0.0, 17.0, 0.0],
+                           "optimalRange": 22464.0, "falloff": 0.0, "trackingSpeed": 0.0, "signatureResolution": 40000.0,
+                           "charge": {"typeId": 54769, "flag": 11, "rounds": 1000, "perCycle": 1},
+                           "aoe": {"explosionRadius": 43.0, "explosionVelocity": 190.0, "damageReductionFactor": 0.4,
+                                   "damageReductionSensitivity": 5.5},
+                           "arc": {"range": 10000.0, "targets": 10}},
+                "onChanges": [{"itemId": "9988400002721", "attributeId": 6, "value": 7.0},
+                              {"itemId": "9988400002721", "attributeId": 51, "value": 6000.0},
+                              {"itemId": "9988400002721", "attributeId": 54, "value": 22464.0}],
+                "offChanges": [{"itemId": "9988400002721", "attributeId": 6, "value": 7.0},
+                               {"itemId": "9988400002721", "attributeId": 51, "value": 6000.0},
+                               {"itemId": "9988400002721", "attributeId": 54, "value": 22464.0}]}},
     {"name": "rounds spent", "kind": "ChargeSpent", "sessionId": "1790646377000015", "moduleId": "9988400002719", "roundsLeft": "79"},
     {"name": "rounds loaded into a gun that runs", "kind": "AdjustCharge", "requestId": "41", "sessionId": "1790646377000015", "moduleId": "9988400002719",
      "chargeType": 222, "op": "add", "capacity": "80", "available": "40"},
@@ -618,6 +640,11 @@ for case in valid:
 good = build(valid[2])  # a good Enter
 precursor = next(c for c in valid if c["name"] == "activate a precursor weapon that builds its damage up")
 negative_spool = dict(precursor, effect=dict(precursor["effect"], turret=dict(precursor["effect"]["turret"], spool={"perCycle": -0.07, "max": 2.125})))
+vorton = next(c for c in valid if c["name"].startswith("activate a vorton projector"))
+negative_radius = dict(vorton, effect=dict(vorton["effect"], turret=dict(vorton["effect"]["turret"],
+                                                                         aoe=dict(vorton["effect"]["turret"]["aoe"], explosionRadius=-43.0))))
+negative_targets = dict(vorton, effect=dict(vorton["effect"], turret=dict(vorton["effect"]["turret"],
+                                                                          arc={"range": 10000.0, "targets": -1})))
 invalid = [
     {"name": "unknown kind", "reason": "unknown-kind", "hex": "01000000ff"},
     {"name": "kind zero", "reason": "unknown-kind", "hex": "0100000000"},
@@ -628,6 +655,8 @@ invalid = [
      "hex": (good[:4] + good[4:17] + bytes([7]) + good[18:]).hex()},
     {"name": "enter cut short", "reason": "truncated", "hex": (struct.pack("<I", 20) + good[4:24]).hex()},
     {"name": "precursor spool with a negative bonus per cycle", "reason": "bad-value", "hex": build(negative_spool).hex()},
+    {"name": "vorton explosion with a negative radius", "reason": "bad-value", "hex": build(negative_radius).hex()},
+    {"name": "vorton arc with a negative number of targets", "reason": "bad-value", "hex": build(negative_targets).hex()},
     {"name": "enter reply with an unknown status", "reason": "bad-value",
      "hex": (struct.pack("<I", 12) + bytes([13]) + u64(1) + bytes([2]) + s("")).hex()},
     {"name": "text that is not UTF-8", "reason": "utf8",

@@ -95,9 +95,14 @@ public class SimCodecTests
 
     private static SimTurret TurretOf(JsonNode t) => new(
         (int)t["weaponTypeId"]!, (string)t["fx"]!, VectorOf(t["rawDamage"]!), (double)t["optimalRange"]!, (double)t["falloff"]!, (double)t["trackingSpeed"]!,
-        (double)t["signatureResolution"]!, ChargeOf(t["charge"]), MissileOf(t["missile"]), SpoolOf(t["spool"]));
+        (double)t["signatureResolution"]!, ChargeOf(t["charge"]), MissileOf(t["missile"]), SpoolOf(t["spool"]), AoeOf(t["aoe"]), ArcOf(t["arc"]));
 
     private static SimSpool? SpoolOf(JsonNode? s) => s is null ? null : new SimSpool((double)s["perCycle"]!, (double)s["max"]!);
+
+    private static SimAoe? AoeOf(JsonNode? a) => a is null ? null : new SimAoe(
+        (double)a["explosionRadius"]!, (double)a["explosionVelocity"]!, (double)a["damageReductionFactor"]!, (double)a["damageReductionSensitivity"]!);
+
+    private static SimArc? ArcOf(JsonNode? a) => a is null ? null : new SimArc((double)a["range"]!, (int)a["targets"]!);
 
     private static SimMissile? MissileOf(JsonNode? m) => m is null ? null : new SimMissile(
         (int)m["chargeTypeId"]!, (int)m["groupId"]!, (string)m["name"]!, (double)m["radius"]!, (double)m["mass"]!, (double)m["agility"]!, (double)m["hitPoints"]!, (double)m["maxVelocity"]!, (double)m["flightTimeMs"]!, (double)m["explosionRadius"]!, (double)m["explosionVelocity"]!,

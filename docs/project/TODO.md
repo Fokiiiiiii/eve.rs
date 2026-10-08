@@ -1,7 +1,7 @@
 # Current TODOs
 
 **Updated:** 2026-10-08
-**Baseline:** main source commit `c6c3833f56fff65f0b1a47ed17576c85204f66de`
+**Baseline:** main source commit `93f92e633747fbadb0d12374606bd1712ce7ff51`
 
 This list distinguishes a real behavior/provider gap from an intentionally empty default and from a method whose route already exists. These items are not missing-route work.
 
@@ -68,14 +68,14 @@ The 484/484 route result is not a 484/484 wire-shape proof. CCP's public ESI mat
 
 **LIMITATION — Character clone and worldspace state.** The character store has a home station but no separate clone station or worldspace field. Character entry currently uses the home station as `cloneStationID` and `None` for `worldspaceid`; populate these from an authoritative store if one is added.
 
-**LIMITATION — In-space resume fidelity.** The active ship's position is persisted and restored, but the current space-item store does not preserve velocity or warp state. Direction reuses any prior stored vector or falls back to +Z. The real-client login and ballpark bootstrap remain unverified.
+**LIMITATION — In-space resume fidelity.** The active ship's position is persisted and restored, but the current space-item store does not preserve velocity or warp state. Direction reuses any prior stored vector or falls back to +Z. The first active-space ship List now triggers a visual-only AddBalls2 prime before full bind; native-client login ordering remains unverified.
 
 ## Closed items that should stay closed
 
 - `storeManager.buy_offer` and `insuranceSvc.InsureShip` / `UnInsureShip`: existing persistence providers are connected.
 - FleetProxy's seven operations plus FleetObject advert creation/setup callbacks: connected and tested; only the legacy-row limitation above remains.
 - `station.GetGuests`: alias route, wire shape, observer ledger seed, and station/structure join/leave broadcasts are implemented and unit-tested.
-- `SelectCharacterID`: character session state, station/structure/space selection, deferred docked ship-id and fitting bootstrap, and saved-pose space resume are wired. The PostgreSQL-backed selection test was skipped without `EVE_PG_URL`; native-client acceptance remains unverified.
+- `SelectCharacterID`: character session state, station/structure/space selection, deferred docked ship-id and fitting bootstrap, first-space-List visual prime, ship/module Dogma hydration, and saved-pose space resume are wired. The PostgreSQL-backed selection test was skipped without `EVE_PG_URL`; native-client acceptance remains unverified.
 - `industryMonitor.ConnectJob`: inventory-flag filtering and blueprint-category exclusion are implemented and tested.
 - `structureHangarViewMgr.GetMyHangarViewState`: existing persistence callback is connected.
 - publicQaToolsServer.SlashCmd delegates to the existing slash service. CanGiveItemForMultifit returns false in EveJS and RS, so those responses are aligned.

@@ -11,27 +11,31 @@ run the same scenarios against. Start with `CLAUDE.md` and the [documentation in
 
 ## Architecture
 
-**Three processes + one database:** Rust handles the network and space simulation; C# handles game services.
+Three independent server processes, backed by PostgreSQL 18.
 
-```mermaid
-flowchart TB
-    Client["EVE Online client<br/>24.01 / build 3396210"]
-    Net["eve-net · Rust<br/>TCP 26000 · login · packets"]
-    Host["eve-host · C# / .NET 10<br/>sessions · RPC · game services"]
-    Sim["eve-sim · Rust<br/>ships · movement · combat · NPCs"]
-    DB[("PostgreSQL 18<br/>persistent game state")]
-    Client <-->|"MachoNet / TCP"| Net
-    Net <-->|HostLink| Host
-    Host <-->|SimLink| Sim
-    Host <-->|SQL| DB
-```
+![eve.rs system architecture](docs/assets/architecture-overview.svg)
 
-- **Network:** `crates/eve-net` accepts clients; `crates/eve-marshal` handles wire encoding.
-- **Game services:** `dotnet/src/Eve.Host` starts the host, `Eve.Services.*` handles RPCs, and domain modules implement game rules.
-- **Space:** `crates/eve-sim` runs `eve-space`, with `eve-destiny` for motion and `eve-behaviors` for NPC behavior.
-- **Persistence:** PostgreSQL stores game data; `Eve.Scheduler`, `Eve.Events`, and `Eve.Relations` provide shared infrastructure.
+<details>
+<summary><strong>Explore internal architecture</strong> · Rust engine and .NET service host</summary>
 
-**Process links:** Unix domain sockets by default; local TCP is also supported.
+### Rust · Network & simulation
+
+![Rust architecture](docs/assets/architecture-rust.svg)
+
+### C# · Service host
+
+![C# service host architecture](docs/assets/architecture-host.svg)
+
+</details>
+
+**At a glance**
+
+- **`eve-net`** · Rust front end for client connections and MachoNet packets.
+- **`eve-host`** · .NET 10 host for sessions, RPCs, game services, and persistent state.
+- **`eve-sim`** · Rust simulation for ships, movement, combat, and NPC behavior.
+- **PostgreSQL 18** · Persistent gameplay data, events, schedules, and static data.
+
+HostLink and SimLink use local IPC (Unix sockets by default, with TCP alternatives).
 
 ## Layout
 

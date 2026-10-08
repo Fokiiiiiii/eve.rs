@@ -46,7 +46,16 @@ public enum ItemMutationRefusal
 /// <summary>What the caller asks: the mutaplasmid and the source, both of the character, both in <see cref="LocationId"/> (a station or a ship).</summary>
 public sealed record ItemMutationRequest(long CharacterId, long LocationId, long MutatorItemId, long SourceItemId);
 
-/// <summary>The mutated item that was created, with the provenance that was recorded for it.</summary>
+/// <summary>
+/// What became of one item in a mutation: its row after (a consumed item has quantity 0), and the place, flag and stack size it had before
+/// (for the item made, the place and flag and quantity are 0: it came from nothing).
+/// </summary>
+public sealed record ItemMutationChange(Item After, long PreviousLocationId, int PreviousFlag, long PreviousQuantity);
+
+/// <summary>
+/// The mutated item that was created, with the provenance that was recorded for it, and the changes the mutation made to the inventory in the
+/// order they are announced: the mutaplasmid, the source, then the item made.
+/// </summary>
 public sealed record ItemMutationReceipt(
     long ItemId,
     int TypeId,
@@ -57,7 +66,8 @@ public sealed record ItemMutationReceipt(
     long SourceItemId,
     int SourceTypeId,
     IReadOnlyDictionary<int, double> Rolls,
-    IReadOnlyDictionary<int, double> MutatedValues);
+    IReadOnlyDictionary<int, double> MutatedValues,
+    IReadOnlyList<ItemMutationChange> Changes);
 
 /// <summary>The outcome of a mutation request: the item that was made, or the typed reason it was refused.</summary>
 public abstract record ItemMutationOutcome;
@@ -208,19 +218,25 @@ public sealed class ItemMutationService
         var baseValues = accepted.Value.Ranges.ToDictionary(range => range.AttributeId, range => sourceAttributes[range.AttributeId]);
 
         // Consume exactly one unit of the mutaplasmid, and the source module.
+        var changes = new List<ItemMutationChange>(3);
         if (mutator.Singleton || mutator.Quantity <= 1)
         {
             await _items.DeleteAsync(connection, transaction, mutator.Id, cancellationToken);
+            changes.Add(new ItemMutationChange(mutator with { Quantity = 0 }, mutator.LocationId, mutator.Flag, mutator.Quantity));
         }
         else
         {
             await _items.SetQuantityAsync(connection, transaction, mutator.Id, mutator.Quantity - 1, cancellationToken);
+            changes.Add(new ItemMutationChange(mutator with { Quantity = mutator.Quantity - 1 }, mutator.LocationId, mutator.Flag, mutator.Quantity));
         }
         await _items.DeleteAsync(connection, transaction, source.Id, cancellationToken);
+        changes.Add(new ItemMutationChange(source with { Quantity = 0 }, source.LocationId, source.Flag, source.Quantity));
 
         // The result takes the source's place: its location and flag (ADR 0016, D7).
         var resultId = await _items.CreateAsync(connection, transaction,
             new NewItem(accepted.Value.OutputTypeId, request.CharacterId, source.LocationId, source.Flag, 1, Singleton: true), cancellationToken);
+        var result = new Item(resultId, accepted.Value.OutputTypeId, request.CharacterId, source.LocationId, source.Flag, 1, Singleton: true, CustomName: null);
+        changes.Add(new ItemMutationChange(result, 0, 0, 0));
 
         var createdAtMs = _nowUnixMs();
         await _mutations.InsertAsync(connection, transaction, new ItemMutationRecord(
@@ -233,7 +249,7 @@ public sealed class ItemMutationService
 
         return new ItemMutationAccepted(new ItemMutationReceipt(
             resultId, accepted.Value.OutputTypeId, source.LocationId, source.Flag,
-            mutator.Id, mutator.TypeId, source.Id, source.TypeId, rolls, mutatedValues));
+            mutator.Id, mutator.TypeId, source.Id, source.TypeId, rolls, mutatedValues, changes));
     }
 
     /// <summary>Loose in a hangar or a cargo hold: a fitted item (a slot flag) is not usable as an input.</summary>

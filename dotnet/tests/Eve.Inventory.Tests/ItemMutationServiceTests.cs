@@ -223,6 +223,22 @@ public class ItemMutationServiceTests
     }
 
     [PgFact]
+    public async Task The_changes_are_the_mutaplasmid_then_the_source_then_the_item_made_each_with_the_place_and_stack_it_had()
+    {
+        await using var m = await Mutations.CreateAsync();
+        var (mutator, source) = await StandardAsync(m);
+
+        var receipt = Assert.IsType<ItemMutationAccepted>(await m.Service().MutateAsync(new(Character, Station, mutator, source))).Receipt;
+
+        // the mutaplasmid is a single unit here: consumed (after quantity 0); the source is consumed; the item made is new, from no place
+        Assert.Equal(3, receipt.Changes.Count);
+        Assert.Equal((mutator, 0L, Station, ItemFlags.Hangar, 1L), (receipt.Changes[0].After.Id, receipt.Changes[0].After.Quantity, receipt.Changes[0].PreviousLocationId, receipt.Changes[0].PreviousFlag, receipt.Changes[0].PreviousQuantity));
+        Assert.Equal((source, 0L, Station, ItemFlags.Hangar, 1L), (receipt.Changes[1].After.Id, receipt.Changes[1].After.Quantity, receipt.Changes[1].PreviousLocationId, receipt.Changes[1].PreviousFlag, receipt.Changes[1].PreviousQuantity));
+        Assert.Equal((receipt.ItemId, Abyssal, 1L, Station, ItemFlags.Hangar), (receipt.Changes[2].After.Id, receipt.Changes[2].After.TypeId, receipt.Changes[2].After.Quantity, receipt.Changes[2].After.LocationId, receipt.Changes[2].After.Flag));
+        Assert.Equal((0L, 0, 0L), (receipt.Changes[2].PreviousLocationId, receipt.Changes[2].PreviousFlag, receipt.Changes[2].PreviousQuantity));
+    }
+
+    [PgFact]
     public async Task The_provenance_records_the_mutaplasmid_the_input_the_rolls_and_the_base_values()
     {
         await using var m = await Mutations.CreateAsync();

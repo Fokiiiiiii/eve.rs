@@ -5,6 +5,7 @@ using Eve.Inventory.Mutation;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
+using Eve.Services.Ships;
 using Eve.Ships;
 
 namespace Eve.Host;
@@ -12,6 +13,7 @@ namespace Eve.Host;
 /// <summary>
 /// <c>dynamicItemService</c>: the crafting window's mutation (<c>CreateDynamicItem</c>, ADR 0016) and the stored record of a mutated item
 /// (<c>GetDynamicItemInfo</c>). The mutation is the <see cref="ItemMutationService"/>'s; refusals are the client's <c>CustomNotify</c> errors;
+/// the inventory changes are announced as <c>OnItemChange</c> before the reply, in the order the mutation made them.
 /// </summary>
 public sealed class DynamicItemRpcService : IService
 {
@@ -54,9 +56,24 @@ public sealed class DynamicItemRpcService : IService
                 Refuse(Describe(refused.Reason));
                 break;
             case ItemMutationAccepted accepted:
+                await AnnounceAsync(call, accepted.Receipt.Changes);
                 return new PyInt(accepted.Receipt.ItemId);
         }
         return PyNone.Instance; // not reached: every outcome is accepted or refused above
+    }
+
+    /// <summary>The changes of a mutation as the client is told them, in order (the mutaplasmid, the source, the item made).</summary>
+    private async Task AnnounceAsync(ServiceCall call, IReadOnlyList<ItemMutationChange> changes)
+    {
+        var types = await _itemTypes.GetAsync(changes.Select(change => change.After.TypeId).Distinct().ToArray(), call.Cancellation);
+        ItemRow Row(Item item) => types.TryGetValue(item.TypeId, out var type)
+            ? new ItemRow(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, item.Quantity, type.GroupId, type.CategoryId)
+            : new ItemRow(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, item.Quantity, 0, 0);
+        foreach (var change in changes)
+        {
+            ShipNotifications.SendItemChange(call.Session,
+                new Eve.Ships.ItemChanged(change.After, change.PreviousLocationId, change.PreviousFlag, change.PreviousQuantity), Row);
+        }
     }
 
     private async ValueTask<PyValue> GetDynamicItemInfoAsync(ServiceCall call)

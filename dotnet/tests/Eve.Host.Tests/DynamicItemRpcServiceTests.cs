@@ -113,6 +113,17 @@ public sealed class DynamicItemRpcServiceTests
         return events;
     }
 
+    /// <summary>The item an <c>OnItemChange</c> is about, its quantity, and the differences it carries (the place, flag and stack it had).</summary>
+    private static (long ItemId, long Quantity, Dictionary<int, long> Before) Change((string Name, PyValue[] Args) notification)
+    {
+        Assert.Equal("OnItemChange", notification.Name);
+        var row = ((PyPackedRow)notification.Args[0]).Values;
+        var before = ((PyDict)notification.Args[1]).Entries.ToDictionary(e => (int)Number(e.Key), e => Number(e.Value));
+        return (Number(row[0]), Number(row[5]), before);
+    }
+
+    private static long Number(PyValue value) => value switch { PyInt i => i.Value, PyLong l => l.Value, _ => throw new InvalidOperationException(value.ToString()) };
+
     /// <summary>The message of a refusal: the client's <c>CustomNotify</c> error and the text it shows.</summary>
     private static string Notice(Exception exception)
     {
@@ -125,7 +136,7 @@ public sealed class DynamicItemRpcServiceTests
     private static string PgUrl() => Environment.GetEnvironmentVariable("EVE_PG_URL") ?? throw new InvalidOperationException("EVE_PG_URL is not set");
 
     [PgFact]
-    public async Task CreateDynamicItem_consumes_both_inputs_and_makes_the_mutated_item()
+    public async Task CreateDynamicItem_makes_the_mutated_item_and_announces_its_changes_in_order_before_the_reply()
     {
         await using var route = await Route.CreateAsync(PgUrl());
         var mutator = await route.GiveAsync(Mutaplasmid, Character, singleton: false);
@@ -134,10 +145,14 @@ public sealed class DynamicItemRpcServiceTests
         var reply = await route.CallAsync("CreateDynamicItem", route.Session, mutator, source);
 
         var made = Assert.IsType<PyInt>(reply).Value;
-        var result = Assert.IsType<Item>(await route.Items.GetAsync(made));
-        Assert.Equal((Result, Character, true), (result.TypeId, result.OwnerId, result.Singleton));
+        Assert.Equal(Result, (await route.Items.GetAsync(made))!.TypeId);
 
-        // the mutaplasmid and the source are gone; the item made is stored with its provenance
+        // the mutaplasmid and the source are gone, announced first, then the item made; then the reply
+        var changes = Notifications(route.Packets).Select(Change).ToList();
+        Assert.Equal(new[] { mutator, source, made }, changes.Select(c => c.ItemId));
+        Assert.Equal(new[] { 0L, 0L, 1L }, changes.Select(c => c.Quantity));
+        Assert.Equal(0, changes[2].Before[3]); // the item made came from nothing: its previous place is 0
+        Assert.Equal(1L, changes[1].Before[9]); // the source was a single module of stack size 1 (key 9)
         Assert.Null(await route.Items.GetAsync(mutator));
         Assert.Null(await route.Items.GetAsync(source));
     }

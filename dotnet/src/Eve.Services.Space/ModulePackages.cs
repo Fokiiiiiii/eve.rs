@@ -25,7 +25,7 @@ internal static class ModulePackages
     public static (SimNumbers On, SimNumbers Off) Propulsion(double mass, double maxVelocity, double signatureRadius, double massAddition, double speedFactor, double speedBoostFactor, double signatureBonus) =>
         PropulsionEffect.Numbers(mass, maxVelocity, signatureRadius, massAddition, speedFactor, speedBoostFactor, signatureBonus);
 
-    public static Result Of(ShipSnapshot snapshot, DogmaStatic statics, long moduleId, string effectName, long targetId, int repeat, IReadOnlyList<double>? aim = null)
+    public static Result Of(ShipSnapshot snapshot, DogmaStatic statics, long moduleId, string effectName, long targetId, int repeat, IReadOnlyList<double>? aim = null, IReadOnlyList<double>? aimEnd = null)
     {
         var module = snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId);
         if (module is null || statics.Type(module.TypeId) is not { } type)
@@ -48,7 +48,7 @@ internal static class ModulePackages
             return new Result(null, "MODULE_NOT_ONLINE", module.TypeId, name);
         }
 
-        var context = new EffectContext<ShipSnapshot>(snapshot, snapshot.World, statics, moduleId, type, effect, targetId, repeat, aim);
+        var context = new EffectContext<ShipSnapshot>(snapshot, snapshot.World, statics, moduleId, type, effect, targetId, repeat, aim, aimEnd);
         var handler = ModuleEffects.Default.Find(context);
         // the handler may refuse before the target is asked for (a gun with nothing to shoot is refused first: the reference's order)
         if (handler?.Refusal(context) is { } reason)

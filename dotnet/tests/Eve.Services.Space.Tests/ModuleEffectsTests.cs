@@ -717,7 +717,6 @@ public class ModuleEffectsTests
             "doomsdayAOETrack",
             "doomsdayAOEWeb",
             "doomsdayHOG",
-            "doomsdaySlash",
             "entosisLink",
             "hackOrbital",
             "industrialItemCompression",

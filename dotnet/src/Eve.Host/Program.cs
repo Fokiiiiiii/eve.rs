@@ -195,7 +195,7 @@ var superWeaponCallbacks = new SuperWeaponRpcCallbacks(
     ActivatePointTargetedAsync: (request, cancellationToken) => (superWeapons ?? throw SuperWeaponMgrService.NotWired())
         .ActivatePointTargetedAsync(request.Session, request.ModuleId, request.EffectId, request.Destination, cancellationToken),
     ActivateSlashAsync: (request, cancellationToken) => (superWeapons ?? throw SuperWeaponMgrService.NotWired())
-        .ActivateSlashAsync(request.Session, request.ModuleId, cancellationToken));
+        .ActivateSlashAsync(request.Session, request.ModuleId, request.StartPoint, request.EndPoint, cancellationToken));
 foreach (var service in CoreServices.Create(
     new SubscriptionSettings(), new NoOmegaAccounts(), now, calendarStore, calendarAudience,
     gameRpcCallbacks: gameRpcCallbacks,

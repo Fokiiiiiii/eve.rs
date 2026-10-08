@@ -1100,7 +1100,7 @@ private readonly TransitionRuntime _transitions;
     /// <summary>
     /// Starts an effect of a module of the pilot's ship. <paramref name="aim"/> is the point a point-targeted effect is aimed at (an offset from the ship's centre), or null.
     /// </summary>
-    public async Task<ModuleResult?> ActivateAsync(ClientSession session, long moduleId, string effectName, long targetId, int repeat, CancellationToken cancellationToken, IReadOnlyList<double>? aim = null)
+    public async Task<ModuleResult?> ActivateAsync(ClientSession session, long moduleId, string effectName, long targetId, int repeat, CancellationToken cancellationToken, IReadOnlyList<double>? aim = null, IReadOnlyList<double>? aimEnd = null)
     {
         CancelSafeLogoff(session);
         var id = (ulong)session.SessionId;
@@ -1128,7 +1128,7 @@ private readonly TransitionRuntime _transitions;
         {
             return ModuleResult.Refusal(warpRefusal, warpModule.TypeId, _statics.Type(warpModule.TypeId)?.Name ?? "");
         }
-        var made = ModulePackages.Of(snapshot, _statics, moduleId, effectName, targetId, repeat, aim);
+        var made = ModulePackages.Of(snapshot, _statics, moduleId, effectName, targetId, repeat, aim, aimEnd);
         if (made.Effect is not { } package)
         {
             return ModuleResult.Refusal(made.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);

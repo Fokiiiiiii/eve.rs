@@ -29,8 +29,7 @@ namespace Eve.Services.Space.Effects;
 //   - the strike: damage after a delay, a chain with a loss per jump (EveJS tickDoomsdayEffect), and the immobility and no-jump windows. It needs a new sim
 //     action and a wire bump (decisions D7 and D8 of the superweapons brief); the area is the Area shape of ADR 0011, not built yet;
 //   - the lance beacon (a Deployed object, ADR 0012): the lance has a body (LanceEffect, DoomsdayLanceEffect.cs) without it, the beacon is the client's graphic only;
-//   - the reaper's slash arc (two points) and its cylinder area (ADR 0011);
-//   - the disruptive lance's debuff (a buff registry, decision D4; the cloak-disallow flag, decision D10);
+//   - the disruptive lance's siege requirement (5426): no siege state in the simulation (its debuff is built, protocol 28; DEVIATIONS 139);
 //   - the HOG's transport: the destination point, the capital-ship exclusion and the 60 s warp block come from the SDE text only. EveJS has no function for
 //     doomsdayHOG (U11, UNVERIFIED). The structure variant (category 66) is module and wiring only (O5), so it is refused the same way.
 
@@ -45,13 +44,7 @@ internal abstract class SuperWeaponPendingEffect(string reason, params string[] 
     protected override string? Refusal(ModuleEffectContext module) => _reason;
 }
 
-/// <summary>The reapers and Catmageddon (<c>doomsdaySlash</c>): an arc of two points, refused until the slash and its cylinder area have a body.</summary>
-internal sealed class ReaperEffect()
-    : SuperWeaponPendingEffect("SUPERWEAPON_REAPER_NOT_IMPLEMENTED", "doomsdaySlash");
 
-/// <summary>The disruptive lances (<c>debuffLance</c>): refused until the debuff and the cloak-disallow flag have a body.</summary>
-internal sealed class DisruptiveLanceEffect()
-    : SuperWeaponPendingEffect("SUPERWEAPON_DISRUPTIVE_LANCE_NOT_IMPLEMENTED", "debuffLance");
 
 /// <summary>The Gravitational Transportation Field Oscillator (40634, <c>doomsdayHOG</c>): refused until its transport has a body (the SDE text only; U11).</summary>
 internal sealed class HogEffect()

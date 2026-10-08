@@ -24,8 +24,10 @@ public class SuperWeaponEffectsTests
         ["superWeaponMinmatar"] = "TARGET_REQUIRED",
         // the lance has a body: without a point it is refused for the point (its aimed package is tested in A_lance...)
         ["doomsdayBeamDOT"] = "TARGET_POINT_REQUIRED",
-        ["doomsdaySlash"] = "SUPERWEAPON_REAPER_NOT_IMPLEMENTED",
-        ["debuffLance"] = "SUPERWEAPON_DISRUPTIVE_LANCE_NOT_IMPLEMENTED",
+        // the reaper has a body: without its two points it is refused for them (A_reaper...)
+        ["doomsdaySlash"] = "SLASH_POINTS_REQUIRED",
+        // the disruptive lance needs an active siege module, which the simulation does not track (A_disruptive_lance...)
+        ["debuffLance"] = "SUPERWEAPON_SIEGE_STATE_NOT_TRACKED",
         // the cone has a body: without a point it is refused for the point (its aimed package is tested in A_cone...)
         ["doomsdayConeDOT"] = "TARGET_POINT_REQUIRED",
         ["doomsdayHOG"] = "SUPERWEAPON_HOG_NOT_IMPLEMENTED",
@@ -69,6 +71,50 @@ public class SuperWeaponEffectsTests
         }
         // one activation per type: no type of the group is left out of the check
         Assert.True(types.Length == seen.Count, $"{seen.Count} activations checked for {types.Length} types: {string.Join(", ", seen)}");
+    }
+
+    [PgFact]
+    public async Task A_reaper_is_a_sweep_of_its_two_points_on_the_fixed_arc_and_refused_off_it()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
+        await statics.EnsureTypesAsync([Ship, 40632]);
+
+        // the Divine Harvest (40632): the client's arc has its centre maxRange (150 km) ahead and a half span of tan(15 degrees) * maxRange, perpendicular
+        // to it. The cylinder (doomsdayDamageRadius 5000) sweeps from the start point to the end point over a 10 s window (11 pulses, closed at its end)
+        var reaper = FittedModule(statics, 40632);
+        var half = Math.Tan(15 * Math.PI / 180) * 150000.0;
+        double[] start = [150000.0, -half, 0.0];
+        double[] end = [150000.0, half, 0.0];
+        Assert.Equal("SLASH_POINTS_REQUIRED", ModulePackages.Of(reaper.Snapshot, statics, reaper.ModuleId, "doomsdaySlash", 0, 1, start).Reason);
+        var result = ModulePackages.Of(reaper.Snapshot, statics, reaper.ModuleId, "doomsdaySlash", 0, 1, start, end);
+        Assert.Null(result.Reason);
+        Assert.True(result.Effect!.BurnsFuel, "the fuel is the shared mechanism's (consumption 714 50000 of 713 16274)");
+        var strike = Assert.IsType<SimAction.Strike>(result.Effect.Action);
+        Assert.True(strike.IsValid);
+        Assert.Equal(1, strike.Shape);
+        Assert.Equal((5000.0, 10000.0, 1000.0, 11), (strike.Radius, strike.WarningMs, strike.PulseMs, strike.Pulses));
+        // the builder rounds the endpoints to six decimals (NpcArmament.Round6), so the sweep's end is the client's point to a micrometre
+        Assert.True(end.Zip(strike.SweepEnd!).All(pair => Math.Abs(pair.First - pair.Second) < 1e-3), $"sweep end {string.Join(", ", strike.SweepEnd!)}");
+        Assert.Equal((35000.0, 10000.0, 20000.0), (strike.NeutAmount, strike.NeutRadius, strike.NeutSignatureRadius));
+        Assert.Equal(0.0, strike.DebuffMs);
+
+        // a slash that is not the client's arc is refused by name, and so is one with no length
+        Assert.Equal("SLASH_POINTS_INVALID", ModulePackages.Of(reaper.Snapshot, statics, reaper.ModuleId, "doomsdaySlash", 0, 1, [30000.0, -5000.0, 0.0], [30000.0, 5000.0, 0.0]).Reason);
+        Assert.Equal("SLASH_POINTS_INVALID", ModulePackages.Of(reaper.Snapshot, statics, reaper.ModuleId, "doomsdaySlash", 0, 1, start, start).Reason);
+    }
+
+    [PgFact]
+    public async Task A_disruptive_lance_is_refused_for_the_siege_it_cannot_see_and_its_strike_carries_the_debuff()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
+        await statics.EnsureTypesAsync([Ship, 77398]);
+
+        // the Atgeir (77398) carries activationRequiresActiveSiegeModule (5426) = 1: the siege is not tracked by the simulation, so it is refused by name
+        var lance = FittedModule(statics, 77398);
+        Assert.Equal("SUPERWEAPON_SIEGE_STATE_NOT_TRACKED", ModulePackages.Of(lance.Snapshot, statics, lance.ModuleId, "debuffLance", 0, 1, [1.0, 0.0, 0.0]).Reason);
+        Assert.Null(ModulePackages.Of(lance.Snapshot, statics, lance.ModuleId, "debuffLance", 0, 1, [1.0, 0.0, 0.0]).Effect);
     }
 
     [PgFact]

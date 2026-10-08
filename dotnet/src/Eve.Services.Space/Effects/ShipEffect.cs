@@ -31,6 +31,9 @@ internal sealed class ModuleEffectContext
     /// <summary>The point a point-targeted effect is aimed at (an offset from the ship's centre), or null.</summary>
     public IReadOnlyList<double>? Aim => Context.Aim;
 
+    /// <summary>The second point of a two-point activation (a reaper's slash end), or null.</summary>
+    public IReadOnlyList<double>? AimEnd => Context.AimEnd;
+
     /// <summary>The module's attributes after dogma.</summary>
     public IReadOnlyDictionary<int, double> Attributes { get; }
 

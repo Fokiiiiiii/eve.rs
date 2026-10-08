@@ -14,18 +14,23 @@ namespace Eve.Services.Space.Effects;
 internal static class DoomsdayStrike
 {
     /// <summary>The strike the module's data gives when aimed along <paramref name="aim"/> (a point from the ship; its direction is the aim).</summary>
-    public static SimAction.Strike Of(ModuleEffectContext module, IReadOnlyList<double> aim)
+    /// <param name="aim">The point the strike is aimed at, from the ship (a reaper's start point when <paramref name="sweepEnd"/> is given).</param>
+    /// <param name="sweepEnd">A reaper's end point, from the ship: the axis sweeps from <paramref name="aim"/> to it over the window (protocol 28).</param>
+    /// <param name="cylinder">A non-cone shape runs as a cylinder (the reference's rule: only shape 3 is a cone). Reapers carry shape 2.</param>
+    public static SimAction.Strike Of(ModuleEffectContext module, IReadOnlyList<double> aim, IReadOnlyList<double>? sweepEnd = null, bool cylinder = false)
     {
         double Attribute(int attribute) => NpcArmament.Round6(Math.Max(0, module.Value(attribute, 0)));
         var direction = Unit(aim) ?? [0.0, 0.0, 0.0];
+        // a sweep's length is its start point's distance, so that its start is the aim exactly (the simulation runs the axis from there)
+        var length = sweepEnd is null ? Attribute(MaxRange) : NpcArmament.Round6(Math.Sqrt(aim.Sum(c => c * c)));
         var pulse = Attribute(DoomsdayDamageCycleTime);
         var window = Attribute(DoomsdayDamageDuration);
         // the reference's window is closed at its end: a pulse at its start and at every cycle time after it, up to and including its end
         var pulses = pulse > 0 ? (int)Math.Floor(window / pulse) + 1 : 0;
         return new SimAction.Strike(
-            (byte)Attribute(DoomsdayAoeShape),
+            cylinder ? (byte)1 : (byte)Attribute(DoomsdayAoeShape),
             direction,
-            Attribute(MaxRange),
+            length,
             Attribute(DoomsdayDamageRadius),
             Attribute(DoomsdayWarningDuration),
             pulse,
@@ -36,7 +41,10 @@ internal static class DoomsdayStrike
             Attribute(DoomsdayNoJumpOrCloakDuration),
             Attribute(DoomsdayEnergyNeutAmount),
             Attribute(DoomsdayEnergyNeutRadius),
-            Attribute(DoomsdayEnergyNeutSignatureRadius));
+            Attribute(DoomsdayEnergyNeutSignatureRadius),
+            // the disruptive lance's applied debuff (60 s); 0 for a doomsday with none
+            Attribute(DoomsdayAppliedDBuffDuration),
+            sweepEnd is null ? null : sweepEnd.Select(NpcArmament.Round6).ToArray());
     }
 
     /// <summary>The unit vector of an aim, or null for a zero or non-finite aim.</summary>

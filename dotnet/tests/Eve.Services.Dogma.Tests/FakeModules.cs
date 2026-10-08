@@ -10,7 +10,7 @@ internal sealed class FakeModules : ISpaceModules
     /// <summary>What every order is answered with; null when the session has no ship in space.</summary>
     public ModuleResult? Answer { get; set; } = ModuleResult.Done;
 
-    public Task<ModuleResult?> ActivateAsync(ClientSession session, long moduleId, string effectName, long targetId, int repeat, CancellationToken cancellationToken, IReadOnlyList<double>? aim = null)
+    public Task<ModuleResult?> ActivateAsync(ClientSession session, long moduleId, string effectName, long targetId, int repeat, CancellationToken cancellationToken, IReadOnlyList<double>? aim = null, IReadOnlyList<double>? aimEnd = null)
     {
         Asked.Add($"activate {moduleId} {effectName} {targetId} {repeat}");
         return Task.FromResult(Answer);

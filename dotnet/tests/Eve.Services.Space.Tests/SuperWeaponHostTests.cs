@@ -13,6 +13,7 @@ namespace Eve.Services.Space.Tests;
 public class SuperWeaponHostTests
 {
     private const int BosonicFieldGenerator = 40633;
+    private const int DivineHarvestReaper = 40632;
     private const int GravitationalOscillator = 40634;
     private const int JudgmentDoomsday = 24550;
     private const int StrontiumClathrates = 16275;
@@ -219,6 +220,22 @@ public class SuperWeaponHostTests
         Assert.Equal("CantInEmpireSpace", UserErrorName(error));
         Assert.Empty(rig.Sim.Heard.OfType<SimActivate>());
         Assert.Equal(2000, await QuantityAsync(rig, flying));
+    }
+
+    [PgFact]
+    public async Task A_reaper_slash_through_superWeaponMgr_takes_both_points_and_is_refused_by_the_empire_rule_before_any_simulation()
+    {
+        // ActivateSlashModule carries the arc's two points; both reach the package (the start is the aim, the end the second point), and the reaper's
+        // empire-space rule (disallowInEmpireSpace) refuses it in high security before any simulation action or fuel
+        await using var rig = await Rig.CreateAsync();
+        var flying = await DroneHostTests.FlyingWithADroneAsync(rig, minerTypeId: DivineHarvestReaper);
+        var route = new SuperWeaponService(rig.Space);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.ActivateSlashAsync(flying.Session, flying.Module, Point(150000, -40000, 0), Point(150000, 40000, 0), CancellationToken.None).AsTask());
+
+        Assert.Equal("CantInEmpireSpace", UserErrorName(error));
+        Assert.Empty(rig.Sim.Heard.OfType<SimActivate>());
     }
 
     [Fact]

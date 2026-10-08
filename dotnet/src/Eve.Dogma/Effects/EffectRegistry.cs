@@ -5,7 +5,7 @@ namespace Eve.Dogma;
 /// The context of an effect activation. <paramref name="Aim"/> is the point a point-targeted effect is aimed at, as an offset from the ship's centre
 /// (the client's point, render space); null for every other activation.
 /// </summary>
-public sealed record EffectContext<THost>(THost Host, DogmaWorld World, DogmaStatic Statics, long ItemId, TypeDef Type, EffectDef Effect, long TargetId, int Repeat, IReadOnlyList<double>? Aim = null);
+public sealed record EffectContext<THost>(THost Host, DogmaWorld World, DogmaStatic Statics, long ItemId, TypeDef Type, EffectDef Effect, long TargetId, int Repeat, IReadOnlyList<double>? Aim = null, IReadOnlyList<double>? AimEnd = null);
 
 /// <summary>
 /// The code behind one or more effects that the static data cannot describe with modifiers alone (what a module DOES each cycle: shoot, repair, web, jam). A handler names the effects it

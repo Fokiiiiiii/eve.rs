@@ -27,7 +27,7 @@ public interface ISpaceModules
 {
     /// <summary>Starts an effect of a fitted module (<c>Activate(itemID, effectName, target, repeat)</c>); null when the session has no ship in space.</summary>
     /// <summary>Starts an effect of a module; <paramref name="aim"/> is the point a point-targeted effect is aimed at (an offset from the ship), or null.</summary>
-    Task<ModuleResult?> ActivateAsync(ClientSession session, long moduleId, string effectName, long targetId, int repeat, CancellationToken cancellationToken, IReadOnlyList<double>? aim = null);
+    Task<ModuleResult?> ActivateAsync(ClientSession session, long moduleId, string effectName, long targetId, int repeat, CancellationToken cancellationToken, IReadOnlyList<double>? aim = null, IReadOnlyList<double>? aimEnd = null);
 
     /// <summary>Asks for an effect to stop at the end of its cycle (<c>Deactivate(itemID, effectName)</c>); null when the session has no ship in space.</summary>
     Task<ModuleResult?> DeactivateAsync(ClientSession session, long moduleId, string effectName, CancellationToken cancellationToken);

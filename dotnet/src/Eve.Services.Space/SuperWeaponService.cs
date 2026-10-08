@@ -32,17 +32,22 @@ public sealed class SuperWeaponService(SpaceSessions spaces)
         return ActivateAsync(session, moduleId, name, aim, cancellationToken);
     }
 
-    /// <summary>Activates the slash (a reaper or Catmageddon) of a module. No slash has a body yet: each is refused by its handler.</summary>
-    public async ValueTask<bool> ActivateSlashAsync(ClientSession session, long moduleId, CancellationToken cancellationToken)
+    /// <summary>
+    /// Activates the slash of a module (a reaper, <c>ActivateSlashModule</c>): the client's two points are the arc's start and end, both relative to the ship.
+    /// The handler checks the arc against the client's fixed geometry and refuses it by name (<c>SLASH_POINTS_*</c>), or builds the sweep.
+    /// </summary>
+    public ValueTask<bool> ActivateSlashAsync(ClientSession session, long moduleId, PyValue startPoint, PyValue endPoint, CancellationToken cancellationToken)
     {
-        await ActivateAsync(session, moduleId, SlashEffect, null, cancellationToken).ConfigureAwait(false);
-        // a slash that the simulation accepted would run without its two points: no handler may let one through
-        throw new InvalidOperationException("a superweapon slash was accepted, but no slash family has a body yet");
+        if (AimOf(startPoint) is not { } start || AimOf(endPoint) is not { } end)
+        {
+            throw ModuleRefusals.Of(ModuleResult.Refusal("SLASH_POINTS_REQUIRED"), starting: true);
+        }
+        return ActivateAsync(session, moduleId, SlashEffect, start, cancellationToken, end);
     }
 
-    private async ValueTask<bool> ActivateAsync(ClientSession session, long moduleId, string effectName, double[]? aim, CancellationToken cancellationToken)
+    private async ValueTask<bool> ActivateAsync(ClientSession session, long moduleId, string effectName, double[]? aim, CancellationToken cancellationToken, double[]? aimEnd = null)
     {
-        var result = await spaces.ActivateAsync(session, moduleId, effectName, 0, 1, cancellationToken, aim).ConfigureAwait(false);
+        var result = await spaces.ActivateAsync(session, moduleId, effectName, 0, 1, cancellationToken, aim, aimEnd).ConfigureAwait(false);
         if (result is null)
         {
             throw MachoErrors.ThrowUserError("DeniedShipChanged");

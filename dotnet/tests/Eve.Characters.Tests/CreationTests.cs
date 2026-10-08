@@ -211,8 +211,9 @@ public class CreationTests
     public async Task A_failure_after_the_character_is_written_rolls_the_character_back()
     {
         await using var s = await PgSchemas.CreateAsync();
-        // the inventory has no table: the ship cannot be written, so the character must not stay
-        await using (var drop = s.Source.CreateCommand($"DROP TABLE {s.InventorySchema}.items"))
+        // the inventory has no table: the ship cannot be written, so the character must not stay.
+        // CASCADE also drops the item_mutations foreign key that references items (migration 0005).
+        await using (var drop = s.Source.CreateCommand($"DROP TABLE {s.InventorySchema}.items CASCADE"))
         {
             await drop.ExecuteNonQueryAsync();
         }

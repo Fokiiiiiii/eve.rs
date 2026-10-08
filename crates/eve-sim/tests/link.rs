@@ -133,6 +133,9 @@ fn enter() -> Message {
         how: How::Undock,
         station_id: STATION,
         ship: ship(),
+        // only an entry in space carries a pose (the codec writes none for an undock)
+        position: None,
+        direction: None,
     }))
 }
 

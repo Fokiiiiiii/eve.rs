@@ -717,7 +717,6 @@ public class ModuleEffectsTests
             "doomsdayAOETrack",
             "doomsdayAOEWeb",
             "doomsdayBeamDOT",
-            "doomsdayConeDOT",
             "doomsdayHOG",
             "doomsdaySlash",
             "entosisLink",

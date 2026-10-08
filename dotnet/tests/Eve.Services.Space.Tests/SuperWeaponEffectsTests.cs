@@ -1,6 +1,7 @@
 using Eve.Data;
 using Eve.Dogma;
 using Eve.Services.Space.Effects;
+using Eve.Space;
 using Eve.Sde;
 using Eve.Ships;
 using Npgsql;
@@ -23,7 +24,8 @@ public class SuperWeaponEffectsTests
         ["doomsdayBeamDOT"] = "SUPERWEAPON_LANCE_NOT_IMPLEMENTED",
         ["doomsdaySlash"] = "SUPERWEAPON_REAPER_NOT_IMPLEMENTED",
         ["debuffLance"] = "SUPERWEAPON_DISRUPTIVE_LANCE_NOT_IMPLEMENTED",
-        ["doomsdayConeDOT"] = "SUPERWEAPON_CONE_NOT_IMPLEMENTED",
+        // the cone has a body: without a point it is refused for the point (its aimed package is tested in A_cone...)
+        ["doomsdayConeDOT"] = "TARGET_POINT_REQUIRED",
         ["doomsdayHOG"] = "SUPERWEAPON_HOG_NOT_IMPLEMENTED",
         // P.A.N.I.C. 42522: its own handler (IndustrialInvulnerabilityEffect), not part of this family
         ["moduleBonusIndustrialInvulnerability"] = PendingModuleEffect.NotImplemented,
@@ -68,26 +70,37 @@ public class SuperWeaponEffectsTests
     }
 
     [PgFact]
-    public async Task A_cone_and_a_hog_are_refused_before_their_target_is_asked_for_and_before_any_fuel_is_read()
+    public async Task A_hog_is_refused_before_any_fuel_is_read_and_a_cone_is_built_from_its_static_data_when_aimed()
     {
         await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
         await statics.EnsureTypesAsync([Ship, 40633, 40634]);
 
-        // the Bosonic Field Generator burns 2000 of 16275 a cycle (713 and 714 in the static data): its body would be a fuel-burning effect, but the refusal stops
-        // the package first, so no ShipEffect.Build runs and no BurnsFuel is set
-        foreach (var (typeId, effectName, reason) in new[]
-                 {
-                     (40633, "doomsdayConeDOT", "SUPERWEAPON_CONE_NOT_IMPLEMENTED"),
-                     (40634, "doomsdayHOG", "SUPERWEAPON_HOG_NOT_IMPLEMENTED"),
-                 })
-        {
-            Assert.Equal(2000, statics.Type(typeId)!.Attributes[ModuleAttributes.ConsumptionQuantity]);
-            var fixture = FittedModule(statics, typeId);
-            var result = ModulePackages.Of(fixture.Snapshot, statics, fixture.ModuleId, effectName, 0, 1);
-            Assert.Equal(reason, result.Reason);
-            Assert.Null(result.Effect);
-        }
+        // the HOG's transport has no body (its semantics are not verified): refused before ShipEffect.Build, so no BurnsFuel is set
+        Assert.Equal(2000, statics.Type(40634)!.Attributes[ModuleAttributes.ConsumptionQuantity]);
+        var hog = FittedModule(statics, 40634);
+        var hogResult = ModulePackages.Of(hog.Snapshot, statics, hog.ModuleId, "doomsdayHOG", 0, 1, [0.6, 0.0, 0.8]);
+        Assert.Equal("SUPERWEAPON_HOG_NOT_IMPLEMENTED", hogResult.Reason);
+        Assert.Null(hogResult.Effect);
+
+        // the Bosonic Field Generator (713 16275 x 714 2000): aimed, it builds the strike of its data, and the fuel is the shared mechanism's
+        Assert.Equal(2000, statics.Type(40633)!.Attributes[ModuleAttributes.ConsumptionQuantity]);
+        var cone = FittedModule(statics, 40633);
+        var result = ModulePackages.Of(cone.Snapshot, statics, cone.ModuleId, "doomsdayConeDOT", 0, 1, [3.0, 0.0, 4.0]);
+        Assert.Null(result.Reason);
+        Assert.True(result.Effect!.BurnsFuel);
+        var strike = Assert.IsType<SimAction.Strike>(result.Effect.Action);
+        Assert.True(strike.IsValid);
+        Assert.Equal(3, strike.Shape);
+        Assert.Equal([0.6, 0.0, 0.8], strike.Direction);
+        // the SDE's numbers (checked in attrs of 40633): range 30000, warning 10000 ms, cycle 1000 ms, damage 20000 ms (21 pulses, the window closed at its end),
+        // em 114, thermal 118, kinetic 117, explosive 116 at 10000 each, signature 552 (10000), immobility 30000 ms, no jump or cloak 300000 ms, energy
+        // neutralisation 30000 within 10000 m against signature 20000
+        Assert.Equal((30000.0, 10000.0, 1000.0, 21), (strike.Length, strike.WarningMs, strike.PulseMs, strike.Pulses));
+        Assert.Equal([10000.0, 10000.0, 10000.0, 10000.0], strike.Damage);
+        Assert.Equal((10000.0, 30000.0, 300000.0), (strike.SignatureRadius, strike.ImmobileMs, strike.NoJumpMs));
+        Assert.Equal((30000.0, 10000.0, 20000.0), (strike.NeutAmount, strike.NeutRadius, strike.NeutSignatureRadius));
+        Assert.Equal(0, strike.Radius);
     }
 
     /// <summary>A ship with one module fitted and online, as the host's snapshot has them (the character is not needed by these rules).</summary>

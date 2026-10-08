@@ -28,6 +28,9 @@ internal sealed class ModuleEffectContext
     public long TargetId => Context.TargetId;
     public int Repeat => Context.Repeat;
 
+    /// <summary>The point a point-targeted effect is aimed at (an offset from the ship's centre), or null.</summary>
+    public IReadOnlyList<double>? Aim => Context.Aim;
+
     /// <summary>The module's attributes after dogma.</summary>
     public IReadOnlyDictionary<int, double> Attributes { get; }
 

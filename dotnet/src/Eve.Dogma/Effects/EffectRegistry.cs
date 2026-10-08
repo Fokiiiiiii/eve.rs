@@ -1,7 +1,11 @@
 namespace Eve.Dogma;
 
 /// <summary>What a handler is told about the effect that is being run: the host's own state (for the space host, the snapshot of the ship), dogma, the item that has the effect and its type.</summary>
-public sealed record EffectContext<THost>(THost Host, DogmaWorld World, DogmaStatic Statics, long ItemId, TypeDef Type, EffectDef Effect, long TargetId, int Repeat);
+/// <summary>
+/// The context of an effect activation. <paramref name="Aim"/> is the point a point-targeted effect is aimed at, as an offset from the ship's centre
+/// (the client's point, render space); null for every other activation.
+/// </summary>
+public sealed record EffectContext<THost>(THost Host, DogmaWorld World, DogmaStatic Statics, long ItemId, TypeDef Type, EffectDef Effect, long TargetId, int Repeat, IReadOnlyList<double>? Aim = null);
 
 /// <summary>
 /// The code behind one or more effects that the static data cannot describe with modifiers alone (what a module DOES each cycle: shoot, repair, web, jam). A handler names the effects it

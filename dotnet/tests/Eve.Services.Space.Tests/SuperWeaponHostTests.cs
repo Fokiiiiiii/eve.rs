@@ -19,6 +19,7 @@ public class SuperWeaponHostTests
     /// <summary>The effect ids of the static data: superWeaponAmarr (the Judgment's) and doomsdayHOG (the Gravitational Oscillator's).</summary>
     private const long SuperWeaponAmarrEffect = 4489;
     private const long DoomsdayHogEffect = 6474;
+    private const long DoomsdayConeEffect = 6473;
 
     [PgFact]
     public async Task A_cone_is_refused_by_the_empire_space_rule_it_states_before_its_effect_is_asked_for_and_takes_no_fuel()
@@ -59,7 +60,7 @@ public class SuperWeaponHostTests
         var route = new SuperWeaponService(rig.Space);
 
         var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
-            route.ActivatePointTargetedAsync(flying.Session, flying.Module, SuperWeaponAmarrEffect, CancellationToken.None).AsTask());
+            route.ActivatePointTargetedAsync(flying.Session, flying.Module, SuperWeaponAmarrEffect, Point(0.6, 0, 0.8), CancellationToken.None).AsTask());
 
         Assert.Equal("'Judgment' Electromagnetic Doomsday cannot be activated.", NotifyText(error));
         Assert.Empty(rig.Sim.Heard.OfType<SimActivate>());
@@ -74,11 +75,37 @@ public class SuperWeaponHostTests
         var route = new SuperWeaponService(rig.Space);
 
         var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
-            route.ActivatePointTargetedAsync(flying.Session, flying.Module, DoomsdayHogEffect, CancellationToken.None).AsTask());
+            route.ActivatePointTargetedAsync(flying.Session, flying.Module, DoomsdayHogEffect, Point(0.6, 0, 0.8), CancellationToken.None).AsTask());
 
         Assert.Equal("Gravitational Transportation Field Oscillator cannot be activated.", NotifyText(error));
         Assert.Empty(rig.Sim.Heard.OfType<SimActivate>());
         Assert.Equal(2000, await QuantityAsync(rig, flying));
+    }
+
+    [PgFact]
+    public async Task A_cone_through_superWeaponMgr_reaches_the_empire_space_rule_with_its_point_and_takes_no_fuel()
+    {
+        // the point reaches the package (the aim is parsed from the client's tuple); the pilot is in high security, so the rule that the cone states refuses it
+        // before any simulation or fuel: the route is wired to the same checks as the module order
+        await using var rig = await Rig.CreateAsync();
+        var flying = await DroneHostTests.FlyingWithADroneAsync(rig, minerTypeId: BosonicFieldGenerator);
+        await PutStrontiumAsync(rig, flying, 2000);
+        var route = new SuperWeaponService(rig.Space);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.ActivatePointTargetedAsync(flying.Session, flying.Module, DoomsdayConeEffect, Point(0, 0, 1), CancellationToken.None).AsTask());
+
+        Assert.Equal("CantInEmpireSpace", UserErrorName(error));
+        Assert.Empty(rig.Sim.Heard.OfType<SimActivate>());
+        Assert.Equal(2000, await QuantityAsync(rig, flying));
+    }
+
+    [Fact]
+    public void The_client_point_is_a_tuple_of_three_numbers_and_anything_else_is_no_aim()
+    {
+        Assert.Equal(new double[] { 0.5, -1.0, 2.0 }, SuperWeaponService.AimOf(new PyTuple(new PyValue[] { new PyReal(0.5), new PyInt(-1), new PyReal(2.0) })) ?? []);
+        Assert.Null(SuperWeaponService.AimOf(new PyTuple(new PyValue[] { new PyReal(1), new PyReal(2) })));
+        Assert.Null(SuperWeaponService.AimOf(new PyStr("north")));
     }
 
     [PgFact]
@@ -89,11 +116,14 @@ public class SuperWeaponHostTests
         var route = new SuperWeaponService(rig.Space);
 
         var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
-            route.ActivatePointTargetedAsync(flying.Session, flying.Module, 999_999_999, CancellationToken.None).AsTask());
+            route.ActivatePointTargetedAsync(flying.Session, flying.Module, 999_999_999, Point(0.6, 0, 0.8), CancellationToken.None).AsTask());
 
         Assert.Equal("module cannot be activated.", NotifyText(error));
         Assert.Empty(rig.Sim.Heard.OfType<SimActivate>());
     }
+
+    /// <summary>The point the client sends: a tuple of three numbers, from the ship.</summary>
+    private static PyTuple Point(double x, double y, double z) => new(new PyValue[] { new PyReal(x), new PyReal(y), new PyReal(z) });
 
     /// <summary>The name of a user error (the client's message key, e.g. CantInEmpireSpace).</summary>
     private static string? UserErrorName(MachoWrappedException error) =>

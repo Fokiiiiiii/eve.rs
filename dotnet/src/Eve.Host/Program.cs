@@ -193,7 +193,7 @@ ReadNonDiminishingInjectionCountCallback? readNonDiminishingInjections = mailSto
 var superWeapons = space is null ? null : new SuperWeaponService(space);
 var superWeaponCallbacks = new SuperWeaponRpcCallbacks(
     ActivatePointTargetedAsync: (request, cancellationToken) => (superWeapons ?? throw SuperWeaponMgrService.NotWired())
-        .ActivatePointTargetedAsync(request.Session, request.ModuleId, request.EffectId, cancellationToken),
+        .ActivatePointTargetedAsync(request.Session, request.ModuleId, request.EffectId, request.Destination, cancellationToken),
     ActivateSlashAsync: (request, cancellationToken) => (superWeapons ?? throw SuperWeaponMgrService.NotWired())
         .ActivateSlashAsync(request.Session, request.ModuleId, cancellationToken));
 foreach (var service in CoreServices.Create(

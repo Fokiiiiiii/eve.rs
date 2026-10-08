@@ -1097,7 +1097,10 @@ private readonly TransitionRuntime _transitions;
     /// Starts an effect of a module. The dogma engine works out the package (the cycle, its cost, the ship's numbers with and without the effect) and the
     /// simulation runs it; an effect it accepts ends the undocking protection, as a movement does. A module order is asked one at a time for a pilot.
     /// </summary>
-    public async Task<ModuleResult?> ActivateAsync(ClientSession session, long moduleId, string effectName, long targetId, int repeat, CancellationToken cancellationToken)
+    /// <summary>
+    /// Starts an effect of a module of the pilot's ship. <paramref name="aim"/> is the point a point-targeted effect is aimed at (an offset from the ship's centre), or null.
+    /// </summary>
+    public async Task<ModuleResult?> ActivateAsync(ClientSession session, long moduleId, string effectName, long targetId, int repeat, CancellationToken cancellationToken, IReadOnlyList<double>? aim = null)
     {
         CancelSafeLogoff(session);
         var id = (ulong)session.SessionId;
@@ -1125,7 +1128,7 @@ private readonly TransitionRuntime _transitions;
         {
             return ModuleResult.Refusal(warpRefusal, warpModule.TypeId, _statics.Type(warpModule.TypeId)?.Name ?? "");
         }
-        var made = ModulePackages.Of(snapshot, _statics, moduleId, effectName, targetId, repeat);
+        var made = ModulePackages.Of(snapshot, _statics, moduleId, effectName, targetId, repeat, aim);
         if (made.Effect is not { } package)
         {
             return ModuleResult.Refusal(made.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);

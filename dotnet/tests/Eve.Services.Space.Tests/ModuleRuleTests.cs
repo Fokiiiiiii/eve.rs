@@ -121,11 +121,15 @@ public class ModuleRuleTests
             Assert.Null(result.Effect);
         }
 
-        // a DDD-class module (Bosonic Field Generator, 713 16275 x 714 2000): its own effect has no body in the host, so it keeps its refusal (not a free run)
+        // a DDD-class module (Bosonic Field Generator, 713 16275 x 714 2000): its cone is aimed at a point, and without one it is refused (no free run);
+        // aimed, its package burns the fuel of its cycle through the shared mechanism
         var ddd = FittedModule(statics, shipTypeId, 40633);
-        var dddResult = ModulePackages.Of(ddd.Snapshot, statics, ddd.ModuleId, "doomsdayConeDOT", 0, 1);
-        Assert.NotNull(dddResult.Reason);
-        Assert.Null(dddResult.Effect);
+        var unaimed = ModulePackages.Of(ddd.Snapshot, statics, ddd.ModuleId, "doomsdayConeDOT", 0, 1);
+        Assert.Equal("TARGET_POINT_REQUIRED", unaimed.Reason);
+        Assert.Null(unaimed.Effect);
+        var dddResult = ModulePackages.Of(ddd.Snapshot, statics, ddd.ModuleId, "doomsdayConeDOT", 0, 1, [0.6, 0.0, 0.8]);
+        Assert.Null(dddResult.Reason);
+        Assert.True(dddResult.Effect!.BurnsFuel, "the cone burns its fuel");
 
         // P.A.N.I.C. has no fuel attributes in the static data: nothing is invented for it
         var panic = FittedModule(statics, shipTypeId, 42522);

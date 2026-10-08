@@ -18,9 +18,9 @@ namespace Eve.Services.Space.Effects;
 // (projected sphere), doomsdayAOERange 10000, doomsdayWarningDuration 15000, isPointTargeted 1. Its SDE description (not an attribute) says it moves capsuleer
 // ships through a localised wormhole between two points, cannot move capital ships, and leaves the moved ships unable to warp for 60 seconds.
 //
-// None of these families has a body in the space host yet. Each handler is registered and REFUSES the activation by name, before any package is built: no
-// simulation action, no fuel taken (ShipEffect.Build is never reached, so BurnsFuel is never set), and no success is reported. The reasons are the ones below.
-// The shared per-cycle fuel mechanism (ModuleFuelHostTests) already takes the fuel of a DDD module once its body exists; nothing here takes fuel for it.
+// The Bosonic Field Generator (40633) has a body: DoomsdayConeEffect.cs (the strike of protocol 25, with the fuel of its cycle through the shared mechanism). The
+// other families have none in the space host yet. Each handler is registered and REFUSES the activation by name, before any package is built: no simulation
+// action, no fuel taken (ShipEffect.Build is never reached, so BurnsFuel is never set), and no success is reported. The reasons are the ones below.
 //
 // What is missing for a body, per family (the owner is the superweapons spec in docs/project/TODO.md section 12, not an EveJS port):
 //   - the point the client sends (superWeaponMgr ActivateSinglePointTargetedModule / ActivateSlashModule) reaches the host only through the callback wired in
@@ -30,8 +30,6 @@ namespace Eve.Services.Space.Effects;
 //   - the lance beacon (a Deployed object, ADR 0012) and its pulse (EveJS tickLanceEffect is not read, U13);
 //   - the reaper's slash arc (two points) and its cylinder area (ADR 0011);
 //   - the disruptive lance's debuff (a buff registry, decision D4; the cloak-disallow flag, decision D10);
-//   - the cone's area (shape 3), its energy neutralisation and its damage. EveJS has no FX guid for the cone (DOOMSDAY_CONE_DOT_FX_GUID is empty) and the
-//     numbers of the damage are not verified against the client (UNVERIFIED);
 //   - the HOG's transport: the destination point, the capital-ship exclusion and the 60 s warp block come from the SDE text only. EveJS has no function for
 //     doomsdayHOG (U11, UNVERIFIED). The structure variant (category 66) is module and wiring only (O5), so it is refused the same way.
 
@@ -61,10 +59,6 @@ internal sealed class ReaperEffect()
 /// <summary>The disruptive lances (<c>debuffLance</c>): refused until the debuff and the cloak-disallow flag have a body.</summary>
 internal sealed class DisruptiveLanceEffect()
     : SuperWeaponPendingEffect("SUPERWEAPON_DISRUPTIVE_LANCE_NOT_IMPLEMENTED", "debuffLance");
-
-/// <summary>The Bosonic Field Generator (40633, <c>doomsdayConeDOT</c>): refused until its cone area, damage and energy neutralisation have a body.</summary>
-internal sealed class ConeEffect()
-    : SuperWeaponPendingEffect("SUPERWEAPON_CONE_NOT_IMPLEMENTED", "doomsdayConeDOT");
 
 /// <summary>The Gravitational Transportation Field Oscillator (40634, <c>doomsdayHOG</c>): refused until its transport has a body (the SDE text only; U11).</summary>
 internal sealed class HogEffect()

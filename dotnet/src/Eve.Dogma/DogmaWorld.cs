@@ -9,7 +9,9 @@ public sealed class DogmaItem
     /// The type the item's base attribute values come from, when that is not its own type: a mutated module is typed as its result, but its
     /// values are those of the input it was made from. The skill requirements always come from <paramref name="typeId"/>. Null: the item's own type.
     /// </param>
-    public DogmaItem(long id, int typeId, long ownerId, long locationId, int flagId = 0, ItemState state = ItemState.Offline, IReadOnlySet<int>? activeEffectIds = null, int? baseTypeId = null)
+    /// <param name="ownValues">The values the item carries of its own from the start (a mutated module's rolled values), over its base. Null: none.</param>
+    public DogmaItem(long id, int typeId, long ownerId, long locationId, int flagId = 0, ItemState state = ItemState.Offline, IReadOnlySet<int>? activeEffectIds = null,
+        int? baseTypeId = null, IReadOnlyDictionary<int, double>? ownValues = null)
     {
         Id = id;
         TypeId = typeId;
@@ -19,6 +21,13 @@ public sealed class DogmaItem
         FlagId = flagId;
         State = state;
         ActiveEffectIds = activeEffectIds;
+        if (ownValues is not null)
+        {
+            foreach (var (attributeId, value) in ownValues)
+            {
+                Own[attributeId] = value;
+            }
+        }
     }
 
     public long Id { get; }
@@ -222,7 +231,7 @@ public sealed class DogmaWorld
         {
             if (_static.Type(baseTypeId) is { } baseType)
             {
-                ids.UnionWith(baseType.Attributes.Keys);
+                ids.UnionWith(baseType.Attributes.Keys.Where(attribute => !TypeDef.IsRequiredSkillAttribute(attribute)));
             }
             if (_static.Type(item.TypeId) is { } resultType)
             {
@@ -415,7 +424,8 @@ public sealed class DogmaWorld
 
     /// <summary>
     /// The value the item's type gives an attribute, or null when it gives none. An item with a base type takes every attribute from it, except the
-    /// skill requirements (and their levels), which come from its own type where that type has them: a mutated module needs the skill of its result.
+    /// skill requirements (and their levels), which come from its own type only: a mutated module needs the skills of its result (T2), whatever its
+    /// base type required, so a skill the result does not name is no requirement at all.
     /// </summary>
     private double? TypeAttribute(DogmaItem item, int attributeId)
     {
@@ -423,9 +433,9 @@ public sealed class DogmaWorld
         {
             return _static.Type(item.TypeId) is { } type && type.Attributes.TryGetValue(attributeId, out var typed) ? typed : null;
         }
-        if (TypeDef.IsRequiredSkillAttribute(attributeId) && _static.Type(item.TypeId) is { } resultType && resultType.Attributes.TryGetValue(attributeId, out var skill))
+        if (TypeDef.IsRequiredSkillAttribute(attributeId))
         {
-            return skill;
+            return _static.Type(item.TypeId) is { } resultType && resultType.Attributes.TryGetValue(attributeId, out var skill) ? skill : null;
         }
         return _static.Type(baseTypeId) is { } baseType && baseType.Attributes.TryGetValue(attributeId, out var fromBase) ? fromBase : null;
     }

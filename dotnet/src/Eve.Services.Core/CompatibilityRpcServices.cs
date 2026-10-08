@@ -28,18 +28,6 @@ public sealed class ShipCosmeticsMgrRpcService(
     }
 }
 
-public sealed class DynamicItemRpcService(
-    Func<ServiceCall, ValueTask<PyValue?>>? handler = null) : IService
-{
-    public string Name => "dynamicItemService";
-    public bool HasMethod(string method) => method == "CreateDynamicItem";
-
-    public ValueTask<PyValue> CallAsync(ServiceCall call) =>
-        !HasMethod(call.Method)
-            ? ValueTask.FromResult<PyValue>(PyNone.Instance)
-            : CompatibilityRpc.Invoke(call, handler, () => PyNone.Instance);
-}
-
 public sealed class CharacterEnergyMgrRpcService(
     Func<long>? nowUnixMs = null,
     Func<ServiceCall, ValueTask<PyValue?>>? handler = null) : IService

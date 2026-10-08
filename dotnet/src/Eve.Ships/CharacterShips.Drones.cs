@@ -1,10 +1,11 @@
 using Eve.Inventory;
+using Eve.Inventory.Mutation;
 using Npgsql;
 
 namespace Eve.Ships;
 
 /// <summary>A drone that has left the bay: the item it is in space (a singleton in the solar system) and what the client is told changed, in order.</summary>
-public sealed record DroneLaunch(Item Drone, IReadOnlyList<ItemChanged> Changes);
+public sealed record DroneLaunch(Item Drone, IReadOnlyList<ItemChanged> Changes, ItemMutationRecord? Mutation = null);
 
 /// <summary>What became of a drone that was to go back into the bay.</summary>
 public abstract record DroneScoop;
@@ -42,7 +43,8 @@ public sealed partial class CharacterShips
         {
             return null;
         }
-        await statics.EnsureTypesAsync([item.TypeId], cancellationToken);
+        var provenance = await items.Mutations.GetAsync(item.Id, cancellationToken);
+        await statics.EnsureTypesAsync(ItemDogma.TypeIdsOf(item, provenance), cancellationToken);
         if (statics.Type(item.TypeId)?.CategoryId != DroneCategory)
         {
             return null;
@@ -61,7 +63,7 @@ public sealed partial class CharacterShips
             await items.MoveToOwnerAsync(connection, transaction, item.Id, characterId, solarSystemId, InSpaceFlag, cancellationToken);
             await items.MakeSingletonAsync(connection, transaction, item.Id, cancellationToken);
             var drone = item with { LocationId = solarSystemId, Flag = InSpaceFlag, Singleton = true, Quantity = 1 };
-            launched = new DroneLaunch(drone, [new ItemChanged(drone, shipId, DroneBayFlag, item.Quantity)]);
+            launched = new DroneLaunch(drone, [new ItemChanged(drone, shipId, DroneBayFlag, item.Quantity)], provenance);
         }
         await transaction.CommitAsync(cancellationToken);
         return launched;

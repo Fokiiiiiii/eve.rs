@@ -112,8 +112,11 @@ public sealed class ShipSnapshot
         var moduleConditions = await modules.ModuleConditionsAsync(fitted.Select(i => i.Id), cancellationToken);
         var condition = await modules.ShipConditionAsync(shipId, cancellationToken);
         var trained = skillsOverride ?? await skills.ForCharacterAsync(characterId, cancellationToken);
+        var provenance = await items.Mutations.GetManyAsync([ship.Id, .. contents.Select(i => i.Id)], cancellationToken);
 
-        await statics.EnsureTypesAsync([character.TypeId, ship.TypeId, .. contents.Select(i => i.TypeId), .. trained.Select(s => s.TypeId)], cancellationToken);
+        await statics.EnsureTypesAsync(
+            [character.TypeId, ship.TypeId, .. contents.Select(i => i.TypeId), .. provenance.Values.Select(m => m.SourceTypeId), .. trained.Select(s => s.TypeId)],
+            cancellationToken);
 
         var world = new DogmaWorld(statics, characterId, shipId);
         world.Add(new DogmaItem(characterId, character.TypeId, characterId, shipId, PilotFlag, ItemState.Online));
@@ -121,14 +124,14 @@ public sealed class ShipSnapshot
         {
             world.SetValue(characterId, learning, learningAttribute?.Invoke(learning) ?? StartingLearningAttribute);
         }
-        world.Add(new DogmaItem(shipId, ship.TypeId, characterId, ship.LocationId, ship.Flag));
+        world.Add(ItemDogma.Of(ship, characterId, ship.LocationId, ship.Flag, mutation: provenance.GetValueOrDefault(ship.Id)));
         foreach (var module in fitted)
         {
-            world.Add(new DogmaItem(module.Id, module.TypeId, characterId, shipId, module.Flag, states[module.Id]));
+            world.Add(ItemDogma.Of(module, characterId, shipId, module.Flag, states[module.Id], provenance.GetValueOrDefault(module.Id)));
         }
         foreach (var charge in charges)
         {
-            world.Add(new DogmaItem(charge.Id, charge.TypeId, characterId, shipId, charge.Flag));
+            world.Add(ItemDogma.Of(charge, characterId, shipId, charge.Flag, mutation: provenance.GetValueOrDefault(charge.Id)));
             world.SetValue(charge.Id, QuantityCharge, charge.Quantity);
         }
         foreach (var skill in trained)

@@ -9,6 +9,30 @@ run the same scenarios against. Start with `CLAUDE.md` and the [documentation in
 > Localhost-only research project. Not affiliated with CCP hf. It contains no
 > CCP client code and no copy of the static data export.
 
+## Architecture
+
+**Three processes + one database:** Rust handles the network and space simulation; C# handles game services.
+
+```mermaid
+flowchart TB
+    Client["EVE Online client<br/>24.01 / build 3396210"]
+    Net["eve-net · Rust<br/>TCP 26000 · login · packets"]
+    Host["eve-host · C# / .NET 10<br/>sessions · RPC · game services"]
+    Sim["eve-sim · Rust<br/>ships · movement · combat · NPCs"]
+    DB[("PostgreSQL 18<br/>persistent game state")]
+    Client <-->|"MachoNet / TCP"| Net
+    Net <-->|HostLink| Host
+    Host <-->|SimLink| Sim
+    Host <-->|SQL| DB
+```
+
+- **Network:** `crates/eve-net` accepts clients; `crates/eve-marshal` handles wire encoding.
+- **Game services:** `dotnet/src/Eve.Host` starts the host, `Eve.Services.*` handles RPCs, and domain modules implement game rules.
+- **Space:** `crates/eve-sim` runs `eve-space`, with `eve-destiny` for motion and `eve-behaviors` for NPC behavior.
+- **Persistence:** PostgreSQL stores game data; `Eve.Scheduler`, `Eve.Events`, and `Eve.Relations` provide shared infrastructure.
+
+**Process links:** Unix domain sockets by default; local TCP is also supported.
+
 ## Layout
 
 | Path | What |

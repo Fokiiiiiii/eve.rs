@@ -1443,6 +1443,14 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         if let Some(pending) = pilot.docking.as_ref().filter(|p| p.station_id == station_id) {
             return vec![Out::Accepted { session, command: code, at: pending.accepted_at }];
         }
+        // a doomsday's windows hold the ship: a held ship follows no orders (IMMOBILE), and a ship in its no-jump window does not dock either (the
+        // reference's disallowDocking on the running module: the module runs for that window)
+        if pilot.immobile_until > now {
+            return vec![Out::Refused { session, command: code, reason: "IMMOBILE" }];
+        }
+        if pilot.no_jump_until > now {
+            return vec![Out::Refused { session, command: code, reason: "DOCKING_BLOCKED" }];
+        }
         if pilot.jump.is_some() {
             return vec![Out::Refused { session, command: code, reason: "JUMPING" }];
         }
@@ -3705,6 +3713,20 @@ pub(crate) mod tests {
         let out = scene.command(SESSION, Command::Dock { station_id: 42 }, NOON);
         assert_eq!(out, [Out::Refused { session: SESSION, command: 4, reason: "STATION_NOT_FOUND" }]);
         assert!(scene.contains(SESSION));
+    }
+
+    #[test]
+    fn a_ship_in_a_doomsdays_windows_does_not_dock_until_they_pass() {
+        let mut scene = near_the_station();
+        let pilot = scene.pilots.get_mut(&SESSION).unwrap();
+        pilot.immobile_until = NOON + seconds(30);
+        pilot.no_jump_until = NOON + seconds(300);
+        let held = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON + seconds(1));
+        assert_eq!(held, [Out::Refused { session: SESSION, command: 4, reason: "IMMOBILE" }], "held by the immobility window");
+        let no_jump = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON + seconds(31));
+        assert_eq!(no_jump, [Out::Refused { session: SESSION, command: 4, reason: "DOCKING_BLOCKED" }], "in the no-jump window");
+        let after = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON + seconds(301));
+        assert!(!after.iter().any(|o| matches!(o, Out::Refused { .. })), "after both windows: {after:?}");
     }
 
     fn near_the_station() -> Scene {

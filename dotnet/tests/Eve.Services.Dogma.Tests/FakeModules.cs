@@ -39,4 +39,10 @@ internal sealed class FakeModules : ISpaceModules
         Asked.Add($"{(active ? "overload rack" : "stop overload rack")} {moduleId}");
         return Task.FromResult(Answer);
     }
+
+    public Task RefreshShipAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        Asked.Add("refresh ship");
+        return Task.CompletedTask;
+    }
 }

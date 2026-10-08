@@ -113,19 +113,12 @@ internal sealed class TypeAttributeResistanceEffect : ShipEffect
         var attributes = module.Effect.Name.Equals(EmergencyHullEnergizer, StringComparison.OrdinalIgnoreCase)
             ? HullResonances
             : ArmorResonances;
-        var on = new List<SimChange>();
-        var off = new List<SimChange>();
-        foreach (var name in attributes)
-        {
-            if (module.Statics.AttributeId(name) is not { } attributeId)
-            {
-                continue;
-            }
-            var before = module.World.Get(shipId, attributeId);
-            var multiplier = module.Value(attributeId, 1);
-            off.Add(new SimChange(shipId, attributeId, before));
-            on.Add(new SimChange(shipId, attributeId, ModuleAttributes.Six(before * multiplier)));
-        }
+        var attributeIds = attributes.Select(name => module.Statics.AttributeId(name)).OfType<int>().ToArray();
+        // each resonance is multiplied by the module's own value, as a modifier of the world: a resonance that is pinned (a PostAssign, a Polarized
+        // weapon fitted) keeps its pinned value, because the world applies its modifiers in order and the assignment comes last
+        var multipliers = attributeIds.Select(id => new Modifier(ModifierFunc.Item, "shipID", Operation.PostMul, id, id)).ToArray();
+        var on = ToldValues(module.World, module.ModuleId, ItemState.Active, multipliers, shipId, attributeIds, round: true);
+        var off = ToldValues(module.World, module.ModuleId, ItemState.Online, [], shipId, attributeIds, round: false);
 
         var repeatAttribute = module.Statics.AttributeId("disallowRepeatingActivation");
         var repeat = repeatAttribute is { } id && module.Value(id, 0) > 0
@@ -140,6 +133,13 @@ internal sealed class TypeAttributeResistanceEffect : ShipEffect
             module.ModuleId, module.Module.TypeId, module.Effect.Id, module.Effect.Guid,
             duration, capacitor, repeat, Math.Max(0, module.TargetId),
             null, null, [.. told, .. on], [.. told, .. off]);
+    }
+
+    /// <summary>The ship's values of the attributes with the item in the given state (and the extra modifiers), as dogma works them out.</summary>
+    private static List<SimChange> ToldValues(DogmaWorld world, long itemId, ItemState state, IReadOnlyList<Modifier> modifiers, long shipId, int[] attributeIds, bool round)
+    {
+        using var assumed = world.Assume(itemId, state, modifiers);
+        return [.. attributeIds.Select(id => new SimChange(shipId, id, round ? ModuleAttributes.Six(world.Get(shipId, id)) : world.Get(shipId, id)))];
     }
 }
 
@@ -222,39 +222,37 @@ internal sealed class DogmaModifierEffect : ShipEffect
                 .Select(target => (target.Id, modifier)));
         }
 
-        double Apply(long itemId, int attributeId)
-        {
-            var value = module.World.Get(itemId, attributeId);
-            foreach (var (_, modifier) in applicable.Where(x => x.ItemId == itemId && x.Modifier.ModifiedAttributeId == attributeId))
-            {
-                value = Operations.Apply(modifier.Operation, value, module.Value(modifier.ModifyingAttributeId, 0));
-            }
-            return value;
-        }
-
         var changed = applicable.Select(x => (x.ItemId, AttributeId: x.Modifier.ModifiedAttributeId)).Distinct().ToArray();
         var hasPhysicalChange = changed.Any(x => x.ItemId == shipId
             && x.AttributeId is ModuleAttributes.Mass or ModuleAttributes.MaxVelocity or ModuleAttributes.SignatureRadius);
-        SimNumbers? Numbers(bool active) => hasPhysicalChange
-            ? new SimNumbers(
-                active ? Apply(shipId, ModuleAttributes.Mass) : module.World.Get(shipId, ModuleAttributes.Mass),
-                active ? Apply(shipId, ModuleAttributes.MaxVelocity) : module.World.Get(shipId, ModuleAttributes.MaxVelocity),
-                active ? Apply(shipId, ModuleAttributes.SignatureRadius) : module.World.Get(shipId, ModuleAttributes.SignatureRadius))
-            : null;
-        IReadOnlyList<SimChange> Changes(bool active) =>
-        [
-            new(module.ModuleId, ModuleAttributes.CapacitorNeed, capacitor),
-            new(module.ModuleId, durationAttribute, ModuleAttributes.Three(duration)),
-            .. changed.Select(x => new SimChange(
-                x.ItemId,
-                x.AttributeId,
-                active ? Apply(x.ItemId, x.AttributeId) : module.World.Get(x.ItemId, x.AttributeId)))
-        ];
+        // what the module's own modifiers make of the world, as dogma works it out (precedence, stacking, a pinned value): active, and back to offline
+        SimNumbers? Numbers(ItemState state)
+        {
+            if (!hasPhysicalChange)
+            {
+                return null;
+            }
+            using var assumed = module.World.Assume(module.ModuleId, state);
+            return new SimNumbers(
+                module.World.Get(shipId, ModuleAttributes.Mass),
+                module.World.Get(shipId, ModuleAttributes.MaxVelocity),
+                module.World.Get(shipId, ModuleAttributes.SignatureRadius));
+        }
+        IReadOnlyList<SimChange> Changes(ItemState state)
+        {
+            using var assumed = module.World.Assume(module.ModuleId, state);
+            return
+            [
+                new(module.ModuleId, ModuleAttributes.CapacitorNeed, capacitor),
+                new(module.ModuleId, durationAttribute, ModuleAttributes.Three(duration)),
+                .. changed.Select(x => new SimChange(x.ItemId, x.AttributeId, module.World.Get(x.ItemId, x.AttributeId))),
+            ];
+        }
 
         return new SimEffect(
             module.ModuleId, module.Module.TypeId, module.Effect.Id, module.Effect.Guid,
             duration, capacitor, Math.Max(1, module.Repeat), Math.Max(0, module.TargetId),
-            Numbers(true), Numbers(false), Changes(true), Changes(false));
+            Numbers(ItemState.Active), Numbers(ItemState.Online), Changes(ItemState.Active), Changes(ItemState.Online));
     }
 }
 

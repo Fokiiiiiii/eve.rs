@@ -37,4 +37,10 @@ public interface ISpaceModules
     Task<ModuleResult?> OfflineAsync(ClientSession session, long moduleId, CancellationToken cancellationToken);
 
     Task<ModuleResult?> OverloadRackAsync(ClientSession session, long moduleId, bool active, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Tells the simulation again what the ship in space is now (its resonances and numbers), after a module of it went online or offline. Nothing
+    /// is sent for a session with no ship in space.
+    /// </summary>
+    Task RefreshShipAsync(ClientSession session, CancellationToken cancellationToken);
 }

@@ -27,8 +27,11 @@ public sealed record SimResonances(IReadOnlyList<double> Shield, IReadOnlyList<d
     public static readonly SimResonances None = new([1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 1]);
 }
 
-/// <summary>What a ship can take, in points, and how it resists: dogma's numbers for the ship as it is fitted and flown.</summary>
-public sealed record SimVitals(double ShieldCapacity, double ArmorHp, double StructureHp, SimResonances Resonances)
+/// <summary>
+/// What a ship can take, in points, and how it resists: dogma's numbers for the ship as it is fitted and flown. <paramref name="ArmorPinned"/> is set while a fitted
+/// Polarized weapon holds the armor's resonances at one: the simulation then keeps them there whatever a reactive armor hardener does.
+/// </summary>
+public sealed record SimVitals(double ShieldCapacity, double ArmorHp, double StructureHp, SimResonances Resonances, bool ArmorPinned = false)
 {
     /// <summary>Nothing to hurt.</summary>
     public static readonly SimVitals Unhurtable = new(0, 0, 0, SimResonances.None);
@@ -335,6 +338,13 @@ public abstract record SimAction
 
     /// <summary>Spools once, then shifts the ship along its heading; cooldown begins when the spool succeeds or is interrupted.</summary>
     public sealed record MicroJumpDrive(double DistanceMeters, long CooldownMs) : SimAction;
+
+    /// <summary>
+    /// A reactive armor hardener: the armor's resonances start at <paramref name="Seed"/> (the module's own values, em, thermal, kinetic, explosive), and at the end
+    /// of each cycle move by <paramref name="Shift"/> of a resonance at most, as the damage the armor took in the cycle says. The pilot is told the armor's resonances
+    /// as the attributes <paramref name="AttributeIds"/> (in the same order) when they change.
+    /// </summary>
+    public sealed record ResistanceShift(IReadOnlyList<double> Seed, double Shift, IReadOnlyList<int> AttributeIds) : SimAction;
 }
 
 /// <summary>What a module that is projected at another ship does to it each cycle.</summary>

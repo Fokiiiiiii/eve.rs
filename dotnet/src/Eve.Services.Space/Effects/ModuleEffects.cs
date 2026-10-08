@@ -12,6 +12,16 @@ internal static class ModuleEffects
 {
     public static SensorBoosterEffect SensorBooster { get; } = new();
 
+    /// <summary>
+    /// The ship's values of the attributes with the item in the given state (and the extra modifiers), as dogma works them out: what an effect tells the client
+    /// (<c>round</c>: to six places, as the reference tells them).
+    /// </summary>
+    internal static List<SimChange> ToldValues(DogmaWorld world, long itemId, ItemState state, IReadOnlyList<Modifier> modifiers, long shipId, int[] attributeIds, bool round)
+    {
+        using var assumed = world.Assume(itemId, state, modifiers);
+        return [.. attributeIds.Select(id => new SimChange(shipId, id, round ? ModuleAttributes.Six(world.Get(shipId, id)) : world.Get(shipId, id)))];
+    }
+
     public static EffectRegistry<ShipSnapshot, SimEffect> Default { get; } = new EffectRegistry<ShipSnapshot, SimEffect>()
         .Register(SensorBooster)
         .Register(new PropulsionEffect())
@@ -28,6 +38,7 @@ internal static class ModuleEffects
         .Register(new MicroJumpDriveEffect())
         .Register(new DogmaModifierEffect())
         .Register(new TypeAttributeResistanceEffect())
+        .Register(new ReactiveArmorHardenerEffect())
         .Register(new AncillaryRemoteArmorRepairEffect())
         .Register(new AncillaryRemoteShieldBoosterEffect())
         .Register(new PowerBoosterEffect())
@@ -86,19 +97,10 @@ internal sealed class MicroJumpDriveEffect : ShipEffect
     }
 }
 
-/// <summary>Starts the explicitly supported effects whose active behavior is supplied by SDE Dogma modifiers.</summary>
+/// <summary>Starts the explicitly supported effects whose active behavior is supplied by SDE Dogma modifiers: the emergency hull energizer.</summary>
 internal sealed class TypeAttributeResistanceEffect : ShipEffect
 {
     private const string EmergencyHullEnergizer = "emergencyHullEnergizer";
-    private const string AdaptiveArmorHardener = "adaptiveArmorHardener";
-
-    private static readonly string[] ArmorResonances =
-    [
-        "armorEmDamageResonance",
-        "armorExplosiveDamageResonance",
-        "armorKineticDamageResonance",
-        "armorThermalDamageResonance",
-    ];
 
     /// <summary>
     /// The hull resonances of the emergency hull energizer: the module's own hull attribute multiplies (PostMul) the ship's resonance of the same damage type
@@ -112,40 +114,28 @@ internal sealed class TypeAttributeResistanceEffect : ShipEffect
         ("hullThermalDamageResonance", "thermalDamageResonance"),
     ];
 
-    public override IReadOnlyCollection<string> EffectNames { get; } =
-        [EmergencyHullEnergizer, AdaptiveArmorHardener];
+    public override IReadOnlyCollection<string> EffectNames { get; } = [EmergencyHullEnergizer];
 
     protected override SimEffect Build(ModuleEffectContext module)
     {
         var (duration, capacitor, durationAttribute) = module.Cycle();
         var shipId = module.Snapshot.Ship.Id;
-        var emergency = module.Effect.Name.Equals(EmergencyHullEnergizer, StringComparison.OrdinalIgnoreCase);
-        // the (module attribute, ship attribute) pairs: the energizer's hull value multiplies the ship's resonance of the same damage type, an armor
-        // hardener's resonance multiplies the ship's resonance of the same name
-        var pairs = emergency
-            ? HullResonanceMultipliers
-                .Select(pair => (Module: module.Statics.AttributeId(pair.Module), Ship: module.Statics.AttributeId(pair.Ship)))
-                .Where(pair => pair.Module is not null && pair.Ship is not null)
-                .Select(pair => (Module: pair.Module!.Value, Ship: pair.Ship!.Value))
-                .ToArray()
-            : ArmorResonances
-                .Select(name => module.Statics.AttributeId(name))
-                .OfType<int>()
-                .Select(id => (Module: id, Ship: id))
-                .ToArray();
+        // the (module attribute, ship attribute) pairs: the energizer's hull value multiplies the ship's resonance of the same damage type
+        var pairs = HullResonanceMultipliers
+            .Select(pair => (Module: module.Statics.AttributeId(pair.Module), Ship: module.Statics.AttributeId(pair.Ship)))
+            .Where(pair => pair.Module is not null && pair.Ship is not null)
+            .Select(pair => (Module: pair.Module!.Value, Ship: pair.Ship!.Value))
+            .ToArray();
         var shipAttributeIds = pairs.Select(pair => pair.Ship).ToArray();
         // each resonance is multiplied by the module's own value, as a modifier of the world: a resonance that is pinned (a PostAssign, a Polarized
         // weapon fitted) keeps its pinned value, because the world applies its modifiers in order and the assignment comes last
         var multipliers = pairs.Select(pair => new Modifier(ModifierFunc.Item, "shipID", Operation.PostMul, pair.Ship, pair.Module)).ToArray();
-        var on = ToldValues(module.World, module.ModuleId, ItemState.Active, multipliers, shipId, shipAttributeIds, round: true);
-        var off = ToldValues(module.World, module.ModuleId, ItemState.Online, [], shipId, shipAttributeIds, round: false);
-        if (emergency)
-        {
-            // the energizer burns its own module out as it starts (emergencyHullEnergizer.py: damage = hp), and the module stays burned out when it stops
-            var burnOut = new SimChange(module.ModuleId, ModuleAttributes.ModuleDamage, module.World.Get(module.ModuleId, ModuleAttributes.ModuleHitPoints));
-            on.Add(burnOut);
-            off.Add(burnOut);
-        }
+        var on = ModuleEffects.ToldValues(module.World, module.ModuleId, ItemState.Active, multipliers, shipId, shipAttributeIds, round: true);
+        var off = ModuleEffects.ToldValues(module.World, module.ModuleId, ItemState.Online, [], shipId, shipAttributeIds, round: false);
+        // the energizer burns its own module out as it starts (emergencyHullEnergizer.py: damage = hp), and the module stays burned out when it stops
+        var burnOut = new SimChange(module.ModuleId, ModuleAttributes.ModuleDamage, module.World.Get(module.ModuleId, ModuleAttributes.ModuleHitPoints));
+        on.Add(burnOut);
+        off.Add(burnOut);
 
         var repeatAttribute = module.Statics.AttributeId("disallowRepeatingActivation");
         var repeat = repeatAttribute is { } id && module.Value(id, 0) > 0
@@ -160,13 +150,6 @@ internal sealed class TypeAttributeResistanceEffect : ShipEffect
             module.ModuleId, module.Module.TypeId, module.Effect.Id, module.Effect.Guid,
             duration, capacitor, repeat, Math.Max(0, module.TargetId),
             null, null, [.. told, .. on], [.. told, .. off]);
-    }
-
-    /// <summary>The ship's values of the attributes with the item in the given state (and the extra modifiers), as dogma works them out.</summary>
-    private static List<SimChange> ToldValues(DogmaWorld world, long itemId, ItemState state, IReadOnlyList<Modifier> modifiers, long shipId, int[] attributeIds, bool round)
-    {
-        using var assumed = world.Assume(itemId, state, modifiers);
-        return [.. attributeIds.Select(id => new SimChange(shipId, id, round ? ModuleAttributes.Six(world.Get(shipId, id)) : world.Get(shipId, id)))];
     }
 }
 

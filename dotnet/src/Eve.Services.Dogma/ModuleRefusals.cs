@@ -64,6 +64,8 @@ internal static class ModuleRefusals
             // an effect with no body yet (PendingModuleEffect) or a module that burns a resource not taken yet (DogmaModifierEffect) is shown as one this module cannot run,
             // the same as an effect with no handler
             "UNSUPPORTED_EFFECT" or "EFFECT_NOT_IMPLEMENTED" or "FUEL_NOT_IMPLEMENTED" => Notify($"{name} cannot be activated."),
+            // a module of a group of which one runs at a time (the reactive armor hardeners) while another of its group runs
+            "MAX_GROUP_ACTIVE" => Notify($"{name} cannot run while another module of its group is active."),
             // a launcher or firing effect whose kind is not run yet names its reason (MissileEffect.RefusedLauncherGroups, RefusedFiringEffects, e.g. F.O.F.):
             // shown as the same refusal
             _ when refusal.Reason?.EndsWith("_NOT_IMPLEMENTED", StringComparison.Ordinal) == true => Notify($"{name} cannot be activated."),

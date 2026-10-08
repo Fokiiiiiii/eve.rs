@@ -15,7 +15,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Arc, Aoe, Charge, Spool, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 21;
+pub const PROTOCOL_VERSION: u16 = 22;
 
 /// The message kinds.
 pub mod kind {
@@ -601,6 +601,7 @@ fn put_vitals(out: &mut Vec<u8>, vitals: &Vitals) {
     {
         out.extend_from_slice(&number.to_le_bytes());
     }
+    out.push(u8::from(vitals.armor_pinned));
 }
 
 fn put_heat_profile(out: &mut Vec<u8>, profile: &HeatProfile) {
@@ -1047,6 +1048,16 @@ fn put_action(out: &mut Vec<u8>, action: &Action) {
             out.extend_from_slice(&distance_meters.to_le_bytes());
             out.extend_from_slice(&cooldown_ms.to_le_bytes());
         }
+        Action::ResistanceShift { seed, shift, attribute_ids } => {
+            out.push(12);
+            for number in seed {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
+            out.extend_from_slice(&shift.to_le_bytes());
+            for attribute in attribute_ids {
+                out.extend_from_slice(&attribute.to_le_bytes());
+            }
+        }
         Action::Remote { what, reach, when, jam } => {
             out.push(1);
             out.push(when_byte(when));
@@ -1244,6 +1255,15 @@ fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             }
             Ok(Action::MicroJumpDrive { distance_meters, cooldown_ms })
         }
+        12 => {
+            let seed = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+            let shift = reader.f64()?;
+            let attribute_ids = [reader.i32()?, reader.i32()?, reader.i32()?, reader.i32()?];
+            if seed.iter().any(|r| !r.is_finite() || !(0.0..=1.0).contains(r)) || !shift.is_finite() || shift <= 0.0 {
+                return Err(DecodeError::BadValue("resistance shift"));
+            }
+            Ok(Action::ResistanceShift { seed, shift, attribute_ids })
+        }
         4 => {
             let charge_type_id = reader.i32()?;
             let charge_flag = reader.i32()?;
@@ -1340,6 +1360,11 @@ fn read_vitals(reader: &mut Reader) -> Result<Vitals, DecodeError> {
             shield: read_damage(reader)?,
             armor: read_damage(reader)?,
             structure: read_damage(reader)?,
+        },
+        armor_pinned: match reader.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err(DecodeError::BadValue("armor pinned")),
         },
     })
 }

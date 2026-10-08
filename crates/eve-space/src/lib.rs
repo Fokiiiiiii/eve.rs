@@ -24,6 +24,7 @@ pub mod motion;
 pub mod names;
 pub mod npc;
 pub mod payload;
+pub mod resistance_shift;
 pub mod scene;
 pub mod sde;
 pub mod security;

@@ -1557,6 +1557,7 @@ mod tests {
             armor_hp: 90.0,
             structure_hp: 200.0,
             resonances: Resonances { shield: [0.5; 4], armor: [0.5; 4], structure: [0.5; 4] },
+            armor_pinned: false,
         };
         drone.condition = Condition::FULL;
         drone
@@ -1708,6 +1709,7 @@ fn work_drone() -> (Scene, SessionId, Vec<Out>) {
             armor_hp: 0.0,
             structure_hp: 15.0,
             resonances: Resonances { shield: [1.0; 4], armor: [1.0; 4], structure: [1.0; 4] },
+            armor_pinned: false,
         };
         let place = place_near(&mut scene, 1_500.0);
         let (rat_session, _) = scene.spawn_npc(rat, rat_identity(0.0), place, LATER);
@@ -2010,6 +2012,7 @@ fn work_drone() -> (Scene, SessionId, Vec<Out>) {
             armor_hp: 0.0,
             structure_hp: 15.0,
             resonances: Resonances { shield: [1.0; 4], armor: [1.0; 4], structure: [1.0; 4] },
+            armor_pinned: false,
         };
         let position = scene.ship(PLAYER, LATER).unwrap().position;
         let place = NpcPlace::at_rest(Vec3::new(position.x + 12_000.0, position.y, position.z));

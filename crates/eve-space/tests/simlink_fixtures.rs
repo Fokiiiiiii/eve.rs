@@ -59,6 +59,7 @@ fn vitals_of(case: &Value) -> Vitals {
         armor_hp: number("armorHp"),
         structure_hp: number("structureHp"),
         resonances: Resonances { shield: four("shield"), armor: four("armor"), structure: four("structure") },
+        armor_pinned: case["armorPinned"].as_bool().unwrap_or(false),
     }
 }
 
@@ -245,6 +246,23 @@ fn effect_of(case: &Value) -> Effect {
                 return Action::EcmBurst {
                     range: a["range"].as_f64().unwrap(),
                     strength: sensors_of(&a["strength"]),
+                };
+            }
+            if a["kind"] == "resistanceShift" {
+                let four = |field: &str| -> [f64; 4] {
+                    let list = a[field].as_array().unwrap_or_else(|| panic!("{field} in {a}"));
+                    [list[0].as_f64().unwrap(), list[1].as_f64().unwrap(), list[2].as_f64().unwrap(), list[3].as_f64().unwrap()]
+                };
+                let ids = a["attributeIds"].as_array().unwrap();
+                return Action::ResistanceShift {
+                    seed: four("seed"),
+                    shift: a["shift"].as_f64().unwrap(),
+                    attribute_ids: [
+                        ids[0].as_i64().unwrap() as i32,
+                        ids[1].as_i64().unwrap() as i32,
+                        ids[2].as_i64().unwrap() as i32,
+                        ids[3].as_i64().unwrap() as i32,
+                    ],
                 };
             }
             if a["kind"] == "repair" {

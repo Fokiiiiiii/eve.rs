@@ -37,6 +37,9 @@ internal static class SimShips
     private static readonly int[] ArmorResonances = [267, 270, 269, 268];
     private static readonly int[] HullResonances = [113, 110, 109, 111];
 
+    /// <summary>The effect of a Polarized weapon that sets the shield and armor resonances of the ship to one (static data, effect 5995).</summary>
+    private const string PolarizedShieldArmorEffect = "resistanceKillerShieldArmorAll";
+
     /// <summary>A ship's warp speed in AU a second: its base warp speed (1 unless something changed it) times its multiplier (3 for a frigate).</summary>
     public static double WarpSpeedAu(double baseWarpSpeed, double multiplier) => (baseWarpSpeed > 0 ? baseWarpSpeed : 1.0) * Math.Max(1, multiplier);
 
@@ -128,8 +131,16 @@ public static SimHeatProfile HeatProfileOf(ShipSnapshot snapshot, DogmaStatic st
         double[] Layer(int[] ids) => [.. ids.Select(id => Math.Max(0, attributes.GetValueOrDefault(id, 1.0)))];
         return new SimVitals(
             Math.Max(0, attributes.GetValueOrDefault(ShieldCapacity)), Math.Max(0, attributes.GetValueOrDefault(ArmorHitPoints)), Math.Max(0, attributes.GetValueOrDefault(HullPoints)),
-            new SimResonances(Layer(ShieldResonances), Layer(ArmorResonances), Layer(HullResonances)));
+            new SimResonances(Layer(ShieldResonances), Layer(ArmorResonances), Layer(HullResonances)), ArmorPinned(snapshot));
     }
+
+    /// <summary>
+    /// Whether a fitted Polarized weapon pins the armor's resonances: its effect (<c>resistanceKillerShieldArmorAll</c>, the static data's) runs on the ship. The
+    /// simulation keeps the armor at one while it is so, whatever a reactive armor hardener does (the world already has them at one).
+    /// </summary>
+    public static bool ArmorPinned(ShipSnapshot snapshot) =>
+        snapshot.Fitted.Any(module => snapshot.World.Item(module.Id) is { } item
+            && snapshot.World.RunningEffects(item).Any(effect => effect.Name == PolarizedShieldArmorEffect));
 
     public static SimCondition ConditionOf(ShipCondition condition) => new(condition.Damage, condition.ArmorDamage, condition.ShieldCharge, condition.Charge);
 }

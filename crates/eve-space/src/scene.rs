@@ -1543,12 +1543,19 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         }
         self.settle_pilot(session, now);
         let stamp = self.next_stamp(now);
+        let shift_attributes = self.shift_attributes(session);
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        let armor_before = pilot.ship.health.armor_resonance();
         let old = std::mem::replace(&mut pilot.ship.spec, spec);
         let new = &pilot.ship.spec;
         pilot.ship.health.respec(new.vitals, new.shield_recharge_ms, now);
+        // a reactive armor hardener that runs is shown the armor's resonances as they now are (a pin, or a new base, moves them)
+        let armor_changes = shift_attributes
+            .map(|ids| crate::modules::armor_changes(&ids, &armor_before, &pilot.ship.health.armor_resonance()))
+            .unwrap_or_default();
         let security_changed = new.security_status != old.security_status;
         let ship_id = id(new.ship_id);
+        let (owner, ship) = (new.character_id, new.ship_id);
         let mut actions = Vec::new();
         if new.mass != old.mass {
             actions.push(payload::action(stamp, "SetBallMass", [ship_id.clone(), real(new.mass)]));
@@ -1559,7 +1566,10 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         if new.max_velocity != old.max_velocity {
             actions.push(payload::action(stamp, "SetMaxSpeed", [ship_id, real(new.max_velocity)]));
         }
-        let mut told = if actions.is_empty() { Vec::new() } else { self.tell_all(session, actions) };
+        let mut told: Vec<Out> = Self::health_told(session, owner, ship, now, &armor_changes).into_iter().collect();
+        if !actions.is_empty() {
+            told.extend(self.tell_all(session, actions));
+        }
         // a security status that changed is in the slim item: the pilot and whoever sees the ship are shown it again (the reference does, when a crime costs a pilot some)
         if security_changed {
             let ship = &self.pilots[&session].ship;
@@ -2953,6 +2963,7 @@ pub(crate) mod tests {
                     armor: [0.5, 0.35, 0.25, 0.1],
                     structure: [0.33, 0.33, 0.33, 0.33],
                 },
+                armor_pinned: false,
             },
             condition: Condition::FULL,
             modules: vec![ModuleSpec { item_id: 9_988_400_001_940, type_id: 21857, flag: 19 }],

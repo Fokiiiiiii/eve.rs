@@ -227,7 +227,7 @@ impl Action {
         match self {
             Self::Remote { what, .. } => what.hostile(),
             Self::Smartbomb { .. } | Self::EcmBurst { .. } => true,
-            Self::Cloak | Self::MicroJumpDrive { .. } => false,
+            Self::Cloak | Self::MicroJumpDrive { .. } | Self::ResistanceShift { .. } => false,
             Self::Charged { action, fallback, .. } => {
                 action.offensive() || fallback.as_deref().is_some_and(Action::offensive)
             }
@@ -271,6 +271,14 @@ pub enum Action {
         charge_flag: i32,
         charge_per_cycle: i64,
         charges: i64,
+    },
+    /// A reactive armor hardener: the armor's resonances start at `seed` (the module's own values for em, thermal, kinetic and explosive) and move each
+    /// cycle as the damage the armor took says (`crate::resistance_shift`), by `shift` of a resonance at most. The client is told the armor's resonances
+    /// as the attributes `attribute_ids` (in the same order) when they change.
+    ResistanceShift {
+        seed: crate::health::Damage,
+        shift: f64,
+        attribute_ids: [i32; 4],
     },
 }
 
@@ -527,6 +535,21 @@ fn no_charges(module_type: i32) -> Value {
 }
 
 /// One line of an `OnModuleAttributeChanges`: `(name, owner, item, attribute, when, new value, old value, when)`.
+/// The armor resonances that changed between two states, as `(attribute, new, old)` (each rounded as it is told). `attribute_ids` are in the order of the
+/// damage vector, as the resonances are.
+pub(crate) fn armor_changes(
+    attribute_ids: &[i32; 4],
+    before: &crate::health::Damage,
+    after: &crate::health::Damage,
+) -> Vec<(i32, f64, f64)> {
+    (0..4)
+        .filter_map(|i| {
+            let (new, old) = (crate::health::round6(after[i]), crate::health::round6(before[i]));
+            (new != old).then_some((attribute_ids[i], new, old))
+        })
+        .collect()
+}
+
 pub(crate) fn attribute_change(
     owner: i64,
     item: i64,
@@ -725,6 +748,12 @@ impl Scene {
         if pilot.modules.running.iter().any(|r| r.effect.module_id == effect.module_id) {
             return vec![Out::Refused { session, command: CODE, reason: "ALREADY_ACTIVE" }];
         }
+        // the reactive armor hardeners are one group, of which one runs at a time: a second one is refused (its resonances would not compose)
+        if matches!(effect.action, Some(Action::ResistanceShift { .. }))
+            && pilot.modules.running.iter().any(|r| matches!(r.effect.action, Some(Action::ResistanceShift { .. })))
+        {
+            return vec![Out::Refused { session, command: CODE, reason: "MAX_GROUP_ACTIVE" }];
+        }
         if let Some(Action::MicroJumpDrive { distance_meters, cooldown_ms }) = effect.action.as_ref() {
             if !distance_meters.is_finite()
                 || *distance_meters <= 0.0
@@ -870,6 +899,10 @@ impl Scene {
             Some(capacitor) => capacitor.draw(now, run.effect.capacitor_need),
             None => (0.0, 0.0),
         };
+        // a reactive armor hardener's resonances start at its seed, before anything is told
+        if let Some(Action::ResistanceShift { seed, shift, .. }) = run.effect.action.as_ref() {
+            pilot.ship.health.start_shift(*seed, *shift);
+        }
         let mut out = vec![Out::Accepted { session, command: CODE, at: now }];
         out.push(Self::charge_told(session, owner, ship_id, now, after, before));
         let stamp = self.next_stamp(now);
@@ -1420,6 +1453,9 @@ impl Scene {
             Some(Action::EcmBurst { range, strength }) if when == Applies::CycleStart => {
                 self.jam_burst(session, strength, *range, at)
             }
+            Some(Action::ResistanceShift { attribute_ids, .. }) if when == Applies::CycleEnd => {
+                self.shift_armor(session, *attribute_ids, at)
+            }
             Some(Action::Cloak) if when == Applies::CycleStart => {
                 let changed = if let Some(pilot) = self.pilots.get_mut(&session) {
                     let changed = pilot.cloak != crate::visibility::CloakState::Cloaked;
@@ -1435,6 +1471,28 @@ impl Scene {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// The attributes a running reactive armor hardener tells the armor's resonances as, if one runs.
+    pub(crate) fn shift_attributes(&self, session: SessionId) -> Option<[i32; 4]> {
+        self.pilots.get(&session)?.modules.running.iter().find_map(|run| match run.effect.action.as_ref() {
+            Some(Action::ResistanceShift { attribute_ids, .. }) => Some(*attribute_ids),
+            _ => None,
+        })
+    }
+
+    /// A cycle of a reactive armor hardener ends: the armor's resonances move as the damage it took in the cycle says, and the pilot is told the ones that
+    /// changed (the attributes of the ship, the values they now have, and the ones they had). Nothing is told when they do not move.
+    fn shift_armor(&mut self, session: SessionId, attribute_ids: [i32; 4], at: i64) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+        let before = pilot.ship.health.armor_resonance();
+        if pilot.ship.health.shift_cycle().is_none() {
+            return Vec::new();
+        }
+        let after = pilot.ship.health.armor_resonance();
+        let changes = armor_changes(&attribute_ids, &before, &after);
+        Self::health_told(session, owner, ship_id, at, &changes).into_iter().collect()
     }
 
     pub(crate) fn apart(&self, a: SessionId, b: SessionId) -> Option<f64> {
@@ -1596,6 +1654,12 @@ impl Scene {
     ) -> Vec<Out> {
         let (target_lost, out_of_rounds) =
             (matches!(ending, Ending::TargetLost | Ending::Forced), ending == Ending::NoRounds);
+        // a reactive armor hardener that stops leaves the armor its own resonances, and keeps nothing for a later start
+        if matches!(run.effect.action, Some(Action::ResistanceShift { .. }))
+            && let Some(pilot) = self.pilots.get_mut(&session)
+        {
+            pilot.ship.health.stop_shift();
+        }
         let mut out = Vec::new();
         let changes = Self::changes_told(session, owner, &run.effect, &run.effect.off_changes, at);
         let error = out_of_rounds.then(|| no_charges(run.effect.module_type));
@@ -3661,5 +3725,203 @@ pub(crate) mod tests {
         let (later, _) = poll_until(&mut scene, t + SECOND, 5.0);
         assert!((layers(&scene, t + 6 * SECOND).armor - before).abs() < 1e-3);
         assert!(later.iter().all(|out| !matches!(out, Out::Notify { name: "OnGodmaShipEffect", .. })));
+    }
+
+    // ---- a reactive armor hardener ----
+
+    /// The Ibis's armor resonances (em, thermal, kinetic, explosive) before a hardener.
+    const BASE_ARMOR: [f64; 4] = [0.5, 0.35, 0.25, 0.1];
+    /// The attributes of the armor's resonances, in the order of the damage vector: em (267), thermal (270), kinetic (269), explosive (268).
+    const ARMOR_IDS: [i32; 4] = [267, 270, 269, 268];
+
+    /// A reactive armor hardener of the Ibis (type 4403): seeded at 0.85 each, 6 points a cycle, of ten seconds; told as the ship's armor resonances.
+    fn hardener(module: i64) -> Effect {
+        let ship = spec().ship_id;
+        let seeded = |base: f64| base * 0.85;
+        Effect {
+            module_id: module,
+            module_type: 4403,
+            effect_id: 4928,
+            fx: "effects.AdaptiveArmorHardener".to_string(),
+            duration_ms: 10_000.0,
+            capacitor_need: 42.0,
+            // a toggle: it runs until the pilot stops it (the type does not disallow repeating)
+            repeat: 1000,
+            target_id: 0,
+            turret: None,
+            action: Some(Action::ResistanceShift { seed: [0.85; 4], shift: 0.06, attribute_ids: ARMOR_IDS }),
+            on: None,
+            off: None,
+            on_changes: ARMOR_IDS
+                .iter()
+                .zip(BASE_ARMOR)
+                .map(|(&attribute_id, base)| Change { item_id: ship, attribute_id, value: round6(seeded(base)) })
+                .collect(),
+            off_changes: ARMOR_IDS
+                .iter()
+                .zip(BASE_ARMOR)
+                .map(|(&attribute_id, base)| Change { item_id: ship, attribute_id, value: base })
+                .collect(),
+        }
+    }
+
+    /// The armor resonances the pilot of `A` was told of in `out`: `(attribute, new, old)`.
+    fn armor_told(out: &[Out]) -> Vec<(i64, f64, f64)> {
+        // what an effect's change tells has no old value (`None`): it is not a number
+        let number = |value: &Value| match value {
+            Value::Real(x) => *x,
+            Value::Int(x) => *x as f64,
+            Value::None => f64::NAN,
+            other => panic!("{other:?}"),
+        };
+        out.iter()
+            .filter_map(|o| match o {
+                Out::Notify { session: A, name: "OnModuleAttributeChanges", args, .. } => {
+                    let Some(Value::List(lines)) = args.first() else { panic!("{args:?}") };
+                    Some(lines.clone())
+                }
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|line| {
+                let Value::Tuple(t) = line else { panic!() };
+                let Value::Int(attribute) = t[3] else { panic!() };
+                ARMOR_IDS.contains(&(attribute as i32)).then(|| (attribute, number(&t[5]), number(&t[6])))
+            })
+            .collect()
+    }
+
+    fn round6(value: f64) -> f64 {
+        crate::health::round6(value)
+    }
+
+    /// The Ibis with armor enough to take a long run of hits, so that the hits count in full.
+    fn with_armor(scene: &mut Scene, t: i64) {
+        let mut big = spec();
+        big.vitals.armor_hp = 1.0e7;
+        big.vitals.structure_hp = 1.0e7;
+        scene.respec(A, big, t);
+    }
+
+    #[test]
+    fn a_hardener_moves_the_armor_resonances_at_the_end_of_its_cycle_as_the_hit_says_and_tells_the_pilot() {
+        let (mut scene, t) = crowd();
+        with_armor(&mut scene, t);
+        let started = scene.activate(A, hardener(MODULE), t);
+        assert!(matches!(started.first(), Some(Out::Accepted { command: 17, .. })), "{started:?}");
+        // the armor's resonances are the base times the seed while it runs (the host's told values, and the simulation's)
+        assert!((scene.pilots[&A].ship.health.armor_resonance()[0] - 0.425).abs() < 1e-12);
+        // a hit of 1000 em lands before the cycle ends: 1000 x 0.425 goes into the armor
+        scene.damage(spec().ship_id, [1000.0, 0.0, 0.0, 0.0], t + SECOND);
+        let (out, _) = poll_until(&mut scene, t, 10.5);
+        // the cycle ended: em falls to 0.67 (0.5 x 0.67), the others rise to 0.91 (0.35 x 0.91 for thermal)
+        let told = armor_told(&out);
+        assert!(told.iter().any(|&(attribute, new, old)| attribute == 267 && new == 0.335 && old == 0.425), "{told:?}");
+        assert!(told.iter().any(|&(attribute, new, old)| attribute == 270 && new == 0.3185 && old == 0.2975), "{told:?}");
+        assert_eq!(scene.pilots[&A].ship.health.shift_profile(), Some([0.67, 0.91, 0.91, 0.91]));
+    }
+
+    #[test]
+    fn a_hardener_is_told_nothing_at_a_cycle_in_which_the_armor_took_nothing() {
+        let (mut scene, t) = crowd();
+        with_armor(&mut scene, t);
+        scene.activate(A, hardener(MODULE), t);
+        let (out, _) = poll_until(&mut scene, t, 25.0);
+        assert!(armor_told(&out).is_empty(), "{:?}", armor_told(&out));
+        // the profile is the seed still, after two cycles with nothing in them
+        assert_eq!(scene.pilots[&A].ship.health.shift_profile(), Some([0.85; 4]));
+    }
+
+    #[test]
+    fn the_profile_keeps_its_total_and_its_bounds_over_many_cycles_of_hits() {
+        let (mut scene, t) = crowd();
+        with_armor(&mut scene, t);
+        scene.activate(A, hardener(MODULE), t);
+        let mut now = t;
+        for cycle in 0..30 {
+            // a hit in one kind a cycle, moving round the four
+            let kind = cycle % 4;
+            let mut raw = [0.0; 4];
+            raw[kind] = 400.0;
+            scene.damage(spec().ship_id, raw, now + SECOND);
+            let (_, next) = poll_until(&mut scene, now, 10.5);
+            now = next;
+            let profile = scene.pilots[&A].ship.health.shift_profile().expect("the hardener runs");
+            assert!((profile.iter().sum::<f64>() - 3.4).abs() < 1e-6, "cycle {cycle}: {profile:?}");
+            assert!(profile.iter().all(|r| (0.0..=1.0).contains(r)), "cycle {cycle}: {profile:?}");
+        }
+    }
+
+    #[test]
+    fn a_second_reactive_armor_hardener_is_refused_while_one_runs() {
+        let (mut scene, t) = crowd();
+        scene.activate(A, hardener(MODULE), t);
+        let second = scene.activate(A, hardener(MODULE + 1), t);
+        assert!(
+            matches!(second.first(), Some(Out::Refused { command: 17, reason: "MAX_GROUP_ACTIVE", .. })),
+            "{second:?}"
+        );
+        assert_eq!(scene.pilots[&A].modules.running_count(), 1);
+    }
+
+    #[test]
+    fn stopping_a_hardener_gives_the_armor_its_base_and_a_later_start_begins_from_the_seed() {
+        let (mut scene, t) = crowd();
+        with_armor(&mut scene, t);
+        scene.activate(A, hardener(MODULE), t);
+        scene.damage(spec().ship_id, [1000.0, 0.0, 0.0, 0.0], t + SECOND);
+        scene.deactivate(A, MODULE, t + 2 * SECOND);
+        let (out, t) = poll_until(&mut scene, t, 10.5);
+        // the cycle ends with the hardener stopping: the armor is told its base (the off values) and nothing runs
+        let told = armor_told(&out);
+        assert!(told.iter().any(|&(attribute, new, _)| attribute == 267 && new == 0.5), "{told:?}");
+        assert_eq!(scene.pilots[&A].ship.health.armor_resonance(), BASE_ARMOR);
+        assert_eq!(scene.pilots[&A].ship.health.shift_profile(), None);
+        // a later start is from the seed, not from where it stopped
+        scene.activate(A, hardener(MODULE), t);
+        assert_eq!(scene.pilots[&A].ship.health.shift_profile(), Some([0.85; 4]));
+    }
+
+    #[test]
+    fn a_fitted_polarized_weapon_holds_the_armor_at_one_and_the_hardener_moves_nothing_until_it_is_taken_off() {
+        let (mut scene, t) = crowd();
+        with_armor(&mut scene, t);
+        let mut pinned = spec();
+        pinned.vitals.armor_pinned = true;
+        pinned.vitals.armor_hp = 1.0e7;
+        pinned.vitals.structure_hp = 1.0e7;
+        // the Polarized weapon is fitted: the simulation is sent the pin with the ship
+        scene.respec(A, pinned, t);
+        let started = scene.activate(A, hardener(MODULE), t);
+        assert!(matches!(started.first(), Some(Out::Accepted { command: 17, .. })), "{started:?}");
+        assert_eq!(scene.pilots[&A].ship.health.armor_resonance(), [1.0; 4]);
+        scene.damage(spec().ship_id, [1000.0, 0.0, 0.0, 0.0], t + SECOND);
+        let (out, t) = poll_until(&mut scene, t, 10.5);
+        // nothing moves while pinned: no shift is told and the profile is the seed
+        assert!(armor_told(&out).is_empty(), "{:?}", armor_told(&out));
+        assert_eq!(scene.pilots[&A].ship.health.shift_profile(), Some([0.85; 4]));
+        // the Polarized weapon comes off: the armor is the base times the profile again, and the pilot is told it at once
+        let mut unpinned = spec();
+        unpinned.vitals.armor_hp = 1.0e7;
+        unpinned.vitals.structure_hp = 1.0e7;
+        let out = scene.respec(A, unpinned, t);
+        let told = armor_told(&out);
+        assert!(told.iter().any(|&(attribute, new, old)| attribute == 267 && new == 0.425 && old == 1.0), "{told:?}");
+        assert!((scene.pilots[&A].ship.health.armor_resonance()[0] - 0.425).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_refit_that_changes_the_base_moves_the_told_armor_and_keeps_the_profile() {
+        let (mut scene, t) = crowd();
+        with_armor(&mut scene, t);
+        scene.activate(A, hardener(MODULE), t);
+        let mut refit = spec();
+        refit.vitals.armor_hp = 1.0e7;
+        refit.vitals.structure_hp = 1.0e7;
+        refit.vitals.resonances.armor = [0.4, 0.35, 0.25, 0.1];
+        let out = scene.respec(A, refit, t + SECOND);
+        let told = armor_told(&out);
+        assert!(told.iter().any(|&(attribute, new, old)| attribute == 267 && new == 0.34 && old == 0.425), "{told:?}");
+        assert_eq!(scene.pilots[&A].ship.health.shift_profile(), Some([0.85; 4]));
     }
 }

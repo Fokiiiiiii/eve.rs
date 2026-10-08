@@ -237,6 +237,7 @@ pub fn recorded_ship(race: &Value, ball: &[u8], direction: Vec3) -> Ship {
                 armor: [0.5, 0.55, 0.75, 0.9],
                 structure: [0.67, 0.67, 0.67, 0.67],
             },
+            armor_pinned: false,
         },
         condition: Condition::FULL,
         modules,

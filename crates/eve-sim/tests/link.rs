@@ -82,6 +82,7 @@ fn ship() -> ShipSpec {
                 armor: [0.5, 0.35, 0.25, 0.1],
                 structure: [0.33, 0.33, 0.33, 0.33],
             },
+            armor_pinned: false,
         },
         condition: eve_space::health::Condition::FULL,
         modules: Vec::new(),

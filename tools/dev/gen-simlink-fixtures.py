@@ -59,7 +59,9 @@ def ship(m):
 
 def vitals(v):
     r = v["resonances"]
-    return struct.pack("<15d", v["shieldCapacity"], v["armorHp"], v["structureHp"], *r["shield"], *r["armor"], *r["structure"])
+    # the armor's pin: a fitted Polarized weapon holds the armor's resonances at one (one byte, 0 or 1)
+    return (struct.pack("<15d", v["shieldCapacity"], v["armorHp"], v["structureHp"], *r["shield"], *r["armor"], *r["structure"])
+            + bytes([int(v.get("armorPinned", False))]))
 
 
 def condition(c):
@@ -108,6 +110,9 @@ def action(a):
         return bytes([3]) + struct.pack("<d", a["range"]) + struct.pack("<4d", *a["strength"])
     if kind == "cloak":
         return bytes([5])
+    if kind == "resistanceShift":
+        # a reactive armor hardener: the seed (em, thermal, kinetic, explosive), the most a kind gives up a cycle, the attributes it tells
+        return bytes([12]) + struct.pack("<4d", *a["seed"]) + struct.pack("<d", a["shift"]) + struct.pack("<4i", *a["attributeIds"])
     if kind == "charged":
         body = bytes([4]) + struct.pack("<iiqq", a["chargeTypeId"], a["chargeFlag"], a["chargePerCycle"], a["charges"])
         body += action(a["action"])
@@ -579,6 +584,21 @@ valid = [
      "shipId": "980050000077", "wreckId": "4300000000000001", "position": [311989835983.1308, -13069154020.916222, 156646308895.76187],
      "direction": [0.6159, 0.01306, 0.78769], "radius": 47.0, "killerShipId": "9988400001939",
      "wreckKind": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117}},
+    {"name": "new ship numbers with the armor pinned by a polarized weapon", "kind": "ShipSpec", "sessionId": "1790646377000015",
+     "ship": dict(IBIS, vitals=dict(IBIS["vitals"], armorPinned=True,
+                                    resonances={"shield": [0.0, 0.8, 0.6, 0.5], "armor": [1.0, 1.0, 1.0, 1.0],
+                                                "structure": [0.33, 0.33, 0.33, 0.33]}))},
+    {"name": "activate a reactive armor hardener", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002810", "moduleType": 4403, "effectId": 4928, "fx": "effects.AdaptiveArmorHardener",
+                "durationMs": 10000.0, "capacitorNeed": 42.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "resistanceShift", "seed": [0.85, 0.85, 0.85, 0.85], "shift": 0.06,
+                           "attributeIds": [267, 270, 269, 268]},
+                "onChanges": [{"itemId": "9988400002810", "attributeId": 6, "value": 42.0},
+                              {"itemId": "9988400002810", "attributeId": 73, "value": 10000.0},
+                              {"itemId": "9988400002810", "attributeId": 267, "value": 0.425},
+                              {"itemId": "9988400002810", "attributeId": 270, "value": 0.2975}],
+                "offChanges": [{"itemId": "9988400002810", "attributeId": 6, "value": 42.0},
+                               {"itemId": "9988400002810", "attributeId": 73, "value": 10000.0}]}},
     {"name": "destroyed player's ship, nobody to blame, no wreck", "kind": "Destroyed", "sessionId": "1790646377000015",
      "shipId": "9988400001939", "wreckId": "0", "position": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0],
      "radius": 47.0, "killerShipId": "0", "wreckKind": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 0}},
@@ -664,6 +684,10 @@ negative_radius = dict(vorton, effect=dict(vorton["effect"], turret=dict(vorton[
                                                                          aoe=dict(vorton["effect"]["turret"]["aoe"], explosionRadius=-43.0))))
 negative_targets = dict(vorton, effect=dict(vorton["effect"], turret=dict(vorton["effect"]["turret"],
                                                                           arc={"range": 10000.0, "targets": -1})))
+hardener = next(c for c in valid if c["name"] == "activate a reactive armor hardener")
+hardener_seed_high = dict(hardener, effect=dict(hardener["effect"], action=dict(hardener["effect"]["action"], seed=[0.85, 1.5, 0.85, 0.85])))
+hardener_shift_none = dict(hardener, effect=dict(hardener["effect"], action=dict(hardener["effect"]["action"], shift=0.0)))
+pinned_flag_two = {"kind": "ShipSpec", "sessionId": "1790646377000015", "ship": dict(IBIS, vitals=dict(IBIS["vitals"], armorPinned=2))}
 invalid = [
     {"name": "unknown kind", "reason": "unknown-kind", "hex": "01000000ff"},
     {"name": "kind zero", "reason": "unknown-kind", "hex": "0100000000"},
@@ -676,6 +700,9 @@ invalid = [
     {"name": "precursor spool with a negative bonus per cycle", "reason": "bad-value", "hex": build(negative_spool).hex()},
     {"name": "vorton explosion with a negative radius", "reason": "bad-value", "hex": build(negative_radius).hex()},
     {"name": "vorton arc with a negative number of targets", "reason": "bad-value", "hex": build(negative_targets).hex()},
+    {"name": "reactive armor hardener with a seed above one", "reason": "bad-value", "hex": build(hardener_seed_high).hex()},
+    {"name": "reactive armor hardener that shifts by nothing", "reason": "bad-value", "hex": build(hardener_shift_none).hex()},
+    {"name": "armor pinned flag that is not a flag", "reason": "bad-value", "hex": build(pinned_flag_two).hex()},
     {"name": "enter reply with an unknown status", "reason": "bad-value",
      "hex": (struct.pack("<I", 12) + bytes([13]) + u64(1) + bytes([2]) + s("")).hex()},
     {"name": "text that is not UTF-8", "reason": "utf8",

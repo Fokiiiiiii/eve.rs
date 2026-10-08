@@ -23,7 +23,7 @@ const FULL_SNAP_POINTS: f64 = 1.0;
 /// What a station's or an unhurtable thing's damage state says the shield's recharge is.
 pub const UNHURTABLE_TAU_MS: f64 = 110_000.0;
 
-fn round6(value: f64) -> f64 {
+pub(crate) fn round6(value: f64) -> f64 {
     (value * 1_000_000.0).round() / 1_000_000.0
 }
 
@@ -41,13 +41,16 @@ impl Default for Resonances {
     }
 }
 
-/// What a ship can hold, in points, and how it resists.
+/// What a ship can hold, in points, and how it resists. `resonances` are the ship's own (the host's, without a running reactive armor hardener's
+/// adaptive profile, which the simulation keeps); `armor_pinned` is set while a fitted Polarized weapon holds the armor's resonances at one, and nothing
+/// lifts it.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Vitals {
     pub shield_capacity: f64,
     pub armor_hp: f64,
     pub structure_hp: f64,
     pub resonances: Resonances,
+    pub armor_pinned: bool,
 }
 
 impl Vitals {
@@ -146,6 +149,16 @@ impl Applied {
     }
 }
 
+/// The adaptive resonances of a reactive armor hardener that runs on the ship: the module's multipliers of the armor's resonances (`profile`, the
+/// effective armor resonance is the ship's own times these), the damage the armor took this cycle per kind, weighted by the resonance it had (`tally`),
+/// and the most a kind gives up each cycle (`step`). Owned by the simulation: nothing else writes it (see `crate::resistance_shift`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Shift {
+    pub profile: Damage,
+    pub tally: Damage,
+    pub step: f64,
+}
+
 /// A ship's health: its vitals, what it has taken and the shield's recharge.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Health {
@@ -159,6 +172,8 @@ pub struct Health {
     at: i64,
     /// When the shield's charge is next told to its pilot, while it is below full.
     pub(crate) next_sample: Option<i64>,
+    /// The reactive armor hardener's adaptive resonances, while one runs (a ship has at most one).
+    shift: Option<Shift>,
 }
 
 impl Health {
@@ -179,7 +194,52 @@ impl Health {
             } else {
                 None
             },
+            shift: None,
         }
+    }
+
+    /// The armor's resonances as they are now: the ship's own, each times the adaptive profile of a running reactive armor hardener, or all one while
+    /// a Polarized weapon pins them (the pin wins: the profile is not applied over it).
+    pub fn armor_resonance(&self) -> Damage {
+        if self.vitals.armor_pinned {
+            return [1.0; 4];
+        }
+        let base = self.vitals.resonances.armor;
+        match self.shift {
+            Some(shift) => std::array::from_fn(|i| base[i] * shift.profile[i]),
+            None => base,
+        }
+    }
+
+    /// The adaptive profile of the running reactive armor hardener, if one runs.
+    pub fn shift_profile(&self) -> Option<Damage> {
+        self.shift.map(|shift| shift.profile)
+    }
+
+    /// A reactive armor hardener starts on the ship: its resonances are `seed` (the module's own values, in the order of a damage vector) and move
+    /// by `step` a cycle. Its tally starts from nothing, so a hardener that starts again starts from its seed.
+    pub fn start_shift(&mut self, seed: Damage, step: f64) {
+        self.shift = Some(Shift { profile: seed.map(|r| r.clamp(0.0, 1.0)), tally: [0.0; 4], step });
+    }
+
+    /// The hardener stops: the armor is the ship's own again, and nothing is kept for a later start.
+    pub fn stop_shift(&mut self) {
+        self.shift = None;
+    }
+
+    /// A cycle of the running hardener ends: its resonances move as the damage the armor took in the cycle says, and the tally starts again. The new
+    /// profile when it moved (the armor's resonances then change), None when nothing runs, when it did not move, or when the armor is pinned (a pinned
+    /// armor takes no shift and keeps no tally).
+    pub fn shift_cycle(&mut self) -> Option<Damage> {
+        let pinned = self.vitals.armor_pinned;
+        let shift = self.shift.as_mut()?;
+        let tally = std::mem::replace(&mut shift.tally, [0.0; 4]);
+        if pinned {
+            return None;
+        }
+        let next = crate::resistance_shift::next_profile(shift.profile, tally, shift.step)?;
+        shift.profile = next;
+        Some(next)
     }
 
     /// The ship has new numbers: its absolute damage stays the same, while capacitor charge keeps its fraction.
@@ -279,7 +339,8 @@ impl Health {
         let mut left = raw.map(|d| d.max(0.0));
         let mut now_layers = before;
         let mut taken = Layers { shield: 0.0, armor: 0.0, structure: 0.0 };
-        let resonances = self.vitals.resonances;
+        let pinned = self.vitals.armor_pinned;
+        let resonances = Resonances { armor: self.armor_resonance(), ..self.vitals.resonances };
         for layer in 0..3 {
             let (most, hp, resonance) = match layer {
                 0 => (max.shield, now_layers.shield, resonances.shield),
@@ -293,19 +354,32 @@ impl Health {
             if effective <= 0.0 {
                 continue;
             }
+            // what the layer takes of each kind, before its resonance
+            let mut part_of = [0.0; 4];
             let (used, remaining) = if effective <= hp + 1e-9 {
+                part_of = left;
                 left = [0.0; 4];
                 (effective, hp - effective)
             } else {
                 let fraction = hp / effective;
                 let mut used = 0.0;
-                for (d, r) in left.iter_mut().zip(resonance) {
+                for (i, (d, r)) in left.iter_mut().zip(resonance).enumerate() {
                     let part = *d * fraction;
+                    part_of[i] = part;
                     *d = (*d - part).max(0.0);
                     used += part * r;
                 }
                 (used, 0.0)
             };
+            // a running reactive armor hardener is told what the armor took per kind (the damage it counts), unless a Polarized weapon holds it
+            if layer == 1
+                && !pinned
+                && let Some(shift) = self.shift.as_mut()
+            {
+                for (i, part) in part_of.iter().enumerate() {
+                    shift.tally[i] += part * resonance[i];
+                }
+            }
             match layer {
                 0 => (now_layers.shield, taken.shield) = (remaining.max(0.0), used),
                 1 => (now_layers.armor, taken.armor) = (remaining.max(0.0), used),
@@ -579,6 +653,7 @@ mod tests {
                 armor: [0.5, 0.35, 0.25, 0.1],
                 structure: [0.33, 0.33, 0.33, 0.33],
             },
+            armor_pinned: false,
         }
     }
 
@@ -1162,5 +1237,148 @@ mod tests {
         // a capacitor that starts low is told as it recharges
         let (out, _) = poll_until(&mut scene, NOON, 1.0);
         assert!(attribute_lists(&out, A).iter().any(|l| l[0].0 == 18), "{out:?}");
+    }
+}
+
+#[cfg(test)]
+mod shift_tests {
+    //! A reactive armor hardener's adaptive resonances on a ship's armor: the hits it counts, the cycle's move, the pin of a Polarized weapon, and a
+    //! refit (the base changes, the profile stays).
+
+    use super::*;
+
+    /// An armor with no shield and plenty of hit points, so that a hit goes straight to the armor, whose base resonances are `base`.
+    fn armor(base: Damage, pinned: bool) -> Health {
+        let vitals = Vitals {
+            shield_capacity: 0.0,
+            armor_hp: 1.0e9,
+            structure_hp: 1.0e9,
+            resonances: Resonances { shield: [1.0; 4], armor: base, structure: [1.0; 4] },
+            armor_pinned: pinned,
+        };
+        Health::new(vitals, 860_000.0, Condition::FULL, 0)
+    }
+
+    /// What a hit of `raw` (em, thermal, kinetic, explosive) takes from the armor at `now`.
+    fn taken_armor(health: &mut Health, raw: Damage, now: i64) -> f64 {
+        health.apply(now, raw).expect("the ship can be hurt").taken.armor
+    }
+
+    #[test]
+    fn a_running_hardener_scales_the_ship_armor_resonances_by_its_profile() {
+        let mut health = armor([0.5, 0.35, 0.25, 0.1], false);
+        health.start_shift([0.85; 4], 0.06);
+        let resonance = health.armor_resonance();
+        assert!((resonance[0] - 0.425).abs() < 1e-12);
+        assert!((resonance[1] - 0.2975).abs() < 1e-12);
+        assert_eq!(health.shift_profile(), Some([0.85; 4]));
+        // a hit of 1000 em takes 1000 x 0.425 from the armor
+        assert!((taken_armor(&mut health, [1000.0, 0.0, 0.0, 0.0], 0) - 425.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_hit_at_a_resonance_of_0_40_takes_400_and_at_0_85_takes_850() {
+        let mut health = armor([1.0; 4], false);
+        health.start_shift([0.85; 4], 0.06);
+        assert!((taken_armor(&mut health, [1000.0, 0.0, 0.0, 0.0], 0) - 850.0).abs() < 1e-6);
+        let mut moved = armor([1.0; 4], false);
+        moved.start_shift([0.40, 1.0, 1.0, 1.0], 0.06);
+        assert!((taken_armor(&mut moved, [1000.0, 0.0, 0.0, 0.0], 0) - 400.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_cycle_counts_the_damage_the_armor_took_per_kind_and_moves_the_profile_by_it() {
+        let mut health = armor([0.5, 0.35, 0.25, 0.1], false);
+        health.start_shift([0.85; 4], 0.06);
+        taken_armor(&mut health, [1000.0, 0.0, 0.0, 0.0], 0);
+        // the tally is the damage taken per kind, weighted by the resonance it met: 1000 x 0.425 in em
+        let tally = health.shift.expect("runs").tally;
+        assert!((tally[0] - 425.0).abs() < 1e-6, "{tally:?}");
+        assert!(tally[1..].iter().all(|t| *t == 0.0));
+        let next = health.shift_cycle().expect("the profile moves");
+        assert_eq!(next, [0.67, 0.91, 0.91, 0.91]);
+        // the armor's resonance is the base times the new profile, and the tally starts again
+        assert!((health.armor_resonance()[0] - 0.5 * 0.67).abs() < 1e-12);
+        assert_eq!(health.shift.expect("runs").tally, [0.0; 4]);
+        // a cycle with no damage moves nothing
+        assert_eq!(health.shift_cycle(), None);
+    }
+
+    #[test]
+    fn the_shield_takes_the_hit_before_the_armor_counts_it() {
+        // a hit that the shield absorbs whole is not counted by the armor
+        let vitals = Vitals {
+            shield_capacity: 1.0e9,
+            armor_hp: 1.0e9,
+            structure_hp: 1.0e9,
+            resonances: Resonances { shield: [1.0; 4], armor: [1.0; 4], structure: [1.0; 4] },
+            armor_pinned: false,
+        };
+        let mut health = Health::new(vitals, 860_000.0, Condition::FULL, 0);
+        health.start_shift([0.85; 4], 0.06);
+        health.apply(0, [1000.0, 0.0, 0.0, 0.0]);
+        assert_eq!(health.shift.expect("runs").tally, [0.0; 4]);
+    }
+
+    #[test]
+    fn a_pinned_armor_is_one_and_takes_no_shift() {
+        let mut health = armor([0.5, 0.35, 0.25, 0.1], true);
+        health.start_shift([0.85; 4], 0.06);
+        assert_eq!(health.armor_resonance(), [1.0; 4]);
+        assert!((taken_armor(&mut health, [1000.0, 0.0, 0.0, 0.0], 0) - 1000.0).abs() < 1e-6);
+        // nothing is counted while it is pinned, so the cycle does not move the profile
+        assert_eq!(health.shift.expect("runs").tally, [0.0; 4]);
+        assert_eq!(health.shift_cycle(), None);
+        assert_eq!(health.shift_profile(), Some([0.85; 4]));
+    }
+
+    #[test]
+    fn unpinned_the_profile_applies_again_from_the_next_hit() {
+        let mut health = armor([0.5, 0.35, 0.25, 0.1], true);
+        health.start_shift([0.85; 4], 0.06);
+        taken_armor(&mut health, [1000.0, 0.0, 0.0, 0.0], 0);
+        // the Polarized weapon is taken off: the pin goes, and the profile is the one the hardener kept
+        let mut vitals = health.vitals;
+        vitals.armor_pinned = false;
+        health.respec(vitals, 860_000.0, 1);
+        assert!((health.armor_resonance()[0] - 0.425).abs() < 1e-12);
+        assert!((taken_armor(&mut health, [1000.0, 0.0, 0.0, 0.0], 2) - 425.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_refit_changes_the_base_and_keeps_the_profile() {
+        let mut health = armor([0.5, 0.35, 0.25, 0.1], false);
+        health.start_shift([0.85; 4], 0.06);
+        taken_armor(&mut health, [1000.0, 0.0, 0.0, 0.0], 0);
+        health.shift_cycle();
+        let profile = health.shift_profile();
+        let mut bigger = health.vitals;
+        bigger.resonances.armor = [0.4, 0.35, 0.25, 0.1];
+        health.respec(bigger, 860_000.0, 1);
+        assert_eq!(health.shift_profile(), profile);
+        assert!((health.armor_resonance()[0] - 0.4 * 0.67).abs() < 1e-12);
+    }
+
+    #[test]
+    fn stopping_leaves_the_base_and_a_restart_starts_from_the_seed() {
+        let mut health = armor([0.5, 0.35, 0.25, 0.1], false);
+        health.start_shift([0.85; 4], 0.06);
+        taken_armor(&mut health, [1000.0, 0.0, 0.0, 0.0], 0);
+        health.shift_cycle();
+        health.stop_shift();
+        assert_eq!(health.armor_resonance(), [0.5, 0.35, 0.25, 0.1]);
+        assert_eq!(health.shift_profile(), None);
+        assert_eq!(health.shift_cycle(), None);
+        health.start_shift([0.85; 4], 0.06);
+        assert_eq!(health.shift_profile(), Some([0.85; 4]));
+        assert_eq!(health.shift.expect("runs").tally, [0.0; 4]);
+    }
+
+    #[test]
+    fn a_hit_of_nothing_counts_nothing() {
+        let mut health = armor([0.5; 4], false);
+        health.start_shift([0.85; 4], 0.06);
+        health.apply(0, [0.0; 4]);
+        assert_eq!(health.shift.expect("runs").tally, [0.0; 4]);
     }
 }

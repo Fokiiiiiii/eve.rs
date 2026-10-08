@@ -210,6 +210,28 @@ pub enum Out {
         bonus_per_cycle: f64,
         bonus_max: f64,
     },
+    /// A work cycle of a mining laser or a salvager ended with its target there: the host decides its outcome, and the module waits (ADR 0013).
+    ModuleWorkCycle {
+        session: SessionId,
+        character_id: i64,
+        ship_id: i64,
+        solar_system_id: i32,
+        module_id: i64,
+        target_id: i64,
+        cycle_id: u64,
+        command: u8,
+        mining_amount_m3: f64,
+        waste_multiplier: f64,
+        waste_probability: f64,
+        crit_probability: f64,
+        crit_multiplier: f64,
+        access_difficulty_bonus: f64,
+        waste_roll: f64,
+        rounding_roll: f64,
+        crit_roll: f64,
+    },
+    /// An effect of a module ended (once per end): the host clears it from the ship it sends (`reason` is `Ending::wire_reason`, FP-C1).
+    ModuleEnded { session: SessionId, module_id: i64, reason: u8 },
     /// A targeting order the scene refused, with what the client is told about the target.
     TargetRefused {
         session: SessionId,
@@ -243,6 +265,8 @@ impl Out {
             | Out::DroneReleased { session, .. }
             | Out::DroneWorkCycle { session, .. }
             | Out::RemoteRepairCycle { session, .. }
+            | Out::ModuleWorkCycle { session, .. }
+            | Out::ModuleEnded { session, .. }
             | Out::DroneResults { session, .. }
             | Out::TargetRefused { session, .. }
             | Out::Position { session, .. } => *session,

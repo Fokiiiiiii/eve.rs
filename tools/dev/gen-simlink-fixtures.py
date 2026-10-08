@@ -17,7 +17,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27,
          "PlaceContainer": 28, "ContainerPlaced": 29, "ChangeWreck": 30, "RemoveWreck": 31, "Measured": 32,
          "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35, "LaunchDrone": 36, "DroneCommand": 37, "DroneResults": 38,
-         "DroneScooped": 39, "DroneReleased": 40}
+         "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53}
 
 
 def s(text):  # u16 length + UTF-8
@@ -98,6 +98,7 @@ def turret(t):
 
 
 LAYERS = {"shield": 0, "armor": 1, "structure": 2}
+FAMILIES = {"ore": 0, "ice": 1, "gas": 2}
 
 
 def action(a):
@@ -110,6 +111,17 @@ def action(a):
         return bytes([3]) + struct.pack("<d", a["range"]) + struct.pack("<4d", *a["strength"])
     if kind == "cloak":
         return bytes([5])
+    # the SimAction tags 7-11 (ADR 0013): a mining laser's cycle, a salvager's, and three effects whose packages have not landed (refused at activation)
+    if kind == "mining":
+        return bytes([7, FAMILIES[a["family"]]]) + struct.pack("<5d", a["miningAmountM3"], a["wasteMultiplier"], a["wasteProbability"], a["critProbability"], a["critMultiplier"])
+    if kind == "salvage":
+        return bytes([8]) + struct.pack("<d", a["accessBonus"])
+    if kind == "tractor":
+        return bytes([9]) + struct.pack("<2d", a["velocity"], a["hold"])
+    if kind == "passiveLock":
+        return bytes([10])
+    if kind == "autoTarget":
+        return bytes([11]) + struct.pack("<d", a["range"])
     if kind == "resistanceShift":
         # a reactive armor hardener: the seed (em, thermal, kinetic, explosive), the most a kind gives up a cycle, the attributes it tells
         return bytes([12]) + struct.pack("<4d", *a["seed"]) + struct.pack("<d", a["shift"]) + struct.pack("<4i", *a["attributeIds"])
@@ -193,6 +205,18 @@ def build(m):
     k = m["kind"]
     if k == "Hello":
         return frame(k, struct.pack("<H", m["version"]))
+    if k == "ModuleWorkCycle":
+        # a mining laser's or a salvager's cycle: the numbers, then the waste, rounding and crit rolls the simulation drew
+        return frame(k, u64(m["sessionId"]) + i64(m["characterId"]) + i64(m["shipId"]) + struct.pack("<i", m["solarSystemId"])
+                     + i64(m["moduleId"]) + i64(m["targetId"]) + u64(m["cycleId"]) + bytes([m["command"]])
+                     + struct.pack("<9d", m["miningAmountM3"], m["wasteMultiplier"], m["wasteProbability"], m["critProbability"],
+                                   m["critMultiplier"], m["accessDifficultyBonus"], m["wasteRoll"], m["roundingRoll"], m["critRoll"]))
+    if k == "ModuleWorkResult":
+        return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + i64(m["targetId"]) + u64(m["cycleId"])
+                     + bytes([1 if m["accepted"] else 0]) + s(m["reason"]) + i64(m["unitsRemaining"]) + i64(m["deliveredUnits"])
+                     + bytes([1 if m["complete"] else 0]))
+    if k == "ModuleEnded":
+        return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + bytes([m["reason"]]))
     if k == "HelloAck":
         return frame(k, struct.pack("<HI", m["version"], m["pollHz"]))
     if k == "Enter":
@@ -318,8 +342,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 22},
-    {"name": "hello ack", "kind": "HelloAck", "version": 22, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 23},
+    {"name": "hello ack", "kind": "HelloAck", "version": 23, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -674,6 +698,48 @@ valid = [
     {"name": "how far a can that is not there is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": None},
     {"name": "destroy for nobody", "kind": "Destroy", "shipId": "4200000000000001", "characterId": "0",
      "corporationId": "0", "allianceId": "0", "warFactionId": "0"},
+    {"name": "module work cycle of a mining laser", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
+     "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
+     "targetId": "1000000000001", "cycleId": "7301444403200000001", "command": 7, "miningAmountM3": 20.0,
+     "wasteMultiplier": 1.0, "wasteProbability": 0.1, "critProbability": 0.05, "critMultiplier": 2.0,
+     "accessDifficultyBonus": 0.0, "wasteRoll": 0.25, "roundingRoll": 0.5, "critRoll": 0.75},
+    {"name": "module work cycle of a salvager", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
+     "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
+     "targetId": "1000000000002", "cycleId": "7301444403200000002", "command": 8, "miningAmountM3": 0.0,
+     "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
+     "accessDifficultyBonus": 5.0, "wasteRoll": 0.0, "roundingRoll": 0.0, "critRoll": 0.9},
+    {"name": "module work result accepted", "kind": "ModuleWorkResult", "sessionId": "1790646377000015",
+     "moduleId": "9988400002813", "targetId": "1000000000001", "cycleId": "7301444403200000001", "accepted": True,
+     "reason": "", "unitsRemaining": "980", "deliveredUnits": "20", "complete": False},
+    {"name": "module work result refused", "kind": "ModuleWorkResult", "sessionId": "1790646377000015",
+     "moduleId": "9988400002813", "targetId": "1000000000001", "cycleId": "7301444403200000003", "accepted": False,
+     "reason": "NO_TARGET", "unitsRemaining": "0", "deliveredUnits": "0", "complete": True},
+    {"name": "module ended when its cycles are done", "kind": "ModuleEnded", "sessionId": "1790646377000015",
+     "moduleId": "9988400002813", "reason": 1},
+    {"name": "module ended when its target is lost", "kind": "ModuleEnded", "sessionId": "1790646377000015",
+     "moduleId": "9988400002813", "reason": 2},
+    {"name": "activate a mining laser", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 17912, "effectId": 4025, "fx": "effects.MiningLaser",
+                "durationMs": 2000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "1000000000001",
+                "action": {"kind": "mining", "family": "ore", "miningAmountM3": 20.0, "wasteMultiplier": 1.0,
+                           "wasteProbability": 0.1, "critProbability": 0.05, "critMultiplier": 2.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a salvager", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 25861, "effectId": 6, "fx": "effects.Salvaging",
+                "durationMs": 10000.0, "capacitorNeed": 20.0, "repeat": 1000, "targetId": "1000000000002",
+                "action": {"kind": "salvage", "accessBonus": 10.0}, "onChanges": [], "offChanges": []}},
+    {"name": "activate a tractor beam", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 24348, "effectId": 9, "fx": "effects.TractorBeam",
+                "durationMs": 5000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "1000000000002",
+                "action": {"kind": "tractor", "velocity": 500.0, "hold": 500.0}, "onChanges": [], "offChanges": []}},
+    {"name": "activate a passive targeter", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 1100, "effectId": 10, "fx": "effects.TargetPassively",
+                "durationMs": 1000.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "1000000000002",
+                "action": {"kind": "passiveLock"}, "onChanges": [], "offChanges": []}},
+    {"name": "activate an auto-targeting system", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 1101, "effectId": 11, "fx": "effects.TargetHostiles",
+                "durationMs": 1000.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "0",
+                "action": {"kind": "autoTarget", "range": 50000.0}, "onChanges": [], "offChanges": []}},
 ]
 for case in valid:
     case["hex"] = build(case).hex()
@@ -691,6 +757,10 @@ hardener = next(c for c in valid if c["name"] == "activate a reactive armor hard
 hardener_seed_high = dict(hardener, effect=dict(hardener["effect"], action=dict(hardener["effect"]["action"], seed=[0.85, 1.5, 0.85, 0.85])))
 hardener_shift_none = dict(hardener, effect=dict(hardener["effect"], action=dict(hardener["effect"]["action"], shift=0.0)))
 pinned_flag_two = {"kind": "ShipSpec", "sessionId": "1790646377000015", "ship": dict(IBIS, vitals=dict(IBIS["vitals"], armorPinned=2))}
+def named(name):
+    return next(c for c in valid if c["name"] == name)
+
+
 invalid = [
     {"name": "unknown kind", "reason": "unknown-kind", "hex": "01000000ff"},
     {"name": "kind zero", "reason": "unknown-kind", "hex": "0100000000"},
@@ -712,6 +782,24 @@ invalid = [
      "hex": (struct.pack("<I", 1 + 8 + 1 + 2 + 1) + bytes([11]) + u64(1) + bytes([4]) + struct.pack("<H", 1) + b"\xff").hex()},
     {"name": "command that promises more arguments than it carries", "reason": "truncated",
      "hex": (struct.pack("<I", 1 + 8 + 2) + bytes([7]) + u64(1) + bytes([1, 2])).hex()},
+    {"name": "module work cycle with no cycle", "reason": "bad-value",
+     "hex": build(dict(named("module work cycle of a mining laser"), cycleId="0")).hex()},
+    {"name": "module work cycle with a roll of one", "reason": "bad-value",
+     "hex": build(dict(named("module work cycle of a mining laser"), wasteRoll=1.0)).hex()},
+    {"name": "module work cycle of an unknown command", "reason": "bad-value",
+     "hex": build(dict(named("module work cycle of a mining laser"), command=9)).hex()},
+    {"name": "module work cycle with a probability above one", "reason": "bad-value",
+     "hex": build(dict(named("module work cycle of a mining laser"), critProbability=1.5)).hex()},
+    {"name": "module work cycle cut short", "reason": "truncated",
+     "hex": (struct.pack("<I", 1 + 8 + 8) + bytes([51]) + u64(1) + u64(2)).hex()},
+    {"name": "module ended with an unknown reason", "reason": "bad-value",
+     "hex": build(dict(named("module ended when its target is lost"), reason=9)).hex()},
+    {"name": "mining action with a crit chance above one", "reason": "bad-value",
+     "hex": build(dict(named("activate a mining laser"), effect=dict(named("activate a mining laser")["effect"],
+                       action=dict(named("activate a mining laser")["effect"]["action"], critProbability=1.5)))).hex()},
+    {"name": "mining action with an unknown family", "reason": "bad-value",
+     "hex": (lambda frame: frame[:len(frame) - 41] + bytes([9]) + frame[len(frame) - 40:])(build(named("activate a mining laser")))
+            .hex()},
 ]
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)

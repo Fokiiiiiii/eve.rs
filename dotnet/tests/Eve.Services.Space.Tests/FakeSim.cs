@@ -91,6 +91,8 @@ internal sealed class FakeSim : ISimulation
 
     public void RemoteRepairCycleResult(SimRemoteRepairCycleResult result) => Heard.Add(result);
 
+    public void ModuleWorkResult(SimModuleWorkResult result) => Heard.Add(result);
+
     /// <summary>What a can that is placed is answered with: where it lies (the test's own place when none is set), or why not.</summary>
     public CommandReply? PlaceContainerAnswer { get; set; }
 

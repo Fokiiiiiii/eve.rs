@@ -83,7 +83,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         var npcAuthorityOf = npcAuthority ?? Eve.Npc.NpcAuthority.Load();
         Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => Now, Log.Add, protection, jumpCloak, localTimers) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(npcAuthorityOf), NpcWrecks = npcLoot ? new NpcWrecks(_ => LootTable, () => Task.FromResult(new Eve.Npc.NpcLoot(LootPool)), Ships, () => 0) : null, BeltRats = beltRats is null ? null : new Eve.Npc.BeltRats(npcAuthorityOf, beltRats, type => Eve.Npc.NpcHull.HasHitPoints(statics.Type(type))) };
         Space.UseBounties(Bounties);
-        Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, statics, Space, () => Now, Log.Add);
+        Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, new Eve.Ships.PgWorkCycleLedger(source, _schemas[6]), statics, Space, () => Now, Log.Add);
         Drones = new SpaceDrones(Sim, Ships, statics, Space, () => Now, Log.Add);
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Ships, statics, () => Now, Containers, Drones);
         Ship = new ShipService(Space, () => ClockMs, Containers, Drones);
@@ -94,6 +94,9 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         Registry.Register(Beyonce);
         Registry.Register(Entity);
     }
+
+    /// <summary>The PostgreSQL schema of the space items and the work-cycle ledger: a host restarted over it reads the same ledger.</summary>
+    public string SpaceSchema => _schemas[6];
 
     /// <summary>What every NPC leaves when the rig has loot (<c>npcLoot</c>): a stack of seven to nine of the first type of <see cref="LootPool"/>, or nothing when null (the dice always come out 0).</summary>
     public Eve.Npc.LootTable? LootTable { get; set; } = new("test_loot", "", 1, 1, 0, false, false, 7, 9, [], false);

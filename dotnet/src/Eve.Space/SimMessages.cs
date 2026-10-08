@@ -348,6 +348,32 @@ public abstract record SimAction
     /// as the attributes <paramref name="AttributeIds"/> (in the same order) when they change.
     /// </summary>
     public sealed record ResistanceShift(IReadOnlyList<double> Seed, double Shift, IReadOnlyList<int> AttributeIds) : SimAction;
+
+    /// <summary>
+    /// A mining laser's cycle (tag 7). At the end of each cycle with its target there the simulation sends the host a <see cref="SimModuleWorkCycle"/> and parks the
+    /// module until the answer: the host decides the yield. <paramref name="Family"/> is 0 ore, 1 ice or 2 gas (<see cref="SimMiningFamilies"/>).
+    /// </summary>
+    public sealed record Mining(byte Family, double MiningAmountM3, double WasteVolumeMultiplier, double WasteProbability, double CritProbability, double CritQuantityMultiplier) : SimAction;
+
+    /// <summary>A salvager's cycle (tag 8): as a mining cycle, with the wreck's access chance moved by <paramref name="AccessBonusPercent"/>.</summary>
+    public sealed record Salvage(double AccessBonusPercent) : SimAction;
+
+    /// <summary>A tractor beam (tag 9). Its package has not landed: the activation is refused until it has (the simulation never runs it).</summary>
+    public sealed record Tractor(double VelocityMetersPerSecond, double HoldDistanceMeters) : SimAction;
+
+    /// <summary>A passive targeter (tag 10). Its package has not landed: the activation is refused until it has.</summary>
+    public sealed record PassiveLock : SimAction;
+
+    /// <summary>An auto-targeting system (tag 11). Its package has not landed: the activation is refused until it has.</summary>
+    public sealed record AutoTarget(double RangeMeters) : SimAction;
+}
+
+/// <summary>What a mining laser mines (<see cref="SimAction.Mining"/>'s family byte).</summary>
+public static class SimMiningFamilies
+{
+    public const byte Ore = 0;
+    public const byte Ice = 1;
+    public const byte Gas = 2;
 }
 
 /// <summary>What a module that is projected at another ship does to it each cycle.</summary>
@@ -486,6 +512,40 @@ public sealed record SimDroneWorkCycle(
     ulong SessionId, long CharacterId, long ShipId, int SolarSystemId, long DroneId, long TargetId, ulong CycleId, byte Command,
     double MiningAmountM3, double WasteVolumeMultiplier, double WasteProbability, double AccessDifficultyBonus, double Roll) : SimMessage;
 
+/// <summary>
+/// A module's work cycle (a mining laser's or a salvager's) ended with its target there: the numbers of the cycle and the three rolls the simulation drew (waste,
+/// rounding, crit). The module is parked until a <see cref="SimModuleWorkResult"/>, and the same <see cref="CycleId"/> is sent again while it waits (ADR 0013).
+/// </summary>
+public sealed record SimModuleWorkCycle(
+    ulong SessionId, long CharacterId, long ShipId, int SolarSystemId, long ModuleId, long TargetId, ulong CycleId, byte Command,
+    double MiningAmountM3, double WasteVolumeMultiplier, double WasteProbability, double CritProbability, double CritQuantityMultiplier,
+    double AccessDifficultyBonus, double WasteRoll, double RoundingRoll, double CritRoll) : SimMessage;
+
+/// <summary>The host's decision for one module work cycle; the fields are those of <see cref="SimDroneWorkResult"/>.</summary>
+public sealed record SimModuleWorkResult(
+    ulong SessionId, long ModuleId, long TargetId, ulong CycleId, bool Accepted, string Reason, long UnitsRemaining, long DeliveredUnits, bool Complete) : SimMessage;
+
+/// <summary>The reasons an effect of a module ended on the simulation's account (<see cref="SimModuleEnded"/>).</summary>
+public static class SimModuleEndReasons
+{
+    /// <summary>The cycles were done, the capacitor was short, or the pilot asked.</summary>
+    public const byte Done = 1;
+    /// <summary>The target was lost.</summary>
+    public const byte TargetLost = 2;
+    /// <summary>Something forbade the effect (a warp scrambler, the module went offline).</summary>
+    public const byte Forced = 3;
+    /// <summary>The charge was spent.</summary>
+    public const byte NoRounds = 4;
+    /// <summary>The host refused the work cycle that ended the cycle.</summary>
+    public const byte WorkRefused = 5;
+}
+
+/// <summary>
+/// An effect of a module ended on the simulation's account, once per end (<see cref="SimModuleEndReasons"/>). The host clears the module from the ship it sends, so
+/// the simulation does not keep its resonances or numbers (FP-C1).
+/// </summary>
+public sealed record SimModuleEnded(ulong SessionId, long ModuleId, byte Reason) : SimMessage;
+
 /// <summary>Inventory authority's decision for one completed drone cycle.</summary>
 public sealed record SimDroneWorkResult(
     ulong SessionId, long DroneId, long TargetId, ulong CycleId, bool Accepted, string Reason, long UnitsRemaining, long DeliveredUnits, bool Complete) : SimMessage;
@@ -506,10 +566,6 @@ public sealed record SimRemoteRepairCycleResult(
 public sealed record SimPlaceAsteroid(
     int SolarSystemId, long AsteroidId, int TypeId, int GroupId, int CategoryId, string Name, int? GraphicId,
     IReadOnlyList<double> Position, IReadOnlyList<double> Direction, double Radius, long UnitsRemaining) : SimMessage;
-
-public sealed record SimChangeAsteroid(long AsteroidId, long UnitsRemaining) : SimMessage;
-
-public sealed record SimRemoveAsteroid(long AsteroidId, bool Depleted) : SimMessage;
 
 /// <summary>A drone came within reach of its ship after an order to return to the bay and was taken in: the host moves its item back into the drone bay.</summary>
 public sealed record SimDroneScooped(ulong SessionId, long DroneId) : SimMessage;

@@ -135,6 +135,19 @@ Each is matched to the reference today. None is decided; the evidence needed is 
 
 **Welcome-mail identity:** EveJS uses seeded `GM ELYSIAN` (`senderID=140000004`) and EVEJS-branded copy. eve.rs sends the durable welcome mail from the new character's starter NPC corporation with neutral text, because `140000004` overlaps eve.rs's player-character ID range. The message, mailbox status, type-1004 notification, and unread count are preserved.
 
+## Work cycles and module effect ends (2026-10-08)
+
+Protocol 23 (ADR 0013). The client cannot see the host's round trip, so most rows are internal; the rows that the client can see say so.
+
+| # | Behaviour | Reference does | eve.rs does | Evidence | Status |
+|---|---|---|---|---|---|
+| 124 | How a mining or salvage cycle is settled | The reference settles the cycle inside the module's own runtime (`miningRuntime.js`, `moduleCycleSchedule.js`) | The simulation ends the cycle, parks the module and asks the host (`SimModuleWorkCycle`). The host decides the yield and answers (`SimModuleWorkResult`). The same cycle id is sent again every 2 s of simulation time (`WORK_RESEND_TICKS`, the interval is chosen, not taken from EVE). Cycle ids come from a per-process counter, so a restarted host never confuses a new cycle with a settled one | ADR 0013 rules 3 and 4; `crates/eve-space/src/modules.rs` tests; `dotnet/tests/Eve.Services.Space.Tests/WorkCycleHostTests.cs` | internal. The resend interval is UNVERIFIED against the reference's timing |
+| 125 | A manual stop while a work cycle is parked | The reference short-cycles ore and gas at a manual stop (`scene/modules.js:3918-3935`) and not ice | A deactivate while parked ends the effect at once, with no yield for the cycle | Rust test `deactivating_a_parked_work_cycle_stops_it_now_and_tells_the_host_once` | pending: the short-cycle rule is owed with the mining handler (M8). Until then ore is not short-cycled |
+| 126 | A host restart while a cycle is parked | The reference's behaviour here is UNVERIFIED | The simulation keeps the park and re-sends the same cycle id; the restarted host answers from `space_work_cycles`, so nothing is granted twice. ADR 0013 rule 6 says the simulation drops the parked effect on disconnect: that is not implemented | `WorkCycleHostTests.A_restarted_host_answers_a_repeat_from_the_ledger_in_postgresql` | tolerated (no double grant) pending a decision on rule 6 |
+| 127 | A module's effect that ends on its own (cycles done, capacitor short, target gone, forbidden) | The reference drops the effect on the server and the client sees it stop | The same client messages; the simulation also reports each end once (`SimModuleEnded`, kind 53) so the host clears the module and re-sends the ship (FP-C1) | Rust `every_end_of_an_effect_is_told_to_the_host_once_natural_or_asked`; `A_module_the_simulation_ends_is_taken_out_of_the_ship_the_host_sends` | contract on the client side; the host message is internal |
+| 128 | Tractor beam, passive targeter and auto-targeting activations | Run | Refused `NOT_IMPLEMENTED` at activation (their packages have not landed); nothing is run as a no-op | `modules.rs` `Action::not_implemented`; `tractor_passive_lock_and_auto_target_are_refused_until_they_run` | pending (T2, A1, A2) |
+| 129 | Grant and its dedupe record | Not applicable | A drone's grant is written in its own transaction, and the host's record of the cycle is written after it, so a crash between the two can grant once more. The record moves into the grant transaction with M4 | `dotnet/src/Eve.Services.Space/SpaceContainers.cs` (`HandleWorkCycleAsync`); FOUNDATIONS rule 1 | pending (M4). A module's cycle has no grant yet, so it is not affected |
+
 ## Not yet matched
 
 Behaviour of the reference that eve.rs does not have yet, and where it will come from. These are gaps, not

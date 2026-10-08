@@ -216,7 +216,7 @@ public sealed partial class DogmaIMService(
             case ShipChanged changed:
                 if (!online && modules is not null && await modules.OfflineAsync(call.Session, moduleId, call.Cancellation) is { Ok: false } offlineRefusal)
                 {
-                    throw ModuleError(offlineRefusal, starting: false);
+                    throw ModuleRefusals.Of(offlineRefusal, starting: false);
                 }
                 // what the module changed (its resonances, its numbers) reaches the simulation of a ship in space; nothing is sent when there is none
                 if (modules is not null)

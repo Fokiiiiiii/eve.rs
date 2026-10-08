@@ -6,7 +6,7 @@ namespace Eve.Services.Space.Effects;
 /// The handler of a module effect whose body is not written yet (the exploration, hacking and scanner effects in <c>ExplorationModuleEffects.cs</c>). It is
 /// registered like any other handler, so its module is fitted and onlined as usual. It is not coverage: <see cref="IEffectHandler{THost, TResult}.Implemented"/>
 /// is false and the effect stays listed as uncovered. An activation is refused with <see cref="NotImplemented"/>: the module does not cycle, takes no capacitor and reports no success, and the client is told the module cannot be activated
-/// (<c>DogmaIMService.ModuleError</c>). <see cref="ModulePackages.Of"/> asks the refusal after the module is checked to be online and before a target is asked
+/// (<c>ModuleRefusals.Of</c>). <see cref="ModulePackages.Of"/> asks the refusal after the module is checked to be online and before a target is asked
 /// for, so a pending effect is refused the same way whether or not it has a target.
 /// </summary>
 /// <remarks>

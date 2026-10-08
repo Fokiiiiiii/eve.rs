@@ -53,6 +53,8 @@ internal abstract class ShipEffect : IEffectHandler<ShipSnapshot, SimEffect>
 
     SimEffect IEffectHandler<ShipSnapshot, SimEffect>.Build(EffectContext<ShipSnapshot> context) => Build(new ModuleEffectContext(context));
 
+    void IEffectHandler<ShipSnapshot, SimEffect>.Accepted(EffectContext<ShipSnapshot> context) => Accepted(new ModuleEffectContext(context));
+
     /// <summary>
     /// The length of a cycle of an effect, what it costs the capacitor, and the attribute the duration was read from: the item's own values after dogma (a module's, or a
     /// drone's). <paramref name="value"/> gives an attribute's value, or the fallback when the item has none.
@@ -73,6 +75,14 @@ internal abstract class ShipEffect : IEffectHandler<ShipSnapshot, SimEffect>
 
     /// <summary>False for a handler that only refuses (a pending body); see <see cref="IEffectHandler{THost, TResult}.Implemented"/>.</summary>
     protected virtual bool Implemented => true;
+
+    /// <summary>
+    /// Called once the simulation has accepted the start of the effect (see <see cref="IEffectHandler{THost, TResult}.Accepted"/>): what a refused start must not do.
+    /// The default does nothing.
+    /// </summary>
+    protected virtual void Accepted(ModuleEffectContext module)
+    {
+    }
 
     protected abstract SimEffect Build(ModuleEffectContext module);
 }

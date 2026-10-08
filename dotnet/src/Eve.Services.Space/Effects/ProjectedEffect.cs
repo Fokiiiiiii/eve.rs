@@ -70,6 +70,18 @@ internal sealed class ProjectedEffect : ShipEffect
 
     public override IReadOnlyCollection<string> EffectNames { get; } = [.. Specs.Keys];
 
+    /// <summary>The projected effects that ramp up while they are held on one target (their cycles are spooled by <see cref="MutadaptiveSpool"/>).</summary>
+    private static readonly HashSet<string> Spooling = new(StringComparer.OrdinalIgnoreCase) { "ShipModuleRemoteArmorMutadaptiveRepairer" };
+
+    /// <summary>A spooling module starts counting its ramp only once the simulation has taken its start (a refused start leaves the spool as it was).</summary>
+    protected override void Accepted(ModuleEffectContext module)
+    {
+        if (Spooling.Contains(module.Effect.Name.Trim()))
+        {
+            MutadaptiveSpool.Start(module.ModuleId, module.TargetId);
+        }
+    }
+
     /// <summary>
     /// The remote effect a drone's type carries, when its effect is one of the projected effects above (the drones' rows of <see cref="Specs"/>): what a cycle lands on its
     /// target, how far it reaches (the effect record's range attribute, which is its optimal: a drone's effects have no falloff) and how long what it lands lasts (an ECM jam lasts
@@ -206,11 +218,13 @@ internal sealed class MutadaptiveRepairSpool
                 && cycleNumber == previous.CycleNumber + 1
                 && atMs >= previous.AtMs
                 && atMs - previous.AtMs <= cycleDurationMs;
-            var maximumCycles = MaximumCycles(bonusPerCycle, maximumBonus);
+            // the bonus is applied to the cycle that lands and only then advanced (the reference's advanceAssistanceRepairSpool): the first delivery is x1.0, so
+            // cycle n carries (n - 1) bonuses; the count stops one past the cycles that reach the maximum
+            var maximumCycles = MaximumCycles(bonusPerCycle, maximumBonus) + 1;
             var cycleCount = consecutive
                 ? Math.Min(previous.CycleCount + 1, maximumCycles)
                 : 1;
-            var bonus = Math.Min(maximumBonus, cycleCount * bonusPerCycle);
+            var bonus = Math.Min(maximumBonus, (cycleCount - 1) * bonusPerCycle);
             amount = NpcArmament.Round6(baseAmount * (1 + bonus));
             _byModule[moduleId] = previous with
             {

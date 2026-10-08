@@ -29,7 +29,14 @@ internal static class ModuleEffects
         .Register(new AncillaryRemoteShieldBoosterEffect())
         .Register(new PowerBoosterEffect())
         .Register(new FueledArmorRepairEffect())
-        .Register(new FueledShieldBoostingEffect());
+        .Register(new FueledShieldBoostingEffect())
+        // exploration, hacking and scanner effects: wired, refused as EFFECT_NOT_IMPLEMENTED until their bodies are written (see ExplorationModuleEffects.cs)
+        .Register(new DataAnalyzerEffect())
+        .Register(new DataSubverterEffect())
+        .Register(new CargoScanEffect())
+        .Register(new ShipScanEffect())
+        .Register(new ScanStrengthActivateEffect())
+        .Register(new ScanStrengthTargetEffect());
 }
 
 internal sealed class SensorBoosterEffect : ShipEffect

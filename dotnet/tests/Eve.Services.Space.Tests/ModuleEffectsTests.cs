@@ -202,6 +202,80 @@ public class ModuleEffectsTests
         }
     }
 
+    // The exploration, hacking and scanner effects that are wired but have no body yet (ExplorationModuleEffects.cs): an online module is refused as pending,
+    // never packaged (no cycle, no success), and never as UNSUPPORTED_EFFECT, which means there is no handler at all.
+    [Theory]
+    [InlineData(1738, "doHacking", EffectDef.Target)]
+    [InlineData(4773, "hackOrbital", EffectDef.Target)]
+    [InlineData(47, "cargoScan", EffectDef.Target)]
+    [InlineData(46, "shipScan", EffectDef.Target)]
+    [InlineData(2231, "scanStrengthBonusPercentActivate", EffectDef.Activation)]
+    [InlineData(2246, "scanStrengthTargetPercentBonus", EffectDef.Target)]
+    public void A_scanner_or_hacking_effect_with_no_body_yet_is_refused_as_not_implemented_and_packages_nothing(int effectId, string effectName, int category)
+    {
+        var fixture = Fixture(effectId, effectName, category, new Dictionary<int, double> { [6] = 20, [73] = 10000, [54] = 5000 });
+        // a target effect is refused the same way with or without a target: the pending refusal is asked before the target is
+        foreach (var targetId in new long[] { 0, 70005 })
+        {
+            var result = Eve.Services.Space.ModulePackages.Of(fixture.Snapshot, fixture.Statics, fixture.ModuleId, effectName, targetId, 1);
+
+            Assert.Null(result.Effect);
+            Assert.Equal("EFFECT_NOT_IMPLEMENTED", result.Reason);
+        }
+    }
+
+    [Fact]
+    public void A_pending_effect_of_an_offline_module_is_refused_as_offline_before_it_is_refused_as_pending()
+    {
+        var fixture = Fixture(1738, "doHacking", EffectDef.Target, new Dictionary<int, double> { [6] = 20 });
+        fixture.Snapshot.World.SetState(fixture.ModuleId, ItemState.Offline);
+
+        var result = Eve.Services.Space.ModulePackages.Of(fixture.Snapshot, fixture.Statics, fixture.ModuleId, "doHacking", 70005, 1);
+
+        Assert.Null(result.Effect);
+        Assert.Equal("MODULE_NOT_ONLINE", result.Reason);
+    }
+
+    [PgFact]
+    public async Task The_scanner_and_hacking_effects_without_a_body_are_registered_uncovered_by_nothing_and_assigned_to_module_types_in_the_current_sde()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var sde = new SdeReader(source);
+        var catalogBuild = await sde.BuildAsync()
+            ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
+        var statics = await DogmaStatic.LoadAsync(sde);
+        var registry = Eve.Services.Space.Effects.ModuleEffects.Default;
+        string[] pending = ["doHacking", "hackOrbital", "cargoScan", "shipScan", "scanStrengthBonusPercentActivate", "scanStrengthTargetPercentBonus"];
+        var uncovered = registry.Uncovered(statics).Select(e => e.Name.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var moduleGroups = (await sde.ReadAsync("groups"))
+            .Where(row => row.Doc.GetProperty("categoryID").GetInt32() == 7)
+            .Select(row => row.Key)
+            .ToArray();
+        var moduleTypes = (await sde.ReadByFieldAsync("types", "groupID", moduleGroups))
+            .Select(row => row.Key)
+            .ToArray();
+        var assignedModuleEffects = new HashSet<int>();
+        foreach (var row in await sde.ReadAsync("typeDogma", moduleTypes))
+        {
+            if (!row.Doc.TryGetProperty("dogmaEffects", out var effects) || effects.ValueKind != System.Text.Json.JsonValueKind.Array)
+            {
+                continue;
+            }
+            foreach (var typeEffect in effects.EnumerateArray())
+            {
+                assignedModuleEffects.Add(typeEffect.GetProperty("effectID").GetInt32());
+            }
+        }
+
+        foreach (var name in pending)
+        {
+            var effect = Assert.Single(statics.Effects, candidate => candidate.Name.Trim().Equals(name, StringComparison.OrdinalIgnoreCase));
+            Assert.True(registry.Names.Contains(name, StringComparer.OrdinalIgnoreCase), $"SDE build {catalogBuild} has no handler for {name}.");
+            Assert.False(uncovered.Contains(name), $"SDE build {catalogBuild} leaves {name} uncovered.");
+            Assert.True(assignedModuleEffects.Contains(effect.Id), $"SDE build {catalogBuild} assigns {name} to no module type.");
+        }
+    }
+
     [PgFact]
     public async Task Dogma_modifier_handlers_cover_their_published_module_effects_in_the_current_sde()
     {
@@ -599,10 +673,8 @@ public class ModuleEffectsTests
         string[] currentSdeGaps =
         [
             "ChainLightning",
-            "cargoScan",
             "cloneRespawnBay",
             "debuffLance",
-            "doHacking",
             "doomsdayAOEBubble",
             "doomsdayAOEDamp",
             "doomsdayAOEECM",
@@ -628,7 +700,6 @@ public class ModuleEffectsTests
             "moduleBonusWarfareLinkSkirmish",
             "moduleTitanEffectGenerator",
             "salvaging",
-            "shipScan",
             "superWeaponAmarr",
             "superWeaponCaldari",
             "superWeaponGallente",

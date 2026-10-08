@@ -94,6 +94,15 @@ These are part of the wire contract of epoch 27. They add one number to the ship
 * **Not on the wire.** The nosferatu (`Remote::Drain`) is not weakened; the reference's resistance for it is not read (DEVIATIONS 112). `remoteResistanceID` is not sent.
 * **The codecs.** `SimCodec.cs` and `crates/eve-space/src/link.rs` (`ProtocolVersion` 26 -> 27, once), the fixture generator (`tools/dev/gen-simlink-fixtures.py`, a non-default value 0.25 on the Ibis so a swapped field fails the byte comparison), and `oracle/fixtures/simlink/messages.json`.
 
+## Decisions made in epoch 28: the sweep and the disruption of a strike
+
+These are part of the wire contract of epoch 28. They add two fields to the end of the strike (`SimAction` tag 13, after the neutralising wave) and nothing else.
+
+* **Disruption.** `debuffMs` (f64, 0 for none): for this long from a pulse that covers a ship, the ship cannot warp, jump or dock and takes half the remote repair from another ship. The disruptive lance's `doomsdayAppliedDBuffDuration` (5412, 60 000 ms). The debuff lands on every ship the pulse covers, whatever its signature takes of the damage, and refreshes to the later expiry (EveJS `disruptiveLanceDebuff.js`).
+* **Sweep.** A flag (u8, 0 or 1) and the end of the axis (three f64, zeros without a sweep). With a sweep, the axis at pulse `k` runs from the firing ship's centre along `start + (end - start) * k / (pulses - 1)`, where `start` is `direction * length`; the area starts at the centre, not the hull (EveJS `resolveSlashDamageVolume`). A pulse whose axis has no length hits nothing. A sweep whose end is the ship's centre is invalid.
+* **Not on the wire.** The siege requirement (5426) is decided by the host (named refusal), and the cloak disallow (5425) is not enforced.
+* **The codecs.** `SimCodec.cs` and `crates/eve-space/src/link.rs` (`ProtocolVersion` 27 -> 28, once), the fixture generator (`tools/dev/gen-simlink-fixtures.py`: a reaper sweep, a disruptive lance, and a sweep that ends on the ship as an invalid frame), and `oracle/fixtures/simlink/messages.json` (Hello and HelloAck at 28). Bumped once, in this batch (local, not pushed).
+
 ## Wire epoch log
 
 * 22: the reactive armor hardener batch (W2): `SimAction` tag 12 (`ResistanceShift`) and one armor-pin byte at the end of the ship's vitals. Bumped 21 -> 22 by the integrator in `SimCodec.cs` and `crates/eve-space/src/link.rs`, with `oracle/fixtures/simlink/messages.json` regenerated.
@@ -103,3 +112,4 @@ These are part of the wire contract of epoch 27. They add one number to the ship
 * 25: the doomsday strike (`SimAction` tag 13, the Bosonic cone's body). `ProtocolVersion` 24 -> 25 in `SimCodec.cs` and `crates/eve-space/src/link.rs`; `oracle/fixtures/simlink/messages.json` regenerated (Hello and HelloAck at 25) with a valid cone strike and two invalid strikes. Bumped once, in this batch: `main` was at 24 when the batch started, and the work is local (not pushed).
 * 26: the titan doomsday (`SimAction` tag 14, `Doomsday`). `ProtocolVersion` 25 -> 26 in `SimCodec.cs` and `crates/eve-space/src/link.rs`; `oracle/fixtures/simlink/messages.json` regenerated (Hello and HelloAck at 26) with a valid Judgment hit and one invalid frame (a negative delay). Bumped once, in this batch (local, not pushed).
 * 27: the target's energy warfare resistance (`energyWarfareResistance`, 2045) as a sixth number of the ship's sensors block. `ProtocolVersion` 26 -> 27 in `SimCodec.cs` and `crates/eve-space/src/link.rs`; `oracle/fixtures/simlink/messages.json` regenerated (Hello and HelloAck at 27, the Ibis at 0.25). Bumped once, in this batch (local, not pushed).
+* 28: a strike's `debuffMs` (the disruptive lance's debuff: no warp, jump or dock, half the remote repair) and its sweep (a reaper's axis from its start to its end point over the window). `ProtocolVersion` 27 -> 28 in `SimCodec.cs` and `crates/eve-space/src/link.rs`; `oracle/fixtures/simlink/messages.json` regenerated (Hello and HelloAck at 28). Bumped once.

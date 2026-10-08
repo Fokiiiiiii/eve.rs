@@ -126,7 +126,10 @@ def action(a):
     if kind == "strike":
         return (bytes([13, a["shape"]]) + struct.pack("<3d", *a["direction"]) + struct.pack("<4d", a["length"], a["radius"], a["warningMs"], a["pulseMs"])
                 + struct.pack("<i", a["pulses"]) + struct.pack("<4d", *a["damage"])
-                + struct.pack("<6d", a["signatureRadius"], a["immobileMs"], a["noJumpMs"], a["neutAmount"], a["neutRadius"], a["neutSignatureRadius"]))
+                + struct.pack("<6d", a["signatureRadius"], a["immobileMs"], a["noJumpMs"], a["neutAmount"], a["neutRadius"], a["neutSignatureRadius"])
+                # protocol 28: the disruption a pulse leaves (ms), then a sweep: a flag and the end of the axis (zeros without a sweep)
+                + struct.pack("<d", a.get("debuffMs", 0.0))
+                + bytes([1 if a.get("sweepEnd") else 0]) + struct.pack("<3d", *(a.get("sweepEnd") or [0.0, 0.0, 0.0])))
     # the SimAction tag 14 (ADR 0013 epoch 26): a titan doomsday, one hit on the locked target after a delay, the ship held for its windows
     if kind == "doomsday":
         return bytes([14]) + struct.pack("<d", a["delayMs"]) + struct.pack("<4d", *a["damage"]) + struct.pack("<2d", a["immobileMs"], a["noJumpMs"])
@@ -351,8 +354,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 27},
-    {"name": "hello ack", "kind": "HelloAck", "version": 27, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 28},
+    {"name": "hello ack", "kind": "HelloAck", "version": 28, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -762,6 +765,24 @@ valid = [
                            "signatureRadius": 10000.0, "immobileMs": 30000.0, "noJumpMs": 300000.0,
                            "neutAmount": 30000.0, "neutRadius": 10000.0, "neutSignatureRadius": 20000.0},
                 "onChanges": [], "offChanges": []}},
+    {"name": "activate a reaper sweep (Divine Harvest)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002816", "moduleType": 40632, "effectId": 6201, "fx": "",
+                "durationMs": 300000.0, "capacitorNeed": 35000.0, "repeat": 1, "targetId": "0", "burnsFuel": True,
+                "action": {"kind": "strike", "shape": 1, "direction": [0.6, 0.0, 0.8], "length": 30000.0, "radius": 5000.0,
+                           "warningMs": 10000.0, "pulseMs": 1000.0, "pulses": 11, "damage": [100000.0, 0.0, 0.0, 0.0],
+                           "signatureRadius": 10000.0, "immobileMs": 30000.0, "noJumpMs": 300000.0,
+                           "neutAmount": 35000.0, "neutRadius": 10000.0, "neutSignatureRadius": 20000.0,
+                           "debuffMs": 0.0, "sweepEnd": [-20000.0, 0.0, 28000.0]},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a disruptive lance (Atgeir)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002817", "moduleType": 77398, "effectId": 11691, "fx": "",
+                "durationMs": 300000.0, "capacitorNeed": 30000.0, "repeat": 1, "targetId": "0", "burnsFuel": True,
+                "action": {"kind": "strike", "shape": 1, "direction": [1.0, 0.0, 0.0], "length": 50000.0, "radius": 2500.0,
+                           "warningMs": 15000.0, "pulseMs": 1000.0, "pulses": 16, "damage": [0.0, 0.0, 0.0, 17000.0],
+                           "signatureRadius": 20000.0, "immobileMs": 30000.0, "noJumpMs": 120000.0,
+                           "neutAmount": 31000.0, "neutRadius": 10000.0, "neutSignatureRadius": 20000.0,
+                           "debuffMs": 60000.0},
+                "onChanges": [], "offChanges": []}},
     {"name": "activate a titan doomsday (Judgment)", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002815", "moduleType": 24550, "effectId": 4489, "fx": "",
                 "durationMs": 300000.0, "capacitorNeed": 35000.0, "repeat": 1, "targetId": "1000000000002", "burnsFuel": True,
@@ -811,6 +832,9 @@ invalid = [
     {"name": "strike with an aim that is not a unit vector", "reason": "bad-value",
      "hex": build(dict(named("activate a doomsday strike (Bosonic Field Generator)"), effect=dict(named("activate a doomsday strike (Bosonic Field Generator)")["effect"],
                        action=dict(named("activate a doomsday strike (Bosonic Field Generator)")["effect"]["action"], direction=[0.6, 0.0, 0.9])))).hex()},
+    {"name": "a sweep that ends on the firing ship", "reason": "bad-value",
+     "hex": build(dict(named("activate a reaper sweep (Divine Harvest)"), effect=dict(named("activate a reaper sweep (Divine Harvest)")["effect"],
+                       action=dict(named("activate a reaper sweep (Divine Harvest)")["effect"]["action"], sweepEnd=[0.0, 0.0, 0.0])))).hex()},
     {"name": "strike in a shape the simulation does not run", "reason": "bad-value",
      "hex": build(dict(named("activate a doomsday strike (Bosonic Field Generator)"), effect=dict(named("activate a doomsday strike (Bosonic Field Generator)")["effect"],
                        action=dict(named("activate a doomsday strike (Bosonic Field Generator)")["effect"]["action"], shape=2)))).hex()},

@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 27;
+    public const ushort ProtocolVersion = 28;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -441,7 +441,15 @@ public static class SimCodec
                     var neutAmount = r.F64();
                     var neutRadius = r.F64();
                     var neutSignature = r.F64();
-                    var strike = new SimAction.Strike(shape, direction, length, radius, warning, pulse, pulses, damage, signature, immobile, noJump, neutAmount, neutRadius, neutSignature);
+                    var debuff = r.F64();
+                    var sweepFlag = r.U8();
+                    double[] sweepEnd = [r.F64(), r.F64(), r.F64()];
+                    if (sweepFlag > 1)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad strike sweep flag");
+                    }
+                    var strike = new SimAction.Strike(shape, direction, length, radius, warning, pulse, pulses, damage, signature, immobile, noJump, neutAmount, neutRadius, neutSignature,
+                        debuff, sweepFlag == 1 ? sweepEnd : null);
                     if (!strike.IsValid)
                     {
                         throw new SimLinkException(SimLinkError.BadValue, "bad strike action");
@@ -1339,6 +1347,9 @@ private static void WriteAction(Writer w, SimAction action)
                 foreach (var number in strike.Damage) w.F64(number);
                 w.F64(strike.SignatureRadius); w.F64(strike.ImmobileMs); w.F64(strike.NoJumpMs);
                 w.F64(strike.NeutAmount); w.F64(strike.NeutRadius); w.F64(strike.NeutSignatureRadius);
+                w.F64(strike.DebuffMs);
+                w.U8((byte)(strike.SweepEnd is null ? 0 : 1));
+                foreach (var component in strike.SweepEnd ?? [0.0, 0.0, 0.0]) w.F64(component);
                 break;
             case SimAction.Doomsday doomsday:
                 if (!doomsday.IsValid)

@@ -332,6 +332,8 @@ fn effect_of(case: &Value) -> Effect {
                         neut_amount: num("neutAmount"),
                         neut_radius: num("neutRadius"),
                         neut_signature_radius: num("neutSignatureRadius"),
+                        debuff_ms: a["debuffMs"].as_f64().unwrap_or(0.0),
+                        sweep_end: a["sweepEnd"].as_array().map(|end| [end[0].as_f64().unwrap(), end[1].as_f64().unwrap(), end[2].as_f64().unwrap()]),
                     },
                 };
             }

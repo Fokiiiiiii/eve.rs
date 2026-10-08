@@ -16,7 +16,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Arc, Aoe, Charge, Spool, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 27;
+pub const PROTOCOL_VERSION: u16 = 28;
 
 /// The message kinds.
 pub mod kind {
@@ -1141,8 +1141,21 @@ fn put_action(out: &mut Vec<u8>, action: &Action) {
                 strike.neut_amount,
                 strike.neut_radius,
                 strike.neut_signature_radius,
+                strike.debuff_ms,
             ] {
                 out.extend_from_slice(&number.to_le_bytes());
+            }
+            match strike.sweep_end {
+                Some(end) => {
+                    out.push(1);
+                    for component in end {
+                        out.extend_from_slice(&component.to_le_bytes());
+                    }
+                }
+                None => {
+                    out.push(0);
+                    out.extend_from_slice(&[0u8; 24]);
+                }
             }
         }
         Action::Doomsday { delay_ms, damage, immobile_ms, no_jump_ms } => {
@@ -1397,7 +1410,18 @@ fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             let neut_amount = reader.f64()?;
             let neut_radius = reader.f64()?;
             let neut_signature_radius = reader.f64()?;
+            let debuff_ms = reader.f64()?;
+            let sweep_end = match reader.u8()? {
+                0 => {
+                    let _unused = [reader.f64()?, reader.f64()?, reader.f64()?];
+                    None
+                }
+                1 => Some([reader.f64()?, reader.f64()?, reader.f64()?]),
+                _ => return Err(DecodeError::BadValue("strike sweep flag")),
+            };
             let strike = Strike {
+                debuff_ms,
+                sweep_end,
                 shape,
                 direction,
                 length,

@@ -2100,6 +2100,8 @@ mod tests {
             neut_amount: 0.0,
             neut_radius: 0.0,
             neut_signature_radius: 1.0,
+            debuff_ms: 0.0,
+            sweep_end: None,
         }
     }
 
@@ -2151,6 +2153,64 @@ mod tests {
             .iter()
             .filter(|args| matches!(args, Value::Dict(entries) if entries.iter().any(|(k, v)| matches!(k, Value::Str(s) if s.as_ref() == "attackType") && *v == Value::Str("me".into()))))
             .count()
+    }
+
+    /// The armour a remote repair of 1000 gives a damaged ship in the duel, with the ship disrupted or not (protocol 28: half while disrupted).
+    fn armor_gained_from_remote_repair(disrupted: bool) -> f64 {
+        let (mut scene, npc, _) = duel();
+        let ship = scene.pilots[&npc].ship.spec.ship_id;
+        let now = NOON + 120 * SECOND;
+        scene.damage(ship, [60_000.0, 60_000.0, 60_000.0, 60_000.0], now);
+        if disrupted {
+            scene.pilots.get_mut(&npc).unwrap().disrupted_until = now + 60 * SECOND;
+        }
+        let before = scene.pilots[&npc].ship.health.layers_at(now).armor;
+        scene.mend_remote(ship, crate::health::Layer::Armor, 50.0, now);
+        scene.pilots[&npc].ship.health.layers_at(now).armor - before
+    }
+
+    #[test]
+    fn a_disrupted_ship_takes_half_the_remote_repair_from_another_ship() {
+        let full = armor_gained_from_remote_repair(false);
+        let halved = armor_gained_from_remote_repair(true);
+        assert!(full > 0.0, "the control repair lands: {full}");
+        assert!((halved - full * crate::strike::DISRUPTED_REMOTE_REPAIR).abs() < 1e-6, "half of {full} is {halved}");
+    }
+
+    #[test]
+    fn a_sweeping_strike_runs_its_axis_from_its_start_point_to_its_end_point() {
+        let (mut scene, _npc, _) = duel();
+        let now = NOON + 120 * SECOND;
+        // the axis starts on the npc (2 km down x, two kilometres long) and turns to the y axis by the last pulse, where the npc is no longer
+        let strike = crate::strike::Strike {
+            shape: crate::strike::StrikeShape::Cylinder,
+            radius: 500.0,
+            length: 2_000.0,
+            warning_ms: 2_000.0,
+            sweep_end: Some([0.0, 2_000.0, 0.0]),
+            ..strike_of(2)
+        };
+        let out = scene.activate(PLAYER, strike_effect(spec().ship_id + 1, strike), now);
+        assert!(!out.iter().any(|o| matches!(o, Out::Refused { .. })), "{out:?}");
+        assert_eq!(hits_told(&scene.poll(now + 2 * SECOND), PLAYER), 1, "the first pulse, on the start point");
+        assert_eq!(hits_told(&scene.poll(now + 3 * SECOND), PLAYER), 0, "the last pulse is on the end point, off the npc");
+    }
+
+    #[test]
+    fn a_disruptive_pulse_disrupts_each_ship_it_covers_and_leaves_the_others_alone() {
+        let (mut scene, npc, _) = duel();
+        let now = NOON + 120 * SECOND;
+        let strike = crate::strike::Strike { debuff_ms: 60_000.0, ..strike_of(1) };
+        scene.activate(PLAYER, strike_effect(spec().ship_id + 1, strike), now);
+        assert_eq!(scene.pilots[&npc].disrupted_until, 0, "nothing is disrupted before the pulse");
+        scene.poll(now + 2 * SECOND);
+        assert_eq!(scene.pilots[&npc].disrupted_until, now + 62 * SECOND, "covered: disrupted for the debuff after the pulse");
+        // the same pulse aimed away from the npc leaves it undisrupted
+        let (mut scene, npc, _) = duel();
+        let away = crate::strike::Strike { debuff_ms: 60_000.0, direction: [-1.0, 0.0, 0.0], ..strike_of(1) };
+        scene.activate(PLAYER, strike_effect(spec().ship_id + 1, away), now);
+        scene.poll(now + 2 * SECOND);
+        assert_eq!(scene.pilots[&npc].disrupted_until, 0, "not covered: not disrupted");
     }
 
     #[test]

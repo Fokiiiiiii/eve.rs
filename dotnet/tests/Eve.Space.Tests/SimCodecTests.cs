@@ -101,7 +101,9 @@ public class SimCodecTests
             return new SimAction.Strike(
                 (byte)(int)a["shape"]!, direction, (double)a["length"]!, (double)a["radius"]!, (double)a["warningMs"]!, (double)a["pulseMs"]!, (int)a["pulses"]!,
                 Four(a["damage"]!), (double)a["signatureRadius"]!, (double)a["immobileMs"]!, (double)a["noJumpMs"]!,
-                (double)a["neutAmount"]!, (double)a["neutRadius"]!, (double)a["neutSignatureRadius"]!);
+                (double)a["neutAmount"]!, (double)a["neutRadius"]!, (double)a["neutSignatureRadius"]!,
+                a["debuffMs"] is { } debuff ? (double)debuff : 0.0,
+                a["sweepEnd"] is JsonArray sweepEnd ? sweepEnd.Select(x => (double)x!).ToArray() : null);
         }
         if ((string)a["kind"]! == "smartbomb")
         {

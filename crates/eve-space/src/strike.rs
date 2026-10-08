@@ -6,6 +6,10 @@
 
 use crate::health::Damage;
 
+/// The share of the remote repair a ship takes while a disruptive lance has disrupted it (EveJS `DISRUPTIVE_LANCE_REMOTE_REPAIR_MULTIPLIER`, a CCP
+/// description with no SDE attribute: "massively inhibit the effectiveness of external repair beams"; UNVERIFIED number, see DEVIATIONS).
+pub const DISRUPTED_REMOTE_REPAIR: f64 = 0.5;
+
 /// The shape of a strike, by the static data's `doomsdayAOEShape` value: 1 a cylinder, 3 a cone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StrikeShape {
@@ -59,9 +63,32 @@ pub struct Strike {
     pub neut_amount: f64,
     pub neut_radius: f64,
     pub neut_signature_radius: f64,
+    /// For this long from a pulse that covers a ship, the ship cannot warp, jump or dock and takes half the remote repair (the disruptive lance's
+    /// `doomsdayAppliedDBuffDuration`, 60 s). 0 for none. Protocol 28.
+    pub debuff_ms: f64,
+    /// A sweeping strike (a reaper, `isPointTargeted` 2): the end of the cylinder's axis at the last pulse, as an offset from the firing ship's centre. The
+    /// start is `direction * length`; each pulse runs the axis from the centre toward the point `start + (end - start) * progress`, where progress is the
+    /// pulse's share of the window (EveJS `resolveSlashDamageVolume`). None for a fixed aim. Protocol 28.
+    pub sweep_end: Option<[f64; 3]>,
 }
 
 impl Strike {
+    /// The strike as it is at pulse `pulse` (0 is the first). For a fixed aim that is the strike itself; for a sweep, its axis at that pulse, and None
+    /// when the axis has no length there (no area to hit).
+    pub fn at_pulse(&self, pulse: i32) -> Option<Strike> {
+        let Some(end) = self.sweep_end else { return Some(*self) };
+        let last = f64::from((self.pulses - 1).max(1));
+        let progress = (f64::from(pulse) / last).clamp(0.0, 1.0);
+        let start = [self.direction[0] * self.length, self.direction[1] * self.length, self.direction[2] * self.length];
+        let offset = [0, 1, 2].map(|i| start[i] + (end[i] - start[i]) * progress);
+        let length = dot(offset, offset).sqrt();
+        if !(length.is_finite() && length > 0.0) {
+            return None;
+        }
+        let direction = [offset[0] / length, offset[1] / length, offset[2] / length];
+        Some(Strike { direction, length, ..*self })
+    }
+
     /// Whether a ship is in the area, from `origin` (the hull's surface point along the aim) and with its centre and radius.
     pub fn covers(&self, origin: [f64; 3], centre: [f64; 3], target_radius: f64) -> bool {
         let offset = [centre[0] - origin[0], centre[1] - origin[1], centre[2] - origin[2]];
@@ -117,6 +144,9 @@ impl Strike {
             && self.neut_radius >= 0.0
             && self.neut_signature_radius.is_finite()
             && self.neut_signature_radius >= 0.0
+            && self.debuff_ms.is_finite()
+            && self.debuff_ms >= 0.0
+            && self.sweep_end.is_none_or(|end| finite(&end) && dot(end, end) > 0.0)
     }
 }
 
@@ -155,6 +185,8 @@ mod tests {
             neut_amount: 30_000.0,
             neut_radius: 10_000.0,
             neut_signature_radius: 20_000.0,
+            debuff_ms: 0.0,
+            sweep_end: None,
         }
     }
 
@@ -190,6 +222,31 @@ mod tests {
         assert!(!Strike { damage: [1.0, -1.0, 0.0, 0.0], ..cone(30_000.0) }.is_valid());
         assert_eq!(unit([0.0, 3.0, 4.0]).map(|u| u[1]), Some(0.6));
         assert_eq!(unit([0.0; 3]), None);
+    }
+
+    #[test]
+    fn a_sweep_turns_its_axis_by_the_share_of_its_window_and_a_pulse_on_no_axis_hits_nothing() {
+        let sweep = Strike {
+            shape: StrikeShape::Cylinder,
+            radius: 500.0,
+            length: 2_000.0,
+            pulses: 3,
+            pulse_ms: 5_000.0,
+            sweep_end: Some([0.0, 2_000.0, 0.0]),
+            ..cone(2_000.0)
+        };
+        let first = sweep.at_pulse(0).unwrap();
+        assert_eq!((first.direction, first.length), ([1.0, 0.0, 0.0], 2_000.0), "the start point");
+        // halfway through the window the axis points between the two points, at the same length (a right angle sweep)
+        let middle = sweep.at_pulse(1).unwrap();
+        assert!((middle.length - 2_000.0 * 0.5f64.sqrt()).abs() < 1e-6 * 2_000.0 && (middle.direction[0] - middle.direction[1]).abs() < 1e-9);
+        let last = sweep.at_pulse(2).unwrap();
+        assert_eq!(last.direction, [0.0, 1.0, 0.0], "the end point");
+        // a sweep whose axis passes through the origin has no length there and hits nothing
+        let through = Strike { sweep_end: Some([-2_000.0, 0.0, 0.0]), pulses: 3, ..sweep };
+        assert!(through.at_pulse(1).is_none(), "a zero axis at the middle pulse");
+        assert!(cone(30_000.0).at_pulse(0).is_some_and(|fixed| fixed == cone(30_000.0)), "a fixed aim is the strike itself");
+        assert!(!Strike { sweep_end: Some([0.0; 3]), ..sweep }.is_valid(), "a sweep that ends on the ship is not valid");
     }
 
     #[test]

@@ -12,7 +12,7 @@ use crate::health::Layer;
 use crate::link::ChargeOp;
 use crate::payload;
 use crate::scene::{Out, Scene, SessionId, TICKS_PER_SECOND};
-use crate::strike::Strike;
+use crate::strike::{DISRUPTED_REMOTE_REPAIR, Strike};
 use crate::weapons::{Spool, SpoolState, Turret};
 use crate::wire::{dict, filetime, id, int, real, text, tuple, word};
 
@@ -1595,7 +1595,7 @@ impl Scene {
             let run = pilot.modules.running.remove(index);
             return self.effect_ended(session, run, owner, ship_id, pending.at, Ending::Done);
         };
-        let mut out = self.mend(target_id, *layer, amount * pending.range_share, pending.at);
+        let mut out = self.mend_remote(target_id, *layer, amount * pending.range_share, pending.at);
         if let Some(pilot) = self.pilots.get_mut(&session)
             && let Some(current) = pilot.modules.running.get_mut(index)
             && current.pending_remote_repair.is_some_and(|current| current.cycle_id == cycle_id)
@@ -2030,7 +2030,7 @@ impl Scene {
                 self.hold(session, effect, lasting, at)
             }
             Remote::Jam { strength } => self.jam(session, effect, strength, share, at),
-            Remote::Repair { layer, amount } => self.mend(effect.target_id, *layer, amount * share, at),
+            Remote::Repair { layer, amount } => self.mend_remote(effect.target_id, *layer, amount * share, at),
             Remote::MutadaptiveRepair { .. } => Vec::new(),
             Remote::Transfer { amount } => self.give_capacitor(target, amount * share, at),
             Remote::Neutralize { amount, signature_resolution } => {
@@ -2075,6 +2075,13 @@ impl Scene {
     /// Up to `amount` GJ are taken out of the capacitor of the ship of `target` (never more than it holds); its pilot is told the charge. Answers what was taken.
     /// A strike's cycle starts: the ship stops and is held for its windows, every ship in the neutralising radius loses its capacitor, and the pulses are
     /// counted from zero (the first is due at the warning).
+    /// Remote repair from another ship's module: half of it lands on a ship the disruptive lance has disrupted (`DISRUPTED_REMOTE_REPAIR`, protocol 28).
+    pub(crate) fn mend_remote(&mut self, target_id: i64, layer: Layer, amount: f64, now: i64) -> Vec<Out> {
+        let disrupted = self.session_of(target_id).and_then(|session| self.pilots.get(&session)).is_some_and(|pilot| pilot.disrupted_until > now);
+        let factor = if disrupted { DISRUPTED_REMOTE_REPAIR } else { 1.0 };
+        self.mend(target_id, layer, amount * factor, now)
+    }
+
     fn strike_start(&mut self, session: SessionId, effect: &Effect, strike: Strike, at: i64) -> Vec<Out> {
         self.hold_for_windows(session, strike.immobile_ms, strike.no_jump_ms, at);
         if let Some(run) = self.pilots.get_mut(&session).and_then(|pilot| pilot.modules.running.iter_mut().find(|run| run.effect.module_id == effect.module_id)) {
@@ -2150,19 +2157,26 @@ impl Scene {
 
     /// The next pulse of a strike is due: every ship in the area is hit by the pulse's damage times its signature factor, and the pulse is counted.
     fn strike_pulse(&mut self, session: SessionId, index: usize, at: i64) -> Vec<Out> {
-        let (module_type, strike, centre, radius) = {
+        let (module_type, pulse, strike, centre, radius) = {
             let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
             let Some(run) = pilot.modules.running.get_mut(index) else { return Vec::new() };
             let Some(Action::Strike { strike }) = run.effect.action.clone() else { return Vec::new() };
             if run.strike_done >= strike.pulses {
                 return Vec::new();
             }
+            let pulse = run.strike_done;
             run.strike_done += 1;
-            (run.effect.module_type, strike, pilot.ship.position, pilot.ship.spec.radius.max(0.0))
+            (run.effect.module_type, pulse, strike, pilot.ship.position, pilot.ship.spec.radius.max(0.0))
         };
+        // a sweep (a reaper) has its axis at this pulse; a pulse whose axis has no length hits nothing
+        let Some(strike) = strike.at_pulse(pulse) else { return Vec::new() };
         let direction = strike.direction;
-        // the area starts at the hull, along the aim (the reference's hull surface origin)
-        let origin = [centre.x + direction[0] * radius, centre.y + direction[1] * radius, centre.z + direction[2] * radius];
+        // the area starts at the hull, along the aim (the reference's hull surface origin); a sweep starts at the centre (`resolveSlashDamageVolume`)
+        let origin = if strike.sweep_end.is_some() {
+            [centre.x, centre.y, centre.z]
+        } else {
+            [centre.x + direction[0] * radius, centre.y + direction[1] * radius, centre.z + direction[2] * radius]
+        };
         let targets: Vec<(SessionId, i64, f64)> = self
             .in_entry_order()
             .into_iter()
@@ -2182,6 +2196,15 @@ impl Scene {
                 Some((other, target.ship.spec.ship_id, factor))
             })
             .collect();
+        // the debuff lands on every ship the pulse covers, whatever its signature takes of the damage (`applyDisruptiveLanceDebuff`)
+        if strike.debuff_ms > 0.0 {
+            let until = at + (strike.debuff_ms * TICKS_PER_SECOND as f64 / 1000.0) as i64;
+            for (target_session, _, _) in &targets {
+                if let Some(pilot) = self.pilots.get_mut(target_session) {
+                    pilot.disrupted_until = pilot.disrupted_until.max(until);
+                }
+            }
+        }
         let mut out = Vec::new();
         for (target_session, target_id, factor) in targets {
             let damage = strike.damage.map(|amount| amount * factor);

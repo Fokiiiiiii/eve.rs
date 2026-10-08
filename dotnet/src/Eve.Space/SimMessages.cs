@@ -410,7 +410,9 @@ public abstract record SimAction
         double NoJumpMs,
         double NeutAmount,
         double NeutRadius,
-        double NeutSignatureRadius) : SimAction
+        double NeutSignatureRadius,
+        double DebuffMs = 0,
+        IReadOnlyList<double>? SweepEnd = null) : SimAction
     {
         /// <summary>Whether the numbers are ones the simulation runs (the same checks the simulation makes on decode).</summary>
         public bool IsValid =>
@@ -425,6 +427,8 @@ public abstract record SimAction
             && Pulses >= 1
             && double.IsFinite(SignatureRadius) && SignatureRadius > 0
             && double.IsFinite(ImmobileMs) && ImmobileMs >= 0
+            && double.IsFinite(DebuffMs) && DebuffMs >= 0
+            && (SweepEnd is null || (SweepEnd.Count == 3 && SweepEnd.All(double.IsFinite) && SweepEnd.Any(c => c != 0)))
             && double.IsFinite(NoJumpMs) && NoJumpMs >= 0
             && double.IsFinite(NeutAmount) && NeutAmount >= 0
             && double.IsFinite(NeutRadius) && NeutRadius >= 0

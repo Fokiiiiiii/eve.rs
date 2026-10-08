@@ -421,6 +421,8 @@ pub(crate) struct Pilot {
     pub(crate) protected_until: i64,
     /// Until when the ship cannot move, warp or jump: a doomsday's immobility window (`Strike::immobile_ms`).
     pub(crate) immobile_until: i64,
+    /// Until when the ship is disrupted by a disruptive lance: it cannot warp, jump or dock, and takes half the remote repair (`Strike::debuff_ms`).
+    pub(crate) disrupted_until: i64,
     /// Until when the ship cannot jump or cloak: a doomsday's no-jump window (`Strike::no_jump_ms`).
     pub(crate) no_jump_until: i64,
     /// What other ships' modules do to this ship's numbers while they run (webs, painters, dampeners, scramblers).
@@ -451,6 +453,7 @@ impl Pilot {
             modules,
             protected_until,
             immobile_until: 0,
+            disrupted_until: 0,
             no_jump_until: 0,
             incoming: crate::ewar::Incoming::default(),
             cloak: crate::visibility::CloakState::Uncloaked,
@@ -1239,6 +1242,9 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         if pilot.immobile_until > now {
             return refused("IMMOBILE");
         }
+        if pilot.disrupted_until > now {
+            return refused("WARP_DISRUPTED");
+        }
         if pilot.incoming.scrambled() {
             return refused("WARP_SCRAMBLED");
         }
@@ -1451,6 +1457,9 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         if pilot.no_jump_until > now {
             return vec![Out::Refused { session, command: code, reason: "DOCKING_BLOCKED" }];
         }
+        if pilot.disrupted_until > now {
+            return vec![Out::Refused { session, command: code, reason: "DOCKING_DISRUPTED" }];
+        }
         if pilot.jump.is_some() {
             return vec![Out::Refused { session, command: code, reason: "JUMPING" }];
         }
@@ -1509,6 +1518,9 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         }
         if pilot.no_jump_until > now {
             return refused("NO_JUMP_OR_CLOAK");
+        }
+        if pilot.disrupted_until > now {
+            return refused("JUMP_DISRUPTED");
         }
         if pilot.jump.is_some() {
             return refused("STARGATE_JUMP_IN_PROGRESS");
@@ -3728,6 +3740,22 @@ pub(crate) mod tests {
         assert_eq!(no_jump, [Out::Refused { session: SESSION, command: 4, reason: "DOCKING_BLOCKED" }], "in the no-jump window");
         let after = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON + seconds(301));
         assert!(!after.iter().any(|o| matches!(o, Out::Refused { .. })), "after both windows: {after:?}");
+    }
+
+    #[test]
+    fn a_disrupted_ship_is_refused_warp_docking_and_jump_until_the_debuff_passes() {
+        let mut scene = near_the_station();
+        let pilot = scene.pilots.get_mut(&SESSION).unwrap();
+        pilot.disrupted_until = NOON + seconds(60);
+        let docked = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON + seconds(1));
+        assert_eq!(docked, [Out::Refused { session: SESSION, command: 4, reason: "DOCKING_DISRUPTED" }], "no docking while disrupted");
+        let warped = scene.command(SESSION, Command::WarpToPoint { destination: Vec3::new(5_000_000.0, 0.0, 0.0), range: 0.0 }, NOON + seconds(1));
+        assert_eq!(warped.len(), 1, "{warped:?}");
+        assert!(matches!(warped[0], Out::Refused { reason: "WARP_DISRUPTED", .. }), "no warp while disrupted: {warped:?}");
+        let jumped = scene.command(SESSION, Command::Jump { gate_id: STATION, destination_gate: STATION }, NOON + seconds(1));
+        assert!(matches!(jumped.as_slice(), [Out::Refused { reason: "JUMP_DISRUPTED", .. }]), "no jump while disrupted: {jumped:?}");
+        let after = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON + seconds(61));
+        assert!(!after.iter().any(|o| matches!(o, Out::Refused { .. })), "after the debuff: {after:?}");
     }
 
     fn near_the_station() -> Scene {

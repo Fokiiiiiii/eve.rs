@@ -1,6 +1,6 @@
 # Project status and RPC coverage
 
-**Verified source:** main commit `39fcd15224b78f94d4e2c68b0dcbc8eee2d88c6e`
+**Verified source:** main commit `c6c3833f56fff65f0b1a47ed17576c85204f66de`
 **Updated:** 2026-10-08
 
 This is the current project summary. The dated migration log, old service backlog, and 2026-10-06 audit snapshot were removed; keep current status here and remaining work in [TODO.md](TODO.md).
@@ -34,7 +34,8 @@ The documentation reorganization is a separate, docs-only change and is checked 
 
 - The FleetProxy callbacks and FleetObject `CreateFleet`/`LoadFleetSetup` paths use FleetStore and saved character settings. Migration 006 stores the full advert payload for new writes.
 - `storeManager.buy_offer` and Insurance are connected to their existing persistence providers.
-- `station.GetGuests` resolves through the `stationSvc` alias; its four-field response and observer guest-ledger seed are implemented.
+- Character entry now builds the full supported session state, restores a saved in-space ship pose, and orders selection, session, hangar, Dogma, and guest notifications. Real V24.01 client login has not been run; the PostgreSQL character-selection test was skipped without `EVE_PG_URL`.
+- `station.GetGuests` resolves through the `stationSvc` alias; its four-field response, observer ledger seed, and station/structure join/leave broadcasts are implemented and unit-tested.
 - `industryMonitor.ConnectJob` filters the input inventory flag and excludes blueprint-category items.
 - SignalTracker session registration and its full-state publish hook are wired; the snapshot producer itself remains an open provider item.
 - Abyssal/Void gate fallback error shapes and callback contracts are present; the runtime gate providers remain open.

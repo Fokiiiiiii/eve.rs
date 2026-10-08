@@ -1,7 +1,7 @@
 # Current TODOs
 
 **Updated:** 2026-10-08
-**Baseline:** main source commit `39fcd15224b78f94d4e2c68b0dcbc8eee2d88c6e
+**Baseline:** main source commit `c6c3833f56fff65f0b1a47ed17576c85204f66de`
 
 This list distinguishes a real behavior/provider gap from an intentionally empty default and from a method whose route already exists. These items are not missing-route work.
 
@@ -24,7 +24,6 @@ Do not fabricate successful state or fake backends to close these items.
 | OPEN | `scanMgr.SignalTrackerRegister` | The Host can record the character/session/system registration and has a full-state publish hook. The live signal snapshot producer and the code that calls the publisher are still absent. |
 | OPEN | `posMgr.GetControlTowers` | Connect rows from a real starbase/tower data source to `ReadControlTowerRowsCallback`. The route is present; no current tower provider was found. |
 | OPEN (audit side effect) | publicQaToolsServer.MoveMeTo | EveJS records a move_me_to QA event and returns null. RS returns None with matching wire shape, but has no QA event recorder. Connect a real audit provider only if one becomes available. |
-| OPEN | `station.GetGuests` join/leave broadcast side effect | Snapshot response, alias route, observer ledger seed, and ledger tests are complete. The backend that sends station guest join/leave notifications is still absent. |
 
 ## 2. Mutation authorities and specialized service providers
 
@@ -67,11 +66,16 @@ The 484/484 route result is not a 484/484 wire-shape proof. CCP's public ESI mat
 
 **LIMITATION — Fleet ads created before migration 006.** The migration can only backfill fields present in the old schema. Original leader corporation/alliance/faction, solar system, advert update time, and membergroup allow/deny lists cannot be reconstructed from those rows. New advert writes persist the full payload. Revisit legacy rows only if an authoritative source for the missing fields becomes available.
 
+**LIMITATION — Character clone and worldspace state.** The character store has a home station but no separate clone station or worldspace field. Character entry currently uses the home station as `cloneStationID` and `None` for `worldspaceid`; populate these from an authoritative store if one is added.
+
+**LIMITATION — In-space resume fidelity.** The active ship's position is persisted and restored, but the current space-item store does not preserve velocity or warp state. Direction reuses any prior stored vector or falls back to +Z. The real-client login and ballpark bootstrap remain unverified.
+
 ## Closed items that should stay closed
 
 - `storeManager.buy_offer` and `insuranceSvc.InsureShip` / `UnInsureShip`: existing persistence providers are connected.
 - FleetProxy's seven operations plus FleetObject advert creation/setup callbacks: connected and tested; only the legacy-row limitation above remains.
-- `station.GetGuests`: alias route, wire shape, and observer ledger seed are implemented; only the broadcast sender remains open.
+- `station.GetGuests`: alias route, wire shape, observer ledger seed, and station/structure join/leave broadcasts are implemented and unit-tested.
+- `SelectCharacterID`: character session state, station/structure/space selection, deferred docked ship-id and fitting bootstrap, and saved-pose space resume are wired. The PostgreSQL-backed selection test was skipped without `EVE_PG_URL`; native-client acceptance remains unverified.
 - `industryMonitor.ConnectJob`: inventory-flag filtering and blueprint-category exclusion are implemented and tested.
 - `structureHangarViewMgr.GetMyHangarViewState`: existing persistence callback is connected.
 - publicQaToolsServer.SlashCmd delegates to the existing slash service. CanGiveItemForMultifit returns false in EveJS and RS, so those responses are aligned.

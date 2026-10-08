@@ -631,6 +631,40 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         Ok(self.announce_arrival(session, now))
     }
 
+    /// Restores a pilot whose ship is already in space at its saved position.
+    pub fn enter_in_space(
+        &mut self,
+        session: SessionId,
+        spec: ShipSpec,
+        position: [f64; 3],
+        direction: [f64; 3],
+        now: i64,
+    ) -> Result<Vec<Out>, SceneError> {
+        if self.pilots.contains_key(&session) {
+            return Err(SceneError::AlreadyInSpace(session));
+        }
+        let position = Vec3::new(position[0], position[1], position[2]);
+        let direction = Vec3::new(direction[0], direction[1], direction[2]);
+        let modules = Modules::with_charge(
+            spec.capacitor_capacity,
+            spec.capacitor_recharge_s,
+            spec.condition.charge,
+            now,
+        );
+        let ship = Ship::new(
+            spec,
+            position,
+            Vec3::new(0.0, 0.0, 0.0),
+            direction,
+            0.0,
+            Course::Stop,
+            now,
+        );
+        let entered = self.next_entry();
+        self.pilots.insert(session, Pilot::new(ship, modules, entered, now, now));
+        Ok(self.announce_arrival(session, now))
+    }
+
     pub fn leave(&mut self, session: SessionId, why: Departure, now: i64) -> Option<Vec<Out>> {
         let mut pilot = self.pilots.remove(&session)?;
         if let Some(brains) = self.brains.as_mut() {

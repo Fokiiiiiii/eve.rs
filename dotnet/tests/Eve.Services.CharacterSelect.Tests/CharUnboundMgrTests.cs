@@ -291,11 +291,12 @@ public class CharUnboundMgrTests
 
         Assert.Equal(PyNone.Instance, await h.CallAsync(session, "SelectCharacterID", new PyInt(id), PyNone.Instance, PyBool.False));
 
-        // the session change first, then the skills notification, as the reference orders them
-        Assert.Equal(2, sink.Sent.Count);
-        var packet = sink.Sent[0];
+        // Character selection resets the client before the single session change; skills follow it.
+        Assert.Equal(3, sink.Sent.Count);
+        Assert.Equal("OnCharacterSelected", NotificationName(sink.Sent[0]));
+        var packet = sink.Sent[1];
         Assert.Equal(new PyInt(16), ((PyTuple)((PyObject)packet).Args).Items[0]);
-        Assert.Equal(new PyInt(12), ((PyTuple)((PyObject)sink.Sent[1]).Args).Items[0]);
+        Assert.Equal(new PyInt(12), ((PyTuple)((PyObject)sink.Sent[2]).Args).Items[0]);
         var changes = ChangesOf(packet);
         var recorded = Recorded.Login["afterSelect"]![0]!["$tuple"]![4]!["$tuple"]![1]!["$tuple"]![1]!["$dict"]!.AsArray();
         Assert.Equal(recorded.Select(e => e![0]!.GetValue<string>()), changes.Select(c => c.Name));

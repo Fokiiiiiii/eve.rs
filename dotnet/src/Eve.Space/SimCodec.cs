@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 20;
+    public const ushort ProtocolVersion = 21;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -155,6 +155,13 @@ public static class SimCodec
     }
 
     private static double[] ReadVector(ref Reader r) => [r.F64(), r.F64(), r.F64()];
+
+    private static double[]? ReadOptionalVector(ref Reader r) => r.U8() switch
+    {
+        0 => null,
+        1 => ReadVector(ref r),
+        _ => throw new SimLinkException(SimLinkError.BadValue, "bad optional vector"),
+    };
 
     private static SimWreckKind? ReadWreckKind(ref Reader r) => r.U8() switch
     {
@@ -518,7 +525,14 @@ public static class SimCodec
                         _ => throw new SimLinkException(SimLinkError.BadValue, "bad how"),
                     };
                     var station = r.I64();
-                    message = new SimEnter(session, system, how, station, ReadShip(ref r));
+                    var ship = ReadShip(ref r);
+                    var position = how == EnterHow.InSpace
+                        ? ReadOptionalVector(ref r) ?? throw new SimLinkException(SimLinkError.BadValue, "in-space entry has no position")
+                        : null;
+                    var direction = how == EnterHow.InSpace
+                        ? ReadOptionalVector(ref r) ?? throw new SimLinkException(SimLinkError.BadValue, "in-space entry has no direction")
+                        : null;
+                    message = new SimEnter(session, system, how, station, ship, position, direction);
                     break;
                 }
             case Kind.EnterReply:
@@ -902,6 +916,19 @@ public static class SimCodec
         }
     }
 
+    private static void WriteOptionalVector(Writer w, IReadOnlyList<double>? vector)
+    {
+        if (vector is null)
+        {
+            w.U8(0);
+            return;
+        }
+        if (vector.Count != 3 || vector.Any(value => !double.IsFinite(value)))
+            throw new ArgumentException("A simulation pose needs three finite coordinates.", nameof(vector));
+        w.U8(1);
+        WriteVector(w, vector);
+    }
+
     private static void WriteIdentity(Writer w, SimNpcIdentity i)
     {
         w.I64(i.HostileResponseThreshold);
@@ -1226,6 +1253,11 @@ private static void WriteAction(Writer w, SimAction action)
                 w.U8((byte)m.How);
                 w.I64(m.StationId);
                 WriteShip(w, m.Ship);
+                if (m.How == EnterHow.InSpace)
+                {
+                    WriteOptionalVector(w, m.Position ?? throw new ArgumentException("In-space entry requires a position."));
+                    WriteOptionalVector(w, m.Direction ?? throw new ArgumentException("In-space entry requires a direction."));
+                }
                 break;
             case SimEnterReply m:
                 w.U8(Kind.EnterReply);

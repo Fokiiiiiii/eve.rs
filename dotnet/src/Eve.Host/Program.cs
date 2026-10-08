@@ -369,7 +369,14 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         now);
     var ships = new CharacterShips(source, dogma, characters, items, skills, modules, training);
     // the simulation starts empty with this host: a ship that a host which stopped without closing its sessions left in space is put back where its character last was
-    var stranded = await ships.RecoverAllFromSpaceAsync(id => stations.Get(id) is { } station ? (station.SolarSystemId, station.ConstellationId, station.RegionId) : null);
+    var stranded = await ships.RecoverAllFromSpaceAsync(
+        id => stations.Get(id) is { } station ? (station.SolarSystemId, station.ConstellationId, station.RegionId) : null,
+        shouldRecover: async (characterId, cancellationToken) =>
+        {
+            var character = await characters.GetAsync(characterId, cancellationToken);
+            return character?.ShipId is not { } shipId ||
+                   await spaceItemStore.GetAsync(shipId, cancellationToken) is null;
+        });
     if (stranded > 0)
     {
         Console.Error.WriteLine($"eve-host: {stranded} ship(s) left in space by the last host were put back in their stations");
@@ -755,7 +762,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
                 return Task.CompletedTask;
             });
         var npcWrecks = new NpcWrecks(npcAuthority, () => NpcLoot.LoadAsync(sde), ships);
-        spaceSessions = new SpaceSessions(sim, ships, dogma, stations, solarSystems, now, message => Console.Error.WriteLine($"eve-host: space: {message}"), localTimers: foundations.LocalTimers) { RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new NpcSelector(npcAuthority), NpcWrecks = npcWrecks, BeltRats = new BeltRats(npcAuthority, BeltRatConfig.FromEnvironment(Environment.GetEnvironmentVariable), type => NpcHull.HasHitPoints(dogma.Type(type))) };
+        spaceSessions = new SpaceSessions(sim, ships, dogma, stations, solarSystems, now, message => Console.Error.WriteLine($"eve-host: space: {message}"), localTimers: foundations.LocalTimers, spaceItems: spaceItemStore) { RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new NpcSelector(npcAuthority), NpcWrecks = npcWrecks, BeltRats = new BeltRats(npcAuthority, BeltRatConfig.FromEnvironment(Environment.GetEnvironmentVariable), type => NpcHull.HasHitPoints(dogma.Type(type))) };
         npcWrecks.Warm();
         // the periodic work of the space features is jobs of the shared scheduler, not timers of their own
         spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")));
@@ -974,6 +981,9 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         .OrderBy(agent => agent.AgentId)
         .ToArray();
     var structureDirectoryReadModel = new PersistenceStructureDirectoryReadModel(ReadGameStoreTableAsync, AffiliationOfAsync, sde, mailCache);
+    if (spaceSessions is not null)
+        spaceSessions.StructureExistsAsync = async (structureId, cancellationToken) =>
+            await structureDirectoryReadModel.GetStructureInfoAsync(structureId, cancellationToken) is { PersistentlyDeployed: true };
     var structureProfilesRpcBackend = new Eve.Host.PersistenceStructureProfilesRpcBackend(
         ReadGameStoreTableAsync, mailCache, characterSessions);
     var structureRpcCallbacks = new Eve.Services.Core.StructureRpcCallbacks
@@ -2310,9 +2320,17 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             }));
 
     var stationGuestLedger = new Eve.Services.Station.StationGuestLedger();
+    var characterEntryHooks = new List<ICharacterEntryHook>();
+    if (spaceSessions is not null)
+        characterEntryHooks.Add(spaceSessions);
+    characterEntryHooks.Add(new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now));
+    characterEntryHooks.Add(corporationLogin);
+    characterEntryHooks.Add(new FleetLoginHook(fleetStore.MemberForCharacterAsync));
+    characterEntryHooks.Add(dogmaSync);
+    characterEntryHooks.Add(new Eve.Services.Station.GuestLoginHook(characterSessions, stationGuestLedger));
     IReadOnlyList<IService> services =
     [
-                new CharUnboundMgrService(accounts, characters, items, skills, wallets, creation, catalog, online, [new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now), corporationLogin], Random.Shared, newCharacterExperienceMode == "tutorial"),
+        new CharUnboundMgrService(accounts, characters, items, skills, wallets, creation, catalog, online, characterEntryHooks, Random.Shared, newCharacterExperienceMode == "tutorial"),
         new MultiLoginBlockerService(),
         new PopulationCapService(characters),
         new Eve.Services.CharacterInfo.ConfigService(characters, corporations, stations, solarSystems),
@@ -2400,7 +2418,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
                 });
             }),
         new Eve.Services.CharacterInfo.OnlineStatusService(characterSessions, ReadWatchlistAsync),
-        new StationService(stations, characters, online, now, sovereigntyReadModel.ReadAllianceSystemsAsync, officeManager: officeManager, seedObserverGuestLedger: stationGuestLedger.SeedObserverGuestLedger),
+        new StationService(stations, characters, online, now, sovereigntyReadModel.ReadAllianceSystemsAsync, officeManager: officeManager, seedObserverGuestLedger: stationGuestLedger.SeedObserverGuestLedger, characterSessions: characterSessions),
         new Eve.Services.Station.TradeMgrService(characterSessions),
         new Eve.Host.DevIndexManagerRpcService(sovereigntyReadModel.ReadAllDevelopmentIndicesAsync),
         new Eve.Host.EjectRpcService(),
@@ -2448,7 +2466,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             incursionAnomalyReadModel.ReadAnomaliesAsync,
             nowUnixMs: now,
             signalTrackerRegister: signalTrackerRegistrationProvider.RegisterAsync),
-          HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations),
+          HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations, characterEntryHooks),
           new Eve.Services.Core.CrateService(new PersistenceCrateServiceBackend(source, items, itemTypes, skills, skillCatalog, mailCache)),
           new Eve.Host.ShipCosmeticsMgrRpcService(mailCache, mailCache, items, source, skinCosmeticsCatalog, now,
               (characterId, shipId, skinId) =>
@@ -2694,7 +2712,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
                     Math.Max(0, session.GetInt("warfactionid") ?? 0)))
                 .ToArray();
             return ValueTask.FromResult<IReadOnlyList<Eve.Services.Core.StructureGuestSnapshot>>(guests);
-        })];
+        }, seedObserverGuestLedger: stationGuestLedger.SeedObserverGuestLedger)];
     services = [.. services, new RepackagingService(services.OfType<InvBrokerService>().Single())];
       services = [.. services, new Eve.Services.Corporations.BillMgrService(
           corporations,
@@ -8959,7 +8977,8 @@ public static class HostInventoryServiceFactory
         Func<long> nowUnixMs,
         Eve.Services.Ships.ISpaceContainers? space,
         Eve.Services.Ships.ISpaceDroneBays? droneBays,
-        Eve.Corporations.CorporationStore corporations) =>
+        Eve.Corporations.CorporationStore corporations,
+        IReadOnlyList<ICharacterEntryHook>? entryHooks = null) =>
         new(
             items,
             types,
@@ -8989,7 +9008,8 @@ public static class HostInventoryServiceFactory
                     stationId,
                     divisionFlag,
                     take: operation == Eve.Services.Inventory.CorporationHangarOperation.Take);
-            });
+            },
+            entryHooks: entryHooks);
 }
 
 

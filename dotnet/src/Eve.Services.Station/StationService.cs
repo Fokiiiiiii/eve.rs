@@ -10,7 +10,7 @@ namespace Eve.Services.Station;
 /// is docked here, and the solar system it is in.
 /// </summary>
 [Service("stationSvc", Aliases = ["station"])]
-public sealed partial class StationService(StationCatalog stations, PgCharacterStore characters, OnlineCharacters online, Func<long> nowUnixMs, Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null, Eve.Services.Corporations.OfficeManagerService? officeManager = null, SeedObserverGuestLedgerCallback? seedObserverGuestLedger = null)
+public sealed partial class StationService(StationCatalog stations, PgCharacterStore characters, OnlineCharacters online, Func<long> nowUnixMs, Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null, Eve.Services.Corporations.OfficeManagerService? officeManager = null, SeedObserverGuestLedgerCallback? seedObserverGuestLedger = null, CharacterSessions? characterSessions = null)
 {
     /// <summary>The station services (repair, reprocessing, market, ...) every NPC station offers, as the client's bit mask.</summary>
     public const long AllServicesMask = 1_143_312;
@@ -107,7 +107,13 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
         if (stationId <= 0)
             return new PyList([]);
 
-        var present = await characters.GetManyAsync(online.Snapshot(), call.Cancellation);
+        var characterIds = characterSessions is null
+            ? online.Snapshot()
+            : characterSessions.InStation(stationId)
+                .Select(session => session.CharacterId!.Value)
+                .Distinct()
+                .ToArray();
+        var present = await characters.GetManyAsync(characterIds, call.Cancellation);
         var guests = present
             .Where(character => character.StationId == stationId)
             .OrderBy(character => character.Id)

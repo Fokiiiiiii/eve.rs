@@ -81,7 +81,7 @@ public sealed partial class DogmaIMService(
     {
         var parameters = call.Arg(0) switch { PyTuple t when t.Items.Count > 0 => t.Items[0], PyList l when l.Items.Count > 0 => l.Items[0], var other => other };
         // the place the client is in: the station it is docked at, or, when it is in space, the solar system
-        var place = call.Session.GetInt("stationid") ?? (space is not null ? call.Session.GetInt("solarsystemid") : null);
+        var place = call.Session.DockedLocationId ?? (space is not null ? call.Session.GetInt("solarsystemid") : null);
         if (IdOf(parameters) is not { } location || place != location)
         {
             return None;
@@ -125,7 +125,7 @@ public sealed partial class DogmaIMService(
         var fileTime = Py.FileTimeFromUnixMs(nowUnixMs());
         var wantCharacter = Flag(call.Arg(0), true);
         var wantShip = Flag(call.Arg(1), true);
-        var answer = _info.GetAllInfo(snapshot, wantCharacter, wantShip, Flag(call.Arg(2), false), fileTime, docked: call.Session.GetInt("stationid") is not null);
+        var answer = _info.GetAllInfo(snapshot, wantCharacter, wantShip, Flag(call.Arg(2), false), fileTime, docked: call.Session.DockedLocationId is not null);
         if (wantCharacter || (wantShip && !wantCharacter))
         {
             // sent after the answer: the client has the character before it is told how the character's attributes came to be

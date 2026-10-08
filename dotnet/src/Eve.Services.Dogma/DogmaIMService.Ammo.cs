@@ -37,12 +37,12 @@ public sealed partial class DogmaIMService
             return None;
         }
         var location = IdOf(call.Arg(3)) ?? shipId;
-        if (call.Session.GetInt("stationid") is null && rounds is not null)
+        if (call.Session.DockedLocationId is null && rounds is not null)
         {
             await LoadInSpaceAsync(call.Session, character, shipId, [.. IdsOf(call.Arg(1))], [.. IdsOf(call.Arg(2))], location, call.Cancellation);
             return None;
         }
-        if (IsHangarContainer(location) && call.Session.GetInt("stationid") is { } station)
+        if (IsHangarContainer(location) && call.Session.DockedLocationId is { } station)
         {
             location = station;
         }
@@ -74,12 +74,12 @@ public sealed partial class DogmaIMService
         {
             location = IdOf(call.Arg(2)) ?? shipId;
         }
-        if (IsHangarContainer(location) && call.Session.GetInt("stationid") is { } station)
+        if (IsHangarContainer(location) && call.Session.DockedLocationId is { } station)
         {
             location = station;
         }
         var quantity = IdOf(call.Arg(3)) is { } asked and > 0 ? asked : (long?)null;
-        if (call.Session.GetInt("stationid") is null && rounds is not null)
+        if (call.Session.DockedLocationId is null && rounds is not null)
         {
             await UnloadInSpaceAsync(call.Session, character, shipId, [.. IdsOf(call.Arg(1))], location, flag, quantity, call.Cancellation);
             return None;

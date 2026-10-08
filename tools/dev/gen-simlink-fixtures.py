@@ -179,7 +179,8 @@ def build(m):
         return frame(k, struct.pack("<HI", m["version"], m["pollHz"]))
     if k == "Enter":
         return frame(k, u64(m["sessionId"]) + struct.pack("<iB", m["solarSystemId"], m["how"]) + i64(m["stationId"])
-                     + ship(m["ship"]))
+                       + ship(m["ship"])
+                       + (b"\x01" + struct.pack("<3d", *m["position"]) + b"\x01" + struct.pack("<3d", *m["direction"]) if m["how"] == 1 else b""))
     if k == "EnterReply":
         return frame(k, u64(m["sessionId"]) + bytes([0 if m["ok"] else 1]) + s("" if m["ok"] else m["reason"]))
     if k == "Leave":
@@ -255,7 +256,9 @@ def build(m):
         return frame(k, u64(m["requestId"]) + (bytes([0]) + u64(m["session"]) if m["ok"] else bytes([1]) + s(m["reason"])))
     if k == "LaunchDrone":
         return frame(k, u64(m["requestId"]) + u64(m["sessionId"]) + ship(m["ship"]) + weapon(m["weapon"])
-                     + struct.pack("<iddd", m["graphicId"], m["orbitDistance"], m["attackRange"], m["cruiseFraction"]))
+                       + struct.pack("<iddd5d", m["graphicId"], m["orbitDistance"], m["attackRange"], m["cruiseFraction"],
+                                     m.get("miningAmountM3", 0.0), m.get("workCycleMs", 0.0), m.get("miningWasteMultiplier", 0.0),
+                                     m.get("miningWasteProbability", 0.0), m.get("salvageAccessBonus", 0.0)))
     if k == "DroneCommand":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + i64(m["targetId"]) + struct.pack("<I", len(m["droneIds"]))
                      + b"".join(i64(d) for d in m["droneIds"]) + struct.pack("<d", m["controlRange"]))
@@ -289,12 +292,13 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 20},
-    {"name": "hello ack", "kind": "HelloAck", "version": 20, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 21},
+    {"name": "hello ack", "kind": "HelloAck", "version": 21, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
-     "solarSystemId": 30000142, "how": 1, "stationId": "0", "ship": dict(BARE, name="イビス")},
+     "solarSystemId": 30000142, "how": 1, "stationId": "0", "ship": dict(BARE, name="イビス"),
+     "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]},
     {"name": "enter accepted", "kind": "EnterReply", "sessionId": "1790646377000015", "ok": True},
     {"name": "enter refused", "kind": "EnterReply", "sessionId": "1790646377000015", "ok": False,
      "reason": "UNKNOWN_STATION 60015249"},

@@ -6,6 +6,36 @@ using Eve.Space;
 
 namespace Eve.Services.Space.Tests;
 
+
+
+public sealed class FleetLoginHookTests
+{
+    [Fact]
+    public async Task Fleet_membership_is_folded_into_login_session_attributes_and_cleared_without_a_fleet()
+    {
+        var member = new Eve.Services.Space.FleetMemberSnapshot(2001, 3001, 4001, 2, 0)
+        {
+            FleetId = 1001,
+        };
+        var hook = new Eve.Services.Space.FleetLoginHook(
+            (_, _) => Task.FromResult<Eve.Services.Space.FleetMemberSnapshot?>(member));
+
+        var attributes = await hook.GetSessionAttributesAsync(
+            new Eve.Services.ClientSession(), 2001, CancellationToken.None);
+        var values = attributes.ToDictionary(attribute => attribute.Name, attribute => attribute.Value, StringComparer.Ordinal);
+        Assert.Equal(new Eve.Marshal.PyLong(1001), values["fleetid"]);
+        Assert.Equal(new Eve.Marshal.PyInt(2), values["fleetrole"]);
+        Assert.Equal(new Eve.Marshal.PyLong(3001), values["wingid"]);
+        Assert.Equal(new Eve.Marshal.PyLong(4001), values["squadid"]);
+
+        var noFleet = new Eve.Services.Space.FleetLoginHook(
+            (_, _) => Task.FromResult<Eve.Services.Space.FleetMemberSnapshot?>(null));
+        var cleared = await noFleet.GetSessionAttributesAsync(
+            new Eve.Services.ClientSession(), 2001, CancellationToken.None);
+        Assert.All(cleared, attribute => Assert.Equal(Eve.Marshal.PyNone.Instance, attribute.Value));
+    }
+}
+
 public class SpaceServiceTests
 {
     private static long Id(PyValue value) => Events.Number(value);

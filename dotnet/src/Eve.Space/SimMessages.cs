@@ -56,7 +56,7 @@ public sealed record SimSensors(double Gravimetric, double Ladar, double Magneto
 }
 
 /// <summary>A ship enters a solar system.</summary>
-public sealed record SimEnter(ulong SessionId, int SolarSystemId, EnterHow How, long StationId, SimShip Ship) : SimMessage;
+public sealed record SimEnter(ulong SessionId, int SolarSystemId, EnterHow How, long StationId, SimShip Ship, IReadOnlyList<double>? Position = null, IReadOnlyList<double>? Direction = null) : SimMessage;
 
 public sealed record SimHeatModule(
     long ModuleId, int Flag, double StructureHp, double DamageHp, double HeatDamageHp, double HeatAbsorptionRate, bool Overloadable, bool HeatImmune, bool Online);

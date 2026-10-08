@@ -245,12 +245,17 @@ public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEve
     /// What a host that has just started does before it takes a client: every ship that a host which stopped without closing its sessions left in space is put back
     /// where its character last was (the simulation starts empty with the host's connection, so no ship of a character is in it). Returns how many were put back.
     /// </summary>
-    public async Task<int> RecoverAllFromSpaceAsync(Func<long, (int SolarSystemId, int ConstellationId, int RegionId)?>? placeOf, CancellationToken cancellationToken = default)
+    public async Task<int> RecoverAllFromSpaceAsync(
+        Func<long, (int SolarSystemId, int ConstellationId, int RegionId)?>? placeOf,
+        CancellationToken cancellationToken = default,
+        Func<long, CancellationToken, Task<bool>>? shouldRecover = null)
     {
         var recovered = 0;
         // whoever owns something that is in space: a character's ship is one, the cans and wrecks of NPCs and of players are the others (only a ship of its owner is moved)
         foreach (var owner in await items.OwnersWithFlagAsync(InSpaceFlag, cancellationToken))
         {
+            if (shouldRecover is not null && !await shouldRecover(owner, cancellationToken))
+                continue;
             if (await RecoverFromSpaceAsync(owner, placeOf, cancellationToken))
             {
                 recovered++;

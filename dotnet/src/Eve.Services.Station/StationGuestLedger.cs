@@ -73,3 +73,72 @@ public sealed class StationGuestLedger
         return entry;
     }
 }
+
+public sealed class GuestLoginHook(CharacterSessions sessions, StationGuestLedger ledger) : ICharacterEntryHook
+{
+    public ValueTask OnCharacterLeavingAsync(ClientSession session, long characterId, CancellationToken cancellationToken)
+    {
+        var stationId = session.GetInt("stationid") ?? session.GetInt("stationID") ?? 0;
+        var structureId = session.GetInt("structureid") ?? session.GetInt("structureID") ?? 0;
+        BroadcastLeft(session, characterId, stationId, structureId);
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask OnCharacterEnteredAsync(ClientSession session, long characterId, CancellationToken cancellationToken)
+    {
+        var stationId = session.GetInt("stationid") ?? session.GetInt("stationID") ?? 0;
+        var structureId = session.GetInt("structureid") ?? session.GetInt("structureID") ?? 0;
+        if (stationId > 0)
+        {
+            BroadcastStationJoined(session, characterId, stationId);
+            session.Closed += () => BroadcastLeft(session, characterId, stationId, 0);
+        }
+        else if (structureId > 0)
+        {
+            BroadcastStructureJoined(session, characterId, structureId);
+            session.Closed += () => BroadcastLeft(session, characterId, structureId: structureId);
+        }
+        return ValueTask.CompletedTask;
+    }
+
+    private void BroadcastStationJoined(ClientSession session, long characterId, long stationId)
+    {
+        var guest = GuestIdentity(session, characterId);
+        foreach (var observer in sessions.InStation(stationId))
+            if (observer.CharacterId != characterId && ledger.TryRecordGuestJoined(observer, stationId, characterId))
+                observer.SendNotification("OnCharNowInStation", "stationid", guest);
+    }
+
+    private void BroadcastStructureJoined(ClientSession session, long characterId, long structureId)
+    {
+        var guest = GuestIdentity(session, characterId);
+        foreach (var observer in sessions.InStructure(structureId))
+            if (observer.CharacterId != characterId && ledger.TryRecordGuestJoined(observer, structureId, characterId))
+                observer.SendNotification("OnCharacterEnteredStructure", "clientID", guest);
+    }
+
+    private void BroadcastLeft(ClientSession session, long characterId, long stationId = 0, long structureId = 0)
+    {
+        if (stationId > 0)
+        {
+            var guest = GuestIdentity(session, characterId);
+            foreach (var observer in sessions.InStation(stationId))
+                if (observer.CharacterId != characterId && ledger.TryRecordGuestLeft(observer, stationId, characterId))
+                    observer.SendNotification("OnCharNoLongerInStation", "stationid", guest);
+        }
+        else if (structureId > 0)
+        {
+            foreach (var observer in sessions.InStructure(structureId))
+                if (observer.CharacterId != characterId && ledger.TryRecordGuestLeft(observer, structureId, characterId))
+                    observer.SendNotification("OnCharacterLeftStructure", "clientID", new Eve.Marshal.PyInt(characterId));
+        }
+    }
+
+    private static Eve.Marshal.PyTuple GuestIdentity(ClientSession session, long characterId) =>
+        new([
+            new Eve.Marshal.PyInt(characterId),
+            new Eve.Marshal.PyInt(Math.Max(0, session.GetInt("corpid") ?? 0)),
+            new Eve.Marshal.PyInt(Math.Max(0, session.GetInt("allianceid") ?? 0)),
+            new Eve.Marshal.PyInt(Math.Max(0, session.GetInt("warfactionid") ?? 0)),
+        ]);
+}

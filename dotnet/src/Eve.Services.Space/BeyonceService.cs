@@ -9,7 +9,39 @@ namespace Eve.Services.Space;
 /// the ship. The simulation does the work (<see cref="SpaceSessions"/>); this reads the client's calls.
 /// </summary>
 public sealed record FleetMemberSnapshot(long CharacterId, long WingId, long SquadId, int Role, int Job,
-    bool AcceptsFleetWarp = true, bool AcceptsConduitJumps = true, bool AcceptsFleetRegroups = true, long? ShipTypeId = null);
+    bool AcceptsFleetWarp = true, bool AcceptsConduitJumps = true, bool AcceptsFleetRegroups = true, long? ShipTypeId = null)
+{
+    public long FleetId { get; init; }
+}
+
+public sealed class FleetLoginHook(Func<long, CancellationToken, Task<FleetMemberSnapshot?>> memberForCharacter)
+    : Eve.Services.ICharacterEntryHook
+{
+    public async ValueTask<IReadOnlyList<(string Name, Eve.Marshal.PyValue Value)>> GetSessionAttributesAsync(
+        Eve.Services.ClientSession session, long characterId, CancellationToken cancellationToken)
+    {
+        var member = await memberForCharacter(characterId, cancellationToken);
+        return member is not { FleetId: > 0 }
+            ? [
+                ("fleetid", Eve.Marshal.PyNone.Instance),
+                ("fleetrole", Eve.Marshal.PyNone.Instance),
+                ("wingid", Eve.Marshal.PyNone.Instance),
+                ("squadid", Eve.Marshal.PyNone.Instance),
+            ]
+            : [
+                ("fleetid", new Eve.Marshal.PyLong(member.FleetId)),
+                ("fleetrole", new Eve.Marshal.PyInt(member.Role)),
+                ("wingid", member.WingId > 0 ? new Eve.Marshal.PyLong(member.WingId) : Eve.Marshal.PyNone.Instance),
+                ("squadid", member.SquadId > 0 ? new Eve.Marshal.PyLong(member.SquadId) : Eve.Marshal.PyNone.Instance),
+            ];
+    }
+
+    public ValueTask OnCharacterEnteredAsync(
+        Eve.Services.ClientSession session, long characterId, CancellationToken cancellationToken) =>
+        ValueTask.CompletedTask;
+}
+
+
 public sealed record FleetSquadSnapshot(long SquadId, string Name);
 public sealed record FleetWingSnapshot(long WingId, string Name, IReadOnlyList<FleetSquadSnapshot> Squads);
 public sealed record FleetJoinRequest(long CharacterId);
@@ -395,6 +427,9 @@ public sealed class FleetStore(System.Data.Common.DbDataSource source, string sc
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)
             ? new FleetMemberSnapshot(reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt16(4), reader.GetInt16(5))
+            {
+                FleetId = reader.GetInt64(0),
+            }
             : null;
     }
 

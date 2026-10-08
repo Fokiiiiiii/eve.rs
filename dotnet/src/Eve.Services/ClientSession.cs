@@ -102,6 +102,10 @@ public sealed class ClientSession
         _ => null,
     };
 
+    /// <summary>The station or Upwell structure this client is docked in, or null while in space.</summary>
+    public long? DockedLocationId =>
+        GetInt("stationid") ?? GetInt("stationID") ?? GetInt("structureid") ?? GetInt("structureID");
+
     /// <summary>The account id (<c>userid</c>).</summary>
     public long? UserId
     {

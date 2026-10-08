@@ -193,6 +193,15 @@ public class ModuleEffectsTests
         Assert.Equal(new Eve.Space.SimRemote.Repair(Eve.Space.SimLayer.Shield, 125), unchargedRemote.What);
     }
 
+    [Fact]
+    public void The_booster_and_the_fueled_repairers_are_registered_effect_handlers()
+    {
+        foreach (var name in new[] { "powerBooster", "fueledArmorRepair", "fueledShieldBoosting" })
+        {
+            Assert.Contains(name, Eve.Services.Space.Effects.ModuleEffects.Default.Names, StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
     [PgFact]
     public async Task Dogma_modifier_handlers_cover_their_published_module_effects_in_the_current_sde()
     {
@@ -584,7 +593,7 @@ public class ModuleEffectsTests
         }
 
         var handledNames = Eve.Services.Space.Effects.ModuleEffects.Default.Names
-            .Concat(["powerBooster", "fueledArmorRepair", "fueledShieldBoosting", "missileLaunching", "torpedoLaunching"])
+            .Concat(["missileLaunching", "torpedoLaunching"])
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var uncovered = assignedNames.Except(handledNames, StringComparer.OrdinalIgnoreCase).OrderBy(name => name, StringComparer.Ordinal).ToArray();
         string[] currentSdeGaps =

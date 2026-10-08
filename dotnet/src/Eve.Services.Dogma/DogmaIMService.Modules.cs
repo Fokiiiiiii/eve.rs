@@ -61,6 +61,8 @@ public sealed partial class DogmaIMService
             "MODULE_CLOAKED" => Notify("You cannot activate modules while cloaked."),
             // an effect with no body yet (PendingModuleEffect) is shown as one this module cannot run, the same as an effect with no handler
             "UNSUPPORTED_EFFECT" or "EFFECT_NOT_IMPLEMENTED" => Notify($"{name} cannot be activated."),
+            // a launcher whose kind is not run yet names its group's reason (MissileEffect.RefusedLauncherGroups): shown as the same refusal
+            _ when refusal.Reason?.EndsWith("_LAUNCHER_NOT_IMPLEMENTED", StringComparison.Ordinal) == true => Notify($"{name} cannot be activated."),
             _ => Notify($"Failed to activate {name}: {refusal.Reason ?? "unknown error"}."),
         };
     }

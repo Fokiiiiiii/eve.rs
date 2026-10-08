@@ -12,7 +12,8 @@ namespace Eve.Services.Space.Effects;
 /// <c>missileDamageMultiplier</c>, how fast it flies (<c>maxVelocity</c>) and for how long before it explodes (<c>explosionDelay</c>, which with the speed is the range of the launcher), and the
 /// explosion radius, velocity and damage reduction that decide how much of the damage a target takes. The cycle and the cost are the launcher's own values; a cycle burns the launcher's
 /// <c>chargeRate</c> rounds. The pilot asks for <c>missileLaunching</c> (or <c>torpedoLaunching</c>), the effect of the charge; what runs is the launcher's own <c>useMissiles</c>, which is what the
-/// client is told. The defender missiles (they shoot down other missiles), the guided bombs and the structures' launchers are not run yet.
+/// client is told. The defender missiles (they shoot down other missiles), the guided bombs and the structures' launchers are not run yet: a launcher of such a group is
+/// refused with its own reason (<see cref="RefusedLauncherEffect"/>), and <see cref="MissileEffect.RefusedLauncherGroups"/> lists them.
 /// </summary>
 internal sealed class MissileEffect : ShipEffect
 {
@@ -47,13 +48,38 @@ internal sealed class MissileEffect : ShipEffect
     /// <summary>The launchers that fire missiles at a ship: cruise, rocket, torpedo, light and heavy, rapid, heavy assault, rapid torpedo and the XL ones.</summary>
     private static readonly HashSet<int> LauncherGroups = [506, 507, 508, 509, 510, 511, 771, 1245, RapidTorpedoLauncherGroup, 1674, XlTorpedoLauncherGroup];
 
+    /// <summary>
+    /// The groups whose launchers carry <c>useMissiles</c> in the static data but are not run yet, each with the reason it is refused (the client shows the module cannot be
+    /// started). Every such group is named here, so no launcher group of the static data is left to an unexplained <c>UNSUPPORTED_EFFECT</c>.
+    /// The defender launcher (512) is the interception of <c>crates/eve-space</c>, not yet wired; the bomb launcher (862) has no flight; the others are not weapons.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<int, string> RefusedLauncherGroups = new Dictionary<int, string>
+    {
+        [512] = "DEFENDER_LAUNCHER_NOT_IMPLEMENTED",
+        [862] = "BOMB_LAUNCHER_NOT_IMPLEMENTED",
+        [589] = "INTERDICTION_SPHERE_LAUNCHER_NOT_IMPLEMENTED",
+        [481] = "PROBE_LAUNCHER_NOT_IMPLEMENTED",
+        [1226] = "PROBE_LAUNCHER_NOT_IMPLEMENTED",
+        [501] = "FESTIVAL_LAUNCHER_NOT_IMPLEMENTED",
+        [308] = "COUNTERMEASURE_LAUNCHER_NOT_IMPLEMENTED",
+        [4807] = "BREACHER_POD_LAUNCHER_NOT_IMPLEMENTED",
+        [1327] = "STRUCTURE_LAUNCHER_NOT_IMPLEMENTED",
+        [1328] = "STRUCTURE_LAUNCHER_NOT_IMPLEMENTED",
+        [1562] = "STRUCTURE_LAUNCHER_NOT_IMPLEMENTED",
+        [1974] = "STRUCTURE_LAUNCHER_NOT_IMPLEMENTED",
+    };
+
+    /// <summary>The launcher groups this effect runs.</summary>
+    public static IReadOnlyCollection<int> ServedLauncherGroups => LauncherGroups;
+
     public override IReadOnlyCollection<string> EffectNames { get; } = [LauncherEffectName];
 
     /// <summary>
     /// The effect a launcher runs when the pilot asks for the firing effect of its charge: the launcher's own, or null when the module is no launcher or the name is not one of the firing effects.
+    /// A launcher that is refused (<see cref="RefusedLauncherGroups"/>) is a launcher too: it is asked for its own effect and refused there.
     /// </summary>
     public static EffectDef? LauncherEffectFor(TypeDef type, DogmaStatic statics, string requested) =>
-        LauncherGroups.Contains(type.GroupId) && ClientNames.Any(n => n.Equals(requested, StringComparison.OrdinalIgnoreCase))
+        (LauncherGroups.Contains(type.GroupId) || RefusedLauncherGroups.ContainsKey(type.GroupId)) && ClientNames.Any(n => n.Equals(requested, StringComparison.OrdinalIgnoreCase))
             ? type.EffectIds.Select(statics.Effect).FirstOrDefault(e => e is not null && e.Name.Equals(LauncherEffectName, StringComparison.OrdinalIgnoreCase))
             : null;
 
@@ -115,4 +141,21 @@ internal sealed class MissileEffect : ShipEffect
             || module.Statics.Type(charge.TypeId)?.GroupId is TorpedoGroup or XlTorpedoGroup;
         return torpedo ? TorpedoDeployment : MissileDeployment;
     }
+}
+
+/// <summary>
+/// The handler of a launcher whose group carries <c>useMissiles</c> but is not run (<see cref="MissileEffect.RefusedLauncherGroups"/>): an activation is refused with the
+/// reason of its group, before a target is asked for. It is registered under the same name as <see cref="MissileEffect"/> and serves only the groups that one does not,
+/// so it adds no coverage (a pending handler, see <see cref="PendingModuleEffect"/>).
+/// </summary>
+internal sealed class RefusedLauncherEffect : PendingModuleEffect
+{
+    public RefusedLauncherEffect() : base(MissileEffect.LauncherEffectName)
+    {
+    }
+
+    protected override bool Handles(ModuleEffectContext module) => MissileEffect.RefusedLauncherGroups.ContainsKey(module.Type.GroupId);
+
+    protected override string? Refusal(ModuleEffectContext module) =>
+        MissileEffect.RefusedLauncherGroups.TryGetValue(module.Type.GroupId, out var reason) ? reason : NotImplemented;
 }

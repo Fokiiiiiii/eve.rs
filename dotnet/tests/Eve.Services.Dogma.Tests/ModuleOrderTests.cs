@@ -120,6 +120,9 @@ public class ModuleOrderTests
         Assert.Equal("1MN Civilian Afterburner cannot be activated.", await Said("UNSUPPORTED_EFFECT"));
         // an effect whose body is pending is shown as the same refusal, not as the generic failure
         Assert.Equal("1MN Civilian Afterburner cannot be activated.", await Said("EFFECT_NOT_IMPLEMENTED"));
+        // a launcher whose group is not run yet names its reason; the client shows the same refusal
+        Assert.Equal("1MN Civilian Afterburner cannot be activated.", await Said("DEFENDER_LAUNCHER_NOT_IMPLEMENTED"));
+        Assert.Equal("1MN Civilian Afterburner cannot be activated.", await Said("BOMB_LAUNCHER_NOT_IMPLEMENTED"));
         Assert.Equal("You cannot activate a microwarpdrive while a warp scrambler holds your ship.", await Said("MICROWARPDRIVE_BLOCKED"));
         Assert.Equal("Failed to activate 1MN Civilian Afterburner: SafetyActivated.", await Said("SafetyActivated"));
         Assert.Equal("Failed to activate module: BAD_EFFECT.", await Said("BAD_EFFECT", ""));

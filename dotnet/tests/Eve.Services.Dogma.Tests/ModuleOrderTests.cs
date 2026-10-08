@@ -126,6 +126,8 @@ public class ModuleOrderTests
         Assert.Equal("CantCloak", (await RefusedAsync(rig, session, oid, ModuleResult.Refusal("CLOAK_DISALLOWED", 21857, "1MN Civilian Afterburner"))).Name);
         Assert.Equal("1MN Civilian Afterburner cannot be activated.", await Said("DEFENDER_LAUNCHER_NOT_IMPLEMENTED"));
         Assert.Equal("1MN Civilian Afterburner cannot be activated.", await Said("BOMB_LAUNCHER_NOT_IMPLEMENTED"));
+        // a firing effect refused by name (F.O.F. missiles, MissileEffect.RefusedFiringEffects) is shown as the same refusal, not as a raw reason
+        Assert.Equal("1MN Civilian Afterburner cannot be activated.", await Said("FOF_MISSILE_NOT_IMPLEMENTED"));
         // the reference's wording (moduleOperation.js): the microwarpdrive is held by a scrambler, and a module too damaged to start says so
         Assert.Equal("That module cannot be activated while you are warp scrambled.", await Said("MICROWARPDRIVE_BLOCKED"));
         Assert.Equal("1MN Civilian Afterburner is too damaged to activate.", await Said("MODULE_INCAPACITATED"));

@@ -62,8 +62,9 @@ internal static class ModuleRefusals
             // an effect with no body yet (PendingModuleEffect) or a module that burns a resource not taken yet (DogmaModifierEffect) is shown as one this module cannot run,
             // the same as an effect with no handler
             "UNSUPPORTED_EFFECT" or "EFFECT_NOT_IMPLEMENTED" or "FUEL_NOT_IMPLEMENTED" => Notify($"{name} cannot be activated."),
-            // a launcher whose kind is not run yet names its group's reason (MissileEffect.RefusedLauncherGroups): shown as the same refusal
-            _ when refusal.Reason?.EndsWith("_LAUNCHER_NOT_IMPLEMENTED", StringComparison.Ordinal) == true => Notify($"{name} cannot be activated."),
+            // a launcher or firing effect whose kind is not run yet names its reason (MissileEffect.RefusedLauncherGroups, RefusedFiringEffects, e.g. F.O.F.):
+            // shown as the same refusal
+            _ when refusal.Reason?.EndsWith("_NOT_IMPLEMENTED", StringComparison.Ordinal) == true => Notify($"{name} cannot be activated."),
             _ => Notify($"Failed to activate {name}: {refusal.Reason ?? "unknown error"}."),
         };
     }

@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 22,
-   "hex": "03000000011600"
+   "version": 23,
+   "hex": "03000000011700"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 22,
+   "version": 23,
    "pollHz": 4,
-   "hex": "0700000002160004000000"
+   "hex": "0700000002170004000000"
   },
   {
    "name": "enter by undocking",
@@ -2651,6 +2651,209 @@
    "allianceId": "0",
    "warFactionId": "0",
    "hex": "290000001801800eb4e0eb0e000000000000000000000000000000000000000000000000000000000000000000"
+  },
+  {
+   "name": "module work cycle of a mining laser",
+   "kind": "ModuleWorkCycle",
+   "sessionId": "1790646377000015",
+   "characterId": "140000342",
+   "shipId": "9988400001939",
+   "solarSystemId": 30100032,
+   "moduleId": "9988400002813",
+   "targetId": "1000000000001",
+   "cycleId": "7301444403200000001",
+   "command": 7,
+   "miningAmountM3": 20.0,
+   "wasteMultiplier": 1.0,
+   "wasteProbability": 0.1,
+   "critProbability": 0.05,
+   "critMultiplier": 2.0,
+   "accessDifficultyBonus": 0.0,
+   "wasteRoll": 0.25,
+   "roundingRoll": 0.5,
+   "critRoll": 0.75,
+   "hex": "7e000000334f2c3859955c0600563c58080000000093b3089b15090000404acb01fdb6089b150900000110a5d4e80000000100000000f15365070000000000003440000000000000f03f9a9999999999b93f9a9999999999a93f00000000000000400000000000000000000000000000d03f000000000000e03f000000000000e83f"
+  },
+  {
+   "name": "module work cycle of a salvager",
+   "kind": "ModuleWorkCycle",
+   "sessionId": "1790646377000015",
+   "characterId": "140000342",
+   "shipId": "9988400001939",
+   "solarSystemId": 30100032,
+   "moduleId": "9988400002813",
+   "targetId": "1000000000002",
+   "cycleId": "7301444403200000002",
+   "command": 8,
+   "miningAmountM3": 0.0,
+   "wasteMultiplier": 0.0,
+   "wasteProbability": 0.0,
+   "critProbability": 0.0,
+   "critMultiplier": 0.0,
+   "accessDifficultyBonus": 5.0,
+   "wasteRoll": 0.0,
+   "roundingRoll": 0.0,
+   "critRoll": 0.9,
+   "hex": "7e000000334f2c3859955c0600563c58080000000093b3089b15090000404acb01fdb6089b150900000210a5d4e80000000200000000f153650800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000144000000000000000000000000000000000cdccccccccccec3f"
+  },
+  {
+   "name": "module work result accepted",
+   "kind": "ModuleWorkResult",
+   "sessionId": "1790646377000015",
+   "moduleId": "9988400002813",
+   "targetId": "1000000000001",
+   "cycleId": "7301444403200000001",
+   "accepted": true,
+   "reason": "",
+   "unitsRemaining": "980",
+   "deliveredUnits": "20",
+   "complete": false,
+   "hex": "35000000344f2c3859955c0600fdb6089b150900000110a5d4e80000000100000000f15365010000d403000000000000140000000000000000"
+  },
+  {
+   "name": "module work result refused",
+   "kind": "ModuleWorkResult",
+   "sessionId": "1790646377000015",
+   "moduleId": "9988400002813",
+   "targetId": "1000000000001",
+   "cycleId": "7301444403200000003",
+   "accepted": false,
+   "reason": "NO_TARGET",
+   "unitsRemaining": "0",
+   "deliveredUnits": "0",
+   "complete": true,
+   "hex": "3e000000344f2c3859955c0600fdb6089b150900000110a5d4e80000000300000000f153650009004e4f5f5441524745540000000000000000000000000000000001"
+  },
+  {
+   "name": "module ended when its cycles are done",
+   "kind": "ModuleEnded",
+   "sessionId": "1790646377000015",
+   "moduleId": "9988400002813",
+   "reason": 1,
+   "hex": "12000000354f2c3859955c0600fdb6089b1509000001"
+  },
+  {
+   "name": "module ended when its target is lost",
+   "kind": "ModuleEnded",
+   "sessionId": "1790646377000015",
+   "moduleId": "9988400002813",
+   "reason": 2,
+   "hex": "12000000354f2c3859955c0600fdb6089b1509000002"
+  },
+  {
+   "name": "activate a mining laser",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 17912,
+    "effectId": 4025,
+    "fx": "effects.MiningLaser",
+    "durationMs": 2000.0,
+    "capacitorNeed": 5.0,
+    "repeat": 1000,
+    "targetId": "1000000000001",
+    "action": {
+     "kind": "mining",
+     "family": "ore",
+     "miningAmountM3": 20.0,
+     "wasteMultiplier": 1.0,
+     "wasteProbability": 0.1,
+     "critProbability": 0.05,
+     "critMultiplier": 2.0
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "7d000000134f2c3859955c0600fdb6089b15090000f8450000b90f00001300656666656374732e4d696e696e674c617365720000000000409f400000000000001440e80300000110a5d4e800000008000000000000000007000000000000003440000000000000f03f9a9999999999b93f9a9999999999a93f0000000000000040"
+  },
+  {
+   "name": "activate a salvager",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 25861,
+    "effectId": 6,
+    "fx": "effects.Salvaging",
+    "durationMs": 10000.0,
+    "capacitorNeed": 20.0,
+    "repeat": 1000,
+    "targetId": "1000000000002",
+    "action": {
+     "kind": "salvage",
+     "accessBonus": 10.0
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "5a000000134f2c3859955c0600fdb6089b1509000005650000060000001100656666656374732e53616c766167696e67000000000088c3400000000000003440e80300000210a5d4e8000000080000000000000000080000000000002440"
+  },
+  {
+   "name": "activate a tractor beam",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 24348,
+    "effectId": 9,
+    "fx": "effects.TractorBeam",
+    "durationMs": 5000.0,
+    "capacitorNeed": 5.0,
+    "repeat": 1000,
+    "targetId": "1000000000002",
+    "action": {
+     "kind": "tractor",
+     "velocity": 500.0,
+     "hold": 500.0
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "64000000134f2c3859955c0600fdb6089b150900001c5f0000090000001300656666656374732e54726163746f724265616d000000000088b3400000000000001440e80300000210a5d4e8000000080000000000000000090000000000407f400000000000407f40"
+  },
+  {
+   "name": "activate a passive targeter",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 1100,
+    "effectId": 10,
+    "fx": "effects.TargetPassively",
+    "durationMs": 1000.0,
+    "capacitorNeed": 0.0,
+    "repeat": 1000,
+    "targetId": "1000000000002",
+    "action": {
+     "kind": "passiveLock"
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "58000000134f2c3859955c0600fdb6089b150900004c0400000a0000001700656666656374732e546172676574506173736976656c790000000000408f400000000000000000e80300000210a5d4e80000000800000000000000000a"
+  },
+  {
+   "name": "activate an auto-targeting system",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 1101,
+    "effectId": 11,
+    "fx": "effects.TargetHostiles",
+    "durationMs": 1000.0,
+    "capacitorNeed": 0.0,
+    "repeat": 1000,
+    "targetId": "0",
+    "action": {
+     "kind": "autoTarget",
+     "range": 50000.0
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "5f000000134f2c3859955c0600fdb6089b150900004d0400000b0000001600656666656374732e546172676574486f7374696c65730000000000408f400000000000000000e803000000000000000000000800000000000000000b00000000006ae840"
   }
  ],
  "invalid": [
@@ -2733,6 +2936,46 @@
    "name": "command that promises more arguments than it carries",
    "reason": "truncated",
    "hex": "0b0000000701000000000000000102"
+  },
+  {
+   "name": "module work cycle with no cycle",
+   "reason": "bad-value",
+   "hex": "7e000000334f2c3859955c0600563c58080000000093b3089b15090000404acb01fdb6089b150900000110a5d4e80000000000000000000000070000000000003440000000000000f03f9a9999999999b93f9a9999999999a93f00000000000000400000000000000000000000000000d03f000000000000e03f000000000000e83f"
+  },
+  {
+   "name": "module work cycle with a roll of one",
+   "reason": "bad-value",
+   "hex": "7e000000334f2c3859955c0600563c58080000000093b3089b15090000404acb01fdb6089b150900000110a5d4e80000000100000000f15365070000000000003440000000000000f03f9a9999999999b93f9a9999999999a93f00000000000000400000000000000000000000000000f03f000000000000e03f000000000000e83f"
+  },
+  {
+   "name": "module work cycle of an unknown command",
+   "reason": "bad-value",
+   "hex": "7e000000334f2c3859955c0600563c58080000000093b3089b15090000404acb01fdb6089b150900000110a5d4e80000000100000000f15365090000000000003440000000000000f03f9a9999999999b93f9a9999999999a93f00000000000000400000000000000000000000000000d03f000000000000e03f000000000000e83f"
+  },
+  {
+   "name": "module work cycle with a probability above one",
+   "reason": "bad-value",
+   "hex": "7e000000334f2c3859955c0600563c58080000000093b3089b15090000404acb01fdb6089b150900000110a5d4e80000000100000000f15365070000000000003440000000000000f03f9a9999999999b93f000000000000f83f00000000000000400000000000000000000000000000d03f000000000000e03f000000000000e83f"
+  },
+  {
+   "name": "module work cycle cut short",
+   "reason": "truncated",
+   "hex": "110000003301000000000000000200000000000000"
+  },
+  {
+   "name": "module ended with an unknown reason",
+   "reason": "bad-value",
+   "hex": "12000000354f2c3859955c0600fdb6089b1509000009"
+  },
+  {
+   "name": "mining action with a crit chance above one",
+   "reason": "bad-value",
+   "hex": "7d000000134f2c3859955c0600fdb6089b15090000f8450000b90f00001300656666656374732e4d696e696e674c617365720000000000409f400000000000001440e80300000110a5d4e800000008000000000000000007000000000000003440000000000000f03f9a9999999999b93f000000000000f83f0000000000000040"
+  },
+  {
+   "name": "mining action with an unknown family",
+   "reason": "bad-value",
+   "hex": "7d000000134f2c3859955c0600fdb6089b15090000f8450000b90f00001300656666656374732e4d696e696e674c617365720000000000409f400000000000001440e80300000110a5d4e800000008000000000000000007090000000000003440000000000000f03f9a9999999999b93f9a9999999999a93f0000000000000040"
   }
  ]
 }

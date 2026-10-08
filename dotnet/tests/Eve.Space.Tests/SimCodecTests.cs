@@ -57,6 +57,27 @@ public class SimCodecTests
 
     private static SimAction ActionOf(JsonNode a)
     {
+        if ((string)a["kind"]! == "mining")
+        {
+            var family = (string)a["family"]! switch { "ore" => SimMiningFamilies.Ore, "ice" => SimMiningFamilies.Ice, _ => SimMiningFamilies.Gas };
+            return new SimAction.Mining(family, (double)a["miningAmountM3"]!, (double)a["wasteMultiplier"]!, (double)a["wasteProbability"]!, (double)a["critProbability"]!, (double)a["critMultiplier"]!);
+        }
+        if ((string)a["kind"]! == "salvage")
+        {
+            return new SimAction.Salvage((double)a["accessBonus"]!);
+        }
+        if ((string)a["kind"]! == "tractor")
+        {
+            return new SimAction.Tractor((double)a["velocity"]!, (double)a["hold"]!);
+        }
+        if ((string)a["kind"]! == "passiveLock")
+        {
+            return new SimAction.PassiveLock();
+        }
+        if ((string)a["kind"]! == "autoTarget")
+        {
+            return new SimAction.AutoTarget((double)a["range"]!);
+        }
         if ((string)a["kind"]! == "charged")
         {
             var fallback = a["fallback"] is { } f ? ActionOf(f) : null;
@@ -155,6 +176,14 @@ public class SimCodecTests
             "Jumping" => new SimJumping(Session(), (byte)(int)c["command"]!, (int)c["destinationSystem"]!, Wide(c, "destinationGate")),
             "Jumped" => new SimJumped(Session(), (int)c["fromSystem"]!, Wide(c, "fromGate"), (int)c["toSystem"]!, Wide(c, "toGate")),
             "Activate" => new SimActivate(Session(), EffectOf(c["effect"]!)),
+            "ModuleWorkCycle" => new SimModuleWorkCycle(
+                Session(), Wide(c, "characterId"), Wide(c, "shipId"), (int)c["solarSystemId"]!, Wide(c, "moduleId"), Wide(c, "targetId"), (ulong)Wide(c, "cycleId"),
+                (byte)(int)c["command"]!, (double)c["miningAmountM3"]!, (double)c["wasteMultiplier"]!, (double)c["wasteProbability"]!, (double)c["critProbability"]!,
+                (double)c["critMultiplier"]!, (double)c["accessDifficultyBonus"]!, (double)c["wasteRoll"]!, (double)c["roundingRoll"]!, (double)c["critRoll"]!),
+            "ModuleWorkResult" => new SimModuleWorkResult(
+                Session(), Wide(c, "moduleId"), Wide(c, "targetId"), (ulong)Wide(c, "cycleId"), (bool)c["accepted"]!, (string)c["reason"]!, Wide(c, "unitsRemaining"),
+                Wide(c, "deliveredUnits"), (bool)c["complete"]!),
+            "ModuleEnded" => new SimModuleEnded(Session(), Wide(c, "moduleId"), (byte)(int)c["reason"]!),
             "ChargeSpent" => new SimChargeSpent(Session(), Wide(c, "moduleId"), Wide(c, "roundsLeft")),
             "AdjustCharge" => new SimAdjustCharge(
                 (ulong)Wide(c, "requestId"), Session(), Wide(c, "moduleId"), (int)c["chargeType"]!,
@@ -195,7 +224,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-        Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "Destroy", "Destroyed", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "Enter", "EnterReply", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "Leave", "Measured", "Notify", "PlaceContainer", "PlaceWreck", "Refused", "RemoveWreck", "Respawn", "ShipSpec", "Spawn", "SpawnReply", "TargetRefused", "Targets", "UpdateState"], kinds);
+        Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "Destroy", "Destroyed", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "Enter", "EnterReply", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceContainer", "PlaceWreck", "Refused", "RemoveWreck", "Respawn", "ShipSpec", "Spawn", "SpawnReply", "TargetRefused", "Targets", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);
     }
 
@@ -329,6 +358,35 @@ public class SimCodecTests
         var encoded = SimCodec.Encode(expected);
 
         Assert.Equal(expected, SimCodec.Decode(encoded.AsMemory(4)));
+    }
+
+    [Fact]
+    public void A_module_work_cycle_roundtrips_its_profile_and_its_three_rolls()
+    {
+        var expected = new SimModuleWorkCycle(
+            42, 7, 8, 9, 10, 11, 12, SimDroneCommands.MineRepeatedly, 20, 1.0, 0.1, 0.05, 2.0, 0, 0.25, 0.5, 0.75);
+        var encoded = SimCodec.Encode(expected);
+
+        Assert.Equal(expected, SimCodec.Decode(encoded.AsMemory(4)));
+    }
+
+    [Fact]
+    public void A_module_work_result_and_an_ended_module_roundtrip()
+    {
+        var result = new SimModuleWorkResult(42, 10, 11, 12, false, "NO_TARGET", 0, 0, true);
+        Assert.Equal(result, SimCodec.Decode(SimCodec.Encode(result).AsMemory(4)));
+
+        var ended = new SimModuleEnded(42, 10, SimModuleEndReasons.TargetLost);
+        Assert.Equal(ended, SimCodec.Decode(SimCodec.Encode(ended).AsMemory(4)));
+    }
+
+    [Fact]
+    public void A_module_work_cycle_whose_id_is_zero_or_whose_roll_is_one_is_refused()
+    {
+        var zero = SimCodec.Encode(new SimModuleWorkCycle(42, 7, 8, 9, 10, 11, 0, SimDroneCommands.MineRepeatedly, 20, 1, 0.1, 0.05, 2, 0, 0.25, 0.5, 0.75));
+        Assert.Throws<SimLinkException>(() => SimCodec.Decode(zero.AsMemory(4)));
+        var roll = SimCodec.Encode(new SimModuleWorkCycle(42, 7, 8, 9, 10, 11, 12, SimDroneCommands.MineRepeatedly, 20, 1, 0.1, 0.05, 2, 0, 1.0, 0.5, 0.75));
+        Assert.Throws<SimLinkException>(() => SimCodec.Decode(roll.AsMemory(4)));
     }
 
     [Fact]

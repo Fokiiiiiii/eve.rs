@@ -9,7 +9,7 @@ use eve_space::link::{
     ChargeOp, ContainerPlacement, DecodeError, Enter, How, LaunchDrone, Message, Spawn, WreckPlacement,
 };
 use eve_space::missiles::Missile;
-use eve_space::modules::{Action, Applies, Change, Effect, Numbers, Reach, Remote};
+use eve_space::modules::{Action, Applies, Change, Effect, MiningFamily, Numbers, Reach, Remote};
 use eve_space::scene::{HeatModuleProfile, HeatProfile, HeatRack};
 use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use eve_space::weapons::{Aoe, Arc, Charge, Spool, Turret};
@@ -248,6 +248,32 @@ fn effect_of(case: &Value) -> Effect {
                     strength: sensors_of(&a["strength"]),
                 };
             }
+            if a["kind"] == "mining" {
+                return Action::Mining {
+                    family: match a["family"].as_str().unwrap() {
+                        "ore" => MiningFamily::Ore,
+                        "ice" => MiningFamily::Ice,
+                        _ => MiningFamily::Gas,
+                    },
+                    mining_amount_m3: a["miningAmountM3"].as_f64().unwrap(),
+                    waste_multiplier: a["wasteMultiplier"].as_f64().unwrap(),
+                    waste_probability: a["wasteProbability"].as_f64().unwrap(),
+                    crit_probability: a["critProbability"].as_f64().unwrap(),
+                    crit_multiplier: a["critMultiplier"].as_f64().unwrap(),
+                };
+            }
+            if a["kind"] == "salvage" {
+                return Action::Salvage { access_bonus: a["accessBonus"].as_f64().unwrap() };
+            }
+            if a["kind"] == "tractor" {
+                return Action::Tractor { velocity: a["velocity"].as_f64().unwrap(), hold: a["hold"].as_f64().unwrap() };
+            }
+            if a["kind"] == "passiveLock" {
+                return Action::PassiveLock;
+            }
+            if a["kind"] == "autoTarget" {
+                return Action::AutoTarget { range: a["range"].as_f64().unwrap() };
+            }
             if a["kind"] == "resistanceShift" {
                 let four = |field: &str| -> [f64; 4] {
                     let list = a[field].as_array().unwrap_or_else(|| panic!("{field} in {a}"));
@@ -462,6 +488,41 @@ fn message_of(case: &Value) -> Message {
         "Activate" => {
             Message::Activate { session_id: session_id(), effect: Box::new(effect_of(&case["effect"])) }
         }
+        "ModuleWorkCycle" => Message::ModuleWorkCycle {
+            session_id: session_id(),
+            character_id: wide(case, "characterId"),
+            ship_id: wide(case, "shipId"),
+            solar_system_id: case["solarSystemId"].as_i64().unwrap() as i32,
+            module_id: wide(case, "moduleId"),
+            target_id: wide(case, "targetId"),
+            cycle_id: wide(case, "cycleId") as u64,
+            command: number("command") as u8,
+            mining_amount_m3: case["miningAmountM3"].as_f64().unwrap(),
+            waste_multiplier: case["wasteMultiplier"].as_f64().unwrap(),
+            waste_probability: case["wasteProbability"].as_f64().unwrap(),
+            crit_probability: case["critProbability"].as_f64().unwrap(),
+            crit_multiplier: case["critMultiplier"].as_f64().unwrap(),
+            access_difficulty_bonus: case["accessDifficultyBonus"].as_f64().unwrap(),
+            waste_roll: case["wasteRoll"].as_f64().unwrap(),
+            rounding_roll: case["roundingRoll"].as_f64().unwrap(),
+            crit_roll: case["critRoll"].as_f64().unwrap(),
+        },
+        "ModuleWorkResult" => Message::ModuleWorkResult {
+            session_id: session_id(),
+            module_id: wide(case, "moduleId"),
+            target_id: wide(case, "targetId"),
+            cycle_id: wide(case, "cycleId") as u64,
+            accepted: case["accepted"].as_bool().unwrap(),
+            reason: text(case, "reason"),
+            units_remaining: wide(case, "unitsRemaining"),
+            delivered_units: wide(case, "deliveredUnits"),
+            complete: case["complete"].as_bool().unwrap(),
+        },
+        "ModuleEnded" => Message::ModuleEnded {
+            session_id: session_id(),
+            module_id: wide(case, "moduleId"),
+            reason: number("reason") as u8,
+        },
         "Targets" => Message::Targets {
             session_id: session_id(),
             command: number("command") as u8,

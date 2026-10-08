@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 22;
+    public const ushort ProtocolVersion = 23;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -86,6 +86,9 @@ public static class SimCodec
         public const byte RemoteRepairCycle = 48;
         public const byte RemoteRepairCycleResult = 49;
         public const byte Position = 50;
+        public const byte ModuleWorkCycle = 51;
+        public const byte ModuleWorkResult = 52;
+        public const byte ModuleEnded = 53;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)
@@ -375,6 +378,52 @@ public static class SimCodec
                 return new SimAction.Cloak();
             case 6:
                 return new SimAction.MicroJumpDrive(r.F64(), r.I64());
+            case 7:
+                {
+                    var family = r.U8();
+                    var mining = r.F64();
+                    var wasteMultiplier = r.F64();
+                    var wasteProbability = r.F64();
+                    var critProbability = r.F64();
+                    var critMultiplier = r.F64();
+                    if (family > SimMiningFamilies.Gas || !(mining > 0) || !double.IsFinite(mining)
+                        || new[] { wasteMultiplier, critMultiplier }.Any(n => !double.IsFinite(n) || n < 0)
+                        || new[] { wasteProbability, critProbability }.Any(p => !double.IsFinite(p) || p < 0 || p > 1))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad mining action");
+                    }
+                    return new SimAction.Mining(family, mining, wasteMultiplier, wasteProbability, critProbability, critMultiplier);
+                }
+            case 8:
+                {
+                    var bonus = r.F64();
+                    if (!double.IsFinite(bonus) || bonus < 0)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad salvage action");
+                    }
+                    return new SimAction.Salvage(bonus);
+                }
+            case 9:
+                {
+                    var velocity = r.F64();
+                    var hold = r.F64();
+                    if (!double.IsFinite(velocity) || velocity <= 0 || !double.IsFinite(hold) || hold < 0)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad tractor action");
+                    }
+                    return new SimAction.Tractor(velocity, hold);
+                }
+            case 10:
+                return new SimAction.PassiveLock();
+            case 11:
+                {
+                    var range = r.F64();
+                    if (!double.IsFinite(range) || range <= 0)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad auto-target action");
+                    }
+                    return new SimAction.AutoTarget(range);
+                }
             case 12:
                 {
                     double[] seed = [r.F64(), r.F64(), r.F64(), r.F64()];
@@ -828,6 +877,69 @@ public static class SimCodec
                     message = new SimRemoteRepairCycleResult(session, module, target, cycleId, accepted == 1, reason, amount);
                     break;
                 }
+            case Kind.ModuleWorkCycle:
+                {
+                    var session = r.U64();
+                    var character = r.I64();
+                    var ship = r.I64();
+                    var system = r.I32();
+                    var module = r.I64();
+                    var target = r.I64();
+                    var cycleId = r.U64();
+                    var command = r.U8();
+                    var mining = r.F64();
+                    var wasteMultiplier = r.F64();
+                    var wasteProbability = r.F64();
+                    var critProbability = r.F64();
+                    var critMultiplier = r.F64();
+                    var accessBonus = r.F64();
+                    var wasteRoll = r.F64();
+                    var roundingRoll = r.F64();
+                    var critRoll = r.F64();
+                    // probabilities are at most one, the rolls below one, the numbers finite and not negative; a mining cycle mines something
+                    if (cycleId == 0 || command is not (SimDroneCommands.MineRepeatedly or SimDroneCommands.Salvage)
+                        || new[] { mining, wasteMultiplier, critMultiplier, accessBonus }.Any(n => !double.IsFinite(n) || n < 0)
+                        || new[] { wasteProbability, critProbability }.Any(p => !double.IsFinite(p) || p < 0 || p > 1)
+                        || new[] { wasteRoll, roundingRoll, critRoll }.Any(roll => !double.IsFinite(roll) || roll < 0 || roll >= 1)
+                        || (command == SimDroneCommands.MineRepeatedly && mining <= 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad module work cycle");
+                    }
+                    message = new SimModuleWorkCycle(
+                        session, character, ship, system, module, target, cycleId, command, mining, wasteMultiplier, wasteProbability, critProbability,
+                        critMultiplier, accessBonus, wasteRoll, roundingRoll, critRoll);
+                    break;
+                }
+            case Kind.ModuleWorkResult:
+                {
+                    var session = r.U64();
+                    var module = r.I64();
+                    var target = r.I64();
+                    var cycleId = r.U64();
+                    var accepted = r.U8();
+                    var reason = r.Text();
+                    var remaining = r.I64();
+                    var delivered = r.I64();
+                    var complete = r.U8();
+                    if (cycleId == 0 || accepted > 1 || complete > 1)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad module work result");
+                    }
+                    message = new SimModuleWorkResult(session, module, target, cycleId, accepted == 1, reason, remaining, delivered, complete == 1);
+                    break;
+                }
+            case Kind.ModuleEnded:
+                {
+                    var session = r.U64();
+                    var module = r.I64();
+                    var reason = r.U8();
+                    if (reason is < SimModuleEndReasons.Done or > SimModuleEndReasons.WorkRefused)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad module end reason");
+                    }
+                    message = new SimModuleEnded(session, module, reason);
+                    break;
+                }
             case Kind.Destroy:
                 message = new SimDestroy(r.I64(), ReadCredit(ref r));
                 break;
@@ -1159,6 +1271,22 @@ private static void WriteAction(Writer w, SimAction action)
                 break;
             case SimAction.MicroJumpDrive jump:
                 w.U8(6); w.F64(jump.DistanceMeters); w.I64(jump.CooldownMs);
+                break;
+            case SimAction.Mining mining:
+                w.U8(7); w.U8(mining.Family); w.F64(mining.MiningAmountM3); w.F64(mining.WasteVolumeMultiplier); w.F64(mining.WasteProbability);
+                w.F64(mining.CritProbability); w.F64(mining.CritQuantityMultiplier);
+                break;
+            case SimAction.Salvage salvage:
+                w.U8(8); w.F64(salvage.AccessBonusPercent);
+                break;
+            case SimAction.Tractor tractor:
+                w.U8(9); w.F64(tractor.VelocityMetersPerSecond); w.F64(tractor.HoldDistanceMeters);
+                break;
+            case SimAction.PassiveLock:
+                w.U8(10);
+                break;
+            case SimAction.AutoTarget autoTarget:
+                w.U8(11); w.F64(autoTarget.RangeMeters);
                 break;
             case SimAction.ResistanceShift shift:
                 if (shift.Seed.Count != 4 || shift.AttributeIds.Count != 4)
@@ -1617,6 +1745,44 @@ private static void WriteAction(Writer w, SimAction action)
                 w.F64(m.BaseAmount);
                 w.F64(m.RepairMultiplierBonusPerCycle);
                 w.F64(m.RepairMultiplierBonusMax);
+                break;
+            case SimModuleWorkCycle m:
+                w.U8(Kind.ModuleWorkCycle);
+                w.U64(m.SessionId);
+                w.I64(m.CharacterId);
+                w.I64(m.ShipId);
+                w.I32(m.SolarSystemId);
+                w.I64(m.ModuleId);
+                w.I64(m.TargetId);
+                w.U64(m.CycleId);
+                w.U8(m.Command);
+                w.F64(m.MiningAmountM3);
+                w.F64(m.WasteVolumeMultiplier);
+                w.F64(m.WasteProbability);
+                w.F64(m.CritProbability);
+                w.F64(m.CritQuantityMultiplier);
+                w.F64(m.AccessDifficultyBonus);
+                w.F64(m.WasteRoll);
+                w.F64(m.RoundingRoll);
+                w.F64(m.CritRoll);
+                break;
+            case SimModuleWorkResult m:
+                w.U8(Kind.ModuleWorkResult);
+                w.U64(m.SessionId);
+                w.I64(m.ModuleId);
+                w.I64(m.TargetId);
+                w.U64(m.CycleId);
+                w.U8(m.Accepted ? (byte)1 : (byte)0);
+                w.Text(m.Reason);
+                w.I64(m.UnitsRemaining);
+                w.I64(m.DeliveredUnits);
+                w.U8(m.Complete ? (byte)1 : (byte)0);
+                break;
+            case SimModuleEnded m:
+                w.U8(Kind.ModuleEnded);
+                w.U64(m.SessionId);
+                w.I64(m.ModuleId);
+                w.U8(m.Reason);
                 break;
             case SimRemoteRepairCycleResult m:
                 w.U8(Kind.RemoteRepairCycleResult);

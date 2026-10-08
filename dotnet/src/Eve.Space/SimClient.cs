@@ -402,6 +402,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void RemoteRepairCycleResult(SimRemoteRepairCycleResult result) => Send(result);
 
+    public void ModuleWorkResult(SimModuleWorkResult result) => Send(result);
+
     public Task<CommandReply> PlaceContainerAsync(SimPlaceContainer can, CancellationToken cancellationToken = default) =>
         AwaitAsync(_answered, (can.SessionId, SimCommands.PlaceContainer), can, cancellationToken);
 

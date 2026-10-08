@@ -1114,7 +1114,8 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
                 let (profile, cycle_id) = {
                     let ai = self.drones.get_mut(&session).expect("drone was found");
                     ai.awaiting_work = true;
-                    ai.work_cycle_id = ai.work_cycle_id.wrapping_add(1);
+                    // a process-wide id: the host records the last cycle it settled per drone, so an id must never come back (modules.rs)
+                    ai.work_cycle_id = crate::modules::next_work_cycle_id();
                     (ai.work, ai.work_cycle_id)
                 };
                 vec![Out::DroneWorkCycle {
@@ -2368,7 +2369,9 @@ fn work_drone() -> (Scene, SessionId, Vec<Out>) {
             Out::DroneWorkCycle { command, target_id, cycle_id, .. } => Some((*command, *target_id, *cycle_id)),
             _ => None,
         }).collect();
-        assert_eq!(cycles, [(7, target, 1)]);
+        // the id is drawn from the process-wide counter (modules.rs `next_work_cycle_id`), so only its command and target are fixed
+        assert_eq!(cycles.iter().map(|(command, target, _)| (*command, *target)).collect::<Vec<_>>(), [(7, target)]);
+        assert_ne!(cycles[0].2, 0);
         assert!(scene.drones[&drone].awaiting_work);
         assert!(scene.advance_drones(ready_at + 2 * SECOND).iter().all(|out| !matches!(out, Out::DroneWorkCycle { .. })));
     }

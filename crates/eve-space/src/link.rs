@@ -9,13 +9,13 @@ use crate::death::Credit;
 use crate::health::{Condition, Layer, Resonances, Vitals};
 use crate::missiles::Missile;
 use crate::drones::DroneEffect;
-use crate::modules::{Action, Applies, Change, Effect, Numbers, Reach, Remote};
+use crate::modules::{Action, Applies, Change, Effect, MiningFamily, Numbers, Reach, Remote};
 use crate::scene::{HeatModuleProfile, HeatProfile, HeatRack};
 use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Arc, Aoe, Charge, Spool, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 22;
+pub const PROTOCOL_VERSION: u16 = 23;
 
 /// The message kinds.
 pub mod kind {
@@ -65,6 +65,9 @@ pub mod kind {
     pub const DRONE_WORK_RESULT: u8 = 47;
     pub const REMOTE_REPAIR_CYCLE: u8 = 48;
     pub const REMOTE_REPAIR_CYCLE_RESULT: u8 = 49;
+    pub const MODULE_WORK_CYCLE: u8 = 51;
+    pub const MODULE_WORK_RESULT: u8 = 52;
+    pub const MODULE_ENDED: u8 = 53;
     pub const HEAT_PROFILE: u8 = 41;
     pub const MODULE_OVERHEAT: u8 = 42;
     pub const MODULE_OFFLINE: u8 = 43;
@@ -458,6 +461,41 @@ pub enum Message {
         reason: String,
         amount: f64,
     },
+    /// A work cycle of a module (a mining laser's or a salvager's) ended with its target there: the numbers of the cycle and the three rolls the
+    /// simulation drew (waste, rounding, crit). The module is parked until a `ModuleWorkResult`, and the same `cycle_id` is sent again while it waits.
+    ModuleWorkCycle {
+        session_id: u64,
+        character_id: i64,
+        ship_id: i64,
+        solar_system_id: i32,
+        module_id: i64,
+        target_id: i64,
+        cycle_id: u64,
+        command: u8,
+        mining_amount_m3: f64,
+        waste_multiplier: f64,
+        waste_probability: f64,
+        crit_probability: f64,
+        crit_multiplier: f64,
+        access_difficulty_bonus: f64,
+        waste_roll: f64,
+        rounding_roll: f64,
+        crit_roll: f64,
+    },
+    /// The host's decision for one module work cycle (the same fields as a drone's `DroneWorkResult`).
+    ModuleWorkResult {
+        session_id: u64,
+        module_id: i64,
+        target_id: i64,
+        cycle_id: u64,
+        accepted: bool,
+        reason: String,
+        units_remaining: i64,
+        delivered_units: i64,
+        complete: bool,
+    },
+    /// An effect of a module ended on the simulation's account (cycles done, capacitor short, target gone, forbidden, charge spent, or a refused work cycle).
+    ModuleEnded { session_id: u64, module_id: i64, reason: u8 },
     /// The answer to `COMMAND_MEASURE`: metres from the centre of the ship to the surface of the wreck or can, or none when there is no such wreck.
     Measured {
         session_id: u64,
@@ -1081,6 +1119,31 @@ fn put_action(out: &mut Vec<u8>, action: &Action) {
                 out.extend_from_slice(&attribute.to_le_bytes());
             }
         }
+        Action::Mining { family, mining_amount_m3, waste_multiplier, waste_probability, crit_probability, crit_multiplier } => {
+            out.push(7);
+            out.push(match family {
+                MiningFamily::Ore => 0,
+                MiningFamily::Ice => 1,
+                MiningFamily::Gas => 2,
+            });
+            for number in [mining_amount_m3, waste_multiplier, waste_probability, crit_probability, crit_multiplier] {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
+        }
+        Action::Salvage { access_bonus } => {
+            out.push(8);
+            out.extend_from_slice(&access_bonus.to_le_bytes());
+        }
+        Action::Tractor { velocity, hold } => {
+            out.push(9);
+            out.extend_from_slice(&velocity.to_le_bytes());
+            out.extend_from_slice(&hold.to_le_bytes());
+        }
+        Action::PassiveLock => out.push(10),
+        Action::AutoTarget { range } => {
+            out.push(11);
+            out.extend_from_slice(&range.to_le_bytes());
+        }
         Action::Remote { what, reach, when, jam } => {
             out.push(1);
             out.push(when_byte(when));
@@ -1286,6 +1349,50 @@ fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
                 return Err(DecodeError::BadValue("resistance shift"));
             }
             Ok(Action::ResistanceShift { seed, shift, attribute_ids })
+        }
+        7 => {
+            let family = match reader.u8()? {
+                0 => MiningFamily::Ore,
+                1 => MiningFamily::Ice,
+                2 => MiningFamily::Gas,
+                _ => return Err(DecodeError::BadValue("mining family")),
+            };
+            let mining_amount_m3 = reader.f64()?;
+            let waste_multiplier = reader.f64()?;
+            let waste_probability = reader.f64()?;
+            let crit_probability = reader.f64()?;
+            let crit_multiplier = reader.f64()?;
+            let numbers = [mining_amount_m3, waste_multiplier, crit_multiplier];
+            if mining_amount_m3 <= 0.0
+                || numbers.iter().any(|n| !n.is_finite() || *n < 0.0)
+                || ![waste_probability, crit_probability].iter().all(|p| p.is_finite() && (0.0..=1.0).contains(p))
+            {
+                return Err(DecodeError::BadValue("mining action"));
+            }
+            Ok(Action::Mining { family, mining_amount_m3, waste_multiplier, waste_probability, crit_probability, crit_multiplier })
+        }
+        8 => {
+            let access_bonus = reader.f64()?;
+            if !access_bonus.is_finite() || access_bonus < 0.0 {
+                return Err(DecodeError::BadValue("salvage action"));
+            }
+            Ok(Action::Salvage { access_bonus })
+        }
+        9 => {
+            let velocity = reader.f64()?;
+            let hold = reader.f64()?;
+            if !velocity.is_finite() || velocity <= 0.0 || !hold.is_finite() || hold < 0.0 {
+                return Err(DecodeError::BadValue("tractor action"));
+            }
+            Ok(Action::Tractor { velocity, hold })
+        }
+        10 => Ok(Action::PassiveLock),
+        11 => {
+            let range = reader.f64()?;
+            if !range.is_finite() || range <= 0.0 {
+                return Err(DecodeError::BadValue("auto-target action"));
+            }
+            Ok(Action::AutoTarget { range })
         }
         4 => {
             let charge_type_id = reader.i32()?;
@@ -1580,6 +1687,9 @@ impl Message {
             Self::DroneWorkResult { .. } => kind::DRONE_WORK_RESULT,
             Self::RemoteRepairCycle { .. } => kind::REMOTE_REPAIR_CYCLE,
             Self::RemoteRepairCycleResult { .. } => kind::REMOTE_REPAIR_CYCLE_RESULT,
+            Self::ModuleWorkCycle { .. } => kind::MODULE_WORK_CYCLE,
+            Self::ModuleWorkResult { .. } => kind::MODULE_WORK_RESULT,
+            Self::ModuleEnded { .. } => kind::MODULE_ENDED,
             Self::Measured { .. } => kind::MEASURED,
             Self::AdjustCharge { .. } => kind::ADJUST_CHARGE,
             Self::ChargeAdjusted { .. } => kind::CHARGE_ADJUSTED,
@@ -1793,6 +1903,35 @@ impl Message {
                 out.push(u8::from(*accepted));
                 put_text(&mut out, reason);
                 out.extend_from_slice(&amount.to_le_bytes());
+            }
+            Self::ModuleWorkCycle { session_id, character_id, ship_id, solar_system_id, module_id, target_id, cycle_id, command, mining_amount_m3, waste_multiplier, waste_probability, crit_probability, crit_multiplier, access_difficulty_bonus, waste_roll, rounding_roll, crit_roll } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&character_id.to_le_bytes());
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.extend_from_slice(&module_id.to_le_bytes());
+                out.extend_from_slice(&target_id.to_le_bytes());
+                out.extend_from_slice(&cycle_id.to_le_bytes());
+                out.push(*command);
+                for number in [mining_amount_m3, waste_multiplier, waste_probability, crit_probability, crit_multiplier, access_difficulty_bonus, waste_roll, rounding_roll, crit_roll] {
+                    out.extend_from_slice(&number.to_le_bytes());
+                }
+            }
+            Self::ModuleWorkResult { session_id, module_id, target_id, cycle_id, accepted, reason, units_remaining, delivered_units, complete } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&module_id.to_le_bytes());
+                out.extend_from_slice(&target_id.to_le_bytes());
+                out.extend_from_slice(&cycle_id.to_le_bytes());
+                out.push(u8::from(*accepted));
+                put_text(&mut out, reason);
+                out.extend_from_slice(&units_remaining.to_le_bytes());
+                out.extend_from_slice(&delivered_units.to_le_bytes());
+                out.push(u8::from(*complete));
+            }
+            Self::ModuleEnded { session_id, module_id, reason } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&module_id.to_le_bytes());
+                out.push(*reason);
             }
             Self::Measured { session_id, command, distance } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
@@ -2419,6 +2558,66 @@ impl Message {
                 access_difficulty_bonus: r.f64()?,
                 roll: r.f64()?,
             },
+            kind::MODULE_WORK_CYCLE => {
+                let session_id = r.u64()?;
+                let character_id = r.i64()?;
+                let ship_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let module_id = r.i64()?;
+                let target_id = r.i64()?;
+                let cycle_id = r.u64()?;
+                let command = r.u8()?;
+                let mining_amount_m3 = r.f64()?;
+                let waste_multiplier = r.f64()?;
+                let waste_probability = r.f64()?;
+                let crit_probability = r.f64()?;
+                let crit_multiplier = r.f64()?;
+                let access_difficulty_bonus = r.f64()?;
+                let waste_roll = r.f64()?;
+                let rounding_roll = r.f64()?;
+                let crit_roll = r.f64()?;
+                let numbers = [mining_amount_m3, waste_multiplier, crit_multiplier, access_difficulty_bonus];
+                // probabilities are at most one, the rolls below one, and every number finite and not negative; a mining cycle mines something
+                if cycle_id == 0
+                    || !matches!(command, 7 | 8)
+                    || numbers.iter().chain([&waste_probability, &crit_probability, &waste_roll, &rounding_roll, &crit_roll]).any(|n| !n.is_finite() || *n < 0.0)
+                    || waste_probability > 1.0
+                    || crit_probability > 1.0
+                    || [waste_roll, rounding_roll, crit_roll].iter().any(|roll| *roll >= 1.0)
+                    || (command == 7 && mining_amount_m3 <= 0.0)
+                {
+                    return Err(DecodeError::BadValue("module work cycle"));
+                }
+                Message::ModuleWorkCycle {
+                    session_id, character_id, ship_id, solar_system_id, module_id, target_id, cycle_id, command,
+                    mining_amount_m3, waste_multiplier, waste_probability, crit_probability, crit_multiplier, access_difficulty_bonus,
+                    waste_roll, rounding_roll, crit_roll,
+                }
+            }
+            kind::MODULE_WORK_RESULT => {
+                let session_id = r.u64()?;
+                let module_id = r.i64()?;
+                let target_id = r.i64()?;
+                let cycle_id = r.u64()?;
+                let accepted = match r.u8()? { 0 => false, 1 => true, _ => return Err(DecodeError::BadValue("accepted")) };
+                let reason = r.text()?;
+                let units_remaining = r.i64()?;
+                let delivered_units = r.i64()?;
+                let complete = match r.u8()? { 0 => false, 1 => true, _ => return Err(DecodeError::BadValue("complete")) };
+                if cycle_id == 0 {
+                    return Err(DecodeError::BadValue("module work result"));
+                }
+                Message::ModuleWorkResult { session_id, module_id, target_id, cycle_id, accepted, reason, units_remaining, delivered_units, complete }
+            }
+            kind::MODULE_ENDED => {
+                let session_id = r.u64()?;
+                let module_id = r.i64()?;
+                let reason = r.u8()?;
+                if !(1..=5).contains(&reason) {
+                    return Err(DecodeError::BadValue("module ended reason"));
+                }
+                Message::ModuleEnded { session_id, module_id, reason }
+            }
             kind::REMOTE_REPAIR_CYCLE => {
                 let session_id = r.u64()?;
                 let module_id = r.i64()?;

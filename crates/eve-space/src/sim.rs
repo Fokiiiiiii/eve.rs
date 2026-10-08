@@ -236,6 +236,11 @@ impl Sim {
             Out::RemoteRepairCycle { session, module_id, target_id, cycle_id, cycle_number, cycle_at_ms, cycle_duration_ms, ends_effect_after_cycle, base_amount, bonus_per_cycle, bonus_max } => Message::RemoteRepairCycle {
                 session_id: session, module_id, target_id, cycle_id, cycle_number, cycle_at_ms, cycle_duration_ms, ends_effect_after_cycle, base_amount, bonus_per_cycle, bonus_max,
             },
+            Out::ModuleWorkCycle { session, character_id, ship_id, solar_system_id, module_id, target_id, cycle_id, command, mining_amount_m3, waste_multiplier, waste_probability, crit_probability, crit_multiplier, access_difficulty_bonus, waste_roll, rounding_roll, crit_roll } => Message::ModuleWorkCycle {
+                session_id: session, character_id, ship_id, solar_system_id, module_id, target_id, cycle_id, command, mining_amount_m3, waste_multiplier,
+                waste_probability, crit_probability, crit_multiplier, access_difficulty_bonus, waste_roll, rounding_roll, crit_roll,
+            },
+            Out::ModuleEnded { session, module_id, reason } => Message::ModuleEnded { session_id: session, module_id, reason },
             Out::TargetRefused { session, command, reason, target_type, desired_range, actual_distance } => {
                 Message::TargetRefused {
                     session_id: session,
@@ -646,6 +651,11 @@ impl Sim {
                 self.scenes.values_mut()
                     .find(|scene| scene.session_of(drone_id).is_some())
                     .map(|scene| scene.drone_work_result(session_id, drone_id, target_id, cycle_id, accepted, units_remaining, complete, now))
+                    .unwrap_or_default()
+            },
+            Message::ModuleWorkResult { session_id, module_id, target_id, cycle_id, accepted, reason: _, units_remaining: _, delivered_units: _, complete: _ } => {
+                self.scene_of(session_id)
+                    .map(|scene| scene.module_work_result(session_id, module_id, target_id, cycle_id, accepted, now))
                     .unwrap_or_default()
             },
             Message::RemoteRepairCycleResult { session_id, module_id, target_id, cycle_id, accepted, reason: _, amount } => {

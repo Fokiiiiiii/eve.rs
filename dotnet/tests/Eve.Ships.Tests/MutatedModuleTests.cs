@@ -29,6 +29,16 @@ public class MutatedModuleTests
     /// <summary>The mutated values: the input's base times each rolled multiplier (6: 180 x 1.0, 20: 500 x 0.95, 30: 150 x 1.325, 50: 50 x 0.8, 554: 500 x 1.3).</summary>
     private static readonly Dictionary<int, double> Mutated = new() { [6] = 180.0, [20] = 475.0, [30] = 198.75, [50] = 40.0, [554] = 650.0 };
 
+    private sealed class BusEvents(EventBus bus) : IItemMutationEvents
+    {
+        public async Task PublishMutatedAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, ItemMutationService.ItemMutated payload, string key, CancellationToken cancellationToken)
+        {
+            await bus.PublishAsync(connection, transaction, ItemMutationService.MutatedTopic, payload, key, cancellationToken);
+        }
+
+        public void Wake() => bus.Wake();
+    }
+
     /// <summary>The authority over the rig's item stores, with its own scheduler and event bus in schemas of their own.</summary>
     private static async Task<ItemMutationService> ServiceAsync(Rig rig, MutationRoll roll)
     {
@@ -37,7 +47,7 @@ public class MutatedModuleTests
         await DurableScheduler.MigrateAsync(rig.Source, $"shs_{id}");
         await EventBus.MigrateAsync(rig.Source, $"she_{id}");
         var bus = new EventBus(rig.Source, new DurableScheduler(rig.Source, () => ClockMs, new SchedulerOptions { Concurrency = 1 }, $"shs_{id}"), null, $"she_{id}");
-        return new ItemMutationService(rig.Source, rig.Items, rig.Items.Mutations, catalog, rig.Statics, bus, () => ClockMs, roll);
+        return new ItemMutationService(rig.Source, rig.Items, rig.Items.Mutations, catalog, rig.Statics, new BusEvents(bus), () => ClockMs, roll);
     }
 
     [PgFact]

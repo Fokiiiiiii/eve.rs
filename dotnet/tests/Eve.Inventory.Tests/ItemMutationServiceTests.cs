@@ -112,8 +112,19 @@ public class ItemMutationServiceTests
 
         /// <summary>The service as a restarted process would build it: fresh handles over the same schema.</summary>
         public ItemMutationService Service(MutationRoll? roll = null, DogmaStatic? statics = null) =>
-            new(_source, new PgItemStore(_source, _schema), new ItemMutationStore(_source, _schema), Catalog, statics ?? Statics, Bus, () => ClockMs,
+            new(_source, new PgItemStore(_source, _schema), new ItemMutationStore(_source, _schema), Catalog, statics ?? Statics, new BusEvents(Bus), () => ClockMs,
                 roll ?? Rolls(WorkedRolls));
+
+        /// <summary>The Event Bus as the authority's port (the Host supplies the same in production).</summary>
+        private sealed class BusEvents(EventBus bus) : IItemMutationEvents
+        {
+            public async Task PublishMutatedAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, ItemMutationService.ItemMutated payload, string key, CancellationToken cancellationToken)
+            {
+                await bus.PublishAsync(connection, transaction, ItemMutationService.MutatedTopic, payload, key, cancellationToken);
+            }
+
+            public void Wake() => bus.Wake();
+        }
 
         public async Task<long> AddAsync(int type, long owner, long location, int flag, long quantity = 1, bool singleton = false)
         {

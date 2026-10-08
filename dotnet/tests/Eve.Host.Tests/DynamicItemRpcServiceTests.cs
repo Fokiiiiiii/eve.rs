@@ -53,7 +53,7 @@ public sealed class DynamicItemRpcServiceTests
             await EventBus.MigrateAsync(source, schemas[1]);
             var items = new PgItemStore(source, schemas[0]);
             var bus = new EventBus(source, new DurableScheduler(source, () => ClockMs, new SchedulerOptions { Concurrency = 1 }, schemas[2]), null, schemas[1]);
-            var mutations = new ItemMutationService(source, items, items.Mutations, catalog, dogma, bus, () => ClockMs,
+            var mutations = new ItemMutationService(source, items, items.Mutations, catalog, dogma, new BusItemMutationEvents(bus), () => ClockMs,
                 attribute => Rolls[attribute]);
             var service = new DynamicItemRpcService(items, mutations, dogma, new ItemTypeCatalog(sde));
             var packets = new Sink();

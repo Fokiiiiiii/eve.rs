@@ -360,7 +360,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     var dogma = await DogmaStatic.LoadAsync(sde);
     // the abyssal mutation authority (ADR 0016): the mutaplasmid catalog of the static data, the item store and its provenance, the event bus
     var itemMutations = new Eve.Inventory.Mutation.ItemMutationService(
-        source, items, items.Mutations, await Eve.Inventory.Mutation.MutatorCatalog.LoadAsync(sde), dogma, foundations.Events, now);
+        source, items, items.Mutations, await Eve.Inventory.Mutation.MutatorCatalog.LoadAsync(sde), dogma, new BusItemMutationEvents(foundations.Events), now);
     var omega = new OmegaLicenses(new SubscriptionSettings(), new NoOmegaAccounts(), now);
     var training = new CharacterTraining(
         source, skillCatalog, skills, new PgTrainingStore(source, skillsSchema),

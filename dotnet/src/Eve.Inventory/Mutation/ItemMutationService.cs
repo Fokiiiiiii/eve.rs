@@ -1,7 +1,6 @@
 using System.Security.Cryptography;
 using Eve.Data;
 using Eve.Dogma;
-using Eve.Events;
 using Npgsql;
 
 namespace Eve.Inventory.Mutation;
@@ -83,6 +82,18 @@ public sealed record ItemMutationRefused(ItemMutationRefusal Reason) : ItemMutat
 public delegate double MutationRoll(int attributeId);
 
 /// <summary>
+/// The announcement of a mutation, written in the mutation's own transaction (the outbox row exists exactly when the change does, FOUNDATIONS rule 1)
+/// and woken after its commit. The Event Bus is a shared foundation the domain does not reference: the composition root supplies this port.
+/// </summary>
+public interface IItemMutationEvents
+{
+    Task PublishMutatedAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, ItemMutationService.ItemMutated payload, string key, CancellationToken cancellationToken);
+
+    /// <summary>Asks for the announcement to be delivered now (after the commit), instead of at the next poll.</summary>
+    void Wake();
+}
+
+/// <summary>
 /// The authority of an abyssal mutation (ADR 0016). One PostgreSQL transaction consumes one unit of the mutaplasmid and the source
 /// module, creates the mutated module in the source's place (same location and flag), records its provenance, and publishes
 /// <c>item.mutated</c> through the Event Bus in that transaction. The bus is woken after the commit. Any failure before the commit
@@ -98,20 +109,20 @@ public sealed class ItemMutationService
     private readonly ItemMutationStore _mutations;
     private readonly MutatorCatalog _catalog;
     private readonly DogmaStatic _statics;
-    private readonly EventBus _bus;
+    private readonly IItemMutationEvents _events;
     private readonly Func<long> _nowUnixMs;
     private readonly MutationRoll _roll;
 
     public ItemMutationService(
         NpgsqlDataSource source, PgItemStore items, ItemMutationStore mutations, MutatorCatalog catalog, DogmaStatic statics,
-        EventBus bus, Func<long> nowUnixMs, MutationRoll? roll = null)
+        IItemMutationEvents events, Func<long> nowUnixMs, MutationRoll? roll = null)
     {
         _source = source;
         _items = items;
         _mutations = mutations;
         _catalog = catalog;
         _statics = statics;
-        _bus = bus;
+        _events = events;
         _nowUnixMs = nowUnixMs;
         _roll = roll ?? CryptoRoll;
     }
@@ -138,7 +149,7 @@ public sealed class ItemMutationService
             return outcome;
         }
         await transaction.CommitAsync(cancellationToken);
-        _bus.Wake();
+        _events.Wake();
         return outcome;
     }
 
@@ -243,7 +254,7 @@ public sealed class ItemMutationService
             resultId, mutator.TypeId, mutator.Id, source.TypeId, source.Id, request.CharacterId, createdAtMs,
             rolls, baseValues, mutatedValues), cancellationToken);
 
-        await _bus.PublishAsync(connection, transaction, MutatedTopic,
+        await _events.PublishMutatedAsync(connection, transaction,
             new ItemMutated(resultId, accepted.Value.OutputTypeId, mutator.TypeId, source.TypeId, request.CharacterId),
             $"char:{request.CharacterId}", cancellationToken);
 

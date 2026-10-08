@@ -200,12 +200,53 @@ public sealed class OperationalRpcServiceTests
                 return ValueTask.FromResult<SpaceCompressionResult?>(new(55, 123, 40, 55, 456, 40));
             });
 
-        var actual = await service.CallAsync(Call(
-            "CompressItemInSpace",
-            args: [new PyLong(55), new PyLong(901)]));
+        var notice = await RefusalNoticeAsync(service, [new PyLong(55), new PyLong(901)]);
 
-        Assert.IsType<PyNone>(actual);
+        Assert.Equal(InSpaceCompressionMgrRpcService.NotInActiveShipNotice, notice);
         Assert.False(backendCalled);
+    }
+
+    [Fact]
+    public async Task Compress_item_in_space_refuses_a_request_without_a_facility_instead_of_answering_none()
+    {
+        var item = new Item(55, 123, 20, 400, 5, 40, false, null);
+        var backendCalled = false;
+        IService service = new InSpaceCompressionMgrRpcService(
+            (_, _) => ValueTask.FromResult<Item?>(item),
+            (_, _, _, _) =>
+            {
+                backendCalled = true;
+                return ValueTask.FromResult<SpaceCompressionResult?>(new(55, 123, 40, 55, 456, 40));
+            });
+
+        var notice = await RefusalNoticeAsync(service, [new PyLong(55), new PyLong(0)]);
+
+        Assert.Equal(InSpaceCompressionMgrRpcService.InvalidRequestNotice, notice);
+        Assert.False(backendCalled);
+    }
+
+    [Fact]
+    public async Task Compress_item_in_space_refuses_when_the_backend_returns_no_result()
+    {
+        var item = new Item(55, 123, 20, 400, 5, 40, false, null);
+        IService service = new InSpaceCompressionMgrRpcService(
+            (_, _) => ValueTask.FromResult<Item?>(item),
+            (_, _, _, _) => ValueTask.FromResult<SpaceCompressionResult?>(null));
+
+        var notice = await RefusalNoticeAsync(service, [new PyLong(55), new PyLong(901)]);
+
+        Assert.Equal(InSpaceCompressionMgrRpcService.FailedNotice, notice);
+    }
+
+    private static async Task<string> RefusalNoticeAsync(IService service, PyValue[] args)
+    {
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Call(
+            "CompressItemInSpace",
+            args: args)).AsTask());
+        var arguments = ((PyTuple)((PyTuple)((PyObjectEx)error.Error.Payload).Header).Items[1]).Items;
+        Assert.Equal("CustomNotify", ((PyStr)arguments[0]).Value);
+        var values = ((PyDict)arguments[1]).Entries.ToDictionary(e => ((PyStr)e.Key).Value, e => e.Value);
+        return ((PyStr)values["notify"]).Value;
     }
 
     [Fact]

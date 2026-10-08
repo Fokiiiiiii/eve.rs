@@ -53,11 +53,31 @@ impl Order {
     }
 }
 
+/// Who asks for a lock, and so whether the ship that is locked is told. A player's order and an auto-targeting sweep tell it (`otheradd`); a
+/// passive targeter may keep it quiet (EveJS `suppressTargetNotice`). Every origin takes the same checks, range, capacity and lock time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LockOrigin {
+    /// The pilot asked for the lock.
+    Player,
+    /// A passive targeter locks the target; `suppress_notice` keeps the target from being told.
+    Passive { suppress_notice: bool },
+    /// An auto-targeting sweep locks a ship that is already targeting the pilot.
+    Auto,
+}
+
+impl LockOrigin {
+    /// Whether the ship that is locked is told (`otheradd`).
+    fn tells_target(self) -> bool {
+        !matches!(self, Self::Passive { suppress_notice: true })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct Pending {
     target: i64,
     sequence: u64,
     complete_at: i64,
+    origin: LockOrigin,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -293,7 +313,7 @@ impl Scene {
         }
         self.settle_all(now);
         let told = match &order {
-            Order::Lock(target) => self.lock(session, *target, &order, now),
+            Order::Lock(target) => self.lock(session, *target, &order, LockOrigin::Player, now),
             Order::Cancel(target) => {
                 if let Some(pilot) = self.pilots.get_mut(&session) {
                     pilot.targeting.pending.retain(|p| p.target != *target);
@@ -325,7 +345,15 @@ impl Scene {
         self.pilots.get(&session).map(|p| p.ship.spec.ship_id).unwrap_or(0)
     }
 
-    fn lock(&mut self, session: SessionId, target: i64, order: &Order, now: i64) -> Vec<Out> {
+    /// The one lock path: every origin is checked the same way; the origin only decides who is told (see `finish_lock`).
+    fn lock(
+        &mut self,
+        session: SessionId,
+        target: i64,
+        order: &Order,
+        origin: LockOrigin,
+        now: i64,
+    ) -> Vec<Out> {
         let pilot = &self.pilots[&session];
         if pilot.targeting.locked.iter().any(|l| l.target == target) {
             return Self::answer(session, order, false, self.locked_by(session));
@@ -347,21 +375,29 @@ impl Scene {
         pilot.protected_until = 0;
         if duration <= 1.0 {
             let mut out = Self::answer(session, order, false, Vec::new());
-            out.extend(self.finish_lock(session, subject, sequence, now));
+            out.extend(self.finish_lock(session, subject, sequence, origin, now));
             return out;
         }
         let complete_at = now + (duration * TICKS_PER_SECOND as f64 / 1000.0) as i64;
-        pilot.targeting.pending.push(Pending { target, sequence, complete_at });
+        pilot.targeting.pending.push(Pending { target, sequence, complete_at, origin });
         Self::answer(session, order, true, self.locked_by(session))
     }
 
-    fn finish_lock(&mut self, session: SessionId, subject: Subject, sequence: u64, now: i64) -> Vec<Out> {
+    fn finish_lock(
+        &mut self,
+        session: SessionId,
+        subject: Subject,
+        sequence: u64,
+        origin: LockOrigin,
+        now: i64,
+    ) -> Vec<Out> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         pilot.targeting.pending.retain(|p| p.target != subject.id);
         pilot.targeting.locked.push(Locked { target: subject.id, sequence });
         let source_id = pilot.ship.spec.ship_id;
         let mut out = vec![on_target(session, "add", Some(subject.id))];
-        if let Some(target_session) = subject.session
+        if origin.tells_target()
+            && let Some(target_session) = subject.session
             && target_session != session
         {
             out.push(on_target(target_session, "otheradd", Some(source_id)));
@@ -520,7 +556,7 @@ impl Scene {
                     continue;
                 }
                 if pending.complete_at <= now {
-                    out.extend(self.finish_lock(session, subject, pending.sequence, now));
+                    out.extend(self.finish_lock(session, subject, pending.sequence, pending.origin, now));
                 }
             }
             let held = self.pilots.get(&session).map(|p| p.targeting.targets()).unwrap_or_default();
@@ -1437,5 +1473,76 @@ mod tests {
         assert_eq!(refusal.target_type, 27_003);
         assert!(refusal.actual_distance > refusal.desired_range, "{refusal:?}");
         assert!(on_target(&out).is_empty(), "{out:?}");
+    }
+
+    /// A lock asked for with an origin other than the pilot's own (a passive targeter or a sweep), through the one lock path.
+    fn lock_as(scene: &mut Scene, session: SessionId, target: i64, origin: LockOrigin, now: i64) -> Vec<Out> {
+        scene.lock(session, target, &Order::Lock(target), origin, now)
+    }
+
+    #[test]
+    fn only_a_passive_lock_that_suppresses_its_notice_leaves_the_ship_locked_untold() {
+        let cases = [
+            (LockOrigin::Player, true),
+            (LockOrigin::Passive { suppress_notice: false }, true),
+            (LockOrigin::Passive { suppress_notice: true }, false),
+            (LockOrigin::Auto, true),
+        ];
+        for (origin, told) in cases {
+            let (mut scene, t) = crowd(2);
+            let asked = lock_as(&mut scene, B, ship_id(A), origin, t);
+            assert!(answer(&asked).0, "{origin:?} is going: {asked:?}");
+            // the lock is pending, so the notice (or its absence) comes when settle_targets has it had
+            let (out, t2) = poll_until(&mut scene, t, 6.0);
+            let mut expected = vec![(B, words(&["add", &ship_id(A).to_string()]))];
+            if told {
+                expected.push((A, words(&["otheradd", &ship_id(B).to_string()])));
+            }
+            assert_eq!(on_target(&out), expected, "{origin:?}");
+            assert_eq!(
+                answer(&scene.target_order(B, Order::Targets, t2)),
+                (false, vec![ship_id(A)]),
+                "{origin:?}"
+            );
+            assert_eq!(
+                answer(&scene.target_order(A, Order::Targeters, t2)),
+                (false, vec![ship_id(B)]),
+                "{origin:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_passive_lock_that_is_had_at_once_tells_its_locker_and_not_the_ship_locked() {
+        let (mut scene, t) = crowd(2);
+        // a scanner that locks in a millisecond: the lock is had at once, without waiting for settle_targets
+        scene.pilots.get_mut(&B).unwrap().ship.spec.scan_resolution = 1.0e12;
+        let asked = lock_as(&mut scene, B, ship_id(A), LockOrigin::Passive { suppress_notice: true }, t);
+        assert_eq!(on_target(&asked), vec![(B, words(&["add", &ship_id(A).to_string()]))], "{asked:?}");
+        assert_eq!(answer(&scene.target_order(B, Order::Targets, t)), (false, vec![ship_id(A)]));
+    }
+
+    #[test]
+    fn a_passive_lock_is_held_to_the_range_and_the_capacity_like_any_other() {
+        let quiet = LockOrigin::Passive { suppress_notice: true };
+        let (mut scene, t) = crowd(3);
+        scene.command(A, Command::Stop, t);
+        scene.command(B, Command::Stop, t);
+        scene.command(C, Command::Stop, t);
+        let (_, t) = poll_until(&mut scene, t, 60.0);
+        // the range is 29 700 m between surfaces: one metre beyond it is refused, one metre inside it is accepted
+        let reach = 29_700.0 + 2.0 * spec().radius;
+        scene.pilots.get_mut(&A).unwrap().ship.position = Vec3::new(0.0, 0.0, 0.0);
+        scene.pilots.get_mut(&C).unwrap().ship.position = Vec3::new(reach - 1.0, 0.0, 1_000.0);
+        scene.pilots.get_mut(&B).unwrap().ship.position = Vec3::new(reach + 1.0, 0.0, 0.0);
+        let far = lock_as(&mut scene, B, ship_id(A), quiet, t);
+        assert_eq!(refusal(&far).reason, "TARGET_OUT_OF_RANGE", "{far:?}");
+        assert!(on_target(&far).is_empty(), "{far:?}");
+        scene.pilots.get_mut(&B).unwrap().ship.position = Vec3::new(reach - 1.0, 0.0, 0.0);
+        // the passive lock takes one of the ship's places: a pilot's own lock of another ship is then refused
+        scene.pilots.get_mut(&B).unwrap().ship.spec.max_locked_targets = 1;
+        assert!(answer(&lock_as(&mut scene, B, ship_id(A), quiet, t)).0);
+        let full = refusal(&lock_as(&mut scene, B, ship_id(C), LockOrigin::Player, t));
+        assert_eq!((full.reason, full.desired_range), ("TARGET_LOCK_LIMIT_REACHED", 1.0));
     }
 }

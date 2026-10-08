@@ -39,12 +39,13 @@ internal sealed class MissileEffect : ShipEffect
     private const int XlTorpedoGroup = 476;
     private const int TorpedoLauncherGroup = 508;
     private const int XlTorpedoLauncherGroup = 524;
+    private const int RapidTorpedoLauncherGroup = 1673;
 
     private const string MissileDeployment = "effects.MissileDeployment";
     private const string TorpedoDeployment = "effects.TorpedoDeployment";
 
-    /// <summary>The launchers that fire missiles at a ship: cruise, rocket, torpedo, light and heavy, rapid, heavy assault and the XL ones.</summary>
-    private static readonly HashSet<int> LauncherGroups = [506, 507, 508, 509, 510, 511, 771, 1245, 1674, 524];
+    /// <summary>The launchers that fire missiles at a ship: cruise, rocket, torpedo, light and heavy, rapid, heavy assault, rapid torpedo and the XL ones.</summary>
+    private static readonly HashSet<int> LauncherGroups = [506, 507, 508, 509, 510, 511, 771, 1245, RapidTorpedoLauncherGroup, 1674, XlTorpedoLauncherGroup];
 
     public override IReadOnlyCollection<string> EffectNames { get; } = [LauncherEffectName];
 
@@ -110,7 +111,7 @@ internal sealed class MissileEffect : ShipEffect
         {
             return guid;
         }
-        var torpedo = module.Type.GroupId is TorpedoLauncherGroup or XlTorpedoLauncherGroup
+        var torpedo = module.Type.GroupId is TorpedoLauncherGroup or XlTorpedoLauncherGroup or RapidTorpedoLauncherGroup
             || module.Statics.Type(charge.TypeId)?.GroupId is TorpedoGroup or XlTorpedoGroup;
         return torpedo ? TorpedoDeployment : MissileDeployment;
     }

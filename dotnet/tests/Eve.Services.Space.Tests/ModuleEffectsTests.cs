@@ -352,7 +352,6 @@ public class ModuleEffectsTests
         foreach (var effectName in new[]
         {
             "emergencyHullEnergizer",
-            "adaptiveArmorHardener",
             "moduleBonusAssaultDamageControl",
             "ShipModuleRemoteArmorMutadaptiveRepairer",
         })
@@ -490,14 +489,12 @@ public class ModuleEffectsTests
                 continue;
             }
 
-            var attributeNames = effectName.Equals("adaptiveArmorHardener", StringComparison.OrdinalIgnoreCase)
-                    ? new[] { "armorEmDamageResonance", "armorExplosiveDamageResonance", "armorKineticDamageResonance", "armorThermalDamageResonance" }
-                    : new[]
-                    {
-                        "armorEmDamageResonance", "armorExplosiveDamageResonance", "armorKineticDamageResonance", "armorThermalDamageResonance",
-                        "shieldEmDamageResonance", "shieldExplosiveDamageResonance", "shieldKineticDamageResonance", "shieldThermalDamageResonance",
-                        "hullEmDamageResonance", "hullExplosiveDamageResonance", "hullKineticDamageResonance", "hullThermalDamageResonance",
-                    };
+            var attributeNames = new[]
+            {
+                "armorEmDamageResonance", "armorExplosiveDamageResonance", "armorKineticDamageResonance", "armorThermalDamageResonance",
+                "shieldEmDamageResonance", "shieldExplosiveDamageResonance", "shieldKineticDamageResonance", "shieldThermalDamageResonance",
+                "hullEmDamageResonance", "hullExplosiveDamageResonance", "hullKineticDamageResonance", "hullThermalDamageResonance",
+            };
             foreach (var name in attributeNames)
             {
                 var attributeId = statics.AttributeId(name)

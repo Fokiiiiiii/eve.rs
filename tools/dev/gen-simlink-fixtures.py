@@ -164,6 +164,12 @@ def weapon(w):
     return i64(w["moduleId"]) + struct.pack("<idd", w["effectId"], w["cycleMs"], w["capacitorNeed"]) + turret(w)
 
 
+# what the host sends for a drone with no weapon: no module, no turret
+EMPTY_WEAPON = {"moduleId": 0, "effectId": 0, "cycleMs": 0.0, "capacitorNeed": 0.0, "weaponTypeId": 0, "fx": "",
+                "rawDamage": [0.0, 0.0, 0.0, 0.0], "optimalRange": 0.0, "falloff": 0.0, "trackingSpeed": 0.0,
+                "signatureResolution": 0.0}
+
+
 def identity(i):
     body = struct.pack("<qqd", i["hostileResponseThreshold"], i["friendlyResponseThreshold"], i["aggressionRange"])
     body += struct.pack("<I", len(i["weapons"]))
@@ -261,10 +267,18 @@ def build(m):
     if k == "SpawnReply":
         return frame(k, u64(m["requestId"]) + (bytes([0]) + u64(m["session"]) if m["ok"] else bytes([1]) + s(m["reason"])))
     if k == "LaunchDrone":
-        return frame(k, u64(m["requestId"]) + u64(m["sessionId"]) + ship(m["ship"]) + weapon(m["weapon"])
-                     + struct.pack("<iddd", m["graphicId"], m["orbitDistance"], m["attackRange"], m["cruiseFraction"])
-                     + struct.pack("<5d", m.get("miningAmountM3", 0.0), m.get("workCycleMs", 0.0), m.get("miningWasteMultiplier", 0.0),
-                                   m.get("miningWasteProbability", 0.0), m.get("salvageAccessBonus", 0.0)))
+        # the work profile (mining, salvage) is zero for a drone that does neither; the remote effect (a web, a repair, a jam)
+        # is a flag, then the effect's id, its name in the destiny stream, its cycle and how long it lands, and the action it does
+        work = struct.pack("<5d", m.get("miningAmountM3", 0.0), m.get("workCycleMs", 0.0), m.get("miningWasteMultiplier", 0.0),
+                           m.get("miningWasteProbability", 0.0), m.get("salvageAccessBonus", 0.0))
+        e = m.get("effect")
+        remote = (bytes([1]) + struct.pack("<i", e["effectId"]) + s(e["fx"]) + struct.pack("<dd", e["cycleMs"], e["lastingMs"]) + action(e["action"])
+                  if e else bytes([0]))
+        # a drone without a weapon still carries the empty weapon record (module 0, no turret), as the host sends it
+        weapon_record = weapon(m["weapon"]) if m.get("weapon") else weapon(EMPTY_WEAPON)
+        body = (u64(m["requestId"]) + u64(m["sessionId"]) + ship(m["ship"]) + weapon_record
+                + struct.pack("<iddd", m["graphicId"], m["orbitDistance"], m["attackRange"], m["cruiseFraction"]) + work + remote)
+        return frame(k, body)
     if k == "DroneCommand":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + i64(m["targetId"]) + struct.pack("<I", len(m["droneIds"]))
                      + b"".join(i64(d) for d in m["droneIds"]) + struct.pack("<d", m["controlRange"]))
@@ -595,6 +609,11 @@ valid = [
      "weapon": {"moduleId": "9988400003716", "effectId": 10, "cycleMs": 4000.0, "capacitorNeed": 0.0, "weaponTypeId": 2454, "fx": "effects.Laser",
                 "rawDamage": [0.0, 32.0, 0.0, 0.0], "optimalRange": 2100.0, "falloff": 2000.0, "trackingSpeed": 1.815, "signatureResolution": 25.0},
      "graphicId": 1099, "orbitDistance": 700.0, "attackRange": 2800.0, "cruiseFraction": 0.2357142857142857},
+    {"name": "launch of a web drone", "kind": "LaunchDrone", "requestId": "12", "sessionId": "1790646377000015",
+     "ship": dict(BARE, shipId="9988400003720", characterId="0", ownerId="140000342", categoryId=18, groupId=641, typeId=23731, name="Warrior SW-300"),
+     "weapon": None, "graphicId": 1124, "orbitDistance": 500.0, "attackRange": 10000.0, "cruiseFraction": 0.25,
+     "effect": {"effectId": 6690, "fx": "effects.ModifyTargetSpeed", "cycleMs": 5000.0, "lastingMs": 5000.0,
+                "action": {"kind": "remote", "what": "web", "percent": -5.0, "optimal": 5000.0, "falloff": 0.0, "when": "start", "jam": "webify"}}},
     {"name": "order to engage", "kind": "DroneCommand", "sessionId": "1790646377000015", "command": 1, "targetId": "980050000077",
      "droneIds": ["9988400003716", "9988400003717"], "controlRange": 40_000.0},
     {"name": "order to go home", "kind": "DroneCommand", "sessionId": "1790646377000015", "command": 2, "targetId": "0", "droneIds": ["9988400003716"], "controlRange": 20_000.0},

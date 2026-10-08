@@ -178,6 +178,16 @@ public static class SimCodec
     }
 
 
+    /// <summary>The effect a drone runs at its target, when it has one (a flag, then the effect and its action).</summary>
+    private static SimDroneEffect? ReadOptionalDroneEffect(ref Reader r)
+    {
+        if (r.U8() == 0)
+        {
+            return null;
+        }
+        return new SimDroneEffect(r.I32(), r.Text(), r.F64(), r.F64(), ReadAction(ref r));
+    }
+
     private static SimNpcWeapon? ReadOptionalWeapon(ref Reader r)
     {
         var weapon = ReadWeapon(ref r);
@@ -686,7 +696,7 @@ public static class SimCodec
                     break;
                 }
             case Kind.LaunchDrone:
-                message = new SimLaunchDrone(r.U64(), r.U64(), ReadShip(ref r), ReadOptionalWeapon(ref r), r.I32(), r.F64(), r.F64(), r.F64(), new SimDroneWorkProfile(r.F64(), r.F64(), r.F64(), r.F64(), r.F64()));
+                message = new SimLaunchDrone(r.U64(), r.U64(), ReadShip(ref r), ReadOptionalWeapon(ref r), r.I32(), r.F64(), r.F64(), r.F64(), new SimDroneWorkProfile(r.F64(), r.F64(), r.F64(), r.F64(), r.F64()), ReadOptionalDroneEffect(ref r));
                 break;
             case Kind.DroneCommand:
                 {
@@ -1612,6 +1622,19 @@ private static void WriteAction(Writer w, SimAction action)
                 w.F64(m.Work.MiningWasteVolumeMultiplier);
                 w.F64(m.Work.MiningWasteProbability);
                 w.F64(m.Work.SalvageAccessDifficultyBonus);
+                if (m.Effect is { } effect)
+                {
+                    w.U8(1);
+                    w.I32(effect.EffectId);
+                    w.Text(effect.Fx);
+                    w.F64(effect.CycleMs);
+                    w.F64(effect.LastingMs);
+                    WriteAction(w, effect.Action);
+                }
+                else
+                {
+                    w.U8(0);
+                }
                 break;
             case SimDroneCommand m:
                 w.U8(Kind.DroneCommand);

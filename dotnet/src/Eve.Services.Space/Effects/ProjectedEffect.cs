@@ -1,3 +1,4 @@
+using Eve.Dogma;
 using Eve.Npc;
 using Eve.Space;
 using static Eve.Services.Space.Effects.ModuleAttributes;
@@ -21,33 +22,72 @@ internal sealed class ProjectedEffect : ShipEffect
 
     internal static MutadaptiveRepairSpool MutadaptiveSpool { get; } = new();
 
+    // What each projected effect does, one delegate for each (a drone that carries the same effect as a module uses the same delegate, under its own effect name).
+    private static readonly Spec ShieldBoost = v => (new SimRemote.Repair(SimLayer.Shield, Amount(v, ShieldBonus)), false, "shieldTransfer");
+    private static readonly Spec ArmorRepair = v => (new SimRemote.Repair(SimLayer.Armor, Amount(v, ArmorDamageAmount)), true, "remoteArmorRepair");
+    private static readonly Spec HullRepair = v => (new SimRemote.Repair(SimLayer.Structure, Amount(v, StructureDamageAmount)), true, "remoteHullRepair");
+    private static readonly Spec Neutralize = v => (new SimRemote.Neutralize(Amount(v, EnergyNeutralizerAmount), Amount(v, NeutralizerSignatureResolution)), false, "ewEnergyNeut");
+    // what lasts for as long as the effect runs: the percentages are signed as dogma has them (a web is negative), a scrambler holds a microwarpdrive too
+    private static readonly Spec Web = v => (new SimRemote.Web(Signed(v, WebSpeedFactor)), false, "webify");
+    private static readonly Spec Paint = v => (new SimRemote.Paint(Signed(v, PainterSignatureBonus)), false, "ewTargetPaint");
+    private static readonly Spec SensorDamp = v => (new SimRemote.Damp(Signed(v, MaxTargetRangeBonus), Signed(v, ScanResolutionBonus)), false, "ewRemoteSensorDamp");
+    // what the target's turrets lose or gain: signed range, falloff and tracking percentages from dogma
+    private static readonly Spec TrackingDisrupt = v => (new SimRemote.Disrupt(Signed(v, RangeDisruption), Signed(v, FalloffDisruption), Signed(v, TrackingDisruption)), false, "ewTrackingDisrupt");
+    // the target's HUD is told when a jam lands (the simulation rolls for it), not as the effect begins
+    private static readonly Spec Jam = v => (new SimRemote.Jam(Amount(v, ScanGravimetricStrengthBonus), Amount(v, ScanLadarStrengthBonus), Amount(v, ScanMagnetometricStrengthBonus), Amount(v, ScanRadarStrengthBonus)), false, "");
+
     private static readonly IReadOnlyDictionary<string, Spec> Specs = new Dictionary<string, Spec>(StringComparer.OrdinalIgnoreCase)
     {
-        ["shipModuleRemoteShieldBooster"] = v => (new SimRemote.Repair(SimLayer.Shield, Amount(v, ShieldBonus)), false, "shieldTransfer"),
-        ["shipModuleRemoteArmorRepairer"] = v => (new SimRemote.Repair(SimLayer.Armor, Amount(v, ArmorDamageAmount)), true, "remoteArmorRepair"),
+        ["shipModuleRemoteShieldBooster"] = ShieldBoost,
+        ["npcEntityRemoteShieldBooster"] = ShieldBoost,
+        ["shipModuleRemoteArmorRepairer"] = ArmorRepair,
+        ["npcEntityRemoteArmorRepairer"] = ArmorRepair,
         // The simulation asks the host for each target-specific spool cycle using these SDE multipliers.
         ["ShipModuleRemoteArmorMutadaptiveRepairer"] = v => (new SimRemote.MutadaptiveRepair(SimLayer.Armor, Amount(v, ArmorDamageAmount), Signed(v, RepairMultiplierBonusPerCycle), Signed(v, RepairMultiplierBonusMax)), true, "remoteArmorRepair"),
-        ["shipModuleRemoteHullRepairer"] = v => (new SimRemote.Repair(SimLayer.Structure, Amount(v, StructureDamageAmount)), true, "remoteHullRepair"),
+        ["shipModuleRemoteHullRepairer"] = HullRepair,
+        ["npcEntityRemoteHullRepairer"] = HullRepair,
         ["shipModuleRemoteCapacitorTransmitter"] = v => (new SimRemote.Transfer(Amount(v, PowerTransferAmount)), false, "energyTransfer"),
-        ["energyNeutralizerFalloff"] = v => (new SimRemote.Neutralize(Amount(v, EnergyNeutralizerAmount), Amount(v, NeutralizerSignatureResolution)), false, "ewEnergyNeut"),
+        ["energyNeutralizerFalloff"] = Neutralize,
+        ["entityEnergyNeutralizerFalloff"] = Neutralize,
         ["energyNosferatuFalloff"] = v => (new SimRemote.Drain(Amount(v, PowerTransferAmount), Amount(v, NeutralizerSignatureResolution)), true, "ewEnergyVampire"),
-        // what lasts for as long as the effect runs: the percentages are signed as dogma has them (a web is negative), a scrambler holds a microwarpdrive too
-        ["remoteWebifierFalloff"] = v => (new SimRemote.Web(Signed(v, WebSpeedFactor)), false, "webify"),
-        ["remoteTargetPaintFalloff"] = v => (new SimRemote.Paint(Signed(v, PainterSignatureBonus)), false, "ewTargetPaint"),
-        ["remoteSensorDampFalloff"] = v => (new SimRemote.Damp(Signed(v, MaxTargetRangeBonus), Signed(v, ScanResolutionBonus)), false, "ewRemoteSensorDamp"),
+        ["remoteWebifierFalloff"] = Web,
+        ["remoteWebifierEntity"] = Web,
+        ["remoteTargetPaintFalloff"] = Paint,
+        ["remoteTargetPaintEntity"] = Paint,
+        ["remoteSensorDampFalloff"] = SensorDamp,
+        ["remoteSensorDampEntity"] = SensorDamp,
         ["remoteSensorBoostFalloff"] = v => (new SimRemote.Damp(Signed(v, MaxTargetRangeBonus), Signed(v, ScanResolutionBonus), Signed(v, ScanGravimetricStrengthPercent), Signed(v, ScanLadarStrengthPercent), Signed(v, ScanMagnetometricStrengthPercent), Signed(v, ScanRadarStrengthPercent)), false, "remoteSensorBoost"),
         ["warpScrambleBlockMWDWithNPCEffect"] = v => (new SimRemote.Scramble(Amount(v, WarpScrambleStrength), true), false, "warpScramblerMWD"),
         ["warpDisrupt"] = v => (new SimRemote.Scramble(Amount(v, WarpScrambleStrength), false), false, "warpScrambler"),
-        // what the target's turrets lose or gain: signed range, falloff and tracking percentages from dogma
-        ["shipModuleTrackingDisruptor"] = v => (new SimRemote.Disrupt(Signed(v, RangeDisruption), Signed(v, FalloffDisruption), Signed(v, TrackingDisruption)), false, "ewTrackingDisrupt"),
+        ["shipModuleTrackingDisruptor"] = TrackingDisrupt,
         ["shipModuleRemoteTrackingComputer"] = v => (new SimRemote.Disrupt(Signed(v, RangeDisruption), Signed(v, FalloffDisruption), Signed(v, TrackingDisruption)), false, "ewTrackingDisrupt"),
+        ["npcEntityWeaponDisruptor"] = TrackingDisrupt,
         // what the target's missiles lose: percentages of their speed, flight time and explosion velocity and radius (the radius grows), as dogma gives them
         ["shipModuleGuidanceDisruptor"] = v => (new SimRemote.GuidanceDisrupt(Signed(v, MissileVelocityBonus), Signed(v, ExplosionDelayBonus), Signed(v, AoeVelocityBonus), Signed(v, AoeCloudSizeBonus)), false, "ewGuidanceDisrupt"),
-        // the target's HUD is told when a jam lands (the simulation rolls for it), not as the effect begins
-        ["remoteECMFalloff"] = v => (new SimRemote.Jam(Amount(v, ScanGravimetricStrengthBonus), Amount(v, ScanLadarStrengthBonus), Amount(v, ScanMagnetometricStrengthBonus), Amount(v, ScanRadarStrengthBonus)), false, ""),
+        ["remoteECMFalloff"] = Jam,
+        ["entityECMFalloff"] = Jam,
     };
 
     public override IReadOnlyCollection<string> EffectNames { get; } = [.. Specs.Keys];
+
+    /// <summary>
+    /// The remote effect a drone's type carries, when its effect is one of the projected effects above (the drones' rows of <see cref="Specs"/>): what a cycle lands on its
+    /// target, how far it reaches (the effect record's range attribute, which is its optimal: a drone's effects have no falloff) and how long what it lands lasts (an ECM jam lasts
+    /// its own duration, shorter than its cycle). Null for an effect that is not one of these. <paramref name="value"/> gives an attribute of the drone (0 when it has none).
+    /// </summary>
+    internal static SimDroneEffect? ForDrone(EffectDef effect, Func<int, double> value)
+    {
+        if (!Specs.TryGetValue(effect.Name.Trim(), out var spec))
+        {
+            return null;
+        }
+        var (what, atEnd, jam) = spec(value);
+        var (cycle, _, _) = ShipEffect.CycleOf(effect, (attribute, fallback) => value(attribute) is var v && v != 0 ? v : fallback);
+        var range = effect.RangeAttributeId > 0 ? effect.RangeAttributeId : MaxRange;
+        var optimal = Math.Max(0, NpcArmament.Round6(value(range)));
+        var lasting = what is SimRemote.Jam ? Math.Max(1, NpcArmament.Round6(value(EcmJamDuration))) : cycle;
+        return new SimDroneEffect(effect.Id, effect.Guid, cycle, lasting, new SimAction.Remote(what, optimal, 0, atEnd, jam));
+    }
 
     /// <summary>
     /// A projected module's package: the cycle and its cost are the module's own values after dogma, and each cycle does the remote effect to the locked target, weakened over the falloff

@@ -26,7 +26,17 @@ internal static class ModuleEffects
         .Register(new DogmaModifierEffect())
         .Register(new TypeAttributeResistanceEffect())
         .Register(new AncillaryRemoteArmorRepairEffect())
-        .Register(new AncillaryRemoteShieldBoosterEffect());
+        .Register(new AncillaryRemoteShieldBoosterEffect())
+        .Register(new PowerBoosterEffect())
+        .Register(new FueledArmorRepairEffect())
+        .Register(new FueledShieldBoostingEffect())
+        // exploration, hacking and scanner effects: wired, refused as EFFECT_NOT_IMPLEMENTED until their bodies are written (see ExplorationModuleEffects.cs)
+        .Register(new DataAnalyzerEffect())
+        .Register(new DataSubverterEffect())
+        .Register(new CargoScanEffect())
+        .Register(new ShipScanEffect())
+        .Register(new ScanStrengthActivateEffect())
+        .Register(new ScanStrengthTargetEffect());
 }
 
 internal sealed class SensorBoosterEffect : ShipEffect
@@ -258,7 +268,7 @@ internal sealed class AncillaryRemoteArmorRepairEffect : ShipEffect
         var charge = module.Snapshot.ChargeOf(module.Module);
         var chargeRate = Math.Max(1L, (long)module.Value(ModuleAttributes.ChargeRate, 1));
         var amount = Math.Max(0, ModuleAttributes.Six(module.Value(ModuleAttributes.ArmorDamageAmount, 0)));
-        var chargedAmount = Eve.Services.Space.ModulePackages.FueledArmorRepairAmount(module);
+        var chargedAmount = FueledArmorRepairEffect.ChargedAmount(module);
         var optimal = Math.Max(0, ModuleAttributes.Six(module.Value(ModuleAttributes.MaxRange, 0)));
         var falloff = Math.Max(0, ModuleAttributes.Six(module.Value(ModuleAttributes.FalloffEffectiveness, 0)));
         SimAction Remote(double repair) =>

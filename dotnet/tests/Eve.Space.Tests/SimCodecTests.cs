@@ -173,7 +173,8 @@ public class SimCodecTests
                 (string)c["behavior"]!, IdentityOf(c["identity"]!)),
             "SpawnReply" => (bool)c["ok"]! ? new SimSpawnReply((ulong)Wide(c, "requestId"), (ulong)Wide(c, "session"), null) : new SimSpawnReply((ulong)Wide(c, "requestId"), null, (string)c["reason"]!),
             "LaunchDrone" => new SimLaunchDrone(
-                (ulong)Wide(c, "requestId"), Session(), ShipOf(c["ship"]!), WeaponOf(c["weapon"]!), (int)c["graphicId"]!, (double)c["orbitDistance"]!, (double)c["attackRange"]!, (double)c["cruiseFraction"]!),
+                (ulong)Wide(c, "requestId"), Session(), ShipOf(c["ship"]!), c["weapon"] is { } weapon ? WeaponOf(weapon) : null, (int)c["graphicId"]!, (double)c["orbitDistance"]!, (double)c["attackRange"]!, (double)c["cruiseFraction"]!,
+                Effect: c["effect"] is { } drone ? new SimDroneEffect((int)drone["effectId"]!, (string)drone["fx"]!, (double)drone["cycleMs"]!, (double)drone["lastingMs"]!, ActionOf(drone["action"]!)) : null),
             "DroneCommand" => new SimDroneCommand(Session(), (byte)(int)c["command"]!, Wide(c, "targetId"), [.. ((JsonArray)c["droneIds"]!).Select(d => long.Parse((string)d!))], (double)c["controlRange"]!),
             "DroneResults" => new SimDroneResults(Session(), (byte)(int)c["command"]!, [.. ((JsonArray)c["results"]!).Select(r => new SimDroneResult(Wide(r!, "droneId"), (string)r!["reason"]!))]),
             "DroneScooped" => new SimDroneScooped(Session(), Wide(c, "droneId")),

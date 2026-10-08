@@ -426,7 +426,13 @@ public sealed record SimSpawn(
 /// Launches a drone beside the ship of a pilot (<paramref name="SessionId"/>): the drone's ship, the weapon it fights with (its module is the ship), the graphic of its type, how far it
 /// circles (500 to 5,000 m) and the fraction of its top speed it flies at while it only follows its controller. Answered with <see cref="SimSpawnReply"/>.
 /// </summary>
-public sealed record SimLaunchDrone(ulong RequestId, ulong SessionId, SimShip Ship, SimNpcWeapon? Weapon, int GraphicId, double OrbitDistance, double AttackRange, double CruiseFraction, SimDroneWorkProfile Work = default) : SimMessage;
+/// <summary>
+/// The non-damage effect a drone runs at its target each cycle (a stasis webifier, a remote repairer, an ECM jammer): the dogma effect, its name in the destiny stream, how long a cycle is,
+/// how long what it lands lasts on its target, and the action a cycle does (an <see cref="SimAction.Remote"/>).
+/// </summary>
+public sealed record SimDroneEffect(int EffectId, string Fx, double CycleMs, double LastingMs, SimAction Action);
+
+public sealed record SimLaunchDrone(ulong RequestId, ulong SessionId, SimShip Ship, SimNpcWeapon? Weapon, int GraphicId, double OrbitDistance, double AttackRange, double CruiseFraction, SimDroneWorkProfile Work = default, SimDroneEffect? Effect = null) : SimMessage;
 
 /// <summary>The codes of the orders to drones (<see cref="SimDroneCommand"/>).</summary>
 public static class SimDroneCommands

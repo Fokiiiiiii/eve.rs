@@ -12,7 +12,7 @@
 use eve_destiny::Vec3;
 use eve_marshal::Value;
 
-use crate::modules::Effect;
+use crate::modules::{Action, Applies, Effect, Jam, Reach, Remote};
 use crate::npc::NpcPlace;
 use crate::payload;
 use crate::scene::{Out, Scene, SessionId};
@@ -75,6 +75,40 @@ impl DroneCommand {
     }
 }
 
+/// A non-damage effect a drone runs at its target each cycle: the remote effect of its type (a stasis webifier, a remote repairer, an ECM jammer), as the host worked
+/// it out from the type's dogma. Each cycle lands `action` on its target for `lasting_ms`; the effect runs on its own clock, beside a turret when its type has one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DroneEffect {
+    /// The dogma effect: its id, and the name the destiny stream calls it (`effects.ModifyTargetSpeed`).
+    pub effect_id: i32,
+    pub fx: String,
+    /// How long a cycle is, milliseconds.
+    pub cycle_ms: f64,
+    /// How long what a cycle lands lasts on its target, milliseconds (an ECM jam lasts less than its cycle).
+    pub lasting_ms: f64,
+    /// What a cycle does to its target: the remote effect, its reach, when in the cycle it lands and the name the client's HUD gives it.
+    pub action: Action,
+}
+
+impl DroneEffect {
+    fn remote(&self) -> Option<(&Remote, &Reach, Applies)> {
+        match &self.action {
+            Action::Remote { what, reach, when, .. } => Some((what, reach, *when)),
+            _ => None,
+        }
+    }
+
+    /// Whether the effect mends ships rather than harms them (a remote repairer): it is run on a friendly ship only.
+    pub fn repairs(&self) -> bool {
+        matches!(self.remote(), Some((Remote::Repair { .. } | Remote::MutadaptiveRepair { .. }, ..)))
+    }
+
+    /// How far off its target the effect reaches, metres: a drone's effects have no falloff, so this is the whole of it.
+    fn optimal(&self) -> f64 {
+        self.remote().map_or(0.0, |(_, reach, _)| reach.optimal)
+    }
+}
+
 /// What a drone is set on.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Task {
@@ -121,6 +155,14 @@ pub(crate) struct DroneAi {
     pub(crate) follow: Option<DroneFollow>,
     /// The next moment its weapon fires.
     next_shot: i64,
+    /// The remote effect of its type (what each cycle lands on its target, for how long), which runs on its own clock beside its weapon.
+    remote: Option<DroneEffect>,
+    /// The next moment its remote effect runs.
+    next_remote: i64,
+    /// The cycle whose effect is landing on a target now: its HUD is told as it begins and ends, and the target is let go of when the drone stops.
+    landing: Option<Effect>,
+    /// A cycle of a remote repair that lands when that cycle ends (at the next cycle's moment).
+    ending: Option<Effect>,
     /// How far it can shoot (metres off its target's surface), how near it circles its target, and how far it follows one that runs.
     engagement_range: f64,
     movement_range: f64,
@@ -147,6 +189,8 @@ pub struct DroneFlight {
     /// The fraction of its top speed it flies at while it only follows its controller.
     pub cruise_fraction: f64,
     pub work: DroneWorkProfile,
+    /// The remote effect of the type (a web, a repair, a jam), when it has one.
+    pub effect: Option<DroneEffect>,
 }
 
 /// Effective mining/salvage dogma values, resolved by SDE attribute names by the host.
@@ -189,7 +233,7 @@ impl Scene {
         flight: DroneFlight,
         now: i64,
     ) -> Result<(SessionId, Vec<Out>), &'static str> {
-        let DroneFlight { weapon, graphic_id, orbit_distance, attack_range, cruise_fraction, work } = flight;
+        let DroneFlight { weapon, graphic_id, orbit_distance, attack_range, cruise_fraction, work, effect } = flight;
         self.settle_pilot(controller, now);
         let index = self.drones_of(controller).len();
         let (controller_ship, owner_character_id, position, direction, controller_radius) = {
@@ -216,9 +260,13 @@ impl Scene {
             // the ball is told as it flies round the ship at no distance; the order that follows gives the distance
             course: Course::Orbit { target: controller_ship, distance: 0.0 },
         };
-        let optimal = weapon.as_ref().map_or(0.0, |weapon| weapon.turret.optimal_range);
+        // the reach of what it does to its target: its weapon's optimal range, else its remote effect's (a drone's effects have no falloff)
+        let optimal = weapon.as_ref().map_or_else(
+            || effect.as_ref().map_or(0.0, DroneEffect::optimal),
+            |weapon| weapon.turret.optimal_range,
+        );
         let falloff = weapon.as_ref().map_or(0.0, |weapon| weapon.turret.falloff);
-        let can_combat = weapon.is_some();
+        let can_combat = weapon.is_some() || effect.is_some();
         // `resolveDroneEngagementRanges`: the drone fights inside its attack range, circles at the least of that and its orbit, and chases what runs out past the falloff of its weapon
         let engagement_range = if attack_range > 0.0 {
             attack_range.max(optimal)
@@ -246,6 +294,10 @@ impl Scene {
                 task: Task::Idle,
                 follow: None,
                 next_shot: 0,
+                remote: effect,
+                next_remote: 0,
+                landing: None,
+                ending: None,
                 engagement_range,
                 movement_range: orbit_distance.min(engagement_range),
                 chase_range: engagement_range.max(engagement_range + falloff),
@@ -408,8 +460,15 @@ fn ship_of_character(&self, character_id: i64) -> Option<i64> {
         )
     }
 
-    /// The drone goes back to circling its controller.
+    /// The drone stops what it is doing and goes back to its controller; what its remote effect lands on its target is lifted first.
     fn go_home(&mut self, session: SessionId, activity: i32, now: i64) -> Vec<Out> {
+        let mut out = self.stop_remote(session, now);
+        out.extend(self.fly_home(session, activity, now));
+        out
+    }
+
+    /// The drone goes back to circling its controller.
+    fn fly_home(&mut self, session: SessionId, activity: i32, now: i64) -> Vec<Out> {
         let Some((controller_ship, distance, cruise)) = self
             .pilots
             .get(&session)
@@ -486,6 +545,11 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
                 results.push((drone_id, Some("NO_WEAPON")));
                 continue;
             }
+            // a drone that only mends finds nothing to mend by itself
+            if searching && matches!(command, DroneCommand::Engage { .. }) && self.only_repairs(session) {
+                results.push((drone_id, Some("NO_OPPONENT")));
+                continue;
+            }
             match command {
                 DroneCommand::Engage { .. } if searching => {
                     let Some(&target) = found.get(asked.min(found.len().saturating_sub(1))) else {
@@ -504,6 +568,11 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
                         continue;
                     };
                     if target_session == controller || self.controller_of_drone(target_session) == Some(controller) {
+                        results.push((drone_id, Some("NO_TARGET")));
+                        continue;
+                    }
+                    // a drone that only mends is sent at a friendly ship (the reference's repair task) and at nothing else
+                    if self.only_repairs(session) && !self.is_friendly_to(controller, target_session) {
                         results.push((drone_id, Some("NO_TARGET")));
                         continue;
                     }
@@ -810,6 +879,24 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
         recent.into_iter().map(|(ship, _)| ship).collect()
     }
 
+    /// Whether a drone has a remote repair and no weapon: it is sent at friendly ships only.
+    fn only_repairs(&self, session: SessionId) -> bool {
+        self.drones.get(&session).and_then(|ai| ai.remote.as_ref()).is_some_and(DroneEffect::repairs)
+            && self.pilots.get(&session).and_then(|pilot| pilot.ship.npc.as_ref()).is_some_and(|npc| npc.combat.weapons.is_empty())
+    }
+
+    /// Whether a ship is on the side of a pilot (the reference's `isFriendlyRepairTarget`: its character or owner, its corporation or its alliance).
+    fn is_friendly_to(&self, controller: SessionId, target: SessionId) -> bool {
+        let (Some(controller), Some(target)) = (self.pilots.get(&controller), self.pilots.get(&target)) else {
+            return false;
+        };
+        let (c, t) = (&controller.ship.spec, &target.ship.spec);
+        (c.character_id > 0 && (t.character_id == c.character_id || t.owner_id == c.character_id))
+            || (c.owner_id > 0 && t.owner_id == c.owner_id)
+            || (c.corporation_id > 0 && t.corporation_id == c.corporation_id)
+            || (c.alliance_id > 0 && t.alliance_id == c.alliance_id)
+    }
+
     /// The drone is sent at a target: it circles it at full speed and is told as pursuing, approaching or fighting by how far off it is.
     fn engage(&mut self, session: SessionId, target: i64, now: i64) -> Vec<Out> {
         if self.drones.get(&session).is_some_and(|ai| !ai.can_combat) {
@@ -825,6 +912,7 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
         if let Some(ai) = self.drones.get_mut(&session) {
             ai.task = Task::Engage { target };
             ai.next_shot = now;
+            ai.next_remote = now;
         }
         let activity = if apart > chase + 1.0 {
             PURSUIT
@@ -841,6 +929,12 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
 
     /// The drone is left in this scene under nobody's control; the host keeps it as the pilot's item and may reconnect it later.
     fn abandon(&mut self, session: SessionId, now: i64) -> Vec<Out> {
+        let mut out = self.stop_remote(session, now);
+        out.extend(self.let_go(session, now));
+        out
+    }
+
+    fn let_go(&mut self, session: SessionId, now: i64) -> Vec<Out> {
         let Some(ship_id) = self.pilots.get(&session).map(|pilot| pilot.ship.spec.ship_id) else {
             return Vec::new();
         };
@@ -1185,10 +1279,11 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
         if apart > SCOOP_DISTANCE {
             return Vec::new();
         }
+        let mut out = self.stop_remote(session, now);
         let Some(pilot) = self.pilots.remove(&session) else { return Vec::new() };
         self.drones.remove(&session);
         let drone_id = pilot.ship.spec.ship_id;
-        let mut out = vec![Out::DroneScooped { session: controller, drone_id }];
+        out.push(Out::DroneScooped { session: controller, drone_id });
         // the controller's drone list drops it with the ball, the others see only the ball go
         let stamp = self.next_stamp(now);
         let watchers = self.observers_of(session);
@@ -1251,17 +1346,45 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
                 && let Some(ai) = self.drones.get_mut(&session)
             {
                 ai.next_shot = now;
+                ai.next_remote = now;
             }
             out.extend(self.told_state(session));
         }
-        let next_shot = self.drones.get(&session).map_or(i64::MAX, |ai| ai.next_shot);
-        if wanted != COMBAT || now < next_shot {
+        if wanted != COMBAT {
             return out;
         }
-        let Some(effect) = self.drone_effect(session, target) else { return out };
-        if let Some(ai) = self.drones.get_mut(&session) {
-            ai.next_shot = now + (effect.duration_ms * crate::scene::TICKS_PER_SECOND as f64 / 1000.0) as i64;
+        // the weapon and the remote effect each run on their own clocks
+        let (next_shot, next_remote) =
+            self.drones.get(&session).map_or((i64::MAX, i64::MAX), |ai| (ai.next_shot, ai.next_remote));
+        if now >= next_shot
+            && let Some(effect) = self.drone_effect(session, target)
+        {
+            if let Some(ai) = self.drones.get_mut(&session) {
+                ai.next_shot = now + (effect.duration_ms * crate::scene::TICKS_PER_SECOND as f64 / 1000.0) as i64;
+            }
+            out.extend(self.cycle_fx(session, &effect, now));
+            out.extend(self.fire_turret(session, &effect, now));
         }
+        if now >= next_remote
+            && let Some((effect, lasting_ms)) = self.remote_effect(session, target)
+        {
+            if let Some(ai) = self.drones.get_mut(&session) {
+                ai.next_remote = now + (effect.duration_ms * crate::scene::TICKS_PER_SECOND as f64 / 1000.0) as i64;
+            }
+            out.extend(self.remote_cycle(session, &effect, lasting_ms, now));
+        }
+        // a target that went down with the shot leaves the drone nothing to do
+        if !self.pilots.contains_key(&target_session) {
+            if let Some(ai) = self.drones.get_mut(&session) {
+                ai.task = Task::Idle;
+            }
+            out.extend(self.go_home(session, IDLE, now));
+        }
+        out
+    }
+
+    /// The client is told that the drone's effect plays at its target (`OnSpecialFX`), to those who look on as to its pilot.
+    fn cycle_fx(&mut self, session: SessionId, effect: &Effect, now: i64) -> Vec<Out> {
         let drone_id = self.ship_id_of(session);
         let stamp = self.next_stamp(now);
         let fx = payload::action(
@@ -1271,10 +1394,10 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
                 id(drone_id),
                 id(drone_id),
                 int(i64::from(effect.module_type)),
-                id(target),
+                id(effect.target_id),
                 Value::None,
                 text(effect.fx.clone()),
-                int(1),
+                int(i64::from(effect.offensive())),
                 int(1),
                 int(0),
                 real(effect.duration_ms),
@@ -1284,15 +1407,89 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
                 Value::None,
             ],
         );
-        out.extend(self.tell_all(session, vec![fx]));
-        out.extend(self.fire_turret(session, &effect, now));
-        // a target that went down with the shot leaves the drone nothing to do
-        if !self.pilots.contains_key(&target_session) {
-            if let Some(ai) = self.drones.get_mut(&session) {
-                ai.task = Task::Idle;
-            }
-            out.extend(self.go_home(session, IDLE, now));
+        self.tell_all(session, vec![fx])
+    }
+
+    /// The remote effect a drone runs at a target each cycle, as an effect of the scene (its module is the drone), and how long what it lands lasts.
+    fn remote_effect(&self, session: SessionId, target: i64) -> Option<(Effect, f64)> {
+        let remote = self.drones.get(&session)?.remote.as_ref()?;
+        let spec = &self.pilots.get(&session)?.ship.spec;
+        let effect = Effect {
+            module_id: spec.ship_id,
+            module_type: spec.type_id,
+            effect_id: remote.effect_id,
+            fx: remote.fx.clone(),
+            duration_ms: remote.cycle_ms,
+            capacitor_need: 0.0,
+            repeat: i32::MAX,
+            target_id: target,
+            turret: None,
+            action: Some(remote.action.clone()),
+            on: None,
+            off: None,
+            on_changes: Vec::new(),
+            off_changes: Vec::new(),
+        };
+        Some((effect, remote.lasting_ms))
+    }
+
+    /// A cycle of a remote effect: the cycle that has ended lands its end first; the target's HUD is told as the effect begins on it (refreshed while it goes on, and
+    /// the previous target let go of when it changes); then the cycle lands now (a web, a jam) or at the end of the cycle (a repair).
+    fn remote_cycle(&mut self, session: SessionId, effect: &Effect, lasting_ms: f64, now: i64) -> Vec<Out> {
+        let mut out = Vec::new();
+        if let Some(ended) = self.drones.get_mut(&session).and_then(|ai| ai.ending.take()) {
+            out.extend(self.land_remote(session, &ended, now));
         }
+        let landing = Effect { duration_ms: lasting_ms, ..effect.clone() };
+        let Some((_, _, when)) = landing.remote() else { return out };
+        let same = self
+            .drones
+            .get(&session)
+            .and_then(|ai| ai.landing.as_ref())
+            .is_some_and(|current| current.target_id == landing.target_id);
+        if !same {
+            out.extend(self.stop_remote(session, now));
+        }
+        out.extend(self.cycle_fx(session, effect, now));
+        out.extend(self.jam_told(session, &landing, now, if same { Jam::Refresh } else { Jam::Start }));
+        match when {
+            Applies::CycleStart => {
+                out.extend(self.land_remote(session, &landing, now));
+                if let Some(ai) = self.drones.get_mut(&session) {
+                    ai.landing = Some(landing);
+                }
+            }
+            Applies::CycleEnd => {
+                if let Some(ai) = self.drones.get_mut(&session) {
+                    ai.landing = Some(landing.clone());
+                    ai.ending = Some(landing);
+                }
+            }
+        }
+        out
+    }
+
+    /// What a cycle lands on its target now: the effect projected at the ship it is aimed at, weakened by distance and by the target's resistance (the modules' `project`).
+    fn land_remote(&mut self, session: SessionId, landing: &Effect, now: i64) -> Vec<Out> {
+        let Some((what, reach, _)) = landing.remote() else { return Vec::new() };
+        self.project(session, landing, what, reach, now)
+    }
+
+    /// The drone stops its remote effect: a repair due at the end of its cycle lands first, then what it holds on its target is lifted and the target's HUD is told
+    /// it ended.
+    fn stop_remote(&mut self, session: SessionId, now: i64) -> Vec<Out> {
+        let mut out = Vec::new();
+        if let Some(ended) = self.drones.get_mut(&session).and_then(|ai| ai.ending.take()) {
+            out.extend(self.land_remote(session, &ended, now));
+        }
+        let Some(landing) = self.drones.get_mut(&session).and_then(|ai| ai.landing.take()) else {
+            return out;
+        };
+        let Some(source) = self.pilots.get(&session).map(|pilot| pilot.ship.spec.ship_id) else {
+            return out;
+        };
+        out.extend(self.jam_told(session, &landing, now, Jam::End));
+        out.extend(self.release(source, landing.module_id, landing.target_id, now));
         out
     }
 
@@ -1397,6 +1594,7 @@ mod tests {
             attack_range: 2_800.0,
             cruise_fraction: 660.0 / 2_800.0,
             work: DroneWorkProfile::default(),
+            effect: None,
         };
         let (drone, told) = scene.launch_drone(PLAYER, hobgoblin(), flight, LATER).unwrap();
         (scene, drone, told)
@@ -1747,6 +1945,7 @@ fn work_drone() -> (Scene, SessionId, Vec<Out>) {
                 attack_range: 2_800.0,
                 cruise_fraction: 0.2357,
                 work: DroneWorkProfile::default(),
+                effect: None,
             };
             scene.launch_drone(PLAYER, spec, flight, LATER).unwrap();
         }
@@ -1781,6 +1980,7 @@ fn work_drone() -> (Scene, SessionId, Vec<Out>) {
             attack_range: 2_800.0,
             cruise_fraction: 0.2357,
             work: DroneWorkProfile::default(),
+            effect: None,
         };
         let (second, _) = scene.launch_drone(PLAYER, other, flight, LATER).unwrap();
         scene.drone_command(PLAYER, &[DRONE_SHIP + 1], DroneCommand::ReturnHome, LATER);
@@ -1829,6 +2029,120 @@ fn work_drone() -> (Scene, SessionId, Vec<Out>) {
             states(&told)
         );
         let _ = drone;
+    }
+
+    const FRIEND_SHIP: i64 = 980_050_000_099;
+
+    /// A stasis webifier of a drone as the host gives it (`remoteWebifierEntity`, SDE: speedFactor -5, maxRange 5000, duration 5000): a web of 5 % that lands each cycle.
+    fn webber() -> DroneEffect {
+        DroneEffect {
+            effect_id: 6690,
+            fx: "effects.ModifyTargetSpeed".to_string(),
+            cycle_ms: 5_000.0,
+            lasting_ms: 5_000.0,
+            action: Action::Remote {
+                what: Remote::Web { percent: -5.0 },
+                reach: Reach { optimal: 5_000.0, falloff: 0.0 },
+                when: Applies::CycleStart,
+                jam: "webify".to_string(),
+            },
+        }
+    }
+
+    /// A light armor maintenance bot (`npcEntityRemoteArmorRepairer`, SDE: armorDamageAmount 12, maxRange 5000, duration 5000): it mends its target at the end of each cycle.
+    fn armor_bot() -> DroneEffect {
+        DroneEffect {
+            effect_id: 6687,
+            fx: "effects.RemoteArmorRepairDrone".to_string(),
+            cycle_ms: 5_000.0,
+            lasting_ms: 5_000.0,
+            action: Action::Remote {
+                what: Remote::Repair { layer: crate::health::Layer::Armor, amount: 12.0 },
+                reach: Reach { optimal: 5_000.0, falloff: 0.0 },
+                when: Applies::CycleEnd,
+                jam: "remoteArmorRepair".to_string(),
+            },
+        }
+    }
+
+    /// A drone of the Hobgoblin's ship that has only the given remote effect (no weapon), launched beside the player.
+    fn launched_with(scene: &mut Scene, effect: DroneEffect) -> SessionId {
+        let flight = DroneFlight {
+            weapon: None,
+            graphic_id: 1_124,
+            orbit_distance: 700.0,
+            attack_range: 10_000.0,
+            cruise_fraction: 0.25,
+            work: DroneWorkProfile::default(),
+            effect: Some(effect),
+        };
+        scene.launch_drone(PLAYER, hobgoblin(), flight, LATER).unwrap().0
+    }
+
+    #[test]
+    fn a_web_drone_slows_the_rat_it_is_sent_at_while_its_cycle_lands_and_lets_go_when_called_home() {
+        let mut scene = scene_with_a_player();
+        scene.pilots.get_mut(&PLAYER).unwrap().ship.spec.corporation_id = 1_000_006;
+        launched_with(&mut scene, webber());
+        let rat = spawn_rat_at(&mut scene, RAT_SHIP, 2_000.0);
+        scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Engage { target: RAT_SHIP }, LATER);
+        let mut now = LATER + SECOND / 4;
+        while now <= LATER + 10 * SECOND {
+            scene.poll(now);
+            now += SECOND / 4;
+        }
+        // the rat's top speed is what it is less the web: 5 % off, as one web stacks
+        let pilot = &scene.pilots[&rat];
+        let base = pilot.incoming.base.expect("the web landed on the rat");
+        let worked = pilot.incoming.worked(&base);
+        assert!((worked.max_velocity - base.max_velocity * 0.95).abs() < 1e-6, "{} of {}", worked.max_velocity, base.max_velocity);
+
+        // called home, the drone lets go of it: the web is lifted at once
+        scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::ReturnHome, now);
+        assert!(scene.pilots[&rat].incoming.is_empty());
+    }
+
+    #[test]
+    fn an_armor_bot_mends_a_friendly_ship_only_when_its_cycle_ends() {
+        let mut scene = scene_with_a_player();
+        scene.pilots.get_mut(&PLAYER).unwrap().ship.spec.corporation_id = 1_000_006;
+        let friend = spawn_rat_at(&mut scene, FRIEND_SHIP, 2_000.0);
+        scene.pilots.get_mut(&friend).unwrap().ship.spec.corporation_id = 1_000_006;
+        // strips the friend's shield and some of its armor
+        let (_, applied) = scene.damage(FRIEND_SHIP, [0.0, 600.0, 0.0, 0.0], LATER);
+        assert!(applied.is_some());
+        let before = scene.pilots[&friend].ship.health.layers_at(LATER).armor;
+        launched_with(&mut scene, armor_bot());
+        let sent = scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Engage { target: FRIEND_SHIP }, LATER);
+        assert_eq!(result_of(&sent), [(DRONE_SHIP, None)]);
+
+        // the cycle is five seconds: nothing is mended while it runs, the points are given as it ends
+        let mut now = LATER + SECOND / 4;
+        while now < LATER + 4 * SECOND {
+            scene.poll(now);
+            now += SECOND / 4;
+        }
+        assert_eq!(scene.pilots[&friend].ship.health.layers_at(now).armor, before);
+        while now <= LATER + 7 * SECOND {
+            scene.poll(now);
+            now += SECOND / 4;
+        }
+        let after = scene.pilots[&friend].ship.health.layers_at(now).armor;
+        // the armor is kept as a fraction of the layer that is rounded to six places (health.rs), so 12 points land within that step
+        assert!((after - before - 12.0).abs() < 1e-3, "{before} -> {after}");
+    }
+
+    #[test]
+    fn a_drone_that_only_mends_is_refused_a_hostile_target_and_finds_nothing_to_mend_by_itself() {
+        let mut scene = scene_with_a_player();
+        scene.pilots.get_mut(&PLAYER).unwrap().ship.spec.corporation_id = 1_000_006;
+        launched_with(&mut scene, armor_bot());
+        // a rat is not on the pilot's side
+        spawn_rat_at(&mut scene, RAT_SHIP, 2_000.0);
+        let sent = scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Engage { target: RAT_SHIP }, LATER);
+        assert_eq!(result_of(&sent), [(DRONE_SHIP, Some("NO_TARGET"))]);
+        let searched = scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Engage { target: 0 }, LATER);
+        assert_eq!(result_of(&searched), [(DRONE_SHIP, Some("NO_OPPONENT"))]);
     }
 
     #[test]

@@ -155,6 +155,12 @@ public sealed partial class InSpaceCompressionMgrRpcService(
     Func<long, CancellationToken, ValueTask<Item?>> getItem,
     Func<ServiceCall, Item, long, CancellationToken, ValueTask<SpaceCompressionResult?>>? compress = null)
 {
+    /// <summary>
+    /// Shown to the pilot when no compression authority is attached. Owner C1 (structures) is open, so the
+    /// request is refused by name instead of answering None, which would look like a silent success.
+    /// </summary>
+    public const string UnavailableNotice = "In-space ore compression is not available on this server yet.";
+
     [Method("CompressItemInSpace")]
     public async ValueTask<PyValue> CompressItemInSpace(ServiceCall call)
     {
@@ -177,7 +183,7 @@ public sealed partial class InSpaceCompressionMgrRpcService(
             return PyNone.Instance;
         }
         if (compress is null)
-            return PyNone.Instance;
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(UnavailableNotice)));
 
         var result = await compress(call, item, facilityId.Value, call.Cancellation);
         if (result is null ||

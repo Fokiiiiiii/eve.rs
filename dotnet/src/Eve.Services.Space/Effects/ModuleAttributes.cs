@@ -24,6 +24,8 @@ internal static class ModuleAttributes
     public const int TrackingSpeed = 160;
     public const int OptimalSigRadius = 620;
     public const int ShieldBonus = 68;
+    /// <summary>The length an ECM drone's jam lasts on its target (its cycle is the effect's own duration, 20 s).</summary>
+    public const int EcmJamDuration = 2822;
     public const int StructureDamageAmount = 83;
     public const int ArmorDamageAmount = 84;
     public const int AoeVelocity = 653;

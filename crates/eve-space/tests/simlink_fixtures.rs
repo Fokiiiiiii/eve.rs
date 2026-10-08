@@ -2,6 +2,8 @@
 //! file): every valid frame encodes to its bytes and decodes back, every invalid one is refused for the stated reason.
 
 use eve_space::death::Credit;
+use eve_space::drones::DroneEffect;
+use serde_json::json;
 use eve_space::health::{Condition, Layer, Resonances, Vitals};
 use eve_space::link::{
     ChargeOp, ContainerPlacement, DecodeError, Enter, How, LaunchDrone, Message, Spawn, WreckPlacement,
@@ -330,6 +332,22 @@ fn identity_of(case: &Value) -> NpcIdentity {
     }
 }
 
+/// A drone's remote effect of the fixture: its id, name and cycle numbers, and the action a cycle does (read as an activation's, which holds the same action).
+fn drone_effect_of(case: &Value) -> DroneEffect {
+    let activation = json!({
+        "moduleId": "0", "moduleType": 0, "effectId": case["effectId"], "fx": case["fx"],
+        "durationMs": case["cycleMs"], "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
+        "onChanges": [], "offChanges": [], "action": case["action"],
+    });
+    DroneEffect {
+        effect_id: case["effectId"].as_i64().unwrap() as i32,
+        fx: text(case, "fx"),
+        cycle_ms: case["cycleMs"].as_f64().unwrap(),
+        lasting_ms: case["lastingMs"].as_f64().unwrap(),
+        action: effect_of(&activation).action.expect("the drone effect's action"),
+    }
+}
+
 fn weapon_of(w: &Value) -> NpcWeapon {
     let number = |field: &str| w[field].as_f64().unwrap_or_else(|| panic!("{field} in {w}"));
     NpcWeapon {
@@ -571,6 +589,7 @@ fn message_of(case: &Value) -> Message {
             mining_waste_multiplier: case.get("miningWasteMultiplier").and_then(Value::as_f64).unwrap_or(0.0),
             mining_waste_probability: case.get("miningWasteProbability").and_then(Value::as_f64).unwrap_or(0.0),
             salvage_access_bonus: case.get("salvageAccessBonus").and_then(Value::as_f64).unwrap_or(0.0),
+            effect: case.get("effect").filter(|effect| !effect.is_null()).map(drone_effect_of),
         })),
         "DroneCommand" => Message::DroneCommand {
             session_id: session_id(),

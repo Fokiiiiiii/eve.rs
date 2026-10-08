@@ -21,14 +21,22 @@ internal sealed class RepairEffect : ShipEffect
 
     public override IReadOnlyCollection<string> EffectNames { get; } = [.. Repairs.Keys];
 
-    protected override SimEffect Build(ModuleEffectContext module)
+    protected override SimEffect Build(ModuleEffectContext module) => Package(module, RepairAction(module, module.Effect.Name.Trim()));
+
+    /// <summary>The repair of a table entry: its layer, the points the module's attribute says, and whether they are given at the end of the cycle.</summary>
+    internal static SimAction.Repair RepairAction(ModuleEffectContext module, string repairName)
     {
-        var repair = Repairs[module.Effect.Name.Trim()];
+        var repair = Repairs[repairName];
+        return new SimAction.Repair(repair.Layer, Math.Max(0, NpcArmament.Round6(module.Value(repair.Amount, 0))), repair.AtEnd);
+    }
+
+    /// <summary>The package of a repair with its action: the cycle, its cost, and what the client is told. The ancillary repairers pass the action they charge.</summary>
+    internal static SimEffect Package(ModuleEffectContext module, SimAction action)
+    {
         var (duration, capacitor, durationAttribute) = module.Cycle();
-        var amount = Math.Max(0, NpcArmament.Round6(module.Value(repair.Amount, 0)));
         SimChange[] told = [new(module.ModuleId, CapacitorNeed, capacitor), new(module.ModuleId, durationAttribute, Three(duration))];
         return new SimEffect(
             module.ModuleId, module.Module.TypeId, module.Effect.Id, module.Effect.Guid, duration, capacitor, Math.Max(1, module.Repeat), 0, null, null, told, told, null,
-            new SimAction.Repair(repair.Layer, amount, repair.AtEnd));
+            action);
     }
 }

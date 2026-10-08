@@ -72,6 +72,45 @@ internal static class ModuleAttributes
     public const int ModuleReactivationDelay = 669;
     public const int MicroJumpDriveRange = 2066;
 
+    // Superweapons (group 588 and the structure variants). Names and ids are the SDE's, checked by ModuleAttributeIdsTests; the rules that use them are in
+    // Effects/SuperWeaponEffects.cs (docs/project/TODO.md section 12).
+    /// <summary>Energy neutralisation of a doomsday: the radius, the amount and the signature radius of its area, and the resistance it is measured against.</summary>
+    public const int DoomsdayEnergyNeutRadius = 2259;
+    public const int DoomsdayEnergyNeutAmount = 2260;
+    public const int DoomsdayEnergyNeutSignatureRadius = 2261;
+    public const int DoomsdayEnergyNeutResistanceId = 2609;
+    /// <summary>The time between a doomsday's activation and its damage (the warning), and how long and how often the damage is dealt.</summary>
+    public const int DoomsdayWarningDuration = 2262;
+    public const int DoomsdayDamageRadius = 2263;
+    public const int DoomsdayDamageDuration = 2264;
+    public const int DoomsdayDamageCycleTime = 2265;
+    /// <summary>1 when the doomsday is aimed at a point (titan doomsdays, lances, cones and the HOG); the client sends a point, not a target id.</summary>
+    public const int IsPointTargeted = 2269;
+    /// <summary>The area of a doomsday: its reach, its duration, its signature radius, its shape (1 cylinder, 2 slice, 3 cone, 4 projected sphere) and whether its range is fixed.</summary>
+    public const int DoomsdayAoeRange = 2279;
+    public const int DoomsdayAoeDuration = 2280;
+    public const int DoomsdayAoeSignatureRadius = 2281;
+    public const int DoomsdayAoeShape = 2429;
+    public const int DoomsdayRangeIsFixed = 2430;
+    /// <summary>After a doomsday: the ship is immobile for this long, and it may not jump or cloak for the longer window.</summary>
+    public const int DoomsdayImmobilityDuration = 2428;
+    public const int DoomsdayNoJumpOrCloakDuration = 2427;
+    /// <summary>How long the buff a doomsday applies lasts on its recipients.</summary>
+    public const int DoomsdayAppliedDBuffDuration = 5412;
+    /// <summary>The Pulse Activated Nexus Invulnerability Core's duration (the effect's durationAttributeID).</summary>
+    public const int PanicDuration = 2788;
+
+    // Cynosural fields, jump portals and clone jumps (docs/project/TODO.md section 12; the bodies are not run yet).
+    public const int CynosuralFieldSpawnRadius = 2455;
+    public const int JumpPortalConsumptionMassFactor = 1001;
+    public const int JumpPortalDuration = 1002;
+    public const int CloneJumpCoolDown = 1921;
+    public const int IsTitanJumpPortalPassenger = 3319;
+    public const int IsBlackOpsJumpPortalPassenger = 3320;
+    public const int IsBlackOpsJumpConduitPassenger = 3322;
+    public const int IsIndustrialJumpConduitPassenger = 3324;
+    public const int IsIndustrialJumpPortalPassenger = 3325;
+
     // Module rules the static data states as attributes (docs/project/TODO.md section 9; the names are the SDE's, verified by ModuleRuleAttributesTests).
     public const int WarpScrambleStatus = 104;
     public const int SiegeModeWarpStatus = 852;

@@ -587,13 +587,15 @@ public class ModuleEffectsTests
                     moduleId, targetId, cycleId, cycleNumber, baseAmount, bonusPerCycle, maximumBonus,
                     atMs, cycleDurationMs, out var actual);
                 Assert.True(accepted, "SDE build " + catalogBuild + " rejected cycle " + cycleNumber + ".");
-                var expectedBonus = Math.Min(cycle * bonusPerCycle, maximumBonus);
+                // the first delivery is x1.0 (the reference applies the bonus, then advances it): cycle n carries n - 1 bonuses
+                var expectedBonus = Math.Min((cycle - 1) * bonusPerCycle, maximumBonus);
                 var expected = Eve.Services.Space.Effects.ModuleAttributes.Six(baseAmount * (1 + expectedBonus));
                 Assert.True(Math.Abs(actual - expected) < 0.000001,
                     "SDE build " + catalogBuild + " produced an incorrect mutadaptive amount at cycle " + cycle + ".");
                 if (cycle == 1)
                 {
                     firstAmount = actual;
+                    Assert.Equal(Eve.Services.Space.Effects.ModuleAttributes.Six(baseAmount), actual);
                     Assert.True(spool.TryNextCycle(
                         moduleId, targetId, cycleId, cycleNumber, baseAmount, bonusPerCycle, maximumBonus,
                         atMs, cycleDurationMs, out var duplicate));
@@ -618,7 +620,8 @@ public class ModuleEffectsTests
             Assert.True(spool.TryNextCycle(
                 moduleId, targetId + 1, cycleId, cycleNumber, baseAmount, bonusPerCycle, maximumBonus,
                 atMs, cycleDurationMs, out var finalCycle));
-            var finalBonus = Math.Min(2 * bonusPerCycle, maximumBonus);
+            // the second cycle of this run carries one bonus (the first of the run is x1.0)
+            var finalBonus = Math.Min(1 * bonusPerCycle, maximumBonus);
             Assert.Equal(Eve.Services.Space.Effects.ModuleAttributes.Six(baseAmount * (1 + finalBonus)), finalCycle);
             spool.CompleteCycle(moduleId, cycleId);
             Assert.False(spool.TryNextCycle(
@@ -704,6 +707,7 @@ public class ModuleEffectsTests
         var uncovered = assignedNames.Except(handledNames, StringComparer.OrdinalIgnoreCase).OrderBy(name => name, StringComparer.Ordinal).ToArray();
         string[] currentSdeGaps =
         [
+            "barrage",
             "cargoScan",
             "cloneRespawnBay",
             "debuffLance",

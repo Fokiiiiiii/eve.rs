@@ -35,3 +35,9 @@ deadline is a row, it survives a restart. The sim also has its own timer-like ex
 * The sweep dispatches by kind through a registry with one entry per kind, not an `if` chain (FOUNDATIONS checklist).
 * Expiry survives a restart, because the deadline is a database row and the job is recurring.
 * The `crowd.rs` extraction collides with the mining change `M6b` (`change_asteroid` fan-out). Order: `M6b` first (see `DECISIONS.md`).
+
+## Addendum (2026-10-08, bombs and warp disruption brief)
+
+- Probes stay simulation-only (bombs brief D11): an interdiction probe's lifetime is its SDE `explosionDelay`, checked in the simulation tick. Nothing is persisted, so a restart drops it (a stated LIMITATION). It is not a `Deployed` row, because the sweep runs every 30 s and would make a 120 s probe up to 25 % late.
+- Mobile warp disruptors are not deployable yet (D6): no SDE lifetime exists, and the EveJS table is unverified. When they are, they are `Deployed` rows and the expiry job stays `space.containers.sweep`; anchoring is a separate job, `space.deployed.anchor`, which is not an expiry job.
+- Nothing is written to the sweep for the field generator: its bubble is refused (`EFFECT_NOT_IMPLEMENTED`) until its ship penalties have a source (D5).

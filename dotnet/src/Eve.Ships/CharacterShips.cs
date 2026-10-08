@@ -495,6 +495,34 @@ public sealed partial class CharacterShips(
             [new ItemChanged(packagedShip, item.LocationId, item.Flag, item.Quantity)]), false);
     }
 
+    /// <summary>The attribute that caps how many modules of one group may be online at once (the SDE's <c>maxGroupOnline</c>).</summary>
+    private const int MaxGroupOnlineAttribute = 978;
+
+    /// <summary>
+    /// A module that would be the one too many of its group online: the group's limit is the lowest <c>maxGroupOnline</c> of the modules fitted in it (a module without
+    /// one does not limit), and the modules of the group that are online already count against it. The reference refuses the online with
+    /// <c>CannotOnlineReachedMaxGroupOnline</c> after its processor and power checks (<c>locationDogmaItem.py</c> CheckCanOnlineItem).
+    /// </summary>
+    internal static ShipRefused? MaxGroupOnlineRefusal(IReadOnlyList<Eve.Inventory.Item> fitted, int shipTypeId, DogmaStatic statics, DogmaWorld world, Eve.Inventory.Item module)
+    {
+        var group = statics.Type(module.TypeId)?.GroupId ?? 0;
+        if (group <= 0)
+        {
+            return null;
+        }
+        var members = fitted.Where(m => (statics.Type(m.TypeId)?.GroupId ?? 0) == group).ToArray();
+        var limits = members.Select(m => world.Get(m.Id, MaxGroupOnlineAttribute)).Where(limit => limit > 0).ToArray();
+        if (limits.Length == 0)
+        {
+            return null;
+        }
+        var limit = (int)Math.Floor(limits.Min());
+        var online = members.Count(m => m.Id != module.Id && world.Item(m.Id) is { State: >= ItemState.Online });
+        return online >= limit
+            ? new ShipRefused(ShipRefusal.MaxGroupOnline, null, module.TypeId, shipTypeId, GroupId: group, MaxGroupOnline: limit)
+            : null;
+    }
+
     /// <summary>Switches a module fitted to the character's ship on or off.</summary>
     public async Task<ShipOutcome> SetOnlineAsync(long characterId, long shipId, long moduleId, bool online, CancellationToken cancellationToken = default)
     {
@@ -527,6 +555,10 @@ public sealed partial class CharacterShips(
             if (FittingRules.OnlineShortage(world, shipId, moduleId) is { } shortage)
             {
                 return new ShipRefused(shortage == FitError.NotEnoughCpu ? ShipRefusal.NotEnoughCpu : ShipRefusal.NotEnoughPower, null, module.TypeId, snapshot.Ship.TypeId);
+            }
+            if (MaxGroupOnlineRefusal(snapshot.Fitted, snapshot.Ship.TypeId, statics, world, module) is { } limited)
+            {
+                return limited;
             }
         }
 

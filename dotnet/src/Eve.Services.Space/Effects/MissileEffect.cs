@@ -45,8 +45,20 @@ internal sealed class MissileEffect : ShipEffect
     private const string MissileDeployment = "effects.MissileDeployment";
     private const string TorpedoDeployment = "effects.TorpedoDeployment";
 
-    /// <summary>The launchers that fire missiles at a ship: cruise, rocket, torpedo, light and heavy, rapid, heavy assault, rapid torpedo and the XL ones.</summary>
-    private static readonly HashSet<int> LauncherGroups = [506, 507, 508, 509, 510, 511, 771, 1245, RapidTorpedoLauncherGroup, 1674, XlTorpedoLauncherGroup];
+    /// <summary>
+    /// The firing effects that are refused by name, each with its reason: the F.O.F. missiles of the served launchers (decision D2: a missile that does not lock a target is
+    /// not run; the refusal is named, so it is not an unexplained <c>UNSUPPORTED_EFFECT</c>).
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> RefusedFiringEffects = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["fofMissileLaunching"] = "FOF_MISSILE_NOT_IMPLEMENTED",
+    };
+
+    /// <summary>
+    /// The reason a launcher of the missile family is refused for a firing effect in <see cref="RefusedFiringEffects"/>, or null when the request is not one of them.
+    /// </summary>
+    public static string? RefusedFiringReason(TypeDef type, DogmaStatic statics, string requested) =>
+        statics.MissileLauncherGroups.Contains(type.GroupId) && RefusedFiringEffects.TryGetValue(requested, out var reason) ? reason : null;
 
     /// <summary>
     /// The groups whose launchers carry <c>useMissiles</c> in the static data but are not run yet, each with the reason it is refused (the client shows the module cannot be
@@ -69,8 +81,8 @@ internal sealed class MissileEffect : ShipEffect
         [1974] = "STRUCTURE_LAUNCHER_NOT_IMPLEMENTED",
     };
 
-    /// <summary>The launcher groups this effect runs.</summary>
-    public static IReadOnlyCollection<int> ServedLauncherGroups => LauncherGroups;
+    /// <summary>The launcher groups this effect runs: the missile family derived from the static data (<see cref="LauncherFamilies"/>).</summary>
+    public static IReadOnlySet<int> ServedLauncherGroups(DogmaStatic statics) => statics.MissileLauncherGroups;
 
     public override IReadOnlyCollection<string> EffectNames { get; } = [LauncherEffectName];
 
@@ -79,11 +91,11 @@ internal sealed class MissileEffect : ShipEffect
     /// A launcher that is refused (<see cref="RefusedLauncherGroups"/>) is a launcher too: it is asked for its own effect and refused there.
     /// </summary>
     public static EffectDef? LauncherEffectFor(TypeDef type, DogmaStatic statics, string requested) =>
-        (LauncherGroups.Contains(type.GroupId) || RefusedLauncherGroups.ContainsKey(type.GroupId)) && ClientNames.Any(n => n.Equals(requested, StringComparison.OrdinalIgnoreCase))
+        (statics.MissileLauncherGroups.Contains(type.GroupId) || RefusedLauncherGroups.ContainsKey(type.GroupId)) && ClientNames.Any(n => n.Equals(requested, StringComparison.OrdinalIgnoreCase))
             ? type.EffectIds.Select(statics.Effect).FirstOrDefault(e => e is not null && e.Name.Equals(LauncherEffectName, StringComparison.OrdinalIgnoreCase))
             : null;
 
-    protected override bool Handles(ModuleEffectContext module) => LauncherGroups.Contains(module.Type.GroupId);
+    protected override bool Handles(ModuleEffectContext module) => module.Statics.MissileLauncherGroups.Contains(module.Type.GroupId);
 
     /// <summary>A launcher with no missile in it is refused before it is asked for a target (the reference's order: <c>NO_AMMO</c> first, then the target).</summary>
     protected override string? Refusal(ModuleEffectContext module)

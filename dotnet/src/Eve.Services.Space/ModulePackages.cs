@@ -12,8 +12,11 @@ namespace Eve.Services.Space;
 /// </summary>
 internal static class ModulePackages
 {
-    /// <summary>Why a package cannot be made, or the package.</summary>
-    public readonly record struct Result(SimEffect? Effect, string? Reason, int ModuleType, string ModuleName);
+    /// <summary>
+    /// Why a package cannot be made, or the package. <see cref="Accepted"/> is what the handler does once the simulation has accepted the start (null when there is no
+    /// package); a refused start does not run it.
+    /// </summary>
+    public readonly record struct Result(SimEffect? Effect, string? Reason, int ModuleType, string ModuleName, Action? Accepted = null);
 
     /// <summary>
     /// A propulsion module's numbers. The ship is heavier by the module's mass addition, and faster by the module's speed factor (a percentage) times its
@@ -32,6 +35,10 @@ internal static class ModulePackages
         var name = type.Name;
         var effect = type.EffectIds.Select(statics.Effect).FirstOrDefault(e => e is { } found && found.Name.Equals(effectName, StringComparison.OrdinalIgnoreCase))
             ?? MissileEffect.LauncherEffectFor(type, statics, effectName);   // a launcher is fired with the effect of its charge, and runs its own
+        if (effect is null && MissileEffect.RefusedFiringReason(type, statics, effectName) is { } firingReason)
+        {
+            return new Result(null, firingReason, module.TypeId, name);   // a firing effect that is refused by name (not an unexplained UNSUPPORTED_EFFECT)
+        }
         if (effect is null || effect.Category is not (EffectDef.Activation or EffectDef.Target))
         {
             return new Result(null, "UNSUPPORTED_EFFECT", module.TypeId, name);
@@ -57,6 +64,6 @@ internal static class ModulePackages
         {
             return new Result(null, "UNSUPPORTED_EFFECT", module.TypeId, name);
         }
-        return new Result(handler.Build(context), null, module.TypeId, name);
+        return new Result(handler.Build(context), null, module.TypeId, name, () => handler.Accepted(context));
     }
 }

@@ -394,6 +394,8 @@ public class ProjectedHostTests
         // an ordinary hull has one kind of sensor that counts, and takes a jam in full
         Assert.True(new[] { sensors.Gravimetric, sensors.Ladar, sensors.Magnetometric, sensors.Radar }.Max() > 0, $"{sensors}");
         Assert.Equal(1d, sensors.EcmResistance);
+        // energyWarfareResistance (2045) is read from the hull's own attributes: an ordinary hull takes a neutralisation in full (protocol 27)
+        Assert.Equal(1d, sensors.EnergyWarfareResistance);
     }
 
     [PgFact]

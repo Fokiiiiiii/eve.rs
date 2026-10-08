@@ -2123,6 +2123,28 @@ mod tests {
         }
     }
 
+    /// Runs `body` on its own thread and fails the test when it has not returned within `seconds`. A simulation whose moment never clears (a
+    /// module moment that is due again at once) spins in the caller's loop forever; here it is a failure in `seconds`, and a panic in `body` is
+    /// re-raised with its message.
+    fn finishes_within(seconds: u64, body: impl FnOnce() + Send + 'static) {
+        use std::sync::mpsc::RecvTimeoutError;
+        let (done, finished) = std::sync::mpsc::channel::<()>();
+        let worker = std::thread::spawn(move || {
+            body();
+            let _ = done.send(());
+        });
+        match finished.recv_timeout(std::time::Duration::from_secs(seconds)) {
+            Ok(()) | Err(RecvTimeoutError::Disconnected) => {
+                if let Err(panic) = worker.join() {
+                    std::panic::resume_unwind(panic);
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                panic!("did not finish within {seconds} s: a simulation moment does not clear")
+            }
+        }
+    }
+
     /// The damage messages the pilot of `session` is told about its own hits.
     fn hits_told(out: &[Out], session: SessionId) -> usize {
         messages(out, session, "OnDamageMessage")
@@ -2206,6 +2228,33 @@ mod tests {
         assert!(before - after > 49.0 && before - after <= 50.0 + 1e-6, "drained by the neutralising amount: {before} -> {after}");
     }
 
+    #[test]
+    fn a_strike_neutralisation_is_weakened_by_the_targets_energy_warfare_resistance() {
+        let (mut scene, npc, _) = duel();
+        let now = NOON + 120 * SECOND;
+        scene.pilots.get_mut(&PLAYER).unwrap().ship.spec.energy_warfare_resistance = 0.5;
+        let before = scene.pilots[&PLAYER]
+            .modules
+            .capacitor
+            .as_ref()
+            .expect("the pilot has a capacitor")
+            .charge_at(now);
+        let mut strike = strike_of(1);
+        strike.neut_amount = 50.0;
+        strike.neut_radius = 10_000.0;
+        scene.activate(npc, strike_effect(NPC_SHIP + 1, strike), now);
+        let after = scene.pilots[&PLAYER]
+            .modules
+            .capacitor
+            .as_ref()
+            .expect("the pilot has a capacitor")
+            .charge_at(now);
+        assert!(
+            (before - after - 25.0).abs() < 1e-3,
+            "half of 50 against a resistance of 0.5: {before} -> {after}"
+        );
+    }
+
     /// A titan doomsday's effect: one hit on `target_id`, the module of a Judgment (24550, effect 4489), one cycle.
     fn doomsday_effect(module_id: i64, target_id: i64, action: crate::modules::Action) -> Effect {
         Effect {
@@ -2241,22 +2290,28 @@ mod tests {
 
     #[test]
     fn a_titan_doomsday_hits_its_locked_target_once_after_its_delay_and_holds_the_pilot() {
-        let (mut scene, _npc, now) = duel();
-        let now = lock_target(&mut scene, PLAYER, NPC_SHIP, now);
-        let hit = crate::modules::Action::Doomsday {
-            delay_ms: 9_000.0,
-            damage: [2_400_000.0, 0.0, 0.0, 0.0],
-            immobile_ms: 30_000.0,
-            no_jump_ms: 300_000.0,
-        };
-        let out = scene.activate(PLAYER, doomsday_effect(spec().ship_id + 1, NPC_SHIP, hit), now);
-        assert!(!out.iter().any(|o| matches!(o, Out::Refused { .. })), "{out:?}");
-        assert_eq!(hits_told(&out, PLAYER), 0, "nothing hits before its delay");
-        assert_eq!(hits_told(&scene.poll(now + 8 * SECOND), PLAYER), 0, "8 s in: still charging");
-        assert_eq!(hits_told(&scene.poll(now + 10 * SECOND), PLAYER), 1, "the hit, 9 s after the start");
-        assert_eq!(hits_told(&scene.poll(now + 20 * SECOND), PLAYER), 0, "once: no second hit");
-        let held = scene.command(PLAYER, Command::Stop, now + 11 * SECOND);
-        assert!(held.iter().any(|o| matches!(o, Out::Refused { reason: "IMMOBILE", .. })), "held by its window: {held:?}");
+        // bounded: a hit that is not recorded makes the moment due again at once, and the scheduler would never leave it
+        finishes_within(10, || {
+            let (mut scene, _npc, now) = duel();
+            let now = lock_target(&mut scene, PLAYER, NPC_SHIP, now);
+            let hit = crate::modules::Action::Doomsday {
+                delay_ms: 9_000.0,
+                damage: [2_400_000.0, 0.0, 0.0, 0.0],
+                immobile_ms: 30_000.0,
+                no_jump_ms: 300_000.0,
+            };
+            let out = scene.activate(PLAYER, doomsday_effect(spec().ship_id + 1, NPC_SHIP, hit), now);
+            assert!(!out.iter().any(|o| matches!(o, Out::Refused { .. })), "{out:?}");
+            assert_eq!(hits_told(&out, PLAYER), 0, "nothing hits before its delay");
+            assert_eq!(hits_told(&scene.poll(now + 8 * SECOND), PLAYER), 0, "8 s in: still charging");
+            assert_eq!(hits_told(&scene.poll(now + 10 * SECOND), PLAYER), 1, "the hit, 9 s after the start");
+            assert_eq!(hits_told(&scene.poll(now + 20 * SECOND), PLAYER), 0, "once: no second hit");
+            let held = scene.command(PLAYER, Command::Stop, now + 11 * SECOND);
+            assert!(
+                held.iter().any(|o| matches!(o, Out::Refused { reason: "IMMOBILE", .. })),
+                "held by its window: {held:?}"
+            );
+        });
     }
 
     #[test]

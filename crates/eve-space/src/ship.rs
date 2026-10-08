@@ -54,6 +54,9 @@ pub struct ShipSpec {
     /// (`ECMResistance`: 1 for an ordinary ship, 0 for one that cannot be jammed).
     pub sensor_strength: [f64; 4],
     pub ecm_resistance: f64,
+    /// How much of an energy neutralisation the ship takes (`energyWarfareResistance`, 2045: 1 for an ordinary ship, 0 for one that cannot be neutralised).
+    /// A neutraliser's amount is multiplied by it; the reference applies the same multiplier to a doomsday's neutralising wave (`doomsdayEnergyNeutResistanceID`).
+    pub energy_warfare_resistance: f64,
 }
 
 /// What the ship is doing.

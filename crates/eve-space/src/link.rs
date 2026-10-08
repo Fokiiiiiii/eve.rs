@@ -16,7 +16,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Arc, Aoe, Charge, Spool, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 26;
+pub const PROTOCOL_VERSION: u16 = 27;
 
 /// The message kinds.
 pub mod kind {
@@ -713,7 +713,7 @@ fn put_ship(out: &mut Vec<u8>, ship: &ShipSpec) {
         out.extend_from_slice(&module.type_id.to_le_bytes());
         out.extend_from_slice(&module.flag.to_le_bytes());
     }
-    for number in ship.sensor_strength.iter().chain([&ship.ecm_resistance]) {
+    for number in ship.sensor_strength.iter().chain([&ship.ecm_resistance, &ship.energy_warfare_resistance]) {
         out.extend_from_slice(&number.to_le_bytes());
     }
 }
@@ -1685,6 +1685,7 @@ fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
     }
     let sensor_strength = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
     let ecm_resistance = reader.f64()?;
+    let energy_warfare_resistance = reader.f64()?;
     Ok(ShipSpec {
         ship_id,
         character_id,
@@ -1714,6 +1715,7 @@ fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
         modules,
         sensor_strength,
         ecm_resistance,
+        energy_warfare_resistance,
     })
 }
 

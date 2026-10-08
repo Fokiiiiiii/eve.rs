@@ -92,6 +92,7 @@ fn ship_of(case: &Value) -> ShipSpec {
         capacitor_recharge_s: number("capacitorRechargeS"),
         sensor_strength: sensors_of(&case["sensorStrength"]),
         ecm_resistance: number("ecmResistance"),
+        energy_warfare_resistance: number("energyWarfareResistance"),
         vitals: vitals_of(&case["vitals"]),
         condition: condition_of(&case["condition"]),
         modules: case["modules"]

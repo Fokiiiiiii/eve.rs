@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 26;
+    public const ushort ProtocolVersion = 27;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -290,7 +290,7 @@ public static class SimCodec
         {
             modules[i] = new SimModule(r.I64(), r.I32(), r.I32());
         }
-        var sensors = new SimSensors(r.F64(), r.F64(), r.F64(), r.F64(), r.F64());
+        var sensors = new SimSensors(r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64());
         return new SimShip(shipId, characterId, typeId, groupId, categoryId, name, ownerId, corporationId, allianceId, warFactionId, security, radius, mass, maxVelocity, agility, warpSpeed, shieldRecharge, maxTargetRange, scanResolution, signatureRadius, maxLockedTargets, capacitorCapacity, capacitorRecharge, modules, vitals, condition, sensors);
     }
 
@@ -1511,7 +1511,7 @@ private static void WriteAction(Writer w, SimAction action)
             w.I32(module.Flag);
         }
         var sensors = s.Sensors ?? SimSensors.Plain;
-        foreach (var number in new[] { sensors.Gravimetric, sensors.Ladar, sensors.Magnetometric, sensors.Radar, sensors.EcmResistance })
+        foreach (var number in new[] { sensors.Gravimetric, sensors.Ladar, sensors.Magnetometric, sensors.Radar, sensors.EcmResistance, sensors.EnergyWarfareResistance })
         {
             w.F64(number);
         }

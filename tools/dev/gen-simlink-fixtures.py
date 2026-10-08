@@ -53,7 +53,7 @@ def ship(m):
     body += struct.pack("<I", len(m["modules"]))
     for module in m["modules"]:
         body += i64(module["itemId"]) + struct.pack("<ii", module["typeId"], module["flag"])
-    body += struct.pack("<5d", *m["sensorStrength"], m["ecmResistance"])
+    body += struct.pack("<6d", *m["sensorStrength"], m["ecmResistance"], m["energyWarfareResistance"])
     return body
 
 
@@ -338,7 +338,7 @@ IBIS = {"shipId": "9988400001939", "characterId": "140000342", "typeId": 601, "g
         "securityStatus": 0.0, "radius": 47.0, "mass": 1163000.0, "maxVelocity": 339.25, "agility": 4.0185,
         "warpSpeedAu": 3.0, "shieldRechargeMs": 860000.0, "maxTargetRange": 29700.0, "scanResolution": 660.0,
         "signatureRadius": 28.0, "maxLockedTargets": 4, "capacitorCapacity": 149.5, "capacitorRechargeS": 55.25,
-        "sensorStrength": [0.0, 0.0, 0.0, 6.0], "ecmResistance": 1.0,
+        "sensorStrength": [0.0, 0.0, 0.0, 6.0], "ecmResistance": 1.0, "energyWarfareResistance": 0.25,
         "vitals": {"shieldCapacity": 220.0, "armorHp": 137.5, "structureHp": 201.25,
                    "resonances": {"shield": [0.0, 0.8, 0.6, 0.5], "armor": [0.5, 0.35, 0.25, 0.1],
                                   "structure": [0.33, 0.33, 0.33, 0.33]}},
@@ -351,8 +351,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 26},
-    {"name": "hello ack", "kind": "HelloAck", "version": 26, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 27},
+    {"name": "hello ack", "kind": "HelloAck", "version": 27, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",

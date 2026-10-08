@@ -34,7 +34,7 @@ public class SimCodecTests
     private static SimSensors SensorsOf(JsonNode s)
     {
         var strength = Four(s["sensorStrength"]!);
-        return new SimSensors(strength[0], strength[1], strength[2], strength[3], (double)s["ecmResistance"]!);
+        return new SimSensors(strength[0], strength[1], strength[2], strength[3], (double)s["ecmResistance"]!, (double)s["energyWarfareResistance"]!);
     }
 
     private static double[] Four(JsonNode n) => [.. ((JsonArray)n).Select(x => (double)x!)];
@@ -568,8 +568,8 @@ public class SimCodecTests
     public void A_module_count_the_frame_cannot_hold_is_refused_without_allocating_for_it()
     {
         var good = SimCodec.Encode(MessageOf(Case("valid", "enter by undocking")));
-        // the count is the four bytes before the two 16-byte modules and the five 8-byte sensor numbers at the end of the frame
-        var at = good.Length - (5 * 8) - (2 * 16) - 4;
+        // the count is the four bytes before the two 16-byte modules and the six 8-byte sensor numbers at the end of the frame (protocol 27)
+        var at = good.Length - (6 * 8) - (2 * 16) - 4;
         var forged = (byte[])good.Clone();
         BitConverter.GetBytes(uint.MaxValue).CopyTo(forged, at);
         var error = Assert.Throws<SimLinkException>(() => SimCodec.Decode(forged.AsMemory(4)));

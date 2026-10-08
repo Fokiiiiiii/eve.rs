@@ -2034,7 +2034,10 @@ impl Scene {
             Remote::MutadaptiveRepair { .. } => Vec::new(),
             Remote::Transfer { amount } => self.give_capacitor(target, amount * share, at),
             Remote::Neutralize { amount, signature_resolution } => {
-                let strength = amount * share * resolved(*signature_resolution);
+                let strength = amount
+                    * share
+                    * resolved(*signature_resolution)
+                    * self.capacitor_warfare_multiplier(target);
                 self.take_capacitor(target, strength, at).0
             }
             Remote::Drain { amount, signature_resolution } => {
@@ -2127,6 +2130,7 @@ impl Scene {
                 let gap = ((p.x - centre.x).powi(2) + (p.y - centre.y).powi(2) + (p.z - centre.z).powi(2)).sqrt() - pilot.ship.spec.radius.max(0.0);
                 let signature = pilot.ship.spec.signature_radius;
                 let factor = if signature > 0.0 { (signature / strike.neut_signature_radius).min(1.0) } else { 1.0 };
+                let factor = factor * capacitor_warfare_multiplier(pilot.ship.spec.energy_warfare_resistance);
                 (gap <= strike.neut_radius).then_some((other, factor))
             })
             .collect();
@@ -2135,6 +2139,13 @@ impl Scene {
             out.extend(self.take_capacitor(target, strike.neut_amount * factor, at).0);
         }
         out
+    }
+
+    /// What the target's capacitor warfare resistance leaves of a neutralisation (`energyWarfareResistance`, 2045).
+    fn capacitor_warfare_multiplier(&self, target: SessionId) -> f64 {
+        self.pilots
+            .get(&target)
+            .map_or(1.0, |pilot| capacitor_warfare_multiplier(pilot.ship.spec.energy_warfare_resistance))
     }
 
     /// The next pulse of a strike is due: every ship in the area is hit by the pulse's damage times its signature factor, and the pulse is counted.
@@ -2359,6 +2370,11 @@ enum Moment {
     StrikePulse(usize),
     /// The hit of a titan doomsday is due (the running effect at this index).
     DoomsdayHit(usize),
+}
+
+/// The share of a neutralisation a target takes for its resistance: the value itself, never below 0 (immune), and whole if the value is not a number.
+fn capacitor_warfare_multiplier(resistance: f64) -> f64 {
+    if resistance.is_finite() { resistance.max(0.0) } else { 1.0 }
 }
 
 #[cfg(test)]
@@ -3495,6 +3511,43 @@ pub(crate) mod tests {
         );
         scene.target_order(A, crate::targeting::Order::Remove(vec![partner()]), t + SECOND);
         assert_eq!(scene.pilots[&A].modules.running_count(), 0);
+    }
+
+    #[test]
+    fn a_neutralizer_is_weakened_by_resistance_and_immunity_keeps_the_capacitor() {
+        let (mut scene, t) = reaching(5_000.0);
+        scene.pilots.get_mut(&B).unwrap().ship.spec.energy_warfare_resistance = 0.5;
+        let before = charge(&scene, B, t);
+        scene.activate(
+            A,
+            projected(
+                Remote::Neutralize { amount: 40.0, signature_resolution: 0.0 },
+                Applies::CycleStart,
+                partner(),
+            ),
+            t,
+        );
+        let after = charge(&scene, B, t);
+        assert!(
+            (before - after - 20.0).abs() < 1e-6,
+            "half of 40 against a resistance of 0.5: {before} -> {after}"
+        );
+
+        scene.pilots.get_mut(&B).unwrap().ship.spec.energy_warfare_resistance = 0.0;
+        let immune_before = charge(&scene, B, t + SECOND);
+        scene.activate(
+            A,
+            projected(
+                Remote::Neutralize { amount: 40.0, signature_resolution: 0.0 },
+                Applies::CycleStart,
+                partner(),
+            ),
+            t + SECOND,
+        );
+        assert!(
+            (charge(&scene, B, t + SECOND) - immune_before).abs() < 1e-6,
+            "an immune target keeps its capacitor"
+        );
     }
 
     #[test]

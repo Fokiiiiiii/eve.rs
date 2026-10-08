@@ -51,11 +51,11 @@ public sealed record SimShip(
     double MaxTargetRange, double ScanResolution, double SignatureRadius, int MaxLockedTargets, double CapacitorCapacity, double CapacitorRechargeSeconds, IReadOnlyList<SimModule> Modules,
     SimVitals? Vitals = null, SimCondition? Condition = null, SimSensors? Sensors = null);
 
-/// <summary>What a ship holds against a jammer: the strength of its sensors (gravimetric, ladar, magnetometric, radar; the strongest counts) and how much of a jam it takes (<c>ECMResistance</c>: 1 for an ordinary ship, 0 for one that cannot be jammed).</summary>
-public sealed record SimSensors(double Gravimetric, double Ladar, double Magnetometric, double Radar, double EcmResistance)
+/// <summary>What a ship holds against a jammer and a neutraliser: the strength of its sensors (gravimetric, ladar, magnetometric, radar; the strongest counts), how much of a jam it takes (<c>ECMResistance</c>: 1 for an ordinary ship, 0 for one that cannot be jammed) and how much of an energy neutralisation it takes (<c>energyWarfareResistance</c>, 2045: 1 for an ordinary ship, 0 for one that cannot be neutralised; protocol 27).</summary>
+public sealed record SimSensors(double Gravimetric, double Ladar, double Magnetometric, double Radar, double EcmResistance, double EnergyWarfareResistance)
 {
     /// <summary>A ship with no sensors that count and no resistance.</summary>
-    public static readonly SimSensors Plain = new(0, 0, 0, 0, 1);
+    public static readonly SimSensors Plain = new(0, 0, 0, 0, 1, 1);
 }
 
 /// <summary>A ship enters a solar system.</summary>

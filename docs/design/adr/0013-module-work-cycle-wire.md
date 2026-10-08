@@ -85,6 +85,15 @@ These are part of the wire contract of epoch 26. They add `SimAction` tag 14 (`D
 * **Validation.** A non-finite or negative number is refused by the codecs (`BadValue`) and by the simulation (`BAD_DOOMSDAY`).
 * **Not on the wire.** A chain (the reference's lightning attributes 2104 to 2106 are absent on the titans, so the chain is one ship and is not sent).
 
+## Decisions made in epoch 27: the target's energy warfare resistance
+
+These are part of the wire contract of epoch 27. They add one number to the ship, `energyWarfareResistance` (attribute 2045, "Capacitor Warfare Resistance"), and nothing else.
+
+* **The number.** Each ship's `SimSensors` block carries a sixth number after `EcmResistance`: the hull's own value of 2045 (1 for an ordinary ship, 0 for one that cannot be neutralised). The host reads it from the type's attributes (and the fitted world, where the SDE default applies); a type that does not name 2045 sends 1. Zero is immune, not missing.
+* **The use.** The simulation multiplies an energy neutralisation's amount by the target's value: a neutraliser (`Remote::Neutralize`) and the neutralising wave of a doomsday strike. The strike's resistance is 2045 on every doomsday that carries a wave in the static data (`doomsdayEnergyNeutResistanceID`, 2609, is 2045 on the Bosonic Field Generator, the four lances and the three reapers; the titans carry no wave).
+* **Not on the wire.** The nosferatu (`Remote::Drain`) is not weakened; the reference's resistance for it is not read (DEVIATIONS 112). `remoteResistanceID` is not sent.
+* **The codecs.** `SimCodec.cs` and `crates/eve-space/src/link.rs` (`ProtocolVersion` 26 -> 27, once), the fixture generator (`tools/dev/gen-simlink-fixtures.py`, a non-default value 0.25 on the Ibis so a swapped field fails the byte comparison), and `oracle/fixtures/simlink/messages.json`.
+
 ## Wire epoch log
 
 * 22: the reactive armor hardener batch (W2): `SimAction` tag 12 (`ResistanceShift`) and one armor-pin byte at the end of the ship's vitals. Bumped 21 -> 22 by the integrator in `SimCodec.cs` and `crates/eve-space/src/link.rs`, with `oracle/fixtures/simlink/messages.json` regenerated.
@@ -93,3 +102,4 @@ These are part of the wire contract of epoch 26. They add `SimAction` tag 14 (`D
 * 24: module fuel. `SimEffect` flags bit 16 (`BurnsFuel`), the fuel ask as `SimModuleWorkCycle` command 9, and end reason 6 (`NoFuel`). `ProtocolVersion` 23 -> 24 in `SimCodec.cs` and `crates/eve-space/src/link.rs`; `oracle/fixtures/simlink/messages.json` regenerated (Hello and HelloAck at 24) with the fuel cases. Bumped once, by the integrator, because `main` was pushed at 23.
 * 25: the doomsday strike (`SimAction` tag 13, the Bosonic cone's body). `ProtocolVersion` 24 -> 25 in `SimCodec.cs` and `crates/eve-space/src/link.rs`; `oracle/fixtures/simlink/messages.json` regenerated (Hello and HelloAck at 25) with a valid cone strike and two invalid strikes. Bumped once, in this batch: `main` was at 24 when the batch started, and the work is local (not pushed).
 * 26: the titan doomsday (`SimAction` tag 14, `Doomsday`). `ProtocolVersion` 25 -> 26 in `SimCodec.cs` and `crates/eve-space/src/link.rs`; `oracle/fixtures/simlink/messages.json` regenerated (Hello and HelloAck at 26) with a valid Judgment hit and one invalid frame (a negative delay). Bumped once, in this batch (local, not pushed).
+* 27: the target's energy warfare resistance (`energyWarfareResistance`, 2045) as a sixth number of the ship's sensors block. `ProtocolVersion` 26 -> 27 in `SimCodec.cs` and `crates/eve-space/src/link.rs`; `oracle/fixtures/simlink/messages.json` regenerated (Hello and HelloAck at 27, the Ibis at 0.25). Bumped once, in this batch (local, not pushed).

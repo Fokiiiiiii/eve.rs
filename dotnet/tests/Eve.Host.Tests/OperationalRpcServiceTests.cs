@@ -209,14 +209,21 @@ public sealed class OperationalRpcServiceTests
     }
 
     [Fact]
-    public async Task Compress_item_in_space_without_a_facility_backend_returns_none()
+    public async Task Compress_item_in_space_without_a_facility_backend_refuses_by_name()
     {
         var item = new Item(55, 123, 20, 400, 5, 40, false, null);
         IService service = new InSpaceCompressionMgrRpcService(
             (_, _) => ValueTask.FromResult<Item?>(item));
 
-        Assert.IsType<PyNone>(await service.CallAsync(Call(
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Call(
             "CompressItemInSpace",
-            args: [new PyLong(55), new PyLong(901)])));
+            args: [new PyLong(55), new PyLong(901)])).AsTask());
+
+        var arguments = ((PyTuple)((PyTuple)((PyObjectEx)error.Error.Payload).Header).Items[1]).Items;
+        Assert.Equal("CustomNotify", ((PyStr)arguments[0]).Value);
+        var values = ((PyDict)arguments[1]).Entries.ToDictionary(e => ((PyStr)e.Key).Value, e => e.Value);
+        Assert.Equal(
+            "In-space ore compression is not available on this server yet.",
+            ((PyStr)values["notify"]).Value);
     }
 }

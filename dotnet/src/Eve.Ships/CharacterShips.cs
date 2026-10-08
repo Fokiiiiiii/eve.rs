@@ -161,7 +161,8 @@ public sealed partial class CharacterShips(
         }
 
         var unpack = toShip && !ship.Singleton;
-        await statics.EnsureTypesAsync([item.TypeId], cancellationToken);
+        var provenance = await items.Mutations.GetAsync(item.Id, cancellationToken);
+        await statics.EnsureTypesAsync(ItemDogma.TypeIdsOf(item, provenance), cancellationToken);
         var world = snapshot.World;
         var type = statics.Type(item.TypeId);
         var wasInSlot = inShip && Slots.IsSlotFlag(item.Flag);
@@ -171,7 +172,7 @@ public sealed partial class CharacterShips(
 
         // the item is held in the hangar, out of any slot, while it is worked out where it goes
         world.Remove(item.Id);
-        var candidate = world.Add(new DogmaItem(item.Id, item.TypeId, characterId, station, ItemFlags.Hangar));
+        var candidate = world.Add(ItemDogma.Of(item, characterId, station, ItemFlags.Hangar, mutation: provenance));
 
         int destinationFlag;
         if (toHangar)
@@ -253,7 +254,7 @@ public sealed partial class CharacterShips(
         world.Remove(item.Id);
         if (landsInSlot)
         {
-            world.Add(new DogmaItem(item.Id, item.TypeId, characterId, ship.Id, destinationFlag, newState));
+            world.Add(ItemDogma.Of(item, characterId, ship.Id, destinationFlag, newState, provenance));
         }
         var shipAfter = world.Attributes(ship.Id);
 

@@ -18,6 +18,12 @@ public interface IEffectHandler<THost, TResult>
     /// <summary>Why the effect cannot start (no ammunition), or <c>null</c>. Asked before the host checks that there is a target.</summary>
     string? Refusal(EffectContext<THost> context) => null;
 
+    /// <summary>
+    /// Whether this handler does the effect's work. <c>false</c> for a handler that only refuses (a pending body): it is registered and refuses the effect, but the
+    /// effect stays uncovered in <see cref="EffectRegistry{THost, TResult}.Uncovered"/>, so a refusal is never read as coverage.
+    /// </summary>
+    bool Implemented => true;
+
     TResult Build(EffectContext<THost> context);
 }
 
@@ -51,13 +57,21 @@ public sealed class EffectRegistry<THost, TResult>
     public IEffectHandler<THost, TResult>? Find(EffectContext<THost> context) =>
         _byName.TryGetValue(context.Effect.Name.Trim(), out var list) ? list.FirstOrDefault(h => h.Handles(context)) : null;
 
-    /// <summary>The effect names that have a handler.</summary>
+    /// <summary>The effect names that have a handler, implemented or pending.</summary>
     public IReadOnlyCollection<string> Names => _byName.Keys;
 
-    /// <summary>The effects of the given categories (activation and target, by default) in the static data that no handler serves.</summary>
+    /// <summary>The effect names that have at least one handler that does the work (<see cref="IEffectHandler{THost, TResult}.Implemented"/>).</summary>
+    public IReadOnlyCollection<string> ImplementedNames => [.. _byName.Where(p => p.Value.Any(h => h.Implemented)).Select(p => p.Key)];
+
+    /// <summary>
+    /// The effects of the given categories (activation and target, by default) in the static data that no implemented handler serves. A name served only by
+    /// pending handlers is listed: its refusal is not coverage.
+    /// </summary>
     public IReadOnlyList<EffectDef> Uncovered(DogmaStatic statics, params int[] categories)
     {
         var wanted = categories.Length > 0 ? categories : [EffectDef.Activation, EffectDef.Target];
-        return [.. statics.Effects.Where(e => wanted.Contains(e.Category) && !_byName.ContainsKey(e.Name.Trim())).OrderBy(e => e.Name, StringComparer.Ordinal)];
+        return [.. statics.Effects.Where(e => wanted.Contains(e.Category) && !IsImplemented(e.Name)).OrderBy(e => e.Name, StringComparer.Ordinal)];
     }
+
+    private bool IsImplemented(string name) => _byName.TryGetValue(name.Trim(), out var list) && list.Any(h => h.Implemented);
 }

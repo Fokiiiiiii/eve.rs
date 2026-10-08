@@ -8,13 +8,14 @@
 use crate::death::Credit;
 use crate::health::{Condition, Layer, Resonances, Vitals};
 use crate::missiles::Missile;
+use crate::drones::DroneEffect;
 use crate::modules::{Action, Applies, Change, Effect, Numbers, Reach, Remote};
 use crate::scene::{HeatModuleProfile, HeatProfile, HeatRack};
 use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
-use crate::weapons::{Charge, Turret};
+use crate::weapons::{Arc, Aoe, Charge, Spool, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 20;
+pub const PROTOCOL_VERSION: u16 = 21;
 
 /// The message kinds.
 pub mod kind {
@@ -124,6 +125,8 @@ pub struct LaunchDrone {
     pub mining_waste_multiplier: f64,
     pub mining_waste_probability: f64,
     pub salvage_access_bonus: f64,
+    /// The non-damage effect the drone runs at its target each cycle (a stasis webifier, a remote repairer, an ECM jammer), when its type has one.
+    pub effect: Option<DroneEffect>,
 }
 
 /// A wreck the host made, to be put in space: the item it is (the host's own id), what it is, where, and who may take what is in it.
@@ -798,6 +801,41 @@ fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
         }),
         _ => return Err(DecodeError::BadValue("missile")),
     };
+    let spool = match reader.u8()? {
+        0 => None,
+        1 => {
+            let (per_cycle, max) = (reader.f64()?, reader.f64()?);
+            if !per_cycle.is_finite() || per_cycle < 0.0 || !max.is_finite() || max < 0.0 {
+                return Err(DecodeError::BadValue("spool"));
+            }
+            Some(Spool { per_cycle, max })
+        }
+        _ => return Err(DecodeError::BadValue("spool")),
+    };
+    let aoe = match reader.u8()? {
+        0 => None,
+        1 => {
+            let (explosion_radius, explosion_velocity) = (reader.f64()?, reader.f64()?);
+            let (damage_reduction_factor, damage_reduction_sensitivity) = (reader.f64()?, reader.f64()?);
+            let numbers = [explosion_radius, explosion_velocity, damage_reduction_factor, damage_reduction_sensitivity];
+            if numbers.iter().any(|number| !number.is_finite() || *number < 0.0) {
+                return Err(DecodeError::BadValue("aoe"));
+            }
+            Some(Aoe { explosion_radius, explosion_velocity, damage_reduction_factor, damage_reduction_sensitivity })
+        }
+        _ => return Err(DecodeError::BadValue("aoe")),
+    };
+    let arc = match reader.u8()? {
+        0 => None,
+        1 => {
+            let (range, targets) = (reader.f64()?, reader.i32()?);
+            if !range.is_finite() || range < 0.0 || targets < 0 {
+                return Err(DecodeError::BadValue("arc"));
+            }
+            Some(Arc { range, targets })
+        }
+        _ => return Err(DecodeError::BadValue("arc")),
+    };
     Ok(Turret {
         weapon_type_id,
         fx,
@@ -808,6 +846,9 @@ fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
         signature_resolution,
         charge,
         missile,
+        spool,
+        aoe,
+        arc,
     })
 }
 
@@ -891,6 +932,36 @@ fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
             ] {
                 out.extend_from_slice(&number.to_le_bytes());
             }
+        }
+    }
+    match &turret.spool {
+        None => out.push(0),
+        Some(spool) => {
+            out.push(1);
+            out.extend_from_slice(&spool.per_cycle.to_le_bytes());
+            out.extend_from_slice(&spool.max.to_le_bytes());
+        }
+    }
+    match &turret.aoe {
+        None => out.push(0),
+        Some(aoe) => {
+            out.push(1);
+            for number in [
+                aoe.explosion_radius,
+                aoe.explosion_velocity,
+                aoe.damage_reduction_factor,
+                aoe.damage_reduction_sensitivity,
+            ] {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
+        }
+    }
+    match &turret.arc {
+        None => out.push(0),
+        Some(arc) => {
+            out.push(1);
+            out.extend_from_slice(&arc.range.to_le_bytes());
+            out.extend_from_slice(&arc.targets.to_le_bytes());
         }
     }
 }
@@ -1780,6 +1851,9 @@ impl Message {
                             signature_resolution: 0.0,
                             charge: None,
                             missile: None,
+                            spool: None,
+                            aoe: None,
+                            arc: None,
                         },
                     }),
                 }
@@ -1792,6 +1866,17 @@ impl Message {
                 out.extend_from_slice(&launch.mining_waste_multiplier.to_le_bytes());
                 out.extend_from_slice(&launch.mining_waste_probability.to_le_bytes());
                 out.extend_from_slice(&launch.salvage_access_bonus.to_le_bytes());
+                match &launch.effect {
+                    None => out.push(0),
+                    Some(effect) => {
+                        out.push(1);
+                        out.extend_from_slice(&effect.effect_id.to_le_bytes());
+                        put_text(&mut out, &effect.fx);
+                        out.extend_from_slice(&effect.cycle_ms.to_le_bytes());
+                        out.extend_from_slice(&effect.lasting_ms.to_le_bytes());
+                        put_action(&mut out, &effect.action);
+                    }
+                }
             }
             Self::DroneCommand { session_id, command, target_id, drone_ids, control_range } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
@@ -2221,6 +2306,17 @@ impl Message {
                 mining_waste_multiplier: r.f64()?,
                 mining_waste_probability: r.f64()?,
                 salvage_access_bonus: r.f64()?,
+                effect: match r.u8()? {
+                    0 => None,
+                    1 => Some(DroneEffect {
+                        effect_id: r.i32()?,
+                        fx: r.text()?,
+                        cycle_ms: r.f64()?,
+                        lasting_ms: r.f64()?,
+                        action: read_action(&mut r)?,
+                    }),
+                    _ => return Err(DecodeError::BadValue("drone effect flag")),
+                },
             })),
             kind::DRONE_COMMAND => {
                 let (session_id, command, target_id) = (r.u64()?, r.u8()?, r.i64()?);

@@ -81,11 +81,18 @@ def turret(t):
     c = t.get("charge")
     body += bytes([0]) if not c else bytes([1]) + struct.pack("<iiqq", c["typeId"], c["flag"], c["rounds"], c["perCycle"])
     m = t.get("missile")
-    if not m:
-        return body + bytes([0])
-    return (body + bytes([1]) + struct.pack("<ii", m["chargeTypeId"], m["groupId"]) + s(m["name"])
-            + struct.pack("<10d", m["radius"], m["mass"], m["agility"], m["hitPoints"], m["maxVelocity"], m["flightTimeMs"], m["explosionRadius"],
-                          m["explosionVelocity"], m["damageReductionFactor"], m["damageReductionSensitivity"]))
+    body += bytes([0]) if not m else (bytes([1]) + struct.pack("<ii", m["chargeTypeId"], m["groupId"]) + s(m["name"])
+                                      + struct.pack("<10d", m["radius"], m["mass"], m["agility"], m["hitPoints"], m["maxVelocity"], m["flightTimeMs"],
+                                                    m["explosionRadius"], m["explosionVelocity"], m["damageReductionFactor"], m["damageReductionSensitivity"]))
+    # a precursor weapon's damage ramp: the bonus a cycle adds and the most it reaches (absent for the others)
+    p = t.get("spool")
+    body += bytes([1]) + struct.pack("<2d", p["perCycle"], p["max"]) if p else bytes([0])
+    # a vorton's explosion (its cloud and velocity, the damage reduction) and its arc (the range from the target, the ships in all)
+    a = t.get("aoe")
+    body += bytes([1]) + struct.pack("<4d", a["explosionRadius"], a["explosionVelocity"], a["damageReductionFactor"],
+                                     a["damageReductionSensitivity"]) if a else bytes([0])
+    c = t.get("arc")
+    return body + (bytes([1]) + struct.pack("<di", c["range"], c["targets"]) if c else bytes([0]))
 
 
 LAYERS = {"shield": 0, "armor": 1, "structure": 2}
@@ -155,6 +162,12 @@ def effect(e):
 
 def weapon(w):
     return i64(w["moduleId"]) + struct.pack("<idd", w["effectId"], w["cycleMs"], w["capacitorNeed"]) + turret(w)
+
+
+# what the host sends for a drone with no weapon: no module, no turret
+EMPTY_WEAPON = {"moduleId": 0, "effectId": 0, "cycleMs": 0.0, "capacitorNeed": 0.0, "weaponTypeId": 0, "fx": "",
+                "rawDamage": [0.0, 0.0, 0.0, 0.0], "optimalRange": 0.0, "falloff": 0.0, "trackingSpeed": 0.0,
+                "signatureResolution": 0.0}
 
 
 def identity(i):
@@ -254,8 +267,18 @@ def build(m):
     if k == "SpawnReply":
         return frame(k, u64(m["requestId"]) + (bytes([0]) + u64(m["session"]) if m["ok"] else bytes([1]) + s(m["reason"])))
     if k == "LaunchDrone":
-        return frame(k, u64(m["requestId"]) + u64(m["sessionId"]) + ship(m["ship"]) + weapon(m["weapon"])
-                     + struct.pack("<iddd", m["graphicId"], m["orbitDistance"], m["attackRange"], m["cruiseFraction"]))
+        # the work profile (mining, salvage) is zero for a drone that does neither; the remote effect (a web, a repair, a jam)
+        # is a flag, then the effect's id, its name in the destiny stream, its cycle and how long it lands, and the action it does
+        work = struct.pack("<5d", m.get("miningAmountM3", 0.0), m.get("workCycleMs", 0.0), m.get("miningWasteMultiplier", 0.0),
+                           m.get("miningWasteProbability", 0.0), m.get("salvageAccessBonus", 0.0))
+        e = m.get("effect")
+        remote = (bytes([1]) + struct.pack("<i", e["effectId"]) + s(e["fx"]) + struct.pack("<dd", e["cycleMs"], e["lastingMs"]) + action(e["action"])
+                  if e else bytes([0]))
+        # a drone without a weapon still carries the empty weapon record (module 0, no turret), as the host sends it
+        weapon_record = weapon(m["weapon"]) if m.get("weapon") else weapon(EMPTY_WEAPON)
+        body = (u64(m["requestId"]) + u64(m["sessionId"]) + ship(m["ship"]) + weapon_record
+                + struct.pack("<iddd", m["graphicId"], m["orbitDistance"], m["attackRange"], m["cruiseFraction"]) + work + remote)
+        return frame(k, body)
     if k == "DroneCommand":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + i64(m["targetId"]) + struct.pack("<I", len(m["droneIds"]))
                      + b"".join(i64(d) for d in m["droneIds"]) + struct.pack("<d", m["controlRange"]))
@@ -289,8 +312,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 20},
-    {"name": "hello ack", "kind": "HelloAck", "version": 20, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 21},
+    {"name": "hello ack", "kind": "HelloAck", "version": 21, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -505,6 +528,34 @@ valid = [
                                        "damageReductionSensitivity": 5.5}},
                 "onChanges": [{"itemId": "9988400003564", "attributeId": 51, "value": 4900.0}],
                 "offChanges": [{"itemId": "9988400003564", "attributeId": 51, "value": 4900.0}]}},
+    {"name": "activate a precursor weapon that builds its damage up", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002720", "moduleType": 47272, "effectId": 6995, "fx": "effects.Laser",
+                "durationMs": 3500.0, "capacitorNeed": 4.5, "repeat": 1000, "targetId": "980050000108",
+                "turret": {"weaponTypeId": 47272, "fx": "effects.Laser", "rawDamage": [0.0, 0.0, 2.5, 0.0],
+                           "optimalRange": 6000.0, "falloff": 0.0, "trackingSpeed": 410.0, "signatureResolution": 40000.0,
+                           "spool": {"perCycle": 0.07, "max": 2.125}},
+                "onChanges": [{"itemId": "9988400002720", "attributeId": 6, "value": 4.5},
+                              {"itemId": "9988400002720", "attributeId": 51, "value": 3500.0},
+                              {"itemId": "9988400002720", "attributeId": 54, "value": 6000.0}],
+                "offChanges": [{"itemId": "9988400002720", "attributeId": 6, "value": 4.5},
+                               {"itemId": "9988400002720", "attributeId": 51, "value": 3500.0},
+                               {"itemId": "9988400002720", "attributeId": 54, "value": 6000.0}]}},
+    {"name": "activate a vorton projector whose explosion needs no roll and whose arc reaches ten ships", "kind": "Activate",
+     "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002721", "moduleType": 54739, "effectId": 8037, "fx": "effects.AttackMode",
+                "durationMs": 6000.0, "capacitorNeed": 7.0, "repeat": 1000, "targetId": "980050000108",
+                "turret": {"weaponTypeId": 54739, "fx": "effects.AttackMode", "rawDamage": [116.0, 0.0, 17.0, 0.0],
+                           "optimalRange": 22464.0, "falloff": 0.0, "trackingSpeed": 0.0, "signatureResolution": 40000.0,
+                           "charge": {"typeId": 54769, "flag": 11, "rounds": 1000, "perCycle": 1},
+                           "aoe": {"explosionRadius": 43.0, "explosionVelocity": 190.0, "damageReductionFactor": 0.4,
+                                   "damageReductionSensitivity": 5.5},
+                           "arc": {"range": 10000.0, "targets": 10}},
+                "onChanges": [{"itemId": "9988400002721", "attributeId": 6, "value": 7.0},
+                              {"itemId": "9988400002721", "attributeId": 51, "value": 6000.0},
+                              {"itemId": "9988400002721", "attributeId": 54, "value": 22464.0}],
+                "offChanges": [{"itemId": "9988400002721", "attributeId": 6, "value": 7.0},
+                               {"itemId": "9988400002721", "attributeId": 51, "value": 6000.0},
+                               {"itemId": "9988400002721", "attributeId": 54, "value": 22464.0}]}},
     {"name": "rounds spent", "kind": "ChargeSpent", "sessionId": "1790646377000015", "moduleId": "9988400002719", "roundsLeft": "79"},
     {"name": "rounds loaded into a gun that runs", "kind": "AdjustCharge", "requestId": "41", "sessionId": "1790646377000015", "moduleId": "9988400002719",
      "chargeType": 222, "op": "add", "capacity": "80", "available": "40"},
@@ -558,6 +609,11 @@ valid = [
      "weapon": {"moduleId": "9988400003716", "effectId": 10, "cycleMs": 4000.0, "capacitorNeed": 0.0, "weaponTypeId": 2454, "fx": "effects.Laser",
                 "rawDamage": [0.0, 32.0, 0.0, 0.0], "optimalRange": 2100.0, "falloff": 2000.0, "trackingSpeed": 1.815, "signatureResolution": 25.0},
      "graphicId": 1099, "orbitDistance": 700.0, "attackRange": 2800.0, "cruiseFraction": 0.2357142857142857},
+    {"name": "launch of a web drone", "kind": "LaunchDrone", "requestId": "12", "sessionId": "1790646377000015",
+     "ship": dict(BARE, shipId="9988400003720", characterId="0", ownerId="140000342", categoryId=18, groupId=641, typeId=23731, name="Warrior SW-300"),
+     "weapon": None, "graphicId": 1124, "orbitDistance": 500.0, "attackRange": 10000.0, "cruiseFraction": 0.25,
+     "effect": {"effectId": 6690, "fx": "effects.ModifyTargetSpeed", "cycleMs": 5000.0, "lastingMs": 5000.0,
+                "action": {"kind": "remote", "what": "web", "percent": -5.0, "optimal": 5000.0, "falloff": 0.0, "when": "start", "jam": "webify"}}},
     {"name": "order to engage", "kind": "DroneCommand", "sessionId": "1790646377000015", "command": 1, "targetId": "980050000077",
      "droneIds": ["9988400003716", "9988400003717"], "controlRange": 40_000.0},
     {"name": "order to go home", "kind": "DroneCommand", "sessionId": "1790646377000015", "command": 2, "targetId": "0", "droneIds": ["9988400003716"], "controlRange": 20_000.0},
@@ -601,6 +657,13 @@ for case in valid:
 
 # each of these is refused for the stated reason
 good = build(valid[2])  # a good Enter
+precursor = next(c for c in valid if c["name"] == "activate a precursor weapon that builds its damage up")
+negative_spool = dict(precursor, effect=dict(precursor["effect"], turret=dict(precursor["effect"]["turret"], spool={"perCycle": -0.07, "max": 2.125})))
+vorton = next(c for c in valid if c["name"].startswith("activate a vorton projector"))
+negative_radius = dict(vorton, effect=dict(vorton["effect"], turret=dict(vorton["effect"]["turret"],
+                                                                         aoe=dict(vorton["effect"]["turret"]["aoe"], explosionRadius=-43.0))))
+negative_targets = dict(vorton, effect=dict(vorton["effect"], turret=dict(vorton["effect"]["turret"],
+                                                                          arc={"range": 10000.0, "targets": -1})))
 invalid = [
     {"name": "unknown kind", "reason": "unknown-kind", "hex": "01000000ff"},
     {"name": "kind zero", "reason": "unknown-kind", "hex": "0100000000"},
@@ -610,6 +673,9 @@ invalid = [
     {"name": "enter with an unknown way in", "reason": "bad-value",
      "hex": (good[:4] + good[4:17] + bytes([7]) + good[18:]).hex()},
     {"name": "enter cut short", "reason": "truncated", "hex": (struct.pack("<I", 20) + good[4:24]).hex()},
+    {"name": "precursor spool with a negative bonus per cycle", "reason": "bad-value", "hex": build(negative_spool).hex()},
+    {"name": "vorton explosion with a negative radius", "reason": "bad-value", "hex": build(negative_radius).hex()},
+    {"name": "vorton arc with a negative number of targets", "reason": "bad-value", "hex": build(negative_targets).hex()},
     {"name": "enter reply with an unknown status", "reason": "bad-value",
      "hex": (struct.pack("<I", 12) + bytes([13]) + u64(1) + bytes([2]) + s("")).hex()},
     {"name": "text that is not UTF-8", "reason": "utf8",

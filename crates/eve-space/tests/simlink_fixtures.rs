@@ -2,6 +2,8 @@
 //! file): every valid frame encodes to its bytes and decodes back, every invalid one is refused for the stated reason.
 
 use eve_space::death::Credit;
+use eve_space::drones::DroneEffect;
+use serde_json::json;
 use eve_space::health::{Condition, Layer, Resonances, Vitals};
 use eve_space::link::{
     ChargeOp, ContainerPlacement, DecodeError, Enter, How, LaunchDrone, Message, Spawn, WreckPlacement,
@@ -10,7 +12,7 @@ use eve_space::missiles::Missile;
 use eve_space::modules::{Action, Applies, Change, Effect, Numbers, Reach, Remote};
 use eve_space::scene::{HeatModuleProfile, HeatProfile, HeatRack};
 use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
-use eve_space::weapons::{Charge, Turret};
+use eve_space::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use eve_space::wreck::WreckKind;
 use serde_json::Value;
 
@@ -150,6 +152,20 @@ fn turret_of(w: &Value) -> Turret {
             explosion_velocity: m["explosionVelocity"].as_f64().unwrap(),
             damage_reduction_factor: m["damageReductionFactor"].as_f64().unwrap(),
             damage_reduction_sensitivity: m["damageReductionSensitivity"].as_f64().unwrap(),
+        }),
+        spool: w
+            .get("spool")
+            .filter(|s| !s.is_null())
+            .map(|s| Spool { per_cycle: s["perCycle"].as_f64().unwrap(), max: s["max"].as_f64().unwrap() }),
+        aoe: w.get("aoe").filter(|a| !a.is_null()).map(|a| Aoe {
+            explosion_radius: a["explosionRadius"].as_f64().unwrap(),
+            explosion_velocity: a["explosionVelocity"].as_f64().unwrap(),
+            damage_reduction_factor: a["damageReductionFactor"].as_f64().unwrap(),
+            damage_reduction_sensitivity: a["damageReductionSensitivity"].as_f64().unwrap(),
+        }),
+        arc: w.get("arc").filter(|a| !a.is_null()).map(|a| Arc {
+            range: a["range"].as_f64().unwrap(),
+            targets: a["targets"].as_i64().unwrap() as i32,
         }),
     }
 }
@@ -313,6 +329,22 @@ fn identity_of(case: &Value) -> NpcIdentity {
         hull: case.get("hull").and_then(Value::as_bool).unwrap_or(false),
         host_wreck: case.get("hostWreck").and_then(Value::as_bool).unwrap_or(false),
         drone: None,
+    }
+}
+
+/// A drone's remote effect of the fixture: its id, name and cycle numbers, and the action a cycle does (read as an activation's, which holds the same action).
+fn drone_effect_of(case: &Value) -> DroneEffect {
+    let activation = json!({
+        "moduleId": "0", "moduleType": 0, "effectId": case["effectId"], "fx": case["fx"],
+        "durationMs": case["cycleMs"], "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
+        "onChanges": [], "offChanges": [], "action": case["action"],
+    });
+    DroneEffect {
+        effect_id: case["effectId"].as_i64().unwrap() as i32,
+        fx: text(case, "fx"),
+        cycle_ms: case["cycleMs"].as_f64().unwrap(),
+        lasting_ms: case["lastingMs"].as_f64().unwrap(),
+        action: effect_of(&activation).action.expect("the drone effect's action"),
     }
 }
 
@@ -557,6 +589,7 @@ fn message_of(case: &Value) -> Message {
             mining_waste_multiplier: case.get("miningWasteMultiplier").and_then(Value::as_f64).unwrap_or(0.0),
             mining_waste_probability: case.get("miningWasteProbability").and_then(Value::as_f64).unwrap_or(0.0),
             salvage_access_bonus: case.get("salvageAccessBonus").and_then(Value::as_f64).unwrap_or(0.0),
+            effect: case.get("effect").filter(|effect| !effect.is_null()).map(drone_effect_of),
         })),
         "DroneCommand" => Message::DroneCommand {
             session_id: session_id(),

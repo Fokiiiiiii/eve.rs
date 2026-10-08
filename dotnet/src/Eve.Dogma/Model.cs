@@ -82,6 +82,9 @@ public sealed record EffectDef(int Id, string Name, int Category, IReadOnlyList<
     /// <summary>What the client's effects are called in the destiny stream (<c>effects.Afterburner</c>); empty when the data has none.</summary>
     public string Guid { get; init; } = "";
 
+    /// <summary>The attribute that holds how far the effect reaches (0 when it has no range).</summary>
+    public int RangeAttributeId { get; init; }
+
     /// <summary>The attribute that holds how long a cycle of the effect takes (0 when it has none).</summary>
     public int DurationAttributeId { get; init; }
 

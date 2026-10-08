@@ -82,6 +82,9 @@ pub(crate) fn rat_identity(aggression_range: f64) -> NpcIdentity {
                     signature_resolution: 40.0,
                     charge: None,
                     missile: None,
+                    spool: None,
+                    aoe: None,
+                    arc: None,
                 },
             }],
         },
@@ -296,6 +299,9 @@ fn missile_rat_identity(aggression_range: f64) -> NpcIdentity {
             damage_reduction_factor: 0.5,
             damage_reduction_sensitivity: 5.5,
         }),
+        spool: None,
+        aoe: None,
+        arc: None,
     };
     identity
 }

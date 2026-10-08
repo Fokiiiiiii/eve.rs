@@ -4,8 +4,8 @@ namespace Eve.Services.Space.Effects;
 
 /// <summary>
 /// The handler of a module effect whose body is not written yet (the exploration, hacking and scanner effects in <c>ExplorationModuleEffects.cs</c>). It is
-/// registered like any other handler, so the effect is no longer uncovered and its module is fitted and onlined as usual. An activation is refused with
-/// <see cref="NotImplemented"/>: the module does not cycle, takes no capacitor and reports no success, and the client is told the module cannot be activated
+/// registered like any other handler, so its module is fitted and onlined as usual. It is not coverage: <see cref="IEffectHandler{THost, TResult}.Implemented"/>
+/// is false and the effect stays listed as uncovered. An activation is refused with <see cref="NotImplemented"/>: the module does not cycle, takes no capacitor and reports no success, and the client is told the module cannot be activated
 /// (<c>DogmaIMService.ModuleError</c>). <see cref="ModulePackages.Of"/> asks the refusal after the module is checked to be online and before a target is asked
 /// for, so a pending effect is refused the same way whether or not it has a target.
 /// </summary>
@@ -35,6 +35,12 @@ internal abstract class PendingModuleEffect : ShipEffect
 
     /// <summary>The pending refusal. An implementation replaces it with its own checks (or null when there are none).</summary>
     protected override string? Refusal(ModuleEffectContext module) => NotImplemented;
+
+    /// <summary>
+    /// False: the handler only refuses, so its effect stays uncovered in <see cref="EffectRegistry{THost, TResult}.Uncovered"/>. An implementation that writes the body
+    /// removes this override (the default is true).
+    /// </summary>
+    protected override bool Implemented => false;
 
     /// <summary>
     /// The body of the effect: the <see cref="SimEffect"/> of a module that may start. Not written yet, so it throws, and it is not reached while

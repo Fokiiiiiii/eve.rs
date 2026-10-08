@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 20;
+    public const ushort ProtocolVersion = 21;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -177,6 +177,16 @@ public static class SimCodec
             turret.SignatureResolution, turret.Charge, turret.Missile);
     }
 
+
+    /// <summary>The effect a drone runs at its target, when it has one (a flag, then the effect and its action).</summary>
+    private static SimDroneEffect? ReadOptionalDroneEffect(ref Reader r)
+    {
+        if (r.U8() == 0)
+        {
+            return null;
+        }
+        return new SimDroneEffect(r.I32(), r.Text(), r.F64(), r.F64(), ReadAction(ref r));
+    }
 
     private static SimNpcWeapon? ReadOptionalWeapon(ref Reader r)
     {
@@ -463,7 +473,57 @@ public static class SimCodec
             1 => new SimMissile(r.I32(), r.I32(), r.Text(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64()),
             _ => throw new SimLinkException(SimLinkError.BadValue, "bad missile"),
         };
-        return new SimTurret(weaponType, fx, damage, optimal, falloff, tracking, resolution, charge, missile);
+        var spool = r.U8() switch
+        {
+            0 => null,
+            1 => ReadSpool(ref r),
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad spool"),
+        };
+        var aoe = r.U8() switch
+        {
+            0 => null,
+            1 => ReadAoe(ref r),
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad aoe"),
+        };
+        var arc = r.U8() switch
+        {
+            0 => null,
+            1 => ReadArc(ref r),
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad arc"),
+        };
+        return new SimTurret(weaponType, fx, damage, optimal, falloff, tracking, resolution, charge, missile, spool, aoe, arc);
+    }
+
+    private static SimAoe ReadAoe(ref Reader r)
+    {
+        var (radius, velocity) = (r.F64(), r.F64());
+        var (factor, sensitivity) = (r.F64(), r.F64());
+        if (!double.IsFinite(radius) || radius < 0 || !double.IsFinite(velocity) || velocity < 0
+            || !double.IsFinite(factor) || factor < 0 || !double.IsFinite(sensitivity) || sensitivity < 0)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad aoe");
+        }
+        return new SimAoe(radius, velocity, factor, sensitivity);
+    }
+
+    private static SimArc ReadArc(ref Reader r)
+    {
+        var (range, targets) = (r.F64(), r.I32());
+        if (!double.IsFinite(range) || range < 0 || targets < 0)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad arc");
+        }
+        return new SimArc(range, targets);
+    }
+
+    private static SimSpool ReadSpool(ref Reader r)
+    {
+        var (perCycle, max) = (r.F64(), r.F64());
+        if (!double.IsFinite(perCycle) || perCycle < 0 || !double.IsFinite(max) || max < 0)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad spool");
+        }
+        return new SimSpool(perCycle, max);
     }
 
     /// <summary>Decodes a frame's payload: the kind byte and the body (without the length prefix).</summary>
@@ -636,7 +696,7 @@ public static class SimCodec
                     break;
                 }
             case Kind.LaunchDrone:
-                message = new SimLaunchDrone(r.U64(), r.U64(), ReadShip(ref r), ReadOptionalWeapon(ref r), r.I32(), r.F64(), r.F64(), r.F64(), new SimDroneWorkProfile(r.F64(), r.F64(), r.F64(), r.F64(), r.F64()));
+                message = new SimLaunchDrone(r.U64(), r.U64(), ReadShip(ref r), ReadOptionalWeapon(ref r), r.I32(), r.F64(), r.F64(), r.F64(), new SimDroneWorkProfile(r.F64(), r.F64(), r.F64(), r.F64(), r.F64()), ReadOptionalDroneEffect(ref r));
                 break;
             case Kind.DroneCommand:
                 {
@@ -995,6 +1055,38 @@ public static class SimCodec
             w.F64(missile.ExplosionVelocity);
             w.F64(missile.DamageReductionFactor);
             w.F64(missile.DamageReductionSensitivity);
+        }
+        else
+        {
+            w.U8(0);
+        }
+        if (t.Spool is { } spool)
+        {
+            w.U8(1);
+            w.F64(spool.PerCycle);
+            w.F64(spool.Max);
+        }
+        else
+        {
+            w.U8(0);
+        }
+        if (t.Aoe is { } aoe)
+        {
+            w.U8(1);
+            w.F64(aoe.ExplosionRadius);
+            w.F64(aoe.ExplosionVelocity);
+            w.F64(aoe.DamageReductionFactor);
+            w.F64(aoe.DamageReductionSensitivity);
+        }
+        else
+        {
+            w.U8(0);
+        }
+        if (t.Arc is { } arc)
+        {
+            w.U8(1);
+            w.F64(arc.Range);
+            w.I32(arc.Targets);
         }
         else
         {
@@ -1530,6 +1622,19 @@ private static void WriteAction(Writer w, SimAction action)
                 w.F64(m.Work.MiningWasteVolumeMultiplier);
                 w.F64(m.Work.MiningWasteProbability);
                 w.F64(m.Work.SalvageAccessDifficultyBonus);
+                if (m.Effect is { } effect)
+                {
+                    w.U8(1);
+                    w.I32(effect.EffectId);
+                    w.Text(effect.Fx);
+                    w.F64(effect.CycleMs);
+                    w.F64(effect.LastingMs);
+                    WriteAction(w, effect.Action);
+                }
+                else
+                {
+                    w.U8(0);
+                }
                 break;
             case SimDroneCommand m:
                 w.U8(Kind.DroneCommand);

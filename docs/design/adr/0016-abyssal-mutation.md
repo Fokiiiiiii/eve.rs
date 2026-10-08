@@ -86,6 +86,9 @@ result. CCP shows the mutaplasmid and the input in the tooltip (patch 1.5 [C]), 
 
 **Other decisions recorded with D1-D9.**
 
+- *Placement.* The authority `ItemMutationService` lives in the domain project `Eve.Inventory` (`Mutation/`), not in
+  `Eve.Services.Inventory`: `dotnet/src/AGENTS.md` reserves `Eve.Services*` for RPC handlers, wire conversion and notifications.
+  `Eve.Inventory` takes references to `Eve.Dogma` (pure, ADR 0004) and `Eve.Events`, neither of which references it back.
 - *Transaction.* Consume of the mutaplasmid and the source, creation of the result and the store of its record happen in **one
   PostgreSQL transaction**. Both inputs are locked in ascending id order (`LockAndGetAsync`). Any failure before commit leaves both
   inputs, no record and no event.

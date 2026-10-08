@@ -2,11 +2,9 @@ using System.Security.Cryptography;
 using Eve.Data;
 using Eve.Dogma;
 using Eve.Events;
-using Eve.Inventory;
-using Eve.Inventory.Mutation;
 using Npgsql;
 
-namespace Eve.Services.Inventory;
+namespace Eve.Inventory.Mutation;
 
 /// <summary>Why a mutation is refused. Every refusal is decided before the first write, so a refused request changes nothing.</summary>
 public enum ItemMutationRefusal

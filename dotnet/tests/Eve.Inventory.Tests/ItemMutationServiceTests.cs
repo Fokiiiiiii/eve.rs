@@ -5,10 +5,9 @@ using Eve.Inventory;
 using Eve.Inventory.Mutation;
 using Eve.Scheduler;
 using Eve.Sde;
-using Eve.Services.Inventory;
 using Npgsql;
 
-namespace Eve.Services.Inventory.Tests;
+namespace Eve.Inventory.Tests;
 
 /// <summary>
 /// The abyssal mutation authority over a scratch item schema, a scratch event bus and the real SDE (skipped without EVE_PG_URL;
@@ -33,7 +32,7 @@ public class ItemMutationServiceTests
 
     private static async Task<(DogmaStatic Statics, MutatorCatalog Catalog)> LoadStaticDataAsync()
     {
-        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Rig.Url!));
+        var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
         var sde = new SdeReader(source);
         Assert.True(await sde.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
         return (await DogmaStatic.LoadAsync(sde), await MutatorCatalog.LoadAsync(sde));
@@ -96,7 +95,7 @@ public class ItemMutationServiceTests
         public static async Task<Mutations> CreateAsync()
         {
             var (statics, catalog) = await StaticData.Value;
-            var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Rig.Url!));
+            var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(PgFactAttribute.Url!));
             var id = Guid.NewGuid().ToString("N")[..12];
             var mutations = new Mutations(source, id, statics, catalog);
             await PgItemStore.MigrateAsync(source, mutations._schema);

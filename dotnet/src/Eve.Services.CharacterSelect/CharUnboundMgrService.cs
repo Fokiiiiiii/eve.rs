@@ -25,7 +25,9 @@ public sealed partial class CharUnboundMgrService(
     OnlineCharacters online,
     IReadOnlyList<ICharacterEntryHook> entryHooks,
     Random random,
-    bool newCharacterExperienceEnabled = false)
+    bool newCharacterExperienceEnabled = false,
+    Func<long, CancellationToken, Task>? sendWelcomeMailAsync = null,
+    Func<long, int>? unreadMailCount = null)
 {
     /// <summary>What every session's role gets on top of the account's (the client shows staff roles and the base bits alike).</summary>
     public const long SessionBaseRole = 0x6000000080000000;
@@ -229,6 +231,8 @@ public sealed partial class CharUnboundMgrService(
             Appearance(call.Arg(5)),
             Appearance(call.Arg(6)));
         var outcome = await creation.CreateAsync(request, Token(call));
+        if (outcome is Created newCharacter && sendWelcomeMailAsync is not null)
+            await sendWelcomeMailAsync(newCharacter.CharacterId, Token(call));
         return outcome switch
         {
             Created created => new PyInt(created.CharacterId),
@@ -244,11 +248,11 @@ public sealed partial class CharUnboundMgrService(
         var skipTutorial = call.Args.Count > 2
             ? BooleanLike(call.Arg(2))
             : BooleanLike(call.Kwarg("skipTutorial") ?? None);
-        if (AccountOf(call) is not { } account || call.Arg(0) is not (PyInt or PyLong))
+        var characterId = RequestCharacterId(call);
+        if (AccountOf(call) is not { } account || characterId <= 0)
         {
             return None;
         }
-        var characterId = call.Arg(0) is PyLong wide ? wide.Value : ((PyInt)call.Arg(0)).Value;
         var character = await characters.GetAsync(characterId, Token(call));
         if (character is null)
         {
@@ -475,8 +479,7 @@ public sealed partial class CharUnboundMgrService(
             ("securityRating", new PyInt(0)),
             ("securityStatus", new PyInt(0)),
             ("title", new PyStr("")),
-            // Gap: mail belongs to a module that does not exist yet; this is the reference's value for a new character.
-            ("unreadMailCount", new PyInt(1)),
+            ("unreadMailCount", new PyInt(Math.Max(0, unreadMailCount?.Invoke(c.Id) ?? 0))),
             ("paperdollState", new PyInt(0)),
             ("lockTypeID", None),
             ("logoffDate", new PyLong(FileTime(logoff))),

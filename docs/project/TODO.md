@@ -74,8 +74,9 @@ The 484/484 route result is not a 484/484 wire-shape proof. CCP's public ESI mat
 
 - `storeManager.buy_offer` and `insuranceSvc.InsureShip` / `UnInsureShip`: existing persistence providers are connected.
 - FleetProxy's seven operations plus FleetObject advert creation/setup callbacks: connected and tested; only the legacy-row limitation above remains.
-- `station.GetGuests`: alias route, wire shape, observer ledger seed, and station/structure join/leave broadcasts are implemented and unit-tested.
-- `SelectCharacterID`: character session state, station/structure/space selection, deferred docked ship-id and fitting bootstrap, first-space-List visual prime, ship/module Dogma hydration, and saved-pose space resume are wired. The PostgreSQL-backed selection test was skipped without `EVE_PG_URL`; native-client acceptance remains unverified.
+- `station.GetGuests`: alias route, wire shape, observer ledger seed, live-session `warfactionid`, and station/structure join/leave broadcasts are implemented and unit-tested.
+- `CreateCharacterWithDoll`: starter inventory, modules, skills and wallet persist; the new character's welcome mail/notification is durable before selection, and `GetCharacterSelectionData` reads the live unread-mail count.
+- `SelectCharacterID`: named arguments, `OnCharacterSelected`, session state, station/structure/space selection, deferred docked ship-id and fitting bootstrap, first-space-List visual prime, ship/module Dogma hydration, and saved-pose space resume are covered by PostgreSQL and TCP headless tests.
 - `industryMonitor.ConnectJob`: inventory-flag filtering and blueprint-category exclusion are implemented and tested.
 - `structureHangarViewMgr.GetMyHangarViewState`: existing persistence callback is connected.
 - publicQaToolsServer.SlashCmd delegates to the existing slash service. CanGiveItemForMultifit returns false in EveJS and RS, so those responses are aligned.

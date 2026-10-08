@@ -214,16 +214,16 @@ public class StationServiceTests
     }
 
     [Fact]
-    public async Task Station_item_bits_are_a_list_in_reference_order()
+    public async Task Station_item_bits_are_a_tuple_in_reference_order()
     {
         var (session, _) = Data.Session(60015249);
         Assert.Equal(
             [new PyInt(1000413), new PyInt(60015249), new PyInt(123), new PyInt(92885)],
-            Assert.IsType<PyList>(await Data.CallAsync(Make(), session, "GetStationItemBits")).Items);
+            Assert.IsType<PyTuple>(await Data.CallAsync(Make(), session, "GetStationItemBits")).Items);
         var (elsewhere, _) = Data.Session(60000610);
         Assert.Equal(
             [new PyInt(1000006), new PyInt(60000610), new PyInt(7), new PyInt(4023)],
-            Assert.IsType<PyList>(await Data.CallAsync(Make(), elsewhere, "GetStationItemBits")).Items);
+            Assert.IsType<PyTuple>(await Data.CallAsync(Make(), elsewhere, "GetStationItemBits")).Items);
         var (nowhere, _) = Data.Session(null);
         Assert.Equal(PyNone.Instance, await Data.CallAsync(Make(), nowhere, "GetStationItemBits"));
     }
@@ -441,7 +441,7 @@ public class GuestTests
     }
 
     [PgFact]
-    public async Task Station_guests_include_their_character_faction_id()
+    public async Task Station_guests_do_not_expose_character_faction_as_war_faction()
     {
         var (store, source, schema) = await StoreAsync();
         try
@@ -467,7 +467,7 @@ public class GuestTests
             var guests = Assert.IsType<PyList>(await Data.CallAsync(service, session, "GetGuests"));
             Assert.Equal(
                 [
-                    new PyTuple([new PyInt(here1), new PyInt(1000006), new PyInt(0), new PyInt(500028)]),
+                    new PyTuple([new PyInt(here1), new PyInt(1000006), new PyInt(0), new PyInt(0)]),
                     new PyTuple([new PyInt(here2), new PyInt(1000094), new PyInt(0), new PyInt(0)]),
                 ],
                 guests.Items);

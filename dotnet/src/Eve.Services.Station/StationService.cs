@@ -96,7 +96,7 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
     [Method("GetStationItemBits")]
     public PyValue GetStationItemBits(ServiceCall call) =>
         StationOf(call.Session) is { } s
-            ? new PyList([new PyInt(s.OwnerId), new PyInt(s.Id), new PyInt(s.OperationId), new PyInt(s.TypeId)])
+            ? Py.Tuple(new PyInt(s.OwnerId), new PyInt(s.Id), new PyInt(s.OperationId), new PyInt(s.TypeId))
             : None;
 
     /// <summary>Who is docked here: <c>[(characterID, corporationID, allianceID, warFactionID)]</c> for every character in the game at this station.</summary>
@@ -107,12 +107,14 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
         if (stationId <= 0)
             return new PyList([]);
 
+        var guestSessions = characterSessions?.InStation(stationId) ?? [];
+        var sessionsByCharacter = guestSessions
+            .Where(session => session.CharacterId is { } id && id > 0)
+            .GroupBy(session => session.CharacterId!.Value)
+            .ToDictionary(group => group.Key, group => group.First());
         var characterIds = characterSessions is null
             ? online.Snapshot()
-            : characterSessions.InStation(stationId)
-                .Select(session => session.CharacterId!.Value)
-                .Distinct()
-                .ToArray();
+            : sessionsByCharacter.Keys.ToArray();
         var present = await characters.GetManyAsync(characterIds, call.Cancellation);
         var guests = present
             .Where(character => character.StationId == stationId)
@@ -123,7 +125,11 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
             stationId,
             guests.Select(character => character.Id).Where(characterId => characterId > 0).ToHashSet());
         return new PyList([.. guests
-            .Select(character => Py.Tuple(new PyInt(character.Id), new PyInt(character.CorporationId), new PyInt(character.AllianceId ?? 0), new PyInt(character.FactionId ?? 0)))]);
+            .Select(character => Py.Tuple(
+                new PyInt(character.Id),
+                new PyInt(character.CorporationId),
+                new PyInt(character.AllianceId ?? 0),
+                new PyInt(Math.Max(0, sessionsByCharacter.GetValueOrDefault(character.Id)?.GetInt("warfactionid") ?? 0))))]);
     }
 
     /// <summary>

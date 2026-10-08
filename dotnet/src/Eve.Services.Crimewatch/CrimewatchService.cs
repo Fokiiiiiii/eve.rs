@@ -206,8 +206,20 @@ public sealed partial class CrimewatchService(
 
 
 [Service("killRightMgr")]
-public sealed partial class KillRightMgrService(PgCrimewatchStore store)
+public sealed partial class KillRightMgrService(
+    PgCrimewatchStore store,
+    CrimewatchRuntime? runtime = null,
+    Eve.Wallet.WalletTransactions? walletTransactions = null,
+    Eve.Wallet.PgWalletStore? walletStore = null,
+    Func<long>? nowUnixMs = null,
+    Action<string>? log = null)
 {
+    /// <summary>
+    /// Future notification-service hook: EveJS persists a kill-right-used notification for the owner
+    /// when somebody else activates it.
+    /// </summary>
+    public Func<KillRightActivation, CancellationToken, Task>? KillRightUsedNotification { get; set; }
+
     /// <summary>
     /// <c>GetKillRights(toIDs)</c>: active rights owned by the caller for the requested targets.
     /// Client 1dbb5711a072a146e1d228365668ac05655eefe1 caches records by <c>toID</c>
@@ -246,9 +258,199 @@ public sealed partial class KillRightMgrService(PgCrimewatchStore store)
                 ("killRightID", new PyLong(right.KillRightId)),
                 ("fromID", InventoryWire.Id(right.OwnerCharacterId)),
                 ("toID", InventoryWire.Id(right.TargetCharacterId)),
-                ("restrictedTo", InventoryWire.Id(right.OwnerCharacterId)),
-                ("price", PyNone.Instance),
+                ("restrictedTo", right.SalePrice is null
+                    ? InventoryWire.Id(right.OwnerCharacterId)
+                    : right.RestrictedToOwnerId is { } restrictedTo
+                        ? InventoryWire.Id(restrictedTo)
+                        : PyNone.Instance),
+                ("price", right.SalePrice is { } price
+                    ? new PyReal((double)price)
+                    : PyNone.Instance),
                 ("solarSystemID", InventoryWire.Id(right.SolarSystemId))))]);
+    }
+
+    [Method("ActivateKillRight")]
+    public async ValueTask<PyValue> ActivateKillRight(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } activatorCharacterId || activatorCharacterId <= 0
+            || Number(call.Arg(0)) is not { } killRightId || killRightId <= 0)
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("NoValidKillRight");
+        }
+        if (runtime is null)
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError(
+                "CustomNotify", ("notify", new PyStr("Unable to activate kill right.")));
+        }
+
+        var result = await store.ActivateKillRightAsync(
+            killRightId, activatorCharacterId, NowUnixMs, call.Cancellation);
+        if (!result.Success)
+        {
+            return await ErrorAsync(result.ErrorKey, activatorCharacterId, result.RequiredAmount, call.Cancellation);
+        }
+
+        await runtime.ApplyKillRightActivationAsync(
+            result.Activation!,
+            call.Session.GetInt("solarsystemid") ?? call.Session.GetInt("solarsystemid2") ?? 0,
+            call.Cancellation);
+        await NotifyOwnerAsync(result.Activation!, call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    [Method("BuyKillRight")]
+    public async ValueTask<PyValue> BuyKillRight(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } buyerCharacterId || buyerCharacterId <= 0
+            || Number(call.Arg(0)) is not { } killRightId || killRightId <= 0)
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("NoValidKillRight");
+        }
+        if (runtime is null)
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError(
+                "CustomNotify", ("notify", new PyStr("Unable to buy kill right.")));
+        }
+
+        decimal? expectedPrice = null;
+        if (call.Arg(1) is not PyNone)
+        {
+            expectedPrice = Money(call.Arg(1));
+            if (expectedPrice is null)
+            {
+                throw Eve.Services.MachoErrors.ThrowUserError("KillRightNotForSale");
+            }
+        }
+
+        var buyerOwnerIds = new HashSet<long> { buyerCharacterId };
+        if (call.Session.GetInt("corpid") is > 0 and { } corporationId)
+        {
+            buyerOwnerIds.Add(corporationId);
+        }
+        if (call.Session.GetInt("allianceid") is > 0 and { } allianceId)
+        {
+            buyerOwnerIds.Add(allianceId);
+        }
+
+        Eve.Crimewatch.KillRightPayment? payment = walletTransactions is null ? null : PayKillRightAsync;
+        var result = await store.BuyKillRightAsync(
+            killRightId, buyerCharacterId, buyerOwnerIds, expectedPrice,
+            NowUnixMs, payment, call.Cancellation);
+        if (!result.Success)
+        {
+            return await ErrorAsync(result.ErrorKey, buyerCharacterId, result.RequiredAmount ?? expectedPrice, call.Cancellation);
+        }
+
+        await runtime.ApplyKillRightActivationAsync(
+            result.Activation!,
+            call.Session.GetInt("solarsystemid") ?? call.Session.GetInt("solarsystemid2") ?? 0,
+            call.Cancellation);
+        await NotifyOwnerAsync(result.Activation!, call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    private async Task<Eve.Crimewatch.KillRightPaymentResult> PayKillRightAsync(
+        Npgsql.NpgsqlConnection connection,
+        Npgsql.NpgsqlTransaction transaction,
+        long activationId,
+        long buyerCharacterId,
+        long sellerCharacterId,
+        decimal amount,
+        long timeUnixMs,
+        CancellationToken cancellationToken)
+    {
+        if (walletTransactions is null)
+        {
+            return Eve.Crimewatch.KillRightPaymentResult.Failed;
+        }
+        try
+        {
+            await walletTransactions.TransferAsync(
+                connection, transaction, buyerCharacterId, sellerCharacterId, amount,
+                116, "Kill right fee", timeUnixMs, $"killright-fee:{activationId}", cancellationToken);
+            return Eve.Crimewatch.KillRightPaymentResult.Paid;
+        }
+        catch (Eve.Wallet.InsufficientFundsException)
+        {
+            return Eve.Crimewatch.KillRightPaymentResult.InsufficientFunds;
+        }
+        catch (Exception error) when (error is Eve.Wallet.WalletNotFoundException or Eve.Wallet.MoneyLimitException)
+        {
+            return Eve.Crimewatch.KillRightPaymentResult.Failed;
+        }
+    }
+
+    private async ValueTask<PyValue> ErrorAsync(
+        string? errorKey,
+        long characterId,
+        decimal? requiredAmount,
+        CancellationToken cancellationToken)
+    {
+        switch (errorKey)
+        {
+            case "KillRightExpired":
+                throw Eve.Services.MachoErrors.ThrowUserError("KillRightExpired");
+            case "KillRightNotForSale":
+                throw Eve.Services.MachoErrors.ThrowUserError("KillRightNotForSale");
+            case "NotEnoughMoney":
+            {
+                var balance = walletStore is null
+                    ? 0m
+                    : (await walletStore.GetAsync(characterId, cancellationToken))?.Isk ?? 0m;
+                throw Eve.Services.MachoErrors.ThrowUserError(
+                    "NotEnoughMoney",
+                    ("amount", new PyReal((double)(requiredAmount ?? 0m))),
+                    ("balance", new PyReal((double)balance)));
+            }
+            case "PaymentFailed":
+                throw Eve.Services.MachoErrors.ThrowUserError(
+                    "CustomNotify", ("notify", new PyStr("Unable to buy kill right.")));
+            default:
+                throw Eve.Services.MachoErrors.ThrowUserError("NoValidKillRight");
+        }
+    }
+
+    private async Task NotifyOwnerAsync(KillRightActivation activation, CancellationToken cancellationToken)
+    {
+        if (activation.OwnerCharacterId == activation.ActivatorCharacterId
+            || KillRightUsedNotification is not { } notifyOwner)
+        {
+            return;
+        }
+        try
+        {
+            await notifyOwner(activation, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            log?.Invoke($"kill right {activation.KillRightId} activation notification failed: {error.Message}");
+        }
+    }
+
+    private long NowUnixMs => nowUnixMs?.Invoke() ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+    private static decimal? Money(PyValue value)
+    {
+        if (value is PyInt integer && integer.Value >= 0)
+        {
+            return integer.Value;
+        }
+        if (value is PyLong largeInteger && largeInteger.Value >= 0)
+        {
+            return largeInteger.Value;
+        }
+        if (value is PyReal real && double.IsFinite(real.Value)
+            && decimal.TryParse(real.Value.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var amount)
+            && amount >= 0 && decimal.Round(amount, 2) == amount)
+        {
+            return amount;
+        }
+        return null;
     }
 
     private static long? Number(PyValue value) => value switch

@@ -85,6 +85,7 @@ public class PlayerDeathTests
 
         rig.Sim.Say(Destroyed(session, c.ShipId, FrigateWreck));
         await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimPlaceWreck>().Any());
+        await Rig.UntilAsync(() => Events.Of(session, clear: false).Count(e => e.Name == "OnItemsChanged") == 4);
         var wreckId = rig.Sim.Heard.OfType<SimPlaceWreck>().Single().WreckId;
 
         var changes = Events.Of(session).Where(e => e.Name == "OnItemsChanged").ToList();

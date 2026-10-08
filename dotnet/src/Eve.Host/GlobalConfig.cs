@@ -14,6 +14,11 @@ public sealed record ClusterOptions
 
     public bool NewCharacterExperienceEnabled { get; init; }
 
+    public string NewCharacterExperienceMode { get; init; } = "disabled";
+
+    public bool AirNpeEnabled =>
+        NewCharacterExperienceEnabled || (NewCharacterExperienceMode is "tutorial" or "cinematic");
+
     public bool HyperNetKillSwitch { get; init; }
 
     public long HyperNetPlexPriceOverride { get; init; } = 3_500_000;
@@ -33,7 +38,7 @@ public static class GlobalConfig
             ("bugReporting_BugReportServer", new PyStr(options.BugReportUrl)),
             ("imageserverurl", new PyStr(options.ImageServerUrl)),
             ("defaultPortraitSaveSize", new PyInt(1024)),
-            ("air_npe_enabled", Flag(options.NewCharacterExperienceEnabled)),
+            ("air_npe_enabled", Flag(options.AirNpeEnabled)),
             ("HyperNetKillSwitch", Flag(options.HyperNetKillSwitch)),
             ("HyperNetPlexPriceOverride", new PyInt(options.HyperNetPlexPriceOverride)),
             ("SkillPurchaseEnabled", Flag(options.SkillPurchaseEnabled)),

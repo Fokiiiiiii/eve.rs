@@ -49,7 +49,9 @@ public sealed class CharacterCreation(
     PgWalletStore wallet,
     StartingWallet startingWallet,
     CreationCatalog catalog,
-    PgModuleStateStore modules)
+    PgModuleStateStore modules,
+    bool newCharacterExperienceEnabled = false,
+    string? newCharacterExperienceMode = null)
 {
     /// <summary>How many characters an account may have.</summary>
     public const int SlotsPerAccount = 3;
@@ -78,6 +80,12 @@ public sealed class CharacterCreation(
         }
 
         long characterId;
+        var tutorialEntryMode = newCharacterExperienceMode switch
+        {
+            "tutorial" => "tutorial",
+            "cinematic" => "cinematic_intro_overlay",
+            _ => newCharacterExperienceEnabled ? "tutorial" : "disabled",
+        };
         try
         {
             characterId = await characters.InsertAsync(
@@ -86,7 +94,11 @@ public sealed class CharacterCreation(
                 new NewCharacter(
                     request.AccountId, CharacterNames.Clean(request.Name), request.Gender, race.Id, bloodline.Id, request.AncestryId, school.Id,
                     CreationCatalog.CharacterTypeId(bloodline.Id), start.CorporationId, start.FactionId, start.StationId, start.SolarSystemId,
-                    start.ConstellationId, start.RegionId, request.DollInfo, request.PortraitInfo),
+                      start.ConstellationId, start.RegionId, request.DollInfo, request.PortraitInfo)
+                  {
+                      TutorialEntryMode = tutorialEntryMode,
+                      AirNpeState = tutorialEntryMode == "tutorial" ? 1 : 2,
+                  },
                 cancellationToken);
         }
         catch (NameTakenException)

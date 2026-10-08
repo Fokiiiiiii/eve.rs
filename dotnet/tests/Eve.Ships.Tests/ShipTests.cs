@@ -286,8 +286,8 @@ public class ShipTests
     {
         var hook = new RecordingShipInsuranceInvalidator();
         await using var rig = await Rig.CreateAsync(hook);
-        var first = await rig.NewCharacterAsync();
-        var second = await rig.NewCharacterAsync();
+        var first = await rig.NewCharacterAsync(name: "Ship Contract Owner");
+        var second = await rig.NewCharacterAsync(name: "Ship Contract Recipient");
         var shipId = await rig.GiveAsync(first.CharacterId, Rig.Cockroach);
 
         await using (var connection = await rig.Source.OpenConnectionAsync())

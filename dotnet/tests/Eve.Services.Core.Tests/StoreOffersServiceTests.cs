@@ -335,7 +335,12 @@ public sealed class RedeemServiceTests
             Args = [],
             Session = session,
         });
-        Assert.Same(tokens, listed);
+        var rowset = Assert.IsType<PyObjectEx>(listed);
+        Assert.Equal(ObjectExKind.Ex2, rowset.Kind);
+        var rowsetHeader = Assert.IsType<PyTuple>(rowset.Header).Items;
+        Assert.Equal(new PyToken("carbon.common.script.sys.crowset.CRowset"),
+            Assert.IsType<PyTuple>(rowsetHeader[0]).Items[0]);
+        Assert.IsType<PyPackedRow>(Assert.Single(rowset.List));
         Assert.Equal(9001L, callbacks.LastUserId);
 
         var redeemInfo = Py.Dict(
@@ -361,7 +366,7 @@ public sealed class RedeemServiceTests
     }
 
     [Fact]
-    public async Task Redeem_mutations_are_account_scoped_and_return_none()
+    public async Task Redeem_mutations_are_account_scoped_and_return_EveJS_success_values()
     {
         var callbacks = new FakeRedeemCallbacks();
         var service = (IService)(object)new RedeemService(callbacks);
@@ -375,7 +380,7 @@ public sealed class RedeemServiceTests
             Session = session,
         });
 
-        Assert.Same(PyNone.Instance, reversed);
+        Assert.Equal(PyBool.True, reversed);
         Assert.Equal(9001L, callbacks.LastUserId);
         Assert.Same(itemId, callbacks.ReversedItemId);
 
@@ -387,7 +392,7 @@ public sealed class RedeemServiceTests
             Session = session,
         });
 
-        Assert.Same(PyNone.Instance, trashed);
+        Assert.Equal(PyBool.True, trashed);
         Assert.Equal(9001L, callbacks.LastUserId);
         Assert.Same(tokens, callbacks.TrashedTokens);
     }

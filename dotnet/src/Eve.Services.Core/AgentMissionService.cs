@@ -5,21 +5,73 @@ using Eve.Services;
 
 namespace Eve.Services.Core;
 
+public sealed record AgentMissionAgentData(
+    long AgentId,
+    long AgentTypeId,
+    long DivisionId,
+    long Level,
+    long? StationId,
+    long CorporationId,
+    bool IsLocatorAgent,
+    bool IsInSpace,
+    long? CareerId,
+    bool ImportantMission,
+    string MissionKind,
+    string MissionTypeLabel,
+    long? SpecialityId,
+    long? StationTypeId,
+    long? BloodlineId,
+    long? SolarSystemId,
+    long? DungeonId,
+    long? SpawnPointId,
+    long? TypeId);
+
+public sealed record AgentMissionRpcCallbacks(
+    Func<CancellationToken, ValueTask<IReadOnlyList<AgentMissionAgentData>>>? ReadAgents = null,
+    Func<CancellationToken, ValueTask<IReadOnlyList<long>>>? ReadDisabledMissions = null,
+    Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? ReadPlausibleMissionIds = null,
+    Func<CancellationToken, ValueTask<JsonObject?>>? ReadEpicArcMessages = null,
+    Func<long, CancellationToken, ValueTask<long?>>? ReadSolarSystemOfAgent = null);
+
 // Readers return persisted character mission state, character-owned bookmark records,
 // and the character's already-resolved seven-field research rows. They never write.
 public sealed class AgentMissionService(
     Func<long, CancellationToken, ValueTask<JsonObject?>> readMissionState,
     Func<long, IReadOnlyList<long>, CancellationToken, ValueTask<IReadOnlyDictionary<long, JsonObject>>> readBookmarks,
     Func<long, CancellationToken, ValueTask<JsonArray?>> readResearchRows,
-    Func<long, long, ClientSession, bool>? isAtAgentLocation = null) : IService
+    Func<long, long, ClientSession, bool>? isAtAgentLocation = null,
+    AgentMissionRpcCallbacks? rpcCallbacks = null) : IService
 {
+    private static readonly string[] AgentColumns =
+    [
+        "agentID", "agentTypeID", "divisionID", "level", "stationID", "corporationID",
+        "isLocatorAgent", "isInSpace", "careerID", "importantMission", "missionKind",
+        "missionTypeLabel", "specialityID", "stationTypeID", "bloodlineID", "solarSystemID",
+        "dungeonID", "spawnPointID", "typeID",
+    ];
+
     public string Name => "agentMgr";
 
-    public bool HasMethod(string method) => method is "GetMyJournalDetails";
+    public bool HasMethod(string method) => method is
+        "GetMyJournalDetails" or
+        "GetAgents" or
+        "GetCompletedCareerAgentIDs" or
+        "GetDisabledMissions" or
+        "GetMessagesForEpicArcMissions" or
+        "GetMyEpicArcStatus" or
+        "GetPlausibleMissionIDs" or
+        "GetSolarSystemOfAgent";
 
     public ValueTask<PyValue> CallAsync(ServiceCall call) => call.Method switch
     {
         "GetMyJournalDetails" => ReadAsync(call),
+        "GetAgents" => ReadAgentsAsync(call),
+        "GetCompletedCareerAgentIDs" => ReadCompletedCareerAgentIdsAsync(call),
+        "GetDisabledMissions" => ReadDisabledMissionsAsync(call),
+        "GetMessagesForEpicArcMissions" => ReadEpicArcMessagesAsync(call),
+        "GetMyEpicArcStatus" => ReadMyEpicArcStatusAsync(call),
+        "GetPlausibleMissionIDs" => ReadPlausibleMissionIdsAsync(call),
+        "GetSolarSystemOfAgent" => ReadSolarSystemOfAgentAsync(call),
         _ => ValueTask.FromResult<PyValue>(PyNone.Instance),
     };
 
@@ -62,6 +114,293 @@ public sealed class AgentMissionService(
             : research.Select(row => (PyValue)Tuple(row as JsonArray)).ToArray();
         return new PyTuple([new PyList(missionRows), new PyList(researchRows)]);
     }
+
+    public async ValueTask<PyValue?> ReadMissionInfoItemsAsync(
+        long characterId,
+        long agentId,
+        ClientSession session,
+        CancellationToken cancellationToken)
+    {
+        if (characterId <= 0 || agentId <= 0) return null;
+        var state = await readMissionState(characterId, cancellationToken);
+        var record = state?["missionsByAgentID"]?[agentId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
+        if (record is null || !string.Equals(Text(record["runtimeStatus"]), "accepted", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var bookmarkIds = BookmarkIds(record).Distinct().ToArray();
+        var bookmarkRecords = bookmarkIds.Length == 0
+            ? new Dictionary<long, JsonObject>()
+            : await readBookmarks(characterId, bookmarkIds, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        return MissionRow(agentId, record, session, characterId, bookmarkRecords) is PyTuple row
+            ? new PyList(row.Items)
+            : null;
+    }
+
+    public async ValueTask<JsonObject?> ReadMissionRecordAsync(
+        long characterId,
+        long agentId,
+        CancellationToken cancellationToken)
+    {
+        if (characterId <= 0 || agentId <= 0) return null;
+        var state = await readMissionState(characterId, cancellationToken);
+        return state?["missionsByAgentID"]?[agentId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
+    }
+    private async ValueTask<PyValue> ReadAgentsAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var agents = rpcCallbacks?.ReadAgents is { } readAgents
+            ? await readAgents(call.Cancellation)
+            : Array.Empty<AgentMissionAgentData>();
+        call.Cancellation.ThrowIfCancellationRequested();
+        return Py.Rowset(AgentColumns, agents.OrderBy(agent => agent.AgentId).Select(AgentRow));
+    }
+
+    private async ValueTask<PyValue> ReadCompletedCareerAgentIdsAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var characterId = Positive(call.Session.Get("charid"));
+        var state = characterId > 0 ? await readMissionState(characterId, call.Cancellation) : null;
+        call.Cancellation.ThrowIfCancellationRequested();
+        var completed = state?["completedCareerAgentIDs"] as JsonObject;
+        return new PyDict(
+        [
+            .. PositiveIds(call.Args.Count > 0 ? call.Args[0] : null).Select(agentId =>
+                new KeyValuePair<PyValue, PyValue>(
+                    new PyInt(agentId),
+                    IsTrue(completed?[agentId.ToString(System.Globalization.CultureInfo.InvariantCulture)])
+                        ? PyBool.True
+                        : PyBool.False)),
+        ]);
+    }
+
+    private async ValueTask<PyValue> ReadDisabledMissionsAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        IReadOnlyList<long> missionIds = rpcCallbacks?.ReadDisabledMissions is { } readDisabled
+            ? await readDisabled(call.Cancellation)
+            : Array.Empty<long>();
+        call.Cancellation.ThrowIfCancellationRequested();
+        return new PyList([.. missionIds.Where(id => id > 0).Select(id => (PyValue)new PyInt(id))]);
+    }
+
+    private async ValueTask<PyValue> ReadEpicArcMessagesAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var messages = rpcCallbacks?.ReadEpicArcMessages is { } readMessages
+            ? await readMessages(call.Cancellation)
+            : null;
+        call.Cancellation.ThrowIfCancellationRequested();
+        return new PyDict(
+        [
+            .. (messages ?? new JsonObject()).Select(pair =>
+                new KeyValuePair<PyValue, PyValue>(
+                    new PyStr(pair.Key),
+                    NumericJsonDictionary(pair.Value as JsonObject))),
+        ]);
+    }
+
+    private async ValueTask<PyValue> ReadMyEpicArcStatusAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var characterId = Positive(call.Session.Get("charid"));
+        var state = characterId > 0 ? await readMissionState(characterId, call.Cancellation) : null;
+        call.Cancellation.ThrowIfCancellationRequested();
+        return EpicArcStatusPayload(state);
+    }
+
+    private async ValueTask<PyValue> ReadPlausibleMissionIdsAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var agentId = Positive(call.Args.Count > 0 ? call.Args[0] : null);
+        IReadOnlyList<long> missionIds = agentId > 0 && rpcCallbacks?.ReadPlausibleMissionIds is { } readMissions
+            ? await readMissions(agentId, call.Cancellation)
+            : Array.Empty<long>();
+        call.Cancellation.ThrowIfCancellationRequested();
+        return new PyList([.. missionIds.Where(id => id > 0).Select(id => (PyValue)new PyInt(id))]);
+    }
+
+    private async ValueTask<PyValue> ReadSolarSystemOfAgentAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var agentId = Positive(call.Args.Count > 0 ? call.Args[0] : null);
+        long? solarSystemId = null;
+        if (agentId > 0 && rpcCallbacks?.ReadSolarSystemOfAgent is { } readSolarSystem)
+        {
+            solarSystemId = await readSolarSystem(agentId, call.Cancellation);
+        }
+        else if (agentId > 0 && rpcCallbacks?.ReadAgents is { } readAgents)
+        {
+            solarSystemId = (await readAgents(call.Cancellation))
+                .FirstOrDefault(agent => agent.AgentId == agentId)?.SolarSystemId;
+        }
+        call.Cancellation.ThrowIfCancellationRequested();
+        return solarSystemId is > 0 and var id ? new PyInt(id) : PyNone.Instance;
+    }
+
+    private static PyTuple AgentRow(AgentMissionAgentData agent) => new(
+    [
+        new PyInt(agent.AgentId),
+        new PyInt(agent.AgentTypeId),
+        new PyInt(agent.DivisionId),
+        new PyInt(agent.Level > 0 ? agent.Level : 1),
+        OptionalPositive(agent.StationId),
+        new PyInt(agent.CorporationId),
+        agent.IsLocatorAgent ? PyBool.True : PyBool.False,
+        agent.IsInSpace ? PyBool.True : PyBool.False,
+        OptionalPositive(agent.CareerId),
+        agent.ImportantMission ? PyBool.True : PyBool.False,
+        new PyStr(agent.MissionKind ?? ""),
+        new PyStr(agent.MissionTypeLabel ?? ""),
+        OptionalPositive(agent.SpecialityId),
+        OptionalPositive(agent.StationTypeId),
+        OptionalPositive(agent.BloodlineId),
+        OptionalPositive(agent.SolarSystemId),
+        OptionalPositive(agent.DungeonId),
+        OptionalPositive(agent.SpawnPointId),
+        OptionalPositive(agent.TypeId),
+    ]);
+
+    private static IEnumerable<long> PositiveIds(PyValue? value)
+    {
+        var values = value switch
+        {
+            PyList list => list.Items,
+            PyTuple tuple => tuple.Items,
+            _ => [],
+        };
+        var seen = new HashSet<long>();
+        foreach (var item in values)
+        {
+            var id = Positive(item);
+            if (id > 0 && seen.Add(id)) yield return id;
+        }
+    }
+
+    private static PyValue OptionalPositive(long? value) =>
+        value is > 0 and var id ? new PyInt(id) : PyNone.Instance;
+
+    private static PyDict NumericJsonDictionary(JsonObject? value)
+    {
+        var entries = new List<KeyValuePair<PyValue, PyValue>>();
+        if (value is not null)
+        {
+            foreach (var pair in value)
+            {
+                var id = PositiveString(pair.Key);
+                if (id > 0)
+                    entries.Add(new KeyValuePair<PyValue, PyValue>(new PyInt(id), Payload(pair.Value)));
+            }
+        }
+        return new PyDict(entries);
+    }
+
+    private static PyValue EpicArcStatusPayload(JsonObject? state)
+    {
+        var statusByArcId = new SortedDictionary<long, SortedDictionary<long, JsonObject>>();
+        var progress = state?["epicArcProgress"] as JsonObject;
+        if (progress?["missionStatusByArcID"] is JsonObject missionStatusByArcId)
+        {
+            foreach (var arc in missionStatusByArcId)
+            {
+                var arcId = PositiveString(arc.Key);
+                if (arcId == 0 || arc.Value is not JsonObject missions) continue;
+                foreach (var mission in missions)
+                {
+                    var missionId = PositiveString(mission.Key);
+                    if (missionId > 0 && mission.Value is JsonObject status)
+                        AddEpicArcStatus(statusByArcId, arcId, missionId, status);
+                }
+            }
+        }
+
+        if (progress?["completedArcsByID"] is JsonObject completedArcs)
+        {
+            foreach (var completion in completedArcs.Select(pair => pair.Value).OfType<JsonObject>())
+            {
+                var arcId = Positive(completion["epicArcID"]);
+                var missionId = Positive(completion["completedMissionID"]);
+                if (arcId == 0 || missionId == 0) continue;
+                var status = new JsonObject
+                {
+                    ["completedDate"] = completion["completedAtFileTime"]?.DeepClone(),
+                };
+                AddEpicArcStatus(statusByArcId, arcId, missionId, status);
+            }
+        }
+
+        if (state?["missionsByAgentID"] is JsonObject missionRecords)
+        {
+            foreach (var missionRecord in missionRecords.Select(pair => pair.Value).OfType<JsonObject>())
+            {
+                var clientMission = missionRecord["clientMissionRecord"] as JsonObject;
+                var isEpicArc = BooleanValue(clientMission?["isEpicArc"]) == true ||
+                    string.Equals(Text(clientMission?["missionFlavor"]), "epicArc", StringComparison.OrdinalIgnoreCase) ||
+                    Positive(clientMission?["epicArcID"]) > 0;
+                if (!isEpicArc) continue;
+                var arcId = Positive(clientMission?["epicArcID"]);
+                var missionId = Positive(clientMission?["missionID"]);
+                if (missionId == 0) missionId = Positive(missionRecord["missionID"]);
+                if (missionId == 0) missionId = Positive(missionRecord["contentID"]);
+                if (arcId == 0 || missionId == 0) continue;
+
+                var runtimeStatus = Text(missionRecord["runtimeStatus"]);
+                var status = new JsonObject
+                {
+                    ["acceptedDate"] = string.Equals(runtimeStatus, "accepted", StringComparison.OrdinalIgnoreCase)
+                        ? missionRecord["acceptedAtFileTime"]?.DeepClone()
+                        : JsonValue.Create(""),
+                    ["completedDate"] = string.Equals(runtimeStatus, "completed", StringComparison.OrdinalIgnoreCase)
+                        ? missionRecord["completedAtFileTime"]?.DeepClone()
+                        : JsonValue.Create(""),
+                    ["quitDate"] = missionRecord["quitDate"]?.DeepClone() ?? JsonValue.Create(""),
+                    ["nameID"] = Positive(missionRecord["missionNameID"]) is > 0 and var nameId
+                        ? JsonValue.Create(nameId)
+                        : clientMission?["nameID"]?.DeepClone(),
+                };
+                AddEpicArcStatus(statusByArcId, arcId, missionId, status);
+            }
+        }
+
+        return new PyDict(
+        [
+            .. statusByArcId.Select(arc =>
+                new KeyValuePair<PyValue, PyValue>(
+                    new PyInt(arc.Key),
+                    new PyDict(
+                    [
+                        .. arc.Value.Select(mission =>
+                            new KeyValuePair<PyValue, PyValue>(
+                                new PyInt(mission.Key),
+                                EpicArcMissionStatus(mission.Value))),
+                    ]))),
+        ]);
+    }
+
+    private static void AddEpicArcStatus(
+        SortedDictionary<long, SortedDictionary<long, JsonObject>> statusByArcId,
+        long arcId,
+        long missionId,
+        JsonObject status)
+    {
+        if (!statusByArcId.TryGetValue(arcId, out var missions))
+            statusByArcId[arcId] = missions = [];
+        var merged = missions.TryGetValue(missionId, out var current)
+            ? (JsonObject)current.DeepClone()
+            : new JsonObject();
+        foreach (var field in status)
+            merged[field.Key] = field.Value?.DeepClone();
+        missions[missionId] = merged;
+    }
+
+    private static PyValue EpicArcMissionStatus(JsonObject status) => Py.KeyVal(
+        ("acceptedDate", FileTimeValue(status["acceptedDate"])),
+        ("completedDate", FileTimeValue(status["completedDate"])),
+        ("quitDate", FileTimeValue(status["quitDate"])),
+        ("nameID", OptionalPositive(status["nameID"])));
+
+    private static PyValue FileTimeValue(JsonNode? value) =>
+        Integer(value) is > 0 and var fileTime ? Py.FileTimeLong(fileTime) : PyNone.Instance;
 
     private static PyTuple EmptyJournal() => new([new PyList([]), new PyList([])]);
 
@@ -210,6 +549,9 @@ public sealed class AgentMissionService(
     }
 
     private static double Number(JsonNode? value) => TryNumber(value, out var number) ? number : 0;
+
+    private static bool IsTrue(JsonNode? value) =>
+        value is JsonValue json && json.GetValueKind() == JsonValueKind.True;
 
     private static bool? BooleanValue(JsonNode? value) => value?.GetValueKind() switch
     {

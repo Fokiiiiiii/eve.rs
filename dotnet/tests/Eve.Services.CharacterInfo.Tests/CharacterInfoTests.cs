@@ -57,9 +57,17 @@ internal sealed class Rig : IAsyncDisposable
 
     public Dictionary<long, long?> MedalGraphicIds => _medalGraphicIds;
 
-    public CharMgrService CreateCharMgr(Func<long, CancellationToken, ValueTask<CharMgrPersonalData?>>? readPersonalData = null) =>
-        new(Characters, Stations, ReadRecentShipKillmailPageAsync, ReadCharacterDescriptionAsync,
-            WriteCharacterDescriptionAsync, ReadSecurityStatusAsync, ReadMedal1GraphicIdAsync, readPersonalData);
+    public CharMgrService CreateCharMgr(
+    Func<long, CancellationToken, ValueTask<CharMgrPersonalData?>>? readPersonalData = null,
+    Func<long, Func<CharMgrPersonalData, CharMgrPersonalData>, CancellationToken, ValueTask<CharMgrPersonalData?>>? updatePersonalData = null,
+    Func<long, long, string?, CancellationToken, ValueTask>? writeActivityStatus = null,
+    Func<long, PyValue, CancellationToken, ValueTask>? writeLogSettings = null,
+    Func<long, CancellationToken, ValueTask<long?>>? readCorporationMemberStartedMs = null,
+    Func<IReadOnlyList<Character>, CancellationToken, ValueTask<IReadOnlyDictionary<long, CharMgrOrganizationInfo>>>? readOrganizationInfo = null) =>
+    new(Characters, Stations, ReadRecentShipKillmailPageAsync, ReadCharacterDescriptionAsync,
+        WriteCharacterDescriptionAsync, ReadSecurityStatusAsync, ReadMedal1GraphicIdAsync,
+        readPersonalData, updatePersonalData, writeActivityStatus, writeLogSettings,
+        readCorporationMemberStartedMs, readOrganizationInfo);
 
     private ValueTask<IReadOnlyList<PyValue>> ReadRecentShipKillmailPageAsync(long characterId, int num, int startIndex, CancellationToken _)
     {
@@ -454,6 +462,162 @@ public class CharMgrTests
                 ("note", new PyStr("1::F::0::Main|")))]),
             await Ask(second, "GetOwnerNote", Id(5)));
         Assert.Equal(new PyStr(""), await Ask(second, "GetNote", Id(4001)));
+    }
+
+
+    [PgFact]
+    public async Task Get_private_info_on_corporation_change_returns_the_reference_keyval_shape()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = await rig.MakeAsync("Change Corp");
+        var character = await rig.Characters.GetAsync(characterId);
+        var service = rig.CreateCharMgr();
+        var (session, _) = Rig.Session(characterId);
+
+        Assert.Equal(
+            Py.KeyVal(
+                ("corporationID", Id(1000006)),
+                ("corporationDateTime", new PyLong(Py.FileTimeFromUnixMs(character!.CreatedAt.ToUnixTimeMilliseconds())))),
+            await Rig.CallAsync(service, session, "GetPrivateInfoOnCorpChange", Id(characterId)));
+    }
+
+
+    [PgFact]
+    public async Task Personal_char_mgr_rpcs_preserve_client_shapes_and_update_owner_scoped_state()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = await rig.MakeAsync("Personal RPCs");
+        var store = new Dictionary<long, CharMgrPersonalData>
+        {
+            [characterId] = new(
+                [new CharMgrContact(2001, false, 0, 9)],
+                [3000],
+                new Dictionary<long, CharMgrContactLabel>(),
+                [new CharMgrOwnerNote(1, "S:Folders", "1::F::0::Main|"),
+                    new CharMgrOwnerNote(2, "Briefing", "old")],
+                new Dictionary<long, string> { [4001] = "old item note" })
+            {
+                NextOwnerNoteId = 5,
+            },
+        };
+        (long CharacterId, long Status, string? ExtraInfo)? activity = null;
+        PyValue? loggedSettings = null;
+        var settings = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("window"), new PyStr("chat")),
+        ]);
+        var service = rig.CreateCharMgr(
+            (id, _) => ValueTask.FromResult(store.GetValueOrDefault(id)),
+            (id, update, _) =>
+            {
+                var updated = update(store.GetValueOrDefault(id) ?? CharMgrPersonalData.Empty);
+                store[id] = updated;
+                return ValueTask.FromResult<CharMgrPersonalData?>(updated);
+            },
+            (id, status, extraInfo, _) =>
+            {
+                activity = (id, status, extraInfo);
+                return ValueTask.CompletedTask;
+            },
+            (_, value, _) =>
+            {
+                loggedSettings = value;
+                return ValueTask.CompletedTask;
+            },
+            (_, _) => ValueTask.FromResult<long?>(1_700_000_000_123));
+        var (session, _) = Rig.Session(characterId);
+
+        Assert.Equal(
+            Py.KeyVal(
+                ("corporationID", Id(1000006)),
+                ("corporationDateTime", new PyLong(Py.FileTimeFromUnixMs(1_700_000_000_123)))),
+            await Rig.CallAsync(service, session, "GetPrivateInfoOnCorpChange", Id(characterId)));
+
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "AddContact", Id(2002), Id(-10), PyBool.True));
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "EditContactsRelationshipID",
+            new PyList([Id(2001), Id(2002)]), Id(-5)));
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "BlockOwners", new PyList([Id(3001), Id(3002)])));
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "UnblockOwners", new PyList([Id(3001)])));
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "DeleteContacts", new PyList([Id(2002)])));
+
+        var list = await Rig.CallAsync(service, session, "GetContactList");
+        Assert.Equal(
+            Py.KeyVal(
+                ("addresses", Py.Rowset(["contactID", "inWatchlist", "relationshipID", "labelMask"],
+                    [new PyList([Id(2001), Id(0), Id(-5), Id(9)])])),
+                ("blocked", Py.Rowset(["senderID"], [new PyList([Id(3000)]), new PyList([Id(3002)])]))),
+            list);
+
+        Assert.Equal(Id(5), await Rig.CallAsync(service, session, "AddOwnerNote", new PyStr("Status"), new PyStr("ready")));
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "EditOwnerNote", Id(5), new PyStr("Updated")));
+        Assert.Equal(
+            new PyList([Py.KeyVal(("noteID", Id(5)), ("label", new PyStr("Updated")), ("note", new PyStr("ready")))]),
+            await Rig.CallAsync(service, session, "GetOwnerNote", Id(5)));
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "RemoveOwnerNote", Id(5)));
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "SetNote", Id(4002), new PyStr("saved")));
+        Assert.Equal(new PyStr("saved"), await Rig.CallAsync(service, session, "GetNote", Id(4002)));
+
+        Assert.Equal(PyNone.Instance, await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "SetActivityStatus",
+            Args = [],
+            Kwargs = new PyDict([
+                new KeyValuePair<PyValue, PyValue>(new PyStr("status"), Id(2)),
+                new KeyValuePair<PyValue, PyValue>(new PyStr("extraInfo"), new PyLong(12345)),
+            ]),
+            Session = session,
+        }));
+        Assert.Equal((characterId, 2, "12345"), activity);
+
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "LogSettings", settings));
+        Assert.Equal(settings, loggedSettings);
+    }
+
+
+    [PgFact]
+    public async Task Get_organization_info_for_local_chat_returns_keyed_keyvals_from_the_existing_stores()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var caldari = await rig.MakeAsync("Chat Caldari", corporation: 1000006, faction: 500001);
+        var amarr = await rig.MakeAsync("Chat Amarr", corporation: 1000009, faction: 500003);
+        IReadOnlyList<long> loadedCharacters = [];
+        var service = rig.CreateCharMgr(readOrganizationInfo: (characters, _) =>
+        {
+            loadedCharacters = characters.Select(character => character.Id).ToArray();
+            IReadOnlyDictionary<long, CharMgrOrganizationInfo> affiliations = characters.ToDictionary(
+                character => character.Id,
+                character => character.Id == caldari
+                    ? new CharMgrOrganizationInfo(character.CorporationId, 99000001, 500001)
+                    : new CharMgrOrganizationInfo(character.CorporationId, 0, 0));
+            return ValueTask.FromResult(affiliations);
+        });
+        var (session, _) = Rig.Session(caldari);
+
+        var result = await Rig.CallAsync(
+            service,
+            session,
+            "GetOrganizationInfoForCharacters",
+            new PyList([Id(amarr), Id(caldari), Id(0), new PyStr("invalid"), Id(999999999)]));
+
+        Assert.Equal(new long[] { caldari, amarr }, loadedCharacters.Order().ToArray());
+        Assert.Equal(
+            new PyDict([
+                new KeyValuePair<PyValue, PyValue>(Id(amarr),
+                    Py.KeyVal(
+                        ("corporationID", Id(1000009)),
+                        ("allianceID", Id(0)),
+                        ("warFactionID", Id(0)))),
+                new KeyValuePair<PyValue, PyValue>(Id(caldari),
+                    Py.KeyVal(
+                        ("corporationID", Id(1000006)),
+                        ("allianceID", Id(99000001)),
+                        ("warFactionID", Id(500001)))),
+                new KeyValuePair<PyValue, PyValue>(Id(999999999),
+                    Py.KeyVal(
+                        ("corporationID", Id(0)),
+                        ("allianceID", Id(0)),
+                        ("warFactionID", Id(0)))),
+            ]),
+            result);
     }
 
     [PgFact]

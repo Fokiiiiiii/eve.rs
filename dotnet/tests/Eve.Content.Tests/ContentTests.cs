@@ -187,4 +187,20 @@ public class ContentTests
         await bus.PumpAsync();
         Assert.Equal(2, (await content.ObjectivesOfAsync(id))[0].Progress);
     }
+
+    [PgFact]
+    public async Task Active_content_can_be_read_by_kind_across_all_owners()
+    {
+        await using var rig = await Rig.Create();
+        rig.Content.Define(KillThenReport());
+        await rig.Ready();
+        var first = await rig.Start("kill-then-report", Pilot);
+        var second = await rig.Start("kill-then-report", Other);
+
+        var active = await rig.Content.ActiveByKindAsync("mission");
+
+        Assert.Equal(new[] { first.Id, second.Id }.Order(), active.Select(instance => instance.Id).Order());
+        Assert.Equal(new[] { Pilot, Other }.Order(), active.Select(instance => instance.Owner).Order());
+        Assert.Empty(await rig.Content.ActiveByKindAsync("missing-kind"));
+    }
 }

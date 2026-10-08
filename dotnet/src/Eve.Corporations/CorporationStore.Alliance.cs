@@ -21,6 +21,16 @@ public sealed partial class CorporationStore
         await using var connection = await _source.OpenConnectionAsync(token);
         return await AllianceAsync(connection,null,id,false,token);
     }
+
+    public async Task<IReadOnlyList<Alliance>> AllAlliancesAsync(CancellationToken token = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT {AllianceColumns} FROM {_schema}.alliances WHERE deleted=FALSE ORDER BY id");
+        var result = new List<Alliance>();
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token)) result.Add(ReadAlliance(reader));
+        return result;
+    }
+
     private async Task<Alliance?> AllianceAsync(NpgsqlConnection connection,NpgsqlTransaction? tx,long id,bool locked,CancellationToken token)
     {
         await using var command = Command(connection,tx,$"SELECT {AllianceColumns} FROM {_schema}.alliances WHERE id=$1" + (locked ? " FOR UPDATE" : ""),id);

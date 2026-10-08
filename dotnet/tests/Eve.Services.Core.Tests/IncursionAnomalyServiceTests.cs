@@ -193,6 +193,47 @@ public sealed class IncursionAnomalyServiceTests
     }
 
     [Fact]
+    public async Task Scan_manager_binds_one_system_scan_object_to_the_selected_character_session()
+    {
+        var service = NewService("scanMgr");
+        var (call, _) = Request("GetSystemScanMgr", 30000142);
+        call.Session.CharacterId = 42;
+
+        var bound = Assert.IsType<PySubStruct>(await service.CallAsync(call));
+        var reference = Assert.IsType<PyTuple>(Assert.IsType<PySubStream>(bound.Value).Decoded);
+        var objectId = Str(reference.Items[0]);
+        Assert.StartsWith("N=", objectId);
+        Assert.IsType<PyLong>(reference.Items[1]);
+        Assert.Equal(objectId, call.Session.BoundObjectIds["scanMgr"]);
+        Assert.Equal(objectId, call.Session.BoundObjectStates["scanMgr"].ObjectId);
+
+        var second = Assert.IsType<PySubStruct>(await service.CallAsync(call));
+        var secondReference = Assert.IsType<PyTuple>(Assert.IsType<PySubStream>(second.Value).Decoded);
+        Assert.Equal(objectId, Str(secondReference.Items[0]));
+    }
+
+    [Fact]
+    public async Task Scan_manager_signal_tracker_register_returns_none_and_calls_a_wired_backend()
+    {
+        var empty = NewService("scanMgr");
+        var (emptyCall, _) = Request("SignalTrackerRegister", 30000142);
+        emptyCall.Session.CharacterId = 42;
+        Assert.Equal(PyNone.Instance, await empty.CallAsync(emptyCall));
+
+        var calls = 0;
+        var wired = NewService("scanMgr", signalTrackerRegister: _ =>
+        {
+            calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        });
+        var (wiredCall, _) = Request("SignalTrackerRegister", 30000142);
+        wiredCall.Session.CharacterId = 42;
+
+        Assert.Equal(PyNone.Instance, await wired.CallAsync(wiredCall));
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
     public async Task Map_read_service_delegates_unhandled_methods_to_existing_map_service()
     {
         var fallback = new FallbackMapService();
@@ -207,13 +248,15 @@ public sealed class IncursionAnomalyServiceTests
     private static IncursionAnomalyService NewService(
         string name,
         IReadOnlyList<JsonObject>? incursions = null,
-        IService? fallback = null) =>
+        IService? fallback = null,
+        Func<ServiceCall, ValueTask<PyValue>>? signalTrackerRegister = null) =>
         new(
             name,
             _ => ValueTask.FromResult<IReadOnlyList<JsonObject>>(incursions ?? Array.Empty<JsonObject>()),
             (_, _) => ValueTask.FromResult<IReadOnlyList<JsonObject>>(Array.Empty<JsonObject>()),
             fallback,
-            () => 1_700_000_000_000);
+            () => 1_700_000_000_000,
+            signalTrackerRegister);
 
     private static JsonObject Json(string json) => JsonNode.Parse(json)!.AsObject();
 

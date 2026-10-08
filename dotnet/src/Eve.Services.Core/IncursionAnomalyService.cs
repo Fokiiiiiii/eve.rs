@@ -17,12 +17,15 @@ public sealed class IncursionAnomalyService : IService
     private readonly IService? _fallback;
     private readonly Func<long> _nowUnixMs;
 
+    private readonly Func<ServiceCall, ValueTask<PyValue>>? _signalTrackerRegister;
+
     public IncursionAnomalyService(
         string serviceName,
         Func<CancellationToken, ValueTask<IReadOnlyList<JsonObject>>> readIncursions,
         Func<long, CancellationToken, ValueTask<IReadOnlyList<JsonObject>>> readAnomalies,
         IService? fallback = null,
-        Func<long>? nowUnixMs = null)
+        Func<long>? nowUnixMs = null,
+        Func<ServiceCall, ValueTask<PyValue>>? signalTrackerRegister = null)
     {
         if (serviceName is not (MapName or TaleManagerName or ScanManagerName))
             throw new ArgumentOutOfRangeException(nameof(serviceName), serviceName, "Unsupported incursion/anomaly service.");
@@ -36,6 +39,7 @@ public sealed class IncursionAnomalyService : IService
         _readAnomalies = readAnomalies;
         _fallback = fallback;
         _nowUnixMs = nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        _signalTrackerRegister = signalTrackerRegister;
     }
 
     public string Name => _serviceName;
@@ -58,6 +62,8 @@ public sealed class IncursionAnomalyService : IService
             (TaleManagerName, "GetGlobalWorldEventTales") => await GetGlobalWorldEventTalesAsync(call),
             (TaleManagerName, "get_active_tales_by_template") => await GetActiveTalesByTemplateAsync(call),
             (ScanManagerName, "GetFullState") => await GetFullStateAsync(call),
+            (ScanManagerName, "GetSystemScanMgr") => GetSystemScanMgr(call),
+            (ScanManagerName, "SignalTrackerRegister") => await SignalTrackerRegisterAsync(call),
             _ => PyNone.Instance,
         };
     }
@@ -66,7 +72,7 @@ public sealed class IncursionAnomalyService : IService
     {
         MapName => method is "GetIncursionGlobalReport" or "GetSystemsInIncursions",
         TaleManagerName => method is "GetGlobalWorldEventTales" or "get_active_tales_by_template",
-        ScanManagerName => method == "GetFullState",
+        ScanManagerName => method is "GetFullState" or "GetSystemScanMgr" or "SignalTrackerRegister",
         _ => false,
     };
 
@@ -148,6 +154,27 @@ public sealed class IncursionAnomalyService : IService
             new PyDict([]),
         ]);
     }
+
+    private PyValue GetSystemScanMgr(ServiceCall call)
+    {
+        _ = ResolveSystemId(call.Session);
+        if (!call.Session.BoundObjectIds.TryGetValue(ScanManagerName, out var objectId))
+        {
+            objectId = $"N={Eve.Macho.MachoMessage.ProxyNodeId}:{Eve.Services.BoundObjectIds.Next()}";
+            call.Session.BoundObjectIds[ScanManagerName] = objectId;
+            call.Session.BoundObjectStates[ScanManagerName] = new BoundObjectState(objectId);
+        }
+
+        call.Session.LastBoundObjectId = objectId;
+        return new PySubStruct(new PySubStream(Py.Tuple(
+            new PyStr(objectId),
+            new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs())))));
+    }
+
+    private async ValueTask<PyValue> SignalTrackerRegisterAsync(ServiceCall call) =>
+        _signalTrackerRegister is null
+            ? PyNone.Instance
+            : await _signalTrackerRegister(call);
 
     private static PyValue BuildIncursionReport(JsonObject incursion)
     {

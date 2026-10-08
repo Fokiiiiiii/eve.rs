@@ -136,6 +136,21 @@ public class HostServerTests : IAsyncLifetime
 
         public ValueTask<bool> CharacterHasSettingAsync(long characterId, long structureId, long settingId, CancellationToken cancellationToken) =>
             ValueTask.FromResult(false);
+
+
+        public ValueTask<PyValue> GetStructureMapDataAsync(long solarSystemId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<PyValue>(new PyList([]));
+        public ValueTask<PyValue> GetMyAccessibleOnlineCynoBeaconStructuresAsync(ServiceCall call) =>
+            ValueTask.FromResult<PyValue>(new PyList([]));
+        public ValueTask<PyValue> GetSolarSystemsWithBeaconsAsync(CancellationToken cancellationToken) =>
+            ValueTask.FromResult<PyValue>(new PyList([]));
+        public ValueTask<PyValue> GetValidWarHQsAsync(ServiceCall call, long ownerId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<PyValue>(new PyList([]));
+        public ValueTask<bool> SetStructureDescriptionAsync(ServiceCall call) => ValueTask.FromResult(false);
+        public ValueTask<IReadOnlyList<long>> GetStructureIdsInSolarSystemAsync(long solarSystemId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<IReadOnlyList<long>>([]);
+        public ValueTask<PyValue> CharacterGetServiceAsync(long characterId, long structureId, long serviceId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<PyValue>(PyNone.Instance);
     }
 
     private sealed class EmptyInsuranceReadModel : Eve.Services.Core.IInsuranceReadModel
@@ -493,6 +508,144 @@ public class HostServerTests : IAsyncLifetime
         Assert.Empty(missingNotes.OwnerNotes);
         Assert.Empty(missingNotes.ItemNotes);
         Assert.Null(missingNotes.NextOwnerNoteId);
+    }
+
+
+    [Fact]
+    public async Task Character_personal_rpc_writes_use_the_existing_owner_scoped_tables()
+    {
+        var tables = new Dictionary<string, System.Text.Json.Nodes.JsonObject>
+        {
+            ["characters"] = System.Text.Json.Nodes.JsonNode.Parse("""
+                { "1001": { "personalContacts": {}, "blockedOwners": {} } }
+                """)!.AsObject(),
+            ["characterNotes"] = System.Text.Json.Nodes.JsonNode.Parse("""
+                {
+                  "_meta": { "nextNoteID": 5 },
+                  "characters": {
+                    "1001": {
+                      "notes": { "2": { "noteID": 2, "label": "Briefing", "note": "old", "created": "old-created", "updated": "old-updated" } },
+                      "itemNotes": { "4000": { "itemID": 4000, "note": "old", "updated": "old-updated" } }
+                    }
+                  }
+                }
+                """)!.AsObject(),
+        };
+        Task<System.Text.Json.Nodes.JsonObject> ReadTable(string name, CancellationToken _) =>
+            Task.FromResult((System.Text.Json.Nodes.JsonObject)tables[name].DeepClone());
+        var writes = new List<(string Table, string Path, System.Text.Json.Nodes.JsonNode? Data)>();
+        var model = new PersistenceCharMgrReadModel(
+            ReadTable,
+            (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<Eve.Marshal.PyValue>>([]),
+            (_, _) => ValueTask.FromResult<string?>(null),
+            (_, _, _) => ValueTask.CompletedTask,
+            (_, _) => ValueTask.FromResult<long?>(null),
+            (table, path, data) =>
+            {
+                writes.Add((table, path, data?.DeepClone()));
+                return new Eve.GameStore.WriteResult(true, null);
+            },
+            (_, _) => new Eve.GameStore.WriteResult(true, null));
+
+        await model.UpdateAsync(1001, data => data with
+        {
+            Contacts = [new CharMgrContact(2001, true, -10, 3)],
+            BlockedSenders = [3001],
+            OwnerNotes = [new CharMgrOwnerNote(2, "Updated", "changed"), new CharMgrOwnerNote(5, "Briefing", "ready")],
+            ItemNotes = new Dictionary<long, string> { [4000] = "changed", [4001] = "ship note" },
+            NextOwnerNoteId = 6,
+        }, CancellationToken.None);
+
+        var contact = Assert.Single(writes, write => write.Path == "/1001/personalContacts/2001");
+        Assert.Equal("characters", contact.Table);
+        Assert.Equal(2001, contact.Data!["contactID"]!.GetValue<long>());
+        Assert.True(contact.Data["inWatchlist"]!.GetValue<bool>());
+        Assert.Equal(-10, contact.Data["relationshipID"]!.GetValue<long>());
+        Assert.Equal(3L, contact.Data["labelMask"]!.GetValue<long>());
+        Assert.Contains(writes, write => write.Table == "characters" &&
+            write.Path == "/1001/blockedOwners/3001" && write.Data!["senderID"]!.GetValue<long>() == 3001);
+        var newOwnerNote = Assert.Single(writes, write =>
+            write.Table == "characterNotes" && write.Path == "/characters/1001/notes/5");
+        Assert.Equal("ready", newOwnerNote.Data!["note"]!.GetValue<string>());
+        Assert.False(string.IsNullOrEmpty(newOwnerNote.Data["created"]!.GetValue<string>()));
+        Assert.False(string.IsNullOrEmpty(newOwnerNote.Data["updated"]!.GetValue<string>()));
+        Assert.Contains(writes, write => write.Path == "/characters/1001/notes/2/label" &&
+            write.Data!.GetValue<string>() == "Updated");
+        Assert.Contains(writes, write => write.Path == "/characters/1001/notes/2/note" &&
+            write.Data!.GetValue<string>() == "changed");
+        Assert.Contains(writes, write => write.Path == "/characters/1001/notes/2/updated");
+        Assert.DoesNotContain(writes, write => write.Path == "/characters/1001/notes/2");
+        var newItemNote = Assert.Single(writes, write =>
+            write.Table == "characterNotes" && write.Path == "/characters/1001/itemNotes/4001");
+        Assert.Equal("ship note", newItemNote.Data!["note"]!.GetValue<string>());
+        Assert.False(string.IsNullOrEmpty(newItemNote.Data["updated"]!.GetValue<string>()));
+        Assert.Contains(writes, write => write.Path == "/characters/1001/itemNotes/4000/note" &&
+            write.Data!.GetValue<string>() == "changed");
+        Assert.Contains(writes, write => write.Path == "/characters/1001/itemNotes/4000/updated");
+        Assert.Contains(writes, write => write.Path == "/_meta/nextNoteID" &&
+            write.Data!.GetValue<long>() == 6);
+
+        await model.WriteActivityStatusAsync(1001, 2, "12345", CancellationToken.None);
+        await model.WriteLogSettingsAsync(1001, new Eve.Marshal.PyDict([
+            new KeyValuePair<Eve.Marshal.PyValue, Eve.Marshal.PyValue>(
+                new Eve.Marshal.PyStr("window"), new Eve.Marshal.PyStr("chat")),
+        ]), CancellationToken.None);
+        Assert.Contains(writes, write => write.Path == "/1001/activityStatus" &&
+            write.Data!.GetValue<long>() == 2);
+        Assert.Contains(writes, write => write.Path == "/1001/activityStatusExtraInfo" &&
+            write.Data!.GetValue<string>() == "12345");
+        Assert.Contains(writes, write => write.Path == "/1001/lastSettingsTelemetry" &&
+            write.Data!["window"]!.GetValue<string>() == "chat");
+
+        var removalTables = new Dictionary<string, System.Text.Json.Nodes.JsonObject>
+        {
+            ["characters"] = System.Text.Json.Nodes.JsonNode.Parse("""
+                {
+                  "1001": {
+                    "personalContacts": { "2001": { "contactID": 2001 } },
+                    "blockedOwners": { "3001": { "senderID": 3001 } }
+                  }
+                }
+                """)!.AsObject(),
+            ["characterNotes"] = System.Text.Json.Nodes.JsonNode.Parse("""
+                {
+                  "_meta": { "nextNoteID": 6 },
+                  "characters": {
+                    "1001": {
+                      "notes": { "5": { "noteID": 5, "label": "Briefing", "note": "ready" } },
+                      "itemNotes": { "4001": { "itemID": 4001, "note": "ship note" } }
+                    }
+                  }
+                }
+                """)!.AsObject(),
+        };
+        Task<System.Text.Json.Nodes.JsonObject> ReadRemovalTable(string name, CancellationToken _) =>
+            Task.FromResult((System.Text.Json.Nodes.JsonObject)removalTables[name].DeepClone());
+        var removals = new List<(string Table, string Path)>();
+        var removeModel = new PersistenceCharMgrReadModel(
+            ReadRemovalTable,
+            (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<Eve.Marshal.PyValue>>([]),
+            (_, _) => ValueTask.FromResult<string?>(null),
+            (_, _, _) => ValueTask.CompletedTask,
+            (_, _) => ValueTask.FromResult<long?>(null),
+            (_, _, _) => new Eve.GameStore.WriteResult(true, null),
+            (table, path) =>
+            {
+                removals.Add((table, path));
+                return new Eve.GameStore.WriteResult(true, null);
+            });
+        await removeModel.UpdateAsync(1001, data => data with
+        {
+            Contacts = [],
+            BlockedSenders = [],
+            OwnerNotes = [],
+            ItemNotes = new Dictionary<long, string>(),
+            NextOwnerNoteId = null,
+        }, CancellationToken.None);
+        Assert.Contains(("characters", "/1001/personalContacts/2001"), removals);
+        Assert.Contains(("characters", "/1001/blockedOwners/3001"), removals);
+        Assert.Contains(("characterNotes", "/characters/1001/notes/5"), removals);
+        Assert.Contains(("characterNotes", "/characters/1001/itemNotes/4001"), removals);
     }
 
     [Fact]
@@ -2225,7 +2378,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             Task.FromResult((System.Text.Json.Nodes.JsonObject)tables.GetValueOrDefault(name, new()).DeepClone());
         Task<Eve.Relations.Affiliation> Affiliation(long character, CancellationToken token) =>
             Task.FromResult(new Eve.Relations.Affiliation(corporationId, allianceId, null));
-        var model = new PersistenceStructureDirectoryReadModel(ReadTable, Affiliation);
+        var model = new PersistenceStructureDirectoryReadModel(ReadTable, Affiliation, null!, null!);
 
         var allowedSession = new Eve.Services.ClientSession();
         allowedSession.Set("charid", new Eve.Marshal.PyInt(allowedCharacter));
@@ -2252,7 +2405,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         };
         Task<System.Text.Json.Nodes.JsonObject> ReadUnknown(string name, CancellationToken _) =>
             Task.FromResult((System.Text.Json.Nodes.JsonObject)unknownTables.GetValueOrDefault(name, new()).DeepClone());
-        var unknown = new PersistenceStructureDirectoryReadModel(ReadUnknown, Affiliation);
+        var unknown = new PersistenceStructureDirectoryReadModel(ReadUnknown, Affiliation, null!, null!);
         Assert.Empty(Assert.IsType<Eve.Marshal.PyList>(await unknown.GetNearbyJumpBridgesAsync(accessCall)).Items);
     }
 
@@ -2345,7 +2498,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             Task.FromResult(id == characterId
                 ? new Eve.Relations.Affiliation(corporationId, allianceId, null)
                 : new Eve.Relations.Affiliation(98000012, null, null));
-        var readModel = new PersistenceStructureDirectoryReadModel(ReadTable, Affiliation);
+        var readModel = new PersistenceStructureDirectoryReadModel(ReadTable, Affiliation, null!, null!);
         var persisted = await readModel.GetStructureInfoAsync(structureId, CancellationToken.None);
         Assert.NotNull(persisted);
         Assert.True(persisted.PersistentlyDeployed);
@@ -2470,7 +2623,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             Task.FromResult(character == deniedCharacterId
                 ? new Eve.Relations.Affiliation(ownerCorporationId, ownerAllianceId, null)
                 : new Eve.Relations.Affiliation(98000002, 99000002, null));
-        var model = new PersistenceStructureDirectoryReadModel(ReadTable, Affiliation);
+        var model = new PersistenceStructureDirectoryReadModel(ReadTable, Affiliation, null!, null!);
 
         var allowedServices = Assert.IsType<Eve.Marshal.PyDict>(
             await model.CharacterGetServicesAsync(allowedCharacterId, structureId, CancellationToken.None));
@@ -2494,7 +2647,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             Task.FromResult(name == "structures"
                 ? (System.Text.Json.Nodes.JsonObject)tables["structures"].DeepClone()
                 : new System.Text.Json.Nodes.JsonObject());
-        var missingProfile = new PersistenceStructureDirectoryReadModel(MissingProfileTable, Affiliation);
+        var missingProfile = new PersistenceStructureDirectoryReadModel(MissingProfileTable, Affiliation, null!, null!);
         Assert.False(await missingProfile.CharacterHasServiceAsync(
             allowedCharacterId, structureId, 1, CancellationToken.None));
     }
@@ -2529,7 +2682,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                 ? new Eve.Relations.Affiliation(ownerCorporationId, null, null)
                 : new Eve.Relations.Affiliation(98000004, null, null));
 
-        var model = new PersistenceStructureDirectoryReadModel(ReadTable, Affiliation);
+        var model = new PersistenceStructureDirectoryReadModel(ReadTable, Affiliation, null!, null!);
         Assert.True(await model.CharacterHasServiceAsync(ownerCharacterId, structureId, 1, CancellationToken.None));
         Assert.False(await model.CharacterHasServiceAsync(otherCharacterId, structureId, 1, CancellationToken.None));
 
@@ -2537,7 +2690,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             System.Globalization.CultureInfo.InvariantCulture)]!.DeepClone();
         explicitStructure["profileID"] = explicitMissingProfileId;
         tables["structures"][structureId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = explicitStructure;
-        var missingExplicitProfile = new PersistenceStructureDirectoryReadModel(ReadTable, Affiliation);
+        var missingExplicitProfile = new PersistenceStructureDirectoryReadModel(ReadTable, Affiliation, null!, null!);
         Assert.False(await missingExplicitProfile.CharacterHasServiceAsync(
             ownerCharacterId, structureId, 1, CancellationToken.None));
     }
@@ -2856,10 +3009,19 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                 Assert.Equal(recipientId, characterId);
                 Assert.Contains("notifications", flushes);
                 var notificationId = Assert.IsType<Eve.Marshal.PyLong>(arguments[0]).Value;
-                Assert.Equal(1004, Assert.IsType<Eve.Marshal.PyInt>(arguments[1]).Value);
-                Assert.Equal(12, committed["notifications"]["boxes"]![recipientId.ToString(
+                var typeId = Assert.IsType<Eve.Marshal.PyInt>(arguments[1]).Value;
+                var saved = committed["notifications"]["boxes"]![recipientId.ToString(
                     System.Globalization.CultureInfo.InvariantCulture)]!["byID"]![notificationId.ToString(
-                    System.Globalization.CultureInfo.InvariantCulture)]!["data"]!["msg"]!["messageID"]!.GetValue<long>());
+                    System.Globalization.CultureInfo.InvariantCulture)]!;
+                Assert.Equal(typeId, saved["typeID"]!.GetValue<int>());
+                if (typeId == 1004)
+                    Assert.Equal(12, saved["data"]!["msg"]!["messageID"]!.GetValue<long>());
+                else
+                {
+                    Assert.Equal(Eve.Services.Crimewatch.KillRightNotificationTypes.Used, typeId);
+                    Assert.Equal(senderId, saved["senderID"]!.GetValue<long>());
+                    Assert.Equal(recipientId, saved["receiverID"]!.GetValue<long>());
+                }
                 liveNotifications.Add((characterId, arguments));
             });
         var session = new Eve.Services.ClientSession { CharacterId = senderId };
@@ -2892,6 +3054,24 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["12"]!["labelMask"]!.GetValue<int>());
         Assert.Equal("keep", committed["notifications"]["metadata"]!.GetValue<string>());
         Assert.Single(liveNotifications);
+
+        var usedData = new System.Text.Json.Nodes.JsonObject { ["charID"] = senderId };
+        await adapter.WriteKillRightNotificationAsync(
+            recipientId, senderId, Eve.Services.Crimewatch.KillRightNotificationTypes.Used,
+            usedData, "kill-right-used:activation-1", CancellationToken.None);
+        await adapter.WriteKillRightNotificationAsync(
+            recipientId, senderId, Eve.Services.Crimewatch.KillRightNotificationTypes.Used,
+            usedData, "kill-right-used:activation-1", CancellationToken.None);
+
+        var notificationRows = committed["notifications"]["boxes"]![recipientId.ToString(
+            System.Globalization.CultureInfo.InvariantCulture)]!["byID"]!.AsObject();
+        var usedNotification = Assert.Single(
+            notificationRows.Select(pair => pair.Value).OfType<System.Text.Json.Nodes.JsonObject>(),
+            notification => notification["idempotencyKey"]?.GetValue<string>() == "kill-right-used:activation-1");
+        Assert.Equal(Eve.Services.Crimewatch.KillRightNotificationTypes.Used, usedNotification["typeID"]!.GetValue<int>());
+        Assert.Equal(Eve.Services.Crimewatch.KillRightNotificationTypes.MiscGroup, usedNotification["groupID"]!.GetValue<int>());
+        Assert.Equal(senderId, usedNotification["data"]!["charID"]!.GetValue<long>());
+        Assert.Equal(2, liveNotifications.Count);
     }
 
     [Fact]

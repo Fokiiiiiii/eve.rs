@@ -37,6 +37,7 @@ internal sealed class Rig : IAsyncDisposable
     public Eve.Inventory.PgItemStore Items { get; }
     public long Now { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 10000;
     public string CorporationSchema => _schemas[0];
+    public string CharacterSchema => _schemas[1];
 
     public static async Task<Rig> CreateAsync()
     {

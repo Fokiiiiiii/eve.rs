@@ -19,6 +19,30 @@ public sealed partial class ConfigService(
     private static readonly string[] LocationColumns =
         ["locationID", "locationName", "solarSystemID", "x", "y", "z", "locationNameID"];
 
+    [Method("GetStationSolarSystemsByOwner")]
+    public PyValue GetStationSolarSystemsByOwner(ServiceCall call)
+    {
+        var ownerId = call.Arg(0) switch
+        {
+            PyInt integer => integer.Value,
+            PyLong integer => integer.Value,
+            _ => 0,
+        };
+        if (ownerId <= 0)
+            return new PyList([]);
+
+        var rows = stations.All
+            .Where(station => station.OwnerId == ownerId && station.SolarSystemId > 0)
+            .GroupBy(station => station.SolarSystemId)
+            .OrderBy(group => group.Key)
+            .Select(group => (PyValue)Py.KeyVal(
+                ("ownerID", PyValue.Of(ownerId)),
+                ("solarSystemID", PyValue.Of((long)group.Key)),
+                ("stationCount", PyValue.Of((long)group.Count()))))
+            .ToArray();
+        return new PyList(rows);
+    }
+
     [Method("GetMultiOwnersEx")]
     public async ValueTask<PyValue> GetMultiOwnersEx(ServiceCall call)
     {

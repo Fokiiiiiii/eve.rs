@@ -91,4 +91,8 @@ public sealed record CombatState(long WeaponsUntilMs, long PvpUntilMs, long NpcU
         var kept = FlagAt(nowMs) == Flag.None ? 0 : FlagUntilMs;
         return this with { Flag = flag, FlagUntilMs = Math.Max(kept, nowMs + FlagDurationMs) };
     }
+
+
+    /// <summary>Sets the suspect flag for a kill-right activation, preserving any longer active flag timer.</summary>
+    public CombatState FlagAsSuspect(long nowMs) => Flagged(Flag.Suspect, nowMs);
 }

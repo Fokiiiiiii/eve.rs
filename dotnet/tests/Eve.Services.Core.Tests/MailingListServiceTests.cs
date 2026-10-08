@@ -249,7 +249,20 @@ public sealed class MailingListServiceTests
         MailingListMutationCallback callback = (mutation, _) =>
         {
             observed = mutation;
-            return ValueTask.FromResult<PyValue>(new PyLong(77));
+            PyValue result = mutation.Method switch
+            {
+                MailingListManagerMethod.KickMembers or
+                MailingListManagerMethod.SetEntitiesAccess or
+                MailingListManagerMethod.ClearEntityAccess or
+                MailingListManagerMethod.SetMembersMuted or
+                MailingListManagerMethod.SetMembersOperator or
+                MailingListManagerMethod.SetMembersClear or
+                MailingListManagerMethod.SetDefaultAccess or
+                MailingListManagerMethod.SaveWelcomeMail or
+                MailingListManagerMethod.ClearWelcomeMail => PyNone.Instance,
+                _ => new PyLong(77),
+            };
+            return ValueTask.FromResult(result);
         };
         IService service = new MailingListService(
             _ => throw new InvalidOperationException("Writes must not read a mailing-list snapshot."),
@@ -259,7 +272,20 @@ public sealed class MailingListServiceTests
         {
             observed = null;
             Assert.True(service.HasMethod(item.Method));
-            Assert.Equal(new PyLong(77), await service.CallAsync(
+            PyValue expectedResult = item.ManagerMethod switch
+            {
+                MailingListManagerMethod.KickMembers or
+                MailingListManagerMethod.SetEntitiesAccess or
+                MailingListManagerMethod.ClearEntityAccess or
+                MailingListManagerMethod.SetMembersMuted or
+                MailingListManagerMethod.SetMembersOperator or
+                MailingListManagerMethod.SetMembersClear or
+                MailingListManagerMethod.SetDefaultAccess or
+                MailingListManagerMethod.SaveWelcomeMail or
+                MailingListManagerMethod.ClearWelcomeMail => PyNone.Instance,
+                _ => new PyLong(77),
+            };
+            Assert.Equal(expectedResult, await service.CallAsync(
                 MutationRequest(item.Method, 42, item.Arguments)));
 
             var mutation = Assert.IsType<MailingListMutation>(observed);
@@ -342,6 +368,28 @@ public sealed class MailingListServiceTests
             await service.CallAsync(MutationRequest(
                 "Create", 100,
                 new PyStr("fleetops"), new PyInt(1), new PyInt(1), new PyInt(0))));
+    }
+
+    [Fact]
+    public async Task Create_uses_EveJS_defaults_and_normalizes_optional_numeric_arguments()
+    {
+        MailingListMutation? observed = null;
+        MailingListMutationCallback callback = (mutation, _) =>
+        {
+            observed = mutation;
+            return ValueTask.FromResult<PyValue>(new PyLong(500000123));
+        };
+        var service = Service(Lists(), callback);
+
+        Assert.Equal(new PyLong(500000123), await service.CallAsync(
+            MutationRequest("Create", 42, new PyStr("fleetops"))));
+        Assert.Equal(new PyValue[] { new PyStr("fleetops"), new PyInt(1), new PyInt(1), new PyInt(0) },
+            Assert.IsType<MailingListMutation>(observed).PositionalArguments);
+
+        await service.CallAsync(MutationRequest("Create", 42,
+            new PyStr("fleetops"), new PyStr("invalid"), PyNone.Instance, new PyInt(-4)));
+        Assert.Equal(new PyValue[] { new PyStr("fleetops"), new PyInt(1), new PyInt(1), new PyInt(0) },
+            Assert.IsType<MailingListMutation>(observed).PositionalArguments);
     }
 
     private static IService Service(

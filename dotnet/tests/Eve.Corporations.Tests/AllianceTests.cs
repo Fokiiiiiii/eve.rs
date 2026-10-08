@@ -49,6 +49,7 @@ public class AllianceTests
         Assert.Equal(corp.Id,alliance.ActiveExecutorId);
         Assert.Equal(alliance.Id,(await rig.Characters.GetAsync(actor))!.AllianceId);
         Assert.Equal(alliance.Id,(await rig.Store.GetAsync(corp.Id))!.AllianceId);
+        Assert.Contains(alliance, await rig.Store.AllAlliancesAsync());
         Assert.Single(await rig.Store.AllianceMembersAsync(alliance.Id));
         Assert.Equal(before-1000000000m,(await rig.Wallets.GetAsync(actor))!.Isk);
         Assert.Equal(alliance,await rig.Store.CreateAllianceAsync(actor,Request,"alliance-once"));

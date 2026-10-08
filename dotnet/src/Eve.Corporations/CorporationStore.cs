@@ -225,6 +225,16 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
         while (await r.ReadAsync(token)) result.Add(ReadCorporation(r));
         return result;
     }
+
+    public async Task<IReadOnlyList<Corporation>> AllAsync(CancellationToken token = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT {CorpColumns} FROM {_schema}.corporations WHERE deleted=FALSE ORDER BY id");
+        var result = new List<Corporation>();
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token)) result.Add(ReadCorporation(reader));
+        return result;
+    }
+
     public async Task<Member?> MemberAsync(long character,CancellationToken token = default)
     {
         await using var command = _source.CreateCommand($"SELECT {MemberColumns} FROM {_schema}.members WHERE character_id=$1");
@@ -1693,6 +1703,22 @@ public sealed record CorporationOfficeStation(long Id, int TypeId, long OwnerId,
     double Security, int OfficeCapacity = 24);
 
 /// <summary>Durable corporation office rentals, daily rental quotes, and the next-cycle bill.</summary>
+public sealed record CorporationOfficeRentBill(
+    long BillId,
+    long OfficeId,
+    long CorporationId,
+    long StationId,
+    decimal AmountIsk,
+    long IssuedAtMs,
+    long DueAtMs,
+    int Status,
+    long? PaidAtMs = null,
+    long? PaidByOwnerId = null);
+
+public sealed record CorporationBillAutomaticPaySettings(
+    int DivisionId,
+    IReadOnlyDictionary<int, bool> EnabledBillTypes);
+
 public sealed class CorporationOfficeStore
 {
     public const long RentalCycleMs = 30L * 24 * 60 * 60 * 1000;
@@ -1755,6 +1781,17 @@ public sealed class CorporationOfficeStore
                 price_isk numeric(38,2) NOT NULL CHECK (price_isk >= 10000),
                 pricing_day bigint NOT NULL CHECK (pricing_day >= 0)
             );
+            """),
+        new Migration("009_bill_manager", """
+            ALTER TABLE office_rent_bills ADD COLUMN paid_at_ms bigint;
+            ALTER TABLE office_rent_bills ADD COLUMN paid_by_owner_id bigint;
+
+            CREATE TABLE corporation_bill_auto_pay_settings (
+                owner_id bigint PRIMARY KEY CHECK (owner_id > 0),
+                division_id integer NOT NULL DEFAULT 1000 CHECK (division_id BETWEEN 1000 AND 1006),
+                enabled_bill_types jsonb NOT NULL DEFAULT '{}'::jsonb
+                    CHECK (jsonb_typeof(enabled_bill_types) = 'object')
+            );
             """)
     ];
 
@@ -1806,6 +1843,170 @@ public sealed class CorporationOfficeStore
         while (await reader.ReadAsync(cancellationToken)) offices.Add(ReadOffice(reader));
         return offices;
     }
+
+    public async Task<IReadOnlyList<CorporationOfficeRentBill>> BillsForCorporationAsync(
+        long corporationId, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"""
+            SELECT bill_id,office_id,corporation_id,station_id,amount_isk,issued_at_ms,due_at_ms,status,
+                   paid_at_ms,paid_by_owner_id
+            FROM {_schema}.office_rent_bills
+            WHERE corporation_id=$1 AND status=0
+            ORDER BY due_at_ms,bill_id
+            """);
+        command.Parameters.Add(new NpgsqlParameter { Value = corporationId });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var bills = new List<CorporationOfficeRentBill>();
+        while (await reader.ReadAsync(cancellationToken)) bills.Add(ReadRentBill(reader));
+        return bills;
+    }
+
+
+    public async Task<IReadOnlyList<CorporationOfficeRentBill>> BillsForCreditorAsync(
+        long creditorId, Func<long, long?> stationOwnerOf, CancellationToken cancellationToken = default)
+    {
+        if (creditorId <= 0) return [];
+        await using var command = _source.CreateCommand($"""
+            SELECT bill_id,office_id,corporation_id,station_id,amount_isk,issued_at_ms,due_at_ms,status,
+                   paid_at_ms,paid_by_owner_id
+            FROM {_schema}.office_rent_bills
+            WHERE status=0
+            ORDER BY due_at_ms,bill_id
+            """);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var bills = new List<CorporationOfficeRentBill>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var bill = ReadRentBill(reader);
+            if (stationOwnerOf(bill.StationId) == creditorId) bills.Add(bill);
+        }
+        return bills;
+    }
+
+    public async Task<IReadOnlyDictionary<long, CorporationBillAutomaticPaySettings>> AutomaticPaySettingsAsync(
+        IEnumerable<long> ownerIds, CancellationToken cancellationToken = default)
+    {
+        var result = ownerIds.Where(ownerId => ownerId > 0).Distinct().ToDictionary(
+            ownerId => ownerId,
+            _ => new CorporationBillAutomaticPaySettings(1000, new Dictionary<int, bool>()));
+        foreach (var ownerId in result.Keys.ToArray())
+        {
+            await using var command = _source.CreateCommand($"""
+                SELECT division_id,enabled_bill_types::text
+                FROM {_schema}.corporation_bill_auto_pay_settings
+                WHERE owner_id=$1
+                """);
+            command.Parameters.Add(new NpgsqlParameter { Value = ownerId });
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken)) continue;
+            var divisionId = reader.GetInt32(0);
+            var persisted = JsonSerializer.Deserialize<Dictionary<string, bool>>(reader.GetString(1)) ?? [];
+            var billTypes = new Dictionary<int, bool>();
+            foreach (var (key, enabled) in persisted)
+                if (int.TryParse(key, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var billTypeId))
+                    billTypes[billTypeId] = enabled;
+            result[ownerId] = new CorporationBillAutomaticPaySettings(divisionId, billTypes);
+        }
+        return result;
+    }
+
+    public async Task SetAutomaticPaySettingsAsync(
+        IReadOnlyDictionary<long, CorporationBillAutomaticPaySettings> settings,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        foreach (var (ownerId, value) in settings)
+        {
+            if (ownerId <= 0) throw new ArgumentOutOfRangeException(nameof(settings));
+            var divisionId = value.DivisionId is >= 1000 and <= 1006 ? value.DivisionId : 1000;
+            var billTypes = value.EnabledBillTypes.ToDictionary(
+                entry => entry.Key.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                entry => entry.Value);
+            var json = JsonSerializer.Serialize(billTypes);
+            await using var command = Command(connection, transaction, $"""
+                INSERT INTO {_schema}.corporation_bill_auto_pay_settings
+                    (owner_id,division_id,enabled_bill_types)
+                VALUES ($1,$2,$3::jsonb)
+                ON CONFLICT (owner_id) DO UPDATE SET
+                    division_id=EXCLUDED.division_id,
+                    enabled_bill_types=EXCLUDED.enabled_bill_types
+                """, ownerId, divisionId, json);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task<bool> PayBillAsync(
+        long billId,
+        long corporationId,
+        long paidByOwnerId,
+        long nowMs,
+        Func<NpgsqlConnection, NpgsqlTransaction, CorporationOfficeRentBill, Task> settle,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(settle);
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var billCommand = Command(connection, transaction, $"""
+            SELECT bill_id,office_id,corporation_id,station_id,amount_isk,issued_at_ms,due_at_ms,status,
+                   paid_at_ms,paid_by_owner_id
+            FROM {_schema}.office_rent_bills
+            WHERE bill_id=$1 AND corporation_id=$2 AND status=0
+            FOR UPDATE
+            """, billId, corporationId);
+        await using var billReader = await billCommand.ExecuteReaderAsync(cancellationToken);
+        if (!await billReader.ReadAsync(cancellationToken))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return false;
+        }
+        var bill = ReadRentBill(billReader);
+        await billReader.CloseAsync();
+
+        await using var officeCommand = Command(connection, transaction, $"""
+            SELECT expires_at_ms
+            FROM {_schema}.office_rentals
+            WHERE office_id=$1 AND corporation_id=$2 AND active
+            FOR UPDATE
+            """, bill.OfficeId, corporationId);
+        if (await officeCommand.ExecuteScalarAsync(cancellationToken) is not long)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return false;
+        }
+
+        await settle(connection, transaction, bill);
+        var nextDueAtMs = checked(Math.Max(nowMs, bill.DueAtMs) + RentalCycleMs);
+        await using (var updateOffice = Command(connection, transaction, $"""
+            UPDATE {_schema}.office_rentals SET expires_at_ms=$2
+            WHERE office_id=$1 AND corporation_id=$3 AND active
+            """, bill.OfficeId, nextDueAtMs, corporationId))
+            if (await updateOffice.ExecuteNonQueryAsync(cancellationToken) != 1)
+                throw new CorporationError("OFFICE_RENTAL_FAILED");
+        await using (var markPaid = Command(connection, transaction, $"""
+            UPDATE {_schema}.office_rent_bills SET status=1,paid_at_ms=$2,paid_by_owner_id=$3
+            WHERE bill_id=$1 AND status=0
+            """, bill.BillId, nowMs, paidByOwnerId))
+            if (await markPaid.ExecuteNonQueryAsync(cancellationToken) != 1)
+                throw new CorporationError("BILL_NOT_PAYABLE");
+        await using (var nextBill = Command(connection, transaction, $"""
+            INSERT INTO {_schema}.office_rent_bills
+                (office_id,corporation_id,station_id,amount_isk,issued_at_ms,due_at_ms,status,operation_key)
+            VALUES ($1,$2,$3,$4,$5,$6,0,$7)
+            """, bill.OfficeId, corporationId, bill.StationId, bill.AmountIsk, nowMs, nextDueAtMs,
+            $"office-rent:{bill.OfficeId}:renewal:{bill.BillId}"))
+            await nextBill.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return true;
+    }
+
+    private static CorporationOfficeRentBill ReadRentBill(NpgsqlDataReader reader) => new(
+        reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3),
+        reader.GetDecimal(4), reader.GetInt64(5), reader.GetInt64(6), reader.GetInt16(7),
+        reader.IsDBNull(8) ? null : reader.GetInt64(8),
+        reader.IsDBNull(9) ? null : reader.GetInt64(9));
 
     public async Task<IReadOnlyList<long>> CorporationsAtStationAsync(long stationId,
         CancellationToken cancellationToken = default)

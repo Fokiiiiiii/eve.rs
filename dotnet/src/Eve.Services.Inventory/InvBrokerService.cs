@@ -58,7 +58,7 @@ public sealed partial class InvBrokerService(
     }
 
     /// <summary>What a bound inventory is: which kind, whose item it is, and the session that opened it.</summary>
-    private sealed record Context(Kind Kind, long ItemId, long SessionId);
+    private sealed record Context(Kind Kind, long ItemId, long SessionId, long FlagId = 0);
 
     private readonly ConcurrentDictionary<string, Context> _bound = new(StringComparer.Ordinal);
 
@@ -259,16 +259,16 @@ public sealed partial class InvBrokerService(
         {
             if (item.OwnerId == character
                 || await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Query, call.Cancellation))
-                return Bind(new Context(Kind.Ship, item.Id, 0), call.Session);
+                return Bind(new Context(Kind.Ship, item.Id, 0, CharacterShips.CargoFlag), call.Session);
             return None;
         }
 
         if (item.OwnerId == character
             && await ships.IsOwnedDockedContainerAsync(id, character, station, call.Cancellation))
-            return Bind(new Context(Kind.Container, id, CharacterShips.ContainerFlag), call.Session);
+            return Bind(new Context(Kind.Container, id, 0, CharacterShips.ContainerFlag), call.Session);
         if (await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Query, call.Cancellation)
             && await ships.IsOwnedDockedContainerAsync(id, item.OwnerId, station, call.Cancellation))
-            return Bind(new Context(Kind.Container, id, CharacterShips.ContainerFlag), call.Session);
+            return Bind(new Context(Kind.Container, id, 0, CharacterShips.ContainerFlag), call.Session);
         return None;
     }
 
@@ -285,9 +285,9 @@ public sealed partial class InvBrokerService(
         }
         if (call.Session.GetInt("shipid") == id)
         {
-            return Bind(new Context(Kind.Ship, id, 0), call.Session);
+            return Bind(new Context(Kind.Ship, id, 0, CharacterShips.CargoFlag), call.Session);
         }
-        return await space.OpenAsync(call.Session, id, call.Cancellation) is { } container ? Bind(new Context(Kind.Container, container.Id, 0), call.Session) : None;
+        return await space.OpenAsync(call.Session, id, call.Cancellation) is { } container ? Bind(new Context(Kind.Container, container.Id, 0, CharacterShips.ContainerFlag), call.Session) : None;
     }
 
     // ── what the client asks a bound inventory ───────────────────────────────
@@ -761,7 +761,7 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
         };
         if (ids.Count == 0) return None;
         var flagValue = call.Kwarg("flag");
-        var requestedFlag = flagValue is null or PyNone ? 0L : IdOf(flagValue);
+        var requestedFlag = flagValue is null ? context.FlagId : flagValue is PyNone ? 0L : IdOf(flagValue);
         if (requestedFlag is not { } flag)
             return None;
         var corporationId = CorporationIdOf(call.Session);
@@ -771,7 +771,7 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
 
         if (space is not null && space.IsInSpace(call.Session))
         {
-            if (context.Kind != Kind.Ship || flag == 0) return None;
+            if (context.Kind != Kind.Ship || flag != CharacterShips.CargoFlag) return None;
             return await space.MoveAllAsync(call.Session, ids, source, context.ItemId, (int)flag, call.Cancellation) switch
             {
                 true => PyBool.True,

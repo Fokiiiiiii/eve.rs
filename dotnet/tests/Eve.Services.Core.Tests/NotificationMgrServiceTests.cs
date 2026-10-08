@@ -240,16 +240,50 @@ public class NotificationMgrServiceTests
     }
 
     [Fact]
-    public async Task Only_read_rpcs_are_exposed()
+    public async Task Unknown_mutators_are_not_exposed_and_interaction_log_is_a_noop()
     {
         var source = new Mailbox();
         var service = Service(source);
-        foreach (var method in new[] { "MarkAsProcessed", "DeleteAllNotifications", "LogNotificationInteraction", "Unknown" })
+        foreach (var method in new[] { "MarkAsProcessed", "DeleteAllNotifications", "Unknown" })
         {
             Assert.False(service.HasMethod(method));
             Assert.IsType<PyNone>(await service.CallAsync(Call(method)));
         }
+        Assert.True(service.HasMethod("LogNotificationInteraction"));
+        Assert.IsType<PyNone>(await service.CallAsync(Call("LogNotificationInteraction", args: [new PyInt(55)])));
         Assert.Equal(0, source.Reads);
+    }
+
+    [Fact]
+    public async Task Interaction_log_accepts_positional_and_keyword_reference_ids_without_reading_the_mailbox()
+    {
+        var observed = new List<long>();
+        var session = Session();
+        var service = new NotificationMgrService(
+            (_, _) => throw new InvalidOperationException("Interaction logging must not read notifications."),
+            () => ClockUnixMs,
+            (referenceId, caller, _) =>
+            {
+                Assert.Same(session, caller);
+                observed.Add(referenceId);
+                return ValueTask.CompletedTask;
+            });
+
+        Assert.Same(PyNone.Instance, await service.CallAsync(new ServiceCall
+        {
+            Method = "LogNotificationInteraction",
+            Args = [new PyInt(55)],
+            Session = session,
+        }));
+        Assert.Same(PyNone.Instance, await service.CallAsync(new ServiceCall
+        {
+            Method = "LogNotificationInteraction",
+            Args = [],
+            Kwargs = Py.Dict(("referenceID", new PyInt(77))),
+            Session = session,
+        }));
+
+        Assert.Equal(new long[] { 55, 77 }, observed);
     }
 
     [Fact]

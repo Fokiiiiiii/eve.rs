@@ -1,0 +1,98 @@
+using Eve.Macho;
+using Eve.Marshal;
+using Eve.Services;
+
+namespace Eve.Services.Core;
+
+[Service("authentication")]
+public sealed partial class AuthenticationRpcService(
+    Func<ServiceCall, CancellationToken, ValueTask<PyValue>>? accruedTime = null,
+    Func<ServiceCall, CancellationToken, ValueTask<bool>>? amUnderage = null)
+{
+    private readonly Func<ServiceCall, CancellationToken, ValueTask<PyValue>> _accruedTime = accruedTime ?? EmptyAccruedTime;
+    private readonly Func<ServiceCall, CancellationToken, ValueTask<bool>> _amUnderage = amUnderage ?? NotUnderage;
+
+    [Method("AccruedTime")]
+    public ValueTask<PyValue> AccruedTime(ServiceCall call) => _accruedTime(call, call.Cancellation);
+
+    [Method("AmUnderage")]
+    public async ValueTask<PyValue> AmUnderage(ServiceCall call) =>
+        await _amUnderage(call, call.Cancellation).ConfigureAwait(false) ? PyBool.True : PyBool.False;
+
+    [Method("SetLanguageID")]
+    public PyValue SetLanguageID(ServiceCall call)
+    {
+        var languageId = Eve.Macho.JsSemantics.StringValue(call.Arg(0))?.Trim();
+        if (string.IsNullOrEmpty(languageId))
+            languageId = "EN";
+
+        var value = new PyStr(languageId);
+        call.Session.Set("languageID", value);
+        call.Session.Set("languageId", value);
+        call.Session.Set("languageid", value);
+        call.Session.Set("userLanguageID", value);
+        return PyNone.Instance;
+    }
+
+    private static ValueTask<PyValue> EmptyAccruedTime(ServiceCall _, CancellationToken __) =>
+        ValueTask.FromResult<PyValue>(new PyList([]));
+
+    private static ValueTask<bool> NotUnderage(ServiceCall _, CancellationToken __) =>
+        ValueTask.FromResult(false);
+}
+
+[Service("infoGatheringMgr")]
+public sealed partial class InfoGatheringMgrService(
+    Func<ServiceCall, CancellationToken, ValueTask<PyValue>>? getStateAndConfig = null,
+    Func<ServiceCall, PyValue, CancellationToken, ValueTask<PyValue>>? logInfoEventsFromClient = null)
+{
+    private static readonly PyValue DefaultStateAndConfig = Py.KeyVal(
+        ("isEnabled", new PyInt(0)),
+        ("infoTypes", new PyList([])),
+        ("clientWorkerInterval", new PyInt(0)),
+        ("infoTypesOncePerRun", new PyList([])),
+        ("infoTypeAggregates", new PyDict([])),
+        ("infoTypeParameters", new PyDict([])));
+
+    private readonly Func<ServiceCall, CancellationToken, ValueTask<PyValue>> _getStateAndConfig =
+        getStateAndConfig ?? DefaultConfig;
+    private readonly Func<ServiceCall, PyValue, CancellationToken, ValueTask<PyValue>> _logInfoEventsFromClient =
+        logInfoEventsFromClient ?? EmptyStatuses;
+
+    [Method("GetStateAndConfig")]
+    public ValueTask<PyValue> GetStateAndConfig(ServiceCall call) =>
+        _getStateAndConfig(call, call.Cancellation);
+
+    [Method("LogInfoEventsFromClient")]
+    public ValueTask<PyValue> LogInfoEventsFromClient(ServiceCall call) =>
+        _logInfoEventsFromClient(call, call.Arg(0), call.Cancellation);
+
+    private static ValueTask<PyValue> DefaultConfig(ServiceCall _, CancellationToken __) =>
+        ValueTask.FromResult(DefaultStateAndConfig);
+
+    private static ValueTask<PyValue> EmptyStatuses(ServiceCall _, PyValue __, CancellationToken ___) =>
+        ValueTask.FromResult<PyValue>(new PyDict([]));
+}
+
+[Service("eveguard_report")]
+public sealed partial class EveguardReportService(
+    Func<string, ServiceCall, CancellationToken, ValueTask>? recordHeartbeat = null)
+{
+    private readonly Func<string, ServiceCall, CancellationToken, ValueTask> _recordHeartbeat =
+        recordHeartbeat ?? IgnoreHeartbeat;
+
+    [Method("heartbeat_started")]
+    public ValueTask<PyValue> HeartbeatStarted(ServiceCall call) => RecordAsync("started", call);
+
+    [Method("heartbeat_stopped")]
+    public ValueTask<PyValue> HeartbeatStopped(ServiceCall call) => RecordAsync("stopped", call);
+
+    private async ValueTask<PyValue> RecordAsync(string eventType, ServiceCall call)
+    {
+        await _recordHeartbeat(eventType, call, call.Cancellation).ConfigureAwait(false);
+        return PyNone.Instance;
+    }
+
+    private static ValueTask IgnoreHeartbeat(string _, ServiceCall __, CancellationToken ___) =>
+        ValueTask.CompletedTask;
+}

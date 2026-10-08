@@ -1,0 +1,224 @@
+using System.Text;
+using Eve.Macho;
+using Eve.Marshal;
+using Eve.Services;
+
+namespace Eve.Services.Core;
+
+public sealed partial class RedeemService
+{
+    private const long OldAccountCreateFileTime = 132000000000000000L;
+
+    [Method("GetMultiCharactersTrainingSlots")]
+    public async ValueTask<PyValue> GetMultiCharactersTrainingSlots(ServiceCall call) =>
+        await OverrideUserCallAsync(call, new PyDict([]));
+
+    [Method("GetUpdatedMultiCharacterTraining")]
+    public async ValueTask<PyValue> GetUpdatedMultiCharacterTraining(ServiceCall call) =>
+        await OverrideUserCallAsync(call, new PyList([]));
+
+    [Method("ActivateMultiTraining")]
+    public async ValueTask<PyValue> ActivateMultiTraining(ServiceCall call) =>
+        await OverrideUserCallAsync(call, new PyList([]));
+
+    [Method("ActivateSoulboundMultiTraining")]
+    public async ValueTask<PyValue> ActivateSoulboundMultiTraining(ServiceCall call) =>
+        await OverrideUserCallAsync(call, new PyList([]));
+
+    [Method("InvalidateMultiCharacterTrainingCache")]
+    public async ValueTask<PyValue> InvalidateMultiCharacterTrainingCache(ServiceCall call) =>
+        await OverrideUserCallAsync(call, PyNone.Instance);
+
+    [Method("CreateRedeemTokenQA")]
+    public async ValueTask<PyValue> CreateRedeemTokenQA(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var accountId = PositiveInteger(call.Kwarg("userID") ?? PyNone.Instance);
+        if (accountId <= 0) accountId = call.Session.UserId ?? 0;
+        if (accountId is <= 0 or > int.MaxValue || PositiveInteger(call.Kwarg("typeID") ?? PyNone.Instance) is <= 0 or > int.MaxValue)
+            return PyBool.False;
+        return await OverrideUserCallAsync(call, PyBool.False);
+    }
+
+    [Method("ActivateCharacterReSculpt")]
+    public async ValueTask<PyValue> ActivateCharacterReSculpt(ServiceCall call) =>
+        await OverrideUserCallAsync(call, PyBool.True);
+
+    [Method("CastUpvote")]
+    public async ValueTask<PyValue> CastUpvote(ServiceCall call) =>
+        await OverrideUserCallAsync(call, PyBool.True);
+
+    [Method("CastDownvote")]
+    public async ValueTask<PyValue> CastDownvote(ServiceCall call) =>
+        await OverrideUserCallAsync(call, PyBool.True);
+
+    [Method("ReportBot")]
+    public async ValueTask<PyValue> ReportBot(ServiceCall call) =>
+        await OverrideUserCallAsync(call, PyBool.True);
+
+    [Method("ReportISKSpammer")]
+    public async ValueTask<PyValue> ReportISKSpammer(ServiceCall call) =>
+        await OverrideUserCallAsync(call, PyBool.True);
+
+    [Method("UserLogOffCharacter")]
+    public async ValueTask<PyValue> UserLogOffCharacter(ServiceCall call) =>
+        await OverrideUserCallAsync(call, PyBool.True);
+
+    [Method("GetSessionPlaytimeMinutes")]
+    public async ValueTask<PyValue> GetSessionPlaytimeMinutes(ServiceCall call) =>
+        await OverrideUserCallAsync(call, new PyInt(0));
+
+    [Method("GetCreateDate")]
+    public async ValueTask<PyValue> GetCreateDate(ServiceCall call)
+    {
+        if (await UserOverrideAsync(call).ConfigureAwait(false) is { } overridden) return overridden;
+        var characterId = call.Session.CharacterId ?? 0;
+        var fileTime = characterId > 0 && readCharacterCreateFileTime is not null
+            ? await readCharacterCreateFileTime(characterId, call.Cancellation).ConfigureAwait(false)
+            : null;
+        return Py.FileTimeLong(fileTime ?? OldAccountCreateFileTime);
+    }
+
+    [Method("GetUserName")]
+    public async ValueTask<PyValue> GetUserName(ServiceCall call)
+    {
+        if (await UserOverrideAsync(call).ConfigureAwait(false) is { } overridden) return overridden;
+        var userId = Positive(call.Arg(0));
+        if (userId <= 0) userId = call.Session.UserId ?? 0;
+        var userName = userId > 0 && readUserName is not null
+            ? await readUserName(userId, call.Cancellation).ConfigureAwait(false)
+            : null;
+        return new PyStr(string.IsNullOrEmpty(userName)
+            ? userId > 0 ? $"user-{userId}" : "user-local"
+            : userName);
+    }
+
+    [Method("GetUserToken")]
+    public async ValueTask<PyValue> GetUserToken(ServiceCall call)
+    {
+        if (await UserOverrideAsync(call).ConfigureAwait(false) is { } overridden) return overridden;
+        return new PyStr($"evejs-local-token-{call.Session.UserId ?? 0}-{call.Session.CharacterId ?? 0}");
+    }
+
+    private async ValueTask<PyValue> OverrideUserCallAsync(ServiceCall call, PyValue fallback) =>
+        await UserOverrideAsync(call).ConfigureAwait(false) ?? fallback;
+
+    private ValueTask<PyValue?> UserOverrideAsync(ServiceCall call) =>
+        userRpcHandler is null
+            ? ValueTask.FromResult<PyValue?>(null)
+            : userRpcHandler(call, call.Cancellation);
+
+    private static long Positive(PyValue value) => value switch
+    {
+        PyInt number when number.Value > 0 => number.Value,
+        PyLong number when number.Value > 0 => number.Value,
+        _ => 0,
+    };
+
+    private static long PositiveInteger(PyValue value)
+    {
+        var number = JsSemantics.ToNumber(value);
+        if (!double.IsFinite(number)) return 0;
+        var integer = Math.Truncate(number);
+        if (integer <= 0 || integer != number) return 0;
+        return integer >= 9_223_372_036_854_775_808d ? long.MaxValue : (long)integer;
+    }
+}
+
+internal static class UserSvcCompatibility
+{
+    private const string CRowsetName = "carbon.common.script.sys.crowset.CRowset";
+    private static readonly (string Name, int Type)[] Columns =
+    [
+        ("tokenID", 0x03), ("massTokenID", 0x03), ("typeID", 0x03), ("quantity", 0x03),
+        ("blueprintRuns", 0x03), ("blueprintMaterialLevel", 0x03), ("blueprintProductivityLevel", 0x03),
+        ("label", 0x82), ("description", 0x82), ("dateTime", 0x40), ("expireDateTime", 0x40),
+        ("availableDateTime", 0x40), ("stationID", 0x14), ("soulbound", 0x03),
+    ];
+    private static readonly PyObjectEx DescriptorWire = new(
+        ObjectExKind.Ex1,
+        Py.Tuple(
+            new PyToken("blue.DBRowDescriptor"),
+            Py.Tuple(Py.Tuple([.. Columns.Select(column =>
+                (PyValue)Py.Tuple(new PyStr(column.Name), new PyInt(column.Type)))]))),
+        [], []);
+    private static readonly Descriptor Descriptor = Descriptor.FromHeader(DescriptorWire);
+    private static readonly PyValue RowsetHeader = Py.Tuple(
+        Py.Tuple(new PyToken(CRowsetName)),
+        Py.Dict(("header", DescriptorWire)));
+
+    public static PyValue RedeemTokenRowset(PyValue value)
+    {
+        if (value is not PyList rows) return value;
+        var packedRows = rows.Items
+            .Where(item => item is PyDict or PyObject { Args: PyDict } or PyObjectEx { Dict.Count: > 0 })
+            .Select(item => (PyValue)new PyPackedRow(Descriptor, RedeemTokenValues(item)))
+            .ToArray();
+        return new PyObjectEx(ObjectExKind.Ex2, RowsetHeader, packedRows, []);
+    }
+
+    private static IReadOnlyList<PyValue> RedeemTokenValues(PyValue token)
+    {
+        var tokenId = Integer(Field(token, "tokenID"));
+        var massTokenId = Integer(Field(token, "massTokenID"));
+        var dateTime = Integer(Field(token, "dateTime"));
+        var expireDateTime = Integer(Field(token, "expireDateTime"));
+        var availableDateTime = Integer(Field(token, "availableDateTime"));
+        return
+        [
+            Number(tokenId),
+            massTokenId > 0 && massTokenId != tokenId ? Number(massTokenId) : PyNone.Instance,
+            Number(Integer(Field(token, "typeID"))),
+            Number(Integer(Field(token, "quantity"))),
+            Number(Integer(Field(token, "blueprintRuns"))),
+            Number(Integer(Field(token, "blueprintMaterialLevel"))),
+            Number(Integer(Field(token, "blueprintProductivityLevel"))),
+            new PyWString(Text(Field(token, "label"))),
+            new PyWString(Text(Field(token, "description"))),
+            Py.FileTimeLong(dateTime),
+            expireDateTime > 0 ? Py.FileTimeLong(expireDateTime) : PyNone.Instance,
+            Py.FileTimeLong(availableDateTime > 0 ? availableDateTime : dateTime),
+            Integer(Field(token, "stationID")) > 0 ? Number(Integer(Field(token, "stationID"))) : PyNone.Instance,
+            Boolean(Field(token, "soulbound")) ? new PyInt(1) : new PyInt(0),
+        ];
+    }
+
+    private static PyValue? Field(PyValue source, string name)
+    {
+        IEnumerable<KeyValuePair<PyValue, PyValue>> entries = source switch
+        {
+            PyDict dict => dict.Entries,
+            PyObject { Args: PyDict dict } => dict.Entries,
+            PyObjectEx objectEx => objectEx.Dict,
+            _ => [],
+        };
+        return entries.FirstOrDefault(entry => Eve.Macho.JsSemantics.StringValue(entry.Key) == name).Value;
+    }
+
+    private static long Integer(PyValue? value) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        PyReal number when double.IsFinite(number.Value) && number.Value < 9_223_372_036_854_775_808d && number.Value >= long.MinValue => (long)number.Value,
+        _ => 0,
+    };
+
+    private static PyValue Number(long value) => Py.Number(value);
+
+    private static bool Boolean(PyValue? value) => value switch
+    {
+        PyBool boolean => boolean == PyBool.True,
+        PyInt number => number.Value != 0,
+        PyLong number => number.Value != 0,
+        PyReal number => double.IsFinite(number.Value) && number.Value != 0,
+        _ => false,
+    };
+
+    private static string Text(PyValue? value) => value switch
+    {
+        PyStr text => text.Value,
+        PyWString text => text.Value,
+        PyBytes text => Encoding.UTF8.GetString(text.Value.Span),
+        _ => "",
+    };
+}

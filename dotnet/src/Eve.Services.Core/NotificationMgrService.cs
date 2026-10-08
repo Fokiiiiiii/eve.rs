@@ -7,7 +7,7 @@ using Eve.Macho;
 namespace Eve.Services.Core;
 
 /// <summary>
-/// Read-only notificationMgr. The required reader supplies one character's current
+/// The reader supplies one character's current
 /// notifications/boxes/{characterId} document from GameStore (byID plus order).
 /// Return null only for a missing box; storage failures must propagate. The service
 /// reads a fresh snapshot per call and never changes processed flags or storage.
@@ -22,19 +22,30 @@ namespace Eve.Services.Core;
 /// </remarks>
 public sealed class NotificationMgrService(
     Func<long, CancellationToken, ValueTask<JsonObject?>> readBox,
-    Func<long> nowUnixMs) : IService
+    Func<long> nowUnixMs,
+    NotificationInteractionCallback? logInteraction = null) : IService
 {
     public string Name => "notificationMgr";
 
-    public bool HasMethod(string method) => method is "GetAllNotifications" or "GetByGroupID" or "GetUnprocessed";
+    public bool HasMethod(string method) => method is "GetAllNotifications" or "GetByGroupID" or "GetUnprocessed" or "LogNotificationInteraction";
 
     public ValueTask<PyValue> CallAsync(ServiceCall call) => call.Method switch
     {
         "GetAllNotifications" => ReadAsync(call, fromId: Argument(call, "fromID")),
         "GetByGroupID" => ReadAsync(call, groupId: Argument(call, "groupID")),
         "GetUnprocessed" => ReadAsync(call, unprocessed: true),
+        "LogNotificationInteraction" => LogInteractionAsync(call),
         _ => ValueTask.FromResult<PyValue>(PyNone.Instance),
     };
+
+    private async ValueTask<PyValue> LogInteractionAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var referenceId = Positive(call.Kwarg("referenceID") ?? call.Arg(0));
+        if (logInteraction is { } callback)
+            await callback(referenceId, call.Session, call.Cancellation);
+        return PyNone.Instance;
+    }
 
     private async ValueTask<PyValue> ReadAsync(ServiceCall call, long fromId = 0, long groupId = 0, bool unprocessed = false)
     {
@@ -172,3 +183,8 @@ public sealed class NotificationMgrService(
     private static PyValue OptionalId(JsonNode? value) =>
         Positive(Payload(value)) is > 0 and var id ? new PyInt(id) : PyNone.Instance;
 }
+
+public delegate ValueTask NotificationInteractionCallback(
+    long referenceId,
+    ClientSession session,
+    CancellationToken cancellationToken);

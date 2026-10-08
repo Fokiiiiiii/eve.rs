@@ -91,6 +91,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
     private readonly Func<long> _nowUnixMs;
     private readonly Action<string>? _log;
     private readonly ConcurrentDictionary<ulong, Pilot> _pilots = new();
+    private readonly ConcurrentDictionary<ulong, byte> _warping = new();
     private readonly ConcurrentDictionary<ulong, SemaphoreSlim> _targeting = new();
     private readonly ConcurrentDictionary<ulong, IReadOnlySet<long>> _lockedTargets = new();
     /// <summary>The ship ids whose destruction is being processed (each ship is handled once).</summary>
@@ -299,6 +300,8 @@ private readonly TransitionRuntime _transitions;
 
     public long? ShipIdOf(ClientSession session) =>
         _pilots.TryGetValue((ulong)session.SessionId, out var pilot) ? pilot.ShipId : null;
+
+    public bool IsWarping(ClientSession session) => _warping.ContainsKey((ulong)session.SessionId);
 
 
 
@@ -941,10 +944,14 @@ private readonly TransitionRuntime _transitions;
                 {
                     return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
                 }
-                var level = SafetyLevelOf is { } ask
-                    ? await ask(characterId, cancellationToken)
-                    : SafetyLevel.Full;
-                var decision = await policy(request, level, cancellationToken);
+                var decision = await policy(request, SafetyLevel.Full, cancellationToken);
+                if (!decision.Allowed && decision.BlockReason == Eve.Crimewatch.PolicyBlockReason.Safety)
+                {
+                    var level = SafetyLevelOf is { } ask
+                        ? await ask(characterId, cancellationToken)
+                        : SafetyLevel.Full;
+                    decision = await policy(request, level, cancellationToken);
+                }
                 if (!decision.Allowed)
                 {
                     return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
@@ -1893,6 +1900,7 @@ private readonly TransitionRuntime _transitions;
         }
         if (reply.Accepted)
         {
+            _warping[(ulong)session.SessionId] = 0;
             EndInvulnerability(pilot);
             return None;
         }
@@ -1926,7 +1934,8 @@ private readonly TransitionRuntime _transitions;
                 HasWeaponsTimer: state.HasWeaponsTimer(now),
                 HasCriminalTimer: state.IsCriminal(now),
                 ActorIsCapsule: pilot.TypeId == CharacterShips.CapsuleTypeId,
-                HasSessionChangeTimer: _transitions.SessionChangeActive((ulong)pilot.Session.SessionId))));
+                HasSessionChangeTimer: action is not (PolicyAction.Dock or PolicyAction.GateJump)
+                    && _transitions.SessionChangeActive((ulong)pilot.Session.SessionId))));
     }
 
     // ── jumping ──────────────────────────────────────────────────────────────
@@ -2043,10 +2052,14 @@ private readonly TransitionRuntime _transitions;
                 case SimNotify notify when _pilots.TryGetValue(notify.SessionId, out var pilot):
                     Forward(pilot.Session, notify);
                     break;
-                case SimAccepted { Command: not SimCommands.Dock } accepted when _pilots.TryGetValue(accepted.SessionId, out var mover):
-                    EndInvulnerability(mover);
+                case SimAccepted accepted when _pilots.TryGetValue(accepted.SessionId, out var mover):
+                    if (accepted.Command == SimCommands.Stop)
+                        _warping.TryRemove(accepted.SessionId, out _);
+                    if (accepted.Command != SimCommands.Dock)
+                        EndInvulnerability(mover);
                     break;
                 case SimArrived arrived when _pilots.ContainsKey(arrived.SessionId):
+                    _warping.TryRemove(arrived.SessionId, out _);
                     _ = Task.Run(async () =>
                     {
                         try
@@ -2060,12 +2073,15 @@ private readonly TransitionRuntime _transitions;
                     });
                     break;
                 case SimDocked docked when _pilots.TryGetValue(docked.SessionId, out var pilot):
+                    _warping.TryRemove(docked.SessionId, out _);
                     _ = Task.Run(() => FinishDockingAsync(pilot, docked.StationId, docked.Condition));
                     break;
                 case SimJumped jumped when _pilots.TryGetValue(jumped.SessionId, out var jumper):
+                    _warping.TryRemove(jumped.SessionId, out _);
                     _ = Task.Run(() => FinishJumpAsync(jumper, jumped));
                     break;
                 case SimDestroyed destroyed when _pilots.TryGetValue(destroyed.SessionId, out var victim) && victim.ShipId == destroyed.ShipId:
+                    _warping.TryRemove(destroyed.SessionId, out _);
                     ForgetLockedTarget(destroyed.ShipId);
                     _lockedTargets.TryRemove(destroyed.SessionId, out _);
                     _ = Task.Run(() => FinishDeathAsync(victim, destroyed));
@@ -2082,6 +2098,7 @@ private readonly TransitionRuntime _transitions;
                     _charges.Enqueue(spent.SessionId, shooter.CharacterId, spent.ModuleId, spent.RoundsLeft);
                     break;
                 case SimRefused { Command: SimCommands.Stop, Reason: "IN_WARP" } inWarp when _pilots.TryGetValue(inWarp.SessionId, out var warping):
+                    _warping[inWarp.SessionId] = 0;
                     TellShipInWarp(warping.Session);
                     break;
                 case SimRefused refused:
@@ -2185,18 +2202,6 @@ private readonly TransitionRuntime _transitions;
                     ArmProtection(arrived, _jumpCloak);
                     SystemEntered?.Invoke(jumped.ToSystem);
                     ReleaseBoundObjects(session);
-                    var system = new PyInt(jumped.ToSystem);
-                    session.Change(
-                        ("solarsystemid", system),
-                        ("solarsystemid2", system),
-                        ("constellationid", new PyInt(moved.Character.ConstellationId)),
-                        ("regionid", new PyInt(moved.Character.RegionId)),
-                        ("locationid", system));
-                    return Task.FromResult(true);
-                },
-                (result, _) =>
-                {
-                    var moved = result.Moved!;
                     var type = _statics.Type(moved.Ship.TypeId);
                     session.SendNotification(
                         "OnItemChange", "clientID",
@@ -2208,8 +2213,16 @@ private readonly TransitionRuntime _transitions;
                         InventoryWire.Id(pilot.ShipId),
                         new PyLong(arrivalFileTime + JumpCloakTicks),
                         new PyLong(JumpCloakTicks));
-                    return Task.CompletedTask;
+                    var system = new PyInt(jumped.ToSystem);
+                    session.Change(
+                        ("solarsystemid", system),
+                        ("solarsystemid2", system),
+                        ("constellationid", new PyInt(moved.Character.ConstellationId)),
+                        ("regionid", new PyInt(moved.Character.RegionId)),
+                        ("locationid", system));
+                    return Task.FromResult(true);
                 },
+                null,
                 CancellationToken.None,
                 (ulong)session.SessionId);
             if (transition.Moved is null)
@@ -2415,6 +2428,75 @@ private readonly TransitionRuntime _transitions;
         }
     }
 
+    private void NotifyDeathClient(Pilot pilot, ShipDeath lost, SimDestroyed destroyed)
+    {
+        var session = pilot.Session;
+        if (lost.Capsule is { } capsule)
+            session.SendNotification(
+                "OnPodOrCorvetteAssembly", "charid",
+                InventoryWire.Id(capsule.Id), new PyInt(capsule.TypeId));
+        if (lost.EscapeShip is { } escapeShip)
+        {
+            var fromEscapeBay = new PyDict([
+                new(new PyInt(3), InventoryWire.Id(lost.Ship.Id)),
+                new(new PyInt(4), new PyInt(CharacterShips.FrigateEscapeBayFlag))
+            ]);
+            session.SendNotification(
+                "OnItemsChanged", "charid",
+                new PyList([InventoryWire.PackedRow(RowOf(escapeShip, _statics.Type(escapeShip.TypeId)))]),
+                fromEscapeBay,
+                None);
+        }
+        var now = FileTimeNow();
+        if (lost.Events.Count > 0)
+            session.SendNotification(
+                "OnMultiEvent", "clientID",
+                Eve.Services.Ships.ShipNotifications.MultiEvent(
+                    pilot.CharacterId, pilot.ShipId, lost.Events, now));
+        foreach (var change in lost.Changes)
+        {
+            var type = _statics.Type(change.Item.TypeId);
+            var row = change.Destroyed ? change.Item with { LocationId = Junkyard } : change.Item;
+            var from = change.Destroyed
+                ? new PyDict([new(new PyInt(3), InventoryWire.Id(change.PreviousLocationId))])
+                : new PyDict([
+                    new(new PyInt(3), InventoryWire.Id(change.PreviousLocationId)),
+                    new(new PyInt(4), new PyInt(change.PreviousFlag))
+                ]);
+            session.SendNotification(
+                "OnItemsChanged", "charid",
+                new PyList([InventoryWire.PackedRow(RowOf(row, type))]), from, None);
+        }
+        var shipType = _statics.Type(lost.Ship.TypeId);
+        session.SendNotification(
+            "OnItemsChanged", "charid",
+            new PyList([InventoryWire.PackedRow(
+                RowOf(lost.Ship with { LocationId = Junkyard }, shipType),
+                new PyStr($"Undocking:{pilot.UndockedFrom}"))]),
+            new PyDict([new(new PyInt(3), InventoryWire.Id(lost.Ship.LocationId))]),
+            None);
+
+    }
+
+    private void NotifyDeathAfterSessionChange(Pilot pilot, ShipDeath lost, SimDestroyed destroyed)
+    {
+        var session = pilot.Session;
+        session.SendNotification(
+            "OnShipCosmeticsChanged", "clientID", InventoryWire.Id(pilot.ShipId), new PyDict([]));
+        session.SendNotification(
+            "OnShipCosmeticsChanged", "clientID", InventoryWire.Id(lost.PilotShip.Id), new PyDict([]));
+        session.SendNotification(
+            "OnCurrentShipSkinChange", "clientID", InventoryWire.Id(lost.PilotShip.Id), new PyInt(0));
+        if (lost.Wreck is { } wreckItem && destroyed.WreckKind is not null)
+        {
+            session.SendNotification(
+                "OnItemChange", "clientID",
+                InventoryWire.PackedRow(RowOf(wreckItem, _statics.Type(wreckItem.TypeId)), new PyStr("")),
+                new PyDict([new(new PyInt(3), new PyInt(0))]),
+                None);
+        }
+    }
+
     private async Task FinishDeathAsync(Pilot pilot, SimDestroyed destroyed)
     {
         var id = (ulong)pilot.Session.SessionId;
@@ -2527,6 +2609,7 @@ private readonly TransitionRuntime _transitions;
                         session.Close();
                         return true;
                     }
+                    NotifyDeathClient(pilot, lost, destroyed);
                     session.Change(("shipid", new PyLong(survivor.Id)));
                     handedOver = true;
                     return true;
@@ -2535,65 +2618,7 @@ private readonly TransitionRuntime _transitions;
                 {
                     var lost = result!;
                     RaiseShipLost(pilot, lost, destroyed);
-                    if (lost.Capsule is { } capsule)
-                        session.SendNotification(
-                            "OnPodOrCorvetteAssembly", "charid",
-                            InventoryWire.Id(capsule.Id), new PyInt(capsule.TypeId));
-                    if (lost.EscapeShip is { } escapeShip)
-                    {
-                        var fromEscapeBay = new PyDict([
-                            new(new PyInt(3), InventoryWire.Id(lost.Ship.Id)),
-                            new(new PyInt(4), new PyInt(CharacterShips.FrigateEscapeBayFlag))
-                        ]);
-                        session.SendNotification(
-                            "OnItemsChanged", "charid",
-                            new PyList([InventoryWire.PackedRow(RowOf(escapeShip, _statics.Type(escapeShip.TypeId)))]),
-                            fromEscapeBay,
-                            None);
-                    }
-                    var now = FileTimeNow();
-                    if (lost.Events.Count > 0)
-                        session.SendNotification(
-                            "OnMultiEvent", "clientID",
-                            Eve.Services.Ships.ShipNotifications.MultiEvent(
-                                pilot.CharacterId, pilot.ShipId, lost.Events, now));
-                    foreach (var change in lost.Changes)
-                    {
-                        var type = _statics.Type(change.Item.TypeId);
-                        var row = change.Destroyed ? change.Item with { LocationId = Junkyard } : change.Item;
-                        var from = change.Destroyed
-                            ? new PyDict([new(new PyInt(3), InventoryWire.Id(change.PreviousLocationId))])
-                            : new PyDict([
-                                new(new PyInt(3), InventoryWire.Id(change.PreviousLocationId)),
-                                new(new PyInt(4), new PyInt(change.PreviousFlag))
-                            ]);
-                        session.SendNotification(
-                            "OnItemsChanged", "charid",
-                            new PyList([InventoryWire.PackedRow(RowOf(row, type))]), from, None);
-                    }
-                    var shipType = _statics.Type(lost.Ship.TypeId);
-                    session.SendNotification(
-                        "OnItemsChanged", "charid",
-                        new PyList([InventoryWire.PackedRow(
-                            RowOf(lost.Ship with { LocationId = Junkyard }, shipType),
-                            new PyStr($"Undocking:{pilot.UndockedFrom}"))]),
-                        new PyDict([new(new PyInt(3), InventoryWire.Id(lost.Ship.LocationId))]),
-                        None);
-                    session.SendNotification(
-                        "OnShipCosmeticsChanged", "clientID", InventoryWire.Id(pilot.ShipId), new PyDict([]));
-                    session.SendNotification(
-                        "OnShipCosmeticsChanged", "clientID", InventoryWire.Id(lost.PilotShip.Id), new PyDict([]));
-                    session.SendNotification(
-                        "OnCurrentShipSkinChange", "clientID", InventoryWire.Id(lost.PilotShip.Id), new PyInt(0));
-
-                    if (lost.Wreck is { } wreckItem && destroyed.WreckKind is not null)
-                    {
-                        session.SendNotification(
-                            "OnItemChange", "clientID",
-                            InventoryWire.PackedRow(RowOf(wreckItem, _statics.Type(wreckItem.TypeId)), new PyStr("")),
-                            new PyDict([new(new PyInt(3), new PyInt(0))]),
-                            None);
-                    }
+                    NotifyDeathAfterSessionChange(pilot, lost, destroyed);
                     return Task.CompletedTask;
                 },
                 CancellationToken.None,
@@ -2793,6 +2818,7 @@ private readonly TransitionRuntime _transitions;
     /// <summary>The simulation was lost: every ship it held is gone, so each is brought home to the station its character last was at.</summary>
     private void OnLost()
     {
+        _warping.Clear();
         Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.ResetAll();
         foreach (var pilot in _pilots.Values.ToArray())
         {

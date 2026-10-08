@@ -154,6 +154,60 @@ public class MachoNetServiceTests
         Assert.Equal(new PyInt(0), changed["SkillPurchaseEnabled"]);
         Assert.Equal(new PyInt(0), changed["expert_system_feature_enabled"]);
         Assert.Equal(new PyInt(5), changed["HyperNetPlexPriceOverride"]);
+
+          var cinematic = GlobalConfig.Build(new ClusterOptions { NewCharacterExperienceMode = "cinematic" })
+              .Entries.ToDictionary(e => Text(e.Key)!, e => e.Value);
+          Assert.Equal(new PyInt(1), cinematic["air_npe_enabled"]);
+    }
+
+    [Fact]
+    public async Task SetGlobalConfigValue_is_exposed_and_returns_none_without_a_write_backend()
+    {
+        IService service = new MachoNetService(new Info(), () => NowMs);
+        Assert.True(service.HasMethod("SetGlobalConfigValue"));
+
+        var result = await service.CallAsync(new ServiceCall
+        {
+            Method = "SetGlobalConfigValue",
+            Args = [new PyStr("new_mission_giver_enabled"), new PyStr("1")],
+            Session = new ClientSession(),
+        });
+
+        Assert.Same(PyNone.Instance, result);
+    }
+
+    [Fact]
+    public async Task SetGlobalConfigValue_forwards_positional_and_keyword_flags_to_its_typed_backend()
+    {
+        var updates = new List<MachoNetGlobalConfigUpdate>();
+        var session = new ClientSession();
+        IService service = new MachoNetService(new Info(), () => NowMs, (update, caller, _) =>
+        {
+            Assert.Same(session, caller);
+            updates.Add(update);
+            return ValueTask.CompletedTask;
+        });
+
+        Assert.Same(PyNone.Instance, await service.CallAsync(new ServiceCall
+        {
+            Method = "SetGlobalConfigValue",
+            Args = [new PyStr("ignored"), new PyStr("ignored")],
+            Kwargs = Py.Dict(
+                ("key", new PyStr(" new_mission_giver_enabled ")),
+                ("value", new PyStr("1")),
+                ("isUpdateClients", new PyStr("off"))),
+            Session = session,
+        }));
+        Assert.Same(PyNone.Instance, await service.CallAsync(new ServiceCall
+        {
+            Method = "SetGlobalConfigValue",
+            Args = [new PyStr("delete-me"), PyNone.Instance, new PyStr("yes"), new PyStr("off"), new PyInt(0)],
+            Session = session,
+        }));
+
+        Assert.Equal(2, updates.Count);
+        Assert.Equal(new MachoNetGlobalConfigUpdate("new_mission_giver_enabled", new PyStr("1"), false, true, false), updates[0]);
+        Assert.Equal(new MachoNetGlobalConfigUpdate("delete-me", PyNone.Instance, true, false, false), updates[1]);
     }
 
     [Fact]

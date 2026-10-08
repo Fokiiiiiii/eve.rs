@@ -147,6 +147,54 @@ public sealed class LookupSvcTests
 
 
     [Fact]
+    public async Task Faction_lookup_returns_the_reference_owner_rows()
+    {
+        var service = CoreServices.CreateLookupService(new TestDirectory
+        {
+            Factions = [new(500001, "Caldari State"), new(500002, "Gallente Federation")],
+        });
+
+        Assert.True(service.HasMethod("LookupFactions"));
+        var rows = Assert.IsType<Eve.Marshal.PyList>(await service.CallAsync(
+            Request("LookupFactions", new Eve.Marshal.PyStr("Caldari"))));
+
+        var row = Assert.Single(rows.Items);
+        Assert.Equal(["factionID", "factionName", "ownerID", "ownerName", "typeID", "groupID"], Keys(row));
+        Assert.Equal(500001, Number(Field(row, "factionID")));
+        Assert.Equal("Caldari State", Text(Field(row, "factionName")));
+        Assert.Equal(30, Number(Field(row, "typeID")));
+        Assert.Equal(19, Number(Field(row, "groupID")));
+    }
+
+    [Fact]
+    public async Task Location_group_lookup_returns_the_reference_keyval_shape_and_known_alias()
+    {
+        var service = CoreServices.CreateLookupService(new TestDirectory
+        {
+            Locations =
+            [
+                new(30000142, "Jita", 5, 5, 30000142, 20000020, 10000002),
+                new(30000144, "Perimeter", 5, 5, 30000144, 20000020, 10000002),
+            ],
+        });
+        var search = new Eve.Marshal.PyStr("jita");
+        var group = new Eve.Marshal.PyInt(5);
+
+        Assert.True(service.HasMethod("LookupLocationsByGroup"));
+        Assert.True(service.HasMethod("LookupKnownLocationsByGroup"));
+        var locations = Assert.IsType<Eve.Marshal.PyList>(await service.CallAsync(
+            Request("LookupLocationsByGroup", group, search)));
+        Assert.Single(locations.Items);
+        Assert.Equal(["itemID", "itemName", "typeID", "groupID", "solarSystemID", "constellationID", "regionID"], Keys(locations.Items[0]));
+        Assert.Equal(30000142, Number(Field(locations.Items[0], "itemID")));
+        Assert.Equal("Jita", Text(Field(locations.Items[0], "itemName")));
+
+        var known = Assert.IsType<Eve.Marshal.PyList>(await service.CallAsync(
+            Request("LookupKnownLocationsByGroup", group, search)));
+        Assert.Equal(locations, known);
+    }
+
+    [Fact]
     public async Task Legacy_delegate_sources_use_the_same_lookup_service()
     {
         var sources = new LookupSearchSources(
@@ -193,11 +241,14 @@ public sealed class LookupSvcTests
         public IReadOnlyList<LookupCorporation> Corporations { get; init; } = [];
         public IReadOnlyList<LookupAlliance> Alliances { get; init; } = [];
         public IReadOnlyList<LookupFaction> Factions { get; init; } = [];
+        public IReadOnlyList<LookupLocation> Locations { get; init; } = [];
 
         public ValueTask<IReadOnlyList<LookupCharacter>> CharactersAsync(CancellationToken cancellationToken) => ValueTask.FromResult(Characters);
         public ValueTask<IReadOnlyList<LookupCorporation>> CorporationsAsync(CancellationToken cancellationToken) => ValueTask.FromResult(Corporations);
         public ValueTask<IReadOnlyList<LookupAlliance>> AlliancesAsync(CancellationToken cancellationToken) => ValueTask.FromResult(Alliances);
         public ValueTask<IReadOnlyList<LookupFaction>> FactionsAsync(CancellationToken cancellationToken) => ValueTask.FromResult(Factions);
+        public ValueTask<IReadOnlyList<LookupLocation>> LocationsByGroupAsync(int groupId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<IReadOnlyList<LookupLocation>>([.. Locations.Where(location => location.GroupId == groupId)]);
     }
 }
 
@@ -530,10 +581,46 @@ public class CoreCatalogTests
         var created = CoreServices.Create(new SubscriptionSettings(), new NoAccounts(), () => 0);
         var createdNames = created.Select(service => service.Name).Order().ToArray();
 
-        Assert.Equal(
-            ["browserLockdownSvc", "calendarMgr", "calendarProxy", "pingService", "subscriptionMgr"],
-            createdNames);
+        var expectedNames = new[]
+        {
+                "abyssal_content_manager", "alphaInjectorMgr", "authentication", "bannedwords", "browserLockdownSvc", "cache", "calendarMgr", "calendarProxy",
+                "chatAuthenticationService", "communityTrackMgr", "contextualOfferMgr", "dynamicBountyMgr", "ingamereport", "jumpTimers", "nonDiminishingInjectionMgr", "overviewPresetMgr", "ProjectDiscovery", "eveguard_report", "infoGatheringMgr", "kiringMgr", "loginRewardFacilities", "localizationServer", "LPStoreMgr",
+                "corpFittingMgr", "dungeonExplorationMgr", "epicArcStatus", "keeper", "miningScanMgr", "node_graph", "peaceTreatyMgr", "petitioner", "pingService", "posMgr", "publicQaToolsServer", "seasonManager", "subscriptionMgr",
+                "custom_agency_provider", "superWeaponMgr", "tourneyMgr",
+                "raffleMgr", "serviceGatewayMgr", "sharedSettingsMgr", "shipStanceMgr",
+                "solarsystemInterferenceMgr", "survey", "warStatisticMgr",
+        }.Order().ToArray();
+        Assert.Equal(expectedNames, createdNames);
         Assert.All(createdNames, name => Assert.Contains(name, CoreServices.Names));
+    }
+
+
+    [Fact]
+    public async Task Core_factory_exposes_node_graph_callback_for_host_wiring()
+    {
+        Eve.Services.Core.NodeGraphRequest? observed = null;
+        var services = CoreServices.Create(
+            new SubscriptionSettings(),
+            new NoAccounts(),
+            () => 0,
+            nodeGraphRpcCallback: (request, _) =>
+            {
+                observed = request;
+                return ValueTask.CompletedTask;
+            });
+        var service = Assert.Single(services, candidate => candidate.Name == "node_graph");
+        var session = new Eve.Services.ClientSession();
+
+        var response = await service.CallAsync(new Eve.Services.ServiceCall
+        {
+            Method = "qa_unsubscribe",
+            Args = Array.Empty<Eve.Marshal.PyValue>(),
+            Session = session,
+        });
+
+        Assert.Same(Eve.Marshal.PyNone.Instance, response);
+        Assert.Equal(Eve.Services.Core.NodeGraphOperation.QaUnsubscribe, observed!.Operation);
+        Assert.Same(session, observed.Session);
     }
 
     private sealed class NoAccounts : IOmegaAccountStore

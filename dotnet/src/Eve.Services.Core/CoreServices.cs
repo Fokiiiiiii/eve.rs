@@ -12,9 +12,27 @@ public static class CoreServices
         IOmegaAccountStore accounts,
         Func<long> nowUnixMs,
         Eve.Calendar.ICalendarStore? calendarStore = null,
-        Eve.Calendar.ICalendarAudienceReader? calendarAudience = null)
+        Eve.Calendar.ICalendarAudienceReader? calendarAudience = null,
+        AuthenticationRpcService? authentication = null,
+        InfoGatheringMgrService? infoGatheringMgr = null,
+        EveguardReportService? eveguardReport = null,
+        GameRpcCallbacks? gameRpcCallbacks = null,
+        ReadJumpTimersCallback? readJumpTimers = null,
+        ReadNonDiminishingInjectionCountCallback? readNonDiminishingInjections = null,
+        SubmitInGameReportCallback? submitInGameReport = null,
+        NodeGraphRpcCallback? nodeGraphRpcCallback = null,
+        ReadEscalatingPathDetailsCallback? readEscalatingPathDetails = null,
+        KeeperRpcCallbacks? keeperRpcCallbacks = null,
+        ReadControlTowerRowsCallback? readControlTowerRows = null,
+        ReadCommunityFittingsCallback? readCommunityFittings = null,
+        CustomAgencyProviderRpcCallbacks? customAgencyProviderRpcCallbacks = null,
+        ReadEpicArcStatusCallback? readEpicArcStatus = null,
+        SuperWeaponRpcCallbacks? superWeaponRpcCallbacks = null,
+        TourneyQueryCallback? tourneyQueryCallback = null)
     {
+        gameRpcCallbacks ??= new GameRpcCallbacks();
         var licenses = new OmegaLicenses(settings, accounts, nowUnixMs);
+        var subscriptionManager = new SubscriptionMgrService(settings, licenses);
         var calendarManager = calendarStore is null
             ? new CalendarMgrService()
             : new CalendarMgrService(calendarStore,
@@ -26,7 +44,48 @@ public static class CoreServices
         [
             new PingService(),
             new BrowserLockdownService(),
-            new SubscriptionMgrService(settings, licenses),
+            new PosMgrService(readControlTowerRows),
+            new KiringMgrService(),
+            new PetitionerService(),
+            new AbyssalContentManagerService(gameRpcCallbacks.AbyssalSpawnReportAsync),
+            new DungeonExplorationMgrService(readEscalatingPathDetails, nowUnixMs),
+            new KeeperService(keeperRpcCallbacks),
+            new MiningScanMgrService(gameRpcCallbacks.ReadMiningScanResultsAsync),
+            new NodeGraphService(nodeGraphRpcCallback),
+            new PeaceTreatyMgrService(gameRpcCallbacks.ReadPeaceTreaties),
+            new PublicQaToolsServerService(gameRpcCallbacks.PublicQaTools),
+            new CorpFittingMgrService(readCommunityFittings),
+            new CustomAgencyProviderService(customAgencyProviderRpcCallbacks),
+            new EpicArcStatusService(readEpicArcStatus),
+            new SuperWeaponMgrService(superWeaponRpcCallbacks),
+            new TourneyMgrService(tourneyQueryCallback),
+            new RaffleMgrService(gameRpcCallbacks.SeedRafflesAsync),
+            new ServiceGatewayMgrService(gameRpcCallbacks.SetHijackMode, gameRpcCallbacks.IsHijackModeEnabled),
+            new SharedSettingsMgrService(gameRpcCallbacks.ReadSharedSettings, gameRpcCallbacks.WriteSharedSettingsAsync, nowUnixMs),
+            new OverviewPresetMgrService(gameRpcCallbacks.ReadOverviewPresets, gameRpcCallbacks.WriteOverviewPresets),
+            new ShipStanceMgrService(gameRpcCallbacks.SetShipStanceAsync),
+            new SolarSystemInterferenceMgrService(gameRpcCallbacks.ReadInterferenceTableAsync, nowUnixMs),
+            new SurveyService(gameRpcCallbacks.ReadActiveSurveyIdAsync, gameRpcCallbacks.RecordSurveyEventAsync),
+            new WarStatisticMgrService(gameRpcCallbacks.ReadKillmailAsync, nowUnixMs),
+            new LPStoreMgrService(),
+            new BannedWordsService(),
+            new AlphaInjectorMgrService(),
+            new CacheService(),
+              new ChatAuthenticationService(),
+            new CommunityTrackMgrService(),
+            new ContextualOfferMgrService(),
+              new DynamicBountyMgrService(),
+                new JumpTimersService(readJumpTimers),
+              new InGameReportService(submitInGameReport),
+              new NonDiminishingInjectionMgrService(readNonDiminishingInjections),
+            new ProjectDiscoveryService(),
+            new LocalizationServerService(),
+              new SeasonManagerService(),
+            authentication ?? new AuthenticationRpcService(),
+            infoGatheringMgr ?? new InfoGatheringMgrService(),
+            eveguardReport ?? new EveguardReportService(),
+            subscriptionManager,
+            new LoginRewardFacilitiesService(subscriptionManager),
             calendarManager,
             calendarProxy,
         ];
@@ -40,7 +99,7 @@ public static class CoreServices
     public static IService CreateLookupService(LookupSearchSources sources) => new LookupSvcService(sources);
 
     /// <summary>The names of the services <see cref="Create"/> returns.</summary>
-    public static IReadOnlyList<string> Names => Generated.Eve_Services_CoreServiceCatalog.Names;
+    public static IReadOnlyList<string> Names => [.. Generated.Eve_Services_CoreServiceCatalog.Names, "ProjectDiscovery", "overviewPresetMgr"];
 }
 
 public sealed record LookupEntity(
@@ -52,13 +111,23 @@ public sealed record LookupEntity(
     int Gender = 0,
     string? TickerName = null,
     bool IsNpc = false,
-    int WarPermit = 0);
+    int? WarPermit = null);
+
+public sealed record LookupLocation(
+    long Id,
+    string? Name,
+    int TypeId,
+    int GroupId,
+    long? SolarSystemId = null,
+    long? ConstellationId = null,
+    long? RegionId = null);
 
 public sealed record LookupSearchSources(
     Func<CancellationToken, Task<IReadOnlyList<LookupEntity>>> Characters,
     Func<CancellationToken, Task<IReadOnlyList<LookupEntity>>> Corporations,
     Func<CancellationToken, Task<IReadOnlyList<LookupEntity>>> Alliances,
-    Func<CancellationToken, Task<IReadOnlyList<LookupEntity>>> Factions) : ILookupDirectory
+    Func<CancellationToken, Task<IReadOnlyList<LookupEntity>>> Factions,
+    Func<int, CancellationToken, Task<IReadOnlyList<LookupLocation>>>? Locations = null) : ILookupDirectory
 {
     public async ValueTask<IReadOnlyList<LookupCharacter>> CharactersAsync(CancellationToken cancellationToken) =>
         (await Characters(cancellationToken).ConfigureAwait(false))
@@ -79,6 +148,9 @@ public sealed record LookupSearchSources(
         (await Factions(cancellationToken).ConfigureAwait(false))
             .Select(row => new LookupFaction(row.Id, row.Name ?? string.Empty))
             .ToArray();
+
+    public async ValueTask<IReadOnlyList<LookupLocation>> LocationsByGroupAsync(int groupId, CancellationToken cancellationToken) =>
+        Locations is null ? [] : await Locations(groupId, cancellationToken).ConfigureAwait(false);
 }
 
 /// <summary>
@@ -305,6 +377,8 @@ public interface ILookupDirectory
     ValueTask<IReadOnlyList<LookupCorporation>> CorporationsAsync(CancellationToken cancellationToken);
     ValueTask<IReadOnlyList<LookupAlliance>> AlliancesAsync(CancellationToken cancellationToken);
     ValueTask<IReadOnlyList<LookupFaction>> FactionsAsync(CancellationToken cancellationToken);
+    ValueTask<IReadOnlyList<LookupLocation>> LocationsByGroupAsync(int groupId, CancellationToken cancellationToken) =>
+        ValueTask.FromResult<IReadOnlyList<LookupLocation>>([]);
 }
 
 /// <summary>
@@ -401,6 +475,9 @@ public sealed class LookupSvcService : IService
         "LookupEvePlayerCharacters",
         "LookupPlayerCharacters",
         "LookupCorporations",
+        "LookupFactions",
+        "LookupLocationsByGroup",
+        "LookupKnownLocationsByGroup",
         "LookupOwners",
         "LookupPCOwners",
         "LookupNoneNPCAccountOwners",
@@ -422,6 +499,8 @@ public sealed class LookupSvcService : IService
         {
             "LookupCharacters" or "LookupEvePlayerCharacters" or "LookupPlayerCharacters" => await LookupCharactersAsync(call),
             "LookupCorporations" => await LookupCorporationsAsync(call),
+            "LookupFactions" => await LookupFactionsAsync(call),
+            "LookupLocationsByGroup" or "LookupKnownLocationsByGroup" => await LookupLocationsByGroupAsync(call),
             "LookupOwners" => await LookupOwnersAsync(call, includeNpcCorporations: true, includeAlliances: true, includeFactions: true),
             "LookupPCOwners" => await LookupOwnersAsync(call, includeNpcCorporations: false, includeAlliances: true, includeFactions: false),
             "LookupNoneNPCAccountOwners" => await LookupOwnersAsync(call, includeNpcCorporations: false, includeAlliances: false, includeFactions: false),
@@ -467,6 +546,42 @@ public sealed class LookupSvcService : IService
                 IncludeTickerName: true,
                 IsNpc: corporation.IsNpc));
         return AsList(Filter(entries, search, exactMode).Select(BuildCorporationRow));
+    }
+
+    private async ValueTask<PyValue> LookupFactionsAsync(ServiceCall call)
+    {
+        var search = SearchString(call.Arg(0));
+        var exactMode = ExactMode(call.Arg(1));
+        var factions = await directory.FactionsAsync(call.Cancellation);
+        var entries = factions.Where(faction => faction.Id > 0)
+            .Select(faction => new OwnerEntry(
+                faction.Id,
+                NameOr(faction.Name, $"Faction {faction.Id}"),
+                FactionTypeId,
+                FactionGroupId,
+                0,
+                FactionId: faction.Id));
+        return AsList(Filter(entries, search, exactMode).Select(BuildFactionRow));
+    }
+
+    private async ValueTask<PyValue> LookupLocationsByGroupAsync(ServiceCall call)
+    {
+        var rawGroup = JsSemantics.NumberValue(call.Arg(0));
+        var groupId = double.IsFinite(rawGroup) && Math.Truncate(rawGroup) is >= 0 and <= int.MaxValue
+            ? (int)Math.Truncate(rawGroup)
+            : 0;
+        var search = SearchString(call.Arg(1)) ?? string.Empty;
+        var exactMode = ExactMode(call.Arg(2));
+        var locations = await directory.LocationsByGroupAsync(groupId, call.Cancellation);
+        var rows = locations
+            .Where(location => location.GroupId == groupId && location.Id > 0 && !string.IsNullOrWhiteSpace(location.Name))
+            .Where(location => Matches(location.Name!, search, exactMode))
+            .OrderBy(location => Rank(location.Name!, search))
+            .ThenBy(location => location.Name, StringComparer.CurrentCulture)
+            .ThenBy(location => location.Id)
+            .Take(MaxLookupResults)
+            .Select(BuildLocationRow);
+        return AsList(rows);
     }
 
     private async ValueTask<PyValue> LookupOwnersAsync(
@@ -589,6 +704,23 @@ public sealed class LookupSvcService : IService
         ("tickerName", entry.TickerName is { } ticker ? new PyStr(ticker) : PyNone.Instance),
         ("factionID", new PyInt(entry.FactionId ?? 0)),
         ("isNPC", PyValue.Of(entry.IsNpc ?? false)));
+
+    private static PyValue BuildFactionRow(OwnerEntry entry) => Py.KeyVal(
+        ("factionID", new PyInt(entry.Id)),
+        ("factionName", new PyStr(entry.Name)),
+        ("ownerID", new PyInt(entry.Id)),
+        ("ownerName", new PyStr(entry.Name)),
+        ("typeID", new PyInt(FactionTypeId)),
+        ("groupID", new PyInt(FactionGroupId)));
+
+    private static PyValue BuildLocationRow(LookupLocation location) => Py.KeyVal(
+        ("itemID", new PyInt(location.Id)),
+        ("itemName", new PyStr(location.Name ?? string.Empty)),
+        ("typeID", new PyInt(location.TypeId)),
+        ("groupID", new PyInt(location.GroupId)),
+        ("solarSystemID", location.SolarSystemId is > 0 and var systemId ? new PyInt(systemId) : PyNone.Instance),
+        ("constellationID", location.ConstellationId is > 0 and var constellationId ? new PyInt(constellationId) : PyNone.Instance),
+        ("regionID", location.RegionId is > 0 and var regionId ? new PyInt(regionId) : PyNone.Instance));
 
     private static PyValue BuildOwnerRow(OwnerEntry entry)
     {

@@ -1,8 +1,21 @@
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
+using Eve.Services.Core;
 
 namespace Eve.Host;
+
+public sealed record MachoNetGlobalConfigUpdate(
+    string Key,
+    PyValue Value,
+    bool IsDelete,
+    bool IsUpdate,
+    bool IsUpdateClients);
+
+public delegate ValueTask MachoNetGlobalConfigUpdateCallback(
+    MachoNetGlobalConfigUpdate update,
+    ClientSession session,
+    CancellationToken cancellationToken);
 
 /// <summary>What <c>machoNet</c> tells the client about the cluster.</summary>
 public interface IMachoNetInfo
@@ -47,7 +60,10 @@ public static class ServiceLocations
 
 /// <summary>The client's first calls: the time, and the service table and configuration it routes and behaves by.</summary>
 [Service("machoNet")]
-public sealed partial class MachoNetService(IMachoNetInfo info, Func<long> nowUnixMs)
+public sealed partial class MachoNetService(
+    IMachoNetInfo info,
+    Func<long> nowUnixMs,
+    MachoNetGlobalConfigUpdateCallback? setGlobalConfigValue = null)
 {
     private const string ServerStatusLabel = "/Carbon/MachoNet/ServerStatus/OK";
 
@@ -89,12 +105,32 @@ public sealed partial class MachoNetService(IMachoNetInfo info, Func<long> nowUn
         return empty;
     }
 
+    [Method("SetGlobalConfigValue")]
+    public async ValueTask<PyValue> SetGlobalConfigValue(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var key = (JsSemantics.StringValue(Argument(call, "key", 0)) ?? "").Trim();
+        if (key.Length == 0)
+            return PyNone.Instance;
+
+        if (setGlobalConfigValue is { } callback)
+            await callback(new MachoNetGlobalConfigUpdate(
+                    key,
+                    Argument(call, "value", 1) ?? PyNone.Instance,
+                    BooleanArgument(call, "isDelete", 2, false),
+                    BooleanArgument(call, "isUpdate", 3, true),
+                    BooleanArgument(call, "isUpdateClients", 4, true)),
+                call.Session,
+                call.Cancellation);
+        return PyNone.Instance;
+    }
+
     [Method("GetServerStatus")]
     public PyValue GetServerStatus(ServiceCall call) => Py.Tuple(
         Py.Tuple(new PyStr(ServerStatusLabel), new PyDict([])),
         Py.Dict(
-            ("boot_version", new PyReal(24.01)),
-            ("boot_build", new PyInt(3_396_210)),
+            ("boot_version", new PyReal(ServerBuildInfo.BootVersion)),
+            ("boot_build", new PyInt(ServerBuildInfo.BootBuild)),
             ("boot_codename", new PyStr("eve.rs")),
             ("boot_region", new PyStr("ccp")),
             ("update_info", new PyStr("V24.01@ccp")),
@@ -105,4 +141,30 @@ public sealed partial class MachoNetService(IMachoNetInfo info, Func<long> nowUn
 
     [Method("GetNodeID")]
     public PyValue GetNodeId(ServiceCall call) => new PyInt(MachoMessage.ProxyNodeId);
+
+    private static PyValue? Argument(ServiceCall call, string name, int index) =>
+        call.Kwarg(name) ?? (call.Args.Count > index ? call.Args[index] : null);
+
+    private static bool BooleanArgument(ServiceCall call, string name, int index, bool fallback)
+    {
+        var value = Argument(call, name, index);
+        if (value is null or PyNone)
+            return fallback;
+        if (value is PyBool boolean)
+            return boolean.Value;
+        if (value is PyInt integer)
+            return integer.Value != 0;
+        if (value is PyLong longInteger)
+            return longInteger.Value != 0;
+        if (value is PyReal real)
+            return real.Value != 0;
+
+        var normalized = (JsSemantics.StringValue(value) ?? "").Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "1" or "true" or "yes" or "on" => true,
+            "0" or "false" or "no" or "off" => false,
+            _ => fallback,
+        };
+    }
 }

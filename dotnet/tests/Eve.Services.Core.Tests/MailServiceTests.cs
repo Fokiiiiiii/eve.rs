@@ -279,6 +279,55 @@ public sealed class MailServiceTests
         Assert.Equal(PyNone.Instance, await service.CallAsync(Request("GetBody", new PyInt(20), PyBool.True)));
     }
 
+    [Fact]
+    public async Task Chat_gm_poke_rpc_is_exposed_and_returns_none_without_its_server_mail_backend()
+    {
+        var service = new MailService(
+            _ => throw new InvalidOperationException("A GM poke must not read a player mailbox."),
+            (_, _, _, _) => throw new InvalidOperationException("A GM poke must not mark mail read."));
+        var call = new ServiceCall
+        {
+            Method = "PokePlayerAboutChatMsgGm",
+            Args = [new PyInt(90000003), new PyStr("help-channel")],
+            Session = new ClientSession(),
+        };
+
+        Assert.True(service.HasMethod(call.Method));
+        Assert.Same(PyNone.Instance, await service.CallAsync(call));
+    }
+
+    [Fact]
+    public async Task Chat_gm_poke_forwards_the_reference_mail_payload_to_its_typed_backend()
+    {
+        GmChatPokeMailRequest? sent = null;
+        ClientSession? sender = null;
+        var service = new MailService(
+            _ => throw new InvalidOperationException("A GM poke must not read a player mailbox."),
+            (_, _, _, _) => throw new InvalidOperationException("A GM poke must not mark mail read."),
+            pokePlayerAboutChatMsgGm: (request, session, _) =>
+            {
+                sent = request;
+                sender = session;
+                return Task.FromResult<long?>(700);
+            });
+        var call = new ServiceCall
+        {
+            Method = "PokePlayerAboutChatMsgGm",
+            Args = [new PyInt(90000003), new PyStr("help-channel")],
+            Session = new ClientSession(),
+        };
+
+        Assert.Equal(new PyLong(700), await service.CallAsync(call));
+        Assert.NotNull(sent);
+        Assert.Same(call.Session, sender);
+        Assert.Equal(90000003, sent.CharacterId);
+        Assert.Equal(140000004, sent.SenderCharacterId);
+        Assert.Equal("help-channel", sent.ChannelName);
+        Assert.Equal("GM chat request", sent.Title);
+        Assert.Equal("A GM would like to speak with you.<br><br>Requested channel: help-channel", sent.Body);
+        Assert.False(sent.SaveSenderCopy);
+    }
+
     private static MailService Service(JsonObject data) => new(_ => Task.FromResult(data),
         (_, _, _, _) => throw new InvalidOperationException("This read must not update state"));
 

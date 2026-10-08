@@ -289,7 +289,7 @@ public class CharUnboundMgrTests
         var id = await CreateAsync(h, session, "Recorded Pilot");
         var shipId = (await h.Characters.GetAsync(id))!.ShipId!.Value;
 
-        Assert.Equal(PyNone.Instance, await h.CallAsync(session, "SelectCharacterID", new PyInt(id)));
+        Assert.Equal(PyNone.Instance, await h.CallAsync(session, "SelectCharacterID", new PyInt(id), PyNone.Instance, PyBool.False));
 
         // the session change first, then the skills notification, as the reference orders them
         Assert.Equal(2, sink.Sent.Count);
@@ -433,12 +433,167 @@ public class CharUnboundMgrTests
         Assert.Equal(id, session.CharacterId);
     }
 
+    [PgFact]
+    public async Task Skip_tutorial_third_argument_updates_air_npe_state_and_notifies_only_when_it_changes()
+    {
+        await using var h = await Harness.CreateAsync(newCharacterExperienceEnabled: true);
+        var (session, sink) = await h.LoginAsync("skip-tutorial");
+        var id = await CreateAsync(h, session, "Tutorial Pilot");
+        var before = (await h.Characters.GetAsync(id))!;
+        Assert.Equal(("tutorial", 1), (before.TutorialEntryMode, before.AirNpeState));
+        sink.Sent.Clear();
+
+        Assert.Equal(PyNone.Instance, await h.CallAsync(session, "SelectCharacterID", new PyLong(id), new PyInt(0), PyBool.True));
+
+        var skipped = (await h.Characters.GetAsync(id))!;
+        Assert.Equal(("tutorial", "none", 3, false), (
+            skipped.TutorialEntryMode, skipped.TutorialFirstLoginHandoff, skipped.AirNpeState, skipped.AirNpeRevealOnFirstLogin));
+        var names = sink.Sent.Select(NotificationName).Where(name => name is not null).ToArray();
+        Assert.Equal(new[] { "OnServerSkillsChanged", "OnAirNpeStateChanged" }, names);
+        var airNpeNotification = Assert.Single(sink.Sent, packet => NotificationName(packet) == "OnAirNpeStateChanged");
+        Assert.Equal(new PyTuple([new PyInt(id), new PyInt(3)]), NotificationArgs(airNpeNotification));
+        Assert.Single(sink.Sent, packet => ((PyInt)((PyTuple)((PyObject)packet).Args).Items[0]).Value == 16);
+
+        sink.Sent.Clear();
+        Assert.Equal(PyNone.Instance, await h.CallAsync(session, "SelectCharacterID", new PyLong(id), PyNone.Instance, PyBool.True));
+        Assert.DoesNotContain(sink.Sent, packet => NotificationName(packet) == "OnAirNpeStateChanged");
+        Assert.Equal(3, (await h.Characters.GetAsync(id))!.AirNpeState);
+    }
+
+    [PgFact]
+    public async Task First_login_air_npe_reveal_is_consumed_without_a_state_change_notification()
+    {
+        await using var h = await Harness.CreateAsync(newCharacterExperienceEnabled: true);
+        var (session, sink) = await h.LoginAsync("npe-reveal");
+        var id = await CreateAsync(h, session, "Reveal Pilot");
+        await h.ExecuteAsync($"UPDATE {{characters}}.characters SET air_npe_state = 2, air_npe_reveal_on_first_login = TRUE WHERE id = {id}");
+        sink.Sent.Clear();
+
+        Assert.Equal(PyNone.Instance, await h.CallAsync(session, "SelectCharacterID", new PyLong(id), PyNone.Instance, PyBool.False));
+
+        var character = (await h.Characters.GetAsync(id))!;
+        Assert.Equal(2, character.AirNpeState);
+        Assert.False(character.AirNpeRevealOnFirstLogin);
+        Assert.DoesNotContain(sink.Sent, packet => NotificationName(packet) == "OnAirNpeStateChanged");
+    }
+
+    [PgFact]
+    public async Task Get_character_info_lists_owned_characters_and_returns_detail_for_an_id()
+    {
+        await using var h = await Harness.CreateAsync();
+        var (session, _) = await h.LoginAsync("character-info");
+        var id = await CreateAsync(h, session, "Info Pilot");
+
+        var rows = (PyList)await h.CallAsync(session, "GetCharacterInfo");
+        var row = Recorded.Attributes(Assert.Single(rows.Items)).ToDictionary(a => a.Key, a => a.Value);
+        Assert.Equal(new PyInt(id), row["characterID"]);
+        Assert.Equal(new PyStr("Info Pilot"), row["characterName"]);
+
+        var detail = Recorded.Attributes(await h.CallAsync(session, "GetCharacterInfo", new PyLong(id)))
+            .ToDictionary(a => a.Key, a => a.Value);
+        Assert.Equal(new PyInt(id), detail["characterID"]);
+        Assert.Equal(new PyInt(1), detail["bloodlineID"]);
+
+        var (other, _) = await h.LoginAsync("character-info-other");
+        Assert.Empty(((PyList)await h.CallAsync(other, "GetCharacterInfo")).Items);
+    }
+
+    [PgFact]
+    public async Task Qa_starter_system_ids_are_distinct_and_sorted_from_school_catalog_data()
+    {
+        await using var h = await Harness.CreateAsync();
+        var (session, _) = await h.LoginAsync("qa-starters");
+
+        var ids = (PyList)await h.CallAsync(session, "GetQAStarterSystemIDs");
+        Assert.Equal(new PyList([new PyInt(30000001), new PyInt(30002775)]), ids);
+    }
+
+    [PgFact]
+    public async Task Update_character_gender_persists_the_normalized_gender_and_updates_the_matching_session()
+    {
+        await using var h = await Harness.CreateAsync();
+        var (session, _) = await h.LoginAsync("gender-update");
+        var id = await CreateAsync(h, session, "Gender Pilot");
+        session.Set("charid", new PyInt(id));
+
+        Assert.Equal(PyNone.Instance, await h.CallAsync(session, "UpdateCharacterGender", new PyLong(id), new PyInt(2)));
+
+        Assert.Equal(2, (await h.Characters.GetAsync(id))!.Gender);
+        Assert.Equal(new PyInt(2), session.Get("genderID"));
+        Assert.Equal(new PyInt(2), session.Get("genderid"));
+
+        await h.CallAsync(session, "UpdateCharacterGender", new PyLong(id), new PyInt(3));
+        Assert.Equal(1, (await h.Characters.GetAsync(id))!.Gender);
+        await h.CallAsync(session, "UpdateCharacterGender", new PyLong(id));
+        Assert.Equal(1, (await h.Characters.GetAsync(id))!.Gender);
+    }
+
+    [PgFact]
+    public async Task Update_character_bloodline_persists_catalog_identity_and_updates_the_matching_session()
+    {
+        await using var h = await Harness.CreateAsync();
+        var (session, _) = await h.LoginAsync("bloodline-update");
+        var id = await CreateAsync(h, session, "Bloodline Pilot");
+        session.Set("charid", new PyInt(id));
+
+        Assert.Equal(PyNone.Instance, await h.CallAsync(session, "UpdateCharacterBloodline", new PyLong(id), new PyInt(3)));
+
+        var character = (await h.Characters.GetAsync(id))!;
+        Assert.Equal((3, 2, 1375), (character.BloodlineId, character.RaceId, character.TypeId));
+        Assert.Equal(new PyInt(3), session.Get("bloodlineID"));
+        Assert.Equal(new PyInt(3), session.Get("bloodlineid"));
+        Assert.Equal(new PyInt(2), session.Get("raceID"));
+        Assert.Equal(new PyInt(2), session.Get("raceid"));
+        Assert.Equal(new PyInt(1375), session.Get("characterTypeID"));
+    }
+
+    [PgFact]
+    public async Task Cancel_character_delete_prepare_checks_ownership_and_online_state_then_clears_the_queue()
+    {
+        await using var h = await Harness.CreateAsync();
+        var (session, _) = await h.LoginAsync("delete-cancel");
+        var id = await CreateAsync(h, session, "Delete Pilot");
+        var (other, _) = await h.LoginAsync("delete-cancel-other");
+        var otherId = await CreateAsync(h, other, "Other Pilot");
+        await h.ExecuteAsync($"UPDATE {{characters}}.characters SET delete_prepare_at = '2025-01-01T00:00:00Z' WHERE id IN ({id}, {otherId})");
+
+        var foreignError = await ErrorOfAsync(() => h.CallAsync(session, "CancelCharacterDeletePrepare", new PyLong(otherId)));
+        Assert.Equal("That character is not available on this account.", InfoText(foreignError));
+        Assert.NotNull((await h.Characters.GetAsync(otherId))!.DeletePrepareAt);
+
+        Assert.True(h.Online.TryEnter(id, 123));
+        var onlineError = await ErrorOfAsync(() => h.CallAsync(session, "CancelCharacterDeletePrepare", new PyLong(id)));
+        Assert.Equal("That character is currently online and cannot be deleted.", InfoText(onlineError));
+        h.Online.Leave(123);
+
+        Assert.Equal(PyNone.Instance, await h.CallAsync(session, "CancelCharacterDeletePrepare", new PyLong(id)));
+        Assert.Null((await h.Characters.GetAsync(id))!.DeletePrepareAt);
+    }
+
     /// <summary>The <c>info</c> text of a <c>CustomInfo</c> user error.</summary>
     private static string? InfoText(MachoError error)
     {
         var header = (PyTuple)((PyObjectEx)error.Payload).Header;
         var dict = (PyDict)((PyTuple)header.Items[1]).Items[1];
         return JsSemantics.StringValue(dict.Entries.Single(e => JsSemantics.StringValue(e.Key) == "info").Value);
+    }
+
+    private static string? NotificationName(PyValue packet)
+    {
+        if (packet is not PyObject { Name: PyStr name, Args: PyTuple args } ||
+            !name.Value.EndsWith("Notification", StringComparison.Ordinal))
+        {
+            return null;
+        }
+        return Eve.Macho.MachoAddress.Decode(args.Items[2]).BroadcastId;
+    }
+
+    private static PyTuple NotificationArgs(PyValue packet)
+    {
+        var fields = (PyTuple)((PyObject)packet).Args;
+        var envelope = (PyTuple)((PyTuple)fields.Items[4]).Items[0];
+        var notification = (PyTuple)MarshalCodec.Decode(((PyBuffer)envelope.Items[1]).Value);
+        return (PyTuple)((PyTuple)notification.Items[1]).Items[1];
     }
 
     private static List<SessionChange> ChangesOf(PyValue packet)

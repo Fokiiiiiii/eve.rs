@@ -46,6 +46,33 @@ public class CreationTests
     }
 
     [PgFact]
+    public async Task Character_creation_persists_the_configured_tutorial_entry_mode()
+    {
+        await using var s = await PgSchemas.CreateAsync();
+        var modes = new[]
+        {
+            ("disabled", "disabled", 2),
+            ("tutorial", "tutorial", 1),
+            ("cinematic", "cinematic_intro_overlay", 2),
+        };
+
+        for (var index = 0; index < modes.Length; index++)
+        {
+            var (mode, entryMode, state) = modes[index];
+            var creation = new CharacterCreation(
+                s.Source, s.Characters, s.Items, s.Skills, Skills, s.Wallets, new StartingWallet(), Catalog, s.Modules,
+                newCharacterExperienceMode: mode);
+            var created = Assert.IsType<Created>(await creation.CreateAsync(Request($"Mode Pilot {index}")));
+            var character = (await s.Characters.GetAsync(created.CharacterId))!;
+
+            Assert.Equal(entryMode, character.TutorialEntryMode);
+            Assert.Equal(state, character.AirNpeState);
+            Assert.Equal("none", character.TutorialFirstLoginHandoff);
+            Assert.False(character.AirNpeRevealOnFirstLogin);
+        }
+    }
+
+    [PgFact]
     public async Task The_ship_comes_with_its_starter_modules_fitted_in_their_slots()
     {
         await using var s = await PgSchemas.CreateAsync();

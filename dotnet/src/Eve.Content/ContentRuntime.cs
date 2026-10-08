@@ -454,6 +454,25 @@ public sealed class ContentRuntime
         return list;
     }
 
+    public async Task<IReadOnlyList<ContentInstance>> ActiveByKindAsync(string kind, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        var ids = new List<long>();
+        await using (var command = Sql.Command(connection, null, Q("SELECT id FROM {schema}.instances WHERE kind = $1 AND state = 'active' ORDER BY id"), kind))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+                ids.Add(reader.GetInt64(0));
+        }
+        var list = new List<ContentInstance>();
+        foreach (var id in ids)
+        {
+            if ((await LoadAsync(connection, null, id, false, cancellationToken))?.Info is { } info)
+                list.Add(info);
+        }
+        return list;
+    }
+
     public async Task<IReadOnlyList<ObjectiveInfo>> ObjectivesOfAsync(long instanceId, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);

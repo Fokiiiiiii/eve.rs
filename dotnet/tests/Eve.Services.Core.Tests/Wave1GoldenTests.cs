@@ -82,7 +82,8 @@ public class Wave1GoldenTests
         var subscriptions = new SubscriptionMgrService(
             settings,
             new OmegaLicenses(settings, new FakeAccounts(new JsonObject()), () => nowUnixMs));
-        IService service = (IService)(object)new LoginRewardFacilitiesService(subscriptions);
+        IService service = CoreServices.Create(settings, new FakeAccounts(new JsonObject()), () => nowUnixMs)
+            .Single(candidate => candidate.Name == "loginRewardFacilities");
         var session = new ClientSession();
         session.Set("userid", new PyLong(90000001));
 

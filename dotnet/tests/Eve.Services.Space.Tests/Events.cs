@@ -12,7 +12,7 @@ internal static class Events
     {
         var sink = (Sink)session.Sink!;
         var events = new List<Event>();
-        foreach (var packet in sink.Sent.OfType<PyObject>())
+        foreach (var packet in sink.Sent.ToArray().OfType<PyObject>())
         {
             var state = ((PyTuple)packet.Args).Items;
             if (state[0] is not PyInt { Value: MachoMessage.Notification })
@@ -45,7 +45,7 @@ internal static class Sequence
     {
         var sink = (Sink)session.Sink!;
         var names = new List<string>();
-        foreach (var packet in sink.Sent.OfType<PyObject>())
+        foreach (var packet in sink.Sent.ToArray().OfType<PyObject>())
         {
             var state = ((PyTuple)packet.Args).Items;
             if (state[0] is PyInt { Value: MachoMessage.SessionChangeNotification })

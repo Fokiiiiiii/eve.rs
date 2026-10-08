@@ -214,12 +214,16 @@ public class StationServiceTests
     }
 
     [Fact]
-    public async Task The_item_bits_are_the_columns_of_the_row_the_client_builds_for_its_station()
+    public async Task Station_item_bits_are_a_list_in_reference_order()
     {
         var (session, _) = Data.Session(60015249);
-        Assert.Equal(new PyTuple([new PyInt(1000413), new PyInt(60015249), new PyInt(123), new PyInt(92885)]), await Data.CallAsync(Make(), session, "GetStationItemBits"));
+        Assert.Equal(
+            [new PyInt(1000413), new PyInt(60015249), new PyInt(123), new PyInt(92885)],
+            Assert.IsType<PyList>(await Data.CallAsync(Make(), session, "GetStationItemBits")).Items);
         var (elsewhere, _) = Data.Session(60000610);
-        Assert.Equal(new PyTuple([new PyInt(1000006), new PyInt(60000610), new PyInt(7), new PyInt(4023)]), await Data.CallAsync(Make(), elsewhere, "GetStationItemBits"));
+        Assert.Equal(
+            [new PyInt(1000006), new PyInt(60000610), new PyInt(7), new PyInt(4023)],
+            Assert.IsType<PyList>(await Data.CallAsync(Make(), elsewhere, "GetStationItemBits")).Items);
         var (nowhere, _) = Data.Session(null);
         Assert.Equal(PyNone.Instance, await Data.CallAsync(Make(), nowhere, "GetStationItemBits"));
     }
@@ -285,6 +289,30 @@ public class StationServiceTests
         var service = Make();
         Assert.Equal("stationSvc", ((IService)service).Name);
         Assert.True(((IService)service).HasMethod("GetGuests"));
+    }
+
+
+    [Fact]
+    public async Task Get_stations_for_owner_returns_reference_keyvals_and_three_decimal_security()
+    {
+        var service = Make();
+        var (session, _) = Data.Session(null);
+        var ownerId = Data.Stations.All.First().OwnerId;
+        var expected = Data.Stations.All.Where(station => station.OwnerId == ownerId).OrderBy(station => station.Id).ToArray();
+
+        var result = Assert.IsType<PyList>(await Data.CallAsync(service, session, "GetStationsForOwner", new PyLong(ownerId)));
+
+        Assert.Equal(expected.Length, result.Items.Count);
+        var fields = Data.Fields(Assert.IsType<PyObject>(result.Items[0]));
+        Assert.Equal(new PyInt(expected[0].Id), fields["stationID"]);
+        Assert.Equal(new PyStr(expected[0].Name), fields["stationName"]);
+        Assert.Equal(new PyInt(expected[0].OwnerId), fields["ownerID"]);
+        Assert.Equal(new PyInt(expected[0].OwnerId), fields["corporationID"]);
+        Assert.Equal(Py.Number(Math.Round(expected[0].Security, 3, MidpointRounding.AwayFromZero)), fields["security"]);
+        Assert.True(((IService)service).HasMethod("GetStationsForOwner"));
+
+        var empty = Assert.IsType<PyList>(await Data.CallAsync(service, session, "GetStationsForOwner", new PyInt(0)));
+        Assert.Empty(empty.Items);
     }
 
     [PgFact]
@@ -395,41 +423,63 @@ public class GuestTests
         return (new PgCharacterStore(source, schema), source, schema);
     }
 
-    private static async Task<long> MakeAsync(PgCharacterStore store, NpgsqlDataSource source, string name, long station, long corporation = 1000006)
+    private static async Task<long> MakeAsync(
+        PgCharacterStore store,
+        NpgsqlDataSource source,
+        string name,
+        long station,
+        long corporation = 1000006,
+        long? faction = 500001)
     {
         await using var connection = await source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
-        var id = await store.InsertAsync(connection, transaction, new NewCharacter(1, name, 1, 1, 1, 10, 35, 1373, corporation, 500001, station, 30100032, 20010001, 10001004, null, null));
+        var id = await store.InsertAsync(connection, transaction,
+            new NewCharacter(1, name, 1, 1, 1, 10, 35, 1373, corporation, faction,
+                station, 30100032, 20010001, 10001004, null, null));
         await transaction.CommitAsync();
         return id;
     }
 
     [PgFact]
-    public async Task The_guests_are_the_characters_in_the_game_at_this_station()
+    public async Task Station_guests_include_their_character_faction_id()
     {
         var (store, source, schema) = await StoreAsync();
         try
         {
-            var here1 = await MakeAsync(store, source, "Ann Lee", 60015249);
-            var here2 = await MakeAsync(store, source, "Bob Roe", 60015249, corporation: 1000094);
-            var away = await MakeAsync(store, source, "Cy Dee", 60000610);
-            var offline = await MakeAsync(store, source, "Di Fay", 60015249);
+            var here1 = await MakeAsync(store, source, "Ann Lee", 60015249, faction: 500028);
+            var here2 = await MakeAsync(store, source, "Bob Roe", 60015249, corporation: 1000094, faction: null);
+            var away = await MakeAsync(store, source, "Cy Dee", 60000610, faction: 500001);
+            var offline = await MakeAsync(store, source, "Di Fay", 60015249, faction: 500028);
 
             var online = new OnlineCharacters();
             online.TryEnter(here2, 2);
             online.TryEnter(here1, 1);
             online.TryEnter(away, 3);
-            var service = new StationService(Data.Stations, store, online, () => Data.ClockMs);
+            var guestLedger = new StationGuestLedger();
+            var service = new StationService(
+                Data.Stations,
+                store,
+                online,
+                () => Data.ClockMs,
+                seedObserverGuestLedger: guestLedger.SeedObserverGuestLedger);
             var (session, _) = Data.Session(60015249, here1);
 
-            var guests = (PyList)await Data.CallAsync(service, session, "GetGuests");
+            var guests = Assert.IsType<PyList>(await Data.CallAsync(service, session, "GetGuests"));
             Assert.Equal(
-                [new PyTuple([new PyInt(here1), new PyInt(1000006), new PyInt(0), new PyInt(0)]), new PyTuple([new PyInt(here2), new PyInt(1000094), new PyInt(0), new PyInt(0)])],
+                [
+                    new PyTuple([new PyInt(here1), new PyInt(1000006), new PyInt(0), new PyInt(500028)]),
+                    new PyTuple([new PyInt(here2), new PyInt(1000094), new PyInt(0), new PyInt(0)]),
+                ],
                 guests.Items);
-            Assert.DoesNotContain(guests.Items, g => ((PyTuple)g).Items[0] is PyInt { Value: var v } && (v == away || v == offline));
+            Assert.DoesNotContain(guests.Items, guest =>
+                Assert.IsType<PyTuple>(guest).Items[0] is PyInt { Value: var id } && (id == away || id == offline));
+            Assert.False(guestLedger.TryRecordGuestJoined(session, 60015249, here1));
+            Assert.False(guestLedger.TryRecordGuestJoined(session, 60015249, here2));
 
             online.Leave(2);
-            Assert.Single(((PyList)await Data.CallAsync(service, session, "GetGuests")).Items);
+            Assert.Single(Assert.IsType<PyList>(await Data.CallAsync(service, session, "GetGuests")).Items);
+            Assert.False(guestLedger.TryRecordGuestJoined(session, 60015249, here1));
+            Assert.True(guestLedger.TryRecordGuestJoined(session, 60015249, here2));
         }
         finally
         {

@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Eve.Marshal;
 using Eve.Services;
 
@@ -39,9 +40,9 @@ public sealed class ClientStartupServicesTests
     }
 
     [Fact]
-    public void Fighter_manager_returns_empty_tube_space_and_ability_state()
+    public async Task Fighter_manager_returns_empty_tube_space_and_ability_state()
     {
-        var result = Assert.IsType<PyTuple>(new FighterMgrService().GetFightersForShip(null!));
+        var result = Assert.IsType<PyTuple>(await new FighterMgrService().GetFightersForShip(null!));
 
         Assert.Equal(3, result.Items.Count);
         Assert.Empty(Assert.IsType<PyList>(result.Items[0]).Items);
@@ -67,7 +68,7 @@ public sealed class ClientStartupServicesTests
     }
 
     [Fact]
-    public void Fighter_manager_keeps_EveJS_wire_shapes_until_the_fighter_backend_is_wired()
+    public async Task Fighter_manager_matches_EveJS_no_space_fallbacks_and_dispatches_asynchronously()
     {
         var service = new FighterMgrService();
         static ServiceCall Call(string method, params PyValue[] args) => new()
@@ -76,43 +77,157 @@ public sealed class ClientStartupServicesTests
             Args = args,
             Session = new ClientSession(),
         };
-        static void AssertUnavailable(PyDict errors, int id)
-        {
-            var entry = Assert.Single(errors.Entries, entry => entry.Key.Equals(new PyInt(id)));
-            var error = Assert.IsType<PyTuple>(entry.Value);
-            Assert.Equal(new PyStr("CustomNotify"), error.Items[0]);
-            var details = Assert.IsType<PyDict>(error.Items[1]);
-            Assert.Contains(new KeyValuePair<PyValue, PyValue>(
-                new PyStr("notify"),
-                new PyStr("Fighter commands are not connected to the space simulation.")), details.Entries);
-        }
 
-        var launchErrors = Assert.IsType<PyDict>(service.LaunchFightersFromTubes(Call(
+        var launch = Assert.IsType<PyDict>(await service.LaunchFightersFromTubes(Call(
             "LaunchFightersFromTubes", new PyList([new PyInt(901), new PyInt(902)]))));
-        Assert.Equal(2, launchErrors.Entries.Count);
-        AssertUnavailable(launchErrors, 901);
-        AssertUnavailable(launchErrors, 902);
+        Assert.Empty(launch.Entries);
 
-        var recallErrors = Assert.IsType<PyDict>(service.RecallFightersToTubes(Call(
-            "RecallFightersToTubes", new PyList([new PyInt(903)]))));
-        AssertUnavailable(recallErrors, 903);
+        var recall = Assert.IsType<PyDict>(await service.RecallFightersToTubes(Call(
+            "RecallFightersToTubes", new PyList([new PyInt(903), new PyInt(903), new PyInt(0)]))));
+        var recalled = Assert.Single(recall.Entries);
+        Assert.Equal(new PyInt(903), recalled.Key);
+        Assert.Same(PyNone.Instance, recalled.Value);
 
-        Assert.Same(PyNone.Instance, service.ExecuteMovementCommandOnFighters(Call(
+        Assert.Same(PyNone.Instance, await service.ExecuteMovementCommandOnFighters(Call(
             "ExecuteMovementCommandOnFighters",
             new PyList([new PyInt(903)]), new PyStr("ORBIT"), new PyInt(901), new PyInt(5000))));
-        Assert.Same(PyBool.False, service.CmdAbandonFighter(Call("CmdAbandonFighter", new PyInt(903))));
-        Assert.Same(PyBool.False, service.CmdScoopAbandonedFighterFromSpace(Call(
+        Assert.Same(PyBool.False, await service.CmdAbandonFighter(Call("CmdAbandonFighter", new PyInt(903))));
+        Assert.Same(PyBool.False, await service.CmdScoopAbandonedFighterFromSpace(Call(
             "CmdScoopAbandonedFighterFromSpace", new PyInt(903), new PyInt(5))));
-        Assert.Same(PyBool.False, service.LoadFightersToTube(Call(
+        Assert.Same(PyBool.False, await service.LoadFightersToTube(Call(
             "LoadFightersToTube", new PyInt(903), new PyInt(5))));
-        Assert.Same(PyBool.False, service.UnloadTubeToFighterBay(Call(
+        Assert.Same(PyBool.False, await service.UnloadTubeToFighterBay(Call(
             "UnloadTubeToFighterBay", new PyInt(5))));
+
+        string? dispatchedMethod = null;
+        service.RpcHandler = async call =>
+        {
+            await Task.Yield();
+            dispatchedMethod = call.Method;
+            return PyBool.True;
+        };
+        var handled = await ((IService)service).CallAsync(Call("CmdAbandonFighter", new PyInt(903)));
+        Assert.Same(PyBool.True, handled);
+        Assert.Equal("CmdAbandonFighter", dispatchedMethod);
     }
 
     [Fact]
-    public void Missing_ship_kill_counter_returns_zero_for_hangar_rendering()
+    public async Task Fighter_ability_slot_rpcs_return_per_fighter_none_entries_when_unwired()
     {
-        Assert.Equal(new PyInt(0), new ShipKillCounterService().GetItemKillCountPlayer(null!));
+        IService service = new FighterMgrService();
+        var session = new ClientSession();
+        foreach (var method in new[] { "CmdActivateAbilitySlots", "CmdDeactivateAbilitySlots" })
+        {
+            Assert.True(service.HasMethod(method));
+            var result = Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
+            {
+                Method = method,
+                Args = [new PyList([new PyInt(901), new PyInt(901), new PyInt(0)]), new PyInt(1)],
+                Session = session,
+            }));
+            var entry = Assert.Single(result.Entries);
+            Assert.Equal(new PyInt(901), entry.Key);
+            Assert.Same(PyNone.Instance, entry.Value);
+        }
+    }
+
+    [Fact]
+    public async Task Fighter_ability_slot_callback_receives_EveJS_arguments_and_returns_error_map()
+    {
+        var service = new FighterMgrService();
+        var session = new ClientSession();
+        FighterMgrService.AbilitySlotRequest? observed = null;
+        service.RpcHandler = _ => throw new InvalidOperationException("Use the typed ability-slot callback when installed.");
+        service.AbilitySlotHandler = (request, _) =>
+        {
+            observed = request;
+            IReadOnlyDictionary<long, PyValue> result = new Dictionary<long, PyValue>
+            {
+                [901] = PyNone.Instance,
+                [902] = new PyStr("slot error"),
+            };
+            return ValueTask.FromResult<IReadOnlyDictionary<long, PyValue>?>(result);
+        };
+
+        var response = Assert.IsType<PyDict>(await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "CmdActivateAbilitySlots",
+            Args = [new PyList([new PyInt(901), new PyInt(902)]), new PyInt(3), new PyInt(777), new PyStr("ignored")],
+            Session = session,
+        }));
+
+        Assert.NotNull(observed);
+        Assert.Equal(FighterMgrService.AbilitySlotOperation.Activate, observed.Operation);
+        Assert.Same(session, observed.Session);
+        Assert.Equal(new long[] { 901, 902 }, observed.FighterIds);
+        Assert.Equal(new PyInt(3), observed.AbilitySlotId);
+        Assert.Equal(new PyInt(777), observed.Target);
+        Assert.Equal(2, response.Entries.Count);
+        Assert.Contains(response.Entries, entry => entry.Key == new PyInt(901) && entry.Value == PyNone.Instance);
+        Assert.Contains(response.Entries, entry => entry.Key == new PyInt(902) && entry.Value == new PyStr("slot error"));
+    }
+
+    [Fact]
+    public async Task Missing_ship_kill_counter_returns_zero_for_hangar_rendering()
+    {
+        IService service = new ShipKillCounterService();
+        var result = await service.CallAsync(new ServiceCall
+        {
+            Method = "GetItemKillCountPlayer",
+            Args = [PyNone.Instance],
+            Session = new ClientSession(),
+        });
+
+        Assert.Equal(new PyInt(0), result);
+    }
+
+    [Fact]
+    public async Task Ship_kill_counter_does_not_query_nonpositive_item_ids()
+    {
+        var queried = false;
+        IService service = new ShipKillCounterService(_ =>
+        {
+            queried = true;
+            return Task.FromResult(new System.Text.Json.Nodes.JsonObject());
+        });
+        var result = await service.CallAsync(new ServiceCall
+        {
+            Method = "GetItemKillCountPlayer",
+            Args = [new PyInt(0)],
+            Session = new ClientSession(),
+        });
+
+        Assert.Equal(new PyInt(0), result);
+        Assert.False(queried);
+    }
+
+
+    [Theory]
+    [InlineData(37d, 37)]
+    [InlineData(1002d, 999)]
+    [InlineData(-2d, 0)]
+    [InlineData(12.9d, 12)]
+    public async Task Ship_kill_counter_reads_and_normalizes_EveJS_GameStore_counts(double storedCount, int expected)
+    {
+        var table = new JsonObject
+        {
+            ["ships"] = new JsonObject
+            {
+                ["74000001"] = new JsonObject
+                {
+                    ["playerKills"] = JsonValue.Create(storedCount),
+                },
+            },
+        };
+        var service = new ShipKillCounterService(_ => Task.FromResult(table));
+        var result = await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "GetItemKillCountPlayer",
+            Args = [new PyLong(74000001)],
+            Session = new ClientSession(),
+        });
+
+        Assert.Equal(new PyInt(expected), result);
     }
 
     [Fact]

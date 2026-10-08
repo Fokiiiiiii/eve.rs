@@ -70,4 +70,60 @@ public sealed class StructureTravelRpcTests
         Assert.False(service.HasMethod(call.Method));
         Assert.Same(PyNone.Instance, await service.CallAsync(call));
     }
+
+    [Fact]
+    public async Task Jump_bridge_lookup_rpcs_use_persisted_callbacks_and_reference_shapes()
+    {
+        long? destinationRequest = null;
+        long? linkedRequest = null;
+        var service = new StructureTravelRpcService(
+            "structureJumpBridgeMgr",
+            jumpBridgeDestination: (structureId, _) =>
+            {
+                destinationRequest = structureId;
+                return ValueTask.FromResult<long?>(30_000_143);
+            },
+            linkedStructure: (structureId, _) =>
+            {
+                linkedRequest = structureId;
+                return ValueTask.FromResult<(long StructureId, long SolarSystemId)?>((2002, 30_000_143));
+            });
+        var destinationCall = new ServiceCall
+        {
+            Method = "GetJbStructureDestination",
+            Args = [new PyLong(2001)],
+            Session = new ClientSession(),
+        };
+        var linkedCall = new ServiceCall
+        {
+            Method = "GetLinkedStructure",
+            Args = [new PyLong(2001)],
+            Session = new ClientSession(),
+        };
+
+        Assert.True(service.HasMethod(destinationCall.Method));
+        Assert.True(service.HasMethod(linkedCall.Method));
+        Assert.Equal(new PyInt(30_000_143), await service.CallAsync(destinationCall));
+        var linked = Assert.IsType<PyList>(await service.CallAsync(linkedCall));
+        Assert.Equal(new PyInt(2002), linked.Items[0]);
+        Assert.Equal(new PyInt(30_000_143), linked.Items[1]);
+        Assert.Equal(2001, destinationRequest);
+        Assert.Equal(2001, linkedRequest);
+    }
+
+    [Theory]
+    [InlineData("GetJbStructureDestination")]
+    [InlineData("GetLinkedStructure")]
+    public async Task Jump_bridge_lookups_return_none_when_not_found_or_unwired(string method)
+    {
+        var service = new StructureTravelRpcService("structureJumpBridgeMgr");
+        var call = new ServiceCall
+        {
+            Method = method,
+            Args = [new PyInt(2001)],
+            Session = new ClientSession(),
+        };
+
+        Assert.Same(PyNone.Instance, await service.CallAsync(call));
+    }
 }

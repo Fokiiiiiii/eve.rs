@@ -10,7 +10,7 @@ namespace Eve.Services.Station;
 /// is docked here, and the solar system it is in.
 /// </summary>
 [Service("stationSvc", Aliases = ["station"])]
-public sealed partial class StationService(StationCatalog stations, PgCharacterStore characters, OnlineCharacters online, Func<long> nowUnixMs, Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null, Eve.Services.Corporations.OfficeManagerService? officeManager = null)
+public sealed partial class StationService(StationCatalog stations, PgCharacterStore characters, OnlineCharacters online, Func<long> nowUnixMs, Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null, Eve.Services.Corporations.OfficeManagerService? officeManager = null, SeedObserverGuestLedgerCallback? seedObserverGuestLedger = null)
 {
     /// <summary>The station services (repair, reprocessing, market, ...) every NPC station offers, as the client's bit mask.</summary>
     public const long AllServicesMask = 1_143_312;
@@ -66,24 +66,58 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
             ? ObjectCaching.MethodResult(Record(station), nowUnixMs())
             : None;
 
+    /// <summary><c>GetStationsForOwner(ownerID)</c> returns owner stations as the list of compact station KeyVals used by the LP store.</summary>
+    [Method("GetStationsForOwner")]
+    public PyValue GetStationsForOwner(ServiceCall call)
+    {
+        var ownerId = IdOf(call.Arg(0)) ?? 0;
+        if (ownerId <= 0)
+        {
+            return new PyList([]);
+        }
+
+        var rows = stations.All
+            .Where(station => station.OwnerId == ownerId)
+            .OrderBy(station => station.Id)
+            .Select(station => Py.KeyVal(
+                ("stationID", new PyInt(station.Id)),
+                ("stationName", new PyStr(station.Name)),
+                ("solarSystemID", new PyInt(station.SolarSystemId)),
+                ("constellationID", new PyInt(station.ConstellationId)),
+                ("regionID", new PyInt(station.RegionId)),
+                ("stationTypeID", new PyInt(station.TypeId)),
+                ("ownerID", new PyInt(station.OwnerId)),
+                ("corporationID", new PyInt(station.OwnerId)),
+                ("security", Py.Number(Math.Round(station.Security, 3, MidpointRounding.AwayFromZero)))));
+        return new PyList(rows.ToArray());
+    }
+
     /// <summary><c>(ownerID, stationID, operationID, stationTypeID)</c> of the session's station: the columns of the row the client builds.</summary>
     [Method("GetStationItemBits")]
     public PyValue GetStationItemBits(ServiceCall call) =>
-        StationOf(call.Session) is { } s ? Py.Tuple(new PyInt(s.OwnerId), new PyInt(s.Id), new PyInt(s.OperationId), new PyInt(s.TypeId)) : None;
+        StationOf(call.Session) is { } s
+            ? new PyList([new PyInt(s.OwnerId), new PyInt(s.Id), new PyInt(s.OperationId), new PyInt(s.TypeId)])
+            : None;
 
     /// <summary>Who is docked here: <c>[(characterID, corporationID, allianceID, warFactionID)]</c> for every character in the game at this station.</summary>
     [Method("GetGuests")]
     public async ValueTask<PyValue> GetGuests(ServiceCall call)
     {
-        if (call.Session.GetInt("stationid") is not { } stationId)
-        {
+        var stationId = call.Session.GetInt("stationid") ?? call.Session.GetInt("stationID") ?? 0;
+        if (stationId <= 0)
             return new PyList([]);
-        }
+
         var present = await characters.GetManyAsync(online.Snapshot(), call.Cancellation);
-        return new PyList([.. present
-            .Where(c => c.StationId == stationId)
-            .OrderBy(c => c.Id)
-            .Select(c => Py.Tuple(new PyInt(c.Id), new PyInt(c.CorporationId), new PyInt(c.AllianceId ?? 0), new PyInt(0)))]);
+        var guests = present
+            .Where(character => character.StationId == stationId)
+            .OrderBy(character => character.Id)
+            .ToArray();
+        seedObserverGuestLedger?.Invoke(
+            call.Session,
+            stationId,
+            guests.Select(character => character.Id).Where(characterId => characterId > 0).ToHashSet());
+        return new PyList([.. guests
+            .Select(character => Py.Tuple(new PyInt(character.Id), new PyInt(character.CorporationId), new PyInt(character.AllianceId ?? 0), new PyInt(character.FactionId ?? 0)))]);
     }
 
     /// <summary>
@@ -249,6 +283,145 @@ public sealed partial class MapService
         var rows = await _reads.RowsAsync(SecurityModifiedSystemsQuery, cancellationToken: call.Cancellation);
         return rows.ToRowset();
     }
+
+    public Func<ServiceCall, ValueTask<PyValue?>>? ReadDataHook { get; init; }
+
+    [Method("GetBeaconCount")]
+    public async ValueTask<PyValue> GetBeaconCount(ServiceCall call) =>
+        await ReadOrDefaultAsync(call, new PyDict([]));
+
+    [Method("GetConstellationLPData")]
+    public async ValueTask<PyValue> GetConstellationLPData(ServiceCall call) =>
+        await ReadOrDefaultAsync(call, EmptyMapRowset("solarSystemID", "loyaltyPoints"));
+
+    [Method("GetCurrentSovData")]
+    public async ValueTask<PyValue> GetCurrentSovData(ServiceCall call) =>
+        await ReadOrDefaultAsync(call, EmptyMapRowset(
+            "locationID", "solarSystemID", "constellationID", "regionID", "ownerID",
+            "allianceID", "corporationID", "claimStructureID", "infrastructureHubID",
+            "stationID", "claimTime"));
+
+    [Method("GetDeadspaceAgentsMap")]
+    public async ValueTask<PyValue> GetDeadspaceAgentsMap(ServiceCall call) =>
+        await ReadOrDefaultAsync(call, PyNone.Instance);
+
+    [Method("GetDeadspaceComplexMap")]
+    public async ValueTask<PyValue> GetDeadspaceComplexMap(ServiceCall call) =>
+        await ReadOrDefaultAsync(call, PyNone.Instance);
+
+    [Method("GetEdencomFortressSystems")]
+    public async ValueTask<PyValue> GetEdencomFortressSystems(ServiceCall call) =>
+        await ReadOrDefaultAsync(call, SystemIds(EdencomFortressSystems));
+
+    [Method("GetEdencomMinorVictorySystems")]
+    public async ValueTask<PyValue> GetEdencomMinorVictorySystems(ServiceCall call) =>
+        await ReadOrDefaultAsync(call, SystemIds(EdencomMinorVictorySystems));
+
+    [Method("GetFacWarZoneInfo")]
+    public async ValueTask<PyValue> GetFacWarZoneInfo(ServiceCall call)
+    {
+        var factionId = PositiveMapId(call.Arg(0));
+        var fallback = Py.KeyVal(
+            ("factionID", factionId > 0 ? new PyInt(factionId) : PyNone.Instance),
+            ("systemUpgradeLevel", new PyDict([])));
+        return await ReadOrDefaultAsync(call, fallback);
+    }
+
+    [Method("GetHistory")]
+    public async ValueTask<PyValue> GetHistory(ServiceCall call)
+    {
+        var history = await ReadOrDefaultAsync(call,
+            EmptyMapRowset("solarSystemID", "value1", "value2", "value3"));
+        return ObjectCaching.MethodResult(history, _nowUnixMs(), "1 minute");
+    }
+
+    [Method("GetIndustryCostModifier")]
+    public async ValueTask<PyValue> GetIndustryCostModifier(ServiceCall call) =>
+        await ReadOrDefaultAsync(call, new PyDict([]));
+
+    [Method("GetIndustryJobsOverLast24Hours")]
+    public async ValueTask<PyValue> GetIndustryJobsOverLast24Hours(ServiceCall call) =>
+        await ReadOrDefaultAsync(call, EmptyMapRowset("solarSystemID", "noOfJobs"));
+
+    [Method("GetMyExtraMapInfo")]
+    public async ValueTask<PyValue> GetMyExtraMapInfo(ServiceCall call) =>
+        await ReadOrDefaultAsync(call, EmptyMapRowset("characterID", "locationID"));
+
+    [Method("GetMyExtraMapInfoAgents")]
+    public async ValueTask<PyValue> GetMyExtraMapInfoAgents(ServiceCall call) =>
+        await ReadOrDefaultAsync(call, EmptyMapRowset("fromID", "rank"));
+
+    [Method("GetRecentSovActivity")]
+    public async ValueTask<PyValue> GetRecentSovActivity(ServiceCall call) =>
+        await ReadOrDefaultAsync(call,
+            EmptyMapRowset("solarSystemID", "ownerID", "oldOwnerID", "stationID", "changeTime"));
+
+    [Method("GetSolarSystemVisits")]
+    public async ValueTask<PyValue> GetSolarSystemVisits(ServiceCall call) =>
+        await ReadOrDefaultAsync(call, EmptyMapRowset("lastDateTime", "solarSystemID", "visits"));
+
+    [Method("GetTriglavianMinorVictorySystems")]
+    public async ValueTask<PyValue> GetTriglavianMinorVictorySystems(ServiceCall call) =>
+        await ReadOrDefaultAsync(call, SystemIds(TriglavianMinorVictorySystems));
+
+    [Method("GetAllRoamingWeatherSystems")]
+    public async ValueTask<PyValue> GetAllRoamingWeatherSystems(ServiceCall call) =>
+        await ReadOrDefaultAsync(call, EmptyMapRowset("locationID", "sceneType"));
+
+    private async ValueTask<PyValue> ReadOrDefaultAsync(ServiceCall call, PyValue fallback) =>
+        ReadDataHook is null ? fallback : await ReadDataHook(call) ?? fallback;
+
+    private static PyValue EmptyMapRowset(params string[] columns) => Py.Rowset(columns, []);
+
+    private static PyValue SystemIds(IEnumerable<long> ids) =>
+        new PyList([.. ids.Select(id => (PyValue)new PyInt(id))]);
+
+    private static long PositiveMapId(PyValue value) => value switch
+    {
+        PyInt number when number.Value > 0 => number.Value,
+        PyLong number when number.Value > 0 => number.Value,
+        PyReal number when double.IsFinite(number.Value) && number.Value > 0 &&
+            number.Value <= long.MaxValue && Math.Truncate(number.Value) == number.Value => (long)number.Value,
+        PyStr text when long.TryParse(text.Value, System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var number) && number > 0 => number,
+        _ => 0,
+    };
+
+    private static readonly long[] TriglavianMinorVictorySystems =
+    [
+        30003073, 30003076, 30003464, 30002575, 30003856, 30045331, 30004244,
+        30001685, 30045338, 30045345, 30000163, 30001447, 30045354, 30000182,
+        30002760, 30000205, 30001358, 30005330, 30002771, 30002645, 30001383,
+        30002795, 30001390, 30001391, 30004981, 30001400, 30001401, 30002557,
+    ];
+
+    private static readonly long[] EdencomFortressSystems =
+    [
+        30004992, 30005251, 30000004, 30000005, 30004103, 30045322, 30002700,
+        30005058, 30004141, 30002704, 30004248, 30004100, 30004250, 30003490,
+        30002986, 30003883, 30003885, 30004150, 30003514, 30003515, 30000188,
+        30005252, 30003392, 30002242, 30002243, 30003397, 30003398, 30005052,
+        30005260, 30002251, 30002253, 30002385, 30002386, 30003539, 30003541,
+        30002266, 30002651, 30003548, 30003553, 30002530, 30003556, 30003574,
+        30002662, 30004305, 30000105, 30003050, 30004973, 30000113, 30004084,
+        30003573, 30000118, 30002665, 30004090,
+    ];
+
+    private static readonly long[] EdencomMinorVictorySystems =
+    [
+        30002048, 30003074, 30002051, 30003460, 30003078, 30003463, 30000012,
+        30003854, 30005263, 30003088, 30003090, 30003587, 30003478, 30003480,
+        30003481, 30003482, 30004254, 30000160, 30004257, 30003931, 30002724,
+        30004263, 30005034, 30004231, 30004268, 30003570, 30004284, 30000048,
+        30005308, 30004999, 30001718, 30002999, 30005222, 30000060, 30005066,
+        30000062, 30002239, 30003904, 30001696, 30005074, 30002755, 30003908,
+        30003894, 30004289, 30004295, 30005213, 30004108, 30002506, 30003788,
+        30004301, 30003918, 30003829, 30002513, 30003794, 30002644, 30004302,
+        30005334, 30003927, 30005255, 30005209, 30003919, 30003932, 30002397,
+        30005086, 30001376, 30003809, 30005219, 30003558, 30000102, 30004256,
+        30003900, 30000109, 30002241, 30003823, 30003824, 30003058, 30004978,
+        30005236, 30003061, 30005267, 30002772, 30004287, 30001660, 30005284,
+    ];
 
     [Method("GetStationCount")]
     public async ValueTask<PyValue> GetStationCount(ServiceCall call)

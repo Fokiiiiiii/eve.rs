@@ -21,17 +21,19 @@ namespace Eve.Services.Core;
 public sealed class MailService(
     Func<CancellationToken, Task<JsonObject>> readMail,
     Func<long, long, ClientSession, CancellationToken, Task> markAsRead,
-    Func<MailSendRequest, ClientSession, CancellationToken, Task<long?>>? sendMail = null) : IService
+    Func<MailSendRequest, ClientSession, CancellationToken, Task<long?>>? sendMail = null,
+    GmChatPokeMailCallback? pokePlayerAboutChatMsgGm = null) : IService
 {
     private readonly Func<CancellationToken, Task<JsonObject>> _readMail =
         readMail ?? throw new ArgumentNullException(nameof(readMail));
     private readonly Func<long, long, ClientSession, CancellationToken, Task> _markAsRead =
         markAsRead ?? throw new ArgumentNullException(nameof(markAsRead));
     private readonly Func<MailSendRequest, ClientSession, CancellationToken, Task<long?>>? _sendMail = sendMail;
+    private readonly GmChatPokeMailCallback? _pokePlayerAboutChatMsgGm = pokePlayerAboutChatMsgGm;
 
     public string Name => "mailMgr";
 
-    public bool HasMethod(string method) => method is "SyncMail" or "GetMailHeaders" or "GetBody" or "GetLabels" or "SendMail";
+    public bool HasMethod(string method) => method is "SyncMail" or "GetMailHeaders" or "GetBody" or "GetLabels" or "SendMail" or "PokePlayerAboutChatMsgGm";
 
     public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
@@ -41,6 +43,8 @@ public sealed class MailService(
 
         if (call.Method == "SendMail")
             return await SendMailAsync(call);
+        if (call.Method == "PokePlayerAboutChatMsgGm")
+            return await PokePlayerAboutChatMsgGmAsync(call);
 
         var characterId = call.Session.CharacterId.GetValueOrDefault();
         var state = characterId > 0 ? await _readMail(call.Cancellation) : new JsonObject();
@@ -106,6 +110,26 @@ private async ValueTask<PyValue> SendMailAsync(ServiceCall call)
             OptionalPositiveId(call.Arg(5)),
             OptionalPositiveId(call.Arg(6)));
         var messageId = await _sendMail(request, call.Session, call.Cancellation);
+        return messageId is > 0 ? new PyLong(messageId.Value) : PyNone.Instance;
+    }
+
+    private async ValueTask<PyValue> PokePlayerAboutChatMsgGmAsync(ServiceCall call)
+    {
+        var characterId = PositiveId(call.Arg(0));
+        if (characterId <= 0 || _pokePlayerAboutChatMsgGm is null)
+            return PyNone.Instance;
+
+        var channelName = call.Arg(1) is PyNone
+            ? "Unknown Channel"
+            : JsSemantics.StringValue(call.Arg(1)) ?? "Unknown Channel";
+        var request = new GmChatPokeMailRequest(
+            characterId,
+            140000004,
+            channelName,
+            "GM chat request",
+            $"A GM would like to speak with you.<br><br>Requested channel: {channelName}",
+            SaveSenderCopy: false);
+        var messageId = await _pokePlayerAboutChatMsgGm(request, call.Session, call.Cancellation);
         return messageId is > 0 ? new PyLong(messageId.Value) : PyNone.Instance;
     }
 
@@ -247,3 +271,16 @@ public sealed record MailSendRequest(
     string Body,
     long? ReplyToMessageId,
     long? ForwardedFromMessageId);
+
+public sealed record GmChatPokeMailRequest(
+    long CharacterId,
+    long SenderCharacterId,
+    string ChannelName,
+    string Title,
+    string Body,
+    bool SaveSenderCopy);
+
+public delegate Task<long?> GmChatPokeMailCallback(
+    GmChatPokeMailRequest request,
+    ClientSession session,
+    CancellationToken cancellationToken);

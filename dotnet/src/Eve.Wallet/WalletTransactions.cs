@@ -82,6 +82,20 @@ public sealed partial class WalletTransactions
         await ApplyAsync(connection, transaction, to, from, amount, refTypeId, reason, timeMs, operationKey, cancellationToken);
     }
 
+
+    /// <summary>Commit an account-to-account transfer and return its journal receipt.</summary>
+    public async Task<WalletSettlement> TransferAndCommitAsync(
+        WalletAccount from, WalletAccount to, decimal amount, int refTypeId, string reason,
+        long timeMs, string operationKey, string reference, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var settlement = await TransferAsync(connection, transaction, from, to, amount, refTypeId, reason,
+            timeMs, operationKey, reference, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return settlement;
+    }
+
     /// <summary>Journal a mint, burn, escrow reservation or refund in the same transaction as its owning operation.</summary>
     public async Task<decimal> AdjustAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long owner,
         decimal delta, long counterparty, int refTypeId, string reason, long timeMs, string operationKey, CancellationToken cancellationToken = default,

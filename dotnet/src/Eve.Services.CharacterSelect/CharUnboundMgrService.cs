@@ -24,7 +24,8 @@ public sealed partial class CharUnboundMgrService(
     CreationCatalog catalog,
     OnlineCharacters online,
     IReadOnlyList<ICharacterEntryHook> entryHooks,
-    Random random)
+    Random random,
+    bool newCharacterExperienceEnabled = false)
 {
     /// <summary>What every session's role gets on top of the account's (the client shows staff roles and the base bits alike).</summary>
     public const long SessionBaseRole = 0x6000000080000000;
@@ -57,6 +58,31 @@ public sealed partial class CharUnboundMgrService(
         return new PyList([.. list.Select(SelectRow)]);
     }
 
+    [Method("GetCharacterInfo")]
+    public async ValueTask<PyValue> GetCharacterInfo(ServiceCall call)
+    {
+        var characterId = RequestCharacterId(call);
+        var account = AccountOf(call);
+        if (characterId <= 0)
+        {
+            var list = account is { } accountId ? await characters.ForAccountAsync(accountId, Token(call)) : [];
+            return new PyList([.. list.Select(SelectRow)]);
+        }
+        if (account is not { } owner)
+        {
+            return None;
+        }
+
+        var character = await characters.GetAsync(characterId, Token(call));
+        if (character is null || character.AccountId != owner)
+        {
+            return None;
+        }
+        var points = await skills.TotalPointsAsync([character.Id], Token(call));
+        var balances = await wallets.ForOwnersAsync([character.Id], Token(call));
+        return await SelectionRow(character, points.GetValueOrDefault(character.Id), balances.GetValueOrDefault(character.Id), Token(call));
+    }
+
     /// <summary>
     /// <c>(account rows, (None, None), character rows, [])</c>. The rows carry values that belong to modules that do not
     /// exist yet (mail): they are the reference's for a new character, and are marked below.
@@ -83,6 +109,17 @@ public sealed partial class CharUnboundMgrService(
 
     [Method("GetCohortsForUser")]
     public PyValue GetCohortsForUser(ServiceCall call) => new PyList([]);
+
+    [Method("GetQAStarterSystemIDs")]
+    public PyValue GetQAStarterSystemIDs(ServiceCall call) => new PyList([
+        .. CreationCatalog.Schools
+            .Select(school => catalog.StarterFor(school.CorporationId)?.SolarSystemId)
+            .Where(systemId => systemId is > 0)
+            .Select(systemId => systemId!.Value)
+            .Distinct()
+            .OrderBy(systemId => systemId)
+            .Select(systemId => (PyValue)new PyInt(systemId)),
+    ]);
 
     [Method("GetCharacterLockType")]
     public PyValue GetCharacterLockType(ServiceCall call) => None;
@@ -117,6 +154,62 @@ public sealed partial class CharUnboundMgrService(
         return new PyInt((int)check);
     }
 
+    [Method("UpdateCharacterGender")]
+    public async ValueTask<PyValue> UpdateCharacterGender(ServiceCall call)
+    {
+        var characterId = Long(call.Arg(0));
+        var character = await characters.GetAsync(characterId, Token(call));
+        if (character is null)
+        {
+            return None;
+        }
+        if (AccountOf(call) != character.AccountId)
+        {
+            throw Info("That character is not available on this account.");
+        }
+
+        var requestedGender = IntOrDefault(call.Arg(1), 1);
+        var gender = requestedGender is >= 0 and <= 2 ? requestedGender : 1;
+        await characters.SetGenderAsync(characterId, gender, Token(call));
+        if (IsCurrentCharacter(call, characterId))
+        {
+            call.Session.Set("genderID", new PyInt(gender));
+            call.Session.Set("genderid", new PyInt(gender));
+        }
+        return None;
+    }
+
+    [Method("UpdateCharacterBloodline")]
+    public async ValueTask<PyValue> UpdateCharacterBloodline(ServiceCall call)
+    {
+        var characterId = Long(call.Arg(0));
+        var character = await characters.GetAsync(characterId, Token(call));
+        if (character is null)
+        {
+            return None;
+        }
+        if (AccountOf(call) != character.AccountId)
+        {
+            throw Info("That character is not available on this account.");
+        }
+
+        var requestedBloodlineId = IntOrDefault(call.Arg(1), 1);
+        var bloodline = catalog.Bloodline(requestedBloodlineId);
+        var bloodlineId = requestedBloodlineId != 0 ? requestedBloodlineId : character.BloodlineId;
+        var raceId = bloodline?.RaceId ?? character.RaceId;
+        var typeId = CreationCatalog.CharacterTypeId(requestedBloodlineId, character.TypeId);
+        await characters.SetBloodlineAsync(characterId, bloodlineId, raceId, typeId, Token(call));
+        if (IsCurrentCharacter(call, characterId))
+        {
+            call.Session.Set("bloodlineID", new PyInt(bloodlineId));
+            call.Session.Set("bloodlineid", new PyInt(bloodlineId));
+            call.Session.Set("raceID", new PyInt(raceId));
+            call.Session.Set("raceid", new PyInt(raceId));
+            call.Session.Set("characterTypeID", new PyInt(typeId));
+        }
+        return None;
+    }
+
     /// <summary><c>(name, raceID, bloodlineID, genderID, ancestryID, charInfo, portraitInfo, schoolID, None, qaStarter)</c>: the new character's id.</summary>
     [Method("CreateCharacterWithDoll")]
     public async ValueTask<PyValue> CreateCharacterWithDoll(ServiceCall call)
@@ -148,6 +241,9 @@ public sealed partial class CharUnboundMgrService(
     [Method("SelectCharacterID")]
     public async ValueTask<PyValue> SelectCharacterID(ServiceCall call)
     {
+        var skipTutorial = call.Args.Count > 2
+            ? BooleanLike(call.Arg(2))
+            : BooleanLike(call.Kwarg("skipTutorial") ?? None);
         if (AccountOf(call) is not { } account || call.Arg(0) is not (PyInt or PyLong))
         {
             return None;
@@ -169,6 +265,16 @@ public sealed partial class CharUnboundMgrService(
         if (!online.TryEnter(character.Id, call.Session.SessionId))
         {
             throw Info($"{character.Name} is already online.");
+        }
+
+        int? airNpeStateChanged = null;
+        if (skipTutorial)
+        {
+            airNpeStateChanged = await characters.MarkTutorialSkippedAsync(character.Id, newCharacterExperienceEnabled, Token(call));
+        }
+        else
+        {
+            await characters.ConsumeTutorialRevealOnFirstLoginAsync(character.Id, newCharacterExperienceEnabled, Token(call));
         }
 
         var accountRole = call.Session.Get("accountRole") is PyLong r ? r.Value : 0;
@@ -209,10 +315,86 @@ public sealed partial class CharUnboundMgrService(
                 await hook.OnCharacterEnteredAsync(call.Session, character.Id, Token(call));
             }
         }
+        AirNpeNotifications.NotifyStateChanged(call.Session, character.Id, airNpeStateChanged);
+        return None;
+    }
+
+    [Method("CancelCharacterDeletePrepare")]
+    public async ValueTask<PyValue> CancelCharacterDeletePrepare(ServiceCall call)
+    {
+        var characterId = RequestCharacterId(call);
+        var character = await characters.GetAsync(characterId, Token(call));
+        if (character is null)
+        {
+            throw Info("That character no longer exists.");
+        }
+        if (AccountOf(call) is not { } account)
+        {
+            throw Info("Character deletion requires a valid authenticated account.");
+        }
+        if (character.AccountId != account)
+        {
+            throw Info("That character is not available on this account.");
+        }
+        if (online.IsOnline(characterId))
+        {
+            throw Info("That character is currently online and cannot be deleted.");
+        }
+        if (character.IsQueuedForDeletion && !await characters.ClearDeletePrepareAsync(characterId, account, Token(call)))
+        {
+            throw Info("That character no longer exists.");
+        }
         return None;
     }
 
     private static MachoWrappedException Info(string text) => MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr(text)));
+
+    private static long RequestCharacterId(ServiceCall call)
+    {
+        var positional = Long(call.Arg(0));
+        if (positional > 0)
+        {
+            return positional;
+        }
+        return Long(call.Kwarg("charID") ?? call.Kwarg("characterID") ?? None);
+    }
+
+    private static bool IsCurrentCharacter(ServiceCall call, long characterId) =>
+        call.Session.CharacterId == characterId ||
+        Long(call.Session.Get("charid")) == characterId ||
+        Long(call.Session.Get("characterID")) == characterId;
+
+    private static long Long(PyValue? value) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        _ => 0,
+    };
+
+    private static bool BooleanLike(PyValue? value)
+    {
+        if (value is PyBool boolean)
+        {
+            return boolean.Value;
+        }
+        if (value is PyInt integer)
+        {
+            return integer.Value != 0;
+        }
+        if (value is PyLong integer64)
+        {
+            return integer64.Value != 0;
+        }
+        if (value is PyReal real)
+        {
+            return real.Value != 0;
+        }
+        return JsSemantics.StringValue(value)?.Trim().ToLowerInvariant() switch
+        {
+            "true" or "1" or "yes" => true,
+            _ => false,
+        };
+    }
 
     private static int Int(PyValue value) => value switch
     {
@@ -221,6 +403,8 @@ public sealed partial class CharUnboundMgrService(
         PyReal number => (int)Math.Clamp(number.Value, int.MinValue, int.MaxValue),
         _ => 0,
     };
+
+    private static int IntOrDefault(PyValue value, int fallback) => value is PyInt or PyLong or PyReal ? Int(value) : fallback;
 
     /// <summary>The paper doll or portrait the client sent, kept as it was sent.</summary>
     private static byte[]? Appearance(PyValue value) => value is PyNone ? null : MarshalCodec.Encode(value);

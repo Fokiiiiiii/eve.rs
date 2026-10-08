@@ -587,7 +587,7 @@ public class RuntimeTests : IAsyncLifetime
         Assert.NotNull(owned);
         Assert.NotNull(consumed);
         Assert.True(await Store.MarkKillRightUsedAsync(1, consumed.Value, Start + 2));
-        Assert.NotNull(await Store.CreateKillRightAsync(2, 2, System, Start + 3));
+        Assert.NotNull(await Store.CreateKillRightAsync(3, 2, System, Start + 3));
 
         var service = new KillRightMgrService(Store);
         var result = await ((IService)service).CallAsync(new ServiceCall
@@ -632,17 +632,19 @@ public class RuntimeTests : IAsyncLifetime
     }
 
     [PgFact]
-    public async Task Attacking_a_suspect_creates_and_combat_renews_the_five_minute_pair_but_wars_do_not()
+    public async Task Attacking_a_suspect_creates_and_combat_renews_the_five_minute_pair_but_a_war_only_attack_does_not()
     {
         Pilot(1, System);
         Pilot(2, System);
+        Pilot(3, System);
         var flagged = Aggression.Record(CombatState.Idle, CombatState.Idle, SecurityClass.LowSec, System, false, false, _now).Attacker;
         await Store.UpdateAsync(2, _ => flagged, _now);
 
         using var runtime = Runtime();
         runtime.Legal = (_, _, _, _) => Task.FromResult(true);
         var first = await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false));
-        Assert.Equal(AggressionReason.Legal, first.Outcome.Reason);
+        // EveJS resolves an already-suspect target before the ordinary war check.
+        Assert.Equal(AggressionReason.TargetFlagged, first.Outcome.Reason);
         Assert.Equal(Start + CrimewatchRuntime.LimitedEngagementDurationMs, _persistence.Engagements[(1, 2)]);
         Assert.Contains(Told(1), note => note.Name == "OnCrimewatchEngagementCreated");
         Assert.Contains(Told(2), note => note.Name == "OnCrimewatchEngagementCreated");
@@ -652,6 +654,10 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal(_now + CrimewatchRuntime.LimitedEngagementDurationMs, _persistence.Engagements[(1, 2)]);
         Assert.Contains(Told(1), note => note.Name == "OnCrimewatchEngagementStartTimeout");
         Assert.Contains(Told(2), note => note.Name == "OnCrimewatchEngagementStartTimeout");
+
+        var warOnly = await runtime.RecordAggressionAsync(Attack(1, 3, SecurityClass.HighSec, System, false));
+        Assert.Equal(AggressionReason.Legal, warOnly.Outcome.Reason);
+        Assert.False(_persistence.Engagements.ContainsKey((1, 3)));
     }
 
     [PgFact]
@@ -753,6 +759,307 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal(["OnNpcTimerUpdate", "OnDisapprovalTimerUpdate"], ended.Select(note => note.Name));
         Assert.Equal([new PyInt(400), PyNone.Instance], ended[0].Args);
         Assert.Equal([new PyInt(500), PyNone.Instance], ended[1].Args);
+    }
+
+
+    [Fact]
+    public void Kill_right_manager_exposes_activation_and_purchase_rpcs()
+    {
+        var service = (IService)new KillRightMgrService(Store);
+
+        Assert.True(service.HasMethod("ActivateKillRight"));
+        Assert.True(service.HasMethod("BuyKillRight"));
+    }
+
+
+    [PgFact]
+    public async Task GetKillRights_returns_sale_price_and_owner_restriction()
+    {
+        Pilot(1, System);
+        var store = Store;
+        var killRightId = await store.CreateKillRightAsync(1, 2, System, _now);
+        Assert.NotNull(killRightId);
+        Assert.True(await store.SetKillRightSaleAsync(1, killRightId.Value, 250m, 9000001, _now));
+        var service = (IService)new KillRightMgrService(store, nowUnixMs: () => _now);
+
+        var result = await service.CallAsync(new ServiceCall
+        {
+            Method = "GetKillRights",
+            Args = [new PyList([InventoryWire.Id(2)])],
+            Session = _sessions.Of(1)!,
+        });
+
+        var right = Assert.IsType<PyObject>(Assert.Single(Assert.IsType<PyList>(result).Items));
+        var fields = Assert.IsType<PyDict>(right.Args).Entries
+            .ToDictionary(entry => ((PyStr)entry.Key).Value, entry => entry.Value);
+        Assert.Equal(new PyReal(250d), fields["price"]);
+        Assert.Equal(InventoryWire.Id(9000001), fields["restrictedTo"]);
+    }
+
+
+
+    [PgFact]
+    public async Task Bounty_proxy_read_rpcs_match_the_reference_routes_and_sale_access()
+    {
+        Pilot(1, System);
+        var session = _sessions.Of(1)!;
+        session.Set("corpid", new PyInt(500));
+        session.Set("allianceid", new PyInt(700));
+
+        var ownerRight = await Store.CreateKillRightAsync(1, 2, System, _now);
+        var targetRight = await Store.CreateKillRightAsync(3, 1, System, _now);
+        var publicSale = await Store.CreateKillRightAsync(4, 2, System, _now);
+        var corpSale = await Store.CreateKillRightAsync(5, 2, System, _now);
+        var allianceSale = await Store.CreateKillRightAsync(6, 2, System, _now);
+        var restrictedSale = await Store.CreateKillRightAsync(7, 2, System, _now);
+        var privateRight = await Store.CreateKillRightAsync(8, 2, System, _now);
+        Assert.All([ownerRight, targetRight, publicSale, corpSale, allianceSale, restrictedSale, privateRight],
+            id => Assert.NotNull(id));
+        Assert.True(await Store.SetKillRightSaleAsync(4, publicSale!.Value, 100m, null, _now));
+        Assert.True(await Store.SetKillRightSaleAsync(5, corpSale!.Value, 200m, 500, _now));
+        Assert.True(await Store.SetKillRightSaleAsync(6, allianceSale!.Value, 300m, 700, _now));
+        Assert.True(await Store.SetKillRightSaleAsync(7, restrictedSale!.Value, 400m, 900, _now));
+
+        var service = (IService)new BountyProxyKillRightService(store: Store, nowUnixMs: () => _now);
+        Assert.True(service.HasMethod("GetMyKillRights"));
+        Assert.True(service.HasMethod("GetKillRightsOnCharacters"));
+        Assert.True(service.HasMethod("GetBountiesAndKillRights"));
+        Assert.False(service.HasMethod("GetKillRights"));
+
+        var myRights = Assert.IsType<PyList>(await service.CallAsync(new ServiceCall
+        {
+            Method = "GetMyKillRights",
+            Args = [],
+            Session = session,
+        }));
+        Assert.Equal([ownerRight!.Value, targetRight!.Value], myRights.Items
+            .Select(row => (long)((PyLong)Assert.IsType<PyDict>(Assert.IsType<PyObject>(row).Args)
+                .Entries.Single(entry => entry.Key == new PyStr("killRightID")).Value).Value));
+
+        var available = Assert.IsType<PyList>(await service.CallAsync(new ServiceCall
+        {
+            Method = "GetKillRightsOnCharacters",
+            Args = [new PyList([new PyLong(2)])],
+            Session = session,
+        }));
+        Assert.Equal([publicSale!.Value, corpSale!.Value, allianceSale!.Value], available.Items
+            .Select(row => (long)((PyLong)Assert.IsType<PyDict>(Assert.IsType<PyObject>(row).Args)
+                .Entries.Single(entry => entry.Key == new PyStr("killRightID")).Value).Value));
+        var myPayload = Assert.IsType<PyDict>(Assert.IsType<PyObject>(myRights.Items[0]).Args);
+        Assert.Equal(
+            ["killRightID", "fromID", "toID", "expiryTime", "price", "restrictedTo"],
+            myPayload.Entries.Select(entry => Assert.IsType<PyStr>(entry.Key).Value));
+        Assert.Same(PyNone.Instance, myPayload.Entries.Single(entry => entry.Key == new PyStr("price")).Value);
+        Assert.Same(PyNone.Instance, myPayload.Entries.Single(entry => entry.Key == new PyStr("restrictedTo")).Value);
+
+        var combined = Assert.IsType<PyTuple>(await service.CallAsync(new ServiceCall
+        {
+            Method = "GetBountiesAndKillRights",
+            Args = [new PyList([]), new PyList([new PyLong(2)])],
+            Session = session,
+        }));
+        var defaultBountyRows = Assert.IsType<PyList>(combined.Items[0]);
+        Assert.Equal(
+            [new PyInt(0), new PyInt(1), new PyInt(500), new PyInt(700)],
+            defaultBountyRows.Items.Select(item => Assert.IsType<PyTuple>(item).Items[0]));
+        Assert.Equal(available.Items, Assert.IsType<PyList>(combined.Items[1]).Items);
+    }
+
+    [PgFact]
+    public async Task Bounty_proxy_sells_and_cancels_restricted_and_open_kill_rights()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        var store = Store;
+        var killRightId = await store.CreateKillRightAsync(1, 2, System, _now);
+        Assert.NotNull(killRightId);
+        var notifications = new List<(long Recipient, long Sender, int Type, System.Text.Json.Nodes.JsonObject Data)>();
+        var service = (IService)new BountyProxyKillRightService(
+            store: store,
+            notificationWriter: (recipient, sender, type, data, _, _) =>
+            {
+                notifications.Add((recipient, sender, type, (System.Text.Json.Nodes.JsonObject)data.DeepClone()));
+                return Task.CompletedTask;
+            },
+            nowUnixMs: () => _now);
+        Assert.True(service.HasMethod("SellKillRight"));
+        Assert.True(service.HasMethod("CancelSellKillRight"));
+
+        var restrictedSale = await service.CallAsync(new ServiceCall
+        {
+            Method = "SellKillRight",
+            Args = [new PyLong(killRightId.Value), new PyReal(250d), new PyLong(9000001)],
+            Session = _sessions.Of(1)!,
+        });
+        var listed = Assert.IsType<PyObject>(Assert.Single(Assert.IsType<PyList>(restrictedSale).Items));
+        var fields = Assert.IsType<PyDict>(listed.Args).Entries
+            .ToDictionary(entry => ((PyStr)entry.Key).Value, entry => entry.Value);
+        Assert.Equal(new PyReal(250d), fields["price"]);
+        Assert.Equal(InventoryWire.Id(9000001), fields["restrictedTo"]);
+        Assert.Equal((2L, 1L, KillRightNotificationTypes.Available),
+            (notifications[0].Recipient, notifications[0].Sender, notifications[0].Type));
+        Assert.Equal(1L, notifications[0].Data["charID"]!.GetValue<long>());
+        Assert.Equal(9000001L, notifications[0].Data["toEntityID"]!.GetValue<long>());
+
+        var cancelled = await service.CallAsync(new ServiceCall
+        {
+            Method = "CancelSellKillRight",
+            Args = [new PyLong(killRightId.Value), new PyLong(2)],
+            Session = _sessions.Of(1)!,
+        });
+        Assert.Same(PyNone.Instance, cancelled);
+        Assert.Null(Assert.Single(await store.KillRightsOfAsync(1)).SalePrice);
+        Assert.Equal(KillRightNotificationTypes.Unavailable, notifications[1].Type);
+        Assert.Equal(9000001L, notifications[1].Data["toEntityID"]!.GetValue<long>());
+
+        await service.CallAsync(new ServiceCall
+        {
+            Method = "SellKillRight",
+            Args = [new PyLong(killRightId.Value), new PyReal(50d), PyNone.Instance],
+            Session = _sessions.Of(1)!,
+        });
+        Assert.Equal(KillRightNotificationTypes.AvailableOpen, notifications[2].Type);
+        Assert.Null(notifications[2].Data["toEntityID"]);
+        await service.CallAsync(new ServiceCall
+        {
+            Method = "CancelSellKillRight",
+            Args = [new PyLong(killRightId.Value), new PyLong(2)],
+            Session = _sessions.Of(1)!,
+        });
+        Assert.Equal(KillRightNotificationTypes.UnavailableOpen, notifications[3].Type);
+    }
+
+
+    [PgFact]
+    public async Task Killmail_hook_selects_the_final_attackers_activation_and_consumes_the_right_once()
+    {
+        var store = Store;
+        var killRightId = await store.CreateKillRightAsync(1, 2, System, _now);
+        Assert.NotNull(killRightId);
+        Assert.True(await store.SetKillRightSaleAsync(1, killRightId.Value, 0m, null, _now));
+        var ownerActivation = await store.ActivateKillRightAsync(killRightId.Value, 1, _now);
+        var buyerPurchase = await store.BuyKillRightAsync(
+            killRightId.Value, 3, [3L], null, _now + 1, payment: null);
+        Assert.True(ownerActivation.Success);
+        Assert.True(buyerPurchase.Success);
+
+        var consumed = await store.ConsumeKillRightAfterKillAsync(2, 3, _now + 2);
+
+        Assert.Equal(buyerPurchase.Activation!.ActivationId, consumed?.ActivationId);
+        Assert.Empty(await store.ActiveKillRightActivationsForTargetAsync(2, _now + 2));
+        Assert.Empty(await store.KillRightsOfAsync(1));
+        Assert.Null(await store.ConsumeKillRightAfterKillAsync(2, 3, _now + 3));
+    }
+
+
+    [PgFact]
+    public async Task Activating_an_owned_kill_right_persists_a_fifteen_minute_suspect_flag()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        var store = Store;
+        var killRightId = await store.CreateKillRightAsync(1, 2, System, _now);
+        Assert.NotNull(killRightId);
+        using var runtime = Runtime();
+        var service = (IService)new KillRightMgrService(store, runtime, nowUnixMs: () => _now);
+
+        var result = await service.CallAsync(new ServiceCall
+        {
+            Method = "ActivateKillRight",
+            Args = [new PyLong(killRightId.Value)],
+            Session = _sessions.Of(1)!,
+        });
+
+        Assert.Same(PyNone.Instance, result);
+        var state = await store.StateOfAsync(2);
+        Assert.Equal(Flag.Suspect, state.FlagAt(_now));
+        Assert.Equal(_now + CombatState.FlagDurationMs, state.FlagUntilMs);
+        var activation = Assert.Single(await store.ActiveKillRightActivationsForTargetAsync(2, _now));
+        Assert.Equal(killRightId.Value, activation.KillRightId);
+        Assert.Equal(1, activation.ActivatorCharacterId);
+        Assert.Equal("activate", activation.ActivationKind);
+        Assert.Contains(Told(1), note => note.Name == "OnKillRightActivated");
+    }
+
+    [PgFact]
+    public async Task Buying_a_restricted_kill_right_transfers_isk_atomically_and_applies_suspect()
+    {
+        var walletSchema = "krw_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await Eve.Wallet.PgWalletStore.MigrateAsync(_source!, walletSchema);
+            var walletStore = new Eve.Wallet.PgWalletStore(_source!, walletSchema);
+            await using (var connection = await _source!.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await walletStore.OpenAsync(connection, transaction, 1, 0m, 0);
+                await walletStore.OpenAsync(connection, transaction, 3, 1_000m, 0);
+                await transaction.CommitAsync();
+            }
+            Pilot(1, System);
+            Pilot(2, System);
+            Pilot(3, System);
+            Pilot(4, System);
+            _sessions.Of(3)!.Set("corpid", new PyInt(9000001));
+            var store = Store;
+            var killRightId = await store.CreateKillRightAsync(1, 2, System, _now);
+            Assert.NotNull(killRightId);
+            Assert.True(await store.SetKillRightSaleAsync(1, killRightId.Value, 250m, 9000001, _now));
+            using var runtime = Runtime();
+            var usedNotifications = new List<KillRightActivation>();
+            var killRightManager = new KillRightMgrService(
+                store, runtime, new Eve.Wallet.WalletTransactions(_source!, walletSchema), walletStore, () => _now)
+            {
+                KillRightUsedNotification = (activation, _) =>
+                {
+                    usedNotifications.Add(activation);
+                    return Task.CompletedTask;
+                },
+            };
+            var service = (IService)killRightManager;
+
+            var result = await service.CallAsync(new ServiceCall
+            {
+                Method = "BuyKillRight",
+                Args = [new PyLong(killRightId.Value), new PyReal(250d)],
+                Session = _sessions.Of(3)!,
+            });
+
+            Assert.Same(PyNone.Instance, result);
+            Assert.Equal(750m, (await walletStore.GetAsync(3))!.Isk);
+            Assert.Equal(250m, (await walletStore.GetAsync(1))!.Isk);
+            Assert.Equal(Flag.Suspect, (await store.StateOfAsync(2)).FlagAt(_now));
+            var activation = Assert.Single(await store.ActiveKillRightActivationsForTargetAsync(2, _now));
+            Assert.Equal(3, activation.ActivatorCharacterId);
+            Assert.Equal(250m, activation.PricePaid);
+            Assert.Equal("buy", activation.ActivationKind);
+            Assert.Contains(Told(3), note => note.Name == "OnKillRightActivated");
+            Assert.Equal(killRightId.Value, Assert.Single(usedNotifications).KillRightId);
+
+            var unaffordableId = await store.CreateKillRightAsync(1, 4, System, _now + 1);
+            Assert.NotNull(unaffordableId);
+            Assert.True(await store.SetKillRightSaleAsync(1, unaffordableId.Value, 2_000m, 9000001, _now + 1));
+            var error = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(async () =>
+                await service.CallAsync(new ServiceCall
+                {
+                    Method = "BuyKillRight",
+                    Args = [new PyLong(unaffordableId.Value), new PyReal(2_000d)],
+                    Session = _sessions.Of(3)!,
+                }));
+            Assert.True(error.Error.IsUserError);
+            Assert.Equal("NotEnoughMoney", error.Error.UserErrorMessage);
+            Assert.Equal(750m, (await walletStore.GetAsync(3))!.Isk);
+            Assert.Empty(await store.ActiveKillRightActivationsForTargetAsync(4, _now));
+
+            await using var journal = _source.CreateCommand(
+                $"SELECT count(*) FROM {walletSchema}.journal WHERE ref_type_id = 116 AND reason = 'Kill right fee'");
+            Assert.Equal(2L, (long)(await journal.ExecuteScalarAsync())!);
+        }
+        finally
+        {
+            await using var drop = _source!.CreateCommand($"DROP SCHEMA IF EXISTS {walletSchema} CASCADE");
+            await drop.ExecuteNonQueryAsync();
+        }
     }
 }
 

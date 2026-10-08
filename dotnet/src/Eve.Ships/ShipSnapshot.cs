@@ -94,7 +94,7 @@ public sealed class ShipSnapshot
     /// </summary>
     internal static async Task<ShipSnapshot?> LoadAsync(
         DogmaStatic statics, PgCharacterStore characters, PgItemStore items, PgSkillStore skills, PgModuleStateStore modules, long characterId,
-        Func<int, double>? learningAttribute, IReadOnlyList<CharacterSkill>? skillsOverride, CancellationToken cancellationToken, long? shipIdOverride = null)
+        Func<int, double>? learningAttribute, IReadOnlyList<CharacterSkill>? skillsOverride, CancellationToken cancellationToken, long? shipIdOverride = null, long? shipOwnerIdOverride = null)
     {
         if (await characters.GetAsync(characterId, cancellationToken) is not { } character)
         {
@@ -102,11 +102,11 @@ public sealed class ShipSnapshot
         }
         var selectedShipId = shipIdOverride ?? character.ShipId;
         if (selectedShipId is not { } shipId
-            || await items.GetAsync(shipId, cancellationToken) is not { } ship || ship.OwnerId != characterId)
+            || await items.GetAsync(shipId, cancellationToken) is not { } ship || ship.OwnerId != (shipOwnerIdOverride ?? characterId))
         {
             return null;
         }
-        var contents = await items.InLocationAsync(shipId, characterId, cancellationToken);
+        var contents = await items.InLocationAsync(shipId, ship.OwnerId, cancellationToken);
         var (fitted, charges) = await SlotsOfAsync(statics, contents, cancellationToken);
         var states = await modules.StatesAsync(fitted.Select(i => i.Id), cancellationToken);
         var moduleConditions = await modules.ModuleConditionsAsync(fitted.Select(i => i.Id), cancellationToken);

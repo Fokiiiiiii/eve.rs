@@ -87,15 +87,28 @@ static Socket Listen(string endpoint)
     return unix;
 }
 
-using var sentry = SentrySdk.Init(options =>
-{
-    options.Dsn = Env("SENTRY_DSN", "");
-    options.Environment = Env("SENTRY_ENVIRONMENT", "development");
-    options.SendDefaultPii = false;
-});
+var sentryDsn = Env("SENTRY_DSN", "");
+using var sentry = string.IsNullOrWhiteSpace(sentryDsn)
+    ? null
+    : SentrySdk.Init(options =>
+    {
+        options.Dsn = sentryDsn;
+        options.Environment = Env("SENTRY_ENVIRONMENT", "development");
+        options.SendDefaultPii = false;
+    });
 
 var endpoint = Env("EVE_HOST", "/tmp/eve-host.sock");
-var options = new ClusterOptions { ImageServerUrl = Env("EVE_IMAGE_SERVER_URL", "http://127.0.0.1:26001/") };
+var newCharacterExperienceMode = Env(
+    "EVE_NEW_CHARACTER_EXPERIENCE_MODE",
+    Flag("EVE_AIR_NPE_ENABLED", false) ? "tutorial" : "disabled").Trim().ToLowerInvariant();
+if (newCharacterExperienceMode is not ("disabled" or "tutorial" or "cinematic"))
+    throw new InvalidOperationException("EVE_NEW_CHARACTER_EXPERIENCE_MODE must be disabled, tutorial, or cinematic.");
+var options = new ClusterOptions
+{
+    ImageServerUrl = Env("EVE_IMAGE_SERVER_URL", "http://127.0.0.1:26001/"),
+    NewCharacterExperienceEnabled = newCharacterExperienceMode == "tutorial",
+    NewCharacterExperienceMode = newCharacterExperienceMode,
+};
 var accountOptions = new AccountOptions
 {
     SkipPasswordCheck = Flag("EVE_DEV_SKIP_PASSWORD", false),
@@ -103,6 +116,8 @@ var accountOptions = new AccountOptions
 };
 IAccountDirectory accounts;
 IReadOnlyList<IService> characterServices = [];
+Eve.Services.Core.GameRpcCallbacks? gameRpcCallbacks = null;
+Eve.Services.Core.KeeperRpcCallbacks? keeperRpcCallbacks = null;
 Eve.Calendar.ICalendarStore? calendarStore = null;
 Eve.Calendar.ICalendarAudienceReader? calendarAudience = null;
 Foundations? foundations = null;
@@ -137,7 +152,15 @@ if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
     await mailCache.LoadAsync("crimewatchRuntime");
     await mailCache.LoadAsync("characters");
     await mailCache.LoadAsync("sovereignty");
-    (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience) = await CharacterServicesAsync(source, directory, online, clock, foundations, mailStore, mailStoreOwner, mailCache);
+    await mailCache.LoadAsync("characterEnergyState");
+    await mailCache.LoadAsync("shipCosmetics");
+    await mailCache.LoadAsync("shipLogoFittings");
+    await mailCache.LoadAsync("planetRuntimeState");
+    await mailCache.LoadAsync("industryRuntime");
+    await mailCache.LoadAsync("moonExtractions");
+    await mailCache.LoadAsync("overviewSharedPresets");
+      await mailCache.LoadAsync("sharedSettings");
+    (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks) = await CharacterServicesAsync(source, directory, online, clock, foundations, mailStore, mailStoreOwner, mailCache, options.NewCharacterExperienceMode);
     // every feature has registered its job handlers by now: the scheduler may start running jobs
     await foundations.StartAsync();
 }
@@ -149,7 +172,29 @@ else
 
 var registry = new ServiceRegistry();
 Func<long> now = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-foreach (var service in CoreServices.Create(new SubscriptionSettings(), new NoOmegaAccounts(), now, calendarStore, calendarAudience))
+ReadJumpTimersCallback? readJumpTimers = mailCache is { } characterCache
+    ? (characterId, cancellationToken) =>
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var path = $"/{characterId.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+        var character = characterCache.Read("characters", path).Data as JsonObject;
+        return ValueTask.FromResult(PersistenceCharacterRpcReadModel.ReadJumpTimers(character));
+    }
+    : null;
+ReadNonDiminishingInjectionCountCallback? readNonDiminishingInjections = mailStore is { } characterStore
+    ? async (characterId, cancellationToken) =>
+    {
+        var state = await PersistenceReadHelpers.ReadOptionalTableAsync(
+            characterStore, "skillTradingState", cancellationToken);
+        return PersistenceCharacterRpcReadModel.ReadNonDiminishingInjections(state, characterId);
+    }
+    : null;
+foreach (var service in CoreServices.Create(
+    new SubscriptionSettings(), new NoOmegaAccounts(), now, calendarStore, calendarAudience,
+    gameRpcCallbacks: gameRpcCallbacks,
+    readJumpTimers: readJumpTimers,
+    readNonDiminishingInjections: readNonDiminishingInjections,
+    keeperRpcCallbacks: keeperRpcCallbacks))
 {
     registry.Register(service);
 }
@@ -217,7 +262,7 @@ return 0;
 /// The character-side modules (characters, inventory, skills) and their services, or none (with the reason logged) when
 /// the static data they need is not in the database.
 /// </summary>
-static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience)> CharacterServicesAsync(NpgsqlDataSource source, IAccountLookup accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache)
+static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks)> CharacterServicesAsync(NpgsqlDataSource source, IAccountLookup accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode)
 {
     CharacterNames.EnsureUnicodeSupport();
     var characterSchema = Env("EVE_CHARACTERS_SCHEMA", PgCharacterStore.DefaultSchema);
@@ -297,13 +342,14 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     if (await sde.BuildAsync() is not { } build)
     {
         Console.Error.WriteLine("eve-host: the static data is not loaded (run `eve-sde ensure --pg $EVE_PG_URL`): no charUnboundMgr, no skills");
-        return ([], null, null, null, null, null);
+        return ([], null, null, null, null, null, null, null);
     }
     var startText = Env("EVE_START_STATION", "60015249");
     long? startStation = startText == "school" ? null : long.Parse(startText, System.Globalization.CultureInfo.InvariantCulture);
     var catalog = await CreationCatalog.LoadAsync(sde, startStation);
     var characters = new PgCharacterStore(source, characterSchema);
     var items = new PgItemStore(source, inventorySchema);
+    var spaceItemStore = new PgSpaceItemStore(source, spaceSchema);
     var itemTypes = new ItemTypeCatalog(sde);
     var skills = new PgSkillStore(source, skillsSchema);
     var skillCatalog = await SkillCatalog.LoadAsync(sde);
@@ -330,6 +376,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     }
     var dogmaSync = new CharacterDogmaSync(dogma, ships, now);
         var characterSessions = new CharacterSessions();
+        var signalTrackerRegistrationProvider = new Eve.Host.SignalTrackerRegistrationProvider(characterSessions);
         static bool ContactWatchlisted(JsonNode? node)
         {
             if (node is not JsonValue value)
@@ -524,7 +571,9 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         ReadRecentShipKillmailPageAsync,
         ReadCharacterDescriptionAsync,
         WriteCharacterDescriptionAsync,
-        ReadMedal1GraphicIdAsync);
+        ReadMedal1GraphicIdAsync,
+        (table, path, data) => mailCache.Write(table, path, data),
+        (table, path) => mailCache.Remove(table, path));
     var crimewatchPersistence = new PersistenceCrimewatchCallbacks(
         foundations.Relations, mailStore, mailCache, characterSessions, AffiliationOfAsync, now);
     var crimewatchRuntime = new Eve.Services.Crimewatch.CrimewatchRuntime(
@@ -548,7 +597,9 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         decimal.Parse(Env("EVE_START_ISK", "100000"), System.Globalization.CultureInfo.InvariantCulture),
         long.Parse(Env("EVE_START_PLEX", "2222"), System.Globalization.CultureInfo.InvariantCulture));
     Console.Error.WriteLine($"eve-host: characters in PostgreSQL, schemas {characterSchema}, {inventorySchema}, {skillsSchema} and {walletSchema}; {stations.Count} stations; dogma of {dogma.AttributeCount} attributes and {dogma.EffectCount} effects; static data build {build}; new characters start at {(startStation is { } id ? $"station {id}" : "their school's headquarters")}");
-    var creation = new CharacterCreation(source, characters, items, skills, skillCatalog, wallets, startingWallet, catalog, modules);
+    var creation = new CharacterCreation(
+        source, characters, items, skills, skillCatalog, wallets, startingWallet, catalog, modules,
+        newCharacterExperienceMode == "tutorial", newCharacterExperienceMode);
     // Codex-owned corporation registration; keep combat/NPC construction in its own block below.
     var corporationSchema = Env("EVE_CORPORATIONS_SCHEMA", Eve.Corporations.CorporationStore.DefaultSchema);
     await Eve.Corporations.CorporationStore.MigrateAsync(source, corporationSchema);
@@ -838,10 +889,114 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         wakeAllianceApplicationScheduler: allianceDue.Wake,
         relations: foundations.Relations);
 
-    var agentLocationById = await new PersistenceAgentLocationReadModel(
-        (table, cancellation) => sde.ReadAsync(table, cancellationToken: cancellation))
-        .ReadAsync(CancellationToken.None);
-    var structureDirectoryReadModel = new PersistenceStructureDirectoryReadModel(ReadGameStoreTableAsync, AffiliationOfAsync);
+    var npcCharacterRows = await sde.ReadAsync("npcCharacters", cancellationToken: CancellationToken.None);
+    var agentsInSpaceById = (await sde.ReadAsync("agentsInSpace", cancellationToken: CancellationToken.None))
+        .ToDictionary(row => row.Key);
+    var agentLocationById = new Dictionary<long, long>();
+    foreach (var row in npcCharacterRows)
+    {
+        if (row.Key > 0 &&
+            row.Doc.TryGetProperty("locationID", out var location) &&
+            location.TryGetInt64(out var locationId) &&
+            locationId > 0)
+        {
+            agentLocationById[row.Key] = locationId;
+        }
+    }
+
+    static long AgentSdeInteger(JsonElement document, string name) =>
+        document.TryGetProperty(name, out var value) &&
+        value.ValueKind == JsonValueKind.Number &&
+        value.TryGetInt64(out var result)
+            ? result
+            : 0;
+    static long? AgentSdeOptionalInteger(JsonElement document, string name) =>
+        AgentSdeInteger(document, name) is > 0 and var value ? value : null;
+    static string AgentSdeText(JsonElement document, string name) =>
+        document.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? ""
+            : "";
+    static bool AgentSdeBoolean(JsonElement document, string name) =>
+        document.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.True;
+
+    var agentMissionAgentRows = npcCharacterRows
+        .Where(row => row.Key > 0 &&
+            row.Doc.TryGetProperty("agent", out var agent) &&
+            agent.ValueKind == JsonValueKind.Object)
+        .Select(row =>
+        {
+            var agent = row.Doc.GetProperty("agent");
+            var locationId = AgentSdeInteger(row.Doc, "locationID");
+            var station = locationId > 0 ? stations.Get(locationId) : null;
+            JsonElement? inSpace = agentsInSpaceById.TryGetValue(row.Key, out var inSpaceRow)
+                ? inSpaceRow.Doc
+                : null;
+            var inSpaceSolarSystemId = inSpace is { } inSpaceDoc
+                ? AgentSdeInteger(inSpaceDoc, "solarSystemID")
+                : 0;
+            var isInSpace = inSpaceSolarSystemId is > 0 and <= int.MaxValue &&
+                solarSystems.Get((int)inSpaceSolarSystemId) is not null;
+            long? solarSystemId = isInSpace
+                ? inSpaceSolarSystemId
+                : station?.SolarSystemId;
+            if (solarSystemId is null &&
+                locationId is > 0 and <= int.MaxValue &&
+                solarSystems.Get((int)locationId) is not null)
+            {
+                solarSystemId = locationId;
+            }
+
+            return new AgentMissionAgentData(
+                row.Key,
+                AgentSdeInteger(agent, "agentTypeID"),
+                AgentSdeInteger(agent, "divisionID"),
+                AgentSdeInteger(agent, "level") is > 0 and var level ? level : 1,
+                isInSpace ? null : AgentSdeOptionalInteger(row.Doc, "locationID"),
+                AgentSdeInteger(row.Doc, "corporationID"),
+                AgentSdeBoolean(agent, "isLocator"),
+                isInSpace,
+                AgentSdeOptionalInteger(row.Doc, "careerID"),
+                AgentSdeBoolean(row.Doc, "importantMission") || AgentSdeBoolean(agent, "importantMission"),
+                AgentSdeText(row.Doc, "missionKind") is { Length: > 0 } missionKind
+                    ? missionKind
+                    : AgentSdeText(agent, "missionKind"),
+                AgentSdeText(row.Doc, "missionTypeLabel") is { Length: > 0 } missionType
+                    ? missionType
+                    : AgentSdeText(agent, "missionTypeLabel"),
+                AgentSdeOptionalInteger(row.Doc, "specialityID"),
+                station?.TypeId > 0 ? station.TypeId : AgentSdeOptionalInteger(row.Doc, "stationTypeID"),
+                AgentSdeOptionalInteger(row.Doc, "bloodlineID"),
+                solarSystemId,
+                isInSpace && inSpace is { } spaceDungeon ? AgentSdeOptionalInteger(spaceDungeon, "dungeonID") : null,
+                isInSpace && inSpace is { } spaceSpawn ? AgentSdeOptionalInteger(spaceSpawn, "spawnPointID") : null,
+                isInSpace && inSpace is { } spaceType ? AgentSdeOptionalInteger(spaceType, "typeID") : null);
+        })
+        .OrderBy(agent => agent.AgentId)
+        .ToArray();
+    var structureDirectoryReadModel = new PersistenceStructureDirectoryReadModel(ReadGameStoreTableAsync, AffiliationOfAsync, sde, mailCache);
+    var structureProfilesRpcBackend = new Eve.Host.PersistenceStructureProfilesRpcBackend(
+        ReadGameStoreTableAsync, mailCache, characterSessions);
+    var structureRpcCallbacks = new Eve.Services.Core.StructureRpcCallbacks
+    {
+        GetProfilesAsync = structureProfilesRpcBackend.GetProfilesAsync,
+        GetProfileSettingsAsync = structureProfilesRpcBackend.GetProfileSettingsAsync,
+        GetMyHangarViewStateAsync = (call, structureId) =>
+            structureProfilesRpcBackend.GetMyHangarViewStateAsync(structureId, call.Cancellation),
+        CreateProfileAsync = (call, corporationId, name, description) =>
+            structureProfilesRpcBackend.CreateProfileAsync(corporationId, name, description, call.Cancellation),
+        UpdateProfileAsync = (call, corporationId, profileId, name, description) =>
+            structureProfilesRpcBackend.UpdateProfileAsync(corporationId, profileId, name, description, call.Cancellation),
+        SaveProfileSettingsAsync = (call, corporationId, profileId, settings) =>
+            structureProfilesRpcBackend.SaveProfileSettingsAsync(corporationId, profileId, settings, call.Cancellation),
+        SetDefaultProfileAsync = (call, corporationId, profileId) =>
+            structureProfilesRpcBackend.SetDefaultProfileAsync(corporationId, profileId, call.Cancellation),
+        ChangeProfilesAsync = (call, corporationId, structureIds, profileId) =>
+            structureProfilesRpcBackend.ChangeProfilesAsync(corporationId, structureIds, profileId, call.Cancellation),
+        DeleteProfileAsync = (call, corporationId, profileId) =>
+            structureProfilesRpcBackend.DeleteProfileAsync(corporationId, profileId, call.Cancellation),
+        DuplicateProfileAsync = (call, corporationId, profileId) =>
+            structureProfilesRpcBackend.DuplicateProfileAsync(corporationId, profileId, call.Cancellation),
+    };
     var structureAssetSafetyReadModel = new PersistenceStructureAssetSafetyReadModel(
         source, items, new PgSpaceItemStore(source, spaceSchema), economyWallets, sde,
         ReadGameStoreTableAsync, AffiliationOfAsync, now, inventorySchema, corporationSchema,
@@ -1139,9 +1294,19 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
                 ADD COLUMN IF NOT EXISTS accepts_conduit_jumps boolean NOT NULL DEFAULT true,
                 ADD COLUMN IF NOT EXISTS accepts_fleet_regroups boolean NOT NULL DEFAULT true,
                 ADD COLUMN IF NOT EXISTS ship_type_id bigint;
-            """)
+            """),
+        Eve.Services.Space.FleetStore.FleetFinderAllowedEntitiesMigration,
+        Eve.Services.Space.FleetStore.FleetFinderAdvertPayloadMigration
     ], CancellationToken.None);
     var fleetStore = new Eve.Services.Space.FleetStore(source, fleetSchema);
+    async Task<Eve.Services.Space.FleetAdvertLeaderProfile?> FleetAdvertLeaderProfileForAsync(
+        long characterId, CancellationToken cancellationToken)
+    {
+        var affiliation = await AffiliationOfAsync(characterId, cancellationToken);
+        var securityStatus = await securityStatusOf(characterId, cancellationToken);
+        return new Eve.Services.Space.FleetAdvertLeaderProfile(
+            affiliation.Corporation, affiliation.Alliance, affiliation.Faction, securityStatus);
+    }
     Eve.Services.ClientSession? FleetSessionForCharacter(long characterId) =>
         characterSessions.Of(characterId);
     static bool SameFleetBubble(Eve.Services.ClientSession sender, Eve.Services.ClientSession recipient) =>
@@ -1191,6 +1356,28 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         foundations.Content.ActiveOfAsync,
         ReadGameStoreTableAsync,
         now);
+    var dungeonReadModel = new Eve.Host.PersistenceDungeonReadModel(
+        (table, token) => sde.ReadAsync(table, cancellationToken: token),
+        foundations.Content.ActiveByKindAsync,
+        ReadGameStoreTableAsync,
+        now);
+    var keeperRpcCallbacks = new Eve.Services.Core.KeeperRpcCallbacks(
+        ReadCurrentDungeonAsync: async (session, cancellationToken) =>
+        {
+            if (spaceSessions is null || session.CharacterId is not { } characterId)
+                return null;
+            var shipId = spaceSessions.ShipIdOf(session);
+            if (shipId is not > 0)
+                return null;
+            var position = await spaceSessions.PositionOfAsync(session, shipId.Value, cancellationToken)
+                .ConfigureAwait(false);
+            var currentSystemId = position?.SolarSystemId ??
+                session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0;
+            return await dungeonReadModel.ReadCurrentDungeonAsync(
+                characterId, shipId.Value, currentSystemId,
+                position?.X, position?.Y, position?.Z,
+                spaceSessions.IsWarping(session), cancellationToken).ConfigureAwait(false);
+        });
     async Task<PersistenceMailSendRecipients?> ResolveMailSendRecipientsAsync(
         Eve.Services.Core.MailSendRequest request,
         Eve.Services.ClientSession session,
@@ -1307,12 +1494,19 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         (characterId, args) => characterSessions.Of(characterId)?.SendNotification("OnNotificationReceived", "clientID", args));
 
     var mailingListMutationGate = new SemaphoreSlim(1, 1);
-    static long? MailingListPyLong(Eve.Marshal.PyValue? value) => value switch
+    static long? MailingListPyLong(Eve.Marshal.PyValue? value)
     {
-        Eve.Marshal.PyInt integer => integer.Value,
-        Eve.Marshal.PyLong integer => integer.Value,
-        _ => null,
-    };
+        var number = value switch
+        {
+            Eve.Marshal.PyInt small => (double)small.Value,
+            Eve.Marshal.PyLong large => large.Value,
+            Eve.Marshal.PyReal real => real.Value,
+            _ => double.NaN,
+        };
+        return double.IsFinite(number) && number >= long.MinValue && number < (double)long.MaxValue
+            ? (long)Math.Truncate(number)
+            : null;
+    }
     static string? MailingListPyText(Eve.Marshal.PyValue? value) => value switch
     {
         Eve.Marshal.PyStr text => text.Value,
@@ -1333,7 +1527,18 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         if (MailingListJsonLong(row["ownerID"]) == characterId)
             return 3;
         var members = row["members"] as JsonObject;
-        return MailingListJsonLong(members?[MailingListKey(characterId)]);
+        return MailingListMemberRole(MailingListJsonLong(members?[MailingListKey(characterId)]));
+    }
+    static long MailingListMemberRole(long value) => value is 0 or 2 or 3 ? value : 1;
+    static long MailingListAccess(long value) => value == 0 ? 0 : 1;
+    static bool MailingListCanManageTarget(long actorRole, long targetRole) =>
+        actorRole is 2 or 3 && targetRole != 3 && !(actorRole == 2 && targetRole == 2);
+    static string MailingListTimestamp(long unixMs) =>
+        Py.FileTimeFromUnixMs(unixMs).ToString(System.Globalization.CultureInfo.InvariantCulture);
+    static string MailingListBoundedText(string? value, int length)
+    {
+        var text = (value ?? string.Empty).Trim();
+        return text.Length > length ? text[..length] : text;
     }
     static bool MailingListCanManage(JsonObject row, long characterId) =>
         MailingListRole(row, characterId) is 2 or 3;
@@ -1495,39 +1700,65 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
                             return Eve.Marshal.PyNone.Instance;
                         var updated = (JsonObject)current.DeepClone();
                         var members = updated["members"] as JsonObject ?? new JsonObject();
-                        var ownerId = MailingListJsonLong(updated["ownerID"]);
-                        var defaultRole = MailingListJsonLong(updated["defaultMemberAccess"]);
+                        var defaultRole = MailingListMemberRole(MailingListJsonLong(updated["defaultMemberAccess"]));
+                        var seen = new HashSet<long>();
+                        var changed = new List<long>();
                         foreach (var targetValue in targetList.Items)
                         {
                             if (MailingListPyLong(targetValue) is not { } targetId || targetId <= 0 ||
-                                targetId == ownerId)
+                                !seen.Add(targetId))
                                 continue;
+                            if (seen.Count > 1000)
+                                break;
                             var targetKey = MailingListKey(targetId);
                             if (!members.ContainsKey(targetKey))
                                 continue;
-                            var targetRole = MailingListJsonLong(members[targetKey]);
-                            if (targetId == characterId && currentRole != 3 ||
-                                currentRole == 2 && targetRole >= 2)
+                            var targetRole = MailingListRole(current, targetId);
+                            if (!MailingListCanManageTarget(currentRole, targetRole))
                                 continue;
-                            switch (mutation.Method)
+
+                            if (mutation.Method == Eve.Services.Core.MailingListManagerMethod.KickMembers)
                             {
-                                case Eve.Services.Core.MailingListManagerMethod.KickMembers:
-                                    members.Remove(MailingListKey(targetId));
-                                    break;
-                                case Eve.Services.Core.MailingListManagerMethod.SetMembersMuted:
-                                    members[MailingListKey(targetId)] = 1;
-                                    break;
-                                case Eve.Services.Core.MailingListManagerMethod.SetMembersOperator:
-                                    if (currentRole == 3)
-                                        members[MailingListKey(targetId)] = 2;
-                                    break;
-                                case Eve.Services.Core.MailingListManagerMethod.SetMembersClear:
-                                    members[MailingListKey(targetId)] = defaultRole;
-                                    break;
+                                members.Remove(targetKey);
+                                changed.Add(targetId);
+                                continue;
                             }
+
+                            var nextRole = mutation.Method switch
+                            {
+                                Eve.Services.Core.MailingListManagerMethod.SetMembersMuted => 0,
+                                Eve.Services.Core.MailingListManagerMethod.SetMembersOperator => 2,
+                                _ => defaultRole,
+                            };
+                            if (targetRole == nextRole)
+                                continue;
+                            members[targetKey] = nextRole;
+                            changed.Add(targetId);
                         }
+                        if (changed.Count == 0)
+                            return Eve.Marshal.PyNone.Instance;
+
                         updated["members"] = members;
+                        updated["updatedAt"] = MailingListTimestamp(now());
                         await PersistMailingListRowAsync(listId, updated, cancellationToken);
+                        if (mutation.Method == Eve.Services.Core.MailingListManagerMethod.KickMembers)
+                        {
+                            foreach (var targetId in changed)
+                                characterSessions.Of(targetId)?.SendNotification(
+                                    "OnMailingListLeave", "clientID", new Eve.Marshal.PyLong(listId), new Eve.Marshal.PyLong(targetId));
+                        }
+                        else
+                        {
+                            var notification = mutation.Method switch
+                            {
+                                Eve.Services.Core.MailingListManagerMethod.SetMembersMuted => "OnMailingListSetMuted",
+                                Eve.Services.Core.MailingListManagerMethod.SetMembersOperator => "OnMailingListSetOperator",
+                                _ => "OnMailingListSetClear",
+                            };
+                            foreach (var targetId in changed)
+                                characterSessions.Of(targetId)?.SendNotification(
+                                    notification, "clientID", new Eve.Marshal.PyLong(listId));
+                        }
                         return Eve.Marshal.PyNone.Instance;
                     }
                     case Eve.Services.Core.MailingListManagerMethod.SetEntitiesAccess:
@@ -1537,24 +1768,36 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
                             return Eve.Marshal.PyNone.Instance;
                         var updated = (JsonObject)current.DeepClone();
                         var access = updated["access"] as JsonObject ?? new JsonObject();
+                        var updates = 0;
                         foreach (var pair in accessByEntity.Entries)
                         {
                             if (MailingListPyLong(pair.Key) is not { } entityId || entityId <= 0 ||
                                 MailingListPyLong(pair.Value) is not { } mode)
                                 continue;
-                            access[MailingListKey(entityId)] = mode;
+                            var entityKey = MailingListKey(entityId);
+                            var nextAccess = MailingListAccess(mode);
+                            if (access.ContainsKey(entityKey) && MailingListJsonLong(access[entityKey]) == nextAccess)
+                                continue;
+                            access[entityKey] = nextAccess;
+                            if (++updates >= 1000)
+                                break;
                         }
+                        if (updates == 0)
+                            return Eve.Marshal.PyNone.Instance;
                         updated["access"] = access;
+                        updated["updatedAt"] = MailingListTimestamp(now());
                         await PersistMailingListRowAsync(listId, updated, cancellationToken);
                         return Eve.Marshal.PyNone.Instance;
                     }
                     case Eve.Services.Core.MailingListManagerMethod.ClearEntityAccess:
                     {
                         if (args.Count < 2 || !MailingListCanManage(current, characterId) ||
-                            MailingListPyLong(args[1]) is not { } entityId)
+                            MailingListPyLong(args[1]) is not { } entityId || entityId <= 0)
                             return Eve.Marshal.PyNone.Instance;
                         var updated = (JsonObject)current.DeepClone();
-                        (updated["access"] as JsonObject)?.Remove(MailingListKey(entityId));
+                        if ((updated["access"] as JsonObject)?.Remove(MailingListKey(entityId)) != true)
+                            return Eve.Marshal.PyNone.Instance;
+                        updated["updatedAt"] = MailingListTimestamp(now());
                         await PersistMailingListRowAsync(listId, updated, cancellationToken);
                         return Eve.Marshal.PyNone.Instance;
                     }
@@ -1565,27 +1808,30 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
                             MailingListPyLong(args[2]) is not { } defaultMemberAccess)
                             return Eve.Marshal.PyNone.Instance;
                         var updated = (JsonObject)current.DeepClone();
-                        updated["defaultAccess"] = defaultAccess;
-                        updated["defaultMemberAccess"] = defaultMemberAccess;
-                        if (args.Count > 3 && MailingListPyLong(args[3]) is { } cost && cost >= 0)
-                            updated["cost"] = cost;
+                        updated["defaultAccess"] = MailingListAccess(defaultAccess);
+                        updated["defaultMemberAccess"] = MailingListMemberRole(defaultMemberAccess);
+                        var cost = args.Count > 3 ? MailingListPyLong(args[3]) ?? 0 : 0;
+                        updated["cost"] = Math.Max(0, cost);
+                        updated["updatedAt"] = MailingListTimestamp(now());
                         await PersistMailingListRowAsync(listId, updated, cancellationToken);
                         return Eve.Marshal.PyNone.Instance;
                     }
                     case Eve.Services.Core.MailingListManagerMethod.SaveWelcomeMail:
                     case Eve.Services.Core.MailingListManagerMethod.SendWelcomeMail:
                     {
-                        if (args.Count < 3 || !MailingListCanManage(current, characterId) ||
-                            MailingListPyText(args[1]) is not { } title ||
-                            MailingListPyText(args[2]) is not { } body)
+                        if (args.Count < 3 || !MailingListCanManage(current, characterId))
                             return Eve.Marshal.PyNone.Instance;
+                        var title = MailingListBoundedText(MailingListPyText(args[1]), 150);
+                        var body = MailingListBoundedText(MailingListPyText(args[2]), 8000);
+                        var timestamp = MailingListTimestamp(now());
                         var updated = (JsonObject)current.DeepClone();
                         updated["welcomeMail"] = new JsonObject
                         {
                             ["title"] = title,
                             ["body"] = body,
-                            ["savedAt"] = Py.FileTimeFromUnixMs(now()).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            ["savedAt"] = timestamp,
                         };
+                        updated["updatedAt"] = timestamp;
                         await PersistMailingListRowAsync(listId, updated, cancellationToken);
                         if (mutation.Method == Eve.Services.Core.MailingListManagerMethod.SaveWelcomeMail)
                             return Eve.Marshal.PyNone.Instance;
@@ -1611,7 +1857,8 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
                         if (!MailingListCanManage(current, characterId))
                             return Eve.Marshal.PyNone.Instance;
                         var updated = (JsonObject)current.DeepClone();
-                        updated.Remove("welcomeMail");
+                        updated["welcomeMail"] = null;
+                        updated["updatedAt"] = MailingListTimestamp(now());
                         await PersistMailingListRowAsync(listId, updated, cancellationToken);
                         return Eve.Marshal.PyNone.Instance;
                     }
@@ -1631,7 +1878,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             ("id", new Eve.Marshal.PyLong(listId)),
             ("name", new Eve.Marshal.PyStr(MailingListJsonText(list["name"]))),
             ("displayName", new Eve.Marshal.PyStr(MailingListJsonText(list["displayName"]))),
-            ("isMuted", role == 1 ? Eve.Marshal.PyBool.True : Eve.Marshal.PyBool.False),
+            ("isMuted", role == 0 ? Eve.Marshal.PyBool.True : Eve.Marshal.PyBool.False),
             ("isOperator", role == 2 || role == 3 ? Eve.Marshal.PyBool.True : Eve.Marshal.PyBool.False),
             ("isOwner", MailingListJsonLong(list["ownerID"]) == characterId ? Eve.Marshal.PyBool.True : Eve.Marshal.PyBool.False),
         ]);
@@ -1713,9 +1960,123 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             ? IndustryTruthy(service["online"] ?? service["isOnline"] ?? service["active"])
             : IndustryTruthy(value);
 
+    static PyValue? FacilityField(PyValue? source, string name)
+    {
+        IEnumerable<KeyValuePair<PyValue, PyValue>> entries = source switch
+        {
+            PyDict dict => dict.Entries,
+            PyObject { Args: PyDict args } => args.Entries,
+            PyObjectEx value => value.Dict,
+            _ => Array.Empty<KeyValuePair<PyValue, PyValue>>(),
+        };
+        foreach (var (key, value) in entries)
+            if (Eve.Macho.JsSemantics.StringValue(key) == name) return value;
+        return null;
+    }
+    static long FacilityNumber(PyValue? value) => value switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        _ => 0,
+    };
+    async ValueTask<PyValue?> FacilityManagerRpcAsync(ServiceCall call, CancellationToken token)
+    {
+        async ValueTask<PyValue?> ReadFacilityAsync(long facilityId)
+        {
+            if (facilityId <= 0) return null;
+            var station = stations.Get(facilityId);
+            var systemId = station?.SolarSystemId ?? 0;
+            var typeId = station?.TypeId ?? 0;
+            if (station is null)
+            {
+                var info = await structureDirectoryReadModel.GetStructureInfoAsync(facilityId, token);
+                if (info is not { PersistentlyDeployed: true }) return null;
+                systemId = (int)FacilityNumber(FacilityField(info.Info, "solarSystemID"));
+                typeId = (int)FacilityNumber(FacilityField(info.Info, "typeID"));
+            }
+            if (systemId <= 0 || typeId <= 0) return null;
+            var facility = await ResolveIndustryFacilityAsync(
+                facilityId, 0, systemId, call.Session.CharacterId ?? 0, token);
+            if (facility is null) return null;
+
+            var activities = new PyDict([]);
+            return Py.KeyVal(
+                ("facilityID", new PyLong(facility.FacilityId)),
+                ("typeID", new PyInt(typeId)),
+                ("ownerID", new PyLong(facility.OwnerId)),
+                ("tax", Py.Number((double)facility.TaxRate)),
+                ("solarSystemID", new PyInt(facility.SolarSystemId)),
+                ("online", PyValue.Of(facility.IsOnline)),
+                ("serviceAccess", new PyDict([])),
+                ("sccTaxModifier", Py.Number(1)),
+                ("rigModifiers", new PyDict([])),
+                ("globalModifiers", Py.Dict(("faction", Py.Number(1)), ("system", new PyDict([])))),
+                ("activities", activities));
+        }
+
+        if (call.Method == "GetFacility")
+            return await ReadFacilityAsync(FacilityNumber(call.Arg(0)));
+        if (call.Method != "GetFacilitiesByID")
+            return null;
+
+        var requested = call.Arg(0) switch
+        {
+            PyList list => list.Items,
+            PyTuple tuple => tuple.Items,
+            _ => Array.Empty<PyValue>(),
+        };
+        var facilities = new List<PyValue>();
+        foreach (var raw in requested)
+            if (await ReadFacilityAsync(FacilityNumber(raw)) is { } facility)
+                facilities.Add(facility);
+        return new PyList(facilities);
+    }
     var industryJobOperations = new PersistenceIndustryJobOperations(
         source, industrySchema, items, economyWallets, skills, sde, corporations,
         foundations.Events, stations, ResolveIndustryFacilityAsync, now);
+    var mapSolarSystems = new Lazy<Task<IReadOnlyList<Eve.Sde.SdeRow>>>(() =>
+        sde.ReadAsync("mapSolarSystems", cancellationToken: CancellationToken.None));
+    var mapIndustrySystems = new Lazy<Task<IReadOnlyList<Eve.Sde.SdeRow>>>(() =>
+        sde.ReadAsync("industrySystems", cancellationToken: CancellationToken.None));
+
+    static long PositiveMapRpcId(PyValue value) => value switch
+    {
+        PyInt number when number.Value > 0 => number.Value,
+        PyLong number when number.Value > 0 => number.Value,
+        PyReal number when double.IsFinite(number.Value) && number.Value > 0 &&
+            number.Value <= long.MaxValue && Math.Truncate(number.Value) == number.Value => (long)number.Value,
+        PyStr text when long.TryParse(text.Value, System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var number) && number > 0 => number,
+        _ => 0,
+    };
+    static int MapActivityId(PyValue value)
+    {
+        var id = PositiveMapRpcId(value);
+        return id > 0 && id <= int.MaxValue ? (int)id : 0;
+    }
+
+    async ValueTask<PyValue?> ReadMapRpcDataAsync(ServiceCall call)
+    {
+        switch (call.Method)
+        {
+            case "GetCurrentSovData":
+                return await sovereigntyReadModel.ReadCurrentMapDataAsync(
+                    PositiveMapRpcId(call.Arg(0)),
+                    await mapSolarSystems.Value.WaitAsync(call.Cancellation),
+                    call.Cancellation);
+            case "GetRecentSovActivity":
+                return await sovereigntyReadModel.ReadRecentSovActivityAsync(call.Cancellation);
+            case "GetIndustryCostModifier":
+                return industryJobOperations.ReadMapIndustryCostModifier(
+                    MapActivityId(call.Arg(0)),
+                    await mapIndustrySystems.Value.WaitAsync(call.Cancellation));
+            case "GetIndustryJobsOverLast24Hours":
+                return await industryJobOperations.ReadMapIndustryJobsOverLast24HoursAsync(
+                    MapActivityId(call.Arg(0)), now(), call.Cancellation);
+            default:
+                return null;
+        }
+    }
     foundations.Events.Subscribe(
         "industry.jobs.client-notifications",
         [Eve.Services.Core.IndustryJobEvents.Changed],
@@ -1738,29 +2099,269 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             return Task.CompletedTask;
         });
 
+    var corporationOfficeStore = new Eve.Corporations.CorporationOfficeStore(source, corporationSchema);
     var officeManager = new Eve.Services.Corporations.OfficeManagerService(
-        new Eve.Corporations.CorporationOfficeStore(source, corporationSchema), corporations, characters, items,
+        corporationOfficeStore, corporations, characters, items,
         economyWallets,
         id => stations.Get(id) is { } station
             ? new Eve.Corporations.CorporationOfficeStation(
                 station.Id, station.TypeId, station.OwnerId, station.SolarSystemId, station.Security)
             : null,
         now);
-    var emptyLoginRewards = new Eve.Services.Core.EmptyLoginRewardCallbacks();
+    var skinCosmeticsCatalog = await ShipCosmeticsCatalog.LoadAsync(sde);
+    var agentMissionAgentById = agentMissionAgentRows.ToDictionary(agent => agent.AgentId);
+    var agentMissionStaticAuthority = EveJsMissionAuthorityDataSource.Shared;
+    var agentMissionRpcCallbacks = new AgentMissionRpcCallbacks(
+        ReadAgents: _ => ValueTask.FromResult<IReadOnlyList<AgentMissionAgentData>>(agentMissionAgentRows),
+        ReadDisabledMissions: _ => ValueTask.FromResult(agentMissionStaticAuthority.DisabledMissionIds),
+        ReadPlausibleMissionIds: (agentId, _) => ValueTask.FromResult(
+            agentMissionStaticAuthority.PlausibleMissionIds(agentId)),
+        ReadEpicArcMessages: _ => ValueTask.FromResult<JsonObject?>(agentMissionStaticAuthority.EpicArcMessageMaps),
+        ReadSolarSystemOfAgent: (agentId, _) => ValueTask.FromResult<long?>(
+            agentMissionAgentById.TryGetValue(agentId, out var agent) ? agent.SolarSystemId : null));
+    var agentMissionService = new AgentMissionService(
+        async (characterId, ct) =>
+        {
+            var state = await ReadGameStoreTableAsync("missionRuntimeState", ct);
+            return (state["charactersByID"] as JsonObject)?[characterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
+        },
+        async (characterId, bookmarkIds, ct) =>
+        {
+            var state = await ReadGameStoreTableAsync("bookmarks", ct);
+            var records = state["records"] as JsonObject;
+            var bookmarks = new Dictionary<long, JsonObject>();
+            foreach (var bookmarkId in bookmarkIds.Distinct())
+            {
+                if (records?[bookmarkId.ToString(System.Globalization.CultureInfo.InvariantCulture)] is JsonObject row)
+                    bookmarks[bookmarkId] = row;
+            }
+            return bookmarks;
+        },
+        async (characterId, ct) =>
+        {
+            var state = await ReadGameStoreTableAsync("researchRuntimeState", ct);
+            return (state["charactersByID"] as JsonObject)?[characterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonArray;
+        },
+        (characterId, agentId, session) =>
+        {
+            var stationId = session.GetInt("stationid");
+            return stationId is { } station &&
+                (!agentLocationById.TryGetValue(agentId, out var agentStationId) || station == agentStationId);
+        },
+        rpcCallbacks: agentMissionRpcCallbacks);
+    async Task<JsonObject?> ReadCharacterGameStoreRowAsync(long characterId, CancellationToken cancellationToken)
+    {
+        if (characterId <= 0) return null;
+        var charactersState = await ReadGameStoreTableAsync("characters", cancellationToken);
+        return charactersState[characterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
+    }
+    async Task<(JsonObject? MissionRecord, JsonObject? DungeonState, bool? InActiveDungeon)> ReadMissionTrackerContextAsync(
+        long characterId, long agentId, ClientSession session, CancellationToken cancellationToken)
+    {
+        var missionRecord = await agentMissionService.ReadMissionRecordAsync(characterId, agentId, cancellationToken);
+        if (missionRecord is null) return (null, null, false);
+        var dungeonState = await ReadGameStoreTableAsync("dungeonRuntimeState", cancellationToken);
+        if (spaceSessions is null) return (missionRecord, dungeonState, false);
+        var shipId = spaceSessions.ShipIdOf(session);
+        if (shipId is not > 0) return (missionRecord, dungeonState, null);
+        var position = await spaceSessions.PositionOfAsync(session, shipId.Value, cancellationToken);
+        var currentSystemId = position?.SolarSystemId ??
+            session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0;
+        var active = MissionTrackerGameStoreProjection.IsInActiveMissionDungeon(
+            missionRecord,
+            dungeonState,
+            characterId,
+            currentSystemId,
+            shipId.Value,
+            position?.X,
+            position?.Y,
+            position?.Z,
+            spaceSessions.IsWarping(session));
+        return (missionRecord, dungeonState, active);
+    }
+    async Task<AirNpeCharacterState?> ReadAirNpeCharacterStateAsync(long characterId, CancellationToken cancellationToken)
+    {
+        var character = await characters.GetAsync(characterId, cancellationToken);
+        return character is null ? null : new AirNpeCharacterState(character.TutorialEntryMode, character.AirNpeState);
+    }
+
+    async ValueTask<Eve.Services.Core.ShipStanceChange?> SetShipStanceAsync(
+        long shipId, int stanceId, long characterId, CancellationToken cancellationToken)
+    {
+        var ship = await items.GetAsync(shipId, cancellationToken);
+        if (ship is null)
+            return new(false, ErrorCode: "SHIP_NOT_FOUND");
+        if (ship.OwnerId != characterId)
+            return new(false, ErrorCode: "SHIP_NOT_OWNED");
+        if (!Eve.Services.Core.ShipStanceMgrService.StanceModifiersByShipType.TryGetValue(ship.TypeId, out var stanceTypes))
+            return new(false, ErrorCode: "SHIP_STANCE_UNSUPPORTED");
+        if (!stanceTypes.TryGetValue(stanceId, out var modifierTypeId))
+            return new(false, ErrorCode: "SHIP_STANCE_INVALID");
+
+        await dogma.EnsureTypesAsync([ship.TypeId], cancellationToken);
+        var cooldownMs = dogma.Type(ship.TypeId)?.Attributes.GetValueOrDefault(1985, 0d) ?? 0d;
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var lockedShip = await items.LockAndGetAsync(connection, transaction, shipId, cancellationToken);
+        if (lockedShip is null)
+            return new(false, ErrorCode: "SHIP_NOT_FOUND");
+        if (lockedShip.OwnerId != characterId)
+            return new(false, ErrorCode: "SHIP_NOT_OWNED");
+        if (lockedShip.TypeId != ship.TypeId)
+            return new(false, ErrorCode: "SHIP_NOT_FOUND");
+
+        var modifiers = await items.LockInLocationAsync(
+            connection, transaction, shipId, characterId, Eve.Inventory.ItemFlags.HiddenModifiers,
+            stanceTypes.Values.ToArray(), cancellationToken);
+        var currentStanceId = modifiers.OrderBy(item => item.Id)
+            .Select(item => stanceTypes.FirstOrDefault(pair => pair.Value == item.TypeId).Key)
+            .FirstOrDefault(id => id > 0);
+        if (currentStanceId <= 0)
+            currentStanceId = 1;
+
+        var exactTarget = modifiers.Count == 1 && modifiers[0].TypeId == modifierTypeId;
+        var changed = currentStanceId != stanceId;
+        var lastSwitchMs = modifiers.Select(ParseShipStanceSwitchTime)
+            .Where(value => value.HasValue).Select(value => value!.Value).DefaultIfEmpty().Max();
+        if (!changed && exactTarget)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return new(true, currentStanceId);
+        }
+
+        var nowMs = now();
+        if (changed && cooldownMs <= 0)
+            return new(false, ErrorCode: "SHIP_STANCE_COOLDOWN_UNAVAILABLE");
+        if (changed && lastSwitchMs > 0 && nowMs < lastSwitchMs + cooldownMs)
+            return new(false, ErrorCode: "SHIP_STANCE_COOLDOWN");
+
+        foreach (var modifier in modifiers)
+            await items.DeleteAsync(connection, transaction, modifier.Id, cancellationToken);
+        var switchedAt = changed ? nowMs : lastSwitchMs > 0 ? lastSwitchMs : (long?)null;
+        var customInfo = switchedAt is { } timestamp
+            ? $"shipStance:{stanceId}:switchedAtMs:{timestamp}"
+            : $"shipStance:{stanceId}";
+        await items.CreateAsync(connection, transaction,
+            new Eve.Inventory.NewItem(modifierTypeId, characterId, shipId,
+                Eve.Inventory.ItemFlags.HiddenModifiers, CustomInfo: customInfo), cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new(true, currentStanceId);
+    }
+
+    static long? ParseShipStanceSwitchTime(Eve.Inventory.Item item)
+    {
+        var parts = item.CustomInfo?.Split(':');
+        return parts is { Length: 4 } && parts[0] == "shipStance" && parts[2] == "switchedAtMs" &&
+               long.TryParse(parts[3], System.Globalization.NumberStyles.Integer,
+                   System.Globalization.CultureInfo.InvariantCulture, out var timestamp) && timestamp >= 0
+            ? timestamp
+            : null;
+    }
+
+    async ValueTask<JsonObject?> ReadKillmailAsync(long killId, CancellationToken cancellationToken)
+    {
+        var state = await ReadGameStoreTableAsync("killmails", cancellationToken);
+        var key = killId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var record = (state["records"] as JsonObject)?[key] as JsonObject;
+        return record?.DeepClone() as JsonObject;
+    }
+
+    Eve.Services.Slash.SlashService? publicQaSlashService = null;
+    var gameRpcCallbacks = new Eve.Services.Core.GameRpcCallbacks(
+        ReadSharedSettings: () => mailCache.Read("sharedSettings", "/").Data as JsonObject,
+                ReadOverviewPresets: () => mailCache.Read("overviewSharedPresets", "/").Data as JsonObject,
+                WriteOverviewPresets: state => mailCache.Write("overviewSharedPresets", "/", state).Success,
+        WriteSharedSettingsAsync: async (state, cancellationToken) =>
+        {
+            var write = mailCache.Write("sharedSettings", "/", state);
+            if (!write.Success)
+                return false;
+            await mailCache.FlushTableAsync("sharedSettings", cancellationToken);
+            return true;
+        },
+        SetShipStanceAsync: SetShipStanceAsync,
+        ReadInterferenceTableAsync: async cancellationToken =>
+            await ReadGameStoreTableAsync("solarSystemInterferenceState", cancellationToken),
+        ReadKillmailAsync: ReadKillmailAsync,
+        ReadMiningScanResultsAsync: spaceSessions is null
+            ? null
+            : new Eve.Host.MiningScanRpcReadModel(spaceSessions, items, spaceItemStore, dogma).ReadAsync,
+        ReadPeaceTreaties: async (ownerId, cancellationToken) =>
+        {
+            var state = await ReadGameStoreTableAsync("corporationRuntime", cancellationToken);
+            var nowFiletime = DateTimeOffset.FromUnixTimeMilliseconds(now()).ToFileTime();
+            return PersistencePeaceTreatyReadModel.Read(state, ownerId, nowFiletime);
+        },
+        PublicQaTools: new Eve.Services.Core.PublicQaToolsRpcCallbacks(
+            IsStaff: Eve.Services.Core.PublicQaToolsServerService.HasStaffAccountRole,
+            SlashCmdAsync: async (request, cancellationToken) =>
+            {
+                if (publicQaSlashService is null)
+                    return null;
+                return await publicQaSlashService.SlashCmd(new ServiceCall
+                {
+                    Method = "SlashCmd",
+                    Args = request.Arguments,
+                    Kwargs = request.KeywordArguments,
+                    Session = request.Session,
+                    CallId = request.CallId,
+                    Cancellation = cancellationToken,
+                });
+            }));
+
+    var stationGuestLedger = new Eve.Services.Station.StationGuestLedger();
     IReadOnlyList<IService> services =
     [
-        new CharUnboundMgrService(accounts, characters, items, skills, wallets, creation, catalog, online, [new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now), corporationLogin], Random.Shared),
+                new CharUnboundMgrService(accounts, characters, items, skills, wallets, creation, catalog, online, [new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now), corporationLogin], Random.Shared, newCharacterExperienceMode == "tutorial"),
         new MultiLoginBlockerService(),
         new PopulationCapService(characters),
         new Eve.Services.CharacterInfo.ConfigService(characters, corporations, stations, solarSystems),
+        Eve.Services.Core.CoreServices.CreateLookupService(
+            new Eve.Host.PersistenceLookupDirectory(characters, corporations, sde, stations)),
         new Eve.Services.Core.SecurityMgrService(),
+        new Eve.Services.Core.RWManagerService(),
+        new Eve.Services.Core.FwCharacterEnlistmentMgrService(new Eve.Services.Core.FwCharacterEnlistmentRpcCallbacks(
+            ReadCharacterStateAsync: async (characterId, cancellationToken) =>
+            {
+                var character = await characters.GetAsync(characterId, cancellationToken);
+                return character is null
+                    ? null
+                    : new Eve.Services.Core.FwCharacterWarfareState(character.DirectFactionId, character.DirectEnlistmentCooldownFileTime);
+            },
+            ReadCorporationFactionIdAsync: async (corporationId, cancellationToken) =>
+                Eve.Services.Corporations.CorporationWire.FactionId(await corporations.GetAsync(corporationId, cancellationToken)),
+            ReadAllowedFactionsAsync: async (corporationId, cancellationToken) =>
+                Eve.Services.Corporations.CorporationWire.AllowedEnlistmentFactions(await corporations.GetAsync(corporationId, cancellationToken)),
+            SetAllowedFactionsAsync: async (characterId, corporationId, factions, cancellationToken) =>
+                await corporations.SetFactionWarfareAllowedEnlistmentFactionsAsync(characterId, corporationId, factions, cancellationToken),
+            SaveCharacterStateAsync: async (characterId, factionId, cooldown, cancellationToken) =>
+                await characters.SetFactionWarfareStateAsync(characterId, factionId, cooldown, cancellationToken))),
+        new Eve.Services.Core.FwVictoryPointMgrService(),
+        new Eve.Services.Core.InsurgencySolarsystemService(),
         new Eve.Services.Core.AlertService(),
         new Eve.Services.Core.FighterMgrService(),
-        new Eve.Services.Core.ShipKillCounterService(),
+        new Eve.Services.Space.EssMgrService(),
+        new Eve.Services.Space.DynamicResourceCacheMgrService(),
+        new Eve.Services.Core.ShipKillCounterService(ct => ReadGameStoreTableAsync("shipKillCounters", ct)),
         // security status is the character's relation of that kind (Eve.Relations); crimewatch only asks for it
         new Eve.Services.Crimewatch.CrimewatchService(
             crimewatchStore, crimewatchRuntime, now,
             securityStatusOf),
+        new Eve.Services.Crimewatch.KillRightMgrService(
+            crimewatchStore, crimewatchRuntime, economyWallets, wallets, now,
+            message => Console.Error.WriteLine($"eve-host: crimewatch: {message}"))
+        {
+            KillRightUsedNotification = (activation, ct) => mailSendWriter.WriteKillRightNotificationAsync(
+                activation.OwnerCharacterId, activation.TargetCharacterId,
+                Eve.Services.Crimewatch.KillRightNotificationTypes.Used,
+                new JsonObject { ["charID"] = activation.TargetCharacterId },
+                $"kill-right-used:{activation.ActivationId}", ct)
+        },
+        new Eve.Services.Crimewatch.BountyProxyKillRightService(
+            store: crimewatchStore,
+            notificationWriter: mailSendWriter.WriteKillRightNotificationAsync,
+            nowUnixMs: now),
+
         new SkillMgr2Service(),
         skillHandler,
         new CharMgrService(
@@ -1771,9 +2372,51 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             charMgrReadModel.WriteCharacterDescriptionAsync,
             ReadCharacterSecurityStatusAsync,
             charMgrReadModel.ReadMedal1GraphicIdAsync,
-            charMgrReadModel.ReadAsync),
+            charMgrReadModel.ReadAsync,
+            charMgrReadModel.UpdateAsync,
+            charMgrReadModel.WriteActivityStatusAsync,
+            charMgrReadModel.WriteLogSettingsAsync,
+            async (characterId, token) => (await corporations.MemberAsync(characterId, token))?.StartedMs,
+            async (memberCharacters, token) =>
+            {
+                var corporationIds = memberCharacters
+                    .Select(character => character.CorporationId)
+                    .Where(id => id > 0)
+                    .Distinct()
+                    .ToArray();
+                var corporationsById = (await corporations.GetManyAsync(corporationIds, token))
+                    .ToDictionary(corporation => corporation.Id);
+                var characterState = await ReadGameStoreTableAsync("characters", token);
+                return memberCharacters.ToDictionary(character => character.Id, character =>
+                {
+                    var corporation = corporationsById.GetValueOrDefault(character.CorporationId);
+                    var key = character.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    var row = characterState[key] as JsonObject;
+                    var warFactionId = CharMgrJsonLong(row?["warFactionID"] ?? row?["militiaFactionID"]);
+                    return new Eve.Services.CharacterInfo.CharMgrOrganizationInfo(
+                        character.CorporationId,
+                        character.AllianceId ?? corporation?.AllianceId ?? 0,
+                        Math.Max(0, warFactionId));
+                });
+            }),
         new Eve.Services.CharacterInfo.OnlineStatusService(characterSessions, ReadWatchlistAsync),
-        new StationService(stations, characters, online, now, sovereigntyReadModel.ReadAllianceSystemsAsync, officeManager: officeManager),
+        new StationService(stations, characters, online, now, sovereigntyReadModel.ReadAllianceSystemsAsync, officeManager: officeManager, seedObserverGuestLedger: stationGuestLedger.SeedObserverGuestLedger),
+        new Eve.Services.Station.TradeMgrService(characterSessions),
+        new Eve.Host.DevIndexManagerRpcService(sovereigntyReadModel.ReadAllDevelopmentIndicesAsync),
+        new Eve.Host.EjectRpcService(),
+        new Eve.Host.EncodedItemsRpcService(
+            async (itemId, cancellationToken) => await items.GetAsync(itemId, cancellationToken),
+            async (_, item, cancellationToken) =>
+            {
+                var itemType = await itemTypes.GetAsync(item.TypeId, cancellationToken);
+                if (itemType is null)
+                    return false;
+                var lists = await sde.ReadAsync("typeLists", [492L], cancellationToken);
+                return lists.FirstOrDefault() is { } list &&
+                       Eve.Host.EncodedItemsRpcService.IsInTypeList(list.Doc, itemType);
+            }),
+        new Eve.Host.InSpaceCompressionMgrRpcService(async (itemId, cancellationToken) =>
+            await items.GetAsync(itemId, cancellationToken)),
         .. Eve.Services.Core.SovFwService.Create(
             sovereigntyReadModel.ReadSnapshotAsync,
             sovereigntyReadModel.IsOnLocalFuelAccessGroupAsync,
@@ -1790,8 +2433,10 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             "map",
             incursionAnomalyReadModel.ReadIncursionsAsync,
             incursionAnomalyReadModel.ReadAnomaliesAsync,
-            new MapService(foundations.Reads, now),
+            new MapService(foundations.Reads, now) { ReadDataHook = ReadMapRpcDataAsync },
             now),
+        new Eve.Services.Core.DungeonService(dungeonReadModel.ReadEditorCatalogAsync),
+        new Eve.Services.Core.DungeonInstanceCacheMgrService(dungeonReadModel.ReadCacheSnapshotAsync, now),
         new Eve.Services.Core.IncursionAnomalyService(
             "taleMgr",
             incursionAnomalyReadModel.ReadIncursionsAsync,
@@ -1801,9 +2446,37 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             "scanMgr",
             incursionAnomalyReadModel.ReadIncursionsAsync,
             incursionAnomalyReadModel.ReadAnomaliesAsync,
-            nowUnixMs: now),
-        HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations),
-        new DogmaIMService(
+            nowUnixMs: now,
+            signalTrackerRegister: signalTrackerRegistrationProvider.RegisterAsync),
+          HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations),
+          new Eve.Services.Core.CrateService(new PersistenceCrateServiceBackend(source, items, itemTypes, skills, skillCatalog, mailCache)),
+          new Eve.Host.ShipCosmeticsMgrRpcService(mailCache, mailCache, items, source, skinCosmeticsCatalog, now,
+              (characterId, shipId, skinId) =>
+              {
+                  if (characterSessions.Of(characterId) is not { } session) return;
+                  session.SendNotification("OnShipCosmeticsChanged", "clientID", InventoryWire.Id(shipId), new PyDict([]));
+                  session.SendNotification("OnCurrentShipSkinChange", "clientID", InventoryWire.Id(shipId), new PyInt(skinId ?? 0));
+              },
+              (characterId, skinId) =>
+              {
+                  if (characterSessions.Of(characterId) is { } session)
+                      session.SendNotification("OnSkinLicenseActivated", "clientID",
+                          new PyList([new PyInt(skinId), new PyInt(characterId)]));
+              },
+              inventoryItemConsumed: async (characterId, before, remainingQuantity, ct) =>
+              {
+                  if (characterSessions.Of(characterId) is not { } session) return;
+                  var type = await itemTypes.GetAsync(before.TypeId, ct);
+                  var row = new ItemRow(before.Id, before.TypeId, before.OwnerId, before.LocationId, before.Flag, remainingQuantity, type?.GroupId ?? 0, type?.CategoryId ?? 0);
+                  var changes = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(9), InventoryWire.Id(before.Quantity))]);
+                  session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(row), changes, PyNone.Instance);
+              }),
+          new Eve.Host.DynamicItemRpcService(items, dogma: dogma),
+          new Eve.Host.CharacterEnergyMgrRpcService(mailCache, now),
+          new Eve.Host.PaperDollServerRpcService(characters),
+          new Eve.Host.PlanetMgrRpcService(mailCache, sde, now),
+          new Eve.Host.IndustryMonitorRpcService(mailCache, items, nowUnixMs: now, itemTypes: itemTypes),
+          new DogmaIMService(
             dogma, ships, now,
             skillHandler.TryActivateBoosterAsync,
             sync: dogmaSync,
@@ -1815,7 +2488,14 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             localTimers: foundations.LocalTimers),
         new AccountService(wallets, corporations, economyWallets),
         new Eve.Services.Market.MarketProxyService(market, marketTrading, marketTopology, characters, economyWallets, marketCatalog, now, characterSessions),
-        new Eve.Services.Corporations.CorpMgrService(corporations, characters),
+        new Eve.Services.Corporations.CorpMgrService(
+            corporations, characters, items, itemTypes, corporationOfficeStore,
+            resolveAssetLocation: id => stations.Get(id) is { } station
+                ? (station.SolarSystemId, (int?)station.TypeId)
+                : id is >= 0 and <= int.MaxValue && solarSystems.Get((int)id) is { } system
+                    ? ((long)system.Id, (int?)null)
+                    : null),
+        new Eve.Services.Corporations.MutualWarInviteMgrService(),
         new Eve.Services.Corporations.CorporationService(corporations, characters, characterSessions),
         new Eve.Services.Corporations.CorpRegistryService(corporations, characters, now, characterSessions)
         {
@@ -1827,6 +2507,19 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         new Eve.Services.Corporations.VoteManagerService(corporations),
         new Eve.Services.Space.FleetObjectService(
             fleetStore, now,
+            loadFleetSetup: async (fleetId, characterId, setupName, _, cancellationToken) =>
+            {
+                var characters = await ReadGameStoreTableAsync("characters", cancellationToken);
+                var setup = Eve.Host.PersistenceFleetSettings.FindSetup(characters, characterId, setupName)
+                    ?? throw new InvalidOperationException("FleetError");
+                if (!await fleetStore.ApplyFleetSetupAsync(fleetId, characterId, setup, cancellationToken))
+                    throw new InvalidOperationException("FleetError");
+                return PyNone.Instance;
+            },
+            createFleetAdvert: (fleetId, characterId, advertData, session, cancellationToken) =>
+                fleetStore.FleetFinderAdvertOperationAsync(
+                    "AddFleetFinderAdvert", characterId, [advertData], session,
+                    FleetAdvertLeaderProfileForAsync, cancellationToken),
             sessionForCharacter: FleetSessionForCharacter,
             compositionForMembers: FleetCompositionForMembersAsync,
             sameBubble: SameFleetBubble),
@@ -1836,6 +2529,9 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             sameBubble: SameFleetBubble),
         new Eve.Services.Space.FleetProxyService(
             fleetStore,
+            fleetAdvertOperation: (operation, characterId, args, session, cancellationToken) =>
+                fleetStore.FleetFinderAdvertOperationAsync(operation, characterId, args, session,
+                    FleetAdvertLeaderProfileForAsync, cancellationToken),
             sessionForCharacter: FleetSessionForCharacter),
         insuranceService,
         new MailService(
@@ -1878,13 +2574,32 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             },
             mutateMailingList),
         new RewardsService(),
-        new Eve.Services.Core.LoginCampaignMgrService(emptyLoginRewards),
-        new Eve.Services.Core.SeasonalLoginCampaignMgrService(emptyLoginRewards),
+        new Eve.Services.Core.LoginCampaignMgrService(storeRuntime),
+        new Eve.Services.Core.SeasonalLoginCampaignMgrService(storeRuntime),
         new StoreOffersService(
             async ct => await ReadGameStoreTableAsync("newEdenStore", ct),
             storeRuntime.PurchaseAsync),
-        new Eve.Services.Core.RedeemService(storeRuntime),
+        new Eve.Services.Core.RedeemService(
+            storeRuntime,
+            async (userId, ct) => (await accounts.FindAsync(checked((uint)userId), ct))?.UserName,
+            async (characterId, ct) =>
+            {
+                var character = await characters.GetAsync(characterId, ct);
+                return character?.CreatedAt.UtcDateTime.ToFileTimeUtc();
+            },
+            async (call, ct) =>
+            {
+                if (call.Method == "UserLogOffCharacter")
+                {
+                    call.Session.AfterResponse(call.Session.Close);
+                    return PyBool.True;
+                }
+                if (call.Method == "CreateRedeemTokenQA")
+                    return await storeRuntime.CreateRedeemTokenQAAsync(call, ct).ConfigureAwait(false);
+                return null;
+            }),
         new Eve.Services.Core.VaultManagerService(storeRuntime),
+        new Eve.Services.Core.FacilityManagerService(FacilityManagerRpcAsync),
         new IndustryJobsService(
             industryJobOperations.ReadJobsAsync,
             industryJobOperations,
@@ -1894,44 +2609,100 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         new Eve.Services.Core.CorpMiningLedgerService(
             ct => ReadGameStoreTableAsync("miningLedger", ct)),
         new Eve.Services.Core.StructureDirectoryService(structureDirectoryReadModel),
+        // Mutation needs structure-control/drill authority and the space timer/settlement backend.
+        new Eve.Services.Core.MoonExtractionsRpcService(
+            readState: () => mailCache.Read("moonExtractions", "/").Data as JsonObject ?? new JsonObject(),
+            mutationBackend: null),
+        new Eve.Services.Space.StructureTravelRpcService(
+            "structureJumpBridgeMgr",
+            jumpBridgeDestination: structureDirectoryReadModel.GetJbStructureDestinationAsync,
+            linkedStructure: structureDirectoryReadModel.GetLinkedStructureAsync),
+        new Eve.Services.Core.StructureRpcService("structureCargoDelivery"),
+        new Eve.Services.Core.StructureRpcService("structureCompressionMgr"),
+        new Eve.Services.Core.StructureRpcService("structureControl"),
+        new Eve.Services.Core.StructureRpcService("structureDeliveries"),
+        new Eve.Services.Core.StructureRpcService("structureDeployment"),
+        new Eve.Services.Core.StructureRpcService("structureDocking"),
+        new Eve.Services.Core.StructureRpcService("structureHangarViewMgr", structureRpcCallbacks),
+        new Eve.Services.Core.StructureRpcService("structureProfiles", structureRpcCallbacks),
+        new Eve.Services.Core.StructureRpcService("structureVulnerability"),
         new Eve.Services.Core.StructureAssetSafetyService(structureAssetSafetyReadModel),
         structureSettingsService,
         skyhookResourceMgrService,
-        new AgentMissionService(
-            async (characterId, ct) =>
+        new AchievementTrackerMgrService(
+            readState: async (characterId, ct) =>
+                LoginInitializationGameStoreProjection.ReadAchievementState(
+                    await ReadCharacterGameStoreRowAsync(characterId, ct)),
+            hasEverWarped: async (characterId, ct) =>
+                LoginInitializationGameStoreProjection.ReadHasEverWarped(
+                    await ReadCharacterGameStoreRowAsync(characterId, ct)) ?? true),
+        new MilestoneMgrService(),
+        new OperationsManagerService(
+            readCharacterProgress: async (call, ct) =>
+                LoginInitializationGameStoreProjection.ReadOperationsProgress(
+                    await ReadCharacterGameStoreRowAsync(LoginInitializationGameStoreProjection.CharacterId(call), ct)),
+            newCharacterExperienceMode: () => newCharacterExperienceMode,
+            readTutorialState: ReadAirNpeCharacterStateAsync),
+        new MissionTrackerMgrService(
+            readMissionInfoItems: agentMissionService.ReadMissionInfoItemsAsync,
+            readAllMissionObjectives: async (characterId, agentId, session, ct) =>
             {
-                var state = await ReadGameStoreTableAsync("missionRuntimeState", ct);
-                return (state["charactersByID"] as JsonObject)?[characterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
+                var context = await ReadMissionTrackerContextAsync(characterId, agentId, session, ct);
+                return MissionTrackerGameStoreProjection.ReadAllObjectives(
+                    context.MissionRecord, agentId, context.InActiveDungeon == true, context.DungeonState);
             },
-            async (characterId, bookmarkIds, ct) =>
+            isInActiveDungeon: async (call, ct) =>
             {
-                var state = await ReadGameStoreTableAsync("bookmarks", ct);
-                var records = state["records"] as JsonObject;
-                var bookmarks = new Dictionary<long, JsonObject>();
-                foreach (var bookmarkId in bookmarkIds.Distinct())
-                {
-                    if (records?[bookmarkId.ToString(System.Globalization.CultureInfo.InvariantCulture)] is JsonObject row)
-                        bookmarks[bookmarkId] = row;
-                }
-                return bookmarks;
-            },
-            async (characterId, ct) =>
-            {
-                var state = await ReadGameStoreTableAsync("researchRuntimeState", ct);
-                return (state["charactersByID"] as JsonObject)?[characterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonArray;
-            },
-            (characterId, agentId, session) =>
-            {
-                var stationId = session.GetInt("stationid");
-                return stationId is { } station &&
-                    (!agentLocationById.TryGetValue(agentId, out var agentStationId) || station == agentStationId);
+                var characterId = call.Session.GetInt("charid") ?? call.Session.GetInt("characterID") ?? 0;
+                var agentId = LoginInitializationGameStoreProjection.PositiveId(call.Arg(0));
+                if (characterId <= 0 || agentId <= 0) return false;
+                return (await ReadMissionTrackerContextAsync(characterId, agentId, call.Session, ct)).InActiveDungeon;
             }),
+        new AbyssalMgrService(),
+        new VoidSpaceMgrService(),
+        new AirNpeService(
+            () => newCharacterExperienceMode,
+            ReadAirNpeCharacterStateAsync,
+            (characterId, tutorialEnabled, ct) => characters.MarkTutorialSkippedAsync(characterId, tutorialEnabled, ct)),
+        agentMissionService,
         allianceRegistry,
-        new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now), new SkillCommands(skillCatalog, skills, source, dogmaSync, now)),
-        .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now, spaceContainers, spaceDrones), new BeyonceService(spaceSessions, now, fleetStore, FleetSessionForCharacter), new StructureTravelRpcService("structureCynoBeaconMgr"), new StructureTravelRpcService("structureJumpBridgeMgr"), new EntityService(spaceDrones!, now, spaceContainers) },
+        publicQaSlashService = new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now), new SkillCommands(skillCatalog, skills, source, dogmaSync, now)),
+        .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now, spaceContainers, spaceDrones), new BeyonceService(spaceSessions, now, fleetStore, FleetSessionForCharacter), new StructureTravelRpcService("structureCynoBeaconMgr"), new ShipcasterRpcService("shipCasterLandingPadMgr", solarSystems), new ShipcasterRpcService("shipCasterLauncherMgr", solarSystems), new ShipcasterRpcService("shipcasterTravelMgr", solarSystems), new ShipcasterRpcService("starterShipcasterTravelMgr", solarSystems), new EntityService(spaceDrones!, now, spaceContainers) },
     ];
+    async ValueTask<Eve.Services.Space.SpaceRpcItem?> ReadTravelRpcItemAsync(long itemId, CancellationToken cancellationToken)
+    {
+        var item = await items.GetAsync(itemId, cancellationToken);
+        if (item is null) return null;
+        var type = await itemTypes.GetAsync(item.TypeId, cancellationToken);
+        return new Eve.Services.Space.SpaceRpcItem(item.Id, item.OwnerId, item.TypeId, type?.GroupId ?? 0, item.Quantity);
+    }
+    services = [.. services,
+        new Eve.Services.Space.PvpFilamentMgrService(),
+        new Eve.Services.Space.RandomJumpMgrService(ReadTravelRpcItemAsync),
+        new Eve.Services.Space.WarpVectorMgrService(ReadTravelRpcItemAsync),
+        new Eve.Services.Space.WormholeMgrService(spaceSessions),
+        new Eve.Services.Core.StructureGuestsService(
+        (structureId, cancellationToken) =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var guests = characterSessions.InStructure(structureId)
+                .Where(session => session.CharacterId is > 0)
+                .Select(session => new Eve.Services.Core.StructureGuestSnapshot(
+                    session.CharacterId!.Value,
+                    Math.Max(0, session.GetInt("corpid") ?? 0),
+                    Math.Max(0, session.GetInt("allianceid") ?? 0),
+                    Math.Max(0, session.GetInt("warfactionid") ?? 0)))
+                .ToArray();
+            return ValueTask.FromResult<IReadOnlyList<Eve.Services.Core.StructureGuestSnapshot>>(guests);
+        })];
     services = [.. services, new RepackagingService(services.OfType<InvBrokerService>().Single())];
-    return (services, spaceSessions, sim, crimewatchRuntime, calendarStore, calendarAudience);
+      services = [.. services, new Eve.Services.Corporations.BillMgrService(
+          corporations,
+          corporationOfficeStore,
+          economyWallets,
+          stationId => stations.Get(stationId)?.OwnerId,
+          now)];
+    return (services, spaceSessions, sim, crimewatchRuntime, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks);
 }
 
 /// <summary>Until accounts live in the database (S2), nobody has a stored Omega expiry.</summary>
@@ -1963,12 +2734,19 @@ public sealed class PersistenceNewEdenStoreRuntime(
     CharacterSessions sessions,
     Func<long> nowUnixMs,
     Func<CancellationToken, Task<JsonObject>> readStoreState)
-    : Eve.Services.Core.IRedeemCallbacks, Eve.Services.Core.IVaultManagerCallbacks
+    : Eve.Services.Core.IRedeemCallbacks, Eve.Services.Core.IVaultManagerCallbacks, Eve.Services.Core.ILoginRewardCallbacks
 {
     private const string ReceiptsTable = "newEdenStorePurchaseSettlements";
     private const string ReceiptsRow = "purchasesByOperationID";
     private const string RedeemTable = "redeemTokens";
     private const string RedeemRow = "accounts";
+    private const string LoginCampaignTable = "dailyLoginCampaignProgress";
+    private const string LoginCampaignRow = "accountsByUserID";
+    private const int DailyLoginCampaignId = 2187;
+    private const int DailyLoginBucketId = 4;
+    private const int DailyLoginTrackLength = 15;
+    private const int DailyLoginResetHourUtc = 11;
+    private const int DailyLoginRewardTypeId = 49810;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     public async ValueTask<PyValue> PurchaseAsync(
@@ -2122,6 +2900,228 @@ public sealed class PersistenceNewEdenStoreRuntime(
         }
     }
 
+    public async ValueTask<Eve.Services.Core.LoginCampaignSnapshot?> GetLoginCampaignStateAsync(
+        Eve.Services.Core.LoginRewardPlayer player,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await HasLoginRewardCharacterAsync(player, cancellationToken))
+            return null;
+
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var state = await PersistenceReadHelpers.ReadOptionalTableAsync(
+                store, LoginCampaignTable, cancellationToken);
+            var accounts = state[LoginCampaignRow] as JsonObject;
+            var accountKey = player.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var progress = LoginCampaignProgress(accounts?[accountKey] as JsonObject);
+            var now = DateTimeOffset.FromUnixTimeMilliseconds(nowUnixMs());
+            var resetId = LoginCampaignResetId(now);
+            var resetStart = LoginCampaignResetStart(now);
+            var nextRewardTime = progress.LastClaimReset == resetId
+                ? resetStart.AddDays(1)
+                : resetStart;
+            var nextRewardIndex = progress.Day >= DailyLoginTrackLength ? 1 : progress.Day + 1;
+            var clientState = LoginCampaignClientState(progress.Day, progress.LastClaimReset, now);
+
+            return new Eve.Services.Core.LoginCampaignSnapshot(
+                DailyLoginCampaignId,
+                clientState,
+                nextRewardIndex,
+                Py.FileTimeFromUnixMs(nextRewardTime.ToUnixTimeMilliseconds()));
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async ValueTask<Eve.Services.Core.LoginCampaignClaimResult?> TryClaimLoginCampaignRewardAsync(
+        Eve.Services.Core.LoginCampaignClaimRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var player = request.Player;
+        if (request.CampaignId != DailyLoginCampaignId ||
+            !await HasLoginRewardCharacterAsync(player, cancellationToken))
+            return null;
+        if (await itemTypes.GetAsync(DailyLoginRewardTypeId, cancellationToken) is null)
+            throw new InvalidOperationException($"Daily login reward type {DailyLoginRewardTypeId} is missing from the item catalog.");
+
+        var accountKey = player.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var nowUnix = nowUnixMs();
+            var now = DateTimeOffset.FromUnixTimeMilliseconds(nowUnix);
+            var resetId = LoginCampaignResetId(now);
+            var resetStart = LoginCampaignResetStart(now);
+            var availableAt = Py.FileTimeFromUnixMs(resetStart.ToUnixTimeMilliseconds());
+
+            var loginTable = await PersistenceReadHelpers.ReadOptionalTableAsync(
+                store, LoginCampaignTable, cancellationToken);
+            var loginAccounts = loginTable[LoginCampaignRow] as JsonObject ?? new JsonObject();
+            var progress = LoginCampaignProgress(loginAccounts[accountKey] as JsonObject);
+            if (progress.LastClaimReset == resetId)
+                return null;
+
+            var rewardIndex = progress.Day >= DailyLoginTrackLength ? 1 : progress.Day + 1;
+            if (request.ExpectedNextRewardIndex != rewardIndex ||
+                request.ExpectedNextRewardTimestampFiletime != availableAt ||
+                availableAt >= Py.FileTimeFromUnixMs(nowUnix))
+                return null;
+
+            var redeemTable = await PersistenceReadHelpers.ReadOptionalTableAsync(
+                store, RedeemTable, cancellationToken);
+            var redeemAccounts = redeemTable[RedeemRow] as JsonObject ?? new JsonObject();
+            var accountTokens = redeemAccounts[accountKey] as JsonObject ?? new JsonObject();
+            var tokenId = TokenId($"daily-login:{accountKey}:{resetId}", 0);
+            var tokenKey = tokenId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (accountTokens.ContainsKey(tokenKey))
+                throw new InvalidOperationException("The daily login reward token already exists.");
+
+            accountTokens[tokenKey] = new JsonObject
+            {
+                ["tokenID"] = tokenId,
+                ["massTokenID"] = null,
+                ["typeID"] = DailyLoginRewardTypeId,
+                ["quantity"] = 1,
+                ["stationID"] = 0,
+                ["dateTime"] = Py.FileTimeFromUnixMs(nowUnix).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["expireDateTime"] = "0",
+                ["label"] = "Daily Login Reward",
+                ["description"] = "Daily login campaign reward",
+                ["available"] = true,
+                ["addedByContext"] = 0,
+                ["addedByExtra"] = null,
+            };
+            redeemAccounts[accountKey] = accountTokens;
+            loginAccounts[accountKey] = new JsonObject
+            {
+                ["day"] = rewardIndex,
+                ["lastClaimReset"] = resetId,
+            };
+
+            await using var connection = await source.OpenConnectionAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            await store.ApplyChangesAsync(
+                connection, transaction, LoginCampaignTable,
+                [new RowUpsert(LoginCampaignRow, loginAccounts.ToJsonString())], [], ownerFence, cancellationToken);
+            await store.ApplyChangesAsync(
+                connection, transaction, RedeemTable,
+                [new RowUpsert(RedeemRow, redeemAccounts.ToJsonString())], [], ownerFence, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            sessions.Of(player.CharacterId!.Value)?.SendNotification("OnRedeemingQueueUpdated", "clientID");
+            var claimedProgress = LoginCampaignItemProgress(rewardIndex, resetId, now);
+            return new Eve.Services.Core.LoginCampaignClaimResult(
+                LoginCampaignReward(rewardIndex),
+                claimedProgress,
+                PyNone.Instance,
+                LoginCampaignBucketProgress(rewardIndex));
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public ValueTask<Eve.Services.Core.SeasonalLoginCampaignSnapshot?> GetSeasonalLoginCampaignAsync(
+        Eve.Services.Core.LoginRewardPlayer player,
+        CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult<Eve.Services.Core.SeasonalLoginCampaignSnapshot?>(null);
+
+    public ValueTask<bool> TryClaimSeasonalLoginCampaignAsync(
+        Eve.Services.Core.SeasonalLoginCampaignClaimRequest request,
+        CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(false);
+
+    private async ValueTask<bool> HasLoginRewardCharacterAsync(
+        Eve.Services.Core.LoginRewardPlayer player,
+        CancellationToken cancellationToken)
+    {
+        if (player.UserId <= 0 || player.UserId > int.MaxValue ||
+            player.CharacterId is not { } characterId || characterId <= 0)
+            return false;
+        var character = await characters.GetAsync(characterId, cancellationToken);
+        return character is not null && character.AccountId == (int)player.UserId;
+    }
+
+    private static (int Day, string LastClaimReset) LoginCampaignProgress(JsonObject? state)
+    {
+        var storedDay = Integer(state?["day"]);
+        var day = storedDay is >= 0 and <= DailyLoginTrackLength ? (int)storedDay : 0;
+        return (day, String(state?["lastClaimReset"]));
+    }
+
+    private static DateTimeOffset LoginCampaignResetStart(DateTimeOffset value)
+    {
+        var utc = value.ToUniversalTime();
+        var reset = new DateTimeOffset(
+            utc.Year, utc.Month, utc.Day, DailyLoginResetHourUtc, 0, 0, TimeSpan.Zero);
+        return utc < reset ? reset.AddDays(-1) : reset;
+    }
+
+    private static string LoginCampaignResetId(DateTimeOffset value) =>
+        value.ToUniversalTime().AddHours(-DailyLoginResetHourUtc)
+            .ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static PyValue LoginCampaignClientState(
+        int day,
+        string lastClaimReset,
+        DateTimeOffset now) =>
+        LoginCampaignKeyVal(
+            ("static_data", LoginCampaignStaticData()),
+            ("bucket_progress", LoginCampaignBucketProgress(day)),
+            ("item_progress", LoginCampaignItemProgress(day, lastClaimReset, now)));
+
+    private static PyValue LoginCampaignStaticData()
+    {
+        var rewards = new List<KeyValuePair<PyValue, PyValue>>(DailyLoginTrackLength);
+        for (var day = 1; day <= DailyLoginTrackLength; day++)
+            rewards.Add(new KeyValuePair<PyValue, PyValue>(new PyInt(day), LoginCampaignReward(day)));
+        return LoginCampaignKeyVal(
+            ("campaign_duration", new PyInt(DailyLoginTrackLength)),
+            ("subtitleMessageID", new PyInt(598039)),
+            ("campaign_id", new PyInt(DailyLoginCampaignId)),
+            ("titleMessageID", new PyInt(598040)),
+            ("is_rookie_campaign", PyBool.True),
+            ("windowHeaderBackgroundNarrow", new PyStr("res:/UI/Texture/classes/LoginCampaign/backgrounds/dliBackground.png")),
+            ("windowHeaderBackgroundWide", new PyStr("res:/UI/Texture/classes/LoginCampaign/backgrounds/dliBackground.png")),
+            ("item_rewards_by_day", new PyDict(rewards)));
+    }
+
+    private static PyValue LoginCampaignReward(int day) =>
+        LoginCampaignKeyVal(
+            ("typeID", new PyInt(DailyLoginRewardTypeId)),
+            ("blueprintProductivityLevel", PyNone.Instance),
+            ("blueprintMaterialLevel", PyNone.Instance),
+            ("labelMessageID", new PyInt(598041 + day - 1)),
+            ("tier", new PyInt(day == DailyLoginTrackLength ? 4 : 1)),
+            ("quantity", new PyInt(1)),
+            ("icon", PyNone.Instance));
+
+    private static PyValue LoginCampaignBucketProgress(int day) =>
+        LoginCampaignKeyVal(
+            ("bucketID", new PyInt(DailyLoginBucketId)),
+            ("fill_level", new PyReal((double)day / DailyLoginTrackLength)),
+            ("next_fill_level", new PyReal((double)Math.Min(day + 1, DailyLoginTrackLength) / DailyLoginTrackLength)));
+
+    private static PyValue LoginCampaignItemProgress(int day, string lastClaimReset, DateTimeOffset now)
+    {
+        var resetStart = LoginCampaignResetStart(now);
+        var claimedToday = lastClaimReset == LoginCampaignResetId(now);
+        var nextRewardTime = claimedToday ? resetStart.AddDays(1) : resetStart;
+        var nextRewardIndex = day >= DailyLoginTrackLength ? 1 : day + 1;
+        return LoginCampaignKeyVal(
+            ("next_reward_index", new PyInt(nextRewardIndex)),
+            ("num_claimed_rewards", new PyInt(day)),
+            ("next_reward_timestamp", new PyLong(Py.FileTimeFromUnixMs(nextRewardTime.ToUnixTimeMilliseconds()))));
+    }
+
+    private static PyValue LoginCampaignKeyVal(params (string Name, PyValue Value)[] entries) =>
+        Eve.Services.Py.KeyVal(entries.Select(entry =>
+            new KeyValuePair<PyValue, PyValue>(new PyStr(entry.Name), entry.Value)));
+
     public async ValueTask<long> GetPlexBalanceAsync(long authenticatedUserId, CancellationToken cancellationToken)
     {
         var accountCharacters = await characters.ForAccountAsync(checked((int)authenticatedUserId), cancellationToken);
@@ -2148,6 +3148,241 @@ public sealed class PersistenceNewEdenStoreRuntime(
         .OrderBy(entry => Integer((entry.Value as JsonObject)?["dateTime"]))
         .Select(entry => ToRedeemToken((JsonObject)entry.Value!, entry.Key))]);
 }
+
+    public async ValueTask<PyValue> CreateRedeemTokenQAAsync(ServiceCall call, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var accountId = RedeemQaPositiveInteger(call.Kwarg("userID"));
+        if (accountId <= 0)
+            accountId = call.Session.UserId ?? 0;
+        var typeId = RedeemQaPositiveInteger(call.Kwarg("typeID"));
+        if (accountId is <= 0 or > int.MaxValue || typeId is <= 0 or > int.MaxValue)
+            return PyBool.False;
+        RequireAccount(accountId);
+
+        var quantityNumber = call.Kwarg("quantity") is { } requestedQuantity
+            ? Eve.Macho.JsSemantics.ToNumber(requestedQuantity)
+            : 1;
+        var quantity = !double.IsFinite(quantityNumber) || quantityNumber == 0
+            ? 1
+            : Math.Max(1, Math.Truncate(quantityNumber));
+        var quantityLong = RedeemQaBoundedInteger(quantity);
+        var blueprintRuns = Math.Max(0, RedeemQaInteger(call.Kwarg("blueprintRuns")));
+        var materialLevel = RedeemQaInteger(call.Kwarg("blueprintMaterialLevel"));
+        var productivityLevel = RedeemQaInteger(call.Kwarg("blueprintProductivityLevel"));
+        var soulboundValue = call.Kwarg("soulbound");
+        var soulbound = soulboundValue is not null && Eve.Macho.JsSemantics.Truthy(soulboundValue);
+        var availableValue = call.Kwarg("available");
+        var available = availableValue is null or PyNone || Eve.Macho.JsSemantics.Truthy(availableValue);
+        var labelValue = call.Kwarg("label");
+        var label = labelValue is not null && Eve.Macho.JsSemantics.Truthy(labelValue)
+            ? RedeemQaText(labelValue)
+            : string.Empty;
+        var descriptionValue = call.Kwarg("description");
+        var description = descriptionValue is not null && Eve.Macho.JsSemantics.Truthy(descriptionValue)
+            ? RedeemQaText(descriptionValue)
+            : string.Empty;
+        var expiry = RedeemQaFileTime(call.Kwarg("expiry"));
+        var addedByContext = RedeemQaInteger(call.Kwarg("addedByContext"));
+        var addedByExtra = RedeemQaJson(call.Kwarg("addedByExtra"));
+        var nowFileTime = ToFileTime(nowUnixMs());
+        var accountKey = accountId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var typeKey = typeId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var state = await PersistenceReadHelpers.ReadOptionalTableAsync(store, RedeemTable, cancellationToken)
+                .ConfigureAwait(false);
+            var accounts = state[RedeemRow] as JsonObject ?? new JsonObject();
+            var accountTokens = accounts[accountKey] as JsonObject ?? new JsonObject();
+            var maximumId = MaximumRedeemTokenId(accountTokens);
+            var tokenId = maximumId >= 700_000_000
+                ? checked(maximumId + 1)
+                : 700_000_000 + Math.Abs(nowUnixMs() % 100_000_000);
+            var tokenKey = tokenId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var isAutoInject = soulbound || typeId is 52996 or 73277 or 54652 or 54653 or 63303 or 63304 or
+                54650 or 63305 or 63306 or 63307 or 63308 or 54654 or 63309;
+            var token = new JsonObject
+            {
+                ["tokenID"] = tokenId,
+                ["massTokenID"] = tokenId,
+                ["typeID"] = checked((int)typeId),
+                ["quantity"] = quantityLong,
+                ["stationID"] = 0,
+                ["dateTime"] = nowFileTime.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["expireDateTime"] = expiry.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["availableDateTime"] = nowFileTime.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["label"] = label,
+                ["description"] = description,
+                ["blueprintRuns"] = blueprintRuns,
+                ["blueprintMaterialLevel"] = materialLevel,
+                ["blueprintProductivityLevel"] = productivityLevel,
+                ["soulbound"] = soulbound,
+                ["available"] = available,
+                ["addedByContext"] = addedByContext,
+                ["addedByExtra"] = addedByExtra,
+                ["isAutoInject"] = isAutoInject,
+                ["status"] = "pending",
+            };
+            accountTokens[tokenKey] = token;
+            accounts[accountKey] = accountTokens;
+
+            await using var connection = await source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            await store.ApplyChangesAsync(
+                connection, transaction, RedeemTable,
+                [new RowUpsert(RedeemRow, accounts.ToJsonString())], [], ownerFence, cancellationToken)
+                .ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+
+            var blueprintInfo = blueprintRuns > 0
+                ? LoginCampaignKeyVal(
+                    ("isCopy", PyBool.True),
+                    ("runs", Py.Number(blueprintRuns)),
+                    ("materialEfficiency", Py.Number(materialLevel)),
+                    ("timeEfficiency", Py.Number(productivityLevel)))
+                : PyNone.Instance;
+            return LoginCampaignKeyVal(
+                ("tokenID", Py.Number(tokenId)),
+                ("massTokenID", Py.Number(tokenId)),
+                ("typeID", Py.Number(typeId)),
+                ("quantity", Py.Number(quantityLong)),
+                ("stationID", new PyInt(0)),
+                ("dateTime", new PyLong(nowFileTime)),
+                ("expireDateTime", Py.Number(expiry)),
+                ("label", new PyStr(label)),
+                ("description", new PyStr(description)),
+                ("blueprintRuns", Py.Number(blueprintRuns)),
+                ("blueprintInfo", blueprintInfo),
+                ("soulbound", soulbound ? PyBool.True : PyBool.False),
+                ("isAutoInject", isAutoInject ? PyBool.True : PyBool.False));
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private static long MaximumRedeemTokenId(JsonObject tokens)
+    {
+        var maximum = 0L;
+        foreach (var (key, value) in tokens)
+        {
+            if (long.TryParse(key, System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out var tokenKey))
+                maximum = Math.Max(maximum, tokenKey);
+            if (value is JsonObject token)
+            {
+                maximum = Math.Max(maximum, Integer(token["tokenID"]));
+                maximum = Math.Max(maximum, Integer(token["massTokenID"]));
+            }
+            if (key == "claimed" && value is JsonObject claimed)
+            {
+                foreach (var (claimedKey, claimedValue) in claimed)
+                {
+                    if (long.TryParse(claimedKey, System.Globalization.NumberStyles.None,
+                            System.Globalization.CultureInfo.InvariantCulture, out var claimedId))
+                        maximum = Math.Max(maximum, claimedId);
+                    if (claimedValue is JsonObject claimedToken)
+                    {
+                        maximum = Math.Max(maximum, Integer(claimedToken["tokenID"]));
+                        maximum = Math.Max(maximum, Integer(claimedToken["massTokenID"]));
+                    }
+                }
+            }
+        }
+        return maximum;
+    }
+
+    private static long RedeemQaPositiveInteger(PyValue? value)
+    {
+        var number = value is null ? double.NaN : Eve.Macho.JsSemantics.ToNumber(value);
+        return double.IsFinite(number) && number > 0 && number == Math.Truncate(number) &&
+            number < 9_223_372_036_854_775_808d ? (long)number : 0;
+    }
+
+    private static long RedeemQaInteger(PyValue? value)
+    {
+        var number = value is null ? 0 : Eve.Macho.JsSemantics.ToNumber(value);
+        return double.IsFinite(number) ? RedeemQaBoundedInteger(Math.Truncate(number)) : 0;
+    }
+
+    private static long RedeemQaBoundedInteger(double number) =>
+        number >= 9_223_372_036_854_775_808d ? long.MaxValue :
+        number <= -9_223_372_036_854_775_808d ? long.MinValue : (long)number;
+
+    private static long RedeemQaFileTime(PyValue? value)
+    {
+        if (value is null or PyNone)
+            return 0;
+        if (RedeemQaField(value, "value") is { } wrapped)
+            return RedeemQaFileTime(wrapped);
+        if (value is PyInt or PyLong or PyReal)
+        {
+            var number = Eve.Macho.JsSemantics.ToNumber(value);
+            return double.IsFinite(number) && number > 0 ? RedeemQaBoundedInteger(Math.Truncate(number)) : 0;
+        }
+        var text = RedeemQaText(value).Trim();
+        return long.TryParse(text, System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
+    }
+
+    private static PyValue? RedeemQaField(PyValue source, string name)
+    {
+        IEnumerable<KeyValuePair<PyValue, PyValue>> entries = source switch
+        {
+            PyDict dict => dict.Entries,
+            PyObject { Args: PyDict dict } => dict.Entries,
+            PyObjectEx objectEx => objectEx.Dict,
+            _ => [],
+        };
+        return entries.FirstOrDefault(entry => Eve.Macho.JsSemantics.StringValue(entry.Key) == name).Value;
+    }
+
+    private static string RedeemQaText(PyValue? value) => value switch
+    {
+        null or PyNone => string.Empty,
+        PyStr text => text.Value,
+        PyWString text => text.Value,
+        PyBytes text => System.Text.Encoding.UTF8.GetString(text.Value.Span),
+        PyBuffer buffer => System.Text.Encoding.UTF8.GetString(buffer.Value.Span),
+        _ => Eve.Macho.JsSemantics.StringValue(value) ?? string.Empty,
+    };
+
+    private static JsonNode? RedeemQaJson(PyValue? value) => value switch
+    {
+        null or PyNone => null,
+        PyBool boolean => JsonValue.Create(boolean == PyBool.True),
+        PyInt number => JsonValue.Create(number.Value),
+        PyLong number => JsonValue.Create(number.Value),
+        PyReal number when double.IsFinite(number.Value) => JsonValue.Create(number.Value),
+        PyReal => null,
+        PyStr text => JsonValue.Create(text.Value),
+        PyWString text => JsonValue.Create(text.Value),
+        PyToken text => JsonValue.Create(text.Value),
+        PyBytes bytes => JsonValue.Create(System.Text.Encoding.UTF8.GetString(bytes.Value.Span)),
+        PyBuffer buffer => JsonValue.Create(System.Text.Encoding.UTF8.GetString(buffer.Value.Span)),
+        PyList list => new JsonArray(list.Items.Select(RedeemQaJson).ToArray()),
+        PyTuple tuple => new JsonArray(tuple.Items.Select(RedeemQaJson).ToArray()),
+        PyDict dict => RedeemQaJson(dict.Entries),
+        PyObject { Args: PyDict dict } => RedeemQaJson(dict.Entries),
+        PyObjectEx { Dict.Count: > 0 } objectEx => RedeemQaJson(objectEx.Dict),
+        PyObjectEx { List.Count: > 0 } objectEx => new JsonArray(objectEx.List.Select(RedeemQaJson).ToArray()),
+        _ => null,
+    };
+
+    private static JsonObject RedeemQaJson(IReadOnlyList<KeyValuePair<PyValue, PyValue>> entries)
+    {
+        var result = new JsonObject();
+        foreach (var (key, value) in entries)
+        {
+            var name = Eve.Macho.JsSemantics.StringValue(key);
+            if (name is not null)
+                result[name] = RedeemQaJson(value);
+        }
+        return result;
+    }
 
     public async ValueTask<PyValue> ClaimRedeemTokensAsync(
         long authenticatedUserId,
@@ -3188,6 +4423,36 @@ public sealed class PersistenceStructureAssetSafetyReadModel : Eve.Services.Core
         ]);
     }
 
+
+    public async System.Threading.Tasks.ValueTask<bool> MoveEjectTimeGMAsync(
+        Eve.Services.ServiceCall call,
+        long assetWrapId,
+        int days,
+        System.Threading.CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        const long roleGml = 1L << 54;
+        if (assetWrapId <= 0 || days is not (5 or 30) ||
+            ((call.Session?.GetInt("role") ?? 0) & roleGml) == 0)
+            return false;
+
+        var deltaMs = checked((long)days * DayMs);
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new Npgsql.NpgsqlCommand(
+            $"""
+            UPDATE {_schema}.asset_safety_wraps
+            SET created_at_ms = created_at_ms + $2
+            WHERE wrap_id = $1 AND state = $3
+            RETURNING wrap_id
+            """,
+            connection);
+        command.Parameters.Add(new Npgsql.NpgsqlParameter { Value = assetWrapId });
+        command.Parameters.Add(new Npgsql.NpgsqlParameter { Value = deltaMs });
+        command.Parameters.Add(new Npgsql.NpgsqlParameter { Value = Stored });
+        var updated = await command.ExecuteScalarAsync(cancellationToken);
+        return updated is not null && updated is not System.DBNull;
+    }
+
     public System.Threading.Tasks.ValueTask<Eve.Services.Core.AssetSafetyActionState> MovePersonalAssetsToSafetyAsync(
         Eve.Services.ServiceCall call,
         long solarSystemId,
@@ -4132,10 +5397,19 @@ public sealed class PersistenceStructureAssetSafetyReadModel : Eve.Services.Core
 
 public sealed class PersistenceStructureDirectoryReadModel(
     Func<string, CancellationToken, Task<JsonObject>> readTable,
-    Func<long, CancellationToken, Task<Eve.Relations.Affiliation>> affiliationOf) :
+    Func<long, CancellationToken, Task<Eve.Relations.Affiliation>> affiliationOf,
+    Eve.Sde.SdeReader sde,
+    Eve.GameStore.GameStoreCache gameStoreCache) :
     Eve.Services.Core.IStructureDirectoryReadCallbacks,
     Eve.Services.Core.IStructureSettingsReadCallbacks
 {
+    public PersistenceStructureDirectoryReadModel(
+        Func<string, CancellationToken, Task<JsonObject>> readTable,
+        Func<long, CancellationToken, Task<Eve.Relations.Affiliation>> affiliationOf)
+        : this(readTable, affiliationOf, null!, null!)
+    {
+    }
+
     private const long AnsiblexJumpBridgeTypeId = 35841;
     private const int JumpBridgeServiceId = 15;
     private const int DockingServiceId = 1;
@@ -4146,10 +5420,41 @@ public sealed class PersistenceStructureDirectoryReadModel(
     {
         DockingServiceId => DockAccessSettingId,
         JumpBridgeServiceId => JumpBridgeAccessSettingId,
+        5 => 4,
+        16 => 35,
         _ => null,
     };
 
     private sealed record Bridge(long Id, long SolarSystemId, long DestinationSolarSystemId, JsonObject Value);
+
+    public async ValueTask<long?> GetJbStructureDestinationAsync(long structureId, CancellationToken cancellationToken)
+    {
+        if (structureId <= 0)
+            return null;
+        var structures = await readTable("structures", cancellationToken);
+        var bridge = ReadBridges(structures).FirstOrDefault(candidate => candidate.Id == structureId);
+        return bridge is { DestinationSolarSystemId: > 0 } ? bridge.DestinationSolarSystemId : null;
+    }
+
+    public async ValueTask<(long StructureId, long SolarSystemId)?> GetLinkedStructureAsync(
+        long structureId,
+        CancellationToken cancellationToken)
+    {
+        if (structureId <= 0)
+            return null;
+        var structures = await readTable("structures", cancellationToken);
+        var bridges = ReadBridges(structures);
+        var source = bridges.FirstOrDefault(candidate => candidate.Id == structureId);
+        if (source is null || source.DestinationSolarSystemId <= 0)
+            return null;
+        var linked = bridges.FirstOrDefault(candidate =>
+            candidate.Id != source.Id &&
+            candidate.SolarSystemId == source.DestinationSolarSystemId &&
+            candidate.DestinationSolarSystemId == source.SolarSystemId);
+        return linked is { Id: > 0, SolarSystemId: > 0 }
+            ? (linked.Id, linked.SolarSystemId)
+            : null;
+    }
 
     public async ValueTask<PyValue> GetJumpBridgesWithMyAccessAsync(ServiceCall call)
     {
@@ -4507,6 +5812,362 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
             result.Add(new KeyValuePair<PyValue, PyValue>(new PyInt(serviceId), new PyInt(state)));
         }
         return new PyDict(result);
+    }
+
+    public async ValueTask<PyValue> CharacterGetServiceAsync(
+        long characterId,
+        long structureId,
+        long serviceId,
+        CancellationToken cancellationToken)
+    {
+        if (!await CharacterHasServiceAsync(characterId, structureId, serviceId, cancellationToken))
+            return PyNone.Instance;
+
+        var settingId = SettingIdForService(serviceId);
+        if (settingId is not > 0)
+            return PyBool.True;
+
+        var context = await ReadStructureSettingsContextAsync(characterId, structureId, cancellationToken);
+        if (context is null)
+            return PyNone.Instance;
+        var settings = context.Value.Profile["settingsBySettingID"] as JsonObject;
+        var settingGroups = settings?[settingId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonArray;
+        if (settingGroups is not { Count: > 0 })
+            return PyBool.True;
+
+        var access = (context.Value.CharacterId, context.Value.Affiliation);
+        var bestRank = 0;
+        JsonNode? resolvedValue = null;
+        foreach (var node in settingGroups)
+        {
+            if (node is not JsonObject row)
+                continue;
+            var groupId = Integer(row["groupID"], -1);
+            if (groupId < 0)
+                continue;
+            var rank = groupId == 0
+                ? context.Value.OwnerCorporationId > 0 &&
+                    context.Value.Affiliation.Corporation == context.Value.OwnerCorporationId ? 1 : 0
+                : AccessGroupMatchRank(groupId, access, context.Value.AccessGroupState);
+            if (rank > bestRank)
+            {
+                bestRank = rank;
+                resolvedValue = row["value"];
+            }
+        }
+
+        return StructureSettingValue(resolvedValue);
+    }
+
+
+
+
+    public async ValueTask<PyValue> GetStructureMapDataAsync(
+        long solarSystemId,
+        CancellationToken cancellationToken)
+    {
+        if (sde is null || solarSystemId <= 0)
+            return new PyList([]);
+
+        var state = await readTable("structures", cancellationToken);
+        var structures = new List<(long Id, JsonObject Row)>();
+        foreach (var (key, node) in state)
+        {
+            if (node is not JsonObject row ||
+                !long.TryParse(key, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var structureId) ||
+                !IsPersistentlyDeployedStructure(row, structureId) ||
+                Integer(row["solarSystemID"]) != solarSystemId)
+                continue;
+            structures.Add((structureId, row));
+        }
+        structures.Sort(static (left, right) => left.Id.CompareTo(right.Id));
+
+        var typeIds = structures.Select(entry => (long)Positive(Integer(entry.Row["typeID"]))).Distinct().ToArray();
+        var types = (await sde.ReadAsync("invTypes", typeIds, cancellationToken))
+            .ToDictionary(row => row.Key);
+
+        var descriptor = Descriptor.FromHeader(new PyObjectEx(
+            ObjectExKind.Ex1,
+            Py.Tuple(
+                new PyToken("blue.DBRowDescriptor"),
+                Py.Tuple(Py.Tuple(
+                    Py.Tuple(new PyStr("groupID"), new PyInt(0x03)),
+                    Py.Tuple(new PyStr("typeID"), new PyInt(0x03)),
+                    Py.Tuple(new PyStr("itemID"), new PyInt(0x14)),
+                    Py.Tuple(new PyStr("itemName"), new PyInt(0x82)),
+                    Py.Tuple(new PyStr("locationID"), new PyInt(0x03)),
+                    Py.Tuple(new PyStr("orbitID"), new PyInt(0x03)),
+                    Py.Tuple(new PyStr("connector"), new PyInt(0x0b)),
+                    Py.Tuple(new PyStr("x"), new PyInt(0x05)),
+                    Py.Tuple(new PyStr("y"), new PyInt(0x05)),
+                    Py.Tuple(new PyStr("z"), new PyInt(0x05)),
+                    Py.Tuple(new PyStr("celestialIndex"), new PyInt(0x03)),
+                    Py.Tuple(new PyStr("orbitIndex"), new PyInt(0x03))))),
+            [],
+            []));
+
+        static double Coordinate(JsonNode? node) =>
+            double.TryParse(node?.ToString(), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var value) && double.IsFinite(value)
+                    ? value
+                    : 0;
+
+        var rows = new List<PyValue>(structures.Count);
+        foreach (var (structureId, row) in structures)
+        {
+            var typeId = Positive(Integer(row["typeID"]));
+            var groupId = types.TryGetValue(typeId, out var typeRow)
+                ? Positive(SdeInteger(typeRow, "groupID"))
+                : 0;
+            var ownerId = Positive(Integer(row["ownerID"], Positive(Integer(row["ownerCorpID"] ?? row["corporationID"]))));
+            var position = row["position"] as JsonObject;
+            var name = Text(row["itemName"] ?? row["name"]);
+            rows.Add(new PyPackedRow(descriptor, [
+                new PyInt(groupId),
+                new PyInt(typeId),
+                new PyLong(structureId),
+                new PyWString(name),
+                new PyInt(solarSystemId),
+                new PyInt(ownerId),
+                PyBool.False,
+                new PyReal(Coordinate(position?["x"])),
+                new PyReal(Coordinate(position?["y"])),
+                new PyReal(Coordinate(position?["z"])),
+                PyNone.Instance,
+                PyNone.Instance,
+            ]));
+        }
+
+        return new PyObjectEx(
+            ObjectExKind.Ex2,
+            Py.Tuple(
+                Py.Tuple(new PyToken("carbon.common.script.sys.crowset.CRowset")),
+                Py.Dict(("header", descriptor.Header))),
+            rows,
+            []);
+    }
+
+    public async ValueTask<PyValue> GetMyAccessibleOnlineCynoBeaconStructuresAsync(ServiceCall call)
+    {
+        var access = await ReadAccessContextAsync(call, call.Cancellation);
+        if (access.CharacterId <= 0)
+            return new PyList([]);
+
+        var state = await readTable("structures", call.Cancellation);
+        var profiles = await readTable("structureProfiles", call.Cancellation);
+        var groups = await readTable("accessGroups", call.Cancellation);
+        var rows = new List<(long Id, PyValue Row)>();
+        foreach (var (key, node) in state)
+        {
+            if (node is not JsonObject structure ||
+                !long.TryParse(key, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var structureId) ||
+                !IsPersistentlyDeployedStructure(structure, structureId) ||
+                Integer(structure["typeID"]) != 35840 ||
+                Integer((structure["serviceStates"] as JsonObject)?["16"]) != 1)
+                continue;
+
+            var ownerCorporationId = Positive(Integer(structure["ownerCorpID"] ?? structure["corporationID"]));
+            if (ownerCorporationId <= 0 ||
+                !ProfileSettingAllows(
+                    structure,
+                    ownerCorporationId,
+                    access,
+                    profiles,
+                    groups,
+                    35))
+                continue;
+
+            var ownerId = Positive(Integer(structure["ownerID"], ownerCorporationId));
+            var stateId = Integer(structure["state"]);
+            var name = Text(structure["itemName"] ?? structure["name"]);
+            if (name.Length == 0)
+                name = $"Structure {structureId}";
+            rows.Add((structureId, new PyList([
+                new PyInt(structureId),
+                new PyInt(Positive(Integer(structure["typeID"]))),
+                new PyInt(ownerId),
+                new PyInt(Positive(Integer(structure["solarSystemID"]))),
+                new PyInt(stateId),
+                new PyStr(name),
+            ])));
+        }
+
+        return new PyList(rows
+            .OrderBy(entry => entry.Id)
+            .Select(entry => entry.Row)
+            .ToArray());
+    }
+
+    public async ValueTask<PyValue> GetSolarSystemsWithBeaconsAsync(CancellationToken cancellationToken)
+    {
+        var structures = await readTable("structures", cancellationToken);
+        var systems = new SortedSet<long>();
+        foreach (var (key, node) in structures)
+        {
+            if (node is not JsonObject structure ||
+                !long.TryParse(key, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var structureId) ||
+                !IsPersistentlyDeployedStructure(structure, structureId) ||
+                Integer(structure["typeID"]) != 35840 ||
+                Integer((structure["serviceStates"] as JsonObject)?["16"]) != 1)
+                continue;
+            var solarSystemId = Positive(Integer(structure["solarSystemID"]));
+            if (solarSystemId > 0)
+                systems.Add(solarSystemId);
+        }
+
+        return new PyList(systems.Select(id => (PyValue)new PyInt(id)).ToArray());
+    }
+
+    public async ValueTask<PyValue> GetValidWarHQsAsync(
+        ServiceCall call,
+        long ownerId,
+        CancellationToken cancellationToken)
+    {
+        var characterId = call.Session?.CharacterId ?? 0;
+        var corporationId = call.Session?.GetInt("corpid") ?? 0;
+        var allianceId = call.Session?.GetInt("allianceid") ?? 0;
+        if (characterId <= 0 || ownerId <= 0 ||
+            (ownerId != corporationId && ownerId != allianceId))
+            return new PyList([]);
+
+        var state = await readTable("structures", cancellationToken);
+        var structures = new List<(long Id, JsonObject Row)>();
+        foreach (var (key, node) in state)
+        {
+            if (node is not JsonObject structure ||
+                !long.TryParse(key, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var structureId) ||
+                !IsPersistentlyDeployedStructure(structure, structureId))
+                continue;
+            var ownerCorporationId = Positive(Integer(structure["ownerCorpID"] ?? structure["ownerID"]));
+            var ownerAllianceId = Positive(Integer(structure["allianceID"]));
+            if (ownerCorporationId != ownerId && ownerAllianceId != ownerId)
+                continue;
+            structures.Add((structureId, structure));
+        }
+
+        var typeRows = await sde.ReadAsync(
+            "invTypes", structures.Select(entry => (long)Positive(Integer(entry.Row["typeID"]))).Distinct(), cancellationToken);
+        var types = typeRows.ToDictionary(row => row.Key);
+        var systemRows = await sde.ReadAsync(
+            "mapSolarSystems", structures.Select(entry => (long)Positive(Integer(entry.Row["solarSystemID"]))).Distinct(), cancellationToken);
+        var systems = systemRows.ToDictionary(row => row.Key);
+
+        var valid = new List<(long Id, PyValue Payload)>();
+        foreach (var (structureId, structure) in structures)
+        {
+            var typeId = Positive(Integer(structure["typeID"]));
+            var solarSystemId = Positive(Integer(structure["solarSystemID"]));
+            if (!types.TryGetValue(typeId, out var type) ||
+                SdeInteger(type, "categoryID") != 65 ||
+                !SdeBoolean(type, "dockable") ||
+                !systems.TryGetValue(solarSystemId, out var system) ||
+                SdeDouble(system, "security") < 0.45)
+                continue;
+
+            var ownerCorporationId = Positive(Integer(structure["ownerCorpID"] ?? structure["ownerID"]));
+            var ownerIdForPayload = Positive(Integer(structure["ownerID"], ownerCorporationId));
+            var itemName = Text(structure["itemName"] ?? structure["name"]);
+            if (itemName.Length == 0)
+                itemName = $"Structure {structureId}";
+            var upkeepState = Positive(Integer(structure["upkeepState"], 1));
+            var inSpace = structure["inSpace"] is JsonValue inSpaceValue &&
+                inSpaceValue.TryGetValue<bool>(out var isInSpace) && !isInSpace
+                    ? new PyInt(0)
+                    : new PyInt(1);
+            var payload = Py.KeyVal(
+                ("typeID", new PyInt(typeId)),
+                ("structureID", new PyInt(structureId)),
+                ("upkeepState", new PyInt(upkeepState)),
+                ("wars", new PyList([])),
+                ("ownerID", new PyInt(ownerIdForPayload)),
+                ("solarSystemID", new PyInt(solarSystemId)),
+                ("itemName", new PyStr(itemName)),
+                ("inSpace", inSpace));
+            valid.Add((structureId, payload));
+        }
+
+        return new PyList(valid
+            .OrderBy(entry => entry.Id)
+            .Select(entry => entry.Payload)
+            .ToArray());
+    }
+
+    public async ValueTask<bool> SetStructureDescriptionAsync(ServiceCall call)
+    {
+        if (gameStoreCache is null)
+            return false;
+        var characterId = call.Session?.CharacterId ?? 0;
+        var corporationId = call.Session?.GetInt("corpid") ?? 0;
+        var corporationRoles = call.Session?.GetInt("corprole") ?? 0;
+        var structureId = call.Arg(0) switch
+        {
+            PyInt id when id.Value > 0 => id.Value,
+            PyLong id when id.Value > 0 => id.Value,
+            _ => 0,
+        };
+        if (characterId <= 0 || corporationId <= 0 || structureId <= 0 ||
+            (corporationRoles & 2048) != 2048)
+            return false;
+
+        var affiliation = await affiliationOf(characterId, call.Cancellation);
+        if (affiliation.Corporation != corporationId)
+            return false;
+
+        var state = await readTable("structures", call.Cancellation);
+        var key = structureId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (state[key] is not JsonObject structure ||
+            !IsPersistentlyDeployedStructure(structure, structureId) ||
+            Positive(Integer(structure["ownerCorpID"] ?? structure["ownerID"])) != corporationId)
+            return false;
+
+        var text = call.Arg(1) switch
+        {
+            PyStr value => value.Value,
+            PyWString value => value.Value,
+            PyBytes value => System.Text.Encoding.UTF8.GetString(value.Value.Span),
+            PyInt value => value.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            PyLong value => value.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            PyReal value => value.Value.ToString("G", System.Globalization.CultureInfo.InvariantCulture),
+            PyBool value => value.Value ? "True" : "False",
+            _ => string.Empty,
+        };
+        var description = text[..Math.Min(1000, text.Length)];
+        var write = gameStoreCache.Write(
+            "structures",
+            $"/{structureId}/description",
+            JsonValue.Create(description));
+        if (!write.Success)
+            throw new InvalidOperationException($"Could not update structure {structureId} description: {write.ErrorMsg}");
+        await gameStoreCache.FlushTableAsync("structures", call.Cancellation);
+        return true;
+    }
+
+    public async ValueTask<IReadOnlyList<long>> GetStructureIdsInSolarSystemAsync(
+        long solarSystemId,
+        CancellationToken cancellationToken)
+    {
+        if (solarSystemId <= 0)
+            return Array.Empty<long>();
+
+        var state = await readTable("structures", cancellationToken);
+        var ids = new List<long>();
+        foreach (var (key, node) in state)
+        {
+            if (node is JsonObject structure &&
+                long.TryParse(key, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var structureId) &&
+                IsPersistentlyDeployedStructure(structure, structureId) &&
+                Integer(structure["solarSystemID"]) == solarSystemId &&
+                Integer((structure["serviceStates"] as JsonObject)?[DockingServiceId.ToString(System.Globalization.CultureInfo.InvariantCulture)]) == 1)
+                ids.Add(structureId);
+        }
+
+        ids.Sort();
+        return ids;
     }
 
     public async ValueTask<bool> CharacterHasServiceAsync(
@@ -4915,6 +6576,54 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
                 System.Globalization.CultureInfo.InvariantCulture, out var number))
             return number != 0;
         return value.ToString().Length > 0;
+    }
+
+    private static long SdeInteger(Eve.Sde.SdeRow row, string field)
+    {
+        if (!row.Doc.TryGetProperty(field, out var value))
+            return 0;
+        if (value.TryGetInt64(out var integer))
+            return integer;
+        return value.TryGetDouble(out var number) && double.IsFinite(number)
+            ? (long)Math.Truncate(number)
+            : 0;
+    }
+
+    private static double SdeDouble(Eve.Sde.SdeRow row, string field) =>
+        row.Doc.TryGetProperty(field, out var value) &&
+        value.TryGetDouble(out var number) && double.IsFinite(number)
+            ? number
+            : 0;
+
+    private static bool SdeBoolean(Eve.Sde.SdeRow row, string field)
+    {
+        if (!row.Doc.TryGetProperty(field, out var value))
+            return false;
+        if (value.ValueKind is System.Text.Json.JsonValueKind.True)
+            return true;
+        if (value.ValueKind is System.Text.Json.JsonValueKind.Number)
+            return value.TryGetInt64(out var integer) && integer != 0;
+        return false;
+    }
+
+    private static PyValue StructureSettingValue(JsonNode? value)
+    {
+        if (value is null)
+            return PyBool.True;
+        if (value is JsonValue scalar)
+        {
+            if (scalar.TryGetValue<bool>(out var boolean))
+                return PyValue.Of(boolean);
+            if (scalar.TryGetValue<int>(out var int32))
+                return new PyInt(int32);
+            if (scalar.TryGetValue<long>(out var int64))
+                return new PyLong(int64);
+            if (scalar.TryGetValue<double>(out var real) && double.IsFinite(real))
+                return new PyReal(real);
+            if (scalar.TryGetValue<string>(out var text))
+                return new PyStr(text);
+        }
+        return new PyStr(value.ToString());
     }
 }
 
@@ -5814,6 +7523,37 @@ public sealed class PersistenceSovFwReadModel(
     Func<string, CancellationToken, Task<JsonObject>> readTable,
     Func<long, CancellationToken, Task<Eve.Relations.Affiliation>> affiliationOf)
 {
+    public async ValueTask<IReadOnlyList<Eve.Host.DevelopmentIndexRecord>> ReadAllDevelopmentIndicesAsync(
+        CancellationToken cancellationToken)
+    {
+        var state = await readTable("sovereignty", cancellationToken);
+        var systems = state["systems"] as JsonObject;
+        if (systems is null)
+            return [];
+
+        var records = new List<Eve.Host.DevelopmentIndexRecord>(systems.Count);
+        foreach (var (key, node) in systems)
+        {
+            if (node is not JsonObject system)
+                continue;
+            var systemId = Positive(Integer(system["solarSystemID"]));
+            if (systemId <= 0 &&
+                !long.TryParse(key, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out systemId))
+                continue;
+            if (systemId <= 0)
+                continue;
+
+            var indices = system["devIndices"] as JsonObject;
+            records.Add(new(
+                systemId,
+                Positive(Integer(indices?["militaryPoints"])),
+                Positive(Integer(indices?["industrialPoints"])),
+                Positive(Integer(indices?["claimedForDays"] ?? indices?["claimedFor"]))));
+        }
+        return records.OrderBy(record => record.SolarSystemId).ToArray();
+    }
+
     public async ValueTask<Eve.Services.Core.SovFwReadSnapshot> ReadSnapshotAsync(
         Eve.Services.ServiceCall call) =>
         await ReadSnapshotAsync(call.Cancellation);
@@ -5910,6 +7650,117 @@ public sealed class PersistenceSovFwReadModel(
             .Select(pair => pair.Key)
             .OrderBy(systemId => systemId)
             .ToArray();
+    }
+
+
+    public async ValueTask<PyValue> ReadCurrentMapDataAsync(
+        long locationId,
+        IReadOnlyList<Eve.Sde.SdeRow> staticSystems,
+        CancellationToken cancellationToken)
+    {
+        var columns = new[]
+        {
+            "locationID", "solarSystemID", "constellationID", "regionID", "ownerID",
+            "allianceID", "corporationID", "claimStructureID", "infrastructureHubID",
+            "stationID", "claimTime",
+        };
+        if (locationId <= 0)
+            return Py.Rowset(columns, []);
+
+        static long StaticId(System.Text.Json.JsonElement doc, string field) =>
+            doc.TryGetProperty(field, out var value) && value.TryGetInt64(out var number) ? number : 0;
+
+        static PyValue Id(JsonObject? row, string field, long fallback = 0)
+        {
+            var value = Positive(Integer(row?[field]));
+            if (value <= 0)
+                value = fallback;
+            return value > 0 ? new PyInt(value) : PyNone.Instance;
+        }
+
+        static PyValue CurrentRow(JsonObject? row, long systemId, long constellationId, long regionId)
+        {
+            var allianceId = Positive(Integer(row?["allianceID"]));
+            return Py.Tuple(
+                Id(row, "locationID", systemId),
+                Id(row, "solarSystemID", systemId),
+                Id(row, "constellationID", constellationId),
+                Id(row, "regionID", regionId),
+                Id(row, "ownerID", allianceId),
+                Id(row, "allianceID", allianceId),
+                Id(row, "corporationID"),
+                Id(row, "claimStructureID"),
+                Id(row, "infrastructureHubID"),
+                Id(row, "stationID"),
+                new PyLong(Math.Max(0, Integer(row?["claimTime"]))));
+        }
+
+        var state = await readTable("sovereignty", cancellationToken);
+        var systems = state["systems"] as JsonObject;
+        var result = new List<PyValue>();
+        foreach (var system in staticSystems.OrderBy(row => row.Key))
+        {
+            var constellationId = StaticId(system.Doc, "constellationID");
+            var regionId = StaticId(system.Doc, "regionID");
+            if (system.Key != locationId && constellationId != locationId && regionId != locationId)
+                continue;
+
+            var stored = systems?[system.Key.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
+            if (stored?["currentData"] is JsonArray { Count: > 0 } currentRows)
+            {
+                foreach (var current in currentRows.OfType<JsonObject>())
+                    result.Add(CurrentRow(current, system.Key, constellationId, regionId));
+            }
+            else
+            {
+                result.Add(CurrentRow(stored, system.Key, constellationId, regionId));
+            }
+        }
+
+        return Py.Rowset(columns, result);
+    }
+
+    public async ValueTask<PyValue> ReadRecentSovActivityAsync(CancellationToken cancellationToken)
+    {
+        var columns = new[] { "solarSystemID", "ownerID", "oldOwnerID", "stationID", "changeTime" };
+        var state = await readTable("sovereignty", cancellationToken);
+        var systems = state["systems"] as JsonObject;
+        if (systems is null)
+            return Py.Rowset(columns, []);
+
+        var changes = new List<(long SystemId, long OwnerId, long OldOwnerId, long StationId, long ChangeTime)>();
+        foreach (var (key, node) in systems)
+        {
+            if (node is not JsonObject system || system["recentActivity"] is not JsonArray activityRows)
+                continue;
+            var storedSystemId = Positive(Integer(system["solarSystemID"]));
+            if (storedSystemId <= 0 && long.TryParse(key, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var parsedSystemId))
+                storedSystemId = Positive(parsedSystemId);
+
+            foreach (var activity in activityRows.OfType<JsonObject>())
+            {
+                var systemId = Positive(Integer(activity["solarSystemID"]));
+                if (systemId <= 0)
+                    systemId = storedSystemId;
+                changes.Add((
+                    systemId,
+                    Positive(Integer(activity["ownerID"])),
+                    Positive(Integer(activity["oldOwnerID"])),
+                    Positive(Integer(activity["stationID"])),
+                    Math.Max(0, Integer(activity["changeTime"]))));
+            }
+        }
+
+        return Py.Rowset(columns, changes
+            .OrderByDescending(change => change.ChangeTime)
+            .ThenBy(change => change.SystemId)
+            .Select(change => Py.Tuple(
+                change.SystemId > 0 ? new PyInt(change.SystemId) : PyNone.Instance,
+                change.OwnerId > 0 ? new PyInt(change.OwnerId) : PyNone.Instance,
+                change.OldOwnerId > 0 ? new PyInt(change.OldOwnerId) : PyNone.Instance,
+                change.StationId > 0 ? new PyInt(change.StationId) : PyNone.Instance,
+                new PyLong(change.ChangeTime))));
     }
 
     private static Eve.Services.Core.SovStructureRecord? ReadStructure(JsonObject value, long systemId)
@@ -6104,8 +7955,12 @@ public sealed class PersistenceCharMgrReadModel(
     Func<long, int, int, CancellationToken, ValueTask<IReadOnlyList<PyValue>>> readRecentShipKillmailPageAsync,
     Func<long, CancellationToken, ValueTask<string?>> readCharacterDescriptionAsync,
     Func<long, string, CancellationToken, ValueTask> writeCharacterDescriptionAsync,
-    Func<long, CancellationToken, ValueTask<long?>> readMedal1GraphicIdAsync)
+    Func<long, CancellationToken, ValueTask<long?>> readMedal1GraphicIdAsync,
+    Func<string, string, JsonNode?, WriteResult>? writePath = null,
+    Func<string, string, WriteResult>? removePath = null)
 {
+    // ponytail: serialize personal-data read-modify-write, including the shared nextNoteID; split by owner plus a note-ID allocator if throughput matters.
+    private readonly SemaphoreSlim _updateGate = new(1, 1);
     private const string DefaultFoldersLabel = "S:Folders";
     private const string DefaultFoldersNote = "1::F::0::Main|";
 
@@ -6182,6 +8037,236 @@ public sealed class PersistenceCharMgrReadModel(
         {
             NextOwnerNoteId = nextNoteId > 0 ? nextNoteId : null,
         };
+    }
+
+    public async ValueTask<CharMgrPersonalData?> UpdateAsync(
+        long characterId,
+        Func<CharMgrPersonalData, CharMgrPersonalData> update,
+        CancellationToken cancellationToken)
+    {
+        if (characterId <= 0)
+        {
+            return null;
+        }
+
+        await _updateGate.WaitAsync(cancellationToken);
+        try
+        {
+            var before = await ReadAsync(characterId, cancellationToken) ?? CharMgrPersonalData.Empty;
+            var after = update(before);
+            WriteChanges(characterId, before, after);
+            return after;
+        }
+        finally
+        {
+            _updateGate.Release();
+        }
+    }
+
+    public ValueTask WriteActivityStatusAsync(
+        long characterId, long status, string? extraInfo, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var key = characterId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        WritePath("characters", $"/{key}/activityStatus", JsonValue.Create(status));
+        WritePath("characters", $"/{key}/activityStatusExtraInfo",
+            extraInfo is null ? null : JsonValue.Create(extraInfo));
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask WriteLogSettingsAsync(long characterId, PyValue settings, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var value = JsonFromPy(settings);
+        if (value is not (JsonObject or JsonArray))
+        {
+            value = new JsonObject();
+        }
+        var key = characterId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        WritePath("characters", $"/{key}/lastSettingsTelemetry", value);
+        return ValueTask.CompletedTask;
+    }
+
+    private void WriteChanges(long characterId, CharMgrPersonalData before, CharMgrPersonalData after)
+{
+    var owner = characterId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    var fileTime = Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+        .ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    var oldContacts = before.Contacts.ToDictionary(contact => contact.ContactId);
+    var newContacts = after.Contacts.ToDictionary(contact => contact.ContactId);
+    foreach (var contactId in oldContacts.Keys.Union(newContacts.Keys))
+    {
+        if (!newContacts.TryGetValue(contactId, out var contact))
+        {
+            RemovePath("characters", $"/{owner}/personalContacts/{contactId}");
+        }
+        else if (!oldContacts.TryGetValue(contactId, out var old) || old != contact)
+        {
+            WritePath("characters", $"/{owner}/personalContacts/{contactId}", new JsonObject
+            {
+                ["contactID"] = contact.ContactId,
+                ["inWatchlist"] = contact.InWatchlist,
+                ["relationshipID"] = contact.RelationshipId,
+                ["labelMask"] = contact.LabelMask,
+            });
+        }
+    }
+
+    var oldBlocked = before.BlockedSenders.ToHashSet();
+    var newBlocked = after.BlockedSenders.ToHashSet();
+    foreach (var ownerId in oldBlocked.Union(newBlocked))
+    {
+        if (!newBlocked.Contains(ownerId))
+        {
+            RemovePath("characters", $"/{owner}/blockedOwners/{ownerId}");
+        }
+        else if (!oldBlocked.Contains(ownerId))
+        {
+            WritePath("characters", $"/{owner}/blockedOwners/{ownerId}", new JsonObject
+            {
+                ["senderID"] = ownerId,
+            });
+        }
+    }
+
+    var oldOwnerNotes = before.OwnerNotes.ToDictionary(note => note.NoteId);
+    var newOwnerNotes = after.OwnerNotes.ToDictionary(note => note.NoteId);
+    foreach (var noteId in oldOwnerNotes.Keys.Union(newOwnerNotes.Keys))
+    {
+        var path = $"/characters/{owner}/notes/{noteId}";
+        if (!newOwnerNotes.TryGetValue(noteId, out var note))
+        {
+            RemovePath("characterNotes", path);
+        }
+        else if (!oldOwnerNotes.TryGetValue(noteId, out var old))
+        {
+            WritePath("characterNotes", path, new JsonObject
+            {
+                ["noteID"] = note.NoteId,
+                ["label"] = note.Label,
+                ["note"] = note.Note,
+                ["created"] = fileTime,
+                ["updated"] = fileTime,
+            });
+        }
+        else if (old != note)
+        {
+            if (old.Label != note.Label)
+            {
+                WritePath("characterNotes", $"{path}/label", JsonValue.Create(note.Label));
+            }
+            if (old.Note != note.Note)
+            {
+                WritePath("characterNotes", $"{path}/note", JsonValue.Create(note.Note));
+            }
+            WritePath("characterNotes", $"{path}/updated", JsonValue.Create(fileTime));
+        }
+    }
+
+    var oldItemNotes = before.ItemNotes;
+    var newItemNotes = after.ItemNotes;
+    foreach (var itemId in oldItemNotes.Keys.Union(newItemNotes.Keys))
+    {
+        var path = $"/characters/{owner}/itemNotes/{itemId}";
+        if (!newItemNotes.TryGetValue(itemId, out var note))
+        {
+            RemovePath("characterNotes", path);
+        }
+        else if (!oldItemNotes.TryGetValue(itemId, out var old))
+        {
+            WritePath("characterNotes", path, new JsonObject
+            {
+                ["itemID"] = itemId,
+                ["note"] = note,
+                ["updated"] = fileTime,
+            });
+        }
+        else if (old != note)
+        {
+            WritePath("characterNotes", $"{path}/note", JsonValue.Create(note));
+            WritePath("characterNotes", $"{path}/updated", JsonValue.Create(fileTime));
+        }
+    }
+
+    if (before.NextOwnerNoteId != after.NextOwnerNoteId)
+    {
+        if (after.NextOwnerNoteId is > 0)
+        {
+            WritePath("characterNotes", "/_meta/nextNoteID", JsonValue.Create(after.NextOwnerNoteId.Value));
+        }
+        else
+        {
+            RemovePath("characterNotes", "/_meta/nextNoteID");
+        }
+    }
+}
+
+    private void WritePath(string table, string path, JsonNode? data)
+    {
+        var result = writePath?.Invoke(table, path, data)
+            ?? throw new InvalidOperationException("CharMgr GameStore writer is not configured.");
+        if (!result.Success)
+        {
+            throw new InvalidOperationException($"Could not write CharMgr data at {table}{path}: {result.ErrorMsg}");
+        }
+    }
+
+    private void RemovePath(string table, string path)
+    {
+        var result = removePath?.Invoke(table, path)
+            ?? throw new InvalidOperationException("CharMgr GameStore remover is not configured.");
+        if (!result.Success && result.ErrorMsg != "ENTRY_NOT_FOUND")
+        {
+            throw new InvalidOperationException($"Could not remove CharMgr data at {table}{path}: {result.ErrorMsg}");
+        }
+    }
+
+    private static JsonNode? JsonFromPy(PyValue value) => value switch
+    {
+        PyNone => null,
+        PyBool boolean => JsonValue.Create(boolean.Value),
+        PyInt number => JsonValue.Create(number.Value),
+        PyLong number => JsonValue.Create(number.Value),
+        PyReal number when double.IsFinite(number.Value) => JsonValue.Create(number.Value),
+        PyReal => null,
+        PyStr text => JsonValue.Create(text.Value),
+        PyWString text => JsonValue.Create(text.Value),
+        PyToken text => JsonValue.Create(text.Value),
+        PyBytes bytes => JsonValue.Create(System.Text.Encoding.UTF8.GetString(bytes.Value.Span)),
+        PyBuffer buffer => JsonValue.Create(System.Text.Encoding.UTF8.GetString(buffer.Value.Span)),
+        PyList list => new JsonArray(list.Items.Select(JsonFromPy).ToArray()),
+        PyTuple tuple => new JsonArray(tuple.Items.Select(JsonFromPy).ToArray()),
+        PyDict dict => JsonFromPy(dict.Entries),
+        PyObject obj => JsonFromPy(obj.Args),
+        PyObjectEx objEx when objEx.Dict.Count > 0 => JsonFromPy(objEx.Dict),
+        PyObjectEx objEx when objEx.List.Count > 0 => new JsonArray(objEx.List.Select(JsonFromPy).ToArray()),
+        PyObjectEx => new JsonObject(),
+        _ => null,
+    };
+
+    private static JsonObject JsonFromPy(IReadOnlyList<KeyValuePair<PyValue, PyValue>> entries)
+    {
+        var result = new JsonObject();
+        foreach (var (key, value) in entries)
+        {
+            var name = key switch
+            {
+                PyStr text => text.Value,
+                PyWString text => text.Value,
+                PyToken text => text.Value,
+                PyInt number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                PyLong number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                PyBool boolean => boolean.Value ? "true" : "false",
+                PyNone => "null",
+                _ => Eve.Macho.JsSemantics.StringValue(key),
+            };
+            if (name is not null)
+            {
+                result[name] = JsonFromPy(value);
+            }
+        }
+        return result;
     }
 
     private Task<JsonObject> ReadOptionalTableAsync(string table, CancellationToken cancellationToken) =>
@@ -7513,6 +9598,64 @@ public sealed class PersistenceIndustryJobOperations : Eve.Services.Core.IIndust
         throw InvalidJob();
     }
 
+
+    public PyValue ReadMapIndustryCostModifier(
+        int activityId,
+        IReadOnlyList<Eve.Sde.SdeRow> systems)
+    {
+        var entries = new List<KeyValuePair<PyValue, PyValue>>();
+        foreach (var system in systems)
+        {
+            if (!system.Doc.TryGetProperty("costIndices", out var costIndices) ||
+                costIndices.ValueKind != System.Text.Json.JsonValueKind.Array)
+                continue;
+
+            foreach (var index in costIndices.EnumerateArray())
+            {
+                if (Int(index, "activityID") != activityId)
+                    continue;
+                var rate = Decimal(index, "costIndex");
+                if (rate > 1)
+                    rate /= 100m;
+                entries.Add(new(new PyInt(system.Key), new PyReal((double)Math.Clamp(rate, 0, 1))));
+                break;
+            }
+        }
+        return new PyDict(entries);
+    }
+
+    public async Task<PyValue> ReadMapIndustryJobsOverLast24HoursAsync(
+        int activityId,
+        long nowUnixMs,
+        CancellationToken cancellationToken)
+    {
+        const long fileTimeEpochOffset = 116444736000000000L;
+        var nowFileTime = checked(fileTimeEpochOffset + nowUnixMs * 10_000L);
+        var cutoff = nowFileTime - TimeSpan.TicksPerDay;
+        var futureGrace = nowFileTime + TimeSpan.TicksPerMinute;
+
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new Npgsql.NpgsqlCommand($"""
+            SELECT solar_system_id, COUNT(*)::bigint
+              FROM {_schema}.jobs
+             WHERE solar_system_id > 0
+               AND start_date_filetime >= $1
+               AND start_date_filetime <= $2
+               AND ($3 <= 0 OR activity_id = $3)
+             GROUP BY solar_system_id
+             ORDER BY solar_system_id
+            """, connection);
+        command.Parameters.Add(new Npgsql.NpgsqlParameter { Value = cutoff });
+        command.Parameters.Add(new Npgsql.NpgsqlParameter { Value = futureGrace });
+        command.Parameters.Add(new Npgsql.NpgsqlParameter { Value = activityId });
+
+        var rows = new List<PyValue>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            rows.Add(Py.Tuple(new PyInt(reader.GetInt64(0)), new PyInt(reader.GetInt64(1))));
+        return Py.Rowset(["solarSystemID", "noOfJobs"], rows);
+    }
+
     private static IReadOnlyList<Product> SelectProducts(
         Eve.Services.Core.IndustryJobInstallSubmission job,
         ActivityRecipe recipe)
@@ -8095,6 +10238,67 @@ public sealed class PersistenceMailSendHostAdapter(
         }
     }
 
+    /// <summary>Persists and delivers a kill-right notification through the shared notification mailbox.</summary>
+    public async Task WriteKillRightNotificationAsync(
+        long recipientId,
+        long senderId,
+        int typeId,
+        JsonObject data,
+        string? idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        if (recipientId <= 0 || senderId <= 0 || typeId <= 0)
+            return;
+        await _sendGate.WaitAsync(cancellationToken);
+        try
+        {
+            var boxes = readCacheTable("notifications")["boxes"] as JsonObject ?? new JsonObject();
+            var recipientKey = Key(recipientId);
+            if (idempotencyKey is not null &&
+                (boxes[recipientKey] as JsonObject)?["byID"] is JsonObject existingRows &&
+                existingRows.Any(entry => entry.Value is JsonObject existing &&
+                    string.Equals(Text(existing["idempotencyKey"]), idempotencyKey, StringComparison.Ordinal)))
+            {
+                return;
+            }
+
+            var notificationId = NextNotificationId(boxes);
+            var created = DateTimeOffset.FromUnixTimeMilliseconds(nowUnixMs()).UtcDateTime.ToFileTimeUtc();
+            var notification = new JsonObject
+            {
+                ["notificationID"] = notificationId,
+                ["typeID"] = typeId,
+                ["senderID"] = senderId,
+                ["receiverID"] = recipientId,
+                ["groupID"] = Eve.Services.Crimewatch.KillRightNotificationTypes.MiscGroup,
+                ["processed"] = false,
+                ["created"] = created,
+                ["data"] = data.DeepClone(),
+            };
+            if (idempotencyKey is not null)
+                notification["idempotencyKey"] = idempotencyKey;
+            RequireWrite("notifications", $"/boxes/{recipientKey}/byID/{Key(notificationId)}", notification);
+            await FlushUntilVisibleAsync("notifications", persisted =>
+            {
+                var saved = (persisted["boxes"] as JsonObject)?[recipientKey] is JsonObject box &&
+                    box["byID"] is JsonObject rows ? rows[Key(notificationId)] as JsonObject : null;
+                return saved is not null && Number(saved["typeID"]) == typeId &&
+                    Number(saved["senderID"]) == senderId && Number(saved["receiverID"]) == recipientId;
+            }, cancellationToken);
+            sendNotification(recipientId,
+            [
+                new Eve.Marshal.PyLong(notificationId),
+                new Eve.Marshal.PyInt(typeId),
+                new Eve.Marshal.PyLong(senderId),
+                Py.FileTimeLong(created),
+                NotificationWireData(data),
+            ]);
+        }
+        finally
+        {
+            _sendGate.Release();
+        }
+    }
     private void RequireWrite(string table, string path, JsonNode data)
     {
         var result = write(table, path, data);
@@ -8164,6 +10368,26 @@ public sealed class PersistenceMailSendHostAdapter(
 
     private static JsonNode? OptionalLong(long? value) => value is { } id ? JsonValue.Create(id) : null;
 
+    private static Eve.Marshal.PyValue NotificationWireData(JsonObject data) =>
+        new Eve.Marshal.PyDict([.. data.Select(pair => new KeyValuePair<Eve.Marshal.PyValue, Eve.Marshal.PyValue>(
+            new Eve.Marshal.PyStr(pair.Key), NotificationWireValue(pair.Value)))]);
+
+    private static Eve.Marshal.PyValue NotificationWireValue(JsonNode? value)
+    {
+        if (value is not JsonValue scalar)
+            return Eve.Marshal.PyNone.Instance;
+        if (scalar.TryGetValue<long>(out var integer))
+            return new Eve.Marshal.PyLong(integer);
+        if (scalar.TryGetValue<decimal>(out var amount))
+            return new Eve.Marshal.PyReal((double)amount);
+        if (scalar.TryGetValue<double>(out var number) && double.IsFinite(number))
+            return new Eve.Marshal.PyReal(number);
+        if (scalar.TryGetValue<bool>(out var flag))
+            return flag ? Eve.Marshal.PyBool.True : Eve.Marshal.PyBool.False;
+        if (scalar.TryGetValue<string>(out var text))
+            return new Eve.Marshal.PyStr(text);
+        return Eve.Marshal.PyNone.Instance;
+    }
     private static Eve.Marshal.PyValue NotificationData(
         long senderId,
         string senderName,

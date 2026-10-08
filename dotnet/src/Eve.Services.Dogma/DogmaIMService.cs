@@ -25,7 +25,8 @@ public delegate ValueTask<bool?> SkillBoosterActivationHandler(
 public sealed partial class DogmaIMService(
     DogmaStatic statics, CharacterShips ships, Func<long> nowUnixMs, SkillBoosterActivationHandler activateBooster,
     CharacterDogmaSync? sync = null, ISpaceTargeting? space = null, ISpaceModules? modules = null, ISpaceHealth? health = null,
-    ISpaceRounds? rounds = null, Func<TimeSpan, CancellationToken, Task>? delay = null, Action<string>? log = null, Eve.Scheduler.LocalTimers? localTimers = null, Func<ClientSession, IReadOnlyList<long>, CancellationToken, Task<PyValue>>? injectSkillBooks = null) : IBoundObjectReleaseHandler
+    ISpaceRounds? rounds = null, Func<TimeSpan, CancellationToken, Task>? delay = null, Action<string>? log = null, Eve.Scheduler.LocalTimers? localTimers = null, Func<ClientSession, IReadOnlyList<long>, CancellationToken, Task<PyValue>>? injectSkillBooks = null,
+    Func<ClientSession, CancellationToken, ValueTask>? createNewbieShip = null) : IBoundObjectReleaseHandler
 {
     private readonly CharacterDogmaSync _sync = sync ?? new CharacterDogmaSync(statics, ships, nowUnixMs);
 
@@ -132,6 +133,49 @@ public sealed partial class DogmaIMService(
             call.Session.AfterResponse(() => _sync.SendCharacter(call.Session, snapshot, fileTime, version));
         }
         return answer;
+    }
+
+    /// <summary><c>GetRequiredSkillLevels(typeID)</c>: maps each required skill type to the maximum level required by the type.</summary>
+    [Method("GetRequiredSkillLevels")]
+    public async ValueTask<PyValue> GetRequiredSkillLevels(ServiceCall call)
+    {
+        var requestedTypeId = IdOf(call.Arg(0)) ?? 0;
+        if (requestedTypeId <= 0 || requestedTypeId > int.MaxValue)
+        {
+            return new PyDict([]);
+        }
+
+        var typeId = (int)requestedTypeId;
+        await statics.EnsureTypesAsync([typeId], call.Cancellation);
+        if (statics.Type(typeId) is not { } type)
+        {
+            return new PyDict([]);
+        }
+
+        return new PyDict(FittingRules.RequiredSkills(type)
+            .GroupBy(requirement => requirement.Skill)
+            .OrderBy(group => group.Key)
+            .Select(group => new KeyValuePair<PyValue, PyValue>(
+                new PyInt(group.Key), new PyInt(Math.Max(1, group.Max(requirement => requirement.Level)))))
+            .ToArray());
+    }
+
+    /// <summary><c>CreateNewbieShip(shipID, locationID)</c>: assembles and boards the session character's rookie ship at its current station.</summary>
+    [Method("CreateNewbieShip")]
+    public async ValueTask<PyValue> CreateNewbieShip(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Session.CharacterId is not > 0 || call.Session.GetInt("stationid") is not > 0)
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("MustBeDocked");
+        }
+
+        if (createNewbieShip is not null)
+        {
+            // The reference resolves the character and station from the session; its client IDs are logging data only.
+            await createNewbieShip(call.Session, call.Cancellation);
+        }
+        return None;
     }
 
     /// <summary>Returns the active ship's remaining turret hardpoints as the integer the fitting UI reads.</summary>

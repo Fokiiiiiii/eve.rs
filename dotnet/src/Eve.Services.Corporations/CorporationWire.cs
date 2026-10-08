@@ -18,6 +18,34 @@ public static class CorporationWire
             _ => None,
         } : fallback ?? None;
 
+
+    public static long? FactionId(Corporation? corporation)
+    {
+        return corporation is null ? null : PositiveSetting(corporation, "factionID");
+    }
+
+    public static IReadOnlyList<long> AllowedEnlistmentFactions(Corporation? corporation)
+    {
+        if (corporation is null ||
+            !corporation.Settings.TryGetProperty("fw", out var warfare) ||
+            warfare.ValueKind != System.Text.Json.JsonValueKind.Object ||
+            !warfare.TryGetProperty("allowedEnlistmentFactions", out var values) ||
+            values.ValueKind != System.Text.Json.JsonValueKind.Array)
+            return [];
+
+        return values.EnumerateArray()
+            .Where(value => value.ValueKind == System.Text.Json.JsonValueKind.Number && value.TryGetInt64(out var factionId) && factionId > 0)
+            .Select(value => value.GetInt64())
+            .ToArray();
+    }
+
+    private static long? PositiveSetting(Corporation corporation, string key) =>
+        corporation.Settings.TryGetProperty(key, out var value) &&
+        value.ValueKind == System.Text.Json.JsonValueKind.Number &&
+        value.TryGetInt64(out var factionId) && factionId > 0
+            ? factionId
+            : null;
+
     public static (string Key,PyValue Value)[] Fields(Corporation c,int members) =>
     [
         ("corporationID",new PyInt(c.Id)),("corporationName",new PyStr(c.Name)),

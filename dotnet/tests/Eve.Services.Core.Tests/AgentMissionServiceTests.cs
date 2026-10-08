@@ -222,6 +222,274 @@ public sealed class AgentMissionServiceTests
         Assert.Equal(new PyInt(0), mission.Items[8]);
     }
 
+    [Fact]
+    public async Task ReadMissionInfoItemsAsync_projects_an_accepted_mission_for_mission_tracker_rpcs()
+    {
+        const long characterId = 90000004;
+        const long agentId = 7004;
+        var state = JsonNode.Parse("""
+            {
+              "missionsByAgentID": {
+                "7004": {
+                  "runtimeStatus": "accepted",
+                  "missionNameID": 123458,
+                  "missionTypeLabel": "UI/Agents/StandardMission/Encounter",
+                  "expiresAtFileTime": "133801234567890123",
+                  "objectiveMode": "agent",
+                  "contentID": "mission-4",
+                  "bookmarkIDsByRole": {}
+                }
+              }
+            }
+            """)!.AsObject();
+        var service = new AgentMissionService(
+            (id, _) => ValueTask.FromResult<JsonObject?>(id == characterId ? state : null),
+            (_, ids, _) =>
+            {
+                Assert.Empty(ids);
+                return ValueTask.FromResult<IReadOnlyDictionary<long, JsonObject>>(new Dictionary<long, JsonObject>());
+            },
+            (_, _) => ValueTask.FromResult<JsonArray?>(null));
+        var session = new ClientSession();
+        session.Set("charid", new PyInt(characterId));
+
+        var result = Assert.IsType<PyList>(await service.ReadMissionInfoItemsAsync(
+            characterId, agentId, session, CancellationToken.None));
+
+        Assert.Equal(10, result.Items.Count);
+        Assert.Equal(new PyInt(2), result.Items[0]);
+        Assert.Equal(new PyStr("UI/Agents/StandardMission/Encounter"), result.Items[2]);
+        Assert.Equal(new PyInt(123458), result.Items[3]);
+        Assert.Equal(new PyInt(agentId), result.Items[4]);
+        Assert.Equal(new PyStr("mission-4"), result.Items[9]);
+        Assert.Null(await service.ReadMissionInfoItemsAsync(
+            characterId, agentId + 1, session, CancellationToken.None));
+    }
+    [Fact]
+    public async Task MissionTrackerMgrService_uses_the_existing_agent_mission_reader()
+    {
+        const long characterId = 90000005;
+        const long agentId = 7005;
+        var state = JsonNode.Parse("""
+            {
+              "missionsByAgentID": {
+                "7005": {
+                  "runtimeStatus": "accepted",
+                  "missionNameID": 123459,
+                  "missionTypeLabel": "UI/Agents/StandardMission/Encounter",
+                  "expiresAtFileTime": "133801234567890123",
+                  "objectiveMode": "agent",
+                  "contentID": "mission-5",
+                  "bookmarkIDsByRole": {}
+                }
+              }
+            }
+            """)!.AsObject();
+        var agentMissions = new AgentMissionService(
+            (id, _) => ValueTask.FromResult<JsonObject?>(id == characterId ? state : null),
+            (_, _, _) => ValueTask.FromResult<IReadOnlyDictionary<long, JsonObject>>(new Dictionary<long, JsonObject>()),
+            (_, _) => ValueTask.FromResult<JsonArray?>(null));
+        var session = new ClientSession();
+        session.Set("charid", new PyInt(characterId));
+        var tracker = (IService)new MissionTrackerMgrService(agentMissions.ReadMissionInfoItemsAsync);
+
+        var info = Assert.IsType<PyList>(await tracker.CallAsync(new ServiceCall
+        {
+            Method = "GetMissionInfoItems",
+            Args = [new PyInt(agentId)],
+            Session = session,
+        }));
+
+        Assert.Equal(new PyInt(2), info.Items[0]);
+        Assert.Equal(new PyInt(agentId), info.Items[4]);
+        Assert.Equal(new PyStr("mission-5"), info.Items[9]);
+    }
+    [Fact]
+    public void Agent_mgr_advertises_the_seven_reference_rpcs()
+    {
+        var service = new AgentMissionService(
+            (_, _) => ValueTask.FromResult<JsonObject?>(null),
+            (_, _, _) => ValueTask.FromResult<IReadOnlyDictionary<long, JsonObject>>(new Dictionary<long, JsonObject>()),
+            (_, _) => ValueTask.FromResult<JsonArray?>(null));
+        string[] methods =
+        [
+            "GetAgents",
+            "GetCompletedCareerAgentIDs",
+            "GetDisabledMissions",
+            "GetMessagesForEpicArcMissions",
+            "GetMyEpicArcStatus",
+            "GetPlausibleMissionIDs",
+            "GetSolarSystemOfAgent",
+        ];
+
+        Assert.All(methods, method => Assert.True(service.HasMethod(method), method));
+    }
+
+    [Fact]
+    public async Task Agent_mgr_agents_and_location_match_the_reference_rowset_and_scalar()
+    {
+        var agent = new AgentMissionAgentData(
+            7004, 8, 24, 3, null, 1000036, false, true, 17, false, "", "",
+            18, 1531, 1, 30000165, 416, 4239, 20520);
+        var service = CreateAgentRpcService(rpcCallbacks: new AgentMissionRpcCallbacks(
+            ReadAgents: _ => ValueTask.FromResult<IReadOnlyList<AgentMissionAgentData>>([agent]),
+            ReadSolarSystemOfAgent: (agentId, _) =>
+                ValueTask.FromResult<long?>(agentId == agent.AgentId ? agent.SolarSystemId : null)));
+        var session = new ClientSession();
+
+        var rowset = await service.CallAsync(RpcCall("GetAgents", session));
+        Assert.Equal(Py.Rowset(
+        [
+            "agentID", "agentTypeID", "divisionID", "level", "stationID", "corporationID",
+            "isLocatorAgent", "isInSpace", "careerID", "importantMission", "missionKind",
+            "missionTypeLabel", "specialityID", "stationTypeID", "bloodlineID", "solarSystemID",
+            "dungeonID", "spawnPointID", "typeID",
+        ],
+        [
+            new PyTuple([
+                new PyInt(7004), new PyInt(8), new PyInt(24), new PyInt(3), PyNone.Instance,
+                new PyInt(1000036), PyBool.False, PyBool.True, new PyInt(17), PyBool.False,
+                new PyStr(""), new PyStr(""), new PyInt(18), new PyInt(1531), new PyInt(1),
+                new PyInt(30000165), new PyInt(416), new PyInt(4239), new PyInt(20520),
+            ]),
+        ]), rowset);
+        Assert.Equal(new PyInt(30000165),
+            await service.CallAsync(RpcCall("GetSolarSystemOfAgent", session, new PyInt(7004))));
+    }
+
+    [Fact]
+    public async Task Agent_mgr_career_completion_and_mission_lists_keep_the_reference_shapes()
+    {
+        const long characterId = 90000021;
+        long requestedAgentId = 0;
+        var state = JsonNode.Parse("""
+            {"completedCareerAgentIDs":{"7001":true,"7002":false,"7003":1}}
+            """)!.AsObject();
+        var service = CreateAgentRpcService(
+            (id, _) => ValueTask.FromResult<JsonObject?>(id == characterId ? state : null),
+            new AgentMissionRpcCallbacks(
+                ReadDisabledMissions: _ => ValueTask.FromResult<IReadOnlyList<long>>([5101, 5102]),
+                ReadPlausibleMissionIds: (agentId, _) =>
+                {
+                    requestedAgentId = agentId;
+                    return ValueTask.FromResult<IReadOnlyList<long>>([6101, 6102]);
+                }));
+        var session = new ClientSession();
+        session.Set("charid", new PyInt(characterId));
+
+        Assert.Equal(NumericDict(
+                (7001, PyBool.True),
+                (7002, PyBool.False),
+                (7003, PyBool.False)),
+            await service.CallAsync(RpcCall(
+                "GetCompletedCareerAgentIDs",
+                session,
+                new PyList([new PyInt(7001), new PyInt(7002), new PyInt(7003), new PyInt(7001), new PyInt(0)]))));
+        Assert.Equal(new PyList([new PyInt(5101), new PyInt(5102)]),
+            await service.CallAsync(RpcCall("GetDisabledMissions", session)));
+        Assert.Equal(new PyList([new PyInt(6101), new PyInt(6102)]),
+            await service.CallAsync(RpcCall("GetPlausibleMissionIDs", session, new PyInt(7004))));
+        Assert.Equal(7004, requestedAgentId);
+    }
+
+    [Fact]
+    public async Task Agent_mgr_epic_arc_status_and_message_maps_use_numeric_nested_keys()
+    {
+        const long characterId = 90000022;
+        const long acceptedDate = 133801234567890123;
+        const long completedDate = 133802345678901234;
+        var state = JsonNode.Parse("""
+            {
+              "epicArcProgress": {
+                "missionStatusByArcID": {
+                  "1200": {
+                    "430001": {
+                      "acceptedDate": "133801234567890123",
+                      "completedDate": "",
+                      "quitDate": "",
+                      "nameID": 123456
+                    }
+                  }
+                },
+                "completedArcsByID": {
+                  "arc-1201": {
+                    "epicArcID": 1201,
+                    "completedMissionID": 430002,
+                    "completedAtFileTime": "133802345678901234"
+                  }
+                }
+              },
+              "missionsByAgentID": {
+                "7004": {
+                  "runtimeStatus": "accepted",
+                  "acceptedAtFileTime": "133801234567890123",
+                  "missionNameID": 123457,
+                  "clientMissionRecord": {
+                    "isEpicArc": true,
+                    "epicArcID": 1202,
+                    "missionID": 430003
+                  }
+                }
+              }
+            }
+            """)!.AsObject();
+        var messages = JsonNode.Parse("""
+            {"start":{"430001":"UI/Agent/EpicArc/Start","430002":123}}
+            """)!.AsObject();
+        var service = CreateAgentRpcService(
+            (id, _) => ValueTask.FromResult<JsonObject?>(id == characterId ? state : null),
+            new AgentMissionRpcCallbacks(
+                ReadEpicArcMessages: _ => ValueTask.FromResult<JsonObject?>(messages)));
+        var session = new ClientSession();
+        session.Set("charid", new PyInt(characterId));
+
+        var firstArcMissions = NumericDict((430001, Py.KeyVal(
+            ("acceptedDate", Py.FileTimeLong(acceptedDate)),
+            ("completedDate", PyNone.Instance),
+            ("quitDate", PyNone.Instance),
+            ("nameID", new PyInt(123456)))));
+        var completedArcMissions = NumericDict((430002, Py.KeyVal(
+            ("acceptedDate", PyNone.Instance),
+            ("completedDate", Py.FileTimeLong(completedDate)),
+            ("quitDate", PyNone.Instance),
+            ("nameID", PyNone.Instance))));
+        var activeArcMissions = NumericDict((430003, Py.KeyVal(
+            ("acceptedDate", Py.FileTimeLong(acceptedDate)),
+            ("completedDate", PyNone.Instance),
+            ("quitDate", PyNone.Instance),
+            ("nameID", new PyInt(123457)))));
+        var expectedArcStatus = NumericDict(
+            (1200, firstArcMissions),
+            (1201, completedArcMissions),
+            (1202, activeArcMissions));
+        Assert.Equal(expectedArcStatus, await service.CallAsync(RpcCall("GetMyEpicArcStatus", session)));
+
+        Assert.Equal(new PyDict([
+            new KeyValuePair<PyValue, PyValue>(
+                new PyStr("start"),
+                NumericDict(
+                    (430001, new PyStr("UI/Agent/EpicArc/Start")),
+                    (430002, new PyInt(123)))
+            ),
+        ]), await service.CallAsync(RpcCall("GetMessagesForEpicArcMissions", session)));
+    }
+
+    private static AgentMissionService CreateAgentRpcService(
+        Func<long, CancellationToken, ValueTask<JsonObject?>>? readMissionState = null,
+        AgentMissionRpcCallbacks? rpcCallbacks = null) =>
+        new(
+            readMissionState ?? ((_, _) => ValueTask.FromResult<JsonObject?>(null)),
+            (_, _, _) => ValueTask.FromResult<IReadOnlyDictionary<long, JsonObject>>(new Dictionary<long, JsonObject>()),
+            (_, _) => ValueTask.FromResult<JsonArray?>(null),
+            rpcCallbacks: rpcCallbacks);
+
+    private static ServiceCall RpcCall(string method, ClientSession session, params PyValue[] args) =>
+        new() { Method = method, Args = args, Session = session };
+
+    private static PyDict NumericDict(params (long Key, PyValue Value)[] entries) =>
+        new(entries.Select(entry => new KeyValuePair<PyValue, PyValue>(
+            new PyInt(entry.Key), entry.Value)).ToArray());
+
     private static ServiceCall Call(long characterId, long stationId = 0)
     {
         var session = new ClientSession();

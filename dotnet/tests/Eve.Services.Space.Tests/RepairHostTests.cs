@@ -114,8 +114,24 @@ public class ProjectedHostTests
         int typeId, int slot = HighSlot, int? shipTypeId = null)
     {
         var rig = await Rig.CreateAsync();
+        WireRemoteAssistance(rig);
         var (session, character, module) = await RepairHostTests.InSpaceWithAsync(rig, typeId, slot, shipTypeId);
         return (rig, session, character, module);
+    }
+
+    private static void WireRemoteAssistance(Rig rig)
+    {
+        rig.Space.RemoteAssistancePolicyOf = (request, safetyLevel, _) =>
+        {
+            var facts = new Eve.Crimewatch.PolicyFacts(
+                AttackerIsPlayer: request.Attacker > 0,
+                TargetIsPlayerProperty: request.Target > 0,
+                SamePilot: request.Attacker == request.Target,
+                TargetIsCapsule: request.TargetIsCapsule);
+            return Task.FromResult(Eve.Crimewatch.PolicyEngine.Evaluate(new Eve.Crimewatch.PolicyRequest(
+                Eve.Crimewatch.PolicyAction.RemoteAssistance, request.Where, facts, safetyLevel)));
+        };
+        rig.Space.RecordRemoteAssistance = (_, _) => Task.CompletedTask;
     }
 
     private static async Task<double> ValueAsync(Rig rig, Eve.Characters.Created character, long module, int attribute) =>
@@ -452,6 +468,7 @@ public class ProjectedHostTests
     public async Task Remote_tracking_computer_assistance_avoids_crimewatch_while_tracking_disruption_is_an_attack()
     {
         var rig = await Rig.CreateAsync();
+        WireRemoteAssistance(rig);
         await using var _ = rig;
         var sde = new Eve.Sde.SdeReader(rig.Source);
         var catalogBuild = await sde.BuildAsync()
@@ -531,6 +548,7 @@ public class ProjectedHostTests
     public async Task Mutadaptive_cycle_requests_receive_the_spooled_amount_and_clear_after_the_final_response()
     {
         var rig = await Rig.CreateAsync();
+        WireRemoteAssistance(rig);
         await using var _ = rig;
         var sde = new Eve.Sde.SdeReader(rig.Source);
         var catalogBuild = await sde.BuildAsync()

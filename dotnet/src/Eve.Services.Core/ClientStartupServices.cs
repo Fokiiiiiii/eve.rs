@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Text;
+using System.Text.Json.Nodes;
 using Eve.Marshal;
 
 namespace Eve.Services.Core;
@@ -45,49 +47,96 @@ public sealed partial class AlertService
 [Service("fighterMgr")]
 public sealed partial class FighterMgrService
 {
+    public enum AbilitySlotOperation { Activate, Deactivate }
+
+    public sealed record AbilitySlotRequest(
+        AbilitySlotOperation Operation,
+        ClientSession Session,
+        IReadOnlyList<long> FighterIds,
+        PyValue AbilitySlotId,
+        PyValue Target);
+
+    public delegate ValueTask<IReadOnlyDictionary<long, PyValue>?> AbilitySlotCallback(
+        AbilitySlotRequest request,
+        CancellationToken cancellationToken);
+
+    /// <summary>The Host installs this handler when player-fighter inventory and simulation support is available.</summary>
+    public Func<ServiceCall, ValueTask<PyValue>>? RpcHandler { get; set; }
+    public AbilitySlotCallback? AbilitySlotHandler { get; set; }
+
     [Method("GetFightersForShip")]
-    public PyValue GetFightersForShip(ServiceCall call) => new PyTuple([
+    public ValueTask<PyValue> GetFightersForShip(ServiceCall call) => Dispatch(call, new PyTuple([
         new PyList([]),
         new PyList([]),
         new PyDict([]),
-    ]);
-
-    // The current space protocol controls drones, not player fighter squadrons. Keep the fighterMgr wire contract available until a fighter backend is exposed.
-    private const string FighterBackendUnavailable = "Fighter commands are not connected to the space simulation.";
+    ]));
 
     [Method("CmdAbandonFighter")]
-    public PyValue CmdAbandonFighter(ServiceCall call) => PyBool.False;
+    public ValueTask<PyValue> CmdAbandonFighter(ServiceCall call) => Dispatch(call, PyBool.False);
+
+    [Method("CmdActivateAbilitySlots")]
+    public ValueTask<PyValue> CmdActivateAbilitySlots(ServiceCall call) =>
+        DispatchAbilitySlots(call, AbilitySlotOperation.Activate);
+
+    [Method("CmdDeactivateAbilitySlots")]
+    public ValueTask<PyValue> CmdDeactivateAbilitySlots(ServiceCall call) =>
+        DispatchAbilitySlots(call, AbilitySlotOperation.Deactivate);
 
     [Method("CmdScoopAbandonedFighterFromSpace")]
-    public PyValue CmdScoopAbandonedFighterFromSpace(ServiceCall call) => PyBool.False;
+    public ValueTask<PyValue> CmdScoopAbandonedFighterFromSpace(ServiceCall call) => Dispatch(call, PyBool.False);
 
     [Method("ExecuteMovementCommandOnFighters")]
-    public PyValue ExecuteMovementCommandOnFighters(ServiceCall call) => PyNone.Instance;
+    public ValueTask<PyValue> ExecuteMovementCommandOnFighters(ServiceCall call) => Dispatch(call, PyNone.Instance);
 
     [Method("LaunchFightersFromTubes")]
-    public PyValue LaunchFightersFromTubes(ServiceCall call) => UnavailableErrors(call, 0);
+    public ValueTask<PyValue> LaunchFightersFromTubes(ServiceCall call) => Dispatch(call, new PyDict([]));
 
     [Method("LoadFightersToTube")]
-    public PyValue LoadFightersToTube(ServiceCall call) => PyBool.False;
+    public ValueTask<PyValue> LoadFightersToTube(ServiceCall call) => Dispatch(call, PyBool.False);
 
     [Method("RecallFightersToTubes")]
-    public PyValue RecallFightersToTubes(ServiceCall call) => UnavailableErrors(call, 0);
+    public ValueTask<PyValue> RecallFightersToTubes(ServiceCall call) => Dispatch(call, RecallFallback(call));
 
     [Method("UnloadTubeToFighterBay")]
-    public PyValue UnloadTubeToFighterBay(ServiceCall call) => PyBool.False;
+    public ValueTask<PyValue> UnloadTubeToFighterBay(ServiceCall call) => Dispatch(call, PyBool.False);
 
-    private static PyDict UnavailableErrors(ServiceCall call, int argumentIndex)
+    private ValueTask<PyValue> Dispatch(ServiceCall call, PyValue fallback) =>
+        RpcHandler is { } handler ? handler(call) : ValueTask.FromResult(fallback);
+
+    private ValueTask<PyValue> DispatchAbilitySlots(ServiceCall call, AbilitySlotOperation operation)
     {
-        var error = new PyTuple([
-            new PyStr("CustomNotify"),
-            new PyDict([new KeyValuePair<PyValue, PyValue>(
-                new PyStr("notify"), new PyStr(FighterBackendUnavailable))]),
-        ]);
-        var entries = RequestedIds(call.Arg(argumentIndex))
-            .Select(id => new KeyValuePair<PyValue, PyValue>(FighterId(id), error))
-            .ToArray();
-        return new PyDict(entries);
+        if (AbilitySlotHandler is { } abilitySlotHandler)
+        {
+            var request = new AbilitySlotRequest(
+                operation,
+                call.Session,
+                RequestedIds(call.Arg(0)),
+                call.Arg(1),
+                operation == AbilitySlotOperation.Activate && call.Args.Count > 2
+                    ? call.Arg(2)
+                    : PyNone.Instance);
+            return BuildAbilitySlotResultAsync(abilitySlotHandler, request, call.Cancellation);
+        }
+        return RpcHandler is { } rpcHandler
+            ? rpcHandler(call)
+            : ValueTask.FromResult<PyValue>(RecallFallback(call));
     }
+
+    private static async ValueTask<PyValue> BuildAbilitySlotResultAsync(
+        AbilitySlotCallback callback,
+        AbilitySlotRequest request,
+        CancellationToken cancellationToken)
+    {
+        var entries = await callback(request, cancellationToken);
+        return entries is null
+            ? new PyDict([])
+            : new PyDict([.. entries.Where(entry => entry.Key > 0).Select(entry =>
+                new KeyValuePair<PyValue, PyValue>(FighterId(entry.Key), entry.Value))]);
+    }
+
+    private static PyDict RecallFallback(ServiceCall call) => new(RequestedIds(call.Arg(0))
+        .Select(id => new KeyValuePair<PyValue, PyValue>(FighterId(id), PyNone.Instance))
+        .ToArray());
 
     private static IReadOnlyList<long> RequestedIds(PyValue value)
     {
@@ -115,8 +164,31 @@ public sealed partial class FighterMgrService
 }
 
 [Service("shipKillCounter")]
-public sealed partial class ShipKillCounterService
+public sealed partial class ShipKillCounterService(
+    Func<CancellationToken, Task<JsonObject>>? readShipKillCounters = null)
 {
+    private const int MaxDisplayedKillmarks = 999;
+
     [Method("GetItemKillCountPlayer")]
-    public PyValue GetItemKillCountPlayer(ServiceCall call) => new PyInt(0);
+    public async ValueTask<PyValue> GetItemKillCountPlayer(ServiceCall call)
+    {
+        var itemId = call.Arg(0) switch
+        {
+            PyInt value => value.Value,
+            PyLong value => value.Value,
+            _ => 0,
+        };
+        if (itemId <= 0 || readShipKillCounters is null)
+            return new PyInt(0);
+
+        var table = await readShipKillCounters(call.Cancellation).ConfigureAwait(false);
+        var record = (table["ships"] as JsonObject)?
+            [itemId.ToString(CultureInfo.InvariantCulture)] as JsonObject;
+        if (record?["playerKills"] is not { } storedCount ||
+            !double.TryParse(storedCount.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var count) ||
+            !double.IsFinite(count))
+            return new PyInt(0);
+
+        return new PyInt((int)Math.Clamp(Math.Truncate(count), 0d, MaxDisplayedKillmarks));
+    }
 }

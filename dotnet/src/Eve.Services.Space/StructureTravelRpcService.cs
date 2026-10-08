@@ -11,14 +11,22 @@ namespace Eve.Services.Space;
 public sealed class StructureTravelRpcService : IService
 {
     private readonly Func<ServiceCall, ValueTask<PyValue>>? _travel;
+    private readonly Func<long, CancellationToken, ValueTask<long?>>? _jumpBridgeDestination;
+    private readonly Func<long, CancellationToken, ValueTask<(long StructureId, long SolarSystemId)?>>? _linkedStructure;
 
-    public StructureTravelRpcService(string name, Func<ServiceCall, ValueTask<PyValue>>? travel = null)
+    public StructureTravelRpcService(
+        string name,
+        Func<ServiceCall, ValueTask<PyValue>>? travel = null,
+        Func<long, CancellationToken, ValueTask<long?>>? jumpBridgeDestination = null,
+        Func<long, CancellationToken, ValueTask<(long StructureId, long SolarSystemId)?>>? linkedStructure = null)
     {
         if (name is not ("structureCynoBeaconMgr" or "structureJumpBridgeMgr"))
             throw new ArgumentOutOfRangeException(nameof(name), name, "Unknown structure travel service.");
 
         Name = name;
         _travel = travel;
+        _jumpBridgeDestination = jumpBridgeDestination;
+        _linkedStructure = linkedStructure;
     }
 
     public string Name { get; }
@@ -29,7 +37,10 @@ public sealed class StructureTravelRpcService : IService
             "CmdBridgeToStructureBeacon" or
             "CmdGroupJumpToStructureBeacon" or
             "CmdJumpToStructureBeacon",
-        "structureJumpBridgeMgr" => method is "CmdJumpThroughStructureStargate",
+        "structureJumpBridgeMgr" => method is
+            "CmdJumpThroughStructureStargate" or
+            "GetJbStructureDestination" or
+            "GetLinkedStructure",
         _ => false,
     };
 
@@ -37,6 +48,33 @@ public sealed class StructureTravelRpcService : IService
     {
         if (!HasMethod(call.Method))
             return PyNone.Instance;
+
+        if (Name == "structureJumpBridgeMgr" && call.Method is "GetJbStructureDestination" or "GetLinkedStructure")
+        {
+            var structureId = call.Arg(0) switch
+            {
+                PyInt id when id.Value > 0 => id.Value,
+                PyLong id when id.Value > 0 => id.Value,
+                _ => 0,
+            };
+            if (structureId <= 0)
+                return PyNone.Instance;
+
+            if (call.Method == "GetJbStructureDestination")
+            {
+                var destination = _jumpBridgeDestination is { } getDestination
+                    ? await getDestination(structureId, call.Cancellation).ConfigureAwait(false)
+                    : null;
+                return destination is > 0 ? new PyInt(destination.Value) : PyNone.Instance;
+            }
+
+            var linked = _linkedStructure is { } getLinked
+                ? await getLinked(structureId, call.Cancellation).ConfigureAwait(false)
+                : null;
+            return linked is { StructureId: > 0, SolarSystemId: > 0 } pair
+                ? new PyList([new PyInt(pair.StructureId), new PyInt(pair.SolarSystemId)])
+                : PyNone.Instance;
+        }
 
         if (_travel is null)
         {

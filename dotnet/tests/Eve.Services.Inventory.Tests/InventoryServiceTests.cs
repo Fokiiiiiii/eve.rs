@@ -245,6 +245,13 @@ public class InvBrokerTests
     private static PyValue[] Values(PyValue row) => [.. ((PyPackedRow)row).Values];
 
     private static PyPackedRow[] Rows(PyValue list) => [.. ((PyList)list).Items.Cast<PyPackedRow>()];
+    // Packed rows preserve DBTYPE20 item IDs as PyLong; compare the numeric ID, not the wrapper type.
+    private static long PackedItemId(PyPackedRow row) => row.Values[0] switch
+    {
+        PyLong wide => wide.Value,
+        PyInt narrow => narrow.Value,
+        _ => throw new InvalidOperationException("Packed inventory row has a non-integer item ID."),
+    };
 
     /// <summary>The rows in a Python <c>set</c> (what a docked ship answers when it is asked for everything).</summary>
     private static PyPackedRow[] SetRows(PyValue set) =>
@@ -362,12 +369,12 @@ public class InvBrokerTests
         var stationIds = Assert.IsType<PyList>(await rig.CallAsync(session, "ListStations"));
         Assert.Contains(InventoryWire.Id(Rig.Station), stationIds.Items);
         var stationItems = Rows(await rig.CallAsync(session, "ListStationItems", null, new PyLong(Rig.Station)));
-        Assert.Contains(stationItems, row => Equals(row.Values[0], InventoryWire.Id(ship)));
+        Assert.Contains(stationItems, row => PackedItemId(row) == ship);
         Assert.Equal(PyBool.True, await rig.CallAsync(session, "IsMyItemAtDockableLocation", null, new PyLong(ship), new PyLong(Rig.Station)));
 
         var inventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
         var nested = Rows(await rig.CallAsync(session, "ListIncludingContainers", inventory));
-        Assert.Contains(nested, row => Equals(row.Values[0], InventoryWire.Id(cargo)));
+        Assert.Contains(nested, row => PackedItemId(row) == cargo);
 
         Assert.Equal(PyNone.Instance, await rig.CallAsync(session, "SetLabel", null, new PyLong(ship), new PyStr("Test fit")));
         Assert.Equal("Test fit", (await rig.Items.GetAsync(ship))!.CustomName);
@@ -441,7 +448,7 @@ public class InvBrokerTests
         var session = Rig.Session(corporation: Rig.Corporation);
         var inventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(corporationShip)));
         var existing = Rows(await rig.CallAsync(session, "List", inventory, new PyInt(CharacterShips.CargoFlag)));
-        Assert.Contains(existing, row => row.Values[0] == InventoryWire.Id(corporationCargo));
+        Assert.Contains(existing, row => PackedItemId(row) == corporationCargo);
 
         Assert.Equal(PyNone.Instance, await rig.CallAsync(session, "SetLabel", inventory,
             new PyLong(corporationShip), new PyStr("Denied")));
@@ -499,12 +506,12 @@ public class InvBrokerTests
         var stations = Assert.IsType<PyList>(await rig.CallAsync(session, "ListStations"));
         Assert.Contains(InventoryWire.Id(Rig.Station), stations.Items);
         var stationItems = Rows(await rig.CallAsync(session, "ListStationItems", null, new PyLong(Rig.Station)));
-        Assert.Contains(stationItems, row => row.Values[0] == InventoryWire.Id(ship));
+        Assert.Contains(stationItems, row => PackedItemId(row) == ship);
         Assert.Equal(PyBool.True, await rig.CallAsync(session, "IsMyItemAtDockableLocation", null, new PyLong(ship), new PyLong(Rig.Station)));
 
         var inventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
         var includingContainers = Rows(await rig.CallAsync(session, "ListIncludingContainers", inventory));
-        Assert.Contains(includingContainers, row => row.Values[0] == InventoryWire.Id(cargo));
+        Assert.Contains(includingContainers, row => PackedItemId(row) == cargo);
 
         Assert.Equal(PyNone.Instance, await rig.CallAsync(session, "SetLabel", null, new PyLong(ship), new PyStr("Test fit")));
         Assert.Equal("Test fit", (await rig.Items.GetAsync(ship))!.CustomName);
@@ -896,6 +903,7 @@ public class InvBrokerTests
             }).AsTask();
         var oid = Rig.OidOf(await Call(null!, "GetInventoryFromId", new PyLong(ship)));
 
+        // An omitted flag inherits the cargo flag from the bound ship inventory.
         // what moved: True
         space.Answer = true;
         Assert.Equal(PyBool.True, await Call(oid, "MultiAdd", new PyList([new PyLong(9_988_400_000_005), new PyInt(77)]), new PyLong(9_988_400_000_009)));
@@ -917,6 +925,7 @@ public class InvBrokerTests
         Assert.Equal(PyNone.Instance, await Call(oid, "MultiAdd", new PyList([]), new PyInt(9)));
         Assert.Equal(PyNone.Instance, await Call(oid, "MultiAdd", new PyList([new PyInt(5)]), new PyStr("x")));
         Assert.Equal(PyNone.Instance, await CallWith(oid, "MultiAdd", 87, new PyList([new PyInt(5)]), new PyInt(9))); // the drone bay is not the hold
+        Assert.Equal(PyNone.Instance, await CallWith(oid, "MultiAdd", 0, new PyList([new PyInt(5)]), new PyInt(9))); // an explicit empty flag does not inherit cargo
         Assert.Equal(asked, space.Asked.Count);
     }
 

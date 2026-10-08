@@ -19,6 +19,26 @@ public sealed class RewardsServiceTests
         Assert.Equal(MarshalCodec.Encode(expected), MarshalCodec.Encode(result));
     }
 
+    [Theory]
+    [InlineData("loginCampaignManager", "GetActiveCampaigns", "list")]
+    [InlineData("loginCampaignManager", "GetCampaignData", "dict")]
+    [InlineData("loginCampaignManager", "GetPlayerProgress", "dict")]
+    [InlineData("seasonalLoginCampaignManager", "GetActiveCampaigns", "list")]
+    [InlineData("seasonalLoginCampaignManager", "GetCampaignData", "list")]
+    [InlineData("seasonalLoginCampaignManager", "GetPlayerProgress", "dict")]
+    public async Task Campaign_catalog_rpcs_keep_the_reference_empty_shapes(string serviceName, string method, string shape)
+    {
+        var callbacks = new EmptyLoginRewardCallbacks();
+        IService service = serviceName == "loginCampaignManager"
+            ? new LoginCampaignMgrService(callbacks, () => Now)
+            : new SeasonalLoginCampaignMgrService(callbacks, () => Now);
+
+        Assert.True(service.HasMethod(method));
+        var result = await service.CallAsync(Call(method));
+        PyValue expected = shape == "list" ? new PyList([]) : new PyDict([]);
+        Assert.Equal(MarshalCodec.Encode(expected), MarshalCodec.Encode(result));
+    }
+
     [Fact]
     public async Task Login_campaign_state_returns_the_backend_snapshot_without_inventing_data()
     {

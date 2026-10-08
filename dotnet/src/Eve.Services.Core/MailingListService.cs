@@ -13,10 +13,8 @@ namespace Eve.Services.Core;
 /// </summary>
 /// <remarks>
 /// The reader supplies a snapshot of the existing GameStore mail.mailingLists object,
-/// keyed by list ID. For example, the Host can select it from LoadTableAsync("mail",
-/// createIfMissing: false). An unconnected service has the reference's empty state.
-/// Host registration and Create/Join/Leave/Delete, membership/access and welcome-mail
-/// writers (including notifications and mail fan-out) remain separate integration work.
+/// keyed by list ID. The Host provides the atomic mutation callback for manager writes,
+/// including authorization, member notifications, and welcome-mail fan-out.
 /// </remarks>
 public enum MailingListManagerMethod
 {
@@ -89,8 +87,11 @@ public sealed class MailingListService : IService
                 call.Session.ClientId,
                 call.Session.UserId,
                 call.Session.CharacterId);
+              var arguments = managerMethod == MailingListManagerMethod.Create
+                  ? CreateArguments(call)
+                  : call.Args;
             return await callback(
-                new MailingListMutation(managerMethod, caller, call.Args),
+                  new MailingListMutation(managerMethod, caller, arguments),
                 call.Cancellation);
         }
 
@@ -156,6 +157,29 @@ public sealed class MailingListService : IService
         "ClearWelcomeMail" => MailingListManagerMethod.ClearWelcomeMail,
         _ => null,
     };
+
+    private static IReadOnlyList<PyValue> CreateArguments(ServiceCall call) =>
+    [
+        call.Arg(0),
+        new PyInt(Access(CreateNumber(call.Arg(1), 1))),
+        new PyInt(Role(CreateNumber(call.Arg(2), 1))),
+        IntegerWire(Math.Max(0, Math.Truncate(CreateNumber(call.Arg(3), 0)))),
+    ];
+
+    private static double CreateNumber(PyValue value, double fallback)
+    {
+        if (value is PyNone)
+            return fallback;
+        var number = JsSemantics.ToNumber(value);
+        return double.IsFinite(number) ? number : fallback;
+    }
+
+    private static PyValue IntegerWire(double value)
+    {
+        if (value <= int.MaxValue)
+            return new PyInt((int)value);
+        return value >= long.MaxValue ? new PyLong(long.MaxValue) : new PyLong((long)value);
+    }
 
     private static PyValue Empty(string method) => method switch
     {

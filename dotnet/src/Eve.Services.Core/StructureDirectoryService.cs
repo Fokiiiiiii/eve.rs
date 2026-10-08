@@ -18,6 +18,26 @@ public interface IStructureDirectoryReadCallbacks
 
     ValueTask<PyValue> GetStructureDescriptionAsync(ServiceCall call);
 
+    /// <summary>Returns deployed structure map rows in the client's CRowset format.</summary>
+    ValueTask<PyValue> GetStructureMapDataAsync(long solarSystemId, CancellationToken cancellationToken);
+
+    /// <summary>Returns accessible online cyno beacon rows as six-field lists.</summary>
+    ValueTask<PyValue> GetMyAccessibleOnlineCynoBeaconStructuresAsync(ServiceCall call);
+
+    /// <summary>Returns solar-system IDs with online cyno beacons.</summary>
+    ValueTask<PyValue> GetSolarSystemsWithBeaconsAsync(CancellationToken cancellationToken);
+
+    /// <summary>Returns valid war-HQ rows only for the authenticated corporation or alliance.</summary>
+    ValueTask<PyValue> GetValidWarHQsAsync(ServiceCall call, long ownerId, CancellationToken cancellationToken);
+
+    /// <summary>Updates a persisted structure description after Host ownership and role checks.</summary>
+    ValueTask<bool> SetStructureDescriptionAsync(ServiceCall call);
+
+    /// <summary>Returns IDs of persisted, deployed structures with online docking in one system.</summary>
+    ValueTask<IReadOnlyList<long>> GetStructureIdsInSolarSystemAsync(
+        long solarSystemId,
+        CancellationToken cancellationToken);
+
     /// <summary>Returns info only for an actually deployed structure row in persistent state.</summary>
     ValueTask<PersistedStructureInfo?> GetStructureInfoAsync(long structureId, CancellationToken cancellationToken);
 
@@ -88,8 +108,14 @@ public sealed class StructureDirectoryService(IStructureDirectoryReadCallbacks r
         "GetJumpBridgesWithMyAccess" or
         "GetNearbyJumpBridges" or
         "GetStructureDescription" or
+        "GetStructureMapData" or
+        "GetMyAccessibleOnlineCynoBeaconStructures" or
+        "GetSolarSystemsWithBeacons" or
+        "GetValidWarHQs" or
+        "SetStructureDescription" or
         "GetStructureInfo" or
         "CheckMyDockingAccessToStructures" or
+        "GetMyDockableStructures" or
         "GetMyCharacterStructures" or
         "GetMyCorporationStructures";
 
@@ -103,6 +129,38 @@ public sealed class StructureDirectoryService(IStructureDirectoryReadCallbacks r
                 return await _read.GetNearbyJumpBridgesAsync(call);
             case "GetStructureDescription":
                 return await _read.GetStructureDescriptionAsync(call);
+            case "GetStructureMapData":
+            {
+                var solarSystemId = PositiveId(call.Arg(0));
+                if (solarSystemId <= 0)
+                    solarSystemId = call.Session?.GetInt("solarsystemid2") ??
+                        call.Session?.GetInt("solarsystemid") ?? 0;
+                return solarSystemId > 0
+                    ? await _read.GetStructureMapDataAsync(solarSystemId, call.Cancellation)
+                    : new PyList([]);
+            }
+            case "GetMyAccessibleOnlineCynoBeaconStructures":
+                return call.Session?.CharacterId is > 0
+                    ? await _read.GetMyAccessibleOnlineCynoBeaconStructuresAsync(call)
+                    : new PyList([]);
+            case "GetSolarSystemsWithBeacons":
+                return await _read.GetSolarSystemsWithBeaconsAsync(call.Cancellation);
+            case "GetValidWarHQs":
+            {
+                var ownerId = PositiveId(call.Arg(0));
+                var corporationId = call.Session?.GetInt("corpid") ?? 0;
+                var allianceId = call.Session?.GetInt("allianceid") ?? 0;
+                return ownerId > 0 && (ownerId == corporationId || ownerId == allianceId)
+                    ? await _read.GetValidWarHQsAsync(call, ownerId, call.Cancellation)
+                    : new PyList([]);
+            }
+            case "SetStructureDescription":
+            {
+                var structureId = PositiveId(call.Arg(0));
+                if (structureId <= 0 || !await _read.SetStructureDescriptionAsync(call))
+                    throw StructureDescriptionDenied();
+                return PyNone.Instance;
+            }
             case "GetStructureInfo":
             {
                 var structureId = PositiveId(call.Arg(0));
@@ -125,23 +183,29 @@ public sealed class StructureDirectoryService(IStructureDirectoryReadCallbacks r
 
                 var snapshots = await _read.GetDockingAccessSnapshotsAsync(
                     characterId, corporationId, allianceId, requested, call.Cancellation);
-                var requestedSet = new HashSet<long>(requested);
-                var byId = new Dictionary<long, StructureDockingAccessSnapshot>();
-                var ambiguous = new HashSet<long>();
-                foreach (var snapshot in snapshots)
-                {
-                    if (!requestedSet.Contains(snapshot.StructureId))
-                        continue;
-                    if (!byId.TryAdd(snapshot.StructureId, snapshot))
-                        ambiguous.Add(snapshot.StructureId);
-                }
+                return DockableStructures(requested, snapshots, characterId, corporationId, allianceId);
+            }
+            case "GetMyDockableStructures":
+            {
+                var characterId = call.Session?.CharacterId ?? 0;
+                var corporationId = call.Session?.GetInt("corpid") ?? 0;
+                var allianceId = call.Session?.GetInt("allianceid") ?? 0;
+                var solarSystemId = PositiveId(call.Arg(0));
+                if (solarSystemId <= 0)
+                    solarSystemId = call.Session?.GetInt("solarsystemid2") ??
+                        call.Session?.GetInt("solarsystemid") ?? 0;
+                if (characterId <= 0 || solarSystemId <= 0)
+                    return new PyList([]);
 
-                return new PyList(requested
-                    .Where(id => !ambiguous.Contains(id) &&
-                        byId.TryGetValue(id, out var snapshot) &&
-                        CanDock(snapshot, id, characterId, corporationId, allianceId))
-                    .Select(id => (PyValue)new PyInt(id))
-                    .ToArray());
+                var structureIds = await _read.GetStructureIdsInSolarSystemAsync(
+                    solarSystemId, call.Cancellation);
+                var requested = structureIds.Where(id => id > 0).Distinct().ToArray();
+                if (requested.Length == 0)
+                    return new PyList([]);
+
+                var snapshots = await _read.GetDockingAccessSnapshotsAsync(
+                    characterId, corporationId, allianceId, requested, call.Cancellation);
+                return DockableStructures(requested, snapshots, characterId, corporationId, allianceId);
             }
             case "GetMyCharacterStructures":
             {
@@ -162,6 +226,40 @@ public sealed class StructureDirectoryService(IStructureDirectoryReadCallbacks r
                 return PyNone.Instance;
         }
     }
+
+    private static PyList DockableStructures(
+        IReadOnlyList<long> requested,
+        IReadOnlyList<StructureDockingAccessSnapshot> snapshots,
+        long characterId,
+        long corporationId,
+        long allianceId)
+    {
+        var requestedSet = new HashSet<long>(requested);
+        var byId = new Dictionary<long, StructureDockingAccessSnapshot>();
+        var ambiguous = new HashSet<long>();
+        foreach (var snapshot in snapshots)
+        {
+            if (!requestedSet.Contains(snapshot.StructureId))
+                continue;
+            if (!byId.TryAdd(snapshot.StructureId, snapshot))
+                ambiguous.Add(snapshot.StructureId);
+        }
+
+        return new PyList(requested
+            .Where(id => !ambiguous.Contains(id) &&
+                byId.TryGetValue(id, out var snapshot) &&
+                CanDock(snapshot, id, characterId, corporationId, allianceId))
+            .Select(id => (PyValue)new PyInt(id))
+            .ToArray());
+    }
+
+    private static Eve.Services.MachoWrappedException StructureDescriptionDenied() =>
+        Eve.Services.MachoErrors.ThrowUserError(
+            "CrpAccessDenied",
+            ("reason", new PyList([
+                new PyInt(101),
+                new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles"),
+            ])));
 
     private static long PositiveId(PyValue? value) => value switch
     {
@@ -251,6 +349,52 @@ public sealed class StructureDirectoryService(IStructureDirectoryReadCallbacks r
 }
 
 
+public sealed record StructureGuestSnapshot(
+    long CharacterId,
+    long CorporationId,
+    long AllianceId,
+    long WarFactionId);
+
+/// <summary>Adapter for the client's structureGuests.GetGuests snapshot RPC.</summary>
+public sealed class StructureGuestsService(
+    Func<long, CancellationToken, ValueTask<IReadOnlyList<StructureGuestSnapshot>>> getGuests) : IService
+{
+    private readonly Func<long, CancellationToken, ValueTask<IReadOnlyList<StructureGuestSnapshot>>> _getGuests =
+        getGuests ?? throw new ArgumentNullException(nameof(getGuests));
+
+    public string Name => "structureGuests";
+
+    public bool HasMethod(string method) => method == "GetGuests";
+
+    public async ValueTask<PyValue> CallAsync(ServiceCall call)
+    {
+        if (!HasMethod(call.Method))
+            return PyNone.Instance;
+
+        var structureId = Macho.JsSemantics.ToPositiveInteger(call.Arg(0));
+        if (structureId <= 0)
+            structureId = call.Session?.GetInt("structureid") ?? 0;
+        if (structureId <= 0)
+            return new PyDict([]);
+
+        var guests = await _getGuests(structureId, call.Cancellation);
+        var entries = guests
+            .Where(guest => guest.CharacterId > 0)
+            .GroupBy(guest => guest.CharacterId)
+            .Select(group => group.First())
+            .OrderBy(guest => guest.CharacterId)
+            .Select(guest => new KeyValuePair<PyValue, PyValue>(
+                new PyInt(guest.CharacterId),
+                new PyList([
+                    new PyInt(guest.CorporationId),
+                    new PyInt(guest.AllianceId),
+                    new PyInt(guest.WarFactionId),
+                ])))
+            .ToArray();
+        return new PyDict(entries);
+    }
+}
+
 /// <summary>
 /// Read callbacks for the client's structureSettings RPCs.
 /// Implementations must read deployed structure state (not SDE type rows) and enforce each structure's
@@ -261,6 +405,9 @@ public sealed class StructureDirectoryService(IStructureDirectoryReadCallbacks r
 public interface IStructureSettingsReadCallbacks
 {
     ValueTask<PyDict> CharacterGetServicesAsync(long characterId, long structureId, CancellationToken cancellationToken);
+
+    ValueTask<PyValue> CharacterGetServiceAsync(
+        long characterId, long structureId, long serviceId, CancellationToken cancellationToken);
 
     ValueTask<bool> CharacterHasServiceAsync(long characterId, long structureId, long serviceId, CancellationToken cancellationToken);
 
@@ -278,15 +425,34 @@ public sealed class StructureSettingsService(IStructureSettingsReadCallbacks rea
     public bool HasMethod(string method) => method is
         "CharacterGetServices" or
         "CharacterHasService" or
-        "CharacterHasSetting";
+        "CharacterHasSetting" or
+        "CharacterGetService" or
+        "CharacterCheckService";
 
     public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
         if (!HasMethod(call.Method))
             return PyNone.Instance;
 
-        var characterId = call.Session.CharacterId.GetValueOrDefault();
+        var characterId = call.Session?.CharacterId ?? 0;
         var structureId = Integer(call.Arg(0));
+        if (call.Method == "CharacterCheckService")
+        {
+            var serviceId = Integer(call.Arg(1));
+            if (characterId <= 0 || structureId <= 0 || serviceId <= 0 ||
+                !await _read.CharacterHasServiceAsync(characterId, structureId, serviceId, call.Cancellation))
+                throw ServiceUnavailable(serviceId);
+            return PyBool.True;
+        }
+
+        if (call.Method == "CharacterGetService")
+        {
+            var serviceId = Integer(call.Arg(1));
+            return characterId > 0 && structureId > 0 && serviceId > 0
+                ? await _read.CharacterGetServiceAsync(characterId, structureId, serviceId, call.Cancellation)
+                : PyNone.Instance;
+        }
+
         if (characterId <= 0 || structureId <= 0)
             return call.Method == "CharacterGetServices" ? new PyDict([]) : PyBool.False;
 
@@ -309,6 +475,19 @@ public sealed class StructureSettingsService(IStructureSettingsReadCallbacks rea
             : await _read.CharacterHasSettingAsync(characterId, structureId, settingId, call.Cancellation)
                 ? PyBool.True
                 : PyBool.False;
+    }
+
+    private static Eve.Services.MachoWrappedException ServiceUnavailable(long serviceId)
+    {
+        var error = serviceId switch
+        {
+            5 => "StructureMarketDenied",
+            1 => "StructureDockingDenied",
+            15 => "ActivateJumpBridgeDenied",
+            16 => "ConnectToCynoBeaconDenied",
+            _ => "StructureGenericSettingDenied",
+        };
+        return Eve.Services.MachoErrors.ThrowUserError(error);
     }
 
     private static long Integer(PyValue? value)
@@ -388,6 +567,13 @@ public interface IStructureAssetSafetyReadCallbacks
         long destinationId,
         CancellationToken cancellationToken);
 
+    /// <summary>Moves a persisted wrap's eject timer to the requested GM day offset (5 or 30).</summary>
+    ValueTask<bool> MoveEjectTimeGMAsync(
+        ServiceCall call,
+        long assetWrapId,
+        int days,
+        CancellationToken cancellationToken);
+
     /// <summary>
     /// Idempotently auto-delivers every due wrap at day twenty using CCP's security-space/nearest-NPC
     /// station rules and fees. Run from the Host's durable scheduler and before service reads.
@@ -428,7 +614,8 @@ public sealed class StructureAssetSafetyService(IStructureAssetSafetyReadCallbac
         "MoveCorpAssetsToSafety" or
         "GetWrapNames" or
         "GetStructuresICanDeliverTo" or
-        "MoveSafetyWrapToStructure";
+        "MoveSafetyWrapToStructure" or
+        "MoveEjectTimeGM";
 
     public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
@@ -516,10 +703,26 @@ public sealed class StructureAssetSafetyService(IStructureAssetSafetyReadCallbac
                 return PyNone.Instance;
             }
 
+            case "MoveEjectTimeGM":
+            {
+                var assetWrapId = PositiveId(call.Arg(0));
+                var days = PositiveId(call.Arg(1));
+                var role = call.Session?.GetInt("role") ?? 0;
+                if ((role & (1L << 54)) == 0 || assetWrapId <= 0 || days is not 5 and not 30)
+                    throw MoveEjectTimeDenied();
+                if (!await _read.MoveEjectTimeGMAsync(call, assetWrapId, (int)days, call.Cancellation))
+                    throw MoveEjectTimeDenied();
+                return PyNone.Instance;
+            }
+
             default:
                 return PyNone.Instance;
         }
     }
+
+    private static Eve.Services.MachoWrappedException MoveEjectTimeDenied() =>
+        Eve.Services.MachoErrors.ThrowUserError(
+            "CustomInfo", ("info", new PyWString("This Asset Safety timer cannot be changed.")));
 
     private static long PositiveId(PyValue? value) => value switch
     {

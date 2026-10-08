@@ -142,11 +142,16 @@ public sealed class LoginCampaignMgrService : IService
     public string Name => "loginCampaignManager";
 
     public bool HasMethod(string method) => method is
+        "GetActiveCampaigns" or
+        "GetCampaignData" or
+        "GetPlayerProgress" or
         "get_client_campaign_state" or
         "claim_reward";
 
     public ValueTask<PyValue> CallAsync(ServiceCall call) => call.Method switch
     {
+        "GetActiveCampaigns" => ValueTask.FromResult<PyValue>(new PyList([])),
+        "GetCampaignData" or "GetPlayerProgress" => ValueTask.FromResult<PyValue>(new PyDict([])),
         "get_client_campaign_state" => GetClientCampaignStateAsync(call),
         "claim_reward" => ClaimRewardAsync(call),
         _ => ValueTask.FromResult<PyValue>(PyNone.Instance),
@@ -208,12 +213,17 @@ public sealed class SeasonalLoginCampaignMgrService : IService
     public string Name => "seasonalLoginCampaignManager";
 
     public bool HasMethod(string method) => method is
+        "GetActiveCampaigns" or
+        "GetCampaignData" or
+        "GetPlayerProgress" or
         "get_active_campaign" or
         "get_claim_history" or
         "claim_reward";
 
     public ValueTask<PyValue> CallAsync(ServiceCall call) => call.Method switch
     {
+        "GetActiveCampaigns" or "GetCampaignData" => ValueTask.FromResult<PyValue>(new PyList([])),
+        "GetPlayerProgress" => ValueTask.FromResult<PyValue>(new PyDict([])),
         "get_active_campaign" => GetActiveCampaignAsync(call),
         "get_claim_history" => GetClaimHistoryAsync(call),
         "claim_reward" => ClaimRewardAsync(call),

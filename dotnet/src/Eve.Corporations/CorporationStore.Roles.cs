@@ -159,6 +159,50 @@ public sealed partial class CorporationStore
             return results;
         },token);
 
+    public sealed record RoleHistoryRecord(
+        long CharacterId, long CorporationId, long ActorId, long ChangedMs, string OldRolesJson, string NewRolesJson);
+
+    public async Task<IReadOnlyList<RoleHistoryRecord>> RoleHistoryAsync(
+        long corporationId, long characterId, long? fromUnixMs, long? toUnixMs, int limit,
+        CancellationToken cancellationToken = default)
+    {
+        if (corporationId <= 0 || characterId <= 0 || limit <= 0)
+            return [];
+
+        await using var command = _source.CreateCommand($"""
+            SELECT character_id,corporation_id,actor_id,time_ms,old_roles::text,new_roles::text
+            FROM {_schema}.role_history
+            WHERE corporation_id=$1 AND character_id=$2
+                AND ($3::bigint IS NULL OR time_ms >= $3)
+                AND ($4::bigint IS NULL OR time_ms < $4)
+            ORDER BY time_ms DESC,id DESC
+            LIMIT $5
+            """);
+        command.Parameters.Add(new NpgsqlParameter { Value = corporationId });
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        command.Parameters.Add(new NpgsqlParameter
+        {
+            DbType = System.Data.DbType.Int64,
+            Value = fromUnixMs is { } from ? from : DBNull.Value
+        });
+        command.Parameters.Add(new NpgsqlParameter
+        {
+            DbType = System.Data.DbType.Int64,
+            Value = toUnixMs is { } to ? to : DBNull.Value
+        });
+        command.Parameters.Add(new NpgsqlParameter { Value = Math.Min(limit, 5000) });
+
+        var rows = new List<RoleHistoryRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            rows.Add(new RoleHistoryRecord(
+                reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3),
+                reader.GetString(4), reader.GetString(5)));
+        }
+        return rows;
+    }
+
     public Task SetAccountKeyAsync(long character,int key,CancellationToken token = default) =>
         WriteAsync(async (connection,tx) =>
         {

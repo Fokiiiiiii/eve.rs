@@ -304,13 +304,16 @@ public interface IRedeemCallbacks
 }
 
 [Service("userSvc")]
-public sealed partial class RedeemService(IRedeemCallbacks callbacks)
+public sealed partial class RedeemService(IRedeemCallbacks callbacks, Func<long, CancellationToken, ValueTask<string?>>? readUserName = null, Func<long, CancellationToken, ValueTask<long?>>? readCharacterCreateFileTime = null, Func<ServiceCall, CancellationToken, ValueTask<PyValue?>>? userRpcHandler = null)
 {
     private readonly IRedeemCallbacks _callbacks = callbacks ?? throw new ArgumentNullException(nameof(callbacks));
 
     [Method("GetRedeemTokens")]
-    public ValueTask<PyValue> GetRedeemTokens(ServiceCall call) =>
-        _callbacks.GetRedeemTokensAsync(AuthenticatedUserId(call), call.Cancellation);
+    public async ValueTask<PyValue> GetRedeemTokens(ServiceCall call)
+    {
+        var tokens = await _callbacks.GetRedeemTokensAsync(AuthenticatedUserId(call), call.Cancellation).ConfigureAwait(false);
+        return UserSvcCompatibility.RedeemTokenRowset(tokens);
+    }
 
     [Method("ClaimRedeemTokens")]
     public ValueTask<PyValue> ClaimRedeemTokens(ServiceCall call)
@@ -333,7 +336,7 @@ public sealed partial class RedeemService(IRedeemCallbacks callbacks)
             AuthenticatedUserId(call),
             call.Arg(0),
             call.Cancellation).ConfigureAwait(false);
-        return PyNone.Instance;
+        return PyBool.True;
     }
 
     [Method("TrashRedeemTokens")]
@@ -343,7 +346,7 @@ public sealed partial class RedeemService(IRedeemCallbacks callbacks)
             AuthenticatedUserId(call),
             call.Arg(0),
             call.Cancellation).ConfigureAwait(false);
-        return PyNone.Instance;
+        return PyBool.True;
     }
 
     private static long AuthenticatedUserId(ServiceCall call) =>

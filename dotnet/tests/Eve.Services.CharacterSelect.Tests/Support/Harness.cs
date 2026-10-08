@@ -68,7 +68,7 @@ public sealed class Harness : IAsyncDisposable
     private readonly string _fittingSchema;
     private readonly string _corporationSchema;
 
-    private Harness(NpgsqlDataSource source, string suffix)
+    private Harness(NpgsqlDataSource source, string suffix, bool newCharacterExperienceEnabled)
     {
         Source = source;
         _characterSchema = $"cs_test_{suffix}";
@@ -90,8 +90,8 @@ public sealed class Harness : IAsyncDisposable
         Announcer = new TrainingAnnouncer(Training, Skills, Sessions, null, () => ClockUnixMs, schedule: false);
         Service = new CharUnboundMgrService(
             Accounts, Characters, Items, SkillStore, Wallets,
-            new CharacterCreation(source, Characters, Items, SkillStore, Skills, Wallets, new StartingWallet(), Catalog, new PgModuleStateStore(source, _fittingSchema)), Catalog, Online,
-            [new SkillsLoginHook(Training, Skills, Sessions, Announcer, () => ClockUnixMs), new Eve.Services.Corporations.CorporationLoginHook(Corporations,Characters)], new Random(7));
+                new CharacterCreation(source, Characters, Items, SkillStore, Skills, Wallets, new StartingWallet(), Catalog, new PgModuleStateStore(source, _fittingSchema), newCharacterExperienceEnabled), Catalog, Online,
+                [new SkillsLoginHook(Training, Skills, Sessions, Announcer, () => ClockUnixMs), new Eve.Services.Corporations.CorporationLoginHook(Corporations,Characters)], new Random(7), newCharacterExperienceEnabled);
         var dogma = new Eve.Dogma.DogmaStatic([], [], []);
         Handler = new SkillHandlerService(
             SkillStore, Skills, Training, Characters, Items, dogma, Announcer, () => ClockUnixMs,
@@ -129,11 +129,11 @@ public sealed class Harness : IAsyncDisposable
 
     public CharUnboundMgrService Service { get; }
 
-    public static async Task<Harness> CreateAsync()
+      public static async Task<Harness> CreateAsync(bool newCharacterExperienceEnabled = false)
     {
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
-        var harness = new Harness(source, Guid.NewGuid().ToString("N")[..12]);
+          var harness = new Harness(source, Guid.NewGuid().ToString("N")[..12], newCharacterExperienceEnabled);
         await PgCharacterStore.MigrateAsync(source, harness._characterSchema);
         await PgItemStore.MigrateAsync(source, harness._inventorySchema);
         await PgSkillStore.MigrateAsync(source, harness._skillsSchema);
@@ -146,7 +146,7 @@ public sealed class Harness : IAsyncDisposable
     /// <summary>A logged-in session of a new account (the account is created by logging in).</summary>
     public async Task<(ClientSession Session, Capture Sink)> LoginAsync(string user, ulong role = 0)
     {
-        var accounts = Accounts.WithOptions(new AccountOptions { NewAccountRole = role });
+        var accounts = Accounts.WithOptions(new AccountOptions { AutoCreate = true, NewAccountRole = role });
         var login = (LoggedIn)await accounts.LoginAsync(new LoginAttempt(user, new byte[] { 1 }, "EN", "127.0.0.1"), CancellationToken.None);
         var sink = new Capture();
         var id = Interlocked.Increment(ref _sessions);

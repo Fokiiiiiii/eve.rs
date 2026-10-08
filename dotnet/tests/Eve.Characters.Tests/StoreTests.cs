@@ -39,9 +39,10 @@ public class StoreTests
     {
         await using var s = await PgSchemas.CreateAsync();
         var first = await Insert(s, Pilot("First One", account: 7));
-        await Insert(s, Pilot("Someone Else", account: 8));
+        var other = await Insert(s, Pilot("Someone Else", account: 8));
         var second = await Insert(s, Pilot("Second One", account: 7));
         Assert.Equal([first, second], (await s.Characters.ForAccountAsync(7)).Select(c => c.Id));
+        Assert.Equal([first, other, second], (await s.Characters.AllAsync()).Select(c => c.Id));
         Assert.Equal(2, await s.Characters.CountForAccountAsync(7));
         Assert.Equal(1, await s.Characters.CountForAccountAsync(8));
         Assert.Empty(await s.Characters.ForAccountAsync(9));
@@ -93,6 +94,28 @@ public class StoreTests
         var none = await Insert(s, Pilot("Bob Roe"));
         Assert.Equal((null, null), await s.Characters.AppearanceAsync(none));
         Assert.Equal((null, null), await s.Characters.AppearanceAsync(999));
+        var many = await s.Characters.AppearanceManyAsync([id, none, 999]);
+        Assert.Equal(doll, many[id].Doll);
+        Assert.True(many.ContainsKey(none));
+        Assert.False(many.ContainsKey(999));
+    }
+
+
+    [PgFact]
+    public async Task Appearance_updates_preserve_omitted_fields_and_clear_a_missing_doll()
+    {
+        await using var s = await PgSchemas.CreateAsync();
+        var id = await Insert(s, Pilot("Doll Update"));
+        byte[] firstDoll = [1, 2, 3];
+        byte[] portrait = [4, 5, 6];
+        Assert.True(await s.Characters.SetAppearanceAsync(id, firstDoll, true, portrait, true));
+        byte[] secondDoll = [7, 8];
+        Assert.True(await s.Characters.SetAppearanceAsync(id, secondDoll, true, null, false));
+        var (updatedDoll, keptPortrait) = await s.Characters.AppearanceAsync(id);
+        Assert.Equal(secondDoll, updatedDoll);
+        Assert.Equal(portrait, keptPortrait);
+        Assert.True(await s.Characters.SetAppearanceAsync(id, null, true, null, true));
+        Assert.Equal((null, null), await s.Characters.AppearanceAsync(id));
     }
 
     [PgFact]
@@ -135,5 +158,24 @@ public class StoreTests
         using var source = NpgsqlDataSource.Create("Host=127.0.0.1");
         Assert.Throws<ArgumentException>(() => new PgCharacterStore(source, "characters; DROP SCHEMA x"));
         Assert.Throws<ArgumentException>(() => new Eve.Inventory.PgItemStore(source, "Inventory"));
+    }
+
+
+    [PgFact]
+    public async Task Direct_enlistment_faction_and_cooldown_round_trip_through_character_store()
+    {
+        await using var s = await PgSchemas.CreateAsync();
+        var id = await Insert(s, Pilot("Warfare Pilot"));
+        var cooldown = 133_000_000_000_000_000L;
+
+        Assert.True(await s.Characters.SetFactionWarfareStateAsync(id, 500001, 0));
+        var enlisted = (await s.Characters.GetAsync(id))!;
+        Assert.Equal((long?)500001, enlisted.DirectFactionId);
+        Assert.Equal(0, enlisted.DirectEnlistmentCooldownFileTime);
+
+        Assert.True(await s.Characters.SetFactionWarfareStateAsync(id, null, cooldown));
+        var removed = (await s.Characters.GetAsync(id))!;
+        Assert.Null(removed.DirectFactionId);
+        Assert.Equal(cooldown, removed.DirectEnlistmentCooldownFileTime);
     }
 }

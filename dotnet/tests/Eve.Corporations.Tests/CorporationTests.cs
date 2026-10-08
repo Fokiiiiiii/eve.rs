@@ -17,6 +17,7 @@ public class CorporationTests
         Assert.Equal(98000000,corp.Id);
         Assert.Equal(founder,corp.CeoId);
         Assert.Equal(corp.Id,(await rig.Characters.GetAsync(founder))!.CorporationId);
+        Assert.Contains(corp.Id, (await rig.Store.AllAsync()).Select(candidate => candidate.Id));
         Assert.Equal(CorporationRoles.Director,(await rig.Store.MemberAsync(founder))!.Masks.Roles);
         Assert.Equal(3400200m,(await rig.Wallets.GetAsync(founder))!.Isk);
         Assert.Equal(0m,(await rig.Wallets.GetAsync(corp.Id))!.Isk);
@@ -29,6 +30,40 @@ public class CorporationTests
         Assert.Equal(corp.Id,history.Single(e => e.EndedMs is null).CorporationId);
         Assert.Equal(1000044,history.Single(e => e.EndedMs is not null).CorporationId);
         Assert.All(history,e => Assert.True(e.EndedMs is null || e.EndedMs >= e.StartedMs));
+    }
+
+
+    [PgFact]
+    public async Task Faction_warfare_policy_updates_keep_other_corporation_settings()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("FW Policy Founder");
+        var corporation = await rig.Store.CreateAsync(founder, Request("FW Policy", "FWP"), "fw-policy");
+        await rig.Store.UpdateSettingsAsync(founder, corporation.Id, "{\"fw\":{\"existing\":true}}");
+
+        Assert.True(await rig.Store.SetFactionWarfareAllowedEnlistmentFactionsAsync(founder, corporation.Id, [500001, 500002]));
+        var settings = (await rig.Store.GetAsync(corporation.Id))!.Settings;
+        Assert.True(settings.GetProperty("fw").GetProperty("existing").GetBoolean());
+        Assert.Equal([500001L, 500002L], settings.GetProperty("fw").GetProperty("allowedEnlistmentFactions").EnumerateArray().Select(value => value.GetInt64()));
+    }
+
+
+    [PgFact]
+    public async Task Character_login_restores_direct_war_faction_then_corporation_faction()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = await rig.CharacterAsync("FW Login Pilot");
+        var corporation = await rig.Store.CreateAsync(characterId, Request("FW Login", "FWL"), "fw-login");
+        await rig.Store.UpdateSettingsAsync(characterId, corporation.Id, "{\"factionID\":500002}");
+        var hook = new Eve.Services.Corporations.CorporationLoginHook(rig.Store, rig.Characters);
+
+        Assert.True(await rig.Characters.SetFactionWarfareStateAsync(characterId, 500003, 0));
+        var joined = await hook.GetSessionAttributesAsync(new Eve.Services.ClientSession(), characterId, CancellationToken.None);
+        Assert.Equal(new Eve.Marshal.PyInt(500003), Assert.Single(joined, entry => entry.Name == "warfactionid").Value);
+
+        Assert.True(await rig.Characters.SetFactionWarfareStateAsync(characterId, null, 0));
+        var removed = await hook.GetSessionAttributesAsync(new Eve.Services.ClientSession(), characterId, CancellationToken.None);
+        Assert.Equal(new Eve.Marshal.PyInt(500002), Assert.Single(removed, entry => entry.Name == "warfactionid").Value);
     }
 
     [PgFact]
@@ -396,6 +431,100 @@ public sealed class CorporationOfficeTests
         await service.TrashImpoundedOffice(Call("TrashImpoundedOffice", actor, corporation.Id));
 
         Assert.Null(await rig.Items.GetAsync(itemId));
+    }
+
+    [PgFact]
+    public async Task Bill_manager_lists_saves_settings_and_pays_office_rent_in_the_wallet_transaction()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using (var migrationCheck = rig.Source.CreateCommand("""
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema=$1 AND table_name='characters' AND column_name='direct_faction_id')
+            """))
+        {
+            migrationCheck.Parameters.Add(new Npgsql.NpgsqlParameter { Value = rig.CharacterSchema });
+            Assert.True((bool)(await migrationCheck.ExecuteScalarAsync())!);
+        }
+        var (actor, corporation) = await CreateCorporationAsync(rig);
+        await SetOfficeRoleAsync(rig, actor, CorporationRoles.RentOffice | CorporationRoles.Accountant);
+        var officeManager = CreateService(rig);
+        var quote = await QuoteAsync(officeManager, actor, corporation.Id);
+        await officeManager.RentOffice(Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyReal((double)quote)));
+
+        var billMgr = new Eve.Services.Corporations.BillMgrService(
+            rig.Store, rig.OfficeStore, rig.Transactions,
+            id => id == Station.Id ? Station.OwnerId : null,
+            () => rig.Now);
+        Assert.Equal("billMgr", billMgr.Name);
+        foreach (var method in new[]
+                 {
+                     "CharPayBill", "GetAutomaticPaySettings", "GetCorporationBills",
+                     "GetCorporationBillsReceivable", "PayCorporationBill", "SendAutomaticPaySettings",
+                 })
+            Assert.True(billMgr.HasMethod(method), method);
+
+        var currentBill = Assert.Single(await rig.OfficeStore.BillsForCorporationAsync(corporation.Id));
+        var expectedBill = Eve.Services.Py.KeyVal(
+            ("billID", Eve.Services.Py.Number(currentBill.BillId)),
+            ("billTypeID", new Eve.Marshal.PyInt(2)),
+            ("amount", Eve.Services.Py.Number((double)currentBill.AmountIsk)),
+            ("interest", new Eve.Marshal.PyInt(0)),
+            ("debtorID", Eve.Services.Py.Number(corporation.Id)),
+            ("creditorID", Eve.Services.Py.Number(Station.OwnerId)),
+            ("dueDateTime", new Eve.Marshal.PyLong(Eve.Services.Py.FileTimeFromUnixMs(currentBill.DueAtMs))),
+            ("paid", new Eve.Marshal.PyInt(0)),
+            ("paidDateTime", Eve.Marshal.PyNone.Instance),
+            ("paidByOwnerID", new Eve.Marshal.PyInt(0)),
+            ("externalID", new Eve.Marshal.PyInt(-1)),
+            ("externalID2", new Eve.Marshal.PyInt(-1)));
+        var listedBills = Assert.IsType<Eve.Marshal.PyList>(
+            await billMgr.CallAsync(Call("GetCorporationBills", actor, corporation.Id)));
+        Assert.Equal(new Eve.Marshal.PyList([expectedBill]), listedBills);
+
+        var receivableBeforePayment = Assert.IsType<Eve.Marshal.PyList>(
+            await billMgr.CallAsync(Call("GetCorporationBillsReceivable", actor, Station.OwnerId)));
+        Assert.Equal(new Eve.Marshal.PyList([expectedBill]), receivableBeforePayment);
+
+        var submitted = new Eve.Marshal.PyDict(
+        [
+            new(new Eve.Marshal.PyInt(corporation.Id), new Eve.Marshal.PyDict(
+            [
+                new(new Eve.Marshal.PyStr("divisionID"), new Eve.Marshal.PyInt(1002)),
+                new(new Eve.Marshal.PyInt(2), Eve.Marshal.PyBool.True),
+            ])),
+        ]);
+        Assert.Equal(Eve.Marshal.PyNone.Instance,
+            await billMgr.CallAsync(Call("SendAutomaticPaySettings", actor, corporation.Id, submitted)));
+        var settings = Assert.IsType<Eve.Marshal.PyDict>(
+            await billMgr.CallAsync(Call("GetAutomaticPaySettings", actor, corporation.Id)));
+        var corporationSettings = Assert.Single(settings.Entries);
+        Assert.Equal(Eve.Services.Py.Number(corporation.Id), corporationSettings.Key);
+        Assert.Equal(new Eve.Marshal.PyDict(
+        [
+            new(new Eve.Marshal.PyStr("divisionID"), new Eve.Marshal.PyInt(1002)),
+            new(new Eve.Marshal.PyInt(2), Eve.Marshal.PyBool.True),
+        ]), corporationSettings.Value);
+
+        var beforePayment = (await rig.Wallets.GetAsync(corporation.Id))!.Isk;
+        var call = Call("PayCorporationBill", actor, corporation.Id, new Eve.Marshal.PyLong(currentBill.BillId));
+        var payCall = new Eve.Services.ServiceCall
+        {
+            Method = call.Method,
+            Args = call.Args,
+            Session = call.Session,
+            Kwargs = new Eve.Marshal.PyDict(
+            [
+                new(new Eve.Marshal.PyStr("fromAccountKey"), new Eve.Marshal.PyInt(1000)),
+            ]),
+        };
+        Assert.Equal(Eve.Marshal.PyNone.Instance, await billMgr.CallAsync(payCall));
+        Assert.Equal(beforePayment - quote, (await rig.Wallets.GetAsync(corporation.Id))!.Isk);
+        var receivable = Assert.IsType<Eve.Marshal.PyList>(
+            await billMgr.CallAsync(Call("GetCorporationBillsReceivable", actor, corporation.Id)));
+        Assert.Empty(receivable.Items);
+        var nextBill = Assert.Single(await rig.OfficeStore.BillsForCorporationAsync(corporation.Id));
+        Assert.Equal(rig.Now + 2 * Eve.Corporations.CorporationOfficeStore.RentalCycleMs, nextBill.DueAtMs);
     }
 
     private static Eve.Services.Corporations.OfficeManagerService CreateService(Rig rig) =>

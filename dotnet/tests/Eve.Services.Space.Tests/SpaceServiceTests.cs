@@ -11,6 +11,73 @@ public class SpaceServiceTests
     private static long Id(PyValue value) => Events.Number(value);
 
     [Fact]
+    public async Task Admin_get_bubble_id_requires_view_role_and_uses_available_bubble_sources()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(character);
+
+        var denied = await rig.BeyonceCallAsync(session, "AdminGetBubbleID", null, new PyLong(character.ShipId));
+        Assert.Same(PyNone.Instance, denied);
+
+        session.Set("role", new PyLong(1));
+        Assert.Same(PyNone.Instance, await rig.BeyonceCallAsync(
+            session, "AdminGetBubbleID", null, new PyLong(character.ShipId)));
+
+        session.Set("role", new PyLong(18014398509481984L));
+        session.Set("shipid", new PyLong(character.ShipId));
+        session.Set("ballparkid", new PyLong(987653));
+        var ownShipBubble = await rig.BeyonceCallAsync(
+            session, "AdminGetBubbleID", null, new PyLong(character.ShipId));
+        Assert.Equal(new PyLong(987653), ownShipBubble);
+
+        const long otherItemId = 987654321;
+        long requestedItem = 0;
+        rig.Beyonce.BubbleIdForItem = (_, itemId, _) =>
+        {
+            requestedItem = itemId;
+            return ValueTask.FromResult<long?>(987654);
+        };
+
+        var bubble = await rig.BeyonceCallAsync(session, "AdminGetBubbleID", null, new PyLong(otherItemId));
+        Assert.Equal(new PyLong(987654), bubble);
+        Assert.Equal(otherItemId, requestedItem);
+
+        rig.Beyonce.BubbleIdForItem = (_, _, _) => ValueTask.FromResult<long?>(null);
+        Assert.Same(PyNone.Instance, await rig.BeyonceCallAsync(
+            session, "AdminGetBubbleID", null, new PyLong(otherItemId)));
+        Assert.True(((Eve.Services.IService)rig.Beyonce).HasMethod("AdminGetBubbleID"));
+    }
+
+    [Fact]
+    public async Task Get_cyno_jammer_state_uses_the_session_system_and_returns_filetime_or_none()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(character);
+        session.Set("solarsystemid2", new PyInt(0));
+        session.Set("solarsystemid", new PyInt(30000142));
+
+        Assert.Same(PyNone.Instance, await rig.BeyonceCallAsync(session, "GetCynoJammerState"));
+
+        const long activationFileTime = 133900000000000000L;
+        long requestedSystem = 0;
+        rig.Beyonce.CynoJammerOnlineSimTimeForSystem = (systemId, _) =>
+        {
+            requestedSystem = systemId;
+            return ValueTask.FromResult<long?>(activationFileTime);
+        };
+        var state = await rig.BeyonceCallAsync(session, "GetCynoJammerState");
+
+        Assert.Equal(new PyLong(activationFileTime), state);
+        Assert.Equal(30000142, requestedSystem);
+
+        rig.Beyonce.CynoJammerOnlineSimTimeForSystem = (_, _) => ValueTask.FromResult<long?>(0);
+        Assert.Equal(new PyLong(0), await rig.BeyonceCallAsync(session, "GetCynoJammerState"));
+        Assert.True(((Eve.Services.IService)rig.Beyonce).HasMethod("GetCynoJammerState"));
+    }
+
+    [Fact]
     public void Ship_dirt_timestamp_is_a_current_EVE_filetime()
     {
         const long nowUnixMs = 1_000;
@@ -32,8 +99,9 @@ public class SpaceServiceTests
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var timers = new Eve.Scheduler.LocalTimers(delay: (_, token) =>
+        using var timers = new Eve.Scheduler.LocalTimers(delay: (duration, token) =>
         {
+            if (duration != TimeSpan.FromSeconds(30)) return Task.CompletedTask;
             started.TrySetResult();
             return release.Task.WaitAsync(token);
         });
@@ -68,8 +136,9 @@ public class SpaceServiceTests
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var timers = new Eve.Scheduler.LocalTimers(delay: (_, token) =>
+        using var timers = new Eve.Scheduler.LocalTimers(delay: (duration, token) =>
         {
+            if (duration != TimeSpan.FromSeconds(30)) return Task.CompletedTask;
             started.TrySetResult();
             return release.Task.WaitAsync(token);
         });
@@ -97,8 +166,9 @@ public class SpaceServiceTests
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var timers = new Eve.Scheduler.LocalTimers(delay: (_, token) =>
+        using var timers = new Eve.Scheduler.LocalTimers(delay: (duration, token) =>
         {
+            if (duration != TimeSpan.FromSeconds(30)) return Task.CompletedTask;
             started.TrySetResult();
             return release.Task.WaitAsync(token);
         });
@@ -125,9 +195,10 @@ public class SpaceServiceTests
     {
         var sessionChangeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseSessionChange = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sessionChangeTimerCount = 0;
         using var timers = new Eve.Scheduler.LocalTimers(delay: async (after, token) =>
         {
-            if (after == TimeSpan.FromSeconds(10))
+            if (after == TimeSpan.FromSeconds(10) && Interlocked.Increment(ref sessionChangeTimerCount) > 1)
             {
                 sessionChangeStarted.TrySetResult();
                 await releaseSessionChange.Task.WaitAsync(token);
@@ -2847,15 +2918,22 @@ public class SpaceServiceTests
     }
 
 [PgFact]
-    public async Task Fleet_finder_advert_operations_persist_filter_and_preserve_live_membership()
+    public async Task Fleet_finder_advert_operations_match_evejs_arguments_and_persist_the_full_payload()
     {
         await using var rig = await Rig.CreateAsync();
         var leader = await rig.NewCharacterAsync("Fleet Finder Leader");
         var member = await rig.NewCharacterAsync("Fleet Finder Member");
         var leaderSession = await rig.SessionAsync(leader);
         var memberSession = await rig.SessionAsync(member);
-        const long allowedCorporationId = 980000123;
-        leaderSession.Set("corpid", new PyLong(allowedCorporationId));
+        const long leaderCorporationId = 980000123;
+        const long leaderAllianceId = 990000123;
+        const long leaderWarFactionId = 990000124;
+        leaderSession.Set("corpid", new PyLong(leaderCorporationId));
+        leaderSession.Set("allianceid", new PyLong(leaderAllianceId));
+        leaderSession.Set("warfactionid", new PyLong(leaderWarFactionId));
+        leaderSession.Set("securityStatus", new PyReal(0.75));
+        leaderSession.Set("solarsystemid2", new PyLong(30000142));
+        memberSession.Set("corpid", new PyLong(leaderCorporationId));
 
         var store = new Eve.Services.Space.FleetStore(rig.Source);
         var fleetId = await store.CreateAsync(leader.CharacterId);
@@ -2879,66 +2957,269 @@ public class SpaceServiceTests
 
             PyValue Field(PyValue advert, string name)
             {
-                var keyVal = Assert.IsType<PyObject>(advert);
+                var fields = Assert.IsType<PyDict>(advert).Entries;
+                return Assert.Single(fields, entry => entry.Key == new PyStr(name)).Value;
+            }
+
+            PyValue LeaderField(PyValue advert, string name)
+            {
+                var keyVal = Assert.IsType<PyObject>(Field(advert, "leader"));
                 Assert.Equal(new PyStr("util.KeyVal"), keyVal.Name);
                 var fields = Assert.IsType<PyDict>(keyVal.Args).Entries;
                 return Assert.Single(fields, entry => entry.Key == new PyStr(name)).Value;
             }
 
+            string[] expectedFields =
+            [
+                "fleetID", "leader", "solarSystemID", "numMembers", "advertTime", "dateCreated",
+                "fleetName", "description", "inviteScope", "activityValue", "useAdvanceOptions",
+                "newPlayerFriendly", "public_minStanding", "public_minSecurity", "public_allowedEntities",
+                "public_disallowedEntities", "membergroups_minStanding", "membergroups_minSecurity",
+                "membergroups_allowedEntities", "membergroups_disallowedEntities", "joinNeedsApproval",
+                "hideInfo", "updateOnBossChange", "advertJoinLimit"
+            ];
+
+            Assert.Equal(PyNone.Instance, await Call("AddFleetFinderAdvert", memberSession, new PyDict([])));
+            Assert.Equal(PyNone.Instance, await Call("UpdateFleetAdvertWithNewLeader", leaderSession, new PyDict([])));
+            Assert.Equal(PyNone.Instance, await Call("RemoveFleetFinderAdvert", leaderSession));
+            Assert.Equal(PyNone.Instance, await Call("UpdateAdvertInfo", leaderSession, new PyInt(1), new PyDict([])));
+            Assert.Equal(PyNone.Instance, await Call("UpdateAdvertAllowedEntities", leaderSession, new PyDict([])));
+
             var input = Py.KeyVal([
                 ("fleetName", new PyWString("Durable fleet")),
                 ("description", new PyWString("Persisted description")),
-                ("inviteScope", new PyInt(2)),
+                ("inviteScope", new PyInt(1)),
+                ("activityValue", new PyInt(7)),
+                ("useAdvanceOptions", PyBool.True),
+                ("newPlayerFriendly", PyBool.True),
+                ("public_minStanding", new PyReal(0.5)),
+                ("public_minSecurity", new PyReal(-0.2)),
+                ("public_allowedEntities", new PyList([new PyLong(leaderCorporationId)])),
+                ("public_disallowedEntities", new PyList([new PyLong(980000124)])),
+                ("membergroups_minStanding", new PyReal(1.25)),
+                ("membergroups_minSecurity", new PyReal(0.1)),
+                ("membergroups_allowedEntities", new PyList([new PyLong(980000125)])),
+                ("membergroups_disallowedEntities", new PyList([new PyLong(980000126)])),
                 ("joinNeedsApproval", PyBool.True),
                 ("hideInfo", PyBool.False),
-                ("advertJoinLimit", new PyInt(12)),
-                ("publicMinStanding", new PyReal(0.5)),
-                ("maxMemberCount", new PyInt(20)),
-                ("allowedEntities", new PyList([new PyLong(allowedCorporationId)]))
+                ("updateOnBossChange", PyBool.False),
+                ("advertJoinLimit", new PyInt(12))
             ]);
-            Assert.Equal(PyNone.Instance, await Call("AddFleetFinderAdvert", leaderSession, input));
 
-            var advert = await Call("GetMyFleetFinderAdvert", leaderSession);
-            Assert.Equal(new PyWString("Durable fleet"), Field(advert, "fleetName"));
-            Assert.Equal(new PyWString("Persisted description"), Field(advert, "description"));
-            Assert.Equal(new PyInt(2), Field(advert, "inviteScope"));
-            Assert.Equal(PyBool.True, Field(advert, "joinNeedsApproval"));
-            Assert.Equal(new PyReal(0.5), Field(advert, "publicMinStanding"));
-            Assert.Equal(new PyList([new PyLong(allowedCorporationId)]), Field(advert, "allowedEntities"));
+            var added = await Call("AddFleetFinderAdvert", leaderSession, input);
+            Assert.IsType<PyDict>(added);
+            Assert.Equal(expectedFields, Assert.IsType<PyDict>(added).Entries
+                .Select(entry => ((PyStr)entry.Key).Value).ToArray());
+            Assert.Equal(new PyLong(fleetId), Field(added, "fleetID"));
+            Assert.Equal(new PyLong(leader.CharacterId), LeaderField(added, "charID"));
+            Assert.Equal(new PyLong(leaderCorporationId), LeaderField(added, "corpID"));
+            Assert.Equal(new PyLong(leaderAllianceId), LeaderField(added, "allianceID"));
+            Assert.Equal(new PyLong(leaderWarFactionId), LeaderField(added, "warFactionID"));
+            Assert.Equal(new PyReal(0.75), LeaderField(added, "securityStatus"));
+            Assert.Equal(new PyLong(30000142), Field(added, "solarSystemID"));
+            Assert.Equal(new PyInt(2), Field(added, "numMembers"));
+            Assert.True(((PyLong)Field(added, "advertTime")).Value > 0);
+            Assert.True(((PyLong)Field(added, "dateCreated")).Value > 0);
+            Assert.Equal(new PyWString("Durable fleet"), Field(added, "fleetName"));
+            Assert.Equal(new PyWString("Persisted description"), Field(added, "description"));
+            Assert.Equal(new PyInt(1), Field(added, "inviteScope"));
+            Assert.Equal(new PyInt(7), Field(added, "activityValue"));
+            Assert.Equal(PyBool.True, Field(added, "useAdvanceOptions"));
+            Assert.Equal(PyBool.True, Field(added, "newPlayerFriendly"));
+            Assert.Equal(new PyReal(0.5), Field(added, "public_minStanding"));
+            Assert.Equal(new PyReal(-0.2), Field(added, "public_minSecurity"));
+            Assert.Equal(Eve.Services.InventoryWire.Set([new PyLong(leaderCorporationId)]), Field(added, "public_allowedEntities"));
+            Assert.Equal(Eve.Services.InventoryWire.Set([new PyLong(980000124)]), Field(added, "public_disallowedEntities"));
+            Assert.Equal(new PyReal(1.25), Field(added, "membergroups_minStanding"));
+            Assert.Equal(new PyReal(0.1), Field(added, "membergroups_minSecurity"));
+            Assert.Equal(Eve.Services.InventoryWire.Set([new PyLong(980000125)]), Field(added, "membergroups_allowedEntities"));
+            Assert.Equal(Eve.Services.InventoryWire.Set([new PyLong(980000126)]), Field(added, "membergroups_disallowedEntities"));
+            Assert.Equal(PyBool.True, Field(added, "joinNeedsApproval"));
+            Assert.Equal(PyBool.False, Field(added, "hideInfo"));
+            Assert.Equal(PyBool.False, Field(added, "updateOnBossChange"));
+            Assert.Equal(new PyInt(12), Field(added, "advertJoinLimit"));
 
-            var available = Assert.IsType<PyDict>(await Call("GetAvailableFleetAds", leaderSession));
+            var reloadedStore = new Eve.Services.Space.FleetStore(rig.Source);
+            Eve.Services.IService reloadedProxy = new Eve.Services.Space.FleetProxyService(
+                reloadedStore, reloadedStore.FleetFinderAdvertOperationAsync);
+            var advert = await reloadedProxy.CallAsync(new Eve.Services.ServiceCall
+            {
+                Method = "GetMyFleetFinderAdvert",
+                Args = [],
+                Session = leaderSession,
+                CallId = new PyInt(2)
+            });
+            Assert.Equal(added, advert);
+
+            var available = Assert.IsType<PyDict>(await Call("GetAvailableFleetAds", memberSession));
             var advertised = Assert.Single(available.Entries);
             Assert.Equal(new PyLong(fleetId), advertised.Key);
-            Assert.Equal(advert, advertised.Value);
-            leaderSession.Set("corpid", new PyLong(allowedCorporationId + 1));
-            Assert.Empty(Assert.IsType<PyDict>(await Call("GetAvailableFleetAds", leaderSession)).Entries);
-            leaderSession.Set("corpid", new PyLong(allowedCorporationId));
+            Assert.Equal(added, advertised.Value);
+            memberSession.Set("corpid", new PyLong(leaderCorporationId + 1));
+            Assert.Empty(Assert.IsType<PyDict>(await Call("GetAvailableFleetAds", memberSession)).Entries);
+            memberSession.Set("corpid", new PyLong(leaderCorporationId));
 
             Assert.Equal(PyNone.Instance, await store.FleetFinderAdvertOperationAsync(
                 "UpdateAdvertInfo", member.CharacterId,
-                [new PyWString("Unauthorized"), new PyWString("Must not persist")], memberSession));
-            Assert.Equal(new PyWString("Durable fleet"), Field(await Call("GetMyFleetFinderAdvert", leaderSession), "fleetName"));
+                [new PyInt(2), Py.KeyVal([("publicToAddToAllowed", new PyList([new PyLong(leaderCorporationId + 1)]))])],
+                memberSession));
 
-            Assert.Equal(PyNone.Instance, await Call("UpdateAdvertInfo", leaderSession,
-                new PyWString("Updated fleet"), new PyWString("Updated description")));
-            Assert.Equal(PyNone.Instance, await Call("UpdateAdvertAllowedEntities", leaderSession,
-                new PyList([new PyLong(allowedCorporationId + 1)])));
-            var updated = await Call("GetMyFleetFinderAdvert", leaderSession);
-            Assert.Equal(new PyWString("Updated fleet"), Field(updated, "fleetName"));
-            Assert.Equal(new PyWString("Updated description"), Field(updated, "description"));
-            Assert.Equal(new PyList([new PyLong(allowedCorporationId + 1)]), Field(updated, "allowedEntities"));
-            Assert.Empty(Assert.IsType<PyDict>(await Call("GetAvailableFleetAds", leaderSession)).Entries);
+            var infoUpdate = await Call("UpdateAdvertInfo", leaderSession, new PyInt(9), Py.KeyVal([
+                ("publicToAddToAllowed", new PyList([new PyLong(leaderCorporationId + 1)])),
+                ("publicToRemoveFromAllowed", new PyList([new PyLong(leaderCorporationId)])),
+                ("publicToAddToDisallowed", new PyList([new PyLong(980000127)])),
+                ("membergroupsToAddToAllowed", new PyList([new PyLong(980000128)])),
+                ("membergroupsToRemoveFromDisallowed", new PyList([new PyLong(980000126)]))
+            ]));
+            Assert.Equal(new PyInt(9), Field(infoUpdate, "numMembers"));
+            Assert.Equal(Eve.Services.InventoryWire.Set([new PyLong(leaderCorporationId + 1)]), Field(infoUpdate, "public_allowedEntities"));
+            Assert.Equal(Eve.Services.InventoryWire.Set([new PyLong(980000124), new PyLong(980000127)]), Field(infoUpdate, "public_disallowedEntities"));
+            Assert.Equal(Eve.Services.InventoryWire.Set([new PyLong(980000125), new PyLong(980000128)]), Field(infoUpdate, "membergroups_allowedEntities"));
+            Assert.Equal(Eve.Services.InventoryWire.Set([]), Field(infoUpdate, "membergroups_disallowedEntities"));
 
-            Assert.Equal(PyNone.Instance, await Call("UpdateFleetAdvertWithNewLeader", leaderSession,
-                new PyLong(member.CharacterId)));
-            var currentLeader = await store.MemberForCharacterAsync(member.CharacterId);
-            Assert.Equal(Eve.Services.Space.FleetStore.Leader, currentLeader?.Role);
-            var memberAdvert = await Call("GetMyFleetFinderAdvert", memberSession);
-            Assert.Equal(new PyWString("Updated fleet"), Field(memberAdvert, "fleetName"));
+            var allowedUpdate = await Call("UpdateAdvertAllowedEntities", leaderSession, Py.KeyVal([
+                ("public_allowedEntities", new PyList([new PyLong(980000129)])),
+                ("public_disallowedEntities", new PyList([new PyLong(980000130)])),
+                ("membergroups_allowedEntities", new PyList([new PyLong(980000131)])),
+                ("membergroups_disallowedEntities", new PyList([new PyLong(980000132)]))
+            ]));
+            Assert.Equal(Eve.Services.InventoryWire.Set([new PyLong(980000129)]), Field(allowedUpdate, "public_allowedEntities"));
+            Assert.Equal(Eve.Services.InventoryWire.Set([new PyLong(980000130)]), Field(allowedUpdate, "public_disallowedEntities"));
+            Assert.Equal(Eve.Services.InventoryWire.Set([new PyLong(980000131)]), Field(allowedUpdate, "membergroups_allowedEntities"));
+            Assert.Equal(Eve.Services.InventoryWire.Set([new PyLong(980000132)]), Field(allowedUpdate, "membergroups_disallowedEntities"));
 
+            Assert.True(await store.MakeLeaderAsync(fleetId, leader.CharacterId, member.CharacterId));
+            memberSession.Set("corpid", new PyLong(980000200));
+            memberSession.Set("allianceid", new PyLong(990000200));
+            memberSession.Set("warfactionid", new PyLong(990000201));
+            memberSession.Set("securityStatus", new PyReal(1.5));
+            memberSession.Set("solarsystemid2", new PyLong(30000143));
+            var leaderUpdate = await Call("UpdateFleetAdvertWithNewLeader", memberSession, Py.KeyVal([
+                ("public_allowedEntities", new PyList([new PyLong(980000133)])),
+                ("membergroups_allowedEntities", new PyList([new PyLong(980000134)]))
+            ]));
+            Assert.Equal(new PyLong(member.CharacterId), LeaderField(leaderUpdate, "charID"));
+            Assert.Equal(new PyLong(980000200), LeaderField(leaderUpdate, "corpID"));
+            Assert.Equal(new PyLong(990000200), LeaderField(leaderUpdate, "allianceID"));
+            Assert.Equal(new PyLong(990000201), LeaderField(leaderUpdate, "warFactionID"));
+            Assert.Equal(new PyReal(1.5), LeaderField(leaderUpdate, "securityStatus"));
+            Assert.Equal(new PyLong(30000143), Field(leaderUpdate, "solarSystemID"));
+            Assert.Equal(Eve.Services.InventoryWire.Set([new PyLong(980000133)]), Field(leaderUpdate, "public_allowedEntities"));
+            Assert.Equal(Eve.Services.InventoryWire.Set([new PyLong(980000134)]), Field(leaderUpdate, "membergroups_allowedEntities"));
+            Assert.Equal(Eve.Services.Space.FleetStore.Leader,
+                (await store.MemberForCharacterAsync(member.CharacterId))?.Role);
+
+            var removed = await Call("RemoveFleetFinderAdvert", memberSession);
+            Assert.Equal(leaderUpdate, removed);
+            Assert.Equal(PyNone.Instance, await Call("UpdateFleetAdvertWithNewLeader", memberSession, new PyDict([])));
             Assert.Equal(PyNone.Instance, await Call("RemoveFleetFinderAdvert", memberSession));
+            Assert.Equal(PyNone.Instance, await Call("UpdateAdvertInfo", memberSession, new PyInt(1), new PyDict([])));
+            Assert.Equal(PyNone.Instance, await Call("UpdateAdvertAllowedEntities", memberSession, new PyDict([])));
             Assert.Empty(Assert.IsType<PyDict>(await Call("GetAvailableFleetAds", leaderSession)).Entries);
             Assert.Equal(PyNone.Instance, await Call("GetMyFleetFinderAdvert", memberSession));
+        }
+        finally
+        {
+            if (fleetId > 0) await store.DisbandAsync(fleetId, leader.CharacterId);
+        }
+    }
+
+    [PgFact]
+    public async Task Fleet_object_init_advert_callback_persists_through_fleet_store()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var leader = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(leader);
+        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var fleetId = await store.CreateAsync(leader.CharacterId);
+        PyValue Field(PyValue value, string name)
+        {
+            var entries = Assert.IsType<PyDict>(value).Entries;
+            return Assert.Single(entries, entry => entry.Key == new PyStr(name)).Value;
+        }
+        try
+        {
+            var advertData = Py.KeyVal([
+                ("fleetName", new PyWString("Init advert")),
+                ("description", new PyWString("Saved through FleetStore"))
+            ]);
+            var kwargs = new PyDict([
+                new KeyValuePair<PyValue, PyValue>(new PyStr("adInfoData"), advertData)
+            ]);
+            var fleet = new Eve.Services.Space.FleetObjectService(
+                store, () => Rig.ClockMs,
+                createFleetAdvert: (id, characterId, data, callbackSession, cancellationToken) =>
+                    store.FleetFinderAdvertOperationAsync(
+                        "AddFleetFinderAdvert", characterId, [data], callbackSession, cancellationToken));
+
+            var initReply = await FleetObjectCallAsync(
+                fleet, fleetId, session, "Init", [new PyInt(0), PyNone.Instance], kwargs);
+            Assert.IsType<PyDict>(initReply);
+
+            Eve.Services.IService proxy = new Eve.Services.Space.FleetProxyService(
+                store, store.FleetFinderAdvertOperationAsync);
+            var advert = await proxy.CallAsync(new Eve.Services.ServiceCall
+            {
+                Method = "GetMyFleetFinderAdvert",
+                Args = [],
+                Session = session,
+                CallId = new PyInt(2)
+            });
+            Assert.IsType<PyDict>(advert);
+            Assert.Equal(Field(initReply, "fleetName"), Field(advert, "fleetName"));
+        }
+        finally
+        {
+            if (fleetId > 0) await store.DisbandAsync(fleetId, leader.CharacterId);
+        }
+    }
+
+    [PgFact]
+    public async Task Fleet_store_applies_saved_character_setup_atomically()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var leader = await rig.NewCharacterAsync("Fleet Setup Leader");
+        var store = new Eve.Services.Space.FleetStore(rig.Source);
+        var fleetId = await store.CreateAsync(leader.CharacterId);
+        try
+        {
+            var setup = System.Text.Json.Nodes.JsonNode.Parse("""
+                {
+                  "wingsInfo": {
+                    "first": { "wingName": "Alpha", "wingIdx": 0, "squadNames": ["Scout", "Heavy"] }
+                  },
+                  "defaultSquad": ["Alpha", 1],
+                  "motd": "Fleet setup loaded",
+                  "isFreeMove": true,
+                  "maxFleetSize": 50
+                }
+                """)!.AsObject();
+
+            Assert.True(await store.ApplyFleetSetupAsync(fleetId, leader.CharacterId, setup));
+            var snapshot = await store.SnapshotAsync(fleetId);
+            var wing = Assert.Single(snapshot!.Wings);
+            Assert.Equal("Alpha", wing.Name);
+            Assert.Equal(["Scout", "Heavy"], wing.Squads.Select(squad => squad.Name));
+            Assert.Equal(wing.Squads[1].SquadId, snapshot.AutoJoinSquadId);
+            Assert.Equal("Fleet setup loaded", snapshot.Motd);
+            Assert.True(snapshot.IsFreeMove);
+            Assert.Equal(50, snapshot.MaxMemberCount);
+
+            var invalidSetup = System.Text.Json.Nodes.JsonNode.Parse("""
+                {
+                  "wingsInfo": {
+                    "first": { "wingName": "Must rollback", "wingIdx": 0, "squadNames": ["Changed"] }
+                  },
+                  "motd": "Must roll back",
+                  "maxFleetSize": 999
+                }
+                """)!.AsObject();
+            Assert.False(await store.ApplyFleetSetupAsync(fleetId, leader.CharacterId, invalidSetup));
+            var afterRollback = await store.SnapshotAsync(fleetId);
+            Assert.Equal("Alpha", Assert.Single(afterRollback!.Wings).Name);
+            Assert.Equal("Fleet setup loaded", afterRollback.Motd);
+            Assert.Equal(50, afterRollback.MaxMemberCount);
+            Assert.Equal(["Scout", "Heavy"], afterRollback.Wings[0].Squads.Select(squad => squad.Name));
         }
         finally
         {

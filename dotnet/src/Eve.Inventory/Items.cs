@@ -32,14 +32,14 @@ public static class ItemFlags
 
 public sealed record Item(long Id, int TypeId, long OwnerId, long LocationId, int Flag, long Quantity,
     bool Singleton, string? CustomName, bool BlueprintCopy = false, bool BlueprintLocked = false,
-    int? BlueprintRuns = null, int MaterialEfficiency = 0, int TimeEfficiency = 0);
+    int? BlueprintRuns = null, int MaterialEfficiency = 0, int TimeEfficiency = 0, string? CustomInfo = null);
 
 
 public sealed record ItemMergeResult(Item SourceBefore, Item DestinationBefore, Item DestinationAfter, Item? SourceAfter);
 
 public sealed record NewItem(int TypeId, long OwnerId, long LocationId, int Flag, long Quantity = 1,
     bool Singleton = false, string? CustomName = null, bool BlueprintCopy = false, bool BlueprintLocked = false,
-    int? BlueprintRuns = null, int MaterialEfficiency = 0, int TimeEfficiency = 0);
+    int? BlueprintRuns = null, int MaterialEfficiency = 0, int TimeEfficiency = 0, string? CustomInfo = null);
 
 
 public enum ShipContractInvalidationReason
@@ -64,7 +64,7 @@ public sealed class PgItemStore
 {
     public const string DefaultSchema = "inventory";
 
-    private const string Columns = "id, type_id, owner_id, location_id, flag, quantity, singleton, custom_name, blueprint_copy, blueprint_locked, blueprint_runs, material_efficiency, time_efficiency";
+    private const string Columns = "id, type_id, owner_id, location_id, flag, quantity, singleton, custom_name, blueprint_copy, blueprint_locked, blueprint_runs, material_efficiency, time_efficiency, custom_info";
 
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
@@ -104,13 +104,14 @@ public sealed class PgItemStore
     private static Item Read(NpgsqlDataReader r) => new(
         r.GetInt64(0), r.GetInt32(1), r.GetInt64(2), r.GetInt64(3), r.GetInt32(4), r.GetInt64(5),
         r.GetBoolean(6), r.IsDBNull(7) ? null : r.GetString(7), r.GetBoolean(8), r.GetBoolean(9),
-        r.IsDBNull(10) ? null : r.GetInt32(10), r.GetInt32(11), r.GetInt32(12));
+        r.IsDBNull(10) ? null : r.GetInt32(10), r.GetInt32(11), r.GetInt32(12),
+        r.IsDBNull(13) ? null : r.GetString(13));
 
     /// <summary>Creates an item inside the caller's transaction and returns its id.</summary>
     public async Task<long> CreateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, NewItem item, CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand(
-            $"INSERT INTO {_schema}.items (type_id, owner_id, location_id, flag, quantity, singleton, custom_name, blueprint_copy, blueprint_locked, blueprint_runs, material_efficiency, time_efficiency) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id",
+            $"INSERT INTO {_schema}.items (type_id, owner_id, location_id, flag, quantity, singleton, custom_name, blueprint_copy, blueprint_locked, blueprint_runs, material_efficiency, time_efficiency, custom_info) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id",
             connection, transaction)
         {
             Parameters =
@@ -127,6 +128,7 @@ public sealed class PgItemStore
                 new() { Value = (object?)item.BlueprintRuns ?? DBNull.Value },
                 new() { Value = item.MaterialEfficiency },
                 new() { Value = item.TimeEfficiency },
+                new() { Value = (object?)item.CustomInfo ?? DBNull.Value },
             },
         };
         return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
@@ -360,10 +362,10 @@ private static void EnsureUnlocked(Item? item)
             ? $"UPDATE {_schema}.items SET owner_id=$3,location_id=$4,flag=$5 WHERE id=$1 AND quantity=$2 RETURNING {Columns}"
             : $"""
               WITH reduced AS (
-                  UPDATE {_schema}.items SET quantity=quantity-$2 WHERE id=$1 RETURNING type_id,custom_name,blueprint_copy
+                  UPDATE {_schema}.items SET quantity=quantity-$2 WHERE id=$1 RETURNING type_id,custom_name,blueprint_copy,custom_info
               )
-              INSERT INTO {_schema}.items(type_id,owner_id,location_id,flag,quantity,singleton,custom_name,blueprint_copy)
-              SELECT type_id,$3,$4,$5,$2,false,custom_name,blueprint_copy FROM reduced RETURNING {Columns}
+              INSERT INTO {_schema}.items(type_id,owner_id,location_id,flag,quantity,singleton,custom_name,blueprint_copy,custom_info)
+              SELECT type_id,$3,$4,$5,$2,false,custom_name,blueprint_copy,custom_info FROM reduced RETURNING {Columns}
               """;
         Item moved;
         await using (var command = new NpgsqlCommand(sql,connection,transaction)

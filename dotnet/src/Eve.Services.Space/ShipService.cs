@@ -4,12 +4,19 @@ using Eve.Services.Ships;
 
 namespace Eve.Services.Space;
 
+public sealed record ShipFittingInfo(string Name, string Icon, long ShipTypeId, PyValue? Insurance);
+
 /// <summary>
 /// The <c>ship</c> service the client binds to for the station it is docked at, and its <c>Undock</c>: the ship leaves the hangar, the
 /// character is in space, and the simulation takes over (<see cref="SpaceSessions"/>).
 /// </summary>
 [Service("ship")]
-public sealed partial class ShipService(SpaceSessions space, Func<long> nowUnixMs, ISpaceContainers? containers = null, ISpaceDrones? drones = null) : IBoundObjectReleaseHandler
+public sealed partial class ShipService(
+    SpaceSessions space,
+    Func<long> nowUnixMs,
+    ISpaceContainers? containers = null,
+    ISpaceDrones? drones = null,
+    Func<long, CancellationToken, ValueTask<ShipFittingInfo?>>? getShipFittingInfo = null) : IBoundObjectReleaseHandler
 {
     private readonly Binding _binding = new(nowUnixMs);
 
@@ -48,6 +55,26 @@ public sealed partial class ShipService(SpaceSessions space, Func<long> nowUnixM
         PyLong number => number.Value,
         _ => null,
     };
+
+    /// <summary><c>GetShipFittingInfo(fittingID)</c> returns name, icon, hull type and insurance in the fitting UI's tuple shape.</summary>
+    [Method("GetShipFittingInfo")]
+    public async ValueTask<PyValue> GetShipFittingInfo(ServiceCall call)
+    {
+        var fittingId = Math.Max(0, IdOf(call.Arg(0)) ?? 0);
+        var fitting = fittingId > 0 && getShipFittingInfo is not null
+            ? await getShipFittingInfo(fittingId, call.Cancellation)
+            : null;
+        fitting ??= new ShipFittingInfo(
+            $"Fitting {fittingId}",
+            "res:/UI/Texture/classes/Fitting/tabFittings.png",
+            0,
+            PyNone.Instance);
+        return Py.Tuple(
+            new PyStr(fitting.Name),
+            new PyStr(fitting.Icon),
+            new PyInt(fitting.ShipTypeId),
+            fitting.Insurance ?? PyNone.Instance);
+    }
 
     /// <summary>
     /// <c>Jettison(itemIDs)</c>: the stacks of the hold go into a can ahead of the ship. Answers <c>(the ids that went into a can, the ids launched as cans of their own)</c>; the client

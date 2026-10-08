@@ -1032,14 +1032,277 @@ private static PyValue RowField(PyValue value,string key)
     }
 
     [Fact]
+    public void Corp_mgr_exposes_every_reference_rpc()
+    {
+        var service = (IService)new CorpMgrService(null!, null!);
+        foreach (var method in new[]
+        {
+            "AuditMember", "GetAggressionSettings", "GetAggressionSettingsForCorps",
+            "GetAssetInventory", "GetAssetInventoryForLocation", "GetCorporationIDForCharacter", "SearchAssets"
+        }) Assert.True(service.HasMethod(method), method);
+    }
+
+    [PgFact]
+    public async Task Corp_mgr_aggression_and_asset_rpcs_use_login_corporation_and_inventory_data()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Corp RPC Founder");
+        var corporation = await rig.Store.CreateAsync(
+            founder, new NewCorporation("RPC Assets", "RPCAS", "", "", 0.05m),
+            "corp-rpc-assets-" + Guid.NewGuid().ToString("N"));
+        var sde = new SdeReader(rig.Source);
+        Assert.NotNull(await sde.BuildAsync());
+        var itemTypes = new Eve.Inventory.ItemTypeCatalog(sde);
+        var tritanium = await itemTypes.GetAsync(34)
+            ?? throw new InvalidOperationException("The SDE does not contain Tritanium.");
+        const long stationId = 60000001;
+        long itemId;
+        long deliveryItemId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            itemId = await rig.Items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(34, corporation.Id, stationId, Eve.Inventory.ItemFlags.CorpSAG3,
+                    5, CustomName: "corporate stack"));
+            deliveryItemId = await rig.Items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(34, corporation.Id, stationId, 62, 2, CustomName: "delivery"));
+            await transaction.CommitAsync();
+        }
+
+        var service = new CorpMgrService(
+            rig.Store, rig.Characters, rig.Items, itemTypes, rig.OfficeStore,
+            resolveAssetLocation: id => id == stationId ? (30000142L, (int?)1531) : null,
+            readAggressionSettings: (id, _) => ValueTask.FromResult<CorpMgrAggressionSettings?>(
+                id == corporation.Id ? new CorpMgrAggressionSettings(987654321, null) : null));
+        var session = new ClientSession { CharacterId = founder };
+        await new CorporationLoginHook(rig.Store, rig.Characters)
+            .OnCharacterEnteredAsync(session, founder, default);
+        Assert.Equal(corporation.Id, session.GetInt("corpid"));
+        Assert.NotEqual(0, (session.GetInt("corprole") ?? 0) & CorporationRoles.Director);
+        Assert.Equal(new PyInt(corporation.Id), await service.GetCorporationIDForCharacter(Call(
+            session, "GetCorporationIDForCharacter", new PyInt(founder))));
+
+        var aggression = await service.GetAggressionSettings(Call(
+            session, "GetAggressionSettings", new PyInt(corporation.Id)));
+        Assert.Equal(new PyLong(987654321), Field(aggression, "_enableAfter"));
+        Assert.IsType<PyNone>(Field(aggression, "_disableAfter"));
+        var aggressionByCorporation = Assert.IsType<PyDict>(await service.GetAggressionSettingsForCorps(Call(
+            session, "GetAggressionSettingsForCorps", new PyList([new PyInt(corporation.Id)]))));
+        Assert.Equal(new PyLong(987654321), Field(Assert.Single(aggressionByCorporation.Entries).Value, "_enableAfter"));
+
+        var locations = Assert.IsType<PyObject>(CachedPayload(await service.GetAssetInventory(Call(
+            session, "GetAssetInventory", new PyInt(corporation.Id), new PyStr("property")))));
+        var locationValues = RowValues(Assert.Single(Lines(locations)));
+        Assert.Equal(new PyLong(stationId), locationValues[0]);
+        Assert.Equal(new PyLong(30000142), locationValues[1]);
+        Assert.Equal(new PyInt(1531), locationValues[2]);
+
+        var inventory = Assert.IsType<PyObject>(CachedPayload(await service.GetAssetInventoryForLocation(Call(
+            session, "GetAssetInventoryForLocation",
+            new PyInt(corporation.Id), new PyLong(stationId), new PyStr("property")))));
+        var itemValues = RowValues(Assert.Single(Lines(inventory)));
+        Assert.Equal(new PyLong(itemId), itemValues[0]);
+        Assert.Equal(new PyInt(34), itemValues[1]);
+        Assert.Equal(new PyInt(corporation.Id), itemValues[2]);
+        Assert.Equal(new PyLong(stationId), itemValues[3]);
+        Assert.Equal(new PyInt(Eve.Inventory.ItemFlags.CorpSAG3), itemValues[4]);
+        Assert.Equal(new PyInt(5), itemValues[5]);
+        Assert.Equal(new PyInt(tritanium.GroupId), itemValues[6]);
+        Assert.Equal(new PyInt(tritanium.CategoryId), itemValues[7]);
+        Assert.Equal(new PyWString("corporate stack"), itemValues[8]);
+
+        var search = Assert.IsType<PyObject>(CachedPayload(await service.SearchAssets(Call(
+            session, "SearchAssets", new PyStr("property"), new PyInt(0), new PyInt(0),
+            new PyInt(34), new PyInt(3)))));
+        Assert.Equal(new PyLong(stationId), RowValues(Assert.Single(Lines(search)))[0]);
+
+        var deliveries = Assert.IsType<PyObject>(CachedPayload(await service.GetAssetInventory(Call(
+            session, "GetAssetInventory", new PyInt(corporation.Id), new PyStr("deliveries")))));
+        var deliveryLocation = RowValues(Assert.Single(Lines(deliveries)));
+        Assert.Equal(new PyLong(stationId), deliveryLocation[0]);
+        Assert.Equal(new PyInt(1), deliveryLocation[3]);
+        var deliveryItems = Assert.IsType<PyObject>(CachedPayload(await service.GetAssetInventoryForLocation(Call(
+            session, "GetAssetInventoryForLocation",
+            new PyInt(corporation.Id), new PyLong(stationId), new PyStr("deliveries")))));
+        Assert.Equal(new PyLong(deliveryItemId), RowValues(Assert.Single(Lines(deliveryItems)))[0]);
+
+        var mismatched = new ClientSession { CharacterId = founder };
+        mismatched.Set("corpid", new PyInt(corporation.Id + 1));
+        await Assert.ThrowsAsync<CorporationError>(async () => await service.GetAssetInventory(Call(
+            mismatched, "GetAssetInventory", new PyInt(corporation.Id), new PyStr("property"))));
+    }
+
+    [PgFact]
+    public async Task Corp_mgr_audit_member_uses_login_roles_and_stored_role_history()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Audit RPC Founder");
+        var memberId = await rig.CharacterAsync("Audit RPC Member");
+        var corporation = await rig.Store.CreateAsync(
+            founder, new NewCorporation("RPC Audit", "RPCAU", "", "", 0.05m),
+            "corp-rpc-audit-" + Guid.NewGuid().ToString("N"));
+        var application = await rig.Store.ApplyAsync(memberId, corporation.Id, "Join");
+        await rig.Store.RespondAsync(founder, application, 6, "Join", "");
+        await rig.Store.RespondAsync(memberId, application, 2, "Join", "");
+
+        var member = (await rig.Store.MemberAsync(memberId))!;
+        await rig.Store.UpdateMembersAsync(founder,
+            [member with { Masks = member.Masks with { Roles = CorporationRoles.Accountant } }]);
+
+        var auditReads = 0;
+        var service = new CorpMgrService(
+            rig.Store, rig.Characters,
+            readAuditEvents: (corpId, targetId, _, _, _, _) =>
+            {
+                auditReads++;
+                IReadOnlyList<CorpMgrAuditEvent> events =
+                [
+                    new CorpMgrAuditEvent(77, Py.FileTimeFromUnixMs(rig.Now), 3, targetId, corpId)
+                ];
+                return ValueTask.FromResult(events);
+            });
+        var login = new CorporationLoginHook(rig.Store, rig.Characters);
+        var founderSession = new ClientSession { CharacterId = founder };
+        await login.OnCharacterEnteredAsync(founderSession, founder, default);
+
+        var response = Assert.IsType<PyTuple>(await service.AuditMember(Call(
+            founderSession, "AuditMember", new PyInt(memberId), new PyLong(0), new PyLong(0), new PyInt(10))));
+        var eventsRowset = response.Items[0];
+        var eventValues = RowValues(Assert.Single(Lines(eventsRowset)));
+        Assert.Equal(new PyLong(77), eventValues[0]);
+        Assert.Equal(new PyInt(3), eventValues[2]);
+        Assert.Equal(new PyInt(memberId), eventValues[3]);
+        Assert.Equal(new PyInt(corporation.Id), eventValues[4]);
+
+        var roleValues = RowValues(Assert.Single(Lines(response.Items[1])));
+        Assert.Equal(new PyInt(memberId), roleValues[0]);
+        Assert.Equal(new PyInt(corporation.Id), roleValues[1]);
+        Assert.Equal(PyBool.False, roleValues[3]);
+        Assert.Equal(new PyLong(0), roleValues[4]);
+        Assert.Equal(new PyLong(CorporationRoles.Accountant), roleValues[5]);
+        Assert.Equal(new PyInt(founder), roleValues[6]);
+
+        var memberSession = new ClientSession { CharacterId = memberId };
+        await login.OnCharacterEnteredAsync(memberSession, memberId, default);
+        var denied = Assert.IsType<PyTuple>(await service.AuditMember(Call(
+            memberSession, "AuditMember", new PyInt(memberId), new PyLong(0), new PyLong(0), new PyInt(10))));
+        Assert.Empty(Lines(denied.Items[0]));
+        Assert.Empty(Lines(denied.Items[1]));
+        Assert.Equal(1, auditReads);
+    }
+
+    [Fact]
+    public async Task Mutual_war_invite_mgr_exposes_reference_routes_and_callback_shapes()
+    {
+        long pendingOwner = 0;
+        (long From, long To)? sent = null;
+        (long From, long To)? withdrawn = null;
+        (long From, long To, bool Accepts)? response = null;
+        (long Owner, bool Blocked)? blockChange = null;
+        var service = new MutualWarInviteMgrService(
+            readPendingInvites: (owner, _) =>
+            {
+                pendingOwner = owner;
+                IReadOnlyList<MutualWarInvite> invites =
+                [
+                    new MutualWarInvite(8001, owner, 10),
+                    new MutualWarInvite(8002, owner, 20)
+                ];
+                return ValueTask.FromResult(invites);
+            },
+            readInvitesBlocked: (owner, _) => ValueTask.FromResult(owner is 7001 or 8002),
+            sendInvite: (_, from, to, _) =>
+            {
+                sent = (from, to);
+                return ValueTask.CompletedTask;
+            },
+            withdrawInvite: (_, from, to, _) =>
+            {
+                withdrawn = (from, to);
+                return ValueTask.CompletedTask;
+            },
+            respondToInvite: (_, from, to, accepts, _) =>
+            {
+                response = (from, to, accepts);
+                return ValueTask.CompletedTask;
+            },
+            setInvitesBlocked: (_, owner, blocked, _) =>
+            {
+                blockChange = (owner, blocked);
+                return ValueTask.CompletedTask;
+            });
+        var rpc = (IService)service;
+        foreach (var method in new[]
+        {
+            "GetPendingInvitesForSession", "IsCorpInvitesBlockedPlayer", "RespondToInviteByPlayer",
+            "SendInviteByPlayer", "SetInvitesBlockedByPlayer", "WithdrawInviteByPlayer"
+        }) Assert.True(rpc.HasMethod(method), method);
+
+        var session = new ClientSession();
+        session.Set("allianceID", new PyLong(7001));
+        session.Set("allianceid", new PyLong(7002));
+        session.Set("corpid", new PyLong(7003));
+
+        var invites = Assert.IsType<PyList>(await service.GetPendingInvitesForSession(
+            Call(session, "GetPendingInvitesForSession")));
+        Assert.Equal(7001, pendingOwner);
+        Assert.Equal(2, invites.Items.Count);
+        Assert.Equal(new PyInt(8002), Field(invites.Items[0], "fromOwnerID"));
+        Assert.Equal(new PyLong(20), Field(invites.Items[0], "sentDate"));
+        Assert.Equal(new PyInt(1), await service.IsCorpInvitesBlockedPlayer(
+            Call(session, "IsCorpInvitesBlockedPlayer")));
+
+        Assert.IsType<PyNone>(await service.SendInviteByPlayer(
+            Call(session, "SendInviteByPlayer", new PyInt(8002))));
+        Assert.Null(sent);
+        Assert.IsType<PyNone>(await service.SendInviteByPlayer(
+            Call(session, "SendInviteByPlayer", new PyInt(8003))));
+        Assert.Equal((7001L, 8003L), sent);
+
+        Assert.IsType<PyNone>(await service.WithdrawInviteByPlayer(
+            Call(session, "WithdrawInviteByPlayer", new PyInt(8004))));
+        Assert.Equal((7001L, 8004L), withdrawn);
+        Assert.IsType<PyNone>(await service.RespondToInviteByPlayer(
+            Call(session, "RespondToInviteByPlayer", new PyInt(8005), PyBool.True)));
+        Assert.Equal((8005L, 7001L, true), response);
+        Assert.IsType<PyNone>(await service.SetInvitesBlockedByPlayer(
+            Call(session, "SetInvitesBlockedByPlayer", PyBool.True)));
+        Assert.Equal((7001L, true), blockChange);
+
+        var unconfigured = new MutualWarInviteMgrService();
+        Assert.Empty(Assert.IsType<PyList>(await unconfigured.GetPendingInvitesForSession(
+            Call(session, "GetPendingInvitesForSession"))).Items);
+        Assert.Equal(new PyInt(0), await unconfigured.IsCorpInvitesBlockedPlayer(
+            Call(session, "IsCorpInvitesBlockedPlayer")));
+        Assert.IsType<PyNone>(await unconfigured.SetInvitesBlockedByPlayer(
+            Call(session, "SetInvitesBlockedByPlayer", PyBool.True)));
+    }
+
+    [Fact]
     public void Corporation_service_exposes_reference_methods()
     {
         var service = (IService)new CorporationService(null!, null!);
         foreach (var method in new[]
         {
             "CreateMedal", "SetMedalStatus", "GetAllCorpMedals", "GetRecipientsOfMedal",
-            "GiveMedalToCharacters", "GetMedalDetails", "GetMedalsReceived", "GetCorpInfo"
+            "GiveMedalToCharacters", "GetMedalDetails", "GetMedalsReceived", "GetCorpInfo",
+            "GetEmployementRecordAndCharacterTransfers", "GetEmploymentRecord"
         }) Assert.True(service.HasMethod(method), method);
+    }
+
+    [PgFact]
+    public async Task Corporation_employment_and_transfer_rpc_returns_the_history_rowset_and_empty_transfers()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = await rig.CharacterAsync("Employment RPC Character");
+        var session = new ClientSession { CharacterId = characterId };
+        var service = new CorporationService(rig.Store, rig.Characters);
+
+        var result = Assert.IsType<PyTuple>(await service.GetEmployementRecordAndCharacterTransfers(
+            Call(session, "GetEmployementRecordAndCharacterTransfers", new PyInt(characterId))));
+
+        Assert.Single(Lines(result.Items[0]));
+        Assert.Empty(Assert.IsType<PyList>(result.Items[1]).Items);
     }
 
     [Fact]

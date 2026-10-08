@@ -66,6 +66,8 @@ public sealed class CreationCatalog
 
     public static int CharacterTypeId(int bloodlineId) => CharacterTypes.GetValueOrDefault(bloodlineId, DefaultCharacterType);
 
+    public static int CharacterTypeId(int bloodlineId, int fallback) => CharacterTypes.GetValueOrDefault(bloodlineId, fallback);
+
     /// <summary>
     /// The school a new character joins: the one asked for if it takes that race, else the race's first. Null when the
     /// race has none (only the four playable races do).

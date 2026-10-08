@@ -17,8 +17,13 @@ public sealed class StructureDirectoryServiceTests
         Assert.True(service.HasMethod("CheckMyDockingAccessToStructures"));
         Assert.True(service.HasMethod("GetMyCharacterStructures"));
         Assert.True(service.HasMethod("GetMyCorporationStructures"));
+        Assert.True(service.HasMethod("GetMyDockableStructures"));
+        Assert.True(service.HasMethod("GetStructureMapData"));
+        Assert.True(service.HasMethod("GetMyAccessibleOnlineCynoBeaconStructures"));
+        Assert.True(service.HasMethod("GetSolarSystemsWithBeacons"));
+        Assert.True(service.HasMethod("GetValidWarHQs"));
         Assert.False(service.HasMethod("CanContractFrom")); // The pinned client implements this locally via GetStructureInfo.
-        Assert.False(service.HasMethod("SetStructureDescription"));
+        Assert.True(service.HasMethod("SetStructureDescription"));
     }
 
     [Fact]
@@ -75,12 +80,12 @@ public sealed class StructureDirectoryServiceTests
     }
 
     [Fact]
-    public async Task Unknown_and_write_methods_return_none_without_calling_read_callbacks()
+    public async Task Unknown_method_returns_none_without_calling_read_callbacks()
     {
         var callbacks = new TestReadCallbacks();
         var service = new StructureDirectoryService(callbacks);
 
-        var result = await service.CallAsync(Request("SetStructureDescription", new PyInt(90000002), new PyStr("ignored")));
+        var result = await service.CallAsync(Request("UnknownStructureDirectoryMethod"));
 
         Assert.Same(PyNone.Instance, result);
         Assert.Null(callbacks.LastCall);
@@ -169,7 +174,7 @@ public sealed class StructureDirectoryServiceTests
     }
 
     [Fact]
-    public void Asset_safety_service_exposes_the_seven_remote_client_rpcs()
+    public void Asset_safety_service_exposes_the_client_remote_rpcs()
     {
         var service = new StructureAssetSafetyService(new TestAssetSafetyReadCallbacks());
 
@@ -181,9 +186,9 @@ public sealed class StructureDirectoryServiceTests
         Assert.True(service.HasMethod("GetWrapNames"));
         Assert.True(service.HasMethod("GetStructuresICanDeliverTo"));
         Assert.True(service.HasMethod("MoveSafetyWrapToStructure"));
+        Assert.True(service.HasMethod("MoveEjectTimeGM"));
         Assert.False(service.HasMethod("MoveItemsInStructureToAssetSafetyForCharacter"));
         Assert.False(service.HasMethod("MoveItemsInStructureToAssetSafetyForCorp"));
-        Assert.False(service.HasMethod("MoveEjectTimeGM"));
     }
 
     [Fact]
@@ -467,6 +472,244 @@ public sealed class StructureDirectoryServiceTests
             () => service.CallAsync(call).AsTask());
     }
 
+    [Fact]
+    public async Task My_dockable_structures_returns_only_structures_with_resolved_access()
+    {
+        const long systemId = 30000142;
+        const long corporationId = 98000001;
+        const long allianceId = 99000001;
+        long[] candidates = [90000001, 90000002, 90000003];
+        var callbacks = new TestReadCallbacks
+        {
+            StructureIdsInSolarSystemResult = candidates,
+            DockingSnapshotsResult =
+            [
+                new(90000001, corporationId, allianceId, true, true, true,
+                    [new StructureAccessListSnapshot(101, true, [new StructureAccessListMember(42, true)])]),
+                new(90000002, corporationId + 1, allianceId, true, true, true,
+                    [new StructureAccessListSnapshot(102, true, [new StructureAccessListMember(0, false)])]),
+                new(90000003, corporationId, allianceId, true, true, true,
+                    [new StructureAccessListSnapshot(103, true, [new StructureAccessListMember(42, true)])]),
+            ],
+        };
+        var service = new StructureDirectoryService(callbacks);
+        var session = new ClientSession { CharacterId = 42 };
+        session.Set("corpid", new PyInt(corporationId));
+        session.Set("allianceid", new PyInt(allianceId));
+
+        var result = await service.CallAsync(new ServiceCall
+        {
+            Method = "GetMyDockableStructures",
+            Args = [new PyInt(systemId)],
+            Session = session,
+        });
+
+        Assert.Equal(new PyList([new PyInt(90000001), new PyInt(90000003)]), result);
+        Assert.Equal(systemId, callbacks.SolarSystemStructuresRequest);
+        Assert.Equal((42L, corporationId, allianceId, candidates), callbacks.DockingRequest);
+    }
+
+    [Fact]
+    public async Task Structure_directory_data_methods_forward_client_arguments_and_preserve_wire_shapes()
+    {
+        var descriptor = Descriptor.FromHeader(new PyObjectEx(
+            ObjectExKind.Ex1,
+            Py.Tuple(new PyToken("blue.DBRowDescriptor"), Py.Tuple(Py.Tuple(
+                Py.Tuple(new PyStr("groupID"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("typeID"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("itemID"), new PyInt(0x14)),
+                Py.Tuple(new PyStr("itemName"), new PyInt(0x82)),
+                Py.Tuple(new PyStr("locationID"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("orbitID"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("connector"), new PyInt(0x0b)),
+                Py.Tuple(new PyStr("x"), new PyInt(0x05)),
+                Py.Tuple(new PyStr("y"), new PyInt(0x05)),
+                Py.Tuple(new PyStr("z"), new PyInt(0x05)),
+                Py.Tuple(new PyStr("celestialIndex"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("orbitIndex"), new PyInt(0x03))))),
+            [],
+            []));
+        var mapData = new PyObjectEx(
+            ObjectExKind.Ex2,
+            Py.Tuple(
+                Py.Tuple(new PyToken("carbon.common.script.sys.crowset.CRowset")),
+                Py.Dict(("header", descriptor.Header))),
+            [new PyPackedRow(descriptor, [
+                new PyInt(2020), new PyInt(35840), new PyLong(90000001), new PyWString("Beacon"),
+                new PyInt(30000142), new PyInt(98000001), PyBool.False,
+                new PyReal(1), new PyReal(2), new PyReal(3), PyNone.Instance, PyNone.Instance,
+            ])],
+            []);
+        var cynoStructures = new PyList([
+            new PyList([
+                new PyInt(90000001), new PyInt(35840), new PyInt(98000001),
+                new PyInt(30000142), new PyInt(1), new PyStr("Beacon"),
+            ]),
+        ]);
+        var systems = Py.List(new PyInt(30000142));
+        var warHeadquarters = Py.List(Py.KeyVal(
+            ("typeID", new PyInt(35840)),
+            ("structureID", new PyInt(90000001)),
+            ("upkeepState", new PyInt(1)),
+            ("wars", new PyList([])),
+            ("ownerID", new PyInt(98000001)),
+            ("solarSystemID", new PyInt(30000142)),
+            ("itemName", new PyStr("Beacon")),
+            ("inSpace", new PyInt(1))));
+        var callbacks = new TestReadCallbacks
+        {
+            StructureMapDataResult = mapData,
+            AccessibleCynoBeaconStructuresResult = cynoStructures,
+            SolarSystemsWithBeaconsResult = systems,
+            ValidWarHeadquartersResult = warHeadquarters,
+        };
+        var service = new StructureDirectoryService(callbacks);
+        var mapCall = Request("GetStructureMapData", new PyInt(30000142));
+        var mapResult = await service.CallAsync(mapCall);
+        var session = new ClientSession { CharacterId = 42 };
+        session.Set("corpid", new PyInt(98000001));
+        session.Set("allianceid", new PyInt(99000001));
+        var cynoCall = new ServiceCall
+        {
+            Method = "GetMyAccessibleOnlineCynoBeaconStructures",
+            Args = [],
+            Session = session,
+        };
+        var cynoResult = await service.CallAsync(cynoCall);
+        var systemsResult = await service.CallAsync(Request("GetSolarSystemsWithBeacons"));
+        var warHqsCall = new ServiceCall
+        {
+            Method = "GetValidWarHQs",
+            Args = [new PyLong(98000001)],
+            Session = session,
+        };
+        var warHqsResult = await service.CallAsync(warHqsCall);
+
+        Assert.Same(mapData, mapResult);
+        var rowset = Assert.IsType<PyObjectEx>(mapResult);
+        Assert.Equal(ObjectExKind.Ex2, rowset.Kind);
+        Assert.IsType<PyPackedRow>(Assert.Single(rowset.List));
+        Assert.Equal(30000142L, callbacks.StructureMapDataSystemId);
+        Assert.Same(cynoStructures, cynoResult);
+        var beacon = Assert.IsType<PyList>(Assert.Single(Assert.IsType<PyList>(cynoResult).Items));
+        Assert.Equal(6, beacon.Items.Count);
+        Assert.Same(cynoCall, callbacks.AccessibleCynoBeaconCall);
+        Assert.Same(systems, systemsResult);
+        Assert.Same(warHeadquarters, warHqsResult);
+        Assert.Equal(98000001L, callbacks.ValidWarHeadquartersOwnerId);
+        Assert.Same(warHqsCall, callbacks.ValidWarHeadquartersCall);
+    }
+
+    [Fact]
+    public async Task Set_structure_description_forwards_the_authenticated_request()
+    {
+        var callbacks = new TestReadCallbacks { SetStructureDescriptionAccepted = true };
+        var service = new StructureDirectoryService(callbacks);
+        var call = new ServiceCall
+        {
+            Method = "SetStructureDescription",
+            Args = [new PyInt(90000001), new PyWString("A structure description")],
+            Session = new ClientSession { CharacterId = 42 },
+        };
+
+        var result = await service.CallAsync(call);
+
+        Assert.Same(PyNone.Instance, result);
+        Assert.Same(call, callbacks.LastCall);
+    }
+
+    [Fact]
+    public async Task Move_eject_time_gm_requires_gml_and_accepts_only_client_timer_options()
+    {
+        const long wrapId = 90000001;
+        const long gmlRole = 1L << 54;
+        var callbacks = new TestAssetSafetyReadCallbacks();
+        var service = new StructureAssetSafetyService(callbacks);
+        ServiceCall Request(int days, long role)
+        {
+            var session = new ClientSession { CharacterId = 42 };
+            session.Set("role", new PyLong(role));
+            return new ServiceCall
+            {
+                Method = "MoveEjectTimeGM",
+                Args = [new PyLong(wrapId), new PyInt(days)],
+                Session = session,
+            };
+        }
+
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+            service.CallAsync(Request(5, 0)).AsTask());
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+            service.CallAsync(Request(10, gmlRole)).AsTask());
+        Assert.Empty(callbacks.GmTimerRequests);
+
+        Assert.Same(PyNone.Instance, await service.CallAsync(Request(5, gmlRole)));
+        Assert.Same(PyNone.Instance, await service.CallAsync(Request(30, gmlRole)));
+        Assert.Equal(new (long AssetWrapId, int Days)[] { (wrapId, 5), (wrapId, 30) }, callbacks.GmTimerRequests);
+    }
+
+[Fact]
+    public async Task Structure_guests_returns_the_client_identity_dictionary_and_uses_session_structure_fallback()
+    {
+        const long structureId = 90000001;
+        var requestedStructureIds = new List<long>();
+        StructureGuestSnapshot[] guests =
+        [
+            new(42, 98000001, 99000001, 500001),
+            new(41, 98000002, 99000002, 500002),
+        ];
+        var service = new StructureGuestsService((requested, _) =>
+        {
+            requestedStructureIds.Add(requested);
+            return ValueTask.FromResult<IReadOnlyList<StructureGuestSnapshot>>(guests);
+        });
+        var session = new ClientSession { CharacterId = 42 };
+        session.Set("structureid", new PyInt(structureId));
+
+        Assert.Equal("structureGuests", service.Name);
+        Assert.True(service.HasMethod("GetGuests"));
+        Assert.False(service.HasMethod("UnknownMethod"));
+
+        var explicitResult = await service.CallAsync(new ServiceCall
+        {
+            Method = "GetGuests",
+            Args = [new PyInt(structureId + 1)],
+            Session = session,
+        });
+        var expected = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(
+                new PyInt(41), new PyList([new PyInt(98000002), new PyInt(99000002), new PyInt(500002)])),
+            new KeyValuePair<PyValue, PyValue>(
+                new PyInt(42), new PyList([new PyInt(98000001), new PyInt(99000001), new PyInt(500001)])),
+        ]);
+        Assert.Equal(expected, explicitResult);
+        Assert.Equal(structureId + 1, requestedStructureIds[0]);
+
+        var fallbackResult = await service.CallAsync(new ServiceCall
+        {
+            Method = "GetGuests",
+            Args = [],
+            Session = session,
+        });
+        Assert.Equal(expected, fallbackResult);
+        Assert.Equal(structureId, requestedStructureIds[1]);
+
+        var missing = await service.CallAsync(new ServiceCall
+        {
+            Method = "GetGuests",
+            Args = [],
+            Session = new ClientSession(),
+        });
+        Assert.Empty(Assert.IsType<PyDict>(missing).Entries);
+        Assert.Equal(2, requestedStructureIds.Count);
+        Assert.Same(PyNone.Instance, await service.CallAsync(new ServiceCall
+        {
+            Method = "UnknownMethod",
+            Args = [],
+            Session = session,
+        }));
+    }
+
     private static ServiceCall Request(string method, params PyValue[] args) => new()
     {
         Method = method,
@@ -483,15 +726,26 @@ public sealed class StructureDirectoryServiceTests
         public PyValue JumpBridgesResult { get; init; } = Py.List();
         public PyValue NearbyJumpBridgesResult { get; init; } = Py.List();
         public PyValue StructureDescriptionResult { get; init; } = PyNone.Instance;
+        public PyValue StructureMapDataResult { get; init; } = Py.List();
+        public PyValue AccessibleCynoBeaconStructuresResult { get; init; } = Py.List();
+        public PyValue SolarSystemsWithBeaconsResult { get; init; } = Py.List();
+        public PyValue ValidWarHeadquartersResult { get; init; } = Py.List();
+        public bool SetStructureDescriptionAccepted { get; init; }
+        public IReadOnlyList<long> StructureIdsInSolarSystemResult { get; init; } = [];
         public PersistedStructureInfo? StructureInfoResult { get; set; }
         public IReadOnlyList<StructureDockingAccessSnapshot> DockingSnapshotsResult { get; init; } = [];
         public PyDict CharacterStructuresResult { get; init; } = new([]);
         public PyDict CorporationStructuresResult { get; init; } = new([]);
         public long? StructureInfoId { get; private set; }
+        public long? SolarSystemStructuresRequest { get; private set; }
+        public long? StructureMapDataSystemId { get; private set; }
+        public long? ValidWarHeadquartersOwnerId { get; private set; }
         public (long CharacterId, long CorporationId, long AllianceId, IReadOnlyList<long> StructureIds)? DockingRequest { get; private set; }
         public long? CharacterStructuresCharacterId { get; private set; }
         public (long CharacterId, long CorporationId)? CorporationStructuresIdentity { get; private set; }
         public ServiceCall? LastCall { get; private set; }
+        public ServiceCall? AccessibleCynoBeaconCall { get; private set; }
+        public ServiceCall? ValidWarHeadquartersCall { get; private set; }
 
         public ValueTask<PyValue> GetJumpBridgesWithMyAccessAsync(ServiceCall call) =>
             Complete(call, JumpBridgesResult);
@@ -501,6 +755,42 @@ public sealed class StructureDirectoryServiceTests
 
         public ValueTask<PyValue> GetStructureDescriptionAsync(ServiceCall call) =>
             Complete(call, StructureDescriptionResult);
+
+        public ValueTask<PyValue> GetMyAccessibleOnlineCynoBeaconStructuresAsync(ServiceCall call)
+        {
+            AccessibleCynoBeaconCall = call;
+            return Complete(call, AccessibleCynoBeaconStructuresResult);
+        }
+
+        public ValueTask<PyValue> GetSolarSystemsWithBeaconsAsync(CancellationToken cancellationToken) =>
+            ValueTask.FromResult(SolarSystemsWithBeaconsResult);
+
+        public ValueTask<PyValue> GetValidWarHQsAsync(
+            ServiceCall call, long ownerId, CancellationToken cancellationToken)
+        {
+            ValidWarHeadquartersCall = call;
+            ValidWarHeadquartersOwnerId = ownerId;
+            return ValueTask.FromResult(ValidWarHeadquartersResult);
+        }
+
+        public ValueTask<PyValue> GetStructureMapDataAsync(long solarSystemId, CancellationToken cancellationToken)
+        {
+            StructureMapDataSystemId = solarSystemId;
+            return ValueTask.FromResult(StructureMapDataResult);
+        }
+
+        public ValueTask<bool> SetStructureDescriptionAsync(ServiceCall call)
+        {
+            LastCall = call;
+            return ValueTask.FromResult(SetStructureDescriptionAccepted);
+        }
+
+        public ValueTask<IReadOnlyList<long>> GetStructureIdsInSolarSystemAsync(
+            long solarSystemId, CancellationToken cancellationToken)
+        {
+            SolarSystemStructuresRequest = solarSystemId;
+            return ValueTask.FromResult(StructureIdsInSolarSystemResult);
+        }
 
         public ValueTask<PersistedStructureInfo?> GetStructureInfoAsync(long structureId, CancellationToken cancellationToken)
         {
@@ -557,6 +847,7 @@ public sealed class StructureDirectoryServiceTests
         public (long CharacterId, long SolarSystemId, long StructureId)? PersonalMoveRequest { get; private set; }
         public (long CharacterId, long CorporationId, long SolarSystemId, long StructureId)? CorporationMoveRequest { get; private set; }
         public (long CharacterId, long CorporationId, long WrapId, long SolarSystemId, long DestinationId)? WrapDeliveryRequest { get; private set; }
+        public List<(long AssetWrapId, int Days)> GmTimerRequests { get; } = [];
         public int DueDeliveryCalls { get; private set; }
         public int CharacterListCalls { get; private set; }
 
@@ -617,6 +908,13 @@ public sealed class StructureDirectoryServiceTests
             return ValueTask.FromResult(DeliveryResult);
         }
 
+        public ValueTask<bool> MoveEjectTimeGMAsync(
+            ServiceCall call, long assetWrapId, int days, CancellationToken cancellationToken)
+        {
+            GmTimerRequests.Add((assetWrapId, days));
+            return ValueTask.FromResult(true);
+        }
+
         public ValueTask ProcessDueAutomaticDeliveriesAsync(CancellationToken cancellationToken)
         {
             DueDeliveryCalls++;
@@ -637,8 +935,8 @@ public sealed class StructureSettingsServiceTests
         Assert.True(service.HasMethod("CharacterGetServices"));
         Assert.True(service.HasMethod("CharacterHasService"));
         Assert.True(service.HasMethod("CharacterHasSetting"));
-        Assert.False(service.HasMethod("CharacterCheckService"));
-        Assert.False(service.HasMethod("CharacterGetService"));
+        Assert.True(service.HasMethod("CharacterCheckService"));
+        Assert.True(service.HasMethod("CharacterGetService"));
     }
 
     [Fact]
@@ -694,17 +992,49 @@ public sealed class StructureSettingsServiceTests
     }
 
     [Fact]
-    public async Task Unknown_and_unrequested_methods_return_none_without_calling_read_callbacks()
+    public async Task Unknown_methods_return_none_without_calling_read_callbacks()
     {
         var callbacks = new TestReadCallbacks();
         var service = new StructureSettingsService(callbacks);
 
-        var result = await service.CallAsync(Request("CharacterCheckService", 42, new PyInt(90000001)));
+        var result = await service.CallAsync(Request("UnknownStructureSettingsMethod", 42, new PyInt(90000001)));
 
         Assert.Same(PyNone.Instance, result);
         Assert.Null(callbacks.ServicesCall);
         Assert.Null(callbacks.HasServiceCall);
         Assert.Null(callbacks.HasSettingCall);
+    }
+
+    [Fact]
+    public async Task Character_get_service_returns_the_requested_service_value()
+    {
+        var taxRate = new PyReal(0.025);
+        var callbacks = new TestReadCallbacks { CharacterGetServiceResult = taxRate };
+        var service = new StructureSettingsService(callbacks);
+
+        var result = await service.CallAsync(Request(
+            "CharacterGetService", 42, new PyInt(90000001), new PyInt(5)));
+
+        Assert.Same(taxRate, result);
+        Assert.Equal((42L, 90000001L, 5L), callbacks.CharacterGetServiceCall);
+    }
+
+    [Fact]
+    public async Task Character_check_service_returns_true_and_errors_when_unavailable()
+    {
+        var availableCallbacks = new TestReadCallbacks { HasServiceResult = true };
+        var availableService = new StructureSettingsService(availableCallbacks);
+
+        var result = await availableService.CallAsync(Request(
+            "CharacterCheckService", 42, new PyInt(90000001), new PyInt(5)));
+
+        Assert.Same(PyBool.True, result);
+        Assert.Equal((42L, 90000001L, 5L), availableCallbacks.HasServiceCall);
+
+        var unavailableService = new StructureSettingsService(new TestReadCallbacks());
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+            unavailableService.CallAsync(Request(
+                "CharacterCheckService", 42, new PyInt(90000001), new PyInt(5))).AsTask());
     }
 
     private static ServiceCall Request(string method, long? characterId, params PyValue[] args) => new()
@@ -717,21 +1047,25 @@ public sealed class StructureSettingsServiceTests
     private sealed class TestReadCallbacks : IStructureSettingsReadCallbacks
     {
         public PyDict ServicesResult { get; init; } = new([]);
-
+        public PyValue CharacterGetServiceResult { get; init; } = PyNone.Instance;
         public bool HasServiceResult { get; init; }
-
         public bool HasSettingResult { get; init; }
-
         public (long CharacterId, long StructureId)? ServicesCall { get; private set; }
-
+        public (long CharacterId, long StructureId, long ServiceId)? CharacterGetServiceCall { get; private set; }
         public (long CharacterId, long StructureId, long ServiceId)? HasServiceCall { get; private set; }
-
         public (long CharacterId, long StructureId, long SettingId)? HasSettingCall { get; private set; }
 
         public ValueTask<PyDict> CharacterGetServicesAsync(long characterId, long structureId, CancellationToken cancellationToken)
         {
             ServicesCall = (characterId, structureId);
             return ValueTask.FromResult(ServicesResult);
+        }
+
+        public ValueTask<PyValue> CharacterGetServiceAsync(
+            long characterId, long structureId, long serviceId, CancellationToken cancellationToken)
+        {
+            CharacterGetServiceCall = (characterId, structureId, serviceId);
+            return ValueTask.FromResult(CharacterGetServiceResult);
         }
 
         public ValueTask<bool> CharacterHasServiceAsync(long characterId, long structureId, long serviceId, CancellationToken cancellationToken)

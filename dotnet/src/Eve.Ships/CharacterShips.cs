@@ -35,13 +35,13 @@ public sealed partial class CharacterShips(
     public Task<ShipSnapshot?> LoadShipAsync(long characterId, long shipId, CancellationToken cancellationToken = default) =>
         LoadSelectedShipAsync(characterId, shipId, cancellationToken);
 
-    private async Task<ShipSnapshot?> LoadSelectedShipAsync(long characterId, long? shipId, CancellationToken cancellationToken)
+    private async Task<ShipSnapshot?> LoadSelectedShipAsync(long characterId, long? shipId, CancellationToken cancellationToken, long? shipOwnerIdOverride = null)
     {
         if (training is not null && await characters.GetAsync(characterId, cancellationToken) is { } owner)
         {
             await training.SettleAsync(characterId, owner.AccountId, cancellationToken);
         }
-        return await ShipSnapshot.LoadAsync(statics, characters, items, skills, modules, characterId, LearningOf(characterId), null, cancellationToken, shipId);
+        return await ShipSnapshot.LoadAsync(statics, characters, items, skills, modules, characterId, LearningOf(characterId), null, cancellationToken, shipId, shipOwnerIdOverride);
     }
 
     /// <summary>
@@ -124,7 +124,7 @@ public sealed partial class CharacterShips(
             {
                 return new NothingHappened();
             }
-            snapshot = await LoadShipAsync(characterId, selectedShipId, cancellationToken);
+            snapshot = await LoadSelectedShipAsync(characterId, selectedShipId, cancellationToken, selectedShip.OwnerId);
             if (snapshot is null)
             {
                 return new NothingHappened();
@@ -161,6 +161,7 @@ public sealed partial class CharacterShips(
         }
 
         var unpack = toShip && !ship.Singleton;
+        await statics.EnsureTypesAsync([item.TypeId], cancellationToken);
         var world = snapshot.World;
         var type = statics.Type(item.TypeId);
         var wasInSlot = inShip && Slots.IsSlotFlag(item.Flag);
@@ -234,7 +235,8 @@ public sealed partial class CharacterShips(
             && !await ShipContentsAllowedInBayAsync(item, destinationFlag, world, characterId, cancellationToken))
             return new ShipRefused(ShipRefusal.NotAllowedInHold, ModuleTypeId: item.TypeId, ShipTypeId: ship.TypeId);
 
-        var destinationItemOwnerId = toHangar ? destinationOwnerId ?? characterId : characterId;
+        // Corporation-owned ship inventories retain corporation ownership, as EveJS resolves the ship owner as the destination owner.
+        var destinationItemOwnerId = destinationOwnerId ?? characterId;
 
         // what the ship is once the item is where it goes
         var landsInSlot = toShip && Slots.IsSlotFlag(destinationFlag);

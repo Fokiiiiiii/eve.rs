@@ -497,6 +497,27 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
     }
 
 
+    /// <summary>Applies the persisted kill-right activation to the target and tells the activator.</summary>
+    public async Task ApplyKillRightActivationAsync(
+        KillRightActivation activation,
+        long solarSystemId,
+        CancellationToken cancellationToken = default)
+    {
+        if (activation.TargetCharacterId <= 0 || activation.ActivatorCharacterId <= 0)
+        {
+            return;
+        }
+        await UpdateTimerAsync(
+            activation.TargetCharacterId,
+            (state, now) => state.FlagAsSuspect(now) with
+            {
+                SolarSystemId = solarSystemId > 0 ? solarSystemId : state.SolarSystemId,
+            },
+            cancellationToken);
+        sessions.Of(activation.ActivatorCharacterId)?.SendNotification("OnKillRightActivated", "clientID");
+    }
+
+
     public async Task<PolicyDecision> EvaluateRemoteAssistanceAsync(
         AggressionRequest request,
         int safetyLevel,

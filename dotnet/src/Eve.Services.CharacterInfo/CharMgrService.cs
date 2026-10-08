@@ -31,6 +31,9 @@ public sealed record CharMgrPersonalData(
 
     public long? NextOwnerNoteId { get; init; }
 }
+
+
+public sealed record CharMgrOrganizationInfo(long CorporationId, long AllianceId, long WarFactionId);
 [Service("charMgr")]
 public sealed partial class CharMgrService(
     PgCharacterStore characters,
@@ -40,7 +43,12 @@ public sealed partial class CharMgrService(
     Func<long, string, CancellationToken, ValueTask> writeCharacterDescription,
     Func<long, CancellationToken, ValueTask<double>> readCharacterSecurityStatus,
     Func<long, CancellationToken, ValueTask<long?>> readMedal1GraphicId,
-    Func<long, CancellationToken, ValueTask<CharMgrPersonalData?>>? readPersonalData = null)
+    Func<long, CancellationToken, ValueTask<CharMgrPersonalData?>>? readPersonalData = null,
+    Func<long, Func<CharMgrPersonalData, CharMgrPersonalData>, CancellationToken, ValueTask<CharMgrPersonalData?>>? updatePersonalData = null,
+    Func<long, long, string?, CancellationToken, ValueTask>? writeActivityStatus = null,
+    Func<long, PyValue, CancellationToken, ValueTask>? writeLogSettings = null,
+    Func<long, CancellationToken, ValueTask<long?>>? readCorporationMemberStartedMs = null,
+    Func<IReadOnlyList<Character>, CancellationToken, ValueTask<IReadOnlyDictionary<long, CharMgrOrganizationInfo>>>? readOrganizationInfo = null)
 {
 
     /// <summary>
@@ -225,6 +233,117 @@ public sealed partial class CharMgrService(
         return await readPersonalData(characterId, call.Cancellation) ?? CharMgrPersonalData.Empty;
     }
 
+    private async ValueTask<CharMgrPersonalData?> UpdatePersonalDataAsync(
+        ServiceCall call, Func<CharMgrPersonalData, CharMgrPersonalData> update)
+    {
+        if (call.Session.CharacterId is not { } characterId || characterId <= 0 ||
+            updatePersonalData is null ||
+            await characters.GetAsync(characterId, call.Cancellation) is null)
+        {
+            return null;
+        }
+
+        return await updatePersonalData(characterId, update, call.Cancellation);
+    }
+
+    private static long NormalizeInteger(PyValue value, long fallback = 0)
+    {
+        switch (value)
+        {
+            case PyBool boolean:
+                return boolean.Value ? 1 : 0;
+            case PyInt number:
+                return number.Value;
+            case PyLong number:
+                return number.Value;
+            case PyReal number when double.IsFinite(number.Value) &&
+                number.Value >= long.MinValue && number.Value <= long.MaxValue:
+                return (long)Math.Truncate(number.Value);
+            case PyNone:
+                return fallback;
+        }
+
+        var text = Eve.Macho.JsSemantics.StringValue(value);
+        return double.TryParse(text, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var parsed) &&
+            double.IsFinite(parsed) && parsed >= long.MinValue && parsed <= long.MaxValue
+                ? (long)Math.Truncate(parsed)
+                : fallback;
+    }
+
+    private static bool NormalizeBoolean(PyValue value, bool fallback = false)
+    {
+        switch (value)
+        {
+            case PyBool boolean:
+                return boolean.Value;
+            case PyInt number:
+                return number.Value != 0;
+            case PyLong number:
+                return number.Value != 0;
+            case PyReal number:
+                return number.Value != 0 && !double.IsNaN(number.Value);
+            case PyNone:
+                return fallback;
+        }
+
+        var text = Eve.Macho.JsSemantics.StringValue(value);
+        if (text is not null)
+        {
+            var normalized = text.Trim().ToLowerInvariant();
+            if (normalized.Length == 0)
+            {
+                return fallback;
+            }
+            if (normalized is "false" or "0")
+            {
+                return false;
+            }
+            if (normalized is "true" or "1")
+            {
+                return true;
+            }
+            return true;
+        }
+
+        return value is PyDict or PyList or PyTuple or PyObjectEx or PyObject;
+    }
+
+    private static IReadOnlyList<PyValue> ListItems(PyValue value) => value switch
+    {
+        PyList list => list.Items,
+        PyTuple tuple => tuple.Items,
+        _ => [],
+    };
+
+    private static string? OptionalText(PyValue? value)
+    {
+        if (value is null or PyNone)
+        {
+            return null;
+        }
+
+        return value switch
+        {
+            PyBool boolean => boolean.Value ? "true" : "false",
+            PyInt number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            PyLong number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            PyReal number => number.Value.ToString("G", System.Globalization.CultureInfo.InvariantCulture),
+            _ => Eve.Macho.JsSemantics.StringValue(value) ?? value.ToString(),
+        };
+    }
+
+    private static long NextOwnerNoteId(CharMgrPersonalData data, IEnumerable<CharMgrOwnerNote> notes)
+    {
+        var used = notes.Select(note => note.NoteId).ToHashSet();
+        var next = data.NextOwnerNoteId is > 0 ? data.NextOwnerNoteId.Value : 1;
+        while (used.Contains(next) && next < long.MaxValue)
+        {
+            next++;
+        }
+        return next > 0 && next < long.MaxValue ? next : 0;
+    }
+
     [Method("GetContactList")]
 
     public async ValueTask<PyValue> GetContactList(ServiceCall call)
@@ -342,6 +461,326 @@ public sealed partial class CharMgrService(
         var itemId = IdOf(call.Arg(0)) ?? 0;
         var data = await ReadPersonalDataAsync(call);
         return new PyStr(data.ItemNotes.GetValueOrDefault(itemId, ""));
+    }
+
+
+    [Method("GetPrivateInfoOnCorpChange")]
+    public async ValueTask<PyValue> GetPrivateInfoOnCorpChange(ServiceCall call)
+    {
+        var characterId = call.Args.Count == 0
+            ? call.Session.CharacterId ?? 0
+            : NormalizeInteger(call.Arg(0));
+        var character = characterId > 0
+            ? await characters.GetAsync(characterId, call.Cancellation)
+            : null;
+        var corporationId = character?.CorporationId ??
+            call.Session.GetInt("corporationID") ??
+            call.Session.GetInt("corpid") ??
+            0;
+        var startedMs = characterId > 0 && readCorporationMemberStartedMs is not null
+            ? await readCorporationMemberStartedMs(characterId, call.Cancellation)
+            : null;
+        var corporationDateTime = startedMs is > 0
+            ? new PyLong(Py.FileTimeFromUnixMs(startedMs.Value))
+            : character is not null ? FileTime(character.CreatedAt) : None;
+
+        return Py.KeyVal(
+            ("corporationID", corporationId > 0 ? new PyInt(corporationId) : None),
+            ("corporationDateTime", corporationDateTime));
+    }
+
+
+    [Method("GetOrganizationInfoForCharacters")]
+    public async ValueTask<PyValue> GetOrganizationInfoForCharacters(ServiceCall call)
+    {
+        var characterIds = ListItems(call.Arg(0))
+            .Select(value => NormalizeInteger(value))
+            .Where(id => id > 0)
+            .Distinct()
+            .ToArray();
+        if (characterIds.Length == 0)
+        {
+            return new PyDict([]);
+        }
+
+        var characterRows = await characters.GetManyAsync(characterIds, call.Cancellation);
+        var charactersById = characterRows.ToDictionary(character => character.Id);
+        var organizationInfo = readOrganizationInfo is null
+            ? new Dictionary<long, CharMgrOrganizationInfo>()
+            : await readOrganizationInfo(characterRows, call.Cancellation);
+
+        var entries = new List<KeyValuePair<PyValue, PyValue>>(characterIds.Length);
+        foreach (var characterId in characterIds)
+        {
+            var corporationId = 0L;
+            var allianceId = 0L;
+            var warFactionId = 0L;
+            if (charactersById.TryGetValue(characterId, out var character))
+            {
+                corporationId = character.CorporationId;
+                allianceId = character.AllianceId ?? 0;
+                if (organizationInfo.TryGetValue(characterId, out var organization))
+                {
+                    corporationId = organization.CorporationId;
+                    allianceId = organization.AllianceId;
+                    warFactionId = organization.WarFactionId;
+                }
+            }
+
+            entries.Add(new KeyValuePair<PyValue, PyValue>(
+                new PyInt(characterId),
+                Py.KeyVal(
+                    ("corporationID", new PyInt(corporationId)),
+                    ("allianceID", new PyInt(allianceId)),
+                    ("warFactionID", new PyInt(warFactionId)))));
+        }
+        return new PyDict(entries);
+    }
+
+    [Method("AddContact")]
+    public async ValueTask<PyValue> AddContact(ServiceCall call)
+    {
+        var contactId = NormalizeInteger(call.Arg(0));
+        var relationshipId = call.Args.Count > 1 ? NormalizeInteger(call.Arg(1)) : 0;
+        var inWatchlist = call.Args.Count > 2 && NormalizeBoolean(call.Arg(2));
+        await UpdatePersonalDataAsync(call, data =>
+        {
+            if (contactId <= 0)
+            {
+                return data;
+            }
+
+            var existing = data.Contacts.FirstOrDefault(contact => contact.ContactId == contactId);
+            var contact = new CharMgrContact(contactId, inWatchlist, relationshipId, existing?.LabelMask ?? 0);
+            return data with
+            {
+                Contacts = data.Contacts.Where(item => item.ContactId != contactId)
+                    .Append(contact).OrderBy(item => item.ContactId).ToArray(),
+            };
+        });
+        return None;
+    }
+
+    [Method("AddOwnerNote")]
+    public async ValueTask<PyValue> AddOwnerNote(ServiceCall call)
+    {
+        var label = OptionalText(call.Args.Count > 0 ? call.Arg(0) : new PyStr("")) ?? "";
+        var noteText = OptionalText(call.Args.Count > 1 ? call.Arg(1) : new PyStr("")) ?? "";
+        var noteId = 0L;
+        await UpdatePersonalDataAsync(call, data =>
+        {
+            var id = NextOwnerNoteId(data, data.OwnerNotes);
+            if (id <= 0)
+            {
+                return data;
+            }
+
+            noteId = id;
+            return data with
+            {
+                OwnerNotes = [.. data.OwnerNotes, new CharMgrOwnerNote(id, label, noteText)],
+                NextOwnerNoteId = id + 1,
+            };
+        });
+        return new PyInt(noteId);
+    }
+
+    [Method("BlockOwners")]
+    public async ValueTask<PyValue> BlockOwners(ServiceCall call)
+    {
+        var ownerIds = ListItems(call.Arg(0)).Select(item => NormalizeInteger(item)).Where(id => id > 0).ToHashSet();
+        await UpdatePersonalDataAsync(call, data => data with
+        {
+            BlockedSenders = data.BlockedSenders.Concat(ownerIds).Distinct().Order().ToArray(),
+        });
+        return None;
+    }
+
+    [Method("DeleteContacts")]
+    public async ValueTask<PyValue> DeleteContacts(ServiceCall call)
+    {
+        var contactIds = ListItems(call.Arg(0)).Select(item => NormalizeInteger(item)).ToHashSet();
+        await UpdatePersonalDataAsync(call, data => data with
+        {
+            Contacts = data.Contacts.Where(contact => !contactIds.Contains(contact.ContactId)).ToArray(),
+        });
+        return None;
+    }
+
+    [Method("EditContactsRelationshipID")]
+    public async ValueTask<PyValue> EditContactsRelationshipID(ServiceCall call)
+    {
+        var contactIds = ListItems(call.Arg(0)).Select(item => NormalizeInteger(item)).Where(id => id > 0).ToHashSet();
+        var relationshipId = NormalizeInteger(call.Arg(1));
+        await UpdatePersonalDataAsync(call, data =>
+        {
+            var contacts = data.Contacts.ToDictionary(contact => contact.ContactId);
+            foreach (var contactId in contactIds)
+            {
+                var existing = contacts.GetValueOrDefault(contactId);
+                contacts[contactId] = new CharMgrContact(
+                    contactId,
+                    existing?.InWatchlist ?? false,
+                    relationshipId,
+                    existing?.LabelMask ?? 0);
+            }
+            return data with { Contacts = contacts.Values.OrderBy(contact => contact.ContactId).ToArray() };
+        });
+        return None;
+    }
+
+    [Method("EditOwnerNote")]
+    public async ValueTask<PyValue> EditOwnerNote(ServiceCall call)
+    {
+        var noteId = call.Args.Count > 0 ? NormalizeInteger(call.Arg(0)) : 0;
+        var label = call.Args.Count > 1 ? OptionalText(call.Arg(1)) : null;
+        var noteText = call.Args.Count > 2 ? OptionalText(call.Arg(2)) : null;
+        await UpdatePersonalDataAsync(call, data =>
+        {
+            var notes = data.OwnerNotes.ToList();
+            var index = notes.FindIndex(note => note.NoteId == noteId);
+            if (noteId <= 0 || index < 0)
+            {
+                return data;
+            }
+
+            var previous = notes[index];
+            var updated = previous with
+            {
+                Label = label ?? previous.Label,
+                Note = noteText ?? previous.Note,
+            };
+            notes[index] = updated;
+            var nextNoteId = data.NextOwnerNoteId;
+            if (previous.Label == "S:Folders" && updated.Label != "S:Folders" &&
+                !notes.Any(note => note.Label == "S:Folders"))
+            {
+                var foldersId = NextOwnerNoteId(data, notes);
+                if (foldersId > 0)
+                {
+                    notes.Add(new CharMgrOwnerNote(foldersId, "S:Folders", "1::F::0::Main|"));
+                    nextNoteId = foldersId + 1;
+                }
+            }
+
+            return data with
+            {
+                OwnerNotes = notes.OrderBy(note => note.NoteId).ToArray(),
+                NextOwnerNoteId = nextNoteId,
+            };
+        });
+        return None;
+    }
+
+
+
+    [Method("LogSettings")]
+    public async ValueTask<PyValue> LogSettings(ServiceCall call)
+    {
+        if (call.Session.CharacterId is { } characterId && characterId > 0 &&
+            writeLogSettings is not null &&
+            await characters.GetAsync(characterId, call.Cancellation) is not null)
+        {
+            var settings = call.Arg(0);
+            if (settings is not (PyDict or PyList or PyTuple or PyObjectEx or PyObject))
+            {
+                settings = new PyDict([]);
+            }
+            await writeLogSettings(characterId, settings, call.Cancellation);
+        }
+        return None;
+    }
+
+    [Method("RemoveOwnerNote")]
+    public async ValueTask<PyValue> RemoveOwnerNote(ServiceCall call)
+    {
+        var noteId = call.Args.Count > 0 ? NormalizeInteger(call.Arg(0)) : 0;
+        await UpdatePersonalDataAsync(call, data =>
+        {
+            var notes = data.OwnerNotes.ToList();
+            var index = notes.FindIndex(note => note.NoteId == noteId);
+            if (noteId <= 0 || index < 0)
+            {
+                return data;
+            }
+
+            var existing = notes[index];
+            if (existing.Label == "S:Folders" &&
+                notes.Count(note => note.Label == "S:Folders") <= 1)
+            {
+                notes[index] = existing with { Note = "1::F::0::Main|" };
+                return data with { OwnerNotes = notes.ToArray() };
+            }
+
+            notes.RemoveAt(index);
+            var nextNoteId = data.NextOwnerNoteId;
+            if (existing.Label == "S:Folders" && !notes.Any(note => note.Label == "S:Folders"))
+            {
+                var foldersId = NextOwnerNoteId(data, notes);
+                if (foldersId > 0)
+                {
+                    notes.Add(new CharMgrOwnerNote(foldersId, "S:Folders", "1::F::0::Main|"));
+                    nextNoteId = foldersId + 1;
+                }
+            }
+            return data with
+            {
+                OwnerNotes = notes.OrderBy(note => note.NoteId).ToArray(),
+                NextOwnerNoteId = nextNoteId,
+            };
+        });
+        return None;
+    }
+
+    [Method("SetActivityStatus")]
+    public async ValueTask<PyValue> SetActivityStatus(ServiceCall call)
+    {
+        if (call.Session.CharacterId is { } characterId && characterId > 0 &&
+            writeActivityStatus is not null &&
+            await characters.GetAsync(characterId, call.Cancellation) is not null)
+        {
+            var status = NormalizeInteger(call.Kwarg("status") ?? call.Arg(0));
+            var extraInfo = call.Kwarg("extraInfo") ?? call.Arg(1);
+            await writeActivityStatus(characterId, status, OptionalText(extraInfo), call.Cancellation);
+        }
+        return None;
+    }
+
+    [Method("SetNote")]
+    public async ValueTask<PyValue> SetNote(ServiceCall call)
+    {
+        var itemId = call.Args.Count > 0 ? NormalizeInteger(call.Arg(0)) : 0;
+        var noteText = OptionalText(call.Args.Count > 1 ? call.Arg(1) : new PyStr("")) ?? "";
+        await UpdatePersonalDataAsync(call, data =>
+        {
+            if (itemId <= 0)
+            {
+                return data;
+            }
+
+            var notes = new Dictionary<long, string>(data.ItemNotes);
+            if (noteText.Length == 0)
+            {
+                notes.Remove(itemId);
+            }
+            else
+            {
+                notes[itemId] = noteText;
+            }
+            return data with { ItemNotes = notes };
+        });
+        return None;
+    }
+
+    [Method("UnblockOwners")]
+    public async ValueTask<PyValue> UnblockOwners(ServiceCall call)
+    {
+        var ownerIds = ListItems(call.Arg(0)).Select(item => NormalizeInteger(item)).ToHashSet();
+        await UpdatePersonalDataAsync(call, data => data with
+        {
+            BlockedSenders = data.BlockedSenders.Where(id => !ownerIds.Contains(id)).ToArray(),
+        });
+        return None;
     }
 
     [Method("GetRecentShipKillsAndLosses")]

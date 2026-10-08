@@ -56,9 +56,6 @@ public static class FittingRules
 
     private static readonly int[] CanFitShipTypes = [1302, 1303, 1304, 1305, 1944, 2103, 2463, 2486, 2487, 2488];
 
-    /// <summary>The attributes that give the level of each skill a type needs, in the order of <see cref="TypeDef.RequiredSkillAttributes"/>.</summary>
-    private static readonly int[] RequiredSkillLevelAttributes = [277, 278, 279, 1286, 1287, 1288];
-
     /// <summary>The modules fitted to the ship now (not counting <paramref name="candidate"/>).</summary>
     public static IEnumerable<DogmaItem> Fitted(DogmaWorld world, long shipId) =>
         world.Items.Where(i => i.LocationId == shipId && Slots.IsSlotFlag(i.FlagId) && !world.IsCharge(i));
@@ -70,7 +67,7 @@ public static class FittingRules
         {
             if (type.Attributes.TryGetValue(TypeDef.RequiredSkillAttributes[i], out var skill) && skill > 0)
             {
-                yield return ((int)skill, type.Attributes.TryGetValue(RequiredSkillLevelAttributes[i], out var level) ? (int)level : 1);
+                yield return ((int)skill, type.Attributes.TryGetValue(TypeDef.RequiredSkillLevelAttributes[i], out var level) ? (int)level : 1);
             }
         }
     }

@@ -33,9 +33,15 @@ public sealed class PgWorkCycleLedger
     public async Task<WorkCycleRecord?> LastAsync(long ownerId, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        return await LastAsync(connection, null, ownerId, cancellationToken);
+    }
+
+    /// <summary>The last cycle settled for the owner on the given connection (and transaction, when there is one), or null when none was.</summary>
+    public async Task<WorkCycleRecord?> LastAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long ownerId, CancellationToken cancellationToken = default)
+    {
         await using var command = new NpgsqlCommand(
             $"SELECT owner_id, cycle_id, accepted, reason, units_remaining, delivered_units, complete FROM {_schema}.space_work_cycles WHERE owner_id = $1",
-            connection);
+            connection, transaction);
         command.Parameters.Add(new NpgsqlParameter { Value = ownerId });
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
@@ -50,6 +56,12 @@ public sealed class PgWorkCycleLedger
     public async Task RecordAsync(WorkCycleRecord record, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await RecordAsync(connection, null, record, cancellationToken);
+    }
+
+    /// <summary>Records the answer to the owner's cycle on the given connection (and transaction, when there is one), in place of the one before it.</summary>
+    public async Task RecordAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, WorkCycleRecord record, CancellationToken cancellationToken = default)
+    {
         await using var command = new NpgsqlCommand(
             $"""
             INSERT INTO {_schema}.space_work_cycles (owner_id, cycle_id, accepted, reason, units_remaining, delivered_units, complete)
@@ -58,7 +70,7 @@ public sealed class PgWorkCycleLedger
                 cycle_id = EXCLUDED.cycle_id, accepted = EXCLUDED.accepted, reason = EXCLUDED.reason, units_remaining = EXCLUDED.units_remaining,
                 delivered_units = EXCLUDED.delivered_units, complete = EXCLUDED.complete
             """,
-            connection);
+            connection, transaction);
         foreach (var value in new object[]
         {
             record.OwnerId, record.CycleId, record.Accepted, record.Reason, record.UnitsRemaining, record.DeliveredUnits, record.Complete,

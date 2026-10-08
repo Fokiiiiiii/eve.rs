@@ -51,7 +51,15 @@ internal abstract class ShipEffect : IEffectHandler<ShipSnapshot, SimEffect>
 
     bool IEffectHandler<ShipSnapshot, SimEffect>.Implemented => Implemented;
 
-    SimEffect IEffectHandler<ShipSnapshot, SimEffect>.Build(EffectContext<ShipSnapshot> context) => Build(new ModuleEffectContext(context));
+    /// <summary>
+    /// Builds the effect, and marks it as burning fuel when the module's consumption type (713) names one: the common mechanism of every handler (module_rules
+    /// WP18), so a fuel-burning effect asks the host for its fuel before each cycle and does not run one the host refuses. Nothing is marked for a module with no type.
+    /// </summary>
+    SimEffect IEffectHandler<ShipSnapshot, SimEffect>.Build(EffectContext<ShipSnapshot> context)
+    {
+        var module = new ModuleEffectContext(context);
+        return Build(module) with { BurnsFuel = module.Value(ModuleAttributes.ConsumptionType, 0) > 0 };
+    }
 
     void IEffectHandler<ShipSnapshot, SimEffect>.Accepted(EffectContext<ShipSnapshot> context) => Accepted(new ModuleEffectContext(context));
 

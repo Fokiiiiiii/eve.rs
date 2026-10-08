@@ -60,7 +60,7 @@ public class ModuleRuleTests
     }
 
     [PgFact]
-    public async Task A_module_that_burns_fuel_is_refused_as_not_implemented_and_is_not_run_free()
+    public async Task A_module_that_burns_fuel_is_built_to_ask_for_its_fuel_before_each_cycle_and_is_not_run_free()
     {
         await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
@@ -77,17 +77,61 @@ public class ModuleRuleTests
         {
             var fixture = FittedModule(statics, shipTypeId, moduleTypeId);
             var result = ModulePackages.Of(fixture.Snapshot, statics, fixture.ModuleId, "moduleBonusSiegeModule", 0, 1);
-            Assert.Equal("FUEL_NOT_IMPLEMENTED", result.Reason);
-            Assert.Null(result.Effect);
+            Assert.Null(result.Reason);
+            Assert.NotNull(result.Effect);
+            // the common mechanism marks it: the host takes the fuel of each cycle (WP18), it is not run free
+            Assert.True(result.Effect!.BurnsFuel);
         }
-        // the edge: a carrier that burns nothing is not refused for fuel; it is built as before
+        // the edge: a carrier that burns nothing is not marked, and is built as before
         foreach (var moduleTypeId in free.Take(1))
         {
             var fixture = FittedModule(statics, shipTypeId, moduleTypeId);
             var result = ModulePackages.Of(fixture.Snapshot, statics, fixture.ModuleId, "moduleBonusSiegeModule", 0, 1);
             Assert.Null(result.Reason);
             Assert.NotNull(result.Effect);
+            Assert.False(result.Effect!.BurnsFuel);
         }
+    }
+
+    [PgFact]
+    public async Task Each_fuel_family_with_a_body_is_built_with_its_fuel_and_the_bodies_not_yet_run_stay_refused_by_name()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var sde = new SdeReader(source);
+        var statics = await DogmaStatic.LoadAsync(sde);
+        var shipTypeId = await ShipTypeIdAsync(sde, statics);
+        await statics.EnsureTypesAsync([27951, 28583, 21096, 23953, 23735, 40633, 42522]);
+
+        // the modifier bodies that run: the triage module and the capital industrial core burn their fuel and are built
+        foreach (var (moduleTypeId, effectName) in new[] { (27951, "moduleBonusTriageModule"), (28583, "industrialCoreEffect2") })
+        {
+            var fixture = FittedModule(statics, shipTypeId, moduleTypeId);
+            var result = ModulePackages.Of(fixture.Snapshot, statics, fixture.ModuleId, effectName, 0, 1);
+            Assert.Null(result.Reason);
+            Assert.True(result.Effect!.BurnsFuel, $"{moduleTypeId} burns its fuel");
+        }
+
+        // the bodies the host does not run yet (the cyno field, the jump portal, the clone vat's acceptance) are refused by name: their modifiers alone
+        // would be a success the reference does not give, fuel or not
+        foreach (var (moduleTypeId, effectName) in new[] { (21096, "cynosuralGeneration"), (23953, "jumpPortalGeneration"), (23735, "cloneJumpAccepting") })
+        {
+            var fixture = FittedModule(statics, shipTypeId, moduleTypeId);
+            var result = ModulePackages.Of(fixture.Snapshot, statics, fixture.ModuleId, effectName, 0, 1);
+            Assert.Equal("EFFECT_NOT_IMPLEMENTED", result.Reason);
+            Assert.Null(result.Effect);
+        }
+
+        // a DDD-class module (Bosonic Field Generator, 713 16275 x 714 2000): its own effect has no body in the host, so it keeps its refusal (not a free run)
+        var ddd = FittedModule(statics, shipTypeId, 40633);
+        var dddResult = ModulePackages.Of(ddd.Snapshot, statics, ddd.ModuleId, "doomsdayConeDOT", 0, 1);
+        Assert.NotNull(dddResult.Reason);
+        Assert.Null(dddResult.Effect);
+
+        // P.A.N.I.C. has no fuel attributes in the static data: nothing is invented for it
+        var panic = FittedModule(statics, shipTypeId, 42522);
+        Assert.Equal(0, statics.Type(42522)!.Attributes.GetValueOrDefault(ModuleAttributes.ConsumptionType));
+        Assert.Equal(0, statics.Type(42522)!.Attributes.GetValueOrDefault(ModuleAttributes.ConsumptionQuantity));
+        Assert.Equal("EFFECT_NOT_IMPLEMENTED", ModulePackages.Of(panic.Snapshot, statics, panic.ModuleId, "moduleBonusIndustrialInvulnerability", 0, 1).Reason);
     }
 
     [PgFact]

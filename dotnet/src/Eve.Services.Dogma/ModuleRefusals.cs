@@ -63,7 +63,11 @@ internal static class ModuleRefusals
             "MODULE_CLOAKED" => Notify("You cannot activate modules while cloaked."),
             // an effect with no body yet (PendingModuleEffect) or a module that burns a resource not taken yet (DogmaModifierEffect) is shown as one this module cannot run,
             // the same as an effect with no handler
-            "UNSUPPORTED_EFFECT" or "EFFECT_NOT_IMPLEMENTED" or "FUEL_NOT_IMPLEMENTED" => Notify($"{name} cannot be activated."),
+            // the module burns fuel and the ship has not got the fuel of its cycle (the host's answer to the fuel of the first cycle; moduleOperation.js, shipModuleFuel.js NO_FUEL)
+            "NO_FUEL" => Notify("You do not have enough fuel to activate that module."),
+            // the host refused the fuel for a reason that is not the lack of it: the module cannot be run
+            "FUEL_REFUSED" => Notify($"{name} cannot be activated."),
+            "UNSUPPORTED_EFFECT" or "EFFECT_NOT_IMPLEMENTED" => Notify($"{name} cannot be activated."),
             // a module of a group of which one runs at a time (the reactive armor hardeners) while another of its group runs
             "MAX_GROUP_ACTIVE" => Notify($"{name} cannot run while another module of its group is active."),
             // a launcher or firing effect whose kind is not run yet names its reason (MissileEffect.RefusedLauncherGroups, RefusedFiringEffects, e.g. F.O.F.):

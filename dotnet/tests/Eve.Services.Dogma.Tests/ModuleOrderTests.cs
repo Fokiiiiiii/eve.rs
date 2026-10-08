@@ -131,8 +131,9 @@ public class ModuleOrderTests
         // the reference's wording (moduleOperation.js): the microwarpdrive is held by a scrambler, and a module too damaged to start says so
         Assert.Equal("That module cannot be activated while you are warp scrambled.", await Said("MICROWARPDRIVE_BLOCKED"));
         Assert.Equal("1MN Civilian Afterburner is too damaged to activate.", await Said("MODULE_INCAPACITATED"));
-        // a module that burns a resource the host does not take yet is refused, not run free
-        Assert.Equal("1MN Civilian Afterburner cannot be activated.", await Said("FUEL_NOT_IMPLEMENTED"));
+        // a module that burns fuel the ship does not have is refused with the reference's wording; a fuel refusal the host gives for another reason is refused as a whole
+        Assert.Equal("You do not have enough fuel to activate that module.", await Said("NO_FUEL"));
+        Assert.Equal("1MN Civilian Afterburner cannot be activated.", await Said("FUEL_REFUSED"));
         Assert.Equal("Failed to activate 1MN Civilian Afterburner: SafetyActivated.", await Said("SafetyActivated"));
         Assert.Equal("Failed to activate module: BAD_EFFECT.", await Said("BAD_EFFECT", ""));
         foreach (var reason in new[] { "NOT_IN_SPACE", "NO_SHIP_IN_SPACE", "MODULE_NOT_FOUND" })

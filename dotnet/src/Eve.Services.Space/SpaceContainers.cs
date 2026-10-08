@@ -609,6 +609,12 @@ private void OnReceived(SimMessage message)
                 ReplyToWorkCycle(cycle, WorkOutcome.Refuse("INVALID_PROFILE"));
                 return;
             }
+            // the fuel of a module's cycle is debited and its answer recorded in one transaction, which also answers a repeat (CharacterShips.ConsumeModuleFuelAsync)
+            if (cycle.IsModule && cycle.Command == SimModuleWorkCommands.ConsumeFuel)
+            {
+                ReplyToWorkCycle(cycle, await SettleFuelAsync(cycle));
+                return;
+            }
             if (await _cycles.LastAsync(cycle.OwnerId) is { } last && last.CycleId == (long)cycle.CycleId)
             {
                 ReplyToWorkCycle(cycle, new WorkOutcome(last.Accepted, last.Reason, last.UnitsRemaining, last.DeliveredUnits, last.Complete));
@@ -629,6 +635,45 @@ private void OnReceived(SimMessage message)
                 ReplyToWorkCycle(cycle, WorkOutcome.Refuse("WORK_FAILED"));
             }
         }
+    }
+
+    /// <summary>
+    /// The fuel of one cycle of a module that burns fuel: the module must be running in the pilot's ship, and the fuel is the module's consumption (713, 714) taken
+    /// from the ship. A refusal before the debit is not recorded (nothing was taken, and a repeat is checked again).
+    /// </summary>
+    private async Task<WorkOutcome> SettleFuelAsync(WorkCycle cycle)
+    {
+        if (cycle.OwnerId <= 0)
+        {
+            return WorkOutcome.Refuse("INVALID_PROFILE");
+        }
+        var session = _space.ClientSessionOf(cycle.SessionId);
+        if (session is null || session.CharacterId != cycle.CharacterId
+            || session.GetInt("shipid") is not { } shipId || shipId != cycle.ShipId
+            || !_space.IsInSpace(session) || _space.SolarSystemOf(session) != cycle.SolarSystemId)
+        {
+            return WorkOutcome.Refuse("NO_PILOT");
+        }
+        if (!_space.IsModuleActive(cycle.SessionId, cycle.OwnerId))
+        {
+            return WorkOutcome.Refuse("NOT_CONTROLLED");
+        }
+        var ship = await _ships.LoadAsync(cycle.CharacterId);
+        if (ship is null || ship.Ship.Id != cycle.ShipId
+            || ship.Ship.LocationId != cycle.SolarSystemId || ship.Ship.Flag != CharacterShips.InSpaceFlag)
+        {
+            return WorkOutcome.Refuse("NO_SHIP");
+        }
+        var fuelType = ship.World.Get(cycle.OwnerId, Eve.Services.Space.Effects.ModuleAttributes.ConsumptionType);
+        var fuelQuantity = ship.World.Get(cycle.OwnerId, Eve.Services.Space.Effects.ModuleAttributes.ConsumptionQuantity);
+        if (!double.IsFinite(fuelType) || fuelType <= 0 || fuelType > int.MaxValue
+            || !double.IsFinite(fuelQuantity) || fuelQuantity < 0)
+        {
+            return WorkOutcome.Refuse("INVALID_PROFILE");
+        }
+        var record = await _ships.ConsumeModuleFuelAsync(
+            _cycles, cycle.CharacterId, cycle.ShipId, cycle.OwnerId, (long)cycle.CycleId, (int)fuelType, (long)Math.Round(fuelQuantity));
+        return new WorkOutcome(record.Accepted, record.Reason, record.UnitsRemaining, record.DeliveredUnits, record.Complete);
     }
 
     private void ReplyToWorkCycle(WorkCycle cycle, WorkOutcome outcome)

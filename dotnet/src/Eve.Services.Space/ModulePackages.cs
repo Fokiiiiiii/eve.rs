@@ -12,9 +12,6 @@ namespace Eve.Services.Space;
 /// </summary>
 internal static class ModulePackages
 {
-    private const int CapacitorBonus = 67;
-    private const int ChargedArmorDamageMultiplier = 1886;
-
     /// <summary>Why a package cannot be made, or the package.</summary>
     public readonly record struct Result(SimEffect? Effect, string? Reason, int ModuleType, string ModuleName);
 
@@ -45,28 +42,9 @@ internal static class ModulePackages
         }
 
         var context = new EffectContext<ShipSnapshot>(snapshot, snapshot.World, statics, moduleId, type, effect, targetId, repeat);
-        if (effect.Name.Equals("powerBooster", StringComparison.OrdinalIgnoreCase))
-        {
-            var charge = snapshot.ChargeOf(module);
-            if (charge is not { Quantity: > 0 })
-            {
-                return new Result(null, "NO_AMMO", module.TypeId, name);
-            }
-            return new Result(PowerBooster(context, charge), null, module.TypeId, name);
-        }
-
-        // EVE's ancillary armor and shield modules have their own dogma effect names but use the
-        // same cycle packages as the corresponding standard repairers.
-        var handlerEffect = effect.Name.Trim().ToLowerInvariant() switch
-        {
-            "fueledarmorrepair" => effect with { Name = "armorRepair" },
-            "fueledshieldboosting" => effect with { Name = "shieldBoosting" },
-            _ => effect,
-        };
-        var handlerContext = ReferenceEquals(handlerEffect, effect) ? context : context with { Effect = handlerEffect };
-        var handler = ModuleEffects.Default.Find(handlerContext);
+        var handler = ModuleEffects.Default.Find(context);
         // the handler may refuse before the target is asked for (a gun with nothing to shoot is refused first: the reference's order)
-        if (handler?.Refusal(handlerContext) is { } reason)
+        if (handler?.Refusal(context) is { } reason)
         {
             return new Result(null, reason, module.TypeId, name);
         }
@@ -79,45 +57,6 @@ internal static class ModulePackages
         {
             return new Result(null, "UNSUPPORTED_EFFECT", module.TypeId, name);
         }
-
-        var package = handler.Build(handlerContext);
-        if (effect.Name.Equals("fueledArmorRepair", StringComparison.OrdinalIgnoreCase) && package.Action is SimAction.Repair repair)
-        {
-            var moduleContext = new ModuleEffectContext(context);
-            var charge = moduleContext.Snapshot.ChargeOf(moduleContext.Module);
-            var chargeRate = Math.Max(1L, (long)moduleContext.Value(ModuleAttributes.ChargeRate, 1));
-            var fallback = repair with { Amount = Math.Max(0, moduleContext.Value(ModuleAttributes.ArmorDamageAmount, 0)) };
-            var charged = repair with { Amount = FueledArmorRepairAmount(moduleContext) };
-            package = charge is { Quantity: > 0 }
-                ? package with { Action = new SimAction.Charged(charged, fallback, charge.TypeId, moduleContext.Module.Flag, (int)chargeRate, charge.Quantity) }
-                : package with { Action = fallback };
-        }
-        return new Result(package, null, module.TypeId, name);
-    }
-
-    internal static double FueledArmorRepairAmount(ModuleEffectContext module)
-    {
-        var baseAmount = Math.Max(0, module.Value(ModuleAttributes.ArmorDamageAmount, 0));
-        var multiplier = Math.Max(1, module.Value(ChargedArmorDamageMultiplier, 1));
-        var chargeRate = Math.Max(1L, (long)module.Value(ModuleAttributes.ChargeRate, 1));
-        var charge = module.Snapshot.ChargeOf(module.Module);
-        var chargedUnits = Math.Min(chargeRate, Math.Max(0, charge?.Quantity ?? 0));
-        var chargedFraction = (double)chargedUnits / chargeRate;
-        return Math.Max(0, ModuleAttributes.Six(baseAmount + (baseAmount * (multiplier - 1) * chargedFraction)));
-    }
-
-    private static SimEffect PowerBooster(EffectContext<ShipSnapshot> context, Eve.Inventory.Item charge)
-    {
-        var module = new ModuleEffectContext(context);
-        var (duration, capacitor, durationAttribute) = module.Cycle();
-        var amount = Math.Max(0, ModuleAttributes.Six(module.World.Get(charge.Id, CapacitorBonus)));
-        var chargeRate = Math.Max(1L, (long)module.Value(ModuleAttributes.ChargeRate, 1));
-        var chargedCycles = 1 + ((charge.Quantity - 1) / chargeRate);
-        var repeat = (int)Math.Min(Math.Max(1, context.Repeat), chargedCycles);
-        SimChange[] told = [new(module.ModuleId, ModuleAttributes.CapacitorNeed, capacitor), new(module.ModuleId, durationAttribute, ModuleAttributes.Three(duration))];
-        return new SimEffect(
-            module.ModuleId, module.Module.TypeId, module.Effect.Id, module.Effect.Guid, duration, capacitor, repeat, context.Host.Ship.Id, null, null, told, told, null,
-            new SimAction.Charged(new SimAction.Remote(new SimRemote.Transfer(amount), 0, 0, false, "energyTransfer"), null,
-                charge.TypeId, module.Module.Flag, (int)chargeRate, charge.Quantity));
+        return new Result(handler.Build(context), null, module.TypeId, name);
     }
 }

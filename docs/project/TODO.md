@@ -41,7 +41,7 @@ Do not fabricate successful state or fake backends to close these items.
 | OPEN | `structureDocking.Dock`; `Undock` | Connect structure docking state and transitions. |
 | OPEN | `structureVulnerability.UpdateReinforceTimesFromClient` | Connect the authoritative vulnerability schedule update. |
 | OPEN | `eject.LaunchShipOrContainerFromWreckOrContainer` | Connect the Host callback to the real container launch operation. This is separate from the tested in-space ship Eject RPC. |
-| OPEN | `inSpaceCompressionMgr.CompressItemInSpace` | Connect the real in-space compression authority. |
+| OPEN | `inSpaceCompressionMgr.CompressItemInSpace` | No compression backend is attached (`Program.cs` passes none; owner C1 is open). The Host now refuses a valid request with the named `CustomNotify` notice (`InSpaceCompressionMgrRpcService.UnavailableNotice`) instead of returning `PyNone`. The V24.01 client (`itemcompression/client/itemCompression.py`) treats `None` as a failed compress with a generic message, so the old answer was not a success, but it gave no reason. Still to connect: the facility's compressible type list check, consuming the ore, creating the compressed output, the inventory sync, and the six-value result tuple. Real client behaviour for the refusal is unverified. |
 
 The seven structure services above account for **17 methods**. `structureHangarViewMgr.GetMyHangarViewState` is connected and is not part of this TODO list.
 

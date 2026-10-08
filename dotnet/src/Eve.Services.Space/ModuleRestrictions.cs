@@ -18,6 +18,19 @@ public static class ModuleRestrictions
     public const string CantInEmpireSpace = "CantInEmpireSpace";
     public const string CantInHighSecSpace = "CantInHighSecSpace";
 
+    /// <summary><c>disallowActivateOnWarp</c>: the module cannot be activated while its ship aligns to warp (the SDE's wording: "Stops the module from being activated if the ship is aligning to warp").</summary>
+    public const int AttributeDisallowActivateOnWarp = 1245;
+
+    /// <summary>The refusal reason (not a client user error) of a module that may not be activated while its ship warps.</summary>
+    public const string WarpBlockedReason = "MODULE_WARP_BLOCKED";
+
+    /// <summary>
+    /// The refusal of a module that is not allowed on warp, while the ship aligns to warp or is in it (<paramref name="warping"/>, the host's warp state: a warp is
+    /// requested until the ship arrives, stops or leaves). Null when the module may be activated.
+    /// </summary>
+    public static string? CheckWarp(Func<int, double> attribute, bool warping) =>
+        warping && attribute(AttributeDisallowActivateOnWarp) != 0 ? WarpBlockedReason : null;
+
     /// <summary>
     /// <c>CheckAllowedInCurrentSecurityClass</c>: the name of the user error the activation is refused with, or null when the module may be used in a system of this
     /// class. <paramref name="attribute"/> gives the module's value of an attribute (0 when it has none).

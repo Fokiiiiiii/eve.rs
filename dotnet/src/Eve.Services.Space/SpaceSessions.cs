@@ -906,6 +906,13 @@ private readonly TransitionRuntime _transitions;
         {
             throw MachoErrors.ThrowUserError(forbidden);
         }
+        // a module that may not be used on warp (disallowActivateOnWarp) is refused while the ship aligns to warp or is in it: the host's warp state
+        if (snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is { } warpModule
+            && snapshot.World.Item(moduleId) is { State: >= ItemState.Online }
+            && ModuleRestrictions.CheckWarp(attribute => snapshot.World.Get(moduleId, attribute), IsWarping(session)) is { } warpRefusal)
+        {
+            return ModuleResult.Refusal(warpRefusal, warpModule.TypeId, _statics.Type(warpModule.TypeId)?.Name ?? "");
+        }
         var made = ModulePackages.Of(snapshot, _statics, moduleId, effectName, targetId, repeat);
         if (made.Effect is not { } package)
         {

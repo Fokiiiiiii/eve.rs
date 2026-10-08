@@ -33,6 +33,8 @@ internal static class ModuleEffects
         .Register(new PowerBoosterEffect())
         .Register(new FueledArmorRepairEffect())
         .Register(new FueledShieldBoostingEffect())
+        // the Nexus invulnerability core: wired, its rules checked, refused as EFFECT_NOT_IMPLEMENTED until the fleet effect has a body (needs wire bump W2)
+        .Register(new IndustrialInvulnerabilityEffect())
         // exploration, hacking and scanner effects: wired, refused as EFFECT_NOT_IMPLEMENTED until their bodies are written (see ExplorationModuleEffects.cs)
         .Register(new DataAnalyzerEffect())
         .Register(new DataSubverterEffect())

@@ -53,6 +53,8 @@ internal static class ModuleRefusals
             // the reference's wording for a microwarpdrive held by a warp scrambler (moduleOperation.js MICROWARPDRIVE_BLOCKED)
             "MICROWARPDRIVE_BLOCKED" => Notify("That module cannot be activated while you are warp scrambled."),
             "CLOAK_WARP_BLOCKED" => Notify("You cannot activate that cloaking device while warping."),
+            // disallowActivateOnWarp (ModuleRestrictions.CheckWarp): the wording is ours, the client has no UserError for it (UNVERIFIED in the client)
+            "MODULE_WARP_BLOCKED" => Notify($"{name} cannot be activated while your ship is warping."),
             // the client's own UserErrors (FakeCloaking.PreStartChecks): the ship cannot cloak, or disallows a cloak
             "CLOAK_SHIP_UNSUITABLE" => MachoErrors.ThrowUserError("CantCloakTooShipUnsuitable"),
             "CLOAK_DISALLOWED" => MachoErrors.ThrowUserError("CantCloak"),

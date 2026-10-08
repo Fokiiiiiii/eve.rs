@@ -68,11 +68,12 @@ public sealed class DogmaWorld
     private readonly HashSet<(long Item, int Attribute)> _evaluating = [];
     private Dictionary<int, List<Source>>? _sources;
 
-    public DogmaWorld(DogmaStatic statics, long characterId = 0, long shipId = 0)
+    public DogmaWorld(DogmaStatic statics, long characterId = 0, long shipId = 0, long structureId = 0)
     {
         _static = statics;
         CharacterId = characterId;
         ShipId = shipId;
+        StructureId = structureId;
     }
 
     /// <summary>The character whose skills and implants apply (0 when the world has none, as for a ship flown by the game).</summary>
@@ -80,6 +81,9 @@ public sealed class DogmaWorld
 
     /// <summary>The ship the character flies: the ship the skills act on.</summary>
     public long ShipId { get; private set; }
+
+    /// <summary>The structure the modules and skills of a structure act on, as the ship is for a ship (0 when the world has no structure).</summary>
+    public long StructureId { get; private set; }
 
     public IEnumerable<DogmaItem> Items => _items.Values;
 
@@ -105,6 +109,12 @@ public sealed class DogmaWorld
     public void SetShip(long shipId)
     {
         ShipId = shipId;
+        Changed();
+    }
+
+    public void SetStructure(long structureId)
+    {
+        StructureId = structureId;
         Changed();
     }
 
@@ -244,32 +254,45 @@ public sealed class DogmaWorld
             case "charID":
                 return _items.ContainsKey(source.OwnerId) ? source.OwnerId : -1;
             case "shipID":
-                if (ShipId == 0 || !_items.ContainsKey(ShipId))
-                {
-                    return -1;
-                }
-                // the ship itself, what is fitted in it, or what the pilot has (the pilot's skills act on the ship he flies)
-                for (var at = source; ; )
-                {
-                    if (at.Id == ShipId)
-                    {
-                        return ShipId;
-                    }
-                    if (!_items.TryGetValue(at.LocationId, out var up) || up == at)
-                    {
-                        break;
-                    }
-                    at = up;
-                }
-                // what the pilot carries (skills, implants) acts on the ship he flies, in the ship or not; a module lying in a hangar does not
-                return CharacterId != 0 && (source.Id == CharacterId || source.LocationId == CharacterId) ? ShipId : -1;
+                return ResolveRoot(source, ShipId);
+            case "structureID":
+                return ResolveRoot(source, StructureId);
             case "otherID":
                 // the charge in a module, from the module's side, and the module a charge is loaded in, from the charge's: the item that shares its
                 // location and its slot (a charge is an item of the ship whose flag is the flag of the module it sits in)
                 return Partner(source)?.Id ?? -1;
             default:
-                return -1; // targets, other items, structures: nothing in a station reaches them
+                // targetID and target name the target of a projected module. The static world has no target, so they stay unresolved here, and
+                // nothing applies them yet: ModuleEffects skips them (its DomainItemId has no case for them) and ProjectedEffect reads only the
+                // module's own attributes. Other items (a drone, a fleet member) are not reached by any domain in this world either.
+                return -1;
         }
+    }
+
+    /// <summary>
+    /// The root a modifier's domain names, the ship or the structure: the root itself, what is fitted in it, or what the pilot carries (his skills
+    /// and implants act on the root he flies or sits in, in it or not). -1 when there is no such root in the world.
+    /// </summary>
+    private long ResolveRoot(DogmaItem source, long rootId)
+    {
+        if (rootId == 0 || !_items.ContainsKey(rootId))
+        {
+            return -1;
+        }
+        for (var at = source; ; )
+        {
+            if (at.Id == rootId)
+            {
+                return rootId;
+            }
+            if (!_items.TryGetValue(at.LocationId, out var up) || up == at)
+            {
+                break;
+            }
+            at = up;
+        }
+        // what the pilot carries (skills, implants) acts on the root, in it or not; a module lying in a hangar does not
+        return CharacterId != 0 && (source.Id == CharacterId || source.LocationId == CharacterId) ? rootId : -1;
     }
 
     /// <summary>Whether an item is a charge (ammunition, a crystal, a missile: the items that are loaded into a module).</summary>

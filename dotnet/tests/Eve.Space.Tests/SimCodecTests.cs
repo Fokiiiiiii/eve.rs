@@ -95,7 +95,9 @@ public class SimCodecTests
 
     private static SimTurret TurretOf(JsonNode t) => new(
         (int)t["weaponTypeId"]!, (string)t["fx"]!, VectorOf(t["rawDamage"]!), (double)t["optimalRange"]!, (double)t["falloff"]!, (double)t["trackingSpeed"]!,
-        (double)t["signatureResolution"]!, ChargeOf(t["charge"]), MissileOf(t["missile"]));
+        (double)t["signatureResolution"]!, ChargeOf(t["charge"]), MissileOf(t["missile"]), SpoolOf(t["spool"]));
+
+    private static SimSpool? SpoolOf(JsonNode? s) => s is null ? null : new SimSpool((double)s["perCycle"]!, (double)s["max"]!);
 
     private static SimMissile? MissileOf(JsonNode? m) => m is null ? null : new SimMissile(
         (int)m["chargeTypeId"]!, (int)m["groupId"]!, (string)m["name"]!, (double)m["radius"]!, (double)m["mass"]!, (double)m["agility"]!, (double)m["hitPoints"]!, (double)m["maxVelocity"]!, (double)m["flightTimeMs"]!, (double)m["explosionRadius"]!, (double)m["explosionVelocity"]!,

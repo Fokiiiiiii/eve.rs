@@ -40,6 +40,49 @@ pub struct Turret {
     pub charge: Option<Charge>,
     /// What a launcher flies (a launcher is a weapon that fires a missile in the place of a shot: its `raw_damage` is the missile's, its `optimal_range` how far the missile goes).
     pub missile: Option<Missile>,
+    /// The damage ramp of a weapon that builds up its damage on the target it keeps shooting at (a precursor weapon); none for the others.
+    pub spool: Option<Spool>,
+}
+
+/// The damage ramp of a weapon that builds up its damage on the target it keeps shooting at (a precursor weapon, EVE.js `precursorTurrets.js`): each
+/// cycle the bonus grows by `per_cycle` up to `max`, and a shot is multiplied by `1 + bonus`, the bonus built up before that shot (the first has none).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Spool {
+    pub per_cycle: f64,
+    pub max: f64,
+}
+
+/// What a running weapon has built up: the bonus its next shot takes, and the target it was built on.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct SpoolState {
+    pub(crate) bonus: f64,
+    pub(crate) target_id: i64,
+}
+
+impl Spool {
+    /// The bonus the next shot at `target_id` takes: a target other than the one it was built on starts it again from none.
+    pub(crate) fn bonus_for(self, state: &mut SpoolState, target_id: i64) -> f64 {
+        if state.target_id != target_id {
+            *state = SpoolState { bonus: 0.0, target_id };
+        }
+        state.bonus = state.bonus.clamp(0.0, self.max.max(0.0));
+        state.bonus
+    }
+
+    /// A cycle has been shot: the bonus grows by a cycle's worth, up to the maximum.
+    pub(crate) fn advance(self, state: &mut SpoolState) {
+        state.bonus = (state.bonus + self.per_cycle.max(0.0)).min(self.max.max(0.0));
+    }
+}
+
+/// The raw damage of a shot with the bonus a spool has built up: each em, thermal, kinetic and explosive part times `1 + bonus`, rounded as the reference
+/// rounds it. No bonus leaves the damage as it is.
+pub(crate) fn spooled_damage(raw: Damage, bonus: f64) -> Damage {
+    if bonus <= 0.0 {
+        return raw;
+    }
+    let multiplier = round6(1.0 + bonus);
+    raw.map(|damage| round6(damage * multiplier))
 }
 
 /// The ammunition in a turret: the kind, the slot it sits in (the client knows a loaded charge by the ship, the slot and the kind), the rounds it holds and the
@@ -430,6 +473,17 @@ impl Scene {
         // the combat log, the aggression and the kill of a drone's shot are its controller's
         let reporter = self.controller_of_drone(session).unwrap_or(session);
         let aggressor_ship = if reporter == session { attacker_id } else { self.ship_id_of(reporter) };
+        // a weapon that builds up its damage shoots with the bonus it has built on this target (the ramp of its running effect); the bonus grows after the shot
+        let spool = turret.spool;
+        let bonus =
+            spool.map_or(0.0, |spool| self.spool_bonus(session, effect.module_id, effect.target_id, spool));
+        let spooled;
+        let turret = if bonus > 0.0 {
+            spooled = Turret { raw_damage: spooled_damage(turret.raw_damage, bonus), ..turret.clone() };
+            &spooled
+        } else {
+            turret
+        };
         // what disrupts the shooter's turrets works on the numbers the shot is rolled with
         let (range, falloff, tracking) = self.pilots[&session].incoming.weapon_factors();
         let disrupted;
@@ -446,6 +500,9 @@ impl Scene {
         };
         let roll = self.rng.random();
         let shot = resolve_shot(turret, &attacker, &target, roll);
+        if let Some(spool) = spool {
+            self.spool_advance(session, effect.module_id, spool);
+        }
         let mut out = Vec::new();
         let mut applied = 0.0;
         let mut destroyed = false;
@@ -521,6 +578,7 @@ mod tests {
             signature_resolution: resolution,
             charge: None,
             missile: None,
+            spool: None,
         }
     }
 
@@ -872,6 +930,130 @@ mod tests {
             on_changes: Vec::new(),
             off_changes: Vec::new(),
         }
+    }
+
+    /// A bonus is the same to within rounding (the sums of a ramp are not exact in binary).
+    fn assert_bonus_close(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-9, "{actual} is not {expected}");
+    }
+
+    #[test]
+    fn a_spool_has_no_bonus_for_its_first_cycle_then_a_cycle_s_worth_more_after_each_shot_up_to_the_most() {
+        let spool = Spool { per_cycle: 0.07, max: 0.2 };
+        let mut state = SpoolState::default();
+        assert_eq!(spool.bonus_for(&mut state, 7), 0.0, "the first cycle shoots with none");
+        spool.advance(&mut state);
+        assert_bonus_close(spool.bonus_for(&mut state, 7), 0.07);
+        spool.advance(&mut state);
+        assert_bonus_close(spool.bonus_for(&mut state, 7), 0.14);
+        spool.advance(&mut state);
+        assert_bonus_close(spool.bonus_for(&mut state, 7), 0.2);
+        spool.advance(&mut state);
+        assert_eq!(spool.bonus_for(&mut state, 7), 0.2, "the most is the most");
+    }
+
+    #[test]
+    fn the_nth_cycle_shoots_with_n_minus_one_cycles_of_bonus_and_the_ramp_stops_at_its_maximum() {
+        let spool = Spool { per_cycle: 0.07, max: 2.125 };
+        let mut state = SpoolState::default();
+        for cycle in 0..=40 {
+            assert_bonus_close(spool.bonus_for(&mut state, 7), (cycle as f64 * 0.07).min(2.125));
+            spool.advance(&mut state);
+        }
+        // 31 cycles' worth passes 2.125, so from the 32nd cycle on the weapon shoots at the most
+        assert_eq!(spool.bonus_for(&mut state, 7), 2.125);
+    }
+
+    #[test]
+    fn a_shot_at_another_target_starts_the_ramp_again_from_none() {
+        let spool = Spool { per_cycle: 0.07, max: 2.125 };
+        let mut state = SpoolState::default();
+        for _ in 0..3 {
+            spool.bonus_for(&mut state, 7);
+            spool.advance(&mut state);
+        }
+        assert_bonus_close(spool.bonus_for(&mut state, 7), 0.21);
+        assert_eq!(spool.bonus_for(&mut state, 8), 0.0, "a new target has none built");
+        spool.advance(&mut state);
+        assert_bonus_close(spool.bonus_for(&mut state, 8), 0.07);
+    }
+
+    #[test]
+    fn a_spool_multiplies_each_part_of_a_shot_by_one_plus_its_bonus_and_no_bonus_leaves_the_shot_alone() {
+        let raw = [0.0, 10.0, 20.0, 0.0];
+        assert_eq!(spooled_damage(raw, 0.0), raw);
+        assert_eq!(spooled_damage(raw, 0.5), [0.0, 15.0, 30.0, 0.0]);
+        assert_eq!(spooled_damage(raw, 0.07), [0.0, 10.7, 21.4, 0.0]);
+    }
+
+    /// The shot the scene is about to make with `weapon` from the NPC at the player, rolled with the number the scene draws next (read from a copy of its generator).
+    fn next_shot(scene: &Scene, npc: SessionId, weapon: &Turret) -> Shot {
+        let mut next_roll = scene.rng.clone();
+        let roll = next_roll.random();
+        let attacker = scene.kinematics_of(npc).expect("the NPC is in space");
+        let target = scene.kinematics_of(PLAYER).expect("the player is in space");
+        resolve_shot(weapon, &attacker, &target, roll)
+    }
+
+    /// The `damageAttributes` a shot is told as, the way `quality_message` writes them.
+    fn damage_told(shot: &Shot) -> Value {
+        Value::Dict(
+            DAMAGE_ATTRIBUTES
+                .iter()
+                .zip(shot.damage)
+                .map(|(attribute, amount)| (int(*attribute), number6(amount)))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn a_precursor_shot_takes_the_bonus_built_before_it_and_the_ramp_grows_after_each_shot() {
+        let (mut scene, npc, now) = duel();
+        let cycle = 2_500 * SECOND / 1_000;
+        let raw = laser().raw_damage;
+        let mut weapon = laser();
+        weapon.spool = Some(Spool { per_cycle: 0.07, max: 0.2 });
+        // the first shot has no bonus: its damage is the weapon's own
+        let first = next_shot(&scene, npc, &laser());
+        let started = scene.activate(npc, laser_effect(spec().ship_id, weapon), now);
+        let told = messages(&started, PLAYER, "OnDamageMessage");
+        assert_eq!(told.len(), 1, "{started:?}");
+        assert_eq!(entry(&told[0], "damageAttributes"), damage_told(&first));
+        assert_bonus_close(scene.spool_of(npc, NPC_SHIP).unwrap().bonus, 0.07);
+        // the next shots take 0.07, then 0.14, then the most (0.2), and the ramp does not go past it
+        for (cycle_number, bonus_before, bonus_after) in [(1, 0.07, 0.14), (2, 0.14, 0.2), (3, 0.2, 0.2)] {
+            let mut shot_weapon = laser();
+            shot_weapon.raw_damage = spooled_damage(raw, bonus_before);
+            let expected = next_shot(&scene, npc, &shot_weapon);
+            let cycle_told = scene.poll(now + cycle_number * cycle + 1);
+            let told = messages(&cycle_told, PLAYER, "OnDamageMessage");
+            assert_eq!(told.len(), 1, "{cycle_told:?}");
+            assert_eq!(
+                entry(&told[0], "damageAttributes"),
+                damage_told(&expected),
+                "the shot after {bonus_before} of bonus"
+            );
+            assert_bonus_close(scene.spool_of(npc, NPC_SHIP).unwrap().bonus, bonus_after);
+        }
+    }
+
+    #[test]
+    fn a_precursor_weapon_that_stops_starts_its_ramp_again_from_none_when_it_runs_again() {
+        let (mut scene, npc, now) = duel();
+        let cycle = 2_500 * SECOND / 1_000;
+        let mut weapon = laser();
+        weapon.spool = Some(Spool { per_cycle: 0.07, max: 2.125 });
+        scene.activate(npc, laser_effect(spec().ship_id, weapon.clone()), now);
+        scene.poll(now + cycle + 1);
+        scene.poll(now + 2 * cycle + 2);
+        assert_bonus_close(scene.spool_of(npc, NPC_SHIP).unwrap().bonus, 0.21);
+        // the weapon is asked to stop: it stops at the end of the cycle it is in, and what it has built goes with it
+        scene.deactivate(npc, NPC_SHIP, now + 2 * cycle + 3);
+        scene.poll(now + 3 * cycle + 4);
+        assert_eq!(scene.spool_of(npc, NPC_SHIP), None, "the effect is over");
+        // it runs again from none: the first shot has no bonus, and one cycle's worth is built after it
+        scene.activate(npc, laser_effect(spec().ship_id, weapon), now + 4 * cycle);
+        assert_bonus_close(scene.spool_of(npc, NPC_SHIP).unwrap().bonus, 0.07);
     }
 
     /// A player who has bound the ballpark, and an NPC two kilometres off that has locked it (the moment is a minute after noon).
@@ -1355,6 +1537,7 @@ mod tests {
                 damage_reduction_factor: 0.5,
                 damage_reduction_sensitivity: crate::missiles::DEFAULT_REDUCTION_SENSITIVITY,
             }),
+            spool: None,
         }
     }
 

@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 20;
+    public const ushort ProtocolVersion = 21;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -463,7 +463,23 @@ public static class SimCodec
             1 => new SimMissile(r.I32(), r.I32(), r.Text(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64()),
             _ => throw new SimLinkException(SimLinkError.BadValue, "bad missile"),
         };
-        return new SimTurret(weaponType, fx, damage, optimal, falloff, tracking, resolution, charge, missile);
+        var spool = r.U8() switch
+        {
+            0 => null,
+            1 => ReadSpool(ref r),
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad spool"),
+        };
+        return new SimTurret(weaponType, fx, damage, optimal, falloff, tracking, resolution, charge, missile, spool);
+    }
+
+    private static SimSpool ReadSpool(ref Reader r)
+    {
+        var (perCycle, max) = (r.F64(), r.F64());
+        if (!double.IsFinite(perCycle) || perCycle < 0 || !double.IsFinite(max) || max < 0)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad spool");
+        }
+        return new SimSpool(perCycle, max);
     }
 
     /// <summary>Decodes a frame's payload: the kind byte and the body (without the length prefix).</summary>
@@ -995,6 +1011,16 @@ public static class SimCodec
             w.F64(missile.ExplosionVelocity);
             w.F64(missile.DamageReductionFactor);
             w.F64(missile.DamageReductionSensitivity);
+        }
+        else
+        {
+            w.U8(0);
+        }
+        if (t.Spool is { } spool)
+        {
+            w.U8(1);
+            w.F64(spool.PerCycle);
+            w.F64(spool.Max);
         }
         else
         {

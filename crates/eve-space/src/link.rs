@@ -11,10 +11,10 @@ use crate::missiles::Missile;
 use crate::modules::{Action, Applies, Change, Effect, Numbers, Reach, Remote};
 use crate::scene::{HeatModuleProfile, HeatProfile, HeatRack};
 use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
-use crate::weapons::{Charge, Turret};
+use crate::weapons::{Charge, Spool, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 20;
+pub const PROTOCOL_VERSION: u16 = 21;
 
 /// The message kinds.
 pub mod kind {
@@ -798,6 +798,17 @@ fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
         }),
         _ => return Err(DecodeError::BadValue("missile")),
     };
+    let spool = match reader.u8()? {
+        0 => None,
+        1 => {
+            let (per_cycle, max) = (reader.f64()?, reader.f64()?);
+            if !per_cycle.is_finite() || per_cycle < 0.0 || !max.is_finite() || max < 0.0 {
+                return Err(DecodeError::BadValue("spool"));
+            }
+            Some(Spool { per_cycle, max })
+        }
+        _ => return Err(DecodeError::BadValue("spool")),
+    };
     Ok(Turret {
         weapon_type_id,
         fx,
@@ -808,6 +819,7 @@ fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
         signature_resolution,
         charge,
         missile,
+        spool,
     })
 }
 
@@ -891,6 +903,14 @@ fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
             ] {
                 out.extend_from_slice(&number.to_le_bytes());
             }
+        }
+    }
+    match &turret.spool {
+        None => out.push(0),
+        Some(spool) => {
+            out.push(1);
+            out.extend_from_slice(&spool.per_cycle.to_le_bytes());
+            out.extend_from_slice(&spool.max.to_le_bytes());
         }
     }
 }
@@ -1780,6 +1800,7 @@ impl Message {
                             signature_resolution: 0.0,
                             charge: None,
                             missile: None,
+                            spool: None,
                         },
                     }),
                 }

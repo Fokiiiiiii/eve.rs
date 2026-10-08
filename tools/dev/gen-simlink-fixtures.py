@@ -81,11 +81,12 @@ def turret(t):
     c = t.get("charge")
     body += bytes([0]) if not c else bytes([1]) + struct.pack("<iiqq", c["typeId"], c["flag"], c["rounds"], c["perCycle"])
     m = t.get("missile")
-    if not m:
-        return body + bytes([0])
-    return (body + bytes([1]) + struct.pack("<ii", m["chargeTypeId"], m["groupId"]) + s(m["name"])
-            + struct.pack("<10d", m["radius"], m["mass"], m["agility"], m["hitPoints"], m["maxVelocity"], m["flightTimeMs"], m["explosionRadius"],
-                          m["explosionVelocity"], m["damageReductionFactor"], m["damageReductionSensitivity"]))
+    body += bytes([0]) if not m else (bytes([1]) + struct.pack("<ii", m["chargeTypeId"], m["groupId"]) + s(m["name"])
+                                      + struct.pack("<10d", m["radius"], m["mass"], m["agility"], m["hitPoints"], m["maxVelocity"], m["flightTimeMs"],
+                                                    m["explosionRadius"], m["explosionVelocity"], m["damageReductionFactor"], m["damageReductionSensitivity"]))
+    # a precursor weapon's damage ramp: the bonus a cycle adds and the most it reaches (absent for the others)
+    p = t.get("spool")
+    return body + (bytes([1]) + struct.pack("<2d", p["perCycle"], p["max"]) if p else bytes([0]))
 
 
 LAYERS = {"shield": 0, "armor": 1, "structure": 2}
@@ -255,7 +256,9 @@ def build(m):
         return frame(k, u64(m["requestId"]) + (bytes([0]) + u64(m["session"]) if m["ok"] else bytes([1]) + s(m["reason"])))
     if k == "LaunchDrone":
         return frame(k, u64(m["requestId"]) + u64(m["sessionId"]) + ship(m["ship"]) + weapon(m["weapon"])
-                     + struct.pack("<iddd", m["graphicId"], m["orbitDistance"], m["attackRange"], m["cruiseFraction"]))
+                     + struct.pack("<iddd", m["graphicId"], m["orbitDistance"], m["attackRange"], m["cruiseFraction"])
+                     + struct.pack("<5d", m.get("miningAmountM3", 0.0), m.get("workCycleMs", 0.0), m.get("miningWasteMultiplier", 0.0),
+                                   m.get("miningWasteProbability", 0.0), m.get("salvageAccessBonus", 0.0)))
     if k == "DroneCommand":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + i64(m["targetId"]) + struct.pack("<I", len(m["droneIds"]))
                      + b"".join(i64(d) for d in m["droneIds"]) + struct.pack("<d", m["controlRange"]))
@@ -289,8 +292,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 20},
-    {"name": "hello ack", "kind": "HelloAck", "version": 20, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 21},
+    {"name": "hello ack", "kind": "HelloAck", "version": 21, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -505,6 +508,18 @@ valid = [
                                        "damageReductionSensitivity": 5.5}},
                 "onChanges": [{"itemId": "9988400003564", "attributeId": 51, "value": 4900.0}],
                 "offChanges": [{"itemId": "9988400003564", "attributeId": 51, "value": 4900.0}]}},
+    {"name": "activate a precursor weapon that builds its damage up", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002720", "moduleType": 47272, "effectId": 6995, "fx": "effects.Laser",
+                "durationMs": 3500.0, "capacitorNeed": 4.5, "repeat": 1000, "targetId": "980050000108",
+                "turret": {"weaponTypeId": 47272, "fx": "effects.Laser", "rawDamage": [0.0, 0.0, 2.5, 0.0],
+                           "optimalRange": 6000.0, "falloff": 0.0, "trackingSpeed": 410.0, "signatureResolution": 40000.0,
+                           "spool": {"perCycle": 0.07, "max": 2.125}},
+                "onChanges": [{"itemId": "9988400002720", "attributeId": 6, "value": 4.5},
+                              {"itemId": "9988400002720", "attributeId": 51, "value": 3500.0},
+                              {"itemId": "9988400002720", "attributeId": 54, "value": 6000.0}],
+                "offChanges": [{"itemId": "9988400002720", "attributeId": 6, "value": 4.5},
+                               {"itemId": "9988400002720", "attributeId": 51, "value": 3500.0},
+                               {"itemId": "9988400002720", "attributeId": 54, "value": 6000.0}]}},
     {"name": "rounds spent", "kind": "ChargeSpent", "sessionId": "1790646377000015", "moduleId": "9988400002719", "roundsLeft": "79"},
     {"name": "rounds loaded into a gun that runs", "kind": "AdjustCharge", "requestId": "41", "sessionId": "1790646377000015", "moduleId": "9988400002719",
      "chargeType": 222, "op": "add", "capacity": "80", "available": "40"},
@@ -601,6 +616,8 @@ for case in valid:
 
 # each of these is refused for the stated reason
 good = build(valid[2])  # a good Enter
+precursor = next(c for c in valid if c["name"] == "activate a precursor weapon that builds its damage up")
+negative_spool = dict(precursor, effect=dict(precursor["effect"], turret=dict(precursor["effect"]["turret"], spool={"perCycle": -0.07, "max": 2.125})))
 invalid = [
     {"name": "unknown kind", "reason": "unknown-kind", "hex": "01000000ff"},
     {"name": "kind zero", "reason": "unknown-kind", "hex": "0100000000"},
@@ -610,6 +627,7 @@ invalid = [
     {"name": "enter with an unknown way in", "reason": "bad-value",
      "hex": (good[:4] + good[4:17] + bytes([7]) + good[18:]).hex()},
     {"name": "enter cut short", "reason": "truncated", "hex": (struct.pack("<I", 20) + good[4:24]).hex()},
+    {"name": "precursor spool with a negative bonus per cycle", "reason": "bad-value", "hex": build(negative_spool).hex()},
     {"name": "enter reply with an unknown status", "reason": "bad-value",
      "hex": (struct.pack("<I", 12) + bytes([13]) + u64(1) + bytes([2]) + s("")).hex()},
     {"name": "text that is not UTF-8", "reason": "utf8",

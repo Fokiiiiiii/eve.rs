@@ -215,7 +215,15 @@ public sealed record SimChange(long ItemId, int AttributeId, double Value);
 /// </summary>
 public sealed record SimTurret(
     int WeaponTypeId, string Fx, IReadOnlyList<double> RawDamage, double OptimalRange, double Falloff, double TrackingSpeed, double SignatureResolution,
-    SimTurretCharge? Charge = null, SimMissile? Missile = null);
+    SimTurretCharge? Charge = null, SimMissile? Missile = null, SimSpool? Spool = null);
+
+/// <summary>
+/// The damage ramp of a weapon that builds up its damage on the target it keeps shooting at (a precursor weapon: <c>damageMultiplierBonusPerCycle</c> and
+/// <c>damageMultiplierBonusMax</c>). Each cycle the bonus grows by <paramref name="PerCycle"/>, up to <paramref name="Max"/>; a shot is multiplied by one plus the
+/// bonus built up before it (the first shot has none). The simulation keeps the bonus of the running weapon and starts it again from none when the target changes
+/// or the weapon stops.
+/// </summary>
+public sealed record SimSpool(double PerCycle, double Max);
 
 /// <summary>
 /// What a launcher flies: the type of the missile it fires and its group, what the client calls it, the radius, mass and agility of its ball, the hit points it has while it flies (what a smartbomb

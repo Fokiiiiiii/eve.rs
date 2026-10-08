@@ -26,6 +26,8 @@ internal static class ModuleAttributes
     public const int ShieldBonus = 68;
     public const int StructureDamageAmount = 83;
     public const int ArmorDamageAmount = 84;
+    public const int DamageMultiplierBonusPerCycle = 2733;
+    public const int DamageMultiplierBonusMax = 2734;
     public const int RepairMultiplierBonusPerCycle = 2796;
     public const int RepairMultiplierBonusMax = 2797;
     public const int PowerTransferAmount = 90;

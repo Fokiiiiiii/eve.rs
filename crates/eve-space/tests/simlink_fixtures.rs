@@ -10,7 +10,7 @@ use eve_space::missiles::Missile;
 use eve_space::modules::{Action, Applies, Change, Effect, Numbers, Reach, Remote};
 use eve_space::scene::{HeatModuleProfile, HeatProfile, HeatRack};
 use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
-use eve_space::weapons::{Charge, Turret};
+use eve_space::weapons::{Charge, Spool, Turret};
 use eve_space::wreck::WreckKind;
 use serde_json::Value;
 
@@ -151,6 +151,10 @@ fn turret_of(w: &Value) -> Turret {
             damage_reduction_factor: m["damageReductionFactor"].as_f64().unwrap(),
             damage_reduction_sensitivity: m["damageReductionSensitivity"].as_f64().unwrap(),
         }),
+        spool: w
+            .get("spool")
+            .filter(|s| !s.is_null())
+            .map(|s| Spool { per_cycle: s["perCycle"].as_f64().unwrap(), max: s["max"].as_f64().unwrap() }),
     }
 }
 

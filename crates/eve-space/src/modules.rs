@@ -12,7 +12,7 @@ use crate::health::Layer;
 use crate::link::ChargeOp;
 use crate::payload;
 use crate::scene::{Out, Scene, SessionId, TICKS_PER_SECOND};
-use crate::weapons::Turret;
+use crate::weapons::{Spool, SpoolState, Turret};
 use crate::wire::{dict, filetime, id, int, real, text, tuple, word};
 
 /// The attribute of a ship that holds the capacitor's charge.
@@ -459,6 +459,8 @@ pub(crate) struct Running {
     /// Whether the cycle in progress started with a charge available.
     charged_this_cycle: bool,
     pending_remote_repair: Option<PendingRemoteRepairCycle>,
+    /// The damage ramp a precursor weapon has built on its target; it ends with the effect, so a new one starts from none.
+    spool: SpoolState,
 }
 
 /// The modules of a ship that run, and its capacitor.
@@ -863,7 +865,7 @@ impl Scene {
         });
         let charged_this_cycle = rounds.is_some_and(|left| left > 0);
         let run =
-            Running { effect, cycle_start: now, cycles: 1, stopping: false, rounds, charged_this_cycle, pending_remote_repair: None };
+            Running { effect, cycle_start: now, cycles: 1, stopping: false, rounds, charged_this_cycle, pending_remote_repair: None, spool: SpoolState::default() };
         let (before, after) = match pilot.modules.capacitor.as_mut() {
             Some(capacitor) => capacitor.draw(now, run.effect.capacitor_need),
             None => (0.0, 0.0),
@@ -946,6 +948,29 @@ impl Scene {
             ChargeOp::Remove { .. } => 0,
         };
         answer(true, before, *rounds)
+    }
+
+    /// The running effect of a module of this session, if it runs.
+    fn running_mut(&mut self, session: SessionId, module_id: i64) -> Option<&mut Running> {
+        self.pilots.get_mut(&session)?.modules.running.iter_mut().find(|run| run.effect.module_id == module_id)
+    }
+
+    /// The bonus a weapon's shot at `target_id` takes, from the ramp its running effect has built (0 when the module does not run).
+    pub(crate) fn spool_bonus(&mut self, session: SessionId, module_id: i64, target_id: i64, spool: Spool) -> f64 {
+        self.running_mut(session, module_id).map_or(0.0, |run| spool.bonus_for(&mut run.spool, target_id))
+    }
+
+    /// A cycle has been shot: the ramp of the running effect grows by a cycle's worth.
+    pub(crate) fn spool_advance(&mut self, session: SessionId, module_id: i64, spool: Spool) {
+        if let Some(run) = self.running_mut(session, module_id) {
+            spool.advance(&mut run.spool);
+        }
+    }
+
+    /// What the ramp of a running effect has built, for the tests.
+    #[cfg(test)]
+    pub(crate) fn spool_of(&self, session: SessionId, module_id: i64) -> Option<SpoolState> {
+        self.pilots.get(&session)?.modules.running.iter().find(|run| run.effect.module_id == module_id).map(|run| run.spool)
     }
 
     fn spend_round(&mut self, session: SessionId, module_id: i64, at: i64) -> (Vec<Out>, bool) {

@@ -12,13 +12,12 @@ namespace Eve.Services.Space.Effects;
 /// damage of the charge (after dogma: what the module does to it) times the module's damage multiplier, or, for a gun that takes no charge, the module's own damage. The client is
 /// told the cost, the cycle and the range as it starts and stops (<c>notifyGenericDerivedAttributesToSession</c>). The charge is told to the simulation, which spends its rounds cycle
 /// by cycle (a cycle burns the module's <c>chargeRate</c>, one when it names none). A gun fires its own effect: <c>targetAttack</c> (the lasers and the starter guns) or
-/// <c>projectileFired</c> (the projectile and hybrid guns); the other target effects of a turret type (the mining lasers, the disintegrators, barrage) are not run yet.
+/// <c>projectileFired</c> (the projectile and hybrid guns); a precursor weapon builds its damage up on the target it keeps shooting at (its module's bonus attributes give the <see cref="SimSpool"/>); the mining lasers are not run yet.
 /// </summary>
 internal sealed class TurretEffect : ShipEffect
 {
     private const string TurretFitted = "turretfitted";
 
-    // ponytail: SimTurret carries static volley damage; entropic per-target spool needs cycle state in the simulator contract.
     public override IReadOnlyCollection<string> EffectNames { get; } = ["targetAttack", "projectileFired", "barrage", "targetDisintegratorAttack"];
 
     protected override bool Handles(ModuleEffectContext module) =>
@@ -33,6 +32,17 @@ internal sealed class TurretEffect : ShipEffect
         var charge = module.Snapshot.ChargeOf(module.Module);
         return (charge is null ? !FiresWithoutCharge(module) : charge.Quantity < ChargesPerCycle(module.Attributes)) ? "NO_AMMO" : null;
     }
+
+    /// <summary>
+    /// A weapon that builds up its damage declares the bonus a cycle adds and the most it reaches (a precursor weapon's <c>damageMultiplierBonusPerCycle</c> and
+    /// <c>damageMultiplierBonusMax</c>, after dogma). It is read from the attributes the module carries, not from its type; a module that carries no bonus has no spool.
+    /// </summary>
+    private static SimSpool? SpoolOf(IReadOnlyDictionary<int, double> attributes) =>
+        attributes.TryGetValue(DamageMultiplierBonusPerCycle, out var perCycle) && double.IsFinite(perCycle) && perCycle > 0
+            ? new SimSpool(
+                NpcArmament.Round6(perCycle),
+                NpcArmament.Round6(attributes.TryGetValue(DamageMultiplierBonusMax, out var max) && double.IsFinite(max) ? Math.Max(0, max) : 0))
+            : null;
 
     private static bool FiresWithoutCharge(ModuleEffectContext module) =>
         ChargeGroups.All(a => !module.Attributes.TryGetValue(a, out var group) || (int)group <= 0)
@@ -53,7 +63,7 @@ internal sealed class TurretEffect : ShipEffect
         var gun = new SimTurret(
             module.Module.TypeId, fx, [Shot(EmDamage), Shot(ThermalDamage), Shot(KineticDamage), Shot(ExplosiveDamage)], optimal, Math.Max(0, NpcArmament.Round6(module.Value(Falloff, 0))),
             Math.Max(0, NpcArmament.Round6(module.Value(TrackingSpeed, 0))), Math.Max(1, NpcArmament.Round6(module.Value(OptimalSigRadius, 40_000))),
-            charge is null ? null : new SimTurretCharge(charge.TypeId, charge.Flag, charge.Quantity, ChargesPerCycle(attributes)));
+            charge is null ? null : new SimTurretCharge(charge.TypeId, charge.Flag, charge.Quantity, ChargesPerCycle(attributes)), Spool: SpoolOf(attributes));
         SimChange[] told = [new(module.ModuleId, CapacitorNeed, capacitor), new(module.ModuleId, Speed, Three(duration)), new(module.ModuleId, MaxRange, optimal)];
         return new SimEffect(module.ModuleId, module.Module.TypeId, module.Effect.Id, fx, duration, capacitor, Math.Max(1, module.Repeat), Math.Max(0, module.TargetId), null, null, told, told, gun);
     }

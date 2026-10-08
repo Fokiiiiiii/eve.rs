@@ -41,12 +41,13 @@ public class ConditionTests
     }
 
     [PgFact]
-    public async Task A_fraction_that_is_out_of_range_is_kept_within_it()
+    public async Task Finite_ship_condition_fractions_are_preserved_without_clamping()
     {
         await using var rig = await Rig.CreateAsync();
         var c = await rig.NewCharacterAsync();
-        await rig.Modules.SetShipConditionAsync(c.ShipId, new ShipCondition(1.5, -0.2, 2, 0.5, false));
-        Assert.Equal(new ShipCondition(1, 0, 1, 0.5, false), await rig.Modules.ShipConditionAsync(c.ShipId));
+        var condition = new ShipCondition(1.5, -0.2, 2, 0.5, false);
+        await rig.Modules.SetShipConditionAsync(c.ShipId, condition);
+        Assert.Equal(condition, await rig.Modules.ShipConditionAsync(c.ShipId));
     }
 
     [PgFact]

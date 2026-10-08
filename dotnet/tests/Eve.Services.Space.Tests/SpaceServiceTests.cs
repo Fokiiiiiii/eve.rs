@@ -276,7 +276,7 @@ public class SpaceServiceTests
 
         var ejected = await rig.Space.EjectAsync(session, CancellationToken.None);
 
-        Assert.IsType<PyTuple>(ejected);
+        Assert.True(ejected is PyTuple, string.Join(Environment.NewLine, rig.Log));
         Assert.Equal(frigateId, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
         Assert.Equal(frigateId, session.GetInt("shipid"));
         var escaped = (await rig.Items.GetAsync(frigateId))!;
@@ -323,16 +323,18 @@ public class SpaceServiceTests
     {
         var rig = await Rig.CreateAsync();
         await using var _ = rig;
-        var character = await rig.NewCharacterAsync();
+        var character = await rig.NewCharacterAsync(shipTypeId: 582); // Bantam has ordinary SDE hitpoints, without the Cockroach QA hull modifier.
         var session = await rig.SessionAsync(character);
         await InSpaceAsync(rig, session);
         rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
-        var mechanics = (await rig.Statics.TypesInGroupsAsync(["Mechanics"])).First();
+        await rig.Statics.EnsureTypesAsync([3392]);
+        var mechanics = rig.Statics.Type(3392);
+        Assert.Equal("Mechanics", mechanics?.Name);
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
         {
             await rig.Skills.GrantAsync(connection, transaction, character.CharacterId,
-                [new Eve.Skills.CharacterSkill(mechanics.TypeId, 5, 0)]);
+                [new Eve.Skills.CharacterSkill(mechanics!.TypeId, 5, 0)]);
             await transaction.CommitAsync();
         }
         var shipId = character.ShipId;
@@ -341,7 +343,7 @@ public class SpaceServiceTests
         var beforeFit = (await rig.Ships.LoadAsync(character.CharacterId, CancellationToken.None))!;
         var oldHull = beforeFit.World.Get(shipId, hullAttribute.Value);
         var baseHull = rig.Statics.Type(beforeFit.Ship.TypeId)!.Attributes[hullAttribute.Value];
-        Assert.True(oldHull > baseHull, "Mechanics V should increase this ship's maximum structure HP.");
+        Assert.Equal(baseHull * 1.25, oldHull, 2);
         await rig.Modules.SetShipConditionAsync(shipId, new Eve.Fitting.ShipCondition(0.9, 1, 1, 0, false));
 
         var lost = new TaskCompletionSource<ShipLoss>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -439,6 +441,7 @@ public class SpaceServiceTests
     {
         var (rig, character, session) = await DockedAsync();
         await using var _ = rig;
+        rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
         var ships = (await rig.Ships.GrantAsync(character.CharacterId, Rig.Cockroach, 2, singleton: true))!;
         var first = ships[0].After;
         var second = ships[1].After;
@@ -499,6 +502,7 @@ public class SpaceServiceTests
     {
         var (rig, character, session) = await DockedAsync();
         await using var _ = rig;
+        rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
         var oid = await rig.BindShipAsync(session);
 
         var leave = await rig.ShipCallAsync(session, "LeaveShip", oid, new PyLong(character.ShipId));
@@ -510,16 +514,16 @@ public class SpaceServiceTests
         };
 
         Assert.True(capsuleId > 0);
-        Assert.Equal(character.ShipId, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
-        Assert.Equal(character.ShipId, session.GetInt("shipid"));
+        Assert.Equal(capsuleId, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
+        Assert.Equal(capsuleId, session.GetInt("shipid"));
         var capsule = (await rig.Items.GetAsync(capsuleId))!;
         Assert.Equal((Rig.Station, Eve.Inventory.ItemFlags.Hangar), (capsule.LocationId, capsule.Flag));
 
-        var board = await rig.ShipCallAsync(session, "Board", oid, new PyLong(capsuleId), new PyLong(character.ShipId));
+        var board = await rig.ShipCallAsync(session, "Board", oid, new PyLong(character.ShipId), new PyLong(capsuleId));
 
         Assert.IsType<PyTuple>(board);
-        Assert.Equal(capsuleId, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
-        Assert.Equal(capsuleId, session.GetInt("shipid"));
+        Assert.Equal(character.ShipId, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
+        Assert.Equal(character.ShipId, session.GetInt("shipid"));
         var hull = (await rig.Items.GetAsync(character.ShipId))!;
         Assert.Equal((Rig.Station, Eve.Inventory.ItemFlags.Hangar), (hull.LocationId, hull.Flag));
     }
@@ -1780,7 +1784,15 @@ public class SpaceServiceTests
             lock (waits) waits.Add((after, done));
             return done.Task.WaitAsync(token);
         });
-        var rig = await Rig.CreateAsync(localTimers: timers);
+        var responder = new Eve.Npc.NpcProfile(
+            "test-concord-response", "Test CONCORD response", [], "npc", Rig.Cockroach,
+            1000125, 0, 500003, Eve.Npc.NpcAuthority.RetailEmptyLoadoutId, "", "CONCORD response", 0, 0, 0);
+        var authority = new Eve.Npc.NpcAuthority(
+            [responder], [],
+            [new Eve.Npc.NpcPool(
+                "concord_response_fleet", "CONCORD response fleet", [], "npc",
+                [new Eve.Npc.NpcPoolEntry(responder.Id, 1)])]);
+        var rig = await Rig.CreateAsync(localTimers: timers, npcAuthority: authority);
         await using var _ = rig;
         var character = await rig.NewCharacterAsync();
         var session = await rig.SessionAsync(character);
@@ -1788,7 +1800,9 @@ public class SpaceServiceTests
         var systemId = session.GetInt("solarsystemid")!.Value;
         rig.Sim.PositionAnswers[character.ShipId] = [0, 0, 0];
 
-        Assert.True(await rig.Space.RespondToCriminalAsync(character.CharacterId, systemId, character.ShipId));
+        Assert.True(
+            await rig.Space.RespondToCriminalAsync(character.CharacterId, systemId, character.ShipId),
+            string.Join(Environment.NewLine, rig.Log));
 
         var responders = rig.Sim.Heard.OfType<SimSpawn>().ToArray();
         Assert.Equal(3, responders.Length);

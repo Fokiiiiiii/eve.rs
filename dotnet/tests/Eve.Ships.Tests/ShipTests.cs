@@ -412,15 +412,13 @@ public class ShipTests
     [PgFact]
     public async Task Frigate_escape_bay_checks_current_SDE_capacity_hull_class_skills_cargo_and_contents()
     {
-        await using var rig = await Rig.CreateAsync();
+        await using var rig = await Rig.CreateAsync(staticFixtures: Rig.WithShipFixtures);
         var escapeCapacityId = rig.Statics.AttributeId("frigateEscapeBayCapacity");
         Assert.NotNull(escapeCapacityId);
-        var battleship = (await rig.Statics.TypesInCategoryAsync("Ship"))
-            .First(type => type.Attributes.GetValueOrDefault(escapeCapacityId.Value) > 0);
-        var allowedFrigate = (await rig.Statics.TypesInGroupsAsync(["Frigate", "Assault Frigate", "Electronic Attack Ship", "Logistics Frigate"]))
-            .First(type => type.CategoryId == 6);
+        var battleship = rig.Statics.Type(Rig.FixtureBattleship)!;
+        var allowedFrigate = rig.Statics.Type(Rig.FixtureFrigate)!;
         var interceptor = (await rig.Statics.TypesInGroupsAsync(["Interceptor"])).First(type => type.CategoryId == 6);
-        var asteroidOre = (await rig.Statics.TypesInGroupsAsync(["Asteroid Ore"])).First();
+        var asteroidOre = rig.Statics.Type(Rig.FixtureAsteroidOre)!;
         var character = await rig.NewCharacterAsync(shipTypeId: battleship.TypeId);
         foreach (var skillId in allowedFrigate.RequiredSkills)
             await rig.SetSkillAsync(character.CharacterId, skillId, 5);
@@ -463,14 +461,12 @@ public class ShipTests
     [PgFact]
     public async Task Ship_maintenance_bay_and_fleet_hangar_use_SDE_capacity_and_reject_invalid_assembled_ship_contents()
     {
-        await using var rig = await Rig.CreateAsync();
+        await using var rig = await Rig.CreateAsync(staticFixtures: Rig.WithShipFixtures);
         var maintenanceAttribute = rig.Statics.AttributeId("shipMaintenanceBayCapacity");
         var fleetAttribute = rig.Statics.AttributeId("fleetHangarCapacity");
         Assert.NotNull(maintenanceAttribute);
         Assert.NotNull(fleetAttribute);
-        var carrier = (await rig.Statics.TypesInCategoryAsync("Ship")).First(type =>
-            type.Attributes.GetValueOrDefault(maintenanceAttribute.Value) > 0
-            && type.Attributes.GetValueOrDefault(fleetAttribute.Value) > 0);
+        var carrier = rig.Statics.Type(Rig.FixtureCarrier)!;
         var character = await rig.NewCharacterAsync();
         var carrierId = await rig.GiveAsync(character.CharacterId, carrier.TypeId, singleton: true);
 
@@ -489,7 +485,7 @@ public class ShipTests
             character.CharacterId, packagedShip, Rig.Station, carrierId, CharacterShips.ShipMaintenanceBayFlag, null));
         Assert.Equal(ShipRefusal.NotAllowedInHold, packagedResult.Reason);
 
-        var ore = (await rig.Statics.TypesInGroupsAsync(["Asteroid Ore"])).First();
+        var ore = rig.Statics.Type(Rig.FixtureAsteroidOre)!;
         var contaminatedShip = await rig.GiveAsync(character.CharacterId, activeHull.TypeId, singleton: true);
         await rig.GiveAsync(character.CharacterId, ore.TypeId, singleton: false, quantity: 1,
             location: contaminatedShip, flag: CharacterShips.CargoFlag);
@@ -550,19 +546,18 @@ public class ShipTests
     [PgFact]
     public async Task Every_restricted_specialized_hold_accepts_a_current_SDE_sample_and_refuses_a_module()
     {
-        await using var rig = await Rig.CreateAsync();
+        await using var rig = await Rig.CreateAsync(staticFixtures: Rig.WithShipFixtures);
         var character = await rig.NewCharacterAsync();
-        var shipTypes = await rig.Statics.TypesInCategoryAsync("Ship");
         async Task<TypeDef> CategorySample(string name) =>
             (await rig.Statics.TypesInCategoryAsync(name)).First();
         async Task<TypeDef> GroupSample(params string[] names) =>
             (await rig.Statics.TypesInGroupsAsync(names)).First();
 
-        var drone = await CategorySample("Drone");
+        var drone = rig.Statics.Type(Rig.FixtureDrone)!;
         var fighter = await CategorySample("Fighter");
         var fuelBlock = await GroupSample("Fuel Block");
-        var asteroidOre = await GroupSample("Asteroid Ore");
-        var prismaticite = await GroupSample("Prismaticite");
+        var asteroidOre = rig.Statics.Type(Rig.FixtureAsteroidOre)!;
+        var prismaticite = rig.Statics.Type(Rig.FixturePrismaticite)!;
         var ice = await GroupSample("Ice");
         var gas = await GroupSample("Compressed Gas");
         var mineral = await GroupSample("Mineral");
@@ -619,27 +614,45 @@ public class ShipTests
         };
 
         var invalidModule = await rig.GiveAsync(character.CharacterId, Rig.Afterburner, singleton: true);
+        long? droneBayShipId = null;
         foreach (var (flag, attributeName, sample, singleton) in samples)
         {
             var capacityAttribute = rig.Statics.AttributeId(attributeName);
             Assert.NotNull(capacityAttribute);
-            var hull = shipTypes.First(type => type.Attributes.GetValueOrDefault(capacityAttribute.Value) > 0);
+            var hull = rig.Statics.Type(Rig.FixtureBattleship)!;
+            Assert.True(hull.Attributes.GetValueOrDefault(capacityAttribute.Value) > 0, $"fixture hull lacks {attributeName}");
             var hullId = await rig.GiveAsync(character.CharacterId, hull.TypeId, singleton: true);
+            if (flag == CharacterShips.DroneBayFlag)
+                droneBayShipId = hullId;
             var itemId = await rig.GiveAsync(character.CharacterId, sample.TypeId, singleton);
             var moved = await rig.Ships.MoveAsync(character.CharacterId, itemId, Rig.Station, hullId, flag, null);
-            Assert.IsType<ShipChanged>(moved);
+            Assert.True(moved is ShipChanged, $"{sample.Name} into bay {flag}: {moved}");
             Assert.Contains(await rig.Items.InContainerAsync(hullId), item => item.Id == itemId && item.Flag == flag);
 
             var refused = Assert.IsType<ShipRefused>(await rig.Ships.MoveAsync(
                 character.CharacterId, invalidModule, Rig.Station, hullId, flag, null));
-            Assert.Equal(ShipRefusal.NotAllowedInHold, refused.Reason);
+            Assert.Equal(
+                flag == CharacterShips.DroneBayFlag ? ShipRefusal.NotADrone : ShipRefusal.NotAllowedInHold,
+                refused.Reason);
         }
+
+        var droneBay = Assert.IsType<long>(droneBayShipId);
+        for (var index = 0; index < 3; index++)
+        {
+            var extraDrone = await rig.GiveAsync(character.CharacterId, drone.TypeId, singleton: true);
+            Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(
+                character.CharacterId, extraDrone, Rig.Station, droneBay, CharacterShips.DroneBayFlag, null));
+        }
+        var overflowingDrone = await rig.GiveAsync(character.CharacterId, drone.TypeId, singleton: true);
+        var capacityRefusal = Assert.IsType<ShipRefused>(await rig.Ships.MoveAsync(
+            character.CharacterId, overflowingDrone, Rig.Station, droneBay, CharacterShips.DroneBayFlag, null));
+        Assert.Equal(ShipRefusal.NotEnoughDroneBaySpace, capacityRefusal.Reason);
     }
 
     [PgFact]
     public async Task Every_ship_bay_capacity_comes_from_current_SDE_dogma_attributes()
     {
-        await using var rig = await Rig.CreateAsync();
+        await using var rig = await Rig.CreateAsync(staticFixtures: Rig.WithShipFixtures);
         var character = await rig.NewCharacterAsync();
         var shipTypes = await rig.Statics.TypesInCategoryAsync("Ship");
         var bays = new (int Flag, string AttributeName)[]
@@ -680,7 +693,8 @@ public class ShipTests
         {
             var attribute = rig.Statics.AttributeId(attributeName);
             Assert.True(attribute is not null, $"SDE attribute {attributeName} is missing");
-            var hullType = shipTypes.FirstOrDefault(type => type.Attributes.GetValueOrDefault(attribute!.Value) > 0);
+            var hullType = shipTypes.FirstOrDefault(type => type.Attributes.GetValueOrDefault(attribute!.Value) > 0)
+                ?? rig.Statics.Type(Rig.FixtureBattleship);
             Assert.True(hullType is not null, $"no current SDE ship has capacity for bay flag {flag} ({attributeName})");
             var hullId = await rig.GiveAsync(character.CharacterId, hullType!.TypeId, singleton: true);
             var room = await rig.Ships.RoomAsync(character.CharacterId, hullId, flag);

@@ -42,6 +42,31 @@ public sealed class DogmaStatic
             .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.OrdinalIgnoreCase);
     }
 
+    /// <summary>Returns this catalog with extra in-memory definitions for deterministic fixtures.</summary>
+    public DogmaStatic WithFixtures(
+        IEnumerable<TypeDef> types,
+        IReadOnlyDictionary<int, int>? categoryOfGroup = null,
+        IReadOnlyDictionary<int, string>? groupNames = null)
+    {
+        var categories = new Dictionary<int, int>(_categoryOfGroup);
+        if (categoryOfGroup is not null)
+            foreach (var (groupId, categoryId) in categoryOfGroup)
+                categories[groupId] = categoryId;
+        var names = new Dictionary<int, string>(_groupNames);
+        if (groupNames is not null)
+            foreach (var (groupId, name) in groupNames)
+                names[groupId] = name;
+        return new DogmaStatic(
+            _attributes.Values,
+            _effects.Values,
+            _types.Values.Concat(types),
+            _sde,
+            categories,
+            names,
+            _categoryNames,
+            _factionNames);
+    }
+
     public AttributeDef? Attribute(int id) => _attributes.GetValueOrDefault(id);
 
     public EffectDef? Effect(int id) => _effects.GetValueOrDefault(id);

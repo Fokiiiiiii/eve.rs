@@ -62,7 +62,7 @@ internal sealed class Rig : IAsyncDisposable
 private readonly Dictionary<long, ClientSession> _fleetSessions = new();
     public Eve.Services.Space.FleetStore FleetStore { get; }
 
-    private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, CreationCatalog catalog, StationCatalog stations, SolarSystemCatalog systems, PgModuleStateStore modules, TimeSpan protection, TimeSpan jumpCloak, bool npcLoot, Eve.Npc.BeltRatConfig? beltRats, Eve.Scheduler.LocalTimers? localTimers)
+    private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, CreationCatalog catalog, StationCatalog stations, SolarSystemCatalog systems, PgModuleStateStore modules, TimeSpan protection, TimeSpan jumpCloak, bool npcLoot, Eve.Npc.BeltRatConfig? beltRats, Eve.Scheduler.LocalTimers? localTimers, Eve.Npc.NpcAuthority? npcAuthority)
     {
         Source = source;
         FleetStore = new Eve.Services.Space.FleetStore(source);
@@ -80,7 +80,8 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         Wallets = new PgWalletStore(source, _schemas[3]);
         WalletTransactions = new WalletTransactions(source, _schemas[3]);
         Bounties = new Eve.Npc.PgBountyStore(source, WalletTransactions, _schemas[5], Log.Add);
-        Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => Now, Log.Add, protection, jumpCloak, localTimers) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(Eve.Npc.NpcAuthority.Load()), NpcWrecks = npcLoot ? new NpcWrecks(_ => LootTable, () => Task.FromResult(new Eve.Npc.NpcLoot(LootPool)), Ships, () => 0) : null, BeltRats = beltRats is null ? null : new Eve.Npc.BeltRats(Eve.Npc.NpcAuthority.Load(), beltRats, type => Eve.Npc.NpcHull.HasHitPoints(statics.Type(type))) };
+        var npcAuthorityOf = npcAuthority ?? Eve.Npc.NpcAuthority.Load();
+        Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => Now, Log.Add, protection, jumpCloak, localTimers) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(npcAuthorityOf), NpcWrecks = npcLoot ? new NpcWrecks(_ => LootTable, () => Task.FromResult(new Eve.Npc.NpcLoot(LootPool)), Ships, () => 0) : null, BeltRats = beltRats is null ? null : new Eve.Npc.BeltRats(npcAuthorityOf, beltRats, type => Eve.Npc.NpcHull.HasHitPoints(statics.Type(type))) };
         Space.UseBounties(Bounties);
         Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, statics, Space, () => Now, Log.Add);
         Drones = new SpaceDrones(Sim, Ships, statics, Space, () => Now, Log.Add);
@@ -160,7 +161,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
             source.Bloodlines,
             CreationCatalog.Schools.Select(s => source.StarterFor(s.CorporationId)!));
 
-    public static async Task<Rig> CreateAsync(TimeSpan? protection = null, TimeSpan? jumpCloak = null, bool npcLoot = false, Eve.Npc.BeltRatConfig? beltRats = null, Eve.Scheduler.LocalTimers? localTimers = null)
+    public static async Task<Rig> CreateAsync(TimeSpan? protection = null, TimeSpan? jumpCloak = null, bool npcLoot = false, Eve.Npc.BeltRatConfig? beltRats = null, Eve.Scheduler.LocalTimers? localTimers = null, Eve.Npc.NpcAuthority? npcAuthority = null)
     {
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
@@ -266,7 +267,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         var catalog = CockroachCatalog(await CreationCatalog.LoadAsync(sde, Station));
         var creation = new CharacterCreation(
             source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), catalog, modules);
-        return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation, catalog, await StationCatalog.LoadAsync(sde), await SolarSystemCatalog.LoadAsync(sde), modules, protection ?? Timeout.InfiniteTimeSpan, jumpCloak ?? Timeout.InfiniteTimeSpan, npcLoot, beltRats, localTimers);
+        return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation, catalog, await StationCatalog.LoadAsync(sde), await SolarSystemCatalog.LoadAsync(sde), modules, protection ?? Timeout.InfiniteTimeSpan, jumpCloak ?? Timeout.InfiniteTimeSpan, npcLoot, beltRats, localTimers, npcAuthority);
     }
 
     /// <summary>A new character (Caldari), in its rookie ship in the station.</summary>

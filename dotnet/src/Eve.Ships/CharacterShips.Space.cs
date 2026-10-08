@@ -236,6 +236,7 @@ public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEve
         await WriteTransitionAsync(connection, transaction,
             new ShipTransitionEvent("leave-ship", characterId, shipId, capsule.Id, stationId, ItemFlags.Hangar,
                 stationId, ItemFlags.Hangar), cancellationToken);
+        await characters.SetShipAsync(connection, transaction, characterId, capsule.Id, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return capsule;
     }

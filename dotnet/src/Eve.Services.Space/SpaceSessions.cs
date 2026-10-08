@@ -425,7 +425,7 @@ private readonly TransitionRuntime _transitions;
         if (LifecycleBlockers is not { } readBlockers
             || !_pilots.TryGetValue(id, out var pilot)
             || session.CharacterId != pilot.CharacterId || session.GetInt("shipid") != pilot.ShipId
-            || !IsInSpace(session) || _transitions.SessionChangeActive(id)
+            || !IsInSpace(session)
             || await _ships.LoadAsync(pilot.CharacterId, cancellationToken) is not { } fitting
             || fitting.Ship.Id != pilot.ShipId
             || fitting.Ship.TypeId == CharacterShips.CapsuleTypeId)
@@ -539,8 +539,10 @@ private readonly TransitionRuntime _transitions;
         CancelSafeLogoff(session);
         var id = (ulong)session.SessionId;
         if (session.CharacterId is not { } characterId
-            || session.GetInt("shipid") != currentShipId
-            || _transitions.SessionChangeActive(id))
+            || session.GetInt("shipid") != currentShipId)
+            return None;
+        var inSpace = IsInSpace(session);
+        if (inSpace && _transitions.SessionChangeActive(id))
             return None;
 
         if (LifecycleBlockers is not { } readBlockers)
@@ -563,7 +565,7 @@ private readonly TransitionRuntime _transitions;
             return new PyList([.. blockers.Select(label => new PyStr(label))]);
 
         var locationId = session.GetInt("stationid") ?? session.GetInt("structureid");
-        if (!IsInSpace(session))
+        if (!inSpace)
         {
             if (locationId is not { } dockLocationId)
                 return None;
@@ -2428,7 +2430,7 @@ private readonly TransitionRuntime _transitions;
         }
     }
 
-    private void NotifyDeathClient(Pilot pilot, ShipDeath lost, SimDestroyed destroyed)
+    private void NotifyDeathClient(Pilot pilot, ShipDeath lost, SimDestroyed destroyed, Item? recoveredCapsule = null)
     {
         var session = pilot.Session;
         if (lost.Capsule is { } capsule)
@@ -2456,7 +2458,8 @@ private readonly TransitionRuntime _transitions;
         foreach (var change in lost.Changes)
         {
             var type = _statics.Type(change.Item.TypeId);
-            var row = change.Destroyed ? change.Item with { LocationId = Junkyard } : change.Item;
+            var changedItem = recoveredCapsule is { } recoveredItem && recoveredItem.Id == change.Item.Id ? recoveredItem : change.Item;
+            var row = change.Destroyed ? changedItem with { LocationId = Junkyard } : changedItem;
             var from = change.Destroyed
                 ? new PyDict([new(new PyInt(3), InventoryWire.Id(change.PreviousLocationId))])
                 : new PyDict([
@@ -2556,8 +2559,12 @@ private readonly TransitionRuntime _transitions;
                             destroyed.Direction), token);
                         if (refusal is not null)
                         {
-                            _log?.Invoke($"the simulation did not take surviving ship {survivor.Id} of character {pilot.CharacterId}: {refusal}");
+                            var survivorDescription = survivor.TypeId == CharacterShips.CapsuleTypeId
+                                ? $"the capsule {survivor.Id}"
+                                : $"surviving ship {survivor.Id}";
+                            _log?.Invoke($"the simulation did not take {survivorDescription} of character {pilot.CharacterId}: {refusal}");
                             simulationFailed = true;
+                            _sim.Leave(id, LeaveWhy.Docked);
                             await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation);
                             return;
                         }
@@ -2589,13 +2596,32 @@ private readonly TransitionRuntime _transitions;
                             lost.Changes.All(change => change.Destroyed)));
                     }
                 },
-                async (result, _) =>
+                async (result, transitionToken) =>
                 {
                     var lost = result!;
                     ReleaseBoundObjects(session);
                     if (simulationFailed)
                     {
-                        session.Close();
+                        if (await _ships.LoadAsync(pilot.CharacterId, transitionToken) is not { } recovered
+                            || recovered.Ship.LocationId != recovered.Character.StationId)
+                        {
+                            session.Close();
+                            return true;
+                        }
+                        _pilots.TryRemove(id, out _);
+                        NotifyDeathClient(pilot, lost, destroyed, recovered.Ship);
+                        var character = recovered.Character;
+                        var stationId = new PyInt(character.StationId);
+                        session.Change(
+                            ("stationid", stationId),
+                            ("stationid2", stationId),
+                            ("solarsystemid", None),
+                            ("solarsystemid2", new PyInt(character.SolarSystemId)),
+                            ("constellationid", new PyInt(character.ConstellationId)),
+                            ("regionid", new PyInt(character.RegionId)),
+                            ("shipid", new PyLong(recovered.Ship.Id)),
+                            ("locationid", stationId));
+                        handedOver = true;
                         return true;
                     }
 

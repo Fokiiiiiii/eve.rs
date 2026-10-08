@@ -35,6 +35,20 @@ public sealed class PgModuleStateStore
             ALTER TABLE ship_condition DROP CONSTRAINT ship_condition_armor_damage_check;
             ALTER TABLE ship_condition ADD CONSTRAINT ship_condition_armor_damage_nonnegative
                 CHECK (armor_damage >= 0 AND armor_damage < 'Infinity'::double precision);
+            """),
+        new Migration("0004_finite_condition_fractions", """
+            ALTER TABLE ship_condition DROP CONSTRAINT ship_condition_charge_check;
+            ALTER TABLE ship_condition DROP CONSTRAINT ship_condition_damage_nonnegative;
+            ALTER TABLE ship_condition DROP CONSTRAINT ship_condition_shield_charge_finite;
+            ALTER TABLE ship_condition DROP CONSTRAINT ship_condition_armor_damage_nonnegative;
+            ALTER TABLE ship_condition ADD CONSTRAINT ship_condition_damage_finite
+                CHECK (damage > '-Infinity'::double precision AND damage < 'Infinity'::double precision);
+            ALTER TABLE ship_condition ADD CONSTRAINT ship_condition_charge_finite
+                CHECK (charge > '-Infinity'::double precision AND charge < 'Infinity'::double precision);
+            ALTER TABLE ship_condition ADD CONSTRAINT ship_condition_shield_charge_finite
+                CHECK (shield_charge > '-Infinity'::double precision AND shield_charge < 'Infinity'::double precision);
+            ALTER TABLE ship_condition ADD CONSTRAINT ship_condition_armor_damage_finite
+                CHECK (armor_damage > '-Infinity'::double precision AND armor_damage < 'Infinity'::double precision);
             """)
     ];
 
@@ -111,10 +125,10 @@ public sealed class PgModuleStateStore
         {
             foreach (var value in new object[]
             {
-                FiniteNonNegative(condition.Damage),
-                Clamp(condition.Charge),
-                FiniteAtMostOne(condition.ShieldCharge),
-                FiniteNonNegative(condition.ArmorDamage),
+                FiniteOrDefault(condition.Damage, 0),
+                FiniteOrDefault(condition.Charge, 1),
+                FiniteOrDefault(condition.ShieldCharge, 1),
+                FiniteOrDefault(condition.ArmorDamage, 0),
                 condition.Incapacitated,
             })
             {
@@ -127,6 +141,8 @@ public sealed class PgModuleStateStore
     private static double FiniteNonNegative(double value) => double.IsFinite(value) ? Math.Max(0, value) : 0;
 
     private static double FiniteAtMostOne(double value) => double.IsFinite(value) ? Math.Min(1, value) : 0;
+
+    private static double FiniteOrDefault(double value, double fallback) => double.IsFinite(value) ? value : fallback;
 
     private static double Clamp(double fraction) => Math.Clamp(fraction, 0, 1);
 

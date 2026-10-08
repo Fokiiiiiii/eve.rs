@@ -203,6 +203,9 @@ public class PlayerDeathTests
         rig.Sim.Say(Destroyed(session, c.ShipId, FrigateWreck));
         await Rig.UntilAsync(() => session.GetInt("shipid") != c.ShipId);
         await Task.Delay(300);
+        var recoveredCapsule = await rig.Items.GetAsync(session.GetInt("shipid")!.Value);
+        Assert.Equal((Rig.Station, Eve.Inventory.ItemFlags.Hangar, Eve.Ships.CharacterShips.CapsuleTypeId),
+            (recoveredCapsule!.LocationId, recoveredCapsule.Flag, recoveredCapsule.TypeId));
         Assert.False(rig.Space.IsInSpace(session));
         Assert.Contains(rig.Log, line => line.Contains("did not take the capsule"));
         Assert.Contains(rig.Sim.Heard.OfType<SimLeave>(), leave => leave.SessionId == (ulong)session.SessionId);

@@ -68,6 +68,123 @@ internal sealed class Rig : IAsyncDisposable
 
     public const int Cockroach = 11019;
     private const int CaldariRookieShip = 601;
+    public const int FixtureBattleship = 900_001_001;
+    public const int FixtureCarrier = 900_001_002;
+    public const int FixtureFrigate = 900_001_003;
+    public const int FixturePrismaticite = 900_001_004;
+    public const int FixtureAsteroidOre = 900_001_005;
+    public const int FixtureDrone = 900_001_006;
+
+    public static DogmaStatic WithShipFixtures(DogmaStatic statics)
+    {
+        const int battleshipGroup = 900_002_001;
+        const int carrierGroup = 900_002_002;
+        const int frigateGroup = 900_002_003;
+        const int prismaticiteGroup = 900_002_004;
+        const int asteroidOreGroup = 900_002_005;
+        int Attribute(string name) => statics.AttributeId(name)
+            ?? throw new InvalidOperationException($"SDE attribute {name} is missing");
+
+        var common = new Dictionary<int, double>
+        {
+            [Attribute("mass")] = 1_000_000,
+            [Attribute("capacity")] = 1_000,
+            [Attribute("volume")] = 100,
+            [Attribute("radius")] = 100,
+            [Attribute("hp")] = 1_000,
+        };
+        TypeDef Ship(int typeId, int groupId, string name, params (string Attribute, double Value)[] capacities)
+        {
+            var attributes = new Dictionary<int, double>(common);
+            foreach (var (attribute, value) in capacities)
+                attributes[Attribute(attribute)] = value;
+            return new TypeDef(typeId, groupId, statics.CategoryId("Ship") ?? 6, attributes, [], name);
+        }
+
+        var bayAttributes = new (string Attribute, double Value)[]
+        {
+            ("droneCapacity", 100),
+            ("fighterCapacity", 1_000_000),
+            ("frigateEscapeBayCapacity", 1),
+            ("shipMaintenanceBayCapacity", 1_000_000),
+            ("fleetHangarCapacity", 1_000_000),
+            ("specialFuelBayCapacity", 1_000_000),
+            ("generalMiningHoldCapacity", 1_000_000),
+            ("specialAsteroidHoldCapacity", 1_000_000),
+            ("specialIceHoldCapacity", 1_000_000),
+            ("specialGasHoldCapacity", 1_000_000),
+            ("specialMineralHoldCapacity", 1_000_000),
+            ("specialSalvageHoldCapacity", 1_000_000),
+            ("specialShipHoldCapacity", 1_000_000),
+            ("specialSmallShipHoldCapacity", 1_000_000),
+            ("specialMediumShipHoldCapacity", 1_000_000),
+            ("specialLargeShipHoldCapacity", 1_000_000),
+            ("specialIndustrialShipHoldCapacity", 1_000_000),
+            ("specialAmmoHoldCapacity", 1_000_000),
+            ("specialCommandCenterHoldCapacity", 1_000_000),
+            ("specialPlanetaryCommoditiesHoldCapacity", 1_000_000),
+            ("specialMaterialBayCapacity", 1_000_000),
+            ("specialQuafeHoldCapacity", 1_000_000),
+            ("specialCorpseHoldCapacity", 1_000_000),
+            ("specialMobileDepotHoldCapacity", 1_000_000),
+            ("specialBoosterHoldCapacity", 1_000_000),
+            ("specialSubsystemHoldCapacity", 1_000_000),
+            ("specialColonyResourcesHoldCapacity", 1_000_000),
+            ("outputMoonMaterialBayCapacity", 1_000_000),
+            ("specialExpeditionHoldCapacity", 1_000_000),
+        };
+        var asteroidBattleship = Ship(FixtureBattleship, battleshipGroup, "Test Battleship", bayAttributes);
+        var carrierAttributes = new Dictionary<int, double>(common)
+        {
+            [Attribute("shipMaintenanceBayCapacity")] = 500_000,
+            [Attribute("fleetHangarCapacity")] = 50_000,
+        };
+        var carrier = new TypeDef(FixtureCarrier, carrierGroup, statics.CategoryId("Ship") ?? 6, carrierAttributes, [], "Test Carrier");
+        var frigateAttributes = new Dictionary<int, double>(common)
+        {
+            [TypeDef.RequiredSkillAttributes[0]] = 3327,
+        };
+        var frigate = new TypeDef(FixtureFrigate, frigateGroup, statics.CategoryId("Ship") ?? 6, frigateAttributes, [], "Test Frigate");
+        var prismaticite = new TypeDef(
+            FixturePrismaticite,
+            prismaticiteGroup,
+            statics.CategoryId("Asteroid") ?? 25,
+            new Dictionary<int, double> { [Attribute("volume")] = 1 },
+            [],
+            "Test Prismaticite");
+        var asteroidOre = new TypeDef(
+            FixtureAsteroidOre,
+            asteroidOreGroup,
+            statics.CategoryId("Asteroid") ?? 25,
+            new Dictionary<int, double> { [Attribute("volume")] = 1 },
+            [],
+            "Test Asteroid Ore");
+        var drone = new TypeDef(
+            FixtureDrone,
+            900_002_006,
+            statics.CategoryId("Drone") ?? 18,
+            new Dictionary<int, double> { [Attribute("volume")] = 25 },
+            [],
+            "Test Drone");
+        return statics.WithFixtures(
+            [asteroidBattleship, carrier, frigate, prismaticite, asteroidOre, drone],
+            new Dictionary<int, int>
+            {
+                [battleshipGroup] = statics.CategoryId("Ship") ?? 6,
+                [carrierGroup] = statics.CategoryId("Ship") ?? 6,
+                [frigateGroup] = statics.CategoryId("Ship") ?? 6,
+                [prismaticiteGroup] = statics.CategoryId("Asteroid") ?? 25,
+                [asteroidOreGroup] = statics.CategoryId("Asteroid") ?? 25,
+            },
+            new Dictionary<int, string>
+            {
+                [battleshipGroup] = "Battleship",
+                [carrierGroup] = "Carrier",
+                [frigateGroup] = "Frigate",
+                [prismaticiteGroup] = "Prismaticite",
+                [asteroidOreGroup] = "Asteroid Ore",
+            });
+    }
 
     private static CreationCatalog CockroachCatalog(CreationCatalog source) =>
         new(
@@ -75,7 +192,9 @@ internal sealed class Rig : IAsyncDisposable
             source.Bloodlines,
             CreationCatalog.Schools.Select(s => source.StarterFor(s.CorporationId)!));
 
-    public static async Task<Rig> CreateAsync(IShipInsuranceInvalidator? shipInsuranceInvalidator = null)
+    public static async Task<Rig> CreateAsync(
+        IShipInsuranceInvalidator? shipInsuranceInvalidator = null,
+        Func<DogmaStatic, DogmaStatic>? staticFixtures = null)
     {
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
@@ -94,7 +213,10 @@ internal sealed class Rig : IAsyncDisposable
         await PgModuleStateStore.MigrateAsync(source, $"sf_{suffix}");
         var creation = new CharacterCreation(
             source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), CockroachCatalog(await CreationCatalog.LoadAsync(sde, Station)), modules);
-        return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation, shipInsuranceInvalidator);
+        var statics = await DogmaStatic.LoadAsync(sde);
+        if (staticFixtures is not null)
+            statics = staticFixtures(statics);
+        return new Rig(source, suffix, statics, creation, shipInsuranceInvalidator);
     }
 
     /// <summary>A new test character on the Cockroach hull with the starter modules fitted.</summary>

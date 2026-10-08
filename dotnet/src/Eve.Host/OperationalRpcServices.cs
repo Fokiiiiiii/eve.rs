@@ -161,6 +161,15 @@ public sealed partial class InSpaceCompressionMgrRpcService(
     /// </summary>
     public const string UnavailableNotice = "In-space ore compression is not available on this server yet.";
 
+    /// <summary>Shown when the request names no usable item, facility or active ship. Never answered with None (a silent success).</summary>
+    public const string InvalidRequestNotice = "That item cannot be compressed here: pick an item in your active ship and a valid facility.";
+
+    /// <summary>Shown when the item is not in the pilot's active ship (or no longer has the quantity asked for).</summary>
+    public const string NotInActiveShipNotice = "That item is not in your active ship.";
+
+    /// <summary>Shown when the compression backend returns no result or a result that does not describe the request.</summary>
+    public const string FailedNotice = "In-space compression did not complete.";
+
     [Method("CompressItemInSpace")]
     public async ValueTask<PyValue> CompressItemInSpace(ServiceCall call)
     {
@@ -173,17 +182,17 @@ public sealed partial class InSpaceCompressionMgrRpcService(
         if (itemId is not > 0 || facilityId is not > 0 ||
             characterId <= 0 || shipId <= 0 || systemId <= 0)
         {
-            return PyNone.Instance;
+            throw Refuse(InvalidRequestNotice);
         }
 
         var item = await getItem(itemId.Value, call.Cancellation);
         if (item is null || item.Id != itemId || item.OwnerId != characterId ||
             item.LocationId != shipId || item.Quantity < 1)
         {
-            return PyNone.Instance;
+            throw Refuse(NotInActiveShipNotice);
         }
         if (compress is null)
-            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(UnavailableNotice)));
+            throw Refuse(UnavailableNotice);
 
         var result = await compress(call, item, facilityId.Value, call.Cancellation);
         if (result is null ||
@@ -196,7 +205,7 @@ public sealed partial class InSpaceCompressionMgrRpcService(
             result.OutputTypeId <= 0 ||
             result.OutputQuantity <= 0)
         {
-            return PyNone.Instance;
+            throw Refuse(FailedNotice);
         }
 
         return Py.Tuple(
@@ -207,6 +216,9 @@ public sealed partial class InSpaceCompressionMgrRpcService(
             new PyInt(result.OutputTypeId),
             new PyLong(result.OutputQuantity));
     }
+
+    private static MachoWrappedException Refuse(string notice) =>
+        MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(notice)));
 }
 
 internal static class OperationalRpcIds

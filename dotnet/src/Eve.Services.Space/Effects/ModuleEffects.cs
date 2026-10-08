@@ -19,6 +19,7 @@ internal static class ModuleEffects
         .Register(new BarragePendingEffect())
         .Register(new MissileEffect())
         .Register(new RefusedLauncherEffect())
+        .Register(new WarpDisruptSphereEffect())
         .Register(new RepairEffect())
         .Register(new ProjectedEffect())
         .Register(new SmartbombEffect())

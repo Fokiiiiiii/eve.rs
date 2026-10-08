@@ -181,7 +181,7 @@ public class MissileHostTests
         }
         Assert.NotEmpty(carrying);
 
-        var served = MissileEffect.ServedLauncherGroups.Select(group => (long)group).ToHashSet();
+        var served = MissileEffect.ServedLauncherGroups(statics).Select(group => (long)group).ToHashSet();
         var refused = MissileEffect.RefusedLauncherGroups.Keys.Select(group => (long)group).ToHashSet();
         foreach (var group in carrying)
         {

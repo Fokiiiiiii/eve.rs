@@ -59,7 +59,8 @@ public sealed partial class DogmaIMService
             "CLOAK_TARGET_LOCKED" => Notify("Your ship is already target locked and cannot activate a cloaking device."),
             "CLOAK_PROXIMITY_BLOCKED" => Notify("You are too close to another object to activate your cloaking device."),
             "MODULE_CLOAKED" => Notify("You cannot activate modules while cloaked."),
-            "UNSUPPORTED_EFFECT" => Notify($"{name} cannot be activated."),
+            // an effect with no body yet (PendingModuleEffect) is shown as one this module cannot run, the same as an effect with no handler
+            "UNSUPPORTED_EFFECT" or "EFFECT_NOT_IMPLEMENTED" => Notify($"{name} cannot be activated."),
             _ => Notify($"Failed to activate {name}: {refusal.Reason ?? "unknown error"}."),
         };
     }

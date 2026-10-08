@@ -293,11 +293,6 @@ private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
     private SimDroneEffect? RemoteOf(TypeDef type, Func<int, double> value) =>
         type.EffectIds.Select(_statics.Effect).Select(effect => effect is null ? null : ProjectedEffect.ForDrone(effect, value)).FirstOrDefault(remote => remote is not null);
 
-    private double Dogma(ShipSnapshot snapshot, long itemId, string attributeName) =>
-        _statics.AttributeId(attributeName) is { } attribute
-            ? snapshot.World.Get(itemId, attribute)
-            : 0d;
-
     private double StaticDogma(TypeDef type, string attributeName) =>
         _statics.AttributeId(attributeName) is { } attribute
             ? type.Attributes.GetValueOrDefault(attribute, _statics.Attribute(attribute)?.DefaultValue ?? 0d)

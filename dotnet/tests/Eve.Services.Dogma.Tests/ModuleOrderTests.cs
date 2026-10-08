@@ -121,6 +121,9 @@ public class ModuleOrderTests
         // an effect whose body is pending is shown as the same refusal, not as the generic failure
         Assert.Equal("1MN Civilian Afterburner cannot be activated.", await Said("EFFECT_NOT_IMPLEMENTED"));
         // a launcher whose group is not run yet names its reason; the client shows the same refusal
+        // a cloak the ship cannot take is the client's own UserError, as the client raises it itself (FakeCloaking.PreStartChecks)
+        Assert.Equal("CantCloakTooShipUnsuitable", (await RefusedAsync(rig, session, oid, ModuleResult.Refusal("CLOAK_SHIP_UNSUITABLE", 21857, "1MN Civilian Afterburner"))).Name);
+        Assert.Equal("CantCloak", (await RefusedAsync(rig, session, oid, ModuleResult.Refusal("CLOAK_DISALLOWED", 21857, "1MN Civilian Afterburner"))).Name);
         Assert.Equal("1MN Civilian Afterburner cannot be activated.", await Said("DEFENDER_LAUNCHER_NOT_IMPLEMENTED"));
         Assert.Equal("1MN Civilian Afterburner cannot be activated.", await Said("BOMB_LAUNCHER_NOT_IMPLEMENTED"));
         Assert.Equal("You cannot activate a microwarpdrive while a warp scrambler holds your ship.", await Said("MICROWARPDRIVE_BLOCKED"));

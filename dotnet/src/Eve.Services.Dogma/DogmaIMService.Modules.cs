@@ -56,6 +56,9 @@ public sealed partial class DogmaIMService
             "NOT_ENOUGH_CAPACITOR" => Notify("You do not have enough capacitor to activate that module."),
             "MICROWARPDRIVE_BLOCKED" => Notify("You cannot activate a microwarpdrive while a warp scrambler holds your ship."),
             "CLOAK_WARP_BLOCKED" => Notify("You cannot activate that cloaking device while warping."),
+            // the client's own UserErrors (FakeCloaking.PreStartChecks): the ship cannot cloak, or disallows a cloak
+            "CLOAK_SHIP_UNSUITABLE" => MachoErrors.ThrowUserError("CantCloakTooShipUnsuitable"),
+            "CLOAK_DISALLOWED" => MachoErrors.ThrowUserError("CantCloak"),
             "CLOAK_TARGET_LOCKED" => Notify("Your ship is already target locked and cannot activate a cloaking device."),
             "CLOAK_PROXIMITY_BLOCKED" => Notify("You are too close to another object to activate your cloaking device."),
             "MODULE_CLOAKED" => Notify("You cannot activate modules while cloaked."),

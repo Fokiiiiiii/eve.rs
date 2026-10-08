@@ -888,6 +888,52 @@ public class ModuleEffectsTests
         }
     }
 
+    /// <summary>
+    /// Every cloaking device of the static data (group "Cloaking Device") is refused on a ship that cannot cloak (canCloak 0) or disallows it (disallowCloaking), and is
+    /// packaged as a cloak on a ship that does not. It tells the client no speed: no cloak type carries attribute 51, which the old package fabricated.
+    /// </summary>
+    [PgFact]
+    public async Task Every_cloaking_device_is_refused_on_a_ship_that_cannot_cloak_or_disallows_it_and_tells_no_speed()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var sde = new SdeReader(source);
+        var statics = await DogmaStatic.LoadAsync(sde);
+        var cloaks = await statics.TypesInGroupsAsync(["Cloaking Device"]);
+        Assert.NotEmpty(cloaks);
+        var canCloak = statics.AttributeId("canCloak") ?? throw new InvalidOperationException("The SDE is missing canCloak.");
+        var disallowCloaking = statics.AttributeId("disallowCloaking") ?? throw new InvalidOperationException("The SDE is missing disallowCloaking.");
+        var shipGroupIds = (await sde.ReadAsync("groups")).Where(row => row.Doc.GetProperty("categoryID").GetInt32() == 6).Select(row => row.Key).ToArray();
+        var shipTypeId = checked((int)(await sde.ReadByFieldAsync("types", "groupID", shipGroupIds))
+            .First(row => row.Doc.TryGetProperty("published", out var published) && published.ValueKind == System.Text.Json.JsonValueKind.True)
+            .Key);
+        await statics.EnsureTypesAsync([shipTypeId]);
+
+        foreach (var cloak in cloaks)
+        {
+            var cloakEffect = cloak.EffectIds.Select(statics.Effect).First(e => e is { Name: "cloaking" or "cloakingWarpSafe" or "cloakingPrototype" })!;
+            const long characterId = 75001, shipId = 75002, moduleId = 75003;
+            var ship = new Eve.Inventory.Item(shipId, shipTypeId, characterId, 60003760, 0, 1, true, null);
+            var module = new Eve.Inventory.Item(moduleId, cloak.TypeId, characterId, shipId, 11, 1, true, null);
+            var world = new DogmaWorld(statics, characterId, shipId);
+            world.Add(new DogmaItem(shipId, shipTypeId, characterId, ship.LocationId, ship.Flag, ItemState.Online));
+            world.Add(new DogmaItem(moduleId, cloak.TypeId, characterId, shipId, 11, ItemState.Online));
+            var snapshot = new Eve.Ships.ShipSnapshot { Character = null!, Ship = ship, Fitted = [module], Charges = [], Skills = [], World = world };
+
+            var packaged = Eve.Services.Space.ModulePackages.Of(snapshot, statics, moduleId, cloakEffect.Name, 0, 1);
+            Assert.Null(packaged.Reason);
+            var package = Assert.IsType<Eve.Space.SimEffect>(packaged.Effect);
+            Assert.IsType<Eve.Space.SimAction.Cloak>(package.Action);
+            Assert.DoesNotContain(package.OnChanges, change => change.AttributeId == Eve.Services.Space.Effects.ModuleAttributes.Speed);
+
+            world.SetValue(shipId, canCloak, 0);
+            Assert.Equal("CLOAK_SHIP_UNSUITABLE", Eve.Services.Space.ModulePackages.Of(snapshot, statics, moduleId, cloakEffect.Name, 0, 1).Reason);
+
+            world.SetValue(shipId, canCloak, 1);
+            world.SetValue(shipId, disallowCloaking, 1);
+            Assert.Equal("CLOAK_DISALLOWED", Eve.Services.Space.ModulePackages.Of(snapshot, statics, moduleId, cloakEffect.Name, 0, 1).Reason);
+        }
+    }
+
     private static (Eve.Ships.ShipSnapshot Snapshot, DogmaStatic Statics, long ModuleId, long ShipId) Fixture(
     int effectId,
     string effectName,

@@ -47,18 +47,46 @@ internal sealed class EcmBurstEffect : ShipEffect
     }
 }
 
+/// <summary>
+/// A cloaking device (group 330). The refusals the ship's own dogma decides are here: a ship that cannot cloak (<c>canCloak</c>, which a module can take away) and one that
+/// disallows it (<c>disallowCloaking</c>), as the client's <c>FakeCloaking.PreStartChecks</c>. A cloak has no duration of its own in the static data, so it tells the
+/// client no duration: the speed it used to tell was not the module's (no cloak type carries that attribute).
+/// The refusals that need what is running (a second device, a module that cannot be stopped early) are the simulation's, which knows what runs.
+/// </summary>
 internal sealed class CloakingEffect : ShipEffect
 {
+    private const string CanCloakName = "canCloak";
+    private const string DisallowCloakingName = "disallowCloaking";
+
     public override IReadOnlyCollection<string> EffectNames { get; } = ["cloaking", "cloakingWarpSafe", "cloakingPrototype"];
 
     protected override bool Handles(ModuleEffectContext module) => module.Type.GroupId == 330;
 
+    protected override string? Refusal(ModuleEffectContext module)
+    {
+        var shipId = module.Snapshot.Ship.Id;
+        if (module.Statics.AttributeId(CanCloakName) is { } canCloak && module.World.Get(shipId, canCloak) == 0)
+        {
+            return "CLOAK_SHIP_UNSUITABLE";
+        }
+        if (module.Statics.AttributeId(DisallowCloakingName) is { } disallowed && module.World.Get(shipId, disallowed) != 0)
+        {
+            return "CLOAK_DISALLOWED";
+        }
+        return null;
+    }
+
     protected override SimEffect Build(ModuleEffectContext module)
     {
         var (duration, capacitor, durationAttribute) = module.Cycle();
-        SimChange[] told = [new(module.ModuleId, CapacitorNeed, capacitor), new(module.ModuleId, durationAttribute, Three(duration))];
+        var told = new List<SimChange> { new(module.ModuleId, CapacitorNeed, capacitor) };
+        if (module.Effect.DurationAttributeId > 0)
+        {
+            told.Add(new SimChange(module.ModuleId, durationAttribute, Three(duration)));
+        }
+        SimChange[] changes = [.. told];
         return new SimEffect(
             module.ModuleId, module.Module.TypeId, module.Effect.Id, module.Effect.Guid, duration, capacitor,
-            Math.Max(1, module.Repeat), 0, null, null, told, told, null, new SimAction.Cloak());
+            Math.Max(1, module.Repeat), 0, null, null, changes, changes, null, new SimAction.Cloak());
     }
 }

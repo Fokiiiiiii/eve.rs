@@ -55,6 +55,8 @@ internal abstract class ShipEffect : IEffectHandler<ShipSnapshot, SimEffect>
 
     string? IEffectHandler<ShipSnapshot, SimEffect>.Refusal(EffectContext<ShipSnapshot> context) => Refusal(new ModuleEffectContext(context));
 
+    bool IEffectHandler<ShipSnapshot, SimEffect>.Implemented => Implemented;
+
     SimEffect IEffectHandler<ShipSnapshot, SimEffect>.Build(EffectContext<ShipSnapshot> context) => Build(new ModuleEffectContext(context));
 
     /// <summary>Whether this handler serves this module (default: every module that has the effect).</summary>
@@ -62,6 +64,9 @@ internal abstract class ShipEffect : IEffectHandler<ShipSnapshot, SimEffect>
 
     /// <summary>The user-error reason that stops the effect from starting (before the target is asked for), or null.</summary>
     protected virtual string? Refusal(ModuleEffectContext module) => null;
+
+    /// <summary>False for a handler that only refuses (a pending body); see <see cref="IEffectHandler{THost, TResult}.Implemented"/>.</summary>
+    protected virtual bool Implemented => true;
 
     protected abstract SimEffect Build(ModuleEffectContext module);
 }

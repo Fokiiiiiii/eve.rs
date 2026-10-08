@@ -676,7 +676,6 @@ public class ModuleEffectsTests
         var uncovered = assignedNames.Except(handledNames, StringComparer.OrdinalIgnoreCase).OrderBy(name => name, StringComparer.Ordinal).ToArray();
         string[] currentSdeGaps =
         [
-            "ChainLightning",
             "cargoScan",
             "cloneRespawnBay",
             "debuffLance",
@@ -725,6 +724,140 @@ public class ModuleEffectsTests
         Assert.True(
             expectedForCatalog.SequenceEqual(uncovered),
             $"Unexpected module effect gaps for SDE build {catalogBuild}: {string.Join(", ", uncovered)}");
+    }
+
+    [PgFact]
+    public async Task A_precursor_weapon_carries_the_damage_ramp_its_sde_type_declares_on_its_turret()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var sde = new SdeReader(source);
+        var catalogBuild = await sde.BuildAsync()
+            ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
+        var statics = await DogmaStatic.LoadAsync(sde);
+        var precursorTypes = await statics.TypesInGroupsAsync(["Precursor Weapon"]);
+        var charge = (await statics.TypesInGroupsAsync(["Exotic Plasma Charge"])).First();
+        var perCycleAttribute = statics.AttributeId("damageMultiplierBonusPerCycle")
+            ?? throw new InvalidOperationException($"SDE build {catalogBuild} is missing damageMultiplierBonusPerCycle.");
+        var maximumAttribute = statics.AttributeId("damageMultiplierBonusMax")
+            ?? throw new InvalidOperationException($"SDE build {catalogBuild} is missing damageMultiplierBonusMax.");
+        // the values of SDE build 3396210 that the ramp is pinned to: a Light Entropic Disintegrator I builds 0.07 a cycle up to 2.125, an Ultratidal one 0.05 up to 1.5
+        var pinned = new Dictionary<int, (double PerCycle, double Maximum)> { [47272] = (0.07, 2.125), [52915] = (0.05, 1.5) };
+        Assert.Contains(47272, precursorTypes.Select(type => type.TypeId));
+
+        const long characterId = 73001;
+        const long shipId = 73002;
+        const long moduleId = 73003;
+        const long chargeId = 73004;
+        const long targetId = 73005;
+        const int shipTypeId = 587;
+        const int moduleFlag = 11;
+        await statics.EnsureTypesAsync([shipTypeId]);
+        foreach (var precursor in precursorTypes)
+        {
+            await statics.EnsureTypesAsync([precursor.TypeId, charge.TypeId]);
+            var ship = new Eve.Inventory.Item(shipId, shipTypeId, characterId, 60003760, 0, 1, true, null);
+            var module = new Eve.Inventory.Item(moduleId, precursor.TypeId, characterId, shipId, moduleFlag, 1, true, null);
+            var loaded = new Eve.Inventory.Item(chargeId, charge.TypeId, characterId, shipId, moduleFlag, 1000, false, null);
+            var world = new DogmaWorld(statics, characterId, shipId);
+            world.Add(new DogmaItem(shipId, shipTypeId, characterId, ship.LocationId, ship.Flag, ItemState.Online));
+            world.Add(new DogmaItem(moduleId, precursor.TypeId, characterId, shipId, moduleFlag, ItemState.Online));
+            world.Add(new DogmaItem(chargeId, charge.TypeId, characterId, shipId, moduleFlag, ItemState.Online));
+            var snapshot = new Eve.Ships.ShipSnapshot
+            {
+                Character = null!,
+                Ship = ship,
+                Fitted = [module],
+                Charges = [loaded],
+                Skills = [],
+                World = world,
+            };
+            var result = Eve.Services.Space.ModulePackages.Of(snapshot, statics, moduleId, "targetDisintegratorAttack", targetId, 1);
+            Assert.True(result.Reason is null, $"SDE build {catalogBuild}, type {precursor.TypeId}: {result.Reason}");
+            var turret = Assert.IsType<Eve.Space.SimEffect>(result.Effect).Turret
+                ?? throw new InvalidOperationException($"SDE build {catalogBuild}: type {precursor.TypeId} has no turret.");
+            var perCycle = world.Get(moduleId, perCycleAttribute);
+            var maximum = world.Get(moduleId, maximumAttribute);
+            Assert.True(perCycle > 0, $"SDE build {catalogBuild}, type {precursor.TypeId} declares no bonus per cycle.");
+            Assert.Equal(
+                new Eve.Space.SimSpool(Eve.Services.Space.Effects.ModuleAttributes.Six(perCycle), Eve.Services.Space.Effects.ModuleAttributes.Six(maximum)),
+                turret.Spool);
+            if (pinned.TryGetValue(precursor.TypeId, out var expected))
+            {
+                Assert.Equal(new Eve.Space.SimSpool(expected.PerCycle, expected.Maximum), turret.Spool);
+            }
+        }
+    }
+
+    [PgFact]
+    public async Task A_vorton_projector_explodes_without_a_roll_and_arcs_with_the_sde_numbers_its_type_declares()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var sde = new SdeReader(source);
+        var catalogBuild = await sde.BuildAsync()
+            ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
+        var statics = await DogmaStatic.LoadAsync(sde);
+        var vortons = await statics.TypesInGroupsAsync(["Vorton Projector"]);
+        var charge = (await statics.TypesInGroupsAsync(["Condenser Pack"])).First();
+        int Attribute(string name) => statics.AttributeId(name)
+            ?? throw new InvalidOperationException($"SDE build {catalogBuild} is missing {name}.");
+        var cloudAttribute = Attribute("aoeCloudSize");
+        var velocityAttribute = Attribute("aoeVelocity");
+        var factorAttribute = Attribute("aoeDamageReductionFactor");
+        var sensitivityAttribute = Attribute("aoeDamageReductionSensitivity");
+        var rangeAttribute = Attribute("VortonArcRange");
+        var targetsAttribute = Attribute("VortonArcTargets");
+        var trackingAttribute = Attribute("trackingSpeed");
+        Assert.NotEmpty(vortons);
+
+        const long characterId = 74001;
+        const long shipId = 74002;
+        const long moduleId = 74003;
+        const long chargeId = 74004;
+        const long targetId = 74005;
+        const int shipTypeId = 587;
+        const int moduleFlag = 11;
+        await statics.EnsureTypesAsync([shipTypeId]);
+        foreach (var vorton in vortons)
+        {
+            await statics.EnsureTypesAsync([vorton.TypeId, charge.TypeId]);
+            // a vorton carries no tracking speed, and the reference's defaults fill what the type does not declare
+            Assert.False(vorton.Attributes.TryGetValue(trackingAttribute, out var tracking) && tracking > 0,
+                $"SDE build {catalogBuild}, type {vorton.TypeId} declares a tracking speed.");
+            var sensitivity = vorton.Attributes.TryGetValue(sensitivityAttribute, out var declared) ? declared : 5.5;
+            var ship = new Eve.Inventory.Item(shipId, shipTypeId, characterId, 60003760, 0, 1, true, null);
+            var module = new Eve.Inventory.Item(moduleId, vorton.TypeId, characterId, shipId, moduleFlag, 1, true, null);
+            var loaded = new Eve.Inventory.Item(chargeId, charge.TypeId, characterId, shipId, moduleFlag, 1000, false, null);
+            var world = new DogmaWorld(statics, characterId, shipId);
+            world.Add(new DogmaItem(shipId, shipTypeId, characterId, ship.LocationId, ship.Flag, ItemState.Online));
+            world.Add(new DogmaItem(moduleId, vorton.TypeId, characterId, shipId, moduleFlag, ItemState.Online));
+            world.Add(new DogmaItem(chargeId, charge.TypeId, characterId, shipId, moduleFlag, ItemState.Online));
+            var snapshot = new Eve.Ships.ShipSnapshot
+            {
+                Character = null!,
+                Ship = ship,
+                Fitted = [module],
+                Charges = [loaded],
+                Skills = [],
+                World = world,
+            };
+            var result = Eve.Services.Space.ModulePackages.Of(snapshot, statics, moduleId, "ChainLightning", targetId, 1);
+            Assert.True(result.Reason is null, $"SDE build {catalogBuild}, type {vorton.TypeId}: {result.Reason}");
+            var turret = Assert.IsType<Eve.Space.SimEffect>(result.Effect).Turret
+                ?? throw new InvalidOperationException($"SDE build {catalogBuild}: type {vorton.TypeId} has no turret.");
+            Assert.Null(turret.Spool);
+            Assert.Equal(
+                new Eve.Space.SimAoe(
+                    Eve.Services.Space.Effects.ModuleAttributes.Six(world.Get(moduleId, cloudAttribute)),
+                    Eve.Services.Space.Effects.ModuleAttributes.Six(world.Get(moduleId, velocityAttribute)),
+                    Eve.Services.Space.Effects.ModuleAttributes.Six(world.Get(moduleId, factorAttribute)),
+                    Eve.Services.Space.Effects.ModuleAttributes.Six(sensitivity)),
+                turret.Aoe);
+            Assert.Equal(
+                new Eve.Space.SimArc(
+                    Eve.Services.Space.Effects.ModuleAttributes.Six(world.Get(moduleId, rangeAttribute)),
+                    (int)world.Get(moduleId, targetsAttribute)),
+                turret.Arc);
+        }
     }
 
     private static (Eve.Ships.ShipSnapshot Snapshot, DogmaStatic Statics, long ModuleId, long ShipId) Fixture(

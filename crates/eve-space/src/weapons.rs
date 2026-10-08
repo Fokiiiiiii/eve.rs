@@ -9,7 +9,7 @@
 use eve_marshal::Value;
 
 use crate::health::Damage;
-use crate::missiles::Missile;
+use crate::missiles::{application_factor_of, Missile};
 use crate::modules::Effect;
 use crate::npc::is_npc_session;
 use crate::scene::{Out, Scene, SessionId};
@@ -40,6 +40,131 @@ pub struct Turret {
     pub charge: Option<Charge>,
     /// What a launcher flies (a launcher is a weapon that fires a missile in the place of a shot: its `raw_damage` is the missile's, its `optimal_range` how far the missile goes).
     pub missile: Option<Missile>,
+    /// The damage ramp of a weapon that builds up its damage on the target it keeps shooting at (a precursor weapon); none for the others.
+    pub spool: Option<Spool>,
+    /// How a shot that explodes on its target does its damage (a vorton projector: no roll; the explosion's cloud and velocity decide how much of the
+    /// damage reaches the target, as a missile's do); none for a weapon that rolls to hit.
+    pub aoe: Option<Aoe>,
+    /// The chain a shot links from its target to other ships (a vorton projector's arc); none for the others.
+    pub arc: Option<Arc>,
+}
+
+/// The explosion of a shot that does not roll to hit (a vorton projector): the cloud's radius and velocity, and the damage reduction factor and its
+/// sensitivity, as a missile's explosion has them (`missiles::application_factor_of`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Aoe {
+    pub explosion_radius: f64,
+    pub explosion_velocity: f64,
+    pub damage_reduction_factor: f64,
+    pub damage_reduction_sensitivity: f64,
+}
+
+/// The chain a shot links from its target (EVE.js `vortonArcChain`): other ships within `range` of the target, up to `targets` ships in all (the target
+/// counts, so `targets - 1` links are made), each struck with the explosion of the shot.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Arc {
+    pub range: f64,
+    pub targets: i32,
+}
+
+/// The damage ramp of a weapon that builds up its damage on the target it keeps shooting at (a precursor weapon, EVE.js `precursorTurrets.js`): each
+/// cycle the bonus grows by `per_cycle` up to `max`, and a shot is multiplied by `1 + bonus`, the bonus built up before that shot (the first has none).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Spool {
+    pub per_cycle: f64,
+    pub max: f64,
+}
+
+/// A shot that does not roll (a vorton projector's primary, EVE.js `resolveVortonShot`): it hits its target whole when the target is within the weapon's
+/// optimal range (nothing beyond it, no falloff, no tracking), and what the explosion does to the target is `explosion`.
+pub(crate) fn explosion_shot(
+    aoe: &Aoe,
+    raw: Damage,
+    optimal: f64,
+    attacker: &Kinematics,
+    target: &Kinematics,
+) -> Shot {
+    let out_of_range = surface_distance(attacker, target) > optimal.max(0.0) + 1e-6;
+    if out_of_range || raw.iter().sum::<f64>() <= 0.0 {
+        let chance_to_hit = if out_of_range { 0.0 } else { 1.0 };
+        return Shot {
+            hit: false,
+            wrecking: false,
+            quality: 0.0,
+            chance_to_hit,
+            roll: 0.0,
+            damage: [0.0; 4],
+        };
+    }
+    explosion(aoe, raw, target)
+}
+
+/// What an explosion does to one ship, with no range check (an arc's victim, EVE.js `resolveVortonArcShot`): the raw damage times the application factor
+/// of the ship's signature and speed, the missile's curve. A hit whenever there is damage to do.
+pub(crate) fn explosion(aoe: &Aoe, raw: Damage, target: &Kinematics) -> Shot {
+    if raw.iter().sum::<f64>() <= 0.0 {
+        return Shot {
+            hit: false,
+            wrecking: false,
+            quality: 0.0,
+            chance_to_hit: 0.0,
+            roll: 0.0,
+            damage: [0.0; 4],
+        };
+    }
+    let signature =
+        if target.signature_radius > 0.0 { target.signature_radius } else { target.radius.max(1.0) }.max(1.0);
+    let speed = length(target.velocity);
+    let factor = application_factor_of(
+        aoe.explosion_radius,
+        aoe.explosion_velocity,
+        aoe.damage_reduction_factor,
+        aoe.damage_reduction_sensitivity,
+        signature,
+        speed,
+    )
+    .clamp(0.0, 1.0);
+    Shot {
+        hit: true,
+        wrecking: false,
+        quality: 1.0,
+        chance_to_hit: 1.0,
+        roll: 0.0,
+        damage: raw.map(|amount| round6(amount.max(0.0) * factor)),
+    }
+}
+
+/// What a running weapon has built up: the bonus its next shot takes, and the target it was built on.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct SpoolState {
+    pub(crate) bonus: f64,
+    pub(crate) target_id: i64,
+}
+
+impl Spool {
+    /// The bonus the next shot at `target_id` takes: a target other than the one it was built on starts it again from none.
+    pub(crate) fn bonus_for(self, state: &mut SpoolState, target_id: i64) -> f64 {
+        if state.target_id != target_id {
+            *state = SpoolState { bonus: 0.0, target_id };
+        }
+        state.bonus = state.bonus.clamp(0.0, self.max.max(0.0));
+        state.bonus
+    }
+
+    /// A cycle has been shot: the bonus grows by a cycle's worth, up to the maximum.
+    pub(crate) fn advance(self, state: &mut SpoolState) {
+        state.bonus = (state.bonus + self.per_cycle.max(0.0)).min(self.max.max(0.0));
+    }
+}
+
+/// The raw damage of a shot with the bonus a spool has built up: each em, thermal, kinetic and explosive part times `1 + bonus`, rounded as the reference
+/// rounds it. No bonus leaves the damage as it is.
+pub(crate) fn spooled_damage(raw: Damage, bonus: f64) -> Damage {
+    if bonus <= 0.0 {
+        return raw;
+    }
+    let multiplier = round6(1.0 + bonus);
+    raw.map(|damage| round6(damage * multiplier))
 }
 
 /// The ammunition in a turret: the kind, the slot it sits in (the client knows a loaded charge by the ship, the slot and the kind), the rounds it holds and the
@@ -430,6 +555,17 @@ impl Scene {
         // the combat log, the aggression and the kill of a drone's shot are its controller's
         let reporter = self.controller_of_drone(session).unwrap_or(session);
         let aggressor_ship = if reporter == session { attacker_id } else { self.ship_id_of(reporter) };
+        // a weapon that builds up its damage shoots with the bonus it has built on this target (the ramp of its running effect); the bonus grows after the shot
+        let spool = turret.spool;
+        let bonus =
+            spool.map_or(0.0, |spool| self.spool_bonus(session, effect.module_id, effect.target_id, spool));
+        let spooled;
+        let turret = if bonus > 0.0 {
+            spooled = Turret { raw_damage: spooled_damage(turret.raw_damage, bonus), ..turret.clone() };
+            &spooled
+        } else {
+            turret
+        };
         // what disrupts the shooter's turrets works on the numbers the shot is rolled with
         let (range, falloff, tracking) = self.pilots[&session].incoming.weapon_factors();
         let disrupted;
@@ -444,59 +580,156 @@ impl Scene {
             };
             &disrupted
         };
-        let roll = self.rng.random();
-        let shot = resolve_shot(turret, &attacker, &target, roll);
+        // a vorton's explosion does not roll (EVE.js resolveVortonShot); every other shot is rolled to hit
+        let shot = match turret.aoe {
+            Some(aoe) => explosion_shot(&aoe, turret.raw_damage, turret.optimal_range, &attacker, &target),
+            None => {
+                let roll = self.rng.random();
+                resolve_shot(turret, &attacker, &target, roll)
+            }
+        };
+        if let Some(spool) = spool {
+            self.spool_advance(session, effect.module_id, spool);
+        }
+        // the ships an arc reaches are chosen from the scene as the shot lands, before the target can leave it
+        let arc_victims = match (turret.aoe, turret.arc) {
+            (Some(_), Some(arc)) if shot.hit => self.arc_victims(session, target_session, &target, arc),
+            _ => Vec::new(),
+        };
+        let shooter = Shooter {
+            reporter,
+            attacker_ship: attacker_id,
+            aggressor_ship,
+            owner: self.combat_owner(session),
+            weapon: turret.weapon_type_id,
+        };
+        let (mut out, destroyed) = self.land_shot(shooter, target_session, &shot, at);
+        // the shot that took the last of the hull is told first, then the ship is gone
+        if destroyed {
+            out.extend(self.destroy(target_session, Some(reporter), at));
+        }
+        // each ship the arc reaches takes the explosion as the target did, without a roll
+        if let Some(aoe) = turret.aoe {
+            for victim in arc_victims {
+                let Some(victim_kinematics) = self.kinematics_of(victim) else { continue };
+                let struck = explosion(&aoe, turret.raw_damage, &victim_kinematics);
+                let (told, destroyed) = self.land_shot(shooter, victim, &struck, at);
+                out.extend(told);
+                if destroyed {
+                    out.extend(self.destroy(victim, Some(reporter), at));
+                }
+            }
+        }
+        out
+    }
+
+    /// A shot lands on the ship of `target`: its damage is taken (whoever sees it is told its damage state), the shot is an offensive act (the crimewatch
+    /// and the NPCs hear of it), and the pilots who see it are told the shot. Returns what was told, and whether the shot took the last of the hull: the
+    /// caller destroys the ship once the shot is told.
+    fn land_shot(&mut self, shooter: Shooter, target: SessionId, shot: &Shot, at: i64) -> (Vec<Out>, bool) {
         let mut out = Vec::new();
+        let target_id = self.pilots.get(&target).map_or(0, |pilot| pilot.ship.spec.ship_id);
         let mut applied = 0.0;
         let mut destroyed = false;
         if shot.hit {
-            let (told, hit) = self.damage(effect.target_id, shot.damage, at);
+            let (told, hit) = self.damage(target_id, shot.damage, at);
             out.extend(told);
             applied = hit.map_or(0.0, |hit| hit.taken.shield + hit.taken.armor + hit.taken.structure);
             destroyed = hit.is_some_and(|hit| hit.destroyed);
         }
-        let owner = self.combat_owner(session);
-        let target_type_id = self.pilots.get(&target_session).map_or(0, |pilot| pilot.ship.spec.type_id);
+        let target_type_id = self.pilots.get(&target).map_or(0, |pilot| pilot.ship.spec.type_id);
         self.aggressions.push(Aggression {
-            attacker_ship: aggressor_ship,
-            target_ship: effect.target_id,
-            module_type_id: turret.weapon_type_id,
-            source_owner_id: owner,
+            attacker_ship: shooter.aggressor_ship,
+            target_ship: target_id,
+            module_type_id: shooter.weapon,
+            source_owner_id: shooter.owner,
             target_type_id,
         });
         let message = |for_the_attacker| {
             damage_message(
                 for_the_attacker,
-                attacker_id,
-                effect.target_id,
-                turret.weapon_type_id,
+                shooter.attacker_ship,
+                target_id,
+                shooter.weapon,
                 applied,
-                &shot,
-                owner,
+                shot,
+                shooter.owner,
             )
         };
-        if !is_npc_session(reporter) {
+        if !is_npc_session(shooter.reporter) {
             out.push(Out::Notify {
-                session: reporter,
+                session: shooter.reporter,
                 name: "OnDamageMessage",
                 id_type: "clientID",
                 args: vec![message(true)],
             });
         }
-        if !is_npc_session(target_session) {
+        if !is_npc_session(target) {
             out.push(Out::Notify {
-                session: target_session,
+                session: target,
                 name: "OnDamageMessage",
                 id_type: "clientID",
                 args: vec![message(false)],
             });
         }
-        // the shot that took the last of the hull is told first, then the ship is gone
-        if destroyed {
-            out.extend(self.destroy(target_session, Some(reporter), at));
-        }
-        out
+        (out, destroyed)
     }
+
+    /// The ships a vorton's arc reaches from its target (EVE.js `resolveVortonArcChain` and `selectVortonArcTargets`): the ships of the scene other than the
+    /// shooter and the target whose surface is within the arc's range of the target's. When there are more of them than the arc has links (its ships less
+    /// the target), that many are drawn at random (EVE.js's partial Fisher-Yates, one draw each); they come back in order of their distance from the
+    /// target, the ship id deciding a tie.
+    fn arc_victims(
+        &mut self,
+        shooter: SessionId,
+        target: SessionId,
+        target_kinematics: &Kinematics,
+        arc: Arc,
+    ) -> Vec<SessionId> {
+        let links = (arc.targets - 1).max(0) as usize;
+        if arc.range <= 0.0 || links == 0 {
+            return Vec::new();
+        }
+        let mut sessions: Vec<SessionId> = self.pilots.keys().copied().collect();
+        sessions.sort_unstable();
+        let mut eligible: Vec<(f64, i64, SessionId)> = Vec::new();
+        for session in sessions {
+            if session == shooter || session == target {
+                continue;
+            }
+            let Some(kinematics) = self.kinematics_of(session) else { continue };
+            let ship_id = self.pilots.get(&session).map_or(0, |pilot| pilot.ship.spec.ship_id);
+            let distance = round6(surface_distance(target_kinematics, &kinematics));
+            if distance <= arc.range + 1e-6 {
+                eligible.push((distance, ship_id, session));
+            }
+        }
+        let mut chosen = if eligible.len() <= links {
+            eligible
+        } else {
+            let mut pool = eligible;
+            let mut drawn = Vec::with_capacity(links);
+            for _ in 0..links {
+                let rolled = self.rng.random().clamp(0.0, 0.999_999_999);
+                let index = ((rolled * pool.len() as f64) as usize).min(pool.len() - 1);
+                drawn.push(pool.remove(index));
+            }
+            drawn
+        };
+        chosen.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        chosen.into_iter().map(|(_, _, session)| session).collect()
+    }
+}
+
+/// Who a shot is from: the pilot that is told of it (a drone's controller), the ship it counts against and the ship that is aggressed by it, the owner
+/// the combat log names, and the weapon's type.
+#[derive(Debug, Clone, Copy)]
+struct Shooter {
+    reporter: SessionId,
+    attacker_ship: i64,
+    aggressor_ship: i64,
+    owner: i64,
+    weapon: i32,
 }
 
 /// A missile that is this much further from its target than it can fly (metres) still gets there (the reference's `graceMeters`).
@@ -521,6 +754,9 @@ mod tests {
             signature_resolution: resolution,
             charge: None,
             missile: None,
+            spool: None,
+            aoe: None,
+            arc: None,
         }
     }
 
@@ -872,6 +1108,245 @@ mod tests {
             on_changes: Vec::new(),
             off_changes: Vec::new(),
         }
+    }
+
+    /// The explosion of the Small Vorton Projector I of SDE build 3396210 (aoeCloudSize 43, aoeVelocity 190, aoeDamageReductionFactor 0.4; the
+    /// sensitivity is the reference's default, the attribute being absent).
+    fn vorton_aoe() -> Aoe {
+        Aoe { explosion_radius: 43.0, explosion_velocity: 190.0, damage_reduction_factor: 0.4, damage_reduction_sensitivity: 5.5 }
+    }
+
+    /// A vorton projector's turret: no tracking speed, its explosion, its optimal range (maxRange 22464) and the em and kinetic damage of its charge.
+    fn vorton(arc: Option<Arc>) -> Turret {
+        let mut weapon = laser();
+        weapon.raw_damage = [116.0, 0.0, 17.0, 0.0];
+        weapon.optimal_range = 22_464.0;
+        weapon.tracking_speed = 0.0;
+        weapon.aoe = Some(vorton_aoe());
+        weapon.arc = arc;
+        weapon
+    }
+
+    #[test]
+    fn a_vorton_explosion_draws_no_roll_and_hits_whole_within_its_optimal_range_with_the_missile_curve() {
+        let (mut scene, npc, now) = duel();
+        let weapon = vorton(None);
+        let attacker = scene.kinematics_of(npc).unwrap();
+        let target = scene.kinematics_of(PLAYER).unwrap();
+        let expected = explosion_shot(&vorton_aoe(), weapon.raw_damage, weapon.optimal_range, &attacker, &target);
+        assert!(expected.hit, "{expected:?}");
+        // the next roll of the scene is the one a rolled shot would take: the explosion must leave it for what comes after
+        let next = scene.rng.clone().random();
+        let started = scene.activate(npc, laser_effect(spec().ship_id, weapon), now);
+        let told = messages(&started, PLAYER, "OnDamageMessage");
+        assert_eq!(told.len(), 1, "{started:?}");
+        assert_eq!(entry(&told[0], "damageAttributes"), damage_told(&expected));
+        assert_eq!(scene.rng.clone().random(), next, "a vorton's explosion draws no roll");
+    }
+
+    #[test]
+    fn a_vorton_explosion_does_nothing_beyond_its_optimal_range() {
+        let (scene, npc, _now) = duel();
+        let attacker = scene.kinematics_of(npc).unwrap();
+        let target = scene.kinematics_of(PLAYER).unwrap();
+        // no optimal range at all: the target, which is off the attacker's surface, is beyond it
+        let shot = explosion_shot(&vorton_aoe(), [116.0, 0.0, 17.0, 0.0], 0.0, &attacker, &target);
+        let apart = surface_distance(&attacker, &target);
+        assert!(apart > 1e-6, "the target is off the attacker's surface: {apart}");
+        assert_eq!((shot.hit, shot.chance_to_hit, shot.damage), (false, 0.0, [0.0; 4]), "{apart} m apart");
+    }
+
+    #[test]
+    fn an_explosion_takes_each_ship_by_its_own_signature_and_speed() {
+        let raw = [116.0, 0.0, 17.0, 0.0];
+        let small = ship([0.0; 3], [0.0; 3], 20.0, 28.0);
+        let big = ship([0.0; 3], [0.0; 3], 60.0, 150.0);
+        let fast_small = ship([0.0; 3], [3_000.0, 0.0, 0.0], 20.0, 28.0);
+        let on_small = explosion(&vorton_aoe(), raw, &small).damage;
+        let on_big = explosion(&vorton_aoe(), raw, &big).damage;
+        let on_fast = explosion(&vorton_aoe(), raw, &fast_small).damage;
+        // a ship bigger than the cloud takes it whole; a small one takes its signature's share, and a fast one less of that
+        assert_eq!(on_big, raw);
+        assert!(on_small[0] < raw[0] && on_small[0] > 0.0, "{on_small:?}");
+        assert!(on_fast[0] < on_small[0], "{on_fast:?} against {on_small:?}");
+    }
+
+    /// Spawns an NPC ship of its own id `metres` off the player along z (the player is where it was at the start of the duel).
+    fn ship_off_the_player(scene: &mut Scene, ship_id: i64, metres: f64) -> SessionId {
+        let here = scene.ship(PLAYER, NOON).unwrap().position;
+        let mut spec = npc_spec();
+        spec.ship_id = ship_id;
+        let place = NpcPlace::at_rest(eve_destiny::Vec3::new(here.x, here.y, here.z + metres));
+        scene.spawn_npc(spec, NpcIdentity::default(), place, NOON).0
+    }
+
+    #[test]
+    fn a_vorton_arc_strikes_the_ships_near_its_target_nearest_first_and_not_the_shooter_or_the_far_ones() {
+        let (mut scene, npc, now) = duel();
+        let near = ship_off_the_player(&mut scene, 9_000_000_001, 3_000.0);
+        let far = ship_off_the_player(&mut scene, 9_000_000_002, 8_000.0);
+        let beyond = ship_off_the_player(&mut scene, 9_000_000_003, 15_000.0);
+        scene.aggressions.clear();
+        let weapon = vorton(Some(Arc { range: 10_000.0, targets: 3 }));
+        scene.activate(npc, laser_effect(spec().ship_id, weapon), now);
+        // the target, then the two ships within 10 km of it, the nearer first; the shooter and the ship beyond the arc's reach are not struck
+        let struck: Vec<i64> = scene.aggressions.iter().map(|a| a.target_ship).collect();
+        assert_eq!(struck, [spec().ship_id, scene.ship_id_of(near), scene.ship_id_of(far)]);
+        assert!(!struck.contains(&scene.ship_id_of(beyond)));
+        assert!(!struck.contains(&NPC_SHIP));
+    }
+
+    #[test]
+    fn a_vorton_arc_with_more_ships_than_it_has_links_strikes_as_many_as_it_has_drawing_one_roll_each() {
+        let (mut scene, npc, now) = duel();
+        let near = ship_off_the_player(&mut scene, 9_000_000_001, 3_000.0);
+        let far = ship_off_the_player(&mut scene, 9_000_000_002, 8_000.0);
+        scene.aggressions.clear();
+        // two targets is the target and one link: of the two ships in reach, one is drawn
+        let weapon = vorton(Some(Arc { range: 10_000.0, targets: 2 }));
+        let mut expected_rolls = scene.rng.clone();
+        expected_rolls.random();
+        scene.activate(npc, laser_effect(spec().ship_id, weapon), now);
+        let struck: Vec<i64> = scene.aggressions.iter().map(|a| a.target_ship).collect();
+        assert_eq!(struck.len(), 2, "{struck:?}");
+        assert_eq!(struck[0], spec().ship_id);
+        assert!(struck[1] == scene.ship_id_of(near) || struck[1] == scene.ship_id_of(far), "{struck:?}");
+        assert_eq!(scene.rng.clone().random(), expected_rolls.random(), "the draw takes one roll for the one link");
+    }
+
+    #[test]
+    fn a_vorton_with_one_target_arcs_to_nobody() {
+        let (mut scene, npc, now) = duel();
+        let _near = ship_off_the_player(&mut scene, 9_000_000_001, 3_000.0);
+        scene.aggressions.clear();
+        let weapon = vorton(Some(Arc { range: 10_000.0, targets: 1 }));
+        scene.activate(npc, laser_effect(spec().ship_id, weapon), now);
+        let struck: Vec<i64> = scene.aggressions.iter().map(|a| a.target_ship).collect();
+        assert_eq!(struck, [spec().ship_id]);
+    }
+
+    /// A bonus is the same to within rounding (the sums of a ramp are not exact in binary).
+    fn assert_bonus_close(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-9, "{actual} is not {expected}");
+    }
+
+    #[test]
+    fn a_spool_has_no_bonus_for_its_first_cycle_then_a_cycle_s_worth_more_after_each_shot_up_to_the_most() {
+        let spool = Spool { per_cycle: 0.07, max: 0.2 };
+        let mut state = SpoolState::default();
+        assert_eq!(spool.bonus_for(&mut state, 7), 0.0, "the first cycle shoots with none");
+        spool.advance(&mut state);
+        assert_bonus_close(spool.bonus_for(&mut state, 7), 0.07);
+        spool.advance(&mut state);
+        assert_bonus_close(spool.bonus_for(&mut state, 7), 0.14);
+        spool.advance(&mut state);
+        assert_bonus_close(spool.bonus_for(&mut state, 7), 0.2);
+        spool.advance(&mut state);
+        assert_eq!(spool.bonus_for(&mut state, 7), 0.2, "the most is the most");
+    }
+
+    #[test]
+    fn the_nth_cycle_shoots_with_n_minus_one_cycles_of_bonus_and_the_ramp_stops_at_its_maximum() {
+        let spool = Spool { per_cycle: 0.07, max: 2.125 };
+        let mut state = SpoolState::default();
+        for cycle in 0..=40 {
+            assert_bonus_close(spool.bonus_for(&mut state, 7), (cycle as f64 * 0.07).min(2.125));
+            spool.advance(&mut state);
+        }
+        // 31 cycles' worth passes 2.125, so from the 32nd cycle on the weapon shoots at the most
+        assert_eq!(spool.bonus_for(&mut state, 7), 2.125);
+    }
+
+    #[test]
+    fn a_shot_at_another_target_starts_the_ramp_again_from_none() {
+        let spool = Spool { per_cycle: 0.07, max: 2.125 };
+        let mut state = SpoolState::default();
+        for _ in 0..3 {
+            spool.bonus_for(&mut state, 7);
+            spool.advance(&mut state);
+        }
+        assert_bonus_close(spool.bonus_for(&mut state, 7), 0.21);
+        assert_eq!(spool.bonus_for(&mut state, 8), 0.0, "a new target has none built");
+        spool.advance(&mut state);
+        assert_bonus_close(spool.bonus_for(&mut state, 8), 0.07);
+    }
+
+    #[test]
+    fn a_spool_multiplies_each_part_of_a_shot_by_one_plus_its_bonus_and_no_bonus_leaves_the_shot_alone() {
+        let raw = [0.0, 10.0, 20.0, 0.0];
+        assert_eq!(spooled_damage(raw, 0.0), raw);
+        assert_eq!(spooled_damage(raw, 0.5), [0.0, 15.0, 30.0, 0.0]);
+        assert_eq!(spooled_damage(raw, 0.07), [0.0, 10.7, 21.4, 0.0]);
+    }
+
+    /// The shot the scene is about to make with `weapon` from the NPC at the player, rolled with the number the scene draws next (read from a copy of its generator).
+    fn next_shot(scene: &Scene, npc: SessionId, weapon: &Turret) -> Shot {
+        let mut next_roll = scene.rng.clone();
+        let roll = next_roll.random();
+        let attacker = scene.kinematics_of(npc).expect("the NPC is in space");
+        let target = scene.kinematics_of(PLAYER).expect("the player is in space");
+        resolve_shot(weapon, &attacker, &target, roll)
+    }
+
+    /// The `damageAttributes` a shot is told as, the way `quality_message` writes them.
+    fn damage_told(shot: &Shot) -> Value {
+        Value::Dict(
+            DAMAGE_ATTRIBUTES
+                .iter()
+                .zip(shot.damage)
+                .map(|(attribute, amount)| (int(*attribute), number6(amount)))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn a_precursor_shot_takes_the_bonus_built_before_it_and_the_ramp_grows_after_each_shot() {
+        let (mut scene, npc, now) = duel();
+        let cycle = 2_500 * SECOND / 1_000;
+        let raw = laser().raw_damage;
+        let mut weapon = laser();
+        weapon.spool = Some(Spool { per_cycle: 0.07, max: 0.2 });
+        // the first shot has no bonus: its damage is the weapon's own
+        let first = next_shot(&scene, npc, &laser());
+        let started = scene.activate(npc, laser_effect(spec().ship_id, weapon), now);
+        let told = messages(&started, PLAYER, "OnDamageMessage");
+        assert_eq!(told.len(), 1, "{started:?}");
+        assert_eq!(entry(&told[0], "damageAttributes"), damage_told(&first));
+        assert_bonus_close(scene.spool_of(npc, NPC_SHIP).unwrap().bonus, 0.07);
+        // the next shots take 0.07, then 0.14, then the most (0.2), and the ramp does not go past it
+        for (cycle_number, bonus_before, bonus_after) in [(1, 0.07, 0.14), (2, 0.14, 0.2), (3, 0.2, 0.2)] {
+            let mut shot_weapon = laser();
+            shot_weapon.raw_damage = spooled_damage(raw, bonus_before);
+            let expected = next_shot(&scene, npc, &shot_weapon);
+            let cycle_told = scene.poll(now + cycle_number * cycle + 1);
+            let told = messages(&cycle_told, PLAYER, "OnDamageMessage");
+            assert_eq!(told.len(), 1, "{cycle_told:?}");
+            assert_eq!(
+                entry(&told[0], "damageAttributes"),
+                damage_told(&expected),
+                "the shot after {bonus_before} of bonus"
+            );
+            assert_bonus_close(scene.spool_of(npc, NPC_SHIP).unwrap().bonus, bonus_after);
+        }
+    }
+
+    #[test]
+    fn a_precursor_weapon_that_stops_starts_its_ramp_again_from_none_when_it_runs_again() {
+        let (mut scene, npc, now) = duel();
+        let cycle = 2_500 * SECOND / 1_000;
+        let mut weapon = laser();
+        weapon.spool = Some(Spool { per_cycle: 0.07, max: 2.125 });
+        scene.activate(npc, laser_effect(spec().ship_id, weapon.clone()), now);
+        scene.poll(now + cycle + 1);
+        scene.poll(now + 2 * cycle + 2);
+        assert_bonus_close(scene.spool_of(npc, NPC_SHIP).unwrap().bonus, 0.21);
+        // the weapon is asked to stop: it stops at the end of the cycle it is in, and what it has built goes with it
+        scene.deactivate(npc, NPC_SHIP, now + 2 * cycle + 3);
+        scene.poll(now + 3 * cycle + 4);
+        assert_eq!(scene.spool_of(npc, NPC_SHIP), None, "the effect is over");
+        // it runs again from none: the first shot has no bonus, and one cycle's worth is built after it
+        scene.activate(npc, laser_effect(spec().ship_id, weapon), now + 4 * cycle);
+        assert_bonus_close(scene.spool_of(npc, NPC_SHIP).unwrap().bonus, 0.07);
     }
 
     /// A player who has bound the ballpark, and an NPC two kilometres off that has locked it (the moment is a minute after noon).
@@ -1355,6 +1830,9 @@ mod tests {
                 damage_reduction_factor: 0.5,
                 damage_reduction_sensitivity: crate::missiles::DEFAULT_REDUCTION_SENSITIVITY,
             }),
+            spool: None,
+            aoe: None,
+            arc: None,
         }
     }
 

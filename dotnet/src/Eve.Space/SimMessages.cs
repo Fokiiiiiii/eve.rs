@@ -215,7 +215,28 @@ public sealed record SimChange(long ItemId, int AttributeId, double Value);
 /// </summary>
 public sealed record SimTurret(
     int WeaponTypeId, string Fx, IReadOnlyList<double> RawDamage, double OptimalRange, double Falloff, double TrackingSpeed, double SignatureResolution,
-    SimTurretCharge? Charge = null, SimMissile? Missile = null);
+    SimTurretCharge? Charge = null, SimMissile? Missile = null, SimSpool? Spool = null, SimAoe? Aoe = null, SimArc? Arc = null);
+
+/// <summary>
+/// The damage ramp of a weapon that builds up its damage on the target it keeps shooting at (a precursor weapon: <c>damageMultiplierBonusPerCycle</c> and
+/// <c>damageMultiplierBonusMax</c>). Each cycle the bonus grows by <paramref name="PerCycle"/>, up to <paramref name="Max"/>; a shot is multiplied by one plus the
+/// bonus built up before it (the first shot has none). The simulation keeps the bonus of the running weapon and starts it again from none when the target changes
+/// or the weapon stops.
+/// </summary>
+public sealed record SimSpool(double PerCycle, double Max);
+
+/// <summary>
+/// The explosion of a shot that does not roll to hit (a vorton projector): the radius of its cloud, its velocity, and the damage reduction factor and its
+/// sensitivity, as a missile's explosion has them. What reaches a target is the damage times the share the explosion gives it at the target's signature
+/// and speed (the missile's curve in <c>eve-space</c>'s <c>missiles</c>).
+/// </summary>
+public sealed record SimAoe(double ExplosionRadius, double ExplosionVelocity, double DamageReductionFactor, double DamageReductionSensitivity);
+
+/// <summary>
+/// The chain a shot links from its target: the ships within <paramref name="Range"/> of the target, up to <paramref name="Targets"/> ships in all (the target
+/// counts, so the chain makes one link fewer than the ships).
+/// </summary>
+public sealed record SimArc(double Range, int Targets);
 
 /// <summary>
 /// What a launcher flies: the type of the missile it fires and its group, what the client calls it, the radius, mass and agility of its ball, the hit points it has while it flies (what a smartbomb

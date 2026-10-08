@@ -53,6 +53,47 @@ fn round6(value: f64) -> f64 {
     (value * 1_000_000.0).round() / 1_000_000.0
 }
 
+/// The exponent a target's speed is raised to, from the damage reduction factor and its sensitivity (`resolveMissileDamageReductionExponent`). Shared by
+/// missiles and the explosions of the vorton projectors.
+pub fn reduction_exponent_of(reduction_factor: f64, reduction_sensitivity: f64) -> f64 {
+    let factor = if reduction_factor.is_finite() { reduction_factor } else { 1.0 };
+    let sensitivity = reduction_sensitivity.max(1.000_001);
+    if factor > 1.000_001 {
+        round6(factor.ln() / sensitivity.ln())
+    } else {
+        round6(factor.clamp(0.000_001, 1.0))
+    }
+}
+
+/// The part of an explosion's damage that reaches a target of this signature radius moving at this speed (`resolveMissileApplicationFactor`): the
+/// signature against the explosion's cloud, and the speed against its velocity, raised to the reduction exponent. Shared by missiles and the vorton
+/// projectors, whose explosions are the same curve.
+pub fn application_factor_of(
+    explosion_radius: f64,
+    explosion_velocity: f64,
+    reduction_factor: f64,
+    reduction_sensitivity: f64,
+    target_signature: f64,
+    target_speed: f64,
+) -> f64 {
+    let radius = explosion_radius.max(0.000_001);
+    let velocity = explosion_velocity.max(0.000_001);
+    let signature_factor = target_signature.max(0.0) / radius;
+    let speed = target_speed.max(0.0);
+    let velocity_factor = if speed <= 0.000_001 {
+        1.0
+    } else {
+        let base = (round6(signature_factor) * velocity) / speed.max(0.000_001);
+        let raised = base.powf(reduction_exponent_of(reduction_factor, reduction_sensitivity));
+        if raised.is_finite() {
+            raised
+        } else {
+            1.0
+        }
+    };
+    round6(1.0_f64.min(round6(signature_factor)).min(velocity_factor))
+}
+
 impl Missile {
     /// The missile as a disrupted launcher fires it: slower, shorter-lived, with a smaller explosion velocity and a bigger explosion radius.
     pub fn guided(&self, guidance: Guidance) -> Self {
@@ -77,30 +118,19 @@ impl Missile {
 
     /// The exponent the target's speed is raised to (`resolveMissileDamageReductionExponent`).
     pub fn reduction_exponent(&self) -> f64 {
-        let factor =
-            if self.damage_reduction_factor.is_finite() { self.damage_reduction_factor } else { 1.0 };
-        let sensitivity = self.damage_reduction_sensitivity.max(1.000_001);
-        if factor > 1.000_001 {
-            round6(factor.ln() / sensitivity.ln())
-        } else {
-            round6(factor.clamp(0.000_001, 1.0))
-        }
+        reduction_exponent_of(self.damage_reduction_factor, self.damage_reduction_sensitivity)
     }
 
     /// The part of its damage a missile does to a target of this signature radius that moves at this speed (`resolveMissileApplicationFactor`).
     pub fn application_factor(&self, target_signature: f64, target_speed: f64) -> f64 {
-        let radius = self.explosion_radius.max(0.000_001);
-        let velocity = self.explosion_velocity.max(0.000_001);
-        let signature_factor = target_signature.max(0.0) / radius;
-        let speed = target_speed.max(0.0);
-        let velocity_factor = if speed <= 0.000_001 {
-            1.0
-        } else {
-            let base = (round6(signature_factor) * velocity) / speed.max(0.000_001);
-            let raised = base.powf(self.reduction_exponent());
-            if raised.is_finite() { raised } else { 1.0 }
-        };
-        round6(1.0_f64.min(round6(signature_factor)).min(velocity_factor))
+        application_factor_of(
+            self.explosion_radius,
+            self.explosion_velocity,
+            self.damage_reduction_factor,
+            self.damage_reduction_sensitivity,
+            target_signature,
+            target_speed,
+        )
     }
 
     /// What the missile does to a target: its damage (em, thermal, kinetic, explosive) times the application factor.

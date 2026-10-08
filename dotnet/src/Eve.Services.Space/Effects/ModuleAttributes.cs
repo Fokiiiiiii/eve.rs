@@ -28,6 +28,14 @@ internal static class ModuleAttributes
     public const int EcmJamDuration = 2822;
     public const int StructureDamageAmount = 83;
     public const int ArmorDamageAmount = 84;
+    public const int AoeVelocity = 653;
+    public const int AoeCloudSize = 654;
+    public const int AoeDamageReductionFactor = 1353;
+    public const int AoeDamageReductionSensitivity = 1354;
+    public const int VortonArcRange = 3036;
+    public const int VortonArcTargets = 3037;
+    public const int DamageMultiplierBonusPerCycle = 2733;
+    public const int DamageMultiplierBonusMax = 2734;
     public const int RepairMultiplierBonusPerCycle = 2796;
     public const int RepairMultiplierBonusMax = 2797;
     public const int PowerTransferAmount = 90;

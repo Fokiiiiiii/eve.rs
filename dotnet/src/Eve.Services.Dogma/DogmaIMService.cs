@@ -218,6 +218,11 @@ public sealed partial class DogmaIMService(
                 {
                     throw ModuleError(offlineRefusal, starting: false);
                 }
+                // what the module changed (its resonances, its numbers) reaches the simulation of a ship in space; nothing is sent when there is none
+                if (modules is not null)
+                {
+                    await modules.RefreshShipAsync(call.Session, call.Cancellation);
+                }
                 ShipNotifications.Send(call.Session, character, changed, item => DogmaInfo.RowOf(item, statics.Type(item.TypeId)), Py.FileTimeFromUnixMs(nowUnixMs()));
                 return None;
             case ShipRefused refused:

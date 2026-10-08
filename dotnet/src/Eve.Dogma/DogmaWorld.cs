@@ -75,6 +75,8 @@ public sealed class DogmaWorld
     private readonly Dictionary<(long Item, int Attribute), double> _values = [];
     private readonly HashSet<(long Item, int Attribute)> _evaluating = [];
     private Dictionary<int, List<Source>>? _sources;
+    /// <summary>The modifiers an assumption (<see cref="Assume"/>) adds, each with the item it is on.</summary>
+    private readonly List<(DogmaItem Item, EffectDef Effect)> _assumed = [];
 
     public DogmaWorld(DogmaStatic statics, long characterId = 0, long shipId = 0, long structureId = 0)
     {
@@ -142,6 +144,49 @@ public sealed class DogmaWorld
         {
             item.Own[attributeId] = value;
             Changed();
+        }
+    }
+
+    /// <summary>
+    /// Works out the world as if an item were in another state and ran more modifiers, until the returned scope is disposed; the world is the same
+    /// after it. An effect uses it to work out the numbers it is going to tell (before it starts), so they follow the rules of the world: precedence,
+    /// the stacking penalty and a pinned value (a PostAssign) all apply. Scopes end in the reverse order they began. An unknown item assumes nothing.
+    /// </summary>
+    public IDisposable Assume(long itemId, ItemState state, IReadOnlyList<Modifier>? modifiers = null)
+    {
+        if (!_items.TryGetValue(itemId, out var item))
+        {
+            return new Scope(() => { });
+        }
+        var previous = item.State;
+        var assumed = modifiers is { Count: > 0 } ? new EffectDef(0, "assumed", EffectDef.Passive, modifiers) : null;
+        item.State = state;
+        if (assumed is not null)
+        {
+            _assumed.Add((item, assumed));
+        }
+        Changed();
+        return new Scope(() =>
+        {
+            item.State = previous;
+            if (assumed is not null)
+            {
+                _assumed.RemoveAt(_assumed.FindLastIndex(a => ReferenceEquals(a.Effect, assumed)));
+            }
+            Changed();
+        });
+    }
+
+    /// <summary>Ends an assumption (<see cref="Assume"/>) when disposed; a second dispose does nothing.</summary>
+    private sealed class Scope(Action end) : IDisposable
+    {
+        private Action? _end = end;
+
+        public void Dispose()
+        {
+            var end = _end;
+            _end = null;
+            end?.Invoke();
         }
     }
 
@@ -241,24 +286,32 @@ public sealed class DogmaWorld
             return _sources;
         }
         var index = new Dictionary<int, List<Source>>();
+        void Index(DogmaItem item, EffectDef effect)
+        {
+            foreach (var modifier in effect.Modifiers)
+            {
+                var domain = Resolve(item, modifier.Domain);
+                if (domain < 0)
+                {
+                    continue;
+                }
+                if (!index.TryGetValue(modifier.ModifiedAttributeId, out var list))
+                {
+                    index[modifier.ModifiedAttributeId] = list = [];
+                }
+                list.Add(new Source(item, effect, modifier, domain));
+            }
+        }
         foreach (var item in _items.Values.OrderBy(i => i.Id))
         {
             foreach (var effect in RunningEffects(item))
             {
-                foreach (var modifier in effect.Modifiers)
-                {
-                    var domain = Resolve(item, modifier.Domain);
-                    if (domain < 0)
-                    {
-                        continue;
-                    }
-                    if (!index.TryGetValue(modifier.ModifiedAttributeId, out var list))
-                    {
-                        index[modifier.ModifiedAttributeId] = list = [];
-                    }
-                    list.Add(new Source(item, effect, modifier, domain));
-                }
+                Index(item, effect);
             }
+        }
+        foreach (var (item, effect) in _assumed)
+        {
+            Index(item, effect);
         }
         return _sources = index;
     }

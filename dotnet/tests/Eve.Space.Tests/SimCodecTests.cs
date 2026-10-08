@@ -41,7 +41,8 @@ public class SimCodecTests
 
     private static SimVitals VitalsOf(JsonNode v) => new(
         (double)v["shieldCapacity"]!, (double)v["armorHp"]!, (double)v["structureHp"]!,
-        new SimResonances(Four(v["resonances"]!["shield"]!), Four(v["resonances"]!["armor"]!), Four(v["resonances"]!["structure"]!)));
+        new SimResonances(Four(v["resonances"]!["shield"]!), Four(v["resonances"]!["armor"]!), Four(v["resonances"]!["structure"]!)),
+        v["armorPinned"] is { } pinned && (bool)pinned);
 
     private static SimCondition ConditionOf(JsonNode c) => new((double)c["damage"]!, (double)c["armorDamage"]!, (double)c["shieldCharge"]!, (double)c["charge"]!);
 
@@ -64,6 +65,10 @@ public class SimCodecTests
         if ((string)a["kind"]! == "ecmBurst")
         {
             return new SimAction.EcmBurst((double)a["range"]!, Four(a["strength"]!));
+        }
+        if ((string)a["kind"]! == "resistanceShift")
+        {
+            return new SimAction.ResistanceShift(Four(a["seed"]!), (double)a["shift"]!, [.. ((JsonArray)a["attributeIds"]!).Select(x => (int)x!)]);
         }
         if ((string)a["kind"]! == "smartbomb")
         {
@@ -250,6 +255,35 @@ public class SimCodecTests
         Assert.IsType<SimAction.Repair>(action.Fallback);
     }
 
+
+    [Fact]
+    public void A_reactive_armor_hardener_action_roundtrips_its_seed_step_and_attributes_through_the_sim_codec()
+    {
+        var baseline = Assert.IsType<SimActivate>(MessageOf(Case("valid", "activate an ECM burst")));
+        var action = new SimAction.ResistanceShift(new double[] { 0.85, 0.85, 0.85, 0.85 }, 0.06, new int[] { 267, 270, 269, 268 });
+        var message = baseline with { Effect = baseline.Effect with { Action = action } };
+        var encoded = SimCodec.Encode(message);
+        var decoded = Assert.IsType<SimActivate>(SimCodec.Decode(encoded.AsMemory(4)));
+
+        Assert.Equal(Convert.ToHexString(encoded), Convert.ToHexString(SimCodec.Encode(decoded)));
+        var shift = Assert.IsType<SimAction.ResistanceShift>(decoded.Effect.Action);
+        Assert.Equal(new double[] { 0.85, 0.85, 0.85, 0.85 }, shift.Seed);
+        Assert.Equal(0.06, shift.Shift);
+        Assert.Equal(new int[] { 267, 270, 269, 268 }, shift.AttributeIds);
+    }
+
+    [Fact]
+    public void The_armor_pin_of_a_ship_roundtrips_and_a_pin_that_is_not_a_flag_is_refused()
+    {
+        var ship = Assert.IsType<SimShipChanged>(MessageOf(Case("valid", "new ship numbers with the armor pinned by a polarized weapon")));
+        Assert.True(ship.Ship.Vitals!.ArmorPinned);
+        var decoded = Assert.IsType<SimShipChanged>(SimCodec.Decode(SimCodec.Encode(ship).AsMemory(4)));
+        Assert.True(decoded.Ship.Vitals!.ArmorPinned);
+        Assert.Equal(ship.Ship.Vitals.Resonances.Armor, decoded.Ship.Vitals.Resonances.Armor);
+
+        var unpinned = Assert.IsType<SimShipChanged>(MessageOf(Case("valid", "new ship numbers")));
+        Assert.False(unpinned.Ship.Vitals!.ArmorPinned);
+    }
 
     [Fact]
     public void A_micro_jump_drive_action_roundtrips_through_the_sim_codec()

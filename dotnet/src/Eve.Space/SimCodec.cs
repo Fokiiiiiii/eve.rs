@@ -293,7 +293,13 @@ public static class SimCodec
         var shield = r.F64();
         var armor = r.F64();
         var structure = r.F64();
-        return new SimVitals(shield, armor, structure, new SimResonances(ReadFour(ref r), ReadFour(ref r), ReadFour(ref r)));
+        var resonances = new SimResonances(ReadFour(ref r), ReadFour(ref r), ReadFour(ref r));
+        var pinned = r.U8();
+        if (pinned > 1)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad armor pinned flag");
+        }
+        return new SimVitals(shield, armor, structure, resonances, pinned == 1);
     }
 
     private static SimNumbers ReadNumbers(ref Reader r) => new(r.F64(), r.F64(), r.F64());
@@ -362,6 +368,17 @@ public static class SimCodec
                 return new SimAction.Cloak();
             case 6:
                 return new SimAction.MicroJumpDrive(r.F64(), r.I64());
+            case 12:
+                {
+                    double[] seed = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    var shift = r.F64();
+                    int[] attributes = [r.I32(), r.I32(), r.I32(), r.I32()];
+                    if (seed.Any(resonance => !double.IsFinite(resonance) || resonance < 0 || resonance > 1) || !double.IsFinite(shift) || shift <= 0)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad resistance shift");
+                    }
+                    return new SimAction.ResistanceShift(seed, shift, attributes);
+                }
             case 4:
                 {
                     var typeId = r.I32();
@@ -1116,6 +1133,16 @@ private static void WriteAction(Writer w, SimAction action)
             case SimAction.MicroJumpDrive jump:
                 w.U8(6); w.F64(jump.DistanceMeters); w.I64(jump.CooldownMs);
                 break;
+            case SimAction.ResistanceShift shift:
+                if (shift.Seed.Count != 4 || shift.AttributeIds.Count != 4)
+                {
+                    throw new ArgumentException("a reactive armor hardener has four kinds of damage", nameof(action));
+                }
+                w.U8(12);
+                foreach (var resonance in shift.Seed) w.F64(resonance);
+                w.F64(shift.Shift);
+                foreach (var attribute in shift.AttributeIds) w.I32(attribute);
+                break;
             case SimAction.Smartbomb bomb:
                 w.U8(2); w.F64(bomb.Range); foreach (var number in bomb.Damage) w.F64(number); w.U8(bomb.HurtsPilots ? (byte)1 : (byte)0);
                 break;
@@ -1238,6 +1265,7 @@ private static void WriteAction(Writer w, SimAction action)
                 w.F64(resonance);
             }
         }
+        w.U8(v.ArmorPinned ? (byte)1 : (byte)0);
     }
 
     private static void WriteShip(Writer w, SimShip s)

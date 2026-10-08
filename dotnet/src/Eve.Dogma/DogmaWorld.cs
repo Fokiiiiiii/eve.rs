@@ -162,6 +162,31 @@ public sealed class DogmaWorld
     }
 
     /// <summary>
+    /// The value of an attribute of an item as it would be with <paramref name="activatedItemId"/> running (switched on to active), worked out by the same rules
+    /// as <see cref="Get"/>: the precedence of the operations, the stacking penalty and the caps. The item is left as it was, and so is everything cached for it.
+    /// This is what a module that is about to start changes: what the client is told, and what the simulation runs, are this value.
+    /// </summary>
+    public double ValueWhenActive(long activatedItemId, long itemId, int attributeId)
+    {
+        if (!_items.TryGetValue(activatedItemId, out var activated) || activated.State >= ItemState.Active)
+        {
+            return Get(itemId, attributeId);
+        }
+        var before = activated.State;
+        activated.State = ItemState.Active;
+        Changed();
+        try
+        {
+            return Get(itemId, attributeId);
+        }
+        finally
+        {
+            activated.State = before;
+            Changed();
+        }
+    }
+
+    /// <summary>
     /// Every attribute the item has, each with its value now: its type's, its own, and the ones a modifier reaches (a skill's bonus to
     /// an attribute the type never had gives the item that attribute).
     /// </summary>

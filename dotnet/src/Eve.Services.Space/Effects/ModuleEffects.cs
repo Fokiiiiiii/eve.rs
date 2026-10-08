@@ -246,15 +246,9 @@ internal sealed class DogmaModifierEffect : ShipEffect
                 .Select(target => (target.Id, modifier)));
         }
 
-        double Apply(long itemId, int attributeId)
-        {
-            var value = module.World.Get(itemId, attributeId);
-            foreach (var (_, modifier) in applicable.Where(x => x.ItemId == itemId && x.Modifier.ModifiedAttributeId == attributeId))
-            {
-                value = Operations.Apply(modifier.Operation, value, module.Value(modifier.ModifyingAttributeId, 0));
-            }
-            return value;
-        }
+        // the value with this module running, as the world works it out: every modifier that reaches the attribute, in the order of the game, and the stacking
+        // penalty of the attributes that are not stackable (what the simulation runs must be what the world holds once the module runs)
+        double Apply(long itemId, int attributeId) => module.World.ValueWhenActive(module.ModuleId, itemId, attributeId);
 
         var changed = applicable.Select(x => (x.ItemId, AttributeId: x.Modifier.ModifiedAttributeId)).Distinct().ToArray();
         var hasPhysicalChange = changed.Any(x => x.ItemId == shipId

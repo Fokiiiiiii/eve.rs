@@ -101,6 +101,13 @@ public sealed record TypeDef(int TypeId, int GroupId, int CategoryId, IReadOnlyD
     /// <summary>The attributes that name the skills a type needs (requiredSkill1 to requiredSkill6).</summary>
     public static readonly int[] RequiredSkillAttributes = [182, 183, 184, 1285, 1289, 1290];
 
+    /// <summary>The attributes that give the level of each skill a type needs, in the order of <see cref="RequiredSkillAttributes"/>.</summary>
+    public static readonly int[] RequiredSkillLevelAttributes = [277, 278, 279, 1286, 1287, 1288];
+
+    /// <summary>Whether an attribute names a skill a type needs, or the level of one.</summary>
+    public static bool IsRequiredSkillAttribute(int attributeId) =>
+        Array.IndexOf(RequiredSkillAttributes, attributeId) >= 0 || Array.IndexOf(RequiredSkillLevelAttributes, attributeId) >= 0;
+
     public IEnumerable<int> RequiredSkills =>
         RequiredSkillAttributes.Where(Attributes.ContainsKey).Select(a => (int)Attributes[a]).Where(s => s > 0);
 }

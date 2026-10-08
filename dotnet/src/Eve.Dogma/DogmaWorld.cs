@@ -5,10 +5,15 @@ public sealed class DogmaItem
 {
     internal readonly Dictionary<int, double> Own = [];
 
-    public DogmaItem(long id, int typeId, long ownerId, long locationId, int flagId = 0, ItemState state = ItemState.Offline, IReadOnlySet<int>? activeEffectIds = null)
+    /// <param name="baseTypeId">
+    /// The type the item's base attribute values come from, when that is not its own type: a mutated module is typed as its result, but its
+    /// values are those of the input it was made from. The skill requirements always come from <paramref name="typeId"/>. Null: the item's own type.
+    /// </param>
+    public DogmaItem(long id, int typeId, long ownerId, long locationId, int flagId = 0, ItemState state = ItemState.Offline, IReadOnlySet<int>? activeEffectIds = null, int? baseTypeId = null)
     {
         Id = id;
         TypeId = typeId;
+        BaseTypeId = baseTypeId;
         OwnerId = ownerId;
         LocationId = locationId;
         FlagId = flagId;
@@ -19,6 +24,9 @@ public sealed class DogmaItem
     public long Id { get; }
 
     public int TypeId { get; }
+
+    /// <summary>The type whose attribute values this item takes as its base, when it is not <see cref="TypeId"/> (null: it takes them from <see cref="TypeId"/>).</summary>
+    public int? BaseTypeId { get; }
 
     public long OwnerId { get; }
 
@@ -165,7 +173,18 @@ public sealed class DogmaWorld
             return result;
         }
         var ids = new HashSet<int>(item.Own.Keys);
-        if (_static.Type(item.TypeId) is { } type)
+        if (item.BaseTypeId is { } baseTypeId)
+        {
+            if (_static.Type(baseTypeId) is { } baseType)
+            {
+                ids.UnionWith(baseType.Attributes.Keys);
+            }
+            if (_static.Type(item.TypeId) is { } resultType)
+            {
+                ids.UnionWith(resultType.Attributes.Keys.Where(TypeDef.IsRequiredSkillAttribute));
+            }
+        }
+        else if (_static.Type(item.TypeId) is { } type)
         {
             ids.UnionWith(type.Attributes.Keys);
         }
@@ -334,11 +353,28 @@ public sealed class DogmaWorld
         {
             return item.State >= ItemState.Online ? 1d : 0d; // whether a module is online is its state, not something its type says
         }
-        if (_static.Type(item.TypeId) is { } type && type.Attributes.TryGetValue(attributeId, out var typed))
+        if (TypeAttribute(item, attributeId) is { } typed)
         {
             return typed;
         }
         return _static.Attribute(attributeId)?.DefaultValue ?? 0d;
+    }
+
+    /// <summary>
+    /// The value the item's type gives an attribute, or null when it gives none. An item with a base type takes every attribute from it, except the
+    /// skill requirements (and their levels), which come from its own type where that type has them: a mutated module needs the skill of its result.
+    /// </summary>
+    private double? TypeAttribute(DogmaItem item, int attributeId)
+    {
+        if (item.BaseTypeId is not { } baseTypeId)
+        {
+            return _static.Type(item.TypeId) is { } type && type.Attributes.TryGetValue(attributeId, out var typed) ? typed : null;
+        }
+        if (TypeDef.IsRequiredSkillAttribute(attributeId) && _static.Type(item.TypeId) is { } resultType && resultType.Attributes.TryGetValue(attributeId, out var skill))
+        {
+            return skill;
+        }
+        return _static.Type(baseTypeId) is { } baseType && baseType.Attributes.TryGetValue(attributeId, out var fromBase) ? fromBase : null;
     }
 
     private double Compute(DogmaItem item, int attributeId)

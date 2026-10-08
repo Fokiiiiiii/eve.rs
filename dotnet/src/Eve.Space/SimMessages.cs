@@ -292,7 +292,17 @@ public sealed record SimChargeSpent(ulong SessionId, long ModuleId, long RoundsL
 /// </summary>
 public sealed record SimEffect(
     long ModuleId, int ModuleType, int EffectId, string Fx, double DurationMs, double CapacitorNeed, int Repeat, long TargetId, SimNumbers? On, SimNumbers? Off,
-    IReadOnlyList<SimChange> OnChanges, IReadOnlyList<SimChange> OffChanges, SimTurret? Turret = null, SimAction? Action = null);
+    IReadOnlyList<SimChange> OnChanges, IReadOnlyList<SimChange> OffChanges, SimTurret? Turret = null, SimAction? Action = null,
+    /// <summary>The effect burns the fuel its consumption attributes name (713 and 714) each cycle: the simulation asks the host for it before each cycle that starts
+    /// (<see cref="SimModuleWorkCommands.ConsumeFuel"/>), and does not start one the host refuses.</summary>
+    bool BurnsFuel = false);
+
+/// <summary>The codes of the work a module asks the host for (<see cref="SimModuleWorkCycle.Command"/>). Its cycles share the drone codes of mining and salvage (7, 8).</summary>
+public static class SimModuleWorkCommands
+{
+    /// <summary>The fuel of the next cycle: the host takes the module's consumption quantity of its consumption type from the ship, or refuses (<c>NO_FUEL</c>).</summary>
+    public const byte ConsumeFuel = 9;
+}
 
 /// <summary>A layer of a ship's health.</summary>
 public enum SimLayer : byte
@@ -538,6 +548,8 @@ public static class SimModuleEndReasons
     public const byte NoRounds = 4;
     /// <summary>The host refused the work cycle that ended the cycle.</summary>
     public const byte WorkRefused = 5;
+    /// <summary>The fuel of the next cycle was not there (the host refused its consumption, <see cref="SimModuleWorkCommands.ConsumeFuel"/>).</summary>
+    public const byte NoFuel = 6;
 }
 
 /// <summary>

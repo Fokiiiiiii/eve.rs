@@ -257,6 +257,8 @@ impl Action {
 pub(crate) const WORK_MINE: u8 = 7;
 /// The work command of a salvage cycle (the drone command `Salvage`).
 pub(crate) const WORK_SALVAGE: u8 = 8;
+/// The fuel of the next cycle of a module that burns fuel (the wire's `SimModuleWorkCommands.ConsumeFuel`): the host takes it from the ship, or refuses.
+pub(crate) const WORK_FUEL: u8 = 9;
 /// How long a parked work cycle waits before the same `cycle_id` is sent again (2 s of the simulation clock; DEVIATIONS.md, ADR 0013 rule 3).
 pub(crate) const WORK_RESEND_TICKS: i64 = 2 * TICKS_PER_SECOND;
 
@@ -369,6 +371,9 @@ pub struct Effect {
     /// What the client is told when the effect starts, and when it ends.
     pub on_changes: Vec<Change>,
     pub off_changes: Vec<Change>,
+    /// The effect burns the fuel its consumption attributes name each cycle: a fuel cycle is asked of the host before each cycle that starts, and the cycle
+    /// does not start when the host refuses it (`ConsumeFuel`, the host takes the fuel from the ship).
+    pub burns_fuel: bool,
 }
 
 impl Effect {
@@ -511,11 +516,13 @@ pub(crate) enum Ending {
     TargetGone,
     /// The host refused the work cycle that ended the effect's cycle: the client is told as for `Done`.
     WorkRefused,
+    /// The fuel of the next cycle was not there (the host refused it): the client is told as for `Done`.
+    NoFuel,
 }
 
 impl Ending {
     /// The reason the host is sent (`ModuleEnded`, ADR 0013 and FP-C1): 1 the cycles were done, the capacitor was short, or the pilot asked; 2 the target was
-    /// lost; 3 something forbade the effect; 4 the charge was spent; 5 the host refused a work cycle.
+    /// lost; 3 something forbade the effect; 4 the charge was spent; 5 the host refused a work cycle; 6 the fuel of the next cycle was not there.
     pub(crate) fn wire_reason(self) -> u8 {
         match self {
             Self::Done => 1,
@@ -523,6 +530,7 @@ impl Ending {
             Self::Forced => 3,
             Self::NoRounds => 4,
             Self::WorkRefused => 5,
+            Self::NoFuel => 6,
         }
     }
 }
@@ -536,6 +544,17 @@ struct PendingWorkCycle {
     sent_at: i64,
     /// The waste, rounding and crit rolls the cycle was sent with (drawn once, so a repeat carries the same ones).
     rolls: [f64; 3],
+    /// Whether this is the fuel of the next cycle (`WORK_FUEL`), not a mining or salvage cycle.
+    fuel: bool,
+}
+
+/// An effect that burns fuel and waits for the host to take the fuel of its first cycle (`WORK_FUEL`): it starts when the host accepts, and is refused
+/// when the host refuses. `sent_at` is when the fuel was last asked for (the same id is asked again after `WORK_RESEND_TICKS`).
+#[derive(Debug, Clone, PartialEq)]
+struct PendingStart {
+    effect: Effect,
+    cycle_id: u64,
+    sent_at: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -572,6 +591,8 @@ pub(crate) struct Modules {
     running: Vec<Running>,
     mjd_cooldowns: Vec<(i64, i64)>,
     next_remote_repair_cycle_id: u64,
+    /// Fuel-burning effects that wait for the host to take the fuel of their first cycle.
+    pending_starts: Vec<PendingStart>,
 }
 
 impl Modules {
@@ -589,6 +610,7 @@ impl Modules {
             running: Vec::new(),
             mjd_cooldowns: Vec::new(),
             next_remote_repair_cycle_id: 0,
+            pending_starts: Vec::new(),
         }
     }
 
@@ -610,7 +632,9 @@ impl Modules {
     }
 
     pub(crate) fn is_idle(&self) -> bool {
-        self.running.is_empty() && self.capacitor.as_ref().is_none_or(|c| c.next_sample.is_none())
+        self.running.is_empty()
+            && self.pending_starts.is_empty()
+            && self.capacitor.as_ref().is_none_or(|c| c.next_sample.is_none())
     }
 }
 
@@ -842,7 +866,9 @@ impl Scene {
         }
         self.settle_all(now);
         let pilot = &self.pilots[&session];
-        if pilot.modules.running.iter().any(|r| r.effect.module_id == effect.module_id) {
+        if pilot.modules.running.iter().any(|r| r.effect.module_id == effect.module_id)
+            || pilot.modules.pending_starts.iter().any(|start| start.effect.module_id == effect.module_id)
+        {
             return vec![Out::Refused { session, command: CODE, reason: "ALREADY_ACTIVE" }];
         }
         // the reactive armor hardeners are one group, of which one runs at a time: a second one is refused (its resonances would not compose)
@@ -980,6 +1006,32 @@ impl Scene {
             return vec![Out::Refused { session, command: CODE, reason: "NO_CAPACITOR" }];
         };
         if capacitor.charge_at(now) < effect.capacitor_need {
+            return vec![Out::Refused { session, command: CODE, reason: "NOT_ENOUGH_CAPACITOR" }];
+        }
+        // an effect that burns fuel starts when the host has taken the fuel of its first cycle (`WORK_FUEL`): it is parked until the answer
+        if effect.burns_fuel {
+            return self.park_start(session, effect, now);
+        }
+        self.start_effect(session, effect, now)
+    }
+
+    /// Parks an effect that burns fuel until the host takes the fuel of its first cycle: the host is asked for it (`ModuleWorkCycle`, `WORK_FUEL`) and answers.
+    fn park_start(&mut self, session: SessionId, effect: Effect, now: i64) -> Vec<Out> {
+        let cycle_id = next_work_cycle_id();
+        let (module_id, target_id) = (effect.module_id, effect.target_id);
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        pilot.modules.pending_starts.push(PendingStart { effect, cycle_id, sent_at: now });
+        self.fuel_cycle_out(session, module_id, target_id, cycle_id).into_iter().collect()
+    }
+
+    /// The effect starts now: the capacitor pays for its first cycle and the numbers, the effect and its first cycle are told. Refused when the capacitor
+    /// is short (it can be short again when a parked start is answered).
+    fn start_effect(&mut self, session: SessionId, effect: Effect, now: i64) -> Vec<Out> {
+        const CODE: u8 = 17;
+        let Some(pilot) = self.pilots.get(&session) else {
+            return vec![Out::Refused { session, command: CODE, reason: "NO_SHIP_IN_SPACE" }];
+        };
+        if pilot.modules.capacitor.as_ref().is_none_or(|capacitor| capacitor.charge_at(now) < effect.capacitor_need) {
             return vec![Out::Refused { session, command: CODE, reason: "NOT_ENOUGH_CAPACITOR" }];
         }
         // the pilot has given up the undocking protection by flying the ship (the host tells the client)
@@ -1153,6 +1205,14 @@ impl Scene {
         let Some(pilot) = self.pilots.get_mut(&session) else {
             return vec![Out::Refused { session, command: CODE, reason: "NO_SHIP_IN_SPACE" }];
         };
+        // an effect still waiting for the fuel of its first cycle is cancelled: its activation is refused, and the answer to the fuel ask no longer starts it
+        if let Some(position) = pilot.modules.pending_starts.iter().position(|start| start.effect.module_id == module_id) {
+            pilot.modules.pending_starts.remove(position);
+            return vec![
+                Out::Refused { session, command: 17, reason: "DEACTIVATED" },
+                Out::Accepted { session, command: CODE, at: now },
+            ];
+        }
         let Some(index) = pilot.modules.running.iter().position(|r| r.effect.module_id == module_id) else {
             return vec![Out::Refused { session, command: CODE, reason: "NOT_ACTIVE" }];
         };
@@ -1200,10 +1260,19 @@ impl Scene {
                 next = Some((at, moment));
             }
         };
+        for (index, start) in pilot.modules.pending_starts.iter().enumerate() {
+            // a start parked for its fuel: the same id is asked again after a while
+            consider(start.sent_at + WORK_RESEND_TICKS, Moment::StartResend(index));
+        }
         for (index, run) in pilot.modules.running.iter().enumerate() {
             if let Some(pending) = run.pending_work {
                 // parked on the host's answer: no cycle is timed; the same id is sent again after a while, and the effect stops when its target is gone
-                if self.work_target_ok(session, &run.effect) {
+                let target_ok = if pending.fuel {
+                    self.cycle_target_ok(session, &run.effect, run.charged_this_cycle)
+                } else {
+                    self.work_target_ok(session, &run.effect)
+                };
+                if target_ok {
                     consider(pending.sent_at + WORK_RESEND_TICKS, Moment::WorkResend(index));
                 } else {
                     consider(now, Moment::WorkStop(index));
@@ -1235,6 +1304,7 @@ impl Scene {
             Moment::CycleEnd(index) => self.end_cycle(session, index, at),
             Moment::WorkResend(index) => self.resend_work_cycle(session, index, at),
             Moment::WorkStop(index) => self.stop_parked(session, index, at),
+            Moment::StartResend(index) => self.resend_start(session, index, at),
         }
     }
 
@@ -1277,49 +1347,7 @@ impl Scene {
             return out;
         }
         // a weapon goes on while its target is there and locked, an effect projected at a ship while the ship is also in reach
-        let self_capacitor_boost = run
-            .effect
-            .remote()
-            .is_some_and(|(what, ..)| matches!(what, Remote::Transfer { .. }))
-            && self.pilots.get(&session).is_some_and(|pilot| run.effect.target_id == pilot.ship.spec.ship_id);
-        let self_sensor_boost =
-            self.pilots.get(&session).is_some_and(|pilot| run.effect.target_id == pilot.ship.spec.ship_id)
-                && run.effect.jam() == Some("remoteSensorBoost")
-                && run.effect.remote().is_some_and(|(what, ..)| {
-                    matches!(
-                        what,
-                        Remote::Damp {
-                            range_percent,
-                            resolution_percent,
-                            gravimetric_percent,
-                            ladar_percent,
-                            magnetometric_percent,
-                            radar_percent,
-                        } if *range_percent >= 0.0
-                            && *resolution_percent >= 0.0
-                            && (*range_percent > 0.0 || *resolution_percent > 0.0)
-                            && *gravimetric_percent == 0.0
-                            && *ladar_percent == 0.0
-                            && *magnetometric_percent == 0.0
-                            && *radar_percent == 0.0
-                    )
-                });
-        let target_ok = if self_capacitor_boost || self_sensor_boost {
-            true
-        } else if run.effect.turret.is_some() {
-            self.turret_target_ok(session, &run.effect)
-        } else if let Some((_, reach, _)) = run.effect.remote() {
-            self.turret_target_ok(session, &run.effect)
-                && self
-                    .session_of(run.effect.target_id)
-                    .and_then(|target| self.apart(session, target))
-                    .is_some_and(|apart| reach.share(apart).is_some())
-        } else if run.effect.action.as_ref().and_then(|action| action.with_charges(run.charged_this_cycle)).is_some_and(Action::is_work) {
-            // a work target (a rock, a wreck) is there while the pilot holds its lock
-            self.work_target_ok(session, &run.effect)
-        } else {
-            true
-        };
+        let target_ok = self.cycle_target_ok(session, &run.effect, run.charged_this_cycle);
         // a work cycle that ends with its target there is handed to the host, and the module is parked until the answer (ADR 0013)
         if target_ok
             && let Some(work) = run.effect.action.as_ref().and_then(|action| action.with_charges(run.charged_this_cycle)).filter(|action| action.is_work())
@@ -1372,7 +1400,11 @@ impl Scene {
             }];
         }
         // what the cycle that ends does at its end is done before the effect goes on or ends
-        let mut out = self.act(session, &run.effect, Applies::CycleEnd, at);
+        let out = self.act(session, &run.effect, Applies::CycleEnd, at);
+        // an effect that burns fuel asks for the fuel of the next cycle before that cycle starts (`WORK_FUEL`), when there is one to start
+        if target_ok && run.effect.burns_fuel && self.next_cycle_follows(session, run.effect.module_id, at) {
+            return self.park_fuel_cycle(session, run.effect.module_id, at, out);
+        }
         self.finish_cycle(session, run.effect.module_id, at, out, target_ok)
     }
 
@@ -1513,6 +1545,118 @@ impl Scene {
         self.locked_by(session).contains(&effect.target_id)
     }
 
+    /// Whether the target of the cycle that ends is still there, as the effect needs it: a turret's, a projected effect's, a work target's (or none).
+    fn cycle_target_ok(&self, session: SessionId, effect: &Effect, charged: bool) -> bool {
+        let self_capacitor_boost = effect
+            .remote()
+            .is_some_and(|(what, ..)| matches!(what, Remote::Transfer { .. }))
+            && self.pilots.get(&session).is_some_and(|pilot| effect.target_id == pilot.ship.spec.ship_id);
+        let self_sensor_boost =
+            self.pilots.get(&session).is_some_and(|pilot| effect.target_id == pilot.ship.spec.ship_id)
+                && effect.jam() == Some("remoteSensorBoost")
+                && effect.remote().is_some_and(|(what, ..)| {
+                    matches!(
+                        what,
+                        Remote::Damp {
+                            range_percent,
+                            resolution_percent,
+                            gravimetric_percent,
+                            ladar_percent,
+                            magnetometric_percent,
+                            radar_percent,
+                        } if *range_percent >= 0.0
+                            && *resolution_percent >= 0.0
+                            && (*range_percent > 0.0 || *resolution_percent > 0.0)
+                            && *gravimetric_percent == 0.0
+                            && *ladar_percent == 0.0
+                            && *magnetometric_percent == 0.0
+                            && *radar_percent == 0.0
+                    )
+                });
+        if self_capacitor_boost || self_sensor_boost {
+            true
+        } else if effect.turret.is_some() {
+            self.turret_target_ok(session, &effect)
+        } else if let Some((_, reach, _)) = effect.remote() {
+            self.turret_target_ok(session, &effect)
+                && self
+                    .session_of(effect.target_id)
+                    .and_then(|target| self.apart(session, target))
+                    .is_some_and(|apart| reach.share(apart).is_some())
+        } else if effect.action.as_ref().and_then(|action| action.with_charges(charged)).is_some_and(Action::is_work) {
+            // a work target (a rock, a wreck) is there while the pilot holds its lock
+            self.work_target_ok(session, &effect)
+        } else {
+            true
+        }
+    }
+
+    /// The `ModuleWorkCycle` that asks the host for the fuel of a cycle (`WORK_FUEL`): nothing is mined or salvaged, the host takes the fuel or refuses.
+    fn fuel_cycle_out(&self, session: SessionId, module_id: i64, target_id: i64, cycle_id: u64) -> Option<Out> {
+        let pilot = self.pilots.get(&session)?;
+        Some(Out::ModuleWorkCycle {
+            session,
+            character_id: pilot.ship.spec.character_id,
+            ship_id: pilot.ship.spec.ship_id,
+            solar_system_id: self.solar_system_id(),
+            module_id,
+            target_id,
+            cycle_id,
+            command: WORK_FUEL,
+            mining_amount_m3: 0.0,
+            waste_multiplier: 0.0,
+            waste_probability: 0.0,
+            crit_probability: 0.0,
+            crit_multiplier: 0.0,
+            access_difficulty_bonus: 0.0,
+            waste_roll: 0.0,
+            rounding_roll: 0.0,
+            crit_roll: 0.0,
+        })
+    }
+
+    /// The effect of a running cycle goes on past its end only when the next cycle starts: the cycles are not done, the effect is not stopping, the capacitor
+    /// pays for the next one. Only then is its fuel asked for.
+    fn next_cycle_follows(&self, session: SessionId, module_id: i64, at: i64) -> bool {
+        self.pilots.get(&session).is_some_and(|pilot| {
+            pilot.modules.running.iter().any(|run| {
+                run.effect.module_id == module_id
+                    && !run.stopping
+                    && run.cycles < run.effect.repeat
+                    && pilot.modules.capacitor.as_ref().is_some_and(|c| c.charge_at(at) >= run.effect.capacitor_need)
+            })
+        })
+    }
+
+    /// The end of a cycle of an effect that burns fuel, with the next cycle to come: the host is asked for its fuel first, and the module is parked on the answer.
+    fn park_fuel_cycle(&mut self, session: SessionId, module_id: i64, at: i64, mut out: Vec<Out>) -> Vec<Out> {
+        let cycle_id = next_work_cycle_id();
+        let Some(pilot) = self.pilots.get_mut(&session) else { return out };
+        let Some(run) = pilot.modules.running.iter_mut().find(|run| run.effect.module_id == module_id) else { return out };
+        let target_id = run.effect.target_id;
+        run.pending_work = Some(PendingWorkCycle { cycle_id, at, sent_at: at, rolls: [0.0; 3], fuel: true });
+        out.extend(self.fuel_cycle_out(session, module_id, target_id, cycle_id));
+        out
+    }
+
+    /// A parked start is due again: the same id is asked once more (the host answers a repeat from its record).
+    fn resend_start(&mut self, session: SessionId, index: usize, at: i64) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        let Some(start) = pilot.modules.pending_starts.get_mut(index) else { return Vec::new() };
+        start.sent_at = at;
+        let (module_id, target_id, cycle_id) = (start.effect.module_id, start.effect.target_id, start.cycle_id);
+        self.fuel_cycle_out(session, module_id, target_id, cycle_id).into_iter().collect()
+    }
+
+    /// The reason a refused start is shown with: the host's `NO_FUEL` as it is; a ship the host no longer has in space as that; anything else as a refused fuel.
+    fn fuel_refusal(reason: &str) -> &'static str {
+        match reason {
+            "NO_FUEL" => "NO_FUEL",
+            "NO_PILOT" | "NO_SHIP" | "NOT_CONTROLLED" => "NO_SHIP_IN_SPACE",
+            _ => "FUEL_REFUSED",
+        }
+    }
+
     /// The work cycle of a running effect as the host is told it (`ModuleWorkCycle`), for `work` (the action that runs now) and the cycle sent.
     fn work_cycle_out(&self, session: SessionId, module_id: i64, target_id: i64, work: &Action, pending: PendingWorkCycle) -> Option<Out> {
         let pilot = self.pilots.get(&session)?;
@@ -1549,7 +1693,7 @@ impl Scene {
     /// cycle's end is done until then; the next cycle is timed from the answer.
     fn park_work_cycle(&mut self, session: SessionId, module_id: i64, work: &Action, at: i64) -> Vec<Out> {
         let rolls = [self.rng.random(), self.rng.random(), self.rng.random()];
-        let pending = PendingWorkCycle { cycle_id: next_work_cycle_id(), at, sent_at: at, rolls };
+        let pending = PendingWorkCycle { cycle_id: next_work_cycle_id(), at, sent_at: at, rolls, fuel: false };
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         let Some(run) = pilot.modules.running.iter_mut().find(|run| run.effect.module_id == module_id) else {
             return Vec::new();
@@ -1564,6 +1708,11 @@ impl Scene {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         let Some(run) = pilot.modules.running.get_mut(index) else { return Vec::new() };
         let Some(pending) = run.pending_work else { return Vec::new() };
+        if pending.fuel {
+            let (module_id, target_id) = (run.effect.module_id, run.effect.target_id);
+            run.pending_work = Some(PendingWorkCycle { sent_at: at, ..pending });
+            return self.fuel_cycle_out(session, module_id, target_id, pending.cycle_id).into_iter().collect();
+        }
         let Some(work) = run.effect.action.as_ref().and_then(|action| action.with_charges(run.charged_this_cycle)).filter(|action| action.is_work()).cloned()
         else {
             return Vec::new();
@@ -1587,7 +1736,18 @@ impl Scene {
 
     /// The host's answer to a work cycle (`ModuleWorkResult`). An accepted one ends that cycle and the effect goes on, or ends when it must; a refused one
     /// stops the effect (the host has granted nothing). An answer that matches no parked cycle (a repeat, or a cycle the module has left) does nothing.
-    pub fn module_work_result(&mut self, session: SessionId, module_id: i64, target_id: i64, cycle_id: u64, accepted: bool, now: i64) -> Vec<Out> {
+    pub fn module_work_result(&mut self, session: SessionId, module_id: i64, target_id: i64, cycle_id: u64, accepted: bool, reason: &str, now: i64) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        // a start parked for its fuel: accepted, it starts; refused, it is refused with the host's reason
+        if let Some(position) = pilot.modules.pending_starts.iter().position(|start| {
+            start.effect.module_id == module_id && start.effect.target_id == target_id && start.cycle_id == cycle_id
+        }) {
+            let start = pilot.modules.pending_starts.remove(position);
+            if !accepted {
+                return vec![Out::Refused { session, command: 17, reason: Self::fuel_refusal(reason) }];
+            }
+            return self.start_effect(session, start.effect, now);
+        }
         let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
         let Some(index) = pilot.modules.running.iter().position(|run| {
             run.effect.module_id == module_id
@@ -1598,13 +1758,19 @@ impl Scene {
         };
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        let fuel = pilot.modules.running[index].pending_work.is_some_and(|pending| pending.fuel);
         if !accepted {
             let run = pilot.modules.running.remove(index);
-            return self.effect_ended(session, run, owner, ship_id, now, Ending::WorkRefused);
+            let ending = if fuel && reason == "NO_FUEL" { Ending::NoFuel } else { Ending::WorkRefused };
+            return self.effect_ended(session, run, owner, ship_id, now, ending);
         }
         pilot.modules.running[index].pending_work = None;
-        let effect = pilot.modules.running[index].effect.clone();
-        let target_ok = self.work_target_ok(session, &effect);
+        let run = pilot.modules.running[index].clone();
+        let target_ok = if fuel {
+            self.cycle_target_ok(session, &run.effect, run.charged_this_cycle)
+        } else {
+            self.work_target_ok(session, &run.effect)
+        };
         self.finish_cycle(session, module_id, now, Vec::new(), target_ok)
     }
 
@@ -2002,6 +2168,8 @@ enum Moment {
     WorkResend(usize),
     /// The target of a parked work cycle is gone: the effect stops.
     WorkStop(usize),
+    /// A start parked for fuel is asked again (same id), at this index of the pending starts.
+    StartResend(usize),
 }
 
 #[cfg(test)]
@@ -2021,6 +2189,7 @@ pub(crate) mod tests {
 
     pub(crate) fn afterburner() -> Effect {
         Effect {
+            burns_fuel: false,
             module_id: MODULE,
             module_type: 21857,
             effect_id: 6731,
@@ -2048,6 +2217,7 @@ pub(crate) mod tests {
 
     fn micro_jump_drive() -> Effect {
         Effect {
+            burns_fuel: false,
             module_id: MODULE + 200,
             module_type: 4383,
             effect_id: 4921,
@@ -2609,6 +2779,7 @@ pub(crate) mod tests {
     /// An armor repairer of the Ibis: 30 points a cycle of five seconds, applied at the end of the cycle.
     fn repairer(layer: Layer, amount: f64, when: Applies) -> Effect {
         Effect {
+            burns_fuel: false,
             module_id: MODULE,
             module_type: 3530,
             effect_id: 27,
@@ -2741,6 +2912,7 @@ pub(crate) mod tests {
         let (mut scene, t) = reaching(2_000.0);
         let ship_id = scene.pilots[&A].ship.spec.ship_id;
         let effect = Effect {
+            burns_fuel: false,
             module_id: MODULE,
             module_type: 3566,
             effect_id: 13,
@@ -2838,6 +3010,7 @@ pub(crate) mod tests {
     /// A module that runs `what` on the ship `target`, reaching 10 km and falling off through another 5 km.
     fn projected(what: Remote, when: Applies, target: i64) -> Effect {
         Effect {
+            burns_fuel: false,
             module_id: MODULE,
             module_type: 3520,
             effect_id: 6186,
@@ -3688,6 +3861,7 @@ pub(crate) mod tests {
     /// A smartbomb of `range` metres that does `damage` (em, thermal, kinetic, explosive) a cycle.
     fn smartbomb(range: f64, damage: [f64; 4], hurts_pilots: bool) -> Effect {
         Effect {
+            burns_fuel: false,
             fx: "effects.EmpWave".to_string(),
             duration_ms: 10_000.0,
             capacitor_need: 5.0,
@@ -3745,6 +3919,7 @@ pub(crate) mod tests {
         assert!(!scene.pilots[&B].targeting.targets().is_empty());
 
         let burst = Effect {
+            burns_fuel: false,
             fx: "effects.EcmBurstJammer".to_string(),
             action: Some(Action::EcmBurst { range: 3_000.0, strength: [1_000.0; 4] }),
             ..smartbomb(0.0, [0.0; 4], true)
@@ -3970,6 +4145,7 @@ pub(crate) mod tests {
         let ship = spec().ship_id;
         let seeded = |base: f64| base * 0.85;
         Effect {
+            burns_fuel: false,
             module_id: module,
             module_type: 4403,
             effect_id: 4928,
@@ -4215,7 +4391,7 @@ pub(crate) mod tests {
         assert!(again.iter().all(|sent| *sent == asked[0]), "a repeat is the same cycle with the same rolls");
 
         // the answer resumes the module: the next cycle begins from the answer and asks again under a new id
-        let out = scene.module_work_result(A, MODULE, partner(), cycle, true, at);
+        let out = scene.module_work_result(A, MODULE, partner(), cycle, true, "", at);
         assert!(ended(&out).is_empty(), "an accepted cycle does not end the effect: {out:?}");
         assert_eq!(cycles_of(&scene), 2);
         let (next, _) = poll_until(&mut scene, at, 2.5);
@@ -4231,14 +4407,14 @@ pub(crate) mod tests {
         let (first, at) = poll_until(&mut scene, t, 2.5);
         let (cycle, ..) = work_cycles(&first)[0];
 
-        assert!(scene.module_work_result(A, MODULE, partner(), cycle + 1, true, at).is_empty(), "another cycle");
-        assert!(scene.module_work_result(A, MODULE, partner() + 1, cycle, true, at).is_empty(), "another target");
-        assert!(scene.module_work_result(B, MODULE, partner(), cycle, true, at).is_empty(), "another pilot");
+        assert!(scene.module_work_result(A, MODULE, partner(), cycle + 1, true, "", at).is_empty(), "another cycle");
+        assert!(scene.module_work_result(A, MODULE, partner() + 1, cycle, true, "", at).is_empty(), "another target");
+        assert!(scene.module_work_result(B, MODULE, partner(), cycle, true, "", at).is_empty(), "another pilot");
         assert_eq!(cycles_of(&scene), 1);
 
-        scene.module_work_result(A, MODULE, partner(), cycle, true, at);
+        scene.module_work_result(A, MODULE, partner(), cycle, true, "", at);
         assert_eq!(cycles_of(&scene), 2);
-        assert!(scene.module_work_result(A, MODULE, partner(), cycle, true, at + SECOND).is_empty(), "a replay settles nothing");
+        assert!(scene.module_work_result(A, MODULE, partner(), cycle, true, "", at + SECOND).is_empty(), "a replay settles nothing");
         assert_eq!(cycles_of(&scene), 2, "the replay does not start a cycle either");
     }
 
@@ -4249,7 +4425,7 @@ pub(crate) mod tests {
         let (first, at) = poll_until(&mut scene, t, 2.5);
         let (cycle, ..) = work_cycles(&first)[0];
 
-        let out = scene.module_work_result(A, MODULE, partner(), cycle, false, at);
+        let out = scene.module_work_result(A, MODULE, partner(), cycle, false, "", at);
         assert_eq!(ended(&out), [5], "the host refused: reason 5 once: {out:?}");
         assert!(out.iter().any(|item| matches!(item, Out::ModuleEnded { session: A, module_id: MODULE, .. })));
         assert_eq!(scene.pilots[&A].modules.running.len(), 0);
@@ -4340,5 +4516,141 @@ pub(crate) mod tests {
         assert!(matches!(asked.first(), Some(Out::Accepted { .. })));
         let (out, _) = poll_until(&mut scene, t + SECOND, 12.0);
         assert_eq!(ended(&out), [1], "a host-requested stop is told once: {out:?}");
+    }
+
+    /// An effect that burns fuel and has no target (a siege module's shape): cycles of 2 s, `repeat` of them, no capacitor.
+    fn burning(repeat: i32) -> Effect {
+        let mut effect = afterburner();
+        effect.target_id = 0;
+        effect.action = None;
+        effect.burns_fuel = true;
+        effect.duration_ms = 2_000.0;
+        effect.capacitor_need = 0.0;
+        effect.repeat = repeat;
+        effect
+    }
+
+    /// The fuel the host is asked for (`ModuleWorkCycle` with the fuel command): (cycle id, module id, target id).
+    fn fuel_asks(out: &[Out]) -> Vec<(u64, i64, i64)> {
+        out.iter()
+            .filter_map(|item| match item {
+                Out::ModuleWorkCycle { cycle_id, command: WORK_FUEL, module_id, target_id, .. } => Some((*cycle_id, *module_id, *target_id)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The reasons of the activation refusals in `out`.
+    fn refusals(out: &[Out]) -> Vec<&'static str> {
+        out.iter().filter_map(|item| match item { Out::Refused { command: 17, reason, .. } => Some(*reason), _ => None }).collect()
+    }
+
+    #[test]
+    fn a_fuel_burning_effect_asks_the_host_for_the_fuel_of_its_first_cycle_before_it_starts() {
+        let (mut scene, t) = reaching(0.0);
+        let out = scene.activate(A, burning(3), t);
+        let asks = fuel_asks(&out);
+        assert_eq!(asks.len(), 1, "{out:?}");
+        assert_eq!(asks[0].1, MODULE);
+        assert!(!out.iter().any(|item| matches!(item, Out::Accepted { .. })), "nothing starts before the fuel is taken: {out:?}");
+        assert!(scene.pilots[&A].modules.running.is_empty());
+    }
+
+    #[test]
+    fn an_accepted_fuel_ask_starts_the_effect_and_a_repeated_answer_starts_nothing_more() {
+        let (mut scene, t) = reaching(0.0);
+        let (cycle, module, target) = fuel_asks(&scene.activate(A, burning(3), t))[0];
+        let started = scene.module_work_result(A, module, target, cycle, true, "", t);
+        assert!(matches!(started.first(), Some(Out::Accepted { command: 17, .. })), "{started:?}");
+        assert_eq!(scene.pilots[&A].modules.running.len(), 1);
+        assert!(scene.module_work_result(A, module, target, cycle, true, "", t + SECOND).is_empty(), "a replay settles nothing");
+        assert_eq!(scene.pilots[&A].modules.running.len(), 1);
+    }
+
+    #[test]
+    fn a_refused_fuel_ask_starts_nothing_and_says_the_host_reason() {
+        let (mut scene, t) = reaching(0.0);
+        let (cycle, module, target) = fuel_asks(&scene.activate(A, burning(3), t))[0];
+        let out = scene.module_work_result(A, module, target, cycle, false, "NO_FUEL", t);
+        assert_eq!(refusals(&out), ["NO_FUEL"], "{out:?}");
+        assert!(scene.pilots[&A].modules.running.is_empty());
+        assert!(scene.pilots[&A].modules.pending_starts.is_empty());
+    }
+
+    #[test]
+    fn a_second_activation_while_the_first_waits_for_its_fuel_is_already_active() {
+        let (mut scene, t) = reaching(0.0);
+        scene.activate(A, burning(3), t);
+        let again = scene.activate(A, burning(3), t);
+        assert_eq!(refusals(&again), ["ALREADY_ACTIVE"], "{again:?}");
+    }
+
+    #[test]
+    fn a_parked_start_is_asked_again_with_the_same_cycle_id() {
+        let (mut scene, t) = reaching(0.0);
+        let (cycle, ..) = fuel_asks(&scene.activate(A, burning(3), t))[0];
+        let (again, _) = poll_until(&mut scene, t, 2.5);
+        assert_eq!(fuel_asks(&again).first().map(|ask| ask.0), Some(cycle), "{again:?}");
+    }
+
+    #[test]
+    fn the_fuel_of_each_following_cycle_is_asked_at_the_cycle_end_and_taken_before_it_starts() {
+        let (mut scene, t) = reaching(0.0);
+        let (cycle, module, target) = fuel_asks(&scene.activate(A, burning(3), t))[0];
+        scene.module_work_result(A, module, target, cycle, true, "", t);
+        // the first cycle ends after 2 s: the fuel of the next is asked, and the next cycle does not start until it is taken
+        let (first, at) = poll_until(&mut scene, t, 2.5);
+        let asks = fuel_asks(&first);
+        assert_eq!(asks.len(), 1, "{first:?}");
+        assert_eq!(cycles_of(&scene), 1, "the next cycle has not started");
+        scene.module_work_result(A, MODULE, target, asks[0].0, true, "", at);
+        assert_eq!(cycles_of(&scene), 2);
+    }
+
+    #[test]
+    fn a_refused_fuel_ask_at_a_cycle_end_stops_the_effect_with_the_fuel_reason_and_nothing_follows() {
+        let (mut scene, t) = reaching(0.0);
+        let (cycle, module, target) = fuel_asks(&scene.activate(A, burning(3), t))[0];
+        scene.module_work_result(A, module, target, cycle, true, "", t);
+        let (first, at) = poll_until(&mut scene, t, 2.5);
+        let ask = fuel_asks(&first)[0].0;
+        let out = scene.module_work_result(A, MODULE, target, ask, false, "NO_FUEL", at);
+        assert_eq!(ended(&out), [6], "the stop names the fuel: {out:?}");
+        assert!(scene.pilots[&A].modules.running.is_empty());
+        let (later, _) = poll_until(&mut scene, at, 3.0);
+        assert!(fuel_asks(&later).is_empty() && work_cycles(&later).is_empty(), "{later:?}");
+    }
+
+    #[test]
+    fn the_last_cycle_of_a_fuel_effect_asks_for_no_more_fuel() {
+        let (mut scene, t) = reaching(0.0);
+        let (cycle, module, target) = fuel_asks(&scene.activate(A, burning(1), t))[0];
+        scene.module_work_result(A, module, target, cycle, true, "", t);
+        let (out, _) = poll_until(&mut scene, t, 2.5);
+        assert!(fuel_asks(&out).is_empty(), "{out:?}");
+        assert_eq!(ended(&out), [1], "the cycles were done: {out:?}");
+    }
+
+    #[test]
+    fn an_effect_that_burns_no_fuel_is_never_asked_for_any() {
+        let (mut scene, t) = reaching(0.0);
+        let mut free = burning(3);
+        free.burns_fuel = false;
+        let out = scene.activate(A, free, t);
+        assert!(fuel_asks(&out).is_empty() && matches!(out.first(), Some(Out::Accepted { .. })), "{out:?}");
+        let (later, _) = poll_until(&mut scene, t, 5.0);
+        assert!(fuel_asks(&later).is_empty(), "{later:?}");
+    }
+
+    #[test]
+    fn a_deactivation_while_the_fuel_of_the_first_cycle_is_asked_cancels_the_start() {
+        let (mut scene, t) = reaching(0.0);
+        let (cycle, module, target) = fuel_asks(&scene.activate(A, burning(3), t))[0];
+        let out = scene.deactivate(A, module, t);
+        assert_eq!(refusals(&out), ["DEACTIVATED"], "{out:?}");
+        assert!(out.iter().any(|item| matches!(item, Out::Accepted { command: 16, .. })), "{out:?}");
+        // the host's answer to the cancelled ask starts nothing
+        assert!(scene.module_work_result(A, module, target, cycle, true, "", t + SECOND).is_empty());
+        assert!(scene.pilots[&A].modules.running.is_empty());
     }
 }

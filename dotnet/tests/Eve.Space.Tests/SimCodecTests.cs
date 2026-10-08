@@ -53,7 +53,7 @@ public class SimCodecTests
     private static SimEffect EffectOf(JsonNode e) => new(
         Wide(e, "moduleId"), (int)e["moduleType"]!, (int)e["effectId"]!, (string)e["fx"]!, (double)e["durationMs"]!, (double)e["capacitorNeed"]!, (int)e["repeat"]!, Wide(e, "targetId"),
         NumbersOf(e["on"]), NumbersOf(e["off"]), ChangesOf(e["onChanges"]!), ChangesOf(e["offChanges"]!), e["turret"] is { } turret ? TurretOf(turret) : null,
-        e["action"] is { } action ? ActionOf(action) : null);
+        e["action"] is { } action ? ActionOf(action) : null, BurnsFuel: e["burnsFuel"] is { } burns && (bool)burns);
 
     private static SimAction ActionOf(JsonNode a)
     {
@@ -368,6 +368,36 @@ public class SimCodecTests
         var encoded = SimCodec.Encode(expected);
 
         Assert.Equal(expected, SimCodec.Decode(encoded.AsMemory(4)));
+    }
+
+    [Fact]
+    public void A_fuel_cycle_roundtrips_as_a_module_work_cycle_with_no_mining()
+    {
+        var expected = new SimModuleWorkCycle(42, 7, 8, 9, 10, 0, 13, SimModuleWorkCommands.ConsumeFuel, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        var encoded = SimCodec.Encode(expected);
+
+        Assert.Equal(expected, SimCodec.Decode(encoded.AsMemory(4)));
+    }
+
+    [Fact]
+    public void A_fuel_cycle_that_carries_mining_numbers_is_refused()
+    {
+        var encoded = SimCodec.Encode(new SimModuleWorkCycle(42, 7, 8, 9, 10, 0, 13, SimModuleWorkCommands.ConsumeFuel, 20, 0, 0, 0, 0, 0, 0, 0, 0));
+        Assert.Throws<SimLinkException>(() => SimCodec.Decode(encoded.AsMemory(4)));
+    }
+
+    [Fact]
+    public void An_effect_that_burns_fuel_roundtrips_its_flag_and_one_that_does_not_keeps_it_clear()
+    {
+        var burning = new SimEffect(10, 20280, 6582, "siegeMode", 300000, 0, 1, 0, null, null, [], [], null, null, BurnsFuel: true);
+        var free = burning with { BurnsFuel = false };
+
+        var decodedBurning = Assert.IsType<SimActivate>(SimCodec.Decode(SimCodec.Encode(new SimActivate(42, burning)).AsMemory(4))).Effect;
+        var decodedFree = Assert.IsType<SimActivate>(SimCodec.Decode(SimCodec.Encode(new SimActivate(42, free)).AsMemory(4))).Effect;
+
+        Assert.True(decodedBurning.BurnsFuel);
+        Assert.False(decodedFree.BurnsFuel);
+        Assert.Equal(Convert.ToHexString(SimCodec.Encode(new SimActivate(42, burning))), Convert.ToHexString(SimCodec.Encode(new SimActivate(42, decodedBurning))));
     }
 
     [Fact]

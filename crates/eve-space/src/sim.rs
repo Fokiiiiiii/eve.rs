@@ -653,9 +653,9 @@ impl Sim {
                     .map(|scene| scene.drone_work_result(session_id, drone_id, target_id, cycle_id, accepted, units_remaining, complete, now))
                     .unwrap_or_default()
             },
-            Message::ModuleWorkResult { session_id, module_id, target_id, cycle_id, accepted, reason: _, units_remaining: _, delivered_units: _, complete: _ } => {
+            Message::ModuleWorkResult { session_id, module_id, target_id, cycle_id, accepted, reason, units_remaining: _, delivered_units: _, complete: _ } => {
                 self.scene_of(session_id)
-                    .map(|scene| scene.module_work_result(session_id, module_id, target_id, cycle_id, accepted, now))
+                    .map(|scene| scene.module_work_result(session_id, module_id, target_id, cycle_id, accepted, &reason, now))
                     .unwrap_or_default()
             },
             Message::RemoteRepairCycleResult { session_id, module_id, target_id, cycle_id, accepted, reason: _, amount } => {
@@ -903,6 +903,7 @@ mod tests {
 
     fn afterburner(module: i64) -> crate::modules::Effect {
         crate::modules::Effect {
+            burns_fuel: false,
             module_id: module,
             module_type: 21857,
             effect_id: 6731,

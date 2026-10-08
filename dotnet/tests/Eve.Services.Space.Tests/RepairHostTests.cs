@@ -620,7 +620,8 @@ public class ProjectedHostTests
         rig.Sim.Say(firstCycle);
         var firstResponse = Assert.IsType<SimRemoteRepairCycleResult>(rig.Sim.Heard.Last());
         Assert.True(firstResponse.Accepted);
-        Assert.Equal(Eve.Services.Space.Effects.ModuleAttributes.Six(baseAmount * (1 + bonusPerCycle)), firstResponse.Amount);
+        // the first delivery is x1.0: the bonus is applied to the cycle that lands and only then advanced (assistanceModuleRuntime.js)
+        Assert.Equal(Eve.Services.Space.Effects.ModuleAttributes.Six(baseAmount), firstResponse.Amount);
 
         Assert.Equal(ModuleResult.Done, await rig.Space.DeactivateAsync(
             session, moduleId, "ShipModuleRemoteArmorMutadaptiveRepairer", CancellationToken.None));
@@ -630,7 +631,7 @@ public class ProjectedHostTests
         rig.Sim.Say(finalCycle);
         var finalResponse = Assert.IsType<SimRemoteRepairCycleResult>(rig.Sim.Heard.Last());
         Assert.True(finalResponse.Accepted);
-        Assert.Equal(Eve.Services.Space.Effects.ModuleAttributes.Six(baseAmount * (1 + Math.Min(2 * bonusPerCycle, maximumBonus))), finalResponse.Amount);
+        Assert.Equal(Eve.Services.Space.Effects.ModuleAttributes.Six(baseAmount * (1 + Math.Min(bonusPerCycle, maximumBonus))), finalResponse.Amount);
 
         rig.Sim.Say(finalCycle);
         var staleResponse = Assert.IsType<SimRemoteRepairCycleResult>(rig.Sim.Heard.Last());

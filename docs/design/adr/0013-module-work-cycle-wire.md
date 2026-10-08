@@ -35,3 +35,8 @@ so the choice is recorded here.
 * Drone tests and `drone_flight.json` stay unchanged, which is the proof that the drone path was not disturbed.
 * The OnOreMined notice is sent after commit (MIN-D11, FOUNDATIONS rule 2), so a crash after commit can drop one client message.
   This is acceptable only if the client resyncs on login, which is unverified.
+
+## Wire epoch log
+
+* 22: the reactive armor hardener batch (W2): `SimAction` tag 12 (`ResistanceShift`) and one armor-pin byte at the end of the ship's vitals. Bumped 21 -> 22 by the integrator in `SimCodec.cs` and `crates/eve-space/src/link.rs`, with `oracle/fixtures/simlink/messages.json` regenerated.
+* All later W2 additions stay on 22 until the repo is first pushed; no further bump is made per package.

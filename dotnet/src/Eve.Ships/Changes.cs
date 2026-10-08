@@ -49,6 +49,9 @@ public enum ShipRefusal
 
     /// <summary>The item type is not accepted by the selected ship hold.</summary>
     NotAllowedInHold,
+
+    /// <summary>The module's group already has as many modules online as its maxGroupOnline allows (<see cref="ShipRefused.GroupId"/>, <see cref="ShipRefused.MaxGroupOnline"/>).</summary>
+    MaxGroupOnline,
 }
 
 public abstract record ShipOutcome;
@@ -58,7 +61,8 @@ public sealed record NothingHappened : ShipOutcome;
 
 /// <summary>What was asked cannot be done, and why.</summary>
 public sealed record ShipRefused(
-    ShipRefusal Reason, FitFailure? Fit = null, int ModuleTypeId = 0, int ShipTypeId = 0, string? Detail = null, double Available = 0, double Volume = 0) : ShipOutcome;
+    ShipRefusal Reason, FitFailure? Fit = null, int ModuleTypeId = 0, int ShipTypeId = 0, string? Detail = null, double Available = 0, double Volume = 0,
+    int GroupId = 0, int MaxGroupOnline = 0) : ShipOutcome;
 
 /// <summary>
 /// What was done: the items that moved, and what dogma reports of it, in the order the client is told. A move that is not a fitting one (goods into the hold, out of it,

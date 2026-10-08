@@ -47,6 +47,36 @@ public class EventBusTests
     }
 
     [PgFact]
+    public async Task The_transactional_publish_helper_commits_with_the_change_and_rolls_back_with_it()
+    {
+        await using var rig = await Rig.Create();
+        var seen = new List<string>();
+        rig.Bus.Subscribe("s", ["*"], Collect(seen));
+        await rig.Bus.PumpAsync();
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Bus.PublishInTransactionAsync(connection, transaction, "mining.ore_mined", null, "rolled-back");
+            await transaction.RollbackAsync();
+        }
+        Assert.Equal(0, (await rig.Bus.PumpAsync()).Delivered);
+        Assert.Empty(seen);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Bus.PublishInTransactionAsync(connection, transaction, "mining.ore_mined", null, "committed");
+            // not delivered while the publishing transaction is open
+            Assert.Equal(0, (await rig.Bus.PumpAsync()).Delivered);
+            await transaction.CommitAsync();
+        }
+        rig.Bus.Wake();
+        Assert.Equal(1, (await rig.Bus.PumpAsync()).Delivered);
+        Assert.Equal(["mining.ore_mined:committed"], seen);
+    }
+
+    [PgFact]
     public async Task Topics_are_exact_names_prefixes_or_everything()
     {
         await using var rig = await Rig.Create();

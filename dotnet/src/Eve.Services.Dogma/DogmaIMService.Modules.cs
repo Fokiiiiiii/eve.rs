@@ -15,61 +15,7 @@ public sealed partial class DogmaIMService
         {
             throw MachoErrors.ThrowUserError("DeniedShipChanged");
         }
-        return result.Ok ? result : throw ModuleError(result, starting);
-    }
-
-    /// <summary>The error the reference raises for a module order the simulation refused (its wording).</summary>
-    private static MachoWrappedException ModuleError(ModuleResult refusal, bool starting)
-    {
-        static MachoWrappedException Notify(string text) => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(text)));
-        var name = string.IsNullOrEmpty(refusal.ModuleName) ? "module" : refusal.ModuleName;
-        if (!starting)
-        {
-            return refusal.Reason switch
-            {
-                "NOT_IN_SPACE" or "NO_SHIP_IN_SPACE" or "MODULE_NOT_FOUND" => MachoErrors.ThrowUserError("DeniedShipChanged"),
-                "MODULE_NOT_ACTIVE" => Notify($"{name} is not active."),
-                "MODULE_INCAPACITATED" => Notify($"{name} is too damaged to overload."),
-                "MODULE_NOT_OVERLOADABLE" => Notify($"{name} cannot be overloaded."),
-                "THERMODYNAMICS_SKILL_REQUIRED" => MachoErrors.ThrowUserError("DontHaveThermoDynamicsSkill", ("skillLevel", new PyInt(1))),
-                _ => Notify($"Failed to deactivate {name}."),
-            };
-        }
-        return refusal.Reason switch
-        {
-            "NOT_IN_SPACE" or "NO_SHIP_IN_SPACE" or "MODULE_NOT_FOUND" => MachoErrors.ThrowUserError("DeniedShipChanged"),
-            "MODULE_ALREADY_ACTIVE" => MachoErrors.ThrowUserError("EffectAlreadyActive2", ("modulename", new PyTuple([new PyInt(TypeReference), new PyInt(refusal.ModuleType)]))),
-            "TARGET_REQUIRED" => Notify("You need an active target to activate that module."),
-            "TARGET_NOT_LOCKED" => Notify("That target is not locked."),
-            "TARGET_NOT_FOUND" => MachoErrors.ThrowUserError("DeniedActivateTargetNotPresent"),
-            "TARGET_OUT_OF_RANGE" => MachoErrors.ThrowUserError(
-                "TargetNotWithinRangeGeneric",
-                ("desiredRange", Py.Number(Math.Max(0, refusal.DesiredRange))),
-                ("targetName", refusal.TargetType > 0 ? new PyTuple([new PyInt(TypeReference), new PyInt(refusal.TargetType)]) : new PyStr("That target")),
-                ("shipType", refusal.ShipType > 0 ? new PyTuple([new PyInt(TypeReference), new PyInt(refusal.ShipType)]) : new PyInt(0)),
-                ("actualDistance", Py.Number(Math.Max(0, refusal.ActualDistance)))),
-            "NO_AMMO" => MachoErrors.ThrowUserError("NoCharges", ("launcher", new PyTuple([new PyInt(TypeReference), new PyInt(refusal.ModuleType)]))),
-            "MODULE_NOT_ONLINE" => Notify($"{name} is offline."),
-            "MODULE_INCAPACITATED" => Notify($"{name} is too damaged to overload."),
-            "MODULE_NOT_OVERLOADABLE" => Notify($"{name} cannot be overloaded."),
-            "THERMODYNAMICS_SKILL_REQUIRED" => MachoErrors.ThrowUserError("DontHaveThermoDynamicsSkill", ("skillLevel", new PyInt(1))),
-            "NOT_ENOUGH_CAPACITOR" => Notify("You do not have enough capacitor to activate that module."),
-            "MICROWARPDRIVE_BLOCKED" => Notify("You cannot activate a microwarpdrive while a warp scrambler holds your ship."),
-            "CLOAK_WARP_BLOCKED" => Notify("You cannot activate that cloaking device while warping."),
-            // the client's own UserErrors (FakeCloaking.PreStartChecks): the ship cannot cloak, or disallows a cloak
-            "CLOAK_SHIP_UNSUITABLE" => MachoErrors.ThrowUserError("CantCloakTooShipUnsuitable"),
-            "CLOAK_DISALLOWED" => MachoErrors.ThrowUserError("CantCloak"),
-            "CLOAK_TARGET_LOCKED" => Notify("Your ship is already target locked and cannot activate a cloaking device."),
-            "CLOAK_PROXIMITY_BLOCKED" => Notify("You are too close to another object to activate your cloaking device."),
-            "MODULE_CLOAKED" => Notify("You cannot activate modules while cloaked."),
-            // an effect with no body yet (PendingModuleEffect) is shown as one this module cannot run, the same as an effect with no handler
-            "UNSUPPORTED_EFFECT" or "EFFECT_NOT_IMPLEMENTED" => Notify($"{name} cannot be activated."),
-            // a module of a group of which one runs at a time (the reactive armor hardeners) while another of its group runs
-            "MAX_GROUP_ACTIVE" => Notify($"{name} cannot run while another module of its group is active."),
-            // a launcher whose kind is not run yet names its group's reason (MissileEffect.RefusedLauncherGroups): shown as the same refusal
-            _ when refusal.Reason?.EndsWith("_LAUNCHER_NOT_IMPLEMENTED", StringComparison.Ordinal) == true => Notify($"{name} cannot be activated."),
-            _ => Notify($"Failed to activate {name}: {refusal.Reason ?? "unknown error"}."),
-        };
+        return result.Ok ? result : throw ModuleRefusals.Of(result, starting);
     }
 
     /// <summary>

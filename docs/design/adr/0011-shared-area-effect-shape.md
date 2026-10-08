@@ -36,3 +36,7 @@ The bombs spec is not in the repository, so the bomb-specific parts (blast, dela
 * The wire change is part of a later wire batch and bumps the protocol once, through the integrator (ADR 0013).
 * One remote shape (a list) serves Tackle and `Area`; a second shape would mean a second codec and a second bump.
 * Fighter LaunchBomb stays refused until this ADR is implemented and the bombs spec exists (FIG-D-6).
+
+## Addendum (2026-10-08, bombs and warp disruption brief)
+
+- Bombs, the stasis probe burst, festival and breacher pods, and defenders do not use `Area` yet. They are refused by name (`*_LAUNCHER_NOT_IMPLEMENTED`, `MissileEffect.RefusedLauncherGroups`), because a blast radius, delay and trajectory need a captured V24.01 trace (bombs brief D1, D3, D4). No wire change in this addendum: the W2 batch (one bump, by the integrator) carries the `Area` shape only once one of those families is run.

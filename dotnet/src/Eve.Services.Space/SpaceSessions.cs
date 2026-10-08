@@ -12,6 +12,7 @@ using Eve.Services.Ships;
 using Eve.Ships;
 using Eve.Space;
 using Eve.Universe;
+using ModuleAttributes = Eve.Services.Space.Effects.ModuleAttributes;
 
 namespace Eve.Services.Space;
 
@@ -776,8 +777,16 @@ private readonly TransitionRuntime _transitions;
         }
     }
 
-    private void EndInvulnerability(Pilot pilot)
+    /// <summary>The effect of a module is offensive: it damages, jams, webs, paints or scrambles another ship (the attacks the crimewatch and the safety judge).</summary>
+    private static bool IsOffensive(SimEffect package) =>
+        package.Turret is not null || package.Action is SimAction.Remote { What: SimRemote.Neutralize or SimRemote.Drain or SimRemote.Web or SimRemote.Paint or SimRemote.Damp { RangePercent: < 0 } or SimRemote.Damp { ResolutionPercent: < 0 } or SimRemote.Damp { GravimetricStrengthPercent: < 0 } or SimRemote.Damp { LadarStrengthPercent: < 0 } or SimRemote.Damp { MagnetometricStrengthPercent: < 0 } or SimRemote.Damp { RadarStrengthPercent: < 0 } or SimRemote.Scramble or SimRemote.Jam or SimRemote.Disrupt { RangePercent: < 0 } or SimRemote.Disrupt { FalloffPercent: < 0 } or SimRemote.Disrupt { TrackingPercent: < 0 } };
+
+    private void EndInvulnerability(Pilot pilot, bool keepsJumpCloak = false)
     {
+        if (keepsJumpCloak && pilot.JumpCloak)
+        {
+            return;
+        }
         if (pilot.End())
         {
             if (pilot.JumpCloak)
@@ -897,6 +906,13 @@ private readonly TransitionRuntime _transitions;
         {
             throw MachoErrors.ThrowUserError(forbidden);
         }
+        // a module that may not be used on warp (disallowActivateOnWarp) is refused while the ship aligns to warp or is in it: the host's warp state
+        if (snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is { } warpModule
+            && snapshot.World.Item(moduleId) is { State: >= ItemState.Online }
+            && ModuleRestrictions.CheckWarp(attribute => snapshot.World.Get(moduleId, attribute), IsWarping(session)) is { } warpRefusal)
+        {
+            return ModuleResult.Refusal(warpRefusal, warpModule.TypeId, _statics.Type(warpModule.TypeId)?.Name ?? "");
+        }
         var made = ModulePackages.Of(snapshot, _statics, moduleId, effectName, targetId, repeat);
         if (made.Effect is not { } package)
         {
@@ -915,20 +931,30 @@ private readonly TransitionRuntime _transitions;
                 or SimRemote.Damp { RangePercent: >= 0, ResolutionPercent: >= 0, GravimetricStrengthPercent: >= 0, LadarStrengthPercent: >= 0, MagnetometricStrengthPercent: >= 0, RadarStrengthPercent: >= 0 }
                 or SimRemote.Disrupt { RangePercent: >= 0, FalloffPercent: >= 0, TrackingPercent: >= 0 }
         };
+        // the target's type (a pilot's ship, or an NPC's) carries what it refuses; the attributes are the static data's, as the reference's targets' are
+        var targetTypeId = targetPilot?.TypeId;
+        if (targetTypeId is null && _npcShips.TryGetValue(package.TargetId, out var npc))
+        {
+            targetTypeId = npc.TypeId;
+        }
+        if (package.TargetId > 0
+            && targetTypeId is { } immuneTypeId
+            && _statics.Type(immuneTypeId) is { } immuneType
+            && immuneType.Attributes.TryGetValue(ModuleAttributes.DisallowOffensiveModifiers, out var immune) && immune > 0
+            && (IsOffensive(package) || snapshot.World.Get(moduleId, ModuleAttributes.DisallowAgainstEwImmuneTarget) > 0))
+        {
+            // the client's own refusal for a target that cannot be hit by offensive modules (dogma/effects/util.py PreCheckIfImmune)
+            throw MachoErrors.ThrowUserError("DeniedActivateTargetModuleDisallowed");
+        }
         if (assistance)
         {
-            var targetTypeId = targetPilot?.TypeId;
-            if (targetTypeId is null && _npcShips.TryGetValue(package.TargetId, out var npc))
-            {
-                targetTypeId = npc.TypeId;
-            }
             if (targetTypeId is not { } targetTypeIdValue)
             {
                 return ModuleResult.Refusal("REFUSED", made.ModuleType, made.ModuleName);
             }
             var targetType = _statics.Type(targetTypeIdValue);
             if (targetType is null
-                || (targetType.Attributes.TryGetValue(854, out var disallowAssistance) && disallowAssistance > 0))
+                || (targetType.Attributes.TryGetValue(ModuleAttributes.DisallowAssistance, out var disallowAssistance) && disallowAssistance > 0))
             {
                 return ModuleResult.Refusal("REFUSED", made.ModuleType, made.ModuleName);
             }
@@ -968,7 +994,7 @@ private readonly TransitionRuntime _transitions;
         }
 
         // the safety of the pilot: a weapon is not started at the ship of another pilot where that would be a crime the safety the pilot has set does not allow
-        var attack = package.Turret is not null || package.Action is SimAction.Remote { What: SimRemote.Neutralize or SimRemote.Drain or SimRemote.Web or SimRemote.Paint or SimRemote.Damp { RangePercent: < 0 } or SimRemote.Damp { ResolutionPercent: < 0 } or SimRemote.Damp { GravimetricStrengthPercent: < 0 } or SimRemote.Damp { LadarStrengthPercent: < 0 } or SimRemote.Damp { MagnetometricStrengthPercent: < 0 } or SimRemote.Damp { RadarStrengthPercent: < 0 } or SimRemote.Scramble or SimRemote.Jam or SimRemote.Disrupt { RangePercent: < 0 } or SimRemote.Disrupt { FalloffPercent: < 0 } or SimRemote.Disrupt { TrackingPercent: < 0 } };
+        var attack = IsOffensive(package);
         var victim = attack && targetPilot is { CharacterId: > 0 } && targetPilot.CharacterId != characterId
             ? targetPilot
             : null;
@@ -1004,11 +1030,9 @@ private readonly TransitionRuntime _transitions;
         }
         pilot.ActiveModules[moduleId] = ItemState.Active;
         await SendShipAsync(id, pilot, SimShips.VitalsOf(snapshot), cancellationToken);
-        if (effectName.Equals("ShipModuleRemoteArmorMutadaptiveRepairer", StringComparison.OrdinalIgnoreCase))
-        {
-            Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Start(moduleId, package.TargetId);
-        }
-        EndInvulnerability(pilot);
+        made.Accepted?.Invoke();
+        // a module that may run in a gate cloak (canActivateInGateCloak: the warp core stabilizers and interdiction nullifiers) keeps the cloak of a jump
+        EndInvulnerability(pilot, keepsJumpCloak: snapshot.World.Get(moduleId, ModuleAttributes.CanActivateInGateCloak) > 0);
         if (assistanceRequest is { } remoteRequest && recordAssistance is { } recordRemoteAssistance)
         {
             try

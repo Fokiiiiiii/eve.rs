@@ -25,6 +25,12 @@ public interface IEffectHandler<THost, TResult>
     bool Implemented => true;
 
     TResult Build(EffectContext<THost> context);
+
+    /// <summary>
+    /// Called once the host has accepted the effect's start (the simulation took it). A side effect that a refused start must not have (a spool that starts
+    /// counting) belongs here, not in <see cref="Build"/>. The default does nothing.
+    /// </summary>
+    void Accepted(EffectContext<THost> context) { }
 }
 
 /// <summary>

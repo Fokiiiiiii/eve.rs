@@ -26,8 +26,10 @@ internal static class ModuleEffects
         .Register(SensorBooster)
         .Register(new PropulsionEffect())
         .Register(new TurretEffect())
+        .Register(new BarragePendingEffect())
         .Register(new MissileEffect())
         .Register(new RefusedLauncherEffect())
+        .Register(new WarpDisruptSphereEffect())
         .Register(new RepairEffect())
         .Register(new ProjectedEffect())
         .Register(new SmartbombEffect())
@@ -42,6 +44,8 @@ internal static class ModuleEffects
         .Register(new PowerBoosterEffect())
         .Register(new FueledArmorRepairEffect())
         .Register(new FueledShieldBoostingEffect())
+        // the Nexus invulnerability core: wired, its rules checked, refused as EFFECT_NOT_IMPLEMENTED until the fleet effect has a body (needs wire bump W2)
+        .Register(new IndustrialInvulnerabilityEffect())
         // exploration, hacking and scanner effects: wired, refused as EFFECT_NOT_IMPLEMENTED until their bodies are written (see ExplorationModuleEffects.cs)
         .Register(new DataAnalyzerEffect())
         .Register(new DataSubverterEffect())
@@ -85,7 +89,7 @@ internal sealed class MicroJumpDriveEffect : ShipEffect
     {
         var (duration, capacitor, _) = module.Cycle();
         var distance = module.Value(ModuleAttributes.MicroJumpDriveRange, 100_000);
-        var cooldown = (long)module.Value(ModuleAttributes.MicroJumpDriveCooldown, 180_000);
+        var cooldown = (long)module.Value(ModuleAttributes.ModuleReactivationDelay, 180_000);
         return new SimEffect(
             module.ModuleId, module.Module.TypeId, module.Effect.Id, module.Effect.Guid,
             duration, capacitor, 1, Math.Max(0, module.TargetId), null, null, [], [],
@@ -175,6 +179,15 @@ internal sealed class DogmaModifierEffect : ShipEffect
         "targetSpectrumBreakerBonus",
         "warpCoreStabilizerActive",
     ];
+
+    /// <summary>
+    /// A module that burns a resource each cycle (its consumptionType, attribute 713: a siege module's strontium, a capital core's heavy water) is refused as not implemented:
+    /// the fuel is not taken from the pilot's inventory yet (docs/project/TODO.md section 9; module_rules WP18). Running it free would be a success the reference does not give.
+    /// </summary>
+    private const string FuelNotImplemented = "FUEL_NOT_IMPLEMENTED";
+
+    protected override string? Refusal(ModuleEffectContext module) =>
+        module.Value(ModuleAttributes.ConsumptionType, 0) > 0 ? FuelNotImplemented : null;
 
     protected override SimEffect Build(ModuleEffectContext module)
     {

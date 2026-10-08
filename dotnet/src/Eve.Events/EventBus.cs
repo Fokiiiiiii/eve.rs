@@ -178,6 +178,13 @@ public sealed class EventBus
     }
 
     /// <summary>
+    /// The publish that new domain events use: the event is written in the caller's transaction, so it is committed with the change it announces and rolled back with it.
+    /// It cannot wake the pump itself (the commit is the caller's); the caller calls <see cref="Wake"/> after committing, as a best-effort latency step.
+    /// </summary>
+    public Task<long> PublishInTransactionAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string topic, object? payload, string? key = null, CancellationToken cancellationToken = default) =>
+        PublishAsync(connection, transaction, topic, payload, key, cancellationToken);
+
+    /// <summary>
     /// Publishes in the caller's transaction: the event is written with the change it announces. Call <see cref="Wake"/> after the commit to have it delivered at once (otherwise within
     /// <see cref="EventBusOptions.PollMs"/>).
     /// </summary>

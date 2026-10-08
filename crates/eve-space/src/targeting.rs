@@ -196,6 +196,24 @@ impl Scene {
                 protected: false,
             });
         }
+        // a mineable rock is locked through the same path as a wreck. Its id is an item id (the host allocates them from 1,990,000,000);
+        // the id spaces of rocks and system bodies are not yet verified against the SDE, so a rock is looked up before the bodies (UNVERIFIED, DEVIATIONS).
+        // A depleted rock is removed from the map, so it stops resolving and its locks are dropped by the upkeep in `target_order`.
+        if let Some(asteroid) = self.asteroids.get(&target) {
+            return Some(Subject {
+                id: target,
+                session: None,
+                position: asteroid.position,
+                radius: asteroid.radius,
+                type_id: asteroid.type_id,
+                group_id: asteroid.group_id,
+                signature_radius: asteroid.radius,
+                state: DamageState::whole(0.0),
+                has_damage_state: false,
+                warping: false,
+                protected: false,
+            });
+        }
         let body = self.system().body(target)?;
         Some(Subject {
             id: target,
@@ -1472,6 +1490,68 @@ mod tests {
         assert_eq!(refusal.reason, "TARGET_OUT_OF_RANGE");
         assert_eq!(refusal.target_type, 27_003);
         assert!(refusal.actual_distance > refusal.desired_range, "{refusal:?}");
+        assert!(on_target(&out).is_empty(), "{out:?}");
+    }
+
+    fn rock(id: i64, position: Vec3) -> crate::wreck::Asteroid {
+        crate::wreck::Asteroid {
+            id,
+            type_id: 1_230,
+            group_id: 462,
+            category_id: 25,
+            name: "Veldspar".to_string(),
+            graphic_id: None,
+            position,
+            direction: Vec3::new(0.0, 0.0, 1.0),
+            radius: 50.0,
+            units_remaining: 1_000,
+        }
+    }
+
+    #[test]
+    fn a_mineable_rock_in_range_is_locked_and_an_out_of_range_one_is_refused() {
+        let (mut scene, now) = crowd(2);
+        let at = scene.pilots[&B].ship.position;
+        let near = Vec3::new(at.x + 2_000.0, at.y, at.z);
+        let far = Vec3::new(at.x + 90_000.0, at.y, at.z);
+        scene.place_asteroid(rock(99_100_001, near), now);
+        scene.place_asteroid(rock(99_100_002, far), now);
+
+        let asked = scene.target_order(B, Order::Lock(99_100_001), now);
+        assert_eq!(answer(&asked), (true, vec![]), "{asked:?}");
+        let (out, now) = poll_until(&mut scene, now, 10.0);
+        assert_eq!(on_target(&out), vec![(B, words(&["add", "99100001"]))], "{out:?}");
+        assert_eq!(scene.locked_by(B), vec![99_100_001]);
+
+        let out = scene.target_order(B, Order::Lock(99_100_002), now);
+        let far_refusal = refusal(&out);
+        assert_eq!(far_refusal.reason, "TARGET_OUT_OF_RANGE", "{out:?}");
+        assert_eq!(far_refusal.target_type, 1_230);
+        assert!(on_target(&out).is_empty(), "{out:?}");
+
+        // a rock of another system is not in this scene's map, so it does not resolve here
+        let out = scene.target_order(B, Order::Lock(99_100_009), now);
+        assert_eq!(refusal(&out).reason, "TARGET_NOT_FOUND", "{out:?}");
+        assert!(on_target(&out).is_empty(), "{out:?}");
+    }
+
+    #[test]
+    fn a_depleted_rock_refuses_a_new_lock_and_drops_the_lock_held_on_it() {
+        let (mut scene, now) = crowd(2);
+        let at = scene.pilots[&B].ship.position;
+        let near = Vec3::new(at.x + 2_000.0, at.y, at.z);
+        scene.place_asteroid(rock(99_100_003, near), now);
+        let asked = scene.target_order(B, Order::Lock(99_100_003), now);
+        assert_eq!(answer(&asked), (true, vec![]), "{asked:?}");
+        let (_, now) = poll_until(&mut scene, now, 10.0);
+        assert_eq!(scene.locked_by(B), vec![99_100_003]);
+
+        let _ = scene.remove_asteroid(99_100_003, true, now);
+        let (_, now) = poll_until(&mut scene, now, 1.0);
+        assert!(scene.locked_by(B).is_empty(), "the lock on a depleted rock is dropped");
+
+        let out = scene.target_order(B, Order::Lock(99_100_003), now);
+        assert_eq!(refusal(&out).reason, "TARGET_NOT_FOUND", "{out:?}");
         assert!(on_target(&out).is_empty(), "{out:?}");
     }
 

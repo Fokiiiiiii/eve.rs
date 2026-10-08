@@ -8,6 +8,10 @@ namespace Eve.Services.Ships;
 /// <summary>What the client is told when a ship refuses: the user error it shows (the messages and error names are the reference's).</summary>
 public static class ShipErrors
 {
+    /// <summary>The client's UserError kinds for a type and a group (eveexceptions/const.py).</summary>
+    private const int UeTypeId = 4;
+    private const int UeGroupId = 7;
+
     /// <summary>The error that answers a refusal (the static data names the skills and groups a message speaks of).</summary>
     public static MachoWrappedException Of(ShipRefused refused, DogmaStatic statics)
     {
@@ -23,6 +27,14 @@ public static class ShipErrors
                 return Notify("You do not have enough CPU to online that module.");
             case ShipRefusal.NotEnoughPower:
                 return Notify("You do not have enough powergrid to online that module.");
+            // the client's UserError (locationDogmaItem.py CheckCanOnlineItem): the type and the group are tuples of the client's reference kinds (eveexceptions/const.py:
+            // UE_TYPEID = 4, UE_GROUPID = 7)
+            case ShipRefusal.MaxGroupOnline:
+                return MachoErrors.ThrowUserError(
+                    "CannotOnlineReachedMaxGroupOnline",
+                    ("type", new PyTuple([new PyInt(UeTypeId), new PyInt(refused.ModuleTypeId)])),
+                    ("group", new PyTuple([new PyInt(UeGroupId), new PyInt(refused.GroupId)])),
+                    ("maxGroupOnline", new PyInt(refused.MaxGroupOnline)));
             case ShipRefusal.NotEnoughCargoSpace:
                 return MachoErrors.ThrowUserError("NotEnoughCargoSpace", ("available", Py.Number(refused.Available)), ("volume", Py.Number(refused.Volume)));
             case ShipRefusal.NotEnoughDroneBaySpace:

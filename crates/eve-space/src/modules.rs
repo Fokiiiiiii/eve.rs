@@ -1329,7 +1329,7 @@ impl Scene {
     /// What the client of the ship an effect is projected at is told, for its HUD (`hudIconStates.js` of the reference): as the effect goes on `OnJamStart` (who, which module,
     /// the target, what the HUD calls it, when and for how long: a cycle and a tick over), `OnEwarStart` and the buff bar refreshed; as each cycle begins the timer again; as it ends
     /// `OnJamEnd`, `OnEwarEnd` and the buff bar. An NPC is told nothing.
-    fn jam_told(&self, source: SessionId, effect: &Effect, at: i64, phase: Jam) -> Vec<Out> {
+    pub(crate) fn jam_told(&self, source: SessionId, effect: &Effect, at: i64, phase: Jam) -> Vec<Out> {
         let Some(jam) = effect.jam() else { return Vec::new() };
         let Some(target) = self.session_of(effect.target_id).filter(|t| !crate::npc::is_npc_session(*t))
         else {
@@ -1453,7 +1453,7 @@ impl Scene {
 
     /// A cycle of an effect that is projected at a ship: what lands is `what` weakened by how far the target is (nothing when it is out of reach). An attack is
     /// an aggression of the ship that runs the effect.
-    fn project(
+    pub(crate) fn project(
         &mut self,
         session: SessionId,
         effect: &Effect,
@@ -1669,7 +1669,7 @@ impl Scene {
 
 /// Where an effect projected at a ship is in what the target's client is told of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Jam {
+pub(crate) enum Jam {
     /// The effect went on: the timer and the icon.
     Start,
     /// Another cycle began: the timer again.

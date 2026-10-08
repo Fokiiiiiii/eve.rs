@@ -134,6 +134,136 @@ public class DroneHostTests
         Assert.Equal(expectedDamage, launch.Weapon.RawDamage);
     }
 
+    // The drones of the SDE whose remote effects are the projected ones of the ship modules. Their numbers below are the attributes of each type in the SDE (3396210):
+    // a web's speedFactor, a neutralizer's energyNeutralizerAmount and its range (98) and duration (942), a repairer's amount (shieldBonus 68, armorDamageAmount 84,
+    // structureDamageAmount 83) with its maxRange (54) and duration (73), an ECM's sensor strengths (238-241) with its range (936), duration (929) and ecmJamDuration (2822),
+    // a dampener's maxTargetRangeBonus (309) and scanResolutionBonus (566), a weapon disruptor's maxRangeBonus (351), falloffBonus (349), a painter's signatureRadiusBonus (554).
+    private const int WarriorSw300 = 23731, AcolyteEv300 = 23659, LightShieldBotI = 23719, LightArmorBotI = 23711, LightHullBotI = 33706, WaspEc900 = 23473,
+        HobgoblinSd300 = 23715, AcolyteTd300 = 23727, WarriorTp300 = 23723;
+
+    /// <summary>The drone of that type launched from the bay: what the scene is asked for, and the drone is flown with no weapon (its effect is the remote one).</summary>
+    private static async Task<SimLaunchDrone> LaunchedAsync(int droneTypeId)
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await FlyingWithADroneAsync(rig, droneTypeId: droneTypeId);
+        await LaunchAsync(flying);
+        var launch = Assert.Single(rig.Sim.Heard.OfType<SimLaunchDrone>());
+        Assert.Null(launch.Weapon);
+        return launch;
+    }
+
+    [PgFact]
+    public async Task A_stasis_webifier_drone_is_launched_with_the_web_of_its_type_at_the_speed_factor_and_range_of_its_dogma()
+    {
+        var launch = await LaunchedAsync(WarriorSw300);
+
+        // entityAttackRange 10000 is at least its web's 5000 m reach
+        Assert.Equal(10000.0, launch.AttackRange);
+        var effect = Assert.IsType<SimDroneEffect>(launch.Effect);
+        Assert.Equal((6690, "effects.ModifyTargetSpeed", 5000.0, 5000.0), (effect.EffectId, effect.Fx, effect.CycleMs, effect.LastingMs));
+        var remote = Assert.IsType<SimAction.Remote>(effect.Action);
+        Assert.Equal((5000.0, 0.0, false, "webify"), (remote.Optimal, remote.Falloff, remote.AtCycleEnd, remote.Jam));
+        Assert.Equal(-5.0, Assert.IsType<SimRemote.Web>(remote.What).Percent);
+    }
+
+    [PgFact]
+    public async Task An_energy_neutralizer_drone_takes_its_amount_from_the_target_as_each_cycle_begins_within_its_own_range_and_duration()
+    {
+        var effect = Assert.IsType<SimDroneEffect>((await LaunchedAsync(AcolyteEv300)).Effect);
+
+        Assert.Equal((6691, "effects.EnergyDestabilization", 6000.0, 6000.0), (effect.EffectId, effect.Fx, effect.CycleMs, effect.LastingMs));
+        var remote = Assert.IsType<SimAction.Remote>(effect.Action);
+        Assert.Equal((5000.0, false, "ewEnergyNeut"), (remote.Optimal, remote.AtCycleEnd, remote.Jam));
+        var neutralize = Assert.IsType<SimRemote.Neutralize>(remote.What);
+        Assert.Equal((5.0, 0.0), (neutralize.Amount, neutralize.SignatureResolution));
+    }
+
+    [PgFact]
+    public async Task A_remote_shield_booster_drone_gives_its_shield_points_as_each_cycle_begins()
+    {
+        var effect = Assert.IsType<SimDroneEffect>((await LaunchedAsync(LightShieldBotI)).Effect);
+
+        Assert.Equal((6688, "effects.ShieldTransfer", 5000.0, 5000.0), (effect.EffectId, effect.Fx, effect.CycleMs, effect.LastingMs));
+        var remote = Assert.IsType<SimAction.Remote>(effect.Action);
+        Assert.Equal((5000.0, false, "shieldTransfer"), (remote.Optimal, remote.AtCycleEnd, remote.Jam));
+        var repair = Assert.IsType<SimRemote.Repair>(remote.What);
+        Assert.Equal((SimLayer.Shield, 12.0), (repair.Layer, repair.Amount));
+    }
+
+    [PgFact]
+    public async Task A_remote_armor_repairer_drone_mends_the_armor_of_its_target_as_each_cycle_ends()
+    {
+        var effect = Assert.IsType<SimDroneEffect>((await LaunchedAsync(LightArmorBotI)).Effect);
+
+        Assert.Equal((6687, "effects.RemoteArmorRepairDrone", 5000.0, 5000.0), (effect.EffectId, effect.Fx, effect.CycleMs, effect.LastingMs));
+        var remote = Assert.IsType<SimAction.Remote>(effect.Action);
+        Assert.Equal((5000.0, true, "remoteArmorRepair"), (remote.Optimal, remote.AtCycleEnd, remote.Jam));
+        var repair = Assert.IsType<SimRemote.Repair>(remote.What);
+        Assert.Equal((SimLayer.Armor, 12.0), (repair.Layer, repair.Amount));
+    }
+
+    [PgFact]
+    public async Task A_remote_hull_repairer_drone_mends_the_structure_of_its_target_as_each_cycle_ends()
+    {
+        var effect = Assert.IsType<SimDroneEffect>((await LaunchedAsync(LightHullBotI)).Effect);
+
+        Assert.Equal((6689, "effects.RemoteArmorRepairDrone", 5000.0, 5000.0), (effect.EffectId, effect.Fx, effect.CycleMs, effect.LastingMs));
+        var remote = Assert.IsType<SimAction.Remote>(effect.Action);
+        Assert.Equal((5000.0, true, "remoteHullRepair"), (remote.Optimal, remote.AtCycleEnd, remote.Jam));
+        var repair = Assert.IsType<SimRemote.Repair>(remote.What);
+        Assert.Equal((SimLayer.Structure, 6.0), (repair.Layer, repair.Amount));
+    }
+
+    [PgFact]
+    public async Task An_ECM_drone_jams_with_its_sensor_strengths_over_its_own_range_and_its_cycle_while_the_jam_lasts_its_own_duration()
+    {
+        var effect = Assert.IsType<SimDroneEffect>((await LaunchedAsync(WaspEc900)).Effect);
+
+        // the cycle is ECMDuration (929) of 20 s, a jam lands for ecmJamDuration (2822) of 5 s
+        Assert.Equal((6695, "effects.ElectronicAttributeModifyTarget", 20000.0, 5000.0), (effect.EffectId, effect.Fx, effect.CycleMs, effect.LastingMs));
+        var remote = Assert.IsType<SimAction.Remote>(effect.Action);
+        Assert.Equal((15000.0, 0.0, false), (remote.Optimal, remote.Falloff, remote.AtCycleEnd));
+        // scanGravimetricStrengthBonus, scanLadarStrengthBonus, scanMagnetometricStrengthBonus, scanRadarStrengthBonus: 2 each on this type
+        var jam = Assert.IsType<SimRemote.Jam>(remote.What);
+        Assert.Equal((2.0, 2.0, 2.0, 2.0), (jam.Gravimetric, jam.Ladar, jam.Magnetometric, jam.Radar));
+    }
+
+    [PgFact]
+    public async Task A_sensor_dampener_drone_shortens_the_lock_range_and_slows_the_scan_resolution_of_its_target()
+    {
+        var effect = Assert.IsType<SimDroneEffect>((await LaunchedAsync(HobgoblinSd300)).Effect);
+
+        Assert.Equal((6693, 5000.0, 5000.0), (effect.EffectId, effect.CycleMs, effect.LastingMs));
+        var remote = Assert.IsType<SimAction.Remote>(effect.Action);
+        Assert.Equal((5000.0, "ewRemoteSensorDamp"), (remote.Optimal, remote.Jam));
+        var damp = Assert.IsType<SimRemote.Damp>(remote.What);
+        Assert.Equal((-8.0, -8.0), (damp.RangePercent, damp.ResolutionPercent));
+    }
+
+    [PgFact]
+    public async Task A_weapon_disruptor_drone_shortens_the_range_and_falloff_of_the_turrets_of_its_target()
+    {
+        var effect = Assert.IsType<SimDroneEffect>((await LaunchedAsync(AcolyteTd300)).Effect);
+
+        Assert.Equal((6694, 5000.0, 5000.0), (effect.EffectId, effect.CycleMs, effect.LastingMs));
+        var remote = Assert.IsType<SimAction.Remote>(effect.Action);
+        Assert.Equal((5000.0, "ewTrackingDisrupt"), (remote.Optimal, remote.Jam));
+        var disrupt = Assert.IsType<SimRemote.Disrupt>(remote.What);
+        // maxRangeBonus 351, falloffBonus 349 and trackingSpeedBonus 767 are all -5 on this type in the SDE
+        Assert.Equal((-5.0, -5.0, -5.0), (disrupt.RangePercent, disrupt.FalloffPercent, disrupt.TrackingPercent));
+    }
+
+    [PgFact]
+    public async Task A_target_painter_drone_makes_its_target_bigger_to_the_sensors_by_its_signature_bonus()
+    {
+        var effect = Assert.IsType<SimDroneEffect>((await LaunchedAsync(WarriorTp300)).Effect);
+
+        Assert.Equal((6692, "effects.TargetPaint", 5000.0, 5000.0), (effect.EffectId, effect.Fx, effect.CycleMs, effect.LastingMs));
+        var remote = Assert.IsType<SimAction.Remote>(effect.Action);
+        Assert.Equal((5000.0, "ewTargetPaint"), (remote.Optimal, remote.Jam));
+        Assert.Equal(4.0, Assert.IsType<SimRemote.Paint>(remote.What).Percent);
+    }
+
     [PgFact]
     public async Task A_pilot_flies_as_many_drones_as_its_skills_allow_and_is_refused_the_rest()
     {

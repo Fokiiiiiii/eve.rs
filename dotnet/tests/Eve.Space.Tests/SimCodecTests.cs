@@ -70,6 +70,10 @@ public class SimCodecTests
         {
             return new SimAction.Tractor((double)a["velocity"]!, (double)a["hold"]!);
         }
+        if ((string)a["kind"]! == "doomsday")
+        {
+            return new SimAction.Doomsday((double)a["delayMs"]!, [(double)a["damage"]![0]!, (double)a["damage"]![1]!, (double)a["damage"]![2]!, (double)a["damage"]![3]!], (double)a["immobileMs"]!, (double)a["noJumpMs"]!);
+        }
         if ((string)a["kind"]! == "passiveLock")
         {
             return new SimAction.PassiveLock();
@@ -310,6 +314,31 @@ public class SimCodecTests
         Assert.Equal(21, strike.Pulses);
         Assert.Equal(new double[] { 10000, 10000, 10000, 10000 }, strike.Damage);
         Assert.Equal((10000.0, 1000.0, 30000.0, 300000.0), (strike.WarningMs, strike.PulseMs, strike.ImmobileMs, strike.NoJumpMs));
+    }
+
+    [Fact]
+    public void A_titan_doomsday_roundtrips_its_delay_damage_and_windows_through_the_sim_codec()
+    {
+        // protocol 26: SimAction tag 14, one hit on the locked target after its delay, the ship held for its windows
+        var message = Assert.IsType<SimActivate>(MessageOf(Case("valid", "activate a titan doomsday (Judgment)")));
+        var encoded = SimCodec.Encode(message);
+        var decoded = Assert.IsType<SimActivate>(SimCodec.Decode(encoded.AsMemory(4)));
+
+        Assert.Equal(Convert.ToHexString(encoded), Convert.ToHexString(SimCodec.Encode(decoded)));
+        Assert.Equal(1000000000002, decoded.Effect.TargetId);
+        var hit = Assert.IsType<SimAction.Doomsday>(decoded.Effect.Action);
+        Assert.True(hit.IsValid);
+        Assert.Equal((9000.0, 30000.0, 300000.0), (hit.DelayMs, hit.ImmobileMs, hit.NoJumpMs));
+        Assert.Equal(new double[] { 2400000.0, 0.0, 0.0, 0.0 }, hit.Damage);
+    }
+
+    [Fact]
+    public void A_titan_doomsday_with_a_negative_delay_is_not_encoded()
+    {
+        var message = Assert.IsType<SimActivate>(MessageOf(Case("valid", "activate a titan doomsday (Judgment)")));
+        var bad = message with { Effect = message.Effect with { Action = (message.Effect.Action as SimAction.Doomsday)! with { DelayMs = -1.0 } } };
+
+        Assert.Throws<ArgumentException>(() => SimCodec.Encode(bad));
     }
 
     [Fact]

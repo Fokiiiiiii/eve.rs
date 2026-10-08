@@ -1,4 +1,3 @@
-using Eve.Npc;
 using Eve.Space;
 using static Eve.Services.Space.Effects.ModuleAttributes;
 
@@ -23,7 +22,7 @@ internal sealed class ConeEffect : ShipEffect
 
     protected override string? Refusal(ModuleEffectContext module)
     {
-        if (module.Aim is not { Count: 3 } aim || Unit(aim) is null)
+        if (module.Aim is not { Count: 3 } aim || DoomsdayStrike.Unit(aim) is null)
         {
             return "TARGET_POINT_REQUIRED";
         }
@@ -32,7 +31,7 @@ internal sealed class ConeEffect : ShipEffect
         {
             return "SUPERWEAPON_CONE_NOT_IMPLEMENTED";
         }
-        return Strike(module, aim) is { IsValid: true } ? null : "SUPERWEAPON_CONE_DATA_MISSING";
+        return DoomsdayStrike.Of(module, aim) is { IsValid: true } ? null : "SUPERWEAPON_CONE_DATA_MISSING";
     }
 
     protected override SimEffect Build(ModuleEffectContext module)
@@ -41,43 +40,6 @@ internal sealed class ConeEffect : ShipEffect
         SimChange[] told = [new(module.ModuleId, CapacitorNeed, capacitor), new(module.ModuleId, durationAttribute, Three(duration))];
         return new SimEffect(
             module.ModuleId, module.Module.TypeId, module.Effect.Id, module.Effect.Guid, duration, capacitor, Math.Max(1, module.Repeat), 0, null, null, told, told, null,
-            Strike(module, module.Aim!));
-    }
-
-    /// <summary>The strike of the cone: the aim, the cone's length (its range is fixed), its damage per pulse and its windows, all from the module's data after dogma.</summary>
-    private static SimAction.Strike Strike(ModuleEffectContext module, IReadOnlyList<double> aim)
-    {
-        double Attribute(int attribute) => NpcArmament.Round6(Math.Max(0, module.Value(attribute, 0)));
-        var direction = Unit(aim) ?? [0.0, 0.0, 0.0];
-        var pulse = Attribute(DoomsdayDamageCycleTime);
-        var window = Attribute(DoomsdayDamageDuration);
-        // the reference's window is closed at its end: a pulse at its start and at every cycle time after it, up to and including its end
-        var pulses = pulse > 0 ? (int)Math.Floor(window / pulse) + 1 : 0;
-        return new SimAction.Strike(
-            (byte)Attribute(DoomsdayAoeShape),
-            direction,
-            Attribute(MaxRange),
-            0,
-            Attribute(DoomsdayWarningDuration),
-            pulse,
-            pulses,
-            [Attribute(EmDamage), Attribute(ThermalDamage), Attribute(KineticDamage), Attribute(ExplosiveDamage)],
-            Attribute(SignatureRadius),
-            Attribute(DoomsdayImmobilityDuration),
-            Attribute(DoomsdayNoJumpOrCloakDuration),
-            Attribute(DoomsdayEnergyNeutAmount),
-            Attribute(DoomsdayEnergyNeutRadius),
-            Attribute(DoomsdayEnergyNeutSignatureRadius));
-    }
-
-    /// <summary>The unit vector of an aim, or null for a zero or non-finite aim.</summary>
-    internal static double[]? Unit(IReadOnlyList<double> aim)
-    {
-        if (aim.Count != 3 || !aim.All(double.IsFinite))
-        {
-            return null;
-        }
-        var length = Math.Sqrt(aim.Sum(c => c * c));
-        return length > 0 ? [aim[0] / length, aim[1] / length, aim[2] / length] : null;
+            DoomsdayStrike.Of(module, module.Aim!));
     }
 }

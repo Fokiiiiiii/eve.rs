@@ -20,6 +20,15 @@ public class SuperWeaponHostTests
     private const long SuperWeaponAmarrEffect = 4489;
     private const long DoomsdayHogEffect = 6474;
     private const long DoomsdayConeEffect = 6473;
+    private const long DoomsdayBeamEffect = 6472;
+    private const int HolyDestinyLance = 40631;
+    private const int LanceFuel = 16274;
+    /// <summary>The consumption of the lance (714): 50000 of the fuel per cycle.</summary>
+    private const long LanceFuelPerCycle = 50000;
+    /// <summary>LZ-6SU (30000208, security -0.17): zero security, where a lance and a cone may be used (disallowInEmpireSpace refuses low and high security).</summary>
+    private const int ZeroSecSystem = 30000208;
+    /// <summary>A system of low security (30000012, 0.32): the empire-space rule refuses a lance and a cone there.</summary>
+    private const int LowSecSystem = 30000012;
 
     [PgFact]
     public async Task A_cone_is_refused_by_the_empire_space_rule_it_states_before_its_effect_is_asked_for_and_takes_no_fuel()
@@ -53,8 +62,86 @@ public class SuperWeaponHostTests
     }
 
     [PgFact]
-    public async Task A_point_targeted_doomsday_through_superWeaponMgr_is_refused_with_the_user_error_that_names_it()
+    public async Task A_lance_is_refused_by_the_empire_space_rule_of_high_security_and_takes_no_fuel()
     {
+        // disallowInEmpireSpace (1074) is set on the lance: the client's own rule (ModuleRestrictions) refuses it in high security as in low
+        await using var rig = await Rig.CreateAsync();
+        var flying = await DroneHostTests.FlyingWithADroneAsync(rig, minerTypeId: HolyDestinyLance);
+        await PutFuelAsync(rig, flying, LanceFuel, LanceFuelPerCycle);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            new SuperWeaponService(rig.Space).ActivatePointTargetedAsync(flying.Session, flying.Module, DoomsdayBeamEffect, Point(0.6, 0, 0.8), CancellationToken.None).AsTask());
+
+        Assert.Equal("CantInEmpireSpace", UserErrorName(error));
+        Assert.Empty(rig.Sim.Heard.OfType<SimActivate>());
+        Assert.Equal(LanceFuelPerCycle, await QuantityOfAsync(rig, flying, LanceFuel));
+    }
+
+    [PgFact]
+    public async Task A_lance_is_refused_by_the_empire_space_rule_of_low_security_and_takes_no_fuel()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await DroneHostTests.FlyingWithADroneAsync(rig, minerTypeId: HolyDestinyLance, solarSystemId: LowSecSystem);
+        await PutFuelAsync(rig, flying, LanceFuel, LanceFuelPerCycle);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            new SuperWeaponService(rig.Space).ActivatePointTargetedAsync(flying.Session, flying.Module, DoomsdayBeamEffect, Point(0.6, 0, 0.8), CancellationToken.None).AsTask());
+
+        Assert.Equal("CantInEmpireSpace", UserErrorName(error));
+        Assert.Empty(rig.Sim.Heard.OfType<SimActivate>());
+        Assert.Equal(LanceFuelPerCycle, await QuantityOfAsync(rig, flying, LanceFuel));
+    }
+
+    [PgFact]
+    public async Task A_lance_in_zero_security_starts_through_the_host_and_its_fuel_is_taken_when_the_simulation_asks()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await DroneHostTests.FlyingWithADroneAsync(rig, minerTypeId: HolyDestinyLance, solarSystemId: ZeroSecSystem);
+        await PutFuelAsync(rig, flying, LanceFuel, LanceFuelPerCycle);
+        var route = new SuperWeaponService(rig.Space);
+
+        var accepted = await route.ActivatePointTargetedAsync(flying.Session, flying.Module, DoomsdayBeamEffect, Point(0.6, 0, 0.8), CancellationToken.None).AsTask();
+
+        Assert.True(accepted);
+        var activate = Assert.Single(rig.Sim.Heard.OfType<SimActivate>());
+        var strike = Assert.IsType<SimAction.Strike>(activate.Effect.Action);
+        Assert.Equal(1, strike.Shape);
+        Assert.Equal((16, 2500.0), (strike.Pulses, strike.Radius));
+        // the fuel is not taken by the activation: the simulation asks for it, cycle by cycle (the shared mechanism)
+        Assert.Equal(LanceFuelPerCycle, await QuantityOfAsync(rig, flying, LanceFuel));
+        var paid = await ModuleFuelHostTests.SettleAsync(rig, ModuleFuelHostTests.FuelCycle(flying, flying.Module, 1));
+        Assert.True(paid.Accepted, paid.Reason);
+        Assert.Equal(LanceFuelPerCycle, paid.DeliveredUnits);
+        Assert.Equal(0, await QuantityOfAsync(rig, flying, LanceFuel));
+    }
+
+    [PgFact]
+    public async Task A_cone_in_zero_security_starts_through_the_host_and_its_fuel_is_taken_when_the_simulation_asks()
+    {
+        // the accepted path of the Bosonic cone through the host (B2's gap): the pilot is in zero security, so the rule passes, and the strike goes to the sim
+        await using var rig = await Rig.CreateAsync();
+        var flying = await DroneHostTests.FlyingWithADroneAsync(rig, minerTypeId: BosonicFieldGenerator, solarSystemId: ZeroSecSystem);
+        await PutStrontiumAsync(rig, flying, 2000);
+        var route = new SuperWeaponService(rig.Space);
+
+        var accepted = await route.ActivatePointTargetedAsync(flying.Session, flying.Module, DoomsdayConeEffect, Point(0, 0, 1), CancellationToken.None).AsTask();
+
+        Assert.True(accepted);
+        var activate = Assert.Single(rig.Sim.Heard.OfType<SimActivate>());
+        var strike = Assert.IsType<SimAction.Strike>(activate.Effect.Action);
+        Assert.Equal(3, strike.Shape);
+        Assert.Equal(21, strike.Pulses);
+        Assert.Equal(2000, await QuantityAsync(rig, flying));
+        var paid = await ModuleFuelHostTests.SettleAsync(rig, ModuleFuelHostTests.FuelCycle(flying, flying.Module, 1));
+        Assert.True(paid.Accepted, paid.Reason);
+        Assert.Equal(2000, paid.DeliveredUnits);
+        Assert.Equal(0, await QuantityAsync(rig, flying));
+    }
+
+    [PgFact]
+    public async Task A_titan_doomsday_aimed_at_a_point_through_superWeaponMgr_is_refused_for_want_of_a_target()
+    {
+        // the client never aims a titan at a point (no isPointTargeted): a point that reaches the route has no target, so it is refused by name
         await using var rig = await Rig.CreateAsync();
         var flying = await DroneHostTests.FlyingWithADroneAsync(rig, minerTypeId: JudgmentDoomsday);
         var route = new SuperWeaponService(rig.Space);
@@ -62,8 +149,42 @@ public class SuperWeaponHostTests
         var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
             route.ActivatePointTargetedAsync(flying.Session, flying.Module, SuperWeaponAmarrEffect, Point(0.6, 0, 0.8), CancellationToken.None).AsTask());
 
-        Assert.Equal("'Judgment' Electromagnetic Doomsday cannot be activated.", NotifyText(error));
+        Assert.Equal("You need an active target to activate that module.", NotifyText(error));
         Assert.Empty(rig.Sim.Heard.OfType<SimActivate>());
+    }
+
+    [PgFact]
+    public async Task A_titan_doomsday_on_a_locked_target_starts_through_the_host_and_takes_its_fuel_when_the_simulation_asks()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await DroneHostTests.FlyingWithADroneAsync(rig, minerTypeId: JudgmentDoomsday);
+        await PutFuelAsync(rig, flying, LanceFuel, LanceFuelPerCycle);
+        const long target = 1000000000002;
+
+        var result = await rig.Space.ActivateAsync(flying.Session, flying.Module, "superWeaponAmarr", target, 1, CancellationToken.None);
+
+        Assert.True(result is { Ok: true }, result?.Reason);
+        var activate = Assert.Single(rig.Sim.Heard.OfType<SimActivate>());
+        Assert.Equal(target, activate.Effect.TargetId);
+        Assert.Equal(9000.0, Assert.IsType<SimAction.Doomsday>(activate.Effect.Action).DelayMs);
+        Assert.Equal(LanceFuelPerCycle, await QuantityOfAsync(rig, flying, LanceFuel));
+        var paid = await ModuleFuelHostTests.SettleAsync(rig, ModuleFuelHostTests.FuelCycle(flying, flying.Module, 1));
+        Assert.True(paid.Accepted, paid.Reason);
+        Assert.Equal(0, await QuantityOfAsync(rig, flying, LanceFuel));
+    }
+
+    [PgFact]
+    public async Task A_titan_doomsday_without_a_target_is_refused_by_name_and_sends_nothing_and_takes_no_fuel()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await DroneHostTests.FlyingWithADroneAsync(rig, minerTypeId: JudgmentDoomsday);
+        await PutFuelAsync(rig, flying, LanceFuel, LanceFuelPerCycle);
+
+        var result = await rig.Space.ActivateAsync(flying.Session, flying.Module, "superWeaponAmarr", 0, 1, CancellationToken.None);
+
+        Assert.Equal("TARGET_REQUIRED", result?.Reason);
+        Assert.Empty(rig.Sim.Heard.OfType<SimActivate>());
+        Assert.Equal(LanceFuelPerCycle, await QuantityOfAsync(rig, flying, LanceFuel));
     }
 
     [PgFact]
@@ -136,14 +257,23 @@ public class SuperWeaponHostTests
                 ? text.Value
                 : null;
 
-    private static async Task PutStrontiumAsync(Rig rig, DroneHostTests.Flying flying, long quantity)
+    private static Task PutStrontiumAsync(Rig rig, DroneHostTests.Flying flying, long quantity) => PutFuelAsync(rig, flying, StrontiumClathrates, quantity);
+
+    /// <summary>Puts a quantity of a fuel in the cargo of the ship.</summary>
+    private static async Task PutFuelAsync(Rig rig, DroneHostTests.Flying flying, int fuelTypeId, long quantity)
     {
         await using var connection = await rig.Source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         await rig.Items.CreateAsync(connection, transaction,
-            new NewItem(StrontiumClathrates, flying.Character, ShipIdOf(flying), CharacterShips.CargoFlag, quantity));
+            new NewItem(fuelTypeId, flying.Character, ShipIdOf(flying), CharacterShips.CargoFlag, quantity));
         await transaction.CommitAsync();
     }
+
+    /// <summary>The units of a fuel the ship holds in its cargo.</summary>
+    private static async Task<long> QuantityOfAsync(Rig rig, DroneHostTests.Flying flying, int fuelTypeId) =>
+        (await rig.Items.InLocationAsync(ShipIdOf(flying), flying.Character))
+            .Where(item => item.TypeId == fuelTypeId && item.Flag == CharacterShips.CargoFlag)
+            .Sum(item => item.Quantity);
 
     /// <summary>The units of strontium the ship holds in its cargo.</summary>
     private static async Task<long> QuantityAsync(Rig rig, DroneHostTests.Flying flying) =>

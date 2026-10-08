@@ -17,11 +17,13 @@ public class SuperWeaponEffectsTests
     /// <summary>The reason each activation effect of the group is refused with. The reason names the family whose body is missing.</summary>
     private static readonly IReadOnlyDictionary<string, string> ReasonByEffect = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
-        ["superWeaponAmarr"] = "SUPERWEAPON_DOOMSDAY_NOT_IMPLEMENTED",
-        ["superWeaponCaldari"] = "SUPERWEAPON_DOOMSDAY_NOT_IMPLEMENTED",
-        ["superWeaponGallente"] = "SUPERWEAPON_DOOMSDAY_NOT_IMPLEMENTED",
-        ["superWeaponMinmatar"] = "SUPERWEAPON_DOOMSDAY_NOT_IMPLEMENTED",
-        ["doomsdayBeamDOT"] = "SUPERWEAPON_LANCE_NOT_IMPLEMENTED",
+        // the titan doomsdays have a body: without a locked target they are refused for it (their built hit is tested in A_titan...)
+        ["superWeaponAmarr"] = "TARGET_REQUIRED",
+        ["superWeaponCaldari"] = "TARGET_REQUIRED",
+        ["superWeaponGallente"] = "TARGET_REQUIRED",
+        ["superWeaponMinmatar"] = "TARGET_REQUIRED",
+        // the lance has a body: without a point it is refused for the point (its aimed package is tested in A_lance...)
+        ["doomsdayBeamDOT"] = "TARGET_POINT_REQUIRED",
         ["doomsdaySlash"] = "SUPERWEAPON_REAPER_NOT_IMPLEMENTED",
         ["debuffLance"] = "SUPERWEAPON_DISRUPTIVE_LANCE_NOT_IMPLEMENTED",
         // the cone has a body: without a point it is refused for the point (its aimed package is tested in A_cone...)
@@ -101,6 +103,65 @@ public class SuperWeaponEffectsTests
         Assert.Equal((10000.0, 30000.0, 300000.0), (strike.SignatureRadius, strike.ImmobileMs, strike.NoJumpMs));
         Assert.Equal((30000.0, 10000.0, 20000.0), (strike.NeutAmount, strike.NeutRadius, strike.NeutSignatureRadius));
         Assert.Equal(0, strike.Radius);
+    }
+
+    [PgFact]
+    public async Task A_lance_is_built_from_its_static_data_when_aimed_and_is_refused_without_a_point()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
+        await statics.EnsureTypesAsync([Ship, 40631, 41439, 41440, 41441]);
+
+        // the Holy Destiny (40631): a cylinder (doomsdayAOEShape 1) of 2500 m along maxRange 200 km, pulses from a warning of 15 s every second through a
+        // 15 s window (closed at its end: 16 pulses), 50000 EM each, signature 5000, the immobility and no-jump windows, and the energy neutralisation
+        var lance = FittedModule(statics, 40631);
+        Assert.Equal("TARGET_POINT_REQUIRED", ModulePackages.Of(lance.Snapshot, statics, lance.ModuleId, "doomsdayBeamDOT", 0, 1).Reason);
+        var result = ModulePackages.Of(lance.Snapshot, statics, lance.ModuleId, "doomsdayBeamDOT", 0, 1, [0.6, 0.0, 0.8]);
+        Assert.Null(result.Reason);
+        Assert.True(result.Effect!.BurnsFuel, "the fuel is the shared mechanism's (consumption 713 16274 x 714 50000)");
+        var strike = Assert.IsType<SimAction.Strike>(result.Effect.Action);
+        Assert.True(strike.IsValid);
+        Assert.Equal(1, strike.Shape);
+        Assert.Equal([0.6, 0.0, 0.8], strike.Direction);
+        Assert.Equal((200000.0, 2500.0, 15000.0, 1000.0, 16), (strike.Length, strike.Radius, strike.WarningMs, strike.PulseMs, strike.Pulses));
+        Assert.Equal([50000.0, 0.0, 0.0, 0.0], strike.Damage);
+        Assert.Equal((5000.0, 30000.0, 300000.0), (strike.SignatureRadius, strike.ImmobileMs, strike.NoJumpMs));
+        Assert.Equal((35000.0, 10000.0, 20000.0), (strike.NeutAmount, strike.NeutRadius, strike.NeutSignatureRadius));
+
+        // the racial lances are the same effect with their own numbers: each builds a valid cylinder
+        foreach (var racial in new[] { 41439, 41440, 41441 })
+        {
+            var fixture = FittedModule(statics, racial);
+            var built = ModulePackages.Of(fixture.Snapshot, statics, fixture.ModuleId, "doomsdayBeamDOT", 0, 1, [0.6, 0.0, 0.8]);
+            Assert.Null(built.Reason);
+            Assert.Equal(1, Assert.IsType<SimAction.Strike>(built.Effect!.Action).Shape);
+        }
+    }
+
+    [PgFact]
+    public async Task A_titan_doomsday_is_built_as_one_hit_on_its_target_after_its_delay_with_its_one_damage_kind()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
+        // the Judgment (24550, EM 2 400 000, damageDelayDuration 9000, immobility 30 s, no jump or cloak 300 s) and the Gjallarhorn (23674, explosive, 7500 ms)
+        await statics.EnsureTypesAsync([Ship, 24550, 23674]);
+        const long target = 1000000000002;
+
+        var judgment = FittedModule(statics, 24550);
+        Assert.Equal("TARGET_REQUIRED", ModulePackages.Of(judgment.Snapshot, statics, judgment.ModuleId, "superWeaponAmarr", 0, 1).Reason);
+        var result = ModulePackages.Of(judgment.Snapshot, statics, judgment.ModuleId, "superWeaponAmarr", target, 1);
+        Assert.Null(result.Reason);
+        Assert.True(result.Effect!.BurnsFuel, "the fuel is the shared mechanism's (consumption 713 16274 x 714 50000)");
+        Assert.Equal(target, result.Effect.TargetId);
+        var hit = Assert.IsType<SimAction.Doomsday>(result.Effect.Action);
+        Assert.True(hit.IsValid);
+        Assert.Equal((9000.0, 30000.0, 300000.0), (hit.DelayMs, hit.ImmobileMs, hit.NoJumpMs));
+        Assert.Equal([2400000.0, 0.0, 0.0, 0.0], hit.Damage);
+
+        var gjallarhorn = FittedModule(statics, 23674);
+        var explosive = Assert.IsType<SimAction.Doomsday>(ModulePackages.Of(gjallarhorn.Snapshot, statics, gjallarhorn.ModuleId, "superWeaponMinmatar", target, 1).Effect!.Action);
+        Assert.Equal(7500.0, explosive.DelayMs);
+        Assert.Equal([0.0, 0.0, 0.0, 2400000.0], explosive.Damage);
     }
 
     /// <summary>A ship with one module fitted and online, as the host's snapshot has them (the character is not needed by these rules).</summary>

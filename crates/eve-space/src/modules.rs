@@ -227,7 +227,7 @@ impl Action {
     fn offensive(&self) -> bool {
         match self {
             Self::Remote { what, .. } => what.hostile(),
-            Self::Smartbomb { .. } | Self::EcmBurst { .. } | Self::Strike { .. } => true,
+            Self::Smartbomb { .. } | Self::EcmBurst { .. } | Self::Strike { .. } | Self::Doomsday { .. } => true,
             Self::Cloak | Self::MicroJumpDrive { .. } | Self::ResistanceShift { .. } => false,
             Self::Charged { action, fallback, .. } => {
                 action.offensive() || fallback.as_deref().is_some_and(Action::offensive)
@@ -340,6 +340,9 @@ pub enum Action {
     AutoTarget { range: f64 },
     /// A doomsday's strike (tag 13, ADR 0013 epoch 25): the area in front of the ship is hit after a warning, pulse by pulse, and the ship is held for its windows.
     Strike { strike: Strike },
+    /// A titan doomsday (tag 14, ADR 0013 epoch 26): the locked target is hit once, `delay_ms` after the cycle starts, with `damage` (the four kinds, not scaled
+    /// by a signature). The ship is held for its windows from the start, as a strike's.
+    Doomsday { delay_ms: f64, damage: crate::health::Damage, immobile_ms: f64, no_jump_ms: f64 },
 }
 
 /// What a mining laser mines (the wire byte: 0 ore, 1 ice, 2 gas).
@@ -576,6 +579,8 @@ pub(crate) struct Running {
     cycles: i32,
     /// The pulses of a strike the cycle has made (the next one is due at its `pulse_offset_ms`).
     strike_done: i32,
+    /// Whether a titan doomsday has hit its target in the cycle that is on.
+    doomsday_hit: bool,
     /// The pilot asked for it to stop: it does when the cycle ends.
     stopping: bool,
     /// The rounds a turret or charge-using module has left.
@@ -920,6 +925,23 @@ impl Scene {
                 return vec![Out::Refused { session, command: CODE, reason: "CANNOT_ACTIVATE_IN_WARP" }];
             }
         }
+        if let Some(Action::Doomsday { delay_ms, damage, immobile_ms, no_jump_ms }) = effect.action.as_ref() {
+            let numbers = [*delay_ms, *immobile_ms, *no_jump_ms];
+            if !numbers.iter().all(|n| n.is_finite() && *n >= 0.0) || !damage.iter().all(|d| d.is_finite() && *d >= 0.0) {
+                return vec![Out::Refused { session, command: CODE, reason: "BAD_DOOMSDAY" }];
+            }
+            if pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()) {
+                return vec![Out::Refused { session, command: CODE, reason: "CANNOT_ACTIVATE_IN_WARP" }];
+            }
+            // the target is a locked ship of the scene (the reference's TARGET_REQUIRED, TARGET_NOT_FOUND and TARGET_NOT_LOCKED)
+            if effect.target_id <= 0 {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_REQUIRED" }];
+            }
+            if !self.turret_target_ok(session, &effect) {
+                let reason = if self.session_of(effect.target_id).is_none() { "TARGET_NOT_FOUND" } else { "TARGET_NOT_LOCKED" };
+                return vec![Out::Refused { session, command: CODE, reason }];
+            }
+        }
         if matches!(effect.action.as_ref(), Some(Action::Cloak)) {
             if pilot.no_jump_until > now {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_JUMP_OR_CLOAK" }];
@@ -1064,6 +1086,7 @@ impl Scene {
                 cycle_start: now,
                 cycles: 1,
                 strike_done: 0,
+                doomsday_hit: false,
                 stopping: false,
                 rounds,
                 charged_this_cycle,
@@ -1309,6 +1332,14 @@ impl Scene {
             if run.pending_remote_repair.is_some() {
                 continue;
             }
+            if let Some(Action::Doomsday { delay_ms, .. }) = run.effect.action.as_ref()
+                && !run.doomsday_hit
+            {
+                consider(
+                    run.cycle_start + (delay_ms * TICKS_PER_SECOND as f64 / 1000.0) as i64,
+                    Moment::DoomsdayHit(index),
+                );
+            }
             if let Some(Action::Strike { strike }) = run.effect.action.as_ref()
                 && run.strike_done < strike.pulses
             {
@@ -1341,6 +1372,7 @@ impl Scene {
             Moment::WorkStop(index) => self.stop_parked(session, index, at),
             Moment::StartResend(index) => self.resend_start(session, index, at),
             Moment::StrikePulse(index) => self.strike_pulse(session, index, at),
+            Moment::DoomsdayHit(index) => self.doomsday_hit(session, index, at),
         }
     }
 
@@ -1877,6 +1909,13 @@ impl Scene {
                 self.smartbomb(session, effect, *range, *damage, *hurts_pilots, at)
             }
             Some(Action::Strike { strike }) if when == Applies::CycleStart => self.strike_start(session, effect, *strike, at),
+            Some(Action::Doomsday { immobile_ms, no_jump_ms, .. }) if when == Applies::CycleStart => {
+                self.hold_for_windows(session, *immobile_ms, *no_jump_ms, at);
+                if let Some(run) = self.pilots.get_mut(&session).and_then(|pilot| pilot.modules.running.iter_mut().find(|run| run.effect.module_id == effect.module_id)) {
+                    run.doomsday_hit = false;
+                }
+                Vec::new()
+            }
             Some(Action::EcmBurst { range, strength }) if when == Applies::CycleStart => {
                 self.jam_burst(session, strength, *range, at)
             }
@@ -2034,15 +2073,41 @@ impl Scene {
     /// A strike's cycle starts: the ship stops and is held for its windows, every ship in the neutralising radius loses its capacitor, and the pulses are
     /// counted from zero (the first is due at the warning).
     fn strike_start(&mut self, session: SessionId, effect: &Effect, strike: Strike, at: i64) -> Vec<Out> {
-        let per_ms = TICKS_PER_SECOND as f64 / 1000.0;
-        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
-        pilot.immobile_until = pilot.immobile_until.max(at + (strike.immobile_ms * per_ms) as i64);
-        pilot.no_jump_until = pilot.no_jump_until.max(at + (strike.no_jump_ms * per_ms) as i64);
-        pilot.ship.velocity = eve_destiny::Vec3::new(0.0, 0.0, 0.0);
-        if let Some(run) = pilot.modules.running.iter_mut().find(|run| run.effect.module_id == effect.module_id) {
+        self.hold_for_windows(session, strike.immobile_ms, strike.no_jump_ms, at);
+        if let Some(run) = self.pilots.get_mut(&session).and_then(|pilot| pilot.modules.running.iter_mut().find(|run| run.effect.module_id == effect.module_id)) {
             run.strike_done = 0;
         }
         self.strike_neutralise(session, strike, at)
+    }
+
+    /// The ship of a doomsday's cycle is held: it stops, follows no order and cannot warp or jump for `immobile_ms`, and cannot jump or cloak for `no_jump_ms`
+    /// (both from the start of the cycle, the reference's `immobilityDuration` and `noJumpOrCloakDuration`).
+    fn hold_for_windows(&mut self, session: SessionId, immobile_ms: f64, no_jump_ms: f64, at: i64) {
+        let per_ms = TICKS_PER_SECOND as f64 / 1000.0;
+        let Some(pilot) = self.pilots.get_mut(&session) else { return };
+        pilot.immobile_until = pilot.immobile_until.max(at + (immobile_ms * per_ms) as i64);
+        pilot.no_jump_until = pilot.no_jump_until.max(at + (no_jump_ms * per_ms) as i64);
+        pilot.ship.velocity = eve_destiny::Vec3::new(0.0, 0.0, 0.0);
+    }
+
+    /// The titan doomsday's hit: the locked target takes the damage once, if it is still in the scene and not under its undocking protection (the
+    /// reference's `tickDoomsdayEffect`, which hits the primary target alone: a titan has no lightning chain).
+    fn doomsday_hit(&mut self, session: SessionId, index: usize, at: i64) -> Vec<Out> {
+        let (module_type, target_id, damage) = {
+            let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+            let Some(run) = pilot.modules.running.get_mut(index) else { return Vec::new() };
+            let Some(Action::Doomsday { damage, .. }) = run.effect.action.clone() else { return Vec::new() };
+            if run.doomsday_hit {
+                return Vec::new();
+            }
+            run.doomsday_hit = true;
+            (run.effect.module_type, run.effect.target_id, damage)
+        };
+        let Some(target_session) = self.session_of(target_id) else { return Vec::new() };
+        if self.pilots.get(&target_session).is_some_and(|target| target.protected_until > at) {
+            return Vec::new();
+        }
+        self.damage_ship(session, module_type, (target_session, target_id), damage, at)
     }
 
     /// The energy neutralisation of a strike: each other ship whose surface is within `neut_radius` of the firing ship loses `neut_amount` times its
@@ -2292,6 +2357,8 @@ enum Moment {
     StartResend(usize),
     /// The next pulse of a strike is due (the running effect at this index).
     StrikePulse(usize),
+    /// The hit of a titan doomsday is due (the running effect at this index).
+    DoomsdayHit(usize),
 }
 
 #[cfg(test)]

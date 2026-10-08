@@ -97,6 +97,9 @@ internal static class ModuleAttributes
     public const int DoomsdayNoJumpOrCloakDuration = 2427;
     /// <summary>How long the buff a doomsday applies lasts on its recipients.</summary>
     public const int DoomsdayAppliedDBuffDuration = 5412;
+
+    /// <summary><c>damageDelayDuration</c>: the time from a titan doomsday's start to its hit (9000 ms for the Judgment).</summary>
+    public const int DamageDelayDuration = 1839;
     /// <summary>The Pulse Activated Nexus Invulnerability Core's duration (the effect's durationAttributeID).</summary>
     public const int PanicDuration = 2788;
 

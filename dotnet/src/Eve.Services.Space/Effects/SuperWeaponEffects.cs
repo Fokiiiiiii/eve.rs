@@ -19,7 +19,8 @@ namespace Eve.Services.Space.Effects;
 // ships through a localised wormhole between two points, cannot move capital ships, and leaves the moved ships unable to warp for 60 seconds.
 //
 // The Bosonic Field Generator (40633) has a body: DoomsdayConeEffect.cs (the strike of protocol 25, with the fuel of its cycle through the shared mechanism). The
-// other families have none in the space host yet. Each handler is registered and REFUSES the activation by name, before any package is built: no simulation
+// Judgment and the other titan doomsdays (protocol 26) are DoomsdayTitanEffect.cs; the lances are DoomsdayLanceEffect.cs (a strike of a cylinder). The other
+// families have none in the space host yet. Each handler is registered and REFUSES the activation by name, before any package is built: no simulation
 // action, no fuel taken (ShipEffect.Build is never reached, so BurnsFuel is never set), and no success is reported. The reasons are the ones below.
 //
 // What is missing for a body, per family (the owner is the superweapons spec in docs/project/TODO.md section 12, not an EveJS port):
@@ -27,7 +28,7 @@ namespace Eve.Services.Space.Effects;
 //     Program.cs (SuperWeaponService): the point is not carried into a package yet;
 //   - the strike: damage after a delay, a chain with a loss per jump (EveJS tickDoomsdayEffect), and the immobility and no-jump windows. It needs a new sim
 //     action and a wire bump (decisions D7 and D8 of the superweapons brief); the area is the Area shape of ADR 0011, not built yet;
-//   - the lance beacon (a Deployed object, ADR 0012) and its pulse (EveJS tickLanceEffect is not read, U13);
+//   - the lance beacon (a Deployed object, ADR 0012): the lance has a body (LanceEffect, DoomsdayLanceEffect.cs) without it, the beacon is the client's graphic only;
 //   - the reaper's slash arc (two points) and its cylinder area (ADR 0011);
 //   - the disruptive lance's debuff (a buff registry, decision D4; the cloak-disallow flag, decision D10);
 //   - the HOG's transport: the destination point, the capital-ship exclusion and the 60 s warp block come from the SDE text only. EveJS has no function for
@@ -43,14 +44,6 @@ internal abstract class SuperWeaponPendingEffect(string reason, params string[] 
 
     protected override string? Refusal(ModuleEffectContext module) => _reason;
 }
-
-/// <summary>The titan doomsdays (<c>superWeaponAmarr</c>, <c>Caldari</c>, <c>Gallente</c>, <c>Minmatar</c>): point-targeted, refused as a doomsday.</summary>
-internal sealed class DoomsdayEffect()
-    : SuperWeaponPendingEffect("SUPERWEAPON_DOOMSDAY_NOT_IMPLEMENTED", "superWeaponAmarr", "superWeaponCaldari", "superWeaponGallente", "superWeaponMinmatar");
-
-/// <summary>The lances (<c>doomsdayBeamDOT</c>, 40631 and the three racial lances): refused until the beacon and its pulse have a body.</summary>
-internal sealed class LanceEffect()
-    : SuperWeaponPendingEffect("SUPERWEAPON_LANCE_NOT_IMPLEMENTED", "doomsdayBeamDOT");
 
 /// <summary>The reapers and Catmageddon (<c>doomsdaySlash</c>): an arc of two points, refused until the slash and its cylinder area have a body.</summary>
 internal sealed class ReaperEffect()

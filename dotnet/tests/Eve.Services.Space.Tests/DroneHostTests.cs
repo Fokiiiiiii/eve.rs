@@ -19,9 +19,19 @@ public class DroneHostTests
 
     /// <summary>A pilot in space with a Hobgoblin I in the drone bay of its ship, and the Drones skill at level 1 unless <paramref name="skill"/> is 0.</summary>
     internal static async Task<Flying> FlyingWithADroneAsync(
-        Rig rig, int skill = 1, bool withDroneDamageAmplifier = false, bool withDroneLinkAugmentor = false, int? droneTypeId = null, int? minerTypeId = null)
+        Rig rig, int skill = 1, bool withDroneDamageAmplifier = false, bool withDroneLinkAugmentor = false, int? droneTypeId = null, int? minerTypeId = null,
+        int? solarSystemId = null, string characterName = "Space Tester")
     {
-        var character = await rig.NewCharacterAsync();
+        var character = await rig.NewCharacterAsync(characterName);
+        if (solarSystemId is { } system)
+        {
+            // the pilot lives in that system from the start: its location is the system's constellation and region (the static data's)
+            var place = rig.Systems.Get(system) ?? throw new InvalidOperationException($"the static data has no solar system {system}");
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await rig.Characters.SetLocationAsync(connection, transaction, character.CharacterId, system, place.ConstellationId, place.RegionId);
+            await transaction.CommitAsync();
+        }
         if (skill > 0)
         {
             await using var connection = await rig.Source.OpenConnectionAsync();

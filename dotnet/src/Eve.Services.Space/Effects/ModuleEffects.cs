@@ -47,7 +47,7 @@ internal static class ModuleEffects
         // the Nexus invulnerability core: wired, its rules checked, refused as EFFECT_NOT_IMPLEMENTED until the fleet effect has a body (needs wire bump W2)
         .Register(new IndustrialInvulnerabilityEffect())
         // the superweapons of group 588 (not P.A.N.I.C.): wired, each refused by its own name until its body exists (Effects/SuperWeaponEffects.cs, docs/project/TODO.md section 12)
-        .Register(new DoomsdayEffect())
+        .Register(new DoomsdayTitanEffect())
         .Register(new LanceEffect())
         .Register(new ReaperEffect())
         .Register(new DisruptiveLanceEffect())

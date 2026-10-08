@@ -383,6 +383,19 @@ public abstract record SimAction
     /// thermal, kinetic, explosive). The ship is held for <paramref name="ImmobileMs"/> and cannot jump or cloak for <paramref name="NoJumpMs"/>; every ship
     /// within <paramref name="NeutRadius"/> loses <paramref name="NeutAmount"/> capacitor once at the start (see the simulation's <c>strike.rs</c>).
     /// </summary>
+    /// <summary>
+    /// A titan doomsday's hit (tag 14, ADR 0013 epoch 26): the locked target takes <paramref name="Damage"/> once, <paramref name="DelayMs"/> after the cycle
+    /// starts. The ship is held for its windows from the start (<paramref name="ImmobileMs"/>, <paramref name="NoJumpMs"/>).
+    /// </summary>
+    public sealed record Doomsday(double DelayMs, IReadOnlyList<double> Damage, double ImmobileMs, double NoJumpMs) : SimAction
+    {
+        /// <summary>Whether the numbers are ones the simulation runs (finite and not negative, four kinds of damage).</summary>
+        public bool IsValid =>
+            Damage.Count == 4
+            && new[] { DelayMs, ImmobileMs, NoJumpMs }.All(n => double.IsFinite(n) && n >= 0)
+            && Damage.All(d => double.IsFinite(d) && d >= 0);
+    }
+
     public sealed record Strike(
         byte Shape,
         IReadOnlyList<double> Direction,

@@ -142,12 +142,12 @@ public class ModuleFuelHostTests
         DroneHostTests.FlyingWithADroneAsync(rig, minerTypeId: moduleTypeId);
 
     /// <summary>The pilot's module runs, as an activation the simulation accepted leaves it.</summary>
-    private static void StartModule(Rig rig, DroneHostTests.Flying flying) =>
+    internal static void StartModule(Rig rig, DroneHostTests.Flying flying) =>
         rig.Space.StartModuleForTest((ulong)flying.Session.SessionId, flying.Module);
 
     private static long ShipIdOf(DroneHostTests.Flying flying) => flying.Session.GetInt("shipid")!.Value;
 
-    private static async Task PutFuelAsync(Rig rig, DroneHostTests.Flying flying, long quantity, int flag)
+    internal static async Task PutFuelAsync(Rig rig, DroneHostTests.Flying flying, long quantity, int flag)
     {
         await using var connection = await rig.Source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
@@ -162,12 +162,12 @@ public class ModuleFuelHostTests
             .Where(item => item.TypeId == StrontiumClathrates && item.Flag == flag)
             .Sum(item => item.Quantity);
 
-    private static SimModuleWorkCycle FuelCycle(DroneHostTests.Flying flying, long moduleId, ulong cycleId) => new(
+    internal static SimModuleWorkCycle FuelCycle(DroneHostTests.Flying flying, long moduleId, ulong cycleId) => new(
         (ulong)flying.Session.SessionId, flying.Character, ShipIdOf(flying), flying.System, moduleId, 0, cycleId, SimModuleWorkCommands.ConsumeFuel,
         0, 0, 0, 0, 0, 0, 0, 0, 0);
 
     /// <summary>Sends a cycle and waits for the answer to it (a repeat waits for a second answer).</summary>
-    private static async Task<SimModuleWorkResult> SettleAsync(Rig rig, SimModuleWorkCycle cycle)
+    internal static async Task<SimModuleWorkResult> SettleAsync(Rig rig, SimModuleWorkCycle cycle)
     {
         var answered = rig.Sim.Heard.OfType<SimModuleWorkResult>().Count(result => result.CycleId == cycle.CycleId);
         rig.Sim.Say(cycle);

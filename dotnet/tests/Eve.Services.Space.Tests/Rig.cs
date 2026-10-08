@@ -76,6 +76,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         Creation = creation;
         Modules = modules;
         Stations = stations;
+        Systems = systems;
         Ships = new CharacterShips(source, statics, Characters, Items, Skills, modules);
         Wallets = new PgWalletStore(source, _schemas[3]);
         WalletTransactions = new WalletTransactions(source, _schemas[3]);
@@ -109,6 +110,9 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
     public FakeSim Sim { get; } = new();
 
     public StationCatalog Stations { get; private set; } = null!;
+
+    /// <summary>The solar systems of the static data (their security and their constellation and region, for a pilot placed in one).</summary>
+    public SolarSystemCatalog Systems { get; private set; } = null!;
 
     public ServiceRegistry Registry { get; } = new();
 

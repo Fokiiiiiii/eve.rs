@@ -16,7 +16,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Arc, Aoe, Charge, Spool, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 25;
+pub const PROTOCOL_VERSION: u16 = 26;
 
 /// The message kinds.
 pub mod kind {
@@ -1145,6 +1145,12 @@ fn put_action(out: &mut Vec<u8>, action: &Action) {
                 out.extend_from_slice(&number.to_le_bytes());
             }
         }
+        Action::Doomsday { delay_ms, damage, immobile_ms, no_jump_ms } => {
+            out.push(14);
+            for number in [*delay_ms, damage[0], damage[1], damage[2], damage[3], *immobile_ms, *no_jump_ms] {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
+        }
         Action::Mining { family, mining_amount_m3, waste_multiplier, waste_probability, crit_probability, crit_multiplier } => {
             out.push(7);
             out.push(match family {
@@ -1411,6 +1417,17 @@ fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
                 return Err(DecodeError::BadValue("strike"));
             }
             Ok(Action::Strike { strike })
+        }
+        14 => {
+            let delay_ms = reader.f64()?;
+            let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+            let immobile_ms = reader.f64()?;
+            let no_jump_ms = reader.f64()?;
+            let numbers = [delay_ms, immobile_ms, no_jump_ms];
+            if !numbers.iter().all(|n| n.is_finite() && *n >= 0.0) || !damage.iter().all(|d| d.is_finite() && *d >= 0.0) {
+                return Err(DecodeError::BadValue("doomsday"));
+            }
+            Ok(Action::Doomsday { delay_ms, damage, immobile_ms, no_jump_ms })
         }
         7 => {
             let family = match reader.u8()? {

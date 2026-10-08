@@ -292,6 +292,20 @@ fn effect_of(case: &Value) -> Effect {
                     ],
                 };
             }
+            if a["kind"] == "doomsday" {
+                let damage = a["damage"].as_array().unwrap();
+                return Action::Doomsday {
+                    delay_ms: a["delayMs"].as_f64().unwrap(),
+                    damage: [
+                        damage[0].as_f64().unwrap(),
+                        damage[1].as_f64().unwrap(),
+                        damage[2].as_f64().unwrap(),
+                        damage[3].as_f64().unwrap(),
+                    ],
+                    immobile_ms: a["immobileMs"].as_f64().unwrap(),
+                    no_jump_ms: a["noJumpMs"].as_f64().unwrap(),
+                };
+            }
             if a["kind"] == "strike" {
                 let direction = a["direction"].as_array().unwrap();
                 let damage = a["damage"].as_array().unwrap();

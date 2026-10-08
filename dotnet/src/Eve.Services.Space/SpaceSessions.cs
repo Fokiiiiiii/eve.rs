@@ -988,7 +988,7 @@ private readonly TransitionRuntime _transitions;
 
     /// <summary>The effect of a module is offensive: it damages, jams, webs, paints or scrambles another ship (the attacks the crimewatch and the safety judge).</summary>
     private static bool IsOffensive(SimEffect package) =>
-        package.Turret is not null || package.Action is SimAction.Remote { What: SimRemote.Neutralize or SimRemote.Drain or SimRemote.Web or SimRemote.Paint or SimRemote.Damp { RangePercent: < 0 } or SimRemote.Damp { ResolutionPercent: < 0 } or SimRemote.Damp { GravimetricStrengthPercent: < 0 } or SimRemote.Damp { LadarStrengthPercent: < 0 } or SimRemote.Damp { MagnetometricStrengthPercent: < 0 } or SimRemote.Damp { RadarStrengthPercent: < 0 } or SimRemote.Scramble or SimRemote.Jam or SimRemote.Disrupt { RangePercent: < 0 } or SimRemote.Disrupt { FalloffPercent: < 0 } or SimRemote.Disrupt { TrackingPercent: < 0 } };
+        package.Turret is not null || package.Action is SimAction.Strike or SimAction.Doomsday || package.Action is SimAction.Remote { What: SimRemote.Neutralize or SimRemote.Drain or SimRemote.Web or SimRemote.Paint or SimRemote.Damp { RangePercent: < 0 } or SimRemote.Damp { ResolutionPercent: < 0 } or SimRemote.Damp { GravimetricStrengthPercent: < 0 } or SimRemote.Damp { LadarStrengthPercent: < 0 } or SimRemote.Damp { MagnetometricStrengthPercent: < 0 } or SimRemote.Damp { RadarStrengthPercent: < 0 } or SimRemote.Scramble or SimRemote.Jam or SimRemote.Disrupt { RangePercent: < 0 } or SimRemote.Disrupt { FalloffPercent: < 0 } or SimRemote.Disrupt { TrackingPercent: < 0 } };
 
     private void EndInvulnerability(Pilot pilot, bool keepsJumpCloak = false)
     {

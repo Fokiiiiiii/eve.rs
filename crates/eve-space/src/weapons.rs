@@ -2206,6 +2206,71 @@ mod tests {
         assert!(before - after > 49.0 && before - after <= 50.0 + 1e-6, "drained by the neutralising amount: {before} -> {after}");
     }
 
+    /// A titan doomsday's effect: one hit on `target_id`, the module of a Judgment (24550, effect 4489), one cycle.
+    fn doomsday_effect(module_id: i64, target_id: i64, action: crate::modules::Action) -> Effect {
+        Effect {
+            burns_fuel: false,
+            module_id,
+            module_type: 24_550,
+            effect_id: 4_489,
+            fx: String::new(),
+            duration_ms: 300_000.0,
+            capacitor_need: 0.0,
+            repeat: 1,
+            target_id,
+            turret: None,
+            action: Some(action),
+            on: None,
+            off: None,
+            on_changes: Vec::new(),
+            off_changes: Vec::new(),
+        }
+    }
+
+    /// The pilot locks `target` and the lock is had: returns the moment it is had.
+    fn lock_target(scene: &mut Scene, session: SessionId, target: i64, now: i64) -> i64 {
+        scene.target_order(session, Order::Lock(target), now);
+        let mut now = now;
+        for _ in 0..40 {
+            now += SECOND / 4;
+            scene.poll(now);
+        }
+        assert!(scene.locked_by(session).contains(&target), "the lock on {target} is had");
+        now
+    }
+
+    #[test]
+    fn a_titan_doomsday_hits_its_locked_target_once_after_its_delay_and_holds_the_pilot() {
+        let (mut scene, _npc, now) = duel();
+        let now = lock_target(&mut scene, PLAYER, NPC_SHIP, now);
+        let hit = crate::modules::Action::Doomsday {
+            delay_ms: 9_000.0,
+            damage: [2_400_000.0, 0.0, 0.0, 0.0],
+            immobile_ms: 30_000.0,
+            no_jump_ms: 300_000.0,
+        };
+        let out = scene.activate(PLAYER, doomsday_effect(spec().ship_id + 1, NPC_SHIP, hit), now);
+        assert!(!out.iter().any(|o| matches!(o, Out::Refused { .. })), "{out:?}");
+        assert_eq!(hits_told(&out, PLAYER), 0, "nothing hits before its delay");
+        assert_eq!(hits_told(&scene.poll(now + 8 * SECOND), PLAYER), 0, "8 s in: still charging");
+        assert_eq!(hits_told(&scene.poll(now + 10 * SECOND), PLAYER), 1, "the hit, 9 s after the start");
+        assert_eq!(hits_told(&scene.poll(now + 20 * SECOND), PLAYER), 0, "once: no second hit");
+        let held = scene.command(PLAYER, Command::Stop, now + 11 * SECOND);
+        assert!(held.iter().any(|o| matches!(o, Out::Refused { reason: "IMMOBILE", .. })), "held by its window: {held:?}");
+    }
+
+    #[test]
+    fn a_titan_doomsday_is_refused_without_a_locked_target_and_hits_nothing_it_is_not_locked_on() {
+        let (mut scene, _npc, now) = duel();
+        let hit = crate::modules::Action::Doomsday { delay_ms: 9_000.0, damage: [1.0, 0.0, 0.0, 0.0], immobile_ms: 0.0, no_jump_ms: 0.0 };
+        let none = scene.activate(PLAYER, doomsday_effect(spec().ship_id + 1, 0, hit.clone()), now);
+        assert!(none.iter().any(|o| matches!(o, Out::Refused { reason: "TARGET_REQUIRED", .. })), "{none:?}");
+        let unlocked = scene.activate(PLAYER, doomsday_effect(spec().ship_id + 1, NPC_SHIP, hit.clone()), now);
+        assert!(unlocked.iter().any(|o| matches!(o, Out::Refused { reason: "TARGET_NOT_LOCKED", .. })), "{unlocked:?}");
+        let gone = scene.activate(PLAYER, doomsday_effect(spec().ship_id + 1, 999_999, hit), now);
+        assert!(gone.iter().any(|o| matches!(o, Out::Refused { reason: "TARGET_NOT_FOUND", .. })), "{gone:?}");
+    }
+
     fn smartbomb_effect(module_id: i64, damage: Damage) -> Effect {
         Effect {
             burns_fuel: false,

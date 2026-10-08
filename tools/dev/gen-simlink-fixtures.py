@@ -127,6 +127,9 @@ def action(a):
         return (bytes([13, a["shape"]]) + struct.pack("<3d", *a["direction"]) + struct.pack("<4d", a["length"], a["radius"], a["warningMs"], a["pulseMs"])
                 + struct.pack("<i", a["pulses"]) + struct.pack("<4d", *a["damage"])
                 + struct.pack("<6d", a["signatureRadius"], a["immobileMs"], a["noJumpMs"], a["neutAmount"], a["neutRadius"], a["neutSignatureRadius"]))
+    # the SimAction tag 14 (ADR 0013 epoch 26): a titan doomsday, one hit on the locked target after a delay, the ship held for its windows
+    if kind == "doomsday":
+        return bytes([14]) + struct.pack("<d", a["delayMs"]) + struct.pack("<4d", *a["damage"]) + struct.pack("<2d", a["immobileMs"], a["noJumpMs"])
     if kind == "resistanceShift":
         # a reactive armor hardener: the seed (em, thermal, kinetic, explosive), the most a kind gives up a cycle, the attributes it tells
         return bytes([12]) + struct.pack("<4d", *a["seed"]) + struct.pack("<d", a["shift"]) + struct.pack("<4i", *a["attributeIds"])
@@ -348,8 +351,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 25},
-    {"name": "hello ack", "kind": "HelloAck", "version": 25, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 26},
+    {"name": "hello ack", "kind": "HelloAck", "version": 26, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -759,6 +762,12 @@ valid = [
                            "signatureRadius": 10000.0, "immobileMs": 30000.0, "noJumpMs": 300000.0,
                            "neutAmount": 30000.0, "neutRadius": 10000.0, "neutSignatureRadius": 20000.0},
                 "onChanges": [], "offChanges": []}},
+    {"name": "activate a titan doomsday (Judgment)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002815", "moduleType": 24550, "effectId": 4489, "fx": "",
+                "durationMs": 300000.0, "capacitorNeed": 35000.0, "repeat": 1, "targetId": "1000000000002", "burnsFuel": True,
+                "action": {"kind": "doomsday", "delayMs": 9000.0, "damage": [2400000.0, 0.0, 0.0, 0.0],
+                           "immobileMs": 30000.0, "noJumpMs": 300000.0},
+                "onChanges": [], "offChanges": []}},
     {"name": "activate an auto-targeting system", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 1101, "effectId": 11, "fx": "effects.TargetHostiles",
                 "durationMs": 1000.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "0",
@@ -805,6 +814,9 @@ invalid = [
     {"name": "strike in a shape the simulation does not run", "reason": "bad-value",
      "hex": build(dict(named("activate a doomsday strike (Bosonic Field Generator)"), effect=dict(named("activate a doomsday strike (Bosonic Field Generator)")["effect"],
                        action=dict(named("activate a doomsday strike (Bosonic Field Generator)")["effect"]["action"], shape=2)))).hex()},
+    {"name": "titan doomsday with a negative delay", "reason": "bad-value",
+     "hex": build(dict(named("activate a titan doomsday (Judgment)"), effect=dict(named("activate a titan doomsday (Judgment)")["effect"],
+                       action=dict(named("activate a titan doomsday (Judgment)")["effect"]["action"], delayMs=-1.0)))).hex()},
     {"name": "enter reply with an unknown status", "reason": "bad-value",
      "hex": (struct.pack("<I", 12) + bytes([13]) + u64(1) + bytes([2]) + s("")).hex()},
     {"name": "text that is not UTF-8", "reason": "utf8",

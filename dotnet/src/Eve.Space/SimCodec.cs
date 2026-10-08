@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 25;
+    public const ushort ProtocolVersion = 26;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -447,6 +447,19 @@ public static class SimCodec
                         throw new SimLinkException(SimLinkError.BadValue, "bad strike action");
                     }
                     return strike;
+                }
+            case 14:
+                {
+                    var delay = r.F64();
+                    double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    var immobile = r.F64();
+                    var noJump = r.F64();
+                    var doomsday = new SimAction.Doomsday(delay, damage, immobile, noJump);
+                    if (!doomsday.IsValid)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad doomsday action");
+                    }
+                    return doomsday;
                 }
             case 12:
                 {
@@ -1326,6 +1339,15 @@ private static void WriteAction(Writer w, SimAction action)
                 foreach (var number in strike.Damage) w.F64(number);
                 w.F64(strike.SignatureRadius); w.F64(strike.ImmobileMs); w.F64(strike.NoJumpMs);
                 w.F64(strike.NeutAmount); w.F64(strike.NeutRadius); w.F64(strike.NeutSignatureRadius);
+                break;
+            case SimAction.Doomsday doomsday:
+                if (!doomsday.IsValid)
+                {
+                    throw new ArgumentException("a titan doomsday has finite, non-negative delay, damage and windows", nameof(action));
+                }
+                w.U8(14); w.F64(doomsday.DelayMs);
+                foreach (var number in doomsday.Damage) w.F64(number);
+                w.F64(doomsday.ImmobileMs); w.F64(doomsday.NoJumpMs);
                 break;
             case SimAction.ResistanceShift shift:
                 if (shift.Seed.Count != 4 || shift.AttributeIds.Count != 4)

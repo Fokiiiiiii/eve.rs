@@ -9,6 +9,9 @@ public static class ItemFlags
     /// <summary>The hangar of a station.</summary>
     public const int Hangar = 4;
 
+    /// <summary>The cargo hold of a ship (what a character carries loose in its ship).</summary>
+    public const int Cargo = 5;
+
     /// <summary>The seven corporation hangar divisions.</summary>
     public const int CorpSAG1 = 116;
     public const int CorpSAG2 = 117;

@@ -292,8 +292,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 21},
-    {"name": "hello ack", "kind": "HelloAck", "version": 21, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 22},
+    {"name": "hello ack", "kind": "HelloAck", "version": 22, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -311,6 +311,7 @@ valid = [
     {"name": "command with three arguments", "kind": "Command", "sessionId": "1790646377000015", "command": 2,
      "args": [-0.8191520442889917, 0.0, 0.5735764363510462]},
     {"name": "command with none", "kind": "Command", "sessionId": "1790646377000015", "command": 3, "args": []},
+    {"name": "prime login ballpark visuals", "kind": "Command", "sessionId": "1790646377000015", "command": 24, "args": []},
     {"name": "dock command", "kind": "Command", "sessionId": "1790646377000015", "command": 4, "args": [60015249.0]},
     {"name": "follow command", "kind": "Command", "sessionId": "1790646377000015", "command": 5,
      "args": [60015249.0, 2500.0]},

@@ -51,15 +51,22 @@ public sealed class CharacterDogmaSync(DogmaStatic statics, CharacterShips ships
         return ValueTask.CompletedTask;
     }
 
-    public async ValueTask OnInventoryRpcAsync(ClientSession session, string method, bool stationHangar, CancellationToken cancellationToken)
+    public async ValueTask OnInventoryRpcAsync(
+        ClientSession session, string method, bool stationHangar, bool activeSpaceShipInventoryList, CancellationToken cancellationToken)
     {
         if (method is not ("List" or "GetSelfInvItem" or "GetInventoryFromId") ||
             session.Get(FittingBootstrapShipId) is not Eve.Marshal.PyLong pendingShip ||
             session.CharacterId is not { } characterId)
             return;
-        if (session.Get("deferredDockedShipId") is Eve.Marshal.PyLong &&
-            (!stationHangar || method != "List"))
+        if (session.Get("deferredDockedShipId") is Eve.Marshal.PyLong)
+        {
+            if (!stationHangar || method != "List")
+                return;
+        }
+        else if (!activeSpaceShipInventoryList)
+        {
             return;
+        }
 
         session.Set(FittingBootstrapShipId, Eve.Marshal.PyNone.Instance);
         if (await ships.LoadAsync(characterId, cancellationToken) is not { } snapshot ||
@@ -67,15 +74,23 @@ public sealed class CharacterDogmaSync(DogmaStatic statics, CharacterShips ships
             return;
 
         var fileTime = Py.FileTimeFromUnixMs(nowUnixMs());
-        var changes = snapshot.Fitted
-            .SelectMany(module => Info.ModuleAttributes(snapshot, module.Id).Select(attribute =>
-                ShipNotifications.AttributeChange(
-                    characterId,
-                    new Eve.Marshal.PyLong(module.Id),
-                    attribute.Key,
-                    fileTime,
-                    null,
-                    attribute.Value)))
+        var changes = Info.ShipAttributes(snapshot)
+            .Select(attribute => ShipNotifications.AttributeChange(
+                characterId,
+                new Eve.Marshal.PyLong(snapshot.Ship.Id),
+                attribute.Key,
+                fileTime,
+                null,
+                attribute.Value))
+            .Concat(snapshot.Fitted.SelectMany(module =>
+                Info.ModuleAttributes(snapshot, module.Id).Select(attribute =>
+                    ShipNotifications.AttributeChange(
+                        characterId,
+                        new Eve.Marshal.PyLong(module.Id),
+                        attribute.Key,
+                        fileTime,
+                        null,
+                        attribute.Value))))
             .ToArray();
         var onlineModules = snapshot.Fitted
             .Where(module => snapshot.World.Item(module.Id)?.State >= ItemState.Online)

@@ -69,6 +69,17 @@ impl Scene {
             .collect()
     }
 
+    pub(crate) fn ships_visible_to(&self, session: SessionId) -> Vec<&Ship> {
+        if !self.pilots.contains_key(&session) {
+            return Vec::new();
+        }
+        self.in_entry_order()
+            .into_iter()
+            .filter(|other| *other == session || self.visible_to(session, *other))
+            .map(|other| &self.pilots[&other].ship)
+            .collect()
+    }
+
     pub(crate) fn update(session: SessionId, actions: Vec<Value>) -> Out {
         Scene::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false))
     }

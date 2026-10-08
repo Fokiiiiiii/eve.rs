@@ -14,7 +14,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Charge, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 21;
+pub const PROTOCOL_VERSION: u16 = 22;
 
 /// The message kinds.
 pub mod kind {
@@ -81,6 +81,8 @@ pub enum ChargeOp {
 
 /// The command that asks how far a wreck or a can is (`args`: its item id); answered with `Measured`.
 pub const COMMAND_MEASURE: u8 = 20;
+/// Prime the visual half of an in-space login before the client requests its full ballpark state.
+pub const COMMAND_PRIME_LOGIN_BALLPARK_VISUALS: u8 = 24;
 
 /// How a ship comes into space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -36,6 +36,40 @@ public sealed class FleetLoginHookTests
     }
 }
 
+public sealed class CharacterEntryInventoryBootstrapTests
+{
+    [Fact]
+    public async Task First_active_space_ship_list_primes_visuals_once()
+    {
+        var sim = new FakeSim();
+        using var space = new SpaceSessions(sim, null!, null!, null!, null!, () => 1_700_000_000_000);
+        var session = new Eve.Services.ClientSession();
+        session.Set("loginInventoryBootstrapPending", new Eve.Marshal.PyInt(1));
+
+        await space.OnInventoryRpcAsync(session, "List", stationHangar: false, activeSpaceShipInventoryList: true, CancellationToken.None);
+        Assert.Equal(SimCommands.PrimeLoginBallparkVisuals, Assert.Single(sim.Heard.OfType<SimCommand>()).Code);
+        Assert.Equal(Eve.Marshal.PyNone.Instance, session.Get("loginInventoryBootstrapPending"));
+
+        await space.OnInventoryRpcAsync(session, "List", stationHangar: false, activeSpaceShipInventoryList: true, CancellationToken.None);
+        Assert.Single(sim.Heard.OfType<SimCommand>());
+    }
+
+    [Fact]
+    public async Task Docked_shipid_is_changed_only_after_the_hangar_list_response()
+    {
+        using var space = new SpaceSessions(new FakeSim(), null!, null!, null!, null!, () => 1_700_000_000_000);
+        var session = new Eve.Services.ClientSession();
+        session.Set("deferredDockedShipId", new Eve.Marshal.PyLong(9_998_400_000_001));
+
+        await space.OnInventoryRpcAsync(session, "List", stationHangar: true, activeSpaceShipInventoryList: false, CancellationToken.None);
+
+        Assert.Null(session.GetInt("shipid"));
+        session.RunAfterResponse();
+        Assert.Equal(9_998_400_000_001, session.GetInt("shipid"));
+        Assert.Equal(Eve.Marshal.PyNone.Instance, session.Get("deferredDockedShipId"));
+    }
+}
+
 public class SpaceServiceTests
 {
     private static long Id(PyValue value) => Events.Number(value);

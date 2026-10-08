@@ -246,10 +246,20 @@ public sealed partial class InvBrokerService(
     /// </summary>
     private async ValueTask<PyValue> CompleteInventoryRpcAsync(ServiceCall call, PyValue response)
     {
-        var stationHangar = ContextOf(call) is { Kind: Kind.Hangar };
+        var context = ContextOf(call);
+        var stationHangar = context is { Kind: Kind.Hangar };
+        var activeSpaceShipInventoryList = call.Method == "List" &&
+            context is { Kind: Kind.Ship } ship &&
+            call.Session.DockedLocationId is null &&
+            call.Session.GetInt("shipid") == ship.ItemId;
         if (entryHooks is not null)
             foreach (var hook in entryHooks)
-                await hook.OnInventoryRpcAsync(call.Session, call.Method, stationHangar, call.Cancellation);
+                await hook.OnInventoryRpcAsync(
+                    call.Session,
+                    call.Method,
+                    stationHangar,
+                    activeSpaceShipInventoryList,
+                    call.Cancellation);
         return response;
     }
 

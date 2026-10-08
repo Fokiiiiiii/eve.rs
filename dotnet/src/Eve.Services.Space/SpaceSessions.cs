@@ -38,6 +38,7 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
 {
     /// <summary>How long a ship that has undocked cannot be hurt (the reference's: 30 seconds).</summary>
     public const long UndockInvulnerabilityTicks = 300_000_000;
+    private const string LoginInventoryBootstrapPending = "loginInventoryBootstrapPending";
 
     /// <summary>How long a ship that has come through a stargate is cloaked and cannot be hurt (the reference's: 60 seconds).</summary>
     public const long JumpCloakTicks = 600_000_000;
@@ -432,6 +433,7 @@ private readonly TransitionRuntime _transitions;
         ClientSession session, long characterId, CancellationToken cancellationToken)
     {
         _pendingLoginRestores.TryRemove(characterId, out _);
+        session.Set(LoginInventoryBootstrapPending, None);
         session.Set("deferredDockedShipId", None);
         await OnSessionClosedAsync(session);
     }
@@ -479,25 +481,52 @@ private readonly TransitionRuntime _transitions;
         _pilots[sessionId] = new Pilot(
             session, characterId, pending.Snapshot.Ship.Id, pending.Snapshot.Ship.TypeId,
             systemId, FileTimeNow(), pending.Snapshot.Character.StationId);
+        session.Set(LoginInventoryBootstrapPending, new PyInt(1));
         session.Closed += () => OnSessionClosed(session);
         if (_spaceItems is not null)
             await _spaceItems.RemoveAsync(pending.Snapshot.Ship.Id, cancellationToken);
         SystemEntered?.Invoke(systemId);
     }
 
-    public ValueTask OnInventoryRpcAsync(
-        ClientSession session, string method, bool stationHangar, CancellationToken cancellationToken)
+    public async ValueTask OnInventoryRpcAsync(
+        ClientSession session,
+        string method,
+        bool stationHangar,
+        bool activeSpaceShipInventoryList,
+        CancellationToken cancellationToken)
     {
-        if (!stationHangar || method != "List" ||
-            session.Get("deferredDockedShipId") is not PyLong pendingShip || pendingShip.Value <= 0)
-            return ValueTask.CompletedTask;
-
-        session.AfterResponse(() =>
+        if (stationHangar && method == "List" &&
+            session.Get("deferredDockedShipId") is PyLong pendingShip && pendingShip.Value > 0)
         {
-            session.Change(("shipid", new PyLong(pendingShip.Value)));
-            session.Set("deferredDockedShipId", None);
-        });
-        return ValueTask.CompletedTask;
+            session.AfterResponse(() =>
+            {
+                session.Change(("shipid", new PyLong(pendingShip.Value)));
+                session.Set("deferredDockedShipId", None);
+            });
+            return;
+        }
+
+        if (method != "List" || !activeSpaceShipInventoryList ||
+            session.GetInt(LoginInventoryBootstrapPending) != 1)
+            return;
+
+        session.Set(LoginInventoryBootstrapPending, None);
+        if (!_sim.IsConnected)
+            return;
+        try
+        {
+            var prime = await _sim.CommandAsync(
+                (ulong)session.SessionId,
+                SimCommands.PrimeLoginBallparkVisuals,
+                [],
+                cancellationToken);
+            if (!prime.Accepted)
+                _log?.Invoke($"ballpark visuals for space login session {session.SessionId} were not primed: {prime.Reason}");
+        }
+        catch (SimUnavailableException error)
+        {
+            _log?.Invoke($"ballpark visuals for space login session {session.SessionId} could not be primed: {error.Message}");
+        }
     }
 
     // ── undocking ────────────────────────────────────────────────────────────

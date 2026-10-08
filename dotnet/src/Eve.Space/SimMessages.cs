@@ -150,6 +150,9 @@ public static class SimCommands
     /// <summary>Read a body's or ship's current coordinates.</summary>
     public const byte PositionOf = 23;
 
+    /// <summary>Send the visual half of an in-space login before the later full ballpark bind.</summary>
+    public const byte PrimeLoginBallparkVisuals = 24;
+
     /// <summary>The code a <see cref="SimPlaceContainer"/> is answered under (<see cref="SimContainerPlaced"/>, or <see cref="SimRefused"/>).</summary>
     public const byte PlaceContainer = 28;
 

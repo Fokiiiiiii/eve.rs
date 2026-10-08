@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 21,
-   "hex": "03000000011500"
+   "version": 22,
+   "hex": "03000000011600"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 21,
+   "version": 22,
    "pollHz": 4,
-   "hex": "0700000002150004000000"
+   "hex": "0700000002160004000000"
   },
   {
    "name": "enter by undocking",
@@ -251,6 +251,14 @@
    "command": 3,
    "args": [],
    "hex": "0b000000074f2c3859955c06000300"
+  },
+  {
+   "name": "prime login ballpark visuals",
+   "kind": "Command",
+   "sessionId": "1790646377000015",
+   "command": 24,
+   "args": [],
+   "hex": "0b000000074f2c3859955c06001800"
   },
   {
    "name": "dock command",

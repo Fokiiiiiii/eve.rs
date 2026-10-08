@@ -63,6 +63,6 @@ public interface ICharacterEntryHook
 
     ValueTask OnCharacterEnteredAsync(ClientSession session, long characterId, CancellationToken cancellationToken);
 
-    ValueTask OnInventoryRpcAsync(ClientSession session, string method, bool stationHangar, CancellationToken cancellationToken) =>
+    ValueTask OnInventoryRpcAsync(ClientSession session, string method, bool stationHangar, bool activeSpaceShipInventoryList, CancellationToken cancellationToken) =>
         ValueTask.CompletedTask;
 }

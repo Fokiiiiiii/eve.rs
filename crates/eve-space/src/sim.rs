@@ -411,6 +411,29 @@ impl Sim {
                 Some(scene) => scene.condition(session_id, now),
                 None => vec![Out::Refused { session: session_id, command: 19, reason: "NO_SHIP_IN_SPACE" }],
             },
+            Message::Command { session_id, command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS, args } => {
+                match (self.scene_of(session_id), args.as_slice()) {
+                    (Some(scene), []) => {
+                        let mut told = scene.prime_login_visuals(session_id, now);
+                        told.push(Out::Accepted {
+                            session: session_id,
+                            command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS,
+                            at: now,
+                        });
+                        told
+                    }
+                    (Some(_), _) => vec![Out::Refused {
+                        session: session_id,
+                        command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS,
+                        reason: "UNKNOWN_COMMAND",
+                    }],
+                    (None, _) => vec![Out::Refused {
+                        session: session_id,
+                        command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS,
+                        reason: "NO_SHIP_IN_SPACE",
+                    }],
+                }
+            }
             Message::Command { session_id, command: crate::link::COMMAND_MEASURE, args } => {
                 match (self.scene_of(session_id), args.as_slice()) {
                     (Some(scene), [wreck]) if is_id(*wreck) => vec![Out::Measured {
@@ -1492,6 +1515,23 @@ mod tests {
         let restored = sim.scenes.get_mut(&SYSTEM).unwrap().ship(9, NOON).unwrap();
         assert_eq!(restored.spec.ship_id, ship_id);
         assert_eq!(restored.position, Vec3::new(position[0], position[1], position[2]));
+
+        let primed = sim.handle(
+            Message::Command {
+                session_id: 9,
+                command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS,
+                args: Vec::new(),
+            },
+            NOON,
+        ).unwrap();
+        assert_eq!(primed.len(), 4, "clock reset, visual AddBalls2, and command acknowledgement");
+        assert!(matches!(
+            primed.last(),
+            Some(Message::Accepted { session_id: 9, command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS, .. })
+        ));
+
+        let bound = sim.handle(Message::Bind { session_id: 9 }, NOON + 1).unwrap();
+        assert_eq!(bound.len(), 2, "the full SetState and ship numbers follow the earlier visual prime");
     }
 
     #[test]

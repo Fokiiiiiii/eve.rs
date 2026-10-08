@@ -5,6 +5,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Npc;
 using Eve.Services.Dogma;
+using Eve.Services.Space.Effects;
 using Eve.Services.Ships;
 using Eve.Ships;
 using Eve.Space;
@@ -206,7 +207,7 @@ private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
                 var cycleMs = StaticDogma(type, "duration");
                 var workCapable = cycleMs > 0
                     && (StaticDogma(type, "miningAmount") > 0 || StaticDogma(type, "accessDifficultyBonus") > 0);
-                if (previewWeapon is null && !workCapable)
+                if (previewWeapon is null && !workCapable && RemoteOf(type, attribute => type.Attributes.GetValueOrDefault(attribute, 0)) is null)
                 {
                     results.Add(Refusal("That drone has no supported operation profile."));
                     break;
@@ -229,7 +230,8 @@ private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
                 var damageMultiplier = snapshot.World.Get(drone.Id, NpcArmament.DamageMultiplier);
                 var damageScale = baseDamageMultiplier > 0 ? damageMultiplier / baseDamageMultiplier : 0;
                 var weapon = previewWeapon is null ? null : NpcArmament.HullWeapon(type, drone.Id, _statics, damageScale);
-                if (!await SpawnAsync(session, snapshot, drone, type, weapon, cancellationToken).ConfigureAwait(false))
+                var remote = RemoteOf(type, attribute => snapshot.World.Get(drone.Id, attribute));
+                if (!await SpawnAsync(session, snapshot, drone, type, weapon, remote, cancellationToken).ConfigureAwait(false))
                 {
                     results.Add(Refusal("Unable to materialize drone in space."));
                     await _ships.ScoopDroneAsync(characterId, shipId, drone.Id, system, [], CancellationToken.None).ConfigureAwait(false);
@@ -253,7 +255,7 @@ private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
         return Dict(answer);
     }
 
-    private async Task<bool> SpawnAsync(ClientSession session, ShipSnapshot snapshot, Item drone, TypeDef type, SimNpcWeapon? weapon, CancellationToken cancellationToken)
+    private async Task<bool> SpawnAsync(ClientSession session, ShipSnapshot snapshot, Item drone, TypeDef type, SimNpcWeapon? weapon, SimDroneEffect? remote, CancellationToken cancellationToken)
     {
         var character = snapshot.Character;
         var hull = SimShips.OfType(drone.Id, type);
@@ -262,9 +264,10 @@ private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
         var cruise = type.Attributes.TryGetValue(CruiseSpeedAttribute, out var speed) ? Math.Max(0, speed) : maxVelocity;
         var fraction = maxVelocity > 0 ? Math.Clamp(cruise / maxVelocity, 0, 1) : 0;
         // how far it can shoot: its type's attack range, at least what its weapon reaches (`resolveDroneCombatSnapshot`)
-        var attackRange = Math.Max(type.Attributes.GetValueOrDefault(EntityAttackRangeAttribute, 0), weapon?.OptimalRange ?? 0);
+        var remoteReach = remote?.Action is SimAction.Remote reach ? reach.Optimal : 0;
+        var attackRange = Math.Max(type.Attributes.GetValueOrDefault(EntityAttackRangeAttribute, 0), Math.Max(weapon?.OptimalRange ?? 0, remoteReach));
         var work = new SimDroneWorkProfile(Dogma(snapshot, drone.Id, "miningAmount"), Dogma(snapshot, drone.Id, "duration"), Dogma(snapshot, drone.Id, "miningWastedVolumeMultiplier"), Dogma(snapshot, drone.Id, "miningWasteProbability"), Dogma(snapshot, drone.Id, "accessDifficultyBonus"));
-        var launch = new SimLaunchDrone((ulong)Interlocked.Increment(ref _requests), (ulong)session.SessionId, ship, weapon, type.GraphicId, OrbitOf(type), attackRange, fraction, work);
+        var launch = new SimLaunchDrone((ulong)Interlocked.Increment(ref _requests), (ulong)session.SessionId, ship, weapon, type.GraphicId, OrbitOf(type), attackRange, fraction, work, remote);
         try
         {
             var reply = await _sim.LaunchDroneAsync(launch, cancellationToken).ConfigureAwait(false);
@@ -281,6 +284,13 @@ private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
             return false;
         }
     }
+
+    /// <summary>
+    /// The remote effect a drone's type carries: the first of its effects that is a projected effect (the same rows that serve the ship modules), worked out from the drone's own
+    /// dogma; null when the type has none.
+    /// </summary>
+    private SimDroneEffect? RemoteOf(TypeDef type, Func<int, double> value) =>
+        type.EffectIds.Select(_statics.Effect).Select(effect => effect is null ? null : ProjectedEffect.ForDrone(effect, value)).FirstOrDefault(remote => remote is not null);
 
     private double Dogma(ShipSnapshot snapshot, long itemId, string attributeName) =>
         _statics.AttributeId(attributeName) is { } attribute

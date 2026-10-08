@@ -725,6 +725,7 @@ impl Sim {
             mining_waste_multiplier,
             mining_waste_probability,
             salvage_access_bonus,
+            effect,
         } = launch;
         let reply = |outcome| Message::SpawnReply { request_id, outcome };
         let Some(scene) = self.scene_of(session_id) else {
@@ -739,6 +740,7 @@ impl Sim {
                     mining_amount_m3, cycle_ms: work_cycle_ms, waste_multiplier: mining_waste_multiplier,
                     waste_probability: mining_waste_probability, salvage_access_bonus,
                 },
+                effect,
             },
             now,
         ) {

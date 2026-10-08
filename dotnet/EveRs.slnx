@@ -74,6 +74,7 @@
     <Project Path="tests/Eve.Services.Generator.Tests/Eve.Services.Generator.Tests.csproj" />
     <Project Path="tests/Eve.Services.Dogma.Tests/Eve.Services.Dogma.Tests.csproj" />
     <Project Path="tests/Eve.Services.Inventory.Tests/Eve.Services.Inventory.Tests.csproj" />
+    <Project Path="tests/Eve.Inventory.Tests/Eve.Inventory.Tests.csproj" />
     <Project Path="tests/Eve.Services.Skills.Tests/Eve.Services.Skills.Tests.csproj" />
     <Project Path="tests/Eve.Services.Space.Tests/Eve.Services.Space.Tests.csproj" />
     <Project Path="tests/Eve.Services.Station.Tests/Eve.Services.Station.Tests.csproj" />

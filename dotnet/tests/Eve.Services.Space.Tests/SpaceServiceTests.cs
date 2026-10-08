@@ -1164,6 +1164,21 @@ public class SpaceServiceTests
     }
 
     [Fact]
+    public void Ancillary_armor_repairer_without_paste_mends_its_plain_points_as_an_unloaded_repair()
+    {
+        var unloaded = ModulePackageFixture(
+            33076,
+            "Small Ancillary Armor Repairer",
+            "fueledArmorRepair",
+            new Dictionary<int, double> { [6] = 5, [56] = 1, [73] = 6000, [84] = 52, [1886] = 3 });
+        var made = ModulePackages.Of(unloaded.Snapshot, unloaded.Statics, unloaded.ModuleId, "fueledArmorRepair", 0, 5);
+        var package = Assert.IsType<SimEffect>(made.Effect);
+        Assert.Equal(new SimAction.Repair(SimLayer.Armor, 52, true), package.Action);
+        Assert.Equal(5, package.Repeat);
+        Assert.Null(made.Reason);
+    }
+
+    [Fact]
     public void A_micro_jump_drive_package_uses_dogma_range_and_cooldown_and_spools_once()
     {
         var standard = ModulePackageFixture(4383, "Large Micro Jump Drive", "microJumpDrive",

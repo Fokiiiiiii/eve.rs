@@ -266,7 +266,8 @@ private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
         // how far it can shoot: its type's attack range, at least what its weapon reaches (`resolveDroneCombatSnapshot`)
         var remoteReach = remote?.Action is SimAction.Remote reach ? reach.Optimal : 0;
         var attackRange = Math.Max(type.Attributes.GetValueOrDefault(EntityAttackRangeAttribute, 0), Math.Max(weapon?.OptimalRange ?? 0, remoteReach));
-        var work = new SimDroneWorkProfile(Dogma(snapshot, drone.Id, "miningAmount"), Dogma(snapshot, drone.Id, "duration"), Dogma(snapshot, drone.Id, "miningWastedVolumeMultiplier"), Dogma(snapshot, drone.Id, "miningWasteProbability"), Dogma(snapshot, drone.Id, "accessDifficultyBonus"));
+        var mining = MiningProfile.From(snapshot.World, _statics, drone.Id);
+        var work = new SimDroneWorkProfile(mining.MiningAmountM3, mining.CycleTimeMs, mining.WasteVolumeMultiplier, mining.WasteProbability, mining.AccessDifficultyBonus);
         var launch = new SimLaunchDrone((ulong)Interlocked.Increment(ref _requests), (ulong)session.SessionId, ship, weapon, type.GraphicId, OrbitOf(type), attackRange, fraction, work, remote);
         try
         {

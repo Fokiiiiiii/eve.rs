@@ -12,6 +12,25 @@ namespace Eve.Ships;
 public sealed record DroneMiningCommit(bool Accepted, string Reason, long UnitsRemaining, long DeliveredUnits, bool Depleted, ShipChanged? Change);
 public sealed record DroneSalvageCommit(bool Accepted, string Reason, ShipChanged? Change, Item? Container, SpaceItem? ContainerSpaceItem);
 
+/// <summary>
+/// The numbers of a mining cycle, read from the dogma of the item that mines (a drone or a module) by attribute name, so every source reads them the
+/// same way. An attribute name the static data does not define reads as 0; any other value is the world's (the item's own, else the default).
+/// </summary>
+public sealed record MiningProfile(double MiningAmountM3, double CycleTimeMs, double WasteVolumeMultiplier, double WasteProbability, double AccessDifficultyBonus)
+{
+    /// <summary>The profile of the item <paramref name="itemId"/> in <paramref name="world"/> (its dogma after its own modifiers).</summary>
+    public static MiningProfile From(DogmaWorld world, DogmaStatic statics, long itemId)
+    {
+        double Read(string attributeName) => statics.AttributeId(attributeName) is { } attribute ? world.Get(itemId, attribute) : 0d;
+        return new(
+            Read("miningAmount"),
+            Read("duration"),
+            Read("miningWastedVolumeMultiplier"),
+            Read("miningWasteProbability"),
+            Read("accessDifficultyBonus"));
+    }
+}
+
 public sealed partial class CharacterShips
 {
     /// <summary>The drone bay of a ship: it holds drones (category 18) and nothing else, up to its drone capacity (<c>NotEnoughDroneBaySpace</c> when they do not fit).</summary>
@@ -216,10 +235,30 @@ private sealed record ShipHoldRule(
         return (item, spaceItem);
     }
 
+    /// <summary>Where a miner must be: a drone out in the system, or a module fitted to the ship.</summary>
+    private static bool IsPlacedFor(MiningSource kind, Item miner, int solarSystemId, long shipId) => kind switch
+    {
+        MiningSource.Drone => miner.LocationId == solarSystemId && miner.Flag == InSpaceFlag,
+        MiningSource.Module => miner.LocationId == shipId && Slots.IsSlotFlag(miner.Flag),
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+    };
+
+    /// <summary>The category a miner of the kind belongs to.</summary>
+    private static string CategoryOf(MiningSource kind) => kind switch
+    {
+        MiningSource.Drone => "Drone",
+        MiningSource.Module => "Module",
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+    };
+
+    /// <summary>
+    /// One mining cycle of an asteroid by a miner of the ship: a drone or a module (<paramref name="kind"/>). The yield is taken from the asteroid
+    /// in one short transaction (cargo grant and stock change); the refusal reasons are the same for every kind of miner.
+    /// </summary>
     public async Task<DroneMiningCommit> MineAsteroidAsync(
-        long characterId, long shipId, int solarSystemId, long droneId, long asteroidId, double yieldM3,
+        long characterId, long shipId, int solarSystemId, long minerId, long asteroidId, double yieldM3,
         double wasteVolumeMultiplier, double wasteProbability, double roll, PgSpaceItemStore spaceItems,
-        CancellationToken cancellationToken = default)
+        MiningSource kind = MiningSource.Drone, CancellationToken cancellationToken = default)
     {
         if (!double.IsFinite(yieldM3) || yieldM3 <= 0 || !double.IsFinite(wasteVolumeMultiplier)
             || !double.IsFinite(wasteProbability) || !double.IsFinite(roll))
@@ -234,9 +273,9 @@ private sealed record ShipHoldRule(
         {
             return new(false, "NO_SHIP", 0, 0, false, null);
         }
-        if (await items.LockAndGetAsync(connection, transaction, droneId, cancellationToken) is not { } drone
-            || drone.OwnerId != characterId || drone.LocationId != solarSystemId || drone.Flag != InSpaceFlag
-            || statics.Type(drone.TypeId) is not { } droneType || statics.CategoryName(droneType.CategoryId) != "Drone")
+        if (await items.LockAndGetAsync(connection, transaction, minerId, cancellationToken) is not { } miner
+            || miner.OwnerId != characterId || !IsPlacedFor(kind, miner, solarSystemId, shipId)
+            || statics.Type(miner.TypeId) is not { } minerType || statics.CategoryName(minerType.CategoryId) != CategoryOf(kind))
         {
             return new(false, "NOT_CONTROLLED", 0, 0, false, null);
         }

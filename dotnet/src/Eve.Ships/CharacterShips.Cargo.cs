@@ -12,16 +12,6 @@ namespace Eve.Ships;
 public sealed record DroneMiningCommit(bool Accepted, string Reason, long UnitsRemaining, long DeliveredUnits, bool Depleted, ShipChanged? Change);
 public sealed record DroneSalvageCommit(bool Accepted, string Reason, ShipChanged? Change, Item? Container, SpaceItem? ContainerSpaceItem);
 
-/// <summary>What mines an asteroid in a mining cycle: a drone out in the system, or a module fitted to the ship. Both run the same cycle.</summary>
-public enum MiningSource
-{
-    /// <summary>A drone (category 18) that is out in the system: its yield is rounded down and it never crits.</summary>
-    Drone,
-
-    /// <summary>A module (category 7) fitted to the ship.</summary>
-    Module,
-}
-
 /// <summary>
 /// The numbers of a mining cycle, read from the dogma of the item that mines (a drone or a module) by attribute name, so every source reads them the
 /// same way. An attribute name the static data does not define reads as 0; any other value is the world's (the item's own, else the default).

@@ -2,6 +2,7 @@ using Eve.Characters;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
+using Eve.Skills;
 
 namespace Eve.Services.CharacterSelect.Tests;
 
@@ -26,8 +27,10 @@ public class CharUnboundMgrTests
         var id=await CreateAsync(h,session,"Ann Lee");
         sink.Sent.Clear();
         await h.CallAsync(session,"SelectCharacterID",new PyInt(id));
-        Assert.Equal(2,sink.Sent.Count); // one session change, then the skills notification
-        Assert.Equal(PyNone.Instance,session.Get("hqID"));
+        Assert.Equal(3,sink.Sent.Count); // selection reset, session change, then skills
+        Assert.Equal("OnCharacterSelected", NotificationName(sink.Sent[0]));
+        Assert.Equal(PyNone.Instance, session.Get("warfactionid"));
+        Assert.DoesNotContain(ChangesOf(sink.Sent[1]), change => change.Name == "warfactionid");
         session.Close();
         await using (var c=await h.Source.OpenConnectionAsync())
         await using (var tx=await c.BeginTransactionAsync())
@@ -38,7 +41,8 @@ public class CharUnboundMgrTests
         var corp=await h.Corporations.CreateAsync(id,new("Orbital Works","ORBIT","","",0),"found");
         var (corporateSession,corporateSink)=await h.LoginAsync("pilot");
         await h.CallAsync(corporateSession,"SelectCharacterID",new PyInt(id));
-        Assert.Equal(2,corporateSink.Sent.Count);
+        Assert.Equal(3,corporateSink.Sent.Count);
+        Assert.Equal("OnCharacterSelected", NotificationName(corporateSink.Sent[0]));
         Assert.Equal(new PyInt(corp.StationId),corporateSession.Get("hqID"));
         Assert.Equal(new PyLong(Eve.Corporations.CorporationRoles.All),corporateSession.Get("corprole"));
     }
@@ -51,6 +55,21 @@ public class CharUnboundMgrTests
         var error = MachoErrors.UserError("CustomInfo", ("info", new PyStr(text)));
         Assert.True(error.IsUserError);
         return error;
+    }
+
+    [Fact]
+    public void Finished_skill_count_is_the_latest_nonempty_completion_batch()
+    {
+        HistoryEntry[] history =
+        [
+            new(10, SkillEvents.TrainingComplete, 3301, 1_415, 2),
+            new(10, SkillEvents.QueueTrainingCompleted, 3302, 1_415, 2),
+            new(20, SkillEvents.TrainingStarted, 3303, 250, 2),
+            new(30, SkillEvents.TrainingComplete, 3304, 250, 1),
+        ];
+
+        Assert.Equal(1, CharUnboundMgrService.FinishedSkillsCount(history));
+        Assert.Equal(0, CharUnboundMgrService.FinishedSkillsCount([new(40, SkillEvents.TrainingStarted, 3305, 250, 2)]));
     }
 
     // ── the screen before any character ─────────────────────────────────────
@@ -291,11 +310,12 @@ public class CharUnboundMgrTests
 
         Assert.Equal(PyNone.Instance, await h.CallAsync(session, "SelectCharacterID", new PyInt(id), PyNone.Instance, PyBool.False));
 
-        // the session change first, then the skills notification, as the reference orders them
-        Assert.Equal(2, sink.Sent.Count);
-        var packet = sink.Sent[0];
+        // Character selection resets the client before the single session change; skills follow it.
+        Assert.Equal(3, sink.Sent.Count);
+        Assert.Equal("OnCharacterSelected", NotificationName(sink.Sent[0]));
+        var packet = sink.Sent[1];
         Assert.Equal(new PyInt(16), ((PyTuple)((PyObject)packet).Args).Items[0]);
-        Assert.Equal(new PyInt(12), ((PyTuple)((PyObject)sink.Sent[1]).Args).Items[0]);
+        Assert.Equal(new PyInt(12), ((PyTuple)((PyObject)sink.Sent[2]).Args).Items[0]);
         var changes = ChangesOf(packet);
         var recorded = Recorded.Login["afterSelect"]![0]!["$tuple"]![4]!["$tuple"]![1]!["$tuple"]![1]!["$dict"]!.AsArray();
         Assert.Equal(recorded.Select(e => e![0]!.GetValue<string>()), changes.Select(c => c.Name));
@@ -325,6 +345,65 @@ public class CharUnboundMgrTests
         var state = ((PyTuple)((PyObject)packet).Args).Items;
         Assert.Equal(new PyInt(16), state[0]);
         Assert.Equal(new PyInt(session.UserId!.Value), state[3]);
+    }
+
+    [PgFact]
+    public async Task A_new_character_can_be_selected_with_the_clients_named_arguments()
+    {
+        await using var h = await Harness.CreateAsync();
+        var (session, sink) = await h.LoginAsync("named-select");
+        var id = await CreateAsync(h, session, "Named Select Pilot");
+
+        var result = await ((Eve.Services.IService)h.Service).CallAsync(new Eve.Services.ServiceCall
+        {
+            Method = "SelectCharacterID",
+            Args = Array.Empty<PyValue>(),
+            Kwargs = new PyDict([
+                new(new PyStr("charID"), new PyInt(id)),
+                new(new PyStr("secondChoiceID"), PyNone.Instance),
+                new(new PyStr("skipTutorial"), PyBool.False),
+            ]),
+            Session = session,
+        });
+
+        Assert.Equal(PyNone.Instance, result);
+        Assert.Equal(id, session.CharacterId);
+        Assert.Equal("OnCharacterSelected", NotificationName(sink.Sent[0]));
+        Assert.Equal(new PyTuple([new PyList([])]), NotificationArgs(sink.Sent[0]));
+        Assert.Equal(3, sink.Sent.Count);
+    }
+
+    [PgFact]
+    public async Task Character_selection_data_includes_the_ship_name_and_live_training_projection()
+    {
+        await using var h = await Harness.CreateAsync(securityStatus: 1.25);
+        var (session, _) = await h.LoginAsync("selection-state");
+        var id = await CreateAsync(h, session, "Selection State Pilot");
+        var character = await h.Characters.GetAsync(id, CancellationToken.None);
+        Assert.NotNull(character);
+        var shipId = character!.ShipId!.Value;
+        await h.Items.SetCustomNameAsync(shipId, "Named Hull", CancellationToken.None);
+
+        var initial = await h.Training.ViewAsync(id, character.AccountId, CancellationToken.None);
+        var skill = initial.Skills.First(skill => skill.Level < 5);
+        Assert.NotNull(await h.Training.StartAsync(id, character.AccountId, skill.TypeId, skill.Level + 1, [id], CancellationToken.None));
+        var training = await h.Training.ViewAsync(id, character.AccountId, CancellationToken.None);
+        var current = training.Current!;
+        var data = (PyTuple)await h.CallAsync(session, "GetCharacterSelectionData");
+        var row = Assert.Single(((PyList)data.Items[2]).Items);
+        var fields = Recorded.Attributes(row).ToDictionary(attribute => attribute.Key, attribute => attribute.Value);
+
+        Assert.Equal(new PyStr("Named Hull"), fields["shipName"]);
+        Assert.Equal(new PyReal(1.25), fields["securityRating"]);
+        Assert.Equal(new PyReal(1.25), fields["securityStatus"]);
+        Assert.Equal(new PyInt(training.TotalPoints), fields["skillPoints"]);
+        Assert.Equal(new PyInt(current.TypeId), fields["skillTypeID"]);
+        Assert.Equal(new PyInt(current.ToLevel), fields["toLevel"]);
+        Assert.Equal(new PyLong(current.Start!.Value), fields["trainingStartTime"]);
+        Assert.Equal(new PyLong(current.End!.Value), fields["trainingEndTime"]);
+        Assert.Equal(new PyLong(training.Queue[^1].End!.Value), fields["queueEndTime"]);
+        Assert.Equal(new PyInt(current.DestinationPoints), fields["finishSP"]);
+        Assert.Equal(new PyInt(training.Skills.Single(skill => skill.TypeId == current.TypeId).SkillPoints), fields["trainedSP"]);
     }
 
     [PgFact]
@@ -392,7 +471,7 @@ public class CharUnboundMgrTests
         Assert.False(h.Online.IsOnline(id));
         await h.CallAsync(second, "SelectCharacterID", new PyInt(id));
         Assert.Equal(id, second.CharacterId);
-        Assert.Equal(2, secondSink.Sent.Count); // the session change and the skills notification
+        Assert.Equal(3, secondSink.Sent.Count); // OnCharacterSelected, the session change and the skills notification
     }
 
     [PgFact]
@@ -404,7 +483,7 @@ public class CharUnboundMgrTests
         await h.CallAsync(session, "SelectCharacterID", new PyInt(id));
         var announced = sink.Sent.Count;
         await h.CallAsync(session, "SelectCharacterID", new PyInt(id));
-        Assert.Equal(2, announced);
+        Assert.Equal(3, announced);
         // the character is the same: no session change, and it does not enter again (no second skills notification)
         Assert.Equal(announced, sink.Sent.Count);
     }
@@ -449,7 +528,7 @@ public class CharUnboundMgrTests
         Assert.Equal(("tutorial", "none", 3, false), (
             skipped.TutorialEntryMode, skipped.TutorialFirstLoginHandoff, skipped.AirNpeState, skipped.AirNpeRevealOnFirstLogin));
         var names = sink.Sent.Select(NotificationName).Where(name => name is not null).ToArray();
-        Assert.Equal(new[] { "OnServerSkillsChanged", "OnAirNpeStateChanged" }, names);
+        Assert.Equal(new[] { "OnCharacterSelected", "OnServerSkillsChanged", "OnAirNpeStateChanged" }, names);
         var airNpeNotification = Assert.Single(sink.Sent, packet => NotificationName(packet) == "OnAirNpeStateChanged");
         Assert.Equal(new PyTuple([new PyInt(id), new PyInt(3)]), NotificationArgs(airNpeNotification));
         Assert.Single(sink.Sent, packet => ((PyInt)((PyTuple)((PyObject)packet).Args).Items[0]).Value == 16);

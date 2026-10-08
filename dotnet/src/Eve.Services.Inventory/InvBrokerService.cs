@@ -27,7 +27,7 @@ public delegate ValueTask<bool> CorporationHangarAccess(
 
 [Service("invbroker")]
 public sealed partial class InvBrokerService(
-    PgItemStore items, ItemTypeCatalog types, StationCatalog stations, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs, ISpaceContainers? space = null, ISpaceDroneBays? droneBays = null, CorporationHangarAccess? corporationHangarAccess = null) : IBoundObjectReleaseHandler
+    PgItemStore items, ItemTypeCatalog types, StationCatalog stations, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs, ISpaceContainers? space = null, ISpaceDroneBays? droneBays = null, CorporationHangarAccess? corporationHangarAccess = null, IReadOnlyList<Eve.Services.ICharacterEntryHook>? entryHooks = null) : IBoundObjectReleaseHandler
 {
     /// <summary>The container the client asks for to get the hangar of the station it is docked at.</summary>
     public const int ContainerHangar = 10004;
@@ -72,7 +72,7 @@ public sealed partial class InvBrokerService(
     };
 
     /// <summary>The station the session is docked at.</summary>
-    private static long? StationOf(ClientSession session) => session.GetInt("stationid");
+    private static long? StationOf(ClientSession session) => session.DockedLocationId;
 
     public void OnBoundObjectReleased(string oid, ClientSession? session) => _bound.TryRemove(oid, out _);
 
@@ -198,11 +198,14 @@ public sealed partial class InvBrokerService(
     /// <summary>The station as an item of its own: the "container" the hangar is in.</summary>
     private async Task<ItemRow?> StationRowAsync(ClientSession session, CancellationToken cancellationToken)
     {
-        if (StationOf(session) is not { } id || stations.Get(id) is not { } station || await types.GetAsync(station.TypeId, cancellationToken) is not { } type)
-        {
+        if (StationOf(session) is not { } id)
             return null;
-        }
-        return new ItemRow(station.Id, station.TypeId, station.OwnerId, station.Id, 0, 1, type.GroupId, type.CategoryId);
+        if (stations.Get(id) is { } station &&
+            await types.GetAsync(station.TypeId, cancellationToken) is { } type)
+            return new ItemRow(station.Id, station.TypeId, station.OwnerId, station.Id, 0, 1, type.GroupId, type.CategoryId);
+        if (session.GetInt("structureid") != id || await items.GetAsync(id, cancellationToken) is not { } structure)
+            return null;
+        return (await RowsAsync([structure], cancellationToken)).FirstOrDefault();
     }
 
     /// <summary>The item the bound inventory is of: the station, the ship, or the can or wreck.</summary>
@@ -241,35 +244,69 @@ public sealed partial class InvBrokerService(
     /// <c>GetInventoryFromId(itemID)</c>: the station's own inventory (what its hangar shows) or the inventory of a ship of the character in the hangar; in space the solar system
     /// (to bind first), the ship the character flies, or a can or wreck the pilot can open (<see cref="ISpaceContainers.OpenAsync"/>).
     /// </summary>
+    private async ValueTask<PyValue> CompleteInventoryRpcAsync(ServiceCall call, PyValue response)
+    {
+        var context = ContextOf(call);
+        var stationHangar = context is { Kind: Kind.Hangar };
+        var activeSpaceShipInventoryList = call.Method == "List" &&
+            context is { Kind: Kind.Ship } ship &&
+            call.Session.DockedLocationId is null &&
+            call.Session.GetInt("shipid") == ship.ItemId;
+        if (entryHooks is not null)
+            foreach (var hook in entryHooks)
+                await hook.OnInventoryRpcAsync(
+                    call.Session,
+                    call.Method,
+                    stationHangar,
+                    activeSpaceShipInventoryList,
+                    call.Cancellation);
+        return response;
+    }
+
     [Method("GetInventoryFromId")]
     public async ValueTask<PyValue> GetInventoryFromId(ServiceCall call)
     {
+        PyValue result;
         if (IdOf(call.Arg(0)) is not { } id)
-            return None;
-        if (StationOf(call.Session) is not { } station)
-            return await OpenInSpaceAsync(call, id);
-        if (id == station)
-            return Bind(new Context(Kind.Hangar, station, 0), call.Session);
-
-        if (call.Session.CharacterId is not { } character
+        {
+            result = None;
+        }
+        else if (StationOf(call.Session) is not { } station)
+        {
+            result = await OpenInSpaceAsync(call, id);
+        }
+        else if (id == station)
+        {
+            result = Bind(new Context(Kind.Hangar, station, 0), call.Session);
+        }
+        else if (call.Session.CharacterId is not { } character
             || await items.GetAsync(id, call.Cancellation) is not { } item)
-            return None;
-        if (item.LocationId == station
+        {
+            result = None;
+        }
+        else if (item.LocationId == station
             && await types.GetAsync(item.TypeId, call.Cancellation) is { CategoryId: ShipCategory })
         {
-            if (item.OwnerId == character
-                || await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Query, call.Cancellation))
-                return Bind(new Context(Kind.Ship, item.Id, 0, CharacterShips.CargoFlag), call.Session);
-            return None;
+            result = item.OwnerId == character
+                || await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Query, call.Cancellation)
+                ? Bind(new Context(Kind.Ship, item.Id, 0, CharacterShips.CargoFlag), call.Session)
+                : None;
         }
-
-        if (item.OwnerId == character
+        else if (item.OwnerId == character
             && await ships.IsOwnedDockedContainerAsync(id, character, station, call.Cancellation))
-            return Bind(new Context(Kind.Container, id, 0, CharacterShips.ContainerFlag), call.Session);
-        if (await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Query, call.Cancellation)
+        {
+            result = Bind(new Context(Kind.Container, id, 0, CharacterShips.ContainerFlag), call.Session);
+        }
+        else if (await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Query, call.Cancellation)
             && await ships.IsOwnedDockedContainerAsync(id, item.OwnerId, station, call.Cancellation))
-            return Bind(new Context(Kind.Container, id, 0, CharacterShips.ContainerFlag), call.Session);
-        return None;
+        {
+            result = Bind(new Context(Kind.Container, id, 0, CharacterShips.ContainerFlag), call.Session);
+        }
+        else
+        {
+            result = None;
+        }
+        return await CompleteInventoryRpcAsync(call, result);
     }
 
     /// <summary>The inventories of a pilot in space: the solar system it binds first, then its ship and the cans and wrecks beside it.</summary>
@@ -304,20 +341,23 @@ public sealed partial class InvBrokerService(
     [Method("List")]
     public async ValueTask<PyValue> List(ServiceCall call)
     {
+        PyValue result;
         if (ContextOf(call) is not { } context)
         {
-            return None;
+            result = None;
         }
-        var flag = FlagOf(call);
-        var contents = await ContentsAsync(context, call.Session, call.Cancellation);
-        var chosen = flag is { } f ? contents.Where(r => r.Flag == f).ToList() : [.. contents];
-        if (context.Kind == Kind.Ship && flag is null && StationOf(call.Session) is not null)
+        else
         {
-            return InventoryWire.Set(chosen.Select(r => InventoryWire.PackedRow(r, r.CategoryId == PlayerCategory ? new PyStr("") : PyNone.Instance)));
+            var flag = FlagOf(call);
+            var contents = await ContentsAsync(context, call.Session, call.Cancellation);
+            var chosen = flag is { } f ? contents.Where(r => r.Flag == f).ToList() : [.. contents];
+            result = context.Kind == Kind.Ship && flag is null && StationOf(call.Session) is not null
+                ? InventoryWire.Set(chosen.Select(r => InventoryWire.PackedRow(r, r.CategoryId == PlayerCategory ? new PyStr("") : PyNone.Instance)))
+                : chosen.Count == 0 && flag is not null
+                    ? InventoryWire.EmptySet()
+                    : new PyList([.. chosen.Select(r => InventoryWire.PackedRow(r))]);
         }
-        return chosen.Count == 0 && flag is not null
-            ? InventoryWire.EmptySet()
-            : new PyList([.. chosen.Select(r => InventoryWire.PackedRow(r))]);
+        return await CompleteInventoryRpcAsync(call, result);
     }
 
     /// <summary><c>ListByFlags(flags)</c>: the rows in any of the flags, as a list (empty when there are none).</summary>
@@ -353,8 +393,14 @@ public sealed partial class InvBrokerService(
 
     /// <summary>The same item as a packed row.</summary>
     [Method("GetSelfInvItem")]
-    public async ValueTask<PyValue> GetSelfInvItem(ServiceCall call) =>
-        ContextOf(call) is { } context && await SelfAsync(context, call.Session, call.Cancellation) is { } self ? InventoryWire.PackedRow(self) : None;
+    public async ValueTask<PyValue> GetSelfInvItem(ServiceCall call)
+    {
+        var result = ContextOf(call) is { } context &&
+            await SelfAsync(context, call.Session, call.Cancellation) is { } self
+                ? InventoryWire.PackedRow(self)
+                : None;
+        return await CompleteInventoryRpcAsync(call, result);
+    }
 
     /// <summary>Everything in the inventory as a <c>Rowset</c>.</summary>
     [Method("GetContainerContents")]

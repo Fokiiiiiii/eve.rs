@@ -952,6 +952,12 @@ private void OnReceived(SimMessage message)
                             type.GraphicId, item.Position, item.Direction, item.Radius, stored.Quantity));
                         continue;
                     }
+                    // Active ships persist here for login-in-space; the simulator owns their ball, not the container service.
+                    if (type is not null && _statics.CategoryName(type.CategoryId) == "Ship" && item.GroupId != WreckGroup)
+                    {
+                        _placed.TryRemove(item.ItemId, out _);
+                        continue;
+                    }
                     var empty = (await _items.InContainerAsync(item.ItemId)).Count == 0;
                     _sim.PlaceWreck(new SimPlaceWreck(
                         system, item.ItemId, item.GroupId,

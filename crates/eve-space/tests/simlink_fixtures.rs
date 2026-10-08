@@ -399,6 +399,8 @@ fn message_of(case: &Value) -> Message {
             how: if number("how") == 0 { How::Undock } else { How::InSpace },
             station_id: wide(case, "stationId"),
             ship: ship_of(&case["ship"]),
+            position: case.get("position").map(|vector| [vector[0].as_f64().unwrap(), vector[1].as_f64().unwrap(), vector[2].as_f64().unwrap()]),
+            direction: case.get("direction").map(|vector| [vector[0].as_f64().unwrap(), vector[1].as_f64().unwrap(), vector[2].as_f64().unwrap()]),
         })),
         "EnterReply" => Message::EnterReply {
             session_id: session_id(),

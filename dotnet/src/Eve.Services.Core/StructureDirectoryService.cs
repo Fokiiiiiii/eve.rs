@@ -357,10 +357,13 @@ public sealed record StructureGuestSnapshot(
 
 /// <summary>Adapter for the client's structureGuests.GetGuests snapshot RPC.</summary>
 public sealed class StructureGuestsService(
-    Func<long, CancellationToken, ValueTask<IReadOnlyList<StructureGuestSnapshot>>> getGuests) : IService
+    Func<long, CancellationToken, ValueTask<IReadOnlyList<StructureGuestSnapshot>>> getGuests,
+    Action<Eve.Services.ClientSession, long, IReadOnlySet<long>>? seedObserverGuestLedger = null) : IService
 {
     private readonly Func<long, CancellationToken, ValueTask<IReadOnlyList<StructureGuestSnapshot>>> _getGuests =
         getGuests ?? throw new ArgumentNullException(nameof(getGuests));
+    private readonly Action<Eve.Services.ClientSession, long, IReadOnlySet<long>>? _seedObserverGuestLedger =
+        seedObserverGuestLedger;
 
     public string Name => "structureGuests";
 
@@ -378,6 +381,11 @@ public sealed class StructureGuestsService(
             return new PyDict([]);
 
         var guests = await _getGuests(structureId, call.Cancellation);
+        if (call.Session is { } observer)
+            _seedObserverGuestLedger?.Invoke(
+                observer,
+                structureId,
+                guests.Where(guest => guest.CharacterId > 0).Select(guest => guest.CharacterId).ToHashSet());
         var entries = guests
             .Where(guest => guest.CharacterId > 0)
             .GroupBy(guest => guest.CharacterId)

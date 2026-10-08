@@ -254,13 +254,9 @@ impl Sim {
         self.scenes.get_mut(system)
     }
 
-    /// An undock: the answer, and the notifications for the ships that are in view of the one that came out.
     fn enter(&mut self, enter: Enter, now: i64) -> Vec<Message> {
-        let Enter { session_id, solar_system_id, how, station_id, ship } = enter;
+        let Enter { session_id, solar_system_id, how, station_id, ship, position, direction } = enter;
         let reply = |outcome| vec![Message::EnterReply { session_id, outcome }];
-        if how == How::InSpace {
-            return reply(Err("NOT_SUPPORTED: only an undock puts a ship in space for now".to_string()));
-        }
         if self.sessions.contains_key(&session_id) {
             return reply(Err(format!("ALREADY_IN_SPACE {session_id}")));
         }
@@ -269,7 +265,21 @@ impl Sim {
             Err(reason) => return reply(Err(reason)),
         };
         let scene = self.scenes.entry(solar_system_id).or_insert_with(|| self.universe.scene_of(system));
-        match scene.undock(session_id, ship, station_id, now) {
+        let entered = match how {
+            How::Undock => scene.undock(session_id, ship, station_id, now),
+            How::InSpace => {
+                let (Some(position), Some(direction)) = (position, direction) else {
+                    return reply(Err("SPACE_STATE_REQUIRED".to_string()));
+                };
+                if position.iter().chain(direction.iter()).any(|value| !value.is_finite()) ||
+                    direction.iter().all(|value| *value == 0.0)
+                {
+                    return reply(Err("BAD_SPACE_STATE".to_string()));
+                }
+                scene.enter_in_space(session_id, ship, position, direction, now)
+            }
+        };
+        match entered {
             Ok(told) => {
                 self.sessions.insert(session_id, solar_system_id);
                 let mut messages = reply(Ok(()));
@@ -401,6 +411,29 @@ impl Sim {
                 Some(scene) => scene.condition(session_id, now),
                 None => vec![Out::Refused { session: session_id, command: 19, reason: "NO_SHIP_IN_SPACE" }],
             },
+            Message::Command { session_id, command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS, args } => {
+                match (self.scene_of(session_id), args.as_slice()) {
+                    (Some(scene), []) => {
+                        let mut told = scene.prime_login_visuals(session_id, now);
+                        told.push(Out::Accepted {
+                            session: session_id,
+                            command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS,
+                            at: now,
+                        });
+                        told
+                    }
+                    (Some(_), _) => vec![Out::Refused {
+                        session: session_id,
+                        command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS,
+                        reason: "UNKNOWN_COMMAND",
+                    }],
+                    (None, _) => vec![Out::Refused {
+                        session: session_id,
+                        command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS,
+                        reason: "NO_SHIP_IN_SPACE",
+                    }],
+                }
+            }
             Message::Command { session_id, command: crate::link::COMMAND_MEASURE, args } => {
                 match (self.scene_of(session_id), args.as_slice()) {
                     (Some(scene), [wreck]) if is_id(*wreck) => vec![Out::Measured {
@@ -846,6 +879,8 @@ mod tests {
             how: How::Undock,
             station_id,
             ship: spec(),
+            position: None,
+            direction: None,
         }))
     }
 
@@ -1445,7 +1480,7 @@ mod tests {
     }
 
     #[test]
-    fn an_undock_that_cannot_be_done_says_why_and_leaves_nothing_behind() {
+    fn an_undock_rejects_bad_locations_and_in_space_login_restores_the_saved_pose() {
         let mut sim = sim();
         let reason = |message: Vec<Message>| match &message[0] {
             Message::EnterReply { outcome: Err(reason), .. } => reason.clone(),
@@ -1459,14 +1494,46 @@ mod tests {
             reason(sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap())
                 .starts_with("ALREADY_IN_SPACE")
         );
-        let in_space = Message::Enter(Box::new(Enter {
-            session_id: 9,
-            solar_system_id: SYSTEM,
-            how: How::InSpace,
-            station_id: 0,
-            ship: spec(),
-        }));
-        assert!(reason(sim.handle(in_space, NOON).unwrap()).starts_with("NOT_SUPPORTED"));
+
+        let ship = spec();
+        let ship_id = ship.ship_id;
+        let position = [100.0, 200.0, 300.0];
+        let messages = sim.handle(
+            Message::Enter(Box::new(Enter {
+                session_id: 9,
+                solar_system_id: SYSTEM,
+                how: How::InSpace,
+                station_id: 0,
+                ship,
+                position: Some(position),
+                direction: Some([0.0, 0.0, 1.0]),
+            })),
+            NOON,
+        ).unwrap();
+        assert!(matches!(
+            messages.first(),
+            Some(Message::EnterReply { session_id: 9, outcome: Ok(()) })
+        ));
+        let restored = sim.scenes.get_mut(&SYSTEM).unwrap().ship(9, NOON).unwrap();
+        assert_eq!(restored.spec.ship_id, ship_id);
+        assert_eq!(restored.position, Vec3::new(position[0], position[1], position[2]));
+
+        let primed = sim.handle(
+            Message::Command {
+                session_id: 9,
+                command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS,
+                args: Vec::new(),
+            },
+            NOON,
+        ).unwrap();
+        assert_eq!(primed.len(), 4, "clock reset, visual AddBalls2, and command acknowledgement");
+        assert!(matches!(
+            primed.last(),
+            Some(Message::Accepted { session_id: 9, command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS, .. })
+        ));
+
+        let bound = sim.handle(Message::Bind { session_id: 9 }, NOON + 1).unwrap();
+        assert_eq!(bound.len(), 2, "the full SetState and ship numbers follow the earlier visual prime");
     }
 
     #[test]
@@ -1807,6 +1874,8 @@ mod tests {
             how: How::Undock,
             station_id: STATION,
             ship,
+            position: None,
+            direction: None,
         }))
     }
 

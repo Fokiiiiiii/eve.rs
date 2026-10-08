@@ -13,8 +13,14 @@ public sealed class CharacterSessions
     /// <summary>Records that <paramref name="session"/> plays <paramref name="characterId"/>.</summary>
     public void Enter(long characterId, ClientSession session)
     {
+        foreach (var (previousCharacterId, previousSession) in _byCharacter)
+            if (previousCharacterId != characterId && ReferenceEquals(previousSession, session))
+                _byCharacter.TryRemove(new KeyValuePair<long, ClientSession>(previousCharacterId, session));
+
+        var alreadyRegistered = _byCharacter.TryGetValue(characterId, out var current) && ReferenceEquals(current, session);
         _byCharacter[characterId] = session;
-        session.Closed += () => _byCharacter.TryRemove(new KeyValuePair<long, ClientSession>(characterId, session));
+        if (!alreadyRegistered)
+            session.Closed += () => _byCharacter.TryRemove(new KeyValuePair<long, ClientSession>(characterId, session));
     }
 
     /// <summary>The session that plays the character now, or null.</summary>
@@ -27,7 +33,15 @@ public sealed class CharacterSessions
 
     /// <summary>The sessions with a character that are in space (not docked) in a solar system.</summary>
     public IReadOnlyList<ClientSession> InSpace(long solarSystemId) =>
-        [.. _byCharacter.Values.Where(s => s.CharacterId is not null && s.GetInt("stationid") is null && s.GetInt("solarsystemid") == solarSystemId).Distinct()];
+        [.. _byCharacter.Values.Where(s => s.CharacterId is not null && s.DockedLocationId is null && s.GetInt("solarsystemid") == solarSystemId).Distinct()];
+
+    /// <summary>Current character sessions docked at the specified station.</summary>
+    public IReadOnlyList<ClientSession> InStation(long stationId) =>
+        stationId > 0
+            ? [.. _byCharacter.Values.Where(session =>
+                session.CharacterId is not null &&
+                (session.GetInt("stationid") ?? session.GetInt("stationID")) == stationId).Distinct()]
+            : [];
 
     /// <summary>Current character sessions docked in the specified structure.</summary>
     public IReadOnlyList<ClientSession> InStructure(long structureId) =>

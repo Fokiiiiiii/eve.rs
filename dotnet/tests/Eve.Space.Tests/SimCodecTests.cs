@@ -137,7 +137,9 @@ public class SimCodecTests
         {
             "Hello" => new SimHello((ushort)(int)c["version"]!),
             "HelloAck" => new SimHelloAck((ushort)(int)c["version"]!, (uint)(long)c["pollHz"]!),
-            "Enter" => new SimEnter(Session(), (int)c["solarSystemId"]!, (EnterHow)(int)c["how"]!, Wide(c, "stationId"), ShipOf(c["ship"]!)),
+            "Enter" => new SimEnter(Session(), (int)c["solarSystemId"]!, (EnterHow)(int)c["how"]!, Wide(c, "stationId"), ShipOf(c["ship"]!),
+                c["position"] is { } position ? VectorOf(position) : null,
+                c["direction"] is { } direction ? VectorOf(direction) : null),
             "EnterReply" => new SimEnterReply(Session(), (bool)c["ok"]! ? null : (string)c["reason"]!),
             "Leave" => new SimLeave(Session(), (LeaveWhy)(int)c["why"]!),
             "Bind" => new SimBind(Session()),
@@ -396,6 +398,19 @@ public class SimCodecTests
         Assert.Equal([0.5, 0.35, 0.25, 0.1], enter.Ship.Vitals.Resonances.Armor);
         Assert.Equal([0.33, 0.33, 0.33, 0.33], enter.Ship.Vitals.Resonances.Structure);
         Assert.Equal(new SimCondition(0.35, 0.6, 1.0, 1.0), enter.Ship.Condition);
+    }
+
+    [Fact]
+    public void In_space_entry_round_trips_the_saved_pose()
+    {
+        var position = new double[] { 100.0, 200.0, 300.0 };
+        var direction = new double[] { 0.0, 0.0, 1.0 };
+        var message = new SimEnter(7, 30_000_142, EnterHow.InSpace, 0, ShipOf(Case("valid", "enter by undocking")["ship"]!), position, direction);
+
+        var decoded = Assert.IsType<SimEnter>(SimCodec.Decode(SimCodec.Encode(message).AsMemory(4)));
+
+        Assert.Equal(position, decoded.Position?.ToArray());
+        Assert.Equal(direction, decoded.Direction?.ToArray());
     }
 
     [Fact]

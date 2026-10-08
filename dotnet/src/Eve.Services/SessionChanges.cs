@@ -14,7 +14,7 @@ public static class SessionAttributes
     /// </summary>
     public static readonly IReadOnlySet<string> ClientVisible = new HashSet<string>(StringComparer.Ordinal)
     {
-        "role", "countryCode", "charid", "corpid", "corpAccountKey", "hqID", "allianceid", "factionid", "warfactionid",
+        "role", "countryCode", "charid", "corpid", "corpAccountKey", "hqID", "baseID", "allianceid", "factionid", "warfactionid",
         "genderID", "bloodlineID", "raceID", "schoolID", "stationid", "stationid2", "structureid", "solarsystemid",
         "solarsystemid2", "locationid", "worldspaceid", "constellationid", "regionid", "shipid", "fleetid", "fleetrole",
         "wingid", "squadid", "corprole", "rolesAtAll", "rolesAtBase", "rolesAtHQ", "rolesAtOther",

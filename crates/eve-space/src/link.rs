@@ -82,6 +82,8 @@ pub enum ChargeOp {
 
 /// The command that asks how far a wreck or a can is (`args`: its item id); answered with `Measured`.
 pub const COMMAND_MEASURE: u8 = 20;
+/// Prime the visual half of an in-space login before the client requests its full ballpark state.
+pub const COMMAND_PRIME_LOGIN_BALLPARK_VISUALS: u8 = 24;
 
 /// How a ship comes into space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,6 +186,8 @@ pub struct Enter {
     /// The station undocked from (0 when the ship was already in space).
     pub station_id: i64,
     pub ship: ShipSpec,
+    pub position: Option<[f64; 3]>,
+    pub direction: Option<[f64; 3]>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -751,6 +755,25 @@ fn put_vector(out: &mut Vec<u8>, vector: &[f64; 3]) {
 fn read_vector(reader: &mut Reader) -> Result<[f64; 3], DecodeError> {
     Ok([reader.f64()?, reader.f64()?, reader.f64()?])
 }
+
+fn put_optional_vector(out: &mut Vec<u8>, vector: Option<[f64; 3]>) {
+    match vector {
+        Some(vector) => {
+            out.push(1);
+            put_vector(out, &vector);
+        }
+        None => out.push(0),
+    }
+}
+
+fn read_optional_vector(reader: &mut Reader) -> Result<Option<[f64; 3]>, DecodeError> {
+    match reader.u8()? {
+        0 => Ok(None),
+        1 => Ok(Some(read_vector(reader)?)),
+        _ => Err(DecodeError::BadValue("optional vector")),
+    }
+}
+
 
 fn put_credit(out: &mut Vec<u8>, credit: &Credit) {
     for number in [credit.character_id, credit.corporation_id, credit.alliance_id, credit.war_faction_id] {
@@ -1581,6 +1604,10 @@ impl Message {
                 });
                 out.extend_from_slice(&enter.station_id.to_le_bytes());
                 put_ship(&mut out, &enter.ship);
+                if enter.how == How::InSpace {
+                    put_optional_vector(&mut out, enter.position);
+                    put_optional_vector(&mut out, enter.direction);
+                }
             }
             Self::EnterReply { session_id, outcome } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
@@ -2008,7 +2035,15 @@ impl Message {
                 };
                 let station_id = r.i64()?;
                 let ship = read_ship(&mut r)?;
-                Message::Enter(Box::new(Enter { session_id, solar_system_id, how, station_id, ship }))
+                let (position, direction) = if how == How::InSpace {
+                    (read_optional_vector(&mut r)?, read_optional_vector(&mut r)?)
+                } else {
+                    (None, None)
+                };
+                if how == How::InSpace && (position.is_none() || direction.is_none()) {
+                    return Err(DecodeError::BadValue("in-space pose"));
+                }
+                Message::Enter(Box::new(Enter { session_id, solar_system_id, how, station_id, ship, position, direction }))
             }
             kind::ENTER_REPLY => {
                 let session_id = r.u64()?;

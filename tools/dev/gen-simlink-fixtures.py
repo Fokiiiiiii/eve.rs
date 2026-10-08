@@ -197,7 +197,8 @@ def build(m):
         return frame(k, struct.pack("<HI", m["version"], m["pollHz"]))
     if k == "Enter":
         return frame(k, u64(m["sessionId"]) + struct.pack("<iB", m["solarSystemId"], m["how"]) + i64(m["stationId"])
-                     + ship(m["ship"]))
+                       + ship(m["ship"])
+                       + (b"\x01" + struct.pack("<3d", *m["position"]) + b"\x01" + struct.pack("<3d", *m["direction"]) if m["how"] == 1 else b""))
     if k == "EnterReply":
         return frame(k, u64(m["sessionId"]) + bytes([0 if m["ok"] else 1]) + s("" if m["ok"] else m["reason"]))
     if k == "Leave":
@@ -322,7 +323,8 @@ valid = [
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
-     "solarSystemId": 30000142, "how": 1, "stationId": "0", "ship": dict(BARE, name="イビス")},
+     "solarSystemId": 30000142, "how": 1, "stationId": "0", "ship": dict(BARE, name="イビス"),
+     "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]},
     {"name": "enter accepted", "kind": "EnterReply", "sessionId": "1790646377000015", "ok": True},
     {"name": "enter refused", "kind": "EnterReply", "sessionId": "1790646377000015", "ok": False,
      "reason": "UNKNOWN_STATION 60015249"},
@@ -335,6 +337,7 @@ valid = [
     {"name": "command with three arguments", "kind": "Command", "sessionId": "1790646377000015", "command": 2,
      "args": [-0.8191520442889917, 0.0, 0.5735764363510462]},
     {"name": "command with none", "kind": "Command", "sessionId": "1790646377000015", "command": 3, "args": []},
+    {"name": "prime login ballpark visuals", "kind": "Command", "sessionId": "1790646377000015", "command": 24, "args": []},
     {"name": "dock command", "kind": "Command", "sessionId": "1790646377000015", "command": 4, "args": [60015249.0]},
     {"name": "follow command", "kind": "Command", "sessionId": "1790646377000015", "command": 5,
      "args": [60015249.0, 2500.0]},

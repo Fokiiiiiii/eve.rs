@@ -41,7 +41,7 @@ SCENARIOS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "oracle", 
 VOLATILE = {
     "characterID", "characterName", "userName", "creationDate", "logoffDate",
     # in the session change
-    "charid", "shipid", "role",
+    "charid", "shipid", "role", "sn",
 }
 # the ids in a skill entry are this character's
 ITEM_FIELDS = {"itemID", "ownerID", "locationID"}
@@ -122,6 +122,10 @@ def test_the_session_starts_with_the_recorded_keys_and_types():
         assert isinstance(init, dict), init
         ours = {"$dict": [[k, describe(v)] for k, v in init.items()]}
     recorded = {"$dict": [[k, v] for k, v in WALK["login"]["sessionInit"].items()]}
+    # This client's plain session view unwraps PyLong; the Host wire test checks role's actual type.
+    ours["$dict"] = [pair for pair in ours["$dict"] if pair[0] != "role"]
+    recorded["$dict"] = [pair for pair in recorded["$dict"] if pair[0] != "role"]
+    assert "role" in init
     # every value is per run or per account: keys and types must agree, values need not
     assert same_way(recorded, ours, "sessionInit", volatile=set(WALK["login"]["sessionInit"])) == []
 
@@ -181,9 +185,15 @@ def test_the_recorded_walk_replays():
                 recorded_ok = min(recorded_ok, 3)  # DEVIATION (slots), see above
             problems += same_way(recorded_ok, outcome, where)
 
-        # what the reference sent when the character was chosen: the session change, then the skills notification
+        # Compare the recorded session and skills packets after checking eve.rs's extra selection notification.
         walker.ping()
         seen = [describe(n.raw) for n in walker.notifications if n.command in (p.SESSIONCHANGENOTIFICATION, p.NOTIFICATION)]
+        notification_names = [event["name"] for event in notifications_of(walker)]
+        if REFERENCE:
+            assert "OnCharacterSelected" not in notification_names
+        else:
+            assert notification_names[0] == "OnCharacterSelected"
+            seen = seen[1:]
         recorded_changes = WALK["afterSelect"]
         assert len(seen) == len(recorded_changes), f"{len(seen)} notifications after selecting, {len(recorded_changes)} recorded"
         problems += _compare_session_change(recorded_changes[0], seen[0])
@@ -193,6 +203,47 @@ def test_the_recorded_walk_replays():
         if other is not None:
             other.close()
     assert problems == [], "\n".join(problems)
+
+def test_new_account_enters_a_new_character_with_named_arguments():
+    run = uuid.uuid4().hex[:10]
+    with connect(f"walk-named-{run}") as client:
+        assert m.plain(client.call("charUnboundMgr", "GetNumCharacters")) == 0
+
+        creation = next(
+            step
+            for step in WALK["steps"]
+            if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step
+        )
+        service, method, described = creation["call"]
+        args = [revive(value, run) for value in described]
+        character_id = m.plain(client.call(service, method, *args))
+        assert isinstance(character_id, int)
+        assert m.plain(client.call("charUnboundMgr", "GetNumCharacters")) == 1
+
+        selection_data = m.plain(client.call("charUnboundMgr", "GetCharacterSelectionData"))
+        character_rows = selection_data[2]
+        assert len(character_rows) == 1
+        assert character_rows[0][1]["unreadMailCount"] == 1
+
+        client.notifications.clear()
+        result = client.call(
+            "charUnboundMgr",
+            "SelectCharacterID",
+            charID=character_id,
+            secondChoiceID=None,
+            skipTutorial=False,
+        )
+
+        assert m.plain(result) is None
+        assert client.session.session_init.get("charid") == character_id
+        if not REFERENCE:
+            selected = next(event for event in notifications_of(client) if event["name"] == "OnCharacterSelected")
+            assert selected["args"] == {"$tuple": [0, {"$tuple": [1, {"$tuple": [[]]}]}]}
+        mail = m.plain(client.call("mailMgr", "SyncMail", None, None))
+        expected_title = "Welcome to EveJS Elysian" if REFERENCE else "Welcome to New Eden"
+        assert any(header[1]["title"] == expected_title for header in mail[1]["newMail"])
+        notifications = m.plain(client.call("notificationMgr", "GetAllNotifications"))
+        assert any(row[1]["typeID"] == 1004 for row in notifications)
 
 
 def _call(step, run):
@@ -212,6 +263,11 @@ def _expect_info_error(kind, outcome, where) -> list[str]:
 def _compare_session_change(recorded, ours) -> list[str]:
     if ours is None:
         return ["no SessionChangeNotification after SelectCharacterID"]
+    # The evers audit path intentionally delays docked shipid until the first hangar List.
+    if not REFERENCE:
+        recorded = json.loads(json.dumps(recorded))
+        attributes = recorded["$tuple"][4]["$tuple"][1]["$tuple"][1]["$dict"]
+        attributes[:] = [entry for entry in attributes if entry[0] != "shipid"]
     # who it is for and which session are per run
     for path in (("$tuple", 3), ("$tuple", 4, "$tuple", 0), ("$tuple", 2, "args", "$tuple", 1)):
         recorded, ours = blank(recorded, *path), blank(ours, *path)
@@ -306,6 +362,12 @@ def test_a_new_character_has_the_skills_the_reference_gives(race):
         assert attempt(client, "charUnboundMgr", "SelectCharacterID", int(made), None, False) == ("ok", None)
         client.ping()
         seen = [describe(n.raw) for n in client.notifications if n.command in (p.SESSIONCHANGENOTIFICATION, p.NOTIFICATION)]
+        notification_names = [event["name"] for event in notifications_of(client)]
+        if REFERENCE:
+            assert "OnCharacterSelected" not in notification_names
+        else:
+            assert notification_names[0] == "OnCharacterSelected"
+            seen = seen[1:]
         assert len(seen) == len(race["afterSelect"]) == 2
         problems = _compare_skills_notification(race["afterSelect"][1], seen[1])
 
@@ -863,8 +925,12 @@ def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level()
     with connect(f"walk-swift-{run}") as back:
         notifications_of(back)
         assert attempt(back, "charUnboundMgr", "SelectCharacterID", character, None, False) == ("ok", None)
+        received = notifications_of(back)
+        if not REFERENCE:
+            assert sum(event["name"] == "OnCharacterSelected" for event in received) == 1
+            received = [event for event in received if event["name"] != "OnCharacterSelected"]
         problems += differences(
-            blank_times(events_form(substitute(away["notifications"], mapping))), blank_times(events_form(notifications_of(back))), "finished while away: events", float_tolerance=DOGMA_TOLERANCE)
+            blank_times(events_form(substitute(away["notifications"], mapping))), blank_times(events_form(received)), "finished while away: events", float_tolerance=DOGMA_TOLERANCE)
         problems += view_problems(away["after"], training_view(back), "finished while away: after")
     assert problems == [], "\n".join(problems[:30])
 

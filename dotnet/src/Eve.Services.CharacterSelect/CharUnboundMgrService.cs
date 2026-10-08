@@ -18,14 +18,17 @@ public sealed partial class CharUnboundMgrService(
     IAccountLookup accounts,
     PgCharacterStore characters,
     PgItemStore items,
-    PgSkillStore skills,
+    CharacterTraining training,
     PgWalletStore wallets,
     CharacterCreation creation,
     CreationCatalog catalog,
     OnlineCharacters online,
     IReadOnlyList<ICharacterEntryHook> entryHooks,
     Random random,
-    bool newCharacterExperienceEnabled = false)
+    bool newCharacterExperienceEnabled = false,
+    Func<long, CancellationToken, Task>? sendWelcomeMailAsync = null,
+    Func<long, int>? unreadMailCount = null,
+    Func<long, CancellationToken, Task<double>>? securityStatusOf = null)
 {
     /// <summary>What every session's role gets on top of the account's (the client shows staff roles and the base bits alike).</summary>
     public const long SessionBaseRole = 0x6000000080000000;
@@ -46,6 +49,13 @@ public sealed partial class CharUnboundMgrService(
     private static int? AccountOf(ServiceCall call) => call.Session.UserId is { } id ? checked((int)id) : null;
 
     private static long FileTime(DateTimeOffset time) => Py.FileTimeFromUnixMs(time.ToUnixTimeMilliseconds());
+
+    internal static int FinishedSkillsCount(IReadOnlyList<HistoryEntry> history)
+    {
+        var finished = history.Where(entry => entry.EventType is SkillEvents.TrainingComplete or SkillEvents.QueueTrainingCompleted).ToArray();
+        var latest = finished.Select(entry => (long?)entry.LogDate).Max();
+        return latest is { } at ? finished.Count(entry => entry.LogDate == at) : 0;
+    }
 
     [Method("GetNumCharacters")]
     public async ValueTask<PyValue> GetNumCharacters(ServiceCall call) =>
@@ -78,9 +88,8 @@ public sealed partial class CharUnboundMgrService(
         {
             return None;
         }
-        var points = await skills.TotalPointsAsync([character.Id], Token(call));
         var balances = await wallets.ForOwnersAsync([character.Id], Token(call));
-        return await SelectionRow(character, points.GetValueOrDefault(character.Id), balances.GetValueOrDefault(character.Id), Token(call));
+        return await SelectionRow(character, balances.GetValueOrDefault(character.Id), Token(call));
     }
 
     /// <summary>
@@ -93,12 +102,11 @@ public sealed partial class CharUnboundMgrService(
         var account = AccountOf(call);
         var list = account is { } id ? await characters.ForAccountAsync(id, Token(call)) : [];
         var info = account is { } known ? await accounts.FindAsync(checked((uint)known), Token(call)) : null;
-        var points = await skills.TotalPointsAsync(list.Select(c => c.Id), Token(call));
         var balances = await wallets.ForOwnersAsync(list.Select(c => c.Id), Token(call));
         var rows = new List<PyValue>();
         foreach (var character in list)
         {
-            rows.Add(await SelectionRow(character, points[character.Id], balances.GetValueOrDefault(character.Id), Token(call)));
+            rows.Add(await SelectionRow(character, balances.GetValueOrDefault(character.Id), Token(call)));
         }
         return Py.Tuple(
             new PyList(info is null ? [] : [AccountRow(info)]),
@@ -229,6 +237,8 @@ public sealed partial class CharUnboundMgrService(
             Appearance(call.Arg(5)),
             Appearance(call.Arg(6)));
         var outcome = await creation.CreateAsync(request, Token(call));
+        if (outcome is Created newCharacter && sendWelcomeMailAsync is not null)
+            await sendWelcomeMailAsync(newCharacter.CharacterId, Token(call));
         return outcome switch
         {
             Created created => new PyInt(created.CharacterId),
@@ -244,11 +254,11 @@ public sealed partial class CharUnboundMgrService(
         var skipTutorial = call.Args.Count > 2
             ? BooleanLike(call.Arg(2))
             : BooleanLike(call.Kwarg("skipTutorial") ?? None);
-        if (AccountOf(call) is not { } account || call.Arg(0) is not (PyInt or PyLong))
+        var characterId = RequestCharacterId(call);
+        if (AccountOf(call) is not { } account || characterId <= 0)
         {
             return None;
         }
-        var characterId = call.Arg(0) is PyLong wide ? wide.Value : ((PyInt)call.Arg(0)).Value;
         var character = await characters.GetAsync(characterId, Token(call));
         if (character is null)
         {
@@ -281,20 +291,32 @@ public sealed partial class CharUnboundMgrService(
         (string Name,PyValue Value)[] selected = [
             ("charid", new PyInt(character.Id)),
             ("corpid", new PyInt(character.CorporationId)),
+            ("allianceid", None),
             ("genderID", new PyInt(character.Gender)),
             ("bloodlineID", new PyInt(character.BloodlineId)),
             ("raceID", new PyInt(character.RaceId)),
             ("schoolID", new PyInt(character.SchoolId)),
             ("factionid", character.FactionId is { } faction ? new PyInt(faction) : None),
+            ("warfactionid", None),
             ("stationid", new PyInt(character.StationId)),
             ("stationid2", new PyInt(character.StationId)),
+            ("structureid", None),
+            ("solarsystemid", None),
             ("solarsystemid2", new PyInt(character.SolarSystemId)),
             ("constellationid", new PyInt(character.ConstellationId)),
             ("regionid", new PyInt(character.RegionId)),
             ("shipid", character.ShipId is { } ship ? new PyLong(ship) : None),
             ("locationid", new PyInt(character.StationId)),
+            ("worldspaceid", None),
+            ("homeStationID", new PyInt(character.HomeStationId)),
+            ("cloneStationID", new PyInt(character.HomeStationId)),
+            ("fleetid", None),
+            ("fleetrole", None),
+            ("wingid", None),
+            ("squadid", None),
             ("corpAccountKey", new PyInt(DefaultCorpAccountKey)),
             ("hqID", None),
+            ("baseID", None),
             ("role", new PyLong(accountRole | SessionBaseRole)),
             ("corprole", new PyLong(0)),
             ("rolesAtAll", new PyLong(0)),
@@ -305,6 +327,14 @@ public sealed partial class CharUnboundMgrService(
         foreach (var hook in entryHooks)
             foreach (var (name,value) in await hook.GetSessionAttributesAsync(call.Session,character.Id,Token(call)))
                 attributes[name] = value;
+        if (attributes.GetValueOrDefault("deferredDockedShipId") is PyLong deferredShipId && deferredShipId.Value > 0)
+            attributes["shipid"] = None;
+        var changingCharacter = call.Session.CharacterId != characterId;
+        if (changingCharacter && call.Session.CharacterId is { } previousCharacterId)
+            foreach (var hook in entryHooks)
+                await hook.OnCharacterLeavingAsync(call.Session, previousCharacterId, Token(call));
+        if (changingCharacter)
+            call.Session.SendNotification("OnCharacterSelected", "clientID", new PyList([]));
         var announced = call.Session.Change([.. attributes.Select(a => (a.Key,a.Value))]);
         // Whatever else the client needs to learn about the character: the skills module tells it to load its skills.
         // Choosing the character the session already has is not entering it again, as on the reference.
@@ -423,9 +453,17 @@ public sealed partial class CharUnboundMgrService(
         ("subscriptionEndTime", new PyLong(SubscriptionEndFileTime)),
         ("maxCharacterSlots", new PyInt(CharacterCreation.SlotsPerAccount)));
 
-    private async Task<PyValue> SelectionRow(Character c, long skillPoints, Balance? balance, CancellationToken ct)
+    private async Task<PyValue> SelectionRow(Character c, Balance? balance, CancellationToken ct)
     {
         var ship = c.ShipId is { } shipId ? await items.GetAsync(shipId, ct) : null;
+        var trainingView = await training.ViewAsync(c.Id, c.AccountId, ct);
+        var currentTraining = trainingView.Current;
+        var trainingQueueEnd = currentTraining is null ? null : trainingView.Queue.LastOrDefault()?.End;
+        var trainedSkillPoints = currentTraining is null
+            ? null
+            : trainingView.Skills.FirstOrDefault(skill => skill.TypeId == currentTraining.TypeId)?.SkillPoints;
+        var finishedSkills = FinishedSkillsCount(await training.HistoryAsync(c.Id, ct));
+        var securityStatus = securityStatusOf is null ? 0d : await securityStatusOf(c.Id, ct);
         var logoff = c.LastLogoffAt ?? c.CreatedAt;
         return Py.KeyVal(
             ("characterID", new PyInt(c.Id)),
@@ -449,24 +487,24 @@ public sealed partial class CharUnboundMgrService(
             ("plexBalance", new PyInt(balance?.Plex ?? 0)),
             // Gap: the wallet has no journal yet, so nothing has changed the balance.
             ("balanceChange", new PyReal(0.0)),
-            ("skillPoints", new PyInt(skillPoints)),
+            ("skillPoints", new PyInt(trainingView.TotalPoints)),
             ("shipTypeID", ship is null ? None : new PyInt(ship.TypeId)),
-            ("shipName", new PyStr(ship is null ? "" : catalog.ShipName(ship.TypeId))),
-            ("securityRating", new PyInt(0)),
-            ("securityStatus", new PyInt(0)),
+            ("shipName", new PyStr(ship is null ? "" : ship.CustomName ?? catalog.ShipName(ship.TypeId))),
+            ("securityRating", Py.Number(securityStatus)),
+            ("securityStatus", Py.Number(securityStatus)),
             ("title", new PyStr("")),
-            // Gap: mail belongs to a module that does not exist yet; this is the reference's value for a new character.
-            ("unreadMailCount", new PyInt(1)),
+            ("unreadMailCount", new PyInt(Math.Max(0, unreadMailCount?.Invoke(c.Id) ?? 0))),
             ("paperdollState", new PyInt(0)),
             ("lockTypeID", None),
             ("logoffDate", new PyLong(FileTime(logoff))),
-            ("skillTypeID", None),
-            ("toLevel", None),
-            ("trainingStartTime", None),
-            ("trainingEndTime", None),
-            ("queueEndTime", None),
-            ("finishSP", None),
-            ("trainedSP", None),
-            ("finishedSkills", new PyInt(0)));
+            ("skillTypeID", currentTraining is null ? None : new PyInt(currentTraining.TypeId)),
+            ("toLevel", currentTraining is null ? None : new PyInt(currentTraining.ToLevel)),
+            ("trainingStartTime", currentTraining?.Start is { } trainingStart ? new PyLong(trainingStart) : None),
+            ("trainingEndTime", currentTraining?.End is { } trainingEnd ? new PyLong(trainingEnd) : None),
+            ("queueEndTime", trainingQueueEnd is { } queueEnd ? new PyLong(queueEnd) : None),
+            ("finishSP", currentTraining is null ? None : new PyInt(currentTraining.DestinationPoints)),
+            ("trainedSP", trainedSkillPoints is { } trained ? new PyInt(trained) : None),
+            // ponytail: history has no settle-batch id, so separate completion batches with the same FILETIME merge.
+            ("finishedSkills", new PyInt(finishedSkills)));
     }
 }

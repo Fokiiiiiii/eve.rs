@@ -376,10 +376,12 @@ pub(crate) struct Pilot {
     pub(crate) warp_target: Option<i64>,
     /// The jump the ship has begun, until it leaves for the other system.
     jump: Option<PendingJump>,
-    /// The ship came through a gate (it is bound differently from one that undocked).
+    /// The ship arrived already in space (through a gate or on login), not by undocking.
     jumped_in: bool,
     /// The client has bound the ballpark: it can be sent destiny updates.
     pub(crate) bound: bool,
+    /// The login List sent the visual half; the later bind still owes the authoritative state.
+    login_visuals_sent: bool,
     /// When the ship came into the scene (the ships are listed in this order).
     pub(crate) entered: u64,
     /// The other ships this pilot has been told of and not told to forget: those in its ballpark.
@@ -412,6 +414,7 @@ impl Pilot {
             jump: None,
             jumped_in: false,
             bound: false,
+            login_visuals_sent: false,
             entered,
             sees: BTreeSet::new(),
             sees_wrecks: BTreeSet::new(),
@@ -631,6 +634,42 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         Ok(self.announce_arrival(session, now))
     }
 
+    /// Restores a pilot whose ship is already in space at its saved position.
+    pub fn enter_in_space(
+        &mut self,
+        session: SessionId,
+        spec: ShipSpec,
+        position: [f64; 3],
+        direction: [f64; 3],
+        now: i64,
+    ) -> Result<Vec<Out>, SceneError> {
+        if self.pilots.contains_key(&session) {
+            return Err(SceneError::AlreadyInSpace(session));
+        }
+        let position = Vec3::new(position[0], position[1], position[2]);
+        let direction = Vec3::new(direction[0], direction[1], direction[2]);
+        let modules = Modules::with_charge(
+            spec.capacitor_capacity,
+            spec.capacitor_recharge_s,
+            spec.condition.charge,
+            now,
+        );
+        let ship = Ship::new(
+            spec,
+            position,
+            Vec3::new(0.0, 0.0, 0.0),
+            direction,
+            0.0,
+            Course::Stop,
+            now,
+        );
+        let entered = self.next_entry();
+        let mut pilot = Pilot::new(ship, modules, entered, now, now);
+        pilot.jumped_in = true;
+        self.pilots.insert(session, pilot);
+        Ok(self.announce_arrival(session, now))
+    }
+
     pub fn leave(&mut self, session: SessionId, why: Departure, now: i64) -> Option<Vec<Out>> {
         let mut pilot = self.pilots.remove(&session)?;
         if let Some(brains) = self.brains.as_mut() {
@@ -670,12 +709,33 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         Out::Notify { session, name, id_type: "clientID", args }
     }
 
+    /// Send the visual half of a login-in-space bootstrap; the later ballpark bind sends the full SetState.
+    pub fn prime_login_visuals(&mut self, session: SessionId, now: i64) -> Vec<Out> {
+        if self.pilots.get(&session).is_none_or(|pilot| pilot.bound || pilot.login_visuals_sent) {
+            return Vec::new();
+        }
+        self.settle_all(now);
+        let stamp = self.next_stamp(now);
+        let ships = self.ships_visible_to(session);
+        let Ok(added) = payload::add_ships(stamp, &ships, now) else { return Vec::new() };
+        let told = vec![
+            Self::notify(session, "OnSetTimeDilation", vec![int(1), int(1), int(100_000_000)]),
+            Self::notify(session, "DoSimClockRebase", vec![tuple([filetime(now), filetime(now)])]),
+            Self::notify(session, "DoDestinyUpdate", payload::destiny_update([added], true)),
+        ];
+        if let Some(pilot) = self.pilots.get_mut(&session) {
+            pilot.login_visuals_sent = true;
+        }
+        told
+    }
+
     /// The client bound the system's ballpark: it is told the time, and given the ships in view (its own among them, in the order they came into
     /// the scene) and then everything around them.
     pub fn bind(&mut self, session: SessionId, now: i64) -> Vec<Out> {
         if !self.pilots.contains_key(&session) {
             return Vec::new();
         }
+        let login_visuals_sent = self.pilots[&session].login_visuals_sent;
         self.settle_all(now);
         self.take_in_view(session);
         let first = self.next_stamp(now);
@@ -688,7 +748,12 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         let heading =
             |action_stamp: u32| payload::action(action_stamp, heading_name(ship), heading_args(ship));
 
-        let Ok(added) = payload::add_ships(first, &ships, now) else { return Vec::new() };
+        let added = if login_visuals_sent {
+            None
+        } else {
+            let Ok(added) = payload::add_ships(first, &ships, now) else { return Vec::new() };
+            Some(added)
+        };
         let wrecks = self.wrecks_in_view(session);
         let Ok(state) = payload::set_state(second, &system, ship, &ships, &wrecks, now) else {
             return Vec::new();
@@ -696,14 +761,17 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         let update = |actions: Vec<Value>| {
             Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false))
         };
-        let mut told = vec![
-            Self::notify(session, "OnSetTimeDilation", vec![int(1), int(1), int(100_000_000)]),
-            Self::notify(session, "DoSimClockRebase", vec![tuple([filetime(now), filetime(now)])]),
-            // the client waits for the ship of an undock; a ship that came through a gate is not waited for
-            Self::notify(session, "DoDestinyUpdate", payload::destiny_update([added], !pilot.jumped_in)),
-        ];
+        let mut told = Vec::new();
+        if let Some(added) = added {
+            told.extend([
+                Self::notify(session, "OnSetTimeDilation", vec![int(1), int(1), int(100_000_000)]),
+                Self::notify(session, "DoSimClockRebase", vec![tuple([filetime(now), filetime(now)])]),
+                // An undocked ship waits for its ball; an in-space arrival does not.
+                Self::notify(session, "DoDestinyUpdate", payload::destiny_update([added], !pilot.jumped_in)),
+            ]);
+        }
         if !pilot.jumped_in {
-            // a ship that undocked is put in motion as it is bound; one that came through a gate arrives at rest
+            // A ship that undocked moves as it is bound; an in-space arrival is already at rest.
             told.push(update(vec![
                 payload::uncloak(first, ship.spec.ship_id),
                 payload::action(
@@ -722,7 +790,7 @@ pub(crate) fn solar_system_id(&self) -> i32 {
             ]));
         }
         told.push(update(vec![state]));
-        // the numbers of every ship in view; the pilot's own lack the mass when the bind has sent it already
+        // The numbers of every ship in view; the pilot's own lack the mass when the bind has sent it already.
         let mut numbers = Vec::new();
         for other in &ships {
             if other.spec.ship_id != ship.spec.ship_id || pilot.jumped_in {
@@ -738,6 +806,11 @@ pub(crate) fn solar_system_id(&self) -> i32 {
             }
         }
         told.push(update(numbers));
+        if login_visuals_sent {
+            if let Some(pilot) = self.pilots.get_mut(&session) {
+                pilot.login_visuals_sent = false;
+            }
+        }
         self.with_backlog(told)
     }
 
@@ -2974,6 +3047,35 @@ pub(crate) mod tests {
         let mut scene = Scene::new(system());
         scene.undock(SESSION, spec(), STATION, NOON).unwrap();
         scene
+    }
+
+    #[test]
+    fn a_space_login_primes_visuals_before_the_full_bind_without_undocking_again() {
+        let mut scene = Scene::new(system());
+        scene
+            .enter_in_space(SESSION, spec(), [100.0, 200.0, 300.0], [0.0, 0.0, 1.0], NOON)
+            .unwrap();
+        assert!(scene.pilots[&SESSION].jumped_in);
+
+        let visuals = scene.prime_login_visuals(SESSION, NOON);
+        let names: Vec<_> = visuals.iter().filter_map(|out| match out {
+            Out::Notify { name, .. } => Some(*name),
+            _ => None,
+        }).collect();
+        assert!(names.contains(&"DoSimClockRebase"));
+        assert!(names.contains(&"DoDestinyUpdate"));
+        assert!(!scene.pilots[&SESSION].bound);
+        assert!(scene.pilots[&SESSION].login_visuals_sent);
+
+        let bound = scene.bind(SESSION, NOON);
+        let names: Vec<_> = bound.iter().filter_map(|out| match out {
+            Out::Notify { name, .. } => Some(*name),
+            _ => None,
+        }).collect();
+        assert!(scene.pilots[&SESSION].bound);
+        assert!(!scene.pilots[&SESSION].login_visuals_sent);
+        assert!(!names.contains(&"DoSimClockRebase"));
+        assert_eq!(names.iter().filter(|name| **name == "DoDestinyUpdate").count(), 2);
     }
 
     fn seconds(n: i64) -> i64 {

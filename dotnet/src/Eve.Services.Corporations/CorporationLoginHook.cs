@@ -20,7 +20,7 @@ public sealed class CorporationLoginHook(CorporationStore store,PgCharacterStore
             : new SessionRoles(0,0,0,0,0,null,null,1000);
         return [("corpid",new PyInt(character.CorporationId)),("allianceid",CorporationWire.Id(character.AllianceId)),
             ("factionid",CorporationWire.Id(character.FactionId)),
-            ("warfactionid",CorporationWire.Id(character.DirectFactionId ?? CorporationWire.FactionId(corp))),
+            ("warfactionid",CorporationWire.Id(character.DirectFactionId)),
             ("hqID",CorporationWire.Id(roles.HqId)),
             ("baseID",CorporationWire.Id(roles.BaseId)),("corpAccountKey",new PyInt(roles.AccountKey)),
             ("corprole",new PyLong(roles.CorpRole)),("rolesAtAll",new PyLong(roles.AtAll)),("rolesAtHQ",new PyLong(roles.AtHq)),

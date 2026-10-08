@@ -9,6 +9,34 @@ run the same scenarios against. Start with `CLAUDE.md` and the [documentation in
 > Localhost-only research project. Not affiliated with CCP hf. It contains no
 > CCP client code and no copy of the static data export.
 
+## Architecture
+
+Three independent server processes, backed by PostgreSQL 18.
+
+![eve.rs system architecture](docs/assets/architecture-overview.svg)
+
+<details>
+<summary><strong>Explore internal architecture</strong> · Rust engine and .NET service host</summary>
+
+### Rust · Network & simulation
+
+![Rust architecture](docs/assets/architecture-rust.svg)
+
+### C# · Service host
+
+![C# service host architecture](docs/assets/architecture-host.svg)
+
+</details>
+
+**At a glance**
+
+- **`eve-net`** · Rust front end for client connections and MachoNet packets.
+- **`eve-host`** · .NET 10 host for sessions, RPCs, game services, and persistent state.
+- **`eve-sim`** · Rust simulation for ships, movement, combat, and NPC behavior.
+- **PostgreSQL 18** · Persistent gameplay data, events, schedules, and static data.
+
+HostLink and SimLink use local IPC (Unix sockets by default, with TCP alternatives).
+
 ## Layout
 
 | Path | What |

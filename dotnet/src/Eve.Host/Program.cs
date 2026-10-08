@@ -372,7 +372,14 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         now);
     var ships = new CharacterShips(source, dogma, characters, items, skills, modules, training);
     // the simulation starts empty with this host: a ship that a host which stopped without closing its sessions left in space is put back where its character last was
-    var stranded = await ships.RecoverAllFromSpaceAsync(id => stations.Get(id) is { } station ? (station.SolarSystemId, station.ConstellationId, station.RegionId) : null);
+    var stranded = await ships.RecoverAllFromSpaceAsync(
+        id => stations.Get(id) is { } station ? (station.SolarSystemId, station.ConstellationId, station.RegionId) : null,
+        shouldRecover: async (characterId, cancellationToken) =>
+        {
+            var character = await characters.GetAsync(characterId, cancellationToken);
+            return character?.ShipId is not { } shipId ||
+                   await spaceItemStore.GetAsync(shipId, cancellationToken) is null;
+        });
     if (stranded > 0)
     {
         Console.Error.WriteLine($"eve-host: {stranded} ship(s) left in space by the last host were put back in their stations");
@@ -758,7 +765,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
                 return Task.CompletedTask;
             });
         var npcWrecks = new NpcWrecks(npcAuthority, () => NpcLoot.LoadAsync(sde), ships);
-        spaceSessions = new SpaceSessions(sim, ships, dogma, stations, solarSystems, now, message => Console.Error.WriteLine($"eve-host: space: {message}"), localTimers: foundations.LocalTimers) { RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new NpcSelector(npcAuthority), NpcWrecks = npcWrecks, BeltRats = new BeltRats(npcAuthority, BeltRatConfig.FromEnvironment(Environment.GetEnvironmentVariable), type => NpcHull.HasHitPoints(dogma.Type(type))) };
+        spaceSessions = new SpaceSessions(sim, ships, dogma, stations, solarSystems, now, message => Console.Error.WriteLine($"eve-host: space: {message}"), localTimers: foundations.LocalTimers, spaceItems: spaceItemStore) { RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new NpcSelector(npcAuthority), NpcWrecks = npcWrecks, BeltRats = new BeltRats(npcAuthority, BeltRatConfig.FromEnvironment(Environment.GetEnvironmentVariable), type => NpcHull.HasHitPoints(dogma.Type(type))) };
         npcWrecks.Warm();
         // the periodic work of the space features is jobs of the shared scheduler, not timers of their own
         spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")));
@@ -977,6 +984,9 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         .OrderBy(agent => agent.AgentId)
         .ToArray();
     var structureDirectoryReadModel = new PersistenceStructureDirectoryReadModel(ReadGameStoreTableAsync, AffiliationOfAsync, sde, mailCache);
+    if (spaceSessions is not null)
+        spaceSessions.StructureExistsAsync = async (structureId, cancellationToken) =>
+            await structureDirectoryReadModel.GetStructureInfoAsync(structureId, cancellationToken) is { PersistentlyDeployed: true };
     var structureProfilesRpcBackend = new Eve.Host.PersistenceStructureProfilesRpcBackend(
         ReadGameStoreTableAsync, mailCache, characterSessions);
     var structureRpcCallbacks = new Eve.Services.Core.StructureRpcCallbacks
@@ -1495,6 +1505,52 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         ResolveMailSendRecipientsAsync,
         now,
         (characterId, args) => characterSessions.Of(characterId)?.SendNotification("OnNotificationReceived", "clientID", args));
+
+    int ReadUnreadMailCount(long characterId)
+    {
+        var mailState = mailCache.Read("mail", null).Data as JsonObject;
+        var messages = mailState?["messages"] as JsonObject;
+        var statuses = (mailState?["mailboxes"] as JsonObject)?[
+            characterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] is JsonObject mailbox
+            ? mailbox["statuses"] as JsonObject
+            : null;
+        if (messages is null || statuses is null)
+            return 0;
+
+        var unread = 0;
+        const long readMask = 1;
+        const long trashedMask = 8;
+        foreach (var (messageId, statusNode) in statuses)
+        {
+            if (!messages.ContainsKey(messageId) || statusNode is not JsonObject status)
+                continue;
+            var statusMask = long.TryParse(status["statusMask"]?.ToString(),
+                System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture,
+                out var parsedMask) ? parsedMask : 0;
+            if ((statusMask & readMask) == 0 && (statusMask & trashedMask) == 0)
+                unread++;
+        }
+        return unread;
+    }
+
+    async Task SendNewCharacterWelcomeMailAsync(long characterId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var character = await characters.GetAsync(characterId, cancellationToken);
+            var corporation = character is null
+                ? null
+                : await corporations.GetAsync(character.CorporationId, cancellationToken);
+            if (character is null || corporation is null ||
+                await mailSendWriter.SendWelcomeMailAsync(
+                    corporation.Id, corporation.Name, character.Id, character.Name, cancellationToken) is not > 0)
+                throw new InvalidOperationException("The new character or starter corporation is unavailable.");
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine($"[CharacterCreation] Welcome mail failed for character {characterId}: {error.Message}");
+        }
+    }
 
     var mailingListMutationGate = new SemaphoreSlim(1, 1);
     static long? MailingListPyLong(Eve.Marshal.PyValue? value)
@@ -2313,9 +2369,22 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             }));
 
     var stationGuestLedger = new Eve.Services.Station.StationGuestLedger();
+    var characterEntryHooks = new List<ICharacterEntryHook>();
+    if (spaceSessions is not null)
+        characterEntryHooks.Add(spaceSessions);
+    characterEntryHooks.Add(new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now));
+    characterEntryHooks.Add(corporationLogin);
+    characterEntryHooks.Add(new FleetLoginHook(fleetStore.MemberForCharacterAsync));
+    characterEntryHooks.Add(dogmaSync);
+    characterEntryHooks.Add(new Eve.Services.Station.GuestLoginHook(characterSessions, stationGuestLedger));
     IReadOnlyList<IService> services =
     [
-                new CharUnboundMgrService(accounts, characters, items, skills, wallets, creation, catalog, online, [new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now), corporationLogin], Random.Shared, newCharacterExperienceMode == "tutorial"),
+        new CharUnboundMgrService(
+            accounts, characters, items, training, wallets, creation, catalog, online, characterEntryHooks, Random.Shared,
+            newCharacterExperienceMode == "tutorial",
+            sendWelcomeMailAsync: SendNewCharacterWelcomeMailAsync,
+            unreadMailCount: ReadUnreadMailCount,
+            securityStatusOf: securityStatusOf),
         new MultiLoginBlockerService(),
         new PopulationCapService(characters),
         new Eve.Services.CharacterInfo.ConfigService(characters, corporations, stations, solarSystems),
@@ -2403,7 +2472,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
                 });
             }),
         new Eve.Services.CharacterInfo.OnlineStatusService(characterSessions, ReadWatchlistAsync),
-        new StationService(stations, characters, online, now, sovereigntyReadModel.ReadAllianceSystemsAsync, officeManager: officeManager, seedObserverGuestLedger: stationGuestLedger.SeedObserverGuestLedger),
+        new StationService(stations, characters, online, now, sovereigntyReadModel.ReadAllianceSystemsAsync, officeManager: officeManager, seedObserverGuestLedger: stationGuestLedger.SeedObserverGuestLedger, characterSessions: characterSessions),
         new Eve.Services.Station.TradeMgrService(characterSessions),
         new Eve.Host.DevIndexManagerRpcService(sovereigntyReadModel.ReadAllDevelopmentIndicesAsync),
         new Eve.Host.EjectRpcService(),
@@ -2451,7 +2520,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             incursionAnomalyReadModel.ReadAnomaliesAsync,
             nowUnixMs: now,
             signalTrackerRegister: signalTrackerRegistrationProvider.RegisterAsync),
-          HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations),
+          HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations, characterEntryHooks),
           new Eve.Services.Core.CrateService(new PersistenceCrateServiceBackend(source, items, itemTypes, skills, skillCatalog, mailCache)),
           new Eve.Host.ShipCosmeticsMgrRpcService(mailCache, mailCache, items, source, skinCosmeticsCatalog, now,
               (characterId, shipId, skinId) =>
@@ -2697,7 +2766,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
                     Math.Max(0, session.GetInt("warfactionid") ?? 0)))
                 .ToArray();
             return ValueTask.FromResult<IReadOnlyList<Eve.Services.Core.StructureGuestSnapshot>>(guests);
-        })];
+        }, seedObserverGuestLedger: stationGuestLedger.SeedObserverGuestLedger)];
     services = [.. services, new RepackagingService(services.OfType<InvBrokerService>().Single())];
       services = [.. services, new Eve.Services.Corporations.BillMgrService(
           corporations,
@@ -8962,7 +9031,8 @@ public static class HostInventoryServiceFactory
         Func<long> nowUnixMs,
         Eve.Services.Ships.ISpaceContainers? space,
         Eve.Services.Ships.ISpaceDroneBays? droneBays,
-        Eve.Corporations.CorporationStore corporations) =>
+        Eve.Corporations.CorporationStore corporations,
+        IReadOnlyList<ICharacterEntryHook>? entryHooks = null) =>
         new(
             items,
             types,
@@ -8992,7 +9062,8 @@ public static class HostInventoryServiceFactory
                     stationId,
                     divisionFlag,
                     take: operation == Eve.Services.Inventory.CorporationHangarOperation.Take);
-            });
+            },
+            entryHooks: entryHooks);
 }
 
 
@@ -10233,6 +10304,125 @@ public sealed class PersistenceMailSendHostAdapter(
                 }
             }
 
+            return messageId;
+        }
+        finally
+        {
+            _sendGate.Release();
+        }
+    }
+
+    public async Task<long?> SendWelcomeMailAsync(
+        long senderId,
+        string senderName,
+        long recipientCharacterId,
+        string characterName,
+        CancellationToken cancellationToken)
+    {
+        if (senderId <= 0 || recipientCharacterId <= 0 ||
+            string.IsNullOrWhiteSpace(senderName) || string.IsNullOrWhiteSpace(characterName))
+            return null;
+
+        const string title = "Welcome to New Eden";
+        var body = $"Welcome to New Eden, {System.Net.WebUtility.HtmlEncode(characterName)}.<br><br>" +
+            "Your capsuleer career begins now. Fly safe.";
+
+        await _sendGate.WaitAsync(cancellationToken);
+        try
+        {
+            var mailState = readCacheTable("mail");
+            var messages = mailState["messages"] as JsonObject ?? new JsonObject();
+            var mailboxes = mailState["mailboxes"] as JsonObject ?? new JsonObject();
+            var mailboxStatuses = (mailboxes[Key(recipientCharacterId)] as JsonObject)?["statuses"] as JsonObject;
+            if (mailboxStatuses is not null)
+            {
+                foreach (var (statusKey, _) in mailboxStatuses)
+                    if (messages[statusKey] is JsonObject existing &&
+                        Number(existing["welcomeMailForCharacterID"]) == recipientCharacterId &&
+                        Number(existing["senderID"]) == senderId)
+                        return Number(existing["messageID"]);
+            }
+
+            var messageId = NextMailId(messages, mailboxes);
+            var sentFiletime = DateTimeOffset.FromUnixTimeMilliseconds(nowUnixMs()).UtcDateTime.ToFileTimeUtc();
+            var messageKey = Key(messageId);
+            var message = new JsonObject
+            {
+                ["messageID"] = messageId,
+                ["senderID"] = senderId,
+                ["senderName"] = senderName,
+                ["toCharacterIDs"] = LongArray([recipientCharacterId]),
+                ["toListID"] = null,
+                ["toCorpOrAllianceID"] = null,
+                ["title"] = title,
+                ["subject"] = title,
+                ["body"] = body,
+                ["sentDate"] = sentFiletime,
+                ["replyToMessageID"] = null,
+                ["forwardedFromMessageID"] = null,
+                ["statusMask"] = 0,
+                ["labelMask"] = 0,
+                ["read"] = false,
+                ["trashed"] = false,
+                ["replied"] = false,
+                ["forwarded"] = false,
+                ["welcomeMailForCharacterID"] = recipientCharacterId,
+            };
+            var status = new JsonObject
+            {
+                ["statusMask"] = 0,
+                ["labelMask"] = 1,
+            };
+
+            RequireWrite("mail", $"/messages/{messageKey}", message);
+            RequireWrite("mail", $"/mailboxes/{Key(recipientCharacterId)}/statuses/{messageKey}", status);
+            await FlushUntilVisibleAsync("mail", persisted =>
+                persisted["messages"] is JsonObject persistedMessages &&
+                persistedMessages[messageKey] is JsonObject savedMessage &&
+                Number(savedMessage["senderID"]) == senderId &&
+                Number(savedMessage["welcomeMailForCharacterID"]) == recipientCharacterId &&
+                persisted["mailboxes"] is JsonObject persistedMailboxes &&
+                persistedMailboxes[Key(recipientCharacterId)] is JsonObject mailbox &&
+                mailbox["statuses"] is JsonObject savedStatuses &&
+                savedStatuses[messageKey] is JsonObject savedStatus &&
+                Number(savedStatus["statusMask"]) == 0 &&
+                Number(savedStatus["labelMask"]) == 1, cancellationToken);
+
+            var notifications = readCacheTable("notifications");
+            var notificationBoxes = notifications["boxes"] as JsonObject ?? new JsonObject();
+            var notificationId = NextNotificationId(notificationBoxes);
+            var notification = new JsonObject
+            {
+                ["notificationID"] = notificationId,
+                ["typeID"] = 1004,
+                ["senderID"] = senderId,
+                ["receiverID"] = recipientCharacterId,
+                ["processed"] = false,
+                ["created"] = sentFiletime,
+                ["data"] = new JsonObject
+                {
+                    ["senderName"] = senderName,
+                    ["subject"] = title,
+                    ["msg"] = (JsonObject)message.DeepClone(),
+                },
+            };
+            RequireWrite("notifications", $"/boxes/{Key(recipientCharacterId)}/byID/{Key(notificationId)}", notification);
+            await FlushUntilVisibleAsync("notifications", persisted =>
+                persisted["boxes"] is JsonObject boxes &&
+                boxes[Key(recipientCharacterId)] is JsonObject recipientBox &&
+                recipientBox["byID"] is JsonObject records &&
+                records[Key(notificationId)] is JsonObject saved &&
+                Number(saved["typeID"]) == 1004 &&
+                Number(saved["receiverID"]) == recipientCharacterId, cancellationToken);
+
+            sendNotification(recipientCharacterId,
+            [
+                new Eve.Marshal.PyLong(notificationId),
+                new Eve.Marshal.PyInt(1004),
+                new Eve.Marshal.PyLong(senderId),
+                Py.FileTimeLong(sentFiletime),
+                NotificationData(senderId, senderName, title, message, sentFiletime),
+            ]);
             return messageId;
         }
         finally

@@ -181,13 +181,19 @@ internal sealed class DogmaModifierEffect : ShipEffect
     ];
 
     /// <summary>
-    /// A module that burns a resource each cycle (its consumptionType, attribute 713: a siege module's strontium, a capital core's heavy water) is refused as not implemented:
-    /// the fuel is not taken from the pilot's inventory yet (docs/project/TODO.md section 9; module_rules WP18). Running it free would be a success the reference does not give.
+    /// The modifier effects whose body is not in the space host yet: the cyno field, the jump portal and the clone vat's acceptance. Their modifiers alone would be a
+    /// success the reference does not give (the field or portal is never made), so they are refused by name (EFFECT_NOT_IMPLEMENTED), fuel or not.
     /// </summary>
-    private const string FuelNotImplemented = "FUEL_NOT_IMPLEMENTED";
+    private static readonly HashSet<string> BodiesNotImplemented = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "cynosuralGeneration",
+        "jumpPortalGeneration",
+        "jumpPortalGenerationBO",
+        "cloneJumpAccepting",
+    };
 
     protected override string? Refusal(ModuleEffectContext module) =>
-        module.Value(ModuleAttributes.ConsumptionType, 0) > 0 ? FuelNotImplemented : null;
+        BodiesNotImplemented.Contains(module.Effect.Name) ? PendingModuleEffect.NotImplemented : null;
 
     protected override SimEffect Build(ModuleEffectContext module)
     {

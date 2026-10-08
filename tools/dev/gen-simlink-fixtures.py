@@ -166,7 +166,8 @@ def effect(e):
     body = i64(e["moduleId"]) + struct.pack("<ii", e["moduleType"], e["effectId"]) + s(e["fx"])
     body += struct.pack("<ddi", e["durationMs"], e["capacitorNeed"], e["repeat"]) + i64(e["targetId"])
     on, off, gun, act = e.get("on"), e.get("off"), e.get("turret"), e.get("action")
-    body += bytes([(1 if on else 0) | (2 if off else 0) | (4 if gun else 0) | (8 if act else 0)])
+    # bit 16: the effect burns fuel (the host is asked for the fuel of each cycle that starts, ModuleWorkCycle with command 9)
+    body += bytes([(1 if on else 0) | (2 if off else 0) | (4 if gun else 0) | (8 if act else 0) | (16 if e.get("burnsFuel") else 0)])
     for n in (on, off):
         if n:
             body += numbers(n)
@@ -342,8 +343,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 23},
-    {"name": "hello ack", "kind": "HelloAck", "version": 23, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 24},
+    {"name": "hello ack", "kind": "HelloAck", "version": 24, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -708,6 +709,11 @@ valid = [
      "targetId": "1000000000002", "cycleId": "7301444403200000002", "command": 8, "miningAmountM3": 0.0,
      "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
      "accessDifficultyBonus": 5.0, "wasteRoll": 0.0, "roundingRoll": 0.0, "critRoll": 0.9},
+    {"name": "module work cycle asking the fuel of a cycle", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
+     "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002810",
+     "targetId": "0", "cycleId": "7301444403200000003", "command": 9, "miningAmountM3": 0.0,
+     "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
+     "accessDifficultyBonus": 0.0, "wasteRoll": 0.0, "roundingRoll": 0.0, "critRoll": 0.0},
     {"name": "module work result accepted", "kind": "ModuleWorkResult", "sessionId": "1790646377000015",
      "moduleId": "9988400002813", "targetId": "1000000000001", "cycleId": "7301444403200000001", "accepted": True,
      "reason": "", "unitsRemaining": "980", "deliveredUnits": "20", "complete": False},
@@ -724,6 +730,10 @@ valid = [
                 "action": {"kind": "mining", "family": "ore", "miningAmountM3": 20.0, "wasteMultiplier": 1.0,
                            "wasteProbability": 0.1, "critProbability": 0.05, "critMultiplier": 2.0},
                 "onChanges": [], "offChanges": []}},
+    {"name": "activate a siege module that burns fuel", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002810", "moduleType": 20280, "effectId": 6582, "fx": "effects.SiegeMode",
+                "durationMs": 300000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
+                "burnsFuel": True, "onChanges": [], "offChanges": []}},
     {"name": "activate a salvager", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 25861, "effectId": 6, "fx": "effects.Salvaging",
                 "durationMs": 10000.0, "capacitorNeed": 20.0, "repeat": 1000, "targetId": "1000000000002",
@@ -787,11 +797,13 @@ invalid = [
     {"name": "module work cycle with a roll of one", "reason": "bad-value",
      "hex": build(dict(named("module work cycle of a mining laser"), wasteRoll=1.0)).hex()},
     {"name": "module work cycle of an unknown command", "reason": "bad-value",
-     "hex": build(dict(named("module work cycle of a mining laser"), command=9)).hex()},
+     "hex": build(dict(named("module work cycle of a mining laser"), command=10)).hex()},
     {"name": "module work cycle with a probability above one", "reason": "bad-value",
      "hex": build(dict(named("module work cycle of a mining laser"), critProbability=1.5)).hex()},
     {"name": "module work cycle cut short", "reason": "truncated",
      "hex": (struct.pack("<I", 1 + 8 + 8) + bytes([51]) + u64(1) + u64(2)).hex()},
+    {"name": "fuel cycle with mining numbers", "reason": "bad-value",
+     "hex": build(dict(named("module work cycle asking the fuel of a cycle"), miningAmountM3=20.0)).hex()},
     {"name": "module ended with an unknown reason", "reason": "bad-value",
      "hex": build(dict(named("module ended when its target is lost"), reason=9)).hex()},
     {"name": "mining action with a crit chance above one", "reason": "bad-value",

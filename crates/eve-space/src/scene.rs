@@ -4914,6 +4914,7 @@ pub(crate) mod tests {
         scene.set_module_overheat(SESSION, module_id, true).unwrap();
 
         let effect = crate::modules::Effect {
+            burns_fuel: false,
             module_id,
             module_type: 21_857,
             effect_id: 1,

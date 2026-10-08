@@ -15,7 +15,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Arc, Aoe, Charge, Spool, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 23;
+pub const PROTOCOL_VERSION: u16 = 24;
 
 /// The message kinds.
 pub mod kind {
@@ -1041,7 +1041,8 @@ fn put_effect(out: &mut Vec<u8>, effect: &Effect) {
         u8::from(effect.on.is_some())
             | (u8::from(effect.off.is_some()) << 1)
             | (u8::from(effect.turret.is_some()) << 2)
-            | (u8::from(effect.action.is_some()) << 3),
+            | (u8::from(effect.action.is_some()) << 3)
+            | (u8::from(effect.burns_fuel) << 4),
     );
     for numbers in [&effect.on, &effect.off].into_iter().flatten() {
         put_numbers(out, numbers);
@@ -1441,7 +1442,8 @@ fn read_effect(reader: &mut Reader) -> Result<Effect, DecodeError> {
     let repeat = reader.i32()?;
     let target_id = reader.i64()?;
     let flags = reader.u8()?;
-    if flags > 15 {
+    // bits: 1 on, 2 off, 4 turret, 8 action, 16 burns fuel (a fuel cycle is asked of the host before each cycle that starts)
+    if flags > 31 {
         return Err(DecodeError::BadValue("flags"));
     }
     let on = if flags & 1 != 0 { Some(read_numbers(reader)?) } else { None };
@@ -1451,6 +1453,7 @@ fn read_effect(reader: &mut Reader) -> Result<Effect, DecodeError> {
     let turret = if flags & 4 != 0 { Some(read_turret(reader)?) } else { None };
     let action = if flags & 8 != 0 { Some(read_action(reader)?) } else { None };
     Ok(Effect {
+        burns_fuel: flags & 16 != 0,
         module_id,
         module_type,
         effect_id,
@@ -2579,12 +2582,13 @@ impl Message {
                 let numbers = [mining_amount_m3, waste_multiplier, crit_multiplier, access_difficulty_bonus];
                 // probabilities are at most one, the rolls below one, and every number finite and not negative; a mining cycle mines something
                 if cycle_id == 0
-                    || !matches!(command, 7 | 8)
+                    || !matches!(command, 7 | 8 | 9)
                     || numbers.iter().chain([&waste_probability, &crit_probability, &waste_roll, &rounding_roll, &crit_roll]).any(|n| !n.is_finite() || *n < 0.0)
                     || waste_probability > 1.0
                     || crit_probability > 1.0
                     || [waste_roll, rounding_roll, crit_roll].iter().any(|roll| *roll >= 1.0)
                     || (command == 7 && mining_amount_m3 <= 0.0)
+                    || (command == 9 && (mining_amount_m3 != 0.0 || waste_multiplier != 0.0 || waste_probability != 0.0 || crit_probability != 0.0 || crit_multiplier != 0.0 || access_difficulty_bonus != 0.0))
                 {
                     return Err(DecodeError::BadValue("module work cycle"));
                 }
@@ -2613,7 +2617,7 @@ impl Message {
                 let session_id = r.u64()?;
                 let module_id = r.i64()?;
                 let reason = r.u8()?;
-                if !(1..=5).contains(&reason) {
+                if !(1..=6).contains(&reason) {
                     return Err(DecodeError::BadValue("module ended reason"));
                 }
                 Message::ModuleEnded { session_id, module_id, reason }

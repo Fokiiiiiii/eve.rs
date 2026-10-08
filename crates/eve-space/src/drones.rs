@@ -1416,6 +1416,7 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
         let remote = self.drones.get(&session)?.remote.as_ref()?;
         let spec = &self.pilots.get(&session)?.ship.spec;
         let effect = Effect {
+            burns_fuel: false,
             module_id: spec.ship_id,
             module_type: spec.type_id,
             effect_id: remote.effect_id,
@@ -1506,6 +1507,7 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
     fn drone_effect(&self, session: SessionId, target: i64) -> Option<Effect> {
         let weapon = self.pilots.get(&session)?.ship.npc.as_ref()?.combat.weapons.first()?.clone();
         Some(Effect {
+            burns_fuel: false,
             module_id: weapon.module_id,
             module_type: weapon.turret.weapon_type_id,
             effect_id: weapon.effect_id,

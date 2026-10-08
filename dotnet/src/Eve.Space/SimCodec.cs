@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 23;
+    public const ushort ProtocolVersion = 24;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -341,7 +341,8 @@ public static class SimCodec
         var repeat = r.I32();
         var target = r.I64();
         var flags = r.U8();
-        if (flags > 15)
+        // bits: 1 on, 2 off, 4 turret, 8 action, 16 burns fuel (the fuel is asked for before each cycle, ModuleWorkCycle with ConsumeFuel)
+        if (flags > 31)
         {
             throw new SimLinkException(SimLinkError.BadValue, "bad flags");
         }
@@ -351,7 +352,7 @@ public static class SimCodec
         var offChanges = ReadChanges(ref r);
         var turret = (flags & 4) != 0 ? ReadTurret(ref r) : null;
         var action = (flags & 8) != 0 ? ReadAction(ref r) : null;
-        return new SimEffect(module, moduleType, effectId, fx, duration, capacitor, repeat, target, on, off, onChanges, offChanges, turret, action);
+        return new SimEffect(module, moduleType, effectId, fx, duration, capacitor, repeat, target, on, off, onChanges, offChanges, turret, action, (flags & 16) != 0);
     }
 
     private static SimAction ReadAction(ref Reader r)
@@ -897,11 +898,14 @@ public static class SimCodec
                     var roundingRoll = r.F64();
                     var critRoll = r.F64();
                     // probabilities are at most one, the rolls below one, the numbers finite and not negative; a mining cycle mines something
-                    if (cycleId == 0 || command is not (SimDroneCommands.MineRepeatedly or SimDroneCommands.Salvage)
+                    if (cycleId == 0 || command is not (SimDroneCommands.MineRepeatedly or SimDroneCommands.Salvage or SimModuleWorkCommands.ConsumeFuel)
                         || new[] { mining, wasteMultiplier, critMultiplier, accessBonus }.Any(n => !double.IsFinite(n) || n < 0)
                         || new[] { wasteProbability, critProbability }.Any(p => !double.IsFinite(p) || p < 0 || p > 1)
                         || new[] { wasteRoll, roundingRoll, critRoll }.Any(roll => !double.IsFinite(roll) || roll < 0 || roll >= 1)
-                        || (command == SimDroneCommands.MineRepeatedly && mining <= 0))
+                        || (command == SimDroneCommands.MineRepeatedly && mining <= 0)
+                        // a fuel cycle carries no mining numbers: it asks for fuel only
+                        || (command == SimModuleWorkCommands.ConsumeFuel
+                            && new[] { mining, wasteMultiplier, wasteProbability, critProbability, critMultiplier, accessBonus }.Any(n => n != 0)))
                     {
                         throw new SimLinkException(SimLinkError.BadValue, "bad module work cycle");
                     }
@@ -933,7 +937,7 @@ public static class SimCodec
                     var session = r.U64();
                     var module = r.I64();
                     var reason = r.U8();
-                    if (reason is < SimModuleEndReasons.Done or > SimModuleEndReasons.WorkRefused)
+                    if (reason is < SimModuleEndReasons.Done or > SimModuleEndReasons.NoFuel)
                     {
                         throw new SimLinkException(SimLinkError.BadValue, "bad module end reason");
                     }
@@ -1344,7 +1348,7 @@ private static void WriteAction(Writer w, SimAction action)
         w.F64(e.CapacitorNeed);
         w.I32(e.Repeat);
         w.I64(e.TargetId);
-        w.U8((byte)((e.On is null ? 0 : 1) | (e.Off is null ? 0 : 2) | (e.Turret is null ? 0 : 4) | (e.Action is null ? 0 : 8)));
+        w.U8((byte)((e.On is null ? 0 : 1) | (e.Off is null ? 0 : 2) | (e.Turret is null ? 0 : 4) | (e.Action is null ? 0 : 8) | (e.BurnsFuel ? 16 : 0)));
         if (e.On is { } on) WriteNumbers(w, on);
         if (e.Off is { } off) WriteNumbers(w, off);
         WriteChanges(w, e.OnChanges);

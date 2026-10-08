@@ -1093,6 +1093,7 @@ mod tests {
 
     fn laser_effect(target_id: i64, turret: Turret) -> Effect {
         Effect {
+            burns_fuel: false,
             module_id: NPC_SHIP,
             module_type: 23_312,
             effect_id: 10,
@@ -1839,6 +1840,7 @@ mod tests {
     /// One cycle of a launcher at a target (what the tests look at is the one missile it fires).
     fn missile_effect(target_id: i64, turret: Turret) -> Effect {
         Effect {
+            burns_fuel: false,
             effect_id: 101,
             fx: "effects.MissileDeployment".to_string(),
             repeat: 1,
@@ -2079,6 +2081,7 @@ mod tests {
 
     fn smartbomb_effect(module_id: i64, damage: Damage) -> Effect {
         Effect {
+            burns_fuel: false,
             module_id,
             module_type: 3_977,
             effect_id: 1,

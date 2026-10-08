@@ -192,6 +192,7 @@ fn effect_of(case: &Value) -> Effect {
             .collect()
     };
     Effect {
+        burns_fuel: case.get("burnsFuel").and_then(|v| v.as_bool()).unwrap_or(false),
         module_id: wide(case, "moduleId"),
         module_type: case["moduleType"].as_i64().unwrap() as i32,
         effect_id: case["effectId"].as_i64().unwrap() as i32,
@@ -833,6 +834,7 @@ fn module_offline_and_rack_overheat_orders_roundtrip_through_the_link() {
     #[test]
     fn mutadaptive_remote_repair_action_and_cycle_messages_roundtrip_through_the_link() {
         let effect = eve_space::modules::Effect {
+            burns_fuel: false,
             module_id: 700,
             module_type: 35298,
             effect_id: 8,

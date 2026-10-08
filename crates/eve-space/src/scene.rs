@@ -399,7 +399,7 @@ pub(crate) struct Pilot {
     /// What the ship's last warp was to (the body), kept until the next warp: where it came to rest is judged against it.
     pub(crate) warp_target: Option<i64>,
     /// The jump the ship has begun, until it leaves for the other system.
-    jump: Option<PendingJump>,
+    pub(crate) jump: Option<PendingJump>,
     /// The ship arrived already in space (through a gate or on login), not by undocking.
     jumped_in: bool,
     /// The client has bound the ballpark: it can be sent destiny updates.
@@ -425,6 +425,8 @@ pub(crate) struct Pilot {
     pub(crate) disrupted_until: i64,
     /// Until when the ship cannot jump or cloak: a doomsday's no-jump window (`Strike::no_jump_ms`).
     pub(crate) no_jump_until: i64,
+    /// Until when the ship cannot warp: the residual of a transport field on a capital ship (`Action::Field::warp_block_ms`, protocol 29).
+    pub(crate) warp_blocked_until: i64,
     /// What other ships' modules do to this ship's numbers while they run (webs, painters, dampeners, scramblers).
     pub(crate) incoming: crate::ewar::Incoming,
     /// Cloak state used by target selection and public visibility.
@@ -455,6 +457,7 @@ impl Pilot {
             immobile_until: 0,
             disrupted_until: 0,
             no_jump_until: 0,
+            warp_blocked_until: 0,
             incoming: crate::ewar::Incoming::default(),
             cloak: crate::visibility::CloakState::Uncloaked,
             heat: HeatState::default(),
@@ -472,7 +475,7 @@ impl Pilot {
 }
 
 #[derive(Debug, Clone)]
-struct PendingJump {
+pub(crate) struct PendingJump {
     gate_id: i64,
     destination_system: i32,
     destination_gate: i64,
@@ -1244,6 +1247,9 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         }
         if pilot.disrupted_until > now {
             return refused("WARP_DISRUPTED");
+        }
+        if pilot.warp_blocked_until > now {
+            return refused("WARP_BLOCKED");
         }
         if pilot.incoming.scrambled() {
             return refused("WARP_SCRAMBLED");

@@ -16,7 +16,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Arc, Aoe, Charge, Spool, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 28;
+pub const PROTOCOL_VERSION: u16 = 29;
 
 /// The message kinds.
 pub mod kind {
@@ -1061,6 +1061,52 @@ fn put_effect(out: &mut Vec<u8>, effect: &Effect) {
 /// What a cycle of an effect does: a tag and its numbers (`0`: a repair of the ship's own: the layer, when in the cycle, the points; `1`: an effect
 /// projected at the target: when in the cycle, the optimal range and the falloff, the name the target's HUD gives it (a text), then a kind and its numbers: `0` a repair of the target's layer and the
 /// points, `1` a capacitor transfer and its GJ, `2` a neutralizer and `3` a nosferatu: the GJ and the signature resolution, `4` a web and `5` a target painter: a percentage, `6` a sensor dampener: the percentages of the lock range and of the scan resolution, `7` a warp scrambler: the points and whether a microwarpdrive is held too).
+/// The strike's body after its tag (13 and 15): its shape, its numbers and its sweep (see `read_strike`).
+fn write_strike(out: &mut Vec<u8>, strike: &Strike) {
+    out.push(strike.shape.wire());
+    for component in strike.direction {
+        out.extend_from_slice(&component.to_le_bytes());
+    }
+    for number in [strike.length, strike.radius, strike.warning_ms, strike.pulse_ms] {
+        out.extend_from_slice(&number.to_le_bytes());
+    }
+    out.extend_from_slice(&strike.pulses.to_le_bytes());
+    for number in strike.damage {
+        out.extend_from_slice(&number.to_le_bytes());
+    }
+    for number in [
+        strike.signature_radius,
+        strike.immobile_ms,
+        strike.no_jump_ms,
+        strike.neut_amount,
+        strike.neut_radius,
+        strike.neut_signature_radius,
+        strike.debuff_ms,
+    ] {
+        out.extend_from_slice(&number.to_le_bytes());
+    }
+    match strike.sweep_end {
+        Some(end) => {
+            out.push(1);
+            for component in end {
+                out.extend_from_slice(&component.to_le_bytes());
+            }
+        }
+        None => {
+            out.push(0);
+            out.extend_from_slice(&[0u8; 24]);
+        }
+    }
+}
+
+/// A list of ship ids: a count, then each id (as the protocol's i64).
+fn write_ids(out: &mut Vec<u8>, ids: &[i64]) {
+    out.extend_from_slice(&(ids.len() as u32).to_le_bytes());
+    for id in ids {
+        out.extend_from_slice(&id.to_le_bytes());
+    }
+}
+
 fn put_action(out: &mut Vec<u8>, action: &Action) {
     let layer_byte = |layer: &Layer| match layer {
         Layer::Shield => 0,
@@ -1123,40 +1169,17 @@ fn put_action(out: &mut Vec<u8>, action: &Action) {
         }
         Action::Strike { strike } => {
             out.push(13);
-            out.push(strike.shape.wire());
-            for component in strike.direction {
+            write_strike(out, strike);
+        }
+        Action::Field { strike, destination, warp_block_ms, moved, held } => {
+            out.push(15);
+            write_strike(out, strike);
+            for component in destination {
                 out.extend_from_slice(&component.to_le_bytes());
             }
-            for number in [strike.length, strike.radius, strike.warning_ms, strike.pulse_ms] {
-                out.extend_from_slice(&number.to_le_bytes());
-            }
-            out.extend_from_slice(&strike.pulses.to_le_bytes());
-            for number in strike.damage {
-                out.extend_from_slice(&number.to_le_bytes());
-            }
-            for number in [
-                strike.signature_radius,
-                strike.immobile_ms,
-                strike.no_jump_ms,
-                strike.neut_amount,
-                strike.neut_radius,
-                strike.neut_signature_radius,
-                strike.debuff_ms,
-            ] {
-                out.extend_from_slice(&number.to_le_bytes());
-            }
-            match strike.sweep_end {
-                Some(end) => {
-                    out.push(1);
-                    for component in end {
-                        out.extend_from_slice(&component.to_le_bytes());
-                    }
-                }
-                None => {
-                    out.push(0);
-                    out.extend_from_slice(&[0u8; 24]);
-                }
-            }
+            out.extend_from_slice(&warp_block_ms.to_le_bytes());
+            write_ids(out, moved);
+            write_ids(out, held);
         }
         Action::Doomsday { delay_ms, damage, immobile_ms, no_jump_ms } => {
             out.push(14);
@@ -1297,6 +1320,64 @@ fn read_applies(reader: &mut Reader) -> Result<Applies, DecodeError> {
     }
 }
 
+/// A strike's body after its tag (13 and 15), as `write_strike` writes it.
+fn read_strike(reader: &mut Reader) -> Result<Strike, DecodeError> {
+    let shape = StrikeShape::from_wire(reader.u8()?).ok_or(DecodeError::BadValue("strike shape"))?;
+    let direction = [reader.f64()?, reader.f64()?, reader.f64()?];
+    let length = reader.f64()?;
+    let radius = reader.f64()?;
+    let warning_ms = reader.f64()?;
+    let pulse_ms = reader.f64()?;
+    let pulses = reader.i32()?;
+    let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+    let signature_radius = reader.f64()?;
+    let immobile_ms = reader.f64()?;
+    let no_jump_ms = reader.f64()?;
+    let neut_amount = reader.f64()?;
+    let neut_radius = reader.f64()?;
+    let neut_signature_radius = reader.f64()?;
+    let debuff_ms = reader.f64()?;
+    let sweep_end = match reader.u8()? {
+        0 => {
+            let _unused = [reader.f64()?, reader.f64()?, reader.f64()?];
+            None
+        }
+        1 => Some([reader.f64()?, reader.f64()?, reader.f64()?]),
+        _ => return Err(DecodeError::BadValue("strike sweep flag")),
+    };
+    let strike = Strike {
+        debuff_ms,
+        sweep_end,
+        shape,
+        direction,
+        length,
+        radius,
+        warning_ms,
+        pulse_ms,
+        pulses,
+        damage,
+        signature_radius,
+        immobile_ms,
+        no_jump_ms,
+        neut_amount,
+        neut_radius,
+        neut_signature_radius,
+    };
+    if !strike.is_valid() {
+        return Err(DecodeError::BadValue("strike"));
+    }
+    Ok(strike)
+}
+
+/// A list of ship ids, as `write_ids` writes it (at most 4096 of them).
+fn read_ids(reader: &mut Reader) -> Result<Vec<i64>, DecodeError> {
+    let count = reader.u32()? as usize;
+    if count > 4096 {
+        return Err(DecodeError::BadValue("transport ids"));
+    }
+    (0..count).map(|_| reader.i64()).collect()
+}
+
 fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
     match reader.u8()? {
         0 => {
@@ -1395,52 +1476,20 @@ fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             }
             Ok(Action::ResistanceShift { seed, shift, attribute_ids })
         }
-        13 => {
-            let shape = StrikeShape::from_wire(reader.u8()?).ok_or(DecodeError::BadValue("strike shape"))?;
-            let direction = [reader.f64()?, reader.f64()?, reader.f64()?];
-            let length = reader.f64()?;
-            let radius = reader.f64()?;
-            let warning_ms = reader.f64()?;
-            let pulse_ms = reader.f64()?;
-            let pulses = reader.i32()?;
-            let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
-            let signature_radius = reader.f64()?;
-            let immobile_ms = reader.f64()?;
-            let no_jump_ms = reader.f64()?;
-            let neut_amount = reader.f64()?;
-            let neut_radius = reader.f64()?;
-            let neut_signature_radius = reader.f64()?;
-            let debuff_ms = reader.f64()?;
-            let sweep_end = match reader.u8()? {
-                0 => {
-                    let _unused = [reader.f64()?, reader.f64()?, reader.f64()?];
-                    None
-                }
-                1 => Some([reader.f64()?, reader.f64()?, reader.f64()?]),
-                _ => return Err(DecodeError::BadValue("strike sweep flag")),
-            };
-            let strike = Strike {
-                debuff_ms,
-                sweep_end,
-                shape,
-                direction,
-                length,
-                radius,
-                warning_ms,
-                pulse_ms,
-                pulses,
-                damage,
-                signature_radius,
-                immobile_ms,
-                no_jump_ms,
-                neut_amount,
-                neut_radius,
-                neut_signature_radius,
-            };
-            if !strike.is_valid() {
-                return Err(DecodeError::BadValue("strike"));
+        13 => Ok(Action::Strike { strike: read_strike(reader)? }),
+        15 => {
+            let strike = read_strike(reader)?;
+            let destination = [reader.f64()?, reader.f64()?, reader.f64()?];
+            let warp_block_ms = reader.f64()?;
+            let moved = read_ids(reader)?;
+            let held = read_ids(reader)?;
+            if strike.shape != StrikeShape::Sphere
+                || !destination.iter().all(|d| d.is_finite())
+                || !(warp_block_ms.is_finite() && warp_block_ms >= 0.0)
+            {
+                return Err(DecodeError::BadValue("transport field"));
             }
-            Ok(Action::Strike { strike })
+            Ok(Action::Field { strike, destination, warp_block_ms, moved, held })
         }
         14 => {
             let delay_ms = reader.f64()?;

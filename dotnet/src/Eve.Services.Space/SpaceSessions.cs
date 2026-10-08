@@ -1128,7 +1128,13 @@ private readonly TransitionRuntime _transitions;
         {
             return ModuleResult.Refusal(warpRefusal, warpModule.TypeId, _statics.Type(warpModule.TypeId)?.Name ?? "");
         }
-        var made = ModulePackages.Of(snapshot, _statics, moduleId, effectName, targetId, repeat, aim, aimEnd);
+        // a transport field carries the capsuleer ships of the system and holds the capitals among them: the host lists them (the ships of a system are its own)
+        await _statics.EnsureTypesAsync(_pilots.Values.Select(other => other.TypeId), cancellationToken).ConfigureAwait(false);
+        var neighbours = _pilots.Values
+            .Where(other => other.ShipId != pilot.ShipId && other.SolarSystemId == pilot.SolarSystemId)
+            .Select(other => new TransportNeighbour(other.ShipId, _statics.Type(other.TypeId) is { } type && ShipSnapshot.CapitalGroupIds.Contains(type.GroupId)))
+            .ToList();
+        var made = ModulePackages.Of(snapshot.WithNeighbours(neighbours), _statics, moduleId, effectName, targetId, repeat, aim, aimEnd);
         if (made.Effect is not { } package)
         {
             return ModuleResult.Refusal(made.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);

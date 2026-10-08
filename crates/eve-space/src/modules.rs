@@ -227,7 +227,7 @@ impl Action {
     fn offensive(&self) -> bool {
         match self {
             Self::Remote { what, .. } => what.hostile(),
-            Self::Smartbomb { .. } | Self::EcmBurst { .. } | Self::Strike { .. } | Self::Doomsday { .. } => true,
+            Self::Smartbomb { .. } | Self::EcmBurst { .. } | Self::Strike { .. } | Self::Field { .. } | Self::Doomsday { .. } => true,
             Self::Cloak | Self::MicroJumpDrive { .. } | Self::ResistanceShift { .. } => false,
             Self::Charged { action, fallback, .. } => {
                 action.offensive() || fallback.as_deref().is_some_and(Action::offensive)
@@ -343,6 +343,18 @@ pub enum Action {
     /// A titan doomsday (tag 14, ADR 0013 epoch 26): the locked target is hit once, `delay_ms` after the cycle starts, with `damage` (the four kinds, not scaled
     /// by a signature). The ship is held for its windows from the start, as a strike's.
     Doomsday { delay_ms: f64, damage: crate::health::Damage, immobile_ms: f64, no_jump_ms: f64 },
+    /// A gravitational transport field (the Gravitational Transportation Field Oscillator, tag 15, protocol 29): the strike's sphere and windows; at its
+    /// pulse, every ship of `moved` inside the sphere is carried to `destination` (an offset from the firing ship's centre), and every ship of `held` inside
+    /// it cannot warp for `warp_block_ms`. The ship ids are the host's: the simulation only tests their geometry.
+    Field { strike: Strike, destination: [f64; 3], warp_block_ms: f64, moved: Vec<i64>, held: Vec<i64> },
+}
+
+/// The strike an action runs, if it runs one (a cone, a cylinder or a sphere; the transport field is a strike too).
+fn strike_of(action: Option<&Action>) -> Option<Strike> {
+    match action? {
+        Action::Strike { strike } | Action::Field { strike, .. } => Some(*strike),
+        _ => None,
+    }
 }
 
 /// What a mining laser mines (the wire byte: 0 ore, 1 ice, 2 gas).
@@ -1340,7 +1352,7 @@ impl Scene {
                     Moment::DoomsdayHit(index),
                 );
             }
-            if let Some(Action::Strike { strike }) = run.effect.action.as_ref()
+            if let Some(strike) = strike_of(run.effect.action.as_ref())
                 && run.strike_done < strike.pulses
             {
                 consider(
@@ -1909,6 +1921,7 @@ impl Scene {
                 self.smartbomb(session, effect, *range, *damage, *hurts_pilots, at)
             }
             Some(Action::Strike { strike }) if when == Applies::CycleStart => self.strike_start(session, effect, *strike, at),
+            Some(Action::Field { strike, .. }) if when == Applies::CycleStart => self.strike_start(session, effect, *strike, at),
             Some(Action::Doomsday { immobile_ms, no_jump_ms, .. }) if when == Applies::CycleStart => {
                 self.hold_for_windows(session, *immobile_ms, *no_jump_ms, at);
                 if let Some(run) = self.pilots.get_mut(&session).and_then(|pilot| pilot.modules.running.iter_mut().find(|run| run.effect.module_id == effect.module_id)) {
@@ -2156,18 +2169,96 @@ impl Scene {
     }
 
     /// The next pulse of a strike is due: every ship in the area is hit by the pulse's damage times its signature factor, and the pulse is counted.
+    /// A transport field's pulse (protocol 29): the ships of `moved` inside its sphere are carried to `destination` (an offset from the firing ship's
+    /// centre) and stop; the ships of `held` inside it cannot warp for `warp_block_ms`. The sphere is centred on the aim point, `centre + direction *
+    /// length`. A protected ship (undocking) is not reached, and a ship that is warping or jumping is not carried.
+    #[allow(clippy::too_many_arguments)]
+    fn transport_field(
+        &mut self,
+        session: SessionId,
+        strike: Strike,
+        centre: eve_destiny::Vec3,
+        destination: [f64; 3],
+        warp_block_ms: f64,
+        moved: &[i64],
+        held: &[i64],
+        at: i64,
+    ) -> Vec<Out> {
+        let sphere = [
+            centre.x + strike.direction[0] * strike.length,
+            centre.y + strike.direction[1] * strike.length,
+            centre.z + strike.direction[2] * strike.length,
+        ];
+        let target = [centre.x + destination[0], centre.y + destination[1], centre.z + destination[2]];
+        let per_ms = TICKS_PER_SECOND as f64 / 1000.0;
+        let warp_until = at + (warp_block_ms * per_ms) as i64;
+        let reached: Vec<SessionId> = self
+            .in_entry_order()
+            .into_iter()
+            .filter(|other| *other != session)
+            .filter(|other| {
+                self.pilots.get(other).is_some_and(|pilot| {
+                    let p = pilot.ship.position;
+                    pilot.protected_until <= at
+                        && strike.covers(sphere, [p.x, p.y, p.z], pilot.ship.spec.radius.max(0.0))
+                })
+            })
+            .collect();
+        for other in reached {
+            let Some(pilot) = self.pilots.get_mut(&other) else { continue };
+            let ship_id = pilot.ship.spec.ship_id;
+            if moved.contains(&ship_id) {
+                if pilot.flight.is_some() || pilot.jump.is_some() {
+                    continue;
+                }
+                pilot.ship.position = eve_destiny::Vec3::new(target[0], target[1], target[2]);
+                pilot.ship.velocity = eve_destiny::Vec3::new(0.0, 0.0, 0.0);
+            } else if held.contains(&ship_id) {
+                pilot.warp_blocked_until = pilot.warp_blocked_until.max(warp_until);
+            }
+        }
+        Vec::new()
+    }
+
     fn strike_pulse(&mut self, session: SessionId, index: usize, at: i64) -> Vec<Out> {
-        let (module_type, pulse, strike, centre, radius) = {
+        let (module_type, pulse, strike, centre, radius, transport) = {
             let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
             let Some(run) = pilot.modules.running.get_mut(index) else { return Vec::new() };
-            let Some(Action::Strike { strike }) = run.effect.action.clone() else { return Vec::new() };
+            let Some(action) = run.effect.action.clone() else { return Vec::new() };
+            let Some(strike) = strike_of(Some(&action)) else { return Vec::new() };
             if run.strike_done >= strike.pulses {
                 return Vec::new();
             }
             let pulse = run.strike_done;
             run.strike_done += 1;
-            (run.effect.module_type, pulse, strike, pilot.ship.position, pilot.ship.spec.radius.max(0.0))
+            let transport = match action {
+                Action::Field { destination, warp_block_ms, moved, held, .. } => {
+                    Some((destination, warp_block_ms, moved, held))
+                }
+                _ => None,
+            };
+            (
+                run.effect.module_type,
+                pulse,
+                strike,
+                pilot.ship.position,
+                pilot.ship.spec.radius.max(0.0),
+                transport,
+            )
         };
+        // a transport field carries its ships at its pulse and deals no damage
+        if let Some((destination, warp_block_ms, moved, held)) = transport {
+            return self.transport_field(
+                session,
+                strike,
+                centre,
+                destination,
+                warp_block_ms,
+                &moved,
+                &held,
+                at,
+            );
+        }
         // a sweep (a reaper) has its axis at this pulse; a pulse whose axis has no length hits nothing
         let Some(strike) = strike.at_pulse(pulse) else { return Vec::new() };
         let direction = strike.direction;

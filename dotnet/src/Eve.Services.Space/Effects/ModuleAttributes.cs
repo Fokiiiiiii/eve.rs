@@ -127,6 +127,8 @@ internal static class ModuleAttributes
     public const int ActivationBlockedStrength = 1350;
     public const int ActivationRequiresActiveIndustrialCore = 3265;
     public const int ActivationRequiresActiveSiegeModule = 5426;
+    /// <summary>1 on a disruptive lance: the ship cannot cloak while the lance is fitted (<c>disruptionLanceDisallowCloaking</c>).</summary>
+    public const int DisruptionLanceDisallowCloaking = 5425;
     public const int NetworkedSensorArrayDisallowCapitalMicroJump = 5700;
     public const int CanActivateInGateCloak = 3123;
     public const int MaxGroupActive = 763;

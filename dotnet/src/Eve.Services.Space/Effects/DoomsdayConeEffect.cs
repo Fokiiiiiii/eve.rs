@@ -12,7 +12,7 @@ namespace Eve.Services.Space.Effects;
 /// The fuel (consumption 713 and 714) is taken by the shared mechanism of <see cref="ShipEffect"/> (<c>BurnsFuel</c>): one cycle's fuel before each cycle.
 /// </summary>
 /// <remarks>
-/// What is not in this body (named, not run): the cone's graphic (none exists, UNVERIFIED), the target's capacitor resistance (attribute 2609 names it; no
+/// What is not in this body (named, not run): the cone's graphic (none exists in the static data or in EveJS, so none is sent), the target's capacitor resistance (attribute 2609 names it; no
 /// simulation neutralizer applies a resistance, the same as a neutralizer's), and the docking and tethering the reference also forbids in its window (the
 /// simulation does not refuse them yet; the jump and cloak are refused). A target that the reference hits but the cone's signature factor scales to nothing is not hit.
 /// </remarks>

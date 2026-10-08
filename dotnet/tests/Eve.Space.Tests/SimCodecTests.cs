@@ -55,6 +55,18 @@ public class SimCodecTests
         NumbersOf(e["on"]), NumbersOf(e["off"]), ChangesOf(e["onChanges"]!), ChangesOf(e["offChanges"]!), e["turret"] is { } turret ? TurretOf(turret) : null,
         e["action"] is { } action ? ActionOf(action) : null, BurnsFuel: e["burnsFuel"] is { } burns && (bool)burns);
 
+    /// <summary>A strike of the fixture (the object of a strike action, or the nested strike of a field).</summary>
+    private static SimAction.Strike StrikeOf(JsonNode a)
+    {
+        var direction = ((JsonArray)a["direction"]!).Select(x => (double)x!).ToArray();
+        return new SimAction.Strike(
+            (byte)(int)a["shape"]!, direction, (double)a["length"]!, (double)a["radius"]!, (double)a["warningMs"]!, (double)a["pulseMs"]!, (int)a["pulses"]!,
+            Four(a["damage"]!), (double)a["signatureRadius"]!, (double)a["immobileMs"]!, (double)a["noJumpMs"]!,
+            (double)a["neutAmount"]!, (double)a["neutRadius"]!, (double)a["neutSignatureRadius"]!,
+            a["debuffMs"] is { } debuff ? (double)debuff : 0.0,
+            a["sweepEnd"] is JsonArray sweepEnd ? sweepEnd.Select(x => (double)x!).ToArray() : null);
+    }
+
     private static SimAction ActionOf(JsonNode a)
     {
         if ((string)a["kind"]! == "mining")
@@ -97,13 +109,17 @@ public class SimCodecTests
         }
         if ((string)a["kind"]! == "strike")
         {
-            var direction = ((JsonArray)a["direction"]!).Select(x => (double)x!).ToArray();
-            return new SimAction.Strike(
-                (byte)(int)a["shape"]!, direction, (double)a["length"]!, (double)a["radius"]!, (double)a["warningMs"]!, (double)a["pulseMs"]!, (int)a["pulses"]!,
-                Four(a["damage"]!), (double)a["signatureRadius"]!, (double)a["immobileMs"]!, (double)a["noJumpMs"]!,
-                (double)a["neutAmount"]!, (double)a["neutRadius"]!, (double)a["neutSignatureRadius"]!,
-                a["debuffMs"] is { } debuff ? (double)debuff : 0.0,
-                a["sweepEnd"] is JsonArray sweepEnd ? sweepEnd.Select(x => (double)x!).ToArray() : null);
+            return StrikeOf(a);
+        }
+        if ((string)a["kind"]! == "field")
+        {
+            // the transport field: its sphere is the nested strike, then the destination, the warp block and the two id lists
+            return new SimAction.Field(
+                StrikeOf(a["strike"]!),
+                ((JsonArray)a["destination"]!).Select(x => (double)x!).ToArray(),
+                (double)a["warpBlockMs"]!,
+                [.. ((JsonArray)a["moved"]!).Select(x => (long)x!)],
+                [.. ((JsonArray)a["held"]!).Select(x => (long)x!)]);
         }
         if ((string)a["kind"]! == "smartbomb")
         {

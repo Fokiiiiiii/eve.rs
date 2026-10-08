@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 28;
+    public const ushort ProtocolVersion = 29;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -355,6 +355,80 @@ public static class SimCodec
         return new SimEffect(module, moduleType, effectId, fx, duration, capacitor, repeat, target, on, off, onChanges, offChanges, turret, action, (flags & 16) != 0);
     }
 
+    /// <summary>A strike's body (tags 13 and 15): the shape, the aim, the numbers and the sweep (see <see cref="ReadStrike"/>).</summary>
+    private static void WriteStrike(Writer w, byte tag, SimAction.Strike strike, string parameter)
+    {
+        if (!strike.IsValid)
+        {
+            throw new ArgumentException("a strike has a unit aim, four kinds of damage and positive cadence and length", parameter);
+        }
+        w.U8(tag); w.U8(strike.Shape);
+        foreach (var component in strike.Direction) w.F64(component);
+        w.F64(strike.Length); w.F64(strike.Radius); w.F64(strike.WarningMs); w.F64(strike.PulseMs); w.I32(strike.Pulses);
+        foreach (var number in strike.Damage) w.F64(number);
+        w.F64(strike.SignatureRadius); w.F64(strike.ImmobileMs); w.F64(strike.NoJumpMs);
+        w.F64(strike.NeutAmount); w.F64(strike.NeutRadius); w.F64(strike.NeutSignatureRadius);
+        w.F64(strike.DebuffMs);
+        w.U8((byte)(strike.SweepEnd is null ? 0 : 1));
+        foreach (var component in strike.SweepEnd ?? [0.0, 0.0, 0.0]) w.F64(component);
+    }
+
+    /// <summary>A list of ship ids: a u32 count, then each id as an i64 (the simulation's <c>write_ids</c>).</summary>
+    private static void WriteIds(Writer w, IReadOnlyList<long> ids)
+    {
+        w.U32((uint)ids.Count);
+        foreach (var id in ids) w.I64(id);
+    }
+
+    /// <summary>The list <see cref="WriteIds"/> writes; more than 4096 ids is refused (no fleet is that large in a field).</summary>
+    private static IReadOnlyList<long> ReadIds(ref Reader r)
+    {
+        var count = r.U32();
+        if (count > 4096)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "too many transport ids");
+        }
+        var ids = new long[count];
+        for (var index = 0; index < count; index++)
+        {
+            ids[index] = r.I64();
+        }
+        return ids;
+    }
+
+    /// <summary>A strike's body after its tag, as <see cref="WriteStrike"/> writes it.</summary>
+    private static SimAction.Strike ReadStrike(ref Reader r)
+    {
+        var shape = r.U8();
+        double[] direction = [r.F64(), r.F64(), r.F64()];
+        var length = r.F64();
+        var radius = r.F64();
+        var warning = r.F64();
+        var pulse = r.F64();
+        var pulses = r.I32();
+        double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+        var signature = r.F64();
+        var immobile = r.F64();
+        var noJump = r.F64();
+        var neutAmount = r.F64();
+        var neutRadius = r.F64();
+        var neutSignature = r.F64();
+        var debuff = r.F64();
+        var sweepFlag = r.U8();
+        double[] sweepEnd = [r.F64(), r.F64(), r.F64()];
+        if (sweepFlag > 1)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad strike sweep flag");
+        }
+        var strike = new SimAction.Strike(shape, direction, length, radius, warning, pulse, pulses, damage, signature, immobile, noJump, neutAmount, neutRadius, neutSignature,
+            debuff, sweepFlag == 1 ? sweepEnd : null);
+        if (!strike.IsValid)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad strike action");
+        }
+        return strike;
+    }
+
     private static SimAction ReadAction(ref Reader r)
     {
         switch (r.U8())
@@ -426,35 +500,20 @@ public static class SimCodec
                     return new SimAction.AutoTarget(range);
                 }
             case 13:
+                return ReadStrike(ref r);
+            case 15:
                 {
-                    var shape = r.U8();
-                    double[] direction = [r.F64(), r.F64(), r.F64()];
-                    var length = r.F64();
-                    var radius = r.F64();
-                    var warning = r.F64();
-                    var pulse = r.F64();
-                    var pulses = r.I32();
-                    double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
-                    var signature = r.F64();
-                    var immobile = r.F64();
-                    var noJump = r.F64();
-                    var neutAmount = r.F64();
-                    var neutRadius = r.F64();
-                    var neutSignature = r.F64();
-                    var debuff = r.F64();
-                    var sweepFlag = r.U8();
-                    double[] sweepEnd = [r.F64(), r.F64(), r.F64()];
-                    if (sweepFlag > 1)
+                    var strike = ReadStrike(ref r);
+                    double[] destination = [r.F64(), r.F64(), r.F64()];
+                    var warpBlock = r.F64();
+                    var moved = ReadIds(ref r);
+                    var held = ReadIds(ref r);
+                    var field = new SimAction.Field(strike, destination, warpBlock, moved, held);
+                    if (!field.IsValid)
                     {
-                        throw new SimLinkException(SimLinkError.BadValue, "bad strike sweep flag");
+                        throw new SimLinkException(SimLinkError.BadValue, "bad transport field action");
                     }
-                    var strike = new SimAction.Strike(shape, direction, length, radius, warning, pulse, pulses, damage, signature, immobile, noJump, neutAmount, neutRadius, neutSignature,
-                        debuff, sweepFlag == 1 ? sweepEnd : null);
-                    if (!strike.IsValid)
-                    {
-                        throw new SimLinkException(SimLinkError.BadValue, "bad strike action");
-                    }
-                    return strike;
+                    return field;
                 }
             case 14:
                 {
@@ -1337,19 +1396,18 @@ private static void WriteAction(Writer w, SimAction action)
                 w.U8(11); w.F64(autoTarget.RangeMeters);
                 break;
             case SimAction.Strike strike:
-                if (!strike.IsValid)
+                WriteStrike(w, 13, strike, nameof(action));
+                break;
+            case SimAction.Field field:
+                if (!field.IsValid)
                 {
-                    throw new ArgumentException("a strike has a unit aim, four kinds of damage and positive cadence and length", nameof(action));
+                    throw new ArgumentException("a transport field is a sphere strike with a finite destination and a warp block, and lists of ship ids", nameof(action));
                 }
-                w.U8(13); w.U8(strike.Shape);
-                foreach (var component in strike.Direction) w.F64(component);
-                w.F64(strike.Length); w.F64(strike.Radius); w.F64(strike.WarningMs); w.F64(strike.PulseMs); w.I32(strike.Pulses);
-                foreach (var number in strike.Damage) w.F64(number);
-                w.F64(strike.SignatureRadius); w.F64(strike.ImmobileMs); w.F64(strike.NoJumpMs);
-                w.F64(strike.NeutAmount); w.F64(strike.NeutRadius); w.F64(strike.NeutSignatureRadius);
-                w.F64(strike.DebuffMs);
-                w.U8((byte)(strike.SweepEnd is null ? 0 : 1));
-                foreach (var component in strike.SweepEnd ?? [0.0, 0.0, 0.0]) w.F64(component);
+                WriteStrike(w, 15, field.Sphere, nameof(action));
+                foreach (var component in field.Destination) w.F64(component);
+                w.F64(field.WarpBlockMs);
+                WriteIds(w, field.Moved);
+                WriteIds(w, field.Held);
                 break;
             case SimAction.Doomsday doomsday:
                 if (!doomsday.IsValid)

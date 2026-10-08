@@ -23,7 +23,7 @@ public sealed class DogmaStatic
     private readonly Dictionary<int, string> _factionNames;
     private readonly Dictionary<string, int> _attributeIdsByName;
 
-    public DogmaStatic(IEnumerable<AttributeDef> attributes, IEnumerable<EffectDef> effects, IEnumerable<TypeDef> types, SdeReader? sde = null, IReadOnlyDictionary<int, int>? categoryOfGroup = null, IReadOnlyDictionary<int, string>? groupNames = null, IReadOnlyDictionary<int, string>? categoryNames = null, IReadOnlyDictionary<int, string>? factionNames = null)
+    public DogmaStatic(IEnumerable<AttributeDef> attributes, IEnumerable<EffectDef> effects, IEnumerable<TypeDef> types, SdeReader? sde = null, IReadOnlyDictionary<int, int>? categoryOfGroup = null, IReadOnlyDictionary<int, string>? groupNames = null, IReadOnlyDictionary<int, string>? categoryNames = null, IReadOnlyDictionary<int, string>? factionNames = null, IReadOnlySet<int>? missileLauncherGroups = null)
     {
         _attributes = attributes.ToDictionary(a => a.Id);
         _effects = effects.ToDictionary(e => e.Id);
@@ -36,6 +36,7 @@ public sealed class DogmaStatic
         _groupNames = groupNames is null ? [] : new Dictionary<int, string>(groupNames);
         _categoryNames = categoryNames is null ? [] : new Dictionary<int, string>(categoryNames);
         _factionNames = factionNames is null ? [] : new Dictionary<int, string>(factionNames);
+        MissileLauncherGroups = missileLauncherGroups ?? new HashSet<int>();
         _attributeIdsByName = _attributes.Values
             .Where(a => a.Name.Length > 0)
             .GroupBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
@@ -64,8 +65,15 @@ public sealed class DogmaStatic
             categories,
             names,
             _categoryNames,
-            _factionNames);
+            _factionNames,
+            MissileLauncherGroups);
     }
+
+    /// <summary>
+    /// The launcher groups of the missile family (<see cref="LauncherFamilies"/>), derived from the static data when it is loaded from the SDE. Empty for a catalog
+    /// built in memory without them.
+    /// </summary>
+    public IReadOnlySet<int> MissileLauncherGroups { get; }
 
     public AttributeDef? Attribute(int id) => _attributes.GetValueOrDefault(id);
 
@@ -264,6 +272,78 @@ public sealed class DogmaStatic
             .ToDictionary(c => (int)c.Key, c => c.Doc.TryGetProperty("name", out var n) ? SdeReader.English(n) : "");
         var factionNames = (await sde.ReadAsync("factions", cancellationToken: cancellationToken))
             .ToDictionary(f => (int)f.Key, f => f.Doc.TryGetProperty("name", out var n) ? SdeReader.English(n) : "");
-        return new DogmaStatic(attributes, BuiltInEffects.Merge(effects), [], sde, groups, groupNames, categoryNames, factionNames);
+        var effectNames = effects.ToDictionary(e => e.Id, e => e.Name);
+        var missileLaunchers = await MissileLauncherGroupsAsync(sde, effectNames, groups, cancellationToken);
+        return new DogmaStatic(attributes, BuiltInEffects.Merge(effects), [], sde, groups, groupNames, categoryNames, factionNames, missileLaunchers);
+    }
+
+    /// <summary>
+    /// The launcher groups of the missile family (<see cref="LauncherFamilies.MissileGroups"/>): the types carrying <c>useMissiles</c>, their charge groups, and the
+    /// default firing effect of each published charge of those groups. Four reads in all; the static data does not change while the server runs.
+    /// </summary>
+    private static async Task<IReadOnlySet<int>> MissileLauncherGroupsAsync(SdeReader sde, IReadOnlyDictionary<int, string> effectNames, IReadOnlyDictionary<int, int> categoryOfGroup, CancellationToken cancellationToken)
+    {
+        var launcherEffect = effectNames.Where(pair => pair.Value.Equals(LauncherFamilies.LauncherEffectName, StringComparison.OrdinalIgnoreCase)).Select(pair => pair.Key).ToArray();
+        if (launcherEffect.Length == 0)
+        {
+            return new HashSet<int>();
+        }
+        var containment = JsonSerializer.Serialize(new { dogmaEffects = new[] { new { effectID = launcherEffect[0] } } });
+        var carrying = await sde.ReadContainingAsync("typeDogma", containment, cancellationToken);
+        var typeDocs = (await sde.ReadAsync("types", carrying.Select(row => row.Key), cancellationToken)).ToDictionary(row => row.Key, row => row.Doc);
+        var launchers = new List<LauncherCandidate>();
+        foreach (var row in carrying)
+        {
+            if (!typeDocs.TryGetValue(row.Key, out var type))
+            {
+                continue;
+            }
+            var groupId = type.GetProperty("groupID").GetInt32();
+            var chargeGroups = new List<int>();
+            if (row.Doc.TryGetProperty("dogmaAttributes", out var attributes) && attributes.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var attribute in attributes.EnumerateArray())
+                {
+                    if (LauncherFamilies.ChargeGroupAttributes.Contains(attribute.GetProperty("attributeID").GetInt32()))
+                    {
+                        chargeGroups.Add((int)attribute.GetProperty("value").GetDouble());
+                    }
+                }
+            }
+            launchers.Add(new LauncherCandidate((int)row.Key, groupId, IsPublished(type), categoryOfGroup.GetValueOrDefault(groupId), chargeGroups));
+        }
+        var chargeGroupIds = launchers.SelectMany(launcher => launcher.ChargeGroups).Where(group => group > 0).Distinct().Select(group => (long)group).ToArray();
+        IReadOnlyList<SdeRow> chargeTypes = chargeGroupIds.Length == 0
+            ? new List<SdeRow>()
+            : await sde.ReadByFieldAsync("types", "groupID", chargeGroupIds, cancellationToken);
+        var chargeDogma = (await sde.ReadAsync("typeDogma", chargeTypes.Select(row => row.Key), cancellationToken)).ToDictionary(row => row.Key, row => row.Doc);
+        var charges = chargeTypes.Select(row => new ChargeCandidate(
+            (int)row.Key,
+            row.Doc.GetProperty("groupID").GetInt32(),
+            IsPublished(row.Doc),
+            chargeDogma.TryGetValue(row.Key, out var dogma) ? DefaultEffectName(dogma, effectNames) : null)).ToList();
+        return LauncherFamilies.MissileGroups(launchers, charges).ToHashSet();
+    }
+
+    /// <summary>A type is published unless its record says it is not (the SDE leaves the flag out of a few records).</summary>
+    private static bool IsPublished(JsonElement type) =>
+        !type.TryGetProperty("published", out var published) || published.ValueKind != JsonValueKind.False;
+
+    /// <summary>The name of the effect a type fires by default (<c>isDefault</c> in its dogma), or null when it has none.</summary>
+    private static string? DefaultEffectName(JsonElement doc, IReadOnlyDictionary<int, string> effectNames)
+    {
+        if (doc.ValueKind != JsonValueKind.Object || !doc.TryGetProperty("dogmaEffects", out var effects) || effects.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+        foreach (var effect in effects.EnumerateArray())
+        {
+            if (effect.TryGetProperty("isDefault", out var isDefault) && isDefault.ValueKind == JsonValueKind.True
+                && effectNames.TryGetValue(effect.GetProperty("effectID").GetInt32(), out var name))
+            {
+                return name;
+            }
+        }
+        return null;
     }
 }

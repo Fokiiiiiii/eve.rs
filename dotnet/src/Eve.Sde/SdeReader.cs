@@ -111,6 +111,33 @@ public sealed partial class SdeReader
         return rows;
     }
 
+    /// <summary>
+    /// The records of <paramref name="table"/> whose document contains <paramref name="containment"/> (a JSON value, matched with PostgreSQL's <c>@&gt;</c>), in file order.
+    /// This asks which types carry an effect (<c>{"dogmaEffects":[{"effectID":101}]}</c>) without reading every document.
+    /// </summary>
+    public async Task<IReadOnlyList<SdeRow>> ReadContainingAsync(string table, string containment, CancellationToken cancellationToken = default)
+    {
+        if (!TableName().IsMatch(table))
+        {
+            throw new ArgumentException($"not a usable table name: {table}", nameof(table));
+        }
+        var rows = new List<SdeRow>();
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand($"SELECT key, doc FROM {_schema}.\"{table}\" WHERE doc @> $1::jsonb ORDER BY ord", connection)
+        {
+            Parameters = { new() { Value = containment } },
+        };
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (long.TryParse(reader.GetString(0), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var key))
+            {
+                rows.Add(new SdeRow(key, reader.GetFieldValue<JsonDocument>(1).RootElement.Clone()));
+            }
+        }
+        return rows;
+    }
+
     /// <summary>Every type in file order with only what a choice among them needs (the whole documents of the types are large; a type without a published flag is published).</summary>
     public async Task<IReadOnlyList<SdeTypeSummary>> ReadTypeSummariesAsync(CancellationToken cancellationToken = default)
     {

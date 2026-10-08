@@ -1,6 +1,6 @@
 # Deviations from the reference server
 
-The reference (EVE.js) is matched by default (`docs/adr/0001-external-compatibility-only.md`).
+The reference (EVE.js) is matched by default (`docs/design/adr/0001-external-compatibility-only.md`).
 A deliberate difference goes here, with the evidence that the client cannot tell or that it
 is better off, and how it is tested. A behaviour is either:
 
@@ -81,7 +81,7 @@ Each is matched to the reference today. None is decided; the evidence needed is 
 | Behaviour | Why it may not need to match | Evidence to collect |
 |---|---|---|
 | A handler that throws is answered with a `None` result, not an error | A `None` where the client expects data is probably worse than an error the client can report | What the client does on each service's `None` and on an error response |
-| A service call may reach any method of the JS class by name | Only the methods the client calls matter | `docs/spec/services.tsv` against the reference's method set |
+| A service call may reach any method of the JS class by name | Only the methods the client calls matter | `docs/reference/spec/services.tsv` against the reference's method set |
 | A received `str` is echoed as `buffer` (`JsSemantics.AsReceived`) | The Python 2 client's `str` is bytes, so it may not tell the two apart | The client's marshal reader for opcodes `str` and `buffer` |
 | JavaScript number and truthiness rules in ported handlers (`parseInt`, `\|\|`) | They are accidents of the language unless the client feeds the value | Which inputs the client can send |
 | `charMgr.GetPublicInfo`'s `empireID` is taken from a table of four corporations (a Caldari school's pupils are shown under the Gallente empire, 500004) and is the faction for every other corporation | The table looks like a mistake; the client reads `empireID` only to pick an empire icon (`RACE_ICONS[empireID]`) | Whether the character sheet gets `empireID` from this record, and which icon a Caldari character should have |
@@ -140,7 +140,7 @@ decisions.
 | The station's services and reprocessing figures: `serviceMask` is the reference's constant (every service on) and `reprocessingEfficiency` its constant 0.5, whatever the operation or the station's own value in the data; the take and the hangar flag come from the data and match | with the services of each station operation (S3/S5) |
 | `account` other than `GetCashBalance` (`GiveCash`, corporation wallets, the journal) | S3 (wallet journal) and S5 (corporations) |
 | The character's ISK and PLEX are the reference's development values (100000 and 2222) unless `EVE_START_ISK` / `EVE_START_PLEX` say otherwise; `balanceChange` is always 0 (no journal yet) | S3 (wallet journal) |
-| `charUnboundMgr` methods other than the ones the screen needs: `PrepareCharacterForDelete`, `CancelCharacterDeletePrepare`, `DeleteCharacter`, `GetCharacterInfo`, `GetQAStarterSystemIDs`, `UpdateCharacterGender`, `UpdateCharacterBloodline`, `GetCharCreationInfo`, `GetCharNewExtraCreationInfo`, `GetTopBounties`, `IsUserReceivingCharacter`, `GetCharOmegaDowngradeStatus`, `GetCharacterToSelect`; a call to one is answered with a `None` result | as the client calls them (`docs/spec/services.tsv`) |
+| `charUnboundMgr` methods other than the ones the screen needs: `PrepareCharacterForDelete`, `CancelCharacterDeletePrepare`, `DeleteCharacter`, `GetCharacterInfo`, `GetQAStarterSystemIDs`, `UpdateCharacterGender`, `UpdateCharacterBloodline`, `GetCharCreationInfo`, `GetCharNewExtraCreationInfo`, `GetTopBounties`, `IsUserReceivingCharacter`, `GetCharOmegaDowngradeStatus`, `GetCharacterToSelect`; a call to one is answered with a `None` result | as the client calls them (`docs/reference/spec/services.tsv`) |
 | The reference's login takeover (`loginTakeoverEnabled`, evicting the earlier session) and browser-pilot control checks on choosing a character; eve.rs always refuses a character that is already online | with the session model of S3 |
 | The login function also patches portrait upload (`photoUploadSvc`) and seeds the skill-extractor token | S2 (portraits), S3 (skills) |
 | `machoNet.SetGlobalConfigValue`, `ForwardCharacterNotification`, `ReloadClientCodeHash`, `GetNodeFromAddress`, `GetClusterGameStatisticsForClient` | as the client calls them |

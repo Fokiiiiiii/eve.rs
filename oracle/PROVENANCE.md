@@ -30,7 +30,7 @@ reader in `crates/eve-oracle/src/js.rs`.
 answered to the headless client (`tools/headless-client/scripts/record_character_scenarios.py`, against a reference
 started by `tools/dev/ref-server.sh` on data built from SDE build 3396210; the reference is run with `tools/dev/ref-bigint-json.js` required, which makes `JSON.stringify` write the 64-bit integers its debug log passes it as numbers: without it the reference throws while it logs the answer of a ship's inventory and the client is told nothing, so the first recordings of `inventory.json` held `null` for what is in a ship). `referenceCommit` and `recordedAt` are in
 each file. They pin what the client can see on the way from login to a session with a character; where eve.rs
-deliberately differs, `docs/compat/DEVIATIONS.md` says so. `login_to_character.json` is the walk, `starters.json` what
+deliberately differs, `docs/reference/compat/DEVIATIONS.md` says so. `login_to_character.json` is the walk, `starters.json` what
 each bloodline is given, and `skills.json` what the skill handler answers for a new character of each race (the three
 calls that return the whole skill list share one copy, marked `{"$same": "GetSkills"}`), `character_info.json` what
 `charMgr` and `account` answer for a new character of each race, and `stations.json` the reference's station record for
@@ -87,7 +87,7 @@ docked), warps with the station locked (`clear` when the warp is entered), tries
 `--only walk|starters|skills|info|stations|inventory|dogma|fitting|training|training_fast|undock|approach|movement|warp|jump|others|target|module` records one and leaves the others as they are.
 
 `fixtures/simlink/messages.json` is not from the reference: it is what `tools/dev/gen-simlink-fixtures.py` writes, the golden
-frames of the link between the service host and the simulation (`docs/adr/0007`), a third writer of the format that the Rust
+frames of the link between the service host and the simulation (`docs/design/adr/0007`), a third writer of the format that the Rust
 simulation (`crates/eve-space/tests/simlink_fixtures.rs`) and the C# host replay.
 
 `crates/eve-space/data/undock_points.json` is not a recording: it is the reference's table of where a ship comes out of each type of station

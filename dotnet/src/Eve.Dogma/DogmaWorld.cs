@@ -42,7 +42,7 @@ public sealed class DogmaItem
 /// </summary>
 /// <remarks>
 /// The rules are the client's (<c>dogma/const.py</c>, <c>dogma/attributes</c>): a base value, then the modifiers in operation order, with the
-/// stacking penalty on attributes that are not stackable, cut to the attribute's cap and floor. See docs/adr/0004-dogma-is-a-pure-library.md.
+/// stacking penalty on attributes that are not stackable, cut to the attribute's cap and floor. See docs/design/adr/0004-dogma-is-a-pure-library.md.
 /// </remarks>
 public sealed class DogmaWorld
 {

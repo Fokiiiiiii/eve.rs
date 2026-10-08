@@ -4,7 +4,7 @@ A new server for the EVE Online client, in Rust (network front and simulation), 
 PostgreSQL 18. The aim is a server that the same, unmodified client can play on, that is faster and easier to
 maintain, and that does not depend on EVE.js. EVE.js is not ported line by line: its external behaviour (what the
 client can observe) is kept, and everything behind that is designed again. It stays as a behavioural reference to
-run the same scenarios against. Start with `CLAUDE.md`, `docs/PLAN.md` and `docs/adr/`.
+run the same scenarios against. Start with `CLAUDE.md` and the [documentation index](docs/README.md).
 
 > Localhost-only research project. Not affiliated with CCP hf. It contains no
 > CCP client code and no copy of the static data export.
@@ -35,7 +35,7 @@ run the same scenarios against. Start with `CLAUDE.md`, `docs/PLAN.md` and `docs
 | `tools/headless-client` | A small Python client that speaks the wire protocol (handshake, service calls); replays the same golden fixtures |
 | `tools/dev` | `pg18.sh` (a local PostgreSQL 18), `run-eve-live.sh` (start eve.rs and run the live tests, or any command, against it), `run-evejs-live.sh` (live tests against the reference server) |
 | `tools/spec-extract` | Scripts that extract facts (names, constants) from a local copy of the client source |
-| `docs/` | The plan (`PLAN.md`), decisions (`adr/`), registered deviations from the reference (`compat/`), status (`NATIVE_MIGRATION.md`) and extracted client-spec facts (`spec/`) |
+| `docs/` | [Index](docs/README.md); current project status and open TODOs (`project/`); decisions and foundations (`design/`); compatibility register, extracted client specs, and integration contracts (`reference/`) |
 
 ## Checks
 
@@ -45,7 +45,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 tools/dev/pg18.sh start                                  # a local PostgreSQL 18 for the database tests
 EVE_PG_URL=$(tools/dev/pg18.sh url) cargo test --workspace
 (cd tools/headless-client && .venv/bin/python -m pytest -q)
-(cd dotnet && EVE_PG_URL=$(../tools/dev/pg18.sh url) dotnet test EveRs.slnx)      # 2,229 tests; the database ones are skipped without EVE_PG_URL
+(cd dotnet && EVE_PG_URL=$(../tools/dev/pg18.sh url) dotnet test EveRs.slnx)      # 3,859 tests; PostgreSQL tests run with EVE_PG_URL
 cargo run --release -p eve-bench -- --compare
 ```
 
@@ -54,7 +54,7 @@ cargo run --release -p eve-bench -- --compare
 Features do not keep timers, event hooks or tables of running things of their own: the server has a durable scheduler (`Eve.Scheduler`), an
 event bus with a transactional outbox (`Eve.Events`), a relation store for standings, wars, security status and affiliation (`Eve.Relations`),
 a content runtime for missions, anomalies and incursions (`Eve.Content`), an effect registry for what modules do (`Eve.Dogma`), and a rowset
-read side (`Eve.ReadSide`). Read [`docs/FOUNDATIONS.md`](docs/FOUNDATIONS.md) before adding a feature.
+read side (`Eve.ReadSide`). Read [`docs/design/FOUNDATIONS.md`](docs/design/FOUNDATIONS.md) before adding a feature.
 
 ## Development environment and CI
 

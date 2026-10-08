@@ -3,7 +3,7 @@ using System.Text;
 
 namespace Eve.Host;
 
-/// <summary>A message on the link between the network front and this host (docs/adr/0002-front-host-link.md).</summary>
+/// <summary>A message on the link between the network front and this host (docs/design/adr/0002-front-host-link.md).</summary>
 public abstract record HostMessage;
 
 public sealed record Hello(ushort Version, uint NodeId) : HostMessage;

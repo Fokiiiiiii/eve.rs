@@ -7,7 +7,7 @@
 ## Context
 
 `Eve.GameStore` was built first (milestone M2) to make a direct port of EVE.js possible: one JSON document per
-legacy table, a synchronous cache-first API, owner leases and a write-ahead outbox. `docs/PLAN.md` marked it
+legacy table, a synchronous cache-first API, owner leases and a write-ahead outbox. `docs/project/README.md` marked it
 transitional and asked for a decision at the start of S2.
 
 Slice S2 has since built three modules the other way: `identity`, `characters` and `inventory` each own a
@@ -31,7 +31,7 @@ did was one adapter that read an Omega expiry for `subscriptionMgr`, which the h
    reused where a module needs a single writer (world state in S4), as an idea, not as a dependency.
 4. **A domain module knows no protocol.** It does not reference `Eve.Marshal`, `Eve.Macho`, `Eve.Services*` or
    `Eve.Host`. Protocol adapters (`Eve.Services.*`) turn client calls into calls on modules, and back.
-5. **What a module does not own yet is a constant marked as a gap**, listed in `docs/compat/DEVIATIONS.md`
+5. **What a module does not own yet is a constant marked as a gap**, listed in `docs/reference/compat/DEVIATIONS.md`
    under "Not yet matched", and replaced when the owning module exists. It is never read from the legacy
    store as a shortcut.
 6. **The rules are checked**: `dotnet/tests/Eve.Host.Tests/ArchitectureTests.cs` reads the project files and
@@ -48,13 +48,13 @@ did was one adapter that read an Omega expiry for `subscriptionMgr`, which the h
 - S6 has to write a mapping per legacy table. The legacy tables that no module covers are simply not imported
   until the module exists.
 - Decisions still open, each for its own ADR when a slice needs it: where dogma lives (a Rust library the host
-  can also use, per `docs/PLAN.md`), how world state is owned and recovered in S4, and how the simulation
+  can also use, per `docs/project/README.md`), how world state is owned and recovered in S4, and how the simulation
   talks to the host.
 
 ## Alternatives
 
 - **Build the modules on `Eve.GameStore`.** Rejected: it keeps the JSON-blob-per-table model and a synchronous
-  cache whose aliasing hazards are recorded in `docs/NATIVE_MIGRATION.md`; typed tables are what the goal
+  cache whose aliasing hazards are recorded in `docs/project/README.md`; typed tables are what the goal
   (maintainable) asks for.
 - **Delete `Eve.GameStore` now.** Rejected: S6 needs the importer, and the fixtures that pin the legacy
   format are the evidence it maps correctly.

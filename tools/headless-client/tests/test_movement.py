@@ -5,7 +5,7 @@
 `oracle/fixtures/scenarios/movement.json` holds each order (`CmdAlignTo`, `CmdOrbit`, `CmdFollowBall`, `CmdStop`, `CmdSetSpeedFraction`), what the
 reference answered and what the client was sent while it waited; `approach.json` a ship that flies out of docking range and is told to dock
 (`scripts/record_character_scenarios.py --only movement|approach`). The events are compared as in tests/test_undock.py. What a server may do
-differently is listed in docs/compat/DEVIATIONS.md: where the ship appears (#15) and how it comes to rest at the station (#17).
+differently is listed in docs/reference/compat/DEVIATIONS.md: where the ship appears (#15) and how it comes to rest at the station (#17).
 
 Skipped unless EVE_LIVE_HOST is set. The approach test takes about five minutes (the station's bounding sphere is 70 km across, so the ship has
 to fly a long way to be out of range) and runs only with EVE_LIVE_SLOW=1.

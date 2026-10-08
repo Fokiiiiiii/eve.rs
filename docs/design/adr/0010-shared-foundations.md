@@ -23,7 +23,7 @@ Six shared foundations, each a module with its own PostgreSQL schema (ADR 0003),
 5. `Eve.Dogma` `EffectRegistry` with the space host's handlers in `Eve.Services.Space/Effects` (replacing the branch in `ModulePackages.Of`).
 6. `Eve.ReadSide`: named queries over the SDE and module tables, answered as client rowsets.
 
-A new feature uses them and does not build a private timer, event list, running-content table or effect branch. `docs/FOUNDATIONS.md` is the guide.
+A new feature uses them and does not build a private timer, event list, running-content table or effect branch. `docs/design/FOUNDATIONS.md` is the guide.
 
 ## Consequences
 

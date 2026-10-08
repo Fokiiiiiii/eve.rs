@@ -9,7 +9,7 @@ namespace Eve.Npc;
 /// What an NPC fights with. A retail entity type carries its weapon on its own dogma record (the effect <c>targetAttack</c> and the attributes of the ship
 /// itself), not in a module loadout: 5592 of the 5620 authored profiles point at the empty loadout by design. This is a port, as it is, of the part of
 /// <c>buildWeaponModuleSnapshot</c> (<c>server/src/space/combat/weaponDogma.js</c>) and <c>getNpcFittedWeaponModules</c> (<c>npc/npcEquipment.js</c>) of EVE.js
-/// that turns such a hull into a turret (ADR 0009). Modules fitted to an NPC are not armed here (see <c>docs/compat/DEVIATIONS.md</c>).
+/// that turns such a hull into a turret (ADR 0009). Modules fitted to an NPC are not armed here (see <c>docs/reference/compat/DEVIATIONS.md</c>).
 /// </summary>
 public static class NpcArmament
 {

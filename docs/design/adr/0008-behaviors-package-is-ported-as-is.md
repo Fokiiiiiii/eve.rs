@@ -26,7 +26,7 @@ situation nobody set up; the package can.
 - What the tasks ask of the server (the client's package calls the server's `ballpark`, `dogmaLM`, `entityLocation`
   and the like, none of which are in the client) is the `World` trait. The simulation implements it.
 - Every ported file names its source module at the top of the file, and `crates/eve-behaviors/PROVENANCE.md` lists
-  them. A change of behavior on purpose is a numbered row in `docs/compat/DEVIATIONS.md`, as anywhere else.
+  them. A change of behavior on purpose is a numbered row in `docs/reference/compat/DEVIATIONS.md`, as anywhere else.
 - Time is the simulation clock in `gametime` ticks (ten million a second), so a task's `SleepSim` and its
   timeouts are in the same unit as the scene's.
 - A fault (what raises in the client) is a `BehaviorError` that stops the tick, as an exception unwinds it.

@@ -6,7 +6,7 @@
 stargate of its system, `CmdStargateJump` with every event the client was sent while the ship went (with the seconds each arrived at), and the
 ballpark of the next system bound and asked for its state. The warp takes a minute and a half, so this runs only with EVE_LIVE_SLOW=1.
 
-What a server may do differently (docs/compat/DEVIATIONS.md): where the ship lands by the gate and where it appears in the next system (both are
+What a server may do differently (docs/reference/compat/DEVIATIONS.md): where the ship lands by the gate and where it appears in the next system (both are
 random in the reference, inside the same bounds), the customs offices, props, ambient ships and gate guns the reference adds to a system's
 ballpark, the position update the reference sends 0.5 s after the jump-out and the balls it adds a few seconds after the bind, and the ship
 arriving cloaked (the reference's balls carry the jump cloak; eve.rs tells the client with `OnJumpCloakUpdated` only).

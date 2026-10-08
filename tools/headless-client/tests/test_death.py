@@ -6,7 +6,7 @@
 and binds, then the victim does, both bind dogma and wait out their undocking protection. The watcher detonates a hull beside both (`/deathtest 1`: a hull
 nobody flies comes into space, and two seconds on it blows up and leaves a wreck) and, at the end, the victim destroys its own ship (`/suicide`). Each step
 holds what the victim was sent (`events`) and what the watcher was sent (`seen`), with the seconds each arrived at. The replay does the same on any server
-and compares the answers, the events and their order, and the moments. What a server may do differently is in docs/compat/DEVIATIONS.md. The hull is a
+and compares the answers, the events and their order, and the moments. What a server may do differently is in docs/reference/compat/DEVIATIONS.md. The hull is a
 transient ship and its wreck an item the reference makes in its database: the ids of both are per run and compared by type only.
 It waits out the undocking protection first, so it runs only with EVE_LIVE_SLOW=1.
 """
@@ -32,7 +32,7 @@ pytestmark = [
 ]
 
 # the moment a ball goes may differ from the recording's by this much: the reference blows a hull up about 3.7 s after it comes (its own two seconds of
-# simulation time and the way its scene delivers them), eve.rs two seconds on (docs/compat/DEVIATIONS.md #49)
+# simulation time and the way its scene delivers them), eve.rs two seconds on (docs/reference/compat/DEVIATIONS.md #49)
 TOLERANCE = 1.6
 
 
@@ -126,7 +126,7 @@ KEEP_ALIVE = {"SetBallPosition", "SetBallVelocity", "SetSpeedFraction", "Stop"}
 
 
 def victim_view(events: list) -> list:
-    """What the pilot was told, as both servers can be compared: the events in order but for what a server may do differently (docs/compat/DEVIATIONS.md
+    """What the pilot was told, as both servers can be compared: the events in order but for what a server may do differently (docs/reference/compat/DEVIATIONS.md
     #50): the reference lets go of the bound objects and announces the capsule before it sends the explosion, eve.rs after (the explosion goes first
     in both views); the reference repeats a position of the capsule every few seconds, eve.rs does not."""
     view = []

@@ -89,7 +89,7 @@ public sealed class RowSet
 /// <summary>
 /// The server's read side: named queries over the static data and over the tables of the modules, answered as the rowsets the client expects. A feature that needs "the types of a
 /// group", "the stations of a system" or "my open orders" registers a <see cref="RowsetQuery"/> and returns <c>RowsAsync(name, args).ToRowset()</c> (or the shape the call needs). The
-/// SQL stays in one place, the shapes are built once and tested, and the static data is cached. See <c>docs/FOUNDATIONS.md</c>.
+/// SQL stays in one place, the shapes are built once and tested, and the static data is cached. See <c>docs/design/FOUNDATIONS.md</c>.
 /// </summary>
 public sealed class ReadSide
 {

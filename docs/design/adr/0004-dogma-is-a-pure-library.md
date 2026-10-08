@@ -7,7 +7,7 @@
 ## Context
 
 Dogma decides every number a player sees on a ship, a module or a character: hit points, speed, what a
-module costs the ship's processor, how a skill changes a weapon. `docs/PLAN.md` left open where it lives and
+module costs the ship's processor, how a skill changes a weapon. `docs/project/README.md` left open where it lives and
 suggested "a Rust library the host can also use". Slice S3 needs it for the docked ship (`dogmaIM.GetAllInfo`);
 S4 needs its numbers in the simulation (mass, agility, maximum speed, signature radius, targeting ranges).
 
@@ -49,7 +49,7 @@ the engine can be checked number by number.
 7. **Which attributes are listed follows the reference; their values are the engine's.** The lists are a
    protocol adapter's business (`DogmaInfo`): the ship's, a module's and the two lists for the character, and
    the instance state the reference adds (charge, shield charge, armor damage, whether a module is online).
-   Where the engine and the reference differ on purpose, `docs/compat/DEVIATIONS.md` says so (#11, #12).
+   Where the engine and the reference differ on purpose, `docs/reference/compat/DEVIATIONS.md` says so (#11, #12).
 
 ## Consequences
 
@@ -64,7 +64,7 @@ the engine can be checked number by number.
 
 ## Alternatives
 
-- **A Rust library used by both the host and the simulation** (`docs/PLAN.md`'s first idea). Rejected for
+- **A Rust library used by both the host and the simulation** (`docs/project/README.md`'s first idea). Rejected for
   now: fitting and skills change in the host, the simulation needs numbers rather than the engine, and a
   second binding layer (native library or process) would cost more than the messages it saves. Reopened by
   the benchmark above.

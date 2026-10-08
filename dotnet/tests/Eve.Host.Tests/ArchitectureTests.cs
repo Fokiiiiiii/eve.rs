@@ -3,7 +3,7 @@ using System.Xml.Linq;
 namespace Eve.Host.Tests;
 
 /// <summary>
-/// The shape of the solution that docs/adr/0003 decides, kept by reading the project files: a domain module does not
+/// The shape of the solution that docs/design/adr/0003 decides, kept by reading the project files: a domain module does not
 /// know the wire or the legacy store, and nothing but the legacy importer builds on the legacy store.
 /// </summary>
 public class ArchitectureTests

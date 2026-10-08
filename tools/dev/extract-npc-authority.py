@@ -6,7 +6,7 @@
 The reference keeps its NPCs in static tables (`tools/DatabaseCreator/staticTables/npcProfiles`, `npcLoadouts`, `npcSpawnPools`): a profile names a ship type
 and whose it is, a loadout what is fitted to it (almost nothing: a retail entity type carries its weapon on the type itself), a pool which profiles are
 rolled at what weight, a loot table what an NPC leaves in its wreck (`npcLootTables`: rules that pick a kind of item at a weight, or a plain random draw). This keeps the fields the host reads, in the reference's order (the first row of a name is the one a query finds). The tables are
-game data and are used as data; none of the reference's code is copied (docs/adr/0009, oracle/PROVENANCE.md).
+game data and are used as data; none of the reference's code is copied (docs/design/adr/0009, oracle/PROVENANCE.md).
 """
 
 import json

@@ -31,7 +31,7 @@ Redesigning them from the outside costs time and loses detail.
    not a change of behaviour. It is a port, not a new design.
 3. **Provenance stays.** Every ported file names the source it comes from at the top, and where a package is ported whole
    it has a `PROVENANCE.md` (as `crates/eve-behaviors` has). A change of behaviour on purpose is a numbered row in
-   `docs/compat/DEVIATIONS.md`.
+   `docs/reference/compat/DEVIATIONS.md`.
 4. **The structure around it is still ours.** Module boundaries, persistence, the split between the Rust simulation and
    the C# host, and configuration are designed for speed and maintenance (ADR 0001, 0003, 0007). A port fits into them;
    it does not import EVE.js's global state or its file layout.

@@ -5,7 +5,7 @@
 `oracle/fixtures/scenarios/target.json` (scripts/record_character_scenarios.py --only target) holds two characters by the same station: the watcher
 undocks and binds the ballpark, then the actor undocks, binds, and is given the dogma location of the system. Each step holds what the actor was
 sent (`events`) and what the watcher was sent (`seen`), with the seconds each arrived at, and the answer or the error of the call. The replay
-does the same on any server and compares. What a server may do differently is in docs/compat/DEVIATIONS.md; the seconds a lock takes are the
+does the same on any server and compares. What a server may do differently is in docs/reference/compat/DEVIATIONS.md; the seconds a lock takes are the
 ship's own numbers, so they are compared within a second, not to the hundredth. The warp and the docking are long (a minute and a half, and
 the protection of a ship that has just undocked is thirty seconds), so this runs only with EVE_LIVE_SLOW=1.
 """

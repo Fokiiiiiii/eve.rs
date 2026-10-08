@@ -51,6 +51,6 @@ modules own their data (ADR 0003) and no module knows the protocol.
   character's lock and one transaction the same way, and its events are the same `DogmaEvent`s.
 - The rules are known only as far as the reference's validator lists them and the client shows them. A rule
   the reference does not check (for example, cargo capacity) is not there until it is measured against the
-  real game and recorded in `docs/compat/DEVIATIONS.md`.
+  real game and recorded in `docs/reference/compat/DEVIATIONS.md`.
 - Only whole stacks move, and only the active ship is handled; partial stacks, charges and other ships come
   with the slices that need them.

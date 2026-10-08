@@ -5,7 +5,7 @@
 `oracle/fixtures/scenarios/others.json` (scripts/record_character_scenarios.py --only others) holds two characters in the same system: the watcher
 undocks and binds the ballpark, then the actor undocks, binds, is given orders, stops, docks, undocks again and warps to a planet. Each step holds
 what the actor was sent (`events`) and what the watcher was sent (`seen`), with the seconds each arrived at. The replay does the same on any server
-and compares both. What a server may do differently is in docs/compat/DEVIATIONS.md: the reference's ambient additions to a ballpark and the
+and compares both. What a server may do differently is in docs/reference/compat/DEVIATIONS.md: the reference's ambient additions to a ballpark and the
 stamps of a session (its updates for the watcher can be a stamp behind the actor's). The warp takes a minute and a half, so this runs only with
 EVE_LIVE_SLOW=1.
 """

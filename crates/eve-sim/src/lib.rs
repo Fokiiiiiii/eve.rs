@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 //! The simulation process: it listens on a socket, the service host connects, and everything the host says is handed to
-//! a [`Sim`](eve_space::sim::Sim) (`docs/adr/0007-space-simulation-process.md`).
+//! a [`Sim`](eve_space::sim::Sim) (`docs/design/adr/0007-space-simulation-process.md`).
 //!
 //! One host at a time. A connection has its own scenes: when the host goes away (or is restarted) its ships go with it,
 //! as its sessions do.

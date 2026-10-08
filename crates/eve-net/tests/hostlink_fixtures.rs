@@ -1,4 +1,4 @@
-//! Replays oracle/fixtures/hostlink/messages.json, the golden frames of docs/adr/0002 (the C# host
+//! Replays oracle/fixtures/hostlink/messages.json, the golden frames of docs/design/adr/0002 (the C# host
 //! replays the same file): every valid frame encodes to its bytes and decodes back, every invalid one is
 //! refused for the stated reason.
 

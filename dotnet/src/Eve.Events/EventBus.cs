@@ -10,7 +10,7 @@ namespace Eve.Events;
 /// into the caller's transaction, so the event exists exactly when the change it announces does. The bus's own pump loop (started by <see cref="StartAsync"/>) delivers each event, in order, to every subscriber whose topics match; each subscriber has a cursor, and a handler's writes are committed together with its cursor, so a
 /// PostgreSQL-only handler sees each event exactly once and any other handler at least once. A failing handler is retried with a back-off and, after its attempts, the event
 /// is set aside as a dead letter and the subscriber goes on. Features subscribe instead of calling each other, and publish instead of keeping their own event lists.
-/// See <c>docs/FOUNDATIONS.md</c>.
+/// See <c>docs/design/FOUNDATIONS.md</c>.
 /// </summary>
 /// <remarks>
 /// Visibility: row ids are handed out in the order publishers ask for them but become visible in the order they commit, so a cursor over ids alone could skip a row that commits

@@ -11,7 +11,7 @@ namespace Eve.Services.Slash;
 /// The game master's item commands of a docked pilot: <c>/giveitem &lt;item name|typeID&gt; [amount]</c> (items into the station hangar), <c>/fit me &lt;module&gt;</c> (a module,
 /// made if the cargo hold has none, fitted to the first slot that suits) and <c>/unfit me &lt;module name|typeID|itemID|all&gt;</c> (fitted modules back to the hangar).
 /// Their words are the reference's (<c>services/chat/commands/itemSeeding.js</c> and <c>fitModule.js</c>, ADR 0009). The reference also serves a pilot in space; here the
-/// pilot must be docked (<c>docs/compat/DEVIATIONS.md</c>).
+/// pilot must be docked (<c>docs/reference/compat/DEVIATIONS.md</c>).
 /// </summary>
 public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs)
 {

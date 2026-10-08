@@ -24,7 +24,7 @@ public class NameTests
 
     /// <summary>
     /// What the reference answered for each name, before any character existed. One difference is deliberate: it
-    /// also reserves its own project's names ("Elysian"), which eve.rs does not (docs/compat/DEVIATIONS.md).
+    /// also reserves its own project's names ("Elysian"), which eve.rs does not (docs/reference/compat/DEVIATIONS.md).
     /// </summary>
     [Theory]
     [MemberData(nameof(Recorded))]

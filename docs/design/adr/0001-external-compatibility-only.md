@@ -26,13 +26,13 @@ faster and easier to maintain and change, and that is decoupled from EVE.js.**
    (transport, handshake, marshal wire format, MachoNet packet and session semantics,
    the service and method names it calls with their argument and return shapes,
    the destiny and dogma numbers it reads, the static data it downloads). See
-   `docs/PLAN.md` for the contract.
+   `docs/project/README.md` for the contract.
 3. **Everything behind that boundary is redesigned** for clarity and speed: module
    boundaries, state ownership, persistence layout, the simulation's structure,
    configuration, tooling.
 4. **Match the reference by default.** Where it is unknown whether the client can tell
    the difference, behave as the reference does. A deviation needs evidence (the client
-   source, a live run, a test) and an entry in `docs/compat/DEVIATIONS.md`.
+   source, a live run, a test) and an entry in `docs/reference/compat/DEVIATIONS.md`.
 5. **Run early.** Work in vertical slices that can be executed now (a server that a
    client can log in to, then act in) rather than finishing layers in isolation. When a
    piece can be run and would make the whole work better, run it before going on.
@@ -50,14 +50,14 @@ faster and easier to maintain and change, and that is decoupled from EVE.js.**
   ends each slice that changes what the client sees.
 - The existing work is kept where it is part of the contract (wire codecs, packet
   framing, the destiny wire encoding, static-data loading) and re-examined where it
-  reproduced EVE.js's internals (see "What happens to what exists" in `docs/PLAN.md`).
+  reproduced EVE.js's internals (see "What happens to what exists" in `docs/project/README.md`).
 
 ## Alternatives considered
 
 - **Verbatim port** (the first plan): rejected, as above.
 - **Keep the Node server and add native addons for the hot paths**: rejected. It leaves
   the structure, the single process and the storage model as they are, and the boundary
-  costs eat most of the gain (measured for marshal in `docs/NATIVE_MIGRATION.md`).
+  costs eat most of the gain (measured for marshal in `docs/project/README.md`).
 - **Fork and clean up EVE.js in place**: rejected. The server is about 865k lines with
   little test coverage; cleaning it up is a larger job than replacing it against a
   contract, and the result would still be bound to its design.

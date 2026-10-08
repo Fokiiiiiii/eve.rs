@@ -1,6 +1,6 @@
 # Server logic in `eve-logic`, and what of it is ported
 
-The owner (2026-09-30, the amendment of `docs/adr/0009`): port the better implementation as it is, from EVE.js **and from `Fokiiiiiii/eve-logic`**, the
+The owner (2026-09-30, the amendment of `docs/design/adr/0009`): port the better implementation as it is, from EVE.js **and from `Fokiiiiiii/eve-logic`**, the
 decompiled client V24.01. The client is not only UI: its tree holds the packages the server runs too (they are shared, `eve/common`, `carbon/common`, and
 packages such as `industry` or `crimewatch`). The server-only packages (`*/server/*`) are **not** in it: `inventoryrestrictions/common/util.py` imports
 `inventoryrestrictions.server.tracker`, and that file is not there. So what can be ported is the shared rules, the constants, the pure helpers, the

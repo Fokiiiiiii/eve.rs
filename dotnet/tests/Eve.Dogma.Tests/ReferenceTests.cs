@@ -101,7 +101,7 @@ public class ReferenceTests
         return (world, expected, statics);
     }
 
-    /// <summary>What the service adds to an item's attributes from its own state, not from the engine (see docs/compat/DEVIATIONS.md).</summary>
+    /// <summary>What the service adds to an item's attributes from its own state, not from the engine (see docs/reference/compat/DEVIATIONS.md).</summary>
     private static readonly HashSet<int> ShipSupplied = [18, 264, 266, 352, 458, 1152, 2610];
 
     private static readonly HashSet<int> ModuleSupplied = [2, 3, 4, 38, 162, 264, 266, 805];
@@ -173,7 +173,7 @@ public class ReferenceTests
     public async Task The_character_has_the_attributes_the_reference_gives_it(int raceId)
     {
         var (world, expected, _) = await BuildAsync(raceId);
-        // where the two differ on purpose (docs/compat/DEVIATIONS.md #11): the engine applies every modifier that reaches the character.
+        // where the two differ on purpose (docs/reference/compat/DEVIATIONS.md #11): the engine applies every modifier that reaches the character.
         // The reference reports 0 for the trade premium although its own brain says -10% of 1 (= 0.9), and leaves out the rookie ship's
         // mining-drone bonus, which is the whole point of "modified by the ship".
         var deviations = new Dictionary<int, double> { [443] = 0.9 };

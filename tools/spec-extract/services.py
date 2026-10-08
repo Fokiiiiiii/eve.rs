@@ -5,7 +5,7 @@ Reads a local copy of the decompiled client as a read-only reference and writes
 only facts: service names, method names and how often they are called. No client
 code is copied.
 
-    python3 tools/spec-extract/services.py /path/to/eve-logic > docs/spec/services.tsv
+    python3 tools/spec-extract/services.py /path/to/eve-logic > docs/reference/spec/services.tsv
 """
 import collections
 import pathlib

@@ -9,5 +9,5 @@ schemas is written to `out/` (git-ignored) rather than committed.
 
 | Script | Output |
 |---|---|
-| `services.py <client>` | the service names and methods the client calls (`docs/spec/services.tsv`, committed: names and counts only) |
+| `services.py <client>` | the service names and methods the client calls (`docs/reference/spec/services.tsv`, committed: names and counts only) |
 | `protos.py <client>` | a protobuf `FileDescriptorSet` rebuilt from the generated `*_pb2.py` modules (`out/eve_proto.desc`, not committed). Needs `pip install protobuf` |

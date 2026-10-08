@@ -4,7 +4,7 @@ using System.Text.Json.Nodes;
 namespace Eve.Space.Tests;
 
 /// <summary>
-/// Replays oracle/fixtures/simlink/messages.json, the golden frames of docs/adr/0007 (the Rust simulation replays the same
+/// Replays oracle/fixtures/simlink/messages.json, the golden frames of docs/design/adr/0007 (the Rust simulation replays the same
 /// file): every valid frame encodes to its bytes and decodes back, every invalid one is refused for the stated reason.
 /// </summary>
 public class SimCodecTests

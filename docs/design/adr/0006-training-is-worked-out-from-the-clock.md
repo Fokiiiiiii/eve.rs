@@ -36,4 +36,4 @@ computes points from the time the running line began, and settles finished lines
   speed 60,000 times faster, where a queue finishes in a second.
 - After a restart nothing needs restoring: the queue is data, and the first read or login settles it. A timer exists only to
   tell a client that is watching.
-- Alpha clone limits, extra training slots, injectors and remapping are not there yet (`docs/compat/DEVIATIONS.md`, "Not yet matched").
+- Alpha clone limits, extra training slots, injectors and remapping are not there yet (`docs/reference/compat/DEVIATIONS.md`, "Not yet matched").

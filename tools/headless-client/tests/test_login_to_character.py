@@ -9,7 +9,7 @@ values (identifiers, names, times, the place a character starts) are compared by
 
 `EVE_LIVE_SERVER` says which server is running. `reference` must reproduce its own recordings exactly (this
 catches a recording that has drifted from the reference). `eve.rs` (the default) may differ only where
-docs/compat/DEVIATIONS.md says so; each place is marked DEVIATION below and stated as what eve.rs does instead.
+docs/reference/compat/DEVIATIONS.md says so; each place is marked DEVIATION below and stated as what eve.rs does instead.
 
 Skipped unless EVE_LIVE_HOST is set. tools/dev/run-eve-live.sh starts eve.rs and runs this.
 """
@@ -628,7 +628,7 @@ def test_a_new_characters_dogma_is_that_of_the_reference(race):
     expected_info = substitute(expected_info, dict(zip(recorded_ids, given_ids)))
     if not REFERENCE:
         # DEVIATION (drone limits on the ship): the reference also gives the ship the character's two drone limits, which the client
-        # reads from the character (docs/compat/DEVIATIONS.md #12)
+        # reads from the character (docs/reference/compat/DEVIATIONS.md #12)
         ship_attributes = pairs(keyval(pairs(keyval(expected_info)["shipInfo"])[0][1])["attributes"])
         ship_attributes[:] = [pair for pair in ship_attributes if pair[0] not in (352, 458)]
         # DEVIATION (the character as the ship changes it): eve.rs applies every modifier that reaches the character: the trade

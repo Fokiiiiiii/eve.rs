@@ -1,7 +1,7 @@
 # Provenance of `eve-behaviors`
 
 A port, as it is, of the `behaviors` package of the EVE client V24.01 (decompiled; `Fokiiiiiii/eve-logic`, directory
-`behaviors/`). See `docs/adr/0008-behaviors-package-is-ported-as-is.md` for why and under what rule.
+`behaviors/`). See `docs/design/adr/0008-behaviors-package-is-ported-as-is.md` for why and under what rule.
 
 | Rust | Client module |
 |---|---|

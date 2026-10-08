@@ -1,4 +1,4 @@
-//! The messages between the service host and the simulation (`docs/adr/0007-space-simulation-process.md`).
+//! The messages between the service host and the simulation (`docs/design/adr/0007-space-simulation-process.md`).
 //!
 //! A frame is `u32 length | u8 kind | body`, little endian, text as `u16 length + UTF-8` and byte strings as
 //! `u32 length + bytes`, like the front's link (ADR 0002). [`Message::encode`] writes a whole frame and

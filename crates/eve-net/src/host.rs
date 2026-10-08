@@ -1,4 +1,4 @@
-//! The client end of the link to the service host (`docs/adr/0002-front-host-link.md`): one connection,
+//! The client end of the link to the service host (`docs/design/adr/0002-front-host-link.md`): one connection,
 //! shared by every client session the front serves.
 //!
 //! Outgoing messages go through one queue to a writer that batches what has piled up. A reader routes what

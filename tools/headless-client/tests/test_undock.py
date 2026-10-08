@@ -4,7 +4,7 @@
 
 `oracle/fixtures/scenarios/undock.json` (made by scripts/record_character_scenarios.py --only undock) holds each call from the ship
 service bound to the station to `CmdDock`, the answer, and every event the client was sent while it waited, with the destiny actions
-opened. This replays the calls and compares. What a server may do differently is listed in docs/compat/DEVIATIONS.md (#15 to #17) and
+opened. This replays the calls and compares. What a server may do differently is listed in docs/reference/compat/DEVIATIONS.md (#15 to #17) and
 marked DEVIATION below: where the ship appears, the reference's customs offices and props, and the bound objects announced twice.
 
 Skipped unless EVE_LIVE_HOST is set. tools/dev/run-eve-live.sh starts eve.rs (with its space simulation) and runs this.

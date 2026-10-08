@@ -6,7 +6,7 @@
 
 ## Context
 
-`docs/PLAN.md` splits the server into a Rust network front (`eve-net`: TCP, handshake, framing, sessions)
+`docs/project/README.md` splits the server into a Rust network front (`eve-net`: TCP, handshake, framing, sessions)
 and a C# service host (protocol adapters and domain modules, PostgreSQL). Slice S1 needs the link between
 them. It carries every client packet, so its cost is paid on every call; it must also stay understandable,
 because every later slice adds to it.
@@ -66,7 +66,7 @@ because every later slice adds to it.
 ## Notes from S1
 
 - Measured on one machine, the front and host together answered about 11-15x the reference's call rate
-  and logged clients in about 20-35x faster (`docs/NATIVE_MIGRATION.md`). Nothing was tuned; the design's
+  and logged clients in about 20-35x faster (`docs/project/README.md`). Nothing was tuned; the design's
   costs (one socket hop, a copy on each side) did not show up as the limit.
 - A client that stops reading is cut off by the front when its queue (1,024 packets) is full; a session with
   10,000 packets waiting in the host is cut off with `Disconnect("Overloaded")`. Both keep one slow party

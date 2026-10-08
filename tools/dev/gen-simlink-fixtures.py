@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Writes oracle/fixtures/simlink/messages.json: the frames between the host and the simulation of docs/adr/0007, byte for byte.
+"""Writes oracle/fixtures/simlink/messages.json: the frames between the host and the simulation of docs/design/adr/0007, byte for byte.
 
 This is the third writer of the wire format (the Rust simulation and the C# host are the other two); both replay the
 file, so a layout change has to be made here first. 64-bit integers are decimal strings in the JSON.

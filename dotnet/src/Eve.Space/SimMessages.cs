@@ -1,6 +1,6 @@
 namespace Eve.Space;
 
-/// <summary>A message on the link between the service host and the simulation (docs/adr/0007-space-simulation-process.md).</summary>
+/// <summary>A message on the link between the service host and the simulation (docs/design/adr/0007-space-simulation-process.md).</summary>
 public abstract record SimMessage;
 
 public sealed record SimHello(ushort Version) : SimMessage;

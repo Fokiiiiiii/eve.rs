@@ -33,7 +33,7 @@ public sealed record SchedulerOptions
 /// they do not own timers. A job is a row, so it survives restarts, and it can be scheduled in the same transaction as the state change it belongs to (the job exists exactly
 /// when the change does). A runner claims due jobs with <c>FOR UPDATE SKIP LOCKED</c> and a lease, runs the handler in a transaction that also completes the job, retries a
 /// failing handler with a back-off and parks a job that ran out of attempts as <c>failed</c>. A job may recur, be replaced or cancelled by its key, and may ask to run again.
-/// See <c>docs/FOUNDATIONS.md</c>.
+/// See <c>docs/design/FOUNDATIONS.md</c>.
 /// </summary>
 public sealed class DurableScheduler : IAsyncDisposable
 {

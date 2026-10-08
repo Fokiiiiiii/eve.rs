@@ -7,7 +7,7 @@ The SDE says where a station is but not where its ships come out; the reference 
 (`tools/DatabaseCreator/staticTables/stationGraphicLocators`, made from the client's graphics: each station type's directional locators, in
 the station model's own frame, in metres). This keeps the undock points of it (`undockPoint`, `undockPointSmall`, `undockPointLarge`,
 `undockPointCapital`, `undockPointSupercapital`), in the reference's order, because the first that suits the ship is the one that is used.
-The table is game data and is used as data; none of the reference's code is copied (docs/adr/0001, oracle/PROVENANCE.md).
+The table is game data and is used as data; none of the reference's code is copied (docs/design/adr/0001, oracle/PROVENANCE.md).
 """
 
 import json

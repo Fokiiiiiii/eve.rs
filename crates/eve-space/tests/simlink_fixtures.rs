@@ -1,4 +1,4 @@
-//! Replays oracle/fixtures/simlink/messages.json, the golden frames of docs/adr/0007 (the C# host replays the same
+//! Replays oracle/fixtures/simlink/messages.json, the golden frames of docs/design/adr/0007 (the C# host replays the same
 //! file): every valid frame encodes to its bytes and decodes back, every invalid one is refused for the stated reason.
 
 use eve_space::death::Credit;

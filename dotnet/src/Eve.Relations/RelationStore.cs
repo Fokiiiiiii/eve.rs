@@ -10,7 +10,7 @@ namespace Eve.Relations;
 /// The one store of "A stands in some relation to B": standings, wars, security status and affiliation are all relations of different kinds (<see cref="RelationKinds"/>), with
 /// the same operations: set, adjust, end, read, list, history. A write is made in the caller's transaction, keeps the history, publishes
 /// <c>relation.&lt;kind&gt;.changed</c> or <c>relation.&lt;kind&gt;.ended</c> through the event bus (so others react instead of being called), and a relation that ends by itself is ended by a
-/// scheduler job. A feature that needs a new kind of relation defines the kind; it does not make a table, a timer or an event of its own. See <c>docs/FOUNDATIONS.md</c>.
+/// scheduler job. A feature that needs a new kind of relation defines the kind; it does not make a table, a timer or an event of its own. See <c>docs/design/FOUNDATIONS.md</c>.
 /// </summary>
 public sealed class RelationStore
 {

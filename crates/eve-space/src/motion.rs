@@ -1,7 +1,7 @@
 //! How a ship moves: it eases towards the speed it is asked for (the carbon integrator, as the client integrates it), along a heading that is
 //! set, or that follows from a target (approaching it, circling it).
 //!
-//! The heading is the one asked for at once (docs/compat/DEVIATIONS.md #17). A course that depends on where the ship is (following,
+//! The heading is the one asked for at once (docs/reference/compat/DEVIATIONS.md #17). A course that depends on where the ship is (following,
 //! orbiting) is worked out in steps of at most a quarter of a second.
 
 use eve_destiny::{DESTINY_SPACE_FRICTION, Vec3, integrate_carbon_motion};

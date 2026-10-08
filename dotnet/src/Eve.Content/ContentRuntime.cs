@@ -10,7 +10,7 @@ namespace Eve.Content;
 /// The shared runtime for missions, anomalies, incursions and everything else that has objectives. A feature defines content (a <see cref="ContentDefinition"/>: objectives, a
 /// duration, actions), starts instances of it, and lets domain events advance the objectives; the runtime keeps the state in PostgreSQL, ends the content when its objectives are
 /// met or its time is up (a scheduler job), and announces the end as an event (<c>content.&lt;kind&gt;.completed|failed|expired|abandoned</c>) so the feature's own subscribers pay
-/// out, spawn the next thing or clean up. A feature does not keep a table of its running content, a timer for its deadline or a listener for its kills. See <c>docs/FOUNDATIONS.md</c>.
+/// out, spawn the next thing or clean up. A feature does not keep a table of its running content, a timer for its deadline or a listener for its kills. See <c>docs/design/FOUNDATIONS.md</c>.
 /// </summary>
 public sealed class ContentRuntime
 {

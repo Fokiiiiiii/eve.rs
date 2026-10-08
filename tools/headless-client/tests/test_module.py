@@ -6,7 +6,7 @@
 undocks and binds the ballpark, then the actor undocks, binds, is given the dogma location of the system, flies at full speed, starts its afterburner
 (twice), stops it (twice) and tries its gun and its miner where they cannot be used. Each step holds what the actor was sent (`events`) and what the
 watcher was sent (`seen`), with the seconds each arrived at. The replay does the same on any server and compares: the answers and the errors, the
-events and their order, the destiny updates, and the moments. What a server may do differently is in docs/compat/DEVIATIONS.md: the capacitor's charge
+events and their order, the destiny updates, and the moments. What a server may do differently is in docs/reference/compat/DEVIATIONS.md: the capacitor's charge
 is told at the reference's cadence but is compared by its values and not sample by sample; the reference's refusal of the miner is its own (there is no rock
 to work on), so that step is compared as an error only. The refusal of the gun is the pilot's safety, which eve.rs ports (`WeaponSafety`). It takes a minute, but the ships wait out their undocking protection first,
 so it runs only with EVE_LIVE_SLOW=1.

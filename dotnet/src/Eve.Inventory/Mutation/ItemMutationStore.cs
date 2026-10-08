@@ -71,14 +71,35 @@ public sealed class ItemMutationStore
             """));
         command.Parameters.Add(new NpgsqlParameter { Value = itemId });
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-        {
-            return null;
-        }
-        return new ItemMutationRecord(
-            reader.GetInt64(0), reader.GetInt32(1), reader.GetInt64(2), reader.GetInt32(3), reader.GetInt64(4), reader.GetInt64(5), reader.GetInt64(6),
-            Deserialize(reader.GetString(7)), Deserialize(reader.GetString(8)), Deserialize(reader.GetString(9)));
+        return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
+
+    /// <summary>The provenance of each of the items that is a mutated one, keyed by item id (an item that is not mutated is absent).</summary>
+    public async Task<IReadOnlyDictionary<long, ItemMutationRecord>> GetManyAsync(IReadOnlyCollection<long> itemIds, CancellationToken cancellationToken = default)
+    {
+        if (itemIds.Count == 0)
+        {
+            return new Dictionary<long, ItemMutationRecord>();
+        }
+        await using var command = _source.CreateCommand(Q("""
+            SELECT item_id, mutator_type_id, mutator_item_id, source_type_id, source_item_id, character_id, created_at_ms,
+                   rolls::text, base_values::text, mutated_values::text
+            FROM {schema}.item_mutations WHERE item_id = ANY($1)
+            """));
+        command.Parameters.Add(new NpgsqlParameter { Value = itemIds.Distinct().ToArray() });
+        var found = new Dictionary<long, ItemMutationRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var record = Read(reader);
+            found[record.ItemId] = record;
+        }
+        return found;
+    }
+
+    private static ItemMutationRecord Read(NpgsqlDataReader reader) => new(
+        reader.GetInt64(0), reader.GetInt32(1), reader.GetInt64(2), reader.GetInt32(3), reader.GetInt64(4), reader.GetInt64(5), reader.GetInt64(6),
+        Deserialize(reader.GetString(7)), Deserialize(reader.GetString(8)), Deserialize(reader.GetString(9)));
 
     private static string Serialize(IReadOnlyDictionary<int, double> values) => JsonSerializer.Serialize(values, Json);
 

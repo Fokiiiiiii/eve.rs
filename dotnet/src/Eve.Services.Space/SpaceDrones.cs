@@ -225,7 +225,7 @@ private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
                     ShipNotifications.SendItemChange(session, change, RowOf);
                 }
                 SendPrime(session, InventoryWire.Id(shipId), drone with { LocationId = shipId, Flag = CharacterShips.DroneBayFlag }, drone.TypeId);
-                snapshot.World.Add(new DogmaItem(drone.Id, drone.TypeId, characterId, shipId, CharacterShips.DroneBayFlag));
+                snapshot.World.Add(ItemDogma.Of(drone, characterId, shipId, CharacterShips.DroneBayFlag, mutation: launch.Mutation));
                 var baseDamageMultiplier = type.Attributes.GetValueOrDefault(NpcArmament.DamageMultiplier, 1d);
                 var damageMultiplier = snapshot.World.Get(drone.Id, NpcArmament.DamageMultiplier);
                 var damageScale = baseDamageMultiplier > 0 ? damageMultiplier / baseDamageMultiplier : 0;

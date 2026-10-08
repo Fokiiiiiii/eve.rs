@@ -1,4 +1,5 @@
 using Eve.Data;
+using Eve.Inventory.Mutation;
 using Npgsql;
 
 namespace Eve.Inventory;
@@ -74,6 +75,9 @@ public sealed class PgItemStore
 
     public IShipInsuranceInvalidator? ShipInsuranceInvalidator { get; set; }
 
+    /// <summary>The provenance of the mutated items (<c>item_mutations</c>, in this store's schema): the one way an item's mutation is read.</summary>
+    public ItemMutationStore Mutations { get; }
+
     public PgItemStore(NpgsqlDataSource source, string schema = DefaultSchema, IShipInsuranceInvalidator? shipInsuranceInvalidator = null)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]{0,62}$"))
@@ -83,6 +87,7 @@ public sealed class PgItemStore
         _source = source;
         _schema = schema;
         ShipInsuranceInvalidator = shipInsuranceInvalidator;
+        Mutations = new ItemMutationStore(source, schema);
     }
 
     public static IReadOnlyList<Migration> MigrationSet() =>

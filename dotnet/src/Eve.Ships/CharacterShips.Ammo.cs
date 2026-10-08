@@ -101,7 +101,7 @@ public sealed partial class CharacterShips
             if (charge is not null)
             {
                 Charges[module.Flag] = charge;
-                World.Add(new DogmaItem(charge.Id, charge.TypeId, charge.OwnerId, charge.LocationId, charge.Flag));
+                World.Add(ItemDogma.Of(charge, charge.OwnerId, charge.LocationId, charge.Flag));
                 World.SetValue(charge.Id, ShipSnapshot.QuantityCharge, charge.Quantity);
             }
         }

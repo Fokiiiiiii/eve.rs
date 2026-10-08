@@ -20,7 +20,8 @@ public class ModuleEffectsTests
         // a typo in a handler's name would make it serve nothing, silently
         Assert.All(registry.Names, name => Assert.True(known.Contains(name), $"SDE build {catalogBuild} has no effect named {name}."));
         var uncovered = registry.Uncovered(statics).Select(e => e.Name.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        Assert.All(registry.Names, name => Assert.False(uncovered.Contains(name), $"SDE build {catalogBuild} leaves {name} uncovered."));
+        // only implemented handlers cover an effect: a pending handler refuses, and its effect stays listed as uncovered
+        Assert.All(registry.ImplementedNames, name => Assert.False(uncovered.Contains(name), $"SDE build {catalogBuild} leaves {name} uncovered."));
         // Names are validated against the catalog opened by this test, whose build is reported above.
         foreach (var name in new[]
         {
@@ -237,7 +238,7 @@ public class ModuleEffectsTests
     }
 
     [PgFact]
-    public async Task The_scanner_and_hacking_effects_without_a_body_are_registered_uncovered_by_nothing_and_assigned_to_module_types_in_the_current_sde()
+    public async Task The_scanner_and_hacking_effects_without_a_body_are_registered_listed_as_uncovered_and_assigned_to_module_types_in_the_current_sde()
     {
         await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
@@ -271,7 +272,9 @@ public class ModuleEffectsTests
         {
             var effect = Assert.Single(statics.Effects, candidate => candidate.Name.Trim().Equals(name, StringComparison.OrdinalIgnoreCase));
             Assert.True(registry.Names.Contains(name, StringComparer.OrdinalIgnoreCase), $"SDE build {catalogBuild} has no handler for {name}.");
-            Assert.False(uncovered.Contains(name), $"SDE build {catalogBuild} leaves {name} uncovered.");
+            // a pending handler is registered but is not coverage: the effect stays listed as uncovered
+            Assert.False(registry.ImplementedNames.Contains(name, StringComparer.OrdinalIgnoreCase), $"SDE build {catalogBuild} counts pending {name} as implemented.");
+            Assert.True(uncovered.Contains(name), $"SDE build {catalogBuild} does not list pending {name} as uncovered.");
             Assert.True(assignedModuleEffects.Contains(effect.Id), $"SDE build {catalogBuild} assigns {name} to no module type.");
         }
     }
@@ -666,15 +669,18 @@ public class ModuleEffectsTests
             }
         }
 
-        var handledNames = Eve.Services.Space.Effects.ModuleEffects.Default.Names
+        // pending handlers (refusals) are not coverage, so their effects stay in currentSdeGaps
+        var handledNames = Eve.Services.Space.Effects.ModuleEffects.Default.ImplementedNames
             .Concat(["missileLaunching", "torpedoLaunching"])
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var uncovered = assignedNames.Except(handledNames, StringComparer.OrdinalIgnoreCase).OrderBy(name => name, StringComparer.Ordinal).ToArray();
         string[] currentSdeGaps =
         [
             "ChainLightning",
+            "cargoScan",
             "cloneRespawnBay",
             "debuffLance",
+            "doHacking",
             "doomsdayAOEBubble",
             "doomsdayAOEDamp",
             "doomsdayAOEECM",
@@ -687,6 +693,7 @@ public class ModuleEffectsTests
             "doomsdayHOG",
             "doomsdaySlash",
             "entosisLink",
+            "hackOrbital",
             "industrialItemCompression",
             "microJumpPortalDrive",
             "microJumpPortalDriveCapital",
@@ -700,6 +707,9 @@ public class ModuleEffectsTests
             "moduleBonusWarfareLinkSkirmish",
             "moduleTitanEffectGenerator",
             "salvaging",
+            "scanStrengthBonusPercentActivate",
+            "scanStrengthTargetPercentBonus",
+            "shipScan",
             "superWeaponAmarr",
             "superWeaponCaldari",
             "superWeaponGallente",

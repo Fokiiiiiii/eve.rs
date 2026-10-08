@@ -214,7 +214,8 @@ internal sealed class MyEffect : ShipEffect                       // Eve.Service
 * Several handlers may share a name; `Handles(context)` decides by the item (a turret's `targetAttack` and a drone's).
 * `ModulePackages.Of` keeps only what every effect needs (module exists, is online, a target when required). Do not put effect logic there.
 * **What is not done yet** is a list, not a guess: `ModuleEffects.Default.Uncovered(statics)` returns the activation and target effects of
-  the static data that have no handler. `ModuleEffectsTests` fails if a handler names an effect that does not exist.
+  the static data that no implemented handler serves (`IEffectHandler.Implemented` is false for a handler that only refuses; its effect stays listed).
+  `ModuleEffectsTests` fails if a handler names an effect that does not exist.
 * The generic mechanism (`EffectRegistry<THost, TResult>`, `IEffectHandler`) is in `Eve.Dogma` and knows nothing about space; a host
   with another result type (structures, drones) makes its own registry.
 

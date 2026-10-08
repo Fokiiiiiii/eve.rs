@@ -15,11 +15,11 @@ public class DroneHostTests
 {
     private const int Hobgoblin = 2454, DronesSkill = 3436, DroneDamageAmplifier = 47447;
 
-    private sealed record Flying(Rig Rig, Eve.Services.ClientSession Session, long Drone, long Character, string Ship, string Entity, int System);
+    internal sealed record Flying(Rig Rig, Eve.Services.ClientSession Session, long Drone, long Character, string Ship, string Entity, int System, long Module = 0);
 
     /// <summary>A pilot in space with a Hobgoblin I in the drone bay of its ship, and the Drones skill at level 1 unless <paramref name="skill"/> is 0.</summary>
-    private static async Task<Flying> FlyingWithADroneAsync(
-        Rig rig, int skill = 1, bool withDroneDamageAmplifier = false, bool withDroneLinkAugmentor = false, int? droneTypeId = null)
+    internal static async Task<Flying> FlyingWithADroneAsync(
+        Rig rig, int skill = 1, bool withDroneDamageAmplifier = false, bool withDroneLinkAugmentor = false, int? droneTypeId = null, int? minerTypeId = null)
     {
         var character = await rig.NewCharacterAsync();
         if (skill > 0)
@@ -48,6 +48,17 @@ public class DroneHostTests
             }
             await transaction.CommitAsync();
         }
+        long moduleId = 0;
+        if (minerTypeId is { } miner)
+        {
+            // a mining laser fitted and online before the ship undocks, so that the ship's numbers (its module's range) are in its world
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            moduleId = await rig.Items.CreateAsync(connection, transaction,
+                new NewItem(miner, character.CharacterId, character.ShipId, Eve.Inventory.ItemFlags.HiSlot0, 1, true));
+            await rig.Modules.SetAsync(connection, transaction, moduleId, Eve.Dogma.ItemState.Online);
+            await transaction.CommitAsync();
+        }
         var drone = (await rig.Ships.GrantAsync(character.CharacterId, droneTypeId ?? Hobgoblin, 1, singleton: false))!.Single().After;
         Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(character.CharacterId, drone.Id, Rig.Station, character.ShipId, CharacterShips.DroneBayFlag, null));
         var session = await rig.SessionAsync(character, 1);
@@ -57,7 +68,7 @@ public class DroneHostTests
         var ship = await rig.BindShipInSpaceAsync(session);
         var entity = await rig.BindEntityAsync(session);
         Events.Of(session);
-        return new Flying(rig, session, drone.Id, character.CharacterId, ship, entity, (int)session.GetInt("solarsystemid")!.Value);
+        return new Flying(rig, session, drone.Id, character.CharacterId, ship, entity, (int)session.GetInt("solarsystemid")!.Value, moduleId);
     }
 
     private static Task<PyValue> LaunchAsync(Flying flying) =>
@@ -548,7 +559,7 @@ public class DroneHostTests
         await Rig.UntilAsync(() => Events.Of(flying.Session, clear: false).Any(e => e.Name == "OnItemChange"));
     }
 
-    private static int SdeTypeId(IReadOnlyList<Eve.Sde.SdeTypeSummary> types, string name) =>
+    internal static int SdeTypeId(IReadOnlyList<Eve.Sde.SdeTypeSummary> types, string name) =>
         Assert.Single(types, type => type.Published && type.Name == name).TypeId;
 
     private static SimDroneWorkCycle DroneWorkCycle(Flying flying, long targetId, byte command, ulong cycleId, double roll = 0)

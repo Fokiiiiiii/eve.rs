@@ -213,6 +213,9 @@ private readonly TransitionRuntime _transitions;
 
     internal void EnqueueForTest(ulong session, long characterId, long moduleId, long roundsLeft) => _charges.Enqueue(session, characterId, moduleId, roundsLeft);
 
+    /// <summary>Marks a module of a pilot as running, as an activation the simulation accepted does (the work-cycle host tests need a running module).</summary>
+    internal void StartModuleForTest(ulong session, long moduleId) => _pilots[session].ActiveModules[moduleId] = ItemState.Active;
+
     /// <summary>A ship has come into the scene of a solar system (an undock, a jump): what lies there that the simulation does not have yet can be put in it.</summary>
     public event Action<int>? SystemEntered;
 
@@ -1407,6 +1410,10 @@ private readonly TransitionRuntime _transitions;
         && a.Resonances.Shield.SequenceEqual(b.Resonances.Shield) && a.Resonances.Armor.SequenceEqual(b.Resonances.Armor)
         && a.Resonances.Structure.SequenceEqual(b.Resonances.Structure);
 
+    /// <summary>Whether the pilot's module runs in space: the host started it and the simulation has not ended it (<see cref="SimModuleEnded"/>).</summary>
+    public bool IsModuleActive(ulong sessionId, long moduleId) =>
+        _pilots.TryGetValue(sessionId, out var pilot) && pilot.ActiveModules.ContainsKey(moduleId);
+
     /// <inheritdoc/>
     public Task RefreshShipAsync(ClientSession session, CancellationToken cancellationToken) =>
         _pilots.TryGetValue((ulong)session.SessionId, out var pilot)
@@ -2388,6 +2395,12 @@ private readonly TransitionRuntime _transitions;
                     break;
                 case SimChargeSpent spent when _pilots.TryGetValue(spent.SessionId, out var shooter):
                     _charges.Enqueue(spent.SessionId, shooter.CharacterId, spent.ModuleId, spent.RoundsLeft);
+                    break;
+                // an effect the simulation ended on its own account (the cycles done, the capacitor short, the target gone): the module is taken out of the
+                // numbers the ship is sent with, and the ship is sent again so the simulation drops the module's modifiers (FP-C1)
+                case SimModuleEnded ended when _pilots.TryGetValue(ended.SessionId, out var endedPilot) && endedPilot.ActiveModules.TryRemove(ended.ModuleId, out _):
+                    Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Reset(ended.ModuleId);
+                    _ = Task.Run(() => SendShipAsync(ended.SessionId, endedPilot, null, CancellationToken.None));
                     break;
                 case SimRefused { Command: SimCommands.Stop, Reason: "IN_WARP" } inWarp when _pilots.TryGetValue(inWarp.SessionId, out var warping):
                     _warping[inWarp.SessionId] = 0;

@@ -38,10 +38,16 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
     private const int CargoFlag = CharacterShips.CargoFlag;
     private const double CanRadiusFallback = 14;
 
+    /// <summary>The drone control distance (attribute 458): how far from its pilot a drone may be sent to work.</summary>
+    private const int DroneControlDistanceAttribute = 458;
+    /// <summary>The module's maxRange (attribute 54): how far a module's work reaches.</summary>
+    private const int ModuleMaxRangeAttribute = 54;
+
     private readonly ISimulation _sim;
     private readonly CharacterShips _ships;
     private readonly PgItemStore _items;
     private readonly PgSpaceItemStore _spaceItems;
+    private readonly PgWorkCycleLedger _cycles;
     private readonly DogmaStatic _statics;
     private readonly SpaceSessions _space;
     private readonly Func<long> _nowUnixMs;
@@ -53,10 +59,10 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
     private readonly System.Collections.Concurrent.ConcurrentDictionary<long, byte> _abandonedLoot = new();
 
     public SpaceContainers(
-        ISimulation sim, CharacterShips ships, PgItemStore items, PgSpaceItemStore spaceItems, DogmaStatic statics, SpaceSessions space, Func<long> nowUnixMs, Action<string>? log = null,
-        TimeSpan? sweepEvery = null)
+        ISimulation sim, CharacterShips ships, PgItemStore items, PgSpaceItemStore spaceItems, PgWorkCycleLedger cycles, DogmaStatic statics, SpaceSessions space,
+        Func<long> nowUnixMs, Action<string>? log = null, TimeSpan? sweepEvery = null)
     {
-        (_sim, _ships, _items, _spaceItems, _statics, _space, _nowUnixMs, _log) = (sim, ships, items, spaceItems, statics, space, nowUnixMs, log);
+        (_sim, _ships, _items, _spaceItems, _cycles, _statics, _space, _nowUnixMs, _log) = (sim, ships, items, spaceItems, cycles, statics, space, nowUnixMs, log);
         // what the simulation held is gone with it; a scene that is made gets what lies in its system, and a wreck the host puts in space is kept
         _sim.Received += OnReceived;
         _sim.Lost += Forgotten;
@@ -445,7 +451,11 @@ private void OnReceived(SimMessage message)
     {
         if (message is SimDroneWorkCycle cycle)
         {
-            _ = HandleDroneWorkCycleAsync(cycle);
+            _ = HandleWorkCycleAsync(WorkCycle.OfDrone(cycle));
+        }
+        else if (message is SimModuleWorkCycle moduleCycle)
+        {
+            _ = HandleWorkCycleAsync(WorkCycle.OfModule(moduleCycle));
         }
         else if (message is SimArrived arrived)
         {
@@ -560,55 +570,106 @@ private void OnReceived(SimMessage message)
         }
     }
 
-    private async Task HandleDroneWorkCycleAsync(SimDroneWorkCycle cycle)
+    /// <summary>What the host answers a work cycle: accepted or refused with the reason, and what it delivered (the fields of <see cref="SimDroneWorkResult"/>).</summary>
+    private readonly record struct WorkOutcome(bool Accepted, string Reason, long Remaining = 0, long Delivered = 0, bool Complete = true)
+    {
+        public static WorkOutcome Refuse(string reason) => new(false, reason);
+    }
+
+    /// <summary>
+    /// A work cycle the simulation parks on and the host decides (ADR 0013): a drone's (mining or salvage) or a module's (a mining laser's or a salvager's). The
+    /// <see cref="OwnerId"/> is the drone or the module; the answer is recorded for the owner (<see cref="PgWorkCycleLedger"/>).
+    /// </summary>
+    private sealed record WorkCycle(
+        bool IsModule, ulong SessionId, long CharacterId, long ShipId, int SolarSystemId, long OwnerId, long TargetId, ulong CycleId, byte Command,
+        double MiningAmountM3, double WasteVolumeMultiplier, double WasteProbability, double AccessDifficultyBonus, double Roll)
+    {
+        public static WorkCycle OfDrone(SimDroneWorkCycle cycle) => new(
+            false, cycle.SessionId, cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.DroneId, cycle.TargetId, cycle.CycleId, cycle.Command,
+            cycle.MiningAmountM3, cycle.WasteVolumeMultiplier, cycle.WasteProbability, cycle.AccessDifficultyBonus, cycle.Roll);
+
+        /// <remarks>The module's crit numbers and rounding roll are carried on the wire; the host reads them when a module yield is wired (M4, M5).</remarks>
+        public static WorkCycle OfModule(SimModuleWorkCycle cycle) => new(
+            true, cycle.SessionId, cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.ModuleId, cycle.TargetId, cycle.CycleId, cycle.Command,
+            cycle.MiningAmountM3, cycle.WasteVolumeMultiplier, cycle.WasteProbability, cycle.AccessDifficultyBonus, cycle.WasteRoll);
+
+        public string Kind => IsModule ? "module" : "drone";
+    }
+
+    /// <summary>
+    /// The one path for the work cycles of drones and modules. A repeat of the owner's last settled cycle is answered from the record and never settled again, so
+    /// a cycle the simulation re-sends (its answer was lost, or the host restarted) is not granted twice.
+    /// </summary>
+    private async Task HandleWorkCycleAsync(WorkCycle cycle)
     {
         try
         {
-            await SettleDroneWorkCycleAsync(cycle);
+            if (cycle.CycleId > long.MaxValue)
+            {
+                ReplyToWorkCycle(cycle, WorkOutcome.Refuse("INVALID_PROFILE"));
+                return;
+            }
+            if (await _cycles.LastAsync(cycle.OwnerId) is { } last && last.CycleId == (long)cycle.CycleId)
+            {
+                ReplyToWorkCycle(cycle, new WorkOutcome(last.Accepted, last.Reason, last.UnitsRemaining, last.DeliveredUnits, last.Complete));
+                return;
+            }
+            var outcome = await SettleWorkCycleAsync(cycle);
+            await _cycles.RecordAsync(new WorkCycleRecord(
+                cycle.OwnerId, (long)cycle.CycleId, outcome.Accepted, outcome.Reason, outcome.Remaining, outcome.Delivered, outcome.Complete));
+            ReplyToWorkCycle(cycle, outcome);
         }
         catch (Exception error)
         {
-            _log?.Invoke($"drone work cycle {cycle.CycleId} was not settled: {error.Message}");
-            ReplyToDroneWorkCycle(cycle, false, "WORK_FAILED", 0, 0, true);
+            _log?.Invoke($"{cycle.Kind} work cycle {cycle.CycleId} was not settled: {error.Message}");
+            // a module is parked, and the simulation sends the same cycle again (ADR 0013, rule 3): no answer is sent, so the retry settles it. A drone is not
+            // re-sent, so it is refused and goes back to idle.
+            if (!cycle.IsModule)
+            {
+                ReplyToWorkCycle(cycle, WorkOutcome.Refuse("WORK_FAILED"));
+            }
         }
     }
 
-    private void ReplyToDroneWorkCycle(SimDroneWorkCycle cycle, bool accepted, string reason, long remaining, long delivered, bool complete)
+    private void ReplyToWorkCycle(WorkCycle cycle, WorkOutcome outcome)
     {
         try
         {
-            _sim.DroneWorkResult(new SimDroneWorkResult(
-                cycle.SessionId, cycle.DroneId, cycle.TargetId, cycle.CycleId, accepted, reason, remaining, delivered, complete));
+            if (cycle.IsModule)
+            {
+                _sim.ModuleWorkResult(new SimModuleWorkResult(
+                    cycle.SessionId, cycle.OwnerId, cycle.TargetId, cycle.CycleId, outcome.Accepted, outcome.Reason, outcome.Remaining, outcome.Delivered, outcome.Complete));
+            }
+            else
+            {
+                _sim.DroneWorkResult(new SimDroneWorkResult(
+                    cycle.SessionId, cycle.OwnerId, cycle.TargetId, cycle.CycleId, outcome.Accepted, outcome.Reason, outcome.Remaining, outcome.Delivered, outcome.Complete));
+            }
         }
         catch (Exception error)
         {
-            _log?.Invoke($"drone work cycle {cycle.CycleId} response was not sent: {error.Message}");
+            _log?.Invoke($"{cycle.Kind} work cycle {cycle.CycleId} response was not sent: {error.Message}");
         }
     }
 
-    private async Task SettleDroneWorkCycleAsync(SimDroneWorkCycle cycle)
+    /// <summary>The checks and the settlement of one work cycle: the owner must be the pilot's (a drone flown, or a module that runs), the target there, in reach.</summary>
+    private async Task<WorkOutcome> SettleWorkCycleAsync(WorkCycle cycle)
     {
-        void Reply(bool accepted, string reason, long remaining = 0, long delivered = 0, bool complete = true) =>
-            ReplyToDroneWorkCycle(cycle, accepted, reason, remaining, delivered, complete);
-
         if (cycle.Command is not (SimDroneCommands.MineRepeatedly or SimDroneCommands.Salvage))
         {
-            Reply(false, "UNSUPPORTED_COMMAND");
-            return;
+            return WorkOutcome.Refuse("UNSUPPORTED_COMMAND");
         }
-        if (cycle.DroneId <= 0 || cycle.TargetId <= 0
+        if (cycle.OwnerId <= 0 || cycle.TargetId <= 0
             || !double.IsFinite(cycle.Roll) || cycle.Roll < 0 || cycle.Roll >= 1
             || !double.IsFinite(cycle.AccessDifficultyBonus) || cycle.AccessDifficultyBonus < 0)
         {
-            Reply(false, "INVALID_PROFILE");
-            return;
+            return WorkOutcome.Refuse("INVALID_PROFILE");
         }
         if (cycle.Command == SimDroneCommands.MineRepeatedly
             && (!double.IsFinite(cycle.MiningAmountM3) || cycle.MiningAmountM3 <= 0
                 || !double.IsFinite(cycle.WasteVolumeMultiplier) || !double.IsFinite(cycle.WasteProbability)))
         {
-            Reply(false, "INVALID_PROFILE");
-            return;
+            return WorkOutcome.Refuse("INVALID_PROFILE");
         }
 
         var session = _space.ClientSessionOf(cycle.SessionId);
@@ -616,76 +677,100 @@ private void OnReceived(SimMessage message)
             || session.GetInt("shipid") is not { } shipId || shipId != cycle.ShipId
             || !_space.IsInSpace(session) || _space.SolarSystemOf(session) != cycle.SolarSystemId)
         {
-            Reply(false, "NO_PILOT");
-            return;
+            return WorkOutcome.Refuse("NO_PILOT");
         }
 
         var ship = await _ships.LoadAsync(cycle.CharacterId);
         if (ship is null || ship.Ship.Id != cycle.ShipId
             || ship.Ship.LocationId != cycle.SolarSystemId || ship.Ship.Flag != CharacterShips.InSpaceFlag)
         {
-            Reply(false, "NO_SHIP");
-            return;
-        }
-        const int DroneControlDistanceAttribute = 458;
-        var controlRange = 20_000d;
-        var range = ship.World.Get(cycle.CharacterId, DroneControlDistanceAttribute);
-        if (double.IsFinite(range) && range > 0)
-        {
-            controlRange = range;
+            return WorkOutcome.Refuse("NO_SHIP");
         }
 
-        var drone = await _items.GetAsync(cycle.DroneId);
-        if (drone is null || drone.OwnerId != cycle.CharacterId || drone.LocationId != cycle.SolarSystemId
-            || drone.Flag != CharacterShips.InSpaceFlag)
+        // how far the work reaches: a drone's control range, or a module's own range (its maxRange)
+        double controlRange;
+        if (cycle.IsModule)
         {
-            Reply(false, "NOT_CONTROLLED");
-            return;
+            if (!_space.IsModuleActive(cycle.SessionId, cycle.OwnerId))
+            {
+                return WorkOutcome.Refuse("NOT_CONTROLLED");
+            }
+            controlRange = ship.World.Get(cycle.OwnerId, ModuleMaxRangeAttribute);
+            if (!double.IsFinite(controlRange) || controlRange <= 0)
+            {
+                return WorkOutcome.Refuse("INVALID_PROFILE");
+            }
         }
+        else
+        {
+            controlRange = 20_000d;
+            var range = ship.World.Get(cycle.CharacterId, DroneControlDistanceAttribute);
+            if (double.IsFinite(range) && range > 0)
+            {
+                controlRange = range;
+            }
+        }
+
+        var drone = cycle.IsModule ? null : await _items.GetAsync(cycle.OwnerId);
+        if (!cycle.IsModule && (drone is null || drone.OwnerId != cycle.CharacterId || drone.LocationId != cycle.SolarSystemId
+            || drone.Flag != CharacterShips.InSpaceFlag))
+        {
+            return WorkOutcome.Refuse("NOT_CONTROLLED");
+        }
+
         var target = await _items.GetAsync(cycle.TargetId);
         var targetSpace = await _spaceItems.GetAsync(cycle.TargetId);
         if (target is null || target.LocationId != cycle.SolarSystemId || target.Flag != CharacterShips.InSpaceFlag
             || targetSpace is null || targetSpace.SolarSystemId != cycle.SolarSystemId)
         {
-            Reply(false, "NO_TARGET");
-            return;
+            return WorkOutcome.Refuse("NO_TARGET");
         }
 
-        await _statics.EnsureTypesAsync([drone.TypeId, target.TypeId]);
-        var droneType = _statics.Type(drone.TypeId);
-        var targetType = _statics.Type(target.TypeId);
-        var expectedDroneGroup = cycle.Command == SimDroneCommands.MineRepeatedly ? "Mining Drone" : "Salvage Drone";
-        if (droneType is null || _statics.CategoryName(droneType.CategoryId) != "Drone"
-            || !_statics.GroupName(droneType.GroupId).Equals(expectedDroneGroup, StringComparison.OrdinalIgnoreCase))
+        if (drone is not null)
         {
-            Reply(false, "NOT_CONTROLLED");
-            return;
+            await _statics.EnsureTypesAsync([drone.TypeId, target.TypeId]);
+            var droneType = _statics.Type(drone.TypeId);
+            var expectedDroneGroup = cycle.Command == SimDroneCommands.MineRepeatedly ? "Mining Drone" : "Salvage Drone";
+            if (droneType is null || _statics.CategoryName(droneType.CategoryId) != "Drone"
+                || !_statics.GroupName(droneType.GroupId).Equals(expectedDroneGroup, StringComparison.OrdinalIgnoreCase))
+            {
+                return WorkOutcome.Refuse("NOT_CONTROLLED");
+            }
         }
+        else
+        {
+            await _statics.EnsureTypesAsync([target.TypeId]);
+        }
+
+        var targetType = _statics.Type(target.TypeId);
         if (targetType is null
             || (cycle.Command == SimDroneCommands.MineRepeatedly
                 ? _statics.CategoryName(targetType.CategoryId) != "Asteroid"
                 : !_statics.GroupName(targetType.GroupId).Contains("Wreck", StringComparison.OrdinalIgnoreCase)))
         {
-            Reply(false, cycle.Command == SimDroneCommands.MineRepeatedly ? "NO_TARGET" : "NO_WRECK");
-            return;
+            return WorkOutcome.Refuse(cycle.Command == SimDroneCommands.MineRepeatedly ? "NO_TARGET" : "NO_WRECK");
         }
 
         var measured = await _sim.CommandAsync(cycle.SessionId, SimCommands.Measure, [cycle.TargetId]);
         if (!measured.Accepted || measured.Distance is not { } distance || !double.IsFinite(distance))
         {
-            Reply(false, cycle.Command == SimDroneCommands.MineRepeatedly ? "NO_TARGET" : "NO_WRECK");
-            return;
+            return WorkOutcome.Refuse(cycle.Command == SimDroneCommands.MineRepeatedly ? "NO_TARGET" : "NO_WRECK");
         }
         if (distance > controlRange)
         {
-            Reply(false, "OUT_OF_RANGE");
-            return;
+            return WorkOutcome.Refuse("OUT_OF_RANGE");
+        }
+
+        // a module's yield is not wired yet: the cycle is refused by name, never granted as a no-op (AGENTS rule 5)
+        if (cycle.IsModule)
+        {
+            return WorkOutcome.Refuse("NOT_IMPLEMENTED");
         }
 
         if (cycle.Command == SimDroneCommands.MineRepeatedly)
         {
             var mined = await _ships.MineAsteroidAsync(
-                cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.DroneId, cycle.TargetId,
+                cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.OwnerId, cycle.TargetId,
                 cycle.MiningAmountM3, cycle.WasteVolumeMultiplier, cycle.WasteProbability, cycle.Roll, _spaceItems);
             if (mined.Accepted && mined.Depleted)
             {
@@ -704,8 +789,7 @@ private void OnReceived(SimMessage message)
                     _log?.Invoke($"mined cargo for cycle {cycle.CycleId} was saved but its item notification failed: {error.Message}");
                 }
             }
-            Reply(mined.Accepted, mined.Reason, mined.UnitsRemaining, mined.DeliveredUnits, mined.Depleted);
-            return;
+            return new WorkOutcome(mined.Accepted, mined.Reason, mined.UnitsRemaining, mined.DeliveredUnits, mined.Depleted);
         }
 
         var difficultyId = _statics.AttributeId("accessDifficulty");
@@ -713,29 +797,25 @@ private void OnReceived(SimMessage message)
         var chance = Math.Clamp(baseChance + cycle.AccessDifficultyBonus, 0d, 100d);
         if (!double.IsFinite(chance))
         {
-            Reply(false, "INVALID_PROFILE");
-            return;
+            return WorkOutcome.Refuse("INVALID_PROFILE");
         }
         if (cycle.Roll * 100d >= chance)
         {
-            Reply(true, "", 1, 0, false);
-            return;
+            return new WorkOutcome(true, "", 1, 0, false);
         }
 
         var salvageProducts = await _statics.TypesInGroupsAsync(["Salvaged Materials"]);
         var salvageTypeId = SelectSalvageProductTypeId(targetType, targetSpace, salvageProducts);
         if (salvageTypeId is null)
         {
-            Reply(false, "NO_SALVAGE_PRODUCTS");
-            return;
+            return WorkOutcome.Refuse("NO_SALVAGE_PRODUCTS");
         }
         var salvaged = await _ships.SalvageWreckAsync(
-            cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.DroneId, cycle.TargetId, salvageTypeId,
+            cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.OwnerId, cycle.TargetId, salvageTypeId,
             targetSpace, _nowUnixMs() + (long)CanLifetime.TotalMilliseconds, _spaceItems);
         if (!salvaged.Accepted)
         {
-            Reply(false, salvaged.Reason);
-            return;
+            return WorkOutcome.Refuse(salvaged.Reason);
         }
 
         _placed.TryRemove(cycle.TargetId, out _);
@@ -770,10 +850,8 @@ private void OnReceived(SimMessage message)
                 _log?.Invoke($"loot container {container.Id} was saved but not placed in the simulation: {error.Message}");
             }
         }
-        Reply(true, "", 0, 1, true);
+        return new WorkOutcome(true, "", 0, 1, true);
     }
-
-
 
     private int? SelectSalvageProductTypeId(TypeDef wreckType, SpaceItem wreckSpace, IReadOnlyList<TypeDef> products)
     {

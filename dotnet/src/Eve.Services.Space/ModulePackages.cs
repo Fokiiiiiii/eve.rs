@@ -12,8 +12,11 @@ namespace Eve.Services.Space;
 /// </summary>
 internal static class ModulePackages
 {
-    /// <summary>Why a package cannot be made, or the package.</summary>
-    public readonly record struct Result(SimEffect? Effect, string? Reason, int ModuleType, string ModuleName);
+    /// <summary>
+    /// Why a package cannot be made, or the package. <see cref="Accepted"/> is what the handler does once the simulation has accepted the start (null when there is no
+    /// package); a refused start does not run it.
+    /// </summary>
+    public readonly record struct Result(SimEffect? Effect, string? Reason, int ModuleType, string ModuleName, Action? Accepted = null);
 
     /// <summary>
     /// A propulsion module's numbers. The ship is heavier by the module's mass addition, and faster by the module's speed factor (a percentage) times its
@@ -57,6 +60,6 @@ internal static class ModulePackages
         {
             return new Result(null, "UNSUPPORTED_EFFECT", module.TypeId, name);
         }
-        return new Result(handler.Build(context), null, module.TypeId, name);
+        return new Result(handler.Build(context), null, module.TypeId, name, () => handler.Accepted(context));
     }
 }

@@ -13,13 +13,13 @@ namespace Eve.Services.Space.Effects;
 /// told the cost, the cycle and the range as it starts and stops (<c>notifyGenericDerivedAttributesToSession</c>). The charge is told to the simulation, which spends its rounds cycle
 /// by cycle (a cycle burns the module's <c>chargeRate</c>, one when it names none). A gun fires its own effect: <c>targetAttack</c> (the lasers and the starter guns) or
 /// <c>projectileFired</c> (the projectile and hybrid guns); a precursor weapon builds its damage up on the target it keeps shooting at (its module's bonus attributes give the <see cref="SimSpool"/>); a vorton projector's
-/// <c>ChainLightning</c> explodes on its target without a roll (<see cref="SimAoe"/>) and arcs to the ships near it (<see cref="SimArc"/>); the mining lasers are not run yet.
+/// <c>ChainLightning</c> explodes on its target without a roll (<see cref="SimAoe"/>) and arcs to the ships near it (<see cref="SimArc"/>); the mining lasers and barrage are not run yet (barrage is a pending handler: it is refused, not fired as a plain shot).
 /// </summary>
 internal sealed class TurretEffect : ShipEffect
 {
     private const string TurretFitted = "turretfitted";
 
-    public override IReadOnlyCollection<string> EffectNames { get; } = ["targetAttack", "projectileFired", "barrage", "targetDisintegratorAttack", "ChainLightning"];
+    public override IReadOnlyCollection<string> EffectNames { get; } = ["targetAttack", "projectileFired", "targetDisintegratorAttack", "ChainLightning"];
 
     protected override bool Handles(ModuleEffectContext module) =>
         module.Type.EffectIds.Select(module.Statics.Effect).Any(e => e is not null && e.Name.Trim().Equals(TurretFitted, StringComparison.OrdinalIgnoreCase));
@@ -96,5 +96,16 @@ internal sealed class TurretEffect : ShipEffect
             Aoe: AoeOf(attributes), Arc: ArcOf(attributes));
         SimChange[] told = [new(module.ModuleId, CapacitorNeed, capacitor), new(module.ModuleId, Speed, Three(duration)), new(module.ModuleId, MaxRange, optimal)];
         return new SimEffect(module.ModuleId, module.Module.TypeId, module.Effect.Id, fx, duration, capacitor, Math.Max(1, module.Repeat), Math.Max(0, module.TargetId), null, null, told, told, gun);
+    }
+}
+
+/// <summary>
+/// A turret's barrage (<c>barrage</c>; its SDE falloff 328 and damage multiplier 326 are not read). It was run as a plain shot, which the reference does not give: it is a
+/// pending handler, so the activation is refused as not implemented and the effect stays uncovered (docs/project/TODO.md section 9).
+/// </summary>
+internal sealed class BarragePendingEffect : PendingModuleEffect
+{
+    public BarragePendingEffect() : base("barrage")
+    {
     }
 }

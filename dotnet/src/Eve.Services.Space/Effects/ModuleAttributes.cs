@@ -68,8 +68,47 @@ internal static class ModuleAttributes
     public const int MaxTargetRangeBonus = 309;
     public const int ScanResolutionBonus = 566;
     public const int WarpScrambleStrength = 105;
-    public const int MicroJumpDriveCooldown = 669;
+    /// <summary>The time a module must wait after it stops before it starts again (the generic reactivation delay; 0 on most types, and the micro jump drive family's cooldown).</summary>
+    public const int ModuleReactivationDelay = 669;
     public const int MicroJumpDriveRange = 2066;
+
+    // Module rules the static data states as attributes (docs/project/TODO.md section 9; the names are the SDE's, verified by ModuleRuleAttributesTests).
+    public const int WarpScrambleStatus = 104;
+    public const int SiegeModeWarpStatus = 852;
+    public const int DisallowDocking = 2354;
+    public const int DisallowTethering = 2343;
+    public const int DisallowEarlyDeactivation = 906;
+    public const int DisallowActivateOnWarp = 1245;
+    public const int DeactivateIfOffensive = 1934;
+    public const int ActivationBlocked = 1349;
+    public const int ActivationBlockedStrength = 1350;
+    public const int ActivationRequiresActiveIndustrialCore = 3265;
+    public const int ActivationRequiresActiveSiegeModule = 5426;
+    public const int NetworkedSensorArrayDisallowCapitalMicroJump = 5700;
+    public const int CanActivateInGateCloak = 3123;
+    public const int MaxGroupActive = 763;
+    public const int MaxGroupOnline = 978;
+    public const int MaxGroupFitted = 1544;
+    public const int MaxVelocityActivationLimit = 1334;
+    public const int MinVelocityActivationLimit = 2608;
+    /// <summary>The kind of resource a module consumes each cycle (the fuel's type); 0 on a module that burns none.</summary>
+    public const int ConsumptionType = 713;
+    /// <summary>How much of the resource each cycle consumes.</summary>
+    public const int ConsumptionQuantity = 714;
+    /// <summary>On a target: it cannot be assisted (a pilot's ship, or an NPC's type, that disallows assistance).</summary>
+    public const int DisallowAssistance = 854;
+    /// <summary>On a target: it cannot be hit by offensive modules (the reference's <c>disallowOffensiveAct</c>).</summary>
+    public const int DisallowOffensiveModifiers = 872;
+    /// <summary>On an assistance module: it cannot be activated against a target that disallows offensive modifiers.</summary>
+    public const int DisallowAgainstEwImmuneTarget = 1798;
+    public const int DisallowInHazardSystem = 5561;
+    public const int DisallowActivateInForcefield = 1920;
+    public const int RemoteRepairImpedance = 2116;
+    public const int RemoteAssistanceImpedance = 2135;
+    public const int SensorDampenerResistance = 2112;
+    public const int WeaponDisruptionResistance = 2113;
+    public const int TargetPainterResistance = 2114;
+    public const int EcmResistance = 2253;
 
     /// <summary>The attributes that name the groups of the charges a module takes (chargeGroup1 to chargeGroup5).</summary>
     public static readonly int[] ChargeGroups = [604, 605, 606, 609, 610];

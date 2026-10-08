@@ -292,6 +292,34 @@ fn effect_of(case: &Value) -> Effect {
                     ],
                 };
             }
+            if a["kind"] == "strike" {
+                let direction = a["direction"].as_array().unwrap();
+                let damage = a["damage"].as_array().unwrap();
+                let num = |key: &str| a[key].as_f64().unwrap();
+                return Action::Strike {
+                    strike: eve_space::strike::Strike {
+                        shape: eve_space::strike::StrikeShape::from_wire(a["shape"].as_u64().unwrap() as u8).expect("a shape the simulation runs"),
+                        direction: [direction[0].as_f64().unwrap(), direction[1].as_f64().unwrap(), direction[2].as_f64().unwrap()],
+                        length: num("length"),
+                        radius: num("radius"),
+                        warning_ms: num("warningMs"),
+                        pulse_ms: num("pulseMs"),
+                        pulses: a["pulses"].as_i64().unwrap() as i32,
+                        damage: [
+                            damage[0].as_f64().unwrap(),
+                            damage[1].as_f64().unwrap(),
+                            damage[2].as_f64().unwrap(),
+                            damage[3].as_f64().unwrap(),
+                        ],
+                        signature_radius: num("signatureRadius"),
+                        immobile_ms: num("immobileMs"),
+                        no_jump_ms: num("noJumpMs"),
+                        neut_amount: num("neutAmount"),
+                        neut_radius: num("neutRadius"),
+                        neut_signature_radius: num("neutSignatureRadius"),
+                    },
+                };
+            }
             if a["kind"] == "repair" {
                 return Action::Repair { layer: layer(), amount, when };
             }

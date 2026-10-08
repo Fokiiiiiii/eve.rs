@@ -12,6 +12,7 @@ use crate::health::Layer;
 use crate::link::ChargeOp;
 use crate::payload;
 use crate::scene::{Out, Scene, SessionId, TICKS_PER_SECOND};
+use crate::strike::Strike;
 use crate::weapons::{Spool, SpoolState, Turret};
 use crate::wire::{dict, filetime, id, int, real, text, tuple, word};
 
@@ -226,7 +227,7 @@ impl Action {
     fn offensive(&self) -> bool {
         match self {
             Self::Remote { what, .. } => what.hostile(),
-            Self::Smartbomb { .. } | Self::EcmBurst { .. } => true,
+            Self::Smartbomb { .. } | Self::EcmBurst { .. } | Self::Strike { .. } => true,
             Self::Cloak | Self::MicroJumpDrive { .. } | Self::ResistanceShift { .. } => false,
             Self::Charged { action, fallback, .. } => {
                 action.offensive() || fallback.as_deref().is_some_and(Action::offensive)
@@ -337,6 +338,8 @@ pub enum Action {
     PassiveLock,
     /// An auto-target sweep (tag 11). Its package has not landed: the activation is refused (`NOT_IMPLEMENTED`), so it never runs.
     AutoTarget { range: f64 },
+    /// A doomsday's strike (tag 13, ADR 0013 epoch 25): the area in front of the ship is hit after a warning, pulse by pulse, and the ship is held for its windows.
+    Strike { strike: Strike },
 }
 
 /// What a mining laser mines (the wire byte: 0 ore, 1 ice, 2 gas).
@@ -571,6 +574,8 @@ pub(crate) struct Running {
     /// When the cycle that is on began.
     cycle_start: i64,
     cycles: i32,
+    /// The pulses of a strike the cycle has made (the next one is due at its `pulse_offset_ms`).
+    strike_done: i32,
     /// The pilot asked for it to stop: it does when the cycle ends.
     stopping: bool,
     /// The rounds a turret or charge-using module has left.
@@ -907,7 +912,18 @@ impl Scene {
         if effect.effect_id == MICROWARPDRIVE && pilot.incoming.mwd_blocked() {
             return vec![Out::Refused { session, command: CODE, reason: "MICROWARPDRIVE_BLOCKED" }];
         }
+        if let Some(Action::Strike { strike }) = effect.action.as_ref() {
+            if !strike.is_valid() {
+                return vec![Out::Refused { session, command: CODE, reason: "BAD_STRIKE" }];
+            }
+            if pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()) {
+                return vec![Out::Refused { session, command: CODE, reason: "CANNOT_ACTIVATE_IN_WARP" }];
+            }
+        }
         if matches!(effect.action.as_ref(), Some(Action::Cloak)) {
+            if pilot.no_jump_until > now {
+                return vec![Out::Refused { session, command: CODE, reason: "NO_JUMP_OR_CLOAK" }];
+            }
             if pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()) {
                 return vec![Out::Refused { session, command: CODE, reason: "CLOAK_WARP_BLOCKED" }];
             }
@@ -1043,7 +1059,18 @@ impl Scene {
         });
         let charged_this_cycle = rounds.is_some_and(|left| left > 0);
         let run =
-            Running { effect, cycle_start: now, cycles: 1, stopping: false, rounds, charged_this_cycle, pending_remote_repair: None, pending_work: None, spool: SpoolState::default() };
+            Running {
+                effect,
+                cycle_start: now,
+                cycles: 1,
+                strike_done: 0,
+                stopping: false,
+                rounds,
+                charged_this_cycle,
+                pending_remote_repair: None,
+                pending_work: None,
+                spool: SpoolState::default(),
+            };
         let (before, after) = match pilot.modules.capacitor.as_mut() {
             Some(capacitor) => capacitor.draw(now, run.effect.capacitor_need),
             None => (0.0, 0.0),
@@ -1282,6 +1309,14 @@ impl Scene {
             if run.pending_remote_repair.is_some() {
                 continue;
             }
+            if let Some(Action::Strike { strike }) = run.effect.action.as_ref()
+                && run.strike_done < strike.pulses
+            {
+                consider(
+                    run.cycle_start + (strike.pulse_offset_ms(run.strike_done) * TICKS_PER_SECOND as f64 / 1000.0) as i64,
+                    Moment::StrikePulse(index),
+                );
+            }
             consider(
                 run.cycle_start + (run.effect.duration_ms * TICKS_PER_SECOND as f64 / 1000.0) as i64,
                 Moment::CycleEnd(index),
@@ -1305,6 +1340,7 @@ impl Scene {
             Moment::WorkResend(index) => self.resend_work_cycle(session, index, at),
             Moment::WorkStop(index) => self.stop_parked(session, index, at),
             Moment::StartResend(index) => self.resend_start(session, index, at),
+            Moment::StrikePulse(index) => self.strike_pulse(session, index, at),
         }
     }
 
@@ -1840,6 +1876,7 @@ impl Scene {
             Some(Action::Smartbomb { range, damage, hurts_pilots }) if when == Applies::CycleStart => {
                 self.smartbomb(session, effect, *range, *damage, *hurts_pilots, at)
             }
+            Some(Action::Strike { strike }) if when == Applies::CycleStart => self.strike_start(session, effect, *strike, at),
             Some(Action::EcmBurst { range, strength }) if when == Applies::CycleStart => {
                 self.jam_burst(session, strength, *range, at)
             }
@@ -1994,6 +2031,89 @@ impl Scene {
     }
 
     /// Up to `amount` GJ are taken out of the capacitor of the ship of `target` (never more than it holds); its pilot is told the charge. Answers what was taken.
+    /// A strike's cycle starts: the ship stops and is held for its windows, every ship in the neutralising radius loses its capacitor, and the pulses are
+    /// counted from zero (the first is due at the warning).
+    fn strike_start(&mut self, session: SessionId, effect: &Effect, strike: Strike, at: i64) -> Vec<Out> {
+        let per_ms = TICKS_PER_SECOND as f64 / 1000.0;
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        pilot.immobile_until = pilot.immobile_until.max(at + (strike.immobile_ms * per_ms) as i64);
+        pilot.no_jump_until = pilot.no_jump_until.max(at + (strike.no_jump_ms * per_ms) as i64);
+        pilot.ship.velocity = eve_destiny::Vec3::new(0.0, 0.0, 0.0);
+        if let Some(run) = pilot.modules.running.iter_mut().find(|run| run.effect.module_id == effect.module_id) {
+            run.strike_done = 0;
+        }
+        self.strike_neutralise(session, strike, at)
+    }
+
+    /// The energy neutralisation of a strike: each other ship whose surface is within `neut_radius` of the firing ship loses `neut_amount` times its
+    /// signature factor (the same factor a neutralizer uses). Target resistances are not applied (the existing neutralizers do not apply them either).
+    fn strike_neutralise(&mut self, session: SessionId, strike: Strike, at: i64) -> Vec<Out> {
+        if strike.neut_amount <= 0.0 || strike.neut_radius <= 0.0 {
+            return Vec::new();
+        }
+        let Some(centre) = self.pilots.get(&session).map(|pilot| pilot.ship.position) else { return Vec::new() };
+        let targets: Vec<(SessionId, f64)> = self
+            .in_entry_order()
+            .into_iter()
+            .filter(|other| *other != session)
+            .filter_map(|other| {
+                let pilot = self.pilots.get(&other)?;
+                let p = pilot.ship.position;
+                let gap = ((p.x - centre.x).powi(2) + (p.y - centre.y).powi(2) + (p.z - centre.z).powi(2)).sqrt() - pilot.ship.spec.radius.max(0.0);
+                let signature = pilot.ship.spec.signature_radius;
+                let factor = if signature > 0.0 { (signature / strike.neut_signature_radius).min(1.0) } else { 1.0 };
+                (gap <= strike.neut_radius).then_some((other, factor))
+            })
+            .collect();
+        let mut out = Vec::new();
+        for (target, factor) in targets {
+            out.extend(self.take_capacitor(target, strike.neut_amount * factor, at).0);
+        }
+        out
+    }
+
+    /// The next pulse of a strike is due: every ship in the area is hit by the pulse's damage times its signature factor, and the pulse is counted.
+    fn strike_pulse(&mut self, session: SessionId, index: usize, at: i64) -> Vec<Out> {
+        let (module_type, strike, centre, radius) = {
+            let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+            let Some(run) = pilot.modules.running.get_mut(index) else { return Vec::new() };
+            let Some(Action::Strike { strike }) = run.effect.action.clone() else { return Vec::new() };
+            if run.strike_done >= strike.pulses {
+                return Vec::new();
+            }
+            run.strike_done += 1;
+            (run.effect.module_type, strike, pilot.ship.position, pilot.ship.spec.radius.max(0.0))
+        };
+        let direction = strike.direction;
+        // the area starts at the hull, along the aim (the reference's hull surface origin)
+        let origin = [centre.x + direction[0] * radius, centre.y + direction[1] * radius, centre.z + direction[2] * radius];
+        let targets: Vec<(SessionId, i64, f64)> = self
+            .in_entry_order()
+            .into_iter()
+            .filter(|other| *other != session)
+            .filter_map(|other| {
+                let target = self.pilots.get(&other)?;
+                if target.protected_until > at {
+                    return None;
+                }
+                let p = target.ship.position;
+                let target_radius = target.ship.spec.radius.max(0.0);
+                if !strike.covers(origin, [p.x, p.y, p.z], target_radius) {
+                    return None;
+                }
+                let signature = target.ship.spec.signature_radius;
+                let factor = if signature > 0.0 { (signature / strike.signature_radius).min(1.0) } else { 1.0 };
+                Some((other, target.ship.spec.ship_id, factor))
+            })
+            .collect();
+        let mut out = Vec::new();
+        for (target_session, target_id, factor) in targets {
+            let damage = strike.damage.map(|amount| amount * factor);
+            out.extend(self.damage_ship(session, module_type, (target_session, target_id), damage, at));
+        }
+        out
+    }
+
     fn take_capacitor(&mut self, target: SessionId, amount: f64, at: i64) -> (Vec<Out>, f64) {
         let Some(pilot) = self.pilots.get_mut(&target) else { return (Vec::new(), 0.0) };
         let (owner, ship) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
@@ -2170,6 +2290,8 @@ enum Moment {
     WorkStop(usize),
     /// A start parked for fuel is asked again (same id), at this index of the pending starts.
     StartResend(usize),
+    /// The next pulse of a strike is due (the running effect at this index).
+    StrikePulse(usize),
 }
 
 #[cfg(test)]

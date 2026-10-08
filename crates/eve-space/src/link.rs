@@ -11,11 +11,12 @@ use crate::missiles::Missile;
 use crate::drones::DroneEffect;
 use crate::modules::{Action, Applies, Change, Effect, MiningFamily, Numbers, Reach, Remote};
 use crate::scene::{HeatModuleProfile, HeatProfile, HeatRack};
+use crate::strike::{Strike, StrikeShape};
 use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Arc, Aoe, Charge, Spool, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 24;
+pub const PROTOCOL_VERSION: u16 = 25;
 
 /// The message kinds.
 pub mod kind {
@@ -1120,6 +1121,30 @@ fn put_action(out: &mut Vec<u8>, action: &Action) {
                 out.extend_from_slice(&attribute.to_le_bytes());
             }
         }
+        Action::Strike { strike } => {
+            out.push(13);
+            out.push(strike.shape.wire());
+            for component in strike.direction {
+                out.extend_from_slice(&component.to_le_bytes());
+            }
+            for number in [strike.length, strike.radius, strike.warning_ms, strike.pulse_ms] {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
+            out.extend_from_slice(&strike.pulses.to_le_bytes());
+            for number in strike.damage {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
+            for number in [
+                strike.signature_radius,
+                strike.immobile_ms,
+                strike.no_jump_ms,
+                strike.neut_amount,
+                strike.neut_radius,
+                strike.neut_signature_radius,
+            ] {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
+        }
         Action::Mining { family, mining_amount_m3, waste_multiplier, waste_probability, crit_probability, crit_multiplier } => {
             out.push(7);
             out.push(match family {
@@ -1350,6 +1375,42 @@ fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
                 return Err(DecodeError::BadValue("resistance shift"));
             }
             Ok(Action::ResistanceShift { seed, shift, attribute_ids })
+        }
+        13 => {
+            let shape = StrikeShape::from_wire(reader.u8()?).ok_or(DecodeError::BadValue("strike shape"))?;
+            let direction = [reader.f64()?, reader.f64()?, reader.f64()?];
+            let length = reader.f64()?;
+            let radius = reader.f64()?;
+            let warning_ms = reader.f64()?;
+            let pulse_ms = reader.f64()?;
+            let pulses = reader.i32()?;
+            let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+            let signature_radius = reader.f64()?;
+            let immobile_ms = reader.f64()?;
+            let no_jump_ms = reader.f64()?;
+            let neut_amount = reader.f64()?;
+            let neut_radius = reader.f64()?;
+            let neut_signature_radius = reader.f64()?;
+            let strike = Strike {
+                shape,
+                direction,
+                length,
+                radius,
+                warning_ms,
+                pulse_ms,
+                pulses,
+                damage,
+                signature_radius,
+                immobile_ms,
+                no_jump_ms,
+                neut_amount,
+                neut_radius,
+                neut_signature_radius,
+            };
+            if !strike.is_valid() {
+                return Err(DecodeError::BadValue("strike"));
+            }
+            Ok(Action::Strike { strike })
         }
         7 => {
             let family = match reader.u8()? {

@@ -492,48 +492,52 @@ impl Scene {
                 out.extend(self.damage_missile(missile_id, blast, by, at));
             }
         }
-        for (target_session, target_id) in in_range {
-            if self.pilots.get(&target_session).is_none_or(|pilot| pilot.protected_until > at) {
+        for target in in_range {
+            if self.pilots.get(&target.0).is_none_or(|pilot| pilot.protected_until > at) {
                 continue;
             }
-            let shot =
-                Shot { hit: true, wrecking: false, quality: 1.0, chance_to_hit: 1.0, roll: 0.0, damage };
-            let (told, hit) = self.damage(target_id, damage, at);
-            out.extend(told);
-            let applied = hit.map_or(0.0, |hit| hit.taken.shield + hit.taken.armor + hit.taken.structure);
-            let destroyed = hit.is_some_and(|hit| hit.destroyed);
-            let target_type_id = self.pilots.get(&target_session).map_or(0, |pilot| pilot.ship.spec.type_id);
-            self.aggressions.push(Aggression {
-                attacker_ship: attacker_id,
-                target_ship: target_id,
-                module_type_id: effect.module_type,
-                source_owner_id: owner,
-                target_type_id,
-            });
-            let message = |for_the_attacker| {
-                damage_message(
-                    for_the_attacker,
-                    attacker_id,
-                    target_id,
-                    effect.module_type,
-                    applied,
-                    &shot,
-                    owner,
-                )
-            };
-            for (who, mine) in [(session, true), (target_session, false)] {
-                if !is_npc_session(who) {
-                    out.push(Out::Notify {
-                        session: who,
-                        name: "OnDamageMessage",
-                        id_type: "clientID",
-                        args: vec![message(mine)],
-                    });
-                }
+            out.extend(self.damage_ship(session, effect.module_type, target, damage, at));
+        }
+        out
+    }
+
+    /// One ship hit by a module's area effect (a smartbomb's blast, a doomsday's pulse): the damage it takes, the aggression it is recorded as, the messages
+    /// its pilot and the attacker's are told, and its destruction. `target` is the pilot's session and its ship's id.
+    pub(crate) fn damage_ship(&mut self, session: SessionId, module_type: i32, target: (SessionId, i64), damage: Damage, at: i64) -> Vec<Out> {
+        let (target_session, target_id) = target;
+        let Some(attacker_id) = self.pilots.get(&session).map(|pilot| pilot.ship.spec.ship_id) else {
+            return Vec::new();
+        };
+        let owner = self.combat_owner(session);
+        let mut out = Vec::new();
+        let shot = Shot { hit: true, wrecking: false, quality: 1.0, chance_to_hit: 1.0, roll: 0.0, damage };
+        let (told, hit) = self.damage(target_id, damage, at);
+        out.extend(told);
+        let applied = hit.map_or(0.0, |hit| hit.taken.shield + hit.taken.armor + hit.taken.structure);
+        let destroyed = hit.is_some_and(|hit| hit.destroyed);
+        let target_type_id = self.pilots.get(&target_session).map_or(0, |pilot| pilot.ship.spec.type_id);
+        self.aggressions.push(Aggression {
+            attacker_ship: attacker_id,
+            target_ship: target_id,
+            module_type_id: module_type,
+            source_owner_id: owner,
+            target_type_id,
+        });
+        let message = |for_the_attacker| {
+            damage_message(for_the_attacker, attacker_id, target_id, module_type, applied, &shot, owner)
+        };
+        for (who, mine) in [(session, true), (target_session, false)] {
+            if !is_npc_session(who) {
+                out.push(Out::Notify {
+                    session: who,
+                    name: "OnDamageMessage",
+                    id_type: "clientID",
+                    args: vec![message(mine)],
+                });
             }
-            if destroyed {
-                out.extend(self.destroy(target_session, Some(session), at));
-            }
+        }
+        if destroyed {
+            out.extend(self.destroy(target_session, Some(session), at));
         }
         out
     }
@@ -2077,6 +2081,129 @@ mod tests {
         }
         assert!(messages(&told, PLAYER, "OnDamageMessage").is_empty());
         assert!(scene.missiles_within(player_at, 1_000_000.0).is_empty());
+    }
+
+    /// A doomsday's strike in the shape of the Bosonic Field Generator (40633), with `pulses` pulses of one unit of em damage, one second apart, after two.
+    fn strike_of(pulses: i32) -> crate::strike::Strike {
+        crate::strike::Strike {
+            shape: crate::strike::StrikeShape::Cone,
+            direction: [1.0, 0.0, 0.0],
+            length: 30_000.0,
+            radius: 0.0,
+            warning_ms: 2_000.0,
+            pulse_ms: 1_000.0,
+            pulses,
+            damage: [1.0, 0.0, 0.0, 0.0],
+            signature_radius: 1.0,
+            immobile_ms: 30_000.0,
+            no_jump_ms: 300_000.0,
+            neut_amount: 0.0,
+            neut_radius: 0.0,
+            neut_signature_radius: 1.0,
+        }
+    }
+
+    fn strike_effect(module_id: i64, strike: crate::strike::Strike) -> Effect {
+        Effect {
+            burns_fuel: false,
+            module_id,
+            module_type: 40_633,
+            effect_id: 6_473,
+            fx: String::new(),
+            duration_ms: 300_000.0,
+            capacitor_need: 0.0,
+            repeat: 1,
+            target_id: 0,
+            turret: None,
+            action: Some(crate::modules::Action::Strike { strike }),
+            on: None,
+            off: None,
+            on_changes: Vec::new(),
+            off_changes: Vec::new(),
+        }
+    }
+
+    /// The damage messages the pilot of `session` is told about its own hits.
+    fn hits_told(out: &[Out], session: SessionId) -> usize {
+        messages(out, session, "OnDamageMessage")
+            .iter()
+            .filter(|args| matches!(args, Value::Dict(entries) if entries.iter().any(|(k, v)| matches!(k, Value::Str(s) if s.as_ref() == "attackType") && *v == Value::Str("me".into()))))
+            .count()
+    }
+
+    #[test]
+    fn a_strike_hits_the_ships_in_its_area_pulse_by_pulse_after_its_warning() {
+        let (mut scene, _npc, _) = duel();
+        let now = NOON + 120 * SECOND;
+        // the pilot aims down the x axis, where the npc is 2 km away: the first pulse is due at the warning, then every second
+        let out = scene.activate(PLAYER, strike_effect(spec().ship_id + 1, strike_of(3)), now);
+        assert!(!out.iter().any(|o| matches!(o, Out::Refused { .. })), "{out:?}");
+        assert_eq!(hits_told(&out, PLAYER), 0, "nothing hits before the warning");
+        assert_eq!(hits_told(&scene.poll(now + SECOND), PLAYER), 0, "one second in: still warning");
+        assert_eq!(hits_told(&scene.poll(now + 2 * SECOND), PLAYER), 1, "the first pulse at the warning");
+        assert_eq!(hits_told(&scene.poll(now + 3 * SECOND), PLAYER), 1, "the second pulse");
+        assert_eq!(hits_told(&scene.poll(now + 4 * SECOND), PLAYER), 1, "the third pulse");
+        assert_eq!(hits_told(&scene.poll(now + 9 * SECOND), PLAYER), 0, "the pulses are spent: no more hits");
+    }
+
+    #[test]
+    fn a_strike_does_not_hit_what_is_behind_or_off_its_axis() {
+        let (mut scene, npc, _) = duel();
+        let now = NOON + 120 * SECOND;
+        // aimed the other way, along -x: the npc is behind the pilot's aim
+        let mut strike = strike_of(2);
+        strike.direction = [-1.0, 0.0, 0.0];
+        scene.activate(PLAYER, strike_effect(spec().ship_id + 1, strike), now);
+        assert_eq!(hits_told(&scene.poll(now + 5 * SECOND), PLAYER), 0, "the npc is not in the cone");
+        let _ = npc;
+    }
+
+    #[test]
+    fn a_strike_holds_the_ship_for_its_immobility_window_and_then_lets_it_go() {
+        let (mut scene, _npc, _) = duel();
+        let now = NOON + 120 * SECOND;
+        scene.activate(PLAYER, strike_effect(spec().ship_id + 1, strike_of(1)), now);
+        let refused = scene.command(PLAYER, Command::Stop, now + SECOND);
+        assert!(
+            refused.iter().any(|o| matches!(o, Out::Refused { reason: "IMMOBILE", .. })),
+            "a held ship takes no orders: {refused:?}"
+        );
+        let released = scene.command(PLAYER, Command::Stop, now + 31 * SECOND);
+        assert!(!released.iter().any(|o| matches!(o, Out::Refused { .. })), "after 30 s: {released:?}");
+    }
+
+    #[test]
+    fn a_strike_stops_the_jump_and_the_cloak_for_its_no_jump_window() {
+        let (mut scene, _npc, _) = duel();
+        let now = NOON + 120 * SECOND;
+        scene.activate(PLAYER, strike_effect(spec().ship_id + 1, strike_of(1)), now);
+        let cloak = Effect {
+            effect_id: 0,
+            module_id: spec().ship_id + 2,
+            fx: "effects.Cloaking".to_string(),
+            action: Some(crate::modules::Action::Cloak),
+            duration_ms: 1_000.0,
+            ..strike_effect(spec().ship_id + 2, strike_of(1))
+        };
+        let out = scene.activate(PLAYER, cloak, now + 10 * SECOND);
+        assert!(
+            out.iter().any(|o| matches!(o, Out::Refused { reason: "NO_JUMP_OR_CLOAK", .. })),
+            "a ship in its no-jump window does not cloak: {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_strike_drains_the_capacitor_of_the_ships_within_its_neutralising_radius() {
+        let (mut scene, npc, _) = duel();
+        let now = NOON + 120 * SECOND;
+        let before = scene.pilots[&PLAYER].modules.capacitor.as_ref().expect("the pilot has a capacitor").charge_at(now);
+        // the npc fires a strike whose neutralising wave reaches the pilot 2 km away
+        let mut strike = strike_of(1);
+        strike.neut_amount = 50.0;
+        strike.neut_radius = 10_000.0;
+        scene.activate(npc, strike_effect(NPC_SHIP + 1, strike), now);
+        let after = scene.pilots[&PLAYER].modules.capacitor.as_ref().expect("the pilot has a capacitor").charge_at(now);
+        assert!(before - after > 49.0 && before - after <= 50.0 + 1e-6, "drained by the neutralising amount: {before} -> {after}");
     }
 
     fn smartbomb_effect(module_id: i64, damage: Damage) -> Effect {

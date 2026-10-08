@@ -419,6 +419,10 @@ pub(crate) struct Pilot {
     pub(crate) modules: Modules,
     /// Until when the ship cannot be locked (the undocking protection; it ends sooner when the ship is flown or locks something).
     pub(crate) protected_until: i64,
+    /// Until when the ship cannot move, warp or jump: a doomsday's immobility window (`Strike::immobile_ms`).
+    pub(crate) immobile_until: i64,
+    /// Until when the ship cannot jump or cloak: a doomsday's no-jump window (`Strike::no_jump_ms`).
+    pub(crate) no_jump_until: i64,
     /// What other ships' modules do to this ship's numbers while they run (webs, painters, dampeners, scramblers).
     pub(crate) incoming: crate::ewar::Incoming,
     /// Cloak state used by target selection and public visibility.
@@ -446,6 +450,8 @@ impl Pilot {
             targeting: Targeting::default(),
             modules,
             protected_until,
+            immobile_until: 0,
+            no_jump_until: 0,
             incoming: crate::ewar::Incoming::default(),
             cloak: crate::visibility::CloakState::Uncloaked,
             heat: HeatState::default(),
@@ -1230,6 +1236,9 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         if pilot.flight.is_some() {
             return refused("IN_WARP");
         }
+        if pilot.immobile_until > now {
+            return refused("IMMOBILE");
+        }
         if pilot.incoming.scrambled() {
             return refused("WARP_SCRAMBLED");
         }
@@ -1359,6 +1368,10 @@ pub(crate) fn solar_system_id(&self) -> i32 {
             _ => None,
         };
         let pilot = self.pilots.get_mut(&session).expect("the caller checked");
+        if pilot.immobile_until > now {
+            // a ship held by a doomsday's immobility window follows no orders
+            return vec![Out::Refused { session, command: code, reason: "IMMOBILE" }];
+        }
         if pilot.docking.is_some() {
             // a ship that is docking follows no orders
             return vec![Out::Refused { session, command: code, reason: "DOCKING" }];
@@ -1483,6 +1496,12 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         let refused = |reason: &'static str| vec![Out::Refused { session, command: code, reason }];
         let system = Arc::clone(&self.system);
         let Some(pilot) = self.pilots.get(&session) else { return refused("NO_SHIP_IN_SPACE") };
+        if pilot.immobile_until > now {
+            return refused("IMMOBILE");
+        }
+        if pilot.no_jump_until > now {
+            return refused("NO_JUMP_OR_CLOAK");
+        }
         if pilot.jump.is_some() {
             return refused("STARGATE_JUMP_IN_PROGRESS");
         }

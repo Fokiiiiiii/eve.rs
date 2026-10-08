@@ -376,6 +376,47 @@ public abstract record SimAction
 
     /// <summary>An auto-targeting system (tag 11). Its package has not landed: the activation is refused until it has.</summary>
     public sealed record AutoTarget(double RangeMeters) : SimAction;
+
+    /// <summary>
+    /// A doomsday's strike (tag 13, ADR 0013 epoch 25): an area in front of the ship, hit after a warning, pulse by pulse. The shape is the static data's
+    /// <c>doomsdayAOEShape</c> (1 a cylinder, 3 a cone); <paramref name="Direction"/> is the unit aim from the ship's centre; the damage is per pulse (em,
+    /// thermal, kinetic, explosive). The ship is held for <paramref name="ImmobileMs"/> and cannot jump or cloak for <paramref name="NoJumpMs"/>; every ship
+    /// within <paramref name="NeutRadius"/> loses <paramref name="NeutAmount"/> capacitor once at the start (see the simulation's <c>strike.rs</c>).
+    /// </summary>
+    public sealed record Strike(
+        byte Shape,
+        IReadOnlyList<double> Direction,
+        double Length,
+        double Radius,
+        double WarningMs,
+        double PulseMs,
+        int Pulses,
+        IReadOnlyList<double> Damage,
+        double SignatureRadius,
+        double ImmobileMs,
+        double NoJumpMs,
+        double NeutAmount,
+        double NeutRadius,
+        double NeutSignatureRadius) : SimAction
+    {
+        /// <summary>Whether the numbers are ones the simulation runs (the same checks the simulation makes on decode).</summary>
+        public bool IsValid =>
+            (Shape is 1 or 3)
+            && Direction.Count == 3 && Damage.Count == 4
+            && Direction.All(double.IsFinite) && Damage.All(d => double.IsFinite(d) && d >= 0)
+            && Math.Abs(Math.Sqrt(Direction.Sum(c => c * c)) - 1.0) < 1e-6
+            && double.IsFinite(Length) && Length > 0
+            && double.IsFinite(Radius) && Radius >= 0
+            && double.IsFinite(WarningMs) && WarningMs >= 0
+            && double.IsFinite(PulseMs) && PulseMs > 0
+            && Pulses >= 1
+            && double.IsFinite(SignatureRadius) && SignatureRadius > 0
+            && double.IsFinite(ImmobileMs) && ImmobileMs >= 0
+            && double.IsFinite(NoJumpMs) && NoJumpMs >= 0
+            && double.IsFinite(NeutAmount) && NeutAmount >= 0
+            && double.IsFinite(NeutRadius) && NeutRadius >= 0
+            && double.IsFinite(NeutSignatureRadius) && NeutSignatureRadius >= 0;
+    }
 }
 
 /// <summary>What a mining laser mines (<see cref="SimAction.Mining"/>'s family byte).</summary>

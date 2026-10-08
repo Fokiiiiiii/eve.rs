@@ -91,6 +91,14 @@ public class SimCodecTests
         {
             return new SimAction.ResistanceShift(Four(a["seed"]!), (double)a["shift"]!, [.. ((JsonArray)a["attributeIds"]!).Select(x => (int)x!)]);
         }
+        if ((string)a["kind"]! == "strike")
+        {
+            var direction = ((JsonArray)a["direction"]!).Select(x => (double)x!).ToArray();
+            return new SimAction.Strike(
+                (byte)(int)a["shape"]!, direction, (double)a["length"]!, (double)a["radius"]!, (double)a["warningMs"]!, (double)a["pulseMs"]!, (int)a["pulses"]!,
+                Four(a["damage"]!), (double)a["signatureRadius"]!, (double)a["immobileMs"]!, (double)a["noJumpMs"]!,
+                (double)a["neutAmount"]!, (double)a["neutRadius"]!, (double)a["neutSignatureRadius"]!);
+        }
         if ((string)a["kind"]! == "smartbomb")
         {
             return new SimAction.Smartbomb((double)a["range"]!, Four(a["damage"]!), (bool)a["hurtsPilots"]!);
@@ -286,6 +294,32 @@ public class SimCodecTests
         Assert.IsType<SimAction.Repair>(action.Fallback);
     }
 
+
+    [Fact]
+    public void A_doomsday_strike_roundtrips_its_aim_pulses_damage_and_windows_through_the_sim_codec()
+    {
+        var message = Assert.IsType<SimActivate>(MessageOf(Case("valid", "activate a doomsday strike (Bosonic Field Generator)")));
+        var encoded = SimCodec.Encode(message);
+        var decoded = Assert.IsType<SimActivate>(SimCodec.Decode(encoded.AsMemory(4)));
+
+        Assert.Equal(Convert.ToHexString(encoded), Convert.ToHexString(SimCodec.Encode(decoded)));
+        var strike = Assert.IsType<SimAction.Strike>(decoded.Effect.Action);
+        Assert.True(strike.IsValid);
+        Assert.Equal(3, strike.Shape);
+        Assert.Equal(new double[] { 0.6, 0.0, 0.8 }, strike.Direction);
+        Assert.Equal(21, strike.Pulses);
+        Assert.Equal(new double[] { 10000, 10000, 10000, 10000 }, strike.Damage);
+        Assert.Equal((10000.0, 1000.0, 30000.0, 300000.0), (strike.WarningMs, strike.PulseMs, strike.ImmobileMs, strike.NoJumpMs));
+    }
+
+    [Fact]
+    public void A_strike_that_the_simulation_would_refuse_is_not_encoded()
+    {
+        var message = Assert.IsType<SimActivate>(MessageOf(Case("valid", "activate a doomsday strike (Bosonic Field Generator)")));
+        var bad = message with { Effect = message.Effect with { Action = (message.Effect.Action as SimAction.Strike)! with { Direction = [0.6, 0.0, 0.9] } } };
+
+        Assert.Throws<ArgumentException>(() => SimCodec.Encode(bad));
+    }
 
     [Fact]
     public void A_reactive_armor_hardener_action_roundtrips_its_seed_step_and_attributes_through_the_sim_codec()

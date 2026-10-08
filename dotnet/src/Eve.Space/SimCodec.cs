@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 24;
+    public const ushort ProtocolVersion = 25;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -424,6 +424,29 @@ public static class SimCodec
                         throw new SimLinkException(SimLinkError.BadValue, "bad auto-target action");
                     }
                     return new SimAction.AutoTarget(range);
+                }
+            case 13:
+                {
+                    var shape = r.U8();
+                    double[] direction = [r.F64(), r.F64(), r.F64()];
+                    var length = r.F64();
+                    var radius = r.F64();
+                    var warning = r.F64();
+                    var pulse = r.F64();
+                    var pulses = r.I32();
+                    double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    var signature = r.F64();
+                    var immobile = r.F64();
+                    var noJump = r.F64();
+                    var neutAmount = r.F64();
+                    var neutRadius = r.F64();
+                    var neutSignature = r.F64();
+                    var strike = new SimAction.Strike(shape, direction, length, radius, warning, pulse, pulses, damage, signature, immobile, noJump, neutAmount, neutRadius, neutSignature);
+                    if (!strike.IsValid)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad strike action");
+                    }
+                    return strike;
                 }
             case 12:
                 {
@@ -1291,6 +1314,18 @@ private static void WriteAction(Writer w, SimAction action)
                 break;
             case SimAction.AutoTarget autoTarget:
                 w.U8(11); w.F64(autoTarget.RangeMeters);
+                break;
+            case SimAction.Strike strike:
+                if (!strike.IsValid)
+                {
+                    throw new ArgumentException("a strike has a unit aim, four kinds of damage and positive cadence and length", nameof(action));
+                }
+                w.U8(13); w.U8(strike.Shape);
+                foreach (var component in strike.Direction) w.F64(component);
+                w.F64(strike.Length); w.F64(strike.Radius); w.F64(strike.WarningMs); w.F64(strike.PulseMs); w.I32(strike.Pulses);
+                foreach (var number in strike.Damage) w.F64(number);
+                w.F64(strike.SignatureRadius); w.F64(strike.ImmobileMs); w.F64(strike.NoJumpMs);
+                w.F64(strike.NeutAmount); w.F64(strike.NeutRadius); w.F64(strike.NeutSignatureRadius);
                 break;
             case SimAction.ResistanceShift shift:
                 if (shift.Seed.Count != 4 || shift.AttributeIds.Count != 4)

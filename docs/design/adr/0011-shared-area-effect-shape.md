@@ -40,3 +40,8 @@ The bombs spec is not in the repository, so the bomb-specific parts (blast, dela
 ## Addendum (2026-10-08, bombs and warp disruption brief)
 
 - Bombs, the stasis probe burst, festival and breacher pods, and defenders do not use `Area` yet. They are refused by name (`*_LAUNCHER_NOT_IMPLEMENTED`, `MissileEffect.RefusedLauncherGroups`), because a blast radius, delay and trajectory need a captured V24.01 trace (bombs brief D1, D3, D4). No wire change in this addendum: the W2 batch (one bump, by the integrator) carries the `Area` shape only once one of those families is run.
+
+## Addendum (2026-10-08, protocol 25: the doomsday strike)
+
+- The first area action is `Strike` (`SimAction` tag 13, ADR 0013 epoch 25), for the Bosonic Field Generator's cone. It carries the shape (1 cylinder, 3 cone), the aim, the length and the radius, the pulse cadence and damage, and the windows. It is not the general `Area` of this ADR: it has no recipient list (the host does not send one; the simulation tests every ship in the scene), and no tag per family. A second family that uses a radius takes the same action, and the general `Area` type with the recipient lists (decisions D1 and D3) is still to be built.
+- The smartbomb and the strike share the damage path (`Scene::damage_ship`).

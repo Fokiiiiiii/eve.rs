@@ -17,6 +17,7 @@ internal static class ModuleEffects
         .Register(new PropulsionEffect())
         .Register(new TurretEffect())
         .Register(new MissileEffect())
+        .Register(new RefusedLauncherEffect())
         .Register(new RepairEffect())
         .Register(new ProjectedEffect())
         .Register(new SmartbombEffect())
@@ -95,12 +96,16 @@ internal sealed class TypeAttributeResistanceEffect : ShipEffect
         "armorThermalDamageResonance",
     ];
 
-    private static readonly string[] HullResonances =
+    /// <summary>
+    /// The hull resonances of the emergency hull energizer: the module's own hull attribute multiplies (PostMul) the ship's resonance of the same damage type
+    /// (the client's <c>MODIFIER_CHANGES</c>, <c>emergencyHullEnergizer.py</c>). Both are found by name in the static data.
+    /// </summary>
+    private static readonly (string Module, string Ship)[] HullResonanceMultipliers =
     [
-        "hullEmDamageResonance",
-        "hullExplosiveDamageResonance",
-        "hullKineticDamageResonance",
-        "hullThermalDamageResonance",
+        ("hullEmDamageResonance", "emDamageResonance"),
+        ("hullExplosiveDamageResonance", "explosiveDamageResonance"),
+        ("hullKineticDamageResonance", "kineticDamageResonance"),
+        ("hullThermalDamageResonance", "thermalDamageResonance"),
     ];
 
     public override IReadOnlyCollection<string> EffectNames { get; } =
@@ -110,15 +115,33 @@ internal sealed class TypeAttributeResistanceEffect : ShipEffect
     {
         var (duration, capacitor, durationAttribute) = module.Cycle();
         var shipId = module.Snapshot.Ship.Id;
-        var attributes = module.Effect.Name.Equals(EmergencyHullEnergizer, StringComparison.OrdinalIgnoreCase)
-            ? HullResonances
-            : ArmorResonances;
-        var attributeIds = attributes.Select(name => module.Statics.AttributeId(name)).OfType<int>().ToArray();
+        var emergency = module.Effect.Name.Equals(EmergencyHullEnergizer, StringComparison.OrdinalIgnoreCase);
+        // the (module attribute, ship attribute) pairs: the energizer's hull value multiplies the ship's resonance of the same damage type, an armor
+        // hardener's resonance multiplies the ship's resonance of the same name
+        var pairs = emergency
+            ? HullResonanceMultipliers
+                .Select(pair => (Module: module.Statics.AttributeId(pair.Module), Ship: module.Statics.AttributeId(pair.Ship)))
+                .Where(pair => pair.Module is not null && pair.Ship is not null)
+                .Select(pair => (Module: pair.Module!.Value, Ship: pair.Ship!.Value))
+                .ToArray()
+            : ArmorResonances
+                .Select(name => module.Statics.AttributeId(name))
+                .OfType<int>()
+                .Select(id => (Module: id, Ship: id))
+                .ToArray();
+        var shipAttributeIds = pairs.Select(pair => pair.Ship).ToArray();
         // each resonance is multiplied by the module's own value, as a modifier of the world: a resonance that is pinned (a PostAssign, a Polarized
         // weapon fitted) keeps its pinned value, because the world applies its modifiers in order and the assignment comes last
-        var multipliers = attributeIds.Select(id => new Modifier(ModifierFunc.Item, "shipID", Operation.PostMul, id, id)).ToArray();
-        var on = ToldValues(module.World, module.ModuleId, ItemState.Active, multipliers, shipId, attributeIds, round: true);
-        var off = ToldValues(module.World, module.ModuleId, ItemState.Online, [], shipId, attributeIds, round: false);
+        var multipliers = pairs.Select(pair => new Modifier(ModifierFunc.Item, "shipID", Operation.PostMul, pair.Ship, pair.Module)).ToArray();
+        var on = ToldValues(module.World, module.ModuleId, ItemState.Active, multipliers, shipId, shipAttributeIds, round: true);
+        var off = ToldValues(module.World, module.ModuleId, ItemState.Online, [], shipId, shipAttributeIds, round: false);
+        if (emergency)
+        {
+            // the energizer burns its own module out as it starts (emergencyHullEnergizer.py: damage = hp), and the module stays burned out when it stops
+            var burnOut = new SimChange(module.ModuleId, ModuleAttributes.ModuleDamage, module.World.Get(module.ModuleId, ModuleAttributes.ModuleHitPoints));
+            on.Add(burnOut);
+            off.Add(burnOut);
+        }
 
         var repeatAttribute = module.Statics.AttributeId("disallowRepeatingActivation");
         var repeat = repeatAttribute is { } id && module.Value(id, 0) > 0

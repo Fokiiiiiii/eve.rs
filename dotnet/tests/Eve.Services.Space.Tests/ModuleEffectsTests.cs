@@ -460,9 +460,37 @@ public class ModuleEffectsTests
                 continue;
             }
 
-            var attributeNames = effectName.Equals("emergencyHullEnergizer", StringComparison.OrdinalIgnoreCase)
-                ? new[] { "hullEmDamageResonance", "hullExplosiveDamageResonance", "hullKineticDamageResonance", "hullThermalDamageResonance" }
-                : effectName.Equals("adaptiveArmorHardener", StringComparison.OrdinalIgnoreCase)
+            if (effectName.Equals("emergencyHullEnergizer", StringComparison.OrdinalIgnoreCase))
+            {
+                // the ship's resonance of each damage type is multiplied (PostMul) by the module's own hull resonance of that type, never the module's attribute
+                // on the ship; the module is burned out to its hit points as it starts (emergencyHullEnergizer.py)
+                foreach (var (moduleName, shipName) in new[]
+                {
+                    ("hullEmDamageResonance", "emDamageResonance"),
+                    ("hullExplosiveDamageResonance", "explosiveDamageResonance"),
+                    ("hullKineticDamageResonance", "kineticDamageResonance"),
+                    ("hullThermalDamageResonance", "thermalDamageResonance"),
+                })
+                {
+                    var moduleAttribute = statics.AttributeId(moduleName)
+                        ?? throw new InvalidOperationException($"SDE build {catalogBuild} is missing Dogma attribute {moduleName}.");
+                    var shipAttribute = statics.AttributeId(shipName)
+                        ?? throw new InvalidOperationException($"SDE build {catalogBuild} is missing Dogma attribute {shipName}.");
+                    Assert.True(moduleType.Attributes.TryGetValue(moduleAttribute, out var multiplier), $"SDE build {catalogBuild}, type {moduleTypeId} is missing {moduleName}.");
+                    var before = world.Get(shipId, shipAttribute);
+                    var expected = Eve.Services.Space.Effects.ModuleAttributes.Six(before * multiplier);
+                    Assert.Contains(package.OnChanges, change => change.ItemId == shipId && change.AttributeId == shipAttribute && Math.Abs(change.Value - expected) < 0.000001);
+                    Assert.Contains(package.OffChanges, change => change.ItemId == shipId && change.AttributeId == shipAttribute && Math.Abs(change.Value - before) < 0.000001);
+                    Assert.DoesNotContain(package.OnChanges, change => change.ItemId == shipId && change.AttributeId == moduleAttribute);
+                }
+                var hitPoints = world.Get(moduleId, Eve.Services.Space.Effects.ModuleAttributes.ModuleHitPoints);
+                Assert.True(hitPoints > 0, $"SDE build {catalogBuild}, type {moduleTypeId} has no hit points.");
+                Assert.Contains(package.OnChanges, change => change.ItemId == moduleId
+                    && change.AttributeId == Eve.Services.Space.Effects.ModuleAttributes.ModuleDamage && Math.Abs(change.Value - hitPoints) < 0.000001);
+                continue;
+            }
+
+            var attributeNames = effectName.Equals("adaptiveArmorHardener", StringComparison.OrdinalIgnoreCase)
                     ? new[] { "armorEmDamageResonance", "armorExplosiveDamageResonance", "armorKineticDamageResonance", "armorThermalDamageResonance" }
                     : new[]
                     {
@@ -857,6 +885,113 @@ public class ModuleEffectsTests
                     Eve.Services.Space.Effects.ModuleAttributes.Six(world.Get(moduleId, rangeAttribute)),
                     (int)world.Get(moduleId, targetsAttribute)),
                 turret.Arc);
+        }
+    }
+
+    /// <summary>
+    /// Two modules that modify the same non-stackable resonance (two armor hardeners of one kind on the armor's EM resonance) are told the value the world holds once
+    /// both run: the second takes the stacking penalty the world applies, so it is not the first times its own, unpenalised, percentage.
+    /// </summary>
+    [PgFact]
+    public async Task Two_modules_on_the_same_non_stackable_resonance_are_told_the_value_the_world_holds_with_both_running()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var sde = new SdeReader(source);
+        var catalogBuild = await sde.BuildAsync() ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
+        var statics = await DogmaStatic.LoadAsync(sde);
+        var effect = Assert.Single(statics.Effects, candidate => candidate.Name.Equals("modifyActiveArmorResonancePostPercent", StringComparison.OrdinalIgnoreCase));
+        var resonance = statics.AttributeId("armorEmDamageResonance") ?? throw new InvalidOperationException($"SDE build {catalogBuild} is missing armorEmDamageResonance.");
+        Assert.False(statics.Attribute(resonance)?.Stackable ?? true, $"SDE build {catalogBuild}: the penalty of this test needs a non-stackable resonance.");
+        var modifying = effect.Modifiers.Single(modifier => modifier.ModifiedAttributeId == resonance).ModifyingAttributeId;
+
+        var moduleGroupIds = (await sde.ReadAsync("groups")).Where(row => row.Doc.GetProperty("categoryID").GetInt32() == 7).Select(row => row.Key).ToArray();
+        var moduleDogma = await sde.ReadAsync("typeDogma", (await sde.ReadByFieldAsync("types", "groupID", moduleGroupIds))
+            .Where(row => row.Doc.TryGetProperty("published", out var published) && published.ValueKind == System.Text.Json.JsonValueKind.True)
+            .Select(row => row.Key).ToArray());
+        // a hardener of the resonance that it modifies (the EM one: the others carry no value of this modifier), the first of the published ones in the build
+        var candidates = moduleDogma.Where(row => row.Doc.TryGetProperty("dogmaEffects", out var effects)
+                && effects.ValueKind == System.Text.Json.JsonValueKind.Array
+                && effects.EnumerateArray().Any(typeEffect => typeEffect.GetProperty("effectID").GetInt32() == effect.Id))
+            .Select(row => checked((int)row.Key)).OrderBy(id => id).ToArray();
+        await statics.EnsureTypesAsync(candidates);
+        var moduleTypeId = candidates.First(id => statics.Type(id) is { } type && type.Attributes.TryGetValue(modifying, out var value) && value != 0);
+        var shipGroupIds = (await sde.ReadAsync("groups")).Where(row => row.Doc.GetProperty("categoryID").GetInt32() == 6).Select(row => row.Key).ToArray();
+        var shipTypeId = checked((int)(await sde.ReadByFieldAsync("types", "groupID", shipGroupIds))
+            .First(row => row.Doc.TryGetProperty("published", out var published) && published.ValueKind == System.Text.Json.JsonValueKind.True).Key);
+        await statics.EnsureTypesAsync([shipTypeId, moduleTypeId]);
+
+        const long characterId = 76001, shipId = 76002, first = 76003, second = 76004;
+        var ship = new Eve.Inventory.Item(shipId, shipTypeId, characterId, 60003760, 0, 1, true, null);
+        var world = new DogmaWorld(statics, characterId, shipId);
+        world.Add(new DogmaItem(shipId, shipTypeId, characterId, ship.LocationId, ship.Flag, ItemState.Online));
+        world.Add(new DogmaItem(first, moduleTypeId, characterId, shipId, 11, ItemState.Online));
+        world.Add(new DogmaItem(second, moduleTypeId, characterId, shipId, 12, ItemState.Online));
+        var base0 = world.Get(shipId, resonance);
+        var snapshot = new Eve.Ships.ShipSnapshot
+        {
+            Character = null!,
+            Ship = ship,
+            Fitted = [new Eve.Inventory.Item(first, moduleTypeId, characterId, shipId, 11, 1, true, null), new Eve.Inventory.Item(second, moduleTypeId, characterId, shipId, 12, 1, true, null)],
+            Charges = [],
+            Skills = [],
+            World = world,
+        };
+
+        Assert.IsType<Eve.Space.SimEffect>(Eve.Services.Space.ModulePackages.Of(snapshot, statics, first, effect.Name, 0, 1).Effect);
+        world.SetState(first, ItemState.Active);
+        var secondPackage = Assert.IsType<Eve.Space.SimEffect>(Eve.Services.Space.ModulePackages.Of(snapshot, statics, second, effect.Name, 0, 1).Effect);
+        var toldSecond = secondPackage.OnChanges.Single(change => change.ItemId == shipId && change.AttributeId == resonance).Value;
+        world.SetState(second, ItemState.Active);
+        // what the second is told is what the world holds with both running
+        Assert.Equal(world.Get(shipId, resonance), toldSecond, 9);
+        // and the penalty is in play: it is not the first's value times the second's own, unpenalised, percentage
+        var unpenalised = base0 * (100 + world.Get(first, modifying)) / 100 * (100 + world.Get(second, modifying)) / 100;
+        Assert.NotEqual(unpenalised, toldSecond, 9);
+    }
+
+    /// <summary>
+    /// Every cloaking device of the static data (group "Cloaking Device") is refused on a ship that cannot cloak (canCloak 0) or disallows it (disallowCloaking), and is
+    /// packaged as a cloak on a ship that does not. It tells the client no speed: no cloak type carries attribute 51, which the old package fabricated.
+    /// </summary>
+    [PgFact]
+    public async Task Every_cloaking_device_is_refused_on_a_ship_that_cannot_cloak_or_disallows_it_and_tells_no_speed()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var sde = new SdeReader(source);
+        var statics = await DogmaStatic.LoadAsync(sde);
+        var cloaks = await statics.TypesInGroupsAsync(["Cloaking Device"]);
+        Assert.NotEmpty(cloaks);
+        var canCloak = statics.AttributeId("canCloak") ?? throw new InvalidOperationException("The SDE is missing canCloak.");
+        var disallowCloaking = statics.AttributeId("disallowCloaking") ?? throw new InvalidOperationException("The SDE is missing disallowCloaking.");
+        var shipGroupIds = (await sde.ReadAsync("groups")).Where(row => row.Doc.GetProperty("categoryID").GetInt32() == 6).Select(row => row.Key).ToArray();
+        var shipTypeId = checked((int)(await sde.ReadByFieldAsync("types", "groupID", shipGroupIds))
+            .First(row => row.Doc.TryGetProperty("published", out var published) && published.ValueKind == System.Text.Json.JsonValueKind.True)
+            .Key);
+        await statics.EnsureTypesAsync([shipTypeId]);
+
+        foreach (var cloak in cloaks)
+        {
+            var cloakEffect = cloak.EffectIds.Select(statics.Effect).First(e => e is { Name: "cloaking" or "cloakingWarpSafe" or "cloakingPrototype" })!;
+            const long characterId = 75001, shipId = 75002, moduleId = 75003;
+            var ship = new Eve.Inventory.Item(shipId, shipTypeId, characterId, 60003760, 0, 1, true, null);
+            var module = new Eve.Inventory.Item(moduleId, cloak.TypeId, characterId, shipId, 11, 1, true, null);
+            var world = new DogmaWorld(statics, characterId, shipId);
+            world.Add(new DogmaItem(shipId, shipTypeId, characterId, ship.LocationId, ship.Flag, ItemState.Online));
+            world.Add(new DogmaItem(moduleId, cloak.TypeId, characterId, shipId, 11, ItemState.Online));
+            var snapshot = new Eve.Ships.ShipSnapshot { Character = null!, Ship = ship, Fitted = [module], Charges = [], Skills = [], World = world };
+
+            var packaged = Eve.Services.Space.ModulePackages.Of(snapshot, statics, moduleId, cloakEffect.Name, 0, 1);
+            Assert.Null(packaged.Reason);
+            var package = Assert.IsType<Eve.Space.SimEffect>(packaged.Effect);
+            Assert.IsType<Eve.Space.SimAction.Cloak>(package.Action);
+            Assert.DoesNotContain(package.OnChanges, change => change.AttributeId == Eve.Services.Space.Effects.ModuleAttributes.Speed);
+
+            world.SetValue(shipId, canCloak, 0);
+            Assert.Equal("CLOAK_SHIP_UNSUITABLE", Eve.Services.Space.ModulePackages.Of(snapshot, statics, moduleId, cloakEffect.Name, 0, 1).Reason);
+
+            world.SetValue(shipId, canCloak, 1);
+            world.SetValue(shipId, disallowCloaking, 1);
+            Assert.Equal("CLOAK_DISALLOWED", Eve.Services.Space.ModulePackages.Of(snapshot, statics, moduleId, cloakEffect.Name, 0, 1).Reason);
         }
     }
 

@@ -1,6 +1,11 @@
+using Eve.Data;
+using Eve.Dogma;
 using Eve.Inventory;
 using Eve.Marshal;
+using Eve.Sde;
+using Eve.Services.Space.Effects;
 using Eve.Space;
+using Npgsql;
 
 namespace Eve.Services.Space.Tests;
 
@@ -144,5 +149,89 @@ public class MissileHostTests
         var missile = Assert.IsType<SimMissile>(turret.Missile);
         Assert.Equal(ScourgeTorpedo, missile.ChargeTypeId);
         Assert.True(missile.MaxVelocity > 0 && missile.FlightTimeMs > 1, string.Join(",", missile));
+    }
+
+    /// <summary>
+    /// Every group the static data gives a module <c>useMissiles</c> is either served (the launchers that fire) or refused with a reason of its own: a group in neither is
+    /// the silent <c>UNSUPPORTED_EFFECT</c> this guards against. The groups are read from the catalog of the test's build, not listed here.
+    /// </summary>
+    [PgFact]
+    public async Task Every_launcher_group_the_static_data_gives_useMissiles_is_served_or_refused_with_a_reason_of_its_own()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var sde = new SdeReader(source);
+        var catalogBuild = await sde.BuildAsync() ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
+        var statics = await DogmaStatic.LoadAsync(sde);
+        var useMissiles = statics.Effects.Single(effect => effect.Name.Equals(MissileEffect.LauncherEffectName, StringComparison.OrdinalIgnoreCase));
+        // the modules (category 7) and the structures' modules (category 66) whose types carry useMissiles, by their group
+        var moduleGroupIds = (await sde.ReadAsync("groups"))
+            .Where(row => row.Doc.GetProperty("categoryID").GetInt32() is 7 or 66)
+            .Select(row => row.Key)
+            .ToArray();
+        var moduleTypes = await sde.ReadByFieldAsync("types", "groupID", moduleGroupIds);
+        var groupOf = moduleTypes.ToDictionary(row => row.Key, row => row.Doc.GetProperty("groupID").GetInt64());
+        var carrying = new SortedSet<long>();
+        foreach (var row in await sde.ReadAsync("typeDogma", moduleTypes.Select(type => type.Key).ToArray()))
+        {
+            if (row.Doc.TryGetProperty("dogmaEffects", out var effects) && effects.ValueKind == System.Text.Json.JsonValueKind.Array
+                && effects.EnumerateArray().Any(effect => effect.GetProperty("effectID").GetInt64() == useMissiles.Id))
+            {
+                carrying.Add(groupOf[row.Key]);
+            }
+        }
+        Assert.NotEmpty(carrying);
+
+        var served = MissileEffect.ServedLauncherGroups.Select(group => (long)group).ToHashSet();
+        var refused = MissileEffect.RefusedLauncherGroups.Keys.Select(group => (long)group).ToHashSet();
+        foreach (var group in carrying)
+        {
+            Assert.True(served.Contains(group) || refused.Contains(group),
+                $"SDE build {catalogBuild}: launcher group {group} carries useMissiles but is neither served nor refused with a reason.");
+            Assert.False(served.Contains(group) && refused.Contains(group), $"SDE build {catalogBuild}: launcher group {group} is both served and refused.");
+        }
+        foreach (var (group, reason) in MissileEffect.RefusedLauncherGroups)
+        {
+            Assert.EndsWith("_LAUNCHER_NOT_IMPLEMENTED", reason, StringComparison.Ordinal);
+            Assert.True(carrying.Contains(group), $"SDE build {catalogBuild}: refused group {group} carries no useMissiles in this build.");
+        }
+    }
+
+    /// <summary>
+    /// A launcher of a group that is refused is refused with that group's reason, before its charge or a target is asked for, and it packages nothing (the defender and the bomb
+    /// launchers are named: they are the ones the reference fires, and the simulation does not run yet).
+    /// </summary>
+    [PgFact]
+    public async Task A_launcher_of_a_refused_group_is_refused_with_its_own_reason_before_a_target_is_asked_for()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var sde = new SdeReader(source);
+        var statics = await DogmaStatic.LoadAsync(sde);
+        var useMissiles = statics.Effects.Single(effect => effect.Name.Equals(MissileEffect.LauncherEffectName, StringComparison.OrdinalIgnoreCase));
+        var shipGroupIds = (await sde.ReadAsync("groups")).Where(row => row.Doc.GetProperty("categoryID").GetInt32() == 6).Select(row => row.Key).ToArray();
+        var shipTypeId = checked((int)(await sde.ReadByFieldAsync("types", "groupID", shipGroupIds)).First(row => row.Doc.TryGetProperty("published", out var p) && p.ValueKind == System.Text.Json.JsonValueKind.True).Key);
+        await statics.EnsureTypesAsync([shipTypeId]);
+
+        foreach (var (group, expected) in MissileEffect.RefusedLauncherGroups)
+        {
+            var moduleTypeId = checked((int)(await sde.ReadByFieldAsync("types", "groupID", [group])).Select(row => row.Key).OrderBy(id => id).First());
+            await statics.EnsureTypesAsync([moduleTypeId]);
+            Assert.True(statics.Type(moduleTypeId)?.EffectIds.Contains(useMissiles.Id) == true, $"group {group}'s type {moduleTypeId} does not carry useMissiles.");
+            const long characterId = 74001, shipId = 74002, moduleId = 74003;
+            var ship = new Eve.Inventory.Item(shipId, shipTypeId, characterId, 60003760, 0, 1, true, null);
+            var module = new Eve.Inventory.Item(moduleId, moduleTypeId, characterId, shipId, 11, 1, true, null);
+            var world = new Eve.Dogma.DogmaWorld(statics, characterId, shipId);
+            world.Add(new Eve.Dogma.DogmaItem(shipId, shipTypeId, characterId, ship.LocationId, ship.Flag, Eve.Dogma.ItemState.Online));
+            world.Add(new Eve.Dogma.DogmaItem(moduleId, moduleTypeId, characterId, shipId, 11, Eve.Dogma.ItemState.Online));
+            var snapshot = new Eve.Ships.ShipSnapshot { Character = null!, Ship = ship, Fitted = [module], Charges = [], Skills = [], World = world };
+
+            foreach (var target in new long[] { 0, 980050000105 })
+            {
+                var result = Eve.Services.Space.ModulePackages.Of(snapshot, statics, moduleId, MissileEffect.LauncherEffectName, target, 1);
+                Assert.Null(result.Effect);
+                Assert.Equal(expected, result.Reason);
+            }
+            // the client asks for the firing effect of the charge, and a refused launcher is refused the same way
+            Assert.Equal(expected, Eve.Services.Space.ModulePackages.Of(snapshot, statics, moduleId, "missileLaunching", 980050000105, 1).Reason);
+        }
     }
 }

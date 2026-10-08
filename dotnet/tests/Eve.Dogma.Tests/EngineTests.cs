@@ -463,4 +463,60 @@ public class EngineTests
         Assert.Equal(21, world.Get(Char, 164), 9);
         Assert.Equal(10, world.Get(Char, 165), 9);
     }
+
+    /// <summary>The value of an attribute of an item with another item assumed active, as the world works it out; the world is left as it was.</summary>
+    private static double WhenActive(DogmaWorld world, long activatedItemId, long itemId, int attributeId)
+    {
+        using var assumed = world.Assume(activatedItemId, ItemState.Active);
+        return world.Get(itemId, attributeId);
+    }
+
+    [Fact]
+    public void A_value_when_an_item_is_active_is_what_the_world_computes_with_it_running_and_the_world_is_left_as_it_was()
+    {
+        // two modules whose effects are penalised on the same non-stackable attribute: the second one's value depends on the first, as the world applies it
+        var world = Fit(Operation.PostPercent, 8, 2, ItemState.Online, EffectDef.Activation);
+        var both = Fit(Operation.PostPercent, 8, 2, ItemState.Online, EffectDef.Activation);
+        both.SetState(2000, ItemState.Active);
+        both.SetState(2001, ItemState.Active);
+        var firstOnly = Fit(Operation.PostPercent, 8, 2, ItemState.Online, EffectDef.Activation);
+        firstOnly.SetState(2000, ItemState.Active);
+
+        // asked for the first module while nothing runs: what the world says with it running
+        Assert.Equal(firstOnly.Get(1000, 8), WhenActive(world, 2000, 1000, 8), 9);
+        // asked for the second while the first runs: the penalised value both running gives, not the first times the second unpenalised
+        world.SetState(2000, ItemState.Active);
+        Assert.Equal(both.Get(1000, 8), WhenActive(world, 2001, 1000, 8), 9);
+        Assert.True(WhenActive(world, 2001, 1000, 8) < 100 * 1.2 * 1.2 * 1.2);
+
+        // the world is as it was: the second module is still not running, the first still is, and nothing is cached from the query
+        Assert.Equal(ItemState.Online, world.Item(2001)!.State);
+        Assert.Equal(ItemState.Active, world.Item(2000)!.State);
+        Assert.Equal(firstOnly.Get(1000, 8), world.Get(1000, 8), 9);
+    }
+
+    [Fact]
+    public void A_final_assignment_still_wins_when_a_percentage_is_asked_for_while_the_assignment_runs()
+    {
+        var effects = new[]
+        {
+            new EffectDef(1, "percent", EffectDef.Activation, [Mod(ModifierFunc.Item, "shipID", Operation.PostPercent, 1, 6)]),
+            new EffectDef(2, "assign", EffectDef.Activation, [Mod(ModifierFunc.Item, "shipID", Operation.PostAssign, 1, 6)]),
+        };
+        var statics = new DogmaStatic(Attributes, effects,
+        [
+            new TypeDef(Ship, 25, 6, new Dictionary<int, double> { [1] = 100 }, []),
+            new TypeDef(Module, 40, 7, new Dictionary<int, double> { [6] = 7 }, [1]),
+            new TypeDef(Implant, 41, 7, new Dictionary<int, double> { [6] = 20 }, [2]),
+        ]);
+        var world = new DogmaWorld(statics, shipId: 1000);
+        world.Add(new DogmaItem(1000, Ship, 1, 5));
+        world.Add(new DogmaItem(2000, Module, 1, 1000, 19, ItemState.Online));
+        world.Add(new DogmaItem(2001, Implant, 1, 1000, 20, ItemState.Active));
+
+        // the assignment runs (20); the percentage (+7%) is asked for: the assignment still comes last, so the answer is 20, not 20 * 1.07
+        Assert.Equal(20, world.Get(1000, 1), 9);
+        Assert.Equal(20, WhenActive(world, 2000, 1000, 1), 9);
+        Assert.Equal(ItemState.Online, world.Item(2000)!.State);
+    }
 }

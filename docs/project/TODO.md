@@ -122,6 +122,21 @@ those resonances or hit points change. The started modules are kept per pilot (`
 | CHANGED | Adaptive hardener stacking | The adaptive multiplier (effect 4928) is now a world modifier, so the stacking penalty applies to non-stackable resonances. It was an unpenalised multiplication before. Verify with the client when two adaptive hardeners of one kind run. |
 | OPEN | Not in this package | The per-cycle adaptive shift (FP-04a/b) is not implemented. The emergency hull energizer's multiplier, listed here before, is fixed in section 9 (FP-01): it multiplies the ship's 113/110/109/111 by the module's 974-977. |
 
+## 10. Mining, salvage, tractor, targeting and entosis modules (partly done)
+
+Each effect below is in the gap manifest (`dotnet/tests/Eve.Services.Space.Tests/ModuleEffectsTests.cs`, `currentSdeGaps`), so its activation is refused, not run.
+
+| Status | Gap | Evidence and what it needs |
+|---|---|---|
+| OPEN | Mining lasers (`miningLaser`, ore and ice) and gas harvesters (`miningClouds`) do not run. | No handler is registered. The work cycle needs a sim-side module cycle (a new `SimAction` tag and a `SimModuleWorkCycle`/`Result` pair): a wire change that is not made here and needs one ProtocolVersion bump by the integrator. The shared yield (`MiningYield`, `MiningProfile`) exists. Gas clouds are not generated (decision D9). |
+| OPEN | Rock locks: a mineable rock is locked through `Scene::subject` (`crates/eve-space/src/targeting.rs`) with the normal range and visibility checks; a depleted rock drops its locks. | Rust tests `a_mineable_rock_in_range_is_locked_and_an_out_of_range_one_is_refused` and `a_depleted_rock_refuses_a_new_lock_and_drops_the_lock_held_on_it` pass. Not verified in the graphical client. Rock ids vs system body ids: UNVERIFIED (see DEVIATIONS). |
+| OPEN | Belt rocks: one 1,000-unit seed rock per belt (`SpaceContainers.cs`, "ponytail" seed); a depleted persisted rock is not replaced; no respawn. | Decision D8 (per-belt data, restart reset) is not implemented. |
+| OPEN | Salvager (`salvaging`): not run. | Needs the shared salvage cycle and the sim cycle (decision D7, SDE-derived chance from attributes 901/902; the empty chance and weights are provisional). |
+| OPEN | Tractor beam (`tractorBeamCan`): not run. | Pulling a non-ship ball needs a Destiny FOLLOW check that the client accepts it (decision D6); until then the module must refuse with a named reason. |
+| OPEN | Passive targeter (`targetPassively`) and auto-targeting (`targetHostiles`): not run. | The lock path already takes a `LockOrigin` (player, passive, auto). Each needs a handler and an auto-target sweep entry in the sim (decision X1). |
+| BLOCKED | Entosis link (`entosisLink`): not run. | No sovereignty state exists (decision D10); blocked until the sovereignty owner is decided. |
+| BLOCKED | Compression (`industrialItemCompression`, `CompressItemInSpace`): not run. | Owner C1 (structures) is open; see the `CompressItemInSpace` row above. |
+
 ## Closed items that should stay closed
 
 - `storeManager.buy_offer` and `insuranceSvc.InsureShip` / `UnInsureShip`: existing persistence providers are connected.

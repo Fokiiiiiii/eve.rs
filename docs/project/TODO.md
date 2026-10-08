@@ -30,7 +30,7 @@ Do not fabricate successful state or fake backends to close these items.
 
 | Status | Service/method | Missing work |
 |---|---|---|
-| OPEN | `dynamicItemService.CreateDynamicItem` | Connect the real mutaplasmid/item mutation authority, including input consumption and creation of the resulting item. Do not return synthetic success. |
+| OPEN | `dynamicItemService.CreateDynamicItem` | Headless and PostgreSQL-tested, not yet live-verified. Done: the authority (`Eve.Inventory/Mutation/ItemMutationService.cs`: one transaction for consume, create, provenance in `inventory.item_mutations` (migration `0005_item_mutation`) and the `item.mutated` event through an injected port, typed refusals); the Host route (`DynamicItemRpcService`: `CreateDynamicItem` through the authority, `CustomNotify` refusals, `GetDynamicItemInfo` from stored provenance only, the `PyNone` stub and the customInfo path removed); one dogma factory for mutated modules, charges and drones (`Eve.Ships/ItemDogma.cs`, base type = input, skill requirements from the result, stored rolled values as own values); `OnItemChange` for the mutaplasmid, the source and the item made, after the commit and before the reply. Tests: `ItemMutationServiceTests`, `ItemMutationStoreTests`, `MutatedModuleTests` (fit, skill refusal and acceptance, rolled values, twin unchanged), `DynamicItemRpcServiceTests` (route, refusals, announcements in order). Still open: a live graphical-client run (crafting window, tooltips, how the client removes a consumed row, the place it expects for an item made); the drone launch path end to end (the factory is used, no mutated-drone test yet); the decisions D3 (volume), D5 (fitted and damaged sources), D6 (rounding) and D7 (location). The skill-handler sites (implants, boosters) are not mutable (the mapping covers modules and drones only) and are not routed through the factory. |
 | OPEN | `moonExtractions.StartNewExtraction`; `FractureChunkWithStructure`; `CancelExtraction` | Connect the missing extraction mutation authorities. Read-side extraction/event/resource methods already have GameStore data paths. |
 | OPEN | `abyssalMgr.AbyssalGateActivation`; `AbyssalEndGateActivation`; `voidSpaceMgr.VoidSpaceEndGateActivation`; `VoidSpacePlayerJump` | The routes, callback hooks, and EveJS-compatible missing-provider error behavior are implemented. Connect the real gate/runtime authority before claiming successful gate operations. |
 | OPEN | `structureCargoDelivery.DropOffItems` | Connect a real structure cargo-delivery authority. |
@@ -99,6 +99,29 @@ Not wired here, and why:
 - `surveyScan` is carried by the mining survey chipsets (ML-3 Mining Probe, Dactyl Asteroid Analyzer) and the QA Survey Scanner. It belongs to the mining work.
 - `targetHostiles` (Automated Targeting Systems), `ECMBurstJammerQA`, `pacifierDebuffQA` and `structureScanResolutionActivePercentage` (a structure module) are outside the exploration, hacking and scanner set.
 
+## 8. Polarized pin and ship resonance propagation (implemented, not verified with the client)
+
+A fitted Polarized weapon pins the ship's twelve resonances at one (effects 5994 and 5995, PostAssign, caps 1527/1528/2768-2771 at 1.0). The pin
+holds whatever runs on the ship: hardeners, damage control, rigs, and whether the weapon is online or active (fitted is what counts, per CCP). The
+numbers a hardener is told (`TypeAttributeResistanceEffect`, `DogmaModifierEffect`) are read from the world with the module assumed in the state it
+will have (`DogmaWorld.Assume`), so precedence, the stacking penalty and the pin apply to them. The simulation is sent the ship's effective resonances
+through one path, `SpaceSessions.SendShipAsync`, after an accepted activation, an accepted stop, and an online or offline switch in space, whenever
+those resonances or hit points change. The started modules are kept per pilot (`Pilot.ActiveModules`), which is in-memory only.
+
+**No wire change.** The resend uses the existing `ShipChanged` (`SimShipChanged`, kind 8). Nothing here needs the W2 batch or a protocol bump.
+
+| Status | Scope | Remaining work / evidence |
+|---|---|---|
+| OPEN | Client verification | Covered by .NET tests only: `PolarizedPinTests` and `AssumeTests` (Eve.Dogma.Tests, real SDE for 34274, 2293, 2295, 2291, 2046, 587), `PolarizedShipTests` and `PolarizedHostTests` (Eve.Services.Space.Tests). Not run in the graphical client. |
+| LIMITATION | Stop of a hardener | The host takes a module out of the active set when the simulation accepts the stop, but the simulation keeps the effect until its cycle ends. The sim's resonances therefore return to the bare values up to one cycle early. Exact timing needs a simulation-to-host "effect stopped" message: a new wire message, for the next wire batch. |
+| LIMITATION | Whole-ship resend | A resend carries everything dogma has for the ship, so an activation effect that changes a number other than the resistances (mass, speed, sensors) is in the resend too while it runs. That is consistent with the sim only where the sim applies the same effect through dogma. Each activation effect has not been checked for this. |
+| LIMITATION | Overload | Overloaded state is not in the active set; an overload does not refresh the ship. No resonance effect of an overload is known from the SDE; not checked. |
+| LIMITATION | Pilot state across a jump or a survivor | A new `Pilot` (system jump arrival, a survivor flying the wreck's ship) starts with no active modules. If the simulation keeps a hardener running across that, the next refresh drops it. Unverified against the client. |
+| LIMITATION | Fitting in space | No route fits a module in space; a fit made while docked reaches the simulation at undock (spawn). The refresh covers online and offline switches in space. |
+| DECISION | Pin is fitted, not online | The owner rule R5 (an offline weapon restores the resistances) conflicts with CCP's "when fitted" wording and was not implemented. Kept fitted (see the Polarized spec, D1). |
+| CHANGED | Adaptive hardener stacking | The adaptive multiplier (effect 4928) is now a world modifier, so the stacking penalty applies to non-stackable resonances. It was an unpenalised multiplication before. Verify with the client when two adaptive hardeners of one kind run. |
+| OPEN | Not in this package | The per-cycle adaptive shift (FP-04a/b) is not implemented. The emergency hull energizer's multiplier, listed here before, is fixed in section 9 (FP-01): it multiplies the ship's 113/110/109/111 by the module's 974-977. |
+
 ## Closed items that should stay closed
 
 - `storeManager.buy_offer` and `insuranceSvc.InsureShip` / `UnInsureShip`: existing persistence providers are connected.
@@ -122,7 +145,7 @@ Re-read these files before implementing a provider; the Host composition root de
 | Structure operations and container/compression hooks | [StructureRpcServices.cs](../../dotnet/src/Eve.Services.Core/StructureRpcServices.cs), [StructureDataRpcServices.cs](../../dotnet/src/Eve.Services.Core/StructureDataRpcServices.cs), [BeyonceService.cs](../../dotnet/src/Eve.Services.Space/BeyonceService.cs), [Program.cs](../../dotnet/src/Eve.Host/Program.cs) |
 | MCT, dungeon defaults, and extraction authorities | [UserSvcCompatibility.cs](../../dotnet/src/Eve.Services.Core/UserSvcCompatibility.cs), [StoreOffersService.cs](../../dotnet/src/Eve.Services.Core/StoreOffersService.cs), [DungeonRpcServices.cs](../../dotnet/src/Eve.Services.Core/DungeonRpcServices.cs), [GameRpcServices.cs](../../dotnet/src/Eve.Services.Core/GameRpcServices.cs), [CoreServices.cs](../../dotnet/src/Eve.Services.Core/CoreServices.cs) |
 
-## 8. Module effects: gaps left after the parity fixes
+## 9. Module effects: gaps left after the parity fixes
 
 Each item below is **OPEN**. Evidence is the code path named; none of them is covered by a passing test that proves the reference behavior.
 
@@ -131,6 +154,6 @@ Each item below is **OPEN**. Evidence is the code path named; none of them is co
 | OPEN | Shield ancillary booster stops when its charges run out (`fallback: null`), where the reference continues at the base amount and pays the capacitor again | `dotnet/src/Eve.Services.Space/Effects/ModuleEffects.cs` (`AncillaryRemoteShieldBoosterEffect`) tells a capacitor need of 0 while charged; `crates/eve-space/src/modules.rs` `finish_cycle` draws the effect's single `capacitor_need` every cycle. A fallback needs a per-cycle capacitor in the simulation, which is a link change. A host-only fallback would make the booster free after its charges are gone. |
 | OPEN | A second cloaking device, and a running module that cannot be stopped early (`disallowEarlyDeactivation` 906), are refused by the client (`FakeCloaking.PreStartChecks`) but not by eve.rs | The host does not know which modules the simulation runs (`ShipSnapshot` loads only the persisted Online/Offline states); the refusal belongs in `crates/eve-space/src/modules.rs` `activate`. |
 | OPEN | Warp is not refused while a cloak that is not warp-safe (`cloaking`, `cloakingPrototype`) is running | The warp is started in the simulation (`crates/eve-space/src/scene.rs` `begin_warp`); the reference blocks it in `shipCloak.js` (`isEntityWarpBlockedByCloak`). |
-| OPEN | Emergency hull energizer: the module's burn-out is told to the client but not kept, so a burned-out module can be activated again | `dotnet/src/Eve.Services.Dogma/DogmaInfo.cs` shows a module's stored condition (`ModuleConditions`) to the client, but no activation path reads that condition or writes a burn-out to it (`ModuleEffects.cs`, `TypeAttributeResistanceEffect`). The energizer's resonance change also reaches the simulation only once the ship's spec is refreshed after a module change, which `SpaceSessions.ActivateAsync` does not do yet. |
+| OPEN | Emergency hull energizer: the module's burn-out is told to the client but not kept, so a burned-out module can be activated again | `dotnet/src/Eve.Services.Dogma/DogmaInfo.cs` shows a module's stored condition (`ModuleConditions`) to the client, but no activation path reads that condition or writes a burn-out to it (`ModuleEffects.cs`, `TypeAttributeResistanceEffect`). The resonance change reaches the simulation through the resend after an accepted activation (section 8, `SpaceSessions.SendShipAsync`). |
 | OPEN | Launchers of groups that are not run (defender 512, bomb 862, probe, festival, pod, sphere and structure launchers) are refused with `*_LAUNCHER_NOT_IMPLEMENTED`, not run | `dotnet/src/Eve.Services.Space/Effects/MissileEffect.cs` (`RefusedLauncherGroups`). Defender interception exists in `crates/eve-space/src/missiles.rs` but is not wired; guided bombs have no flight code. |
-| OPEN | Armor hardeners and other dogma modifiers reach the simulation only at spawn | Their values are now the world's (`DogmaWorld.ValueWhenActive`), but `SimShips.Of` reads the resonances once. The refresh after a module change is the same open item as the energizer above. |
+| CHANGED | Armor hardeners and other dogma modifiers reach the simulation only at spawn | Their told values are the world's with the module assumed active (`DogmaWorld.Assume`, section 8), and the simulation is sent the resonances after an accepted activation (`SpaceSessions.ActivateAsync`). The stop timing stays the section 8 limitation. |

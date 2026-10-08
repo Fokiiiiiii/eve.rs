@@ -82,10 +82,14 @@ and tests pass explicit rolls. A roll that is missing is an error, not a default
 
 **D9. Provenance.** The item record stores the mutator type, the mutator item id, the source type and the source item id, with the
 result. CCP shows the mutaplasmid and the input in the tooltip (patch 1.5 [C]), so this is player-visible. It lives in the
-`inventory.item_mutations` table (`0004_item_mutation`), not in `custom_info`.
+`inventory.item_mutations` table (`0005_item_mutation`; `0004` is already the item `custom_info` migration), not in `custom_info`.
 
 **Other decisions recorded with D1-D9.**
 
+- *Placement.* The authority `ItemMutationService` lives in the domain project `Eve.Inventory` (`Mutation/`), not in
+  `Eve.Services.Inventory`: `dotnet/src/AGENTS.md` reserves `Eve.Services*` for RPC handlers, wire conversion and notifications.
+  `Eve.Inventory` references `Eve.Dogma` (pure, ADR 0004) only: the architecture test (ADR 0003) keeps domain modules off the
+  Event Bus. The authority publishes through `IItemMutationEvents`, which the Host implements over the bus (`BusItemMutationEvents`).
 - *Transaction.* Consume of the mutaplasmid and the source, creation of the result and the store of its record happen in **one
   PostgreSQL transaction**. Both inputs are locked in ascending id order (`LockAndGetAsync`). Any failure before commit leaves both
   inputs, no record and no event.

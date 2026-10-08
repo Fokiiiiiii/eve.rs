@@ -9,7 +9,9 @@ public sealed class DogmaItem
     /// The type the item's base attribute values come from, when that is not its own type: a mutated module is typed as its result, but its
     /// values are those of the input it was made from. The skill requirements always come from <paramref name="typeId"/>. Null: the item's own type.
     /// </param>
-    public DogmaItem(long id, int typeId, long ownerId, long locationId, int flagId = 0, ItemState state = ItemState.Offline, IReadOnlySet<int>? activeEffectIds = null, int? baseTypeId = null)
+    /// <param name="ownValues">The values the item carries of its own from the start (a mutated module's rolled values), over its base. Null: none.</param>
+    public DogmaItem(long id, int typeId, long ownerId, long locationId, int flagId = 0, ItemState state = ItemState.Offline, IReadOnlySet<int>? activeEffectIds = null,
+        int? baseTypeId = null, IReadOnlyDictionary<int, double>? ownValues = null)
     {
         Id = id;
         TypeId = typeId;
@@ -19,6 +21,13 @@ public sealed class DogmaItem
         FlagId = flagId;
         State = state;
         ActiveEffectIds = activeEffectIds;
+        if (ownValues is not null)
+        {
+            foreach (var (attributeId, value) in ownValues)
+            {
+                Own[attributeId] = value;
+            }
+        }
     }
 
     public long Id { get; }
@@ -75,6 +84,8 @@ public sealed class DogmaWorld
     private readonly Dictionary<(long Item, int Attribute), double> _values = [];
     private readonly HashSet<(long Item, int Attribute)> _evaluating = [];
     private Dictionary<int, List<Source>>? _sources;
+    /// <summary>The modifiers an assumption (<see cref="Assume"/>) adds, each with the item it is on.</summary>
+    private readonly List<(DogmaItem Item, EffectDef Effect)> _assumed = [];
 
     public DogmaWorld(DogmaStatic statics, long characterId = 0, long shipId = 0, long structureId = 0)
     {
@@ -145,6 +156,49 @@ public sealed class DogmaWorld
         }
     }
 
+    /// <summary>
+    /// Works out the world as if an item were in another state and ran more modifiers, until the returned scope is disposed; the world is the same
+    /// after it. An effect uses it to work out the numbers it is going to tell (before it starts), so they follow the rules of the world: precedence,
+    /// the stacking penalty and a pinned value (a PostAssign) all apply. Scopes end in the reverse order they began. An unknown item assumes nothing.
+    /// </summary>
+    public IDisposable Assume(long itemId, ItemState state, IReadOnlyList<Modifier>? modifiers = null)
+    {
+        if (!_items.TryGetValue(itemId, out var item))
+        {
+            return new Scope(() => { });
+        }
+        var previous = item.State;
+        var assumed = modifiers is { Count: > 0 } ? new EffectDef(0, "assumed", EffectDef.Passive, modifiers) : null;
+        item.State = state;
+        if (assumed is not null)
+        {
+            _assumed.Add((item, assumed));
+        }
+        Changed();
+        return new Scope(() =>
+        {
+            item.State = previous;
+            if (assumed is not null)
+            {
+                _assumed.RemoveAt(_assumed.FindLastIndex(a => ReferenceEquals(a.Effect, assumed)));
+            }
+            Changed();
+        });
+    }
+
+    /// <summary>Ends an assumption (<see cref="Assume"/>) when disposed; a second dispose does nothing.</summary>
+    private sealed class Scope(Action end) : IDisposable
+    {
+        private Action? _end = end;
+
+        public void Dispose()
+        {
+            var end = _end;
+            _end = null;
+            end?.Invoke();
+        }
+    }
+
     /// <summary>The value of an attribute of an item, after every modifier that reaches it.</summary>
     public double Get(long itemId, int attributeId)
     {
@@ -159,31 +213,6 @@ public sealed class DogmaWorld
         var value = Compute(item, attributeId);
         _values[(itemId, attributeId)] = value;
         return value;
-    }
-
-    /// <summary>
-    /// The value of an attribute of an item as it would be with <paramref name="activatedItemId"/> running (switched on to active), worked out by the same rules
-    /// as <see cref="Get"/>: the precedence of the operations, the stacking penalty and the caps. The item is left as it was, and so is everything cached for it.
-    /// This is what a module that is about to start changes: what the client is told, and what the simulation runs, are this value.
-    /// </summary>
-    public double ValueWhenActive(long activatedItemId, long itemId, int attributeId)
-    {
-        if (!_items.TryGetValue(activatedItemId, out var activated) || activated.State >= ItemState.Active)
-        {
-            return Get(itemId, attributeId);
-        }
-        var before = activated.State;
-        activated.State = ItemState.Active;
-        Changed();
-        try
-        {
-            return Get(itemId, attributeId);
-        }
-        finally
-        {
-            activated.State = before;
-            Changed();
-        }
     }
 
     /// <summary>
@@ -202,7 +231,7 @@ public sealed class DogmaWorld
         {
             if (_static.Type(baseTypeId) is { } baseType)
             {
-                ids.UnionWith(baseType.Attributes.Keys);
+                ids.UnionWith(baseType.Attributes.Keys.Where(attribute => !TypeDef.IsRequiredSkillAttribute(attribute)));
             }
             if (_static.Type(item.TypeId) is { } resultType)
             {
@@ -266,24 +295,32 @@ public sealed class DogmaWorld
             return _sources;
         }
         var index = new Dictionary<int, List<Source>>();
+        void Index(DogmaItem item, EffectDef effect)
+        {
+            foreach (var modifier in effect.Modifiers)
+            {
+                var domain = Resolve(item, modifier.Domain);
+                if (domain < 0)
+                {
+                    continue;
+                }
+                if (!index.TryGetValue(modifier.ModifiedAttributeId, out var list))
+                {
+                    index[modifier.ModifiedAttributeId] = list = [];
+                }
+                list.Add(new Source(item, effect, modifier, domain));
+            }
+        }
         foreach (var item in _items.Values.OrderBy(i => i.Id))
         {
             foreach (var effect in RunningEffects(item))
             {
-                foreach (var modifier in effect.Modifiers)
-                {
-                    var domain = Resolve(item, modifier.Domain);
-                    if (domain < 0)
-                    {
-                        continue;
-                    }
-                    if (!index.TryGetValue(modifier.ModifiedAttributeId, out var list))
-                    {
-                        index[modifier.ModifiedAttributeId] = list = [];
-                    }
-                    list.Add(new Source(item, effect, modifier, domain));
-                }
+                Index(item, effect);
             }
+        }
+        foreach (var (item, effect) in _assumed)
+        {
+            Index(item, effect);
         }
         return _sources = index;
     }
@@ -387,7 +424,8 @@ public sealed class DogmaWorld
 
     /// <summary>
     /// The value the item's type gives an attribute, or null when it gives none. An item with a base type takes every attribute from it, except the
-    /// skill requirements (and their levels), which come from its own type where that type has them: a mutated module needs the skill of its result.
+    /// skill requirements (and their levels), which come from its own type only: a mutated module needs the skills of its result (T2), whatever its
+    /// base type required, so a skill the result does not name is no requirement at all.
     /// </summary>
     private double? TypeAttribute(DogmaItem item, int attributeId)
     {
@@ -395,9 +433,9 @@ public sealed class DogmaWorld
         {
             return _static.Type(item.TypeId) is { } type && type.Attributes.TryGetValue(attributeId, out var typed) ? typed : null;
         }
-        if (TypeDef.IsRequiredSkillAttribute(attributeId) && _static.Type(item.TypeId) is { } resultType && resultType.Attributes.TryGetValue(attributeId, out var skill))
+        if (TypeDef.IsRequiredSkillAttribute(attributeId))
         {
-            return skill;
+            return _static.Type(item.TypeId) is { } resultType && resultType.Attributes.TryGetValue(attributeId, out var skill) ? skill : null;
         }
         return _static.Type(baseTypeId) is { } baseType && baseType.Attributes.TryGetValue(attributeId, out var fromBase) ? fromBase : null;
     }

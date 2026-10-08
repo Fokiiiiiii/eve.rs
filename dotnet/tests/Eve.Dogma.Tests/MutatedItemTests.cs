@@ -72,6 +72,24 @@ public class MutatedItemTests
     }
 
     [PgFact]
+    public async Task A_skill_only_the_input_names_is_no_requirement_of_the_mutated_module()
+    {
+        // mutaplasmid 49723 on input 93998 gives result 49722: the input needs 3436 at level 2 as well as 3318 at level 4, the result only 3318 at 4
+        var sde = await PgFactAttribute.SdeAsync();
+        var statics = await DogmaStatic.LoadAsync(sde);
+        await statics.EnsureTypesAsync([93998, 49722]);
+        Assert.Equal(2.0, statics.Type(93998)!.Attributes[278], 9);
+        var world = new DogmaWorld(statics);
+        world.Add(new DogmaItem(Ship, Rifter, Owner, 0));
+        world.Add(new DogmaItem(Module, 49722, Owner, Ship, 11, ItemState.Offline, baseTypeId: 93998));
+
+        Assert.Equal(3318.0, world.Get(Module, 182), 9);
+        Assert.Equal(4.0, world.Get(Module, 277), 9);
+        Assert.DoesNotContain(183, world.Attributes(Module).Keys);
+        Assert.DoesNotContain(278, world.Attributes(Module).Keys);
+    }
+
+    [PgFact]
     public async Task Without_its_own_values_a_mutated_module_reads_the_base_of_its_input()
     {
         var statics = await StaticsAsync();

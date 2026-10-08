@@ -12,6 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Eve.Ships/Eve.Ships.csproj" />
+    <ProjectReference Include="../../src/Eve.Events/Eve.Events.csproj" />
     <ProjectReference Include="../../src/Eve.Wallet/Eve.Wallet.csproj" />
   </ItemGroup>
   <ItemGroup>

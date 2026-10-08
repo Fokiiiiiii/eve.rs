@@ -41,14 +41,13 @@ public sealed class CompatibilityRpcServiceTests
     {
         var services = new IService[]
         {
-            new ShipCosmeticsMgrRpcService(), new DynamicItemRpcService(),
+            new ShipCosmeticsMgrRpcService(),
             new CharacterEnergyMgrRpcService(), new PaperDollServerRpcService(),
             new PlanetMgrRpcService(), new IndustryMonitorRpcService(),
         };
         var expected = new Dictionary<string, string[]>
         {
             ["shipCosmeticsMgr"] = ["ActivateSkinLicense", "ApplySkinToShip", "GMExpireSkinLicense", "GetEnabledCosmetics", "GetFirstPartySkinData", "GiveSkin", "RemoveSkin"],
-            ["dynamicItemService"] = ["CreateDynamicItem"],
             ["characterEnergyMgr"] = ["GetMyEnergyState"],
             ["paperDollServer"] = ["GetMyPaperDollData", "GetPaperDollData", "GetPaperDollDataBatch", "GetPaperDollPortraitDataFor", "UpdateExistingCharacterFull", "UpdateExistingCharacterLimited"],
             ["planetMgr"] = ["DeleteLaunch", "GetMyLaunchesDetails", "GetPlanetsForChar"],
@@ -61,7 +60,7 @@ public sealed class CompatibilityRpcServiceTests
     }
 
     [Fact]
-    public async Task Handlers_return_reference_shapes_and_dynamic_item_accepts_a_future_backend()
+    public async Task Handlers_return_reference_shapes()
     {
         var cosmetics = new ShipCosmeticsMgrRpcService();
         var energy = new CharacterEnergyMgrRpcService(nowUnixMs: () => 1_700_000_000_000L);
@@ -72,9 +71,6 @@ public sealed class CompatibilityRpcServiceTests
         Assert.IsType<PyDict>(await cosmetics.CallAsync(Call("GetEnabledCosmetics", args: [new PyInt(10)])));
         Assert.IsType<PyNone>(await cosmetics.CallAsync(Call("GetFirstPartySkinData", args: [new PyInt(20), new PyInt(30)])));
         Assert.IsType<PyNone>(await cosmetics.CallAsync(Call("GiveSkin", Session(20), new PyInt(30))));
-        Assert.IsType<PyNone>(await new DynamicItemRpcService().CallAsync(Call("CreateDynamicItem", Session(20), new PyInt(1), new PyInt(2))));
-        var wired = new DynamicItemRpcService(create: (mutator, source, character, _) => ValueTask.FromResult<long?>(mutator == 1 && source == 2 && character == 20 ? 99 : null));
-        Assert.Equal(new PyInt(99), await wired.CallAsync(Call("CreateDynamicItem", Session(20), new PyInt(1), new PyInt(2))));
 
         var state = Assert.IsType<PyObjectEx>(await energy.CallAsync(Call("GetMyEnergyState", Session(20))));
         Assert.Equal(ObjectExKind.Ex1, state.Kind);

@@ -464,6 +464,13 @@ public class EngineTests
         Assert.Equal(10, world.Get(Char, 165), 9);
     }
 
+    /// <summary>The value of an attribute of an item with another item assumed active, as the world works it out; the world is left as it was.</summary>
+    private static double WhenActive(DogmaWorld world, long activatedItemId, long itemId, int attributeId)
+    {
+        using var assumed = world.Assume(activatedItemId, ItemState.Active);
+        return world.Get(itemId, attributeId);
+    }
+
     [Fact]
     public void A_value_when_an_item_is_active_is_what_the_world_computes_with_it_running_and_the_world_is_left_as_it_was()
     {
@@ -476,11 +483,11 @@ public class EngineTests
         firstOnly.SetState(2000, ItemState.Active);
 
         // asked for the first module while nothing runs: what the world says with it running
-        Assert.Equal(firstOnly.Get(1000, 8), world.ValueWhenActive(2000, 1000, 8), 9);
+        Assert.Equal(firstOnly.Get(1000, 8), WhenActive(world, 2000, 1000, 8), 9);
         // asked for the second while the first runs: the penalised value both running gives, not the first times the second unpenalised
         world.SetState(2000, ItemState.Active);
-        Assert.Equal(both.Get(1000, 8), world.ValueWhenActive(2001, 1000, 8), 9);
-        Assert.True(world.ValueWhenActive(2001, 1000, 8) < 100 * 1.2 * 1.2 * 1.2);
+        Assert.Equal(both.Get(1000, 8), WhenActive(world, 2001, 1000, 8), 9);
+        Assert.True(WhenActive(world, 2001, 1000, 8) < 100 * 1.2 * 1.2 * 1.2);
 
         // the world is as it was: the second module is still not running, the first still is, and nothing is cached from the query
         Assert.Equal(ItemState.Online, world.Item(2001)!.State);
@@ -509,7 +516,7 @@ public class EngineTests
 
         // the assignment runs (20); the percentage (+7%) is asked for: the assignment still comes last, so the answer is 20, not 20 * 1.07
         Assert.Equal(20, world.Get(1000, 1), 9);
-        Assert.Equal(20, world.ValueWhenActive(2000, 1000, 1), 9);
+        Assert.Equal(20, WhenActive(world, 2000, 1000, 1), 9);
         Assert.Equal(ItemState.Online, world.Item(2000)!.State);
     }
 }

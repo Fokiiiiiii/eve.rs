@@ -75,6 +75,12 @@ public sealed class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules,
         /// <summary>Stops the timer that ends the protection when it runs out (set when the timer is; the pilot ends it by hand first when a command breaks the protection).</summary>
         public Action? CancelExpiry { get; set; }
 
+        /// <summary>
+        /// The modules of the ship that the simulation has accepted an activation for, and not yet a stop: their state is Active in dogma, so the
+        /// numbers the ship is told (its resonances, the hardeners) are those of the effects that run. A new pilot (undock, eject, boarding) starts with none.
+        /// </summary>
+        public ConcurrentDictionary<long, ItemState> ActiveModules { get; } = new();
+
         /// <summary>Marks the protection ended; false when it had ended already (each ending is told once).</summary>
         public bool End()
         {
@@ -880,7 +886,7 @@ private readonly TransitionRuntime _transitions;
         }
         // a gun is started with the rounds it has left: what was spent a moment ago is written first
         await _charges.FlushAsync(id).ConfigureAwait(false);
-        if (await _ships.LoadAsync(characterId, cancellationToken) is not { } snapshot)
+        if (await FlownShipAsync(pilot, cancellationToken) is not { } snapshot)
         {
             return null;
         }
@@ -996,6 +1002,8 @@ private readonly TransitionRuntime _transitions;
                 ? refusal with { TargetType = reply.TargetType, ShipType = snapshot.Ship.TypeId, DesiredRange = reply.DesiredRange, ActualDistance = reply.ActualDistance }
                 : refusal;
         }
+        pilot.ActiveModules[moduleId] = ItemState.Active;
+        await SendShipAsync(id, pilot, SimShips.VitalsOf(snapshot), cancellationToken);
         if (effectName.Equals("ShipModuleRemoteArmorMutadaptiveRepairer", StringComparison.OrdinalIgnoreCase))
         {
             Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Start(moduleId, package.TargetId);
@@ -1109,30 +1117,82 @@ private readonly TransitionRuntime _transitions;
     public async Task<ModuleResult?> DeactivateAsync(ClientSession session, long moduleId, string effectName, CancellationToken cancellationToken)
     {
         var id = (ulong)session.SessionId;
-        if (!_pilots.ContainsKey(id) || session.CharacterId is not { } characterId)
+        if (!_pilots.TryGetValue(id, out var pilot) || session.CharacterId is not { } characterId)
         {
             return null;
         }
-        var snapshot = await _ships.LoadAsync(characterId, cancellationToken);
+        var snapshot = await FlownShipAsync(pilot, cancellationToken);
         var module = snapshot?.Fitted.FirstOrDefault(m => m.Id == moduleId);
         var type = module is null ? null : _statics.Type(module.TypeId);
         var reply = await AskSimAsync(id, () => _sim.CommandAsync(id, SimCommands.Deactivate, [moduleId], cancellationToken), session);
         if (reply.Accepted)
         {
             Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.StopAfterCurrentCycle(moduleId);
+            // the simulation ends the effect at the end of its cycle; the host takes the module out of its numbers now, and the ship is sent again
+            pilot.ActiveModules.TryRemove(moduleId, out _);
+            await SendShipAsync(id, pilot, snapshot is null ? null : SimShips.VitalsOf(snapshot), cancellationToken);
         }
         return reply.Accepted ? ModuleResult.Done : ModuleResult.Refusal(reply.Reason == "NOT_ACTIVE" ? "MODULE_NOT_ACTIVE" : reply.Reason ?? "REFUSED", module?.TypeId ?? 0, type?.Name ?? "");
     }
+
+    /// <summary>
+    /// The ship a pilot flies as dogma has it now: the stored module states, with the modules the pilot has started (<see cref="Pilot.ActiveModules"/>) active.
+    /// Null when the ship is not the one the pilot flies.
+    /// </summary>
+    private async Task<ShipSnapshot?> FlownShipAsync(Pilot pilot, CancellationToken cancellationToken)
+    {
+        if (await _ships.LoadAsync(pilot.CharacterId, cancellationToken) is not { } snapshot || snapshot.Ship.Id != pilot.ShipId)
+        {
+            return null;
+        }
+        foreach (var (moduleId, state) in pilot.ActiveModules)
+        {
+            snapshot.World.SetState(moduleId, state);
+        }
+        return snapshot;
+    }
+
+    /// <summary>
+    /// The one path that tells the simulation what a ship in space is now: its resonances and numbers as dogma has them, with the modules the pilot
+    /// has started. Every change of a module's state in space (activation, stop, online, offline) goes through here, so the simulation never keeps
+    /// a number it was told before the change. <paramref name="before"/> is the ship's vitals before the change: when the change moves no resonance
+    /// and no hit points, nothing is sent (null: send).
+    /// </summary>
+    private async Task SendShipAsync(ulong sessionId, Pilot pilot, SimVitals? before, CancellationToken cancellationToken)
+    {
+        if (!_sim.IsConnected || await FlownShipAsync(pilot, cancellationToken) is not { } snapshot)
+        {
+            return;
+        }
+        if (before is not null && SameVitals(before, SimShips.VitalsOf(snapshot)))
+        {
+            return;
+        }
+        _sim.ShipChanged(sessionId, SimShips.Of(snapshot, _statics, await SecurityStatusAsync(pilot.CharacterId, cancellationToken)));
+    }
+
+    /// <summary>Whether two ships take and resist the same (the lists are compared by value; a record's equality would compare them by reference).</summary>
+    private static bool SameVitals(SimVitals a, SimVitals b) =>
+        a.ShieldCapacity == b.ShieldCapacity && a.ArmorHp == b.ArmorHp && a.StructureHp == b.StructureHp
+        && a.Resonances.Shield.SequenceEqual(b.Resonances.Shield) && a.Resonances.Armor.SequenceEqual(b.Resonances.Armor)
+        && a.Resonances.Structure.SequenceEqual(b.Resonances.Structure);
+
+    /// <inheritdoc/>
+    public Task RefreshShipAsync(ClientSession session, CancellationToken cancellationToken) =>
+        _pilots.TryGetValue((ulong)session.SessionId, out var pilot)
+            ? SendShipAsync((ulong)session.SessionId, pilot, null, cancellationToken)
+            : Task.CompletedTask;
 
     public async Task<ModuleResult?> OfflineAsync(ClientSession session, long moduleId, CancellationToken cancellationToken)
     {
         var id = (ulong)session.SessionId;
         if (!_pilots.TryGetValue(id, out var pilot)) return null;
         if (!_sim.IsConnected) return ModuleResult.Refusal("SIM_UNAVAILABLE");
-        var snapshot = await _ships.LoadAsync(pilot.CharacterId, cancellationToken);
+        var snapshot = await FlownShipAsync(pilot, cancellationToken);
         if (snapshot is not null)
             await _sim.SetHeatProfileAsync(id, SimShips.HeatProfileOf(snapshot, _statics), cancellationToken);
         await _sim.OfflineModuleAsync(id, moduleId, cancellationToken);
+        pilot.ActiveModules.TryRemove(moduleId, out _);
         Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Reset(moduleId);
         return ModuleResult.Done;
     }

@@ -358,6 +358,9 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     var stations = await StationCatalog.LoadAsync(sde);
     var solarSystems = await SolarSystemCatalog.LoadAsync(sde);
     var dogma = await DogmaStatic.LoadAsync(sde);
+    // the abyssal mutation authority (ADR 0016): the mutaplasmid catalog of the static data, the item store and its provenance, the event bus
+    var itemMutations = new Eve.Inventory.Mutation.ItemMutationService(
+        source, items, items.Mutations, await Eve.Inventory.Mutation.MutatorCatalog.LoadAsync(sde), dogma, new BusItemMutationEvents(foundations.Events), now);
     var omega = new OmegaLicenses(new SubscriptionSettings(), new NoOmegaAccounts(), now);
     var training = new CharacterTraining(
         source, skillCatalog, skills, new PgTrainingStore(source, skillsSchema),
@@ -2471,7 +2474,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
                   var changes = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(9), InventoryWire.Id(before.Quantity))]);
                   session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(row), changes, PyNone.Instance);
               }),
-          new Eve.Host.DynamicItemRpcService(items, dogma: dogma),
+          new Eve.Host.DynamicItemRpcService(items, itemMutations, dogma, itemTypes),
           new Eve.Host.CharacterEnergyMgrRpcService(mailCache, now),
           new Eve.Host.PaperDollServerRpcService(characters),
           new Eve.Host.PlanetMgrRpcService(mailCache, sde, now),

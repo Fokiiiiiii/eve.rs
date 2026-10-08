@@ -236,6 +236,9 @@ def test_new_account_enters_a_new_character_with_named_arguments():
 
         assert m.plain(result) is None
         assert client.session.session_init.get("charid") == character_id
+        if not REFERENCE:
+            selected = next(event for event in notifications_of(client) if event["name"] == "OnCharacterSelected")
+            assert selected["args"] == {"$tuple": [0, {"$tuple": [1, {"$tuple": [[]]}]}]}
         mail = m.plain(client.call("mailMgr", "SyncMail", None, None))
         expected_title = "Welcome to EveJS Elysian" if REFERENCE else "Welcome to New Eden"
         assert any(header[1]["title"] == expected_title for header in mail[1]["newMail"])
@@ -922,8 +925,12 @@ def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level()
     with connect(f"walk-swift-{run}") as back:
         notifications_of(back)
         assert attempt(back, "charUnboundMgr", "SelectCharacterID", character, None, False) == ("ok", None)
+        received = notifications_of(back)
+        if not REFERENCE:
+            assert sum(event["name"] == "OnCharacterSelected" for event in received) == 1
+            received = [event for event in received if event["name"] != "OnCharacterSelected"]
         problems += differences(
-            blank_times(events_form(substitute(away["notifications"], mapping))), blank_times(events_form(notifications_of(back))), "finished while away: events", float_tolerance=DOGMA_TOLERANCE)
+            blank_times(events_form(substitute(away["notifications"], mapping))), blank_times(events_form(received)), "finished while away: events", float_tolerance=DOGMA_TOLERANCE)
         problems += view_problems(away["after"], training_view(back), "finished while away: after")
     assert problems == [], "\n".join(problems[:30])
 

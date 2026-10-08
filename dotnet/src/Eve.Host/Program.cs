@@ -2377,10 +2377,11 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     IReadOnlyList<IService> services =
     [
         new CharUnboundMgrService(
-            accounts, characters, items, skills, wallets, creation, catalog, online, characterEntryHooks, Random.Shared,
+            accounts, characters, items, training, wallets, creation, catalog, online, characterEntryHooks, Random.Shared,
             newCharacterExperienceMode == "tutorial",
             sendWelcomeMailAsync: SendNewCharacterWelcomeMailAsync,
-            unreadMailCount: ReadUnreadMailCount),
+            unreadMailCount: ReadUnreadMailCount,
+            securityStatusOf: securityStatusOf),
         new MultiLoginBlockerService(),
         new PopulationCapService(characters),
         new Eve.Services.CharacterInfo.ConfigService(characters, corporations, stations, solarSystems),

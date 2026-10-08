@@ -68,7 +68,7 @@ public sealed class Harness : IAsyncDisposable
     private readonly string _fittingSchema;
     private readonly string _corporationSchema;
 
-    private Harness(NpgsqlDataSource source, string suffix, bool newCharacterExperienceEnabled)
+    private Harness(NpgsqlDataSource source, string suffix, bool newCharacterExperienceEnabled, double securityStatus)
     {
         Source = source;
         _characterSchema = $"cs_test_{suffix}";
@@ -89,9 +89,10 @@ public sealed class Harness : IAsyncDisposable
         Sessions = new CharacterSessions();
         Announcer = new TrainingAnnouncer(Training, Skills, Sessions, null, () => ClockUnixMs, schedule: false);
         Service = new CharUnboundMgrService(
-            Accounts, Characters, Items, SkillStore, Wallets,
+            Accounts, Characters, Items, Training, Wallets,
                 new CharacterCreation(source, Characters, Items, SkillStore, Skills, Wallets, new StartingWallet(), Catalog, new PgModuleStateStore(source, _fittingSchema), newCharacterExperienceEnabled), Catalog, Online,
-                [new SkillsLoginHook(Training, Skills, Sessions, Announcer, () => ClockUnixMs), new Eve.Services.Corporations.CorporationLoginHook(Corporations,Characters)], new Random(7), newCharacterExperienceEnabled);
+                [new SkillsLoginHook(Training, Skills, Sessions, Announcer, () => ClockUnixMs), new Eve.Services.Corporations.CorporationLoginHook(Corporations,Characters)], new Random(7), newCharacterExperienceEnabled,
+                securityStatusOf: (_, _) => Task.FromResult(securityStatus));
         var dogma = new Eve.Dogma.DogmaStatic([], [], []);
         Handler = new SkillHandlerService(
             SkillStore, Skills, Training, Characters, Items, dogma, Announcer, () => ClockUnixMs,
@@ -129,11 +130,11 @@ public sealed class Harness : IAsyncDisposable
 
     public CharUnboundMgrService Service { get; }
 
-      public static async Task<Harness> CreateAsync(bool newCharacterExperienceEnabled = false)
+      public static async Task<Harness> CreateAsync(bool newCharacterExperienceEnabled = false, double securityStatus = 0)
     {
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Url!));
-          var harness = new Harness(source, Guid.NewGuid().ToString("N")[..12], newCharacterExperienceEnabled);
+          var harness = new Harness(source, Guid.NewGuid().ToString("N")[..12], newCharacterExperienceEnabled, securityStatus);
         await PgCharacterStore.MigrateAsync(source, harness._characterSchema);
         await PgItemStore.MigrateAsync(source, harness._inventorySchema);
         await PgSkillStore.MigrateAsync(source, harness._skillsSchema);

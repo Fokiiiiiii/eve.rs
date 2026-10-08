@@ -2,6 +2,7 @@ using Eve.Characters;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
+using Eve.Skills;
 
 namespace Eve.Services.CharacterSelect.Tests;
 
@@ -54,6 +55,21 @@ public class CharUnboundMgrTests
         var error = MachoErrors.UserError("CustomInfo", ("info", new PyStr(text)));
         Assert.True(error.IsUserError);
         return error;
+    }
+
+    [Fact]
+    public void Finished_skill_count_is_the_latest_nonempty_completion_batch()
+    {
+        HistoryEntry[] history =
+        [
+            new(10, SkillEvents.TrainingComplete, 3301, 1_415, 2),
+            new(10, SkillEvents.QueueTrainingCompleted, 3302, 1_415, 2),
+            new(20, SkillEvents.TrainingStarted, 3303, 250, 2),
+            new(30, SkillEvents.TrainingComplete, 3304, 250, 1),
+        ];
+
+        Assert.Equal(1, CharUnboundMgrService.FinishedSkillsCount(history));
+        Assert.Equal(0, CharUnboundMgrService.FinishedSkillsCount([new(40, SkillEvents.TrainingStarted, 3305, 250, 2)]));
     }
 
     // ── the screen before any character ─────────────────────────────────────
@@ -353,7 +369,41 @@ public class CharUnboundMgrTests
         Assert.Equal(PyNone.Instance, result);
         Assert.Equal(id, session.CharacterId);
         Assert.Equal("OnCharacterSelected", NotificationName(sink.Sent[0]));
+        Assert.Equal(new PyTuple([new PyList([])]), NotificationArgs(sink.Sent[0]));
         Assert.Equal(3, sink.Sent.Count);
+    }
+
+    [PgFact]
+    public async Task Character_selection_data_includes_the_ship_name_and_live_training_projection()
+    {
+        await using var h = await Harness.CreateAsync(securityStatus: 1.25);
+        var (session, _) = await h.LoginAsync("selection-state");
+        var id = await CreateAsync(h, session, "Selection State Pilot");
+        var character = await h.Characters.GetAsync(id, CancellationToken.None);
+        Assert.NotNull(character);
+        var shipId = character!.ShipId!.Value;
+        await h.Items.SetCustomNameAsync(shipId, "Named Hull", CancellationToken.None);
+
+        var initial = await h.Training.ViewAsync(id, character.AccountId, CancellationToken.None);
+        var skill = initial.Skills.First(skill => skill.Level < 5);
+        Assert.NotNull(await h.Training.StartAsync(id, character.AccountId, skill.TypeId, skill.Level + 1, [id], CancellationToken.None));
+        var training = await h.Training.ViewAsync(id, character.AccountId, CancellationToken.None);
+        var current = training.Current!;
+        var data = (PyTuple)await h.CallAsync(session, "GetCharacterSelectionData");
+        var row = Assert.Single(((PyList)data.Items[2]).Items);
+        var fields = Recorded.Attributes(row).ToDictionary(attribute => attribute.Key, attribute => attribute.Value);
+
+        Assert.Equal(new PyStr("Named Hull"), fields["shipName"]);
+        Assert.Equal(new PyReal(1.25), fields["securityRating"]);
+        Assert.Equal(new PyReal(1.25), fields["securityStatus"]);
+        Assert.Equal(new PyInt(training.TotalPoints), fields["skillPoints"]);
+        Assert.Equal(new PyInt(current.TypeId), fields["skillTypeID"]);
+        Assert.Equal(new PyInt(current.ToLevel), fields["toLevel"]);
+        Assert.Equal(new PyLong(current.Start!.Value), fields["trainingStartTime"]);
+        Assert.Equal(new PyLong(current.End!.Value), fields["trainingEndTime"]);
+        Assert.Equal(new PyLong(training.Queue[^1].End!.Value), fields["queueEndTime"]);
+        Assert.Equal(new PyInt(current.DestinationPoints), fields["finishSP"]);
+        Assert.Equal(new PyInt(training.Skills.Single(skill => skill.TypeId == current.TypeId).SkillPoints), fields["trainedSP"]);
     }
 
     [PgFact]

@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="926" viewBox="0 0 1280 926" role="img" aria-label="eve.rs architecture">
+<title>eve.rs architecture</title><desc>Client, network front, .NET service host, Rust space simulation and PostgreSQL persistent data.</desc>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto-start-reverse"><path d="M1 1 L7 4.5 L1 8" fill="none" stroke="#718099" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="1280" height="926" rx="15" fill="#0B0E13" stroke="none" stroke-width="1.3"/>
+<rect x="20" y="20" width="1240" height="886" rx="24" fill="#0B0E13" stroke="#303741" stroke-width="1.6"/>
+<text x="66" y="73" fill="#AAB4C3" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="680" text-anchor="start" letter-spacing="2.2">EVE.RS  /  SYSTEM ARCHITECTURE</text>
+<rect x="995" y="49" width="198" height="30" rx="15" fill="#26303C" stroke="none" stroke-width="1.3"/>
+<text x="1094" y="69" fill="#AAB4C3" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="14" font-weight="650" text-anchor="middle" letter-spacing="0.6">3 PROCESSES  +  DB</text>
+<rect x="66" y="103" width="1148" height="112" rx="16" fill="#14191F" stroke="#303741" stroke-width="1.5"/>
+<text x="640" y="149" fill="#E9EDF5" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="29" font-weight="720" text-anchor="middle" letter-spacing="0">EVE Online Client</text>
+<text x="640" y="181" fill="#AAB4C3" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="17" font-weight="460" text-anchor="middle" letter-spacing="0">V24.01  /  build 3396210</text>
+<path d="M640 217 V273" fill="none" stroke="#718099" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+<rect x="666" y="232" width="235" height="24" rx="15" fill="#0B0E13" stroke="none" stroke-width="1.3"/>
+<text x="678" y="250" fill="#AAB4C3" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="16" font-weight="500" text-anchor="start" letter-spacing="0">TCP 26000  ·  MachoNet</text>
+<rect x="66" y="282" width="1148" height="128" rx="15" fill="#111B2A" stroke="#315F94" stroke-width="1.6"/>
+<rect x="86" y="308" width="4" height="35" rx="2" fill="#4B8FE5" stroke="none" stroke-width="1.3"/>
+<text x="103" y="333" fill="#E9EDF5" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="25" font-weight="700" text-anchor="start" letter-spacing="0">01  eve-net</text>
+<text x="103" y="367" fill="#AAB4C3" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="16" font-weight="450" text-anchor="start" letter-spacing="0">Client connections  ·  login handshake  ·  packet transport</text>
+<rect x="1119" y="306" width="60" height="30" rx="15" fill="#1B304C" stroke="none" stroke-width="1.3"/>
+<text x="1149" y="326" fill="#4B8FE5" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="14" font-weight="650" text-anchor="middle" letter-spacing="0.6">RUST</text>
+<path d="M640 412 V470" fill="none" stroke="#718099" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+<rect x="665" y="431" width="235" height="24" rx="15" fill="#0B0E13" stroke="none" stroke-width="1.3"/>
+<text x="676" y="449" fill="#AAB4C3" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="16" font-weight="500" text-anchor="start" letter-spacing="0">HostLink  ·  local socket</text>
+<rect x="66" y="479" width="1148" height="211" rx="15" fill="#101E1A" stroke="#296D57" stroke-width="1.6"/>
+<rect x="86" y="505" width="4" height="35" rx="2" fill="#48C69A" stroke="none" stroke-width="1.3"/>
+<text x="103" y="530" fill="#E9EDF5" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="25" font-weight="700" text-anchor="start" letter-spacing="0">02  eve-host</text>
+<text x="103" y="564" fill="#AAB4C3" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="16" font-weight="450" text-anchor="start" letter-spacing="0">RPC dispatch  ·  character and game services  ·  session state</text>
+<rect x="1092" y="503" width="87" height="30" rx="15" fill="#193629" stroke="none" stroke-width="1.3"/>
+<text x="1135.5" y="523" fill="#48C69A" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="14" font-weight="650" text-anchor="middle" letter-spacing="0.6">.NET 10</text>
+<rect x="96" y="609" width="251" height="49" rx="10" fill="#24332E" stroke="#3A5348" stroke-width="0.8"/>
+<text x="221.5" y="640" fill="#E9EDF5" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="550" text-anchor="middle" letter-spacing="0">PacketDispatcher</text>
+<rect x="376" y="609" width="251" height="49" rx="10" fill="#24332E" stroke="#3A5348" stroke-width="0.8"/>
+<text x="501.5" y="640" fill="#E9EDF5" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="550" text-anchor="middle" letter-spacing="0">ServiceRegistry</text>
+<rect x="656" y="609" width="251" height="49" rx="10" fill="#24332E" stroke="#3A5348" stroke-width="0.8"/>
+<text x="781.5" y="640" fill="#E9EDF5" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="550" text-anchor="middle" letter-spacing="0">Domain Services</text>
+<rect x="936" y="609" width="251" height="49" rx="10" fill="#24332E" stroke="#3A5348" stroke-width="0.8"/>
+<text x="1061.5" y="640" fill="#E9EDF5" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="550" text-anchor="middle" letter-spacing="0">Session Management</text>
+<path d="M640 691 V717 H346 V748" fill="none" stroke="#718099" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M640 717 H934 V748" fill="none" stroke="#718099" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="368" y="713" width="145" height="22" rx="15" fill="#0B0E13" stroke="none" stroke-width="1.3"/>
+<text x="379" y="729" fill="#AAB4C3" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="520" text-anchor="start" letter-spacing="0">SimLink  ·  IPC</text>
+<rect x="964" y="713" width="86" height="22" rx="15" fill="#0B0E13" stroke="none" stroke-width="1.3"/>
+<text x="973" y="729" fill="#AAB4C3" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="520" text-anchor="start" letter-spacing="0">SQL  ·  TCP</text>
+<rect x="66" y="756" width="551" height="123" rx="15" fill="#111B2A" stroke="#315F94" stroke-width="1.6"/>
+<rect x="86" y="782" width="4" height="35" rx="2" fill="#4B8FE5" stroke="none" stroke-width="1.3"/>
+<text x="103" y="807" fill="#E9EDF5" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="25" font-weight="700" text-anchor="start" letter-spacing="0">03  eve-sim</text>
+<text x="103" y="841" fill="#AAB4C3" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="16" font-weight="450" text-anchor="start" letter-spacing="0">Ships  ·  movement  ·  combat  ·  NPCs</text>
+<rect x="522" y="780" width="60" height="30" rx="15" fill="#1B304C" stroke="none" stroke-width="1.3"/>
+<text x="552" y="800" fill="#4B8FE5" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="14" font-weight="650" text-anchor="middle" letter-spacing="0.6">RUST</text>
+<rect x="637" y="756" width="577" height="123" rx="15" fill="#211A12" stroke="#835E33" stroke-width="1.6"/>
+<rect x="657" y="782" width="4" height="35" rx="2" fill="#F0B264" stroke="none" stroke-width="1.3"/>
+<text x="674" y="807" fill="#E9EDF5" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="25" font-weight="700" text-anchor="start" letter-spacing="0">PostgreSQL</text>
+<text x="674" y="841" fill="#AAB4C3" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="16" font-weight="450" text-anchor="start" letter-spacing="0">Persistent state  ·  jobs  ·  events  ·  SDE</text>
+<rect x="1137" y="780" width="42" height="30" rx="15" fill="#422B18" stroke="none" stroke-width="1.3"/>
+<text x="1158" y="800" fill="#F0B264" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="14" font-weight="650" text-anchor="middle" letter-spacing="0.6">18</text>
+</svg>

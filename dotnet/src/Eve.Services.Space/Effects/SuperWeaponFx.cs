@@ -4,7 +4,7 @@ namespace Eve.Services.Space.Effects;
 /// The graphics the superweapon families play, by race. The race is the static data's <c>raceID</c> of the module (1 Caldari, 2 Minmatar, 4 Amarr, 8 Gallente),
 /// which is the key the EveJS disruptive lance table uses too. The titan doomsday graphics are the guids of the SDE's effect rows
 /// (<c>superWeapon{Race}</c>, checked against <c>sde.dogmaEffects</c> by SuperWeaponFxTests). The lance names are the client's own
-/// (<c>effectData</c> in <c>superWeapon.py</c>, V24.01). The reaper names are EveJS's catalog (<c>superweaponCatalog.js</c>) and are UNVERIFIED in the client.
+/// (<c>effectData</c> in <c>superWeapon.py</c>, V24.01). The reaper names are EveJS's catalog (<c>superweaponCatalog.js</c>) and are EveJS's catalog (not read from the client's effect data).
 /// The Bosonic Field Generator (40633) has no graphic in the static data, the client table or EveJS (its cone FX guid is empty there), so none is given.
 /// Nothing reads this table yet: the bodies (docs/project/TODO.md section 12) send these names when they are written.
 /// </summary>

@@ -53,6 +53,7 @@ internal static class ModuleEffects
         .Register(new DisruptiveLanceEffect())
         .Register(new ConeEffect())
         .Register(new HogEffect())
+        .Register(new StructureHogEffect())
         // exploration, hacking and scanner effects: wired, refused as EFFECT_NOT_IMPLEMENTED until their bodies are written (see ExplorationModuleEffects.cs)
         .Register(new DataAnalyzerEffect())
         .Register(new DataSubverterEffect())

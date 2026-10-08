@@ -7,14 +7,16 @@
 use crate::health::Damage;
 
 /// The share of the remote repair a ship takes while a disruptive lance has disrupted it (EveJS `DISRUPTIVE_LANCE_REMOTE_REPAIR_MULTIPLIER`, a CCP
-/// description with no SDE attribute: "massively inhibit the effectiveness of external repair beams"; UNVERIFIED number, see DEVIATIONS).
+/// description has no SDE attribute: "massively inhibit the effectiveness of external repair beams"; the 0.5 is EveJS's, see DEVIATIONS 139).
 pub const DISRUPTED_REMOTE_REPAIR: f64 = 0.5;
 
-/// The shape of a strike, by the static data's `doomsdayAOEShape` value: 1 a cylinder, 3 a cone.
+/// The shape of a strike, by the static data's `doomsdayAOEShape` value: 1 a cylinder, 3 a cone, 4 a sphere (the projected sphere of the Gravitational
+/// Transportation Field Oscillator, protocol 29: centred on the aim point, its radius the static data's `doomsdayAOERange`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StrikeShape {
     Cylinder,
     Cone,
+    Sphere,
 }
 
 impl StrikeShape {
@@ -23,6 +25,7 @@ impl StrikeShape {
         match self {
             Self::Cylinder => 1,
             Self::Cone => 3,
+            Self::Sphere => 4,
         }
     }
 
@@ -31,6 +34,7 @@ impl StrikeShape {
         match byte {
             1 => Some(Self::Cylinder),
             3 => Some(Self::Cone),
+            4 => Some(Self::Sphere),
             _ => None,
         }
     }
@@ -89,12 +93,13 @@ impl Strike {
         Some(Strike { direction, length, ..*self })
     }
 
-    /// Whether a ship is in the area, from `origin` (the hull's surface point along the aim) and with its centre and radius.
+    /// Whether a ship is in the area, from `origin` and with its centre and radius. For a cone or a cylinder `origin` is the hull's surface point along the
+    /// aim; for a sphere it is the sphere's centre (the aim point), and the sphere is `radius` around it.
     pub fn covers(&self, origin: [f64; 3], centre: [f64; 3], target_radius: f64) -> bool {
         let offset = [centre[0] - origin[0], centre[1] - origin[1], centre[2] - origin[2]];
         let along = dot(offset, self.direction);
         let reach = target_radius.max(0.0);
-        if along < -reach || along > self.length + reach {
+        if self.shape != StrikeShape::Sphere && (along < -reach || along > self.length + reach) {
             return false;
         }
         match self.shape {
@@ -107,6 +112,7 @@ impl Strike {
                 let radial = distance_from_axis(offset, self.direction, clamped);
                 radial <= self.radius.max(0.0) + reach
             }
+            StrikeShape::Sphere => dot(offset, offset).sqrt() <= self.radius.max(0.0) + reach,
         }
     }
 
@@ -133,7 +139,9 @@ impl Strike {
             && self.pulse_ms > 0.0
             && self.pulses >= 1
             && self.signature_radius.is_finite()
-            && self.signature_radius > 0.0
+            // a strike with no damage (the transport field) has no signature to scale: its static data has none
+            && (self.signature_radius > 0.0 || self.damage.iter().all(|d| *d == 0.0))
+            && (self.shape != StrikeShape::Sphere || self.radius > 0.0)
             && self.immobile_ms.is_finite()
             && self.immobile_ms >= 0.0
             && self.no_jump_ms.is_finite()
@@ -255,5 +263,56 @@ mod tests {
         assert_eq!(StrikeShape::from_wire(1), Some(StrikeShape::Cylinder));
         assert_eq!(StrikeShape::from_wire(2), None, "a slice is not run");
         assert_eq!(StrikeShape::Cone.wire(), 3);
+    }
+
+    fn sphere(radius: f64) -> Strike {
+        Strike {
+            shape: StrikeShape::Sphere,
+            direction: [0.0, 0.0, 1.0],
+            length: 80_000.0,
+            radius,
+            warning_ms: 15_000.0,
+            pulse_ms: 1_000.0,
+            pulses: 1,
+            damage: [0.0; 4],
+            signature_radius: 0.0,
+            immobile_ms: 30_000.0,
+            no_jump_ms: 300_000.0,
+            neut_amount: 30_000.0,
+            neut_radius: 10_000.0,
+            neut_signature_radius: 20_000.0,
+            debuff_ms: 0.0,
+            sweep_end: None,
+        }
+    }
+
+    #[test]
+    fn a_sphere_covers_the_ships_within_its_radius_of_its_centre() {
+        // the centre is the aim point; for a sphere the origin argument is that centre
+        let strike = sphere(10_000.0);
+        let centre = [0.0, 0.0, 80_000.0];
+        assert!(strike.is_valid(), "a damage-free field with no signature is a valid strike");
+        assert!(strike.covers(centre, centre, 0.0), "the centre itself");
+        // (6000, 8000) is exactly 10 km from the centre, the radius
+        assert!(strike.covers(centre, [6_000.0, 8_000.0, 80_000.0], 0.0), "on the radius");
+        // (6000, 8001) is 10000.5 m away: outside with no reach, inside once the target's own radius (1 m) is counted
+        assert!(!strike.covers(centre, [6_000.0, 8_001.0, 80_000.0], 0.0), "just outside");
+        assert!(strike.covers(centre, [6_000.0, 8_001.0, 80_000.0], 1.0), "reach of the target's radius");
+        // a ship behind the centre, along the aim, is inside a sphere that reaches it: the sphere does not clip by the axis
+        assert!(strike.covers(centre, [0.0, 0.0, 75_000.0], 0.0));
+        // the firing ship is 80 km back along the aim: out of the sphere
+        assert!(!strike.covers(centre, [0.0, 0.0, 0.0], 0.0));
+    }
+
+    #[test]
+    fn the_sphere_is_a_wire_shape_and_a_sphere_needs_a_radius() {
+        assert_eq!(StrikeShape::Sphere.wire(), 4);
+        assert_eq!(StrikeShape::from_wire(4), Some(StrikeShape::Sphere));
+        assert!(!sphere(0.0).is_valid(), "a sphere with no radius covers nothing");
+        let mut damaging = sphere(10_000.0);
+        damaging.damage = [1.0, 0.0, 0.0, 0.0];
+        assert!(!damaging.is_valid(), "a strike that damages needs its signature radius");
+        damaging.signature_radius = 20_000.0;
+        assert!(damaging.is_valid());
     }
 }

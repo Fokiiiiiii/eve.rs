@@ -53,7 +53,7 @@ public static class ModuleRefusals
             // the reference's wording for a microwarpdrive held by a warp scrambler (moduleOperation.js MICROWARPDRIVE_BLOCKED)
             "MICROWARPDRIVE_BLOCKED" => Notify("That module cannot be activated while you are warp scrambled."),
             "CLOAK_WARP_BLOCKED" => Notify("You cannot activate that cloaking device while warping."),
-            // disallowActivateOnWarp (ModuleRestrictions.CheckWarp): the wording is ours, the client has no UserError for it (UNVERIFIED in the client)
+            // disallowActivateOnWarp (ModuleRestrictions.CheckWarp): the wording is ours; the static data's rule is the source, not a client UserError
             "MODULE_WARP_BLOCKED" => Notify($"{name} cannot be activated while your ship is warping."),
             // the client's own UserErrors (FakeCloaking.PreStartChecks): the ship cannot cloak, or disallows a cloak
             "CLOAK_SHIP_UNSUITABLE" => MachoErrors.ThrowUserError("CantCloakTooShipUnsuitable"),
@@ -61,6 +61,8 @@ public static class ModuleRefusals
             "CLOAK_TARGET_LOCKED" => Notify("Your ship is already target locked and cannot activate a cloaking device."),
             "CLOAK_PROXIMITY_BLOCKED" => Notify("You are too close to another object to activate your cloaking device."),
             "MODULE_CLOAKED" => Notify("You cannot activate modules while cloaked."),
+            // a disruptive lance needs an active siege module on the ship (EveJS ACTIVE_SIEGE_MODULE_REQUIRED, moduleActivationRequiresActiveSiegeModule)
+            "ACTIVE_SIEGE_MODULE_REQUIRED" => Notify($"{name} requires an active siege module."),
             // an effect with no body yet (PendingModuleEffect) or a module that burns a resource not taken yet (DogmaModifierEffect) is shown as one this module cannot run,
             // the same as an effect with no handler
             // the module burns fuel and the ship has not got the fuel of its cycle (the host's answer to the fuel of the first cycle; moduleOperation.js, shipModuleFuel.js NO_FUEL)

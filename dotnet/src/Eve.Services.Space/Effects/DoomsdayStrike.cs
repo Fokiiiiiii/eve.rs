@@ -47,6 +47,34 @@ internal static class DoomsdayStrike
             sweepEnd is null ? null : sweepEnd.Select(NpcArmament.Round6).ToArray());
     }
 
+    /// <summary>
+    /// The sphere of a transport field (the Gravitational Transportation Field Oscillator, shape 4, protocol 29): centred on the aim point, its radius the
+    /// static data's <c>doomsdayAOERange</c>, its length the aim's distance so that its centre is the aim point. One pulse at the warning: the static data has no
+    /// damage and no cadence, so the cycle's duration stands in for the cadence (it is never reached). The windows and the energy neutralisation are the module's.
+    /// </summary>
+    public static SimAction.Strike Sphere(ModuleEffectContext module, IReadOnlyList<double> aim)
+    {
+        double Attribute(int attribute) => NpcArmament.Round6(Math.Max(0, module.Value(attribute, 0)));
+        var direction = Unit(aim) ?? [0.0, 0.0, 0.0];
+        var length = NpcArmament.Round6(Math.Sqrt(aim.Sum(c => c * c)));
+        return new SimAction.Strike(
+            4,
+            direction,
+            length,
+            Attribute(DoomsdayAoeRange),
+            Attribute(DoomsdayWarningDuration),
+            NpcArmament.Round6(Math.Max(1, module.Cycle().Duration)),
+            1,
+            [0.0, 0.0, 0.0, 0.0],
+            // the module has no signature attribute: with no damage there is nothing to scale by it (SimAction.Strike.IsValid accepts that)
+            Attribute(SignatureRadius),
+            Attribute(DoomsdayImmobilityDuration),
+            Attribute(DoomsdayNoJumpOrCloakDuration),
+            Attribute(DoomsdayEnergyNeutAmount),
+            Attribute(DoomsdayEnergyNeutRadius),
+            Attribute(DoomsdayEnergyNeutSignatureRadius));
+    }
+
     /// <summary>The unit vector of an aim, or null for a zero or non-finite aim.</summary>
     public static double[]? Unit(IReadOnlyList<double> aim)
     {

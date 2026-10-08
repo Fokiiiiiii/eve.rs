@@ -13,7 +13,7 @@ namespace Eve.Services.Space.Effects;
 /// The empire-space rule is the client's own (<c>disallowInEmpireSpace</c> 1074 is set, so low and high security refuse it, as <see cref="ModuleRestrictions"/>
 /// states: lances are used in zero security only, which is what the reference's <c>MODULE_RESTRICTED_IN_LOWSEC</c> says too).
 /// NOT BUILT: the lance beacon (EveJS <c>spawnLanceBeacon</c>, a transient entity at the target point that the client's beam is drawn to). The damage does not
-/// depend on it, so the activation runs; the beacon's graphic and its client messages are UNVERIFIED and remain a gap (docs/project/TODO.md section 12).
+/// depend on it, so the activation runs; the beacon's graphic and its client messages are not in the static data or the client read so far, and remain a gap (DEVIATIONS 136) (docs/project/TODO.md section 12).
 /// </remarks>
 internal sealed class LanceEffect : ShipEffect
 {

@@ -416,16 +416,18 @@ public abstract record SimAction
     {
         /// <summary>Whether the numbers are ones the simulation runs (the same checks the simulation makes on decode).</summary>
         public bool IsValid =>
-            (Shape is 1 or 3)
+            (Shape is 1 or 3 or 4)
             && Direction.Count == 3 && Damage.Count == 4
             && Direction.All(double.IsFinite) && Damage.All(d => double.IsFinite(d) && d >= 0)
             && Math.Abs(Math.Sqrt(Direction.Sum(c => c * c)) - 1.0) < 1e-6
             && double.IsFinite(Length) && Length > 0
             && double.IsFinite(Radius) && Radius >= 0
+            && (Shape != 4 || Radius > 0)
             && double.IsFinite(WarningMs) && WarningMs >= 0
             && double.IsFinite(PulseMs) && PulseMs > 0
             && Pulses >= 1
-            && double.IsFinite(SignatureRadius) && SignatureRadius > 0
+            // a strike with no damage (the transport field's) has no signature to scale: its static data has none
+            && (SignatureRadius > 0 || Damage.All(d => d == 0)) && double.IsFinite(SignatureRadius)
             && double.IsFinite(ImmobileMs) && ImmobileMs >= 0
             && double.IsFinite(DebuffMs) && DebuffMs >= 0
             && (SweepEnd is null || (SweepEnd.Count == 3 && SweepEnd.All(double.IsFinite) && SweepEnd.Any(c => c != 0)))
@@ -433,6 +435,26 @@ public abstract record SimAction
             && double.IsFinite(NeutAmount) && NeutAmount >= 0
             && double.IsFinite(NeutRadius) && NeutRadius >= 0
             && double.IsFinite(NeutSignatureRadius) && NeutSignatureRadius >= 0;
+    }
+
+    /// <summary>
+    /// The Gravitational Transportation Field Oscillator's field (tag 15, protocol 29): a sphere strike (shape 4) whose sphere is centred on the aim point, then
+    /// at its pulse the ships of <paramref name="Moved"/> inside it are carried to <paramref name="Destination"/> (an offset from the firing ship's centre), and
+    /// the capital ships of <paramref name="Held"/> inside it cannot warp for <paramref name="WarpBlockMs"/>. The ship ids are the host's list.
+    /// </summary>
+    public sealed record Field(
+        Strike Sphere,
+        IReadOnlyList<double> Destination,
+        double WarpBlockMs,
+        IReadOnlyList<long> Moved,
+        IReadOnlyList<long> Held) : SimAction
+    {
+        /// <summary>Whether the field is one the simulation runs: a sphere strike, a finite destination and warp block, and at most 4096 ids a list.</summary>
+        public bool IsValid =>
+            Sphere.IsValid && Sphere.Shape == 4
+            && Destination.Count == 3 && Destination.All(double.IsFinite)
+            && double.IsFinite(WarpBlockMs) && WarpBlockMs >= 0
+            && Moved.Count <= 4096 && Held.Count <= 4096;
     }
 }
 

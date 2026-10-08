@@ -10,22 +10,22 @@ namespace Eve.Services.Space.Effects;
 /// expiry. Its cloak is disallowed while fitted (5425), and the lancer is immobile for 30 s and cannot jump or dock for 2 min (SDE 2427 = 120000).
 /// </summary>
 /// <remarks>
-/// NOT ACTIVATABLE YET: every disruptive lance carries <c>activationRequiresActiveSiegeModule</c> (5426) = 1, and the reference refuses it without an active siege
-/// module. The simulation does not track siege activation (<c>moduleBonusSiegeModule</c> is modifier-only here), so the requirement cannot be checked: the
-/// activation is refused by name (<c>SUPERWEAPON_SIEGE_STATE_NOT_TRACKED</c>), never accepted. The body (the strike with the debuff, protocol 28) is built and
-/// tested so that the siege state can enable it. The cloak disallow (5425) is not enforced (no fitted-module state in the simulation: D10).
+/// The siege requirement: every disruptive lance carries <c>activationRequiresActiveSiegeModule</c> (5426) = 1, and the reference refuses it unless a siege
+/// module is active on the ship (<c>ACTIVE_SIEGE_MODULE_REQUIRED</c>, EveJS <c>moduleActivationRequiresActiveSiegeModule</c>). The ship's state already tracks
+/// the started modules (the snapshot's <c>StateOf</c>), so the check reads an active module carrying <c>moduleBonusSiegeModule</c>. The cloak disallow (5425) is
+/// refused by the cloak handler while the lance is fitted (<see cref="SmartbombEffect"/>).
 /// </remarks>
 internal sealed class DisruptiveLanceEffect : ShipEffect
 {
     public override IReadOnlyCollection<string> EffectNames { get; } = ["debuffLance"];
 
-    protected override bool Implemented => false;
+    private const string SiegeModuleEffect = "moduleBonusSiegeModule";
 
     protected override string? Refusal(ModuleEffectContext module)
     {
-        if (module.Value(ActivationRequiresActiveSiegeModule, 0) > 0)
+        if (module.Value(ActivationRequiresActiveSiegeModule, 0) > 0 && !module.IsEffectActiveOnShip(SiegeModuleEffect))
         {
-            return "SUPERWEAPON_SIEGE_STATE_NOT_TRACKED";
+            return "ACTIVE_SIEGE_MODULE_REQUIRED";
         }
         if (module.Aim is not { Count: 3 } aim || DoomsdayStrike.Unit(aim) is null)
         {

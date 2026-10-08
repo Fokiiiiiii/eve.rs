@@ -25,6 +25,9 @@ internal sealed class ModuleEffectContext
     public TypeDef Type => Context.Type;
     public long ModuleId => Context.ItemId;
     public Eve.Inventory.Item Module { get; }
+
+    /// <summary>The other capsuleer ships of the system (the host's list): what a transport field carries or holds.</summary>
+    public IReadOnlyList<TransportNeighbour> Neighbours => Snapshot.Neighbours;
     public long TargetId => Context.TargetId;
     public int Repeat => Context.Repeat;
 
@@ -36,6 +39,14 @@ internal sealed class ModuleEffectContext
 
     /// <summary>The module's attributes after dogma.</summary>
     public IReadOnlyDictionary<int, double> Attributes { get; }
+
+    /// <summary>
+    /// Whether a fitted module of the ship is switched on now and carries the effect <paramref name="effectName"/> (the host's state of the ship: the
+    /// modules the pilot has started are active in the snapshot). An active siege module (<c>moduleBonusSiegeModule</c>) is read this way.
+    /// </summary>
+    public bool IsEffectActiveOnShip(string effectName) => Snapshot.Fitted.Any(fitted =>
+        Snapshot.StateOf(fitted.Id) is ItemState.Active or ItemState.Overloaded
+        && Statics.Type(fitted.TypeId)?.EffectIds.Select(Statics.Effect).Any(effect => effect is { } found && found.Name.Equals(effectName, StringComparison.OrdinalIgnoreCase)) == true);
 
     public double Value(int attribute, double fallback) => Attributes.TryGetValue(attribute, out var value) && double.IsFinite(value) ? value : fallback;
 

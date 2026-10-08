@@ -25,7 +25,7 @@ so the choice is recorded here.
    returns the stored result and never grants again.
 5. **Stop conditions.** Target loss and deactivation stop a parked cycle without a grant.
 6. **Host restart with a cycle in flight.** The sim drops the parked effect on disconnect and re-sends the same `cycle_id` after
-   reconnect; the host dedupes (MIN-X2). EveJS behaviour here is unverified, so the choice is recorded in `DEVIATIONS.md`.
+   reconnect; the host dedupes (MIN-X2). EveJS's behaviour here is not checked against the client, so the choice is recorded in `DEVIATIONS.md`.
 7. **Wire batch.** The pair is part of the one protocol bump of its wire batch, done once by the integrator (SW-D8, MIN-D2).
    Individual packages do not bump `ProtocolVersion` (`SimCodec.cs:30` and `crates/eve-space/src/link.rs:17`, both 20 on main).
 
@@ -34,7 +34,7 @@ so the choice is recorded here.
 * Two codec pairs (drone and module) to keep in sync; both are fixture-checked.
 * Drone tests and `drone_flight.json` stay unchanged, which is the proof that the drone path was not disturbed.
 * The OnOreMined notice is sent after commit (MIN-D11, FOUNDATIONS rule 2), so a crash after commit can drop one client message.
-  This is acceptable only if the client resyncs on login, which is unverified.
+  This is acceptable only if the client resyncs on login, which the client code read so far does not show.
 
 ## Decisions made in the foundation (protocol 23)
 
@@ -113,3 +113,4 @@ These are part of the wire contract of epoch 28. They add two fields to the end 
 * 26: the titan doomsday (`SimAction` tag 14, `Doomsday`). `ProtocolVersion` 25 -> 26 in `SimCodec.cs` and `crates/eve-space/src/link.rs`; `oracle/fixtures/simlink/messages.json` regenerated (Hello and HelloAck at 26) with a valid Judgment hit and one invalid frame (a negative delay). Bumped once, in this batch (local, not pushed).
 * 27: the target's energy warfare resistance (`energyWarfareResistance`, 2045) as a sixth number of the ship's sensors block. `ProtocolVersion` 26 -> 27 in `SimCodec.cs` and `crates/eve-space/src/link.rs`; `oracle/fixtures/simlink/messages.json` regenerated (Hello and HelloAck at 27, the Ibis at 0.25). Bumped once, in this batch (local, not pushed).
 * 28: a strike's `debuffMs` (the disruptive lance's debuff: no warp, jump or dock, half the remote repair) and its sweep (a reaper's axis from its start to its end point over the window). `ProtocolVersion` 27 -> 28 in `SimCodec.cs` and `crates/eve-space/src/link.rs`; `oracle/fixtures/simlink/messages.json` regenerated (Hello and HelloAck at 28). Bumped once.
+* 29: the transport field of the Gravitational Transportation Field Oscillator (`SimAction` tag 15, `Field`): a strike of shape 4 (a sphere centred on the aim point, radius `doomsdayAOERange`), then the destination offset, the warp block of the held capitals (ms), and two lists of ship ids (a u32 count, then each i64: the carried ships and the held ships). The simulation carries the ships of `moved` inside the sphere to the destination and holds those of `held` (`warp_blocked_until`, refused `WARP_BLOCKED`). `ProtocolVersion` 28 -> 29 in `SimCodec.cs` and `crates/eve-space/src/link.rs`; `oracle/fixtures/simlink/messages.json` regenerated (Hello and HelloAck at 29) with a valid field (one moved and one held ship) and the fixture mapper of both codecs reads the `field` kind. The lists are the host's (`ShipSnapshot.Neighbours`), not a sim query (decision D3). Source conflicts and their resolution: DEVIATIONS 135 and 141.

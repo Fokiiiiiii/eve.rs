@@ -2228,6 +2228,124 @@ mod tests {
         assert_eq!(hits_told(&scene.poll(now + 9 * SECOND), PLAYER), 0, "the pulses are spent: no more hits");
     }
 
+    /// A transport field (protocol 29): the sphere of 10 km centred `length` metres along `direction`, one pulse at 2 s, the static data's windows.
+    fn field_effect(
+        module_id: i64,
+        direction: [f64; 3],
+        length: f64,
+        destination: [f64; 3],
+        warp_block_ms: f64,
+        moved: Vec<i64>,
+        held: Vec<i64>,
+    ) -> Effect {
+        let strike = crate::strike::Strike {
+            shape: crate::strike::StrikeShape::Sphere,
+            direction,
+            length,
+            radius: 10_000.0,
+            warning_ms: 2_000.0,
+            pulse_ms: 1_000.0,
+            pulses: 1,
+            damage: [0.0; 4],
+            signature_radius: 0.0,
+            immobile_ms: 30_000.0,
+            no_jump_ms: 300_000.0,
+            neut_amount: 0.0,
+            neut_radius: 0.0,
+            neut_signature_radius: 0.0,
+            debuff_ms: 0.0,
+            sweep_end: None,
+        };
+        Effect {
+            action: Some(crate::modules::Action::Field { strike, destination, warp_block_ms, moved, held }),
+            ..strike_effect(module_id, strike)
+        }
+    }
+
+    #[test]
+    fn a_transport_field_carries_the_ships_of_its_sphere_and_holds_the_capitals_in_it() {
+        // the npc sits 2 km ahead, at the centre of the sphere: it is carried to 5 km above the firing ship and stops
+        let (mut scene, npc, now) = duel();
+        let out = scene.activate(
+            PLAYER,
+            field_effect(
+                spec().ship_id + 1,
+                [1.0, 0.0, 0.0],
+                2_000.0,
+                [0.0, 0.0, 5_000.0],
+                60_000.0,
+                vec![NPC_SHIP],
+                vec![],
+            ),
+            now + 120 * SECOND,
+        );
+        assert!(!out.iter().any(|o| matches!(o, Out::Refused { .. })), "{out:?}");
+        scene.poll(now + 123 * SECOND);
+        // the firing ship is held through the pulse: its centre is the pulse's centre (within a metre of the settling it had before)
+        let firing = scene.pilots[&PLAYER].ship.position;
+        let carried = scene.pilots[&npc].ship.position;
+        let expected = [firing.x, firing.y, firing.z + 5_000.0];
+        assert!(
+            [carried.x - expected[0], carried.y - expected[1], carried.z - expected[2]]
+                .iter()
+                .all(|d| d.abs() < 1.0),
+            "carried to the destination offset from the firing ship: {:?} vs {expected:?}",
+            (carried.x, carried.y, carried.z)
+        );
+        assert_eq!(scene.pilots[&npc].ship.velocity, eve_destiny::Vec3::new(0.0, 0.0, 0.0), "it stops");
+
+        // the same field holds a capital in its sphere: it is not carried, and it cannot warp for 60 s after the pulse
+        let (mut scene, npc, now) = duel();
+        let before = scene.pilots[&npc].ship.position;
+        scene.activate(
+            PLAYER,
+            field_effect(
+                spec().ship_id + 1,
+                [1.0, 0.0, 0.0],
+                2_000.0,
+                [0.0, 0.0, 5_000.0],
+                60_000.0,
+                vec![],
+                vec![NPC_SHIP],
+            ),
+            now + 120 * SECOND,
+        );
+        scene.poll(now + 123 * SECOND);
+        assert_eq!(scene.pilots[&npc].ship.position, before, "a held ship is not carried");
+        let warp =
+            Command::WarpToPoint { destination: eve_destiny::Vec3::new(9_000_000.0, 0.0, 0.0), range: 0.0 };
+        let refused = scene.command(npc, warp.clone(), now + 124 * SECOND);
+        assert_eq!(
+            refused,
+            [Out::Refused { session: npc, command: 21, reason: "WARP_BLOCKED" }],
+            "no warp inside the 60 s"
+        );
+        let free = scene.command(npc, warp, now + 200 * SECOND);
+        assert!(
+            !free.iter().any(|o| matches!(o, Out::Refused { reason: "WARP_BLOCKED", .. })),
+            "after the block: {free:?}"
+        );
+
+        // a field aimed away from the npc leaves it where it is
+        let (mut scene, npc, now) = duel();
+        let before = scene.pilots[&npc].ship.position;
+        scene.activate(
+            PLAYER,
+            field_effect(
+                spec().ship_id + 1,
+                [-1.0, 0.0, 0.0],
+                30_000.0,
+                [0.0, 0.0, 5_000.0],
+                60_000.0,
+                vec![NPC_SHIP],
+                vec![NPC_SHIP],
+            ),
+            now + 120 * SECOND,
+        );
+        scene.poll(now + 123 * SECOND);
+        assert_eq!(scene.pilots[&npc].ship.position, before, "outside the sphere: neither carried nor held");
+    }
+
     #[test]
     fn a_strike_does_not_hit_what_is_behind_or_off_its_axis() {
         let (mut scene, npc, _) = duel();

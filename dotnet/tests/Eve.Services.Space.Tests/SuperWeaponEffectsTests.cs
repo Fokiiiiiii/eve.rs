@@ -26,11 +26,11 @@ public class SuperWeaponEffectsTests
         ["doomsdayBeamDOT"] = "TARGET_POINT_REQUIRED",
         // the reaper has a body: without its two points it is refused for them (A_reaper...)
         ["doomsdaySlash"] = "SLASH_POINTS_REQUIRED",
-        // the disruptive lance needs an active siege module, which the simulation does not track (A_disruptive_lance...)
-        ["debuffLance"] = "SUPERWEAPON_SIEGE_STATE_NOT_TRACKED",
+        // the disruptive lance needs an active siege module on the ship; alone it is refused for the siege (A_disruptive_lance...)
+        ["debuffLance"] = "ACTIVE_SIEGE_MODULE_REQUIRED",
         // the cone has a body: without a point it is refused for the point (its aimed package is tested in A_cone...)
         ["doomsdayConeDOT"] = "TARGET_POINT_REQUIRED",
-        ["doomsdayHOG"] = "SUPERWEAPON_HOG_NOT_IMPLEMENTED",
+        ["doomsdayHOG"] = "TARGET_POINT_REQUIRED",
         // P.A.N.I.C. 42522: its own handler (IndustrialInvulnerabilityEffect), not part of this family
         ["moduleBonusIndustrialInvulnerability"] = PendingModuleEffect.NotImplemented,
     };
@@ -105,31 +105,88 @@ public class SuperWeaponEffectsTests
     }
 
     [PgFact]
-    public async Task A_disruptive_lance_is_refused_for_the_siege_it_cannot_see_and_its_strike_carries_the_debuff()
+    public async Task A_disruptive_lance_needs_an_active_siege_module_and_its_strike_carries_the_debuff()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
+        await statics.EnsureTypesAsync([Ship, 77398, SiegeModuleI]);
+
+        // the Atgeir (77398) carries activationRequiresActiveSiegeModule (5426) = 1: alone, or with a siege module that is fitted but not switched on, it is refused
+        var alone = FittedModules(statics, (77398, ItemState.Online));
+        Assert.Equal("ACTIVE_SIEGE_MODULE_REQUIRED", ModulePackages.Of(alone.Snapshot, statics, alone.ModuleIds[0], "debuffLance", 0, 1, [1.0, 0.0, 0.0]).Reason);
+        Assert.Null(ModulePackages.Of(alone.Snapshot, statics, alone.ModuleIds[0], "debuffLance", 0, 1, [1.0, 0.0, 0.0]).Effect);
+        var offline = FittedModules(statics, (77398, ItemState.Online), (SiegeModuleI, ItemState.Online));
+        Assert.Equal("ACTIVE_SIEGE_MODULE_REQUIRED", ModulePackages.Of(offline.Snapshot, statics, offline.ModuleIds[0], "debuffLance", 0, 1, [1.0, 0.0, 0.0]).Reason);
+
+        // with the siege module switched on, the lance builds its strike: the static data's cylinder, warm-up, debuff and windows
+        var sieged = FittedModules(statics, (77398, ItemState.Online), (SiegeModuleI, ItemState.Active));
+        var result = ModulePackages.Of(sieged.Snapshot, statics, sieged.ModuleIds[0], "debuffLance", 0, 1, [1.0, 0.0, 0.0]);
+        Assert.Null(result.Reason);
+        var strike = Assert.IsType<SimAction.Strike>(result.Effect!.Action);
+        Assert.True(strike.IsValid);
+        Assert.Equal(1, strike.Shape);
+        Assert.Equal((2500.0, 15000.0, 1000.0, 16), (strike.Radius, strike.WarningMs, strike.PulseMs, strike.Pulses));
+        Assert.Equal((30000.0, 120000.0, 60000.0), (strike.ImmobileMs, strike.NoJumpMs, strike.DebuffMs));
+    }
+
+    [PgFact]
+    public async Task A_fitted_disruptive_lance_disallows_the_cloak_while_it_is_fitted()
     {
         await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
         await statics.EnsureTypesAsync([Ship, 77398]);
+        var cloak = (await statics.TypesInGroupsAsync(["Cloaking Device"]))
+            .First(type => type.EffectIds.Select(statics.Effect).Any(effect => effect is { Name: "cloaking" or "cloakingWarpSafe" or "cloakingPrototype" }));
+        await statics.EnsureTypesAsync([cloak.TypeId]);
+        var canCloak = statics.AttributeId("canCloak") ?? throw new InvalidOperationException("The SDE is missing canCloak.");
+        var cloakEffect = cloak.EffectIds.Select(statics.Effect).First(effect => effect is { Name: "cloaking" or "cloakingWarpSafe" or "cloakingPrototype" })!.Name;
 
-        // the Atgeir (77398) carries activationRequiresActiveSiegeModule (5426) = 1: the siege is not tracked by the simulation, so it is refused by name
-        var lance = FittedModule(statics, 77398);
-        Assert.Equal("SUPERWEAPON_SIEGE_STATE_NOT_TRACKED", ModulePackages.Of(lance.Snapshot, statics, lance.ModuleId, "debuffLance", 0, 1, [1.0, 0.0, 0.0]).Reason);
-        Assert.Null(ModulePackages.Of(lance.Snapshot, statics, lance.ModuleId, "debuffLance", 0, 1, [1.0, 0.0, 0.0]).Effect);
+        var bare = FittedModules(statics, (cloak.TypeId, ItemState.Online));
+        bare.Snapshot.World.SetValue(ShipItemId, canCloak, 1);
+        Assert.Null(ModulePackages.Of(bare.Snapshot, statics, bare.ModuleIds[0], cloakEffect, 0, 1).Reason);
+
+        // the same ship with a disruptive lance fitted (switched off): the cloak is refused, whatever the lance's state
+        var withLance = FittedModules(statics, (cloak.TypeId, ItemState.Online), (77398, ItemState.Offline));
+        withLance.Snapshot.World.SetValue(ShipItemId, canCloak, 1);
+        Assert.Equal("CLOAK_DISALLOWED", ModulePackages.Of(withLance.Snapshot, statics, withLance.ModuleIds[0], cloakEffect, 0, 1).Reason);
     }
 
     [PgFact]
-    public async Task A_hog_is_refused_before_any_fuel_is_read_and_a_cone_is_built_from_its_static_data_when_aimed()
+    public async Task A_hog_builds_a_transport_field_from_its_static_data_when_aimed_and_a_cone_is_built_from_its_data()
     {
         await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var statics = await DogmaStatic.LoadAsync(new SdeReader(source));
         await statics.EnsureTypesAsync([Ship, 40633, 40634]);
 
-        // the HOG's transport has no body (its semantics are not verified): refused before ShipEffect.Build, so no BurnsFuel is set
+        // the Gravitational Transportation Field Oscillator (consumption 2000): unaimed it is refused for the point; aimed, it builds a transport field
         Assert.Equal(2000, statics.Type(40634)!.Attributes[ModuleAttributes.ConsumptionQuantity]);
         var hog = FittedModule(statics, 40634);
-        var hogResult = ModulePackages.Of(hog.Snapshot, statics, hog.ModuleId, "doomsdayHOG", 0, 1, [0.6, 0.0, 0.8]);
-        Assert.Equal("SUPERWEAPON_HOG_NOT_IMPLEMENTED", hogResult.Reason);
-        Assert.Null(hogResult.Effect);
+        Assert.Equal("TARGET_POINT_REQUIRED", ModulePackages.Of(hog.Snapshot, statics, hog.ModuleId, "doomsdayHOG", 0, 1).Reason);
+        var hogResult = ModulePackages.Of(hog.Snapshot, statics, hog.ModuleId, "doomsdayHOG", 0, 1, [6000.0, 0.0, 8000.0]);
+        Assert.Null(hogResult.Reason);
+        Assert.True(hogResult.Effect!.BurnsFuel);
+        var field = Assert.IsType<SimAction.Field>(hogResult.Effect.Action);
+        Assert.True(field.IsValid);
+        Assert.Equal((4, 10000.0, 10000.0, 15000.0), (field.Sphere.Shape, field.Sphere.Length, field.Sphere.Radius, field.Sphere.WarningMs));
+        Assert.Equal((30000.0, 300000.0, 30000.0), (field.Sphere.ImmobileMs, field.Sphere.NoJumpMs, field.Sphere.NeutAmount));
+        Assert.Equal((10000.0, 20000.0), (field.Sphere.NeutRadius, field.Sphere.NeutSignatureRadius));
+        Assert.Equal(new[] { 6000.0, 0.0, 8000.0 }, field.Destination.ToArray());
+        Assert.Equal(60000.0, field.WarpBlockMs);
+        Assert.Empty(field.Moved);
+        Assert.Empty(field.Held);
+
+        // the host's list of the system: the capsuleer ship that is not a capital is carried, the capital is held
+        var listed = ModulePackages.Of(hog.Snapshot.WithNeighbours([new TransportNeighbour(91, false), new TransportNeighbour(92, true)]), statics, hog.ModuleId, "doomsdayHOG", 0, 1, [6000.0, 0.0, 8000.0]);
+        var listedField = Assert.IsType<SimAction.Field>(listed.Effect!.Action);
+        Assert.Equal(new long[] { 91 }, listedField.Moved.ToArray());
+        Assert.Equal(new long[] { 92 }, listedField.Held.ToArray());
+
+        // the structure variant (category 66, 47068): module and wiring only, refused by name, never a success
+        await statics.EnsureTypesAsync([47068]);
+        var structure = FittedModule(statics, 47068);
+        var structureResult = ModulePackages.Of(structure.Snapshot, statics, structure.ModuleId, "doomsdayHOG", 0, 1, [6000.0, 0.0, 8000.0]);
+        Assert.Equal("STRUCTURE_SUPERWEAPON_NOT_IMPLEMENTED", structureResult.Reason);
+        Assert.Null(structureResult.Effect);
 
         // the Bosonic Field Generator (713 16275 x 714 2000): aimed, it builds the strike of its data, and the fuel is the shared mechanism's
         Assert.Equal(2000, statics.Type(40633)!.Attributes[ModuleAttributes.ConsumptionQuantity]);
@@ -232,5 +289,34 @@ public class SuperWeaponEffectsTests
             World = world,
         };
         return (snapshot, moduleId);
+    }
+
+    /// <summary>The Siege Module I (20280), whose <c>moduleBonusSiegeModule</c> is the active siege a disruptive lance needs.</summary>
+    private const int SiegeModuleI = 20280;
+
+    /// <summary>The ship item id of <see cref="FittedModules"/>.</summary>
+    private const long ShipItemId = 75002;
+
+    /// <summary>
+    /// A ship with each module fitted in the state given. A started module is active in the snapshot, as the space host sets it (<c>FlownShipAsync</c>).
+    /// </summary>
+    private static (ShipSnapshot Snapshot, long[] ModuleIds) FittedModules(DogmaStatic statics, params (int TypeId, ItemState State)[] modules)
+    {
+        const long characterId = 75001;
+        const int moduleFlag = 11;
+        var ship = new Eve.Inventory.Item(ShipItemId, Ship, characterId, 60003760, 0, 1, true, null);
+        var world = new DogmaWorld(statics, characterId, ShipItemId);
+        world.Add(new DogmaItem(ShipItemId, Ship, characterId, ship.LocationId, ship.Flag, ItemState.Online));
+        var fitted = new List<Eve.Inventory.Item>();
+        var ids = new long[modules.Length];
+        for (var index = 0; index < modules.Length; index++)
+        {
+            var moduleId = 75003 + index;
+            ids[index] = moduleId;
+            fitted.Add(new Eve.Inventory.Item(moduleId, modules[index].TypeId, characterId, ShipItemId, moduleFlag + index, 1, true, null));
+            world.Add(new DogmaItem(moduleId, modules[index].TypeId, characterId, ShipItemId, moduleFlag + index, modules[index].State));
+        }
+        var snapshot = new ShipSnapshot { Character = null!, Ship = ship, Fitted = fitted, Charges = [], Skills = [], World = world };
+        return (snapshot, ids);
     }
 }

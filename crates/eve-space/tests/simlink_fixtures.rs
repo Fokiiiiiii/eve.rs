@@ -307,6 +307,47 @@ fn effect_of(case: &Value) -> Effect {
                     no_jump_ms: a["noJumpMs"].as_f64().unwrap(),
                 };
             }
+            if a["kind"] == "field" {
+                // the transport field: its sphere is a strike (the nested object), then the destination, the warp block and the two id lists
+                let s = &a["strike"];
+                let number = |v: &Value, key: &str| v[key].as_f64().unwrap();
+                let vector =
+                    |v: &Value| [v[0].as_f64().unwrap(), v[1].as_f64().unwrap(), v[2].as_f64().unwrap()];
+                let ids = |key: &str| {
+                    a[key].as_array().unwrap().iter().map(|id| id.as_i64().unwrap()).collect::<Vec<i64>>()
+                };
+                let damage = s["damage"].as_array().unwrap();
+                return Action::Field {
+                    strike: eve_space::strike::Strike {
+                        shape: eve_space::strike::StrikeShape::from_wire(s["shape"].as_u64().unwrap() as u8)
+                            .expect("a shape the simulation runs"),
+                        direction: vector(&s["direction"]),
+                        length: number(s, "length"),
+                        radius: number(s, "radius"),
+                        warning_ms: number(s, "warningMs"),
+                        pulse_ms: number(s, "pulseMs"),
+                        pulses: s["pulses"].as_i64().unwrap() as i32,
+                        damage: [
+                            damage[0].as_f64().unwrap(),
+                            damage[1].as_f64().unwrap(),
+                            damage[2].as_f64().unwrap(),
+                            damage[3].as_f64().unwrap(),
+                        ],
+                        signature_radius: number(s, "signatureRadius"),
+                        immobile_ms: number(s, "immobileMs"),
+                        no_jump_ms: number(s, "noJumpMs"),
+                        neut_amount: number(s, "neutAmount"),
+                        neut_radius: number(s, "neutRadius"),
+                        neut_signature_radius: number(s, "neutSignatureRadius"),
+                        debuff_ms: s["debuffMs"].as_f64().unwrap_or(0.0),
+                        sweep_end: None,
+                    },
+                    destination: vector(&a["destination"]),
+                    warp_block_ms: number(a, "warpBlockMs"),
+                    moved: ids("moved"),
+                    held: ids("held"),
+                };
+            }
             if a["kind"] == "strike" {
                 let direction = a["direction"].as_array().unwrap();
                 let damage = a["damage"].as_array().unwrap();

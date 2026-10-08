@@ -15,7 +15,7 @@ namespace Eve.Services.Space.Effects;
 /// The target is checked by the simulation (a locked ship of the scene: TARGET_NOT_LOCKED, TARGET_NOT_FOUND) and the host refuses a missing target
 /// (TARGET_REQUIRED). A titan has no lightning attributes (2104 to 2106), so the reference's chain is one ship: no chain is run. The hit takes no
 /// signature factor (the reference applies none to a doomsday). The structure variant (category 66) is a different effect, refused by name (O5).
-/// Not verified: the titan's graphic (its FX comes from <c>SuperWeaponFx</c>, UNVERIFIED in the client) and the client text of the windows' refusals.
+/// Not verified: the titan's graphic (its FX comes from <c>SuperWeaponFx</c>, the static data's effect rows) and the client text of the windows' refusals.
 /// </remarks>
 internal sealed class DoomsdayTitanEffect : ShipEffect
 {

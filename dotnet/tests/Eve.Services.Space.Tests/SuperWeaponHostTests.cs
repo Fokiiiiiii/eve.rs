@@ -49,17 +49,34 @@ public class SuperWeaponHostTests
     }
 
     [PgFact]
-    public async Task A_hog_is_refused_by_name_through_the_module_order_and_takes_no_fuel_and_sends_nothing()
+    public async Task A_hog_aimed_at_a_point_goes_to_the_simulation_as_a_transport_field_and_its_fuel_is_taken_when_it_asks()
     {
+        // the Gravitational Transportation Field Oscillator (protocol 29): its sphere, centred on the aimed point, goes to the simulation as a field; the
+        // fuel is the shared mechanism's (consumption 2000 of Strontium Clathrates per cycle), taken cycle by cycle when the simulation asks
         await using var rig = await Rig.CreateAsync();
         var flying = await DroneHostTests.FlyingWithADroneAsync(rig, minerTypeId: GravitationalOscillator);
         await PutStrontiumAsync(rig, flying, 2000);
+        var route = new SuperWeaponService(rig.Space);
 
-        var result = await rig.Space.ActivateAsync(flying.Session, flying.Module, "doomsdayHOG", 0, 1, CancellationToken.None);
+        var accepted = await route.ActivatePointTargetedAsync(flying.Session, flying.Module, DoomsdayHogEffect, Point(6000, 0, 8000), CancellationToken.None).AsTask();
 
-        Assert.Equal("SUPERWEAPON_HOG_NOT_IMPLEMENTED", result?.Reason);
-        Assert.Empty(rig.Sim.Heard.OfType<SimActivate>());
+        Assert.True(accepted);
+        var activate = Assert.Single(rig.Sim.Heard.OfType<SimActivate>());
+        var field = Assert.IsType<SimAction.Field>(activate.Effect.Action);
+        Assert.True(field.IsValid);
+        // the sphere: centred on the aim point 10 km away, radius doomsdayAOERange (10 km), one pulse at the 15 s warning
+        Assert.Equal((4, 10000.0, 15000.0, 1), (field.Sphere.Shape, field.Sphere.Length, field.Sphere.WarningMs, field.Sphere.Pulses));
+        Assert.Equal(10000.0, field.Sphere.Radius);
+        Assert.Equal(new[] { 6000.0, 0.0, 8000.0 }, field.Destination.ToArray());
+        Assert.Equal(60000.0, field.WarpBlockMs);
+        // the rig has no other ship in the system: nothing is carried or held
+        Assert.Empty(field.Moved);
+        Assert.Empty(field.Held);
         Assert.Equal(2000, await QuantityAsync(rig, flying));
+        var paid = await ModuleFuelHostTests.SettleAsync(rig, ModuleFuelHostTests.FuelCycle(flying, flying.Module, 1));
+        Assert.True(paid.Accepted, paid.Reason);
+        Assert.Equal(2000, paid.DeliveredUnits);
+        Assert.Equal(0, await QuantityAsync(rig, flying));
     }
 
     [PgFact]
@@ -186,22 +203,6 @@ public class SuperWeaponHostTests
         Assert.Equal("TARGET_REQUIRED", result?.Reason);
         Assert.Empty(rig.Sim.Heard.OfType<SimActivate>());
         Assert.Equal(LanceFuelPerCycle, await QuantityOfAsync(rig, flying, LanceFuel));
-    }
-
-    [PgFact]
-    public async Task A_hog_through_superWeaponMgr_is_refused_with_the_user_error_that_names_it_and_takes_no_fuel()
-    {
-        await using var rig = await Rig.CreateAsync();
-        var flying = await DroneHostTests.FlyingWithADroneAsync(rig, minerTypeId: GravitationalOscillator);
-        await PutStrontiumAsync(rig, flying, 2000);
-        var route = new SuperWeaponService(rig.Space);
-
-        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
-            route.ActivatePointTargetedAsync(flying.Session, flying.Module, DoomsdayHogEffect, Point(0.6, 0, 0.8), CancellationToken.None).AsTask());
-
-        Assert.Equal("Gravitational Transportation Field Oscillator cannot be activated.", NotifyText(error));
-        Assert.Empty(rig.Sim.Heard.OfType<SimActivate>());
-        Assert.Equal(2000, await QuantityAsync(rig, flying));
     }
 
     [PgFact]

@@ -133,6 +133,13 @@ def action(a):
     # the SimAction tag 14 (ADR 0013 epoch 26): a titan doomsday, one hit on the locked target after a delay, the ship held for its windows
     if kind == "doomsday":
         return bytes([14]) + struct.pack("<d", a["delayMs"]) + struct.pack("<4d", *a["damage"]) + struct.pack("<2d", a["immobileMs"], a["noJumpMs"])
+    # the SimAction tag 15 (protocol 29): the Gravitational Transportation Field Oscillator's field, a sphere strike (shape 4) whose body follows the tag, then the
+    # offset of the destination from the firing ship, the warp block of the held capitals (ms), and the ship ids moved and held (a u32 count, then each as i64)
+    if kind == "field":
+        strike = action(dict(a["strike"], kind="strike"))[1:]
+        ids = lambda values: struct.pack("<I", len(values)) + b"".join(struct.pack("<q", v) for v in values)
+        return (bytes([15]) + strike + struct.pack("<3d", *a["destination"]) + struct.pack("<d", a["warpBlockMs"])
+                + ids(a["moved"]) + ids(a["held"]))
     if kind == "resistanceShift":
         # a reactive armor hardener: the seed (em, thermal, kinetic, explosive), the most a kind gives up a cycle, the attributes it tells
         return bytes([12]) + struct.pack("<4d", *a["seed"]) + struct.pack("<d", a["shift"]) + struct.pack("<4i", *a["attributeIds"])
@@ -354,8 +361,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 28},
-    {"name": "hello ack", "kind": "HelloAck", "version": 28, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 29},
+    {"name": "hello ack", "kind": "HelloAck", "version": 29, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -788,6 +795,17 @@ valid = [
                 "durationMs": 300000.0, "capacitorNeed": 35000.0, "repeat": 1, "targetId": "1000000000002", "burnsFuel": True,
                 "action": {"kind": "doomsday", "delayMs": 9000.0, "damage": [2400000.0, 0.0, 0.0, 0.0],
                            "immobileMs": 30000.0, "noJumpMs": 300000.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate the Gravitational Transportation Field Oscillator (HOG)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002818", "moduleType": 40634, "effectId": 6474, "fx": "",
+                "durationMs": 300000.0, "capacitorNeed": 30000.0, "repeat": 1, "targetId": "0", "burnsFuel": True,
+                "action": {"kind": "field",
+                           "strike": {"shape": 4, "direction": [0.6, 0.0, 0.8], "length": 40000.0, "radius": 10000.0,
+                                      "warningMs": 15000.0, "pulseMs": 1000.0, "pulses": 1, "damage": [0.0, 0.0, 0.0, 0.0],
+                                      "signatureRadius": 0.0, "immobileMs": 30000.0, "noJumpMs": 300000.0,
+                                      "neutAmount": 30000.0, "neutRadius": 10000.0, "neutSignatureRadius": 20000.0},
+                           "destination": [1000.0, 0.0, -2000.0], "warpBlockMs": 60000.0,
+                           "moved": [1000000000003], "held": [1000000000004]},
                 "onChanges": [], "offChanges": []}},
     {"name": "activate an auto-targeting system", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 1101, "effectId": 11, "fx": "effects.TargetHostiles",

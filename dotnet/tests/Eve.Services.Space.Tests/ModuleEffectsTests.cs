@@ -460,9 +460,37 @@ public class ModuleEffectsTests
                 continue;
             }
 
-            var attributeNames = effectName.Equals("emergencyHullEnergizer", StringComparison.OrdinalIgnoreCase)
-                ? new[] { "hullEmDamageResonance", "hullExplosiveDamageResonance", "hullKineticDamageResonance", "hullThermalDamageResonance" }
-                : effectName.Equals("adaptiveArmorHardener", StringComparison.OrdinalIgnoreCase)
+            if (effectName.Equals("emergencyHullEnergizer", StringComparison.OrdinalIgnoreCase))
+            {
+                // the ship's resonance of each damage type is multiplied (PostMul) by the module's own hull resonance of that type, never the module's attribute
+                // on the ship; the module is burned out to its hit points as it starts (emergencyHullEnergizer.py)
+                foreach (var (moduleName, shipName) in new[]
+                {
+                    ("hullEmDamageResonance", "emDamageResonance"),
+                    ("hullExplosiveDamageResonance", "explosiveDamageResonance"),
+                    ("hullKineticDamageResonance", "kineticDamageResonance"),
+                    ("hullThermalDamageResonance", "thermalDamageResonance"),
+                })
+                {
+                    var moduleAttribute = statics.AttributeId(moduleName)
+                        ?? throw new InvalidOperationException($"SDE build {catalogBuild} is missing Dogma attribute {moduleName}.");
+                    var shipAttribute = statics.AttributeId(shipName)
+                        ?? throw new InvalidOperationException($"SDE build {catalogBuild} is missing Dogma attribute {shipName}.");
+                    Assert.True(moduleType.Attributes.TryGetValue(moduleAttribute, out var multiplier), $"SDE build {catalogBuild}, type {moduleTypeId} is missing {moduleName}.");
+                    var before = world.Get(shipId, shipAttribute);
+                    var expected = Eve.Services.Space.Effects.ModuleAttributes.Six(before * multiplier);
+                    Assert.Contains(package.OnChanges, change => change.ItemId == shipId && change.AttributeId == shipAttribute && Math.Abs(change.Value - expected) < 0.000001);
+                    Assert.Contains(package.OffChanges, change => change.ItemId == shipId && change.AttributeId == shipAttribute && Math.Abs(change.Value - before) < 0.000001);
+                    Assert.DoesNotContain(package.OnChanges, change => change.ItemId == shipId && change.AttributeId == moduleAttribute);
+                }
+                var hitPoints = world.Get(moduleId, Eve.Services.Space.Effects.ModuleAttributes.ModuleHitPoints);
+                Assert.True(hitPoints > 0, $"SDE build {catalogBuild}, type {moduleTypeId} has no hit points.");
+                Assert.Contains(package.OnChanges, change => change.ItemId == moduleId
+                    && change.AttributeId == Eve.Services.Space.Effects.ModuleAttributes.ModuleDamage && Math.Abs(change.Value - hitPoints) < 0.000001);
+                continue;
+            }
+
+            var attributeNames = effectName.Equals("adaptiveArmorHardener", StringComparison.OrdinalIgnoreCase)
                     ? new[] { "armorEmDamageResonance", "armorExplosiveDamageResonance", "armorKineticDamageResonance", "armorThermalDamageResonance" }
                     : new[]
                     {

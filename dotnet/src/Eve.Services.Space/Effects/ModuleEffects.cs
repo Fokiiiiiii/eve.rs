@@ -95,12 +95,16 @@ internal sealed class TypeAttributeResistanceEffect : ShipEffect
         "armorThermalDamageResonance",
     ];
 
-    private static readonly string[] HullResonances =
+    /// <summary>
+    /// The hull resonances of the emergency hull energizer: the module's own hull attribute multiplies (PostMul) the ship's resonance of the same damage type
+    /// (the client's <c>MODIFIER_CHANGES</c>, <c>emergencyHullEnergizer.py</c>). Both are found by name in the static data.
+    /// </summary>
+    private static readonly (string Module, string Ship)[] HullResonanceMultipliers =
     [
-        "hullEmDamageResonance",
-        "hullExplosiveDamageResonance",
-        "hullKineticDamageResonance",
-        "hullThermalDamageResonance",
+        ("hullEmDamageResonance", "emDamageResonance"),
+        ("hullExplosiveDamageResonance", "explosiveDamageResonance"),
+        ("hullKineticDamageResonance", "kineticDamageResonance"),
+        ("hullThermalDamageResonance", "thermalDamageResonance"),
     ];
 
     public override IReadOnlyCollection<string> EffectNames { get; } =
@@ -110,21 +114,40 @@ internal sealed class TypeAttributeResistanceEffect : ShipEffect
     {
         var (duration, capacitor, durationAttribute) = module.Cycle();
         var shipId = module.Snapshot.Ship.Id;
-        var attributes = module.Effect.Name.Equals(EmergencyHullEnergizer, StringComparison.OrdinalIgnoreCase)
-            ? HullResonances
-            : ArmorResonances;
+        var emergency = module.Effect.Name.Equals(EmergencyHullEnergizer, StringComparison.OrdinalIgnoreCase);
         var on = new List<SimChange>();
         var off = new List<SimChange>();
-        foreach (var name in attributes)
+        if (emergency)
         {
-            if (module.Statics.AttributeId(name) is not { } attributeId)
+            foreach (var (moduleName, shipName) in HullResonanceMultipliers)
             {
-                continue;
+                if (module.Statics.AttributeId(moduleName) is not { } moduleAttribute
+                    || module.Statics.AttributeId(shipName) is not { } shipAttribute)
+                {
+                    continue;
+                }
+                var before = module.World.Get(shipId, shipAttribute);
+                off.Add(new SimChange(shipId, shipAttribute, before));
+                on.Add(new SimChange(shipId, shipAttribute, ModuleAttributes.Six(before * module.Value(moduleAttribute, 1))));
             }
-            var before = module.World.Get(shipId, attributeId);
-            var multiplier = module.Value(attributeId, 1);
-            off.Add(new SimChange(shipId, attributeId, before));
-            on.Add(new SimChange(shipId, attributeId, ModuleAttributes.Six(before * multiplier)));
+            // the energizer burns its own module out as it starts (emergencyHullEnergizer.py: damage = hp), and the module stays burned out when it stops
+            var burnOut = new SimChange(module.ModuleId, ModuleAttributes.ModuleDamage, module.World.Get(module.ModuleId, ModuleAttributes.ModuleHitPoints));
+            on.Add(burnOut);
+            off.Add(burnOut);
+        }
+        else
+        {
+            foreach (var name in ArmorResonances)
+            {
+                if (module.Statics.AttributeId(name) is not { } attributeId)
+                {
+                    continue;
+                }
+                var before = module.World.Get(shipId, attributeId);
+                var multiplier = module.Value(attributeId, 1);
+                off.Add(new SimChange(shipId, attributeId, before));
+                on.Add(new SimChange(shipId, attributeId, ModuleAttributes.Six(before * multiplier)));
+            }
         }
 
         var repeatAttribute = module.Statics.AttributeId("disallowRepeatingActivation");

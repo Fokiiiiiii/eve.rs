@@ -61,6 +61,10 @@ internal static class ModuleAttributes
     public const int ScanMagnetometricStrengthPercent = 1029;
     public const int ScanRadarStrengthPercent = 1030;
     public const int PainterSignatureBonus = 554;
+    /// <summary>The damage a module has taken (dogma attribute <c>damage</c>): a module whose damage reaches its hit points is burned out.</summary>
+    public const int ModuleDamage = 3;
+    /// <summary>The hit points of a module (dogma attribute <c>hp</c>).</summary>
+    public const int ModuleHitPoints = 9;
     public const int MaxTargetRangeBonus = 309;
     public const int ScanResolutionBonus = 566;
     public const int WarpScrambleStrength = 105;

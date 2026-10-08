@@ -8,7 +8,7 @@ namespace Eve.Services.Dogma;
 /// activation, deactivation and overload orders (<see cref="DogmaIMService"/> asks it; the wording is the reference's, <c>moduleOperation.js</c>
 /// <c>_throwModuleActivationUserError</c>).
 /// </summary>
-internal static class ModuleRefusals
+public static class ModuleRefusals
 {
     /// <summary>The client's UserError kind for a type (eveexceptions/const.py: UE_TYPEID = 4).</summary>
     private const int TypeReference = 4;

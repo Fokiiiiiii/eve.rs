@@ -85,9 +85,12 @@ public sealed class UnportedFeatureRpcServicesTests
         Assert.Empty(Assert.IsType<PyList>(await agency.CallAsync(Call("get_content_data"))).Items);
         Assert.Same(PyNone.Instance, await agency.CallAsync(Call("warp_to_content", args: [new PyInt(42)])));
         Assert.Same(PyBool.False, await ((IService)new EpicArcStatusService()).CallAsync(Call("AgentHasEpicMissionsForCharacter", args: [new PyInt(300)])));
+        // unwired: an explicit user error, never PyNone (which the client reads as an activation that went through)
         var superWeapon = (IService)new SuperWeaponMgrService();
-        Assert.Same(PyNone.Instance, await superWeapon.CallAsync(Call("ActivateSinglePointTargetedModule", args: [new PyInt(5), new PyInt(6), new PyStr("target")])));
-        Assert.Same(PyNone.Instance, await superWeapon.CallAsync(Call("ActivateSlashModule", args: [new PyInt(5), new PyStr("start"), new PyStr("end")])));
+        var point = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(async () => await superWeapon.CallAsync(Call("ActivateSinglePointTargetedModule", args: [new PyInt(5), new PyInt(6), new PyStr("target")])));
+        Assert.Equal("Superweapon activation is not wired on this server.", NotifyText(point));
+        var slash = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(async () => await superWeapon.CallAsync(Call("ActivateSlashModule", args: [new PyInt(5), new PyStr("start"), new PyStr("end")])));
+        Assert.Equal("Superweapon activation is not wired on this server.", NotifyText(slash));
 
         var tourney = (IService)new TourneyMgrService();
         var setup = Assert.IsType<PyTuple>(await tourney.CallAsync(Call("GetTourneySetup")));
@@ -314,4 +317,11 @@ public sealed class UnportedFeatureRpcServicesTests
     {
         public string? GetOmegaExpiry(long accountId) => null;
     }
+
+    /// <summary>The text a CustomNotify user error shows the client (its "notify" argument).</summary>
+    private static string? NotifyText(Eve.Services.MachoWrappedException error) =>
+        error.Error.Payload is Eve.Marshal.PyObjectEx { Header: Eve.Marshal.PyTuple { Items: [_, Eve.Marshal.PyTuple { Items: [_, Eve.Marshal.PyDict arguments] }, ..] } }
+            && arguments.Entries.FirstOrDefault(entry => entry.Key is Eve.Marshal.PyStr { Value: "notify" }).Value is Eve.Marshal.PyStr text
+                ? text.Value
+                : null;
 }

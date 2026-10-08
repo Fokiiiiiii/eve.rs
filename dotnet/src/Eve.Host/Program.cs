@@ -189,12 +189,20 @@ ReadNonDiminishingInjectionCountCallback? readNonDiminishingInjections = mailSto
         return PersistenceCharacterRpcReadModel.ReadNonDiminishingInjections(state, characterId);
     }
     : null;
+// superWeaponMgr: the activations go to the space host's modules (none is wired without the space simulation, and then the route says so)
+var superWeapons = space is null ? null : new SuperWeaponService(space);
+var superWeaponCallbacks = new SuperWeaponRpcCallbacks(
+    ActivatePointTargetedAsync: (request, cancellationToken) => (superWeapons ?? throw SuperWeaponMgrService.NotWired())
+        .ActivatePointTargetedAsync(request.Session, request.ModuleId, request.EffectId, cancellationToken),
+    ActivateSlashAsync: (request, cancellationToken) => (superWeapons ?? throw SuperWeaponMgrService.NotWired())
+        .ActivateSlashAsync(request.Session, request.ModuleId, cancellationToken));
 foreach (var service in CoreServices.Create(
     new SubscriptionSettings(), new NoOmegaAccounts(), now, calendarStore, calendarAudience,
     gameRpcCallbacks: gameRpcCallbacks,
     readJumpTimers: readJumpTimers,
     readNonDiminishingInjections: readNonDiminishingInjections,
-    keeperRpcCallbacks: keeperRpcCallbacks))
+    keeperRpcCallbacks: keeperRpcCallbacks,
+    superWeaponRpcCallbacks: superWeaponCallbacks))
 {
     registry.Register(service);
 }

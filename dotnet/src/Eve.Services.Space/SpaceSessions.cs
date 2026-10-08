@@ -1090,6 +1090,9 @@ private readonly TransitionRuntime _transitions;
         return new TargetingResult(true, reply.Pending, reply.Targets);
     }
 
+    /// <summary>The name of the effect an effect id of the static data names (the superweapon route names the effect by its id), or null when there is none.</summary>
+    public string? EffectNameOf(long effectId) => effectId is > 0 and <= int.MaxValue ? _statics.Effect((int)effectId)?.Name : null;
+
     /// <summary>
     /// Starts an effect of a module. The dogma engine works out the package (the cycle, its cost, the ship's numbers with and without the effect) and the
     /// simulation runs it; an effect it accepts ends the undocking protection, as a movement does. A module order is asked one at a time for a pilot.

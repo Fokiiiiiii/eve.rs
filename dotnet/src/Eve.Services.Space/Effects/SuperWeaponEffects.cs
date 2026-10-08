@@ -1,0 +1,71 @@
+namespace Eve.Services.Space.Effects;
+
+// The superweapon family of static data group 588 ("Super Weapon", category 7), V24.01 build 3396210, read with psql on sde.typeDogma, sde.dogmaEffects and
+// sde.dogmaAttributes. The Pulse Activated Nexus Invulnerability Core (42522, effect 6719) is not here: it has its own handler (IndustrialInvulnerabilityEffect).
+//
+//   Effect (row)                 Types in group 588                                         Effect category
+//   superWeapon{Race} (4489-4492) one titan doomsday per race: 24550, 24552, 24554, 23674     2 (target)
+//   doomsdayBeamDOT (6472)        lances 40631, 41439, 41440, 41441                          1 (activation)
+//   doomsdaySlash (6201)          reapers 40632, 41442, 41443, 41444 and Catmageddon 37474   1
+//   debuffLance (11691)           disruptive lances 77398, 77399, 77400, 77401               1
+//   doomsdayConeDOT (6473)        Bosonic Field Generator 40633                              1
+//   doomsdayHOG (6474)            Gravitational Transportation Field Oscillator 40634         1 (and a structure variant on category 66, same effect)
+//
+// What each family is, from the SDE (values after dogma are the module's own; the numbers are the build's): the cone 40633 has capacitorNeed 30000, maxRange 30000,
+// duration 300000, consumptionType 16275 (Strontium Clathrates) x consumptionQuantity 2000 per cycle, doomsdayAOEShape 3 (cone), doomsdayWarningDuration 10000,
+// doomsdayDamageDuration 20000 at doomsdayDamageCycleTime 1000, doomsdayEnergyNeut amount 30000 within radius 10000, doomsdayImmobilityDuration 30000 and
+// doomsdayNoJumpOrCloakDuration 300000, isPointTargeted 1. The HOG 40634 has maxRange 100000, duration 300000, consumption 2000 of 16275, doomsdayAOEShape 4
+// (projected sphere), doomsdayAOERange 10000, doomsdayWarningDuration 15000, isPointTargeted 1. Its SDE description (not an attribute) says it moves capsuleer
+// ships through a localised wormhole between two points, cannot move capital ships, and leaves the moved ships unable to warp for 60 seconds.
+//
+// None of these families has a body in the space host yet. Each handler is registered and REFUSES the activation by name, before any package is built: no
+// simulation action, no fuel taken (ShipEffect.Build is never reached, so BurnsFuel is never set), and no success is reported. The reasons are the ones below.
+// The shared per-cycle fuel mechanism (ModuleFuelHostTests) already takes the fuel of a DDD module once its body exists; nothing here takes fuel for it.
+//
+// What is missing for a body, per family (the owner is the superweapons spec in docs/project/TODO.md section 12, not an EveJS port):
+//   - the point the client sends (superWeaponMgr ActivateSinglePointTargetedModule / ActivateSlashModule) reaches the host only through the callback wired in
+//     Program.cs (SuperWeaponService): the point is not carried into a package yet;
+//   - the strike: damage after a delay, a chain with a loss per jump (EveJS tickDoomsdayEffect), and the immobility and no-jump windows. It needs a new sim
+//     action and a wire bump (decisions D7 and D8 of the superweapons brief); the area is the Area shape of ADR 0011, not built yet;
+//   - the lance beacon (a Deployed object, ADR 0012) and its pulse (EveJS tickLanceEffect is not read, U13);
+//   - the reaper's slash arc (two points) and its cylinder area (ADR 0011);
+//   - the disruptive lance's debuff (a buff registry, decision D4; the cloak-disallow flag, decision D10);
+//   - the cone's area (shape 3), its energy neutralisation and its damage. EveJS has no FX guid for the cone (DOOMSDAY_CONE_DOT_FX_GUID is empty) and the
+//     numbers of the damage are not verified against the client (UNVERIFIED);
+//   - the HOG's transport: the destination point, the capital-ship exclusion and the 60 s warp block come from the SDE text only. EveJS has no function for
+//     doomsdayHOG (U11, UNVERIFIED). The structure variant (category 66) is module and wiring only (O5), so it is refused the same way.
+
+/// <summary>
+/// A superweapon handler that only refuses: it names the family in its reason, so the refusal says which body is missing rather than a generic
+/// <see cref="NotImplemented"/>. It is not coverage (<see cref="PendingModuleEffect"/>): the effect stays in the gap manifest of <c>ModuleEffectsTests</c>.
+/// </summary>
+internal abstract class SuperWeaponPendingEffect(string reason, params string[] effectNames) : PendingModuleEffect(effectNames)
+{
+    private readonly string _reason = reason;
+
+    protected override string? Refusal(ModuleEffectContext module) => _reason;
+}
+
+/// <summary>The titan doomsdays (<c>superWeaponAmarr</c>, <c>Caldari</c>, <c>Gallente</c>, <c>Minmatar</c>): point-targeted, refused as a doomsday.</summary>
+internal sealed class DoomsdayEffect()
+    : SuperWeaponPendingEffect("SUPERWEAPON_DOOMSDAY_NOT_IMPLEMENTED", "superWeaponAmarr", "superWeaponCaldari", "superWeaponGallente", "superWeaponMinmatar");
+
+/// <summary>The lances (<c>doomsdayBeamDOT</c>, 40631 and the three racial lances): refused until the beacon and its pulse have a body.</summary>
+internal sealed class LanceEffect()
+    : SuperWeaponPendingEffect("SUPERWEAPON_LANCE_NOT_IMPLEMENTED", "doomsdayBeamDOT");
+
+/// <summary>The reapers and Catmageddon (<c>doomsdaySlash</c>): an arc of two points, refused until the slash and its cylinder area have a body.</summary>
+internal sealed class ReaperEffect()
+    : SuperWeaponPendingEffect("SUPERWEAPON_REAPER_NOT_IMPLEMENTED", "doomsdaySlash");
+
+/// <summary>The disruptive lances (<c>debuffLance</c>): refused until the debuff and the cloak-disallow flag have a body.</summary>
+internal sealed class DisruptiveLanceEffect()
+    : SuperWeaponPendingEffect("SUPERWEAPON_DISRUPTIVE_LANCE_NOT_IMPLEMENTED", "debuffLance");
+
+/// <summary>The Bosonic Field Generator (40633, <c>doomsdayConeDOT</c>): refused until its cone area, damage and energy neutralisation have a body.</summary>
+internal sealed class ConeEffect()
+    : SuperWeaponPendingEffect("SUPERWEAPON_CONE_NOT_IMPLEMENTED", "doomsdayConeDOT");
+
+/// <summary>The Gravitational Transportation Field Oscillator (40634, <c>doomsdayHOG</c>): refused until its transport has a body (the SDE text only; U11).</summary>
+internal sealed class HogEffect()
+    : SuperWeaponPendingEffect("SUPERWEAPON_HOG_NOT_IMPLEMENTED", "doomsdayHOG");

@@ -465,17 +465,29 @@ public sealed record SuperWeaponRpcCallbacks(
 [Service("superWeaponMgr")]
 public sealed partial class SuperWeaponMgrService(SuperWeaponRpcCallbacks? callbacks = null)
 {
+    /// <summary>
+    /// The user error of a superweapon call this server does not serve. It is an error, not <c>PyNone</c>: the client reads <c>PyNone</c> as an activation
+    /// that went through (AGENTS rule 4), so an unwired route must say so.
+    /// </summary>
+    public static MachoWrappedException NotWired() =>
+        MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Superweapon activation is not wired on this server.")));
+
+    /// <summary>A callback that answers no: the activation did not go through, and the client is told so (never a silent <c>PyNone</c>).</summary>
+    private static MachoWrappedException Refused() =>
+        MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The superweapon cannot be activated.")));
+
     [Method("ActivateSinglePointTargetedModule")]
     public async ValueTask<PyValue> ActivateSinglePointTargetedModule(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
         var moduleId = Positive(call.Arg(0));
         var effectId = Positive(call.Arg(1));
-        if (moduleId <= 0 || callbacks?.ActivatePointTargetedAsync is not { } activate)
-            return PyNone.Instance;
+        var activate = callbacks?.ActivatePointTargetedAsync ?? throw NotWired();
+        if (moduleId <= 0)
+            throw MachoErrors.ThrowUserError("DeniedShipChanged");
         return await activate(new SuperWeaponPointRequest(moduleId, effectId, call.Arg(2), call.Session), call.Cancellation).ConfigureAwait(false)
             ? new PyInt(1)
-            : PyNone.Instance;
+            : throw Refused();
     }
 
     [Method("ActivateSlashModule")]
@@ -483,11 +495,12 @@ public sealed partial class SuperWeaponMgrService(SuperWeaponRpcCallbacks? callb
     {
         call.Cancellation.ThrowIfCancellationRequested();
         var moduleId = Positive(call.Arg(0));
-        if (moduleId <= 0 || callbacks?.ActivateSlashAsync is not { } activate)
-            return PyNone.Instance;
+        var activate = callbacks?.ActivateSlashAsync ?? throw NotWired();
+        if (moduleId <= 0)
+            throw MachoErrors.ThrowUserError("DeniedShipChanged");
         return await activate(new SuperWeaponSlashRequest(moduleId, call.Arg(1), call.Arg(2), call.Session), call.Cancellation).ConfigureAwait(false)
             ? new PyInt(1)
-            : PyNone.Instance;
+            : throw Refused();
     }
 
     private static long Positive(PyValue value) => value switch

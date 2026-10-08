@@ -56,6 +56,8 @@ public sealed partial class DogmaIMService
             "NOT_ENOUGH_CAPACITOR" => Notify("You do not have enough capacitor to activate that module."),
             "MICROWARPDRIVE_BLOCKED" => Notify("You cannot activate a microwarpdrive while a warp scrambler holds your ship."),
             "CLOAK_WARP_BLOCKED" => Notify("You cannot activate that cloaking device while warping."),
+            // disallowActivateOnWarp (ModuleRestrictions.CheckWarp): the wording is ours, the client has no UserError for it (UNVERIFIED in the client)
+            "MODULE_WARP_BLOCKED" => Notify($"{name} cannot be activated while your ship is warping."),
             // the client's own UserErrors (FakeCloaking.PreStartChecks): the ship cannot cloak, or disallows a cloak
             "CLOAK_SHIP_UNSUITABLE" => MachoErrors.ThrowUserError("CantCloakTooShipUnsuitable"),
             "CLOAK_DISALLOWED" => MachoErrors.ThrowUserError("CantCloak"),

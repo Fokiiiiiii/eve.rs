@@ -1660,7 +1660,11 @@ fn a_running_hardener_and_a_module(scene: &mut Scene) -> (i64, i64) {
         repeat: 1000,
         target_id: 0,
         turret: None,
-        action: Some(crate::modules::Action::ResistanceShift { seed: [0.85; 4], shift: 0.06, attribute_ids: [267, 270, 269, 268] }),
+        action: Some(crate::modules::Action::ResistanceShift {
+            seed: [0.85; 4],
+            shift: 0.06,
+            attribute_ids: [267, 270, 269, 268],
+        }),
         on: None,
         off: None,
         on_changes: Vec::new(),
@@ -1683,13 +1687,19 @@ fn a_stargate_jump_stops_every_module_the_ship_runs_and_the_hardener_profile_wit
     let ended: Vec<(i64, u8)> = told
         .iter()
         .filter_map(|o| match o {
-            Out::ModuleEnded { session, module_id, reason } if *session == SESSION => Some((*module_id, *reason)),
+            Out::ModuleEnded { session, module_id, reason } if *session == SESSION => {
+                Some((*module_id, *reason))
+            }
             _ => None,
         })
         .collect();
     assert_eq!(ended, [(hardener, 3)]);
     assert_eq!(traveller.pilot.modules.running_count(), 0, "nothing the pilot ran goes through the gate");
-    assert_eq!(traveller.pilot.ship.health.shift_profile(), None, "the profile is reset, not kept for a later start");
+    assert_eq!(
+        traveller.pilot.ship.health.shift_profile(),
+        None,
+        "the profile is reset, not kept for a later start"
+    );
 }
 
 #[test]

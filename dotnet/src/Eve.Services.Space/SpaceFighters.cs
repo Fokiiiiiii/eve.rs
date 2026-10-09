@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Eve.Dogma;
 using Eve.Inventory;
 using Eve.Macho;
@@ -17,9 +18,10 @@ namespace Eve.Services.Space;
 /// the ship in the database: a squadron goes into a tube, out of a tube into space, and back into a tube here. A squadron out in space is the simulation's
 /// (<see cref="ISimulation.LaunchFighterAsync"/>, <see cref="ISimulation.FighterOrderAsync"/>): it flies, and it lands or is let go as the simulation says
 /// (<c>SimFighterLanded</c>, <c>SimFighterReleased</c>). Without a simulation no squadron goes out, and each such call is refused with its reason.
-/// The abilities of a squadron run in the simulation as effects built from its type (<see cref="FighterAbilityEffects"/>); their charges and cooldowns are
-/// kept here in memory. A squadron lost (destroyed) is removed from the database and its pilot is told. The scoop of an abandoned squadron takes it back
-/// into the bay or a tube (ADR 0015). Kamikaze and launch bomb are refused with their blockers.
+/// The abilities of a squadron run in the simulation as effects built from its type (<see cref="FighterAbilityEffects"/>). Their charges and cooldowns are
+/// kept on the squadron's item, so they survive a restart; a squadron that is out in space when its pilot enters space again is taken up again
+/// (<see cref="RebuildAsync"/>). A squadron lost (destroyed) is removed from the database and its pilot is told. The scoop of an abandoned squadron takes
+/// it back into the bay or a tube (ADR 0015). Launch bomb is refused with its blocker.
 /// </summary>
 public sealed class SpaceFighters : ISpaceFighters, IDisposable
 {
@@ -243,7 +245,7 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (state.Begin(now, entry.Charges is { } charges ? charges.ChargeCount : null) is { } refused)
         {
-            return refused;
+            return Describe(refused);
         }
         var members = _sizes.GetValueOrDefault(fighterId, 1);
         var (effect, reason) = FighterAbilityEffects.Build(FighterAbilityEffects.EffectNameOf(ability.EffectFamily), type, _statics,
@@ -270,6 +272,7 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
             return Describe(reply.Reason ?? UnsupportedEffectCode);
         }
         state.Started(now, effect.DurationMs, entry.CooldownSeconds);
+        Keep(squadron);
         var pilot = squadron.Pilot;
         Later(() => pilot.SendNotification("OnFighterAbilitySlotActivated", "clientID",
             InventoryWire.Id(fighterId), new PyInt(slot), state.ChargesLeftValue is { } left ? new PyInt(left) : PyNone.Instance,
@@ -327,7 +330,6 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
     /// <summary>The reason an ability's refusal code is said to the pilot.</summary>
     private static string Describe(string reason) => reason switch
     {
-        FighterAbilityEffects.KamikazeRefusal => "Kamikaze squadrons cannot detonate yet: the simulation has no approach and detonation (ADR 0015).",
         FighterAbilityEffects.LaunchBombRefusal => "Launch bomb needs the area mechanism of ADR 0011, which the simulation does not have yet.",
         "ALREADY_ACTIVE" => "That ability is already running.",
         "NO_COOLDOWN" => "That ability has no cooldown to jump on.",
@@ -377,6 +379,12 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
 
         /// <summary>The charges left, or null for a slot without charges.</summary>
         public int? ChargesLeftValue { get { lock (_lock) { return _charges; } } }
+
+        /// <summary>The charges left and the cooldown's end (Unix milliseconds, 0 for none), as the squadron's item keeps them.</summary>
+        public (int? Charges, long CooldownUntilMs) Persisted { get { lock (_lock) { return (_charges, _cooldownUntil); } } }
+
+        /// <summary>A slot resumed from what its item kept: its charges, and a cooldown that may still run.</summary>
+        public static AbilitySlot Resumed(int? charges, long cooldownUntilMs) => new() { _charges = charges, _cooldownUntil = cooldownUntilMs };
 
         /// <summary>Checks the slot may start now, and holds it (returns the refusal when it may not).</summary>
         public string? Begin(long now, int? charges)
@@ -674,8 +682,11 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
             return reply?.Error ?? NoSimulationText;
         }
 
-        _launched[squadron.Id] = new Launched(squadron.Id, squadron.TypeId, characterId, shipId, system, tubeFlag, session, reply.Session);
+        var launched = new Launched(squadron.Id, squadron.TypeId, characterId, shipId, system, tubeFlag, session, reply.Session);
+        _launched[squadron.Id] = launched;
         _sizes[squadron.Id] = members;
+        Resume(squadron.Id, squadron.CustomInfo);
+        Keep(launched);
         ShipNotifications.SendItemChange(session, move.Change!, RowOf);
         // the order of the reference: the tube is empty, the squadron is added to its controller, and the tube is in space
         session.SendNotification("OnFighterTubeContentEmpty", "clientID", new PyInt(tubeFlag));
@@ -703,6 +714,11 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
                     _sizes[size.FighterId] = size.Size;
                     Background(() => ResizeAsync(squadron, size.Size), $"fighter {size.FighterId} size");
                     break;
+                // a squadron let go loses members too: its item keeps the size it has now (nobody is told, as nobody controls it)
+                case SimFighterSize size when _abandoned.TryGetValue(size.FighterId, out var abandoned):
+                    _sizes[size.FighterId] = size.Size;
+                    Background(() => _ships.SetSquadronSizeAsync(abandoned.CharacterId, size.FighterId, size.Size), $"fighter {size.FighterId} size");
+                    break;
                 case SimModuleEnded ended when _launched.ContainsKey(ended.ModuleId / 8) && ended.ModuleId % 8 is >= 0 and <= 7:
                     OnAbilityEnded(ended.ModuleId / 8, (int)(ended.ModuleId % 8));
                     break;
@@ -727,6 +743,140 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
         _abandoned.Clear();
         _sizes.Clear();
         _slots.Clear();
+    }
+
+    /// <summary>What a squadron keeps on its item between its launches: the ship and tube it came from, and each ability slot's charges and cooldown.</summary>
+    private sealed record StoredState(long Ship, int Tube, Dictionary<string, StoredSlot> Slots);
+
+    /// <summary>One ability slot as it is kept: the charges left (null for none) and the cooldown's end (Unix milliseconds, 0 for none).</summary>
+    private sealed record StoredSlot(int? Charges, long CooldownUntilMs);
+
+    private static StoredState? StateOf(string? customInfo)
+    {
+        if (string.IsNullOrEmpty(customInfo))
+        {
+            return null;
+        }
+        try
+        {
+            return JsonSerializer.Deserialize<StoredState>(customInfo);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The squadron's state as its item keeps it.</summary>
+    private string StateText(Launched squadron)
+    {
+        var slots = new Dictionary<string, StoredSlot>();
+        foreach (var (key, state) in _slots.Where(entry => entry.Key.Fighter == squadron.FighterId))
+        {
+            var (charges, cooldownUntil) = state.Persisted;
+            slots[key.Slot.ToString()] = new StoredSlot(charges, cooldownUntil);
+        }
+        return JsonSerializer.Serialize(new StoredState(squadron.ShipId, squadron.TubeFlag, slots));
+    }
+
+    /// <summary>Keeps the squadron's state on its item, so that a restart does not refill its charges or lift its cooldowns.</summary>
+    private void Keep(Launched squadron) =>
+        Background(() => _ships.SetSquadronStateAsync(squadron.CharacterId, squadron.FighterId, StateText(squadron)), $"fighter {squadron.FighterId} state");
+
+    /// <summary>The ability slots of a squadron as its item kept them (a cooldown that still runs is still running).</summary>
+    private void Resume(long fighterId, string? customInfo)
+    {
+        if (StateOf(customInfo) is not { } state)
+        {
+            return;
+        }
+        foreach (var (slot, stored) in state.Slots ?? [])
+        {
+            if (int.TryParse(slot, out var number))
+            {
+                _slots[(fighterId, number)] = AbilitySlot.Resumed(stored.Charges, stored.CooldownUntilMs);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The pilot's ship came into space again: the squadrons its character has out in the solar system are taken up again, as the simulation holds none of
+    /// them after a restart. One launched from this ship is controlled by it again; one let go is let go again. Its charges and cooldowns come back from its item.
+    /// </summary>
+    public async Task RebuildAsync(ClientSession session, long characterId)
+    {
+        if (_sim is null || ShipOf(session) is not { } shipId || _solarSystemOf(session) is not { } system)
+        {
+            return;
+        }
+        foreach (var squadron in await _ships.FightersInSpaceAsync(characterId, system))
+        {
+            if (_launched.ContainsKey(squadron.Id) || _abandoned.ContainsKey(squadron.Id))
+            {
+                continue;
+            }
+            await RelaunchAsync(session, characterId, shipId, system, squadron);
+        }
+    }
+
+    private async Task RelaunchAsync(ClientSession session, long characterId, long shipId, int system, Item squadron)
+    {
+        await _statics.EnsureTypesAsync([squadron.TypeId]);
+        if (_statics.Type(squadron.TypeId) is not { } type || await _ships.LoadAsync(characterId) is not { } snapshot)
+        {
+            return;
+        }
+        var members = (int)Math.Clamp(FighterTubes.InventorySize(squadron.Singleton, squadron.Quantity), 1, 64);
+        var hull = SimShips.OfType(squadron.Id, type) with
+        {
+            OwnerId = characterId,
+            CorporationId = (int)snapshot.Character.CorporationId,
+            AllianceId = (int)(snapshot.Character.AllianceId ?? 0),
+            WarFactionId = (int)(snapshot.Character.FactionId ?? 0),
+        };
+        if (hull.Vitals is { } vitals)
+        {
+            hull = hull with
+            {
+                Vitals = vitals with
+                {
+                    ShieldCapacity = vitals.ShieldCapacity * members,
+                    ArmorHp = vitals.ArmorHp * members,
+                    StructureHp = vitals.StructureHp * members,
+                },
+            };
+        }
+        SimSpawnReply? reply = null;
+        try
+        {
+            reply = await _sim!.LaunchFighterAsync(new SimLaunchFighter((ulong)Interlocked.Increment(ref _requests), (ulong)session.SessionId, hull, type.GraphicId, 1.0, members));
+        }
+        catch (SimUnavailableException error)
+        {
+            _log?.Invoke($"fighters: {error.Message}");
+        }
+        if (reply?.Session is null)
+        {
+            _log?.Invoke($"fighters: fighter {squadron.Id} was not taken up again: {reply?.Error ?? "no answer"}");
+            return;
+        }
+        var state = StateOf(squadron.CustomInfo);
+        var controlled = state is not null && state.Ship == shipId;
+        var tube = state?.Tube ?? 0;
+        var launched = new Launched(squadron.Id, squadron.TypeId, characterId, state?.Ship ?? shipId, system, tube, session, reply.Session);
+        _launched[squadron.Id] = launched;
+        _sizes[squadron.Id] = members;
+        Resume(squadron.Id, squadron.CustomInfo);
+        if (controlled)
+        {
+            session.SendNotification("OnFighterAddedToController", "clientID", InventoryWire.Id(squadron.Id), new PyInt(squadron.TypeId), new PyInt(tube),
+                new PyInt(members), new PyDict([]));
+        }
+        else
+        {
+            // let go as it was: the simulation tells the release, and the squadron is held as abandoned
+            await OrderAsync(session, SimFighterOrders.Abandon, 0, 0, [squadron.Id], CancellationToken.None);
+        }
     }
 
     /// <summary>A squadron that is no longer the host's (destroyed) keeps no size and no ability state.</summary>

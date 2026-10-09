@@ -425,3 +425,15 @@ Protocol 37: the strike (`SimAction` tags 13 and 15) carries a beacon, a flag an
 | LIMITATION | A beacon is simulation-only: a restart drops it (ADR 0012 addendum). | ADR 0012 addendum, track C3 | none |
 | NOT RUN | The beam and the beacon were not seen in the graphical client, and no MITM capture of a lance exists in the repository. | `tools/mitm/README.md` | a capture when a scenario can be driven |
 
+## Track C3: buffs, bursts and P.A.N.I.C. (2026-10-09)
+
+Investigated, not built. The reasons are below, with the sources read. The lance beacon, the fighter LaunchBomb and the protocol 37 work are in their own sections.
+
+| Status | Item | What the sources show | Exact blocker |
+|---|---|---|---|
+| BLOCKED | P.A.N.I.C.'s fleet effect (42522, effect 6719) | The numbers: `eve-logic` `dbuff/common/industrialInvulnConst.py` (`DBUFF_VALUES`: shield resistance -99.99 %, shield recharge -90 %, drone damage -100 %, weapons, entosis, mass +100 %, velocity -50 %, warp penalty +100 %, scan resolution -75 %, cloak, jump-or-dock, tether). The recipients (subcapital mining and hauling ships of the fleet within 200 km) are the SDE text only: the client file has no group list, and EVE.js has no P.A.N.I.C. runtime (a search of `evejs-v0.12.9/server/src` finds no body for 42522 or `industrialInvuln`). | (1) The simulation has no per-ship shield resistance, shield recharge rate (`ship.rs` `shield_recharge_ms` is fixed at spawn), drone damage multiplier, weapons-disallow or tether state, and no warp-penalty term; `SimNumbers` carries mass, velocity and signature only. These need new sim state and a wire message (one protocol bump, ADR 0013). (2) The recipient group ids need a decision from the SDE groups and a CCP source, since no repository source names them. (3) `dbuffWarpPenalty` (+100 %) has no stated meaning in any source read. |
+| BLOCKED | Command bursts (`commandBurstRuntime.js`) | EveJS has the runtime (`space/modules/commandBurstRuntime.js`, `space/runtime/commandBurst.js`, `dbuffCollections` table). It changes the numbers of running modules (reload time, ranges, the rest of the burst's dbuff set). The simulation reads a module's numbers once at activation (the track C remainder row). | A live-numbers message for a running module (a wire change), and the burst's own dbuff set read from `sde.dbuffCollections`. |
+| NOT BUILT | Buff registry (decision D4) | A registry with no consumer would be dead code (AGENTS rule 5). Its first consumers are the two rows above. | Built with its first consumer. |
+
+What was checked: `sde.dbuffCollections` has the PANIC keys (8, 9, 55, 56, 58, 59, 61) and the burst keys (for example 2498); `eve-logic` `dbuff/common/industrialInvulnConst.py`; EveJS `space/modules/commandBurstRuntime.js` and the timed invulnerability runtime (`space/runtime/timedInvulnerability.js`, which is the undock protection and not P.A.N.I.C.); the simulation's `ship.rs`, `health/`, `ewar.rs` (`Lasting`).
+

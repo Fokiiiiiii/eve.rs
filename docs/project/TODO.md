@@ -288,3 +288,14 @@ Re-read these files before implementing a provider; the Host composition root de
 | POS, station guest notifications, and public QA | [PosMgrService.cs](../../dotnet/src/Eve.Services.Core/PosMgrService.cs), [StationService.cs](../../dotnet/src/Eve.Services.Station/StationService.cs), [StationGuestLedger.cs](../../dotnet/src/Eve.Services.Station/StationGuestLedger.cs), [UnportedFeatureRpcServices.cs](../../dotnet/src/Eve.Services.Core/UnportedFeatureRpcServices.cs), [Program.cs](../../dotnet/src/Eve.Host/Program.cs) |
 | Structure operations and container/compression hooks | [StructureRpcServices.cs](../../dotnet/src/Eve.Services.Core/StructureRpcServices.cs), [StructureDataRpcServices.cs](../../dotnet/src/Eve.Services.Core/StructureDataRpcServices.cs), [BeyonceService.cs](../../dotnet/src/Eve.Services.Space/BeyonceService.cs), [Program.cs](../../dotnet/src/Eve.Host/Program.cs) |
 | MCT, dungeon defaults, and extraction authorities | [UserSvcCompatibility.cs](../../dotnet/src/Eve.Services.Core/UserSvcCompatibility.cs), [StoreOffersService.cs](../../dotnet/src/Eve.Services.Core/StoreOffersService.cs), [DungeonRpcServices.cs](../../dotnet/src/Eve.Services.Core/DungeonRpcServices.cs), [GameRpcServices.cs](../../dotnet/src/Eve.Services.Core/GameRpcServices.cs), [CoreServices.cs](../../dotnet/src/Eve.Services.Core/CoreServices.cs) |
+
+## Debugging tools
+
+- `EVE_STRICT_RPC=1` (eve-host): an unknown service, an unknown method, a call with no service and an unhandled
+  exception are answered with a Macho error carrying a correlation id, and logged with the stack trace to stderr. The
+  default answers None, as the reference does. Not covered: services that answer None on missing callbacks by design
+  (for example `StructureRpcServices`), and the unknown-method check trusts each service's `HasMethod`, which has not
+  been audited against all hand-written services.
+- `EVE_TRACE_RPC=1|full`: `full` adds each call's arguments and each result's type tree to the trace lines.
+- `tools/mitm` captures and diffs the client's traffic against the reference. Rule and recipe:
+  `docs/design/REFERENCE-TRACES.md`.

@@ -45,5 +45,6 @@ for _ in $(seq 1 "${EVE_LIVE_BOOT_SECONDS:-900}"); do
 done
 (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null || { echo "the server never listened on $PORT:"; tail -30 "$LOG"; exit 1; }
 
+# EVE_LIVE_HOST set by the caller points the tests at a proxy in front of the server (tools/mitm)
 cd "$HERE/tools/headless-client"
-EVE_LIVE_HOST="127.0.0.1:$PORT" .venv/bin/python -m pytest -q tests/test_live.py
+EVE_LIVE_HOST="${EVE_LIVE_HOST:-127.0.0.1:$PORT}" .venv/bin/python -m pytest -q tests/test_live.py

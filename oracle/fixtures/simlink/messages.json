@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 33,
-   "hex": "03000000012100"
+   "version": 34,
+   "hex": "03000000012200"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 33,
+   "version": 34,
    "pollHz": 4,
-   "hex": "0700000002210004000000"
+   "hex": "0700000002220004000000"
   },
   {
    "name": "enter by undocking",
@@ -623,6 +623,58 @@
     ]
    },
    "hex": "d3000000134f2c3859955c060094b3089b15090000615500004b1a00001300656666656374732e41667465726275726e6572000000000088c3400000000000001440e80300000000000000000000030000000018603941e3378595ca5680400000000000004a4000000000f8be314100000000003475400000000000004a400200000094b3089b15090000140000000000000000004e4093b3089b1509000025000000e3378595ca5680400200000094b3089b15090000140000000000000000004e4093b3089b15090000250000000000000000347540"
+  },
+  {
+   "name": "activate an afterburner with its propulsion group's limit",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400001940",
+    "moduleType": 21857,
+    "effectId": 6731,
+    "fx": "effects.Afterburner",
+    "durationMs": 10000.0,
+    "capacitorNeed": 5.0,
+    "repeat": 1000,
+    "targetId": "0",
+    "onChanges": [],
+    "offChanges": [],
+    "rules": {
+     "groupId": 46,
+     "maxGroupActive": 1,
+     "disallowEarlyDeactivation": false,
+     "requiresIndustrialCore": false,
+     "providesIndustrialCore": false,
+     "reactivationDelayMs": 0.0
+    }
+   },
+   "hex": "64000000134f2c3859955c060094b3089b15090000615500004b1a00001300656666656374732e41667465726275726e6572000000000088c3400000000000001440e803000000000000000000002000000000000000002e00000001000000000000000000000000"
+  },
+  {
+   "name": "activate a compressor that needs a running industrial core, with a cloak's early deactivation and reactivation",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400001950",
+    "moduleType": 4174,
+    "effectId": 6731,
+    "fx": "",
+    "durationMs": 300000.0,
+    "capacitorNeed": 0.0,
+    "repeat": 1,
+    "targetId": "0",
+    "onChanges": [],
+    "offChanges": [],
+    "rules": {
+     "groupId": 4174,
+     "maxGroupActive": 0,
+     "disallowEarlyDeactivation": true,
+     "requiresIndustrialCore": true,
+     "providesIndustrialCore": false,
+     "reactivationDelayMs": 180000.0
+    }
+   },
+   "hex": "51000000134f2c3859955c06009eb3089b150900004e1000004b1a0000000000000000804f124100000000000000000100000000000000000000002000000000000000004e10000000000000030000000000f90541"
   },
   {
    "name": "activate an effect that changes nothing of the ship",

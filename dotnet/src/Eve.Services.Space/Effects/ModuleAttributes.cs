@@ -168,6 +168,8 @@ internal static class ModuleAttributes
     /// <summary>On an assistance module: it cannot be activated against a target that disallows offensive modifiers.</summary>
     public const int DisallowAgainstEwImmuneTarget = 1798;
     public const int DisallowInHazardSystem = 5561;
+    /// <summary>1 when the module cannot be activated and made to autorepeat (disallowRepeatingActivation): it runs one cycle, whatever repeat is asked.</summary>
+    public const int DisallowRepeatingActivation = 1014;
     public const int DisallowActivateInForcefield = 1920;
     public const int RemoteRepairImpedance = 2116;
     public const int RemoteAssistanceImpedance = 2135;

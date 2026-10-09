@@ -1553,6 +1553,20 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task A_dock_that_a_running_module_prevents_is_said_in_the_reference_words()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        await ShipAsync(rig, character);
+        await InSpaceAsync(rig, session);
+        rig.Sim.DockAnswer = new CommandReply(false, 0, "DOCKING_DISALLOWED_BY_MODULE");
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Space.DockAsync(session, Rig.Station, CancellationToken.None));
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        var values = (PyDict)((PyTuple)((PyTuple)((PyObjectEx)error.Error.Payload).Header).Items[1]).Items[1];
+        Assert.Equal("You cannot dock while a module that prevents docking is active.", JsSemantics.StringValue(values.Entries.Single().Value));
+    }
+
+    [PgFact]
     public async Task The_module_orders_of_a_pilot_are_asked_one_at_a_time()
     {
         var (rig, character, session) = await DockedAsync();

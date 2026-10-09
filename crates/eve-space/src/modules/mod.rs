@@ -40,6 +40,17 @@ const CYCLE: i32 = 51;
 /// The capacitor's charge is told every half second, worked out at the tick a tenth of a second on from the moment (the reference's ticks).
 pub(crate) const SAMPLE_EVERY: i64 = TICKS_PER_SECOND / 2;
 
+/// The attributes a running module's modifiers set on the ship or on another module (its `on_changes`): the ship's warp scramble (104, a siege, a sensor array),
+/// the ship's docking lock (2354), and a module's activation block (1349: a sensor array blocks the capital micro jump drives).
+pub(crate) const WARP_SCRAMBLE_STATUS: i32 = 104;
+pub(crate) const DISALLOW_DOCKING: i32 = 2354;
+pub(crate) const ACTIVATION_BLOCKED: i32 = 1349;
+/// A module's damage (dogma attribute `damage`, 3): a module whose damage reaches its hit points (9) is burnt out.
+pub(crate) const MODULE_DAMAGE: i32 = 3;
+
+/// The most module moments one settle takes for a ship (M-1). What is still due is taken by the next settle, so one ship cannot hold the sim thread.
+pub(crate) const MAX_MOMENTS_PER_SETTLE: usize = 10_000;
+
 pub(crate) const TICK: i64 = TICKS_PER_SECOND / 10;
 
 /// The dogma effect of a microwarpdrive (`moduleBonusMicrowarpdrive`): what a warp scrambler that blocks one keeps from running.
@@ -173,6 +184,22 @@ impl Remote {
             ]
             .into_iter()
             .all(|percent| percent >= 0.0),
+            // a computer (a tracking or guidance computer) gives every percentage its own way; a disruptor takes some of them the other way (FP-3: a
+            // positive tracking disruption is assistance, not an attack)
+            Self::Disrupt { range_percent, falloff_percent, tracking_percent } => {
+                [*range_percent, *falloff_percent, *tracking_percent].into_iter().any(|percent| percent < 0.0)
+            }
+            Self::GuidanceDisrupt {
+                velocity_percent,
+                delay_percent,
+                aoe_velocity_percent,
+                aoe_cloud_percent,
+            } => {
+                *velocity_percent < 0.0
+                    || *delay_percent > 0.0
+                    || *aoe_velocity_percent < 0.0
+                    || *aoe_cloud_percent > 0.0
+            }
             _ => true,
         }
     }
@@ -475,6 +502,19 @@ pub enum MiningFamily {
     Gas,
 }
 
+/// The module rules the host works out from a module's type, for the rules the scene enforces (`activate`, `effect_ended`): the group a module belongs to and
+/// how many of that group run at once (maxGroupActive 763, 0 for no limit), whether it holds the ship's early deactivation (906) or needs an active industrial
+/// core (3265), whether it is one (`industrialCoreEffect2`, its compact variant), and how long it waits after it stops before it starts again (669, 0 for none).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Rules {
+    pub group_id: i32,
+    pub max_group_active: i32,
+    pub disallow_early_deactivation: bool,
+    pub requires_industrial_core: bool,
+    pub provides_industrial_core: bool,
+    pub reactivation_delay_ms: f64,
+}
+
 /// An effect the host asks the scene to run, with everything the host has worked out for it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Effect {
@@ -502,6 +542,8 @@ pub struct Effect {
     /// The effect burns the fuel its consumption attributes name each cycle: a fuel cycle is asked of the host before each cycle that starts, and the cycle
     /// does not start when the host refuses it (`ConsumeFuel`, the host takes the fuel from the ship).
     pub burns_fuel: bool,
+    /// The module rules of the module's type (`Rules`); the default is none (a module the host sends no rules for).
+    pub rules: Rules,
 }
 
 impl Effect {
@@ -721,7 +763,11 @@ pub(crate) struct Running {
 pub(crate) struct Modules {
     pub(crate) capacitor: Option<Capacitor>,
     pub(crate) running: Vec<Running>,
-    mjd_cooldowns: Vec<(i64, i64)>,
+    /// The modules that wait after they stopped: the micro jump drives' cooldowns and the reactivation delay of any module (669), until the tick given.
+    reactivation: Vec<(i64, i64)>,
+    /// The modules burned out by an effect that sets their damage as it ends (an emergency hull energizer sets its module's damage to its hit points): they
+    /// cannot start again (the reference's MODULE_INCAPACITATED).
+    burnt_out: Vec<i64>,
     next_remote_repair_cycle_id: u64,
     /// Fuel-burning effects that wait for the host to take the fuel of their first cycle.
     pending_starts: Vec<PendingStart>,
@@ -740,7 +786,8 @@ impl Modules {
         Self {
             capacitor: Some(Capacitor::filled(capacity, recharge_s, ratio, now)),
             running: Vec::new(),
-            mjd_cooldowns: Vec::new(),
+            reactivation: Vec::new(),
+            burnt_out: Vec::new(),
             next_remote_repair_cycle_id: 0,
             pending_starts: Vec::new(),
         }
@@ -843,7 +890,7 @@ pub(crate) enum Jam {
     End,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Moment {
     CycleEnd(usize),
     Charge,

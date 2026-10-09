@@ -24,7 +24,7 @@ use crate::missiles::Missile;
 
 use crate::drones::DroneEffect;
 
-use crate::modules::{Action, Applies, Change, Effect, MiningFamily, Numbers, Reach, Remote};
+use crate::modules::{Action, Applies, Change, Effect, MiningFamily, Numbers, Reach, Remote, Rules};
 
 use crate::scene::{HeatModuleProfile, HeatProfile, HeatRack};
 
@@ -36,7 +36,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 33;
+pub const PROTOCOL_VERSION: u16 = 34;
 
 /// The message kinds.
 pub mod kind;

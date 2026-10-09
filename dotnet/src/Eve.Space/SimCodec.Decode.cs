@@ -172,8 +172,8 @@ public static partial class SimCodec
         var repeat = r.I32();
         var target = r.I64();
         var flags = r.U8();
-        // bits: 1 on, 2 off, 4 turret, 8 action, 16 burns fuel (the fuel is asked for before each cycle, ModuleWorkCycle with ConsumeFuel)
-        if (flags > 31)
+        // bits: 1 on, 2 off, 4 turret, 8 action, 16 burns fuel (the fuel is asked for before each cycle, ModuleWorkCycle with ConsumeFuel), 32 the module rules
+        if (flags > 63)
         {
             throw new SimLinkException(SimLinkError.BadValue, "bad flags");
         }
@@ -183,7 +183,21 @@ public static partial class SimCodec
         var offChanges = ReadChanges(ref r);
         var turret = (flags & 4) != 0 ? ReadTurret(ref r) : null;
         var action = (flags & 8) != 0 ? ReadAction(ref r) : null;
-        return new SimEffect(module, moduleType, effectId, fx, duration, capacitor, repeat, target, on, off, onChanges, offChanges, turret, action, (flags & 16) != 0);
+        var rules = (flags & 32) != 0 ? ReadRules(ref r) : null;
+        return new SimEffect(module, moduleType, effectId, fx, duration, capacitor, repeat, target, on, off, onChanges, offChanges, turret, action, (flags & 16) != 0, rules);
+    }
+
+    private static SimModuleRules ReadRules(ref Reader r)
+    {
+        var group = r.I32();
+        var maxGroupActive = r.I32();
+        var bits = r.U8();
+        var reactivation = r.F64();
+        if (bits > 7 || maxGroupActive < 0 || reactivation < 0 || !double.IsFinite(reactivation))
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad module rules");
+        }
+        return new SimModuleRules(group, maxGroupActive, (bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0, reactivation);
     }
 
     /// <summary>The list <see cref="WriteIds"/> writes; more than 4096 ids is refused (no fleet is that large in a field).</summary>

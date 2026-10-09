@@ -1,4 +1,5 @@
 use super::*;
+use crate::modules::DISALLOW_DOCKING;
 
 impl Scene {
     /// Puts a ship in space at the station it undocks from, moving away at its top speed.
@@ -119,6 +120,10 @@ impl Scene {
         }
         if pilot.disrupted_until > now {
             return vec![Out::Refused { session, command: code, reason: "DOCKING_DISRUPTED" }];
+        }
+        // a running module that disallows docking (disallowDocking 2354: a siege, a triage, a sensor array) keeps the ship from the station
+        if self.overlay(session, pilot.ship.spec.ship_id, DISALLOW_DOCKING) > 0.0 {
+            return vec![Out::Refused { session, command: code, reason: "DOCKING_DISALLOWED_BY_MODULE" }];
         }
         if pilot.jump.is_some() {
             return vec![Out::Refused { session, command: code, reason: "JUMPING" }];

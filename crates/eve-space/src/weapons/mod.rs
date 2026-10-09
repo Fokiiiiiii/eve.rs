@@ -174,4 +174,4 @@ struct Shooter {
 pub(crate) const MISSILE_RANGE_GRACE: f64 = 1.0;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

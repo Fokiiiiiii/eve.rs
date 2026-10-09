@@ -251,7 +251,7 @@ decisions.
 
 ## Bombs, bubbles and warp disruption (2026-10-09)
 
-Decisions of the bombs and bubbles brief (`bombs_decisions_brief.md`, D1 to D14) and the bubble wire of protocol 33 (ADR 0013). The sources are the rank of
+Decisions of the bombs and bubbles brief (`bombs_decisions_brief.md`, D1 to D14) and the bubble wire of protocol 34 (ADR 0013). The sources are the rank of
 AGENTS.md: the SDE (type and effect attributes, read from the pinned build), the V24.01 client (`eve-logic`), and EVE.js. Where they disagree the reading below is
 the one chosen, and the reason is given. "No trace" means that no V24.01 recording of the scenario exists in the repository; nothing here is checked in the
 graphical client.
@@ -272,7 +272,7 @@ graphical client.
 | DECIDED | Stasis webification burst (WP-11b, charge group 4088, 56748): each cycle, every ship within the charge's `doomsdayAOERange` (15 km) of the launcher's ship, but its own, is webbed by its `speedFactor` (-20 %) for `doomsdayAOEDuration` (30 s). It is a burst: no probe is put in space, and nothing checks who the ships belong to | the SDE attributes; the reference has no burst handler to compare (`torpedoLaunching` is not offensive in the SDE, so no aggression is made by it) | the friend-or-foe rule of the burst is not written anywhere the sources show |
 | LIMITATION | Probes and bombs are simulation-only: their lifetime is the simulation's own clock, so a restart drops them (ADR 0012 addendum). A 120 s probe is not a `Deployed` row, because the 30 s sweep would make it up to 25 % late | ADR 0012 decision 2 and its addendum | persistence of timed objects, if an owner wants a restart to keep them |
 | DECIDED | Focus scripts (WP-3, group 908, a charge of the field generator): the script's effect runs on the target ship as a projected scramble. Its reach is the generator's warp scramble range (attribute 103, 16 km on the Generator I) with the script's own range bonus (1327: +50 % for the disruption script, -20 % for the scrambling one). Strength: the module's warp scramble strength (attribute 105, 100 on the Generator I), as the script's own modifier gives it (effects 6849 and 6848: a ModAdd of the target's warp scramble status by the modifying item's 105), so a target is scrambled at once. The scrambling script stops a microwarpdrive (its EffectStopper), as the scrambler does | the SDE effect rows (`dogmaEffects.modifierInfo`) | the other modifiers of the scripts (the maximum velocity multiplier, attribute 1470, and the 1973 and 1974 pair of the disruption script) are not run; the range and the scramble are |
-| LIMITATION | Protocol 33 (ADR 0013): one bump carries the cloak's warp-safe flag (tag 5) and the actions of tags 16 to 22: the bubble, the immunity, the scramble status, the probe, the bomb, the stasis burst and the defender. Fixtures in `oracle/fixtures/simlink/messages.json` cover each | `tools/dev/gen-simlink-fixtures.py` | the bubble's client visual is the effect's own FX (`effects.WarpDisruptFieldGenerating`), with no client message; no trace has been compared |
+| LIMITATION | Protocol 34 (ADR 0013): one bump carries the cloak's warp-safe flag (tag 5) and the actions of tags 16 to 22: the bubble, the immunity, the scramble status, the probe, the bomb, the stasis burst and the defender. Fixtures in `oracle/fixtures/simlink/messages.json` cover each | `tools/dev/gen-simlink-fixtures.py` | the bubble's client visual is the effect's own FX (`effects.WarpDisruptFieldGenerating`), with no client message; no trace has been compared |
 | NOT RUN | The client was not driven for this track: no MITM capture of a bubble, a probe, a bomb or a defender was made, because the headless client has no scenario that fits one, and the graphical client is not on this host | `tools/mitm/README.md` | a capture when a scenario can be driven |
 
 ## Player fighters (2026-10-09)
@@ -300,3 +300,29 @@ Decisions: ADR 0015 and its three amendments.
 | CONFLICT | The EVE.js table flags the AttackM abilities (22 to 27, 44, 45) `isOffensive: false`, while the SDE effect `fighterAbilityAttackM` is offensive (`dogmaEffects`, 54 of 54 types). The offensive flag decides crimewatch aggression, so the SDE is followed when the effect lands (WP-M). The catalogue keeps EVE.js's value and records nothing from it for aggression yet. | none yet | crimewatch aggression for a squadron's attack (the drone path records none either, U3) |
 | REPLACED | The live EVE.js recording (WP-S) was not made: no graphical client runs on this host. Its wire shapes and notification names are pinned by `oracle/fixtures/simlink/messages.json` (the fighter entries follow the EVE.js and eve-logic code: the `LaunchFighter` and `FighterSize` layouts, the `GotoPoint` action of `buildGotoPointPayload`, the `OnFighterAbilitySlotActivated` payload of `notifyAbilityActivated`, `OnInSpaceSquadronSizeChanged` of `notifySquadronSizeChanged`). They are derived from source, not from a recorded trace. | `oracle/fixtures/simlink/messages.json`, `SimCodecTests`, `simlink_fixtures.rs` | a recorded trace when a client is available |
 | CHANGED | Scooping an abandoned squadron back is served for the bay and the tubes. The fleet hangar and the cargo hold (flags 155 and 5) are refused with a message, as EVE.js refuses them, but EVE.js does so silently and the sources used here do not settle CCP's rule (FIG-D-9). | `SpaceFightersTests.A_scoop_is_refused_for_the_cargo_hold_before_the_squadron_is_looked_at` | ADR 0015 FIG-D-9 |
+
+## Module rules (track B, 2026-10-09)
+
+Decisions taken where the sources left a choice (EveJS is the trusted reference; CCP docs and the SDE settle the numbers):
+
+- Module rules are enforced in the simulation from the rules the host sends with each effect (`ModuleRules`, flag 32). The host works them out from the type's
+  attributes once, in the effect wrapper (`ShipEffect`), so no handler repeats them. Early deactivation (906), the core requirement (3265), the group limit (763)
+  and the reactivation delay (669) are the four rules sent. Disallow activate on warp (1245) stays on the host (`ModuleRestrictions.CheckWarp`), as on main.
+- Locks from running modules (warp 104, docking 2354, activation block 1349) are read from the running effect's `on_changes`, which the host already sends,
+  so they need no wire change. The Networked Sensor Array's block of the capital micro jump drives comes through its modifier (5700, skill 83464).
+- Refusal wording: where EveJS has a text it is used (docking, cloak, industrial core, module blocked as the client's `ModuleIsBlocked`). Where EveJS shows a
+  client user error that needs data the refusal does not carry (the reactivation delay with `timeSinceLastStop`, the group limit with `count`), the pilot is
+  told in a notice of ours, recorded in TODO section 16.
+- Dock refusal: EveJS's `DOCKING_DISALLOWED_BY_MODULE` text is shown. The other silent dock refusals (immobile, doomsday, disrupted) are unchanged.
+- Repeat cap (disallowRepeatingActivation 1014): the server's cycle budget is one (EveJS `moduleCycleSchedule.js`). The repeat the client is told for the
+  effect's FX is also one. EveJS keeps the client's repeat for the FX, so this differs for the FX only; the client's view was not checked.
+- Hostility (FP-3, FP-C6): a computer (every percentage on its side) is not hostile; a disruptor is. A guidance disruptor is hostile when its velocity or
+  explosion velocity is lowered, or its delay or explosion radius raised, the same signs as the SDE's bonuses. EveJS gives no separate rule for it.
+- Spool (wiki gap WG-1): the disintegrator's bonus resets when its target changes and when its effect stops (EveJS `precursorTurrets.js` 157-164 and
+  `moduleEffectShutdown.js` 165, 319). EveJS has no reset when the target leaves optimal range, so none is added; the wiki line is not applied.
+- The mwd_blocked special case (another ship's scrambler, `Incoming`) stays. It is not an own-module overlay, so the 1349 overlay does not replace it.
+- A burnt-out module (its own effect sets its damage to its hit points, the energizer) does not start again (MODULE_INCAPACITATED). The state is kept in the
+  simulation and is lost on a host restart; the host's module condition is not updated by it.
+- Stall guard (M-1): a module moment that comes back at the same tick for the same module ends that module's effect (Ending::Forced). A parked work cycle
+  whose action has gone stops the effect. The budget is 10,000 moments a ship per settle; the rest is due at the next settle.
+- ProtocolVersion 32 to 33: one bump for the module rules (flag 32). The fixture generator and `messages.json` carry the frames.

@@ -100,7 +100,8 @@ public class MissileHostTests
     public async Task A_breacher_pod_launcher_is_started_with_the_damage_over_time_its_charge_describes()
     {
         await using var rig = await Rig.CreateAsync();
-        var (session, character, launcher) = await ArmedInSpaceAsync(rig, loaded: true, SmallBreacherLauncher, SmallBreacherPod, Tholos, (3319, 5), (3320, 5));
+        // the launcher needs its skill (SDE 86260 at level 1: requiredSkill1 182 and its level 277 in the launcher's dogma)
+        var (session, character, launcher) = await ArmedInSpaceAsync(rig, loaded: true, SmallBreacherLauncher, SmallBreacherPod, Tholos, (86260, 1));
 
         // the pilot asks for the effect of the pod, as the client does; the launcher runs its own, and the pod's hit starts a damage over time
         var answer = await rig.Space.ActivateAsync(session, launcher, "dotMissileLaunching", 980050000105, 1000, CancellationToken.None);

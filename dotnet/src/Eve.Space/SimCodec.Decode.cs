@@ -258,8 +258,18 @@ public static partial class SimCodec
     }
 
     /// <summary>What a launcher flies (see <c>WriteMissile</c>).</summary>
-    private static SimMissile ReadMissile(ref Reader r) =>
-        new(r.I32(), r.I32(), r.Text(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64());
+    private static SimMissile ReadMissile(ref Reader r)
+    {
+        var missile = new SimMissile(r.I32(), r.I32(), r.Text(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64());
+        // the damage over time of a breacher pod (protocol 41): a flag, then its duration, its cap per tick and its percentage per tick
+        var dot = r.U8() switch
+        {
+            0 => null,
+            1 => new SimDot(r.F64(), r.F64(), r.F64()),
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad dot"),
+        };
+        return missile with { Dot = dot };
+    }
 
     /// <summary>A deployable's charge (see <c>WriteDeployable</c>): the radius of its ball must be a positive number.</summary>
     private static SimDeployable ReadDeployable(ref Reader r)

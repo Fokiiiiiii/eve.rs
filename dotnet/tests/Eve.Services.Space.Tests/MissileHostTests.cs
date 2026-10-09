@@ -114,9 +114,11 @@ public class MissileHostTests
         var world = snapshot.World;
         var turret = Assert.IsType<SimTurret>(package.Turret);
         var missile = Assert.IsType<SimMissile>(turret.Missile);
-        // the SDE's numbers: dotDuration 40 s (5735), 200 a tick at most for the small pod (5736), 0.6 % of the target's hit points a tick (5737)
-        Assert.Equal((40_000.0, 200.0, 0.6), (world.Get(charge.Id, 5735), world.Get(charge.Id, 5736), world.Get(charge.Id, 5737)));
-        Assert.Equal(new SimDot(40_000.0, 200.0, 0.6), missile.Dot);
+        // the SDE's numbers: dotDuration 40 s (5735), 200 a tick at most for the small pod (5736), 0.6 % of the target's hit points a tick (5737), which the
+        // pilot's skills change in dogma: Operation (86260) at level 1 takes 5 % more of the hit points (0.6 becomes 0.63, the wiki's +5 % a level)
+        var percent = Math.Round(world.Get(charge.Id, 5737), 6, MidpointRounding.AwayFromZero);
+        Assert.Equal((40_000.0, 200.0, 0.63), (world.Get(charge.Id, 5735), world.Get(charge.Id, 5736), percent));
+        Assert.Equal(new SimDot(40_000.0, 200.0, percent), missile.Dot);
         // the pod does no damage of its own: its effect is the damage over time
         Assert.Equal(new double[] { 0, 0, 0, 0 }, turret.RawDamage);
     }

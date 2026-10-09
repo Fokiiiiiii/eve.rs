@@ -538,7 +538,8 @@ Source order (the user's rule): the SDE for numbers first, the EVE University wi
 page used is the Revenant expansion notes' breacher section (mirrored on the EVE University wiki); its own breacher page is not at the URL the repo's other pages use.
 
 - Numbers, SDE first: the SCARAB Breacher Pod S (85088) and M (85089) carry `dotDuration` 40000 ms (5735), `dotMaxDamagePerTick` 200 and 600 (5736) and
-  `dotMaxHPPercentagePerTick` 0.6 (5737). The brief's "600 cap" is the medium's; the small charge's cap is 200. The wiki gives 160 (small) and 800 (medium) a second,
+  `dotMaxHPPercentagePerTick` 0.6 (5737). The simulation reads the charge's values after dogma, so the pilot's skills apply: Operation (86260) at level 1 gives
+  0.63 (the wiki's "+5 % max target HP damaged per second per level"; the host test pins it). The brief's "600 cap" is the medium's; the small charge's cap is 200. The wiki gives 160 (small) and 800 (medium) a second,
   and 200 and 1000 with max skills: the SDE is used, and the wiki's numbers conflict with it (the SDE wins). The wiki's 50 to 75 s duration (with skills) is the
   base 40 s plus skill bonuses; the skill bonuses (5749, 5750) are not read yet, so no skill changes a pod here.
 - Launcher: 4807, the small (85084) and medium (85085) launchers. The charge's firing effect is `dotMissileLaunching` (12174), which the SDE marks offensive;

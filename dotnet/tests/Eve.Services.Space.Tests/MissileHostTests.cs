@@ -75,7 +75,7 @@ public class MissileHostTests
         var world = snapshot.World;
         double Six(double value) => Math.Round(value, 6, MidpointRounding.AwayFromZero);
         var turret = Assert.IsType<SimTurret>(package.Turret);
-        Assert.Equal(new SimTurretCharge(ScourgeRocket, Slot, 37, 1), turret.Charge);
+        Assert.Equal(new SimTurretCharge(ScourgeRocket, Slot, 37, 1, Reloads: true), turret.Charge);
         var missile = Assert.IsType<SimMissile>(turret.Missile);
         // how far it goes and for how long, from the charge
         Assert.Equal((ScourgeRocket, Six(world.Get(charge.Id, 37)), Six(world.Get(charge.Id, 281))), (missile.ChargeTypeId, missile.MaxVelocity, missile.FlightTimeMs));

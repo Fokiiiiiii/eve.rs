@@ -88,7 +88,7 @@ internal sealed class Rig : IAsyncDisposable
         Ships = new CharacterShips(source, statics, Characters, Items, Skills, modules);
         Timers = new Eve.Scheduler.LocalTimers(delay: Delay.WaitAsync);
         var boosterActivation = activateBooster ?? ((long _, long _, string _, long? _, long? _, CancellationToken _) => ValueTask.FromResult<bool?>(null));
-        Service = new DogmaIMService(statics, Ships, () => ClockMs, boosterActivation, null, Targeting, SpaceModules, Health, Rounds, Delay.WaitAsync, localTimers: Timers);
+        Service = new DogmaIMService(statics, Ships, () => ClockMs, boosterActivation, null, Targeting, SpaceModules, Health, Rounds, Delay.WaitAsync, localTimers: Timers).ListeningForDryGuns();
         Slash = new SlashService(new ShipHealthCommands(Ships, statics, () => ClockMs, Health));
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(sde), new Eve.Universe.StationCatalog([]), Ships, statics, () => ClockMs);
     }

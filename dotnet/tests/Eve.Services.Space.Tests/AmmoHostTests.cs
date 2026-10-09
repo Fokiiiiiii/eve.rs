@@ -10,7 +10,7 @@ public class AmmoHostTests
     private const int RailgunI = 10678, Antimatter = 222, Slot = 28;
 
     /// <summary>A pilot in space whose slot 28 holds a 125mm Railgun I (online), loaded with antimatter when <paramref name="loaded"/>.</summary>
-    private static async Task<(ClientSession Session, Eve.Characters.Created Character, long Gun)> ArmedInSpaceAsync(Rig rig, bool loaded)
+    internal static async Task<(ClientSession Session, Eve.Characters.Created Character, long Gun)> ArmedInSpaceAsync(Rig rig, bool loaded)
     {
         var character = await rig.NewCharacterAsync();
         Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.MoveAsync(character.CharacterId, character.ShipId + 3, character.ShipId, Rig.Station, ItemFlags.Hangar, null));
@@ -40,7 +40,7 @@ public class AmmoHostTests
 
         Assert.Equal(ModuleResult.Done, answer);
         var turret = Assert.IsType<SimTurret>(Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect.Turret);
-        Assert.Equal(new SimTurretCharge(Antimatter, Slot, 80, 1), turret.Charge);
+        Assert.Equal(new SimTurretCharge(Antimatter, Slot, 80, 1, Reloads: true), turret.Charge);
         // the shot is the damage of the charge (antimatter: 7 kinetic, 5 thermal) times the damage multiplier of the gun, none of it the gun's own
         var snapshot = (await rig.Ships.LoadAsync(character.CharacterId, CancellationToken.None))!;
         var multiplier = snapshot.World.Get(gun, 64);

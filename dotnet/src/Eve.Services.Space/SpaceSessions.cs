@@ -64,6 +64,9 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
         /// </summary>
         public ConcurrentDictionary<long, ItemState> ActiveModules { get; } = new();
 
+        /// <summary>The effects the pilot's modules run, as asked and as the simulation holds them (<see cref="RunningModule"/>): a refresh rebuilds them.</summary>
+        public ConcurrentDictionary<long, RunningModule> RunningModules { get; } = new();
+
         /// <summary>The module repairs under way (nanite paste): what each began with. Ended by a stop, or by the pilot leaving the ship (<see cref="CancelRepairsAsync"/>).</summary>
         public ConcurrentDictionary<long, ModuleRepairRecord> Repairs { get; } = new();
 
@@ -648,12 +651,19 @@ private readonly TransitionRuntime _transitions;
                     break;
                 case SimChargeSpent spent when _pilots.TryGetValue(spent.SessionId, out var shooter):
                     _charges.Enqueue(spent.SessionId, shooter.CharacterId, spent.ModuleId, spent.RoundsLeft);
+                    // a gun that reloads from its hold and has no round left for its next cycle asks for its load (FP-C8)
+                    if (shooter.RunningModules.TryGetValue(spent.ModuleId, out var gun) && gun.Reloads && spent.RoundsLeft < gun.PerCycle)
+                    {
+                        GunRanDry?.Invoke(new SpentGun(shooter.Session, shooter.CharacterId, shooter.ShipId, spent.ModuleId, gun.ChargeTypeId));
+                    }
                     break;
                 // an effect the simulation ended on its own account (the cycles done, the capacitor short, the target gone): the module is taken out of the
                 // numbers the ship is sent with, and the ship is sent again so the simulation drops the module's modifiers (FP-C1)
                 case SimModuleEnded ended when _pilots.TryGetValue(ended.SessionId, out var endedPilot) && endedPilot.ActiveModules.TryRemove(ended.ModuleId, out _):
                     Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Reset(ended.ModuleId);
+                    endedPilot.RunningModules.TryRemove(ended.ModuleId, out _);
                     _ = Task.Run(() => SendShipAsync(ended.SessionId, endedPilot, null, CancellationToken.None));
+                    _ = Task.Run(() => RefreshRunningAsync(endedPilot, ended.SessionId, CancellationToken.None));
                     break;
                 case SimRefused { Command: SimCommands.Stop, Reason: "IN_WARP" } inWarp when _pilots.TryGetValue(inWarp.SessionId, out var warping):
                     _warping[inWarp.SessionId] = 0;

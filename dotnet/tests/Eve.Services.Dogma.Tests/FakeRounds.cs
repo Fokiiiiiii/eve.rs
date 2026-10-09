@@ -6,6 +6,11 @@ namespace Eve.Services.Dogma.Tests;
 /// <summary>The rounds of the guns that run as a test plays them: what the dogma service asks is kept, and what it is answered is what the test says.</summary>
 internal sealed class FakeRounds : ISpaceRounds
 {
+    public event Action<SpentGun>? GunRanDry;
+
+    /// <summary>A reloading gun ran dry (what the space layer raises).</summary>
+    public void RunDry(SpentGun gun) => GunRanDry?.Invoke(gun);
+
     public List<string> Asked { get; } = [];
 
     /// <summary>What every change of rounds is answered with: a gun that does not run, unless the test says it does.</summary>

@@ -109,7 +109,11 @@ mod tests {
             let after = cycle(profile, *raw).unwrap_or(profile);
             // the table is written to the hundredth
             for i in 0..4 {
-                assert!((after[i] - expected[i]).abs() < 0.006, "cycle {} kind {i}: {after:?} vs {expected:?}", index + 1);
+                assert!(
+                    (after[i] - expected[i]).abs() < 0.006,
+                    "cycle {} kind {i}: {after:?} vs {expected:?}",
+                    index + 1
+                );
             }
             profile = after;
         }
@@ -126,7 +130,12 @@ mod tests {
     fn the_total_resonance_is_kept_in_every_cycle() {
         let before = total(SEED);
         let mut profile = SEED;
-        for raw in [[1000.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1000.0, 0.0], [300.0, 800.0, 0.0, 50.0], [0.0, 0.0, 0.0, 999.0]] {
+        for raw in [
+            [1000.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1000.0, 0.0],
+            [300.0, 800.0, 0.0, 50.0],
+            [0.0, 0.0, 0.0, 999.0],
+        ] {
             for _ in 0..6 {
                 if let Some(next) = cycle(profile, raw) {
                     profile = next;
@@ -193,7 +202,10 @@ mod tests {
         let profile = [0.49, 0.97, 0.97, 0.97];
         let next = next_profile(profile, [1000.0, 0.0, 0.0, 0.0].map(|d: f64| d * 0.49), 0.06).unwrap();
         assert!((next[0] - 0.40).abs() < 1e-9, "{next:?}");
-        assert!((next[1] - 1.0).abs() < 1e-9 && (next[2] - 1.0).abs() < 1e-9 && (next[3] - 1.0).abs() < 1e-9, "{next:?}");
+        assert!(
+            (next[1] - 1.0).abs() < 1e-9 && (next[2] - 1.0).abs() < 1e-9 && (next[3] - 1.0).abs() < 1e-9,
+            "{next:?}"
+        );
     }
 
     #[test]

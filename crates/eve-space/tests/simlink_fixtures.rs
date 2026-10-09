@@ -3,7 +3,6 @@
 
 use eve_space::death::Credit;
 use eve_space::drones::DroneEffect;
-use serde_json::json;
 use eve_space::health::{Condition, Layer, Resonances, Vitals};
 use eve_space::link::{
     ChargeOp, ContainerPlacement, DecodeError, Enter, How, LaunchDrone, Message, Spawn, WreckPlacement,
@@ -15,6 +14,7 @@ use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use eve_space::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use eve_space::wreck::WreckKind;
 use serde_json::Value;
+use serde_json::json;
 
 fn fixtures() -> Value {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../oracle/fixtures/simlink/messages.json");
@@ -283,7 +283,12 @@ fn effect_of(case: &Value) -> Effect {
             if a["kind"] == "resistanceShift" {
                 let four = |field: &str| -> [f64; 4] {
                     let list = a[field].as_array().unwrap_or_else(|| panic!("{field} in {a}"));
-                    [list[0].as_f64().unwrap(), list[1].as_f64().unwrap(), list[2].as_f64().unwrap(), list[3].as_f64().unwrap()]
+                    [
+                        list[0].as_f64().unwrap(),
+                        list[1].as_f64().unwrap(),
+                        list[2].as_f64().unwrap(),
+                        list[3].as_f64().unwrap(),
+                    ]
                 };
                 let ids = a["attributeIds"].as_array().unwrap();
                 return Action::ResistanceShift {
@@ -358,8 +363,13 @@ fn effect_of(case: &Value) -> Effect {
                 let num = |key: &str| a[key].as_f64().unwrap();
                 return Action::Strike {
                     strike: eve_space::strike::Strike {
-                        shape: eve_space::strike::StrikeShape::from_wire(a["shape"].as_u64().unwrap() as u8).expect("a shape the simulation runs"),
-                        direction: [direction[0].as_f64().unwrap(), direction[1].as_f64().unwrap(), direction[2].as_f64().unwrap()],
+                        shape: eve_space::strike::StrikeShape::from_wire(a["shape"].as_u64().unwrap() as u8)
+                            .expect("a shape the simulation runs"),
+                        direction: [
+                            direction[0].as_f64().unwrap(),
+                            direction[1].as_f64().unwrap(),
+                            direction[2].as_f64().unwrap(),
+                        ],
                         length: num("length"),
                         radius: num("radius"),
                         warning_ms: num("warningMs"),
@@ -378,7 +388,9 @@ fn effect_of(case: &Value) -> Effect {
                         neut_radius: num("neutRadius"),
                         neut_signature_radius: num("neutSignatureRadius"),
                         debuff_ms: a["debuffMs"].as_f64().unwrap_or(0.0),
-                        sweep_end: a["sweepEnd"].as_array().map(|end| [end[0].as_f64().unwrap(), end[1].as_f64().unwrap(), end[2].as_f64().unwrap()]),
+                        sweep_end: a["sweepEnd"].as_array().map(|end| {
+                            [end[0].as_f64().unwrap(), end[1].as_f64().unwrap(), end[2].as_f64().unwrap()]
+                        }),
                     },
                 };
             }
@@ -516,8 +528,12 @@ fn message_of(case: &Value) -> Message {
             how: if number("how") == 0 { How::Undock } else { How::InSpace },
             station_id: wide(case, "stationId"),
             ship: ship_of(&case["ship"]),
-            position: case.get("position").map(|vector| [vector[0].as_f64().unwrap(), vector[1].as_f64().unwrap(), vector[2].as_f64().unwrap()]),
-            direction: case.get("direction").map(|vector| [vector[0].as_f64().unwrap(), vector[1].as_f64().unwrap(), vector[2].as_f64().unwrap()]),
+            position: case.get("position").map(|vector| {
+                [vector[0].as_f64().unwrap(), vector[1].as_f64().unwrap(), vector[2].as_f64().unwrap()]
+            }),
+            direction: case.get("direction").map(|vector| {
+                [vector[0].as_f64().unwrap(), vector[1].as_f64().unwrap(), vector[2].as_f64().unwrap()]
+            }),
         })),
         "EnterReply" => Message::EnterReply {
             session_id: session_id(),
@@ -759,7 +775,10 @@ fn message_of(case: &Value) -> Message {
             mining_amount_m3: case.get("miningAmountM3").and_then(Value::as_f64).unwrap_or(0.0),
             work_cycle_ms: case.get("workCycleMs").and_then(Value::as_f64).unwrap_or(0.0),
             mining_waste_multiplier: case.get("miningWasteMultiplier").and_then(Value::as_f64).unwrap_or(0.0),
-            mining_waste_probability: case.get("miningWasteProbability").and_then(Value::as_f64).unwrap_or(0.0),
+            mining_waste_probability: case
+                .get("miningWasteProbability")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0),
             salvage_access_bonus: case.get("salvageAccessBonus").and_then(Value::as_f64).unwrap_or(0.0),
             effect: case.get("effect").filter(|effect| !effect.is_null()).map(drone_effect_of),
         })),
@@ -803,13 +822,23 @@ fn message_of(case: &Value) -> Message {
             session_id: session_id(),
             command: number("command") as u8,
             target_id: wide(case, "targetId"),
-            fighter_ids: case["fighterIds"].as_array().unwrap().iter().map(|f| f.as_str().unwrap().parse().unwrap()).collect(),
+            fighter_ids: case["fighterIds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f.as_str().unwrap().parse().unwrap())
+                .collect(),
             range: case["range"].as_f64().unwrap(),
         },
         "FighterResults" => Message::FighterResults {
             session_id: session_id(),
             command: number("command") as u8,
-            results: case["results"].as_array().unwrap().iter().map(|r| (wide(r, "fighterId"), text(r, "reason"))).collect(),
+            results: case["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| (wide(r, "fighterId"), text(r, "reason")))
+                .collect(),
         },
         "FighterSize" => Message::FighterSize {
             session_id: session_id(),
@@ -818,10 +847,17 @@ fn message_of(case: &Value) -> Message {
         },
         "FighterGotoPoint" => Message::FighterGotoPoint {
             session_id: session_id(),
-            fighter_ids: case["fighterIds"].as_array().unwrap().iter().map(|f| f.as_str().unwrap().parse().unwrap()).collect(),
+            fighter_ids: case["fighterIds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f.as_str().unwrap().parse().unwrap())
+                .collect(),
             point: vector_of(case, "point"),
         },
-        "FighterLanded" => Message::FighterLanded { session_id: session_id(), fighter_id: wide(case, "fighterId") },
+        "FighterLanded" => {
+            Message::FighterLanded { session_id: session_id(), fighter_id: wide(case, "fighterId") }
+        }
         "FighterReleased" => Message::FighterReleased {
             session_id: session_id(),
             fighter_id: wide(case, "fighterId"),
@@ -874,7 +910,10 @@ fn every_valid_frame_encodes_to_its_bytes_and_decodes_back() {
 
 #[test]
 fn a_launch_drone_without_a_weapon_roundtrips_with_the_empty_weapon_record() {
-    let mut case = fixtures()["valid"].as_array().unwrap().iter()
+    let mut case = fixtures()["valid"]
+        .as_array()
+        .unwrap()
+        .iter()
         .find(|case| text(case, "name") == "launch of a drone")
         .unwrap()
         .clone();
@@ -957,68 +996,68 @@ fn module_offline_and_rack_overheat_orders_roundtrip_through_the_link() {
     }
 }
 
-    #[test]
-    fn mutadaptive_remote_repair_action_and_cycle_messages_roundtrip_through_the_link() {
-        let effect = eve_space::modules::Effect {
-            burns_fuel: false,
-            module_id: 700,
-            module_type: 35298,
-            effect_id: 8,
-            fx: "effects.RemoteArmorRepair".to_string(),
-            duration_ms: 6_000.0,
-            capacitor_need: 513.0,
-            repeat: i32::MAX,
-            target_id: 701,
-            turret: None,
-            action: Some(eve_space::modules::Action::Remote {
-                what: eve_space::modules::Remote::MutadaptiveRepair {
-                    layer: eve_space::health::Layer::Armor,
-                    amount: 256.0,
-                    bonus_per_cycle: 0.1,
-                    bonus_max: 1.5,
-                },
-                reach: eve_space::modules::Reach { optimal: 12_000.0, falloff: 0.0 },
-                when: eve_space::modules::Applies::CycleEnd,
-                jam: "remoteArmorRepair".to_string(),
-            }),
-            on: None,
-            off: None,
-            on_changes: Vec::new(),
-            off_changes: Vec::new(),
-        };
-        let activation = Message::Activate { session_id: 42, effect: Box::new(effect) };
-        let frame = activation.encode();
-        assert_eq!(Message::decode(&frame[4..]).unwrap(), activation);
-
-        let messages = [
-            Message::RemoteRepairCycle {
-                session_id: 42,
-                module_id: 700,
-                target_id: 701,
-                cycle_id: 9,
-                cycle_number: 15,
-                cycle_at_ms: 123_456,
-                cycle_duration_ms: 6_000,
-                ends_effect_after_cycle: true,
-                base_amount: 256.0,
+#[test]
+fn mutadaptive_remote_repair_action_and_cycle_messages_roundtrip_through_the_link() {
+    let effect = eve_space::modules::Effect {
+        burns_fuel: false,
+        module_id: 700,
+        module_type: 35298,
+        effect_id: 8,
+        fx: "effects.RemoteArmorRepair".to_string(),
+        duration_ms: 6_000.0,
+        capacitor_need: 513.0,
+        repeat: i32::MAX,
+        target_id: 701,
+        turret: None,
+        action: Some(eve_space::modules::Action::Remote {
+            what: eve_space::modules::Remote::MutadaptiveRepair {
+                layer: eve_space::health::Layer::Armor,
+                amount: 256.0,
                 bonus_per_cycle: 0.1,
                 bonus_max: 1.5,
             },
-            Message::RemoteRepairCycleResult {
-                session_id: 42,
-                module_id: 700,
-                target_id: 701,
-                cycle_id: 9,
-                accepted: true,
-                reason: String::new(),
-                amount: 640.0,
-            },
-        ];
-        for message in messages {
-            let frame = message.encode();
-            assert_eq!(Message::decode(&frame[4..]).unwrap(), message);
-        }
+            reach: eve_space::modules::Reach { optimal: 12_000.0, falloff: 0.0 },
+            when: eve_space::modules::Applies::CycleEnd,
+            jam: "remoteArmorRepair".to_string(),
+        }),
+        on: None,
+        off: None,
+        on_changes: Vec::new(),
+        off_changes: Vec::new(),
+    };
+    let activation = Message::Activate { session_id: 42, effect: Box::new(effect) };
+    let frame = activation.encode();
+    assert_eq!(Message::decode(&frame[4..]).unwrap(), activation);
+
+    let messages = [
+        Message::RemoteRepairCycle {
+            session_id: 42,
+            module_id: 700,
+            target_id: 701,
+            cycle_id: 9,
+            cycle_number: 15,
+            cycle_at_ms: 123_456,
+            cycle_duration_ms: 6_000,
+            ends_effect_after_cycle: true,
+            base_amount: 256.0,
+            bonus_per_cycle: 0.1,
+            bonus_max: 1.5,
+        },
+        Message::RemoteRepairCycleResult {
+            session_id: 42,
+            module_id: 700,
+            target_id: 701,
+            cycle_id: 9,
+            accepted: true,
+            reason: String::new(),
+            amount: 640.0,
+        },
+    ];
+    for message in messages {
+        let frame = message.encode();
+        assert_eq!(Message::decode(&frame[4..]).unwrap(), message);
     }
+}
 
 #[test]
 fn every_invalid_frame_is_refused_for_the_stated_reason() {

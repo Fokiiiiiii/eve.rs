@@ -6,7 +6,7 @@
 //! `CmdAbandonFighter`). A squadron that lands is reported as [`Out::FighterLanded`] and one that is let go as [`Out::FighterReleased`]; the host moves the
 //! item in each case. Abilities and damage are not in this module: a squadron is refused what it cannot do, with its reason.
 
-use crate::drones::{DroneFlight, DroneWorkProfile, Task, DEPARTING, FIGHTER_RECOVERY_DISTANCE};
+use crate::drones::{DEPARTING, DroneFlight, DroneWorkProfile, FIGHTER_RECOVERY_DISTANCE, Task};
 use crate::payload;
 use crate::scene::{Out, Scene, SessionId};
 use crate::ship::{CompanionKind, Course, ShipSpec, Squadron};
@@ -94,7 +94,12 @@ impl Scene {
             effect: None,
         };
         let (session, out) = self.launch_companion(CompanionKind::Fighter, controller, spec, flight, now)?;
-        if let Some(link) = self.pilots.get_mut(&session).and_then(|pilot| pilot.ship.npc.as_mut()).and_then(|npc| npc.drone.as_mut()) {
+        if let Some(link) = self
+            .pilots
+            .get_mut(&session)
+            .and_then(|pilot| pilot.ship.npc.as_mut())
+            .and_then(|npc| npc.drone.as_mut())
+        {
             link.squadron = Some(Squadron { members_max: squadron_size, told_size: squadron_size });
         }
         Ok((session, out))
@@ -107,7 +112,9 @@ impl Scene {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         let fighter_id = pilot.ship.spec.ship_id;
         let (left, whole) = pilot.ship.health.points_left(now);
-        let Some(link) = pilot.ship.npc.as_mut().and_then(|npc| npc.drone.as_mut()) else { return Vec::new() };
+        let Some(link) = pilot.ship.npc.as_mut().and_then(|npc| npc.drone.as_mut()) else {
+            return Vec::new();
+        };
         let controller = link.controller;
         let Some(squadron) = link.squadron.as_mut() else { return Vec::new() };
         let member = whole / f64::from(squadron.members_max.max(1));
@@ -126,7 +133,13 @@ impl Scene {
 
     /// Gives the squadrons of `controller` an order and answers, for each squadron, `None` when it took the order or the reason it did not
     /// (as [`Out::FighterResults`] to the controller). A squadron that is not one of the controller's is refused with [`NOT_CONTROLLED`].
-    pub fn fighter_order(&mut self, controller: SessionId, fighters: &[i64], order: FighterOrder, now: i64) -> Vec<Out> {
+    pub fn fighter_order(
+        &mut self,
+        controller: SessionId,
+        fighters: &[i64],
+        order: FighterOrder,
+        now: i64,
+    ) -> Vec<Out> {
         self.settle_all(now);
         if order == FighterOrder::Scoop {
             return self.scoop_abandoned(controller, fighters, now);
@@ -191,7 +204,9 @@ impl Scene {
         let mut out = Vec::new();
         let mut results = Vec::new();
         for &fighter_id in fighters {
-            let let_go = self.session_of(fighter_id).filter(|session| self.is_fighter(*session) && self.controller_of_drone(*session) == Some(0));
+            let let_go = self
+                .session_of(fighter_id)
+                .filter(|session| self.is_fighter(*session) && self.controller_of_drone(*session) == Some(0));
             let Some(session) = let_go else {
                 results.push((fighter_id, Some(NOT_ABANDONED)));
                 continue;
@@ -199,7 +214,9 @@ impl Scene {
             let launched_here = self
                 .pilots
                 .get(&session)
-                .and_then(|pilot| pilot.ship.npc.as_ref()?.drone.as_ref().map(|link| link.launched_from_ship_id))
+                .and_then(|pilot| {
+                    pilot.ship.npc.as_ref()?.drone.as_ref().map(|link| link.launched_from_ship_id)
+                })
                 .is_some_and(|from| Some(from) == ship_id);
             if ship_id.is_none() || !launched_here {
                 results.push((fighter_id, Some(NOT_YOURS)));
@@ -254,7 +271,11 @@ impl Scene {
         self.tell_all(
             session,
             vec![
-                payload::action(stamp, "GotoPoint", [id(fighter_id), real(point[0]), real(point[1]), real(point[2])]),
+                payload::action(
+                    stamp,
+                    "GotoPoint",
+                    [id(fighter_id), real(point[0]), real(point[1]), real(point[2])],
+                ),
                 payload::action(stamp, "SetSpeedFraction", [id(fighter_id), real(speed)]),
             ],
         )

@@ -25,20 +25,31 @@ impl Scene {
     pub(crate) fn surface_distance_to_wreck(&self, session: SessionId, wreck_id: i64) -> Option<f64> {
         let wreck = self.wrecks.get(&wreck_id)?;
         let ship = self.pilots.get(&session)?.ship.position;
-        let centre =
-            ((ship.x - wreck.position.x).powi(2) + (ship.y - wreck.position.y).powi(2) + (ship.z - wreck.position.z).powi(2)).sqrt();
+        let centre = ((ship.x - wreck.position.x).powi(2)
+            + (ship.y - wreck.position.y).powi(2)
+            + (ship.z - wreck.position.z).powi(2))
+        .sqrt();
         Some((centre - wreck.radius.max(0.0)).max(0.0))
     }
 
     /// Whether a beam of `session` still has its target: a wreck or a can its pilot holds the lock on, within the module's `range` (and its grace).
     pub(crate) fn tractor_target_ok(&self, session: SessionId, wreck_id: i64, range: f64) -> bool {
         self.locked_by(session).contains(&wreck_id)
-            && self.surface_distance_to_wreck(session, wreck_id).is_some_and(|apart| apart <= range + REACH_GRACE_METERS)
+            && self
+                .surface_distance_to_wreck(session, wreck_id)
+                .is_some_and(|apart| apart <= range + REACH_GRACE_METERS)
     }
 
     /// The pull of a beam starts, or goes on: the wreck follows the ship at `hold` metres, at `velocity` (EVE.js's presentation of the activation). A wreck
     /// already pulled by this ship is not told again; one pulled by another ship is taken over by this one.
-    pub(crate) fn tractor_pull(&mut self, session: SessionId, wreck_id: i64, velocity: f64, hold: f64, now: i64) -> Vec<crate::scene::Out> {
+    pub(crate) fn tractor_pull(
+        &mut self,
+        session: SessionId,
+        wreck_id: i64,
+        velocity: f64,
+        hold: f64,
+        now: i64,
+    ) -> Vec<crate::scene::Out> {
         let Some(source) = self.pilots.get(&session).map(|pilot| pilot.ship.spec.ship_id) else {
             return Vec::new();
         };
@@ -63,7 +74,12 @@ impl Scene {
 
     /// The beam of `source_ship` lets go of the wreck it pulled: the wreck stops where it is (EVE.js `stopTractorTarget`: the top speed is restored,
     /// the speed fraction and the velocity go to zero, and the ball stops). Another ship's pull on the wreck is left alone.
-    pub(crate) fn tractor_release(&mut self, wreck_id: i64, source_ship: i64, now: i64) -> Vec<crate::scene::Out> {
+    pub(crate) fn tractor_release(
+        &mut self,
+        wreck_id: i64,
+        source_ship: i64,
+        now: i64,
+    ) -> Vec<crate::scene::Out> {
         let Some(wreck) = self.wrecks.get_mut(&wreck_id) else {
             return Vec::new();
         };
@@ -134,7 +150,10 @@ impl Scene {
             .filter_map(|wreck| wreck.pull.map(|pull| (wreck.id, pull.source_ship)))
             .filter(|(_, source)| self.session_of(*source).is_none())
             .collect();
-        orphans.into_iter().flat_map(|(wreck_id, source)| self.tractor_release(wreck_id, source, now)).collect()
+        orphans
+            .into_iter()
+            .flat_map(|(wreck_id, source)| self.tractor_release(wreck_id, source, now))
+            .collect()
     }
 
     /// What happens to a wreck, told to whoever has it in view, at the same stamp (as `remove_wreck` tells its watchers).

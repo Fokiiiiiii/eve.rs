@@ -83,7 +83,11 @@ impl Strike {
         let Some(end) = self.sweep_end else { return Some(*self) };
         let last = f64::from((self.pulses - 1).max(1));
         let progress = (f64::from(pulse) / last).clamp(0.0, 1.0);
-        let start = [self.direction[0] * self.length, self.direction[1] * self.length, self.direction[2] * self.length];
+        let start = [
+            self.direction[0] * self.length,
+            self.direction[1] * self.length,
+            self.direction[2] * self.length,
+        ];
         let offset = [0, 1, 2].map(|i| start[i] + (end[i] - start[i]) * progress);
         let length = dot(offset, offset).sqrt();
         if !(length.is_finite() && length > 0.0) {
@@ -247,14 +251,23 @@ mod tests {
         assert_eq!((first.direction, first.length), ([1.0, 0.0, 0.0], 2_000.0), "the start point");
         // halfway through the window the axis points between the two points, at the same length (a right angle sweep)
         let middle = sweep.at_pulse(1).unwrap();
-        assert!((middle.length - 2_000.0 * 0.5f64.sqrt()).abs() < 1e-6 * 2_000.0 && (middle.direction[0] - middle.direction[1]).abs() < 1e-9);
+        assert!(
+            (middle.length - 2_000.0 * 0.5f64.sqrt()).abs() < 1e-6 * 2_000.0
+                && (middle.direction[0] - middle.direction[1]).abs() < 1e-9
+        );
         let last = sweep.at_pulse(2).unwrap();
         assert_eq!(last.direction, [0.0, 1.0, 0.0], "the end point");
         // a sweep whose axis passes through the origin has no length there and hits nothing
         let through = Strike { sweep_end: Some([-2_000.0, 0.0, 0.0]), pulses: 3, ..sweep };
         assert!(through.at_pulse(1).is_none(), "a zero axis at the middle pulse");
-        assert!(cone(30_000.0).at_pulse(0).is_some_and(|fixed| fixed == cone(30_000.0)), "a fixed aim is the strike itself");
-        assert!(!Strike { sweep_end: Some([0.0; 3]), ..sweep }.is_valid(), "a sweep that ends on the ship is not valid");
+        assert!(
+            cone(30_000.0).at_pulse(0).is_some_and(|fixed| fixed == cone(30_000.0)),
+            "a fixed aim is the strike itself"
+        );
+        assert!(
+            !Strike { sweep_end: Some([0.0; 3]), ..sweep }.is_valid(),
+            "a sweep that ends on the ship is not valid"
+        );
     }
 
     #[test]

@@ -69,7 +69,7 @@ impl Scene {
                     bound: pilot.bound,
                     sees: pilot.sees.clone(),
                     sees_wrecks: pilot.sees_wrecks.clone(),
-            sees_asteroids: pilot.sees_asteroids.clone(),
+                    sees_asteroids: pilot.sees_asteroids.clone(),
                 },
             );
         }
@@ -144,7 +144,9 @@ impl Scene {
                 },
                 launcher_id: ship_id,
                 is_empty: true,
-                rights_known: false, pull: None, velocity: eve_destiny::Vec3::ZERO,
+                rights_known: false,
+                pull: None,
+                velocity: eve_destiny::Vec3::ZERO,
                 expires_at: now + WRECK_LIFETIME,
             }
         });

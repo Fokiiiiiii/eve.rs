@@ -85,11 +85,7 @@ pub fn application_factor_of(
     } else {
         let base = (round6(signature_factor) * velocity) / speed.max(0.000_001);
         let raised = base.powf(reduction_exponent_of(reduction_factor, reduction_sensitivity));
-        if raised.is_finite() {
-            raised
-        } else {
-            1.0
-        }
+        if raised.is_finite() { raised } else { 1.0 }
     };
     round6(1.0_f64.min(round6(signature_factor)).min(velocity_factor))
 }

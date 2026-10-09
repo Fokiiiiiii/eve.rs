@@ -64,7 +64,8 @@ public class PlayerDeathTests
         Assert.Equal((system, 26506, c.ShipId, 47.0), (wreck.SolarSystemId, wreckItem.TypeId, wreck.LauncherId, wreck.Radius));
         Assert.Equal(Place, wreck.Position);
         Assert.Equal(new SimCredit(c.CharacterId, character.CorporationId, character.AllianceId ?? 0, character.FactionId ?? 0), wreck.Credit);
-        Assert.Equal(rig.Sim.Heard.IndexOf(respawn) + 1, rig.Sim.Heard.IndexOf(wreck));
+        var heard = rig.Sim.Heard.ToArray();
+        Assert.Equal(Array.IndexOf(heard, respawn) + 1, Array.IndexOf(heard, wreck));
         Assert.True(rig.Space.IsInSpace(session));
         // where the wreck lies is kept, for two hours, so that it can be put back when a scene is made again
         Eve.Ships.SpaceItem? kept = null;

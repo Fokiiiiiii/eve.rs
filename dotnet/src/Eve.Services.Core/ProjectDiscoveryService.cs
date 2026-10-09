@@ -30,6 +30,7 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
     public string Name => "ProjectDiscovery";
 
     public bool HasMethod(string method) => method is
+        "is_enabled" or
         "fix_task_id" or
         "get_player_analysis_kredits" or
         "get_player_state" or
@@ -41,6 +42,9 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
         var characterId = call.Session.CharacterId.GetValueOrDefault();
         switch (call.Method)
         {
+            case "is_enabled":
+                return PyBool.True;
+
             case "fix_task_id":
                 if (characterId > 0 && _callbacks.FixTaskIdAsync is { } fixTaskId)
                     await fixTaskId(characterId, PositiveFiniteNumber(call.Arg(0)), call.Cancellation);

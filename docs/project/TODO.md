@@ -1,7 +1,7 @@
 # Current TODOs
 
 **Updated:** 2026-10-09
-**Baseline:** main source commit `863d259c16413a4589c030c6dc8e495d518ecc30`
+**Baseline:** main source commit `7379a70fdeee0e93d2ac38c1b7a7bd9ecd29da60`
 
 This list distinguishes a real behavior/provider gap from an intentionally empty default and from a method whose route already exists. These items are not missing-route work.
 
@@ -24,6 +24,10 @@ Do not fabricate successful state or fake backends to close these items.
 | OPEN | `scanMgr.SignalTrackerRegister` | The Host can record the character/session/system registration and has a full-state publish hook. The live signal snapshot producer and the code that calls the publisher are still absent. |
 | OPEN | `posMgr.GetControlTowers` | Connect rows from a real starbase/tower data source to `ReadControlTowerRowsCallback`. The route is present; no current tower provider was found. |
 | OPEN (audit side effect) | publicQaToolsServer.MoveMeTo | EveJS records a move_me_to QA event and returns null. RS returns None with matching wire shape, but has no QA event recorder. Connect a real audit provider only if one becomes available. |
+| OPEN | `contractProxy.GetMyContractEscrow`; `expertSystemMgr.GetMyExpertSystems` | The startup RPCs return EveJS-compatible empty-state shapes, but contract records and expert-system ownership are not persisted. Connect the authoritative read paths when those domains are added. |
+| OPEN | `raffleProxy.AmIBanned` | The current false result matches the enabled-HyperNet default, but account bans are not persisted. Connect the moderation owner before supporting per-account bans. |
+| FUTURE | `config.GetBlackListedPlanets` | The empty list matches EveJS; there is no runtime planet blocklist source. Connect one only if the server adds that policy. |
+| LIMITATION | `home_station.get_home_station` | Reads the persisted home station and falls back to the current station. It does not resolve live structure homes or use the school's starting station when a home structure is lost, as EveJS does. Add an authoritative structure lookup and school-start resolver before claiming parity. |
 
 ## 2. Mutation authorities and specialized service providers
 
@@ -287,6 +291,7 @@ The start scripts are `tools/windows/` (`start-server.bat`, `start-server-dev.ba
 - `station.GetGuests`: alias route, wire shape, observer ledger seed, live-session `warfactionid`, and station/structure join/leave broadcasts are implemented and unit-tested.
 - `CreateCharacterWithDoll`: starter inventory, modules, skills and wallet persist; the new character's welcome mail/notification is durable before selection, and `GetCharacterSelectionData` reads the live unread-mail count.
 - `SelectCharacterID`: named arguments, `OnCharacterSelected("clientID", [])`, session state, station/structure/space selection, deferred docked ship-id and fitting bootstrap, first-space-List visual prime, ship/module Dogma hydration, and saved-pose space resume are covered by PostgreSQL and TCP headless tests.
+- The observed post-selection bootstrap calls `config.GetBlackListedPlanets`, `ProjectDiscovery.is_enabled`, `charMgr.MachoResolveObject` for global assets container 10002, and `jumpCloneSvc.MachoResolveObject` have focused wire-shape tests. Paper-doll normalization has a regression test for missing sculpt weights and `SculptingRow` headers. Data-backed gaps remain listed above.
 - `GetCharacterSelectionData`: full rows keep a renamed ship, report live skill-training projection and relation-backed security status, and derive the latest finished-skill count from history; same-FILETIME completion batches remain indistinguishable.
 - `industryMonitor.ConnectJob`: inventory-flag filtering and blueprint-category exclusion are implemented and tested.
 - `structureHangarViewMgr.GetMyHangarViewState`: existing persistence callback is connected.

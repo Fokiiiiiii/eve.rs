@@ -135,14 +135,100 @@ public sealed class PaperDollServerRpcService : IService
         var dollExists = call.Args.Count <= 3 || BooleanOrDefault(call.Arg(3), true);
         var hasDoll = !dollExists || call.Arg(1) is not PyNone;
         var hasPortrait = !dollExists || call.Arg(2) is not PyNone;
-        var doll = dollExists && call.Arg(1) is not PyNone ? MarshalCodec.Encode(call.Arg(1)) : null;
+        var doll = dollExists && call.Arg(1) is not PyNone ? MarshalCodec.Encode(NormalizePaperDollPayload(call.Arg(1))) : null;
         var portrait = dollExists && call.Arg(2) is not PyNone ? MarshalCodec.Encode(call.Arg(2)) : null;
         if (hasDoll || hasPortrait)
             await _characters.SetAppearanceAsync(id, doll, hasDoll, portrait, hasPortrait, call.Cancellation);
         return PyNone.Instance;
     }
 
-    private static PyValue Decode(byte[]? bytes) => bytes is null ? PyNone.Instance : MarshalCodec.DecodeExact(bytes);
+    private static readonly string[] SculptWeightFields = ["weightUpDown", "weightLeftRight", "weightForwardBack"];
+
+    private static PyValue Decode(byte[]? bytes) =>
+        bytes is null ? PyNone.Instance : NormalizePaperDollPayload(MarshalCodec.DecodeExact(bytes));
+
+    internal static PyValue NormalizePaperDollPayload(PyValue value) => value switch
+    {
+        PyList list => new PyList(list.Items.Select(NormalizePaperDollPayload).ToArray()),
+        PyTuple tuple => Py.Tuple(tuple.Items.Select(NormalizePaperDollPayload).ToArray()),
+        PyDict dictionary => NormalizeSculptingFields(dictionary.Entries),
+        PyObject instance => new PyObject(instance.Name, NormalizePaperDollPayload(instance.Args)),
+        PyObjectEx instance => new PyObjectEx(
+            instance.Kind,
+            NormalizeSculptingHeader(instance.Header),
+            instance.List.Select(NormalizePaperDollPayload).ToArray(),
+            NormalizeSculptingFields(instance.Dict).Entries),
+        PyPackedRow row => NormalizeSculptingRow(row),
+        _ => value,
+    };
+
+    private static PyDict NormalizeSculptingFields(IEnumerable<KeyValuePair<PyValue, PyValue>> source)
+    {
+        var entries = source
+            .Select(entry => new KeyValuePair<PyValue, PyValue>(entry.Key, NormalizePaperDollPayload(entry.Value)))
+            .ToList();
+        bool HasName(string name) => entries.Any(entry => PaperDollName(entry.Key) == name);
+        if (!HasName("sculptLocationID") || !SculptWeightFields.Any(HasName))
+            return new PyDict(entries);
+
+        foreach (var name in SculptWeightFields)
+        {
+            var index = entries.FindLastIndex(entry => PaperDollName(entry.Key) == name);
+            if (index < 0)
+                entries.Add(new(new PyStr(name), new PyReal(0d)));
+            else if (entries[index].Value is PyNone)
+                entries[index] = new(entries[index].Key, new PyReal(0d));
+        }
+        return new PyDict(entries);
+    }
+
+    private static PyValue NormalizeSculptingHeader(PyValue source)
+    {
+        var header = NormalizePaperDollPayload(source);
+        if (header is not PyTuple { Items.Count: > 0 } tuple)
+            return header;
+        var rowHeader = tuple.Items[0] switch
+        {
+            PyTuple nested => nested.Items,
+            PyList nested => nested.Items,
+            _ => Array.Empty<PyValue>(),
+        };
+        if (rowHeader.Count == 0 || PaperDollName(rowHeader[0])?.EndsWith(".SculptingRow", StringComparison.Ordinal) != true)
+            return header;
+
+        var columns = rowHeader.ToList();
+        while (columns.Count < 5)
+            columns.Add(new PyInt(0));
+        for (var index = 2; index <= 4; index++)
+            if (columns[index] is PyNone)
+                columns[index] = new PyInt(0);
+        var items = tuple.Items.ToArray();
+        items[0] = tuple.Items[0] is PyList ? new PyList(columns) : Py.Tuple(columns.ToArray());
+        return Py.Tuple(items);
+    }
+
+    private static PyValue NormalizeSculptingRow(PyPackedRow row)
+    {
+        var columns = row.Columns;
+        var values = row.Values.Select(NormalizePaperDollPayload).ToList();
+        bool IsWeight(string name) => SculptWeightFields.Contains(name, StringComparer.Ordinal);
+        if (!columns.Any(column => column.Name == "sculptLocationID") || !columns.Any(column => IsWeight(column.Name)))
+            return new PyPackedRow(row.Descriptor, values);
+        while (values.Count < columns.Count)
+            values.Add(PyNone.Instance);
+        for (var index = 0; index < columns.Count; index++)
+            if (IsWeight(columns[index].Name) && values[index] is PyNone)
+                values[index] = new PyReal(0d);
+        return new PyPackedRow(row.Descriptor, values);
+    }
+
+    private static string? PaperDollName(PyValue value) => value switch
+    {
+        PyStr text => text.Value,
+        PyWString text => text.Value,
+        PyToken token => token.Value,
+        _ => null,
+    };
 
     private static Dictionary<string, double?> NormalizePortrait(PyValue source)
     {

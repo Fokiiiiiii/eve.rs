@@ -70,6 +70,43 @@ public static void ApplicationChanged(CharacterSessions? sessions,ServiceCall ca
         });
     }
 
+    public static void CorporationChanged(CharacterSessions? sessions,ServiceCall call,long corporationId,
+        string name,PyValue before,PyValue after)
+    {
+        if (sessions is null || before.Equals(after)) return;
+        var change = Py.Dict((name,new PyList([before,after])));
+        var payload = Py.Tuple(CorporationWire.Id(corporationId),change);
+        call.Session.AfterResponse(() =>
+        {
+            foreach (var session in sessions.OfCorporation(corporationId))
+                Send(session,"OnCorporationChanged","ownerid",payload);
+        });
+    }
+
+      public static void WarChanged(CharacterSessions? sessions,ServiceCall call,long declaredById,long againstId,PyValue war)
+      {
+          if (sessions is null || war is not PyObject { Args: PyDict fields }) return;
+          var owners = new PyList([.. new[] { declaredById,againstId }.Distinct().Order().Select(id => (PyValue)new PyInt(id))]);
+          var changes = new PyDict(fields.Entries.Select(entry =>
+              new KeyValuePair<PyValue,PyValue>(entry.Key,new PyList([PyNone.Instance,entry.Value]))).ToArray());
+          var payload = new PyList([war,owners,changes]);
+          call.Session.AfterResponse(() =>
+          {
+              foreach (var session in sessions.All())
+                  Send(session,"OnWarChanged","ownerid",payload);
+          });
+      }
+
+    public static void RecruitmentAdChanged(CharacterSessions? sessions,ServiceCall call)
+    {
+        if (sessions is null) return;
+        call.Session.AfterResponse(() =>
+        {
+            foreach (var session in sessions.All())
+                Send(session,"OnCorporationRecruitmentAdChanged","ownerid",Py.Tuple());
+        });
+    }
+
     private static PyDict MemberChange(Member? before,Member? after)
     {
         var changes = new List<KeyValuePair<PyValue,PyValue>>();

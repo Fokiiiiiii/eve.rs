@@ -77,6 +77,7 @@ internal sealed partial class CharacterServicesComposition
                             Math.Max(0, warFactionId));
                     });
                 }),
+            new Eve.Services.CharacterInfo.HomeStationService(characters, stations),
             new Eve.Services.CharacterInfo.OnlineStatusService(characterSessions, ReadWatchlistAsync),
     ];
 }

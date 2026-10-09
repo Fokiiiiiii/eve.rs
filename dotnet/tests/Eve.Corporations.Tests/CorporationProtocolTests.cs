@@ -103,6 +103,59 @@ public sealed class WarsInfoMgrServiceTests
         Assert.True(declaredTimes[0] > declaredTimes[1]);
     }
 
+    [Eve.Corporations.Tests.PgFact]
+    public async Task War_declaration_storage_is_visible_to_wars_info_with_its_bill_and_spoolup()
+    {
+        await using var corporationRig = await Rig.CreateAsync();
+        await using var relationRig = await WarRig.CreateAsync();
+        var founder = await corporationRig.CharacterAsync("War Persistence Founder");
+        var defender = await corporationRig.CharacterAsync("War Persistence Defender");
+        var corporation = await corporationRig.Store.CreateAsync(founder,new("War Persistence Works","WPR","","",0.05m),"corp-war-persistence");
+        var target = await corporationRig.Store.CreateAsync(defender,new("War Persistence Target","WPT","","",0.05m),"corp-war-persistence-target");
+        var declaredAt = Assert.IsType<PyLong>(CorporationWire.Time(corporationRig.Now)).Value;
+        var startedAt = declaredAt+864_000_000_000L;
+        var created = await corporationRig.Store.CreateWarDeclarationAsync(
+            corporation.Id,founder,target.Id,null,declaredAt,startedAt,declaredAt+6_048_000_000_000L,
+            4,100_000_000m,1000125,"war-persistence",
+            async (connection,transaction,billId,token) =>
+            {
+                if (await relationRig.Relations.GetAsync("war",corporation.Id,target.Id,connection,transaction,token,forUpdate:true) is not null)
+                    throw new Eve.Corporations.CorporationError("WAR_ALREADY_DECLARED");
+                var attrs = new
+                {
+                    declaredByCharacterID=founder,
+                    timeDeclared=declaredAt.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    timeStarted=startedAt.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    timeFinished=(string?)null,
+                    retracted=(string?)null,
+                    retractedBy=(long?)null,
+                    billID=billId,
+                    mutual=0,
+                    fightingLegalNotified=0,
+                    openForAllies=0,
+                    createdFromWarID=(long?)null,
+                    warHQID=(long?)null,
+                    warHQ=(long?)null,
+                    reasonEnded=0,
+                    reasonStarted=0,
+                    reward=0
+                };
+                var change = await relationRig.Relations.SetAsync(connection,transaction,"war",corporation.Id,target.Id,
+                    1.0,"declared",attrs,cancellationToken:token);
+                return change?.RelationId ?? 0;
+            });
+
+        var persisted = await relationRig.Relations.GetAsync("war",corporation.Id,target.Id);
+        Assert.Equal(created.WarId,persisted!.Id);
+        using var attributes = System.Text.Json.JsonDocument.Parse(persisted.AttrsJson);
+        Assert.Equal(created.BillId,attributes.RootElement.GetProperty("billID").GetInt64());
+        Assert.Equal(startedAt.ToString(System.Globalization.CultureInfo.InvariantCulture),attributes.RootElement.GetProperty("timeStarted").GetString());
+        var wars = new Eve.Services.Corporations.WarsInfoMgrService(relationRig.Relations,() => relationRig.Now);
+        var result = AssertRowset(UnwrapCached(await wars.GetWarsByOwnerID(Call("GetWarsByOwnerID",new Eve.Marshal.PyInt(corporation.Id)))));
+        var war = Assert.IsType<Eve.Marshal.PyPackedRow>(Assert.Single(result.List));
+        Assert.Equal(created.WarId,Number(war.Values[0]));
+    }
+
     private static Eve.Services.ServiceCall Call(string method, params Eve.Marshal.PyValue[] args) =>
         Call(method, args, new Eve.Services.ClientSession());
 
@@ -534,7 +587,10 @@ private static PyValue RowField(PyValue value,string key)
                 "004_invitation_ids",
                 "005_medal_award_occurrences",
                 "006_alliance_shares_votes",
-                "007_corporation_welcome_mail"
+                "007_corporation_welcome_mail",
+                "008_corporation_recruitment_ads",
+                "009_corporation_social",
+                "010_corporation_war_bills"
             },applied);
 
             await using var read = await rig.Source.OpenConnectionAsync();
@@ -2252,5 +2308,559 @@ private static PyValue RowField(PyValue value,string key)
             await using var drop = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
             await drop.ExecuteNonQueryAsync();
         }
+    }
+
+    [PgFact]
+    public async Task Corp_registry_member_query_returns_the_corporations_persisted_members()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Query Founder");
+        var member = await rig.CharacterAsync("Query Member");
+        var corp = await rig.Store.CreateAsync(founder,new("Query Works","QUERY","","",0.05m),"member-query");
+        var application = await rig.Store.ApplyAsync(member,corp.Id,"");
+        await rig.Store.RespondAsync(founder,application,6,"","");
+        await rig.Store.RespondAsync(member,application,2,"","");
+
+        var session = new ClientSession();
+        session.CharacterId = founder;
+        var service = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+        async Task<long[]> Query(PyValue criteria) => Assert.IsType<PyList>(await service.CallAsync(
+            Call(session,"GetMemberIDsByQuery",criteria,PyBool.False,PyBool.False))).Items
+            .Select(value => Assert.IsType<PyInt>(value).Value)
+            .Order()
+            .ToArray();
+
+        Assert.Equal(new[] { founder,member }.Order().ToArray(),await Query(new PyList([])));
+        var search = new PyList([
+            new PyList([PyNone.Instance,new PyStr("characterID"),new PyInt(10),new PyStr("Query M*")]),
+            new PyList([new PyInt(2),new PyStr("corporationID"),new PyInt(1),new PyInt(corp.Id)])
+        ]);
+        Assert.Equal(new[] { member },await Query(search));
+
+        var simple = Assert.IsType<PyList>(await service.CallAsync(Call(session,"GetMemberTrackingInfoSimple")));
+        var simpleRows = simple.Items.Select(row => Assert.IsType<PyList>(row)).ToArray();
+        Assert.Equal(2,simpleRows.Length);
+        Assert.All(simpleRows,row => Assert.Equal(13,row.Items.Count));
+        Assert.Contains(simpleRows,row => row.Items[0] == new PyInt(member));
+        var detailed = await service.CallAsync(Call(session,"GetMemberTrackingInfo"));
+        Assert.IsType<PyObject>(detailed);
+        Assert.NotEmpty(MarshalCodec.Encode(detailed));
+
+        await rig.Store.SetVoteShareholderAsync(corp.Id,corp.Id,6);
+        await rig.Store.SetVoteShareholderAsync(corp.Id,member,4);
+        var aboveAverage = Assert.IsType<PyList>(await service.CallAsync(Call(session,"GetMemberIDsWithMoreThanAvgShares")));
+        Assert.Equal(new[] { new PyInt(member) },aboveAverage.Items);
+
+        var info = await service.CallAsync(Call(session,"GetInfoWindowDataForChar",new PyInt(member)));
+        Assert.Equal(new PyInt(corp.Id),Field(info,"corpID"));
+        Assert.Equal(new PyWString(""),Field(info,"title"));
+        Assert.Equal(new PyWString(""),Field(info,"title1"));
+        var suggestions = Assert.IsType<PyList>(await service.CallAsync(Call(session,"GetSuggestedTickerNames")));
+        var ticker = Assert.IsType<PyStr>(Field(suggestions.Items.Single(),"tickerName")).Value;
+        Assert.Equal(4,ticker.Length);
+        Assert.All(ticker,character => Assert.InRange(character,'A','Z'));
+    }
+
+    [PgFact]
+    public async Task Corp_registry_structure_and_mail_settings_are_role_gated_and_persisted()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Settings Founder");
+        var outsider = await rig.CharacterAsync("Settings Outsider");
+        var corp = await rig.Store.CreateAsync(founder,new("Settings Works","SET","","",0.05m),"corp-settings");
+        var service = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+        var session = new ClientSession();
+        session.CharacterId = founder;
+        ValueTask<PyValue> Rpc(ClientSession actor,string method,params PyValue[] args) =>
+            service.CallAsync(Call(actor,method,args));
+
+        Assert.Equal(new PyInt(0),await Rpc(session,"DoesMyCorpAcceptStructures"));
+        Assert.Equal(new PyInt(0),await Rpc(session,"DoesCorpRestrictCorpMails"));
+        var defaultReinforce = Assert.IsType<PyTuple>(await Rpc(session,"GetStructureReinforceDefault"));
+        Assert.Equal(new PyInt(255),defaultReinforce.Items[0]);
+        Assert.Equal(new PyInt(20),defaultReinforce.Items[1]);
+
+        Assert.IsType<PyNone>(await Rpc(session,"RegisterNewAcceptStructureSettings",PyBool.True));
+        Assert.IsType<PyNone>(await Rpc(session,"RegisterNewCorpMailRestrictionSettings",PyBool.True));
+        Assert.IsType<PyNone>(await Rpc(session,"SetStructureReinforceDefault",new PyInt(7)));
+        Assert.Equal(new PyInt(1),await Rpc(session,"DoesMyCorpAcceptStructures"));
+        Assert.Equal(new PyInt(1),await Rpc(session,"DoesCorpRestrictCorpMails"));
+        var updated = Assert.IsType<PyTuple>(await Rpc(session,"GetStructureReinforceDefault"));
+        Assert.Equal(new PyInt(255),updated.Items[0]);
+        Assert.Equal(new PyInt(7),updated.Items[1]);
+
+        var persisted = await rig.ReopenStore().GetAsync(corp.Id);
+        Assert.True(persisted!.Settings.GetProperty("acceptStructures").GetBoolean());
+        Assert.True(persisted.Settings.GetProperty("restrictCorpMails").GetBoolean());
+        Assert.Equal(7,persisted.Settings.GetProperty("structureReinforceDefault").GetInt32());
+        await Assert.ThrowsAsync<CorporationError>(async () => await Rpc(session,"SetStructureReinforceDefault",new PyInt(24)));
+
+        var outsiderSession = new ClientSession();
+        outsiderSession.CharacterId = outsider;
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await Rpc(outsiderSession,"RegisterNewAcceptStructureSettings",PyBool.False));
+    }
+
+    [PgFact]
+    public async Task Corp_recruitment_ads_persist_filter_notify_and_replay_by_call_id()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Recruit Founder");
+        var corp = await rig.Store.CreateAsync(founder,new("Recruit Works","RECRUIT","","",0.05m),"recruit-corp");
+        var sessions = new CharacterSessions();
+        var sink = new PacketSink();
+        var session = new ClientSession(sink);
+        session.CharacterId = founder;
+        session.Set("corpid",new PyInt(corp.Id));
+        sessions.Enter(founder,session);
+        var service = (IService)new CorpRecruitmentProxyService(rig.Store,rig.Characters,() => rig.Now,sessions);
+        var createArgs = new PyValue[]
+        {
+            new PyInt(7),new PyInt(3),new PyInt(4),new PyWString("New pilots welcome"),
+            new PyList([new PyInt(founder)]),new PyWString("Join Recruit Works"),
+            new PyInt(8),new PyInt(100),new PyInt(16)
+        };
+        ServiceCall CreateCall() => new()
+        {
+            Session=session,Method="CreateRecruitmentAd",Args=createArgs,CallId=new PyInt(776)
+        };
+
+        var adId = Assert.IsType<PyInt>(await service.CallAsync(CreateCall())).Value;
+        Assert.Empty(sink.Packets);
+        var persisted = await rig.ReopenStore().RecruitmentAdsAsync(corp.Id);
+        var stored = Assert.Single(persisted);
+        Assert.Equal(adId,stored.Id);
+        Assert.Equal("Join Recruit Works",stored.Title);
+        Assert.Equal(new[] { founder },stored.Recruiters);
+        session.RunAfterResponse();
+        var createNotice = Assert.Single(sink.Packets);
+        Assert.Equal("OnCorporationRecruitmentAdChanged",NotificationName(createNotice));
+        Assert.Equal("ownerid",NotificationAddress(createNotice).IdType);
+
+        var replayId = Assert.IsType<PyInt>(await service.CallAsync(CreateCall())).Value;
+        Assert.Equal(adId,replayId);
+        Assert.Single(await rig.ReopenStore().RecruitmentAdsAsync(corp.Id));
+
+        var ads = Assert.IsType<PyList>(await service.CallAsync(Call(session,"GetRecruitmentAdsForCorporation")));
+        var row = Assert.IsType<PyObject>(Assert.Single(ads.Items));
+        var header = Assert.IsType<PyList>(Field(row,"header"));
+        var line = Assert.IsType<PyList>(Field(row,"line"));
+        Assert.Equal(14,header.Items.Count);
+        Assert.Equal(new PyStr("adID"),header.Items[0]);
+        Assert.Equal(new PyInt(adId),line.Items[0]);
+        Assert.Equal(new PyWString("Join Recruit Works"),line.Items[7]);
+        Assert.Equal(new PyInt(1),line.Items[13]);
+
+        var searchArgs = new PyValue[]
+        {
+            new PyInt(2),new PyInt(4),PyBool.False,PyBool.False,new PyInt(0),new PyInt(1),
+            new PyInt(10),Py.Number(0.1),Py.Number(0.1),new PyInt(8),new PyInt(16)
+        };
+        var matches = Assert.IsType<PyList>(await service.CallAsync(Call(session,"SearchCorpAds",searchArgs)));
+        Assert.Single(matches.Items);
+        searchArgs[0] = new PyInt(8);
+        Assert.Empty(Assert.IsType<PyList>(await service.CallAsync(Call(session,"SearchCorpAds",searchArgs))).Items);
+
+        var beforeExpiry = stored.ExpiryFiletime;
+        Assert.IsType<PyNone>(await service.CallAsync(Call(session,"UpdateRecruitmentAd",
+            new PyInt(adId),new PyInt(4),new PyInt(8),new PyWString("Updated details"),
+            new PyList([new PyInt(founder)]),new PyWString("Updated title"),new PyInt(3),
+            new PyInt(4),new PyInt(200),new PyInt(32))));
+        var updated = Assert.Single(await rig.ReopenStore().RecruitmentAdsAsync(corp.Id));
+        Assert.Equal(4,updated.TypeMask);
+        Assert.Equal(8,updated.LangMask);
+        Assert.Equal("Updated details",updated.Description);
+        Assert.Equal("Updated title",updated.Title);
+        Assert.Equal(200,updated.MinSP);
+        Assert.Equal(32,updated.OtherMask);
+        Assert.Equal(beforeExpiry+3*864_000_000_000L,updated.ExpiryFiletime);
+
+        Assert.IsType<PyNone>(await service.CallAsync(Call(session,"DeleteRecruitmentAd",new PyInt(adId))));
+        Assert.Empty(await rig.ReopenStore().RecruitmentAdsAsync(corp.Id));
+        Assert.IsType<PyNone>(await service.CallAsync(Call(session,"GetRecruitmentAd",new PyInt(corp.Id),new PyInt(adId))));
+    }
+
+    [PgFact]
+    public async Task Corp_registry_contacts_labels_and_bulletins_persist_and_enforce_roles()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Social Founder");
+        var contactId = await rig.CharacterAsync("Social Contact");
+        var memberId = await rig.CharacterAsync("Social Member");
+        var outsider = await rig.CharacterAsync("Social Outsider");
+        var corp = await rig.Store.CreateAsync(founder,new("Social Works","SOCIAL","","",0.05m),"corp-social");
+        var application = await rig.Store.ApplyAsync(memberId,corp.Id,"Join");
+        await rig.Store.RespondAsync(founder,application,6,"","");
+        await rig.Store.RespondAsync(memberId,application,2,"","");
+
+        var session = new ClientSession();
+        session.CharacterId = founder;
+        var service = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+        ValueTask<PyValue> Rpc(ClientSession actor,string method,params PyValue[] args) =>
+            service.CallAsync(Call(actor,method,args));
+        long Integer(PyValue value) => value switch
+        {
+            PyInt number => number.Value,
+            PyLong number => number.Value,
+            _ => throw new Xunit.Sdk.XunitException($"expected integer, got {value.GetType().Name}")
+        };
+
+        Assert.Empty(Assert.IsType<PyDict>(await Rpc(session,"GetCorporateContacts")).Entries);
+        Assert.IsType<PyNone>(await Rpc(session,"AddCorporateContact",new PyInt(contactId),new PyInt(-5)));
+        var contacts = Assert.IsType<PyDict>(await Rpc(session,"GetContactList"));
+        var contact = contacts.Entries.Single(entry => Integer(entry.Key) == contactId).Value;
+        Assert.Equal(new PyInt(contactId),Field(contact,"contactID"));
+        Assert.Equal(new PyInt(-5),Field(contact,"relationshipID"));
+        Assert.Equal(new PyInt(0),Field(contact,"inWatchlist"));
+
+        var labelId = Assert.IsType<PyInt>(await Rpc(session,"CreateLabel",new PyWString("Diplomats"),new PyInt(0x123456)));
+        Assert.Equal(1,labelId.Value);
+        var secondLabelId = Assert.IsType<PyInt>(await Rpc(session,"CreateLabel",new PyWString("Executives"),new PyInt(0x654321)));
+        Assert.Equal(2,secondLabelId.Value);
+        Assert.IsType<PyNone>(await Rpc(session,"AssignLabels",new PyList([new PyInt(contactId)]),labelId));
+        Assert.IsType<PyNone>(await Rpc(session,"AssignLabels",new PyList([new PyInt(contactId)]),secondLabelId));
+        var labels = Assert.IsType<PyDict>(await Rpc(session,"GetLabels"));
+        Assert.Equal(2,labels.Entries.Count);
+        var diplomat = labels.Entries.Single(entry => Integer(entry.Key) == labelId.Value).Value;
+        Assert.Equal(new PyWString("Diplomats"),Field(diplomat,"name"));
+        Assert.Equal(new PyInt(0x123456),Field(diplomat,"color"));
+        Assert.IsType<PyNone>(await Rpc(session,"EditLabel",labelId,new PyWString("Diplomacy"),new PyInt(0x111111)));
+        var editedDiplomat = Assert.IsType<PyDict>(await Rpc(session,"GetLabels")).Entries.Single(entry => Integer(entry.Key) == labelId.Value).Value;
+        Assert.Equal(new PyWString("Diplomacy"),Field(editedDiplomat,"name"));
+        Assert.Equal(new PyInt(0x111111),Field(editedDiplomat,"color"));
+        Assert.Equal(3,Integer(Field(Assert.IsType<PyDict>(await Rpc(session,"GetCorporateContacts"))
+            .Entries.Single().Value,"labelMask")));
+
+        var bulletinId = Assert.IsType<PyInt>(await Rpc(session,"AddBulletin",new PyWString("Ops"),new PyWString("Docking window")));
+        var bulletinRows = Assert.IsType<PyObject>(await Rpc(session,"GetBulletins"));
+        Assert.NotEmpty(MarshalCodec.Encode(bulletinRows));
+        Assert.Single(Assert.IsType<PyList>(Field(bulletinRows,"lines")).Items);
+        Assert.IsType<PyPackedRow>(await Rpc(session,"GetBulletin",bulletinId));
+        Assert.Equal(MarshalCodec.Encode(bulletinRows),MarshalCodec.Encode(await Rpc(session,"GetBulletinEntries")));
+
+        var reopened = (IService)new CorpRegistryService(rig.ReopenStore(),rig.Characters,() => rig.Now);
+        Assert.Single(Assert.IsType<PyDict>(await reopened.CallAsync(Call(session,"GetCorporateContacts"))).Entries);
+        Assert.Single(Assert.IsType<PyList>(Field(await reopened.CallAsync(Call(session,"GetBulletins")),"lines")).Items);
+
+        Assert.IsType<PyNone>(await Rpc(session,"EditCorporateContact",new PyInt(contactId),new PyInt(2)));
+        var directContact = Assert.Single(await rig.Store.CorporationContactsAsync(corp.Id));
+        Assert.Equal(2,directContact.RelationshipId);
+        Assert.Equal(new PyInt(2),Field(Assert.IsType<PyDict>(await Rpc(session,"GetCorporateContacts"))
+            .Entries.Single().Value,"relationshipID"));
+        Assert.IsType<PyNone>(await Rpc(session,"EditContactsRelationshipID",new PyList([new PyInt(contactId)]),new PyInt(10)));
+        Assert.Equal(new PyInt(10),Field(Assert.IsType<PyDict>(await Rpc(session,"GetCorporateContacts"))
+            .Entries.Single().Value,"relationshipID"));
+        Assert.IsType<PyNone>(await Rpc(session,"AssignLabels",new PyList([new PyInt(contactId)]),labelId));
+        Assert.IsType<PyNone>(await Rpc(session,"AssignLabels",new PyList([new PyInt(contactId)]),secondLabelId));
+        Assert.Equal(3,Integer(Field(Assert.IsType<PyDict>(await Rpc(session,"GetCorporateContacts"))
+            .Entries.Single().Value,"labelMask")));
+        Assert.IsType<PyNone>(await Rpc(session,"RemoveLabels",new PyList([new PyInt(contactId)]),labelId));
+        Assert.Equal(new PyInt(2),Field(Assert.IsType<PyDict>(await Rpc(session,"GetCorporateContacts"))
+            .Entries.Single().Value,"labelMask"));
+        Assert.IsType<PyNone>(await Rpc(session,"DeleteLabel",secondLabelId));
+        Assert.Equal(new PyInt(0),Field(Assert.IsType<PyDict>(await Rpc(session,"GetCorporateContacts"))
+            .Entries.Single().Value,"labelMask"));
+        Assert.IsType<PyNone>(await Rpc(session,"DeleteLabel",labelId));
+        Assert.Empty(Assert.IsType<PyDict>(await Rpc(session,"GetLabels")).Entries);
+        Assert.IsType<PyInt>(await Rpc(session,"UpdateBulletin",bulletinId,new PyWString("Ops updated"),new PyWString("Complete")));
+        Assert.IsType<PyNone>(await Rpc(session,"UpdateBulletinOrder",new PyList([bulletinId])));
+        Assert.IsType<PyNone>(await Rpc(session,"DeleteBulletin",bulletinId));
+        Assert.Empty(Assert.IsType<PyList>(Field(await Rpc(session,"GetBulletins"),"lines")).Items);
+        Assert.IsType<PyNone>(await Rpc(session,"RemoveCorporateContacts",new PyList([new PyInt(contactId)])));
+        Assert.Empty(Assert.IsType<PyDict>(await Rpc(session,"GetCorporateContacts")).Entries);
+        Assert.Empty(Assert.IsType<PyList>(await Rpc(session,"GetPendingAutoKicks")).Items);
+
+        var memberSession = new ClientSession();
+        memberSession.CharacterId = memberId;
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await Rpc(memberSession,"AddCorporateContact",new PyInt(contactId),new PyInt(1)));
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await Rpc(memberSession,"AddBulletin",new PyWString("Denied"),new PyWString("No role")));
+        var memberRecord = await rig.Store.MemberAsync(memberId);
+        await rig.Store.UpdateMemberAsync(founder,memberRecord! with
+        {
+            Masks=memberRecord.Masks with { Roles=CorporationRoles.Diplomat }
+        });
+        Assert.IsType<PyNone>(await Rpc(memberSession,"AddCorporateContact",new PyInt(contactId),new PyInt(1)));
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await Rpc(memberSession,"AddBulletin",new PyWString("Denied"),new PyWString("Still no chat role")));
+        memberRecord = await rig.Store.MemberAsync(memberId);
+        await rig.Store.UpdateMemberAsync(founder,memberRecord! with
+        {
+            Masks=memberRecord.Masks with { Roles=CorporationRoles.Diplomat | CorporationRoles.ChatManager }
+        });
+        Assert.IsType<PyInt>(await Rpc(memberSession,"AddBulletin",new PyWString("Manager"),new PyWString("Can post")));
+
+        var outsiderSession = new ClientSession();
+        outsiderSession.CharacterId = outsider;
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await Rpc(outsiderSession,"AddCorporateContact",new PyInt(contactId),new PyInt(1)));
+        Assert.Equal(corp.Id,(await rig.Store.GetAsync(corp.Id))?.Id);
+    }
+
+
+    [PgFact]
+    public async Task Corp_registry_dividends_settle_once_for_shareholders_and_members()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Dividend Founder");
+        var member = await rig.CharacterAsync("Dividend Member");
+        var corp = await rig.Store.CreateAsync(founder,new("Dividend Works","DIV","","",0.05m),"corp-dividend");
+        var application = await rig.Store.ApplyAsync(member,corp.Id,"");
+        await rig.Store.RespondAsync(founder,application,6,"","");
+        await rig.Store.RespondAsync(member,application,2,"","");
+        await rig.Store.SetVoteShareholderAsync(corp.Id,corp.Id,0);
+        await rig.Store.SetVoteShareholderAsync(corp.Id,member,100);
+
+        var session = new ClientSession();
+        session.CharacterId = founder;
+        var service = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+        await rig.Transactions.TransferAndCommitAsync(new Eve.Wallet.WalletAccount(founder),
+            new Eve.Wallet.WalletAccount(corp.Id,1000),100m,10,"Dividend funding",rig.Now,"dividend-fund","fund");
+        var memberBefore = (await rig.Wallets.GetAsync(member))!.Isk;
+
+        ServiceCall Dividend(bool shareholders,long amount,int callId) => new()
+        {
+            Session=session,Method="PayoutDividend",
+            Args=[shareholders ? PyBool.True : PyBool.False,new PyReal(amount)],
+            CallId=new PyInt(callId)
+        };
+        Assert.IsType<PyNone>(await service.CallAsync(Dividend(true,100,9001)));
+        Assert.Equal(0m,await rig.Transactions.AccountBalanceAsync(new Eve.Wallet.WalletAccount(corp.Id,1000)));
+        Assert.Equal(memberBefore+100m,(await rig.Wallets.GetAsync(member))!.Isk);
+        Assert.IsType<PyNone>(await service.CallAsync(Dividend(true,100,9001)));
+        Assert.Equal(memberBefore+100m,(await rig.Wallets.GetAsync(member))!.Isk);
+
+        await rig.Transactions.TransferAndCommitAsync(new Eve.Wallet.WalletAccount(founder),
+            new Eve.Wallet.WalletAccount(corp.Id,1000),20m,10,"Dividend funding",rig.Now,"dividend-fund-members","fund");
+        var founderBefore = (await rig.Wallets.GetAsync(founder))!.Isk;
+        memberBefore = (await rig.Wallets.GetAsync(member))!.Isk;
+        Assert.IsType<PyNone>(await service.CallAsync(Dividend(false,20,9002)));
+        Assert.Equal(founderBefore+10m,(await rig.Wallets.GetAsync(founder))!.Isk);
+        Assert.Equal(memberBefore+10m,(await rig.Wallets.GetAsync(member))!.Isk);
+    }
+
+    [PgFact]
+    public async Task Corp_registry_recent_kill_and_loss_routes_return_crowsets()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Kill Report Founder");
+        await rig.Store.CreateAsync(founder,new("Kill Report Works","KILL","","",0.05m),"corp-kill-report");
+        var session = new ClientSession();
+        session.CharacterId = founder;
+        var service = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+
+        var kills = Assert.IsType<PyObject>(await service.CallAsync(Call(session,"GetRecentKills",new PyInt(10))));
+        Assert.Empty(Assert.IsType<PyList>(Field(kills,"lines")).Items);
+        Assert.NotEmpty(MarshalCodec.Encode(kills));
+        var losses = Assert.IsType<PyObject>(await service.CallAsync(Call(session,"GetRecentLosses",new PyInt(10))));
+        Assert.Empty(Assert.IsType<PyList>(Field(losses,"lines")).Items);
+        Assert.NotEmpty(MarshalCodec.Encode(losses));
+    }
+
+    [PgFact]
+    public async Task Corp_registry_recent_kill_rows_keep_the_fixed_client_columns_and_cursor()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Killmail Founder");
+        var corp = await rig.Store.CreateAsync(founder,new("Killmail Works","KMAIL","","",0.05m),"corp-killmail");
+        var session = new ClientSession();
+        session.CharacterId = founder;
+        var requests = new List<(long CorporationId,bool Losses,int Limit,long? StartKillId)>();
+        var record = new PyDict([
+            new(new PyStr("killID"),new PyLong(7001)),
+            new(new PyStr("solarSystemID"),new PyInt(30000142)),
+            new(new PyStr("victimCharacterID"),new PyInt(90000001)),
+            new(new PyStr("victimCorporationID"),new PyInt(98000001)),
+            new(new PyStr("finalCharacterID"),new PyInt(founder)),
+            new(new PyStr("finalCorporationID"),new PyInt(corp.Id)),
+            new(new PyStr("killBlob"),new PyStr("serialized")),
+            new(new PyStr("killTime"),new PyLong(133700000000000000L)),
+            new(new PyStr("finalSecurityStatus"),new PyReal(0.5)),
+            new(new PyStr("iskLost"),new PyReal(1234.5))
+        ]);
+        ValueTask<IReadOnlyList<PyValue>> Read(long corporationId,bool losses,int limit,long? startKillId,CancellationToken token)
+        {
+            requests.Add((corporationId,losses,limit,startKillId));
+            return ValueTask.FromResult<IReadOnlyList<PyValue>>([record]);
+        }
+        var service = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now,
+            readRecentCorporationKillmails:Read);
+
+        var kills = Assert.IsType<PyObject>(await service.CallAsync(Call(session,"GetRecentKills",new PyInt(10),new PyInt(8000))));
+        var killRows = Assert.IsType<PyList>(Field(kills,"lines"));
+        var kill = Assert.IsType<PyPackedRow>(Assert.Single(killRows.Items));
+        Assert.Equal(25,kill.Values.Count);
+        Assert.Equal(new PyInt(7001),kill.Values[0]);
+        Assert.Equal(new PyInt(corp.Id),kill.Values[8]);
+        Assert.Equal(new PyWString("serialized"),kill.Values[13]);
+        Assert.Equal(new PyLong(133700000000000000L),kill.Values[14]);
+
+        var losses = Assert.IsType<PyObject>(await service.CallAsync(Call(session,"GetRecentLosses",new PyInt(5),new PyInt(7000))));
+        Assert.Single(Assert.IsType<PyList>(Field(losses,"lines")).Items);
+        Assert.Equal(new[]
+        {
+            (corp.Id,false,10,(long?)8000),
+            (corp.Id,true,5,(long?)7000)
+        },requests);
+    }
+
+    [PgFact]
+    public async Task Corp_registry_aggression_settings_schedule_and_persist()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Aggression Founder");
+        var outsider = await rig.CharacterAsync("Aggression Outsider");
+        var corp = await rig.Store.CreateAsync(founder,new("Aggression Works","AGGR","","",0.05m),"corp-aggression");
+        var session = new ClientSession();
+        session.CharacterId = founder;
+        var service = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+        ValueTask<PyValue> Rpc(ClientSession actor,string method,params PyValue[] args) =>
+            service.CallAsync(Call(actor,method,args));
+
+        var defaults = await Rpc(session,"GetAggressionSettings");
+        Assert.Equal(new PyLong(0),Field(defaults,"_enableAfter"));
+        Assert.IsType<PyNone>(Field(defaults,"_disableAfter"));
+        var scheduled = await Rpc(session,"RegisterNewAggressionSettings",PyBool.False);
+        Assert.Equal(new PyLong(0),Field(scheduled,"_enableAfter"));
+        var due = Assert.IsType<PyLong>(Field(scheduled,"_disableAfter")).Value;
+        Assert.Equal(864_000_000_000L+Assert.IsType<PyLong>(CorporationWire.Time(rig.Now)).Value,due);
+        Assert.True((await rig.Store.GetAsync(corp.Id))!.FriendlyFire);
+        var reopened = (IService)new CorpRegistryService(rig.ReopenStore(),rig.Characters,() => rig.Now);
+        Assert.Equal(MarshalCodec.Encode(scheduled),MarshalCodec.Encode(await reopened.CallAsync(Call(session,"GetAggressionSettings"))));
+
+        var outsiderSession = new ClientSession();
+        outsiderSession.CharacterId = outsider;
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await Rpc(outsiderSession,"RegisterNewAggressionSettings",PyBool.True));
+    }
+
+    [PgFact]
+    public async Task Corp_registry_ally_base_cost_uses_the_reference_fallback()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Ally Cost Founder");
+        await rig.Store.CreateAsync(founder,new("Ally Cost Works","ALLY","","",0.05m),"corp-ally-cost");
+        var session = new ClientSession();
+        session.CharacterId = founder;
+        var service = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+
+        Assert.Equal(new PyInt(10_000_000),await service.CallAsync(Call(session,"CharGetAllyBaseCost")));
+        long? measuredCharacter = null;
+        var configured = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now,
+            readCharacterAllyBaseCost:(characterId,token) =>
+            {
+                measuredCharacter=characterId;
+                return ValueTask.FromResult(12_345_678L);
+            });
+        Assert.Equal(new PyInt(12_345_678),await configured.CallAsync(Call(session,"CharGetAllyBaseCost")));
+        Assert.Equal(founder,measuredCharacter);
+    }
+
+    [PgFact]
+    public async Task Corp_registry_declare_war_persists_a_bill_and_replays_by_call_id()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("War Founder");
+        var defender = await rig.CharacterAsync("War Defender");
+        var corp = await rig.Store.CreateAsync(founder,new("War Works","WAR","","",0.05m),"corp-war");
+        var target = await rig.Store.CreateAsync(defender,new("Defender Works","DEF","","",0.05m),"corp-war-target");
+        var sessions = new CharacterSessions();
+        var sink = new PacketSink();
+        var session = new ClientSession(sink);
+        session.CharacterId = founder;
+        session.Set("corpid",new PyInt(corp.Id));
+        sessions.Enter(founder,session);
+
+        CorpWarDeclarationRequest? received = null;
+        ValueTask<CorpWarDeclarationResult> Declare(CorpWarDeclarationRequest request,CancellationToken token)
+        {
+            received=request;
+            return ValueTask.FromResult(new CorpWarDeclarationResult(7001,8001));
+        }
+        var service = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now,
+            characterSessions:sessions,declareWar:Declare);
+        ServiceCall DeclareCall() => new()
+        {
+            Session=session,Method="DeclareWarAgainst",Args=[new PyInt(target.Id),new PyInt(60000001)],CallId=new PyInt(9003)
+        };
+        var declaration = Assert.IsType<PyObject>(await service.CallAsync(DeclareCall()));
+        Assert.Empty(sink.Packets);
+        session.RunAfterResponse();
+        var warChanged = Assert.Single(sink.Packets,p => NotificationName(p) == "OnWarChanged");
+        Assert.Equal("ownerid",NotificationAddress(warChanged).IdType);
+        Assert.Equal(new PyInt(7001),Field(declaration,"warID"));
+        Assert.Equal(new PyInt(corp.Id),Field(declaration,"declaredByID"));
+        Assert.Equal(new PyInt(target.Id),Field(declaration,"againstID"));
+        Assert.Equal(new PyInt(60000001),Field(declaration,"warHQID"));
+        Assert.Equal(new PyInt(8001),Field(declaration,"billID"));
+        Assert.Equal(corp.Id,received!.CorporationId);
+        Assert.Equal(founder,received.DeclaredByCharacterId);
+        Assert.Equal(target.Id,received.AgainstId);
+        Assert.Equal(4,received.BillTypeId);
+        Assert.Equal(100_000_000m,received.BillAmount);
+        Assert.Equal(1000125,received.CreditorId);
+
+        var declaredAt = 1_337_000_000_000_000_000L;
+        var requestKey = "war-declare-pg-retry";
+        var first = await rig.Store.CreateWarDeclarationAsync(corp.Id,founder,target.Id,60000001,declaredAt,
+            declaredAt+864_000_000_000L,declaredAt+6_048_000_000_000L,4,100_000_000m,1000125,requestKey,
+            static (_,_,_,_) => Task.FromResult(9001L));
+        var replay = await rig.Store.CreateWarDeclarationAsync(corp.Id,founder,target.Id,60000001,declaredAt,
+            declaredAt+864_000_000_000L,declaredAt+6_048_000_000_000L,4,100_000_000m,1000125,requestKey,
+            static (_,_,_,_) => throw new Xunit.Sdk.XunitException("a replay must not create another relation"));
+        Assert.Equal(first,replay);
+        var bill = Assert.Single(await rig.Store.CorporationBillsAsync(corp.Id));
+        Assert.Equal(first.BillId,bill.BillId);
+        Assert.Equal(first.WarId,bill.WarId);
+        Assert.Equal(100_000_000m,bill.AmountIsk);
+        await Assert.ThrowsAsync<CorporationError>(() => rig.Store.CreateWarDeclarationAsync(corp.Id,founder,target.Id,60000001,
+            declaredAt,declaredAt+864_000_000_000L,declaredAt+6_048_000_000_000L,4,90_000_000m,1000125,requestKey,
+            static (_,_,_,_) => Task.FromResult(9002L)));
+    }
+
+    [PgFact]
+    public async Task Corporation_war_bills_are_listed_and_paid_once_through_bill_manager()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("War Bill Founder",200_000_000m);
+        var corp = await rig.Store.CreateAsync(founder,new("War Bill Works","WBILL","","",0.05m),"corp-war-bill");
+        var nowFiletime = Assert.IsType<PyLong>(CorporationWire.Time(rig.Now)).Value;
+        var declaration = await rig.Store.CreateWarDeclarationAsync(corp.Id,founder,98000002,null,nowFiletime,
+            nowFiletime+864_000_000_000L,nowFiletime+6_048_000_000_000L,4,100_000_000m,1000125,"war-bill-payment",
+            static (_,_,_,_) => Task.FromResult(9001L));
+        var bill = Assert.Single(await rig.Store.CorporationBillsAsync(corp.Id));
+        Assert.Equal(declaration.BillId,bill.BillId);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Wallets.OpenAsync(connection,transaction,1000125,0m,0);
+            await transaction.CommitAsync();
+        }
+        await rig.Transactions.TransferAndCommitAsync(new Eve.Wallet.WalletAccount(founder),
+            new Eve.Wallet.WalletAccount(corp.Id,1000),100_000_000m,10,"War bill funding",rig.Now,"war-bill-fund","fund");
+
+        var billService = new BillMgrService(rig.Store,rig.OfficeStore,rig.Transactions,_ => null,() => rig.Now);
+        var session = new ClientSession();
+        session.CharacterId = founder;
+        session.Set("corpid",new PyInt(corp.Id));
+        session.Set("corpAccountKey",new PyInt(1000));
+        var payable = Assert.IsType<PyList>(await billService.CallAsync(Call(session,"GetCorporationBills")));
+        var billRow = Assert.IsType<PyObject>(Assert.Single(payable.Items));
+        Assert.Equal(new PyInt(4),Field(billRow,"billTypeID"));
+        Assert.Equal(new PyInt(corp.Id),Field(billRow,"debtorID"));
+        Assert.Equal(new PyInt(1000125),Field(billRow,"creditorID"));
+
+        var concordSession = new ClientSession();
+        concordSession.Set("corpid",new PyInt(1000125));
+        Assert.Single(Assert.IsType<PyList>(await billService.CallAsync(Call(concordSession,"GetCorporationBillsReceivable"))).Items);
+        Assert.IsType<PyNone>(await billService.CallAsync(new ServiceCall
+        {
+            Session=session,Method="PayCorporationBill",Args=[new PyLong(bill.BillId),new PyInt(1000)]
+        }));
+        Assert.Empty(await rig.Store.CorporationBillsAsync(corp.Id));
+        Assert.Equal(0m,await rig.Transactions.AccountBalanceAsync(new Eve.Wallet.WalletAccount(corp.Id,1000)));
+        Assert.Equal(100_000_000m,await rig.Transactions.AccountBalanceAsync(new Eve.Wallet.WalletAccount(1000125,1000)));
     }
 }

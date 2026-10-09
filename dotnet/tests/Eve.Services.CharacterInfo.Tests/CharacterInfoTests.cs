@@ -280,6 +280,33 @@ public class CharMgrTests
         Assert.Equal((PyBool.False, PyBool.False), (f["is_fallback"], f["isFallback"]));
     }
 
+
+    [PgFact]
+    public async Task Home_station_and_character_asset_resolution_use_persisted_character_state()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var id = await rig.MakeAsync("Home Station Pilot");
+        var (session, _) = Rig.Session(id);
+        var homeStation = new HomeStationService(rig.Characters, Rig.Stations);
+
+        var response = Assert.IsType<PyObjectEx>(await Rig.CallAsync(homeStation, session, "get_home_station"));
+        Assert.Equal(ObjectExKind.Ex2, response.Kind);
+        var header = Assert.IsType<PyTuple>(response.Header);
+        Assert.Equal(new PyToken("homestation.types.StationData"),
+            Assert.Single(Assert.IsType<PyTuple>(header.Items[0]).Items));
+        var fields = Assert.IsType<PyDict>(header.Items[1]).Entries
+            .ToDictionary(entry => Assert.IsType<PyStr>(entry.Key).Value, entry => entry.Value);
+        Assert.Equal(PyBool.False, fields["is_fallback"]);
+        Assert.Equal(new PyInt(60015249), fields["id"]);
+        Assert.Equal(new PyInt(92885), fields["type_id"]);
+        Assert.Equal(new PyInt(30100032), fields["solar_system_id"]);
+
+        var charMgr = rig.CreateCharMgr();
+        var nodeId = await Rig.CallAsync(charMgr, session, "MachoResolveObject",
+            Py.Tuple(new PyInt(id), new PyInt(10002)));
+        Assert.Equal(new PyInt(Eve.Macho.MachoMessage.ProxyNodeId), nodeId);
+    }
+
     [PgFact]
     public async Task Without_a_character_or_a_known_station_there_is_no_home_station_row()
     {

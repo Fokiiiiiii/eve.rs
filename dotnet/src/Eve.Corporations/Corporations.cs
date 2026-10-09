@@ -23,6 +23,19 @@ public sealed record SessionRoles(long CorpRole, long AtAll, long AtHq, long AtB
 public sealed record Employment(long Id, long CharacterId, long CorporationId, long StartedMs, long? EndedMs, bool Deleted);
 public sealed record Application(long Id, long CorporationId, long CharacterId, string Text, int Status,
     long CreatedMs, long UpdatedMs, string Response, bool Archived);
+
+public sealed record CorporationRecruitmentAd(
+    long Id,long CorporationId,long ChannelId,long TypeMask,long LangMask,string Description,string Title,
+    long CreateFiletime,long ExpiryFiletime,long HourMask1,long MinSP,long OtherMask,IReadOnlyList<long> Recruiters);
+public sealed record CorporationContact(long ContactId,int RelationshipId,long LabelMask,bool InWatchlist);
+public sealed record CorporationContactLabel(long LabelId,string Name,int Color);
+public sealed record CorporationBulletin(long BulletinId,long CorporationId,long CreateCharacterId,long CreateDateTime,
+    long EditCharacterId,long EditDateTime,string Title,string Body,int SortOrder);
+
+public sealed record CorporationBill(long BillId,int BillTypeId,decimal AmountIsk,decimal Interest,long DebtorId,
+    long CreditorId,long DueFiletime,long ExternalId,long ExternalId2,long WarId,bool Paid,long? PaidFiletime,
+    long? PaidByOwnerId,string OperationKey);
+
 public sealed record NewAlliance(string Name, string ShortName, string Description, string Url);
 public sealed record Alliance(long Id, string Name, string ShortName, string Description, string Url,
     long? ExecutorCorporationId, long CreatorCorporationId, long CreatorCharacterId, long CreatedMs, bool Deleted,
@@ -43,6 +56,7 @@ public static class CorporationRoles
     public const long JuniorAccountant = 4503599627370496;
     public const long Trader = 18014398509481984;
     public const long Diplomat = 17179869184;
+    public const long ChatManager = 36_028_797_018_963_968L;
     public const long All = long.MaxValue & ~((7L << 4) | (31L << 36));
     public const long Locational = 14L | (127L << 13) | (127L << 20) | (127L << 42);
     public const long Administrative = All & ~Locational;

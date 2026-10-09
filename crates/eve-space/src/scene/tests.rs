@@ -2012,3 +2012,21 @@ fn an_overheated_cycle_damages_and_burns_a_fitted_module_in_its_rack() {
     assert_eq!(damaged.damage_hp, damaged.structure_hp);
     assert!(!damaged.online);
 }
+
+/// Moves every ship of the scene by one offset, out past the station's surface, so that none is within a smartbomb's restriction of it
+/// (the ships keep their places among themselves).
+pub(crate) fn clear_of_the_station(scene: &mut Scene) {
+    let (sx, sy, sz) = {
+        let station = scene.system().body(STATION).unwrap();
+        (station.position.x, station.position.y, station.position.z)
+    };
+    let ship = scene.pilots.values().next().unwrap().ship.position;
+    let (dx, dy, dz) = (ship.x - sx, ship.y - sy, ship.z - sz);
+    let length = (dx * dx + dy * dy + dz * dz).sqrt().max(1.0);
+    let away = 20_000.0;
+    let offset = (dx / length * away, dy / length * away, dz / length * away);
+    for pilot in scene.pilots.values_mut() {
+        let p = pilot.ship.position;
+        pilot.ship.position = eve_destiny::Vec3::new(p.x + offset.0, p.y + offset.1, p.z + offset.2);
+    }
+}

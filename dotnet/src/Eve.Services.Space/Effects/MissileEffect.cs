@@ -21,7 +21,27 @@ internal sealed class MissileEffect : ShipEffect
     public const string LauncherEffectName = "useMissiles";
 
     /// <summary>The effects of a charge that name the firing of a launcher of the missile family: the client asks for one of them, the launcher runs <see cref="LauncherEffectName"/>.</summary>
-    private static readonly string[] ClientNames = ["missileLaunching", "torpedoLaunching"];
+    private static readonly string[] ClientNames = ["missileLaunching", "torpedoLaunching", FofMissileLaunching];
+
+    /// <summary>The target of a launch that has none to lock: the launcher picks the nearest valid hostile in the missile's flight range (F.O.F. missiles, see <see cref="ResolveAutoTarget"/>).</summary>
+    public const long AutoTargetId = -1;
+
+    private const string FofMissileLaunching = "fofMissileLaunching";
+    private const string SnowBallLaunching = "snowBallLaunching";
+    private const string DefenderMissileLaunching = "defenderMissileLaunching";
+    private const int FestivalLauncherGroup = 501;
+    private const int CountermeasureLauncherGroup = 308;
+    private const int DefenderChargeGroup = 88;
+
+    /// <summary>
+    /// The firing effects a launcher of a group that is not in the missile family takes (the festival launcher's snowballs, the countermeasure launcher's torpedoes and defenders).
+    /// Which handler runs is the charge's: <see cref="MissileEffect"/> for a missile or torpedo, <see cref="DefenderEffect"/> for a defender.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<int, string[]> OtherLauncherNames = new Dictionary<int, string[]>
+    {
+        [FestivalLauncherGroup] = [SnowBallLaunching],
+        [CountermeasureLauncherGroup] = ["missileLaunching", "torpedoLaunching", DefenderMissileLaunching],
+    };
 
     /// <summary>The firing effects of the launchers that put a deployable in space or fire at no target (<see cref="BombEffect"/>, <see cref="InterdictionSphereEffect"/>,
     /// <see cref="DefenderEffect"/>), by group.</summary>
@@ -59,31 +79,15 @@ internal sealed class MissileEffect : ShipEffect
     private const string TorpedoDeployment = "effects.TorpedoDeployment";
 
     /// <summary>
-    /// The firing effects that are refused by name, each with its reason: the F.O.F. missiles of the served launchers (decision D2: a missile that does not lock a target is
-    /// not run; the refusal is named, so it is not an unexplained <c>UNSUPPORTED_EFFECT</c>).
-    /// </summary>
-    public static readonly IReadOnlyDictionary<string, string> RefusedFiringEffects = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-    {
-        ["fofMissileLaunching"] = "FOF_MISSILE_NOT_IMPLEMENTED",
-    };
-
-    /// <summary>
-    /// The reason a launcher of the missile family is refused for a firing effect in <see cref="RefusedFiringEffects"/>, or null when the request is not one of them.
-    /// </summary>
-    public static string? RefusedFiringReason(TypeDef type, DogmaStatic statics, string requested) =>
-        statics.MissileLauncherGroups.Contains(type.GroupId) && RefusedFiringEffects.TryGetValue(requested, out var reason) ? reason : null;
-
-    /// <summary>
     /// The groups whose launchers carry <c>useMissiles</c> in the static data but are not run yet, each with the reason it is refused (the client shows the module cannot be
     /// started). Every such group is named here, so no launcher group of the static data is left to an unexplained <c>UNSUPPORTED_EFFECT</c>.
-    /// The defender launcher (512) is the interception of <c>crates/eve-space</c>, not yet wired; the bomb launcher (862) has no flight; the others are not weapons.
+    /// The structure launchers (category 66) run on a structure, and no structure service exists yet (the structures are the last phase, DECISIONS); the probe launchers
+    /// need the probe lifecycle and the breacher pods need the damage-over-time effect, neither written yet.
     /// </summary>
     public static readonly IReadOnlyDictionary<int, string> RefusedLauncherGroups = new Dictionary<int, string>
     {
         [481] = "PROBE_LAUNCHER_NOT_IMPLEMENTED",
         [1226] = "PROBE_LAUNCHER_NOT_IMPLEMENTED",
-        [501] = "FESTIVAL_LAUNCHER_NOT_IMPLEMENTED",
-        [308] = "COUNTERMEASURE_LAUNCHER_NOT_IMPLEMENTED",
         [4807] = "BREACHER_POD_LAUNCHER_NOT_IMPLEMENTED",
         [1327] = "STRUCTURE_LAUNCHER_NOT_IMPLEMENTED",
         [1328] = "STRUCTURE_LAUNCHER_NOT_IMPLEMENTED",
@@ -97,6 +101,9 @@ internal sealed class MissileEffect : ShipEffect
     /// <summary>The launcher groups this effect runs: the missile family derived from the static data (<see cref="LauncherFamilies"/>).</summary>
     public static IReadOnlySet<int> ServedLauncherGroups(DogmaStatic statics) => statics.MissileLauncherGroups;
 
+    /// <summary>The launchers this effect runs that are not of the missile family: the festival launcher and the countermeasure launcher (<see cref="OtherLauncherNames"/>).</summary>
+    public static IReadOnlySet<int> OtherServedLauncherGroups { get; } = OtherLauncherNames.Keys.ToHashSet();
+
     public override IReadOnlyCollection<string> EffectNames { get; } = [LauncherEffectName];
 
     /// <summary>
@@ -107,14 +114,25 @@ internal sealed class MissileEffect : ShipEffect
     {
         var group = type.GroupId;
         var names = statics.MissileLauncherGroups.Contains(group) ? ClientNames
-            : RefusedLauncherGroups.ContainsKey(group) ? KnownFiringNames
-            : DeployableLaunchers.GetValueOrDefault(group, []);
+            : OtherLauncherNames.GetValueOrDefault(group) ?? (RefusedLauncherGroups.ContainsKey(group) ? KnownFiringNames : DeployableLaunchers.GetValueOrDefault(group, []));
         return names.Any(n => n.Equals(requested, StringComparison.OrdinalIgnoreCase))
             ? type.EffectIds.Select(statics.Effect).FirstOrDefault(e => e is not null && e.Name.Equals(LauncherEffectName, StringComparison.OrdinalIgnoreCase))
             : null;
     }
 
-    protected override bool Handles(ModuleEffectContext module) => module.Statics.MissileLauncherGroups.Contains(module.Type.GroupId);
+    /// <summary>The missile family, the festival launcher, and the countermeasure launcher when its charge is a missile (a defender is <see cref="DefenderEffect"/>'s).</summary>
+    protected override bool Handles(ModuleEffectContext module) =>
+        module.Statics.MissileLauncherGroups.Contains(module.Type.GroupId) || module.Type.GroupId == FestivalLauncherGroup
+        || module.Type.GroupId == CountermeasureLauncherGroup && !IsDefenderCharge(module);
+
+    /// <summary>Whether the loaded charge of a launcher is a defender missile (its group, 88).</summary>
+    internal static bool IsDefenderCharge(ModuleEffectContext module) =>
+        module.Snapshot.ChargeOf(module.Module) is { } charge && module.Statics.Type(charge.TypeId)?.GroupId == DefenderChargeGroup;
+
+    /// <summary>Whether the loaded charge is an F.O.F. (auto-targeting) missile: its default firing effect is <c>fofMissileLaunching</c>, from the static data.</summary>
+    internal static bool IsFofCharge(ModuleEffectContext module) =>
+        module.Snapshot.ChargeOf(module.Module) is { } charge && module.Statics.Type(charge.TypeId) is { } type
+        && type.EffectIds.Select(module.Statics.Effect).Any(effect => effect is { } e && e.Name.Equals(FofMissileLaunching, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>A launcher with no missile in it is refused before it is asked for a target (the reference's order: <c>NO_AMMO</c> first, then the target).</summary>
     protected override string? Refusal(ModuleEffectContext module)
@@ -124,7 +142,8 @@ internal sealed class MissileEffect : ShipEffect
         {
             return "NO_AMMO";
         }
-        return module.TargetId <= 0 ? "TARGET_REQUIRED" : null;
+        // an F.O.F. missile locks nothing: the launcher picks its target when it fires (see ResolveAutoTarget)
+        return module.TargetId <= 0 && !IsFofCharge(module) ? "TARGET_REQUIRED" : null;
     }
 
     protected override SimEffect Build(ModuleEffectContext module)
@@ -141,12 +160,13 @@ internal sealed class MissileEffect : ShipEffect
 
         var (duration, capacitor, _) = module.Cycle();
         var fx = FxOf(module, charge);
+        var target = IsFofCharge(module) ? AutoTargetId : Math.Max(0, module.TargetId);
         var launcher = new SimTurret(
             module.Module.TypeId, fx, [Damage(EmDamage), Damage(ThermalDamage), Damage(KineticDamage), Damage(ExplosiveDamage)], range, 0, 0, 40_000,
             new SimTurretCharge(charge.TypeId, charge.Flag, charge.Quantity, ChargesPerCycle(attributes), Reloads: module.Value(ModuleAttributes.ReloadTime, 0) > 0), missile);
         // the client is told the cost and the cycle of the launcher as it starts and stops (and no range: a missile's is its own)
         SimChange[] told = [new(module.ModuleId, CapacitorNeed, capacitor), new(module.ModuleId, Speed, Three(duration))];
-        return new SimEffect(module.ModuleId, module.Module.TypeId, module.Effect.Id, fx, duration, capacitor, Math.Max(1, module.Repeat), Math.Max(0, module.TargetId), null, null, told, told, launcher);
+        return new SimEffect(module.ModuleId, module.Module.TypeId, module.Effect.Id, fx, duration, capacitor, Math.Max(1, module.Repeat), target, null, null, told, told, launcher);
     }
 
     /// <summary>

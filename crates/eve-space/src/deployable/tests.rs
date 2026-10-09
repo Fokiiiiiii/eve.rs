@@ -332,3 +332,28 @@ fn a_fighter_blast_does_not_reach_a_ship_beyond_its_radius() {
     assert_eq!(damage_told(&out, B), 0, "a ship 40 km off is outside the blast");
     assert!(damage_told(&out, A) >= 1, "the blast went off at the launcher's ship");
 }
+
+#[test]
+fn a_bomb_launcher_refuses_a_ship_at_rest_and_releases_its_bomb_once_the_ship_moves() {
+    // the launcher starts only above minVelocityActivationLimit 2608 (1 m/s in the SDE): a stopped ship may not release a bomb
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.position;
+    place(&mut scene, A, a);
+    let bomb = Action::Bomb {
+        ball: Spec { charge_type_id: 27_920, group_id: 90, name: "Electron Bomb".to_string(), radius: 40.0 },
+        kind: BombKind::Damage,
+        lifetime_ms: 12_000.0,
+        blast_radius: 400.0,
+        damage: [5_800.0, 0.0, 0.0, 0.0],
+        ecm: [0.0; 4],
+        neutralize: 0.0,
+    };
+    let mut launcher = module(MODULE, bomb, 10_000.0);
+    launcher.rules = crate::modules::Rules { min_velocity_limit: 1.0, ..Default::default() };
+    let at_rest = scene.activate(A, launcher.clone(), t);
+    assert!(refused_with(&at_rest, "VELOCITY_TOO_LOW"), "{at_rest:?}");
+    assert!(scene.deployables.is_empty(), "a refused launch releases nothing");
+    scene.pilots.get_mut(&A).unwrap().ship.velocity = eve_destiny::Vec3::new(20.0, 0.0, 0.0);
+    let moving = scene.activate(A, launcher, t);
+    assert!(accepted(&moving), "{moving:?}");
+}

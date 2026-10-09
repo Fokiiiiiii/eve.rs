@@ -283,7 +283,8 @@ impl Scene {
         if self_capacitor_boost || self_sensor_boost {
             true
         } else if effect.turret.is_some() {
-            self.turret_target_ok(session, effect)
+            // shortcut: a spool turret is checked at the cycle boundary, not on every tick; it stops at most one cycle after the target leaves optimal
+            self.turret_target_ok(session, effect) && !self.spool_target_out_of_optimal(session, effect)
         } else if let Some((_, reach, _)) = effect.remote() {
             self.turret_target_ok(session, effect)
                 && self

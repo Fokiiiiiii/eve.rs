@@ -618,6 +618,48 @@ fn a_precursor_weapon_that_stops_starts_its_ramp_again_from_none_when_it_runs_ag
     assert_bonus_close(scene.spool_of(npc, NPC_SHIP).unwrap().bonus, 0.07);
 }
 
+#[test]
+fn a_precursor_weapon_stops_when_its_target_leaves_optimal_range_and_its_ramp_goes_with_it() {
+    let (mut scene, npc, now) = duel();
+    let cycle = 2_500 * SECOND / 1_000;
+    let mut weapon = laser();
+    // the NPC is two kilometres off: inside this optimal range at the start
+    weapon.optimal_range = 3_000.0;
+    weapon.spool = Some(Spool { per_cycle: 0.07, max: 2.125 });
+    scene.activate(npc, laser_effect(spec().ship_id, weapon.clone()), now);
+    scene.poll(now + cycle + 1);
+    assert_bonus_close(scene.spool_of(npc, NPC_SHIP).unwrap().bonus, 0.14);
+    // the player orbits the NPC at five kilometres, past the optimal range, and the turret stops at a cycle boundary
+    let mut at = now + 2 * cycle + 2;
+    scene.command(PLAYER, Command::Orbit { target_id: npc_spec().ship_id, distance: 5_000.0 }, at);
+    let mut told = Vec::new();
+    while scene.spool_of(npc, NPC_SHIP).is_some() && at < now + 600 * SECOND {
+        at += SECOND / 4;
+        told.extend(scene.poll(at));
+    }
+    assert_eq!(scene.spool_of(npc, NPC_SHIP), None, "the turret stopped with the ramp");
+    assert_eq!(scene.locked_by(npc), [spec().ship_id], "the stop is for the range, not for a lost lock");
+    let ended: Vec<i64> = told
+        .iter()
+        .filter_map(|o| match o {
+            Out::ModuleEnded { session, module_id, reason } if *session == npc => {
+                assert_eq!(*reason, 2, "the target was lost to it: wire reason 2");
+                Some(*module_id)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ended, [NPC_SHIP], "the host is told the turret ended once");
+    // a turret that is still inside its optimal range keeps shooting (the same geometry, a larger optimal)
+    let (mut scene, npc, now) = duel();
+    let mut near = laser();
+    near.optimal_range = 10_000.0;
+    near.spool = Some(Spool { per_cycle: 0.07, max: 2.125 });
+    scene.activate(npc, laser_effect(spec().ship_id, near), now);
+    scene.poll(now + cycle + 1);
+    assert_bonus_close(scene.spool_of(npc, NPC_SHIP).unwrap().bonus, 0.14);
+}
+
 /// A player who has bound the ballpark, and an NPC two kilometres off that has locked it (the moment is a minute after noon).
 fn duel() -> (Scene, SessionId, i64) {
     let mut scene = Scene::new(system());

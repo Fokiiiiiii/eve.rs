@@ -8,10 +8,15 @@ public readonly record struct BurstShip(long ShipId, long CharacterId, long Affi
 /// <c>commandBurstRuntime.js</c>). The source ship itself always is, when it passes <paramref name="eligible"/>. Any other ship needs a shared explicit
 /// affinity group or a shared fleet (two different pilots in one fleet), or, for a burst that reaches every ship in range (a Phenomena Generator), nothing
 /// else; and it must be within the range (surface distance, plus one metre, as the reference allows). The caller passes only the ships that can interact
-/// with the source locally (the same system and bubble). The result is ordered by ship id, as the reference orders it.
+/// with the source locally (the same system and bubble). A burst reaches at most <see cref="MaxRecipients"/> ships, the source among them (the wiki's
+/// "up to 256 people"; the wiki does not say which ones are cut, so the source is kept and the rest are taken in ship id order). The result is ordered by
+/// ship id, as the reference orders it.
 /// </summary>
 public static class BurstRecipients
 {
+    /// <summary>The most ships one burst reaches on a cycle, the source among them (EVE University wiki, Command Bursts: "up to 256 people").</summary>
+    public const int MaxRecipients = 256;
+
     /// <summary>The ships the burst from <paramref name="source"/> reaches, at <paramref name="rangeMeters"/>.</summary>
     /// <param name="ships">Every ship that can interact locally with the source (the source among them or not).</param>
     /// <param name="surfaceDistance">The surface distance in metres from the source to a ship.</param>
@@ -28,11 +33,12 @@ public static class BurstRecipients
         Func<BurstShip, bool>? eligible = null)
     {
         var range = double.IsFinite(rangeMeters) ? Math.Max(0, rangeMeters) : 0;
-        var recipients = new List<long>();
+        var self = new List<long>();
+        var others = new List<long>();
         foreach (var ship in ships.OrderBy(ship => ship.ShipId))
         {
-            var self = ship.ShipId == source.ShipId;
-            if (!self && !affectsAllShipsInRange && !SharesGroup(source, ship, sameFleet))
+            var isSource = ship.ShipId == source.ShipId;
+            if (!isSource && !affectsAllShipsInRange && !SharesGroup(source, ship, sameFleet))
             {
                 continue;
             }
@@ -40,12 +46,17 @@ public static class BurstRecipients
             {
                 continue;
             }
-            if (self || InRange(surfaceDistance(ship), range))
+            if (isSource)
             {
-                recipients.Add(ship.ShipId);
+                self.Add(ship.ShipId);
+            }
+            else if (InRange(surfaceDistance(ship), range))
+            {
+                others.Add(ship.ShipId);
             }
         }
-        return recipients;
+        var recipients = self.Count > 0 ? self.Concat(others.Take(MaxRecipients - self.Count)) : others.Take(MaxRecipients);
+        return recipients.OrderBy(id => id).ToList();
     }
 
     private static bool SharesGroup(BurstShip source, BurstShip ship, Func<long, long, bool> sameFleet)

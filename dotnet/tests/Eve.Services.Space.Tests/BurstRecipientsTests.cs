@@ -67,6 +67,21 @@ public class BurstRecipientsTests
     }
 
     [Fact]
+    public void A_burst_reaches_at_most_256_ships_with_the_source_among_them()
+    {
+        var ships = new List<BurstShip> { Me };
+        var distance = new Dictionary<long, double>();
+        for (long id = 100; id < 100 + 300; id++)
+        {
+            ships.Add(new BurstShip(id, FleetPilot, 0));
+            distance[id] = 1;
+        }
+        var reached = Reach(ships, distance);
+        Assert.Equal(BurstRecipients.MaxRecipients, reached.Count);
+        Assert.Contains(Source, reached);
+    }
+
+    [Fact]
     public void A_ship_with_no_finite_distance_is_not_reached_and_the_result_is_ordered_by_ship_id()
     {
         var ships = new[]

@@ -653,10 +653,21 @@ impl Sim {
                     .map(|scene| scene.drone_work_result(session_id, drone_id, target_id, cycle_id, accepted, units_remaining, complete, now))
                     .unwrap_or_default()
             },
-            Message::ModuleWorkResult { session_id, module_id, target_id, cycle_id, accepted, reason, units_remaining: _, delivered_units: _, complete } => {
-                self.scene_of(session_id)
-                    .map(|scene| scene.module_work_result(session_id, module_id, target_id, cycle_id, accepted, &reason, complete, now))
-                    .unwrap_or_default()
+            Message::ModuleWorkResult { session_id, module_id, target_id, cycle_id, accepted, reason, units_remaining, delivered_units: _, complete } => {
+                // a granted cycle moves the rock's stock and tells the other miners while the cycle is still parked; then the module takes its answer
+                let mut told = if accepted {
+                    self.scene_of(session_id)
+                        .map(|scene| scene.module_mined(session_id, module_id, target_id, cycle_id, units_remaining, now))
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                told.extend(
+                    self.scene_of(session_id)
+                        .map(|scene| scene.module_work_result(session_id, module_id, target_id, cycle_id, accepted, &reason, complete, now))
+                        .unwrap_or_default(),
+                );
+                told
             },
             Message::RemoteRepairCycleResult { session_id, module_id, target_id, cycle_id, accepted, reason: _, amount } => {
                 self.scene_of(session_id)

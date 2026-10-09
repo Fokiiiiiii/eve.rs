@@ -1894,6 +1894,47 @@ impl Scene {
         self.finish_cycle(session, module_id, now, Vec::new(), target_ok)
     }
 
+    /// A module's mining cycle that the host granted (`accepted`) took `units_remaining` from its rock. The other pilots who see the rock are told how much came
+    /// off it (`OnOreMinedByOther`, the whole amount taken, as the reference sends it); the miner is told by its own `OnOreMined`. The rock's stock is set
+    /// without a change to its destiny (the reference's clients keep the scanned quantity and take it down from this message), and a rock mined out is removed.
+    /// Only a cycle still parked counts: a repeat, or a cycle the module has left, tells nobody.
+    pub fn module_mined(
+        &mut self, session: SessionId, module_id: i64, target_id: i64, cycle_id: u64, units_remaining: i64, now: i64,
+    ) -> Vec<Out> {
+        let parked = self.pilots.get(&session).is_some_and(|pilot| {
+            pilot.modules.running.iter().any(|run| {
+                run.effect.module_id == module_id
+                    && run.effect.target_id == target_id
+                    && matches!(run.effect.action, Some(Action::Mining { .. }))
+                    && run.pending_work.is_some_and(|pending| pending.cycle_id == cycle_id && !pending.fuel)
+            })
+        });
+        let Some(stock) = self.asteroids.get(&target_id).map(|asteroid| asteroid.units_remaining) else {
+            return Vec::new();
+        };
+        if !parked || units_remaining >= stock {
+            return Vec::new();
+        }
+        let taken = stock - units_remaining;
+        let mut out: Vec<Out> = self
+            .in_entry_order()
+            .into_iter()
+            .filter(|s| *s != session && self.pilots[s].bound && self.pilots[s].sees_asteroids.contains(&target_id))
+            .map(|watcher| Out::Notify {
+                session: watcher,
+                name: "OnOreMinedByOther",
+                id_type: "charid",
+                args: vec![crate::wire::id(target_id), crate::wire::int(taken)],
+            })
+            .collect();
+        if units_remaining <= 0 {
+            out.extend(self.remove_asteroid(target_id, true, now));
+        } else if let Some(asteroid) = self.asteroids.get_mut(&target_id) {
+            asteroid.units_remaining = units_remaining;
+        }
+        out
+    }
+
     /// What the client of the ship an effect is projected at is told, for its HUD (`hudIconStates.js` of the reference): as the effect goes on `OnJamStart` (who, which module,
     /// the target, what the HUD calls it, when and for how long: a cycle and a tick over), `OnEwarStart` and the buff bar refreshed; as each cycle begins the timer again; as it ends
     /// `OnJamEnd`, `OnEwarEnd` and the buff bar. An NPC is told nothing.
@@ -4745,6 +4786,77 @@ pub(crate) mod tests {
         effect.capacitor_need = 0.0;
         effect.repeat = repeat;
         effect
+    }
+
+    /// The mining laser of `mining`, on a rock instead of the partner.
+    fn mining_on(rock: i64, repeat: i32) -> Effect {
+        let mut effect = mining(repeat);
+        effect.target_id = rock;
+        effect
+    }
+
+    /// A rock of 100 units beside the miner, which has locked it. Both pilots are in one bubble, so both see the rock.
+    fn mining_rock(rock: i64) -> (Scene, i64) {
+        let (mut scene, t) = reaching(0.0);
+        let mut position = scene.pilots[&A].ship.position;
+        position.x += 1_000.0;
+        scene.place_asteroid(
+            crate::wreck::Asteroid {
+                id: rock,
+                type_id: 0,
+                group_id: 0,
+                category_id: 0,
+                name: "Test ore".into(),
+                graphic_id: None,
+                position,
+                direction: eve_destiny::Vec3::new(1.0, 0.0, 0.0),
+                radius: 10.0,
+                units_remaining: 100,
+            },
+            t,
+        );
+        let asked = scene.target_order(A, crate::targeting::Order::Lock(rock), t);
+        let (_, t) = poll_until(&mut scene, t, 40.0);
+        assert!(scene.locked_by(A).contains(&rock), "the miner locked the rock: {asked:?}");
+        (scene, t)
+    }
+
+    #[test]
+    fn a_granted_mining_cycle_tells_the_other_pilot_what_came_off_the_rock_and_not_the_miner() {
+        let rock = 99_200_001;
+        let (mut scene, t) = mining_rock(rock);
+        scene.activate(A, mining_on(rock, 3), t);
+        let (first, at) = poll_until(&mut scene, t, 2.5);
+        let (cycle, ..) = work_cycles(&first)[0];
+
+        let told = scene.module_mined(A, MODULE, rock, cycle, 90, at);
+        assert!(
+            matches!(told.as_slice(), [Out::Notify { session: B, name: "OnOreMinedByOther", id_type: "charid", args, .. }]
+                if args == &[crate::wire::id(rock), crate::wire::int(10)]),
+            "{told:?}"
+        );
+        assert_eq!(scene.asteroids[&rock].units_remaining, 90, "the rock's stock follows the grant");
+
+        // the answer settles the cycle, so a repeat of the same grant tells nobody again
+        scene.module_work_result(A, MODULE, rock, cycle, true, "", false, at);
+        assert!(scene.module_mined(A, MODULE, rock, cycle, 90, at).is_empty(), "a replay tells nobody");
+    }
+
+    #[test]
+    fn a_rock_mined_out_by_a_granted_cycle_is_told_to_the_other_pilot_and_removed() {
+        let rock = 99_200_002;
+        let (mut scene, t) = mining_rock(rock);
+        scene.activate(A, mining_on(rock, 3), t);
+        let (first, at) = poll_until(&mut scene, t, 2.5);
+        let (cycle, ..) = work_cycles(&first)[0];
+
+        let told = scene.module_mined(A, MODULE, rock, cycle, 0, at);
+        assert!(
+            told.iter().any(|o| matches!(o, Out::Notify { session: B, name: "OnOreMinedByOther", args, .. }
+                if args == &[crate::wire::id(rock), crate::wire::int(100)])),
+            "{told:?}"
+        );
+        assert!(!scene.asteroids.contains_key(&rock), "a rock mined out is removed");
     }
 
     #[test]

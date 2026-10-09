@@ -531,3 +531,48 @@ Applied to the scanners:
 - The wiki's survey scanner range (15 km, 23 km with T2) belongs to a different module, which is not part of this runtime. No conflict arises.
 
 **Decisions for the body (recorded so the build follows them; none is built).** D4 (the registry) is a persistent source list on `DogmaWorld` items, keyed by the burst module, cleared when the module stops, and expired by the scheduler at `buffDuration`. D3 (recipients): the same fleet as the burst's pilot (`FleetStore`), a ship in the burst's range, the burst's own ship excluded for the fleet families, and the host sends the list each cycle (ADR 0011 decision 5). The module's cycle is refused while the value chain is OPEN, because a burst with value 0 would be a success the reference does not give.
+
+## Breacher pods, track A4 (2026-10-09)
+
+Source order (the user's rule): the SDE for numbers first, the EVE University wiki for rules next, then EveJS, CCP documents and eve-logic at equal rank. The wiki
+page used is the Revenant expansion notes' breacher section (mirrored on the EVE University wiki); its own breacher page is not at the URL the repo's other pages use.
+
+- Numbers, SDE first: the SCARAB Breacher Pod S (85088) and M (85089) carry `dotDuration` 40000 ms (5735), `dotMaxDamagePerTick` 200 and 600 (5736) and
+  `dotMaxHPPercentagePerTick` 0.6 (5737). The brief's "600 cap" is the medium's; the small charge's cap is 200. The wiki gives 160 (small) and 800 (medium) a second,
+  and 200 and 1000 with max skills: the SDE is used, and the wiki's numbers conflict with it (the SDE wins). The wiki's 50 to 75 s duration (with skills) is the
+  base 40 s plus skill bonuses; the skill bonuses (5749, 5750) are not read yet, so no skill changes a pod here.
+- Launcher: 4807, the small (85084) and medium (85085) launchers. The charge's firing effect is `dotMissileLaunching` (12174), which the SDE marks offensive;
+  its launch is an aggression though it does no damage. The rate of fire is the launcher's own attribute, as for the other missile launchers.
+- A hit: the wiki says "they will not affect their target unless they actually reach and hit" and that a smartbomb can kill a pod before it arrives. The pod flies
+  as a missile does (`missile_entity`), so both hold; the simulation takes the pod's damage as zero (its charge has no damage attributes in the SDE).
+- Targets: the wiki says a pod "cannot be used against targets such as capsules, structures, stargates etc.", and only player ships and NPCs; the simulation's
+  missile targets are ships, so this holds.
+- The tick: one second. The wiki says damage "every second"; V24.01's `DOT_TICK_RATE_SEC` is 1 (eve-logic `dotWeapons/common/dotRegistry.py`).
+- The damage of a tick: the lower of the percentage of the target's total hit points and the cap, rounded down. The wiki gives "based on the targets total
+  hitpoints or a flat cap, whichever is lower", with hit points as shield, armor and hull combined; eve-logic `dotUtil.GetEffectiveDamage` is `int(min(ratio *
+  total, cap))`. The total is the three capacities (eve-logic `_GetTotalHp` reads the dogma capacities), not the current points.
+- Resistances: the wiki says the effect "completely ignores resistances". The tick goes through the layers with every resonance at one (`Health::apply_unresisted`).
+- Stacking: one application works on a ship at a time. The wiki: "the player who has the strongest breacher pod effect will deal damage to the target, and the
+  weaker effect stays inert until the stronger one expires". Strongest is the most a tick does at the ship's current total hit points; a tie goes to the one
+  already working, then to the one that landed first. An inert application's clock stops until it works. eve-logic differs here: its applications expire on
+  absolute time (`expiryTime = added + duration`, `dotPriorityQueue.py`) and pick the highest effective damage with the same tie rule. The wiki is the rule
+  (its order is first), so the inert clock is kept; the difference shows only when a weaker effect outlasts the stronger one's run.
+- A second pod from the same attacker: the wiki says "a new hit replaces the old effect once it expires". It is read as a queue: it waits, inert, like any other.
+  Not a replacement of the attacker's own effect.
+- The effect ends when the ship leaves the scene: a jump, a dock or a death (wiki: "until a player leaves the solarsystem or docks up"). It goes on through warp
+  and tethers (wiki: "It can continue doing damage while the player is in warp or while the player is tethered"). A restart drops it (the simulation keeps no
+  state across a restart, as for missiles in flight).
+- A tick that destroys the ship: the killer is the pilot who fired the pod, while that pilot is still in the scene (a choice; the wiki and eve-logic name no
+  killer for a DoT death).
+- Client-visible: the slim item of the ship carries `dotHpPercentageApplied` = 100 times the tick's damage over the total hit points, told with
+  `OnSlimItemChange` when it changes and removed by the plain slim item when the effect ends (eve-logic `dotRegistry.py` `ballpark.UpdateSlimItemField` and
+  `DeleteSlimItemField`). A ship that comes into view while a pod's effect runs is not told the field until the next change (a shortcut: the slim item is built
+  from the ship, without the effect; upgrade when a ship's slim item reads the applications).
+- Not built, a blocker: `OnDotVictimUpdated(targetID, dmgAppsInfo)` (eve-logic `michelle.py`, the attacker's and the target's list of applications). Its
+  `dmgAppsInfo` is a Python `set` (`dotInfoPerTarget.py` calls `.discard` on it). eve-marshal's `Value` has no set variant, and neither the repo nor EveJS
+  (`server/src/network/tcp/utils/marshal.js`) carries a set opcode, so the payload cannot be encoded from a source here. Until the set's marshal form is known,
+  the attacker and the target get no DoT list, only the slim field.
+- Per-tick damage messages (`OnDamageMessage`) are not sent for a DoT tick: the sources have no wire shape for it. The target's attributes and damage state go
+  through the ordinary hit path.
+- Protocol 40 to 41: the missile block (`put_missile`, `read_missile`) ends with a damage-over-time flag, then duration, cap and percentage. A defender's action
+  carries the same missile block with a 0 flag. The fixture generator writes the new block and one breacher frame in `oracle/fixtures/simlink/messages.json`.

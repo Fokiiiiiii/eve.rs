@@ -786,6 +786,18 @@ fn an_accepted_docking_stops_the_ship_and_takes_four_seconds() {
 }
 
 #[test]
+fn a_ship_that_docks_leaves_the_station_with_no_rack_heat() {
+    // EVE.js resets the rack heat when the ship is healed on a dock (resetEntityRackHeat); here the ship is taken off the scene and the one
+    // that undocks has none. Nothing of the heat is kept by the host.
+    let mut scene = near_the_station();
+    scene.pilots.get_mut(&SESSION).unwrap().heat.levels = [40.0, 10.0, 5.0];
+    scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
+    assert!(matches!(scene.poll(NOON + seconds(4)).first(), Some(Out::Docked { .. })));
+    scene.undock(SESSION, spec(), STATION, NOON + seconds(10)).unwrap();
+    assert_eq!(scene.pilots[&SESSION].heat.levels, [0.0, 0.0, 0.0]);
+}
+
+#[test]
 fn a_docking_asked_for_again_is_accepted_with_the_first_time_and_orders_are_ignored_meanwhile() {
     let mut scene = near_the_station();
     scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);

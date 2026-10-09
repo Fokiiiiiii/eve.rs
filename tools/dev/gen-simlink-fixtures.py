@@ -134,6 +134,14 @@ def action(a):
     # the SimAction tag 14 (ADR 0013 epoch 26): a titan doomsday, one hit on the locked target after a delay, the ship held for its windows
     if kind == "doomsday":
         return bytes([14]) + struct.pack("<d", a["delayMs"]) + struct.pack("<4d", *a["damage"]) + struct.pack("<2d", a["immobileMs"], a["noJumpMs"])
+    # the SimAction tag 16 (protocol 33): a kamikaze squadron's detonation, its damage (four kinds) and the range it detonates at (metres)
+    if kind == "kamikaze":
+        return bytes([16]) + struct.pack("<4d", *a["damage"]) + struct.pack("<d", a["rangeMeters"])
+    # the SimAction tag 17 (protocol 33): a fighter's missiles: the damage (four kinds), the reach (metres) and the explosion (radius, velocity, reduction factor,
+    # reduction sensitivity), scaled by the application factor for the target
+    if kind == "missile":
+        return bytes([17]) + struct.pack("<4d", *a["damage"]) + struct.pack("<5d", a["reachMeters"], a["explosionRadius"], a["explosionVelocity"],
+                                                                              a["reductionFactor"], a["reductionSensitivity"])
     # the SimAction tag 15 (protocol 29): the Gravitational Transportation Field Oscillator's field, a sphere strike (shape 4) whose body follows the tag, then the
     # offset of the destination from the firing ship, the warp block of the held capitals (ms), and the ship ids moved and held (a u32 count, then each as i64)
     if kind == "field":
@@ -381,8 +389,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 31},
-    {"name": "hello ack", "kind": "HelloAck", "version": 31, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 33},
+    {"name": "hello ack", "kind": "HelloAck", "version": 33, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -798,6 +806,17 @@ valid = [
      "effect": {"moduleId": "9988400002813", "moduleType": 1100, "effectId": 10, "fx": "effects.TargetPassively",
                 "durationMs": 1000.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "1000000000002",
                 "action": {"kind": "passiveLock"}, "onChanges": [], "offChanges": []}},
+    {"name": "activate a kamikaze squadron (Shadow: four kinds, detonates at 500 m)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400004102", "moduleType": 2948, "effectId": 6554, "fx": "",
+                "durationMs": 10000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "980050000077", "burnsFuel": False,
+                "action": {"kind": "kamikaze", "damage": [4000.0, 0.0, 6000.0, 0.0], "rangeMeters": 500.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a fighter's missiles (Templar: a missile reaching 20 km)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400004103", "moduleType": 23055, "effectId": 6441, "fx": "",
+                "durationMs": 6000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "980050000077", "burnsFuel": False,
+                "action": {"kind": "missile", "damage": [1500.0, 0.0, 1500.0, 0.0], "reachMeters": 20000.0, "explosionRadius": 40.0,
+                           "explosionVelocity": 135.0, "reductionFactor": 0.4, "reductionSensitivity": 5.5},
+                "onChanges": [], "offChanges": []}},
     {"name": "activate a doomsday strike (Bosonic Field Generator)", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002814", "moduleType": 40633, "effectId": 6473, "fx": "",
                 "durationMs": 300000.0, "capacitorNeed": 30000.0, "repeat": 1, "targetId": "0", "burnsFuel": True,
@@ -881,6 +900,12 @@ invalid = [
     {"name": "reactive armor hardener with a seed above one", "reason": "bad-value", "hex": build(hardener_seed_high).hex()},
     {"name": "reactive armor hardener that shifts by nothing", "reason": "bad-value", "hex": build(hardener_shift_none).hex()},
     {"name": "armor pinned flag that is not a flag", "reason": "bad-value", "hex": build(pinned_flag_two).hex()},
+    {"name": "kamikaze with a negative range", "reason": "bad-value",
+     "hex": build(dict(named("activate a kamikaze squadron (Shadow: four kinds, detonates at 500 m)"), effect=dict(named("activate a kamikaze squadron (Shadow: four kinds, detonates at 500 m)")["effect"],
+                       action=dict(named("activate a kamikaze squadron (Shadow: four kinds, detonates at 500 m)")["effect"]["action"], rangeMeters=-1.0)))).hex()},
+    {"name": "fighter missile with a negative explosion radius", "reason": "bad-value",
+     "hex": build(dict(named("activate a fighter's missiles (Templar: a missile reaching 20 km)"), effect=dict(named("activate a fighter's missiles (Templar: a missile reaching 20 km)")["effect"],
+                       action=dict(named("activate a fighter's missiles (Templar: a missile reaching 20 km)")["effect"]["action"], explosionRadius=-40.0)))).hex()},
     {"name": "strike with an aim that is not a unit vector", "reason": "bad-value",
      "hex": build(dict(named("activate a doomsday strike (Bosonic Field Generator)"), effect=dict(named("activate a doomsday strike (Bosonic Field Generator)")["effect"],
                        action=dict(named("activate a doomsday strike (Bosonic Field Generator)")["effect"]["action"], direction=[0.6, 0.0, 0.9])))).hex()},

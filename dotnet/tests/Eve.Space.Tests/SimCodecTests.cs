@@ -82,6 +82,17 @@ public class SimCodecTests
         {
             return new SimAction.Tractor((double)a["velocity"]!, (double)a["hold"]!, (double)a["range"]!);
         }
+        if ((string)a["kind"]! == "kamikaze")
+        {
+            var d = a["damage"]!;
+            return new SimAction.Kamikaze([(double)d[0]!, (double)d[1]!, (double)d[2]!, (double)d[3]!], (double)a["rangeMeters"]!);
+        }
+        if ((string)a["kind"]! == "missile")
+        {
+            var d = a["damage"]!;
+            return new SimAction.Missile([(double)d[0]!, (double)d[1]!, (double)d[2]!, (double)d[3]!], (double)a["reachMeters"]!,
+                (double)a["explosionRadius"]!, (double)a["explosionVelocity"]!, (double)a["reductionFactor"]!, (double)a["reductionSensitivity"]!);
+        }
         if ((string)a["kind"]! == "doomsday")
         {
             return new SimAction.Doomsday((double)a["delayMs"]!, [(double)a["damage"]![0]!, (double)a["damage"]![1]!, (double)a["damage"]![2]!, (double)a["damage"]![3]!], (double)a["immobileMs"]!, (double)a["noJumpMs"]!);

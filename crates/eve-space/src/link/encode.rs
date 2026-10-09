@@ -407,6 +407,28 @@ pub(super) fn put_action(out: &mut Vec<u8>, action: &Action) {
                 out.extend_from_slice(&number.to_le_bytes());
             }
         }
+        Action::Kamikaze { damage, range } => {
+            out.push(16);
+            for number in [damage[0], damage[1], damage[2], damage[3], *range] {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
+        }
+        Action::Missile { damage, reach, blast } => {
+            out.push(17);
+            for number in [
+                damage[0],
+                damage[1],
+                damage[2],
+                damage[3],
+                *reach,
+                blast.explosion_radius,
+                blast.explosion_velocity,
+                blast.reduction_factor,
+                blast.reduction_sensitivity,
+            ] {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
+        }
         Action::Mining {
             family,
             mining_amount_m3,

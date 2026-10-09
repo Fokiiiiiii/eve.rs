@@ -254,7 +254,9 @@ impl Action {
             | Self::EcmBurst { .. }
             | Self::Strike { .. }
             | Self::Field { .. }
-            | Self::Doomsday { .. } => true,
+            | Self::Doomsday { .. }
+            | Self::Kamikaze { .. }
+            | Self::Missile { .. } => true,
             Self::Cloak | Self::MicroJumpDrive { .. } | Self::ResistanceShift { .. } => false,
             Self::Charged { action, fallback, .. } => {
                 action.offensive() || fallback.as_deref().is_some_and(Action::offensive)
@@ -402,6 +404,19 @@ pub enum Action {
         warp_block_ms: f64,
         moved: Vec<i64>,
         held: Vec<i64>,
+    },
+    /// A kamikaze squadron's detonation (tag 16, protocol 33): it closes in on its locked target to `range` metres and, once there, hits it with `damage`
+    /// (the four kinds) and is destroyed. Its cycle ends without a detonation when the window runs out first.
+    Kamikaze {
+        damage: crate::health::Damage,
+        range: f64,
+    },
+    /// A fighter's missiles (tag 17, protocol 33): the locked target takes `damage` once, scaled by the application factor of `blast` for its signature and
+    /// speed, when it is within `reach` metres (the range gate of the reference's `executeFighterOffensiveCycle`).
+    Missile {
+        damage: crate::health::Damage,
+        reach: f64,
+        blast: crate::missiles::Blast,
     },
 }
 
@@ -647,8 +662,10 @@ pub(crate) struct Running {
     cycles: i32,
     /// The pulses of a strike the cycle has made (the next one is due at its `pulse_offset_ms`).
     strike_done: i32,
-    /// Whether a titan doomsday has hit its target in the cycle that is on.
+    /// Whether a titan doomsday has hit its target in the cycle that is on (a kamikaze or a missile hit lands once in it too).
     doomsday_hit: bool,
+    /// When a kamikaze or a missile next checks whether its target is within reach (the cycle's polls, every quarter second).
+    reach_poll_at: i64,
     /// The pilot asked for it to stop: it does when the cycle ends.
     stopping: bool,
     /// The rounds a turret or charge-using module has left.
@@ -804,6 +821,7 @@ enum Moment {
     StrikePulse(usize),
     /// The hit of a titan doomsday is due (the running effect at this index).
     DoomsdayHit(usize),
+    ReachCheck(usize),
 }
 
 /// The share of a neutralisation a target takes for its resistance: the value itself, never below 0 (immune), and whole if the value is not a number.

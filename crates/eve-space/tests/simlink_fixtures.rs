@@ -7,7 +7,7 @@ use eve_space::health::{Condition, Layer, Resonances, Vitals};
 use eve_space::link::{
     ChargeOp, ContainerPlacement, DecodeError, Enter, How, LaunchDrone, Message, Spawn, WreckPlacement,
 };
-use eve_space::missiles::Missile;
+use eve_space::missiles::{Blast, Missile};
 use eve_space::modules::{Action, Applies, Change, Effect, MiningFamily, Numbers, Reach, Remote};
 use eve_space::scene::{HeatModuleProfile, HeatProfile, HeatRack};
 use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
@@ -396,6 +396,31 @@ fn effect_of(case: &Value) -> Effect {
             }
             if a["kind"] == "repair" {
                 return Action::Repair { layer: layer(), amount, when };
+            }
+            let four = |key: &str| -> [f64; 4] {
+                let v = a[key].as_array().unwrap();
+                [
+                    v[0].as_f64().unwrap(),
+                    v[1].as_f64().unwrap(),
+                    v[2].as_f64().unwrap(),
+                    v[3].as_f64().unwrap(),
+                ]
+            };
+            if a["kind"] == "kamikaze" {
+                return Action::Kamikaze {
+                    damage: four("damage"),
+                    range: a["rangeMeters"].as_f64().unwrap(),
+                };
+            }
+            if a["kind"] == "missile" {
+                let num = |key: &str| a[key].as_f64().unwrap();
+                let blast = Blast {
+                    explosion_radius: num("explosionRadius"),
+                    explosion_velocity: num("explosionVelocity"),
+                    reduction_factor: num("reductionFactor"),
+                    reduction_sensitivity: num("reductionSensitivity"),
+                };
+                return Action::Missile { damage: four("damage"), reach: num("reachMeters"), blast };
             }
             let resolution = || a["signatureResolution"].as_f64().unwrap();
             let percent = || a["percent"].as_f64().unwrap();

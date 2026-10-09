@@ -3122,7 +3122,7 @@ fn a_running_module_that_holds_the_ship_stops_its_warp_and_its_dock_until_it_end
     assert!(scene.activate(A, siege, t).iter().any(|out| matches!(out, Out::Accepted { .. })));
     let warp =
         Command::WarpToPoint { destination: eve_destiny::Vec3::new(9_000_000.0, 0.0, 0.0), range: 0.0 };
-    let out = scene.command(A, warp.clone(), t + SECOND);
+    let out = scene.command(A, warp, t + SECOND);
     assert!(matches!(out.as_slice(), [Out::Refused { reason: "WARP_SCRAMBLED", .. }]), "{out:?}");
     let out = scene.command(A, Command::Dock { station_id: STATION }, t + SECOND);
     assert!(

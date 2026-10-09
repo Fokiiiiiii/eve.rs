@@ -352,3 +352,32 @@ Known failures in the .NET runs of 2026-10-09 (4,244 tests). The first full run 
 | NpcBounty, Mutadaptive | not failing in these runs |
 
 Rust: 1,272 tests passed, 0 failed. Python client: 1,066 passed, 97 skipped (the live tests need a server).
+
+## 16. Module rules and audit remainders (track B, 2026-10-09)
+
+Done (tests in the crates named): settle budget and stall guard, M-1 (`crates/eve-space` `modules`); warp, dock and module-activation locks from running
+overlays (104, 2354, 1349), WP6 (`scene/warping.rs`, `scene/docking.rs`); the dock refusal notice, WP7 (`SpaceSessions.Movement.cs`); the module rules payload
+(flag 32, protocol 33) with the group limit (763, FP-2), early deactivation (906, cloak), industrial core (3265, compressors stop with their core), reactivation
+delay (669, generic), burnt-out modules (energizer), WP3, WP4, WP5 (in part), WP14; fixed 1014 repeat cap (FP-C2); tracking computer not hostile (FP-3); guidance
+disruptor is an attack (FP-C6, Rust and host); the fixture generator carries the rules (`tools/dev/gen-simlink-fixtures.py`).
+
+Open (module rules, each with its exact blocker):
+- WP13 mode events: deferred (decision MR-D2 (b)); no subscriber exists, and the topic table is owned by superweapons S4.
+- WP16 bastion micro jump drive block (client python effect 5788, `bastionMode.py:89`): needs the client modifier table, decision MR-D7 (a); not built.
+- WP17 assistance and jam overlays (2135, 2116, 2112 to 2114, 2253 on the target): not read by `ewar.rs` or the remote paths; stacking rule not decided.
+- WP19 velocity limits (1334, 2608): the only carriers are the cynosural field generator and the missile launcher bomb, which are refused as not implemented, so no
+  reachable carrier exists yet.
+- 906 for eject and logoff, 1934, WP12 logout design: no reference text (MR-D9 (b)); not built.
+- Reactivation refusal: the client's `ModuleReactivationDelayed2` needs the time since the stop and the module id; the refusal does not carry them yet (the host
+  shows a notice).
+- MAX_GROUP_ACTIVE: the client's `EffectCrowdedOut {module, count}` needs the count of running modules; the refusal does not carry it yet.
+- Burnt-out and reactivation state is kept by the simulation, so a host restart clears it (module_rules T17 is not met for these two).
+- Audit A remainders: FP-8 (resistances on ewar and assistance), FP-10 (gunnery-only tracking disruption), FP-9 done earlier.
+- Audit C remainders: FP-C3 (spool telemetry 5804/5818), FP-C4a (overload visible to dogma), FP-C4b and FP-C5 (refresh running effects), FP-C7 (ECM burst
+  aggression), FP-C8 (automatic reload after depletion, also M-7).
+- Audit D: M-4 general maxGroupActive for every group is done; the Hull Energizer burn-out is done; M-6 (scanner, analyzer and relic modules) not built.
+- Wiki gaps: WG-1 decided without change (see DEVIATIONS); WG-2 to WG-8 open (WG-3 needs the module script tests, WG-4 a reference for gate and station
+  proximity, WG-5 heat repair on dock, WG-6 safety-colour gating, WG-7 weapons timer on jam, WG-8 fitting restrictions on the server).
+- Cloak types (covert, prototype, non-warp cloak states): not started.
+- Reactive armor hardener follow-ups (restart, death and gate-jump behaviour of the shift profile): not started.
+- Protocol 33: this is the one bump of track B; re-check `main` before a push.

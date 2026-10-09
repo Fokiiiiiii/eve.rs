@@ -277,3 +277,29 @@ Decisions: ADR 0015 and its three amendments.
 | CONFLICT | The EVE.js table flags the AttackM abilities (22 to 27, 44, 45) `isOffensive: false`, while the SDE effect `fighterAbilityAttackM` is offensive (`dogmaEffects`, 54 of 54 types). The offensive flag decides crimewatch aggression, so the SDE is followed when the effect lands (WP-M). The catalogue keeps EVE.js's value and records nothing from it for aggression yet. | none yet | crimewatch aggression for a squadron's attack (the drone path records none either, U3) |
 | REPLACED | The live EVE.js recording (WP-S) was not made: no graphical client runs on this host. Its wire shapes and notification names are pinned by `oracle/fixtures/simlink/messages.json` (the fighter entries follow the EVE.js and eve-logic code: the `LaunchFighter` and `FighterSize` layouts, the `GotoPoint` action of `buildGotoPointPayload`, the `OnFighterAbilitySlotActivated` payload of `notifyAbilityActivated`, `OnInSpaceSquadronSizeChanged` of `notifySquadronSizeChanged`). They are derived from source, not from a recorded trace. | `oracle/fixtures/simlink/messages.json`, `SimCodecTests`, `simlink_fixtures.rs` | a recorded trace when a client is available |
 | CHANGED | Scooping an abandoned squadron back is served for the bay and the tubes. The fleet hangar and the cargo hold (flags 155 and 5) are refused with a message, as EVE.js refuses them, but EVE.js does so silently and the sources used here do not settle CCP's rule (FIG-D-9). | `SpaceFightersTests.A_scoop_is_refused_for_the_cargo_hold_before_the_squadron_is_looked_at` | ADR 0015 FIG-D-9 |
+
+## Module rules (track B, 2026-10-09)
+
+Decisions taken where the sources left a choice (EveJS is the trusted reference; CCP docs and the SDE settle the numbers):
+
+- Module rules are enforced in the simulation from the rules the host sends with each effect (`ModuleRules`, flag 32). The host works them out from the type's
+  attributes once, in the effect wrapper (`ShipEffect`), so no handler repeats them. Early deactivation (906), the core requirement (3265), the group limit (763)
+  and the reactivation delay (669) are the four rules sent. Disallow activate on warp (1245) stays on the host (`ModuleRestrictions.CheckWarp`), as on main.
+- Locks from running modules (warp 104, docking 2354, activation block 1349) are read from the running effect's `on_changes`, which the host already sends,
+  so they need no wire change. The Networked Sensor Array's block of the capital micro jump drives comes through its modifier (5700, skill 83464).
+- Refusal wording: where EveJS has a text it is used (docking, cloak, industrial core, module blocked as the client's `ModuleIsBlocked`). Where EveJS shows a
+  client user error that needs data the refusal does not carry (the reactivation delay with `timeSinceLastStop`, the group limit with `count`), the pilot is
+  told in a notice of ours, recorded in TODO section 16.
+- Dock refusal: EveJS's `DOCKING_DISALLOWED_BY_MODULE` text is shown. The other silent dock refusals (immobile, doomsday, disrupted) are unchanged.
+- Repeat cap (disallowRepeatingActivation 1014): the server's cycle budget is one (EveJS `moduleCycleSchedule.js`). The repeat the client is told for the
+  effect's FX is also one. EveJS keeps the client's repeat for the FX, so this differs for the FX only; the client's view was not checked.
+- Hostility (FP-3, FP-C6): a computer (every percentage on its side) is not hostile; a disruptor is. A guidance disruptor is hostile when its velocity or
+  explosion velocity is lowered, or its delay or explosion radius raised, the same signs as the SDE's bonuses. EveJS gives no separate rule for it.
+- Spool (wiki gap WG-1): the disintegrator's bonus resets when its target changes and when its effect stops (EveJS `precursorTurrets.js` 157-164 and
+  `moduleEffectShutdown.js` 165, 319). EveJS has no reset when the target leaves optimal range, so none is added; the wiki line is not applied.
+- The mwd_blocked special case (another ship's scrambler, `Incoming`) stays. It is not an own-module overlay, so the 1349 overlay does not replace it.
+- A burnt-out module (its own effect sets its damage to its hit points, the energizer) does not start again (MODULE_INCAPACITATED). The state is kept in the
+  simulation and is lost on a host restart; the host's module condition is not updated by it.
+- Stall guard (M-1): a module moment that comes back at the same tick for the same module ends that module's effect (Ending::Forced). A parked work cycle
+  whose action has gone stops the effect. The budget is 10,000 moments a ship per settle; the rest is due at the next settle.
+- ProtocolVersion 32 to 33: one bump for the module rules (flag 32). The fixture generator and `messages.json` carry the frames.

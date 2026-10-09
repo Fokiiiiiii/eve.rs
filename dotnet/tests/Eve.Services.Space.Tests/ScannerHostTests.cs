@@ -86,7 +86,8 @@ public class ScannerHostTests
         var types = await new Eve.Sde.SdeReader(rig.Source).ReadTypeSummariesAsync();
         var scannerType = DroneHostTests.SdeTypeId(types, scannerName);
         var scanner = await DroneHostTests.FlyingWithADroneAsync(rig, minerTypeId: scannerType);
-        var target = await DroneHostTests.FlyingWithADroneAsync(rig, characterName: "Scanned Pilot");
+        // a second pilot needs its own session: the rig's sessions are keyed by their id
+        var target = await DroneHostTests.FlyingWithADroneAsync(rig, characterName: "Scanned Pilot", sessionId: 2);
         Assert.Equal(scanner.System, target.System);
         await rig.Statics.EnsureTypesAsync([scannerType]);
         return (scanner, target, scannerType);

@@ -104,10 +104,12 @@ public class ModuleScriptTests
         var (rig, world, shipId, _, add) = await ShipAsync(ModuleScriptTypes);
         await using var _rig = rig;
         var baseShipRadar = world.Get(shipId, ScanRadarStrength);
-        var eccm = add(EccmRadarI, 19, Eve.Dogma.ItemState.Online);
+        // the pairing is by slot (flag): the low slot is empty on the starting ship, a medium slot may not be
+        var eccm = add(EccmRadarI, 11, Eve.Dogma.ItemState.Online);
         Assert.Equal(80, world.Get(eccm.Id, ScanRadarStrengthPercent), 9);
 
-        add(EccmScript, 19, Eve.Dogma.ItemState.Online);
+        var script = add(EccmScript, 11, Eve.Dogma.ItemState.Online);
+        Assert.Equal(eccm.Id, world.Partner(script)?.Id);
         Assert.Equal(160, world.Get(eccm.Id, ScanRadarStrengthPercent), 9);
 
         // running, the ECCM's activation effect (2231) adds its percent to the ship's radar strength as PostPercent: base * (1 + 1.60)

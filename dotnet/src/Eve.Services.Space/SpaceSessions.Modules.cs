@@ -126,7 +126,7 @@ public sealed partial class SpaceSessions
             {
                 return ModuleResult.Refusal("CYNO_NOT_IN_FLEET", cynoModule.TypeId, _statics.Type(cynoModule.TypeId)?.Name ?? "");
             }
-            if (_systems.Get(pilot.SolarSystemId) is { } cynoPlace && Security.ClassFromLevel(cynoPlace.Security) == SecurityClass.HighSec)
+            if (_systems.Get(pilot.SolarSystemId) is { } cynoPlace && Security.IsHighSecOrHigher(Security.ClassFromLevel(cynoPlace.Security)))
             {
                 throw MachoErrors.ThrowUserError(ModuleRestrictions.CantInHighSecSpace);
             }

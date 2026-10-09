@@ -14,12 +14,13 @@ public class CynoFieldHostTests
 {
     private const int CynosuralFieldGeneratorI = 21096;
     private const int HighSlot = 27;
+    private const int Falcon = 11957; // a Force Recon ship (group 833): the generator fits these hulls (canFitShipGroup01 833)
 
     private static async Task<(Rig Rig, ClientSession Session, long Module)> GeneratorAsync(bool inFleet)
     {
         var rig = await Rig.CreateAsync();
         rig.Space.IsInFleetAsync = (_, _) => Task.FromResult(inFleet);
-        var (session, _, module) = await RepairHostTests.InSpaceWithAsync(rig, CynosuralFieldGeneratorI, HighSlot);
+        var (session, _, module) = await RepairHostTests.InSpaceWithAsync(rig, CynosuralFieldGeneratorI, HighSlot, shipTypeId: Falcon);
         return (rig, session, module);
     }
 

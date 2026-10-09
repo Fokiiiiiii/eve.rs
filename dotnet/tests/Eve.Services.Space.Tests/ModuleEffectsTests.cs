@@ -266,7 +266,6 @@ public class ModuleEffectsTests
     [Theory]
     [InlineData(1738, "doHacking", EffectDef.Target)]
     [InlineData(4773, "hackOrbital", EffectDef.Target)]
-    [InlineData(2231, "scanStrengthBonusPercentActivate", EffectDef.Activation)]
     [InlineData(2246, "scanStrengthTargetPercentBonus", EffectDef.Target)]
     public void A_scanner_or_hacking_effect_with_no_body_yet_is_refused_as_not_implemented_and_packages_nothing(int effectId, string effectName, int category)
     {
@@ -320,7 +319,7 @@ public class ModuleEffectsTests
             ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
         var statics = await DogmaStatic.LoadAsync(sde);
         var registry = Eve.Services.Space.Effects.ModuleEffects.Default;
-        string[] pending = ["doHacking", "hackOrbital", "scanStrengthBonusPercentActivate", "scanStrengthTargetPercentBonus"];
+        string[] pending = ["doHacking", "hackOrbital", "scanStrengthTargetPercentBonus"];
         var uncovered = registry.Uncovered(statics).Select(e => e.Name.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var moduleGroups = (await sde.ReadAsync("groups"))
             .Where(row => row.Doc.GetProperty("categoryID").GetInt32() == 7)
@@ -800,7 +799,6 @@ public class ModuleEffectsTests
             "moduleBonusWarfareLinkShield",
             "moduleBonusWarfareLinkSkirmish",
             "moduleTitanEffectGenerator",
-            "scanStrengthBonusPercentActivate",
             "scanStrengthTargetPercentBonus",
         ];
         // Reconcile the manifest against the catalog this test actually opened. A newer unhandled

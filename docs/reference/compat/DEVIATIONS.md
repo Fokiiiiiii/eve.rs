@@ -516,8 +516,9 @@ Precedence applied as in track B6c: SDE for numbers and attributes; the EVE Univ
 shapes (the existing codecs were reused and extended by one action, tag 27, ADR 0017).
 
 - **ECCM, self-applied (effect 2231 `scanStrengthBonusPercentActivate`).** SDE: four PostPercent modifiers on the ship's scan strengths (208 to 211)
-  from the module's percents (1027 to 1030). Decided: the generic dogma-modifier path (`DogmaModifierEffect`, which already serves the other self
-  modifiers), replacing the pending handler. Wiki (Electronic warfare, "Countering ECM"): an ECCM script "doubles the sensor strength effect", which
+  from the module's percents (1027 to 1030). Decided: its body is the generic dogma-modifier path (`ScanStrengthEffect` calls
+  `DogmaModifierEffect.BuildModifier`), replacing the pending handler. Its types are unpublished in this build, so it is not one of the published-module
+  modifier names that `ModuleEffectsTests` checks. Wiki (Electronic warfare, "Countering ECM"): an ECCM script "doubles the sensor strength effect", which
   matches the SDE's +100 on the sensor strength bonus (2282). Tests: `ModuleScriptTests.An_ECCM_script_loaded_in_an_ECCM_module_...`.
 - **Projected ECCM (effect 2246 `scanStrengthTargetPercentBonus`).** Still pending: it is a target effect and needs the projected path.
 - **Scripts, flex (groups 1701 and 1702: Armor and Shield EM, thermal, kinetic and explosive scripts).** SDE: +200 on the hardener's EM resistance
@@ -545,8 +546,8 @@ shapes (the existing codecs were reused and extended by one action, tag 27, ADR 
 - **Lighting refusals.** Wiki: "only fleet members can jump to that cyno", "a ship must be in a fleet and slower than 500 m/s" (EveJS `modules.js` quotes
   the same), and "cynos cannot be lit in high-sec". The speed rule is attribute 1334, enforced by the generic velocity rule. Decided: the fleet is
   checked by the host's fleet store (`SpaceSessions.IsInFleetAsync`, set in `AgentRpc`), refused as `CYNO_NOT_IN_FLEET` with our wording, because the
-  client's own wording for it is not in the tables read; the high-security rule is refused with the client's `CantInHighSecSpace`, as EveJS does for
-  `MODULE_DISALLOWED_IN_HIGHSEC`. The order of the two refusals is the host's choice: the fleet is checked first, so both are reachable in the test rig
+  client's own wording for it is not in the tables read; the high-security rule (the high and the safe classes, `Security.IsHighSecOrHigher`, as the
+  wiki's "high-sec" covers 1.0 too) is refused with the client's `CantInHighSecSpace`, as EveJS does for `MODULE_DISALLOWED_IN_HIGHSEC`. The order of the two refusals is the host's choice: the fleet is checked first, so both are reachable in the test rig
   (whose station is in Manifest, security 1.0). EveJS checks the security first.
 - **Open, each with its blocker.**
   - Jump-in (fleet-only for normal fields, Black Ops for covert, jump freighters and capital industrial ships for industrial): not built. eve.rs has no

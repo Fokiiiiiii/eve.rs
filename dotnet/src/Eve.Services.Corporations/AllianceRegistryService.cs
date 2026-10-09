@@ -1219,6 +1219,8 @@ public sealed partial class CorpRegistryService
         if (store.AllianceAffiliationWriter is not { } writer)
             throw new CorporationError("ALLIANCE_AFFILIATION_UNAVAILABLE");
         var alliance = await store.CreateAllianceAsync(actor, request, operationKey, writer, call.Cancellation);
+        if (store.AllianceMaintenanceBillWriter is { } writeMaintenanceBill)
+            await writeMaintenanceBill(alliance.Id, call.Cancellation);
         if (!wasAlreadyInAlliance)
         {
             var counts = await store.AllianceCharacterCountsAsync([alliance.Id],call.Cancellation);
@@ -1260,4 +1262,104 @@ public sealed partial class CorpRegistryService
         return ValueTask.FromResult<PyValue>(new PyList([.. suggestions.Select(value =>
             (PyValue)Py.KeyVal(("shortName",new PyStr(value))))]));
     }
+}
+
+
+public sealed class AllianceMaintenanceBillWorker(
+    CorporationStore store,
+    Eve.Corporations.CorporationOfficeStore officeStore,
+    Eve.Scheduler.DurableScheduler scheduler,
+    Func<long> now)
+{
+    private const int BillTypeId = 5;
+    private const long FiletimeEpochOffsetMs = 11_644_473_600_000L;
+    private const long RetryDelayMs = 24L * 60 * 60 * 1000;
+    private const string JobKind = "alliance-maintenance-bill";
+
+    public async Task RegisterAsync(CancellationToken token = default)
+    {
+        scheduler.Register(JobKind, HandleAsync);
+        store.AllianceMaintenanceBillWriter = EnsureAndScheduleAsync;
+        await ReconcileAsync(token);
+    }
+
+    public async Task ReconcileAsync(CancellationToken token = default)
+    {
+        foreach (var alliance in await store.AllAlliancesAsync(token))
+            if ((await store.AllianceMaintenanceBillsAsync(alliance.Id, token)).Count == 0)
+                await EnsureAndScheduleAsync(alliance.Id, token);
+
+        foreach (var bill in await store.PendingAllianceMaintenanceBillsAsync(token))
+            await scheduler.ScheduleAsync(Spec(bill), token);
+    }
+
+    private async Task EnsureAndScheduleAsync(long allianceId, CancellationToken token)
+    {
+        var bill = await store.EnsureInitialAllianceMaintenanceBillAsync(allianceId, token);
+        if (bill is { Paid: false })
+            await scheduler.ScheduleAsync(Spec(bill), token);
+    }
+
+    private async Task HandleAsync(Eve.Scheduler.JobContext job, CancellationToken token)
+    {
+        var payload = job.Payload<AllianceMaintenanceBillDue>()
+            ?? throw new InvalidOperationException("alliance maintenance bill job has no payload");
+        var bill = (await store.AllianceMaintenanceBillsAsync(payload.AllianceId, token))
+            .SingleOrDefault(entry => entry.BillId == payload.BillId);
+        if (bill is null) return;
+
+        var dueAtMs = UnixMilliseconds(bill.DueFiletime);
+        if (dueAtMs > now())
+        {
+            job.RunAgainAt(dueAtMs, payload);
+            return;
+        }
+        if (bill.Paid)
+        {
+            await RenewAsync(bill, token);
+            return;
+        }
+
+        var alliance = await store.AllianceAsync(payload.AllianceId, token);
+        if (alliance is not { Deleted: false } || alliance.ActiveExecutorId is not { } executorCorporationId)
+            return;
+        var allianceSettings = await officeStore.AutomaticPaySettingsAsync([alliance.Id], token);
+        if (allianceSettings.TryGetValue(alliance.Id, out var payerPolicy) &&
+            payerPolicy.EnabledBillTypes.GetValueOrDefault(BillTypeId))
+        {
+            var executorSettings = await officeStore.AutomaticPaySettingsAsync([executorCorporationId], token);
+            var accountKey = executorSettings.TryGetValue(executorCorporationId, out var settings) &&
+                settings.DivisionId is >= 1000 and <= 1006 ? settings.DivisionId : 1000;
+            if (await store.PayAllianceMaintenanceBillAsync(
+                    bill.BillId, alliance.Id, executorCorporationId, accountKey, now(), token))
+            {
+                await RenewAsync(bill, token);
+                return;
+            }
+        }
+
+        // shortcut: unpaid-bill closure is pending the durable sovereignty and war transfer lifecycle.
+        job.RunAgainAt(checked(now() + RetryDelayMs), payload);
+    }
+
+    private async Task RenewAsync(CorporationBill paidBill, CancellationToken token)
+    {
+        var next = await store.CreateNextAllianceMaintenanceBillAsync(
+            paidBill.DebtorId, paidBill.DueFiletime, token);
+        if (next is not null)
+            await scheduler.ScheduleAsync(Spec(next), token);
+    }
+
+    private static Eve.Scheduler.JobSpec Spec(CorporationBill bill) =>
+        new(JobKind, UnixMilliseconds(bill.DueFiletime))
+        {
+            Key = $"alliance-maintenance:{bill.BillId}",
+            Payload = new AllianceMaintenanceBillDue(bill.DebtorId, bill.BillId),
+            OnDuplicate = Eve.Scheduler.OnDuplicate.Replace
+        };
+
+    private static long UnixMilliseconds(long filetime) =>
+        Math.Max(0, filetime / 10_000L - FiletimeEpochOffsetMs);
+
+    private sealed record AllianceMaintenanceBillDue(long AllianceId, long BillId);
 }

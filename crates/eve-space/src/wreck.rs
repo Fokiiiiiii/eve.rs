@@ -1,7 +1,8 @@
 //! What a ship leaves when it is destroyed: a wreck, a ball that does not move until it is gone. The reference makes the wreck an item of its own
 //! (the dead ship's type says which: `Caldari Frigate Wreck`), gives whoever may loot it the rights to it (`lootRights`), and takes it out of space
-//! after `spaceDebrisLifetimeMs` (two hours). The client sees it as a ball of kind wreck with a slim item; nothing about it moves.
+//! after `spaceDebrisLifetimeMs` (two hours). The client sees it as a ball of kind wreck with a slim item; it moves only while a tractor beam pulls it (`tractor.rs`).
 
+use eve_destiny::ball::LegacyMode;
 use eve_destiny::{BallEntity, IdRef, Kind, Vec3};
 use eve_marshal::Value;
 
@@ -37,6 +38,18 @@ pub struct LootRights {
     pub corporation_id: i64,
 }
 
+/// The pull of a tractor beam on a wreck or a can: the ship that pulls it, how far off it is held (metres from its surface) and the top speed the beam
+/// gives it (`tractorBeamCan`; EVE.js `applyTractorActivationCommand`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WreckPull {
+    pub source_ship: i64,
+    pub hold_meters: f64,
+    pub speed: f64,
+}
+
+/// The mass a pulled wreck or can is given (EVE.js `applyTractorActivationCommand`: 10).
+pub const PULLED_MASS: f64 = 10.0;
+
 /// A wreck in a scene.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Wreck {
@@ -61,6 +74,10 @@ pub struct Wreck {
     pub rights_known: bool,
     /// When it goes.
     pub expires_at: i64,
+    /// The tractor beam that pulls it, while one does.
+    pub pull: Option<WreckPull>,
+    /// How fast it moves (zero for a wreck that lies still).
+    pub velocity: Vec3,
 }
 
 /// A mineable ore rock. Its stock is mirrored from the host inventory item; it is independent of wreck loot state.
@@ -114,11 +131,13 @@ impl Wreck {
         self.group_id == CONTAINER_GROUP
     }
 
-    /// The ball the destiny stream describes the wreck with.
+    /// The ball the destiny stream describes the wreck with. A pulled wreck is a ball that follows its puller, as a pulled ship's is (`PULLED_MASS`, the
+    /// beam's top speed, speed fraction 1).
     pub fn ball(&self) -> BallEntity {
-        BallEntity {
+        let mut ball = BallEntity {
             item_id: IdRef::Valid(self.id),
             kind: Kind::Wreck,
+            velocity: self.velocity,
             radius: self.radius,
             position: self.position,
             direction: self.direction,
@@ -131,7 +150,16 @@ impl Wreck {
             alliance_id: if self.alliance_id > 0 { IdRef::Valid(self.alliance_id) } else { IdRef::Absent },
             owner_positive: self.owner_id > 0,
             ..BallEntity::default()
+        };
+        if let Some(pull) = self.pull {
+            ball.mass = Some(PULLED_MASS);
+            ball.max_velocity = pull.speed;
+            ball.speed_fraction = 1.0;
+            ball.legacy_mode = LegacyMode::Follow;
+            ball.follow_target = IdRef::Valid(pull.source_ship);
+            ball.follow_range = pull.hold_meters;
         }
+        ball
     }
 
     /// The entries of the slim item, in the order the reference gives them.
@@ -241,6 +269,8 @@ mod tests {
             launcher_id: 4_200_000_000_000_000,
             is_empty: true,
             rights_known: false,
+            pull: None,
+            velocity: Vec3::ZERO,
             expires_at: 0,
         }
     }
@@ -266,6 +296,8 @@ mod tests {
             launcher_id: 0,
             is_empty: true,
             rights_known: false,
+            pull: None,
+            velocity: Vec3::ZERO,
             expires_at: 0,
         }
     }

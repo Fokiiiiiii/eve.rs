@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 29;
+    public const ushort ProtocolVersion = 30;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -482,11 +482,13 @@ public static class SimCodec
                 {
                     var velocity = r.F64();
                     var hold = r.F64();
-                    if (!double.IsFinite(velocity) || velocity <= 0 || !double.IsFinite(hold) || hold < 0)
+                    var range = r.F64();
+                    if (!double.IsFinite(velocity) || velocity <= 0 || !double.IsFinite(hold) || hold < 0
+                        || !double.IsFinite(range) || range <= 0)
                     {
                         throw new SimLinkException(SimLinkError.BadValue, "bad tractor action");
                     }
-                    return new SimAction.Tractor(velocity, hold);
+                    return new SimAction.Tractor(velocity, hold, range);
                 }
             case 10:
                 return new SimAction.PassiveLock();
@@ -1387,7 +1389,7 @@ private static void WriteAction(Writer w, SimAction action)
                 w.U8(8); w.F64(salvage.AccessBonusPercent);
                 break;
             case SimAction.Tractor tractor:
-                w.U8(9); w.F64(tractor.VelocityMetersPerSecond); w.F64(tractor.HoldDistanceMeters);
+                w.U8(9); w.F64(tractor.VelocityMetersPerSecond); w.F64(tractor.HoldDistanceMeters); w.F64(tractor.RangeMeters);
                 break;
             case SimAction.PassiveLock:
                 w.U8(10);

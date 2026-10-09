@@ -38,5 +38,6 @@ pub mod warp;
 pub mod weapons;
 pub mod wire;
 pub mod world;
+pub mod tractor;
 pub mod wreck;
 pub mod wreck_types;

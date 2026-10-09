@@ -939,7 +939,10 @@ pub(crate) fn solar_system_id(&self) -> i32 {
             ship_target = Some(Target::at_rest(asteroid.position, asteroid.radius));
         }
         let Some(pilot) = self.pilots.get_mut(&session) else { return };
+        let from = pilot.settled_at;
         let milestones = settle(pilot, &system, ship_target, now);
+        // a wreck this ship's beam pulls moves over the same time as the ship
+        self.advance_pulled_by(session, from, now);
         for milestone in milestones {
             let told = self.tell(session, milestone);
             self.backlog.extend(told);
@@ -949,6 +952,7 @@ pub(crate) fn solar_system_id(&self) -> i32 {
     pub(crate) fn settle_all(&mut self, now: i64) {
         let starts = self.settle_all_motion(now);
         self.resolve_collisions(now, None, Some(&starts));
+        self.release_orphaned_pulls(now);
     }
 
     fn settle_all_motion(&mut self, now: i64) -> BTreeMap<SessionId, (i64, Vec3, bool)> {

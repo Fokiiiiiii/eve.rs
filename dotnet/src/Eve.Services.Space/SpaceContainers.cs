@@ -76,6 +76,7 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
         _space.WreckPlaced += WreckPlaced;
         // the rocks of a belt are items of the store: a module's target is looked up here (SpaceSessions.ActivateAsync)
         _space.TypeOfSpaceItemAsync = async (id, _) => (await _items.GetAsync(id))?.TypeId;
+        _space.MayPullAsync = MayPullAsync;
     }
 
     public void Dispose()
@@ -153,6 +154,25 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
             && await _ships.CharacterAsync(container.OwnerId, cancellationToken) is { } owner && owner.CorporationId == pilot.CorporationId;
     }
 
+
+    /// <summary>
+    /// Whether the pilot may pull the wreck or can with a tractor beam: the rights that its stored loot rights give (the same rights as taking from it:
+    /// abandoned, the owner's own, or its corporation's). Null when no wreck or can has that id, which the simulation refuses as not there.
+    /// </summary>
+    private async Task<bool?> MayPullAsync(long characterId, long wreckId, CancellationToken cancellationToken)
+    {
+        if (await _spaceItems.GetAsync(wreckId, cancellationToken) is not { } rights)
+        {
+            return null;
+        }
+        if (IsAbandoned(rights) || rights.CharacterId == characterId)
+        {
+            return true;
+        }
+        return rights.CorporationId > 0
+            && await _ships.CharacterAsync(characterId, cancellationToken) is { } pilot
+            && pilot.CorporationId == rights.CorporationId;
+    }
 
     private static bool IsAbandoned(SpaceItem? item) =>
         item is { CharacterId: 0, CorporationId: 0, AllianceId: 0, WarFactionId: 0 };

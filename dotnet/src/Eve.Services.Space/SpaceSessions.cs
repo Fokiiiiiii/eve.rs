@@ -1168,6 +1168,18 @@ private readonly TransitionRuntime _transitions;
             }
         }
 
+        // a tractor beam pulls a wreck or a can only when the pilot may take from it (EVE.js hasTractorLootRight); the simulation has the target's place, not the rights
+        if (package.Action is SimAction.Tractor)
+        {
+            bool? mayPull = MayPullAsync is { } mayPullCheck
+                ? await mayPullCheck(characterId, package.TargetId, cancellationToken).ConfigureAwait(false)
+                : false;
+            if (mayPull is false)
+            {
+                return ModuleResult.Refusal("TARGET_LOOT_RIGHTS_REQUIRED", made.ModuleType, made.ModuleName);
+            }
+        }
+
         var targetPilot = _pilots.Values.FirstOrDefault(other => other.ShipId == package.TargetId);
         var securityClass = _systems.Get(pilot.SolarSystemId) is { } system
             ? Security.ClassFromLevel(system.Security)
@@ -3050,6 +3062,12 @@ private readonly TransitionRuntime _transitions;
     /// <summary>The rookie ship type of a race (what a pilot wakes in after its capsule is destroyed), set by the host that knows the races.</summary>
     /// <summary>The type of an item in space (an asteroid, a wreck), when the host has it; null when there is none. A module's target is looked up here.</summary>
     public Func<long, CancellationToken, Task<int?>>? TypeOfSpaceItemAsync { get; set; }
+
+    /// <summary>
+    /// Whether a pilot may pull a wreck or a can with a tractor beam: the rights of its loot, as for taking from it. Null when the id is no wreck or can
+    /// (the simulation then refuses the target as not there); no answer at all (null delegate) refuses the pull.
+    /// </summary>
+    public Func<long, long, CancellationToken, Task<bool?>>? MayPullAsync { get; set; }
 
     public Func<int, int?>? RookieShipOfRace { get; set; }
 

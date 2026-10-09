@@ -600,7 +600,7 @@ impl Sim {
                         },
                         launcher_id: placement.launcher_id,
                         is_empty: placement.is_empty,
-                        rights_known: !placement.is_empty,
+                        rights_known: !placement.is_empty, pull: None, velocity: eve_destiny::Vec3::ZERO,
                         expires_at: now + WRECK_LIFETIME,
                     };
                     scene.place_wreck(wreck, now)

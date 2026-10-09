@@ -80,7 +80,7 @@ public class SimCodecTests
         }
         if ((string)a["kind"]! == "tractor")
         {
-            return new SimAction.Tractor((double)a["velocity"]!, (double)a["hold"]!);
+            return new SimAction.Tractor((double)a["velocity"]!, (double)a["hold"]!, (double)a["range"]!);
         }
         if ((string)a["kind"]! == "doomsday")
         {

@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 41,
-   "hex": "03000000012900"
+   "version": 42,
+   "hex": "03000000012a00"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 41,
+   "version": 42,
    "pollHz": 4,
-   "hex": "0700000002290004000000"
+   "hex": "07000000022a0004000000"
   },
   {
    "name": "enter by undocking",

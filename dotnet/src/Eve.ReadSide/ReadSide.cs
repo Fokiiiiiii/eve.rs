@@ -84,6 +84,9 @@ public sealed class RowSet
 
     /// <summary>The first row as a <c>util.KeyVal</c>, or None when there is none.</summary>
     public PyValue ToKeyVal() => Rows.Count == 0 ? PyValue.None : Py.KeyVal([.. Columns.Select((c, i) => (c.Name, Value(c.Type, Rows[0][i])))]);
+
+    /// <summary>A list with a <c>util.KeyVal</c> per row, keyed by the column names: what the list-of-records calls of EVE.js (<c>buildList</c> of KeyVals) return.</summary>
+    public PyValue ToKeyValList() => new PyList([.. Rows.Select(row => (PyValue)Py.KeyVal([.. Columns.Select((c, i) => (c.Name, Value(c.Type, row[i])))]))]);
 }
 
 /// <summary>

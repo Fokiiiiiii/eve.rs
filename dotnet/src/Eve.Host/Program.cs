@@ -340,6 +340,9 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
     await PgModuleStateStore.MigrateAsync(source, fittingSchema);
     var spaceSchema = Env("EVE_SPACE_SCHEMA", PgSpaceItemStore.DefaultSchema);
     await PgSpaceItemStore.MigrateAsync(source, spaceSchema);
+        // the mining ledger's queries over the space schema (the table is migration 0003 of the ships' migrations, applied just above)
+        var miningLedgerReads = Eve.Services.Core.MiningLedgerQueries.Register(
+            new Eve.ReadSide.ReadSide(source, new Dictionary<string, string> { [Eve.Services.Core.MiningLedgerQueries.SpaceSchema] = spaceSchema }));
     var assetSafetySchema = Env("EVE_ASSET_SAFETY_SCHEMA", PersistenceStructureAssetSafetyReadModel.DefaultSchema);
     await PersistenceStructureAssetSafetyReadModel.MigrateAsync(source, assetSafetySchema);
     var crimewatchSchema = Env("EVE_CRIMEWATCH_SCHEMA", Eve.Crimewatch.PgCrimewatchStore.DefaultSchema);
@@ -758,7 +761,17 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
                     $"character:{change.CharacterId}", token);
             });
         // a mining cycle's ledger entry: written in the event's transaction, so a replayed event writes nothing (the entry id is the event id)
-        var miningLedger = new MiningLedgerRecorder(mailStore, mailStoreOwner.Fence);
+        // the mining ledger is a table of the space schema (MiningLedgerStore), read through the rowset read side; the rows the game store held before are copied once
+        // (the copy adds only the entries that are not there, so a second start adds none)
+        await using (var ledgerConnection = await source.OpenConnectionAsync())
+        await using (var ledgerTransaction = await ledgerConnection.BeginTransactionAsync())
+        {
+            await Eve.Ships.MiningLedgerStore.ImportAsync(ledgerConnection, ledgerTransaction, spaceSchema,
+                (await mailStore.LoadTableAsync("miningLedger")) as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject(),
+                Eve.Ships.MiningLedgerStore.FileTimeOf(now()));
+            await ledgerTransaction.CommitAsync();
+        }
+        var miningLedger = new MiningLedgerRecorder(spaceSchema);
         foundations.Events.Subscribe("mining.ledger", [Eve.Ships.OreMinedEvent.Topic], (context, token) => miningLedger.RecordAsync(context, token));
         // the daily goals of mining and salvage: content defined before the foundations attach, advanced by one subscriber (DailyGoalRecorder)
         var dailyGoals = new DailyGoalRecorder(foundations.Content, foundations.Scheduler);
@@ -2694,10 +2707,8 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
             industryJobOperations.ReadJobsAsync,
             industryJobOperations,
             currentFileTime: () => checked(116444736000000000L + now() * 10_000L)),
-        new Eve.Services.Core.CharacterMiningLedgerService(
-            ct => ReadGameStoreTableAsync("miningLedger", ct)),
-        new Eve.Services.Core.CorpMiningLedgerService(
-            ct => ReadGameStoreTableAsync("miningLedger", ct)),
+        new Eve.Services.Core.CharacterMiningLedgerService(miningLedgerReads, () => Eve.Ships.MiningLedgerStore.FileTimeOf(now())),
+        new Eve.Services.Core.CorpMiningLedgerService(miningLedgerReads, () => Eve.Ships.MiningLedgerStore.FileTimeOf(now())),
         new Eve.Services.Core.StructureDirectoryService(structureDirectoryReadModel),
         // Mutation needs structure-control/drill authority and the space timer/settlement backend.
         new Eve.Services.Core.MoonExtractionsRpcService(

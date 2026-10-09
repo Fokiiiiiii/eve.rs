@@ -302,6 +302,7 @@ public sealed class DogmaStatic
                         m.TryGetProperty("skillTypeID", out var s) ? s.GetInt32() : 0));
                 }
             }
+            modifiers.AddRange(BuiltInEffects.ClientModifiers((int)row.Key));
             return new EffectDef(
                 (int)row.Key,
                 row.Doc.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",

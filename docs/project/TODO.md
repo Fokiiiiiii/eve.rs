@@ -390,7 +390,22 @@ Open (each with its exact blocker):
 - Reactive armor hardener: restart clears the profile (in memory, by design); death and gate jump are covered (section 8b). A host-level test of a jump with a running module is not in this change.
 - Protocol: main is at 34 (the bombs and bubbles track, `mod-a`); this track's bump is 35 (ADR 0013 epoch 35). Re-check `main` before a push.
 
-## 17. Alliance registry (2026-10-10)
+## 17. Module rules track B3 (2026-10-09)
+
+Done (decisions and tests in DEVIATIONS "Module rules, track B3"): WG-4 smartbomb refused within the larger of 5 km and its range of a station or stargate (`crates/eve-space` `modules/activation.rs`, host notice in `ModuleRefusals.cs`); WG-6 safety-colour policy pinned by a test (the Crimewatch policy already applied it); the bastion micro jump drive block, WP16 (`BuiltInEffects.ClientModifiers`, the loader in `DogmaStatic.cs`, the host refusal `MODULE_BLOCKED` in `SpaceSessions.Modules.cs`); cloak types verified present.
+
+Decided, not applied: WG-7 (no source says a jam gives the target a weapons timer; EveJS starts none); WG-8 (no fitting restriction in the SDE for the heavy assault launchers); the 906 eject rule (eve.rs has no eject command).
+
+Open, each with its exact blocker:
+- WG-5 nanite paste repair: the client's `godma.RepairModule` and `StopRepairModule` have no host handler; paste repair, its clock, its cancellation on a jump and the overheat interlock need building. Heat repair on a dock is done (B2).
+- WG-3 module scripts: needs an SDE-backed PostgreSQL case per script attribute.
+- FP-8, FP-C4b, FP-C5, FP-C7: each needs a wire change (resist fields, `SimUpdateEffect`, a burst's jammed ships).
+- FP-C8 automatic reload: the simulation ends the effect at the last round (`NO_CHARGES`) before the host sees the spent charge; a pending-reload state is needed in the simulation.
+- M-6 scanner, analyzer and relic modules: no simulation bodies.
+- WP17 assistance and jam overlays (stacking rule not in the sources read); WP19 velocity limits (no carrier object); WP13 mode events (no subscriber, so none is published).
+- Host-level database tests for the smartbomb refusal and the bastion refusal are not written (unit and simulation tests only).
+
+## 18. Alliance registry (2026-10-10)
 
 The client-facing allianceRegistry paths used by V24.01 alliance wrappers now persist bulletins, executor support, member departure, alliance war bills, bill payment and GML application acceptance. Member-affiliation, alliance and corporation notifications are emitted after the database transaction. alliance_employment records a null-alliance row when a corporation leaves so GetEmploymentRecord retains the transition.
 

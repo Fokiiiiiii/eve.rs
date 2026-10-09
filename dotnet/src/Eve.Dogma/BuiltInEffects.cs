@@ -84,6 +84,19 @@ public static class BuiltInEffects
     /// <summary>The effects the client throws away: the slot-use markers of the static data and the skill effect (a skill's level is given).</summary>
     public static readonly IReadOnlySet<int> Unwanted = new HashSet<int> { 11, 12, 13, 132 };
 
+    /// <summary>The bastion module's effect (SDE 6658): the client's <c>bastionMode.py</c> blocks the micro jump drives of the ship with it, and the SDE carries no such modifier.</summary>
+    public const int BastionMode = 6658;
+    /// <summary>The skill a micro jump drive needs (type 4385, Micro Jump Drive Operation).</summary>
+    public const int MicroJumpDriveOperation = 4385;
+    /// <summary>The activation block a running module puts on what needs its skill, and the strength of it (the client's 1349 and 1350).</summary>
+    public const int ActivationBlocked = 1349, ActivationBlockedStrength = 1350;
+
+    /// <summary>The modifiers the client adds to an effect the static data leaves out, for the effects the loader reads (the client's table, approved for WP16: EVE University and the SDE agree that the bastion stops micro jump drives; the client's row is <c>SKILL_MODIFIER_CHANGES_FOR_LOCATION</c>, 4385 to 1349, in <c>bastionMode.py</c>).</summary>
+    public static IReadOnlyList<Modifier> ClientModifiers(int effectId) =>
+        effectId == BastionMode
+            ? [new Modifier(ModifierFunc.LocationRequiredSkill, "shipID", Operation.ModAdd, ActivationBlocked, ActivationBlockedStrength, SkillTypeId: MicroJumpDriveOperation)]
+            : [];
+
     /// <summary>The static data's effects with these in place of the ones they replace, and without the unwanted ones.</summary>
     public static IEnumerable<EffectDef> Merge(IEnumerable<EffectDef> fromStaticData)
     {

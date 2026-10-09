@@ -75,6 +75,7 @@ public static class ModuleRefusals
             "CLOAK_DISALLOWED" => MachoErrors.ThrowUserError("CantCloak"),
             "CLOAK_TARGET_LOCKED" => Notify("Your ship is already target locked and cannot activate a cloaking device."),
             "CLOAK_PROXIMITY_BLOCKED" => Notify("You are too close to another object to activate your cloaking device."),
+        "SMARTBOMB_NEAR_STATION" => Notify($"{name} cannot be activated this close to a station or stargate."),
             "MODULE_CLOAKED" => Notify("You cannot activate modules while cloaked."),
             // a disruptive lance needs an active siege module on the ship (EveJS ACTIVE_SIEGE_MODULE_REQUIRED, moduleActivationRequiresActiveSiegeModule)
             "ACTIVE_SIEGE_MODULE_REQUIRED" => Notify($"{name} requires an active siege module."),

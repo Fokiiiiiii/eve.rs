@@ -253,6 +253,7 @@ pub(super) fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
             out.extend_from_slice(&arc.targets.to_le_bytes());
         }
     }
+    out.push(u8::from(turret.requires_gunnery));
 }
 
 pub(super) fn put_effect(out: &mut Vec<u8>, effect: &Effect) {

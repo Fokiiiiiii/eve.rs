@@ -418,7 +418,31 @@ public sealed partial class SpaceSessions
         {
             snapshot.World.SetState(moduleId, state);
         }
+        // an overheated module that runs is Overloaded to dogma: its overload effects apply to what it runs (DogmaWorld runs an Overload effect from Overloaded up)
+        foreach (var moduleId in pilot.Overheated.Keys)
+        {
+            if (snapshot.World.Item(moduleId) is { State: >= ItemState.Active })
+            {
+                snapshot.World.SetState(moduleId, ItemState.Overloaded);
+            }
+        }
         return snapshot;
+    }
+
+    /// <summary>The overheat the pilot asked for, kept until it is asked off (FP-C4a); a module that goes offline is not Overloaded to dogma.</summary>
+    private static void MarkOverheated(Pilot pilot, IEnumerable<long> moduleIds, bool active)
+    {
+        foreach (var moduleId in moduleIds)
+        {
+            if (active)
+            {
+                pilot.Overheated[moduleId] = 0;
+            }
+            else
+            {
+                pilot.Overheated.TryRemove(moduleId, out _);
+            }
+        }
     }
 
     /// <summary>
@@ -473,7 +497,7 @@ public sealed partial class SpaceSessions
     public async Task<ModuleResult?> OverloadAsync(ClientSession session, long moduleId, int effectId, bool active, CancellationToken cancellationToken)
     {
         var id = (ulong)session.SessionId;
-        if (!_pilots.ContainsKey(id) || session.CharacterId is not { } characterId) return null;
+        if (!_pilots.TryGetValue(id, out var overheating) || session.CharacterId is not { } characterId) return null;
         if (!_sim.IsConnected) return ModuleResult.Refusal("SIM_UNAVAILABLE");
 
         var snapshot = await _ships.LoadAsync(characterId, cancellationToken);
@@ -491,6 +515,7 @@ public sealed partial class SpaceSessions
 
         await _sim.SetHeatProfileAsync(id, SimShips.HeatProfileOf(snapshot, _statics), cancellationToken);
         await _sim.SetModuleOverheatAsync(id, moduleId, active, cancellationToken);
+        MarkOverheated(overheating, [moduleId], active);
         return ModuleResult.Done;
     }
 
@@ -522,6 +547,7 @@ public sealed partial class SpaceSessions
 
         await _sim.SetHeatProfileAsync(id, SimShips.HeatProfileOf(snapshot, _statics), cancellationToken);
         await _sim.SetRackOverheatAsync(id, rack, active, cancellationToken);
+        MarkOverheated(pilot, modules, active);
         return ModuleResult.Done with { ModuleIds = modules };
     }
 

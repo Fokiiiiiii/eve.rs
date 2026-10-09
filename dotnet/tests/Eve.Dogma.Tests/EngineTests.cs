@@ -225,6 +225,37 @@ public class EngineTests
     }
 
     [Fact]
+    public void A_charges_two_percentages_stack_in_full_as_the_client_says_and_a_modules_do_not()
+    {
+        // the client's unnerfed categories (dogma/const.py: skill, implant, ship, charge, subsystem) include the charge (8): a loaded charge's two
+        // percentages on its module are applied in full; the same two on a module are penalised. The charge reaches its module through `otherID`.
+        const int ChargeType = 501;
+        var chargeEffect = new EffectDef(1, "charge", 0, [Mod(ModifierFunc.Item, "otherID", Operation.PostPercent, 8, 6), Mod(ModifierFunc.Item, "otherID", Operation.PostPercent, 8, 6)]);
+        var moduleEffect = new EffectDef(2, "module", 0, [Mod(ModifierFunc.Item, "itemID", Operation.PostPercent, 8, 6), Mod(ModifierFunc.Item, "itemID", Operation.PostPercent, 8, 6)]);
+        var statics = new DogmaStatic(Attributes, [chargeEffect, moduleEffect],
+        [
+            new TypeDef(Ship, 25, 6, new Dictionary<int, double> { [8] = 100 }, []),
+            new TypeDef(ChargeType, 500, 8, new Dictionary<int, double> { [6] = 10 }, [1]),
+            new TypeDef(Module, 40, 7, new Dictionary<int, double> { [8] = 100 }, []),
+        ]);
+        var world = new DogmaWorld(statics, characterId: 1, shipId: 1000);
+        world.Add(new DogmaItem(1000, Ship, 1, 5));
+        world.Add(new DogmaItem(2000, Module, 1, 1000, 19));
+        world.Add(new DogmaItem(2100, ChargeType, 1, 1000, 19));
+        Assert.Equal(100 * 1.1 * 1.1, world.Get(2000, 8), 9);
+
+        var moduleStatics = new DogmaStatic(Attributes, [moduleEffect],
+        [
+            new TypeDef(Ship, 25, 6, new Dictionary<int, double> { [8] = 100 }, []),
+            new TypeDef(Module, 40, 7, new Dictionary<int, double> { [6] = 10, [8] = 100 }, [2]),
+        ]);
+        var penalised = new DogmaWorld(moduleStatics, characterId: 1, shipId: 1000);
+        penalised.Add(new DogmaItem(1000, Ship, 1, 5));
+        penalised.Add(new DogmaItem(2000, Module, 1, 1000, 19));
+        Assert.True(penalised.Get(2000, 8) < 100 * 1.1 * 1.1, penalised.Get(2000, 8).ToString());
+    }
+
+    [Fact]
     public void An_offline_module_does_not_apply_an_online_effect_but_a_passive_one_always_applies()
     {
         Assert.Equal(100, Fit(Operation.ModAdd, 1, 1, ItemState.Offline, EffectDef.Online).Get(1000, 1));

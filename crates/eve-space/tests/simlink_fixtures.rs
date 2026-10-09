@@ -169,6 +169,7 @@ fn turret_of(w: &Value) -> Turret {
             range: a["range"].as_f64().unwrap(),
             targets: a["targets"].as_i64().unwrap() as i32,
         }),
+        requires_gunnery: w["requiresGunnery"].as_bool().unwrap_or_else(|| panic!("requiresGunnery in {w}")),
     }
 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::missiles::Blast;
 
 /// A deployable's charge: its type, its group, its name and the radius of its ball (a positive number).
 fn read_deployable(reader: &mut Reader) -> Result<Spec, DecodeError> {
@@ -232,6 +233,45 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
                 return Err(DecodeError::BadValue("doomsday"));
             }
             Ok(Action::Doomsday { delay_ms, damage, immobile_ms, no_jump_ms })
+        }
+        23 => {
+            let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+            let range = reader.f64()?;
+            if !damage.iter().chain([&range]).all(|n| n.is_finite() && *n >= 0.0) {
+                return Err(DecodeError::BadValue("kamikaze"));
+            }
+            Ok(Action::Kamikaze { damage, range })
+        }
+        25 => {
+            let centre = [reader.f64()?, reader.f64()?, reader.f64()?];
+            let radius = reader.f64()?;
+            let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+            let numbers = centre.iter().copied().chain([radius]).chain(damage);
+            if !numbers.clone().all(f64::is_finite) || radius <= 0.0 || damage.iter().any(|d| *d < 0.0) {
+                return Err(DecodeError::BadValue("blast"));
+            }
+            Ok(Action::Blast { centre, radius, damage })
+        }
+        24 => {
+            let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+            let reach = reader.f64()?;
+            let blast = Blast {
+                explosion_radius: reader.f64()?,
+                explosion_velocity: reader.f64()?,
+                reduction_factor: reader.f64()?,
+                reduction_sensitivity: reader.f64()?,
+            };
+            let numbers = [
+                reach,
+                blast.explosion_radius,
+                blast.explosion_velocity,
+                blast.reduction_factor,
+                blast.reduction_sensitivity,
+            ];
+            if !damage.iter().chain(numbers.iter()).all(|n| n.is_finite() && *n >= 0.0) {
+                return Err(DecodeError::BadValue("missile"));
+            }
+            Ok(Action::Missile { damage, reach, blast })
         }
         7 => {
             let family = match reader.u8()? {

@@ -90,6 +90,32 @@ pub fn application_factor_of(
     round6(1.0_f64.min(round6(signature_factor)).min(velocity_factor))
 }
 
+/// The explosion of a missile as its launcher's numbers give it (a fighter's missiles: the squadron's own, no missile in flight). What a target takes is the
+/// damage times the application factor of `application_factor_of`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Blast {
+    pub explosion_radius: f64,
+    pub explosion_velocity: f64,
+    pub reduction_factor: f64,
+    pub reduction_sensitivity: f64,
+}
+
+impl Blast {
+    /// What the explosion does to a target of this signature radius moving at this speed.
+    pub fn applied(&self, raw: Damage, target_signature: f64, target_speed: f64) -> Damage {
+        let factor = application_factor_of(
+            self.explosion_radius,
+            self.explosion_velocity,
+            self.reduction_factor,
+            self.reduction_sensitivity,
+            target_signature,
+            target_speed,
+        )
+        .clamp(0.0, 1.0);
+        raw.map(|amount| round6(amount.max(0.0) * factor))
+    }
+}
+
 impl Missile {
     /// The missile as a disrupted launcher fires it: slower, shorter-lived, with a smaller explosion velocity and a bigger explosion radius.
     pub fn guided(&self, guidance: Guidance) -> Self {

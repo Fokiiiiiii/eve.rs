@@ -1,4 +1,11 @@
 use super::*;
+use crate::ship::Course;
+
+/// How often a kamikaze or a missile checks its target is within reach: a quarter of a second, as the simulation polls.
+const REACH_POLL_TICKS: i64 = TICKS_PER_SECOND / 4;
+
+/// The slack a target's reach is measured with (metres): the reference's one metre of tolerance on its range gate.
+const REACH_SLACK_METERS: f64 = 1.0;
 
 impl Scene {
     /// What the client of the ship an effect is projected at is told, for its HUD (`hudIconStates.js` of the reference): as the effect goes on `OnJamStart` (who, which module,
@@ -81,6 +88,14 @@ impl Scene {
                     run.doomsday_hit = false;
                 }
                 Vec::new()
+            }
+            Some(Action::Kamikaze { range, .. } | Action::Missile { reach: range, .. })
+                if when == Applies::CycleStart =>
+            {
+                self.reach_cycle_start(session, effect, *range, at)
+            }
+            Some(Action::Blast { centre, radius, damage }) if when == Applies::CycleEnd => {
+                self.blast_at(session, effect.module_type, *centre, *radius, *damage, at)
             }
             Some(Action::EcmBurst { range, strength }) if when == Applies::CycleStart => {
                 self.jam_burst(session, strength, *range, at)
@@ -321,6 +336,92 @@ impl Scene {
         pilot.immobile_until = pilot.immobile_until.max(at + (immobile_ms * per_ms) as i64);
         pilot.no_jump_until = pilot.no_jump_until.max(at + (no_jump_ms * per_ms) as i64);
         pilot.ship.velocity = eve_destiny::Vec3::new(0.0, 0.0, 0.0);
+    }
+
+    /// A kamikaze's or a missile's cycle starts: the hit is due again, and the squadron closes in on its target when it is beyond reach.
+    fn reach_cycle_start(&mut self, session: SessionId, effect: &Effect, range: f64, at: i64) -> Vec<Out> {
+        if let Some(run) = self.pilots.get_mut(&session).and_then(|pilot| {
+            pilot.modules.running.iter_mut().find(|run| run.effect.module_id == effect.module_id)
+        }) {
+            run.doomsday_hit = false;
+            run.reach_poll_at = at;
+        }
+        self.close_in(session, effect.target_id, range, at)
+    }
+
+    /// A squadron flies to within `range` of its locked target (the reference's `syncFighterOffensiveMovement`: a target beyond reach is followed).
+    /// A squadron within reach, or already following the target, is left as it is.
+    pub(super) fn close_in(&mut self, session: SessionId, target_id: i64, range: f64, at: i64) -> Vec<Out> {
+        let Some(target) = self.session_of(target_id) else { return Vec::new() };
+        if self.apart(session, target).is_some_and(|apart| apart <= range + REACH_SLACK_METERS) {
+            return Vec::new();
+        }
+        let following = self.pilots.get(&session).is_some_and(
+            |pilot| matches!(pilot.ship.course, Course::Follow { target, .. } if target == target_id),
+        );
+        if following {
+            return Vec::new();
+        }
+        self.follow(session, target_id, range, at)
+    }
+
+    /// A poll of a kamikaze or a missile: once its locked target is within reach (the reference's range gate, 1 m of slack) the target takes the hit, once
+    /// in the cycle. A missile's hit is scaled by its application factor for the target's signature and speed. A kamikaze then destroys its squadron. A
+    /// target that is out of reach is followed, and one under undocking protection is not hit. The poll repeats until the cycle ends.
+    pub(super) fn reach_check(&mut self, session: SessionId, index: usize, at: i64) -> Vec<Out> {
+        let (module_type, target_id, action, poll) = {
+            let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
+            let Some(run) = pilot.modules.running.get(index) else { return Vec::new() };
+            if run.doomsday_hit {
+                return Vec::new();
+            }
+            (run.effect.module_type, run.effect.target_id, run.effect.action.clone(), run.reach_poll_at)
+        };
+        let (reach, kamikaze) = match action.as_ref() {
+            Some(Action::Kamikaze { range, .. }) => (*range, true),
+            Some(Action::Missile { reach, .. }) => (*reach, false),
+            _ => return Vec::new(),
+        };
+        self.set_reach_poll(session, index, poll + REACH_POLL_TICKS);
+        let Some(target_session) = self.session_of(target_id) else { return Vec::new() };
+        let within =
+            self.apart(session, target_session).is_some_and(|apart| apart <= reach + REACH_SLACK_METERS);
+        let protected = self.pilots.get(&target_session).is_some_and(|target| target.protected_until > at);
+        if !within {
+            return self.close_in(session, target_id, reach, at);
+        }
+        if protected {
+            return Vec::new();
+        }
+        let damage = match action {
+            Some(Action::Kamikaze { damage, .. }) => damage,
+            Some(Action::Missile { damage, blast, .. }) => {
+                let (signature, speed) = self.pilots.get(&target_session).map_or((0.0, 0.0), |target| {
+                    let v = target.ship.velocity;
+                    (target.ship.spec.signature_radius, (v.x * v.x + v.y * v.y + v.z * v.z).sqrt())
+                });
+                blast.applied(damage, signature, speed)
+            }
+            _ => return Vec::new(),
+        };
+        if let Some(run) =
+            self.pilots.get_mut(&session).and_then(|pilot| pilot.modules.running.get_mut(index))
+        {
+            run.doomsday_hit = true;
+        }
+        let mut out = self.damage_ship(session, module_type, (target_session, target_id), damage, at);
+        if kamikaze {
+            out.extend(self.destroy(session, None, at));
+        }
+        out
+    }
+
+    fn set_reach_poll(&mut self, session: SessionId, index: usize, at: i64) {
+        if let Some(run) =
+            self.pilots.get_mut(&session).and_then(|pilot| pilot.modules.running.get_mut(index))
+        {
+            run.reach_poll_at = at;
+        }
     }
 
     /// The titan doomsday's hit: the locked target takes the damage once, if it is still in the scene and not under its undocking protection (the

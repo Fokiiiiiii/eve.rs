@@ -37,3 +37,18 @@ public enum ShipLossCause
 /// <param name="SolarSystemId">The solar system it was destroyed in.</param>
 /// <param name="KillerCharacterId">The character of the pilot who dealt the last blow (0 unless <see cref="Cause"/> is <see cref="ShipLossCause.Player"/>).</param>
 public sealed record ShipLoss(long CharacterId, long ShipId, int ShipTypeId, ShipLossCause Cause, int SolarSystemId, long KillerCharacterId);
+
+/// <summary>
+/// The topics a module of a ship announces its start and stop on, and the siege mode (a siege module's start and stop). Nothing subscribes yet; the names are
+/// the contract for the subscribers that will (missions, crimewatch), so they are kept as they are.
+/// </summary>
+public static class ShipModeTopics
+{
+    public const string ModuleStarted = "ship.module.started";
+    public const string ModuleStopped = "ship.module.stopped";
+    public const string SiegeEntered = "ship.siege.entered";
+    public const string SiegeLeft = "ship.siege.left";
+}
+
+/// <summary>A module of a pilot's ship started or stopped (the siege topics carry the same payload).</summary>
+public sealed record ShipModeEvent(long CharacterId, long ShipId, long ModuleId, int ModuleTypeId, int SolarSystemId);

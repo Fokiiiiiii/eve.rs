@@ -440,6 +440,44 @@ public static partial class SimCodec
                     }
                     return doomsday;
                 }
+            case 23:
+                {
+                    double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    var range = r.F64();
+                    var kamikaze = new SimAction.Kamikaze(damage, range);
+                    if (!kamikaze.IsValid)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad kamikaze action");
+                    }
+                    return kamikaze;
+                }
+            case 25:
+                {
+                    double[] centre = [r.F64(), r.F64(), r.F64()];
+                    var radius = r.F64();
+                    double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    var blast = new SimAction.Blast(centre, radius, damage);
+                    if (!blast.IsValid)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad fighter blast action");
+                    }
+                    return blast;
+                }
+            case 24:
+                {
+                    double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    var reach = r.F64();
+                    var radius = r.F64();
+                    var velocity = r.F64();
+                    var factor = r.F64();
+                    var sensitivity = r.F64();
+                    var missile = new SimAction.FighterMissile(damage, reach, radius, velocity, factor, sensitivity);
+                    if (!missile.IsValid)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad fighter missile action");
+                    }
+                    return missile;
+                }
             case 12:
                 {
                     double[] seed = [r.F64(), r.F64(), r.F64(), r.F64()];

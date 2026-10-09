@@ -201,7 +201,7 @@ impl Scene {
         &self,
         centre: [f64; 3],
         radius: f64,
-        exclude_ship: i64,
+        exclude_ship: Option<i64>,
     ) -> Vec<(SessionId, i64)> {
         let candidates = self.pilots.iter().map(|(other, pilot)| self.spatial_ship(*other, pilot));
         let mut inside: Vec<(SessionId, i64)> = crate::geo::SpatialQuery::surface_radius(
@@ -210,7 +210,7 @@ impl Scene {
             radius,
             1e-6,
             crate::geo::SpatialFilter {
-                exclude_id: Some(exclude_ship),
+                exclude_id: exclude_ship,
                 exclude_warping: true,
                 ..crate::geo::SpatialFilter::default()
             },
@@ -233,7 +233,7 @@ impl Scene {
         match kind {
             BombKind::Damage => {
                 let mut out = Vec::new();
-                for target in self.ships_in_area(centre, *blast_radius, deployable.ship_id) {
+                for target in self.ships_in_area(centre, *blast_radius, Some(deployable.ship_id)) {
                     if self.pilots.get(&target.0).is_none_or(|pilot| pilot.protected_until > at) {
                         continue;
                     }
@@ -250,7 +250,7 @@ impl Scene {
             BombKind::Ecm => self.jam_at(centre, 0.0, Some(deployable.ship_id), ecm, *blast_radius, at),
             BombKind::Neutralize => {
                 let mut out = Vec::new();
-                for (target, _) in self.ships_in_area(centre, *blast_radius, deployable.ship_id) {
+                for (target, _) in self.ships_in_area(centre, *blast_radius, Some(deployable.ship_id)) {
                     let amount = neutralize * self.capacitor_warfare_multiplier(target);
                     out.extend(self.take_capacitor(target, amount, at).0);
                 }
@@ -274,7 +274,7 @@ impl Scene {
         let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
         let (own, owner, p) = (pilot.ship.spec.ship_id, self.combat_owner(session), pilot.ship.position);
         let mut out = Vec::new();
-        for target in self.ships_in_area([p.x, p.y, p.z], range, own) {
+        for target in self.ships_in_area([p.x, p.y, p.z], range, Some(own)) {
             let target_type_id = self.pilots.get(&target.0).map_or(0, |pilot| pilot.ship.spec.type_id);
             self.aggressions.push(crate::weapons::Aggression {
                 attacker_ship: own,
@@ -291,6 +291,25 @@ impl Scene {
                 duration_ms,
                 at,
             ));
+        }
+        out
+    }
+
+    /// A fighter's LaunchBomb blast goes off at `centre` when its window ends (ADR 0011's area, decided for the fighter by EVE.js `executeFighterBombCycle`):
+    /// every ship within `radius` of it (its surface) takes `damage` from `launcher`. No ship is spared, not even the launcher's own, and the undock
+    /// protection is not read, as the reference does not read it (DEVIATIONS, Fighter LaunchBomb).
+    pub(crate) fn blast_at(
+        &mut self,
+        launcher: SessionId,
+        module_type: i32,
+        centre: [f64; 3],
+        radius: f64,
+        damage: crate::health::Damage,
+        at: i64,
+    ) -> Vec<Out> {
+        let mut out = Vec::new();
+        for target in self.ships_in_area(centre, radius, None) {
+            out.extend(self.damage_ship(launcher, module_type, target, damage, at));
         }
         out
     }

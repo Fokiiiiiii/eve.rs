@@ -11,6 +11,7 @@
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="../../src/Eve.Host/Eve.Host.csproj" />
     <ProjectReference Include="../../src/Eve.Services.Space/Eve.Services.Space.csproj" />
     <ProjectReference Include="../../src/Eve.Services.Inventory/Eve.Services.Inventory.csproj" />
     <ProjectReference Include="../../src/Eve.Services.Dogma/Eve.Services.Dogma.csproj" />

@@ -492,3 +492,15 @@ Investigated, not built. The reasons are below, with the sources read. The lance
 
 What was checked: `sde.dbuffCollections` has the PANIC keys (8, 9, 55, 56, 58, 59, 61) and the burst keys (for example 2498); `eve-logic` `dbuff/common/industrialInvulnConst.py`; EveJS `space/modules/commandBurstRuntime.js` and the timed invulnerability runtime (`space/runtime/timedInvulnerability.js`, which is the undock protection and not P.A.N.I.C.); the simulation's `ship.rs`, `health/`, `ewar.rs` (`Lasting`).
 
+## Source priority for the scanner track (user rule, 2026-10-09)
+
+- STATS, NUMBERS and ATTRIBUTES: the SDE first. LOGIC, MECHANICS and RULES: the EVE University wiki is the final authority, implemented as written. CCP docs and
+  EVE.js / eve-logic are supporting evidence and decide the client's wire shapes.
+- Where an SDE number and a wiki number differ, the SDE number is used and the wiki rule is used.
+- Finding for the scanners: the wiki pages read for this track (`Scanning`, `Hacking`) give no rule for the Cargo Scanner or the Ship Scanner (no page for either
+  is reachable under `Cargo_Scanner` or `Ship_Scanner`). The scanner mechanics in this track therefore rest on the SDE numbers and EVE.js
+  `scannerModuleRuntime.js`, with the client's unpacking as wire evidence. The `Scanning` page covers the survey scanner (15 km, 23 km with T2): a different
+  module, not part of this runtime.
+- Hacking: the wiki's rules (minigame, failure penalties, analyzer coherence and strength) are recorded in the hacking item above. Its numbers agree with the SDE
+  where they overlap (tier 1 analyzer coherence and strength), so no number was changed.
+

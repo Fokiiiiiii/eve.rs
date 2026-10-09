@@ -65,6 +65,7 @@ fn module(module_id: i64, action: Action, duration_ms: f64) -> Effect {
         off: None,
         on_changes: Vec::new(),
         off_changes: Vec::new(),
+        rules: Default::default(),
     }
 }
 

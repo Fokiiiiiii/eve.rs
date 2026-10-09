@@ -3209,7 +3209,8 @@ fn a_cloak_is_refused_while_a_module_that_cannot_be_deactivated_early_runs() {
     let held =
         Effect { rules: Rules { disallow_early_deactivation: true, ..Default::default() }, ..afterburner() };
     assert!(accepted(&scene.activate(A, held, t)));
-    let cloak = Effect { module_id: MODULE + 500, action: Some(Action::Cloak), ..afterburner() };
+    let cloak =
+        Effect { module_id: MODULE + 500, action: Some(Action::Cloak { warp_safe: false }), ..afterburner() };
     assert_eq!(
         scene.activate(A, cloak.clone(), t),
         [Out::Refused { session: A, command: 17, reason: "CLOAK_MODULE_ACTIVE" }]

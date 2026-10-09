@@ -79,9 +79,6 @@ internal sealed class ProjectedEffect : ShipEffect
         ["fighterAbilityECM"] = v => (new SimRemote.Jam(Amount(v, FighterGravimetricStrength), Amount(v, FighterLadarStrength), Amount(v, FighterMagnetometricStrength), Amount(v, FighterRadarStrength)), false, ""),
     };
 
-    /// <summary>The range bonus of a focus script (SDE attribute 1327, a percentage of the module's warp scramble range).</summary>
-    internal const int ScriptRangeBonus = 1327;
-
     /// <summary>The focus scripts: their reach is the module's warp scramble range (attribute 103) times the script's own range bonus.</summary>
     private static readonly HashSet<string> FocusScripts = new(StringComparer.OrdinalIgnoreCase) { "shipModuleFocusedWarpDisruptionScript", "shipModuleFocusedWarpScramblingScript" };
 
@@ -145,12 +142,9 @@ internal sealed class ProjectedEffect : ShipEffect
         var remote = Specs[module.Effect.Name.Trim()](attribute => module.World.Get(module.ModuleId, attribute));
         var (duration, capacitor, durationAttribute) = module.Cycle();
         var optimal = Math.Max(0, NpcArmament.Round6(module.Value(MaxRange, 0)));
-        if (IsFocusScript(module.Effect.Name))
-        {
-            // a focus script reaches the warp scramble range of its module, with the script's own bonus on it (the charge is the script)
-            var bonus = module.Snapshot.ChargeOf(module.Module) is { } script ? module.World.Get(script.Id, ScriptRangeBonus) : 0;
-            optimal = Math.Max(0, NpcArmament.Round6(module.Value(WarpScrambleRange, 0) * (1 + bonus / 100)));
-        }
+        // a focus script reaches the warp scramble range of its module; the script's own range bonus (1327) is already in it, as the script's effect 3648 modifies
+        // the module's attribute 103 in dogma (applying the bonus again would count it twice)
+        if (IsFocusScript(module.Effect.Name)) optimal = Math.Max(0, NpcArmament.Round6(module.Value(WarpScrambleRange, 0)));
         var falloff = Math.Max(0, NpcArmament.Round6(module.Value(FalloffEffectiveness, 0)));
         SimChange[] told = [new(module.ModuleId, CapacitorNeed, capacitor), new(module.ModuleId, durationAttribute, Three(duration)), new(module.ModuleId, MaxRange, optimal)];
         return new SimEffect(

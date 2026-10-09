@@ -459,6 +459,11 @@ pub(super) fn put_action(out: &mut Vec<u8>, action: &Action) {
                 out.extend_from_slice(&number.to_le_bytes());
             }
         }
+        Action::CynoField { ball, lifetime_ms } => {
+            out.push(27);
+            put_deployable(out, ball);
+            out.extend_from_slice(&lifetime_ms.to_le_bytes());
+        }
         Action::MicroJumpDrive { distance_meters, cooldown_ms } => {
             out.push(6);
             out.extend_from_slice(&distance_meters.to_le_bytes());

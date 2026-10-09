@@ -234,7 +234,7 @@ SDE facts (build 3396210): group 588 "Super Weapon" has 20 types. Catmageddon (3
 | VERIFIED (tests) | The structure cyno beacon route (`structureCynoBeaconMgr`, P2-6) answers the user error `Structure travel is not wired on this server.` for each of its three calls while no backend is wired, and forwards to a backend when one is given. | `StructureTravelTests` (new file). |
 | VERIFIED (tests) | Attribute constants for the superweapon, cyno, jump portal and clone rules are the SDE's attributes (`ModuleAttributes`). | `SuperWeaponAttributeIdsTests` (PgFact, real SDE). |
 | VERIFIED (tests) | Superweapon graphics (`SuperWeaponFx`): the titan doomsday guids are the SDE effect rows; lance and disruptive lance graphics follow the module's raceID. Reaper graphics are EveJS's catalog only (EveJS's catalog, not read from the client's effect data). The cone has none. Nothing reads the table yet. | `SuperWeaponFxTests` (PgFact). |
-| VERIFIED (tests) | Cynosural field types from the SDE: 21094, 28650, 52696, each radius 250. Nothing spawns a field yet. | `CynoFieldTypesTests` (PgFact). |
+| VERIFIED (tests) | Cynosural field types from the SDE: 21094, 28650, 52696, each radius 250. Fields are spawned by the generator's cycle (section 22, track B7). | `CynoFieldTypesTests` (PgFact). |
 | DONE | Fuel of a superweapon with a body goes through the shared per-cycle mechanism (`ShipEffect.Build` sets `BurnsFuel` for 713 > 0). | `ModuleFuelHostTests`; `ModuleRuleTests` (the DDD module is aimed and burns its fuel). |
 | DONE | Module gap manifest (manifest test): the cone is removed from the uncovered list because it has a body; the refusals stay listed. | `ModuleEffectsTests` (the manifest test). |
 | VERIFIED (tests) | Titan doomsdays (`superWeapon{Amarr,Caldari,Gallente,Minmatar}`: Judgment 24550, Gjallarhorn 23674, Oblivion 24552, Aurora Ominae 24554), protocol 26 (`SimAction` tag 14, `Doomsday`). The client activates a titan with its LOCKED TARGET, not a point (no `isPointTargeted` on the type; `shipmodulebutton.py` calls `def_effect.Activate(targetID)`), so the brief's "point targeting" does not apply to them. One hit on the target after `damageDelayDuration` (7500 to 12000 ms), its one damage kind 2 400 000, no signature factor; the immobility (30 s) and no-jump window (300 s) at activation; fuel 16274 x 50000 per cycle through the shared mechanism. No chain: the titans carry no lightning attributes (2104 to 2106), so EveJS hits the primary target alone. Not checked in the client: the titan graphic (`SuperWeaponFx`) and the texts of the refusals. The structure variant (category 66) is still refused by name (O5). | `SuperWeaponEffectsTests.A_titan_doomsday_is_built...` (PgFact, SDE numbers); `SuperWeaponHostTests.A_titan_doomsday_on_a_locked_target...` (through the host, fuel taken when the simulation asks) and `..._without_a_target...`; Rust `weapons::tests::a_titan_doomsday_hits...` and `..._is_refused_without_a_locked_target...`; `SimCodecTests.A_titan_doomsday_roundtrips...`; `simlink_fixtures` (a valid hit, a negative delay). ADR 0013 epoch 26. |
@@ -384,7 +384,7 @@ Open (each with its exact blocker):
 - WP13 mode events (MR-D2): stays deferred. No subscriber exists in the reference, and a subscriber with no consumer is the no-op AGENTS rule 5 forbids.
 - WP16 bastion micro jump drive block: needs the client's modifier 5788 to 6658 mapping (MR-D7), which the decisions brief marks as a client-derived table needing sign-off; not built.
 - WP17 stacking: the penalty curve, operations and unpenalised categories match the V24.01 client (`eve-logic dogma/attributes/stackingNurfedAttribute.py`, `const.py`); the SDE `stackable=false` flag selects the penalty (`DogmaWorld.ApplyModifiers`). The assistance and jam overlays are stackable=true in the SDE (2112 to 2424, 2253), so their modifiers multiply unpenalised (`itemAttributeFactory.py:35`). The sim-side overlays themselves are not built.
-- WP19 velocity limits (1334, 2608): the bomb launcher (2608) is refused outside its band and the refusal is tested (`deployable::tests::a_bomb_launcher_refuses_a_ship_at_rest_and_releases_its_bomb_once_the_ship_moves`). The cynosural field generator (1334) has no body, so its band is not reached.
+- WP19 velocity limits (1334, 2608): the bomb launcher (2608) is refused outside its band and the refusal is tested (`deployable::tests::a_bomb_launcher_refuses_a_ship_at_rest_and_releases_its_bomb_once_the_ship_moves`). The cynosural field generator (1334) has a body since track B7 (section 22); its band is reached through the generic velocity rule.
 - 906 eject and logoff, 1934, WP12: 1934 is the SDE text (default 1: an offensive module deactivates when its pilot disconnects). The path is `OnSessionClosedAsync` (`SpaceSessions.cs:820`) to `_sim.Leave(LoggedOff)` to `Scene::leave` (`crates/eve-space/src/scene/docking.rs:64`), which drops the pilot and its running effects (`modules::tests::a_ship_that_leaves_takes_its_effects_with_it`). Open: a bastion (1934 = 0) keeps running after its pilot logs off in CCP; eve.rs has no logged-off ship left in space to keep it running. The 906 log-out timer is not built.
 - Reactivation refusal and MAX_GROUP_ACTIVE: the refusal does not carry the time since the stop or the running count yet (the client's `ModuleReactivationDelayed2` and `EffectCrowdedOut` need them).
 - Reactive armor hardener: restart clears the profile (in memory, by design); death and gate jump are covered (section 8b). A host-level test of a jump with a running module is not in this change.
@@ -398,11 +398,11 @@ Decided, not applied: WG-7 (no source says a jam gives the target a weapons time
 
 Open, each with its exact blocker:
 - WG-5 nanite paste repair: the client's `godma.RepairModule` and `StopRepairModule` have no host handler; paste repair, its clock, its cancellation on a jump and the overheat interlock need building. Heat repair on a dock is done (B2).
-- WG-3 module scripts: needs an SDE-backed PostgreSQL case per script attribute.
+- WG-3 module scripts: PostgreSQL cases per script family are in section 22 (track B7); the disruption scripts are open there.
 - FP-8, FP-C4b, FP-C5, FP-C7: each needs a wire change (resist fields, `SimUpdateEffect`, a burst's jammed ships).
 - FP-C8 automatic reload: the simulation ends the effect at the last round (`NO_CHARGES`) before the host sees the spent charge; a pending-reload state is needed in the simulation.
 - M-6 scanner, analyzer and relic modules: no simulation bodies.
-- WP17 assistance and jam overlays (the sim-side overlays are not built); WP19 cynosural field body; WP13 mode events (no subscriber, so none is published).
+- WP17 assistance and jam overlays (the sim-side overlays are not built); WP19 cynosural field (the body is built in track B7, section 22, with open items there); WP13 mode events (no subscriber, so none is published).
 - Host-level database tests for the smartbomb refusal and the bastion refusal are not written (unit and simulation tests only).
 
 ## 18. Alliance registry (2026-10-10)
@@ -423,7 +423,7 @@ Done (decisions in DEVIATIONS "Module rules, track B4"; tests in the projects na
 
 Open, each with its exact blocker:
 - WG-5: a repair ended by a leave takes its paste and damage, but the client is not told the cargo change then (no notification path from the space layer to the client's cargo for a ship that has left). The rate and cost come from the character's dogma world; only the no-skill values are tested.
-- WG-3: the tracking and optimal range scripts are verified with a loaded script (`ModuleScriptTests`, through the charge pairing in `Eve.Dogma/DogmaWorld.cs`, `otherID`). Guidance, flex hardener and ECCM are not verified with a loaded script yet.
+- WG-3: the tracking and optimal range scripts are verified with a loaded script (`ModuleScriptTests`, through the charge pairing in `Eve.Dogma/DogmaWorld.cs`, `otherID`). Guidance, flex hardener and ECCM are verified with a loaded script in track B7 (section 22).
 - FP-C4b and FP-C5 (refresh a running effect when the overheat or a computer changes): not built. Closed in track B5 (section 20). Needs a new `SimUpdateEffect` message: `crates/eve-space/src/link`, `SimCodec`, the Python generator `tools/dev/gen-simlink-fixtures.py`, and one protocol bump at the next free number (37 if track C2 takes 36).
 - FP-C7 (an ECM burst: the ships it jams, and its offensive gate): not built. The simulation does not report a landed burst (a wire message), and no source read gives the burst's safety rule.
 - FP-C8 (automatic reload from the hold): not built. Closed in track B5 (section 20). The simulation ends the run at the last round with `NO_CHARGES` (`crates/eve-space/src/modules/effects.rs` around 613) before the host sees `ChargeSpent`. The design: a pending-reload state that waits for the next cycle boundary for an `AdjustCharge` from the host (the message exists, `SimAdjustCharge`), and resumes if one arrives. Needs the simulation change and host tests.
@@ -485,3 +485,25 @@ Sources, the SDE facts and the blockers are in DEVIATIONS "Track C4". Summary of
 - NOT BUILT: the buff registry (persistent source list on `DogmaWorld` items, expiry by the scheduler, restart drops it, client `OnDogmaAttributeChanged` for the recipients). Built with its first consumer, the burst.
 - NOT BUILT: P.A.N.I.C. (42522). Its fleet effect needs the registry, the wire batch, and the simulation state for shield resistance, shield recharge, drone damage, weapons, mass, scan resolution, entosis and jump/dock/tether flags.
 - NOT RUN: a MITM capture of a burst or P.A.N.I.C. cycle (`tools/mitm/README.md`). No scenario was driven.
+
+## 22. Module rules track B7: ECCM, scripts, the cynosural field generator (2026-10-09)
+
+Done (decisions and sources in DEVIATIONS "Module rules, track B7"; ADR 0017 for the wire):
+- WG-3 ECCM, self-applied (effect 2231): runs through the dogma modifiers (`DogmaModifierEffect`); the projected ECCM stays pending. Tests: `ModuleScriptTests` (ECCM Script on ECCM - Radar I, category 7 with its category 8 script).
+- WG-3 flex armour and shield scripts (41517 to 41524): PostgreSQL cases in `ModuleScriptTests` (the hardener's bonus and the ship's resonance it sets).
+- WG-3 guidance scripts (Missile Range and Missile Precision, 35794 and 35795) on the Missile Guidance Computer: PostgreSQL cases in `ModuleScriptTests`.
+- The cynosural field generator (21096, 28646, 52694) has a body: `CynoGeneratorEffect` (host) and `SimAction.CynoField` (tag 27, protocol 41). The field is released at the end of the cycle, lives explosionDelay (600000 ms), costs the cycle's fuel through the shared mechanism, and is announced with `AddBalls2` and removed with `RemoveBalls`. Tests: `deployable::tests::a_cynosural_field_is_lit_...` (sim), the golden entry in `messages.json` (codec), `CynoFieldHostTests` (fleet and high-security refusals, PostgreSQL).
+- Refusals: a pilot outside a fleet (`CYNO_NOT_IN_FLEET`, the host's fleet store through `SpaceSessions.IsInFleetAsync`), a fleet member in high-security space (`CantInHighSecSpace`). The generic 500 m/s rule (1334) applies.
+
+Open, each with its exact blocker:
+- Jump-in restrictions (normal fields to fleet members with jump drives, covert to Black Ops, industrial to jump freighters and capital industrial ships): no capital jump drive in eve.rs.
+- Mobile Cynosural Inhibitor (200 km lighting block): no inhibitor body.
+- Cynosural System Jammer (E-03): the host callback `BeyonceService.CynoJammerOnlineSimTimeForSystem` is not assigned, so the jammed state has no source.
+- Fleet beacon state when a field is lit (EveJS `setFleetCynoBeaconState`): no beacon state in eve.rs.
+- Persistence (ADR 0012): the field is a sim-timed deployable, so a restart drops it; the `Deployed` record and the sweep are not built.
+- The positive lighting path has no host PostgreSQL test: the rig's station is in Manifest (high-sec), and no low-sec undock is in the rig.
+- The Guidance Disruption scripts (40334, 40335): not tested; their launcher group is the computer's (1396) but the computer's charge group is 1400, so the pairing is not decided.
+- The projected ECCM (2246): pending.
+- WP12 bastion and 1934 (keep running after logoff): not built. The wiki page says nothing about logoff; the SDE sets 1934 = 0. Needs a logged-off ship that stays in space.
+- WP17 sim-side assistance and jam overlays: not started; the part to build is not settled in the sources read.
+- E-06 probe lifecycle notifications: not started; needs the probe launcher (`LaunchProbes`, RC-7).

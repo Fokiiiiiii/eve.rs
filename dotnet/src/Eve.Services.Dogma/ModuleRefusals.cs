@@ -79,6 +79,8 @@ public static class ModuleRefusals
             "CLOAK_DISALLOWED" => MachoErrors.ThrowUserError("CantCloak"),
             "CLOAK_TARGET_LOCKED" => Notify("Your ship is already target locked and cannot activate a cloaking device."),
             "CLOAK_PROXIMITY_BLOCKED" => Notify("You are too close to another object to activate your cloaking device."),
+        // the wiki (EVE University, Cynosural Field Generator): a cynosural field is lit by a fleet member; the client's own wording is not in the tables read
+        "CYNO_NOT_IN_FLEET" => Notify($"{name} can only be lit by a member of a fleet."),
         "SMARTBOMB_NEAR_STATION" => Notify($"{name} cannot be activated this close to a station or stargate."),
             "MODULE_CLOAKED" => Notify("You cannot activate modules while cloaked."),
             // a disruptive lance needs an active siege module on the ship (EveJS ACTIVE_SIEGE_MODULE_REQUIRED, moduleActivationRequiresActiveSiegeModule)

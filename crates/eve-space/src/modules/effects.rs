@@ -128,6 +128,15 @@ impl Scene {
                 };
                 self.release_deployable(session, effect, ball.clone(), role, *lifetime_ms, at)
             }
+            Some(Action::CynoField { ball, lifetime_ms }) if when == Applies::CycleEnd => self
+                .release_deployable(
+                    session,
+                    effect,
+                    ball.clone(),
+                    crate::deployable::Role::CynoField,
+                    *lifetime_ms,
+                    at,
+                ),
             Some(Action::Defender { missile, damage }) if when == Applies::CycleStart => {
                 self.defender_intercept(session, effect, missile, *damage, at)
             }

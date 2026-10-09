@@ -508,3 +508,63 @@ Applied to the scanners:
 - The wiki's survey scanner range (15 km, 23 km with T2) belongs to a different module, which is not part of this runtime. No conflict arises.
 
 **Decisions for the body (recorded so the build follows them; none is built).** D4 (the registry) is a persistent source list on `DogmaWorld` items, keyed by the burst module, cleared when the module stops, and expired by the scheduler at `buffDuration`. D3 (recipients): the same fleet as the burst's pilot (`FleetStore`), a ship in the burst's range, the burst's own ship excluded for the fleet families, and the host sends the list each cycle (ADR 0011 decision 5). The module's cycle is refused while the value chain is OPEN, because a burst with value 0 would be a success the reference does not give.
+
+## Module rules, track B7: ECCM, scripts, the cynosural field generator (2026-10-09)
+
+Precedence applied as in track B6c: SDE for numbers and attributes; the EVE University wiki for mechanics; EveJS (`cynosuralField.js`,
+`activationSpaceRestrictions.js`, `modules.js`) as the functional reference; CCP documents and eve-logic not re-read for this track's wire
+shapes (the existing codecs were reused and extended by one action, tag 27, ADR 0017).
+
+- **ECCM, self-applied (effect 2231 `scanStrengthBonusPercentActivate`).** SDE: four PostPercent modifiers on the ship's scan strengths (208 to 211)
+  from the module's percents (1027 to 1030). Decided: the generic dogma-modifier path (`DogmaModifierEffect`, which already serves the other self
+  modifiers), replacing the pending handler. Wiki (Electronic warfare, "Countering ECM"): an ECCM script "doubles the sensor strength effect", which
+  matches the SDE's +100 on the sensor strength bonus (2282). Tests: `ModuleScriptTests.An_ECCM_script_loaded_in_an_ECCM_module_...`.
+- **Projected ECCM (effect 2246 `scanStrengthTargetPercentBonus`).** Still pending: it is a target effect and needs the projected path.
+- **Scripts, flex (groups 1701 and 1702: Armor and Shield EM, thermal, kinetic and explosive scripts).** SDE: +200 on the hardener's EM resistance
+  bonus and -100 on the other three (2402 to 2405, PostPercent), on the hardener's bonus (984 to 987), which resonance activation (5230, 5231) reads.
+  Numbers from the SDE only; the wiki page for these scripts was not read in this track. Tests: `ModuleScriptTests` (armour and shield).
+- **Scripts, guidance (group 1400 Missile Range and Missile Precision Script, on the Missile Guidance Computer, group 1396).** SDE: Range adds +100 to
+  missile velocity and explosion delay and -100 to the AoE cloud and velocity; Precision is the mirror. Tests: `ModuleScriptTests` (range and precision).
+  Open: the Guidance Disruption scripts (group 1569, 40334 and 40335) carry the same modifiers with launcher group 1396, but the computer's charge group is
+  1400, so their pairing is not decided here; not tested.
+- **Category of ECCM.** The ECCM modules are category 7 (group 202); the ECCM Script is a charge of category 8 (group 910, type 41155). The pairing of a
+  script with its module uses the category (`DogmaWorld.Partner`, `IsCharge`), so it works without a special case. Tested with `ModuleScriptTests`.
+- **Cynosural field generators (21096 normal, 28646 covert, 52694 industrial; group 658).** SDE numbers: activation duration 600000 ms (normal and
+  industrial) and 60000 ms (covert); fuel per cycle 500, 50 and 800 Liquid Ozone (type 16273); speed ceiling 1334 = 500 m/s; spawn radius 2455 = 5000.
+  Wiki: activation ten minutes (matches), covert one tenth (matches), fuel 500 normal (matches), industrial base 800 (matches), covert fuel "always 25":
+  the SDE says 50. Decided: SDE 50 (SDE first for numbers).
+- **When the field is lit.** Wiki: the generator has an activation time of ten minutes before the field is lit. Decided: the field is released at the end
+  of the generator's cycle (`SimAction.CynoField`, applied at `CycleEnd`). EveJS (`cynosuralField.js`, `spawnCynosuralFieldForEffect`) spawns the field at
+  activation; the difference is recorded here and not copied.
+- **Field lifetime.** SDE: each field type has explosionDelay 281 = 600000 ms (21094, 28650, 52696); the same expiry rule as bombs. Decided: the field lives
+  its explosionDelay and does not explode. EveJS uses the generator's duration as the field's life and removes the field when the effect stops; with the
+  covert generator (60000 ms) that differs from the SDE's field lifetime (600000 ms). Decided: the SDE number; the field is not removed when the generator
+  stops. Test: `CynoFieldTypes`, `deployable::tests::a_cynosural_field_is_lit_...`.
+- **One cycle per lighting.** The generator's repeat is one: it lights its field once and stops. Fuel is taken before that cycle through the shared
+  mechanism (`BurnsFuel`, set by `ShipEffect` from the consumption type).
+- **Lighting refusals.** Wiki: "only fleet members can jump to that cyno", "a ship must be in a fleet and slower than 500 m/s" (EveJS `modules.js` quotes
+  the same), and "cynos cannot be lit in high-sec". The speed rule is attribute 1334, enforced by the generic velocity rule. Decided: the fleet is
+  checked by the host's fleet store (`SpaceSessions.IsInFleetAsync`, set in `AgentRpc`), refused as `CYNO_NOT_IN_FLEET` with our wording, because the
+  client's own wording for it is not in the tables read; the high-security rule is refused with the client's `CantInHighSecSpace`, as EveJS does for
+  `MODULE_DISALLOWED_IN_HIGHSEC`. The order of the two refusals is the host's choice: the fleet is checked first, so both are reachable in the test rig
+  (whose station is in Manifest, security 1.0). EveJS checks the security first.
+- **Open, each with its blocker.**
+  - Jump-in (fleet-only for normal fields, Black Ops for covert, jump freighters and capital industrial ships for industrial): not built. eve.rs has no
+    capital jump drive, so there is no jump to a field to restrict.
+  - Mobile Cynosural Inhibitor (200 km): not applied. No inhibitor body exists in eve.rs (a module and a deployable that do not exist yet).
+  - Cynosural System Jammer (E-03, a system-wide jam of non-covert generators, EveJS `activationSpaceRestrictions.js`): not applied. The host's
+    `BeyonceService.CynoJammerOnlineSimTimeForSystem` is not assigned (E-03), so the jammed state has no source yet.
+  - The fleet beacon state (EveJS `setFleetCynoBeaconState` when a field is lit) is not set: the fleet runtime has no beacon state in eve.rs.
+  - Persistence: ADR 0012 asks for a `Deployed` record expired by the sweep for cyno fields. This field is a sim-timed deployable (as the bombs and
+    probes are), so a restart drops it. Open; see ADR 0017.
+  - The lighting positive path (a fleet member in low or null security lighting a field and the fuel taken) has no host PostgreSQL test: the rig's station
+    is high-security, and a low-security undock is not in the rig. The field's life, its announcement and its expiry are tested in the simulation.
+- **Bastion and logoff (WP12, 1934).** Not built in this track. Wiki (Bastion Module) says nothing about logoff, so no source states it; the SDE sets
+  1934 = 0 for the bastion. Keeping the module running needs a logged-off ship that stays in space, which eve.rs does not have (see DEVIATIONS, track B6c).
+  Open.
+- **Sim-side overlays (WP17, assistance and jam).** Not started in this track. The B6c notes name them as the sim-side part of the assistance and jam
+  overlays (EveJS `hostileModuleRuntime.js`, `assistanceModuleRuntime.js`), and the definition of that part is not settled in the sources read. Open.
+- **Probe launcher and probe lifecycle notifications (E-06).** Not started. Depends on the probe launcher (`LaunchProbes`, RC-7), which eve.rs does not
+  have. Open.
+- **Protocol.** 40 to 41 (one bump for this track): tag 27 `CynoField`, and the two version constants. `oracle/fixtures/simlink/messages.json` gained the
+  two entries the generator writes for the field.

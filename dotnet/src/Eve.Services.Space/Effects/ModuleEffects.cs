@@ -46,6 +46,7 @@ internal static class ModuleEffects
         .Register(new CloakingEffect())
         .Register(new MicroJumpDriveEffect())
         .Register(new DogmaModifierEffect())
+        .Register(new CynoGeneratorEffect())
         .Register(new WarpModifierEffect())
         .Register(new TypeAttributeResistanceEffect())
         .Register(new ReactiveArmorHardenerEffect())

@@ -311,6 +311,12 @@ fn effect_of(case: &Value) -> Effect {
                     lifetime_ms: a["lifetimeMs"].as_f64().unwrap(),
                 };
             }
+            if a["kind"] == "cynoField" {
+                return Action::CynoField {
+                    ball: deployable(&a["ball"]),
+                    lifetime_ms: a["lifetimeMs"].as_f64().unwrap(),
+                };
+            }
             if a["kind"] == "bomb" {
                 let numbers = |key: &str| sensors_of(&a[key]);
                 return Action::Bomb {

@@ -17,6 +17,7 @@ public class MissileHostTests
 {
     private const int RocketLauncherI = 10629, ScourgeRocket = 266, Slot = 28, UseMissiles = 101;
     private const int RapidTorpedoLauncherI = 37288, ScourgeTorpedo = 267, Phoenix = 19726;
+    private const int SmallBreacherLauncher = 85084, SmallBreacherPod = 85088;
 
     /// <summary>A pilot in space whose slot 28 holds a Rocket Launcher I (online), loaded with Scourge Rockets when <paramref name="loaded"/>.</summary>
     private static Task<(ClientSession Session, Eve.Characters.Created Character, long Launcher)> ArmedInSpaceAsync(Rig rig, bool loaded) =>
@@ -92,6 +93,30 @@ public class MissileHostTests
         var told = new[] { (launcher, 6, package.CapacitorNeed), (launcher, 51, Math.Round(package.DurationMs, 3)) };
         Assert.Equal(told, package.OnChanges.Select(c => (c.ItemId, c.AttributeId, c.Value)));
         Assert.Equal(told, package.OffChanges.Select(c => (c.ItemId, c.AttributeId, c.Value)));
+    }
+
+    [PgFact]
+    public async Task A_breacher_pod_launcher_is_started_with_the_damage_over_time_its_charge_describes()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, launcher) = await ArmedInSpaceAsync(rig, loaded: true, SmallBreacherLauncher, SmallBreacherPod, Rig.Cockroach, (3319, 5), (3320, 5));
+
+        // the pilot asks for the effect of the pod, as the client does; the launcher runs its own, and the pod's hit starts a damage over time
+        var answer = await rig.Space.ActivateAsync(session, launcher, "dotMissileLaunching", 980050000105, 1000, CancellationToken.None);
+
+        Assert.Equal(ModuleResult.Done, answer);
+        var package = Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect;
+        Assert.Equal((launcher, SmallBreacherLauncher, UseMissiles), (package.ModuleId, package.ModuleType, package.EffectId));
+        var snapshot = (await rig.Ships.LoadAsync(character.CharacterId, CancellationToken.None))!;
+        var charge = snapshot.Charges.Single();
+        var world = snapshot.World;
+        var turret = Assert.IsType<SimTurret>(package.Turret);
+        var missile = Assert.IsType<SimMissile>(turret.Missile);
+        // the SDE's numbers: dotDuration 40 s (5735), 200 a tick at most for the small pod (5736), 0.6 % of the target's hit points a tick (5737)
+        Assert.Equal((40_000.0, 200.0, 0.6), (world.Get(charge.Id, 5735), world.Get(charge.Id, 5736), world.Get(charge.Id, 5737)));
+        Assert.Equal(new SimDot(40_000.0, 200.0, 0.6), missile.Dot);
+        // the pod does no damage of its own: its effect is the damage over time
+        Assert.Equal(new double[] { 0, 0, 0, 0 }, turret.RawDamage);
     }
 
     [PgFact]

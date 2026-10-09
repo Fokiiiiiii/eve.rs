@@ -228,9 +228,12 @@ public class SimCodecTests
 
     private static SimArc? ArcOf(JsonNode? a) => a is null ? null : new SimArc((double)a["range"]!, (int)a["targets"]!);
 
-    private static SimMissile? MissileOf(JsonNode? m) => m is null ? null : new SimMissile(
+    private static SimMissile? MissileOf(JsonNode? m) => m is null ? null : MissileWith(m);
+
+    private static SimMissile MissileWith(JsonNode m) => new SimMissile(
         (int)m["chargeTypeId"]!, (int)m["groupId"]!, (string)m["name"]!, (double)m["radius"]!, (double)m["mass"]!, (double)m["agility"]!, (double)m["hitPoints"]!, (double)m["maxVelocity"]!, (double)m["flightTimeMs"]!, (double)m["explosionRadius"]!, (double)m["explosionVelocity"]!,
-        (double)m["damageReductionFactor"]!, (double)m["damageReductionSensitivity"]!);
+        (double)m["damageReductionFactor"]!, (double)m["damageReductionSensitivity"]!,
+        m["dot"] is { } d ? new SimDot((double)d["durationMs"]!, (double)d["maxDamagePerTick"]!, (double)d["maxHpPercentPerTick"]!) : null);
 
     private static SimTurretCharge? ChargeOf(JsonNode? c) => c is null ? null : new SimTurretCharge((int)c["typeId"]!, (int)c["flag"]!, (long)c["rounds"]!, (long)c["perCycle"]!, (bool?)c["reloads"] ?? false);
 

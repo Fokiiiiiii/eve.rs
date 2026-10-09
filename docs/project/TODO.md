@@ -405,8 +405,19 @@ Open, each with its exact blocker:
 - WP17 assistance and jam overlays (stacking rule not in the sources read); WP19 velocity limits (no carrier object); WP13 mode events (no subscriber, so none is published).
 - Host-level database tests for the smartbomb refusal and the bastion refusal are not written (unit and simulation tests only).
 
-<<<<<<< HEAD
-## 18. Module rules track B4 (2026-10-09)
+## 18. Alliance registry (2026-10-10)
+
+The client-facing allianceRegistry paths used by V24.01 alliance wrappers now persist bulletins, executor support, member departure, alliance war bills, bill payment and GML application acceptance. Member-affiliation, alliance and corporation notifications are emitted after the database transaction. alliance_employment records a null-alliance row when a corporation leaves so GetEmploymentRecord retains the transition.
+
+Open before calling Alliance parity complete:
+
+- Alliance maintenance bills: the initial monthly invoice, durable due scheduling, executor-wallet auto-payment and paid renewal are implemented and PostgreSQL-tested. Unpaid closure at the next downtime and its sovereignty/war transfers remain open; due invoices retry daily meanwhile. Bill-issued notification type 4 reaches executor-corporation members and is idempotent.
+- War lifecycle: due-bill renewal/default, and inheriting an active alliance war when a corporation leaves.
+- Sovereignty ownership transfer on member departure and alliance closure.
+- GetAllianceSovereigntyStructuresInfo and GetEveOwners remain unimplemented; no direct V24.01 callsite has been verified for these two EveJS handlers.
+- Real graphical-client verification remains unrun.
+
+## 19. Module rules track B4 (2026-10-09)
 
 Done (decisions in DEVIATIONS "Module rules, track B4"; tests in the projects named): WG-5 nanite paste repair end to end (`dotnet/src/Eve.Ships/CharacterShips.Repair.cs`, `Eve.Services.Space/SpaceSessions.Repair.cs`, `Eve.Services.Dogma/DogmaIMService.Repair.cs`; tests `RepairTests`, `ModuleRepairHostTests`); the 906 eject refusal (`SpaceSessions.Ships.cs`); WP13 mode events (`ShipModeTopics`, `ShipModeEventTests`); FP-8 target resistance, host-side (`Effects/RemoteResistance.cs`, `RemoteResistanceTests`); WG-3 sensor booster strengths (`SensorBoosterEffect.cs`, `ModuleEffectsTests`); WG-7 and WG-8 decided (DEVIATIONS). The protocol is not bumped in this track.
 
@@ -421,17 +432,3 @@ Open, each with its exact blocker:
 - WP19 (velocity limits 1334 and 2608): not built. The activation check needs the ship's velocity on the simulation side and a rule field (a wire change), and the carriers (the cynosural field generator and the bomb launcher) have no bodies.
 - WP12 and 1934 (logout and the 906 log-out timer): not built; no reference text (MR-D9).
 - Host PG tests for the sensor booster strengths in a fitted scene: the effect is tested through `ModulePackages` only.
-
-=======
-## 18. Alliance registry (2026-10-10)
-
-The client-facing allianceRegistry paths used by V24.01 alliance wrappers now persist bulletins, executor support, member departure, alliance war bills, bill payment and GML application acceptance. Member-affiliation, alliance and corporation notifications are emitted after the database transaction. alliance_employment records a null-alliance row when a corporation leaves so GetEmploymentRecord retains the transition.
-
-Open before calling Alliance parity complete:
-
-- Alliance maintenance bills: the initial monthly invoice, durable due scheduling, executor-wallet auto-payment and paid renewal are implemented and PostgreSQL-tested. Unpaid closure at the next downtime and its sovereignty/war transfers remain open; due invoices retry daily meanwhile. Bill-issued notification type 4 reaches executor-corporation members and is idempotent.
-- War lifecycle: due-bill renewal/default, and inheriting an active alliance war when a corporation leaves.
-- Sovereignty ownership transfer on member departure and alliance closure.
-- GetAllianceSovereigntyStructuresInfo and GetEveOwners remain unimplemented; no direct V24.01 callsite has been verified for these two EveJS handlers.
-- Real graphical-client verification remains unrun.
->>>>>>> origin/main

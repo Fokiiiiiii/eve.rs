@@ -244,6 +244,16 @@ public sealed record SimAoe(double ExplosionRadius, double ExplosionVelocity, do
 /// </summary>
 public sealed record SimArc(double Range, int Targets);
 
+public sealed record SimDeployable(int ChargeTypeId, int GroupId, string Name, double Radius);
+
+/// <summary>What a bomb does where it goes off (wire byte: 0 damage, 1 ECM, 2 neutralisation).</summary>
+public enum SimBombKind : byte
+{
+    Damage = 0,
+    Ecm = 1,
+    Neutralize = 2,
+}
+
 /// <summary>
 /// What a launcher flies: the type of the missile it fires and its group, what the client calls it, the radius, mass and agility of its ball, the hit points it has while it flies (what a smartbomb
 /// or a point defense has to do to shoot it down), its speed (metres a second), how long it flies before it explodes (milliseconds) and the numbers that decide how much of its damage a target
@@ -356,8 +366,48 @@ public abstract record SimAction
     public sealed record Charged(SimAction Action, SimAction? Fallback, int ChargeTypeId, int ChargeFlag, int ChargePerCycle, long Charges) : SimAction;
 
 
-    /// <summary>Engages or disengages the ship's active cloaking device.</summary>
-    public sealed record Cloak : SimAction;
+    /// <summary>
+    /// Engages the ship's active cloaking device (tag 5). A cloak that is not warp-safe (<paramref name="WarpSafe"/> false, a standard cloaking device) holds the
+    /// ship out of warp while it runs; a warp-safe (covert ops) cloak carries it into warp.
+    /// </summary>
+    public sealed record Cloak(bool WarpSafe) : SimAction;
+
+    /// <summary>
+    /// A warp disruption field generator's bubble (tag 16): while the effect runs the ship is a warp-disruption source of <paramref name="RangeMeters"/> around itself,
+    /// and a ship within it cannot start a warp (<c>WARP_DISRUPTED_BY_BUBBLE</c>).
+    /// </summary>
+    public sealed record WarpBubble(double RangeMeters) : SimAction;
+
+    /// <summary>The ship is immune to warp bubbles while the effect runs (tag 17): an interdiction nullifier (attribute 1538).</summary>
+    public sealed record WarpImmunity : SimAction;
+
+    /// <summary>The ship's warp scramble status changes by <paramref name="Delta"/> while the effect runs (tag 18): a warp core stabilizer's -2 (attribute 104).</summary>
+    public sealed record ScrambleStatus(double Delta) : SimAction;
+
+    /// <summary>
+    /// An interdiction probe (tag 19): as each cycle starts a probe (<paramref name="Ball"/>) is put in space at the ship. It is a warp-disruption source of
+    /// <paramref name="RangeMeters"/> for <paramref name="LifetimeMs"/>, then it is gone. The simulation keeps the lifetime (a restart drops it).
+    /// </summary>
+    public sealed record WarpProbe(SimDeployable Ball, double RangeMeters, double LifetimeMs) : SimAction;
+
+    /// <summary>
+    /// A stasis webification burst (tag 21, the Stasis Webification Probe): as each cycle starts, every ship within <paramref name="RangeMeters"/> of the ship that runs it
+    /// is webbed by <paramref name="SpeedFactorPercent"/> percent (a negative number slows it) for <paramref name="DurationMs"/>. The probe is spent by its charge.
+    /// </summary>
+    public sealed record StasisBurst(double RangeMeters, double DurationMs, double SpeedFactorPercent) : SimAction;
+
+    /// <summary>
+    /// A defender launcher's cycle (tag 22, the Defender Launcher I): as the cycle starts its defender missile (<paramref name="Missile"/>, the charge's flight) goes for
+    /// the nearest hostile missile in its reach and shoots it down, or hurts it by <paramref name="Damage"/> (em, thermal, kinetic, explosive) when it does not destroy it.
+    /// Target-less.
+    /// </summary>
+    public sealed record Defender(SimMissile Missile, IReadOnlyList<double> Damage) : SimAction;
+
+    /// <summary>
+    /// A bomb (tag 20): as each cycle starts it is released at the ship; <paramref name="LifetimeMs"/> later it detonates where it is. The ships within
+    /// <paramref name="BlastRadius"/> take its effect by its <paramref name="Kind"/>: the four damages, or the four ECM strengths, or the capacitor it neutralises.
+    /// </summary>
+    public sealed record Bomb(SimDeployable Ball, SimBombKind Kind, double LifetimeMs, double BlastRadius, IReadOnlyList<double> Damage, IReadOnlyList<double> Ecm, double Neutralize) : SimAction;
 
     /// <summary>Spools once, then shifts the ship along its heading; cooldown begins when the spool succeeds or is interrupted.</summary>
     public sealed record MicroJumpDrive(double DistanceMeters, long CooldownMs) : SimAction;
@@ -408,7 +458,7 @@ public abstract record SimAction
     }
 
     /// <summary>
-    /// A kamikaze squadron's detonation (tag 16, protocol 34): the squadron closes in on its locked target to <paramref name="RangeMeters"/> and, once there, the
+    /// A kamikaze squadron's detonation (tag 23, protocol 35): the squadron closes in on its locked target to <paramref name="RangeMeters"/> and, once there, the
     /// target takes <paramref name="Damage"/> (the four kinds) and the squadron is destroyed.
     /// </summary>
     public sealed record Kamikaze(IReadOnlyList<double> Damage, double RangeMeters) : SimAction
@@ -421,7 +471,7 @@ public abstract record SimAction
     }
 
     /// <summary>
-    /// A fighter's missiles (tag 17, protocol 34): the locked target takes <paramref name="Damage"/> once, scaled by the application factor of the explosion
+    /// A fighter's missiles (tag 24, protocol 35): the locked target takes <paramref name="Damage"/> once, scaled by the application factor of the explosion
     /// (<paramref name="ExplosionRadius"/>, <paramref name="ExplosionVelocity"/>, the reduction factor and its sensitivity) for the target's signature and
     /// speed, when it is within <paramref name="ReachMeters"/>.
     /// </summary>

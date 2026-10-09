@@ -72,6 +72,9 @@ public class SimCodecTests
             a["sweepEnd"] is JsonArray sweepEnd ? sweepEnd.Select(x => (double)x!).ToArray() : null);
     }
 
+    private static SimDeployable DeployableOf(JsonNode d) =>
+        new((int)d["chargeTypeId"]!, (int)d["groupId"]!, (string)d["name"]!, (double)d["radius"]!);
+
     private static SimAction ActionOf(JsonNode a)
     {
         if ((string)a["kind"]! == "mining")
@@ -114,6 +117,42 @@ public class SimCodecTests
         {
             var fallback = a["fallback"] is { } f ? ActionOf(f) : null;
             return new SimAction.Charged(ActionOf(a["action"]!), fallback, (int)a["chargeTypeId"]!, (int)a["chargeFlag"]!, (int)a["chargePerCycle"]!, (long)a["charges"]!);
+        }
+        if ((string)a["kind"]! == "cloak")
+        {
+            return new SimAction.Cloak(a["warpSafe"] is { } warpSafe && (bool)warpSafe);
+        }
+        if ((string)a["kind"]! == "warpBubble")
+        {
+            return new SimAction.WarpBubble((double)a["range"]!);
+        }
+        if ((string)a["kind"]! == "warpImmunity")
+        {
+            return new SimAction.WarpImmunity();
+        }
+        if ((string)a["kind"]! == "scrambleStatus")
+        {
+            return new SimAction.ScrambleStatus((double)a["delta"]!);
+        }
+        if ((string)a["kind"]! == "defender")
+        {
+            var m = a["missile"]!;
+            var missile = new SimMissile((int)m["chargeTypeId"]!, (int)m["groupId"]!, (string)m["name"]!, (double)m["radius"]!, (double)m["mass"]!, (double)m["agility"]!,
+                (double)m["hitPoints"]!, (double)m["maxVelocity"]!, (double)m["flightTimeMs"]!, (double)m["explosionRadius"]!, (double)m["explosionVelocity"]!,
+                (double)m["damageReductionFactor"]!, (double)m["damageReductionSensitivity"]!);
+            return new SimAction.Defender(missile, Four(a["damage"]!));
+        }
+        if ((string)a["kind"]! == "stasisBurst")
+        {
+            return new SimAction.StasisBurst((double)a["range"]!, (double)a["durationMs"]!, (double)a["speedFactor"]!);
+        }
+        if ((string)a["kind"]! == "warpProbe")
+        {
+            return new SimAction.WarpProbe(DeployableOf(a["ball"]!), (double)a["range"]!, (double)a["lifetimeMs"]!);
+        }
+        if ((string)a["kind"]! == "bomb")
+        {
+            return new SimAction.Bomb(DeployableOf(a["ball"]!), (SimBombKind)(int)a["bombKind"]!, (double)a["lifetimeMs"]!, (double)a["blastRadius"]!, Four(a["damage"]!), Four(a["ecm"]!), (double)a["neutralize"]!);
         }
         if ((string)a["kind"]! == "ecmBurst")
         {

@@ -61,7 +61,8 @@ impl Scene {
         if pilot.warp_blocked_until > now {
             return refused("WARP_BLOCKED");
         }
-        if pilot.incoming.scrambled() {
+        // a warp core stabilizer takes its scramble status off the ship's own (`Action::ScrambleStatus`): a point it cancels is not a scramble
+        if pilot.incoming.scrambled_with(self.scramble_status(session)) {
             return refused("WARP_SCRAMBLED");
         }
         // a running module of the ship that scrambles it (warpScrambleStatus 104: a siege, a triage, a sensor array) holds it in place
@@ -82,6 +83,14 @@ impl Scene {
         .sqrt();
         if total < warp::MINIMUM_WARP_DISTANCE {
             return refused("WARP_DISTANCE_TOO_CLOSE");
+        }
+        // the reference's order: a bubble holds the ship unless it is immune to bubbles (the bubble is tested where the ship is), then a cloak that is not
+        // warp-safe (a standard cloaking device) holds it until it decloaks
+        if !self.warp_immune(session) && self.warp_disrupted_at(ship.position, now) {
+            return refused("WARP_DISRUPTED_BY_BUBBLE");
+        }
+        if self.cloak_blocks_warp(session) {
+            return refused("WARP_BLOCKED_BY_CLOAK");
         }
 
         let profile = warp::Profile::new(total, ship.spec.warp_speed_au, ship.spec.max_velocity);
@@ -119,6 +128,36 @@ impl Scene {
         let mut out = self.tell_split(session, own, watchers);
         out.push(Out::Accepted { session, command: code, at: now });
         out
+    }
+
+    /// Whether the ship of `session` is immune to warp bubbles: an interdiction nullifier runs (`Action::WarpImmunity`).
+    pub(crate) fn warp_immune(&self, session: SessionId) -> bool {
+        self.running_actions(session).any(|action| matches!(action, crate::modules::Action::WarpImmunity))
+    }
+
+    /// The change the running modules of `session` make to its warp scramble status (a warp core stabilizer's -2): what the scrambles on the ship add to.
+    pub(crate) fn scramble_status(&self, session: SessionId) -> f64 {
+        self.running_actions(session)
+            .map(|action| match action {
+                crate::modules::Action::ScrambleStatus { delta } => *delta,
+                _ => 0.0,
+            })
+            .sum()
+    }
+
+    /// Whether a cloaking device that is not warp-safe runs on the ship of `session`: such a cloak holds the ship out of warp until it decloaks.
+    pub(crate) fn cloak_blocks_warp(&self, session: SessionId) -> bool {
+        self.running_actions(session)
+            .any(|action| matches!(action, crate::modules::Action::Cloak { warp_safe: false }))
+    }
+
+    /// The actions of the effects that run on the ship of `session` (a state of the ship while they run, not a cycle).
+    fn running_actions(&self, session: SessionId) -> impl Iterator<Item = &crate::modules::Action> + '_ {
+        self.pilots
+            .get(&session)
+            .into_iter()
+            .flat_map(|pilot| pilot.modules.running.iter())
+            .filter_map(|run| run.effect.action.as_ref())
     }
 
     pub(super) fn warp_target_point(

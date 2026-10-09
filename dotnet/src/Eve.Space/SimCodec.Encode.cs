@@ -123,6 +123,25 @@ public static partial class SimCodec
         }
     }
 
+    /// <summary>What a launcher flies (a turret's missile, a defender's): the charge's type and group and name, the ball's radius, mass and agility, the hit points, the speed,
+    /// the flight time, and the explosion's radius, velocity, damage reduction factor and sensitivity (<c>SimCodec.Decode</c> reads them in this order).</summary>
+    private static void WriteMissile(Writer w, SimMissile missile)
+    {
+        w.I32(missile.ChargeTypeId);
+        w.I32(missile.GroupId);
+        w.Text(missile.Name);
+        w.F64(missile.Radius);
+        w.F64(missile.Mass);
+        w.F64(missile.Agility);
+        w.F64(missile.HitPoints);
+        w.F64(missile.MaxVelocity);
+        w.F64(missile.FlightTimeMs);
+        w.F64(missile.ExplosionRadius);
+        w.F64(missile.ExplosionVelocity);
+        w.F64(missile.DamageReductionFactor);
+        w.F64(missile.DamageReductionSensitivity);
+    }
+
     private static void WriteTurret(Writer w, SimTurret t)
     {
         w.I32(t.WeaponTypeId);
@@ -147,19 +166,7 @@ public static partial class SimCodec
         if (t.Missile is { } missile)
         {
             w.U8(1);
-            w.I32(missile.ChargeTypeId);
-            w.I32(missile.GroupId);
-            w.Text(missile.Name);
-            w.F64(missile.Radius);
-            w.F64(missile.Mass);
-            w.F64(missile.Agility);
-            w.F64(missile.HitPoints);
-            w.F64(missile.MaxVelocity);
-            w.F64(missile.FlightTimeMs);
-            w.F64(missile.ExplosionRadius);
-            w.F64(missile.ExplosionVelocity);
-            w.F64(missile.DamageReductionFactor);
-            w.F64(missile.DamageReductionSensitivity);
+            WriteMissile(w, missile);
         }
         else
         {
@@ -199,6 +206,16 @@ public static partial class SimCodec
         }
     }
 
+/// <summary>A deployable's charge: its type, its group, its name and the radius of its ball (a positive number).</summary>
+private static void WriteDeployable(Writer w, SimDeployable ball, string parameter)
+{
+    if (!(double.IsFinite(ball.Radius) && ball.Radius > 0))
+    {
+        throw new ArgumentException("a deployable's ball has a positive radius", parameter);
+    }
+    w.I32(ball.ChargeTypeId); w.I32(ball.GroupId); w.Text(ball.Name); w.F64(ball.Radius);
+}
+
 private static void WriteAction(Writer w, SimAction action)
     {
         switch (action)
@@ -215,8 +232,58 @@ private static void WriteAction(Writer w, SimAction action)
                 w.U8(charged.Fallback is null ? (byte)0 : (byte)1);
                 if (charged.Fallback is { } fallback) WriteAction(w, fallback);
                 break;
-            case SimAction.Cloak:
-                w.U8(5);
+            case SimAction.Cloak cloak:
+                w.U8(5); w.U8(cloak.WarpSafe ? (byte)1 : (byte)0);
+                break;
+            case SimAction.WarpBubble bubble:
+                if (!(double.IsFinite(bubble.RangeMeters) && bubble.RangeMeters > 0))
+                {
+                    throw new ArgumentException("a warp bubble has a positive range", nameof(action));
+                }
+                w.U8(16); w.F64(bubble.RangeMeters);
+                break;
+            case SimAction.WarpImmunity:
+                w.U8(17);
+                break;
+            case SimAction.Defender defender:
+                if (defender.Damage.Count != 4 || !defender.Damage.All(d => double.IsFinite(d) && d >= 0))
+                {
+                    throw new ArgumentException("a defender hurts with four damages, finite and not negative", nameof(action));
+                }
+                w.U8(22); WriteMissile(w, defender.Missile);
+                foreach (var number in defender.Damage) w.F64(number);
+                break;
+            case SimAction.StasisBurst stasis:
+                if (!(double.IsFinite(stasis.RangeMeters) && stasis.RangeMeters > 0 && double.IsFinite(stasis.DurationMs) && stasis.DurationMs > 0 && double.IsFinite(stasis.SpeedFactorPercent)))
+                {
+                    throw new ArgumentException("a stasis burst has a positive range and duration and a finite speed factor", nameof(action));
+                }
+                w.U8(21); w.F64(stasis.RangeMeters); w.F64(stasis.DurationMs); w.F64(stasis.SpeedFactorPercent);
+                break;
+            case SimAction.ScrambleStatus status:
+                if (!double.IsFinite(status.Delta))
+                {
+                    throw new ArgumentException("a scramble status change is a finite number", nameof(action));
+                }
+                w.U8(18); w.F64(status.Delta);
+                break;
+            case SimAction.WarpProbe probe:
+                if (!(double.IsFinite(probe.RangeMeters) && probe.RangeMeters > 0 && double.IsFinite(probe.LifetimeMs) && probe.LifetimeMs > 0))
+                {
+                    throw new ArgumentException("a warp probe has a positive range and lifetime", nameof(action));
+                }
+                w.U8(19); WriteDeployable(w, probe.Ball, nameof(action)); w.F64(probe.RangeMeters); w.F64(probe.LifetimeMs);
+                break;
+            case SimAction.Bomb bomb:
+                if (bomb.Damage.Count != 4 || bomb.Ecm.Count != 4 || !(double.IsFinite(bomb.LifetimeMs) && bomb.LifetimeMs > 0 && double.IsFinite(bomb.BlastRadius) && bomb.BlastRadius > 0)
+                    || bomb.Damage.Concat(bomb.Ecm).Append(bomb.Neutralize).Any(n => !double.IsFinite(n) || n < 0))
+                {
+                    throw new ArgumentException("a bomb has four damages and four ECM strengths, finite and not negative, and a positive lifetime and blast radius", nameof(action));
+                }
+                w.U8(20); WriteDeployable(w, bomb.Ball, nameof(action)); w.U8((byte)bomb.Kind); w.F64(bomb.LifetimeMs); w.F64(bomb.BlastRadius);
+                foreach (var number in bomb.Damage) w.F64(number);
+                foreach (var number in bomb.Ecm) w.F64(number);
+                w.F64(bomb.Neutralize);
                 break;
             case SimAction.MicroJumpDrive jump:
                 w.U8(6); w.F64(jump.DistanceMeters); w.I64(jump.CooldownMs);
@@ -265,7 +332,7 @@ private static void WriteAction(Writer w, SimAction action)
                 {
                     throw new ArgumentException("a kamikaze has finite, non-negative damage and range", nameof(action));
                 }
-                w.U8(16);
+                w.U8(23);
                 foreach (var number in kamikaze.Damage) w.F64(number);
                 w.F64(kamikaze.RangeMeters);
                 break;
@@ -274,7 +341,7 @@ private static void WriteAction(Writer w, SimAction action)
                 {
                     throw new ArgumentException("a fighter missile has finite, non-negative damage and explosion", nameof(action));
                 }
-                w.U8(17);
+                w.U8(24);
                 foreach (var number in missile.Damage) w.F64(number);
                 w.F64(missile.ReachMeters); w.F64(missile.ExplosionRadius); w.F64(missile.ExplosionVelocity);
                 w.F64(missile.ReductionFactor); w.F64(missile.ReductionSensitivity);

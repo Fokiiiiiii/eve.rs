@@ -41,3 +41,12 @@ deadline is a row, it survives a restart. The sim also has its own timer-like ex
 - Probes stay simulation-only (bombs brief D11): an interdiction probe's lifetime is its SDE `explosionDelay`, checked in the simulation tick. Nothing is persisted, so a restart drops it (a stated LIMITATION). It is not a `Deployed` row, because the sweep runs every 30 s and would make a 120 s probe up to 25 % late.
 - Mobile warp disruptors are not deployable yet (D6): no SDE lifetime exists, and the EveJS table is unverified. When they are, they are `Deployed` rows and the expiry job stays `space.containers.sweep`; anchoring is a separate job, `space.deployed.anchor`, which is not an expiry job.
 - Nothing is written to the sweep for the field generator: its bubble is refused (`EFFECT_NOT_IMPLEMENTED`) until its ship penalties have a source (D5).
+
+## Addendum (2026-10-09, the bombs and bubbles track: deployables in the simulation)
+
+- The interdiction probe and the bomb are deployables of the simulation (`crates/eve-space/src/deployable.rs`): a free ball each, kept apart from the ships, with an end
+  time on the simulation's clock (the SDE's explosion delay). They are not `Deployed` rows, for the reason of the first addendum: the 30 s sweep would end a 120 s probe late.
+  A restart drops them (a stated limitation). The end is the simulation's own; the sweep is not involved.
+- The warp bubble of a field generator is not a deployable: it is the ship's own source while its effect runs (`SimAction.WarpBubble`), and it ends with the effect.
+- Mobile warp disruptors are still not deployable: their anchoring and expiry are the deployable store and the durable jobs of this record, not started.
+

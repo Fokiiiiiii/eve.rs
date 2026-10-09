@@ -44,3 +44,11 @@ The bombs spec is not in the repository, so the bomb-specific parts (blast, dela
 
 - The first area action is `Strike` (`SimAction` tag 13, ADR 0013 epoch 25), for the Bosonic Field Generator's cone. It carries the shape (1 cylinder, 3 cone), the aim, the length and the radius, the pulse cadence and damage, and the windows. It is not the general `Area` of this ADR: it has no recipient list (the host does not send one; the simulation tests every ship in the scene), and no tag per family. A second family that uses a radius takes the same action, and the general `Area` type with the recipient lists (decisions D1 and D3) is still to be built.
 - The smartbomb and the strike share the damage path (`Scene::damage_ship`).
+
+## Addendum (2026-10-09, the bombs and bubbles track: the Area of the bombs, decided)
+
+- The bombs' blast is the `Area` of this record, decided by the track rather than waiting for a spec: a centre (the bomb's place when it detonates), a radius (the charge's `aoeCloudSize`, measured as the surface distance of each ship), and a filter (every ship but the launcher's own, which a smartbomb also spares). It has no cadence: a bomb goes off once.
+- The simulation computes the recipients itself (`crates/eve-space/src/deployable.rs`, `ships_in_area`). Decision 5 asks the host for lists because fleet and hostile filters are the host's; the bombs and the stasis burst have no such filter, and the positions at detonation are the simulation's state, so no list is sent. A fleet or hostile filter, when a spec needs one, comes as a host list in a wire batch.
+- Used by: the bomb (`SimAction.Bomb`, protocol 34; its kinds are damage, ECM and neutralisation), and the stasis burst (`SimAction.StasisBurst`, the web of a charge's doomsday area, centred on the launcher's ship). Not used by the field generator (a bubble is the ship's own source, `SimAction.WarpBubble`) nor the probe (a point source, `WarpProbe`).
+- The defender is not an area: its interception is a single missile (`Scene::defender_intercept`).
+

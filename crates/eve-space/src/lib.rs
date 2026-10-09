@@ -8,6 +8,7 @@
 pub mod brains;
 pub mod crowd;
 pub mod death;
+pub mod deployable;
 pub mod destruction;
 pub mod drones;
 pub mod ewar;

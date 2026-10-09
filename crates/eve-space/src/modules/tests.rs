@@ -3325,7 +3325,7 @@ fn a_module_that_its_own_effect_burns_out_does_not_start_again() {
     );
 }
 
-// ---- scanners (protocol 39): a cargo or ship scan is a work cycle the host settles; the simulation keeps the lock and the reach ----
+// ---- scanners (protocol 40): a cargo or ship scan is a work cycle the host settles; the simulation keeps the lock and the reach ----
 
 /// A scanner of `cargo` or ship kind, one cycle, locked on the partner ship: its reach is `optimal` metres, then `falloff` metres of falloff.
 fn scanner(cargo: bool, optimal: f64, falloff: f64) -> Effect {

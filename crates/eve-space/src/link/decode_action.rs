@@ -274,7 +274,7 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             Ok(Action::Missile { damage, reach, blast })
         }
         26 => {
-            // a scanner (protocol 39): 0 cargo, 1 ship; the scan's optimal range and its falloff (none for a cargo scan), in metres
+            // a scanner (protocol 40): 0 cargo, 1 ship; the scan's optimal range and its falloff (none for a cargo scan), in metres
             let cargo = match reader.u8()? {
                 0 => true,
                 1 => false,

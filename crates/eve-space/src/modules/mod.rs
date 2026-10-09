@@ -416,7 +416,7 @@ pub enum Action {
     Salvage {
         access_bonus: f64,
     },
-    /// A scanner's cycle (tag 26, protocol 39): at the cycle's end the host reveals the locked ship's cargo (`cargo`, a Cargo Scanner) or its fitted hardware
+    /// A scanner's cycle (tag 26, protocol 40): at the cycle's end the host reveals the locked ship's cargo (`cargo`, a Cargo Scanner) or its fitted hardware
     /// (a Ship Scanner) to the pilot. `reach` is the scan's range: whole to its optimal, then the standard falloff, out of reach past it (a cargo scan has no
     /// falloff, a hard cutoff). A work cycle (ADR 0013): the host decides the rows, the simulation the lock and the range.
     Scan {

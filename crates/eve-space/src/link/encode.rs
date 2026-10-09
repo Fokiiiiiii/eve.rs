@@ -341,6 +341,19 @@ pub(super) fn write_strike(out: &mut Vec<u8>, strike: &Strike) {
             out.extend_from_slice(&[0u8; 24]);
         }
     }
+    // the beacon: a flag, then its offset from the firing ship (zeros without a beacon)
+    match strike.beacon {
+        Some(offset) => {
+            out.push(1);
+            for component in offset {
+                out.extend_from_slice(&component.to_le_bytes());
+            }
+        }
+        None => {
+            out.push(0);
+            out.extend_from_slice(&[0u8; 24]);
+        }
+    }
 }
 
 /// A list of ship ids: a count, then each id (as the protocol's i64).

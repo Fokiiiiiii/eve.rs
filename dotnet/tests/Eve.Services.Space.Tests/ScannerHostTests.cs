@@ -5,7 +5,7 @@ using Eve.Space;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The scanners' settle (protocol 39, ADR 0013): a Cargo Scanner's cycle reveals the locked ship's hold, a Ship Scanner's its fitted hardware, to the pilot who ran it,
+/// The scanners' settle (protocol 40, ADR 0013): a Cargo Scanner's cycle reveals the locked ship's hold, a Ship Scanner's its fitted hardware, to the pilot who ran it,
 /// once, and the target is told nothing. The simulation's answer is the lock and the reach; these tests drive the host's side through the work-cycle dispatcher.
 /// </summary>
 public class ScannerHostTests

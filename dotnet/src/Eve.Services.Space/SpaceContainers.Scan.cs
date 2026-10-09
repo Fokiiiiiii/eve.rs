@@ -8,7 +8,7 @@ using Eve.Space;
 namespace Eve.Services.Space;
 
 /// <summary>
-/// The scanners' work cycles (protocol 39): a Cargo Scanner's cycle reveals the locked ship's hold, a Ship Scanner's its fitted hardware, to the pilot who ran it. The
+/// The scanners' work cycles (protocol 40): a Cargo Scanner's cycle reveals the locked ship's hold, a Ship Scanner's its fitted hardware, to the pilot who ran it. The
 /// simulation has decided the lock and the reach (a cycle that ends out of reach never reaches here); the host decides the rows and the notification, through the same
 /// dispatcher as the mining and salvage cycles (ADR 0013). The reveal is announced to the pilot only, and the target is told nothing.
 /// </summary>

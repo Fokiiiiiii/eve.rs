@@ -343,10 +343,10 @@ public static class SimModuleWorkCommands
     /// <summary>The fuel of the next cycle: the host takes the module's consumption quantity of its consumption type from the ship, or refuses (<c>NO_FUEL</c>).</summary>
     public const byte ConsumeFuel = 9;
 
-    /// <summary>A Cargo Scanner's cycle ended with its target in reach: the host reveals the target's hold (protocol 39). It carries no mining numbers.</summary>
+    /// <summary>A Cargo Scanner's cycle ended with its target in reach: the host reveals the target's hold (protocol 40). It carries no mining numbers.</summary>
     public const byte ScanCargo = 10;
 
-    /// <summary>A Ship Scanner's cycle ended with its target in reach: the host reveals the target's fitted hardware (protocol 39). It carries no mining numbers.</summary>
+    /// <summary>A Ship Scanner's cycle ended with its target in reach: the host reveals the target's fitted hardware (protocol 40). It carries no mining numbers.</summary>
     public const byte ScanShip = 11;
 }
 
@@ -455,7 +455,7 @@ public abstract record SimAction
     public sealed record Salvage(double AccessBonusPercent) : SimAction;
 
     /// <summary>
-    /// A scanner's cycle (tag 26, protocol 39): a cargo scan (<see cref="SimScanKinds.Cargo"/>) or a ship scan (<see cref="SimScanKinds.Ship"/>) of the locked ship.
+    /// A scanner's cycle (tag 26, protocol 40): a cargo scan (<see cref="SimScanKinds.Cargo"/>) or a ship scan (<see cref="SimScanKinds.Ship"/>) of the locked ship.
     /// The reach is <paramref name="OptimalMeters"/> whole, then <paramref name="FalloffMeters"/> of falloff (0 for a hard cutoff, as a cargo scan has). The
     /// simulation parks the module at the cycle's end and the host settles the reveal (<see cref="SimModuleWorkCommands.ScanCargo"/> or <c>ScanShip</c>).
     /// </summary>
@@ -558,7 +558,8 @@ public abstract record SimAction
         double NeutRadius,
         double NeutSignatureRadius,
         double DebuffMs = 0,
-        IReadOnlyList<double>? SweepEnd = null) : SimAction
+        IReadOnlyList<double>? SweepEnd = null,
+        IReadOnlyList<double>? Beacon = null) : SimAction
     {
         /// <summary>Whether the numbers are ones the simulation runs (the same checks the simulation makes on decode).</summary>
         public bool IsValid =>
@@ -577,6 +578,7 @@ public abstract record SimAction
             && double.IsFinite(ImmobileMs) && ImmobileMs >= 0
             && double.IsFinite(DebuffMs) && DebuffMs >= 0
             && (SweepEnd is null || (SweepEnd.Count == 3 && SweepEnd.All(double.IsFinite) && SweepEnd.Any(c => c != 0)))
+            && (Beacon is null || (Beacon.Count == 3 && Beacon.All(double.IsFinite)))
             && double.IsFinite(NoJumpMs) && NoJumpMs >= 0
             && double.IsFinite(NeutAmount) && NeutAmount >= 0
             && double.IsFinite(NeutRadius) && NeutRadius >= 0

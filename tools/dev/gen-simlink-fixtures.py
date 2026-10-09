@@ -146,7 +146,7 @@ def action(a):
         return bytes([7, FAMILIES[a["family"]]]) + struct.pack("<5d", a["miningAmountM3"], a["wasteMultiplier"], a["wasteProbability"], a["critProbability"], a["critMultiplier"])
     if kind == "salvage":
         return bytes([8]) + struct.pack("<d", a["accessBonus"])
-    # the SimAction tag 26 (protocol 39): a scanner's cycle, a cargo (0) or ship (1) scan, and its optimal range and falloff (metres; no falloff for a cargo scan)
+    # the SimAction tag 26 (protocol 40): a scanner's cycle, a cargo (0) or ship (1) scan, and its optimal range and falloff (metres; no falloff for a cargo scan)
     if kind == "scan":
         return bytes([26, 0 if a["cargo"] else 1]) + struct.pack("<2d", a["optimalMeters"], a["falloffMeters"])
     # the SimAction tag 9 (protocol 30): the beam's speed, the hold distance, and the module's reach (the range a target is out of reach past)
@@ -163,7 +163,9 @@ def action(a):
                 + struct.pack("<6d", a["signatureRadius"], a["immobileMs"], a["noJumpMs"], a["neutAmount"], a["neutRadius"], a["neutSignatureRadius"])
                 # protocol 28: the disruption a pulse leaves (ms), then a sweep: a flag and the end of the axis (zeros without a sweep)
                 + struct.pack("<d", a.get("debuffMs", 0.0))
-                + bytes([1 if a.get("sweepEnd") else 0]) + struct.pack("<3d", *(a.get("sweepEnd") or [0.0, 0.0, 0.0])))
+                + bytes([1 if a.get("sweepEnd") else 0]) + struct.pack("<3d", *(a.get("sweepEnd") or [0.0, 0.0, 0.0]))
+                # protocol 39: a lance's beacon, a flag then its offset from the firing ship (zeros without a beacon)
+                + bytes([1 if a.get("beacon") else 0]) + struct.pack("<3d", *(a.get("beacon") or [0.0, 0.0, 0.0])))
     # the SimAction tag 14 (ADR 0013 epoch 26): a titan doomsday, one hit on the locked target after a delay, the ship held for its windows
     if kind == "doomsday":
         return bytes([14]) + struct.pack("<d", a["delayMs"]) + struct.pack("<4d", *a["damage"]) + struct.pack("<2d", a["immobileMs"], a["noJumpMs"])
@@ -435,8 +437,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 39},
-    {"name": "hello ack", "kind": "HelloAck", "version": 39, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 40},
+    {"name": "hello ack", "kind": "HelloAck", "version": 40, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -919,7 +921,7 @@ valid = [
      "effect": {"moduleId": "9988400002813", "moduleType": 24348, "effectId": 9, "fx": "effects.TractorBeam",
                 "durationMs": 5000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "1000000000002",
                 "action": {"kind": "tractor", "velocity": 500.0, "hold": 500.0, "range": 20000.0}, "onChanges": [], "offChanges": []}},
-    # the SimAction tag 26 (protocol 39): a Cargo Scanner I (50 km, a hard cutoff) and a Ship Scanner I (50 km, 30 km of falloff), each locked on a ship
+    # the SimAction tag 26 (protocol 40): a Cargo Scanner I (50 km, a hard cutoff) and a Ship Scanner I (50 km, 30 km of falloff), each locked on a ship
     {"name": "activate a cargo scanner (Cargo Scanner I: 50 km, no falloff)", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 442, "effectId": 47, "fx": "effects.CargoScan",
                 "durationMs": 5000.0, "capacitorNeed": 4.0, "repeat": 1, "targetId": "1000000000002", "burnsFuel": False,
@@ -972,7 +974,7 @@ valid = [
                            "warningMs": 15000.0, "pulseMs": 1000.0, "pulses": 16, "damage": [0.0, 0.0, 0.0, 17000.0],
                            "signatureRadius": 20000.0, "immobileMs": 30000.0, "noJumpMs": 120000.0,
                            "neutAmount": 31000.0, "neutRadius": 10000.0, "neutSignatureRadius": 20000.0,
-                           "debuffMs": 60000.0},
+                           "debuffMs": 60000.0, "beacon": [4000.0, 0.0, 0.0]},
                 "onChanges": [], "offChanges": []}},
     {"name": "activate a titan doomsday (Judgment)", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002815", "moduleType": 24550, "effectId": 4489, "fx": "",

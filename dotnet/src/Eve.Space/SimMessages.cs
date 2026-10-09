@@ -591,6 +591,43 @@ public sealed record SimDroneResult(long DroneId, string Reason);
 /// <summary>What each drone did with an order.</summary>
 public sealed record SimDroneResults(ulong SessionId, byte Command, IReadOnlyList<SimDroneResult> Results) : SimMessage;
 
+/// <summary>
+/// A pilot's fighter squadron is launched beside its ship: the squadron's ship, the graphic of its type and its cruise fraction (no weapon, no work and no
+/// effect: a squadron is not a drone). Answered with <see cref="SimSpawnReply"/>.
+/// </summary>
+public sealed record SimLaunchFighter(ulong RequestId, ulong SessionId, SimShip Ship, int GraphicId, double CruiseFraction) : SimMessage;
+
+/// <summary>The codes of the orders to fighter squadrons (<see cref="SimFighterOrder"/>), as the simulation numbers them.</summary>
+public static class SimFighterOrders
+{
+    public const byte Orbit = 1;
+    public const byte Follow = 2;
+    public const byte Stop = 3;
+    public const byte Recall = 4;
+    public const byte Abandon = 5;
+
+    /// <summary>The key an order is answered under in <see cref="CommandReply"/>s: apart from the drones' (<see cref="SimDroneCommands.Key"/>).</summary>
+    public static byte Key(byte command) => (byte)(0xF0 + command);
+}
+
+/// <summary>
+/// A pilot gives its fighter squadrons (their item ids) an order: for an orbit the target and the distance, for a follow the target and the range (the
+/// <paramref name="Range"/> of either). The answer is <see cref="SimFighterResults"/>.
+/// </summary>
+public sealed record SimFighterOrder(ulong SessionId, byte Command, long TargetId, IReadOnlyList<long> FighterIds, double Range) : SimMessage;
+
+/// <summary>What one squadron did with an order: <paramref name="Reason"/> is empty when it took it.</summary>
+public sealed record SimFighterResult(long FighterId, string Reason);
+
+/// <summary>What each squadron did with an order.</summary>
+public sealed record SimFighterResults(ulong SessionId, byte Command, IReadOnlyList<SimFighterResult> Results) : SimMessage;
+
+/// <summary>A squadron came back after a recall and landed: the host moves its item into the tube it came from.</summary>
+public sealed record SimFighterLanded(ulong SessionId, long FighterId) : SimMessage;
+
+/// <summary>A squadron was let go (abandoned, or its controller left the scene) at <paramref name="Position"/>: the host decides what becomes of its item.</summary>
+public sealed record SimFighterReleased(ulong SessionId, long FighterId, IReadOnlyList<double> Position) : SimMessage;
+
 public readonly record struct SimDroneWorkProfile(
     double MiningAmountM3,
     double CycleTimeMs,

@@ -16,7 +16,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Arc, Aoe, Charge, Spool, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 30;
+pub const PROTOCOL_VERSION: u16 = 31;
 
 /// The message kinds.
 pub mod kind {
@@ -73,6 +73,11 @@ pub mod kind {
     pub const MODULE_OVERHEAT: u8 = 42;
     pub const MODULE_OFFLINE: u8 = 43;
     pub const RACK_OVERHEAT: u8 = 44;
+    pub const LAUNCH_FIGHTER: u8 = 54;
+    pub const FIGHTER_ORDER: u8 = 55;
+    pub const FIGHTER_RESULTS: u8 = 56;
+    pub const FIGHTER_LANDED: u8 = 57;
+    pub const FIGHTER_RELEASED: u8 = 58;
 }
 
 /// What the host changes in the rounds of a gun, in the order the simulation hears it (the host asks for it when a pilot loads or unloads a gun in space).
@@ -374,6 +379,40 @@ pub enum Message {
     DroneReleased {
         session_id: u64,
         drone_id: i64,
+        position: [f64; 3],
+    },
+    /// The host launches a fighter squadron beside the ship of a pilot, circling it at the launch distance (answered with `SpawnReply`).
+    LaunchFighter {
+        request_id: u64,
+        session_id: u64,
+        ship: ShipSpec,
+        graphic_id: i32,
+        cruise_fraction: f64,
+    },
+    /// A pilot gives its fighter squadrons an order: the command (`FighterOrder::code`), the target (orbit and follow), the range (the orbit distance or the follow
+    /// range, metres) and the squadrons (their item ids).
+    FighterOrder {
+        session_id: u64,
+        command: u8,
+        target_id: i64,
+        fighter_ids: Vec<i64>,
+        range: f64,
+    },
+    /// What each squadron did with the order: its item id and the reason it did not take it (empty when it did).
+    FighterResults {
+        session_id: u64,
+        command: u8,
+        results: Vec<(i64, String)>,
+    },
+    /// A squadron came back after a recall and landed: the host moves its item into the tube it came from.
+    FighterLanded {
+        session_id: u64,
+        fighter_id: i64,
+    },
+    /// A squadron was let go (abandoned, or its controller left the scene): the host decides what becomes of its item.
+    FighterReleased {
+        session_id: u64,
+        fighter_id: i64,
         position: [f64; 3],
     },
     DroneWorkCycle {
@@ -1832,6 +1871,11 @@ impl Message {
             Self::DroneResults { .. } => kind::DRONE_RESULTS,
             Self::DroneScooped { .. } => kind::DRONE_SCOOPED,
             Self::DroneReleased { .. } => kind::DRONE_RELEASED,
+            Self::LaunchFighter { .. } => kind::LAUNCH_FIGHTER,
+            Self::FighterOrder { .. } => kind::FIGHTER_ORDER,
+            Self::FighterResults { .. } => kind::FIGHTER_RESULTS,
+            Self::FighterLanded { .. } => kind::FIGHTER_LANDED,
+            Self::FighterReleased { .. } => kind::FIGHTER_RELEASED,
             Self::DroneWorkCycle { .. } => kind::DRONE_WORK_CYCLE,
             Self::Destroy { .. } => kind::DESTROY,
             Self::Respawn { .. } => kind::RESPAWN,
@@ -2253,6 +2297,41 @@ impl Message {
             Self::DroneReleased { session_id, drone_id, position } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&drone_id.to_le_bytes());
+                put_vector(&mut out, position);
+            }
+            Self::LaunchFighter { request_id, session_id, ship, graphic_id, cruise_fraction } => {
+                out.extend_from_slice(&request_id.to_le_bytes());
+                out.extend_from_slice(&session_id.to_le_bytes());
+                put_ship(&mut out, ship);
+                out.extend_from_slice(&graphic_id.to_le_bytes());
+                out.extend_from_slice(&cruise_fraction.to_le_bytes());
+            }
+            Self::FighterOrder { session_id, command, target_id, fighter_ids, range } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.push(*command);
+                out.extend_from_slice(&target_id.to_le_bytes());
+                out.extend_from_slice(&(fighter_ids.len() as u32).to_le_bytes());
+                for fighter in fighter_ids {
+                    out.extend_from_slice(&fighter.to_le_bytes());
+                }
+                out.extend_from_slice(&range.to_le_bytes());
+            }
+            Self::FighterResults { session_id, command, results } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.push(*command);
+                out.extend_from_slice(&(results.len() as u32).to_le_bytes());
+                for (fighter, reason) in results {
+                    out.extend_from_slice(&fighter.to_le_bytes());
+                    put_text(&mut out, reason);
+                }
+            }
+            Self::FighterLanded { session_id, fighter_id } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&fighter_id.to_le_bytes());
+            }
+            Self::FighterReleased { session_id, fighter_id, position } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&fighter_id.to_le_bytes());
                 put_vector(&mut out, position);
             }
             Self::DroneWorkCycle { session_id, character_id, ship_id, solar_system_id, drone_id, target_id, cycle_id, command, mining_amount_m3, waste_multiplier, waste_probability, access_difficulty_bonus, roll } => {
@@ -2699,6 +2778,39 @@ impl Message {
             kind::DRONE_RELEASED => Message::DroneReleased {
                 session_id: r.u64()?,
                 drone_id: r.i64()?,
+                position: read_vector(&mut r)?,
+            },
+            kind::LAUNCH_FIGHTER => Message::LaunchFighter {
+                request_id: r.u64()?,
+                session_id: r.u64()?,
+                ship: read_ship(&mut r)?,
+                graphic_id: r.i32()?,
+                cruise_fraction: r.f64()?,
+            },
+            kind::FIGHTER_ORDER => {
+                let (session_id, command, target_id) = (r.u64()?, r.u8()?, r.i64()?);
+                let count = r.u32()? as usize;
+                if count > r.data.len().saturating_sub(8) / 8 {
+                    return Err(DecodeError::Truncated);
+                }
+                let fighter_ids = (0..count).map(|_| r.i64()).collect::<Result<Vec<_>, _>>()?;
+                let range = r.f64()?;
+                Message::FighterOrder { session_id, command, target_id, fighter_ids, range }
+            }
+            kind::FIGHTER_RESULTS => {
+                let (session_id, command) = (r.u64()?, r.u8()?);
+                let count = r.u32()? as usize;
+                if count > r.data.len() / 12 {
+                    return Err(DecodeError::Truncated);
+                }
+                let results =
+                    (0..count).map(|_| Ok((r.i64()?, r.text()?))).collect::<Result<Vec<_>, DecodeError>>()?;
+                Message::FighterResults { session_id, command, results }
+            }
+            kind::FIGHTER_LANDED => Message::FighterLanded { session_id: r.u64()?, fighter_id: r.i64()? },
+            kind::FIGHTER_RELEASED => Message::FighterReleased {
+                session_id: r.u64()?,
+                fighter_id: r.i64()?,
                 position: read_vector(&mut r)?,
             },
             kind::DRONE_WORK_CYCLE => Message::DroneWorkCycle {

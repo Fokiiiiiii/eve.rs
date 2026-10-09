@@ -17,7 +17,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27,
          "PlaceContainer": 28, "ContainerPlaced": 29, "ChangeWreck": 30, "RemoveWreck": 31, "Measured": 32,
          "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35, "LaunchDrone": 36, "DroneCommand": 37, "DroneResults": 38,
-         "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53}
+         "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58}
 
 
 def s(text):  # u16 length + UTF-8
@@ -339,6 +339,20 @@ def build(m):
         return frame(k, u64(m["sessionId"]) + i64(m["droneId"]))
     if k == "DroneReleased":
         return frame(k, u64(m["sessionId"]) + i64(m["droneId"]) + struct.pack("<3d", *m["position"]))
+    if k == "LaunchFighter":
+        # the squadron's ship, the graphic of its type, and its cruise fraction (no weapon, no work, no effect: a squadron is not a drone)
+        return frame(k, u64(m["requestId"]) + u64(m["sessionId"]) + ship(m["ship"])
+                     + struct.pack("<id", m["graphicId"], m["cruiseFraction"]))
+    if k == "FighterOrder":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + i64(m["targetId"]) + struct.pack("<I", len(m["fighterIds"]))
+                     + b"".join(i64(f) for f in m["fighterIds"]) + struct.pack("<d", m["range"]))
+    if k == "FighterResults":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<I", len(m["results"]))
+                     + b"".join(i64(r["fighterId"]) + s(r["reason"]) for r in m["results"]))
+    if k == "FighterLanded":
+        return frame(k, u64(m["sessionId"]) + i64(m["fighterId"]))
+    if k == "FighterReleased":
+        return frame(k, u64(m["sessionId"]) + i64(m["fighterId"]) + struct.pack("<3d", *m["position"]))
     if k == "Destroy":
         return frame(k, i64(m["shipId"]) + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"]))
     raise ValueError(k)
@@ -362,8 +376,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 30},
-    {"name": "hello ack", "kind": "HelloAck", "version": 30, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 31},
+    {"name": "hello ack", "kind": "HelloAck", "version": 31, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -688,6 +702,16 @@ valid = [
      "results": [{"droneId": "9988400003716", "reason": ""}, {"droneId": "9988400003717", "reason": "NOT_CONTROLLED"}]},
     {"name": "a drone scooped into the bay", "kind": "DroneScooped", "sessionId": "1790646377000015", "droneId": "9988400003716"},
     {"name": "a drone let go", "kind": "DroneReleased", "sessionId": "1790646377000015", "droneId": "9988400003716",
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
+    {"name": "launch of a fighter squadron", "kind": "LaunchFighter", "requestId": "13", "sessionId": "1790646377000015",
+     "ship": dict(IBIS, shipId="9988400004100", typeId=23055, groupId=1652, name="Templar I", modules=[]),
+     "graphicId": 1200, "cruiseFraction": 0.5},
+    {"name": "a fighter order to orbit a ship", "kind": "FighterOrder", "sessionId": "1790646377000015", "command": 1,
+     "targetId": "980050000077", "fighterIds": ["9988400004100"], "range": 800.0},
+    {"name": "what the fighters did with an order", "kind": "FighterResults", "sessionId": "1790646377000015", "command": 4,
+     "results": [{"fighterId": "9988400004100", "reason": ""}, {"fighterId": "9988400004101", "reason": "NOT_CONTROLLED"}]},
+    {"name": "a fighter landed in its tube", "kind": "FighterLanded", "sessionId": "1790646377000015", "fighterId": "9988400004100"},
+    {"name": "a fighter let go", "kind": "FighterReleased", "sessionId": "1790646377000015", "fighterId": "9988400004100",
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
     {"name": "destroy for a pilot to loot", "kind": "Destroy", "shipId": "980050000077", "characterId": "140000001",
      "corporationId": "1000006", "allianceId": "0", "warFactionId": "500001"},

@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 30;
+    public const ushort ProtocolVersion = 31;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -89,6 +89,11 @@ public static class SimCodec
         public const byte ModuleWorkCycle = 51;
         public const byte ModuleWorkResult = 52;
         public const byte ModuleEnded = 53;
+        public const byte LaunchFighter = 54;
+        public const byte FighterOrder = 55;
+        public const byte FighterResults = 56;
+        public const byte FighterLanded = 57;
+        public const byte FighterReleased = 58;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)
@@ -924,6 +929,50 @@ public static class SimCodec
                 break;
             case Kind.DroneReleased:
                 message = new SimDroneReleased(r.U64(), r.I64(), ReadVector(ref r));
+                break;
+            case Kind.LaunchFighter:
+                message = new SimLaunchFighter(r.U64(), r.U64(), ReadShip(ref r), r.I32(), r.F64());
+                break;
+            case Kind.FighterOrder:
+                {
+                    var session = r.U64();
+                    var command = r.U8();
+                    var target = r.I64();
+                    var count = r.U32();
+                    if (r.Remaining < 8 || count > (r.Remaining - 8) / 8)
+                    {
+                        throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");
+                    }
+                    var fighters = new long[count];
+                    for (var i = 0; i < fighters.Length; i++)
+                    {
+                        fighters[i] = r.I64();
+                    }
+                    message = new SimFighterOrder(session, command, target, fighters, r.F64());
+                    break;
+                }
+            case Kind.FighterResults:
+                {
+                    var session = r.U64();
+                    var command = r.U8();
+                    var count = r.U32();
+                    if (count > r.Remaining / 10)
+                    {
+                        throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");
+                    }
+                    var results = new SimFighterResult[count];
+                    for (var i = 0; i < results.Length; i++)
+                    {
+                        results[i] = new SimFighterResult(r.I64(), r.Text());
+                    }
+                    message = new SimFighterResults(session, command, results);
+                    break;
+                }
+            case Kind.FighterLanded:
+                message = new SimFighterLanded(r.U64(), r.I64());
+                break;
+            case Kind.FighterReleased:
+                message = new SimFighterReleased(r.U64(), r.I64(), ReadVector(ref r));
                 break;
             case Kind.DroneWorkCycle:
                 message = new SimDroneWorkCycle(r.U64(), r.I64(), r.I64(), r.I32(), r.I64(), r.I64(), r.U64(), r.U8(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64());
@@ -2026,6 +2075,48 @@ private static void WriteAction(Writer w, SimAction action)
                 w.U8(Kind.DroneReleased);
                 w.U64(m.SessionId);
                 w.I64(m.DroneId);
+                WriteVector(w, m.Position);
+                break;
+            case SimLaunchFighter m:
+                w.U8(Kind.LaunchFighter);
+                w.U64(m.RequestId);
+                w.U64(m.SessionId);
+                WriteShip(w, m.Ship);
+                w.I32(m.GraphicId);
+                w.F64(m.CruiseFraction);
+                break;
+            case SimFighterOrder m:
+                w.U8(Kind.FighterOrder);
+                w.U64(m.SessionId);
+                w.U8(m.Command);
+                w.I64(m.TargetId);
+                w.U32((uint)m.FighterIds.Count);
+                foreach (var fighter in m.FighterIds)
+                {
+                    w.I64(fighter);
+                }
+                w.F64(m.Range);
+                break;
+            case SimFighterResults m:
+                w.U8(Kind.FighterResults);
+                w.U64(m.SessionId);
+                w.U8(m.Command);
+                w.U32((uint)m.Results.Count);
+                foreach (var result in m.Results)
+                {
+                    w.I64(result.FighterId);
+                    w.Text(result.Reason);
+                }
+                break;
+            case SimFighterLanded m:
+                w.U8(Kind.FighterLanded);
+                w.U64(m.SessionId);
+                w.I64(m.FighterId);
+                break;
+            case SimFighterReleased m:
+                w.U8(Kind.FighterReleased);
+                w.U64(m.SessionId);
+                w.I64(m.FighterId);
                 WriteVector(w, m.Position);
                 break;
             case SimSpawnReply m:

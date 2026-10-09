@@ -221,6 +221,17 @@ impl Sim {
                 drone_id,
                 position: [position.x, position.y, position.z],
             },
+            Out::FighterLanded { session, fighter_id } => Message::FighterLanded { session_id: session, fighter_id },
+            Out::FighterReleased { session, fighter_id, position } => Message::FighterReleased {
+                session_id: session,
+                fighter_id,
+                position: [position.x, position.y, position.z],
+            },
+            Out::FighterResults { session, command, results } => Message::FighterResults {
+                session_id: session,
+                command,
+                results: results.into_iter().map(|(fighter, reason)| (fighter, reason.unwrap_or("").to_string())).collect(),
+            },
             Out::DroneResults { session, command, results } => Message::DroneResults {
                 session_id: session,
                 command,
@@ -484,6 +495,40 @@ impl Sim {
             }
             Message::Spawn(spawn) => return Ok(self.spawn(*spawn, now)),
             Message::LaunchDrone(launch) => return Ok(self.launch_drone(*launch, now)),
+            Message::LaunchFighter { request_id, session_id, ship, graphic_id, cruise_fraction } => {
+                let reply = |outcome| Message::SpawnReply { request_id, outcome };
+                let Some(scene) = self.scene_of(session_id) else {
+                    return Ok(vec![reply(Err(format!("NO_SHIP {session_id}")))]);
+                };
+                return Ok(match scene.launch_fighter(session_id, ship, graphic_id, cruise_fraction, now) {
+                    Ok((session, told)) => {
+                        let mut messages = Self::messages(told);
+                        messages.push(reply(Ok(session)));
+                        messages
+                    }
+                    Err(reason) => vec![reply(Err(reason.to_string()))],
+                });
+            }
+            Message::FighterOrder { session_id, command, target_id, fighter_ids, range } => {
+                use crate::fighters::FighterOrder;
+                let order = match command {
+                    1 => FighterOrder::Orbit { target: target_id, distance: range },
+                    2 => FighterOrder::Follow { target: target_id, range },
+                    3 => FighterOrder::Stop,
+                    4 => FighterOrder::Recall,
+                    5 => FighterOrder::Abandon,
+                    other => return Err(ProtocolError(format!("unknown fighter order {other}"))),
+                };
+                // no ship in space: nothing is under this pilot's control, and each squadron is told so
+                let Some(scene) = self.scene_of(session_id) else {
+                    return Ok(vec![Message::FighterResults {
+                        session_id,
+                        command,
+                        results: fighter_ids.into_iter().map(|id| (id, "NOT_CONTROLLED".to_string())).collect(),
+                    }]);
+                };
+                return Ok(Self::messages(scene.fighter_order(session_id, &fighter_ids, order, now)));
+            }
             Message::DroneCommand { session_id, command, target_id, drone_ids, control_range } => {
                 let command = match command {
                     1 => DroneCommand::Engage { target: target_id },

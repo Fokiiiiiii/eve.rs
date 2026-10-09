@@ -10,6 +10,7 @@ pub mod crowd;
 pub mod death;
 pub mod destruction;
 pub mod drones;
+pub mod fighters;
 pub mod ewar;
 pub mod flight;
 pub mod gate;

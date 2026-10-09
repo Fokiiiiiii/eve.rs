@@ -16,11 +16,14 @@ use crate::modules::{Action, Applies, Effect, Jam, Reach, Remote};
 use crate::npc::NpcPlace;
 use crate::payload;
 use crate::scene::{Out, Scene, SessionId};
-use crate::ship::{Course, DroneLink, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
+use crate::ship::{Course, CompanionKind, DroneLink, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::wire::{id, int, real, text};
 
 /// How near the controller's surface a drone has to be to be taken into the bay.
 pub const SCOOP_DISTANCE: f64 = 2_500.0;
+
+/// How near the controller's surface a fighter squadron has to come to land in its tube (EVE.js `FIGHTER_RECOVERY_DISTANCE_METERS`).
+pub const FIGHTER_RECOVERY_DISTANCE: f64 = 5_000.0;
 
 /// How far ahead of the ship's surface a drone comes into space, metres.
 const LAUNCH_OFFSET: f64 = 75.0;
@@ -233,6 +236,19 @@ impl Scene {
         flight: DroneFlight,
         now: i64,
     ) -> Result<(SessionId, Vec<Out>), &'static str> {
+        self.launch_companion(CompanionKind::Drone, controller, spec, flight, now)
+    }
+
+    /// A fighter squadron comes into space beside the ship of `controller` (see `fighters.rs`): the same companion as a drone, without its drone notices.
+    pub fn launch_companion(
+        &mut self,
+        kind: CompanionKind,
+        controller: SessionId,
+        spec: ShipSpec,
+        flight: DroneFlight,
+        now: i64,
+    ) -> Result<(SessionId, Vec<Out>), &'static str> {
+        let fighter = kind == CompanionKind::Fighter;
         let DroneFlight { weapon, graphic_id, orbit_distance, attack_range, cruise_fraction, work, effect } = flight;
         self.settle_pilot(controller, now);
         let index = self.drones_of(controller).len();
@@ -284,6 +300,7 @@ impl Scene {
                 orbit_distance,
                 cruise_fraction,
                 activity: IDLE,
+                kind,
             }),
             ..NpcIdentity::default()
         };
@@ -330,8 +347,13 @@ impl Scene {
             if let Some(pilot) = self.pilots.get_mut(&controller) {
                 pilot.sees.insert(session);
             }
-            let state = self.drone_state_action(stamp, session);
-            out.push(Self::update(controller, vec![state, added]));
+            // a drone's controller is told what it is doing; a fighter squadron is not a drone and the host hears of it through its own notices
+            let told = if fighter {
+                vec![added]
+            } else {
+                vec![self.drone_state_action(stamp, session), added]
+            };
+            out.push(Self::update(controller, told));
             out.push(Self::update(controller, circling));
         }
         if let Some(pilot) = self.pilots.get_mut(&session) {
@@ -408,6 +430,9 @@ fn ship_of_character(&self, character_id: i64) -> Option<i64> {
 
     /// The controller is told what the drone is doing now: `OnDroneStateChange` and `OnDroneActivityChange` (nothing about an assignment).
     fn told_state(&self, session: SessionId) -> Vec<Out> {
+        if self.is_fighter(session) {
+            return Vec::new();
+        }
         let Some(controller) = self.controller_of_drone(session) else { return Vec::new() };
         let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
         vec![
@@ -438,7 +463,7 @@ fn ship_of_character(&self, character_id: i64) -> Option<i64> {
     }
 
     /// Sets the drone circling `target` `distance` metres off its surface at `speed_fraction`, telling whoever sees it.
-    fn circle(
+    pub(crate) fn circle(
         &mut self,
         session: SessionId,
         target: i64,
@@ -461,7 +486,7 @@ fn ship_of_character(&self, character_id: i64) -> Option<i64> {
     }
 
     /// The drone stops what it is doing and goes back to its controller; what its remote effect lands on its target is lifted first.
-    fn go_home(&mut self, session: SessionId, activity: i32, now: i64) -> Vec<Out> {
+    pub(crate) fn go_home(&mut self, session: SessionId, activity: i32, now: i64) -> Vec<Out> {
         let mut out = self.stop_remote(session, now);
         out.extend(self.fly_home(session, activity, now));
         out
@@ -533,7 +558,7 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
         for &drone_id in drones {
             let session = self.session_of(drone_id).filter(|session| match command {
                 DroneCommand::Reconnect => self.can_reconnect(controller, *session),
-                _ => self.controller_of_drone(*session) == Some(controller),
+                _ => self.controller_of_drone(*session) == Some(controller) && !self.is_fighter(*session),
             });
             let Some(session) = session else {
                 results.push((drone_id, Some("NOT_CONTROLLED")));
@@ -928,7 +953,7 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
     }
 
     /// The drone is left in this scene under nobody's control; the host keeps it as the pilot's item and may reconnect it later.
-    fn abandon(&mut self, session: SessionId, now: i64) -> Vec<Out> {
+    pub(crate) fn abandon(&mut self, session: SessionId, now: i64) -> Vec<Out> {
         let mut out = self.stop_remote(session, now);
         out.extend(self.let_go(session, now));
         out
@@ -957,6 +982,9 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
             ai.auto_salvage = false;
         }
         let _ = now;
+        if self.is_fighter(session) {
+            return vec![Out::FighterReleased { session: controller, fighter_id: ship_id, position }];
+        }
         vec![Out::DroneReleased { session: controller, drone_id: ship_id, position }]
     }
 
@@ -1277,14 +1305,20 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
     fn scoop_if_near(&mut self, session: SessionId, now: i64) -> Vec<Out> {
         let Some(controller) = self.controller_of_drone(session) else { return Vec::new() };
         let Some(apart) = self.apart(session, controller) else { return Vec::new() };
-        if apart > SCOOP_DISTANCE {
+        let fighter = self.is_fighter(session);
+        let reach = if fighter { FIGHTER_RECOVERY_DISTANCE } else { SCOOP_DISTANCE };
+        if apart > reach {
             return Vec::new();
         }
         let mut out = self.stop_remote(session, now);
         let Some(pilot) = self.pilots.remove(&session) else { return Vec::new() };
         self.drones.remove(&session);
         let drone_id = pilot.ship.spec.ship_id;
-        out.push(Out::DroneScooped { session: controller, drone_id });
+        out.push(if fighter {
+            Out::FighterLanded { session: controller, fighter_id: drone_id }
+        } else {
+            Out::DroneScooped { session: controller, drone_id }
+        });
         // the controller's drone list drops it with the ball, the others see only the ball go
         let stamp = self.next_stamp(now);
         let watchers = self.observers_of(session);
@@ -1293,7 +1327,7 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
         }
         for watcher in watchers {
             let mut actions = Vec::new();
-            if watcher == controller {
+            if watcher == controller && !fighter {
                 actions.push(payload::action(
                     stamp,
                     "OnDroneStateChange",
@@ -1479,7 +1513,7 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
 
     /// The drone stops its remote effect: a repair due at the end of its cycle lands first, then what it holds on its target is lifted and the target's HUD is told
     /// it ended.
-    fn stop_remote(&mut self, session: SessionId, now: i64) -> Vec<Out> {
+    pub(crate) fn stop_remote(&mut self, session: SessionId, now: i64) -> Vec<Out> {
         let mut out = Vec::new();
         if let Some(ended) = self.drones.get_mut(&session).and_then(|ai| ai.ending.take()) {
             out.extend(self.land_remote(session, &ended, now));

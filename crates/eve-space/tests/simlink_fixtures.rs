@@ -791,6 +791,31 @@ fn message_of(case: &Value) -> Message {
             drone_id: wide(case, "droneId"),
             position: vector_of(case, "position"),
         },
+        "LaunchFighter" => Message::LaunchFighter {
+            request_id: wide(case, "requestId") as u64,
+            session_id: session_id(),
+            ship: ship_of(&case["ship"]),
+            graphic_id: number("graphicId") as i32,
+            cruise_fraction: case["cruiseFraction"].as_f64().unwrap(),
+        },
+        "FighterOrder" => Message::FighterOrder {
+            session_id: session_id(),
+            command: number("command") as u8,
+            target_id: wide(case, "targetId"),
+            fighter_ids: case["fighterIds"].as_array().unwrap().iter().map(|f| f.as_str().unwrap().parse().unwrap()).collect(),
+            range: case["range"].as_f64().unwrap(),
+        },
+        "FighterResults" => Message::FighterResults {
+            session_id: session_id(),
+            command: number("command") as u8,
+            results: case["results"].as_array().unwrap().iter().map(|r| (wide(r, "fighterId"), text(r, "reason"))).collect(),
+        },
+        "FighterLanded" => Message::FighterLanded { session_id: session_id(), fighter_id: wide(case, "fighterId") },
+        "FighterReleased" => Message::FighterReleased {
+            session_id: session_id(),
+            fighter_id: wide(case, "fighterId"),
+            position: vector_of(case, "position"),
+        },
         "Destroy" => Message::Destroy {
             ship_id: wide(case, "shipId"),
             credit: Credit {

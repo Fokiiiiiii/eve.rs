@@ -30,6 +30,9 @@ public sealed record CommandReply(bool Accepted, long At, string? Reason, double
     /// <summary>What each drone did with an order to drones (<see cref="SimDroneResult.Reason"/> is empty for one that took it).</summary>
     public IReadOnlyList<SimDroneResult> Drones { get; init; } = [];
 
+    /// <summary>What each fighter squadron did with an order to fighters (<see cref="SimFighterResult.Reason"/> is empty for one that took it).</summary>
+    public IReadOnlyList<SimFighterResult> Fighters { get; init; } = [];
+
     /// <summary>How far a wreck or can is, measured to its surface (the answer to <see cref="SimCommands.Measure"/>; null: there is no such wreck).</summary>
     public double? Distance { get; init; }
 }
@@ -85,6 +88,12 @@ public interface ISimulation
 
     /// <summary>Gives a pilot's drones an order (<see cref="SimDroneCommands"/>) and waits for what each did with it (<see cref="CommandReply.Drones"/>).</summary>
     Task<CommandReply> DroneCommandAsync(ulong sessionId, byte command, long targetId, IReadOnlyList<long> droneIds, double controlRange, CancellationToken cancellationToken = default);
+
+    /// <summary>Launches a pilot's fighter squadron beside its ship (answered with <see cref="SimSpawnReply"/>: the session it is known by, or why not).</summary>
+    Task<SimSpawnReply> LaunchFighterAsync(SimLaunchFighter launch, CancellationToken cancellationToken = default);
+
+    /// <summary>Gives a pilot's fighter squadrons an order (<see cref="SimFighterOrders"/>) and waits for what each did with it (<see cref="CommandReply.Fighters"/>).</summary>
+    Task<CommandReply> FighterOrderAsync(ulong sessionId, byte command, long targetId, IReadOnlyList<long> fighterIds, double range, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gives a session whose ship was destroyed another (the capsule the host made), at rest at the place; null when it was done, else why not.

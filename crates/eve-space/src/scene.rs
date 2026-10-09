@@ -178,6 +178,12 @@ pub enum Out {
     DroneScooped { session: SessionId, drone_id: i64 },
     /// A drone is let go (`Abandon`, or its controller left the scene): it is out of the scene and the host decides what becomes of its item.
     DroneReleased { session: SessionId, drone_id: i64, position: Vec3 },
+    /// A fighter squadron came back and landed (within reach of its ship after a recall): the host moves its item into the tube it came from.
+    FighterLanded { session: SessionId, fighter_id: i64 },
+    /// A fighter squadron is let go (abandoned, or its controller left the scene): the host decides what becomes of its item.
+    FighterReleased { session: SessionId, fighter_id: i64, position: Vec3 },
+    /// The answer to an order to fighter squadrons: for each `None` when it took the order, the reason when it did not.
+    FighterResults { session: SessionId, command: u8, results: Vec<(i64, Option<&'static str>)> },
     /// The answer to an order to drones: for each drone `None` when it took the order, the reason when it did not.
     DroneResults { session: SessionId, command: u8, results: Vec<(i64, Option<&'static str>)> },
     /// A completed drone work cycle waiting for authoritative inventory/cargo settlement by the host.
@@ -268,6 +274,9 @@ impl Out {
             | Out::ModuleWorkCycle { session, .. }
             | Out::ModuleEnded { session, .. }
             | Out::DroneResults { session, .. }
+            | Out::FighterLanded { session, .. }
+            | Out::FighterReleased { session, .. }
+            | Out::FighterResults { session, .. }
             | Out::TargetRefused { session, .. }
             | Out::Position { session, .. } => *session,
         }

@@ -252,6 +252,11 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 break;
             case SimDroneResults:
                 break; // nobody is waiting for it
+            case SimFighterResults fighters when _answered.TryRemove((fighters.SessionId, SimFighterOrders.Key(fighters.Command)), out var ordering):
+                ordering.TrySetResult(new CommandReply(true, 0, null) { Fighters = fighters.Results });
+                break;
+            case SimFighterResults:
+                break; // nobody is waiting for it
             case SimMeasured measured when _answered.TryRemove((measured.SessionId, measured.Command), out var measuring):
                 measuring.TrySetResult(new CommandReply(true, 0, null) { Distance = measured.Distance });
                 break;
@@ -390,6 +395,12 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public Task<CommandReply> DroneCommandAsync(ulong sessionId, byte command, long targetId, IReadOnlyList<long> droneIds, double controlRange, CancellationToken cancellationToken = default) =>
         AwaitAsync(_answered, (sessionId, SimDroneCommands.Key(command)), new SimDroneCommand(sessionId, command, targetId, droneIds, controlRange), cancellationToken);
+
+    public Task<SimSpawnReply> LaunchFighterAsync(SimLaunchFighter launch, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_spawning, launch.RequestId, launch, cancellationToken);
+
+    public Task<CommandReply> FighterOrderAsync(ulong sessionId, byte command, long targetId, IReadOnlyList<long> fighterIds, double range, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_answered, (sessionId, SimFighterOrders.Key(command)), new SimFighterOrder(sessionId, command, targetId, fighterIds, range), cancellationToken);
 
     public Task<string?> RespawnAsync(SimRespawn respawn, CancellationToken cancellationToken = default) =>
         AwaitAsync(_entering, respawn.SessionId, respawn, cancellationToken);

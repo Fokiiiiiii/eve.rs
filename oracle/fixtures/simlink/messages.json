@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 30,
-   "hex": "03000000011e00"
+   "version": 31,
+   "hex": "03000000011f00"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 30,
+   "version": 31,
    "pollHz": 4,
-   "hex": "07000000021e0004000000"
+   "hex": "07000000021f0004000000"
   },
   {
    "name": "enter by undocking",
@@ -2406,6 +2406,128 @@
     156646308895.76187
    ],
    "hex": "29000000284f2c3859955c060084ba089b150900005fc833c6022952426c5427b7db5708c285e10f7e6c3c4242"
+  },
+  {
+   "name": "launch of a fighter squadron",
+   "kind": "LaunchFighter",
+   "requestId": "13",
+   "sessionId": "1790646377000015",
+   "ship": {
+    "shipId": "9988400004100",
+    "characterId": "140000342",
+    "typeId": 23055,
+    "groupId": 1652,
+    "categoryId": 6,
+    "name": "Templar I",
+    "ownerId": "140000342",
+    "corporationId": 1000006,
+    "allianceId": 0,
+    "warFactionId": 0,
+    "securityStatus": 0.0,
+    "radius": 47.0,
+    "mass": 1163000.0,
+    "maxVelocity": 339.25,
+    "agility": 4.0185,
+    "warpSpeedAu": 3.0,
+    "shieldRechargeMs": 860000.0,
+    "maxTargetRange": 29700.0,
+    "scanResolution": 660.0,
+    "signatureRadius": 28.0,
+    "maxLockedTargets": 4,
+    "capacitorCapacity": 149.5,
+    "capacitorRechargeS": 55.25,
+    "sensorStrength": [
+     0.0,
+     0.0,
+     0.0,
+     6.0
+    ],
+    "ecmResistance": 1.0,
+    "energyWarfareResistance": 0.25,
+    "vitals": {
+     "shieldCapacity": 220.0,
+     "armorHp": 137.5,
+     "structureHp": 201.25,
+     "resonances": {
+      "shield": [
+       0.0,
+       0.8,
+       0.6,
+       0.5
+      ],
+      "armor": [
+       0.5,
+       0.35,
+       0.25,
+       0.1
+      ],
+      "structure": [
+       0.33,
+       0.33,
+       0.33,
+       0.33
+      ]
+     }
+    },
+    "condition": {
+     "damage": 0.35,
+     "armorDamage": 0.6,
+     "shieldCharge": 1.0,
+     "charge": 1.0
+    },
+    "modules": []
+   },
+   "graphicId": 1200,
+   "cruiseFraction": 0.5,
+   "hex": "89010000360d000000000000004f2c3859955c060004bc089b15090000563c5808000000000f5a00007406000006000000090054656d706c61722049563c58080000000046420f0000000000000000000000000000000000000000000080474000000000f8be314100000000003475406de7fba9f1121040000000000000084000000000c03e2a41000000000001dd400000000000a084400000000000003c400000000000b062400000000000a04b40040000000000000000806b400000000000306140000000000028694000000000000000009a9999999999e93f333333333333e33f000000000000e03f000000000000e03f666666666666d63f000000000000d03f9a9999999999b93f1f85eb51b81ed53f1f85eb51b81ed53f1f85eb51b81ed53f1f85eb51b81ed53f00666666666666d63f333333333333e33f000000000000f03f000000000000f03f000000000000000000000000000000000000000000000000000000000000000000001840000000000000f03f000000000000d03fb0040000000000000000e03f"
+  },
+  {
+   "name": "a fighter order to orbit a ship",
+   "kind": "FighterOrder",
+   "sessionId": "1790646377000015",
+   "command": 1,
+   "targetId": "980050000077",
+   "fighterIds": [
+    "9988400004100"
+   ],
+   "range": 800.0,
+   "hex": "26000000374f2c3859955c060001cd38882fe40000000100000004bc089b150900000000000000008940"
+  },
+  {
+   "name": "what the fighters did with an order",
+   "kind": "FighterResults",
+   "sessionId": "1790646377000015",
+   "command": 4,
+   "results": [
+    {
+     "fighterId": "9988400004100",
+     "reason": ""
+    },
+    {
+     "fighterId": "9988400004101",
+     "reason": "NOT_CONTROLLED"
+    }
+   ],
+   "hex": "30000000384f2c3859955c0600040200000004bc089b15090000000005bc089b150900000e004e4f545f434f4e54524f4c4c4544"
+  },
+  {
+   "name": "a fighter landed in its tube",
+   "kind": "FighterLanded",
+   "sessionId": "1790646377000015",
+   "fighterId": "9988400004100",
+   "hex": "11000000394f2c3859955c060004bc089b15090000"
+  },
+  {
+   "name": "a fighter let go",
+   "kind": "FighterReleased",
+   "sessionId": "1790646377000015",
+   "fighterId": "9988400004100",
+   "position": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "hex": "290000003a4f2c3859955c060004bc089b150900005fc833c6022952426c5427b7db5708c285e10f7e6c3c4242"
   },
   {
    "name": "destroy for a pilot to loot",

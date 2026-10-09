@@ -245,6 +245,11 @@ public class SimCodecTests
             "DroneResults" => new SimDroneResults(Session(), (byte)(int)c["command"]!, [.. ((JsonArray)c["results"]!).Select(r => new SimDroneResult(Wide(r!, "droneId"), (string)r!["reason"]!))]),
             "DroneScooped" => new SimDroneScooped(Session(), Wide(c, "droneId")),
             "DroneReleased" => new SimDroneReleased(Session(), Wide(c, "droneId"), VectorOf(c["position"]!)),
+            "LaunchFighter" => new SimLaunchFighter((ulong)Wide(c, "requestId"), Session(), ShipOf(c["ship"]!), (int)c["graphicId"]!, (double)c["cruiseFraction"]!),
+            "FighterOrder" => new SimFighterOrder(Session(), (byte)(int)c["command"]!, Wide(c, "targetId"), [.. ((JsonArray)c["fighterIds"]!).Select(f => long.Parse((string)f!))], (double)c["range"]!),
+            "FighterResults" => new SimFighterResults(Session(), (byte)(int)c["command"]!, [.. ((JsonArray)c["results"]!).Select(r => new SimFighterResult(Wide(r!, "fighterId"), (string)r!["reason"]!))]),
+            "FighterLanded" => new SimFighterLanded(Session(), Wide(c, "fighterId")),
+            "FighterReleased" => new SimFighterReleased(Session(), Wide(c, "fighterId"), VectorOf(c["position"]!)),
             "Destroy" => new SimDestroy(Wide(c, "shipId"), new SimCredit(Wide(c, "characterId"), Wide(c, "corporationId"), Wide(c, "allianceId"), Wide(c, "warFactionId"))),
             var other => throw new InvalidOperationException(other),
         };
@@ -254,7 +259,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-        Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "Destroy", "Destroyed", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "Enter", "EnterReply", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceContainer", "PlaceWreck", "Refused", "RemoveWreck", "Respawn", "ShipSpec", "Spawn", "SpawnReply", "TargetRefused", "Targets", "UpdateState"], kinds);
+        Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "Destroy", "Destroyed", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "Enter", "EnterReply", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceContainer", "PlaceWreck", "Refused", "RemoveWreck", "Respawn", "ShipSpec", "Spawn", "SpawnReply", "TargetRefused", "Targets", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);
     }
 

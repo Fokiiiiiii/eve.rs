@@ -119,6 +119,16 @@ pub struct DroneLink {
     pub cruise_fraction: f64,
     /// What the drone is doing, as the client numbers it.
     pub activity: i32,
+    /// Whether this companion is a drone or a fighter squadron (the fighter path shares this link; see `fighters.rs`).
+    pub kind: CompanionKind,
+}
+
+/// What a companion of a ship is: a drone of the drone bay, or a fighter squadron of the fighter tubes and bay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CompanionKind {
+    #[default]
+    Drone,
+    Fighter,
 }
 
 /// What sets an NPC's ship apart from a player's: nobody flies it (its ball has no session and is not interactive), its slim item has no name and
@@ -195,10 +205,15 @@ impl Ship {
 
     /// The ball the destiny stream describes the ship with.
     pub fn ball(&self) -> BallEntity {
-        let drone = self.npc.as_ref().is_some_and(|npc| npc.drone.is_some());
+        let companion = self.npc.as_ref().and_then(|npc| npc.drone.as_ref()).map(|link| link.kind);
+        let drone = companion.is_some();
         BallEntity {
             item_id: IdRef::Valid(self.spec.ship_id),
-            kind: if drone { Kind::Drone } else { Kind::Ship },
+            kind: match companion {
+                Some(CompanionKind::Drone) => Kind::Drone,
+                Some(CompanionKind::Fighter) => Kind::Fighter,
+                None => Kind::Ship,
+            },
             legacy_mode: match self.course {
                 Course::Goto => LegacyMode::Goto,
                 Course::Stop => LegacyMode::Stop,

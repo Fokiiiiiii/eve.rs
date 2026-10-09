@@ -67,6 +67,33 @@ internal sealed class FakeSim : ISimulation
             ?? new CommandReply(true, 0, null) { Drones = [.. droneIds.Select(id => new SimDroneResult(id, ""))] });
     }
 
+    /// <summary>What a launched fighter squadron is answered with: the session it is known by, or a reason.</summary>
+    public SimSpawnReply? FighterLaunchAnswer { get; set; }
+
+    public Task<SimSpawnReply> LaunchFighterAsync(SimLaunchFighter launch, CancellationToken cancellationToken = default)
+    {
+        if (!IsConnected)
+        {
+            throw new SimUnavailableException("the simulation is not running");
+        }
+        Heard.Add(launch);
+        return Task.FromResult(FighterLaunchAnswer is { } answer ? answer with { RequestId = launch.RequestId } : new SimSpawnReply(launch.RequestId, (ulong)Heard.Count + (1UL << 62), null));
+    }
+
+    /// <summary>What an order to fighter squadrons is answered with: every squadron takes it, unless the test says otherwise.</summary>
+    public Func<ulong, byte, long, IReadOnlyList<long>, CommandReply>? FighterAnswer { get; set; }
+
+    public Task<CommandReply> FighterOrderAsync(ulong sessionId, byte command, long targetId, IReadOnlyList<long> fighterIds, double range, CancellationToken cancellationToken = default)
+    {
+        if (!IsConnected)
+        {
+            throw new SimUnavailableException("the simulation is not running");
+        }
+        Heard.Add(new SimFighterOrder(sessionId, command, targetId, fighterIds, range));
+        return Task.FromResult(FighterAnswer?.Invoke(sessionId, command, targetId, fighterIds)
+            ?? new CommandReply(true, 0, null) { Fighters = [.. fighterIds.Select(id => new SimFighterResult(id, ""))] });
+    }
+
     /// <summary>What a respawn is answered with: null (done) or a reason.</summary>
     public string? RespawnAnswer { get; set; }
 

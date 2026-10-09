@@ -1355,6 +1355,68 @@ public class AllianceTests
         }
     }
 
+      [PgFact]
+    public async Task Alliance_maintenance_bills_auto_pay_and_renew_once_from_the_prior_due_date()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schedulerSchema = "alliance_maintenance_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(rig.Source, schedulerSchema);
+            var scheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now, schema: schedulerSchema);
+            var (actor, executorCorp) = await Founder(rig, "Maintenance Executor", "ALLYFEE");
+            var alliance = await rig.Store.CreateAllianceAsync(actor, Request, "alliance-maintenance");
+            await using (var connection = await rig.Source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await rig.Transactions.TransferAsync(connection, transaction,
+                    new Eve.Wallet.WalletAccount(actor, 1000),
+                    new Eve.Wallet.WalletAccount(executorCorp.Id, 1003),
+                    3_000_000m, 17, "Test alliance maintenance funding",
+                    rig.Now, $"alliance-maintenance-funding:{actor}", "test_wallet_transfer");
+                await rig.Wallets.OpenAsync(connection, transaction, 1_000_125, 0m, 0);
+                await transaction.CommitAsync();
+            }
+            await rig.OfficeStore.SetAutomaticPaySettingsAsync(new Dictionary<long, Eve.Corporations.CorporationBillAutomaticPaySettings>
+            {
+                [alliance.Id] = new(1000, new Dictionary<int, bool> { [5] = true }),
+                [executorCorp.Id] = new(1003, new Dictionary<int, bool>())
+            });
+            var worker = new Eve.Services.Corporations.AllianceMaintenanceBillWorker(
+                rig.Store, rig.OfficeStore, scheduler, () => rig.Now);
+            await worker.RegisterAsync();
+            await worker.ReconcileAsync();
+
+            var initial = Assert.Single(await rig.Store.AllianceMaintenanceBillsAsync(alliance.Id));
+            Assert.Equal(5, initial.BillTypeId);
+            Assert.Equal(2_000_000m, initial.AmountIsk);
+            var initialDue = initial.DueFiletime;
+            var expectedInitialDue = checked((rig.Now + 11_644_473_600_000L) * 10_000L) +
+                30L * 24 * 60 * 60 * 10_000_000;
+            Assert.Equal(expectedInitialDue, initialDue);
+            var balanceBefore = await rig.Transactions.AccountBalanceAsync(new Eve.Wallet.WalletAccount(executorCorp.Id, 1003));
+
+            rig.Now = initialDue / 10_000L - 11_644_473_600_000L;
+            Assert.Equal(1, await scheduler.RunDueAsync());
+
+            var renewed = Assert.Single(await rig.Store.AllianceBillsAsync(alliance.Id));
+            Assert.Equal(5, renewed.BillTypeId);
+            Assert.Equal(2_000_000m, renewed.AmountIsk);
+            Assert.Equal(initialDue + 30L * 24 * 60 * 60 * 10_000_000, renewed.DueFiletime);
+            var settledBills = await rig.Store.AllianceMaintenanceBillsAsync(alliance.Id);
+            var settled = Assert.Single(settledBills, item => item.BillId == initial.BillId);
+            Assert.True(settled.Paid);
+            var balanceAfter = await rig.Transactions.AccountBalanceAsync(new Eve.Wallet.WalletAccount(executorCorp.Id, 1003));
+            Assert.Equal(2_000_000m, balanceBefore - balanceAfter);
+            Assert.Equal(0, await scheduler.RunDueAsync());
+        }
+        finally
+        {
+            await using var cleanup = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schedulerSchema} CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
     [PgFact]
     public async Task Alliance_war_declaration_bills_are_replay_safe_and_pay_from_the_executor_wallet()
     {

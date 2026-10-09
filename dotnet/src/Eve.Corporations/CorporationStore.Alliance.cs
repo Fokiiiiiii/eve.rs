@@ -1617,7 +1617,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
     }
 
     public async Task<bool> PayAllianceBillAsync(long billId,long allianceId,long payerCorporationId,
-        long paidByOwnerId,int accountKey,long paidAtMs,CancellationToken token = default)
+    long paidByOwnerId,int accountKey,long paidAtMs,CancellationToken token = default)
     {
         if (billId <= 0 || allianceId <= 0 || payerCorporationId <= 0 || paidByOwnerId <= 0 ||
             accountKey is < 1000 or > 1006 || paidAtMs < 0)
@@ -1633,44 +1633,199 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             CorporationRoles.Accountant,token);
         if (payer.Id != payerCorporationId || payer.AllianceId != allianceId)
             throw new CorporationError("ALLIANCE_ACCESS_DENIED");
-        await using var command = Command(connection,transaction,$"""
+        var settlement = await SettleAllianceBillAsync(connection,transaction,billId,allianceId,
+            payerCorporationId,paidByOwnerId,accountKey,paidAtMs,null,token);
+        if (settlement is null) return false;
+        await transaction.CommitAsync(token);
+        AnnounceAllianceBillPayment(settlement);
+        return true;
+    }
+
+    private async Task<Eve.Wallet.WalletSettlement?> SettleAllianceBillAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long billId, long allianceId,
+        long payerCorporationId, long paidByOwnerId, int accountKey, long paidAtMs,
+        int? expectedBillTypeId, CancellationToken token)
+    {
+        var alliance = await AllianceAsync(connection, transaction, allianceId, true, token);
+        if (alliance is not { Deleted: false } || alliance.ActiveExecutorId != payerCorporationId)
+            return null;
+        var payer = await GetAsync(connection, transaction, payerCorporationId, true, token);
+        if (payer?.AllianceId != allianceId) return null;
+
+        await using var command = Command(connection, transaction, $"""
             SELECT bill_id,bill_type_id,amount_isk,interest,debtor_alliance_id,creditor_id,due_filetime,
                    external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key
             FROM {_schema}.alliance_bills
             WHERE bill_id=$1 AND debtor_alliance_id=$2 AND NOT paid
             FOR UPDATE
-            """,billId,allianceId);
+            """, billId, allianceId);
         CorporationBill bill;
         await using (var reader = await command.ExecuteReaderAsync(token))
         {
-            if (!await reader.ReadAsync(token)) return false;
+            if (!await reader.ReadAsync(token)) return null;
             bill = ReadCorporationBill(reader);
         }
+        if (expectedBillTypeId is { } typeId && bill.BillTypeId != typeId) return null;
+
         Eve.Wallet.WalletSettlement settlement;
         try
         {
-            settlement = await _wallets.TransferAsync(connection,transaction,
-                new Eve.Wallet.WalletAccount(payerCorporationId,accountKey),
-                new Eve.Wallet.WalletAccount(bill.CreditorId,1000),bill.AmountIsk,17,"Bill payment",paidAtMs,
-                $"alliance-bill:{billId}:payment","bill_payment",token);
+            settlement = await _wallets.TransferAsync(connection, transaction,
+                new Eve.Wallet.WalletAccount(payerCorporationId, accountKey),
+                new Eve.Wallet.WalletAccount(bill.CreditorId, 1000), bill.AmountIsk, 17, "Bill payment", paidAtMs,
+                $"alliance-bill:{billId}:payment", "bill_payment", token);
         }
         catch (Exception error) when (error is Eve.Wallet.InsufficientFundsException or Eve.Wallet.MoneyLimitException or
             Eve.Wallet.WalletNotFoundException or Eve.Wallet.WalletOperationConflictException)
         {
-            return false;
+            return null;
         }
-        var paidFiletime = checked((paidAtMs+11_644_473_600_000L)*10_000L);
-        await using var mark = Command(connection,transaction,$"""
+        var paidFiletime = checked((paidAtMs + EveFiletimeEpochOffsetMs) * 10_000L);
+        await using var mark = Command(connection, transaction, $"""
             UPDATE {_schema}.alliance_bills
             SET paid=true,paid_filetime=$2,paid_by_owner_id=$3
             WHERE bill_id=$1 AND NOT paid
-            """,billId,paidFiletime,paidByOwnerId);
+            """, billId, paidFiletime, paidByOwnerId);
         if (await mark.ExecuteNonQueryAsync(token) != 1)
             throw new CorporationError("BILL_NOT_PAYABLE");
+        return settlement;
+    }
+
+    private void AnnounceAllianceBillPayment(Eve.Wallet.WalletSettlement settlement)
+    {
+        if (settlement.Replayed) return;
+        foreach (var entry in settlement.Entries.GroupBy(entry => (entry.OwnerId, entry.AccountKey)).Select(group => group.Last()))
+            _wallets.AnnounceCommitted(new Eve.Wallet.WalletBalanceChange(entry.OwnerId, entry.AccountKey, entry.Balance));
+    }
+
+    private const int AllianceMaintenanceBillTypeId = 5;
+    private const long AllianceMaintenanceFeePerCorporation = 2_000_000L;
+    private const long AllianceMaintenancePeriodFiletime = 30L * 24 * 60 * 60 * 10_000_000;
+    private const long EveFiletimeEpochOffsetMs = 11_644_473_600_000L;
+    private const long ConcordCorporationId = 1_000_125;
+
+    public Func<long, CancellationToken, Task>? AllianceMaintenanceBillWriter { get; set; }
+
+    public async Task<IReadOnlyList<CorporationBill>> AllianceMaintenanceBillsAsync(
+        long allianceId, CancellationToken token = default)
+    {
+        if (allianceId <= 0) return [];
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection, null, $"""
+            SELECT bill_id,bill_type_id,amount_isk,interest,debtor_alliance_id,creditor_id,due_filetime,
+                   external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key
+            FROM {_schema}.alliance_bills
+            WHERE debtor_alliance_id=$1 AND bill_type_id=$2 AND war_id IS NULL
+            ORDER BY due_filetime,bill_id
+            """, allianceId, AllianceMaintenanceBillTypeId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        var bills = new List<CorporationBill>();
+        while (await reader.ReadAsync(token)) bills.Add(ReadCorporationBill(reader));
+        return bills;
+    }
+
+    public async Task<IReadOnlyList<CorporationBill>> PendingAllianceMaintenanceBillsAsync(
+        CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection, null, $"""
+            SELECT bill_id,bill_type_id,amount_isk,interest,debtor_alliance_id,creditor_id,due_filetime,
+                   external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key
+            FROM {_schema}.alliance_bills AS bill
+            WHERE bill.bill_type_id=$1 AND bill.war_id IS NULL
+              AND (NOT bill.paid OR NOT EXISTS (
+                  SELECT 1 FROM {_schema}.alliance_bills AS next
+                  WHERE next.debtor_alliance_id=bill.debtor_alliance_id
+                    AND next.bill_type_id=bill.bill_type_id
+                    AND next.due_filetime=bill.due_filetime+$2
+              ))
+            ORDER BY bill.due_filetime,bill.bill_id
+            """, AllianceMaintenanceBillTypeId, AllianceMaintenancePeriodFiletime);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        var bills = new List<CorporationBill>();
+        while (await reader.ReadAsync(token)) bills.Add(ReadCorporationBill(reader));
+        return bills;
+    }
+
+    public Task<CorporationBill?> EnsureInitialAllianceMaintenanceBillAsync(
+        long allianceId, CancellationToken token = default) =>
+        CreateAllianceMaintenanceBillAsync(allianceId, null, token);
+
+    public Task<CorporationBill?> CreateNextAllianceMaintenanceBillAsync(
+        long allianceId, long previousDueFiletime, CancellationToken token = default) =>
+        previousDueFiletime <= 0
+            ? Task.FromResult<CorporationBill?>(null)
+            : CreateAllianceMaintenanceBillAsync(allianceId, previousDueFiletime, token);
+
+    private Task<CorporationBill?> CreateAllianceMaintenanceBillAsync(
+        long allianceId, long? previousDueFiletime, CancellationToken token)
+    {
+        if (allianceId <= 0) return Task.FromResult<CorporationBill?>(null);
+        return WriteAsync(async (connection, transaction) =>
+        {
+            var alliance = await AllianceAsync(connection, transaction, allianceId, true, token);
+            if (alliance is not { Deleted: false }) return null;
+
+            var bills = new List<CorporationBill>();
+            await using (var existing = Command(connection, transaction, $"""
+                SELECT bill_id,bill_type_id,amount_isk,interest,debtor_alliance_id,creditor_id,due_filetime,
+                       external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key
+                FROM {_schema}.alliance_bills
+                WHERE debtor_alliance_id=$1 AND bill_type_id=$2 AND war_id IS NULL
+                ORDER BY due_filetime,bill_id FOR UPDATE
+                """, allianceId, AllianceMaintenanceBillTypeId))
+            await using (var reader = await existing.ExecuteReaderAsync(token))
+                while (await reader.ReadAsync(token)) bills.Add(ReadCorporationBill(reader));
+
+            if (bills.FirstOrDefault(bill => !bill.Paid) is { } unpaid) return unpaid;
+            if (previousDueFiletime is null && bills.Count != 0) return null;
+
+            var dueFiletime = previousDueFiletime is { } previousDue
+                ? checked(previousDue + AllianceMaintenancePeriodFiletime)
+                : checked((_now() + EveFiletimeEpochOffsetMs) * 10_000L + AllianceMaintenancePeriodFiletime);
+            if (bills.FirstOrDefault(bill => bill.DueFiletime == dueFiletime) is { } existingNext)
+                return existingNext;
+
+            var memberCount = (await AllianceMembersAsync(connection, transaction, allianceId, token)).Count;
+            if (memberCount == 0) return null;
+            var amount = checked(memberCount * AllianceMaintenanceFeePerCorporation);
+            var operationKey = $"alliance-maintenance:{allianceId}:{dueFiletime}";
+            var fingerprint = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                allianceId,
+                billTypeId = AllianceMaintenanceBillTypeId,
+                amount,
+                dueFiletime
+            });
+            await using var insert = Command(connection, transaction, $"""
+                INSERT INTO {_schema}.alliance_bills
+                    (bill_type_id,amount_isk,interest,debtor_alliance_id,creditor_id,due_filetime,
+                     external_id,external_id2,war_id,operation_key,request_fingerprint)
+                VALUES($1,$2,0,$3,$4,$5,$3,-1,NULL,$6,$7)
+                RETURNING bill_id
+                """, AllianceMaintenanceBillTypeId, amount, allianceId, ConcordCorporationId,
+                dueFiletime, operationKey, fingerprint);
+            var billId = Convert.ToInt64(await insert.ExecuteScalarAsync(token));
+            return new CorporationBill(billId, AllianceMaintenanceBillTypeId, amount, 0, allianceId,
+                ConcordCorporationId, dueFiletime, allianceId, -1, 0, false, null, null, operationKey);
+        }, token);
+    }
+
+    public async Task<bool> PayAllianceMaintenanceBillAsync(
+        long billId, long allianceId, long payerCorporationId, int accountKey, long paidAtMs,
+        CancellationToken token = default)
+    {
+        if (billId <= 0 || allianceId <= 0 || payerCorporationId <= 0 ||
+            accountKey is < 1000 or > 1006 || paidAtMs < 0)
+            return false;
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+        var settlement = await SettleAllianceBillAsync(connection, transaction, billId, allianceId,
+            payerCorporationId, payerCorporationId, accountKey, paidAtMs,
+            AllianceMaintenanceBillTypeId, token);
+        if (settlement is null) return false;
         await transaction.CommitAsync(token);
-        if (!settlement.Replayed)
-            foreach (var entry in settlement.Entries.GroupBy(entry => (entry.OwnerId,entry.AccountKey)).Select(group => group.Last()))
-                _wallets.AnnounceCommitted(new Eve.Wallet.WalletBalanceChange(entry.OwnerId,entry.AccountKey,entry.Balance));
+        AnnounceAllianceBillPayment(settlement);
         return true;
     }
 }

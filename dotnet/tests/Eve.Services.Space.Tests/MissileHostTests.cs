@@ -17,7 +17,8 @@ public class MissileHostTests
 {
     private const int RocketLauncherI = 10629, ScourgeRocket = 266, Slot = 28, UseMissiles = 101;
     private const int RapidTorpedoLauncherI = 37288, ScourgeTorpedo = 267, Phoenix = 19726;
-    private const int SmallBreacherLauncher = 85084, SmallBreacherPod = 85088;
+    /// <summary>The SCARAB pods fit the deathless Tholos and Cenotaph (wiki), so the breacher test flies a Tholos (SDE 85087).</summary>
+    private const int SmallBreacherLauncher = 85084, SmallBreacherPod = 85088, Tholos = 85087;
 
     /// <summary>A pilot in space whose slot 28 holds a Rocket Launcher I (online), loaded with Scourge Rockets when <paramref name="loaded"/>.</summary>
     private static Task<(ClientSession Session, Eve.Characters.Created Character, long Launcher)> ArmedInSpaceAsync(Rig rig, bool loaded) =>
@@ -99,7 +100,7 @@ public class MissileHostTests
     public async Task A_breacher_pod_launcher_is_started_with_the_damage_over_time_its_charge_describes()
     {
         await using var rig = await Rig.CreateAsync();
-        var (session, character, launcher) = await ArmedInSpaceAsync(rig, loaded: true, SmallBreacherLauncher, SmallBreacherPod, Rig.Cockroach, (3319, 5), (3320, 5));
+        var (session, character, launcher) = await ArmedInSpaceAsync(rig, loaded: true, SmallBreacherLauncher, SmallBreacherPod, Tholos, (3319, 5), (3320, 5));
 
         // the pilot asks for the effect of the pod, as the client does; the launcher runs its own, and the pod's hit starts a damage over time
         var answer = await rig.Space.ActivateAsync(session, launcher, "dotMissileLaunching", 980050000105, 1000, CancellationToken.None);

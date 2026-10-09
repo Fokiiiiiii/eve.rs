@@ -1,4 +1,6 @@
 using Eve.Ships;
+using Eve.Macho;
+using Eve.Marshal;
 using Eve.Space;
 
 namespace Eve.Services.Space.Tests;
@@ -172,9 +174,82 @@ public class WorkCycleHostTests
     }
 
     /// <summary>A salvage cycle of a module: the access bonus is the module's, and the roll decides the chance (0 is a success at any chance).</summary>
-    private static SimModuleWorkCycle SalvageCycle(DroneHostTests.Flying flying, long moduleId, long targetId, ulong cycleId) => new(
+    private static SimModuleWorkCycle SalvageCycle(DroneHostTests.Flying flying, long moduleId, long targetId, ulong cycleId, double roll = 0.0) => new(
         (ulong)flying.Session.SessionId, flying.Character, flying.Session.GetInt("shipid")!.Value, flying.System, moduleId, targetId, cycleId,
-        SimDroneCommands.Salvage, 0, 0, 0, 0, 0, 3, 0.0, 0.5, 0.75);
+        SimDroneCommands.Salvage, 0, 0, 0, 0, 0, 3, roll, 0.5, 0.75);
+
+    /// <summary>A pilot in space with a Salvager I fitted and online, and an Amarr Frigate Wreck in its system: the pilot, the wreck and the wreck's type.</summary>
+    private static async Task<(DroneHostTests.Flying Flying, long Wreck, int WreckType)> SalvagerOnWreckAsync(Rig rig)
+    {
+        var types = await new Eve.Sde.SdeReader(rig.Source).ReadTypeSummariesAsync();
+        var salvagerTypeId = DroneHostTests.SdeTypeId(types, "Salvager I");
+        var wreckTypeId = Assert.Single(types, type => type.Name == "Amarr Frigate Wreck").TypeId;
+        await rig.Statics.EnsureTypesAsync([salvagerTypeId, wreckTypeId]);
+        var flying = await DroneHostTests.FlyingWithADroneAsync(rig, minerTypeId: salvagerTypeId);
+        return (flying, await WreckInSpaceAsync(rig, flying, wreckTypeId), wreckTypeId);
+    }
+
+    /// <summary>Subscribes to the salvage facts on the rig's bus; the list fills when the bus is pumped.</summary>
+    private static async Task<List<(string Topic, string Json)>> SalvageFactsAsync(Rig rig)
+    {
+        var facts = new List<(string Topic, string Json)>();
+        rig.Events.Subscribe("test.salvage_facts", [Eve.Ships.SalvageWreckedEvent.Topic, Eve.Ships.SalvageFailedEvent.Topic], (context, _) =>
+        {
+            facts.Add((context.Event.Topic, context.Event.PayloadJson));
+            return Task.CompletedTask;
+        });
+        await rig.Events.PumpAsync();   // the subscriber starts here
+        return facts;
+    }
+
+    /// <summary>The <c>OnRemoteMessage</c> the pilot was sent: its name and the dict it carries.</summary>
+    private static IEnumerable<(string Name, PyDict Body)> RemoteMessagesOf(DroneHostTests.Flying flying) =>
+        Events.Of(flying.Session, clear: false).Where(e => e.Name == "OnRemoteMessage")
+            .Select(e => Events.Items(e.Args[0])).Select(items => (JsSemantics.StringValue(items[0])!, (PyDict)items[1]));
+
+    [PgFact]
+    public async Task A_granted_salvage_tells_the_pilot_what_it_recovered_and_announces_the_wreck_salvaged()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, wreck, _) = await SalvagerOnWreckAsync(rig);
+        var facts = await SalvageFactsAsync(rig);
+        StartModule(rig, flying);
+
+        var result = await SettleAsync(rig, SalvageCycle(flying, flying.Module, wreck, 6));
+        await rig.Events.PumpAsync();
+
+        Assert.True(result.Accepted, result.Reason);
+        var told = RemoteMessagesOf(flying).ToArray();
+        var (name, body) = Assert.Single(told);
+        var text = JsSemantics.StringValue(body.Entries.Single().Value)!;
+        Assert.Equal("CustomNotify", name);
+        Assert.StartsWith("Salvaging succeeded. Recovered 1 x ", text);
+        Assert.EndsWith(" and placed it in your cargo hold.", text);
+        Assert.Equal(new[] { Eve.Ships.SalvageWreckedEvent.Topic }, facts.Select(fact => fact.Topic));
+    }
+
+    [PgFact]
+    public async Task A_failed_salvage_roll_tells_the_pilot_the_wreck_is_not_salvaged_and_is_recorded_with_its_fact()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, wreck, wreckType) = await SalvagerOnWreckAsync(rig);
+        var facts = await SalvageFactsAsync(rig);
+        StartModule(rig, flying);
+
+        var result = await SettleAsync(rig, SalvageCycle(flying, flying.Module, wreck, 7, roll: 0.999));
+        await rig.Events.PumpAsync();
+
+        Assert.Equal((true, "", 1L, 0L, false), (result.Accepted, result.Reason, result.UnitsRemaining, result.DeliveredUnits, result.Complete));
+        var (name, body) = Assert.Single(RemoteMessagesOf(flying));
+        Assert.Equal("SalvagingFailure", name);
+        var type = Events.Items(body.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "type").Value);
+        Assert.Equal((wreck, 4L, (long)wreckType), (Events.Number(body.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "itemID").Value),
+            Events.Number(type[0]), Events.Number(type[1])));
+        Assert.Equal(7L, (await new PgWorkCycleLedger(rig.Source, rig.SpaceSchema).LastAsync(flying.Module))?.CycleId);
+        Assert.Equal(new[] { Eve.Ships.SalvageFailedEvent.Topic }, facts.Select(fact => fact.Topic));
+    }
+
+    /// <summary>A salvage cycle of a module: the access bonus is the module's, and the roll decides the chance (0 is a success at any chance).</summary>
 
     /// <summary>A wreck of an Amarr frigate in the pilot's system, with no contents: the salvager reaches it and the answer takes its product.</summary>
     private static async Task<long> WreckInSpaceAsync(Rig rig, DroneHostTests.Flying flying, int wreckTypeId)

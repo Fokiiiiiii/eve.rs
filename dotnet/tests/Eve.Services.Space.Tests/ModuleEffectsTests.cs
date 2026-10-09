@@ -728,7 +728,6 @@ public class ModuleEffectsTests
             "moduleBonusWarfareLinkShield",
             "moduleBonusWarfareLinkSkirmish",
             "moduleTitanEffectGenerator",
-            "salvaging",
             "scanStrengthBonusPercentActivate",
             "scanStrengthTargetPercentBonus",
             "shipScan",

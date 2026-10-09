@@ -28,6 +28,19 @@ public sealed record OreMinedEvent(
 {
     public const string Topic = "mining.ore_mined";
 }
+
+/// <summary>The fact of a granted salvage cycle (<c>salvage.wreck_salvaged</c>), written in the grant's transaction; <c>ContainerId</c> is 0 when no can was left.</summary>
+public sealed record SalvageWreckedEvent(
+    long CharacterId, int SolarSystemId, long ShipId, long MinerId, MiningSource Source, long WreckId, int WreckTypeId, int ProductTypeId, long ContainerId)
+{
+    public const string Topic = "salvage.wreck_salvaged";
+}
+
+/// <summary>The fact of a salvage cycle whose roll failed (<c>salvage.salvage_failed</c>), written with the answer that records the cycle.</summary>
+public sealed record SalvageFailedEvent(long CharacterId, int SolarSystemId, long ShipId, long MinerId, MiningSource Source, long WreckId, int WreckTypeId)
+{
+    public const string Topic = "salvage.salvage_failed";
+}
 public sealed record DroneSalvageCommit(bool Accepted, string Reason, ShipChanged? Change, Item? Container, SpaceItem? ContainerSpaceItem);
 
 /// <summary>
@@ -370,7 +383,7 @@ private sealed record ShipHoldRule(
     /// </summary>
     public async Task<DroneSalvageCommit> SalvageWreckAsync(
         long characterId, long shipId, int solarSystemId, MiningSource kind, long minerId, long wreckId, int? productTypeId,
-        SpaceItem wreckSpace, long containerExpiresAtMs, PgSpaceItemStore spaceItems,
+        SpaceItem wreckSpace, long containerExpiresAtMs, PgSpaceItemStore spaceItems, long cycleId, PgWorkCycleLedger ledger, EventBus events,
         CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
@@ -380,6 +393,12 @@ private sealed record ShipHoldRule(
             || snapshot.Ship.LocationId != solarSystemId || snapshot.Ship.Flag != InSpaceFlag)
         {
             return new(false, "NO_SHIP", null, null, null);
+        }
+        // a cycle this salvager has had granted is answered from its record, in the transaction: the wreck is not salvaged twice when the cycle is sent again
+        if (await ledger.LastAsync(connection, transaction, minerId, cancellationToken) is { } settled && settled.CycleId == cycleId)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return new(settled.Accepted, settled.Reason, null, null, null);
         }
         if (await items.LockAndGetAsync(connection, transaction, minerId, cancellationToken) is not { } drone
             || drone.OwnerId != characterId || !IsPlacedFor(kind, drone, solarSystemId, shipId)
@@ -449,7 +468,12 @@ private sealed record ShipHoldRule(
         }
         await items.DeleteAsync(connection, transaction, wreckId, cancellationToken);
         await spaceItems.RemoveAsync(connection, transaction, wreckId, cancellationToken);
+        // the grant, the wreck's removal, the answer that records the cycle and its fact are one transaction (rule 1)
+        await ledger.RecordAsync(connection, transaction, new WorkCycleRecord(minerId, cycleId, true, "", 0, 1, true), cancellationToken);
+        await events.PublishInTransactionAsync(connection, transaction, SalvageWreckedEvent.Topic, new SalvageWreckedEvent(
+            characterId, solarSystemId, shipId, minerId, kind, wreckId, wreck.TypeId, productTypeId ?? 0, container?.Id ?? 0), $"char:{characterId}", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        events.Wake();
         var change = moved.Count == 0 ? null : new ShipChanged(moved[0].After.Id, shipId, [], [], moved);
         return new(true, "", change, container, containerSpace);
     }

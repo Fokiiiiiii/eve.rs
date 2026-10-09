@@ -575,7 +575,13 @@ private void OnReceived(SimMessage message)
     }
 
     /// <summary>What the host answers a work cycle: accepted or refused with the reason, and what it delivered (the fields of <see cref="SimDroneWorkResult"/>).</summary>
-    private readonly record struct WorkOutcome(bool Accepted, string Reason, long Remaining = 0, long Delivered = 0, bool Complete = true)
+    /// <summary>
+    /// The answer of a settled work cycle. <see cref="Fact"/> is announced on the bus in the transaction that records the answer; <see cref="Notice"/> is the
+    /// <c>OnRemoteMessage</c> the pilot is told once the answer is kept.
+    /// </summary>
+    private readonly record struct WorkOutcome(
+        bool Accepted, string Reason, long Remaining = 0, long Delivered = 0, bool Complete = true, (string Topic, object Payload, string Key)? Fact = null,
+        PyValue? Notice = null)
     {
         public static WorkOutcome Refuse(string reason) => new(false, reason);
     }
@@ -626,8 +632,7 @@ private void OnReceived(SimMessage message)
                 return;
             }
             var outcome = await SettleWorkCycleAsync(cycle);
-            await _cycles.RecordAsync(new WorkCycleRecord(
-                cycle.OwnerId, (long)cycle.CycleId, outcome.Accepted, outcome.Reason, outcome.Remaining, outcome.Delivered, outcome.Complete));
+            await RecordOutcomeAsync(cycle, outcome);
             ReplyToWorkCycle(cycle, outcome);
         }
         catch (Exception error)
@@ -639,6 +644,26 @@ private void OnReceived(SimMessage message)
             {
                 ReplyToWorkCycle(cycle, WorkOutcome.Refuse("WORK_FAILED"));
             }
+        }
+    }
+
+    /// <summary>
+    /// Records a settled cycle's answer, with its fact when it has one (in one transaction), and then tells the pilot the notice of the answer, once it is kept.
+    /// </summary>
+    private async Task RecordOutcomeAsync(WorkCycle cycle, WorkOutcome outcome)
+    {
+        var record = new WorkCycleRecord(cycle.OwnerId, (long)cycle.CycleId, outcome.Accepted, outcome.Reason, outcome.Remaining, outcome.Delivered, outcome.Complete);
+        if (outcome.Fact is { } fact)
+        {
+            await _cycles.RecordWithFactAsync(record, _events, fact.Topic, fact.Payload, fact.Key);
+        }
+        else
+        {
+            await _cycles.RecordAsync(record);
+        }
+        if (outcome.Notice is { } notice && _space.ClientSessionOf(cycle.SessionId) is { } session)
+        {
+            session.SendNotification("OnRemoteMessage", "clientID", notice);
         }
     }
 
@@ -857,7 +882,16 @@ private void OnReceived(SimMessage message)
         }
         if (cycle.Roll * 100d >= chance)
         {
-            return new WorkOutcome(true, "", 1, 0, false);
+            // a failed roll takes nothing from the wreck: the answer that records it carries the fact, and the pilot is told
+            var failed = new SalvageFailedEvent(
+                cycle.CharacterId, cycle.SolarSystemId, cycle.ShipId, cycle.OwnerId, cycle.IsModule ? MiningSource.Module : MiningSource.Drone,
+                cycle.TargetId, targetType.TypeId);
+            return new WorkOutcome(
+                true, "", 1, 0, false, (SalvageFailedEvent.Topic, failed, $"char:{cycle.CharacterId}"),
+                Py.Tuple(new PyStr("SalvagingFailure"), new PyDict([
+                    new(new PyStr("itemID"), new PyLong(cycle.TargetId)),
+                    new(new PyStr("type"), Py.Tuple(new PyInt(4), new PyInt(targetType.TypeId))),
+                ])));
         }
 
         var salvageProducts = await _statics.TypesInGroupsAsync(["Salvaged Materials"]);
@@ -869,7 +903,7 @@ private void OnReceived(SimMessage message)
         var salvaged = await _ships.SalvageWreckAsync(
             cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.IsModule ? MiningSource.Module : MiningSource.Drone,
             cycle.OwnerId, cycle.TargetId, salvageTypeId,
-            targetSpace, _nowUnixMs() + (long)CanLifetime.TotalMilliseconds, _spaceItems);
+            targetSpace, _nowUnixMs() + (long)CanLifetime.TotalMilliseconds, _spaceItems, (long)cycle.CycleId, _cycles, _events);
         if (!salvaged.Accepted)
         {
             return WorkOutcome.Refuse(salvaged.Reason);
@@ -907,7 +941,10 @@ private void OnReceived(SimMessage message)
                 _log?.Invoke($"loot container {container.Id} was saved but not placed in the simulation: {error.Message}");
             }
         }
-        return new WorkOutcome(true, "", 0, 1, true);
+        // the pilot is told what was recovered once the grant is kept; a replayed grant has no change and is not told again
+        var recovered = _statics.Type(salvageTypeId.Value)?.Name ?? string.Empty;
+        return new WorkOutcome(true, "", 0, 1, true, Notice: salvaged.Change is null ? null : Py.Tuple(new PyStr("CustomNotify"), new PyDict([
+            new(new PyStr("notify"), new PyStr($"Salvaging succeeded. Recovered 1 x {recovered} and placed it in your cargo hold."))])));
     }
 
     private int? SelectSalvageProductTypeId(TypeDef wreckType, SpaceItem wreckSpace, IReadOnlyList<TypeDef> products)

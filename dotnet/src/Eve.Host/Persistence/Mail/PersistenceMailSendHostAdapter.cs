@@ -338,15 +338,32 @@ public sealed class PersistenceMailSendHostAdapter(
     }
 
     /// <summary>Persists and delivers a kill-right notification through the shared notification mailbox.</summary>
-    public async Task WriteKillRightNotificationAsync(
+    public Task WriteKillRightNotificationAsync(
         long recipientId,
         long senderId,
         int typeId,
         JsonObject data,
         string? idempotencyKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) =>
+        WriteNotificationAsync(recipientId, senderId, typeId,
+            Eve.Services.Crimewatch.KillRightNotificationTypes.MiscGroup,
+            data, idempotencyKey, cancellationToken);
+
+    public Task WriteAllianceMaintenanceBillNotificationAsync(
+        long recipientId, long allianceId, long billId, CancellationToken cancellationToken)
     {
-        if (recipientId <= 0 || senderId <= 0 || typeId <= 0)
+        if (recipientId <= 0 || allianceId <= 0 || billId <= 0)
+            return Task.CompletedTask;
+        return WriteNotificationAsync(recipientId, 1_000_125, 4, 2,
+            new JsonObject { ["allianceID"] = allianceId },
+            $"alliance-maintenance-bill:{billId}:receiver:{recipientId}", cancellationToken);
+    }
+
+    private async Task WriteNotificationAsync(
+        long recipientId, long senderId, int typeId, int groupId, JsonObject data,
+        string? idempotencyKey, CancellationToken cancellationToken)
+    {
+        if (recipientId <= 0 || senderId <= 0 || typeId <= 0 || groupId < 0)
             return;
         await _sendGate.WaitAsync(cancellationToken);
         try
@@ -369,7 +386,7 @@ public sealed class PersistenceMailSendHostAdapter(
                 ["typeID"] = typeId,
                 ["senderID"] = senderId,
                 ["receiverID"] = recipientId,
-                ["groupID"] = Eve.Services.Crimewatch.KillRightNotificationTypes.MiscGroup,
+                ["groupID"] = groupId,
                 ["processed"] = false,
                 ["created"] = created,
                 ["data"] = data.DeepClone(),
@@ -382,7 +399,8 @@ public sealed class PersistenceMailSendHostAdapter(
                 var saved = (persisted["boxes"] as JsonObject)?[recipientKey] is JsonObject box &&
                     box["byID"] is JsonObject rows ? rows[Key(notificationId)] as JsonObject : null;
                 return saved is not null && Number(saved["typeID"]) == typeId &&
-                    Number(saved["senderID"]) == senderId && Number(saved["receiverID"]) == recipientId;
+                    Number(saved["senderID"]) == senderId && Number(saved["receiverID"]) == recipientId &&
+                    Number(saved["groupID"]) == groupId;
             }, cancellationToken);
             sendNotification(recipientId,
             [

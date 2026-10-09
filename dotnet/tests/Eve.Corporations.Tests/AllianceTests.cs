@@ -1382,8 +1382,14 @@ public class AllianceTests
                 [alliance.Id] = new(1000, new Dictionary<int, bool> { [5] = true }),
                 [executorCorp.Id] = new(1003, new Dictionary<int, bool>())
             });
+            var notices = new HashSet<(long RecipientId, long AllianceId, long BillId)>();
             var worker = new Eve.Services.Corporations.AllianceMaintenanceBillWorker(
-                rig.Store, rig.OfficeStore, scheduler, () => rig.Now);
+                rig.Store, rig.OfficeStore, scheduler, () => rig.Now,
+                (recipientId, allianceId, billId, _) =>
+                {
+                    notices.Add((recipientId, allianceId, billId));
+                    return Task.CompletedTask;
+                });
             await worker.RegisterAsync();
             await worker.ReconcileAsync();
 
@@ -1394,6 +1400,7 @@ public class AllianceTests
             var expectedInitialDue = checked((rig.Now + 11_644_473_600_000L) * 10_000L) +
                 30L * 24 * 60 * 60 * 10_000_000;
             Assert.Equal(expectedInitialDue, initialDue);
+            Assert.Contains((actor, alliance.Id, initial.BillId), notices);
             var balanceBefore = await rig.Transactions.AccountBalanceAsync(new Eve.Wallet.WalletAccount(executorCorp.Id, 1003));
 
             rig.Now = initialDue / 10_000L - 11_644_473_600_000L;
@@ -1402,6 +1409,7 @@ public class AllianceTests
             var renewed = Assert.Single(await rig.Store.AllianceBillsAsync(alliance.Id));
             Assert.Equal(5, renewed.BillTypeId);
             Assert.Equal(2_000_000m, renewed.AmountIsk);
+            Assert.Contains((actor, alliance.Id, renewed.BillId), notices);
             Assert.Equal(initialDue + 30L * 24 * 60 * 60 * 10_000_000, renewed.DueFiletime);
             var settledBills = await rig.Store.AllianceMaintenanceBillsAsync(alliance.Id);
             var settled = Assert.Single(settledBills, item => item.BillId == initial.BillId);

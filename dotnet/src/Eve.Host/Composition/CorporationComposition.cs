@@ -37,6 +37,8 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
+    private Eve.Services.Corporations.AllianceMaintenanceBillWorker? allianceMaintenanceBillWorker;
+
     private async Task CorporationMigrations()
     {
         // Codex-owned corporation registration; keep combat/NPC construction in its own block below.
@@ -142,10 +144,10 @@ internal sealed partial class CharacterServicesComposition
             corporations, characters, foundations.Scheduler, foundations.Relations, foundations.Events,
             allianceAffiliationNotify, characterSessions);
         await allianceDue.RegisterAsync();
-        var maintenance = new Eve.Services.Corporations.AllianceMaintenanceBillWorker(
+        allianceMaintenanceBillWorker = new Eve.Services.Corporations.AllianceMaintenanceBillWorker(
             corporations, new Eve.Corporations.CorporationOfficeStore(source, corporationSchema),
             foundations.Scheduler, now);
-        await maintenance.RegisterAsync();
+        await allianceMaintenanceBillWorker.RegisterAsync();
         allianceRegistry = new Eve.Services.Corporations.AllianceRegistryService(
             corporations, characters, now,
             scheduleAllianceApplication: allianceDue.ScheduleAcceptedAsync,

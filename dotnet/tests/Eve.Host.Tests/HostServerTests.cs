@@ -2933,6 +2933,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
     {
         const long senderId = 90000031;
         const long recipientId = 90000032;
+        const long allianceId = 90000033;
+        const long allianceBillId = 90000034;
         var cache = new Dictionary<string, System.Text.Json.Nodes.JsonObject>
         {
             ["mail"] = new()
@@ -3049,6 +3051,12 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                 Assert.Equal(typeId, saved["typeID"]!.GetValue<int>());
                 if (typeId == 1004)
                     Assert.Equal(12, saved["data"]!["msg"]!["messageID"]!.GetValue<long>());
+                else if (typeId == 4)
+                {
+                    Assert.Equal(2, saved["groupID"]!.GetValue<int>());
+                    Assert.Equal(1_000_125, saved["senderID"]!.GetValue<long>());
+                    Assert.Equal(allianceId, saved["data"]!["allianceID"]!.GetValue<long>());
+                }
                 else
                 {
                     Assert.Equal(Eve.Services.Crimewatch.KillRightNotificationTypes.Used, typeId);
@@ -3105,6 +3113,22 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.Equal(Eve.Services.Crimewatch.KillRightNotificationTypes.MiscGroup, usedNotification["groupID"]!.GetValue<int>());
         Assert.Equal(senderId, usedNotification["data"]!["charID"]!.GetValue<long>());
         Assert.Equal(2, liveNotifications.Count);
+
+        await adapter.WriteAllianceMaintenanceBillNotificationAsync(
+            recipientId, allianceId, allianceBillId, CancellationToken.None);
+        await adapter.WriteAllianceMaintenanceBillNotificationAsync(
+            recipientId, allianceId, allianceBillId, CancellationToken.None);
+        var billNotification = Assert.Single(
+            committed["notifications"]["boxes"]![recipientId.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)]!["byID"]!.AsObject()
+                .Select(pair => pair.Value).OfType<System.Text.Json.Nodes.JsonObject>(),
+            notification => notification["idempotencyKey"]?.GetValue<string>() ==
+                $"alliance-maintenance-bill:{allianceBillId}:receiver:{recipientId}");
+        Assert.Equal(4, billNotification["typeID"]!.GetValue<int>());
+        Assert.Equal(2, billNotification["groupID"]!.GetValue<int>());
+        Assert.Equal(1_000_125, billNotification["senderID"]!.GetValue<long>());
+        Assert.Equal(allianceId, billNotification["data"]!["allianceID"]!.GetValue<long>());
+        Assert.Equal(3, liveNotifications.Count);
     }
 
     [Fact]

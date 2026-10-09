@@ -322,3 +322,32 @@ Re-read these files before implementing a provider; the Host composition root de
 - `EVE_TRACE_RPC=1|full`: `full` adds each call's arguments and each result's type tree to the trace lines.
 - `tools/mitm` captures and diffs the client's traffic against the reference. Rule and recipe:
   `docs/design/REFERENCE-TRACES.md`.
+
+## 15. CI hygiene and the pre-push check (2026-10-09)
+
+The primary check before a push is `tools/dev/check-all.sh`: the jobs of `.github/workflows/ci.yml` (manual only: the repository is private and Actions minutes are limited) in the same order and environment, on a local PostgreSQL 18. `CHECK_SKIP=live,dotnet` leaves steps out.
+
+| Status | Item | Where |
+|---|---|---|
+| DONE | `cargo fmt --all --check` clean, with the pinned toolchain 1.94.1 (17 eve-space files were unformatted, not 8) | `rustfmt.toml`; commit "Format the Rust workspace" |
+| DONE | `cargo clippy --workspace --all-targets -- -D warnings` clean on 1.94.1 (no blanket `allow`) | `crates/eve-space` |
+| DONE | `Sim::handle` split into `handle_session`, `handle_fitting`, `handle_command`, `handle_fleet`, `handle_world`; arms moved verbatim; golden fixtures unchanged | `crates/eve-space/src/sim.rs` |
+| DONE | Rust job has the PostgreSQL service and `EVE_PG_URL` (postgres:// form); the .NET test step gets the Npgsql keyword string | `.github/workflows/ci.yml` |
+| DONE | Live script sets `EVE_DEV_AUTO_CREATE=1`: the host refused every test login, as its header promises accounts are created | `tools/dev/run-eve-live.sh` |
+| DONE | `.NET` build is warnings-as-errors already (`dotnet/Directory.Build.props`); CI does not run `dotnet format`, so it is not checked here | |
+| FIXED | `test_call_request_wire_shape` expected `isBound` clear; direct calls set it since 4d289a7 | `tools/headless-client/tests/test_handshake_mock.py` |
+| OPEN | Live E2E: undock and align-to-station produce one extra `DoDestinyUpdate` after `OnInvulnCancelled`. Failing: `test_a_ship_undocks_flies_and_docks_as_the_reference_did[race-1]` and `[race-4]`, `test_orders_in_space_make_the_updates_the_reference_sent[race-1]`. Reference order: `DoDestinyUpdate`, `OnInvulnCancelled`; eve.rs: plus a trailing `DoDestinyUpdate`. The invulnerability ends in `SpaceSessions.EndInvulnerability` / the target-lock path (`SpaceSessions.cs` ~1005, ~1088), after the simulation's notify; the trailing update is from a later simulation tick, not yet traced | `tools/headless-client/tests/test_movement.py:85`; run 2026-10-09 with `tools/dev/check-all.sh` |
+| OBSERVED ONCE | Live run: the host's event pump reported `relation "live_<pid>_events.outbox" does not exist` at start (PostgreSQL log, one statement); the same schema was complete in the next run, and logins then failed only because of the auto-create flag. Not reproduced; watch for it | `dotnet/src/Eve.Events/EventBus.cs` (horizon query), `Eve.Data/Migrations.cs` |
+
+Known failures in the full .NET run of 2026-10-09 (4,244 tests; 4 failed, all on the baseline list):
+
+| Test | Status |
+|---|---|
+| `Eve.Corporations.Tests` `Character_login_restores_direct_war_faction_then_corporation_faction` (CorpWarFaction) | fails |
+| `Eve.Services.Tests` `SessionChangeTests.The_client_visible_set_is_the_reference_list` (SessionChange) | fails |
+| `Eve.Services.Space.Tests` `Fleet_finder_advert_operations_match_evejs_arguments_and_persist_the_full_payload` | fails |
+| `Eve.Services.Space.Tests` `When_a_session_ends_in_space_the_simulation_is_told_and_the_ship_is_put_back_in_the_hangar` | fails |
+| ConfigPrime, SessionEndsHangar, capsule death | not failing in this run |
+| Safe logoff, NpcBounty, Mutadaptive (flaky; rerun alone) | not failing in this run |
+
+Rust: 1,272 tests passed, 0 failed. Python client: 1,066 passed, 97 skipped (the live tests need a server).

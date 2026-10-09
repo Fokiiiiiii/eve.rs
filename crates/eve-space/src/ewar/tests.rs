@@ -110,11 +110,11 @@ fn a_record_is_renewed_by_the_same_module_and_the_numbers_are_worked_from_the_ba
     assert!(
         (worked.max_target_range - 24_000.0).abs() < 1e-9 && (worked.scan_resolution - 350.0).abs() < 1e-9
     );
-    assert!(!incoming.scrambled());
+    assert!(!incoming.scrambled_with(0.0));
     incoming.upsert(4, 12, Lasting::Scramble { strength: 2.0, blocks_mwd: true }, 100);
     incoming.upsert(5, 13, Lasting::Scramble { strength: 1.0, blocks_mwd: false }, 100);
     assert_eq!(incoming.scramble_points(), 3.0);
-    assert!(incoming.scrambled());
+    assert!(incoming.scrambled_with(0.0));
 }
 
 #[test]

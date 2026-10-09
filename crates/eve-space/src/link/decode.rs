@@ -38,6 +38,25 @@ pub(super) fn read_credit(reader: &mut Reader) -> Result<Credit, DecodeError> {
     })
 }
 
+/// What a launcher flies (a missile's spec, after its charge's type and group and name): see `put_missile` for the order of the fields.
+pub(super) fn read_missile(reader: &mut Reader) -> Result<Missile, DecodeError> {
+    Ok(Missile {
+        charge_type_id: reader.i32()?,
+        group_id: reader.i32()?,
+        name: reader.text()?,
+        radius: reader.f64()?,
+        mass: reader.f64()?,
+        agility: reader.f64()?,
+        hit_points: reader.f64()?,
+        max_velocity: reader.f64()?,
+        flight_time_ms: reader.f64()?,
+        explosion_radius: reader.f64()?,
+        explosion_velocity: reader.f64()?,
+        damage_reduction_factor: reader.f64()?,
+        damage_reduction_sensitivity: reader.f64()?,
+    })
+}
+
 pub(super) fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
     let weapon_type_id = reader.i32()?;
     let fx = reader.text()?;
@@ -56,21 +75,7 @@ pub(super) fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
     };
     let missile = match reader.u8()? {
         0 => None,
-        1 => Some(Missile {
-            charge_type_id: reader.i32()?,
-            group_id: reader.i32()?,
-            name: reader.text()?,
-            radius: reader.f64()?,
-            mass: reader.f64()?,
-            agility: reader.f64()?,
-            hit_points: reader.f64()?,
-            max_velocity: reader.f64()?,
-            flight_time_ms: reader.f64()?,
-            explosion_radius: reader.f64()?,
-            explosion_velocity: reader.f64()?,
-            damage_reduction_factor: reader.f64()?,
-            damage_reduction_sensitivity: reader.f64()?,
-        }),
+        1 => Some(read_missile(reader)?),
         _ => return Err(DecodeError::BadValue("missile")),
     };
     let spool = match reader.u8()? {

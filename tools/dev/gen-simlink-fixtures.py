@@ -103,6 +103,10 @@ LAYERS = {"shield": 0, "armor": 1, "structure": 2}
 FAMILIES = {"ore": 0, "ice": 1, "gas": 2}
 
 
+def deployable(d):
+    return struct.pack("<ii", d["chargeTypeId"], d["groupId"]) + s(d["name"]) + struct.pack("<d", d["radius"])
+
+
 def action(a):
     kind = a["kind"]
     if kind == "smartbomb":
@@ -111,8 +115,31 @@ def action(a):
         return bytes([0, LAYERS[a["layer"]], 1 if a["when"] == "end" else 0]) + struct.pack("<d", a["amount"])
     if kind == "ecmBurst":
         return bytes([3]) + struct.pack("<d", a["range"]) + struct.pack("<4d", *a["strength"])
+    # the SimAction tag 5 (protocol 34): a cloak and whether it is warp-safe (a covert ops cloak carries the ship into warp; a standard one holds it)
     if kind == "cloak":
-        return bytes([5])
+        return bytes([5, 1 if a.get("warpSafe") else 0])
+    # the SimAction tags 16 to 20 (protocol 34): a warp disruption bubble on the ship, the immunity of a nullifier, a stabilizer's scramble status, an interdiction
+    # probe in space, and a bomb that goes off where it is (kind 0 damage, 1 ECM, 2 neutralisation); a deployable's ball is its charge, its group, its name and radius
+    if kind == "warpBubble":
+        return bytes([16]) + struct.pack("<d", a["range"])
+    if kind == "warpImmunity":
+        return bytes([17])
+    if kind == "scrambleStatus":
+        return bytes([18]) + struct.pack("<d", a["delta"])
+    # the SimAction tag 22 (protocol 34): a defender launcher's cycle, its defender missile (the charge's flight, as a turret's missile is) and four damages
+    if kind == "defender":
+        m = a["missile"]
+        return (bytes([22]) + struct.pack("<ii", m["chargeTypeId"], m["groupId"]) + s(m["name"])
+                + struct.pack("<10d", m["radius"], m["mass"], m["agility"], m["hitPoints"], m["maxVelocity"], m["flightTimeMs"],
+                              m["explosionRadius"], m["explosionVelocity"], m["damageReductionFactor"], m["damageReductionSensitivity"])
+                + struct.pack("<4d", *a["damage"]))
+    if kind == "stasisBurst":
+        return bytes([21]) + struct.pack("<3d", a["range"], a["durationMs"], a["speedFactor"])
+    if kind == "warpProbe":
+        return bytes([19]) + deployable(a["ball"]) + struct.pack("<2d", a["range"], a["lifetimeMs"])
+    if kind == "bomb":
+        return (bytes([20]) + deployable(a["ball"]) + bytes([a["bombKind"]]) + struct.pack("<2d", a["lifetimeMs"], a["blastRadius"])
+                + struct.pack("<4d", *a["damage"]) + struct.pack("<4d", *a["ecm"]) + struct.pack("<d", a["neutralize"]))
     # the SimAction tags 7-11 (ADR 0013): a mining laser's cycle, a salvager's, and three effects whose packages have not landed (refused at activation)
     if kind == "mining":
         return bytes([7, FAMILIES[a["family"]]]) + struct.pack("<5d", a["miningAmountM3"], a["wasteMultiplier"], a["wasteProbability"], a["critProbability"], a["critMultiplier"])
@@ -388,8 +415,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 34},
-    {"name": "hello ack", "kind": "HelloAck", "version": 34, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 35},
+    {"name": "hello ack", "kind": "HelloAck", "version": 35, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -560,6 +587,47 @@ valid = [
      "effect": {"moduleId": "9988400002813", "moduleType": 1563, "effectId": 38, "fx": "effects.EmpWave",
                 "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1000, "targetId": "0",
                 "action": {"kind": "smartbomb", "range": 3000.0, "damage": [50.0, 0.0, 0.0, 0.0], "hurtsPilots": True},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a cloak that is not warp-safe", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 11577, "effectId": 197, "fx": "effects.Cloaking",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1000, "targetId": "0",
+                "action": {"kind": "cloak", "warpSafe": False}, "onChanges": [], "offChanges": []}},
+    {"name": "activate a field generator's bubble", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 28654, "effectId": 1,
+                "fx": "effects.WarpDisruptFieldGenerating",
+                "durationMs": 30000.0, "capacitorNeed": 150.0, "repeat": 1000, "targetId": "0",
+                "action": {"kind": "warpBubble", "range": 16000.0}, "onChanges": [], "offChanges": []}},
+    {"name": "activate a nullifier's immunity", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 58919, "effectId": 1, "fx": "",
+                "durationMs": 10000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "warpImmunity"}, "onChanges": [], "offChanges": []}},
+    {"name": "activate a stabilizer's scramble status", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 10998, "effectId": 1, "fx": "",
+                "durationMs": 10000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "scrambleStatus", "delta": -2.0}, "onChanges": [], "offChanges": []}},
+    {"name": "activate a defender launcher", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 44102, "effectId": 1, "fx": "",
+                "durationMs": 10000.0, "capacitorNeed": 50.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "defender", "missile": {"chargeTypeId": 32782, "groupId": 88, "name": "Defender Missile I", "radius": 1.0,
+                           "mass": 1.0, "agility": 1.0, "hitPoints": 5.0, "maxVelocity": 10000.0, "flightTimeMs": 3000.0,
+                           "explosionRadius": 10.0, "explosionVelocity": 400.0, "damageReductionFactor": 0.1, "damageReductionSensitivity": 5.5},
+                           "damage": [200.0, 200.0, 200.0, 200.0]},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a stasis webification burst", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 22782, "effectId": 1, "fx": "effects.TorpedoDeployment",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "stasisBurst", "range": 15000.0, "durationMs": 30000.0, "speedFactor": -20.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate an interdiction probe", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 22782, "effectId": 1, "fx": "effects.TorpedoDeployment",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "warpProbe", "ball": {"chargeTypeId": 22778, "groupId": 548, "name": "Warp Disrupt Probe", "radius": 40.0}, "range": 20000.0, "lifetimeMs": 120000.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a bomb", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 4256, "effectId": 1, "fx": "effects.MissileDeployment",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "bomb", "ball": {"chargeTypeId": 27920, "groupId": 90, "name": "Electron Bomb", "radius": 40.0}, "bombKind": 0, "lifetimeMs": 12000.0, "blastRadius": 400.0,
+                           "damage": [5800.0, 0.0, 0.0, 0.0], "ecm": [0.0, 0.0, 0.0, 0.0], "neutralize": 0.0},
                 "onChanges": [], "offChanges": []}},
     {"name": "activate an ECM burst", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 580, "effectId": 38, "fx": "effects.EcmBurstJammer",
@@ -932,6 +1000,12 @@ invalid = [
      "hex": build(dict(named("module work cycle asking the fuel of a cycle"), miningAmountM3=20.0)).hex()},
     {"name": "module ended with an unknown reason", "reason": "bad-value",
      "hex": build(dict(named("module ended when its target is lost"), reason=9)).hex()},
+    {"name": "warp probe with no lifetime", "reason": "bad-value",
+     "hex": build(dict(named("activate an interdiction probe"), effect=dict(named("activate an interdiction probe")["effect"],
+                       action=dict(named("activate an interdiction probe")["effect"]["action"], lifetimeMs=0.0)))).hex()},
+    {"name": "bomb of an unknown kind", "reason": "bad-value",
+     "hex": build(dict(named("activate a bomb"), effect=dict(named("activate a bomb")["effect"],
+                       action=dict(named("activate a bomb")["effect"]["action"], bombKind=7)))).hex()},
     {"name": "mining action with a crit chance above one", "reason": "bad-value",
      "hex": build(dict(named("activate a mining laser"), effect=dict(named("activate a mining laser")["effect"],
                        action=dict(named("activate a mining laser")["effect"]["action"], critProbability=1.5)))).hex()},

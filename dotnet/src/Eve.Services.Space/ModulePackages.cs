@@ -1,4 +1,5 @@
 using Eve.Dogma;
+using Eve.Inventory;
 using Eve.Services.Space.Effects;
 using Eve.Ships;
 using Eve.Space;
@@ -25,6 +26,15 @@ internal static class ModulePackages
     public static (SimNumbers On, SimNumbers Off) Propulsion(double mass, double maxVelocity, double signatureRadius, double massAddition, double speedFactor, double speedBoostFactor, double signatureBonus) =>
         PropulsionEffect.Numbers(mass, maxVelocity, signatureRadius, massAddition, speedFactor, speedBoostFactor, signatureBonus);
 
+    /// <summary>The effect of the script loaded in the module, when the script's type carries the requested effect (a focus script of a field generator).</summary>
+    private static EffectDef? ScriptEffectOf(ShipSnapshot snapshot, DogmaStatic statics, Item module, string effectName)
+    {
+        var script = ProjectedEffect.IsFocusScript(effectName) ? snapshot.ChargeOf(module) : null;
+        return script is null || statics.Type(script.TypeId) is not { } scriptType
+            ? null
+            : scriptType.EffectIds.Select(statics.Effect).FirstOrDefault(e => e is { } found && found.Name.Equals(effectName, StringComparison.OrdinalIgnoreCase));
+    }
+
     public static Result Of(ShipSnapshot snapshot, DogmaStatic statics, long moduleId, string effectName, long targetId, int repeat, IReadOnlyList<double>? aim = null, IReadOnlyList<double>? aimEnd = null)
     {
         var module = snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId);
@@ -34,7 +44,8 @@ internal static class ModulePackages
         }
         var name = type.Name;
         var effect = type.EffectIds.Select(statics.Effect).FirstOrDefault(e => e is { } found && found.Name.Equals(effectName, StringComparison.OrdinalIgnoreCase))
-            ?? MissileEffect.LauncherEffectFor(type, statics, effectName);   // a launcher is fired with the effect of its charge, and runs its own
+            ?? MissileEffect.LauncherEffectFor(type, statics, effectName)   // a launcher is fired with the effect of its charge, and runs its own
+            ?? ScriptEffectOf(snapshot, statics, module, effectName);      // a focus script is loaded as a charge, and its effect is the module's to run
         if (effect is null && MissileEffect.RefusedFiringReason(type, statics, effectName) is { } firingReason)
         {
             return new Result(null, firingReason, module.TypeId, name);   // a firing effect that is refused by name (not an unexplained UNSUPPORTED_EFFECT)

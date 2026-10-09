@@ -59,6 +59,11 @@ internal sealed class ProjectedEffect : ShipEffect
         ["remoteSensorBoostFalloff"] = v => (new SimRemote.Damp(Signed(v, MaxTargetRangeBonus), Signed(v, ScanResolutionBonus), Signed(v, ScanGravimetricStrengthPercent), Signed(v, ScanLadarStrengthPercent), Signed(v, ScanMagnetometricStrengthPercent), Signed(v, ScanRadarStrengthPercent)), false, "remoteSensorBoost"),
         ["warpScrambleBlockMWDWithNPCEffect"] = v => (new SimRemote.Scramble(Amount(v, WarpScrambleStrength), true), false, "warpScramblerMWD"),
         ["warpDisrupt"] = v => (new SimRemote.Scramble(Amount(v, WarpScrambleStrength), false), false, "warpScrambler"),
+        // the focus scripts of a warp disruption field generator (group 908; the script is the charge, its effect is the generator's): the strength is the module's, as the
+        // script's own modifier gives it (effect 6849 and 6848: a ModAdd of the target's warp scramble status by the modifying item's attribute 105); the scrambling one
+        // stops a microwarpdrive (its EffectStopper), as the scrambler does.
+        ["shipModuleFocusedWarpDisruptionScript"] = v => (new SimRemote.Scramble(Amount(v, WarpScrambleStrength), false), false, "warpScrambler"),
+        ["shipModuleFocusedWarpScramblingScript"] = v => (new SimRemote.Scramble(Amount(v, WarpScrambleStrength), true), false, "warpScramblerMWD"),
         ["shipModuleTrackingDisruptor"] = TrackingDisrupt,
         ["shipModuleRemoteTrackingComputer"] = v => (new SimRemote.Disrupt(Signed(v, RangeDisruption), Signed(v, FalloffDisruption), Signed(v, TrackingDisruption)), false, "ewTrackingDisrupt"),
         ["npcEntityWeaponDisruptor"] = TrackingDisrupt,
@@ -73,6 +78,13 @@ internal sealed class ProjectedEffect : ShipEffect
         ["fighterAbilityTackle"] = v => (new SimRemote.Tackle(Amount(v, FighterTackleScramble), Signed(v, FighterTackleWeb)), false, "warpScrambler"),
         ["fighterAbilityECM"] = v => (new SimRemote.Jam(Amount(v, FighterGravimetricStrength), Amount(v, FighterLadarStrength), Amount(v, FighterMagnetometricStrength), Amount(v, FighterRadarStrength)), false, ""),
     };
+
+    /// <summary>The focus scripts: their reach is the module's warp scramble range (attribute 103) times the script's own range bonus.</summary>
+    private static readonly HashSet<string> FocusScripts = new(StringComparer.OrdinalIgnoreCase) { "shipModuleFocusedWarpDisruptionScript", "shipModuleFocusedWarpScramblingScript" };
+
+
+    /// <summary>Whether an effect name is a focus script (a charge of a field generator, run by the module it is loaded in).</summary>
+    internal static bool IsFocusScript(string effectName) => FocusScripts.Contains(effectName.Trim());
 
     /// <summary>The fighter attributes the rows above read (SDE dogma attribute ids: warp disruption point strength 2205, stasis speed penalty 2184, neutralized amount 2211, ECM strengths 2246 to 2249).</summary>
     internal const int FighterWarpDisruptionStrength = 2205;
@@ -130,6 +142,9 @@ internal sealed class ProjectedEffect : ShipEffect
         var remote = Specs[module.Effect.Name.Trim()](attribute => module.World.Get(module.ModuleId, attribute));
         var (duration, capacitor, durationAttribute) = module.Cycle();
         var optimal = Math.Max(0, NpcArmament.Round6(module.Value(MaxRange, 0)));
+        // a focus script reaches the warp scramble range of its module; the script's own range bonus (1327) is already in it, as the script's effect 3648 modifies
+        // the module's attribute 103 in dogma (applying the bonus again would count it twice)
+        if (IsFocusScript(module.Effect.Name)) optimal = Math.Max(0, NpcArmament.Round6(module.Value(WarpScrambleRange, 0)));
         var falloff = Math.Max(0, NpcArmament.Round6(module.Value(FalloffEffectiveness, 0)));
         SimChange[] told = [new(module.ModuleId, CapacitorNeed, capacitor), new(module.ModuleId, durationAttribute, Three(duration)), new(module.ModuleId, MaxRange, optimal)];
         return new SimEffect(

@@ -249,6 +249,21 @@ public static partial class SimCodec
         return strike;
     }
 
+    /// <summary>What a launcher flies (see <c>WriteMissile</c>).</summary>
+    private static SimMissile ReadMissile(ref Reader r) =>
+        new(r.I32(), r.I32(), r.Text(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64());
+
+    /// <summary>A deployable's charge (see <c>WriteDeployable</c>): the radius of its ball must be a positive number.</summary>
+    private static SimDeployable ReadDeployable(ref Reader r)
+    {
+        var ball = new SimDeployable(r.I32(), r.I32(), r.Text(), r.F64());
+        if (!double.IsFinite(ball.Radius) || ball.Radius <= 0)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad deployable ball");
+        }
+        return ball;
+    }
+
     private static SimAction ReadAction(ref Reader r)
     {
         switch (r.U8())
@@ -270,7 +285,82 @@ public static partial class SimCodec
                     return new SimAction.EcmBurst(range, strength);
                 }
             case 5:
-                return new SimAction.Cloak();
+                {
+                    var warpSafe = r.U8();
+                    if (warpSafe > 1)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad warp-safe flag of the cloak");
+                    }
+                    return new SimAction.Cloak(warpSafe == 1);
+                }
+            case 16:
+                {
+                    var range = r.F64();
+                    if (!double.IsFinite(range) || range <= 0)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad warp bubble action");
+                    }
+                    return new SimAction.WarpBubble(range);
+                }
+            case 17:
+                return new SimAction.WarpImmunity();
+            case 22:
+                {
+                    var missile = ReadMissile(ref r);
+                    double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    if (missile.MaxVelocity < 0 || damage.Any(d => !double.IsFinite(d) || d < 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad defender action");
+                    }
+                    return new SimAction.Defender(missile, damage);
+                }
+            case 21:
+                {
+                    var range = r.F64();
+                    var duration = r.F64();
+                    var speed = r.F64();
+                    if (!(double.IsFinite(range) && range > 0 && double.IsFinite(duration) && duration > 0 && double.IsFinite(speed)))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad stasis burst action");
+                    }
+                    return new SimAction.StasisBurst(range, duration, speed);
+                }
+            case 18:
+                {
+                    var delta = r.F64();
+                    if (!double.IsFinite(delta))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad scramble status action");
+                    }
+                    return new SimAction.ScrambleStatus(delta);
+                }
+            case 19:
+                {
+                    var ball = ReadDeployable(ref r);
+                    var range = r.F64();
+                    var lifetime = r.F64();
+                    if (!(double.IsFinite(range) && range > 0 && double.IsFinite(lifetime) && lifetime > 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad warp probe action");
+                    }
+                    return new SimAction.WarpProbe(ball, range, lifetime);
+                }
+            case 20:
+                {
+                    var ball = ReadDeployable(ref r);
+                    var kind = r.U8();
+                    var lifetime = r.F64();
+                    var blast = r.F64();
+                    double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    double[] ecm = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    var neutralize = r.F64();
+                    if (kind > 2 || !(double.IsFinite(lifetime) && lifetime > 0 && double.IsFinite(blast) && blast > 0)
+                        || damage.Concat(ecm).Append(neutralize).Any(n => !double.IsFinite(n) || n < 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad bomb action");
+                    }
+                    return new SimAction.Bomb(ball, (SimBombKind)kind, lifetime, blast, damage, ecm, neutralize);
+                }
             case 6:
                 return new SimAction.MicroJumpDrive(r.F64(), r.I64());
             case 7:
@@ -469,7 +559,7 @@ public static partial class SimCodec
         var missile = r.U8() switch
         {
             0 => null,
-            1 => new SimMissile(r.I32(), r.I32(), r.Text(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64()),
+            1 => ReadMissile(ref r),
             _ => throw new SimLinkException(SimLinkError.BadValue, "bad missile"),
         };
         var spool = r.U8() switch

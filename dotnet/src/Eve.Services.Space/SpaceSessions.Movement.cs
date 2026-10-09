@@ -156,6 +156,15 @@ public sealed partial class SpaceSessions
         {
             throw Notify("You cannot warp because you are warp scrambled.");
         }
+        // the reference's errors for a bubble (the user error WarpDisrupted) and for a cloak that holds the ship (the notice of its text)
+        if (reply.Reason == "WARP_DISRUPTED_BY_BUBBLE")
+        {
+            throw MachoErrors.ThrowUserError("WarpDisrupted");
+        }
+        if (reply.Reason == "WARP_BLOCKED_BY_CLOAK")
+        {
+            throw Notify("You cannot warp while cloaked. Deactivate your cloaking device first.");
+        }
         throw Notify("You cannot warp there right now.");
     }
 

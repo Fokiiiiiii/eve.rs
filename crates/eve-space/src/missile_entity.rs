@@ -73,8 +73,8 @@ pub enum Interceptor {
     Smartbomb { ship_id: i64, module_id: i64 },
     /// A point defense battery shot at it.
     PointDefense { module_id: i64 },
-    /// A defender missile met it: the defender's id.
-    Defender { missile_id: i64 },
+    /// A defender launcher's missile met it: the launcher's module (`Scene::defender_intercept`).
+    Defender { module_id: i64 },
 }
 
 /// A missile in flight.
@@ -366,7 +366,7 @@ impl Scene {
     }
 
     /// The pilots that have bound the ballpark and can see this place (a missile is seen where it was fired from).
-    fn missile_audience(&self, position: Vec3) -> Vec<SessionId> {
+    pub(crate) fn missile_audience(&self, position: Vec3) -> Vec<SessionId> {
         self.in_entry_order()
             .into_iter()
             .filter(|s| !is_npc_session(*s) && self.pilots[s].bound)
@@ -592,6 +592,69 @@ impl Scene {
         .collect();
         missiles.sort_unstable();
         missiles
+    }
+
+    /// A defender launcher's cycle starts: its defender missile goes for the nearest hostile missile in its reach (the flight of its charge from the ship, and the
+    /// missile in flight within it), and meets it where the two courses cross (`DefenderMissile::intercept`). A missile it destroys is gone; one it does not is
+    /// hurt by the damage the defender does (its hit points, `Scene::damage_missile`). Nothing is aimed at a ship: the reference's defender has no target either
+    /// (DEVIATIONS). The interceptor is the launcher's module.
+    pub(crate) fn defender_intercept(
+        &mut self,
+        session: SessionId,
+        effect: &Effect,
+        missile: &Missile,
+        damage: crate::health::Damage,
+        at: i64,
+    ) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
+        let (p, owner) = (pilot.ship.position, self.combat_owner(session));
+        let origin = [p.x, p.y, p.z];
+        let reach = missile.max_velocity.max(0.0) * missile.flight_time_ms.max(0.0) / 1000.0;
+        let by = crate::missile_entity::Interceptor::Defender { module_id: effect.module_id };
+        // the nearest hostile missile in reach that is flying (its shooter is another owner)
+        let nearest = self
+            .missiles_within(p, reach)
+            .into_iter()
+            .filter_map(|id| self.missiles.get(&id).filter(|m| m.is_flying() && m.shooter.owner_id != owner))
+            .map(|m| {
+                let apart = ((m.position.x - p.x).powi(2)
+                    + (m.position.y - p.y).powi(2)
+                    + (m.position.z - p.z).powi(2))
+                .sqrt();
+                (apart, m.id)
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let Some((_, victim)) = nearest else { return Vec::new() };
+        let Some(threat) = self.missile_threat(victim) else { return Vec::new() };
+        let defender = crate::missiles::DefenderMissile::from_charge(missile, damage.iter().sum());
+        let Some(interception) = defender.intercept(origin, &threat) else { return Vec::new() };
+        if interception.destroyed {
+            self.intercept_missile(victim, by, at)
+        } else {
+            self.damage_missile(victim, damage.iter().sum(), by, at)
+        }
+    }
+
+    /// The threat a missile in flight is to a defender: where it is and how fast it flies, its radius and hit points, and how long until it reaches its target.
+    fn missile_threat(&self, missile_id: i64) -> Option<crate::missiles::MissileThreat> {
+        let missile = self.missiles.get(&missile_id)?;
+        let target = self.kinematics_of(self.session_of(missile.target)?)?;
+        let (to, speed) = (target.position, missile.spec.max_velocity.max(0.0));
+        let apart = ((to[0] - missile.position.x).powi(2)
+            + (to[1] - missile.position.y).powi(2)
+            + (to[2] - missile.position.z).powi(2))
+        .sqrt();
+        let to_surface = (apart - target.radius.max(0.0)).max(0.0);
+        if speed <= 0.0 || missile.spec.hit_points <= 0.0 {
+            return None;
+        }
+        Some(crate::missiles::MissileThreat {
+            position: [missile.position.x, missile.position.y, missile.position.z],
+            velocity: [missile.velocity.x, missile.velocity.y, missile.velocity.z],
+            radius_m: missile.spec.radius,
+            hit_points: missile.hit_points,
+            time_to_target_seconds: (to_surface / speed).max(1e-3),
+        })
     }
 
     /// A missile is shot down: it is gone with the explosion played, and does nothing to its target. What shot it down does not touch the ships: the missile is the only thing it hurt.

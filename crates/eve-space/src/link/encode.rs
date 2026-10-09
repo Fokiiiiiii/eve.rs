@@ -173,6 +173,28 @@ pub(super) fn put_credit(out: &mut Vec<u8>, credit: &Credit) {
 /// A turret's numbers: the type of the weapon, the effect the client plays, the damage of a shot (em, thermal, kinetic, explosive), the range, the falloff,
 /// the tracking and the signature resolution, then the charge it fires (a flag byte, and when set the type, the flag it sits at, the rounds left and the rounds a cycle takes), then the missile it
 /// flies (a flag byte, and when set the type of the missile, its speed, its flight time in milliseconds, the explosion radius and velocity and the damage reduction factor and sensitivity).
+/// What a launcher flies: the charge's type and group and name, then the ball's radius, mass and agility, the hit points, the speed, the flight time, and the
+/// explosion's radius, velocity, damage reduction factor and sensitivity (`decode::read_missile` reads them in this order).
+pub(super) fn put_missile(out: &mut Vec<u8>, missile: &Missile) {
+    out.extend_from_slice(&missile.charge_type_id.to_le_bytes());
+    out.extend_from_slice(&missile.group_id.to_le_bytes());
+    put_text(out, &missile.name);
+    for number in [
+        missile.radius,
+        missile.mass,
+        missile.agility,
+        missile.hit_points,
+        missile.max_velocity,
+        missile.flight_time_ms,
+        missile.explosion_radius,
+        missile.explosion_velocity,
+        missile.damage_reduction_factor,
+        missile.damage_reduction_sensitivity,
+    ] {
+        out.extend_from_slice(&number.to_le_bytes());
+    }
+}
+
 pub(super) fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
     out.extend_from_slice(&turret.weapon_type_id.to_le_bytes());
     put_text(out, &turret.fx);
@@ -198,23 +220,7 @@ pub(super) fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
         None => out.push(0),
         Some(missile) => {
             out.push(1);
-            out.extend_from_slice(&missile.charge_type_id.to_le_bytes());
-            out.extend_from_slice(&missile.group_id.to_le_bytes());
-            put_text(out, &missile.name);
-            for number in [
-                missile.radius,
-                missile.mass,
-                missile.agility,
-                missile.hit_points,
-                missile.max_velocity,
-                missile.flight_time_ms,
-                missile.explosion_radius,
-                missile.explosion_velocity,
-                missile.damage_reduction_factor,
-                missile.damage_reduction_sensitivity,
-            ] {
-                out.extend_from_slice(&number.to_le_bytes());
-            }
+            put_missile(out, missile);
         }
     }
     match &turret.spool {
@@ -334,6 +340,14 @@ pub(super) fn write_strike(out: &mut Vec<u8>, strike: &Strike) {
 }
 
 /// A list of ship ids: a count, then each id (as the protocol's i64).
+/// A deployable's charge (see `decode_action::read_deployable`).
+pub(super) fn put_deployable(out: &mut Vec<u8>, spec: &Spec) {
+    out.extend_from_slice(&spec.charge_type_id.to_le_bytes());
+    out.extend_from_slice(&spec.group_id.to_le_bytes());
+    put_text(out, &spec.name);
+    out.extend_from_slice(&spec.radius.to_le_bytes());
+}
+
 pub(super) fn write_ids(out: &mut Vec<u8>, ids: &[i64]) {
     out.extend_from_slice(&(ids.len() as u32).to_le_bytes());
     for id in ids {
@@ -385,7 +399,49 @@ pub(super) fn put_action(out: &mut Vec<u8>, action: &Action) {
                 out.extend_from_slice(&number.to_le_bytes());
             }
         }
-        Action::Cloak => out.push(5),
+        Action::Cloak { warp_safe } => out.extend([5, u8::from(*warp_safe)]),
+        Action::WarpBubble { range } => {
+            out.push(16);
+            out.extend_from_slice(&range.to_le_bytes());
+        }
+        Action::WarpImmunity => out.push(17),
+        Action::Defender { missile, damage } => {
+            out.push(22);
+            put_missile(out, missile);
+            for number in damage {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
+        }
+        Action::StasisBurst { range, duration_ms, speed_factor } => {
+            out.push(21);
+            out.extend_from_slice(&range.to_le_bytes());
+            out.extend_from_slice(&duration_ms.to_le_bytes());
+            out.extend_from_slice(&speed_factor.to_le_bytes());
+        }
+        Action::ScrambleStatus { delta } => {
+            out.push(18);
+            out.extend_from_slice(&delta.to_le_bytes());
+        }
+        Action::WarpProbe { ball, range, lifetime_ms } => {
+            out.push(19);
+            put_deployable(out, ball);
+            out.extend_from_slice(&range.to_le_bytes());
+            out.extend_from_slice(&lifetime_ms.to_le_bytes());
+        }
+        Action::Bomb { ball, kind, lifetime_ms, blast_radius, damage, ecm, neutralize } => {
+            out.push(20);
+            put_deployable(out, ball);
+            out.push(match kind {
+                BombKind::Damage => 0,
+                BombKind::Ecm => 1,
+                BombKind::Neutralize => 2,
+            });
+            out.extend_from_slice(&lifetime_ms.to_le_bytes());
+            out.extend_from_slice(&blast_radius.to_le_bytes());
+            for number in damage.iter().chain(ecm.iter()).chain([neutralize]) {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
+        }
         Action::MicroJumpDrive { distance_meters, cooldown_ms } => {
             out.push(6);
             out.extend_from_slice(&distance_meters.to_le_bytes());

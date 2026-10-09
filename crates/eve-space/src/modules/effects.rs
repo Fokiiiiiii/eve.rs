@@ -97,7 +97,29 @@ impl Scene {
             Some(Action::Tractor { velocity, hold, .. }) if when == Applies::CycleStart => {
                 self.tractor_pull(session, effect.target_id, *velocity, *hold, at)
             }
-            Some(Action::Cloak) if when == Applies::CycleStart => {
+            Some(Action::WarpProbe { ball, range, lifetime_ms }) if when == Applies::CycleStart => {
+                let role = crate::deployable::Role::WarpSource { range: *range };
+                self.release_deployable(session, effect, ball.clone(), role, *lifetime_ms, at)
+            }
+            Some(Action::Bomb { ball, kind, lifetime_ms, blast_radius, damage, ecm, neutralize })
+                if when == Applies::CycleStart =>
+            {
+                let role = crate::deployable::Role::Bomb {
+                    kind: *kind,
+                    blast_radius: *blast_radius,
+                    damage: *damage,
+                    ecm: *ecm,
+                    neutralize: *neutralize,
+                };
+                self.release_deployable(session, effect, ball.clone(), role, *lifetime_ms, at)
+            }
+            Some(Action::Defender { missile, damage }) if when == Applies::CycleStart => {
+                self.defender_intercept(session, effect, missile, *damage, at)
+            }
+            Some(Action::StasisBurst { range, duration_ms, speed_factor }) if when == Applies::CycleStart => {
+                self.stasis_burst(session, effect, *range, *duration_ms, *speed_factor, at)
+            }
+            Some(Action::Cloak { .. }) if when == Applies::CycleStart => {
                 let changed = if let Some(pilot) = self.pilots.get_mut(&session) {
                     let changed = pilot.cloak != crate::visibility::CloakState::Cloaked;
                     pilot.cloak = crate::visibility::CloakState::Cloaked;
@@ -355,7 +377,7 @@ impl Scene {
     }
 
     /// What the target's capacitor warfare resistance leaves of a neutralisation (`energyWarfareResistance`, 2045).
-    pub(super) fn capacitor_warfare_multiplier(&self, target: SessionId) -> f64 {
+    pub(crate) fn capacitor_warfare_multiplier(&self, target: SessionId) -> f64 {
         self.pilots
             .get(&target)
             .map_or(1.0, |pilot| capacitor_warfare_multiplier(pilot.ship.spec.energy_warfare_resistance))
@@ -502,7 +524,7 @@ impl Scene {
         out
     }
 
-    pub(super) fn take_capacitor(&mut self, target: SessionId, amount: f64, at: i64) -> (Vec<Out>, f64) {
+    pub(crate) fn take_capacitor(&mut self, target: SessionId, amount: f64, at: i64) -> (Vec<Out>, f64) {
         let Some(pilot) = self.pilots.get_mut(&target) else { return (Vec::new(), 0.0) };
         let (owner, ship) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
         let Some(capacitor) = pilot.modules.capacitor.as_mut() else { return (Vec::new(), 0.0) };
@@ -619,7 +641,7 @@ impl Scene {
         {
             out.extend(self.release(ship_id, run.effect.module_id, run.effect.target_id, at));
         }
-        if matches!(run.effect.action.as_ref(), Some(Action::Cloak)) {
+        if matches!(run.effect.action.as_ref(), Some(Action::Cloak { .. })) {
             let changed = if let Some(pilot) = self.pilots.get_mut(&session) {
                 let changed = pilot.cloak != crate::visibility::CloakState::Uncloaked;
                 pilot.cloak = crate::visibility::CloakState::Uncloaked;

@@ -92,6 +92,8 @@ internal sealed class CloakingEffect : ShipEffect
         SimChange[] changes = [.. told];
         return new SimEffect(
             module.ModuleId, module.Module.TypeId, module.Effect.Id, module.Effect.Guid, duration, capacitor,
-            Math.Max(1, module.Repeat), 0, null, null, changes, changes, null, new SimAction.Cloak());
+            Math.Max(1, module.Repeat), 0, null, null, changes, changes, null,
+            // a warp-safe (covert ops) cloak carries the ship into warp; the standard and the prototype cloaks hold it (shipCloak.js isWarpSafeActiveModuleEffectState)
+            new SimAction.Cloak(module.Effect.Name.Equals("cloakingWarpSafe", StringComparison.OrdinalIgnoreCase)));
     }
 }

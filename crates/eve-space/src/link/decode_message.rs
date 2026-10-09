@@ -337,6 +337,38 @@ impl Message {
                 Message::ChangeWreck { session_id, wreck_id, is_empty }
             }
             kind::REMOVE_WRECK => Message::RemoveWreck { wreck_id: r.i64()?, effect: r.i32()? },
+            kind::DEPLOYED => {
+                let solar_system_id = r.i32()?;
+                let deployable_id = r.i64()?;
+                let name = r.text()?;
+                let type_id = r.i32()?;
+                let group_id = r.i32()?;
+                let position = read_vector(&mut r)?;
+                let radius = r.f64()?;
+                let owner_id = r.i64()?;
+                let corporation_id = r.i32()?;
+                let alliance_id = r.i32()?;
+                let ship_id = r.i64()?;
+                let lifetime_ms = r.f64()?;
+                if !(lifetime_ms.is_finite() && lifetime_ms >= 0.0 && radius.is_finite() && radius >= 0.0) {
+                    return Err(DecodeError::BadValue("deployed"));
+                }
+                Message::Deployed(Box::new(DeployedPlacement {
+                    solar_system_id,
+                    deployable_id,
+                    name,
+                    type_id,
+                    group_id,
+                    position,
+                    radius,
+                    owner_id,
+                    corporation_id,
+                    alliance_id,
+                    ship_id,
+                    lifetime_ms,
+                }))
+            }
+            kind::REMOVE_DEPLOYED => Message::RemoveDeployed { deployable_id: r.i64()? },
             kind::DRONE_WORK_RESULT => {
                 let session_id = r.u64()?;
                 let drone_id = r.i64()?;

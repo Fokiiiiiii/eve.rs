@@ -906,6 +906,21 @@ fn message_of(case: &Value) -> Message {
         "RemoveWreck" => {
             Message::RemoveWreck { wreck_id: wide(case, "wreckId"), effect: number("effect") as i32 }
         }
+        "Deployed" => Message::Deployed(Box::new(eve_space::link::DeployedPlacement {
+            solar_system_id: number("solarSystemId") as i32,
+            deployable_id: wide(case, "deployableId"),
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            owner_id: wide(case, "ownerId"),
+            corporation_id: number("corporationId") as i32,
+            alliance_id: number("allianceId") as i32,
+            ship_id: wide(case, "shipId"),
+            lifetime_ms: case["lifetimeMs"].as_f64().unwrap(),
+        })),
+        "RemoveDeployed" => Message::RemoveDeployed { deployable_id: wide(case, "deployableId") },
         "Measured" => Message::Measured {
             session_id: session_id(),
             command: number("command") as u8,

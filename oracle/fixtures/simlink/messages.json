@@ -3274,6 +3274,54 @@
    "hex": "0d0000001f71b5089b1509000000000000"
   },
   {
+   "name": "cynosural field lit by a generator, told with its life",
+   "kind": "Deployed",
+   "solarSystemId": 30100032,
+   "deployableId": "4250000000000003",
+   "typeName": "Cynosural Field",
+   "typeId": 21094,
+   "groupId": 2020,
+   "position": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "radius": 250.0,
+   "ownerId": "1790646377000015",
+   "corporationId": 98000001,
+   "allianceId": 0,
+   "shipId": "9988400001943",
+   "lifetimeMs": 600000.0,
+   "hex": "660000003e404acb0103a04b3c5a190f000f0043796e6f737572616c204669656c6466520000e40700005fc833c6022952426c5427b7db5708c285e10f7e6c3c42420000000000406f404f2c3859955c0600815cd7050000000097b3089b1509000000000000804f2241"
+  },
+  {
+   "name": "cynosural field put back after a restart, with what is left of its life",
+   "kind": "Deployed",
+   "solarSystemId": 30100032,
+   "deployableId": "4250000000000007",
+   "typeName": "Cynosural Field",
+   "typeId": 21094,
+   "groupId": 2020,
+   "position": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "radius": 250.0,
+   "ownerId": "1790646377000015",
+   "corporationId": 98000001,
+   "allianceId": 0,
+   "shipId": "9988400001943",
+   "lifetimeMs": 120000.0,
+   "hex": "660000003e404acb0107a04b3c5a190f000f0043796e6f737572616c204669656c6466520000e40700005fc833c6022952426c5427b7db5708c285e10f7e6c3c42420000000000406f404f2c3859955c0600815cd7050000000097b3089b1509000000000000004cfd40"
+  },
+  {
+   "name": "cynosural field taken out of space by the host",
+   "kind": "RemoveDeployed",
+   "deployableId": "4250000000000003",
+   "hex": "090000003f03a04b3c5a190f00"
+  },
+  {
    "name": "how far a can is",
    "kind": "Measured",
    "sessionId": "1790646377000015",
@@ -4103,6 +4151,16 @@
    "name": "module ended with an unknown reason",
    "reason": "bad-value",
    "hex": "12000000354f2c3859955c0600fdb6089b1509000009"
+  },
+  {
+   "name": "cynosural field with no life left",
+   "reason": "bad-value",
+   "hex": "660000003e404acb0103a04b3c5a190f000f0043796e6f737572616c204669656c6466520000e40700005fc833c6022952426c5427b7db5708c285e10f7e6c3c42420000000000406f404f2c3859955c0600815cd7050000000097b3089b15090000000000000000f0bf"
+  },
+  {
+   "name": "cynosural field with a radius that is not a number",
+   "reason": "bad-value",
+   "hex": "660000003e404acb0103a04b3c5a190f000f0043796e6f737572616c204669656c6466520000e40700005fc833c6022952426c5427b7db5708c285e10f7e6c3c4242000000000000f87f4f2c3859955c0600815cd7050000000097b3089b1509000000000000804f2241"
   },
   {
    "name": "warp probe with no lifetime",

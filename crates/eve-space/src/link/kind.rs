@@ -59,3 +59,7 @@ pub const FIGHTER_RELEASED: u8 = 58;
 pub const FIGHTER_GOTO_POINT: u8 = 59;
 pub const FIGHTER_SIZE: u8 = 60;
 pub const UPDATE_EFFECT: u8 = 61;
+/// A deployable whose record the host keeps (a cynosural field): the simulation says it was lit, and the host puts it back after a restart (protocol 43).
+pub const DEPLOYED: u8 = 62;
+/// The host takes a deployable out of space when its record's time is up (protocol 43).
+pub const REMOVE_DEPLOYED: u8 = 63;

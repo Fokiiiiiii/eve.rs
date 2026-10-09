@@ -72,6 +72,7 @@ impl Sim {
             Out::Docked { session, station_id, condition } => {
                 Message::Docked { session_id: session, station_id, condition }
             }
+            Out::DeployedLit { placement, .. } => Message::Deployed(placement),
             Out::Arrived { session, belt_id, position } => Message::Arrived {
                 session_id: session,
                 belt_id,
@@ -294,7 +295,9 @@ impl Sim {
             | Message::PlaceWreck(..)
             | Message::PlaceContainer(..)
             | Message::ChangeWreck { .. }
-            | Message::RemoveWreck { .. } => self.handle_world(message, now),
+            | Message::RemoveWreck { .. }
+            | Message::Deployed(..)
+            | Message::RemoveDeployed { .. } => self.handle_world(message, now),
             other => Err(ProtocolError(format!(
                 "a message of kind {} is for the host, not the simulation",
                 other.kind()
@@ -830,6 +833,19 @@ impl Sim {
                 }
                 None => Vec::new(),
             },
+            Message::Deployed(placement) => {
+                let placement = *placement;
+                match self.scenes.get_mut(&placement.solar_system_id) {
+                    Some(scene) => scene.restore_field(placement, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::RemoveDeployed { deployable_id } => self
+                .scenes
+                .values_mut()
+                .find(|scene| scene.deployables.contains_key(&deployable_id))
+                .map(|scene| scene.remove_field(deployable_id, now))
+                .unwrap_or_default(),
             Message::PlaceContainer(can) => {
                 let session_id = can.session_id;
                 match self.scene_of(session_id) {

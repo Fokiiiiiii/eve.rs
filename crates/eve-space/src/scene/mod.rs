@@ -185,6 +185,8 @@ pub enum Out {
     Arrived { session: SessionId, belt_id: i64, position: Vec3 },
     /// The answer to a question about the ship's condition.
     Condition { session: SessionId, command: u8, condition: Condition },
+    /// A cynosural field was lit by the ship of `session`: the host keeps its record (`Message::Deployed`).
+    DeployedLit { session: SessionId, placement: Box<crate::link::DeployedPlacement> },
     /// A command the scene cannot do.
     Refused { session: SessionId, command: u8, reason: &'static str },
     /// The answer to a targeting order: whether a lock is going, and the ships and bodies locked (or, to `GetTargeters`, the ships that lock this one).
@@ -317,6 +319,7 @@ impl Out {
             | Out::FighterResults { session, .. }
             | Out::FighterSize { session, .. }
             | Out::TargetRefused { session, .. }
+            | Out::DeployedLit { session, .. }
             | Out::Position { session, .. } => *session,
         }
     }

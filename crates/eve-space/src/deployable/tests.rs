@@ -225,6 +225,90 @@ fn a_cynosural_field_is_lit_where_the_ship_is_as_its_activation_ends_and_is_take
 }
 
 #[test]
+fn a_lit_cynosural_field_is_told_to_the_host_with_its_place_and_its_whole_life() {
+    let (mut scene, t) = crowd();
+    let field = Action::CynoField {
+        ball: Spec {
+            charge_type_id: 21_094,
+            group_id: 2_020,
+            name: "Cynosural Field".to_string(),
+            radius: 250.0,
+        },
+        lifetime_ms: 600_000.0,
+    };
+    assert!(accepted(&scene.activate(A, module(MODULE, field, 20_000.0), t)));
+    let (lit, _) = poll_for(&mut scene, t, 21.0);
+    let told: Vec<_> = lit
+        .iter()
+        .filter_map(|out| match out {
+            Out::DeployedLit { session, placement } => Some((*session, placement.clone())),
+            _ => None,
+        })
+        .collect();
+    let [(session, placement)] = told.as_slice() else { panic!("one field lit: {lit:?}") };
+    assert_eq!(*session, A, "the pilot whose generator lit it");
+    assert_eq!(Some(&placement.deployable_id), scene.deployables.keys().next());
+    assert_eq!(
+        (placement.type_id, placement.group_id, placement.solar_system_id),
+        (21_094, 2_020, scene.solar_system_id())
+    );
+    assert!(
+        (placement.lifetime_ms - 600_000.0).abs() < 1.0,
+        "the whole life is told: {}",
+        placement.lifetime_ms
+    );
+}
+
+#[test]
+fn a_field_the_host_puts_back_after_a_restart_lives_what_was_left_and_is_removed_on_request() {
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.position;
+    let placement = crate::link::DeployedPlacement {
+        solar_system_id: scene.solar_system_id(),
+        deployable_id: DEPLOYABLE_ID_BASE + 900,
+        name: "Cynosural Field".to_string(),
+        type_id: 21_094,
+        group_id: 2_020,
+        position: [a.x, a.y, a.z],
+        radius: 250.0,
+        owner_id: 4_242,
+        corporation_id: 0,
+        alliance_id: 0,
+        ship_id: scene.pilots[&A].ship.spec.ship_id,
+        lifetime_ms: 120_000.0,
+    };
+    assert!(scene.restore_field(placement.clone(), t).iter().any(|o| format!("{o:?}").contains("AddBalls2")));
+    assert_eq!(scene.deployables.len(), 1, "the field is in space again");
+    assert!(
+        scene.restore_field(placement.clone(), t).is_empty(),
+        "a field already in space is not put in twice"
+    );
+    assert!(
+        scene.deployable_sequence > 900,
+        "a field made after the restore takes a new id, not the restored one"
+    );
+    // the restored field lives what was left of its life from the restore, not the time the record was made
+    let (ended, _) = poll_for(&mut scene, t, 121.0);
+    assert!(scene.deployables.is_empty(), "gone when what was left of its life is up");
+    assert!(ended.iter().any(|o| format!("{o:?}").contains("RemoveBalls")));
+
+    // the host takes a field out: told, and once only
+    assert!(scene.restore_field(placement.clone(), t + 200 * SECOND).len() == 1);
+    let removed = scene.remove_field(placement.deployable_id, t + 201 * SECOND);
+    assert!(scene.deployables.is_empty());
+    assert!(removed.iter().any(|o| format!("{o:?}").contains("RemoveBalls")));
+    assert!(
+        scene.remove_field(placement.deployable_id, t + 201 * SECOND).is_empty(),
+        "a field already gone is left alone"
+    );
+
+    // no life left, nothing to put back
+    let spent = crate::link::DeployedPlacement { lifetime_ms: 0.0, ..placement };
+    assert!(scene.restore_field(spent, t).is_empty());
+    assert!(scene.deployables.is_empty());
+}
+
+#[test]
 fn a_stasis_burst_webs_the_ships_in_its_range_for_its_duration_and_spares_its_own_ship() {
     let (mut scene, t) = crowd();
     let base = scene.pilots[&B].ship.spec.max_velocity;

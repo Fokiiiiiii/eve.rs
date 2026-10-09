@@ -9,14 +9,21 @@ namespace Eve.Ships;
 /// (<c>oracle/fixtures/scenarios/cargo.json</c>): the capacity is the ship's own (dogma's capacity, skills and modules included), what is in the hold takes the volume of
 /// each unit, and what does not fit is refused with the room that is left and the room that was asked for.
 /// </summary>
-public sealed record DroneMiningCommit(bool Accepted, string Reason, long UnitsRemaining, long DeliveredUnits, bool Depleted, ShipChanged? Change);
+/// <summary>The answer to one mining cycle. <c>Mined</c> is the yield of a cycle that was granted now (null for a refusal and for a cycle answered from its record).</summary>
+public sealed record DroneMiningCommit(
+    bool Accepted, string Reason, long UnitsRemaining, long DeliveredUnits, bool Depleted, ShipChanged? Change, MiningResult? Mined = null, int OreTypeId = 0);
+
+/// <summary>The numbers of one mining cycle as the miner has them: the volume it mines, the waste and the critical yield (a chance is 0 to 1, a waste chance a percent).</summary>
+public sealed record MiningNumbers(double YieldM3, double WasteVolumeMultiplier, double WasteProbability, double CritProbability, double CritQuantityMultiplier);
 public sealed record DroneSalvageCommit(bool Accepted, string Reason, ShipChanged? Change, Item? Container, SpaceItem? ContainerSpaceItem);
 
 /// <summary>
 /// The numbers of a mining cycle, read from the dogma of the item that mines (a drone or a module) by attribute name, so every source reads them the
 /// same way. An attribute name the static data does not define reads as 0; any other value is the world's (the item's own, else the default).
 /// </summary>
-public sealed record MiningProfile(double MiningAmountM3, double CycleTimeMs, double WasteVolumeMultiplier, double WasteProbability, double AccessDifficultyBonus)
+public sealed record MiningProfile(
+    double MiningAmountM3, double CycleTimeMs, double WasteVolumeMultiplier, double WasteProbability, double AccessDifficultyBonus,
+    double CritProbability = 0, double CritQuantityMultiplier = 0)
 {
     /// <summary>The profile of the item <paramref name="itemId"/> in <paramref name="world"/> (its dogma after its own modifiers).</summary>
     public static MiningProfile From(DogmaWorld world, DogmaStatic statics, long itemId)
@@ -27,7 +34,9 @@ public sealed record MiningProfile(double MiningAmountM3, double CycleTimeMs, do
             Read("duration"),
             Read("miningWastedVolumeMultiplier"),
             Read("miningWasteProbability"),
-            Read("accessDifficultyBonus"));
+            Read("accessDifficultyBonus"),
+            Read("miningCritChance"),
+            Read("miningCritBonusYield"));
     }
 }
 
@@ -256,18 +265,25 @@ private sealed record ShipHoldRule(
     /// in one short transaction (cargo grant and stock change); the refusal reasons are the same for every kind of miner.
     /// </summary>
     public async Task<DroneMiningCommit> MineAsteroidAsync(
-        long characterId, long shipId, int solarSystemId, long minerId, long asteroidId, double yieldM3,
-        double wasteVolumeMultiplier, double wasteProbability, double roll, PgSpaceItemStore spaceItems,
-        MiningSource kind = MiningSource.Drone, CancellationToken cancellationToken = default)
+        long characterId, long shipId, int solarSystemId, long minerId, long asteroidId, MiningSource kind, MiningNumbers numbers, MiningRolls rolls,
+        long cycleId, PgWorkCycleLedger ledger, PgSpaceItemStore spaceItems, CancellationToken cancellationToken = default)
     {
-        if (!double.IsFinite(yieldM3) || yieldM3 <= 0 || !double.IsFinite(wasteVolumeMultiplier)
-            || !double.IsFinite(wasteProbability) || !double.IsFinite(roll))
+        static bool IsRoll(double value) => value >= 0d && value <= 1d;
+        if (!double.IsFinite(numbers.YieldM3) || numbers.YieldM3 <= 0 || !double.IsFinite(numbers.WasteVolumeMultiplier)
+            || !double.IsFinite(numbers.WasteProbability) || !double.IsFinite(numbers.CritProbability) || !double.IsFinite(numbers.CritQuantityMultiplier)
+            || !IsRoll(rolls.Waste) || !IsRoll(rolls.NormalRounding) || !IsRoll(rolls.WasteRounding) || !IsRoll(rolls.Crit) || !IsRoll(rolls.CritRounding))
         {
             return new(false, "INVALID_PROFILE", 0, 0, false, null);
         }
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockAsync(connection, transaction, characterId, cancellationToken);
+        // a cycle this miner has had granted is answered from its record: nothing is granted twice when the simulation sends the cycle again
+        if (await ledger.LastAsync(connection, transaction, minerId, cancellationToken) is { } settled && settled.CycleId == cycleId)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return new(settled.Accepted, settled.Reason, settled.UnitsRemaining, settled.DeliveredUnits, settled.Complete, null);
+        }
         if (await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Id != shipId
             || snapshot.Ship.LocationId != solarSystemId || snapshot.Ship.Flag != InSpaceFlag)
         {
@@ -294,16 +310,17 @@ private sealed record ShipHoldRule(
         {
             return new(false, "NO_TARGET", asteroid.Quantity, 0, false, null);
         }
-        var miningUnits = (long)Math.Floor(yieldM3 / unitVolume);
-        if (miningUnits <= 0)
+        // the yield is the one function both sources use (MiningYield): a drone rounds down and gets no critical yield, a module does both
+        var mined = MiningYield.ComputeMiningResult(
+            new MiningCycle(kind, numbers.YieldM3, unitVolume, asteroid.Quantity, numbers.WasteVolumeMultiplier, numbers.WasteProbability,
+                numbers.CritQuantityMultiplier, numbers.CritProbability),
+            rolls);
+        if (kind == MiningSource.Drone && mined.NormalQuantity <= 0)
         {
             return new(false, "INVALID_PROFILE", asteroid.Quantity, 0, false, null);
         }
-        var wasteUnits = roll * 100d < Math.Clamp(wasteProbability, 0d, 100d)
-            ? (long)Math.Floor(yieldM3 * Math.Max(0d, wasteVolumeMultiplier) / unitVolume)
-            : 0L;
-        var wasted = Math.Min(asteroid.Quantity, Math.Max(0, wasteUnits));
-        var delivered = Math.Min(miningUnits, Math.Max(0, asteroid.Quantity - wasted));
+        var delivered = mined.TransferredQuantity;
+        var remaining = asteroid.Quantity - mined.DepletedQuantity;
         if (delivered > 0)
         {
             var candidate = new Item(0, asteroid.TypeId, characterId, shipId, CargoFlag, delivered, false, null);
@@ -312,7 +329,6 @@ private sealed record ShipHoldRule(
                 return new(false, "CARGO_FULL", asteroid.Quantity, 0, false, null);
             }
         }
-        var remaining = Math.Max(0, asteroid.Quantity - wasted - delivered);
         ItemChanged? change = null;
         if (delivered > 0)
         {
@@ -320,8 +336,10 @@ private sealed record ShipHoldRule(
             change = new ItemChanged(new Item(id, asteroid.TypeId, characterId, shipId, CargoFlag, delivered, false, null), solarSystemId, InSpaceFlag, 0);
         }
         await items.SetQuantityAsync(connection, transaction, asteroidId, remaining, cancellationToken);
+        await ledger.RecordAsync(connection, transaction, new WorkCycleRecord(minerId, cycleId, true, "", remaining, delivered, remaining == 0), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return new(true, "", remaining, delivered, remaining == 0, change is null ? null : new ShipChanged(change.After.Id, shipId, [], [], [change]));
+        return new(true, "", remaining, delivered, remaining == 0,
+            change is null ? null : new ShipChanged(change.After.Id, shipId, [], [], [change]), mined, asteroid.TypeId);
     }
 
     public async Task<DroneSalvageCommit> SalvageWreckAsync(

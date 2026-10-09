@@ -67,6 +67,22 @@ public static class ShipNotifications
         },
         new PyLong(fileTime)))]);
 
+    /// <summary>
+    /// <c>OnOreMined</c>, told to the pilot who ran a mining cycle once it is granted: the keys the client reads (<c>oreMinedNotificationAdapter.py</c>), with the
+    /// reference's meaning (<c>quantity_removed</c> is the yield alone, <c>quantity_added</c> is what reached the hold, the critical bonus is extra to the hold).
+    /// </summary>
+    public static PyDict OreMined(long asteroidId, long moduleId, int oreTypeId, MiningResult mined) => new(
+    [
+        new(new PyStr("itemID"), InventoryWire.Id(asteroidId)),
+        new(new PyStr("oreType"), new PyInt(oreTypeId)),
+        new(new PyStr("quantity_added"), new PyLong(mined.TransferredQuantity)),
+        new(new PyStr("quantity_removed"), new PyLong(mined.NormalQuantity)),
+        new(new PyStr("amountWasted"), new PyLong(mined.WastedQuantity)),
+        new(new PyStr("amountCritBonus"), new PyLong(mined.CriticalQuantity)),
+        new(new PyStr("hasRewards"), PyBool.False),
+        new(new PyStr("moduleItemID"), InventoryWire.Id(moduleId)),
+    ]);
+
     /// <summary>Tells the session about a change: the dogma events first, then the items that moved.</summary>
     public static void Send(ClientSession session, long characterId, ShipChanged changed, Func<Eve.Inventory.Item, ItemRow> row, long fileTime)
     {

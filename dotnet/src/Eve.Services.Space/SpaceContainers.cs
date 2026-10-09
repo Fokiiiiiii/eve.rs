@@ -582,16 +582,17 @@ private void OnReceived(SimMessage message)
     /// </summary>
     private sealed record WorkCycle(
         bool IsModule, ulong SessionId, long CharacterId, long ShipId, int SolarSystemId, long OwnerId, long TargetId, ulong CycleId, byte Command,
-        double MiningAmountM3, double WasteVolumeMultiplier, double WasteProbability, double AccessDifficultyBonus, double Roll)
+        double MiningAmountM3, double WasteVolumeMultiplier, double WasteProbability, double AccessDifficultyBonus, double Roll,
+        double RoundingRoll, double CritRoll, double CritProbability, double CritQuantityMultiplier)
     {
         public static WorkCycle OfDrone(SimDroneWorkCycle cycle) => new(
             false, cycle.SessionId, cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.DroneId, cycle.TargetId, cycle.CycleId, cycle.Command,
-            cycle.MiningAmountM3, cycle.WasteVolumeMultiplier, cycle.WasteProbability, cycle.AccessDifficultyBonus, cycle.Roll);
+            cycle.MiningAmountM3, cycle.WasteVolumeMultiplier, cycle.WasteProbability, cycle.AccessDifficultyBonus, cycle.Roll, 0, 0, 0, 0);
 
-        /// <remarks>The module's crit numbers and rounding roll are carried on the wire; the host reads them when a module yield is wired (M4, M5).</remarks>
         public static WorkCycle OfModule(SimModuleWorkCycle cycle) => new(
             true, cycle.SessionId, cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.ModuleId, cycle.TargetId, cycle.CycleId, cycle.Command,
-            cycle.MiningAmountM3, cycle.WasteVolumeMultiplier, cycle.WasteProbability, cycle.AccessDifficultyBonus, cycle.WasteRoll);
+            cycle.MiningAmountM3, cycle.WasteVolumeMultiplier, cycle.WasteProbability, cycle.AccessDifficultyBonus, cycle.WasteRoll,
+            cycle.RoundingRoll, cycle.CritRoll, cycle.CritProbability, cycle.CritQuantityMultiplier);
 
         public string Kind => IsModule ? "module" : "drone";
     }
@@ -806,17 +807,23 @@ private void OnReceived(SimMessage message)
             return WorkOutcome.Refuse("OUT_OF_RANGE");
         }
 
-        // a module's yield is not wired yet: the cycle is refused by name, never granted as a no-op (AGENTS rule 5)
-        if (cycle.IsModule)
+        // a module's salvage is not wired yet: refused by name, never granted as a no-op (AGENTS rule 5)
+        if (cycle.IsModule && cycle.Command != SimDroneCommands.MineRepeatedly)
         {
             return WorkOutcome.Refuse("NOT_IMPLEMENTED");
         }
 
         if (cycle.Command == SimDroneCommands.MineRepeatedly)
         {
+            // a module's rolls are the simulation's three draws; a drone rounds down and never crits, so its crit draw is unused
             var mined = await _ships.MineAsteroidAsync(
                 cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.OwnerId, cycle.TargetId,
-                cycle.MiningAmountM3, cycle.WasteVolumeMultiplier, cycle.WasteProbability, cycle.Roll, _spaceItems);
+                cycle.IsModule ? MiningSource.Module : MiningSource.Drone,
+                new MiningNumbers(cycle.MiningAmountM3, cycle.WasteVolumeMultiplier, cycle.WasteProbability, cycle.CritProbability, cycle.CritQuantityMultiplier),
+                cycle.IsModule
+                    ? MiningRolls.ForModule(cycle.Roll, cycle.RoundingRoll, cycle.CritRoll, cycle.WasteProbability, cycle.CritProbability)
+                    : new MiningRolls(cycle.Roll, 0, 0, 1, 0),
+                (long)cycle.CycleId, _cycles, _spaceItems);
             if (mined.Accepted && mined.Depleted)
             {
                 _placed.TryRemove(cycle.TargetId, out _);
@@ -833,6 +840,12 @@ private void OnReceived(SimMessage message)
                 {
                     _log?.Invoke($"mined cargo for cycle {cycle.CycleId} was saved but its item notification failed: {error.Message}");
                 }
+            }
+            // the miner is told what it mined, after the grant is committed (the cycle is granted once, so this is sent once)
+            if (mined.Accepted && cycle.IsModule && mined.Mined is { } yield)
+            {
+                session.SendNotification(
+                    "OnOreMined", "charid", Eve.Services.Ships.ShipNotifications.OreMined(cycle.TargetId, cycle.OwnerId, mined.OreTypeId, yield));
             }
             return new WorkOutcome(mined.Accepted, mined.Reason, mined.UnitsRemaining, mined.DeliveredUnits, mined.Depleted);
         }

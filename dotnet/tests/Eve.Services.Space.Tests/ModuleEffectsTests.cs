@@ -721,7 +721,6 @@ public class ModuleEffectsTests
             "microJumpPortalDrive",
             "microJumpPortalDriveCapital",
             "miningClouds",
-            "miningLaser",
             "moduleBonusIndustrialInvulnerability",
             "moduleBonusWarfareLinkArmor",
             "moduleBonusWarfareLinkInfo",

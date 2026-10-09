@@ -47,7 +47,8 @@ public class MiningProfileTests
         await using var rig = await Rig.CreateAsync();
         var world = await WorldWithAsync(rig, (ModuleItem, MinerI, ItemFlags.HiSlot0));
 
-        Assert.Equal(new MiningProfile(10, 15_000, 0, 0, 0), MiningProfile.From(world, rig.Statics, ModuleItem));
+        // a laser also carries its crit chance (1 %) and crit yield (twice the normal), which a drone does not
+        Assert.Equal(new MiningProfile(10, 15_000, 0, 0, 0, 0.01, 2), MiningProfile.From(world, rig.Statics, ModuleItem));
     }
 
     [PgFact]
@@ -56,7 +57,7 @@ public class MiningProfileTests
         await using var rig = await Rig.CreateAsync();
         var world = await WorldWithAsync(rig, (ModuleItem, ModulatedStripMinerII, ItemFlags.HiSlot0));
 
-        Assert.Equal(new MiningProfile(120, 45_000, 1, 34, 0), MiningProfile.From(world, rig.Statics, ModuleItem));
+        Assert.Equal(new MiningProfile(120, 45_000, 1, 34, 0, 0.01, 2), MiningProfile.From(world, rig.Statics, ModuleItem));
     }
 
     [PgFact]
@@ -88,21 +89,30 @@ public class MiningProfileTests
         var schema = $"sp_{Guid.NewGuid():N}"[..14];
         await PgSpaceItemStore.MigrateAsync(rig.Source, schema);
         var spaceItems = new PgSpaceItemStore(rig.Source, schema);
+        var ledger = new PgWorkCycleLedger(rig.Source, schema);
+        // the numbers of a cycle of 10 m3 with no waste and no crit; the rolls are 0.5 (a drone uses only the waste roll)
+        var numbers = new MiningNumbers(10, 0, 0, 0, 0);
+        var rolls = new MiningRolls(0.5, 0.5, 0.5, 0.5, 0.5);
 
         // a drone is refused as a module, and a module as a drone: nothing is mined
-        var asModule = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, drone, rock, 10, 0, 0, 0.5, spaceItems, MiningSource.Module);
-        var asDrone = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, module, rock, 10, 0, 0, 0.5, spaceItems, MiningSource.Drone);
+        var asModule = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, drone, rock, MiningSource.Module, numbers, rolls, 1, ledger, spaceItems);
+        var asDrone = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, module, rock, MiningSource.Drone, numbers, rolls, 1, ledger, spaceItems);
         Assert.Equal(("NOT_CONTROLLED", false), (asModule.Reason, asModule.Accepted));
         Assert.Equal(("NOT_CONTROLLED", false), (asDrone.Reason, asDrone.Accepted));
 
         // 10 m3 of Veldspar (0.1 m3 a unit) is 100 units, for either source: the rock keeps what is left
-        var byModule = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, module, rock, 10, 0, 0, 0.5, spaceItems, MiningSource.Module);
+        var byModule = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, module, rock, MiningSource.Module, numbers, rolls, 2, ledger, spaceItems);
         Assert.Equal((true, "", 900L, 100L, false), (byModule.Accepted, byModule.Reason, byModule.UnitsRemaining, byModule.DeliveredUnits, byModule.Depleted));
+
+        // the same cycle again is answered from its record inside the grant transaction: the rock gives nothing more
+        var again = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, module, rock, MiningSource.Module, numbers, rolls, 2, ledger, spaceItems);
+        Assert.Equal((true, "", 900L, 100L, false), (again.Accepted, again.Reason, again.UnitsRemaining, again.DeliveredUnits, again.Depleted));
+        Assert.Equal(900L, (await rig.Items.GetAsync(rock))!.Quantity);
 
         var type = rig.Statics.Type(MiningDroneI);
         Assert.Equal((true, true, 18, "Drone"), ((await rig.Items.GetAsync(drone)) is not null, type is not null, type?.CategoryId ?? -1, rig.Statics.CategoryName(type?.CategoryId ?? -1)));
 
-        var byDrone = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, drone, rock, 10, 0, 0, 0.5, spaceItems, MiningSource.Drone);
+        var byDrone = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, drone, rock, MiningSource.Drone, numbers, rolls, 3, ledger, spaceItems);
         Assert.Equal((true, "", 800L, 100L, false), (byDrone.Accepted, byDrone.Reason, byDrone.UnitsRemaining, byDrone.DeliveredUnits, byDrone.Depleted));
     }
 }

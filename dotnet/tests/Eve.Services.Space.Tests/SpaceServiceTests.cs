@@ -1130,6 +1130,23 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task A_mining_laser_is_built_as_an_ore_cycle_from_the_module_own_numbers_by_attribute_name()
+    {
+        var (rig, character, _) = await DockedAsync();
+        await using var _ = rig;
+        var (snapshot, _, _, miner) = await ShipAsync(rig, character);
+
+        var package = ModulePackages.Of(snapshot, rig.Statics, miner, "miningLaser", 9988400002215, 1);
+
+        Assert.Null(package.Reason);
+        // Miner I (SDE): no waste, a 1 % crit chance of twice the yield; its amount is the module's own after the pilot's skills (the world's value)
+        var mining = Assert.IsType<SimAction.Mining>(package.Effect!.Action);
+        var amountId = rig.Statics.AttributeId("miningAmount")!.Value;
+        Assert.Equal((SimMiningFamilies.Ore, snapshot.World.Get(miner, amountId), 0d, 0d, 2d), (mining.Family, mining.MiningAmountM3, mining.WasteVolumeMultiplier, mining.WasteProbability, mining.CritQuantityMultiplier));
+        Assert.Equal(0.01, mining.CritProbability, 6);
+    }
+
+    [PgFact]
     public async Task What_cannot_be_run_is_refused_with_the_reason_and_the_module_that_the_message_names()
     {
         var (rig, character, _) = await DockedAsync();
@@ -1139,10 +1156,10 @@ public class SpaceServiceTests
         Assert.Equal("MODULE_NOT_FOUND", Why(42, "moduleBonusAfterburner"));
         Assert.Equal("UNSUPPORTED_EFFECT", Why(afterburner, "targetAttack"));
         Assert.Equal("UNSUPPORTED_EFFECT", Why(afterburner, "online")); // an effect that is not the module's to start
-        // a weapon and a miner need a target; the miner is not run yet with one
+        // a weapon and a miner need a target; with one, a mining laser is accepted here (its lock and range are the simulation's to check)
         Assert.Equal("TARGET_REQUIRED", Why(gun, "targetAttack"));
         Assert.Equal("TARGET_REQUIRED", Why(miner, "miningLaser"));
-        Assert.Equal("UNSUPPORTED_EFFECT", Why(miner, "miningLaser", 9988400002215));
+        Assert.Null(Why(miner, "miningLaser", 9988400002215));
         // a gun that takes a charge, with none loaded (nothing loads one yet), has nothing to shoot, and says so before it asks for a target
         snapshot.World.SetValue(gun, 604, 86);
         Assert.Equal("NO_AMMO", Why(gun, "targetAttack"));

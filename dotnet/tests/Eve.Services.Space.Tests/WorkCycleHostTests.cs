@@ -59,18 +59,38 @@ public class WorkCycleHostTests
     }
 
     [PgFact]
-    public async Task A_module_cycle_in_reach_is_refused_by_name_until_its_yield_is_wired_and_the_refusal_is_recorded()
+    public async Task A_module_cycle_in_reach_is_granted_its_yield_from_the_rock_and_recorded()
     {
         await using var rig = await Rig.CreateAsync();
         var (flying, rock) = await MiningPilotAsync(rig);
         StartModule(rig, flying);
+        var before = (await rig.Items.GetAsync(rock))!.Quantity;
 
         var result = await SettleAsync(rig, ModuleCycle(flying, flying.Module, rock, 4));
 
-        Assert.False(result.Accepted);
-        Assert.Equal("NOT_IMPLEMENTED", result.Reason);
+        Assert.True(result.Accepted, result.Reason);
+        Assert.True(result.DeliveredUnits > 0, $"{result.DeliveredUnits}");
+        Assert.Equal(result.UnitsRemaining, (await rig.Items.GetAsync(rock))!.Quantity);
+        Assert.True(result.UnitsRemaining < before);
         var recorded = await new PgWorkCycleLedger(rig.Source, rig.SpaceSchema).LastAsync(flying.Module);
-        Assert.Equal((4L, "NOT_IMPLEMENTED"), (recorded?.CycleId, recorded?.Reason));
+        Assert.Equal(4L, recorded?.CycleId);
+        Assert.True(recorded?.Accepted);
+        Assert.Equal(result.DeliveredUnits, recorded?.DeliveredUnits);
+    }
+
+    [PgFact]
+    public async Task A_repeat_of_a_granted_module_cycle_is_answered_from_the_record_and_is_not_granted_again()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, rock) = await MiningPilotAsync(rig);
+        StartModule(rig, flying);
+        var granted = await SettleAsync(rig, ModuleCycle(flying, flying.Module, rock, 5));
+        var after = (await rig.Items.GetAsync(rock))!.Quantity;
+
+        var repeat = await SettleAsync(rig, ModuleCycle(flying, flying.Module, rock, 5));
+
+        Assert.Equal((granted.Accepted, granted.DeliveredUnits, granted.UnitsRemaining), (repeat.Accepted, repeat.DeliveredUnits, repeat.UnitsRemaining));
+        Assert.Equal(after, (await rig.Items.GetAsync(rock))!.Quantity);
     }
 
     [PgFact]
@@ -88,9 +108,9 @@ public class WorkCycleHostTests
         var repeat = await SettleAsync(rig, ModuleCycle(flying, flying.Module, rock, 31));
         Assert.Equal("OUT_OF_RANGE", repeat.Reason);
 
-        // a new cycle of the same module is settled afresh
+        // a new cycle of the same module is settled afresh, and in reach it is granted
         var next = await SettleAsync(rig, ModuleCycle(flying, flying.Module, rock, 32));
-        Assert.Equal("NOT_IMPLEMENTED", next.Reason);
+        Assert.True(next.Accepted, next.Reason);
     }
 
     [PgFact]

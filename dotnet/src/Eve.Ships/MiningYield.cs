@@ -19,7 +19,17 @@ public enum MiningSource
 /// the randomized rounding (the remainder rounds up when it is greater than the roll) and the critical chance (it fires when the chance
 /// is greater than the roll). A roll the source does not use is still checked for range, and then ignored.
 /// </summary>
-public readonly record struct MiningRolls(double Waste, double NormalRounding, double WasteRounding, double Crit, double CritRounding);
+public readonly record struct MiningRolls(double Waste, double NormalRounding, double WasteRounding, double Crit, double CritRounding)
+{
+    /// <summary>
+    /// The rolls of a module cycle from the three draws the simulation sends (the waste, the rounding and the crit). The waste and the critical rounding have no
+    /// draw of their own on the wire, so each reuses its branch's draw, rescaled to a fresh uniform value: a draw below a chance is uniform on [0, chance).
+    /// </summary>
+    public static MiningRolls ForModule(double wasteRoll, double roundingRoll, double critRoll, double wasteProbability, double critProbability) => new(
+        wasteRoll, roundingRoll, Share(wasteRoll, wasteProbability / 100d), critRoll, Share(critRoll, critProbability));
+
+    private static double Share(double roll, double chance) => chance > 0 ? Math.Min(1d, roll / chance) : 0d;
+}
 
 /// <summary>
 /// The inputs of one mining cycle. <c>Volume</c> is what the cycle mines in cubic metres before the cargo clamp and the efficiency (the

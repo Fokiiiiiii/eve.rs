@@ -74,6 +74,9 @@ pub struct Strike {
     /// start is `direction * length`; each pulse runs the axis from the centre toward the point `start + (end - start) * progress`, where progress is the
     /// pulse's share of the window (EveJS `resolveSlashDamageVolume`). None for a fixed aim. Protocol 28.
     pub sweep_end: Option<[f64; 3]>,
+    /// A lance's beacon (EVE.js `spawnLanceBeacon`, protocol 37): where the beam is anchored, as an offset from the firing ship's centre (the aim clamped to the
+    /// strike's length). The simulation puts the beacon ball there when the strike starts. None for a strike with no beacon.
+    pub beacon: Option<[f64; 3]>,
 }
 
 impl Strike {
@@ -159,6 +162,7 @@ impl Strike {
             && self.debuff_ms.is_finite()
             && self.debuff_ms >= 0.0
             && self.sweep_end.is_none_or(|end| finite(&end) && dot(end, end) > 0.0)
+            && self.beacon.is_none_or(|offset| finite(&offset))
     }
 }
 
@@ -199,6 +203,7 @@ mod tests {
             neut_signature_radius: 20_000.0,
             debuff_ms: 0.0,
             sweep_end: None,
+            beacon: None,
         }
     }
 
@@ -296,6 +301,7 @@ mod tests {
             neut_signature_radius: 20_000.0,
             debuff_ms: 0.0,
             sweep_end: None,
+            beacon: None,
         }
     }
 

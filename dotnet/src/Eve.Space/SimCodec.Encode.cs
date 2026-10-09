@@ -38,6 +38,9 @@ public static partial class SimCodec
         w.F64(strike.DebuffMs);
         w.U8((byte)(strike.SweepEnd is null ? 0 : 1));
         foreach (var component in strike.SweepEnd ?? [0.0, 0.0, 0.0]) w.F64(component);
+        // protocol 37: a lance's beacon, a flag then its offset from the firing ship (zeros without a beacon)
+        w.U8((byte)(strike.Beacon is null ? 0 : 1));
+        foreach (var component in strike.Beacon ?? [0.0, 0.0, 0.0]) w.F64(component);
     }
 
     /// <summary>A list of ship ids: a u32 count, then each id as an i64 (the simulation's <c>write_ids</c>).</summary>

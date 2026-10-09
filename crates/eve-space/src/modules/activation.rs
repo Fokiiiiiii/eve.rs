@@ -97,7 +97,8 @@ impl Scene {
     }
 
     /// The action the client plays on the ship for the effect: `OnSpecialFX(ship, module, module type, target, charge, effect, offensive, start, active, duration, …)`.
-    pub(super) fn fx_action(stamp: u32, ship: &Value, effect: &Effect, on: bool) -> Value {
+    /// The action the client plays on the ship for the effect, on `target_id` (the module's target, or a lance's beacon; 0 for none).
+    pub(super) fn fx_action(stamp: u32, ship: &Value, effect: &Effect, on: bool, target_id: i64) -> Value {
         payload::action(
             stamp,
             "OnSpecialFX",
@@ -105,7 +106,7 @@ impl Scene {
                 ship.clone(),
                 id(effect.module_id),
                 int(i64::from(effect.module_type)),
-                if effect.target_id > 0 { id(effect.target_id) } else { Value::None },
+                if target_id > 0 { id(target_id) } else { Value::None },
                 effect
                     .turret
                     .as_ref()
@@ -498,8 +499,22 @@ impl Scene {
                 out.extend(self.tell_all(session, actions));
             }
         }
+        // a lance's beacon is in space before its effect is played, which is drawn to it (EVE.js spawnLanceBeacon, the beacon first; a strike with no
+        // effect of its own, the cone, has the beacon but no beam to draw)
+        let beacon = match run.effect.action.as_ref() {
+            Some(Action::Strike { strike }) => strike.beacon.map(|offset| {
+                let lifetime = run.effect.duration_ms;
+                self.release_beacon(session, &run.effect, offset, lifetime, now)
+            }),
+            _ => None,
+        };
+        let beacon_id = beacon.as_ref().map_or(0, |(beacon_id, _)| *beacon_id);
+        if let Some((_, beacon_out)) = beacon {
+            out.extend(beacon_out);
+        }
         // a turret's special effect is played before its numbers are told (the recording of the reference's gun), a propulsion module's after
-        let fx = self.tell_all(session, vec![Self::fx_action(stamp, &ship, &run.effect, true)]);
+        let fx_target = if beacon_id > 0 { beacon_id } else { run.effect.target_id };
+        let fx = self.tell_all(session, vec![Self::fx_action(stamp, &ship, &run.effect, true, fx_target)]);
         if run.effect.turret.is_some() {
             out.extend(fx);
             out.extend(Self::changes_told(session, owner, &run.effect, &run.effect.on_changes, now));

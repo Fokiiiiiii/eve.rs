@@ -340,6 +340,13 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         return Task.CompletedTask;
     }
 
+    public Task UpdateEffectAsync(SimUpdateEffect request, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Send(request);
+        return Task.CompletedTask;
+    }
+
     public Task SetModuleOverheatAsync(ulong sessionId, long moduleId, bool active, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

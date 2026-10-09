@@ -37,6 +37,9 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
+    private Eve.Services.Corporations.AllianceMaintenanceBillWorker? allianceMaintenanceBillWorker;
+
+
     private async Task CorporationMigrations()
     {
         // Codex-owned corporation registration; keep combat/NPC construction in its own block below.
@@ -140,13 +143,47 @@ internal sealed partial class CharacterServicesComposition
             : spaceSessions.AffiliationChangedAsync;
         allianceDue = new Eve.Services.Corporations.AllianceApplicationDueWorker(
             corporations, characters, foundations.Scheduler, foundations.Relations, foundations.Events,
-            allianceAffiliationNotify);
+            allianceAffiliationNotify, characterSessions);
         await allianceDue.RegisterAsync();
+        var officeStore = new Eve.Corporations.CorporationOfficeStore(source, corporationSchema);
+        var warInheritance = new Eve.Services.Corporations.AllianceWarInheritanceWorker(
+            source, corporations, officeStore, foundations.Relations, foundations.Scheduler, now, characterSessions);
+        await warInheritance.RegisterAsync();
+        var maintenance = new Eve.Services.Corporations.AllianceMaintenanceBillWorker(
+            corporations, officeStore, foundations.Scheduler, now);
+        maintenance.NextDowntimeAtMs = at => DailyGoalRecorder.PeriodAt(at).UntilMs;
+        maintenance.CharacterSessions = characterSessions;
+        maintenance.InheritAllianceWarsForClosureAsync = warInheritance.InheritForAllianceClosureAsync;
+        maintenance.EndAllianceWarsAtClosureAsync = warInheritance.EndAllianceWarsAsync;
+        allianceMaintenanceBillWorker = maintenance;
+        await maintenance.RegisterAsync();
         allianceRegistry = new Eve.Services.Corporations.AllianceRegistryService(
             corporations, characters, now,
             scheduleAllianceApplication: allianceDue.ScheduleAcceptedAsync,
             wakeAllianceApplicationScheduler: allianceDue.Wake,
-            relations: foundations.Relations);
+            relations: foundations.Relations,
+            characterSessions: characterSessions,
+            readSovSnapshot: ReadAllianceSovSnapshotAsync);
+    }
+
+    private async Task<Eve.Services.Corporations.AllianceSovSnapshot?> ReadAllianceSovSnapshotAsync(
+        long allianceId,CancellationToken token)
+    {
+        var snapshot = await sovereigntyReadModel.ReadSnapshotAsync(token);
+        var claims = snapshot.ClaimsBySolarSystemId.ToDictionary(
+            pair => pair.Key,pair => pair.Value.AllianceId);
+        var hubs = snapshot.HubsBySolarSystemId.ToDictionary(
+            pair => pair.Key,pair => (pair.Value.AllianceId,pair.Value.HubId));
+        var now = corporations.VoteNowFiletime;
+        var nextVulnerability = snapshot.StructuresBySolarSystemId.Values
+            .SelectMany(structures => structures)
+            .Where(structure => structure.AllianceId == allianceId &&
+                structure.VulnerableEndTimeFileTime is { } end && end > now)
+            .Select(structure => structure.VulnerableEndTimeFileTime!.Value)
+            .DefaultIfEmpty(0)
+            .Min();
+        return new Eve.Services.Corporations.AllianceSovSnapshot(
+            claims,hubs,nextVulnerability > 0 ? nextVulnerability : null);
     }
 
     private async Task CorporationOffices()

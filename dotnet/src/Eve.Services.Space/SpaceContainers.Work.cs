@@ -17,7 +17,7 @@ public sealed partial class SpaceContainers
     /// </summary>
     private readonly record struct WorkOutcome(
         bool Accepted, string Reason, long Remaining = 0, long Delivered = 0, bool Complete = true, (string Topic, object Payload, string Key)? Fact = null,
-        PyValue? Notice = null)
+        PyValue? Notice = null, (string Name, PyValue[] Args)? Scan = null)
     {
         public static WorkOutcome Refuse(string reason) => new(false, reason);
     }
@@ -101,6 +101,11 @@ public sealed partial class SpaceContainers
         {
             session.SendNotification("OnRemoteMessage", "clientID", notice);
         }
+        // a scan's reveal is the pilot's alone, sent once the grant is kept (a repeated cycle is answered from the record and reveals nothing again)
+        if (outcome.Scan is { } scan && _space.ClientSessionOf(cycle.SessionId) is { } scanner)
+        {
+            scanner.SendNotification(scan.Name, "clientID", scan.Args);
+        }
     }
 
     /// <summary>
@@ -166,6 +171,10 @@ public sealed partial class SpaceContainers
     /// <summary>The checks and the settlement of one work cycle: the owner must be the pilot's (a drone flown, or a module that runs), the target there, in reach.</summary>
     private async Task<WorkOutcome> SettleWorkCycleAsync(WorkCycle cycle)
     {
+        if (cycle.IsModule && cycle.Command is SimModuleWorkCommands.ScanCargo or SimModuleWorkCommands.ScanShip)
+        {
+            return await SettleScanAsync(cycle);
+        }
         if (cycle.Command is not (SimDroneCommands.MineRepeatedly or SimDroneCommands.Salvage))
         {
             return WorkOutcome.Refuse("UNSUPPORTED_COMMAND");

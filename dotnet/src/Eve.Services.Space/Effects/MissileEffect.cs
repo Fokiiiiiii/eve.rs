@@ -143,7 +143,7 @@ internal sealed class MissileEffect : ShipEffect
         var fx = FxOf(module, charge);
         var launcher = new SimTurret(
             module.Module.TypeId, fx, [Damage(EmDamage), Damage(ThermalDamage), Damage(KineticDamage), Damage(ExplosiveDamage)], range, 0, 0, 40_000,
-            new SimTurretCharge(charge.TypeId, charge.Flag, charge.Quantity, ChargesPerCycle(attributes)), missile);
+            new SimTurretCharge(charge.TypeId, charge.Flag, charge.Quantity, ChargesPerCycle(attributes), Reloads: module.Value(ModuleAttributes.ReloadTime, 0) > 0), missile);
         // the client is told the cost and the cycle of the launcher as it starts and stops (and no range: a missile's is its own)
         SimChange[] told = [new(module.ModuleId, CapacitorNeed, capacitor), new(module.ModuleId, Speed, Three(duration))];
         return new SimEffect(module.ModuleId, module.Module.TypeId, module.Effect.Id, fx, duration, capacitor, Math.Max(1, module.Repeat), Math.Max(0, module.TargetId), null, null, told, told, launcher);

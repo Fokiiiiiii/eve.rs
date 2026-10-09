@@ -144,6 +144,14 @@ internal sealed class FakeSim : ISimulation
     }
 
     /// <summary>What a change of the rounds of a gun is answered with (the default: the gun does not run, the host has its rounds).</summary>
+    public List<SimUpdateEffect> Updates { get; } = [];
+
+    public Task UpdateEffectAsync(SimUpdateEffect request, CancellationToken cancellationToken = default)
+    {
+        Updates.Add(request);
+        return Task.CompletedTask;
+    }
+
     public Func<SimAdjustCharge, SimChargeAdjusted> AdjustAnswer { get; set; } = request => new SimChargeAdjusted(request.RequestId, false, 0, 0);
 
     /// <summary>What the simulation tells right after it has answered a change of rounds (a count of the gun, as it goes on shooting).</summary>

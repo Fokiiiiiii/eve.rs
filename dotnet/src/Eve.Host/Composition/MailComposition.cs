@@ -199,5 +199,10 @@ internal sealed partial class CharacterServicesComposition
             ResolveMailSendRecipientsAsync,
             now,
             (characterId, args) => characterSessions.Of(characterId)?.SendNotification("OnNotificationReceived", "clientID", args));
+        if (allianceMaintenanceBillWorker is { } maintenanceWorker)
+        {
+            maintenanceWorker.BillNotificationWriter = mailSendWriter.WriteAllianceMaintenanceBillNotificationAsync;
+            await maintenanceWorker.ReconcileAsync();
+        }
     }
 }

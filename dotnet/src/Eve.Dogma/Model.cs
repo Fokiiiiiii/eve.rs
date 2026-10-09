@@ -93,6 +93,9 @@ public sealed record EffectDef(int Id, string Name, int Category, IReadOnlyList<
     /// <summary>The attribute that holds how long a cycle of the effect takes (0 when it has none).</summary>
     public int DurationAttributeId { get; init; }
 
+    /// <summary>The attribute that holds the falloff of the effect's range (0 when it has none: a hard cutoff at the range).</summary>
+    public int FalloffAttributeId { get; init; }
+
     /// <summary>The attribute that holds the capacitor a cycle takes (0 when it needs none).</summary>
     public int DischargeAttributeId { get; init; }
 

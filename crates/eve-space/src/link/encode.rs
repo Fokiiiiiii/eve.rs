@@ -214,6 +214,7 @@ pub(super) fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
             out.extend_from_slice(&charge.flag.to_le_bytes());
             out.extend_from_slice(&charge.rounds.to_le_bytes());
             out.extend_from_slice(&charge.per_cycle.to_le_bytes());
+            out.push(u8::from(charge.reloads));
         }
     }
     match &turret.missile {
@@ -295,6 +296,9 @@ pub(super) fn put_effect(out: &mut Vec<u8>, effect: &Effect) {
                 | (u8::from(rules.provides_industrial_core) << 2),
         );
         out.extend_from_slice(&rules.reactivation_delay_ms.to_le_bytes());
+        // the speed limits (protocol 38, WP19): the highest and the lowest speed a module starts at (0 for none)
+        out.extend_from_slice(&rules.max_velocity_limit.to_le_bytes());
+        out.extend_from_slice(&rules.min_velocity_limit.to_le_bytes());
     }
 }
 
@@ -329,6 +333,19 @@ pub(super) fn write_strike(out: &mut Vec<u8>, strike: &Strike) {
         Some(end) => {
             out.push(1);
             for component in end {
+                out.extend_from_slice(&component.to_le_bytes());
+            }
+        }
+        None => {
+            out.push(0);
+            out.extend_from_slice(&[0u8; 24]);
+        }
+    }
+    // the beacon: a flag, then its offset from the firing ship (zeros without a beacon)
+    match strike.beacon {
+        Some(offset) => {
+            out.push(1);
+            for component in offset {
                 out.extend_from_slice(&component.to_le_bytes());
             }
         }
@@ -476,6 +493,42 @@ pub(super) fn put_action(out: &mut Vec<u8>, action: &Action) {
             for number in [*delay_ms, damage[0], damage[1], damage[2], damage[3], *immobile_ms, *no_jump_ms] {
                 out.extend_from_slice(&number.to_le_bytes());
             }
+        }
+        Action::Kamikaze { damage, range } => {
+            out.push(23);
+            for number in [damage[0], damage[1], damage[2], damage[3], *range] {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
+        }
+        Action::Blast { centre, radius, damage } => {
+            out.push(25);
+            for number in
+                [centre[0], centre[1], centre[2], *radius, damage[0], damage[1], damage[2], damage[3]]
+            {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
+        }
+        Action::Missile { damage, reach, blast } => {
+            out.push(24);
+            for number in [
+                damage[0],
+                damage[1],
+                damage[2],
+                damage[3],
+                *reach,
+                blast.explosion_radius,
+                blast.explosion_velocity,
+                blast.reduction_factor,
+                blast.reduction_sensitivity,
+            ] {
+                out.extend_from_slice(&number.to_le_bytes());
+            }
+        }
+        Action::Scan { cargo, reach } => {
+            out.push(26);
+            out.push(u8::from(!*cargo));
+            out.extend_from_slice(&reach.optimal.to_le_bytes());
+            out.extend_from_slice(&reach.falloff.to_le_bytes());
         }
         Action::Mining {
             family,

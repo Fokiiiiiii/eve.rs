@@ -53,7 +53,7 @@ public sealed partial class DogmaIMService
     }
 
     /// <summary>The client is told the module is reloading until a moment and that a charge is being loaded; the rounds move when the time has run.</summary>
-    private void StartReload(ClientSession session, long characterId, ReloadPlan plan)
+    private void StartReload(ClientSession session, long characterId, ReloadPlan plan, bool automatic = false)
     {
         if (!_reloads.TryAdd(plan.ModuleId, plan))
         {
@@ -72,7 +72,7 @@ public sealed partial class DogmaIMService
             try
             {
                 _reloads.TryRemove(plan.ModuleId, out _);
-                await ReloadAsync(session, characterId, plan, readyAt, CancellationToken.None).ConfigureAwait(false);
+                await ReloadAsync(session, characterId, plan, readyAt, CancellationToken.None, automatic).ConfigureAwait(false);
             }
             catch (Exception error)
             {
@@ -86,13 +86,15 @@ public sealed partial class DogmaIMService
     /// The rounds move from the hold into the module and the client is told what changed, last that the module is ready (<paramref name="readyAt"/>: the moment it was told).
     /// A gun that runs is given what the simulation adds to the rounds it has; one the hold could not give all of gives the rest back.
     /// </summary>
-    private async Task ReloadAsync(ClientSession session, long characterId, ReloadPlan plan, long? readyAt, CancellationToken cancellationToken)
+    private async Task ReloadAsync(ClientSession session, long characterId, ReloadPlan plan, long? readyAt, CancellationToken cancellationToken, bool automatic = false)
     {
         ShipOutcome outcome = new NothingHappened();
+        var answered = false;
         try
         {
             if (await ships.ReloadRoomAsync(characterId, plan, cancellationToken) is { } room)
             {
+                answered = true;
                 outcome = rounds is null
                     ? await ships.CompleteReloadAsync(characterId, plan, GunRounds.Idle, cancellationToken)
                     : await rounds.AdjustAsync(
@@ -111,6 +113,11 @@ public sealed partial class DogmaIMService
             {
                 rounds?.GiveBack(session, plan.ModuleId, lacking.Shortfall);
             }
+            // a gun the simulation holds for its load is answered even when nothing came into it (FP-C8)
+            if (automatic && !answered)
+            {
+                await AnswerEmptyAsync(session, plan.ModuleId, CancellationToken.None).ConfigureAwait(false);
+            }
             if (readyAt is { } ready)
             {
                 Tell(() => session.SendNotification(
@@ -118,6 +125,65 @@ public sealed partial class DogmaIMService
             }
         }
     }
+
+    /// <summary>1 once this service listens to the guns that run dry (<see cref="ListeningForDryGuns"/>).</summary>
+    private int _listeningForDryGuns;
+
+    /// <summary>
+    /// Listens to the guns of the ships that run dry (FP-C8, <see cref="ISpaceRounds.GunRanDry"/>), once, when the service has its rounds. Returns the service, so the
+    /// composition that gives it its rounds can say so in one expression.
+    /// </summary>
+    public DogmaIMService ListeningForDryGuns()
+    {
+        if (rounds is not null && Interlocked.Exchange(ref _listeningForDryGuns, 1) == 0)
+        {
+            rounds.GunRanDry += OnGunRanDry;
+        }
+        return this;
+    }
+
+    /// <summary>
+    /// A reloading gun of a ship the pilot flies has no round left for its next cycle (FP-C8, <see cref="ISpaceRounds.GunRanDry"/>): the rounds of its kind are loaded from the
+    /// hold the way a pilot's load in space is (the reload time first), and the simulation resumes the gun with them. With nothing of the kind to load, the simulation is
+    /// answered with none and the gun stops.
+    /// </summary>
+    private async Task ReloadEmptiedGunAsync(SpentGun gun, CancellationToken cancellationToken)
+    {
+        if (!_reloads.ContainsKey(gun.ModuleId)
+            && await ships.PlanReloadsAsync(gun.CharacterId, gun.ShipId, [gun.ModuleId], [], gun.ShipId, cancellationToken, gun.ChargeTypeId) is { } plans
+            && plans.FirstOrDefault(plan => plan.ModuleId == gun.ModuleId) is { } plan)
+        {
+            if (plan.ReloadMs <= 0)
+            {
+                await ReloadAsync(gun.Session, gun.CharacterId, plan, null, cancellationToken, automatic: true);
+            }
+            else
+            {
+                StartReload(gun.Session, gun.CharacterId, plan, automatic: true);
+            }
+            return;
+        }
+        await AnswerEmptyAsync(gun.Session, gun.ModuleId, cancellationToken);
+    }
+
+    /// <summary>The simulation is told that the gun takes no rounds (a load of nothing): the gun that waited for them stops.</summary>
+    private Task AnswerEmptyAsync(ClientSession session, long moduleId, CancellationToken cancellationToken) =>
+        rounds is null
+            ? Task.CompletedTask
+            : rounds.AdjustAsync(session, moduleId, 0, new RoundsChange.Add(0, 0), _ => Task.FromResult(true), cancellationToken);
+
+    /// <summary>The handler of <see cref="ISpaceRounds.GunRanDry"/>: the load runs apart from the link that raised it.</summary>
+    private void OnGunRanDry(SpentGun gun) => _ = Task.Run(async () =>
+    {
+        try
+        {
+            await ReloadEmptiedGunAsync(gun, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            log?.Invoke($"the gun {gun.ModuleId} that ran dry could not be reloaded: {error.Message}");
+        }
+    });
 
     /// <summary>What the modules hold goes to the hold at once; a gun that runs gives what the simulation took out of its rounds.</summary>
     private async Task UnloadInSpaceAsync(

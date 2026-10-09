@@ -26,7 +26,7 @@ public class DroneHostTests
     /// <summary>A pilot in space with a Hobgoblin I in the drone bay of its ship, and the Drones skill at level 1 unless <paramref name="skill"/> is 0.</summary>
     internal static async Task<Flying> FlyingWithADroneAsync(
         Rig rig, int skill = 1, bool withDroneDamageAmplifier = false, bool withDroneLinkAugmentor = false, int? droneTypeId = null, int? minerTypeId = null,
-        int? solarSystemId = null, string characterName = "Space Tester", int? mutatorTypeId = null)
+        int? solarSystemId = null, string characterName = "Space Tester", int? mutatorTypeId = null, long sessionId = 1)
     {
         var character = await rig.NewCharacterAsync(characterName);
         if (solarSystemId is { } system)
@@ -79,7 +79,7 @@ public class DroneHostTests
             ? await MutatedDroneAsync(rig, character.CharacterId, mutator)
             : (await rig.Ships.GrantAsync(character.CharacterId, droneTypeId ?? Hobgoblin, 1, singleton: false))!.Single().After;
         Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(character.CharacterId, drone.Id, Rig.Station, character.ShipId, CharacterShips.DroneBayFlag, null));
-        var session = await rig.SessionAsync(character, 1);
+        var session = await rig.SessionAsync(character, sessionId);
         var oid = await rig.BindShipAsync(session);
         await rig.ShipCallAsync(session, "Undock", oid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
         await rig.BindBeyonceAsync(session);

@@ -123,8 +123,10 @@ impl Scene {
         else {
             return out;
         };
-        let run = pilot.modules.running[index].clone();
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+        // a refresh the host sent takes effect at this cycle's start, before what the cycle costs is worked out
+        let refresh = refresh_running(&mut pilot.modules.running[index], session, owner, at);
+        let run = pilot.modules.running[index].clone();
         let affordable =
             pilot.modules.capacitor.as_ref().is_some_and(|c| c.charge_at(at) >= run.effect.capacitor_need);
         let more = run.cycles < run.effect.repeat;
@@ -152,6 +154,7 @@ impl Scene {
             out.extend(self.effect_ended(session, run, owner, ship_id, at, Ending::NoRounds));
             return out;
         }
+        out.extend(refresh);
         let (before, after) = match pilot.modules.capacitor.as_mut() {
             Some(capacitor) => capacitor.draw(at, run.effect.capacitor_need),
             None => (0.0, 0.0),
@@ -191,7 +194,8 @@ impl Scene {
             if next.effect.turret.as_ref().is_none_or(|turret| turret.missile.is_none()) {
                 out.push(Self::effect_told(session, owner, ship_id, &next, at, true, at, None));
             }
-        } else if let Some(pilot) = self.pilots.get_mut(&session)
+        } else if !self.park_for_reload(session, next.effect.module_id)
+            && let Some(pilot) = self.pilots.get_mut(&session)
             && let Some(position) =
                 pilot.modules.running.iter().position(|run| run.effect.module_id == next.effect.module_id)
         {
@@ -250,7 +254,16 @@ impl Scene {
 
     /// A work target (a rock, a wreck) is there while the pilot holds its lock: a depleted rock drops its locks.
     pub(super) fn work_target_ok(&self, session: SessionId, effect: &Effect) -> bool {
-        self.locked_by(session).contains(&effect.target_id)
+        let locked = self.locked_by(session).contains(&effect.target_id);
+        // a scan's target is also in its reach: the lock alone is not enough once the ship has moved off (scanner range, cycle end)
+        let in_reach = match effect.action.as_ref() {
+            Some(Action::Scan { reach, .. }) => self
+                .session_of(effect.target_id)
+                .and_then(|target| self.apart(session, target))
+                .is_some_and(|apart| reach.share(apart).is_some()),
+            _ => true,
+        };
+        locked && in_reach
     }
 
     /// Whether the target of the cycle that ends is still there, as the effect needs it: a turret's, a projected effect's, a work target's (or none).
@@ -429,6 +442,10 @@ impl Scene {
                 0.0,
             ),
             Action::Salvage { access_bonus } => (WORK_SALVAGE, 0.0, 0.0, 0.0, 0.0, 0.0, *access_bonus),
+            // a scan carries no mining numbers: the host reads the target and decides what it reveals
+            Action::Scan { cargo, .. } => {
+                (if *cargo { WORK_SCAN_CARGO } else { WORK_SCAN_SHIP }, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+            }
             _ => return None,
         };
         Some(Out::ModuleWorkCycle {
@@ -612,4 +629,35 @@ impl Scene {
         }
         out
     }
+}
+
+/// Brings a refresh the host sent (`UpdateEffect`) to a running effect: the cycle, the capacitor it costs, the turret and the attributes the client is told.
+/// Returns the attribute change the client is told, if the refresh changes any.
+fn refresh_running(run: &mut Running, session: SessionId, owner: i64, at: i64) -> Option<Out> {
+    let update = run.pending_update.take()?;
+    let module_id = run.effect.module_id;
+    let lines: Vec<Value> = update
+        .changes
+        .iter()
+        .map(|change| {
+            let old = run
+                .effect
+                .on_changes
+                .iter()
+                .rev()
+                .find(|known| known.attribute_id == change.attribute_id)
+                .map_or(0.0, |known| known.value);
+            attribute_change(owner, module_id, change.attribute_id, at, real(change.value), real(old))
+        })
+        .collect();
+    run.effect.duration_ms = update.duration_ms;
+    run.effect.capacitor_need = update.capacitor_need;
+    run.effect.turret = update.turret;
+    run.effect.on_changes = update.changes;
+    (!lines.is_empty()).then(|| Out::Notify {
+        session,
+        name: "OnModuleAttributeChanges",
+        id_type: "clientID",
+        args: vec![Value::List(lines)],
+    })
 }

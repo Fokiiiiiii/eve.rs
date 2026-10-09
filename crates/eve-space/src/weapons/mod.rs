@@ -127,6 +127,9 @@ pub struct Charge {
     pub flag: i32,
     pub rounds: i64,
     pub per_cycle: i64,
+    /// The gun reloads from the hold when its rounds run out (the host answers the spend with a load): the simulation waits for that answer
+    /// instead of stopping the gun (FP-C8).
+    pub reloads: bool,
 }
 
 /// Where and how a ship moves, for the sake of a shot.

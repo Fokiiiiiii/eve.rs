@@ -299,6 +299,24 @@ public sealed partial class CharacterShips
         return true;
     }
 
+    /// <summary>
+    /// The state a squadron keeps between its launches (the ship and tube it came from, and its ability charges and cooldowns), as the text of its item's
+    /// custom info. Returns false when the squadron is not the character's.
+    /// </summary>
+    public async Task<bool> SetSquadronStateAsync(long characterId, long fighterId, string? state, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        if (await items.LockAndGetAsync(connection, transaction, fighterId, cancellationToken) is not { } fighter || fighter.OwnerId != characterId)
+        {
+            return false;
+        }
+        await items.SetCustomInfoAsync(connection, transaction, fighterId, state, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return true;
+    }
+
     /// <summary>The squadrons of a ship: the ones in its tubes and the ones in its fighter bay, as the database has them.</summary>
     public async Task<IReadOnlyList<Item>> FightersOfShipAsync(long shipId, CancellationToken cancellationToken = default)
     {

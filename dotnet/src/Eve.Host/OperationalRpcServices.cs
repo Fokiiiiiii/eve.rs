@@ -159,7 +159,7 @@ public sealed partial class InSpaceCompressionMgrRpcService(
     /// Shown to the pilot when no compression authority is attached. Owner C1 (structures) is open, so the
     /// request is refused by name instead of answering None, which would look like a silent success.
     /// </summary>
-    public const string UnavailableNotice = "In-space ore compression is not available on this server yet.";
+    public const string UnavailableNotice = "In-space ore compression needs a compressor structure, and structures are not on this server yet (phase 3).";
 
     /// <summary>Shown when the request names no usable item, facility or active ship. Never answered with None (a silent success).</summary>
     public const string InvalidRequestNotice = "That item cannot be compressed here: pick an item in your active ship and a valid facility.";

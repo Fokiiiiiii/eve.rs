@@ -3,6 +3,7 @@ using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Ships;
+using Eve.Services.Ships;
 
 namespace Eve.Services.Dogma.Tests;
 
@@ -162,5 +163,45 @@ public class ReloadServiceTests
         Assert.Equal((5L, 275L), (await InGunAsync(f) ?? 0, await HoldAsync(f)));
         Assert.Empty(f.Rig.Delay.Asked);
         Assert.Equal([$"{f.Gun} 0 Remove {{ Quantity = 75 }}"], f.Rig.Rounds.Asked);
+    }
+
+    /// <summary>Waits until the condition holds (the dry-gun handler runs apart from the test, as the link's answers do).</summary>
+    private static async Task WaitForAsync(Func<bool> condition)
+    {
+        for (var i = 0; i < 200 && !condition(); i++)
+        {
+            await Task.Delay(25);
+        }
+    }
+
+    [PgFact]
+    public async Task A_gun_that_runs_dry_is_loaded_from_the_hold_when_the_reload_time_has_run_and_the_simulation_is_answered_with_the_rounds()
+    {
+        await using var f = await InSpaceAsync();
+
+        // the simulation says the gun has no round for its next cycle: the load starts as a load in space does, and waits for the reload time
+        f.Rig.Rounds.RunDry(new SpentGun(f.Session, f.Character.CharacterId, f.Character.ShipId, f.Gun, Antimatter));
+        await WaitForAsync(() => f.Rig.Timers.IsSet($"dogma.reload:{f.Gun}"));
+        Assert.True(f.Rig.Timers.IsSet($"dogma.reload:{f.Gun}"));
+        Assert.Empty(f.Rig.Rounds.Asked);
+        Assert.Equal((200L, (long?)null), (await HoldAsync(f), await InGunAsync(f)));
+
+        // when the time has run the rounds are asked of the simulation (the gun takes what fits) and the hold gives them
+        f.Rig.Delay.Release();
+        await WaitForAsync(() => f.Rig.Rounds.Asked.Count > 0);
+        Assert.Contains(f.Rig.Rounds.Asked, asked => asked.StartsWith($"{f.Gun} {Antimatter} Add"));
+    }
+
+    [PgFact]
+    public async Task A_gun_that_runs_dry_with_nothing_of_its_kind_to_load_is_answered_with_no_rounds_so_that_it_stops()
+    {
+        await using var f = await InSpaceAsync();
+
+        // a module that is not fitted has nothing to load: the simulation is answered with none, and never waits on the host
+        const long NotFitted = 999;
+        f.Rig.Rounds.RunDry(new SpentGun(f.Session, f.Character.CharacterId, f.Character.ShipId, NotFitted, Antimatter));
+        await WaitForAsync(() => f.Rig.Rounds.Asked.Count > 0);
+        Assert.Equal([$"{NotFitted} 0 Add {{ Capacity = 0, Available = 0 }}"], f.Rig.Rounds.Asked);
+        Assert.False(f.Rig.Timers.IsSet($"dogma.reload:{NotFitted}"));
     }
 }

@@ -77,7 +77,7 @@ internal abstract class ShipEffect : IEffectHandler<ShipSnapshot, SimEffect>
         var module = new ModuleEffectContext(context);
         var built = Build(module) with { BurnsFuel = module.Value(ModuleAttributes.ConsumptionType, 0) > 0, Rules = RulesOf(module) };
         // a module that cannot be made to autorepeat (disallowRepeatingActivation 1014) has one cycle as its budget, whatever repeat the client asks for (EveJS
-        // moduleCycleSchedule.js). shortcut: the repeat count the client is told for the effect's FX is one too; EveJS keeps the client's, UNVERIFIED which the client shows.
+        // moduleCycleSchedule.js). shortcut: the repeat count the client is told for the effect's FX is one too; EveJS (moduleCycleSchedule.js) keeps the client's count, and the V24.01 client's FX repeat for these effects is not traced here, upgrade with a client FX trace.
         return module.Value(ModuleAttributes.DisallowRepeatingActivation, 0) == 1 ? built with { Repeat = 1 } : built;
     }
 
@@ -93,7 +93,9 @@ internal abstract class ShipEffect : IEffectHandler<ShipSnapshot, SimEffect>
         module.Value(ModuleAttributes.DisallowEarlyDeactivation, 0) == 1,
         module.Value(ModuleAttributes.ActivationRequiresActiveIndustrialCore, 0) == 1,
         module.Effect.Name is "industrialCoreEffect2" or "industrialCompactCoreEffect2",
-        Math.Max(0, module.Value(ModuleAttributes.ModuleReactivationDelay, 0)));
+        Math.Max(0, module.Value(ModuleAttributes.ModuleReactivationDelay, 0)),
+        Math.Max(0, module.Value(ModuleAttributes.MaxVelocityActivationLimit, 0)),
+        Math.Max(0, module.Value(ModuleAttributes.MinVelocityActivationLimit, 0)));
 
     /// <summary>
     /// The length of a cycle of an effect, what it costs the capacitor, and the attribute the duration was read from: the item's own values after dogma (a module's, or a

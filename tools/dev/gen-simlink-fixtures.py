@@ -17,7 +17,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27,
          "PlaceContainer": 28, "ContainerPlaced": 29, "ChangeWreck": 30, "RemoveWreck": 31, "Measured": 32,
          "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35, "LaunchDrone": 36, "DroneCommand": 37, "DroneResults": 38,
-         "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60}
+         "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60, "UpdateEffect": 61}
 
 
 def s(text):  # u16 length + UTF-8
@@ -81,7 +81,8 @@ def turret(t):
     body = struct.pack("<i", t["weaponTypeId"]) + s(t["fx"])
     body += struct.pack("<8d", *t["rawDamage"], t["optimalRange"], t["falloff"], t["trackingSpeed"], t["signatureResolution"])
     c = t.get("charge")
-    body += bytes([0]) if not c else bytes([1]) + struct.pack("<iiqq", c["typeId"], c["flag"], c["rounds"], c["perCycle"])
+    # the charge's reloads byte (protocol 38, FP-C8): the gun reloads from its hold when its rounds run out
+    body += bytes([0]) if not c else bytes([1]) + struct.pack("<iiqq", c["typeId"], c["flag"], c["rounds"], c["perCycle"]) + bytes([1 if c.get("reloads") else 0])
     m = t.get("missile")
     body += bytes([0]) if not m else (bytes([1]) + struct.pack("<ii", m["chargeTypeId"], m["groupId"]) + s(m["name"])
                                       + struct.pack("<10d", m["radius"], m["mass"], m["agility"], m["hitPoints"], m["maxVelocity"], m["flightTimeMs"],
@@ -145,6 +146,9 @@ def action(a):
         return bytes([7, FAMILIES[a["family"]]]) + struct.pack("<5d", a["miningAmountM3"], a["wasteMultiplier"], a["wasteProbability"], a["critProbability"], a["critMultiplier"])
     if kind == "salvage":
         return bytes([8]) + struct.pack("<d", a["accessBonus"])
+    # the SimAction tag 26 (protocol 40): a scanner's cycle, a cargo (0) or ship (1) scan, and its optimal range and falloff (metres; no falloff for a cargo scan)
+    if kind == "scan":
+        return bytes([26, 0 if a["cargo"] else 1]) + struct.pack("<2d", a["optimalMeters"], a["falloffMeters"])
     # the SimAction tag 9 (protocol 30): the beam's speed, the hold distance, and the module's reach (the range a target is out of reach past)
     if kind == "tractor":
         return bytes([9]) + struct.pack("<3d", a["velocity"], a["hold"], a["range"])
@@ -159,10 +163,23 @@ def action(a):
                 + struct.pack("<6d", a["signatureRadius"], a["immobileMs"], a["noJumpMs"], a["neutAmount"], a["neutRadius"], a["neutSignatureRadius"])
                 # protocol 28: the disruption a pulse leaves (ms), then a sweep: a flag and the end of the axis (zeros without a sweep)
                 + struct.pack("<d", a.get("debuffMs", 0.0))
-                + bytes([1 if a.get("sweepEnd") else 0]) + struct.pack("<3d", *(a.get("sweepEnd") or [0.0, 0.0, 0.0])))
+                + bytes([1 if a.get("sweepEnd") else 0]) + struct.pack("<3d", *(a.get("sweepEnd") or [0.0, 0.0, 0.0]))
+                # protocol 39: a lance's beacon, a flag then its offset from the firing ship (zeros without a beacon)
+                + bytes([1 if a.get("beacon") else 0]) + struct.pack("<3d", *(a.get("beacon") or [0.0, 0.0, 0.0])))
     # the SimAction tag 14 (ADR 0013 epoch 26): a titan doomsday, one hit on the locked target after a delay, the ship held for its windows
     if kind == "doomsday":
         return bytes([14]) + struct.pack("<d", a["delayMs"]) + struct.pack("<4d", *a["damage"]) + struct.pack("<2d", a["immobileMs"], a["noJumpMs"])
+    # the SimAction tag 23 (protocol 36): a kamikaze squadron's detonation, its damage (four kinds) and the range it detonates at (metres)
+    if kind == "kamikaze":
+        return bytes([23]) + struct.pack("<4d", *a["damage"]) + struct.pack("<d", a["rangeMeters"])
+    # the SimAction tag 24 (protocol 36): a fighter's missiles: the damage (four kinds), the reach (metres) and the explosion (radius, velocity, reduction factor,
+    # reduction sensitivity), scaled by the application factor for the target
+    if kind == "missile":
+        return bytes([24]) + struct.pack("<4d", *a["damage"]) + struct.pack("<5d", a["reachMeters"], a["explosionRadius"], a["explosionVelocity"],
+                                                                              a["reductionFactor"], a["reductionSensitivity"])
+    # the SimAction tag 25 (protocol 37): a fighter's LaunchBomb blast: the centre (metres), the radius (metres) and the four damages (EM, thermal, kinetic, explosive)
+    if kind == "blast":
+        return bytes([25]) + struct.pack("<3d", *a["centre"]) + struct.pack("<d", a["radiusMeters"]) + struct.pack("<4d", *a["damage"])
     # the SimAction tag 15 (protocol 29): the Gravitational Transportation Field Oscillator's field, a sphere strike (shape 4) whose body follows the tag, then the
     # offset of the destination from the firing ship, the warp block of the held capitals (ms), and the ship ids moved and held (a u32 count, then each as i64)
     if kind == "field":
@@ -227,7 +244,7 @@ def effect(e):
         # the module rules, after the action: the group and its limit (763), the rule bits (1 early deactivation 906, 2 needs an active industrial core 3265,
         # 4 is an industrial core), and the reactivation delay (669, ms)
         bits = (1 if rules["disallowEarlyDeactivation"] else 0) | (2 if rules["requiresIndustrialCore"] else 0) | (4 if rules["providesIndustrialCore"] else 0)
-        body += struct.pack("<iiBd", rules["groupId"], rules["maxGroupActive"], bits, rules["reactivationDelayMs"])
+        body += struct.pack("<iiBddd", rules["groupId"], rules["maxGroupActive"], bits, rules["reactivationDelayMs"], rules.get("maxVelocityLimit", 0.0), rules.get("minVelocityLimit", 0.0))
     return body
 
 
@@ -319,6 +336,11 @@ def build(m):
                      + i64(m["killerShipId"]) + wreck_kind(m.get("wreckKind")))
     if k == "ChargeSpent":
         return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + i64(m["roundsLeft"]))
+    # protocol 38 (FP-C4b, FP-C5): a refresh of a running effect: the cycle, the capacitor a cycle costs, the turret (a flag, then the turret) and the changes
+    if k == "UpdateEffect":
+        t = m.get("turret")
+        return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + struct.pack("<2d", m["durationMs"], m["capacitorNeed"])
+                     + (bytes([0]) if not t else bytes([1]) + turret(t)) + changes(m["changes"]))
     if k == "AdjustCharge":
         add = m["op"] == "add"
         return frame(k, u64(m["requestId"]) + u64(m["sessionId"]) + i64(m["moduleId"]) + struct.pack("<i", m["chargeType"])
@@ -415,8 +437,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 35},
-    {"name": "hello ack", "kind": "HelloAck", "version": 35, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 40},
+    {"name": "hello ack", "kind": "HelloAck", "version": 40, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -500,6 +522,16 @@ valid = [
                 "repeat": 1, "targetId": "0", "onChanges": [], "offChanges": [],
                 "rules": {"groupId": 4174, "maxGroupActive": 0, "disallowEarlyDeactivation": True, "requiresIndustrialCore": True,
                           "providesIndustrialCore": False, "reactivationDelayMs": 180000.0}}},
+    {"name": "activate a cynosural field generator, which starts up to 500 m/s (WP19)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400001951", "moduleType": 21096, "effectId": 6731, "fx": "", "durationMs": 60000.0, "capacitorNeed": 0.0,
+                "repeat": 1, "targetId": "0", "onChanges": [], "offChanges": [],
+                "rules": {"groupId": 0, "maxGroupActive": 0, "disallowEarlyDeactivation": True, "requiresIndustrialCore": False,
+                          "providesIndustrialCore": False, "reactivationDelayMs": 0.0, "maxVelocityLimit": 500.0, "minVelocityLimit": 0.0}}},
+    {"name": "activate a bomb launcher, which starts only while moving (WP19)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400001952", "moduleType": 4256, "effectId": 6731, "fx": "", "durationMs": 10000.0, "capacitorNeed": 0.0,
+                "repeat": 1, "targetId": "0", "onChanges": [], "offChanges": [],
+                "rules": {"groupId": 0, "maxGroupActive": 0, "disallowEarlyDeactivation": False, "requiresIndustrialCore": False,
+                          "providesIndustrialCore": False, "reactivationDelayMs": 0.0, "maxVelocityLimit": 0.0, "minVelocityLimit": 1.0}}},
     {"name": "activate an effect that changes nothing of the ship", "kind": "Activate", "sessionId": "1",
      "effect": {"moduleId": "9988400001941", "moduleType": 3651, "effectId": 67, "fx": "", "durationMs": 3000.0,
                 "capacitorNeed": 0.0, "repeat": 1, "targetId": "9988400002151", "onChanges": [], "offChanges": []}},
@@ -721,6 +753,14 @@ valid = [
      "chargeType": 0, "op": "remove", "quantity": "75"},
     {"name": "all the rounds taken out of a gun", "kind": "AdjustCharge", "requestId": "43", "sessionId": "1790646377000015", "moduleId": "9988400002719",
      "chargeType": 0, "op": "remove", "quantity": "0"},
+    {"name": "a refresh of a running gun: its cycle, its capacitor and its numbers, with the attributes told", "kind": "UpdateEffect", "sessionId": "1790646377000015",
+     "moduleId": "9988400002719", "durationMs": 4500.0, "capacitorNeed": 2.5,
+     "turret": {"weaponTypeId": 3638, "fx": "effects.Laser", "rawDamage": [0.0, 3.0, 4.5, 0.0], "optimalRange": 5000.0, "falloff": 1200.0,
+                "trackingSpeed": 0.1, "signatureResolution": 40000.0, "requiresGunnery": True,
+                "charge": {"typeId": 222, "flag": 28, "rounds": 80, "perCycle": 1, "reloads": True}},
+     "changes": [{"itemId": "9988400002719", "attributeId": 6, "value": 2.5}, {"itemId": "9988400002719", "attributeId": 51, "value": 4500.0}]},
+    {"name": "a refresh of a running module with no gun", "kind": "UpdateEffect", "sessionId": "1790646377000015",
+     "moduleId": "9988400002721", "durationMs": 3000.0, "capacitorNeed": 0.0, "changes": []},
     {"name": "rounds of a gun that runs changed", "kind": "ChargeAdjusted", "requestId": "41", "running": True, "before": "3", "after": "80"},
     {"name": "rounds of a gun that does not run", "kind": "ChargeAdjusted", "requestId": "44", "running": False, "before": "0", "after": "0"},
     {"name": "targets with a lock going", "kind": "Targets", "sessionId": "1790646377000015", "command": 10,
@@ -881,10 +921,35 @@ valid = [
      "effect": {"moduleId": "9988400002813", "moduleType": 24348, "effectId": 9, "fx": "effects.TractorBeam",
                 "durationMs": 5000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "1000000000002",
                 "action": {"kind": "tractor", "velocity": 500.0, "hold": 500.0, "range": 20000.0}, "onChanges": [], "offChanges": []}},
+    # the SimAction tag 26 (protocol 40): a Cargo Scanner I (50 km, a hard cutoff) and a Ship Scanner I (50 km, 30 km of falloff), each locked on a ship
+    {"name": "activate a cargo scanner (Cargo Scanner I: 50 km, no falloff)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 442, "effectId": 47, "fx": "effects.CargoScan",
+                "durationMs": 5000.0, "capacitorNeed": 4.0, "repeat": 1, "targetId": "1000000000002", "burnsFuel": False,
+                "action": {"kind": "scan", "cargo": True, "optimalMeters": 50000.0, "falloffMeters": 0.0}, "onChanges": [], "offChanges": []}},
+    {"name": "activate a ship scanner (Ship Scanner I: 50 km, 30 km falloff)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 443, "effectId": 46, "fx": "effects.ShipScan",
+                "durationMs": 2000.0, "capacitorNeed": 5.0, "repeat": 1, "targetId": "1000000000002", "burnsFuel": False,
+                "action": {"kind": "scan", "cargo": False, "optimalMeters": 50000.0, "falloffMeters": 30000.0}, "onChanges": [], "offChanges": []}},
     {"name": "activate a passive targeter", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 1100, "effectId": 10, "fx": "effects.TargetPassively",
                 "durationMs": 1000.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "1000000000002",
                 "action": {"kind": "passiveLock"}, "onChanges": [], "offChanges": []}},
+    {"name": "activate a kamikaze squadron (Shadow: four kinds, detonates at 500 m)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400004102", "moduleType": 2948, "effectId": 6554, "fx": "",
+                "durationMs": 10000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "980050000077", "burnsFuel": False,
+                "action": {"kind": "kamikaze", "damage": [4000.0, 0.0, 6000.0, 0.0], "rangeMeters": 500.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a fighter's missiles (Templar: a missile reaching 20 km)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400004103", "moduleType": 23055, "effectId": 6441, "fx": "",
+                "durationMs": 6000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "980050000077", "burnsFuel": False,
+                "action": {"kind": "missile", "damage": [1500.0, 0.0, 1500.0, 0.0], "reachMeters": 20000.0, "explosionRadius": 40.0,
+                           "explosionVelocity": 135.0, "reductionFactor": 0.4, "reductionSensitivity": 5.5},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400004104", "moduleType": 40362, "effectId": 6485, "fx": "",
+                "durationMs": 60000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0", "burnsFuel": False,
+                "action": {"kind": "blast", "centre": [12000.0, -3000.0, 45000.0], "radiusMeters": 15000.0, "damage": [640.0, 0.0, 0.0, 0.0]},
+                "onChanges": [], "offChanges": []}},
     {"name": "activate a doomsday strike (Bosonic Field Generator)", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002814", "moduleType": 40633, "effectId": 6473, "fx": "",
                 "durationMs": 300000.0, "capacitorNeed": 30000.0, "repeat": 1, "targetId": "0", "burnsFuel": True,
@@ -909,7 +974,7 @@ valid = [
                            "warningMs": 15000.0, "pulseMs": 1000.0, "pulses": 16, "damage": [0.0, 0.0, 0.0, 17000.0],
                            "signatureRadius": 20000.0, "immobileMs": 30000.0, "noJumpMs": 120000.0,
                            "neutAmount": 31000.0, "neutRadius": 10000.0, "neutSignatureRadius": 20000.0,
-                           "debuffMs": 60000.0},
+                           "debuffMs": 60000.0, "beacon": [4000.0, 0.0, 0.0]},
                 "onChanges": [], "offChanges": []}},
     {"name": "activate a titan doomsday (Judgment)", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002815", "moduleType": 24550, "effectId": 4489, "fx": "",
@@ -968,6 +1033,18 @@ invalid = [
     {"name": "reactive armor hardener with a seed above one", "reason": "bad-value", "hex": build(hardener_seed_high).hex()},
     {"name": "reactive armor hardener that shifts by nothing", "reason": "bad-value", "hex": build(hardener_shift_none).hex()},
     {"name": "armor pinned flag that is not a flag", "reason": "bad-value", "hex": build(pinned_flag_two).hex()},
+    {"name": "kamikaze with a negative range", "reason": "bad-value",
+     "hex": build(dict(named("activate a kamikaze squadron (Shadow: four kinds, detonates at 500 m)"), effect=dict(named("activate a kamikaze squadron (Shadow: four kinds, detonates at 500 m)")["effect"],
+                       action=dict(named("activate a kamikaze squadron (Shadow: four kinds, detonates at 500 m)")["effect"]["action"], rangeMeters=-1.0)))).hex()},
+    {"name": "fighter missile with a negative explosion radius", "reason": "bad-value",
+     "hex": build(dict(named("activate a fighter's missiles (Templar: a missile reaching 20 km)"), effect=dict(named("activate a fighter's missiles (Templar: a missile reaching 20 km)")["effect"],
+                       action=dict(named("activate a fighter's missiles (Templar: a missile reaching 20 km)")["effect"]["action"], explosionRadius=-40.0)))).hex()},
+    {"name": "fighter bomb with no radius", "reason": "bad-value",
+     "hex": build(dict(named("activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)"), effect=dict(named("activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)")["effect"],
+                       action=dict(named("activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)")["effect"]["action"], radiusMeters=0.0)))).hex()},
+    {"name": "fighter bomb with a negative damage", "reason": "bad-value",
+     "hex": build(dict(named("activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)"), effect=dict(named("activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)")["effect"],
+                       action=dict(named("activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)")["effect"]["action"], damage=[-640.0, 0.0, 0.0, 0.0])))).hex()},
     {"name": "strike with an aim that is not a unit vector", "reason": "bad-value",
      "hex": build(dict(named("activate a doomsday strike (Bosonic Field Generator)"), effect=dict(named("activate a doomsday strike (Bosonic Field Generator)")["effect"],
                        action=dict(named("activate a doomsday strike (Bosonic Field Generator)")["effect"]["action"], direction=[0.6, 0.0, 0.9])))).hex()},
@@ -986,12 +1063,22 @@ invalid = [
      "hex": (struct.pack("<I", 1 + 8 + 1 + 2 + 1) + bytes([11]) + u64(1) + bytes([4]) + struct.pack("<H", 1) + b"\xff").hex()},
     {"name": "command that promises more arguments than it carries", "reason": "truncated",
      "hex": (struct.pack("<I", 1 + 8 + 2) + bytes([7]) + u64(1) + bytes([1, 2])).hex()},
+    {"name": "refresh of a running effect with no cycle", "reason": "bad-value",
+     "hex": build(dict(named("a refresh of a running gun: its cycle, its capacitor and its numbers, with the attributes told"), durationMs=0.0)).hex()},
+    {"name": "refresh of a running effect with a negative capacitor need", "reason": "bad-value",
+     "hex": build(dict(named("a refresh of a running gun: its cycle, its capacitor and its numbers, with the attributes told"), capacitorNeed=-1.0)).hex()},
     {"name": "module work cycle with no cycle", "reason": "bad-value",
      "hex": build(dict(named("module work cycle of a mining laser"), cycleId="0")).hex()},
     {"name": "module work cycle with a roll of one", "reason": "bad-value",
      "hex": build(dict(named("module work cycle of a mining laser"), wasteRoll=1.0)).hex()},
     {"name": "module work cycle of an unknown command", "reason": "bad-value",
-     "hex": build(dict(named("module work cycle of a mining laser"), command=10)).hex()},
+     "hex": build(dict(named("module work cycle of a mining laser"), command=12)).hex()},
+    {"name": "scan with no optimal range", "reason": "bad-value",
+     "hex": build(dict(named("activate a cargo scanner (Cargo Scanner I: 50 km, no falloff)"), effect=dict(named("activate a cargo scanner (Cargo Scanner I: 50 km, no falloff)")["effect"],
+                       action=dict(named("activate a cargo scanner (Cargo Scanner I: 50 km, no falloff)")["effect"]["action"], optimalMeters=0.0)))).hex()},
+    {"name": "ship scan with a negative falloff", "reason": "bad-value",
+     "hex": build(dict(named("activate a ship scanner (Ship Scanner I: 50 km, 30 km falloff)"), effect=dict(named("activate a ship scanner (Ship Scanner I: 50 km, 30 km falloff)")["effect"],
+                       action=dict(named("activate a ship scanner (Ship Scanner I: 50 km, 30 km falloff)")["effect"]["action"], falloffMeters=-1.0)))).hex()},
     {"name": "module work cycle with a probability above one", "reason": "bad-value",
      "hex": build(dict(named("module work cycle of a mining laser"), critProbability=1.5)).hex()},
     {"name": "module work cycle cut short", "reason": "truncated",

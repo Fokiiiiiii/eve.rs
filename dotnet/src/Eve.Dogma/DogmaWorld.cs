@@ -86,6 +86,8 @@ public sealed class DogmaWorld
     private Dictionary<int, List<Source>>? _sources;
     /// <summary>The modifiers an assumption (<see cref="Assume"/>) adds, each with the item it is on.</summary>
     private readonly List<(DogmaItem Item, EffectDef Effect)> _assumed = [];
+    /// <summary>The buffs each item carries (<see cref="SetBuffs"/>): passive effects that run on the item whatever its state.</summary>
+    private readonly Dictionary<long, IReadOnlyList<EffectDef>> _buffs = [];
 
     public DogmaWorld(DogmaStatic statics, long characterId = 0, long shipId = 0, long structureId = 0)
     {
@@ -282,6 +284,23 @@ public sealed class DogmaWorld
         _ => false, // an effect on a target or an area needs a target or an area
     };
 
+    /// <summary>
+    /// Replaces the buffs an item carries (the modifiers of the timed buff collections, <see cref="BuffRegistry"/>): each effect runs on the item as a passive
+    /// effect, and its modifiers carry their own values (<see cref="Modifier.Literal"/>). An empty list takes the item's buffs away.
+    /// </summary>
+    public void SetBuffs(long itemId, IReadOnlyList<EffectDef> effects)
+    {
+        if (effects.Count == 0)
+        {
+            _buffs.Remove(itemId);
+        }
+        else
+        {
+            _buffs[itemId] = effects;
+        }
+        Changed();
+    }
+
     private void Changed()
     {
         _values.Clear();
@@ -321,6 +340,16 @@ public sealed class DogmaWorld
         foreach (var (item, effect) in _assumed)
         {
             Index(item, effect);
+        }
+        foreach (var (itemId, effects) in _buffs)
+        {
+            if (_items.TryGetValue(itemId, out var buffed))
+            {
+                foreach (var effect in effects)
+                {
+                    Index(buffed, effect);
+                }
+            }
         }
         return _sources = index;
     }
@@ -508,7 +537,7 @@ public sealed class DogmaWorld
             }
             var op = source.Modifier.Operation;
             var penalised = !stackable && Operations.IsPenalisable(op) && !UnpenalisedCategories.Contains(_static.Type(source.Item.TypeId)?.CategoryId ?? 0);
-            incoming.Add((op, Get(source.Item.Id, source.Modifier.ModifyingAttributeId), penalised));
+            incoming.Add((op, source.Modifier.Literal ?? Get(source.Item.Id, source.Modifier.ModifyingAttributeId), penalised));
         }
         if (incoming.Count == 0)
         {

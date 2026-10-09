@@ -365,3 +365,14 @@ Each item names the source that decided it. The SDE and CCP material come first,
   - WP17 assistance and jam overlays: the stacking rule is not in any source read.
   - WP19 velocity limits: no carrier object yet.
   - WP13 mode events (MR-D2): the cancelled deferral is not carried out in this track; no subscriber consumes the events, so none is published (AGENTS rule 5).
+
+## Track A5: Python set on the wire (2026-10-09)
+
+- **Python `set` is a PyObjectEx1 (no set opcode), built.** The marshal protocol has no set opcode. A set is what
+  `set.__reduce__` returns, `(set, (list(items),))`, so it goes out as PyObjectEx1 with the header
+  `(token "__builtin__.set", (list,))`. Source: EveJS `services/_shared/serviceHelpers.js` `buildPythonSet` (line 307 to 315) and
+  its reader at line 615; the client needs a real set, because `dotWeapons/client/dotInfoPerTarget.py` calls `discard` on the
+  `OnDotVictimUpdated` payload (`eve-logic dotWeapons/client/incomingDotTracker.py`, called from `michelle.py` line 1578).
+  Both codecs carry it: `Value::python_set` in `crates/eve-marshal/src/value.rs` and `PyValue.PythonSet` in
+  `dotnet/src/Eve.Marshal/PyValue.cs`; `InventoryWire.Set` delegates to it. Tests: `crates/eve-marshal/tests/python_set.rs`
+  and `CodecTests.A_python_set_is_a_set_object_ex1_and_round_trips`. The protocol number does not change (no new opcode, no new message).

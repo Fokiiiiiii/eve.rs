@@ -404,3 +404,30 @@ Open, each with its exact blocker:
 - M-6 scanner, analyzer and relic modules: no simulation bodies.
 - WP17 assistance and jam overlays (stacking rule not in the sources read); WP19 velocity limits (no carrier object); WP13 mode events (no subscriber, so none is published).
 - Host-level database tests for the smartbomb refusal and the bastion refusal are not written (unit and simulation tests only).
+
+## 18. Track A5: probes, DoT notification, jump drive and mobile objects (2026-10-09)
+
+Done: the Python `set` encoding in both marshal codecs (`Value::python_set`, `PyValue.PythonSet`; `InventoryWire.Set` delegates), with
+round-trip tests. Protocol unchanged (42 on main). DEVIATIONS "Track A5: Python set on the wire".
+
+Found, not built (each with its exact blocker; sources are the SDE, the EVE University wiki where it decides, EveJS and eve-logic):
+- OnDotVictimUpdated (michelle.py:1578 to dotWeaponSvc, eve-logic `dotWeapons/`): the payload is now encodable, but the producer is the
+  SCARAB Breacher Pod (SDE groups 4807 launcher and 4808 charges, types 85088 and 85089, effect `dotMissileLaunching` 12174). The breacher
+  launcher is refused with `*_LAUNCHER_NOT_IMPLEMENTED` (section 9). EveJS has no breacher and no DoT code (grep of `server/src`),
+  so the applied damage, stacking (`dotPriorityQueue`, `dotApplicationStore`) and expiry must come from the wiki's Breacher Pod page,
+  not yet read. Blocker: the breacher launcher and its DoT body, then the notification.
+- LaunchProbes (RC-7, E-06): EveJS `services/dogma/dogmaService/moduleOperation.js` `Handle_LaunchProbes` (line 3388) and
+  `_resolveValidatedProbeLaunchContext` (425 to 567) give the validation order and the messages; the active cap is 8
+  (`probeRuntimeState.MAX_ACTIVE_PROBES`). Section 7 names the probe owner. eve.rs has no route, no probe record (`probeRuntimeState` is a store name only) and no probe
+  object in the simulation. Blocker: probe objects in the simulation, the probe records, scanning and the lifecycle notifications
+  (OnNewProbe, OnRemoveProbe, OnProbesIdle, OnSystemScanStarted, OnSystemScanStopped, OnProbeWarpStart, OnProbeWarpEnd).
+- GetCynoJammerState (E-03): the C# route returns None when no source is assigned (`BeyonceService.cs` 137). None is the answer while no
+  jammer exists, which is always the case on main: eve.rs has no Tenebrex cyno-suppression state and no mobile cyno inhibitor. EveJS
+  takes it from `services/sovereignty/sovSuppressionState.js` `getCynoJammerOnlineSimTime` (259) and
+  `services/starbase/starbaseTravelRuntime.js` `getJammerActivationTimeMs`. Blocker: the sovereignty structures (none in `dotnet/src`)
+  or the mobile inhibitor (WP-8).
+- WP-8 mobile warp disruptors: blocked on ADR 0012, whose `Deployed` record is not on main (the wreck and can sweep
+  `space.containers.sweep` is the only timed-object owner). The `placed.rs` extraction from `crowd.rs` is also not done. Blocker: build
+  the `Deployed` store and its migration, then the anchorDrop item effect, the custody path, the sim object and the scramble source.
+- Capital jump drive, cyno targeting and jump execution (B7 list): blocked on the cyno field. Section 12 says nothing spawns a field yet
+  (`CynoFieldTypesTests`), and no B7 branch is on origin or in a worktree. Blocker: the cyno field (ADR 0012 `Deployed`) first.

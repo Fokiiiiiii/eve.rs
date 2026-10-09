@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::missiles::Dot;
+
 pub(super) fn read_weapon(reader: &mut Reader) -> Result<NpcWeapon, DecodeError> {
     let (module_id, effect_id, cycle_ms, capacitor_need) =
         (reader.i64()?, reader.i32()?, reader.f64()?, reader.f64()?);
@@ -54,6 +56,15 @@ pub(super) fn read_missile(reader: &mut Reader) -> Result<Missile, DecodeError> 
         explosion_velocity: reader.f64()?,
         damage_reduction_factor: reader.f64()?,
         damage_reduction_sensitivity: reader.f64()?,
+        dot: match reader.u8()? {
+            0 => None,
+            1 => Some(Dot {
+                duration_ms: reader.f64()?,
+                max_damage_per_tick: reader.f64()?,
+                max_hp_percent_per_tick: reader.f64()?,
+            }),
+            _ => return Err(DecodeError::BadValue("dot")),
+        },
     })
 }
 

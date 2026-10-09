@@ -299,6 +299,7 @@ fn missile_rat_identity(aggression_range: f64) -> NpcIdentity {
             explosion_velocity: 1.0e9,
             damage_reduction_factor: 0.5,
             damage_reduction_sensitivity: 5.5,
+            dot: None,
         }),
         spool: None,
         aoe: None,

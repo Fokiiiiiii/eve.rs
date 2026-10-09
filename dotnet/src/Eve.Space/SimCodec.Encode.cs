@@ -144,6 +144,18 @@ public static partial class SimCodec
         w.F64(missile.ExplosionVelocity);
         w.F64(missile.DamageReductionFactor);
         w.F64(missile.DamageReductionSensitivity);
+        // the damage over time of a breacher pod (protocol 42): a flag, then its duration, its cap per tick and its percentage per tick
+        if (missile.Dot is { } dot)
+        {
+            w.U8(1);
+            w.F64(dot.DurationMs);
+            w.F64(dot.MaxDamagePerTick);
+            w.F64(dot.MaxHpPercentPerTick);
+        }
+        else
+        {
+            w.U8(0);
+        }
     }
 
     private static void WriteTurret(Writer w, SimTurret t)

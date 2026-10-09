@@ -264,7 +264,13 @@ public enum SimBombKind : byte
 /// </summary>
 public sealed record SimMissile(
     int ChargeTypeId, int GroupId, string Name, double Radius, double Mass, double Agility, double HitPoints, double MaxVelocity, double FlightTimeMs,
-    double ExplosionRadius, double ExplosionVelocity, double DamageReductionFactor, double DamageReductionSensitivity);
+    double ExplosionRadius, double ExplosionVelocity, double DamageReductionFactor, double DamageReductionSensitivity, SimDot? Dot = null);
+
+/// <summary>
+/// The damage over time a breacher pod's hit starts on its ship (the charge's <c>dotDuration</c>, <c>dotMaxDamagePerTick</c> and <c>dotMaxHPPercentagePerTick</c>):
+/// the duration in milliseconds, the most a tick does in points, and the most a tick does as a percentage of the target's hit points (0.6 is 0.6 %).
+/// </summary>
+public sealed record SimDot(double DurationMs, double MaxDamagePerTick, double MaxHpPercentPerTick);
 
 /// <summary>
 /// The charge a turret fires: its type, the flag it sits at in the ship (the slot of the module), the rounds left and the rounds a cycle takes. The simulation

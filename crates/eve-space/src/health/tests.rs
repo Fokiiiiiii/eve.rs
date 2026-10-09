@@ -51,6 +51,15 @@ fn a_hit_is_taken_by_the_shield_through_its_resonances() {
 }
 
 #[test]
+fn a_damage_over_time_tick_goes_through_the_layers_whole_while_a_hit_is_resisted() {
+    // 100 thermal: the shield lets 0.8 of a hit through, but a damage-over-time tick ignores resistances (the wiki) and takes all of it
+    let resisted = health().apply(0, [0.0, 100.0, 0.0, 0.0]).unwrap();
+    let whole = health().apply_unresisted(0, [0.0, 100.0, 0.0, 0.0]).unwrap();
+    assert!((resisted.taken.shield - 80.0).abs() < 1e-9);
+    assert!((whole.taken.shield - 100.0).abs() < 1e-9);
+}
+
+#[test]
 fn what_the_shield_cannot_take_goes_on_to_the_armor_in_the_same_proportions() {
     let mut health = health();
     // 500 explosive: the shield holds 220 points and takes 0.5 of each point, so it soaks 440 of them; 60 explosive are left for the armor

@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <ProjectReference Include="../Eve.Services/Eve.Services.csproj" />
+    <ProjectReference Include="../Eve.Services.Core/Eve.Services.Core.csproj" />
     <ProjectReference Include="../Eve.Services.Ships/Eve.Services.Ships.csproj" />
     <ProjectReference Include="../Eve.Services.Dogma/Eve.Services.Dogma.csproj" />
     <ProjectReference Include="../Eve.Ships/Eve.Ships.csproj" />
@@ -14,6 +15,9 @@
     <ProjectReference Include="../Eve.Crimewatch/Eve.Crimewatch.csproj" />
     <ProjectReference Include="../Eve.Events/Eve.Events.csproj" />
     <ProjectReference Include="../Eve.Services.Generator/Eve.Services.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Effects/Data/fighter-abilities.json" LogicalName="fighter-abilities.json" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Eve.Services.Space.Tests" />

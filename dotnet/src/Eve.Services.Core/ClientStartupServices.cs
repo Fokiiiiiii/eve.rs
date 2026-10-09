@@ -47,96 +47,64 @@ public sealed partial class AlertService
 [Service("fighterMgr")]
 public sealed partial class FighterMgrService
 {
-    public enum AbilitySlotOperation { Activate, Deactivate }
+    /// <summary>The text of a refusal when no fighter provider is installed (the simulation and its fighter service are not running).</summary>
+    public const string UnavailableText = "Player fighters are not available on this server: the fighter service is not running.";
 
-    public sealed record AbilitySlotRequest(
-        AbilitySlotOperation Operation,
-        ClientSession Session,
-        IReadOnlyList<long> FighterIds,
-        PyValue AbilitySlotId,
-        PyValue Target);
-
-    public delegate ValueTask<IReadOnlyDictionary<long, PyValue>?> AbilitySlotCallback(
-        AbilitySlotRequest request,
-        CancellationToken cancellationToken);
-
-    /// <summary>The Host installs this handler when player-fighter inventory and simulation support is available.</summary>
-    public Func<ServiceCall, ValueTask<PyValue>>? RpcHandler { get; set; }
-    public AbilitySlotCallback? AbilitySlotHandler { get; set; }
+    /// <summary>
+    /// The provider of the fighter calls. Without one a call is refused, never answered as done: a dictionary answer names each id with a user error, the other
+    /// answers throw one. A fighter is never reported launched, recalled, moved or scooped when nothing did it.
+    /// </summary>
+    public ISpaceFighters? Provider { get; set; }
 
     [Method("GetFightersForShip")]
-    public ValueTask<PyValue> GetFightersForShip(ServiceCall call) => Dispatch(call, new PyTuple([
-        new PyList([]),
-        new PyList([]),
-        new PyDict([]),
-    ]));
+    public ValueTask<PyValue> GetFightersForShip(ServiceCall call) =>
+        Provider is { } provider ? provider.GetFightersForShipAsync(call) : Unavailable();
 
     [Method("CmdAbandonFighter")]
-    public ValueTask<PyValue> CmdAbandonFighter(ServiceCall call) => Dispatch(call, PyBool.False);
+    public ValueTask<PyValue> CmdAbandonFighter(ServiceCall call) =>
+        Provider is { } provider ? provider.CmdAbandonFighterAsync(call) : Unavailable();
 
     [Method("CmdActivateAbilitySlots")]
     public ValueTask<PyValue> CmdActivateAbilitySlots(ServiceCall call) =>
-        DispatchAbilitySlots(call, AbilitySlotOperation.Activate);
+        Provider is { } provider ? provider.CmdActivateAbilitySlotsAsync(call) : UnavailableForEachId(call);
 
     [Method("CmdDeactivateAbilitySlots")]
     public ValueTask<PyValue> CmdDeactivateAbilitySlots(ServiceCall call) =>
-        DispatchAbilitySlots(call, AbilitySlotOperation.Deactivate);
+        Provider is { } provider ? provider.CmdDeactivateAbilitySlotsAsync(call) : UnavailableForEachId(call);
 
     [Method("CmdScoopAbandonedFighterFromSpace")]
-    public ValueTask<PyValue> CmdScoopAbandonedFighterFromSpace(ServiceCall call) => Dispatch(call, PyBool.False);
+    public ValueTask<PyValue> CmdScoopAbandonedFighterFromSpace(ServiceCall call) =>
+        Provider is { } provider ? provider.CmdScoopAbandonedFighterFromSpaceAsync(call) : Unavailable();
 
     [Method("ExecuteMovementCommandOnFighters")]
-    public ValueTask<PyValue> ExecuteMovementCommandOnFighters(ServiceCall call) => Dispatch(call, PyNone.Instance);
+    public ValueTask<PyValue> ExecuteMovementCommandOnFighters(ServiceCall call) =>
+        Provider is { } provider ? provider.ExecuteMovementCommandOnFightersAsync(call) : Unavailable();
 
     [Method("LaunchFightersFromTubes")]
-    public ValueTask<PyValue> LaunchFightersFromTubes(ServiceCall call) => Dispatch(call, new PyDict([]));
+    public ValueTask<PyValue> LaunchFightersFromTubes(ServiceCall call) =>
+        Provider is { } provider ? provider.LaunchFightersFromTubesAsync(call) : UnavailableForEachId(call);
 
     [Method("LoadFightersToTube")]
-    public ValueTask<PyValue> LoadFightersToTube(ServiceCall call) => Dispatch(call, PyBool.False);
+    public ValueTask<PyValue> LoadFightersToTube(ServiceCall call) =>
+        Provider is { } provider ? provider.LoadFightersToTubeAsync(call) : Unavailable();
 
     [Method("RecallFightersToTubes")]
-    public ValueTask<PyValue> RecallFightersToTubes(ServiceCall call) => Dispatch(call, RecallFallback(call));
+    public ValueTask<PyValue> RecallFightersToTubes(ServiceCall call) =>
+        Provider is { } provider ? provider.RecallFightersToTubesAsync(call) : UnavailableForEachId(call);
 
     [Method("UnloadTubeToFighterBay")]
-    public ValueTask<PyValue> UnloadTubeToFighterBay(ServiceCall call) => Dispatch(call, PyBool.False);
+    public ValueTask<PyValue> UnloadTubeToFighterBay(ServiceCall call) =>
+        Provider is { } provider ? provider.UnloadTubeToFighterBayAsync(call) : Unavailable();
 
-    private ValueTask<PyValue> Dispatch(ServiceCall call, PyValue fallback) =>
-        RpcHandler is { } handler ? handler(call) : ValueTask.FromResult(fallback);
+    private static ValueTask<PyValue> Unavailable() =>
+        ValueTask.FromException<PyValue>(MachoErrors.ThrowUserError(UnavailableText));
 
-    private ValueTask<PyValue> DispatchAbilitySlots(ServiceCall call, AbilitySlotOperation operation)
-    {
-        if (AbilitySlotHandler is { } abilitySlotHandler)
-        {
-            var request = new AbilitySlotRequest(
-                operation,
-                call.Session,
-                RequestedIds(call.Arg(0)),
-                call.Arg(1),
-                operation == AbilitySlotOperation.Activate && call.Args.Count > 2
-                    ? call.Arg(2)
-                    : PyNone.Instance);
-            return BuildAbilitySlotResultAsync(abilitySlotHandler, request, call.Cancellation);
-        }
-        return RpcHandler is { } rpcHandler
-            ? rpcHandler(call)
-            : ValueTask.FromResult<PyValue>(RecallFallback(call));
-    }
-
-    private static async ValueTask<PyValue> BuildAbilitySlotResultAsync(
-        AbilitySlotCallback callback,
-        AbilitySlotRequest request,
-        CancellationToken cancellationToken)
-    {
-        var entries = await callback(request, cancellationToken);
-        return entries is null
-            ? new PyDict([])
-            : new PyDict([.. entries.Where(entry => entry.Key > 0).Select(entry =>
-                new KeyValuePair<PyValue, PyValue>(FighterId(entry.Key), entry.Value))]);
-    }
-
-    private static PyDict RecallFallback(ServiceCall call) => new(RequestedIds(call.Arg(0))
-        .Select(id => new KeyValuePair<PyValue, PyValue>(FighterId(id), PyNone.Instance))
-        .ToArray());
+    /// <summary>The per-id answer of a call without a provider: each id the call names is refused with the same user error.</summary>
+    private static ValueTask<PyValue> UnavailableForEachId(ServiceCall call) => ValueTask.FromResult<PyValue>(new PyDict(
+        RequestedIds(call.Arg(0)).Select(id => new KeyValuePair<PyValue, PyValue>(
+            FighterId(id),
+            MachoErrors.UserErrorPayload(UnavailableText)))
+        .ToArray()));
 
     private static IReadOnlyList<long> RequestedIds(PyValue value)
     {

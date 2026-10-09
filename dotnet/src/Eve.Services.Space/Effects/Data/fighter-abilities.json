@@ -1,0 +1,2714 @@
+{
+ "source": {
+  "provider": "EveJS v0.12.9 tools/DatabaseCreator/staticTables/fighterAbilities/data.json",
+  "derivedFrom": "fighterabilities.static + fighterabilitiesbytype.static",
+  "clientGeneratedAt": "2026-06-16T22:42:58.338002Z",
+  "note": "Slot order, cooldowns and charges per fighter type. Families and slot 0 agree with the pinned SDE typeDogma (isDefault effect). Derived by a one-off extraction; regenerate from EveJS, do not hand-edit."
+ },
+ "abilities": [
+  {
+   "abilityID": 1,
+   "effectFamily": "fighterAbilityAttackTurret",
+   "targetMode": "itemTargeted",
+   "isOffensive": false,
+   "published": false,
+   "dogmaEffectID": null,
+   "durationAttributeID": null,
+   "rangeAttributeID": null,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 2,
+   "effectFamily": "fighterAbilityStasisWebifier",
+   "targetMode": "itemTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6435,
+   "durationAttributeID": 2183,
+   "rangeAttributeID": 2186,
+   "falloffAttributeID": 2187,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 3,
+   "effectFamily": "fighterTargetPaint",
+   "targetMode": "itemTargeted",
+   "isOffensive": false,
+   "published": false,
+   "dogmaEffectID": null,
+   "durationAttributeID": null,
+   "rangeAttributeID": null,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 4,
+   "effectFamily": "fighterAbilityMicroWarpDrive",
+   "targetMode": "untargeted",
+   "isOffensive": false,
+   "published": false,
+   "dogmaEffectID": 6441,
+   "durationAttributeID": 2157,
+   "rangeAttributeID": null,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 5,
+   "effectFamily": "fighterAbilityMicroJumpDrive",
+   "targetMode": "pointTargeted",
+   "isOffensive": false,
+   "published": false,
+   "dogmaEffectID": 6442,
+   "durationAttributeID": 2155,
+   "rangeAttributeID": 2154,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 6,
+   "effectFamily": "fighterDamageMultiply",
+   "targetMode": "untargeted",
+   "isOffensive": false,
+   "published": false,
+   "dogmaEffectID": null,
+   "durationAttributeID": null,
+   "rangeAttributeID": null,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 7,
+   "effectFamily": "fighterAbilityLaunchBomb",
+   "targetMode": "pointTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6485,
+   "durationAttributeID": 2349,
+   "rangeAttributeID": null,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": true,
+   "disallowInLowSec": true
+  },
+  {
+   "abilityID": 9,
+   "effectFamily": "fighterAbilityAfterburner",
+   "targetMode": "untargeted",
+   "isOffensive": false,
+   "published": false,
+   "dogmaEffectID": 6440,
+   "durationAttributeID": 2158,
+   "rangeAttributeID": null,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 10,
+   "effectFamily": "fighterAbilityWarpDisruption",
+   "targetMode": "itemTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6436,
+   "durationAttributeID": 2203,
+   "rangeAttributeID": 2204,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 11,
+   "effectFamily": "fighterAbilityEnergyNeutralizer",
+   "targetMode": "itemTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6434,
+   "durationAttributeID": 2208,
+   "rangeAttributeID": 2209,
+   "falloffAttributeID": 2210,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 12,
+   "effectFamily": "fighterAbilityECM",
+   "targetMode": "itemTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6437,
+   "durationAttributeID": 2220,
+   "rangeAttributeID": 2221,
+   "falloffAttributeID": 2222,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 13,
+   "effectFamily": "fighterAbilityEvasiveManeuvers",
+   "targetMode": "untargeted",
+   "isOffensive": false,
+   "published": false,
+   "dogmaEffectID": 6439,
+   "durationAttributeID": 2123,
+   "rangeAttributeID": null,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 14,
+   "effectFamily": "fighterAbilityMissiles",
+   "targetMode": "itemTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6431,
+   "durationAttributeID": 2182,
+   "rangeAttributeID": 2149,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 16,
+   "effectFamily": "fighterAbilityTackle",
+   "targetMode": "itemTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6464,
+   "durationAttributeID": 2238,
+   "rangeAttributeID": 2239,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 17,
+   "effectFamily": "fighterAbilityAttackMissile",
+   "targetMode": "itemTargeted",
+   "isOffensive": false,
+   "published": false,
+   "dogmaEffectID": null,
+   "durationAttributeID": null,
+   "rangeAttributeID": null,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 18,
+   "effectFamily": "fighterAbilityMissiles",
+   "targetMode": "itemTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6431,
+   "durationAttributeID": 2182,
+   "rangeAttributeID": 2149,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 19,
+   "effectFamily": "fighterAbilityMissiles",
+   "targetMode": "itemTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6431,
+   "durationAttributeID": 2182,
+   "rangeAttributeID": 2149,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 20,
+   "effectFamily": "fighterAbilityMissiles",
+   "targetMode": "itemTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6431,
+   "durationAttributeID": 2182,
+   "rangeAttributeID": 2149,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 21,
+   "effectFamily": "fighterAbilityMissiles",
+   "targetMode": "itemTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6431,
+   "durationAttributeID": 2182,
+   "rangeAttributeID": 2149,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 22,
+   "effectFamily": "fighterAbilityAttackMissile",
+   "targetMode": "itemTargeted",
+   "isOffensive": false,
+   "published": false,
+   "dogmaEffectID": null,
+   "durationAttributeID": null,
+   "rangeAttributeID": null,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 23,
+   "effectFamily": "fighterAbilityAttackMissile",
+   "targetMode": "itemTargeted",
+   "isOffensive": false,
+   "published": false,
+   "dogmaEffectID": null,
+   "durationAttributeID": null,
+   "rangeAttributeID": null,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 24,
+   "effectFamily": "fighterAbilityAttackMissile",
+   "targetMode": "itemTargeted",
+   "isOffensive": false,
+   "published": false,
+   "dogmaEffectID": null,
+   "durationAttributeID": null,
+   "rangeAttributeID": null,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 25,
+   "effectFamily": "fighterAbilityAttackMissile",
+   "targetMode": "itemTargeted",
+   "isOffensive": false,
+   "published": false,
+   "dogmaEffectID": null,
+   "durationAttributeID": null,
+   "rangeAttributeID": null,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 26,
+   "effectFamily": "fighterAbilityAttackMissile",
+   "targetMode": "itemTargeted",
+   "isOffensive": false,
+   "published": false,
+   "dogmaEffectID": null,
+   "durationAttributeID": null,
+   "rangeAttributeID": null,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 27,
+   "effectFamily": "fighterAbilityAttackMissile",
+   "targetMode": "itemTargeted",
+   "isOffensive": false,
+   "published": false,
+   "dogmaEffectID": null,
+   "durationAttributeID": null,
+   "rangeAttributeID": null,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 29,
+   "effectFamily": "fighterAbilityMissiles",
+   "targetMode": "itemTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6431,
+   "durationAttributeID": 2182,
+   "rangeAttributeID": 2149,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 30,
+   "effectFamily": "fighterAbilityMissiles",
+   "targetMode": "itemTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6431,
+   "durationAttributeID": 2182,
+   "rangeAttributeID": 2149,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 31,
+   "effectFamily": "fighterAbilityMissiles",
+   "targetMode": "itemTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6431,
+   "durationAttributeID": 2182,
+   "rangeAttributeID": 2149,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 32,
+   "effectFamily": "fighterAbilityMissiles",
+   "targetMode": "itemTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6431,
+   "durationAttributeID": 2182,
+   "rangeAttributeID": 2149,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 33,
+   "effectFamily": "fighterAbilityMissiles",
+   "targetMode": "itemTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6431,
+   "durationAttributeID": 2182,
+   "rangeAttributeID": 2149,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 34,
+   "effectFamily": "fighterAbilityMissiles",
+   "targetMode": "itemTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6431,
+   "durationAttributeID": 2182,
+   "rangeAttributeID": 2149,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 35,
+   "effectFamily": "fighterAbilityMissiles",
+   "targetMode": "itemTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6431,
+   "durationAttributeID": 2182,
+   "rangeAttributeID": 2149,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 36,
+   "effectFamily": "fighterAbilityMissiles",
+   "targetMode": "itemTargeted",
+   "isOffensive": true,
+   "published": false,
+   "dogmaEffectID": 6431,
+   "durationAttributeID": 2182,
+   "rangeAttributeID": 2149,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 38,
+   "effectFamily": "fighterAbilityKamikaze",
+   "targetMode": "itemTargeted",
+   "isOffensive": false,
+   "published": false,
+   "dogmaEffectID": 6554,
+   "durationAttributeID": 2401,
+   "rangeAttributeID": null,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 44,
+   "effectFamily": "fighterAbilityAttackMissile",
+   "targetMode": "itemTargeted",
+   "isOffensive": false,
+   "published": false,
+   "dogmaEffectID": null,
+   "durationAttributeID": null,
+   "rangeAttributeID": null,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  },
+  {
+   "abilityID": 45,
+   "effectFamily": "fighterAbilityAttackMissile",
+   "targetMode": "itemTargeted",
+   "isOffensive": false,
+   "published": false,
+   "dogmaEffectID": null,
+   "durationAttributeID": null,
+   "rangeAttributeID": null,
+   "falloffAttributeID": null,
+   "trackingSpeedAttributeID": null,
+   "disallowInHighSec": false,
+   "disallowInLowSec": false
+  }
+ ],
+ "types": [
+  {
+   "typeID": 2948,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 22,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 9,
+     "cooldownSeconds": 60,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 38,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 23055,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 22,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 33,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 18,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 23057,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 44,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 35,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 18,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 23059,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 24,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 34,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 18,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 23061,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 26,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 36,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 18,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 32325,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 24,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 19,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 9,
+      "rearmTimeSeconds": 6.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 32340,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 22,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 18,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 9,
+      "rearmTimeSeconds": 6.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 32342,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 26,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 21,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 9,
+      "rearmTimeSeconds": 6.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 32344,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 44,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 20,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 9,
+      "rearmTimeSeconds": 6.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 37599,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 11,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 40345,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 12,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 40346,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 10,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 9,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 40347,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 2,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 40358,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 29,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 40359,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 31,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 40360,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 30,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 40361,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 32,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 40362,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 23,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 5,
+     "cooldownSeconds": 90.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 7,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 3,
+      "rearmTimeSeconds": 20.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 40363,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 45,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 5,
+     "cooldownSeconds": 90.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 7,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 3,
+      "rearmTimeSeconds": 20.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 40364,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 25,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 5,
+     "cooldownSeconds": 90.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 7,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 3,
+      "rearmTimeSeconds": 20.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 40365,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 27,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 5,
+     "cooldownSeconds": 90.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 7,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 3,
+      "rearmTimeSeconds": 20.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 40552,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 29,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 40553,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 32,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 40554,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 31,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 40555,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 30,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 40556,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 22,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 33,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 18,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 40557,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 44,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 35,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 18,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 40558,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 24,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 34,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 18,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 40559,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 26,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 36,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 18,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 40560,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 23,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 5,
+     "cooldownSeconds": 90.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 7,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 5,
+      "rearmTimeSeconds": 20.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 40561,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 22,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 18,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 9,
+      "rearmTimeSeconds": 6.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 40562,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 25,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 5,
+     "cooldownSeconds": 90.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 7,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 5,
+      "rearmTimeSeconds": 20.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 40563,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 24,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 19,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 9,
+      "rearmTimeSeconds": 6.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 40564,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 27,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 5,
+     "cooldownSeconds": 90.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 7,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 5,
+      "rearmTimeSeconds": 20.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 40565,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 26,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 21,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 9,
+      "rearmTimeSeconds": 6.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 40566,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 45,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 5,
+     "cooldownSeconds": 90.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 7,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 5,
+      "rearmTimeSeconds": 20.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 40567,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 44,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 20,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 9,
+      "rearmTimeSeconds": 6.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 40568,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 11,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 40569,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 12,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 40570,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 10,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 9,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 40571,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 2,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 47035,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 22,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 33,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 18,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47036,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 32,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 47037,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 10,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 9,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 47038,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 44,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 20,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 9,
+      "rearmTimeSeconds": 6.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47039,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 27,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 5,
+     "cooldownSeconds": 90.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 7,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 3,
+      "rearmTimeSeconds": 20.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47116,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 22,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 18,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 9,
+      "rearmTimeSeconds": 6.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47117,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 24,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 19,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 9,
+      "rearmTimeSeconds": 6.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47118,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 26,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 21,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 9,
+      "rearmTimeSeconds": 6.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47119,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 22,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 18,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 9,
+      "rearmTimeSeconds": 6.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47120,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 44,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 20,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 9,
+      "rearmTimeSeconds": 6.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47121,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 24,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 19,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 9,
+      "rearmTimeSeconds": 6.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47122,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 26,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 21,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 9,
+      "rearmTimeSeconds": 6.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47123,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 22,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 9,
+     "cooldownSeconds": 60,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 38,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 47124,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 23,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 5,
+     "cooldownSeconds": 90,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 7,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 2,
+      "rearmTimeSeconds": 20
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47125,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 45,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 5,
+     "cooldownSeconds": 90.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 7,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 3,
+      "rearmTimeSeconds": 20.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47126,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 25,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 5,
+     "cooldownSeconds": 90.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 7,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 3,
+      "rearmTimeSeconds": 20.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47127,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 23,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 5,
+     "cooldownSeconds": 90.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 7,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 5,
+      "rearmTimeSeconds": 20.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47128,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 45,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 5,
+     "cooldownSeconds": 90.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 7,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 5,
+      "rearmTimeSeconds": 20.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47129,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 25,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 5,
+     "cooldownSeconds": 90.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 7,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 5,
+      "rearmTimeSeconds": 20.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47130,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 27,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 5,
+     "cooldownSeconds": 90.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 7,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 5,
+      "rearmTimeSeconds": 20.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47131,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 11,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 47132,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 12,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 47133,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 2,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 47134,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 11,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 47135,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 12,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 47136,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 10,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 9,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 47137,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 2,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 47138,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 44,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 35,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 18,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47139,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 24,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 34,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 18,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47140,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 26,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 36,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 18,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47141,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 22,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 33,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 18,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47142,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 44,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 35,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 18,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47143,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 24,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 34,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 18,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47144,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 26,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 36,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 18,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 47145,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 29,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 47146,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 31,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 47147,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 30,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 47148,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 29,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 47149,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 31,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 47150,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 30,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 47151,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 32,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 83579,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 22,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 33,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 20,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 83582,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 44,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 35,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 20,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 83583,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 24,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 34,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 20,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 83584,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 26,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 36,
+     "cooldownSeconds": null,
+     "charges": {
+      "chargeCount": 20,
+      "rearmTimeSeconds": 4.0
+     }
+    }
+   ]
+  },
+  {
+   "typeID": 83585,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 29,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 83586,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 31,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 83587,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 30,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 83589,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 32,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 13,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    },
+    {
+     "slotID": 2,
+     "abilityID": 16,
+     "cooldownSeconds": null,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 83591,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 11,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 83592,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 12,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 83593,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 10,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 9,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    }
+   ]
+  },
+  {
+   "typeID": 83594,
+   "slots": [
+    {
+     "slotID": 0,
+     "abilityID": 2,
+     "cooldownSeconds": null,
+     "charges": null
+    },
+    {
+     "slotID": 1,
+     "abilityID": 4,
+     "cooldownSeconds": 60.0,
+     "charges": null
+    }
+   ]
+  }
+ ]
+}

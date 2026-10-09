@@ -49,3 +49,9 @@ cooldowns or the charge counts (the client reads those from its own static resou
 * Work cycles for fighters are not part of `CompanionBridge`; the mining work cycle (ADR 0013) keeps them.
 * Unverified and open items (CCP scoop rules, AttackM damage model, event names from the client, abandoned-squadron cleanup,
   destruction item removal, the capacitor check on a companion pilot) are listed in `DECISIONS.md`; none is claimed as verified.
+
+## Amendment (2026-10-09): ability facts from EVE.js and the SDE
+
+The owner's directive for this track replaces FIG-D-2 for the ability facts. The facts file is not generated from a client install. The slot order, cooldowns and charges come from the EVE.js extraction (`tools/DatabaseCreator/staticTables/fighterAbilities/data.json`, generated from the client static cache), committed as `dotnet/src/Eve.Services.Space/Effects/Data/fighter-abilities.json` (an embedded resource, read by `FighterAbilityCatalogue`). The families and the counts per family agree with the pinned SDE for all 94 types (`FighterAbilityCatalogueTests`). The file is a derived copy with its provenance in its `source` block; it is regenerated from EVE.js, never edited by hand. The SDE effect name of the AttackM family is `fighterAbilityAttackM`; EVE.js calls the family `fighterAbilityAttackMissile`.
+
+The wire protocol is not changed by this batch (main is at protocol 29; the mining track owns the bump to 30). The provider interface is `ISpaceFighters` in `Eve.Services.Core` (the service routes to it) and its implementation is `SpaceFighters` in `Eve.Services.Space`, which serves the database side of the fighter calls.

@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 
@@ -40,131 +41,83 @@ public sealed class ClientStartupServicesTests
     }
 
     [Fact]
-    public async Task Fighter_manager_returns_empty_tube_space_and_ability_state()
-    {
-        var result = Assert.IsType<PyTuple>(await new FighterMgrService().GetFightersForShip(null!));
-
-        Assert.Equal(3, result.Items.Count);
-        Assert.Empty(Assert.IsType<PyList>(result.Items[0]).Items);
-        Assert.Empty(Assert.IsType<PyList>(result.Items[1]).Items);
-        Assert.Empty(Assert.IsType<PyDict>(result.Items[2]).Entries);
-    }
-
-    [Fact]
-    public void Fighter_manager_exposes_all_EveLogic_fighter_rpc_methods()
-    {
-        var methods = typeof(FighterMgrService).GetMethods()
-            .Where(method => method.DeclaringType == typeof(FighterMgrService))
-            .Select(method => method.Name)
-            .ToHashSet(StringComparer.Ordinal);
-
-        Assert.Contains("CmdAbandonFighter", methods);
-        Assert.Contains("CmdScoopAbandonedFighterFromSpace", methods);
-        Assert.Contains("ExecuteMovementCommandOnFighters", methods);
-        Assert.Contains("LaunchFightersFromTubes", methods);
-        Assert.Contains("LoadFightersToTube", methods);
-        Assert.Contains("RecallFightersToTubes", methods);
-        Assert.Contains("UnloadTubeToFighterBay", methods);
-    }
-
-    [Fact]
-    public async Task Fighter_manager_matches_EveJS_no_space_fallbacks_and_dispatches_asynchronously()
+    public async Task Fighter_manager_refuses_each_fighter_when_no_provider_is_installed()
     {
         var service = new FighterMgrService();
-        static ServiceCall Call(string method, params PyValue[] args) => new()
-        {
-            Method = method,
-            Args = args,
-            Session = new ClientSession(),
-        };
-
-        var launch = Assert.IsType<PyDict>(await service.LaunchFightersFromTubes(Call(
-            "LaunchFightersFromTubes", new PyList([new PyInt(901), new PyInt(902)]))));
-        Assert.Empty(launch.Entries);
-
-        var recall = Assert.IsType<PyDict>(await service.RecallFightersToTubes(Call(
-            "RecallFightersToTubes", new PyList([new PyInt(903), new PyInt(903), new PyInt(0)]))));
-        var recalled = Assert.Single(recall.Entries);
-        Assert.Equal(new PyInt(903), recalled.Key);
-        Assert.Same(PyNone.Instance, recalled.Value);
-
-        Assert.Same(PyNone.Instance, await service.ExecuteMovementCommandOnFighters(Call(
-            "ExecuteMovementCommandOnFighters",
-            new PyList([new PyInt(903)]), new PyStr("ORBIT"), new PyInt(901), new PyInt(5000))));
-        Assert.Same(PyBool.False, await service.CmdAbandonFighter(Call("CmdAbandonFighter", new PyInt(903))));
-        Assert.Same(PyBool.False, await service.CmdScoopAbandonedFighterFromSpace(Call(
-            "CmdScoopAbandonedFighterFromSpace", new PyInt(903), new PyInt(5))));
-        Assert.Same(PyBool.False, await service.LoadFightersToTube(Call(
-            "LoadFightersToTube", new PyInt(903), new PyInt(5))));
-        Assert.Same(PyBool.False, await service.UnloadTubeToFighterBay(Call(
-            "UnloadTubeToFighterBay", new PyInt(5))));
-
-        string? dispatchedMethod = null;
-        service.RpcHandler = async call =>
-        {
-            await Task.Yield();
-            dispatchedMethod = call.Method;
-            return PyBool.True;
-        };
-        var handled = await ((IService)service).CallAsync(Call("CmdAbandonFighter", new PyInt(903)));
-        Assert.Same(PyBool.True, handled);
-        Assert.Equal("CmdAbandonFighter", dispatchedMethod);
-    }
-
-    [Fact]
-    public async Task Fighter_ability_slot_rpcs_return_per_fighter_none_entries_when_unwired()
-    {
-        IService service = new FighterMgrService();
         var session = new ClientSession();
-        foreach (var method in new[] { "CmdActivateAbilitySlots", "CmdDeactivateAbilitySlots" })
+        ServiceCall Call(string method, params PyValue[] args) => new() { Method = method, Args = args, Session = session };
+
+        // a dictionary answer names each id with a user error: never a success (None, False, or an empty answer)
+        foreach (var (method, args) in new (string, PyValue[])[]
         {
-            Assert.True(service.HasMethod(method));
-            var result = Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
-            {
-                Method = method,
-                Args = [new PyList([new PyInt(901), new PyInt(901), new PyInt(0)]), new PyInt(1)],
-                Session = session,
-            }));
-            var entry = Assert.Single(result.Entries);
-            Assert.Equal(new PyInt(901), entry.Key);
-            Assert.Same(PyNone.Instance, entry.Value);
+            ("RecallFightersToTubes", [new PyList([new PyInt(903)])]),
+            ("CmdActivateAbilitySlots", [new PyList([new PyInt(903)]), new PyInt(1)]),
+            ("CmdDeactivateAbilitySlots", [new PyList([new PyInt(903)]), new PyInt(1)]),
+            ("LaunchFightersFromTubes", [new PyList([new PyInt(159)])]),
+        })
+        {
+            var answer = Assert.IsType<PyDict>(await ((IService)service).CallAsync(Call(method, args)));
+            var entry = Assert.Single(answer.Entries);
+            Assert.Equal(FighterMgrService.UnavailableText, UserMessage(entry.Value));
+        }
+
+        // a call that answers one thing (a bool, None, the fighters of the ship) refuses the whole call with a user error
+        foreach (var (method, args) in new (string, PyValue[])[]
+        {
+            ("GetFightersForShip", []),
+            ("LoadFightersToTube", [new PyInt(903), new PyInt(159)]),
+            ("UnloadTubeToFighterBay", [new PyInt(159)]),
+            ("ExecuteMovementCommandOnFighters", [new PyList([new PyInt(903)]), new PyStr("STOP")]),
+            ("CmdAbandonFighter", [new PyInt(903)]),
+            ("CmdScoopAbandonedFighterFromSpace", [new PyInt(903), new PyInt(158)]),
+        })
+        {
+            var thrown = await Assert.ThrowsAsync<MachoWrappedException>(() => ((IService)service).CallAsync(Call(method, args)).AsTask());
+            Assert.Equal(FighterMgrService.UnavailableText, thrown.Error.UserErrorMessage);
         }
     }
 
     [Fact]
-    public async Task Fighter_ability_slot_callback_receives_EveJS_arguments_and_returns_error_map()
+    public async Task Fighter_manager_routes_each_call_to_the_provider_and_answers_what_it_answers()
     {
-        var service = new FighterMgrService();
-        var session = new ClientSession();
-        FighterMgrService.AbilitySlotRequest? observed = null;
-        service.RpcHandler = _ => throw new InvalidOperationException("Use the typed ability-slot callback when installed.");
-        service.AbilitySlotHandler = (request, _) =>
-        {
-            observed = request;
-            IReadOnlyDictionary<long, PyValue> result = new Dictionary<long, PyValue>
-            {
-                [901] = PyNone.Instance,
-                [902] = new PyStr("slot error"),
-            };
-            return ValueTask.FromResult<IReadOnlyDictionary<long, PyValue>?>(result);
-        };
+        var provider = new RecordingFighters();
+        var service = new FighterMgrService { Provider = provider };
 
-        var response = Assert.IsType<PyDict>(await ((IService)service).CallAsync(new ServiceCall
+        var answer = await ((IService)service).CallAsync(new ServiceCall
         {
-            Method = "CmdActivateAbilitySlots",
-            Args = [new PyList([new PyInt(901), new PyInt(902)]), new PyInt(3), new PyInt(777), new PyStr("ignored")],
-            Session = session,
-        }));
+            Method = "CmdAbandonFighter",
+            Args = [new PyInt(903)],
+            Session = new ClientSession(),
+        });
 
-        Assert.NotNull(observed);
-        Assert.Equal(FighterMgrService.AbilitySlotOperation.Activate, observed.Operation);
-        Assert.Same(session, observed.Session);
-        Assert.Equal(new long[] { 901, 902 }, observed.FighterIds);
-        Assert.Equal(new PyInt(3), observed.AbilitySlotId);
-        Assert.Equal(new PyInt(777), observed.Target);
-        Assert.Equal(2, response.Entries.Count);
-        Assert.Contains(response.Entries, entry => entry.Key == new PyInt(901) && entry.Value == PyNone.Instance);
-        Assert.Contains(response.Entries, entry => entry.Key == new PyInt(902) && entry.Value == new PyStr("slot error"));
+        Assert.Equal(new PyStr("CmdAbandonFighterAsync"), answer);
+        Assert.Equal(new[] { "CmdAbandonFighterAsync" }, provider.Calls);
+    }
+
+    private static string UserMessage(PyValue payload) =>
+        new MachoError(MachoErrorType.WrappedException, payload).UserErrorMessage;
+
+    /// <summary>A provider that answers each call with its own name and records the calls it was given.</summary>
+    private sealed class RecordingFighters : ISpaceFighters
+    {
+        public List<string> Calls { get; } = [];
+
+        private ValueTask<PyValue> Answer(string name)
+        {
+            Calls.Add(name);
+            return ValueTask.FromResult<PyValue>(new PyStr(name));
+        }
+
+        public ValueTask<PyValue> GetFightersForShipAsync(ServiceCall call) => Answer(nameof(GetFightersForShipAsync));
+        public ValueTask<PyValue> LoadFightersToTubeAsync(ServiceCall call) => Answer(nameof(LoadFightersToTubeAsync));
+        public ValueTask<PyValue> UnloadTubeToFighterBayAsync(ServiceCall call) => Answer(nameof(UnloadTubeToFighterBayAsync));
+        public ValueTask<PyValue> LaunchFightersFromTubesAsync(ServiceCall call) => Answer(nameof(LaunchFightersFromTubesAsync));
+        public ValueTask<PyValue> RecallFightersToTubesAsync(ServiceCall call) => Answer(nameof(RecallFightersToTubesAsync));
+        public ValueTask<PyValue> CmdActivateAbilitySlotsAsync(ServiceCall call) => Answer(nameof(CmdActivateAbilitySlotsAsync));
+        public ValueTask<PyValue> CmdDeactivateAbilitySlotsAsync(ServiceCall call) => Answer(nameof(CmdDeactivateAbilitySlotsAsync));
+        public ValueTask<PyValue> ExecuteMovementCommandOnFightersAsync(ServiceCall call) => Answer(nameof(ExecuteMovementCommandOnFightersAsync));
+        public ValueTask<PyValue> CmdAbandonFighterAsync(ServiceCall call) => Answer(nameof(CmdAbandonFighterAsync));
+        public ValueTask<PyValue> CmdScoopAbandonedFighterFromSpaceAsync(ServiceCall call) => Answer(nameof(CmdScoopAbandonedFighterFromSpaceAsync));
     }
 
     [Fact]

@@ -2422,7 +2422,7 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         new Eve.Services.Core.FwVictoryPointMgrService(),
         new Eve.Services.Core.InsurgencySolarsystemService(),
         new Eve.Services.Core.AlertService(),
-        new Eve.Services.Core.FighterMgrService(),
+        new Eve.Services.Core.FighterMgrService { Provider = new Eve.Services.Space.SpaceFighters(ships, dogma, session => spaceSessions?.SolarSystemOf(session)) },
         new Eve.Services.Space.EssMgrService(),
         new Eve.Services.Space.DynamicResourceCacheMgrService(),
         new Eve.Services.Core.ShipKillCounterService(ct => ReadGameStoreTableAsync("shipKillCounters", ct)),

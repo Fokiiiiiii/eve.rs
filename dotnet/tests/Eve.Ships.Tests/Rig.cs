@@ -94,6 +94,10 @@ internal sealed class Rig : IAsyncDisposable
     public const int FixturePrismaticite = 900_001_004;
     public const int FixtureAsteroidOre = 900_001_005;
     public const int FixtureDrone = 900_001_006;
+    public const int FixtureFighterCarrier = 900_001_007;
+
+    /// <summary>The fighter bay of <see cref="FixtureFighterCarrier"/> (a squadron of the static data is far larger than a few cubic metres).</summary>
+    public const double FighterCarrierBayM3 = 1_000_000;
 
     public static DogmaStatic WithShipFixtures(DogmaStatic statics)
     {
@@ -186,8 +190,22 @@ internal sealed class Rig : IAsyncDisposable
             new Dictionary<int, double> { [Attribute("volume")] = 25 },
             [],
             "Test Drone");
+        // a carrier with five launch tubes, three light and two heavy squadron slots, and a fighter bay of FighterCarrierBayM3
+        var fighterCarrier = new TypeDef(
+            FixtureFighterCarrier,
+            carrierGroup,
+            statics.CategoryId("Ship") ?? 6,
+            new Dictionary<int, double>(common)
+            {
+                [Attribute("fighterTubes")] = 5,
+                [Attribute("fighterLightSlots")] = 3,
+                [Attribute("fighterHeavySlots")] = 2,
+                [Attribute("fighterCapacity")] = Rig.FighterCarrierBayM3,
+            },
+            [],
+            "Test Fighter Carrier");
         return statics.WithFixtures(
-            [asteroidBattleship, carrier, frigate, prismaticite, asteroidOre, drone],
+            [asteroidBattleship, carrier, frigate, prismaticite, asteroidOre, drone, fighterCarrier],
             new Dictionary<int, int>
             {
                 [battleshipGroup] = statics.CategoryId("Ship") ?? 6,

@@ -270,7 +270,7 @@ public sealed record SimMissile(
 /// The charge a turret fires: its type, the flag it sits at in the ship (the slot of the module), the rounds left and the rounds a cycle takes. The simulation
 /// spends them cycle by cycle (<see cref="SimChargeSpent"/>) and stops the weapon when they are gone.
 /// </summary>
-public sealed record SimTurretCharge(int TypeId, int Flag, long Rounds, long PerCycle);
+public sealed record SimTurretCharge(int TypeId, int Flag, long Rounds, long PerCycle, bool Reloads = false);
 
 /// <summary>What the host changes in the rounds of a gun that runs: rounds go in (up to the capacity, and no more than the hold has) or come out (all of them when the quantity is 0).</summary>
 public abstract record SimChargeOp
@@ -291,6 +291,12 @@ public abstract record SimChargeOp
 /// says what they come to; it answers with <see cref="SimChargeAdjusted"/>, after every <see cref="SimChargeSpent"/> it told before.
 /// </summary>
 public sealed record SimAdjustCharge(ulong RequestId, ulong SessionId, long ModuleId, int ChargeType, SimChargeOp Op) : SimMessage;
+
+/// <summary>
+/// A refresh of a running effect (protocol 38, FP-C4b and FP-C5): an overheat, or a tracking computer that starts, stops or overheats, changes the cycle, what a
+/// cycle costs the capacitor, the turret's numbers and the attributes the client is told. The simulation applies it at the start of the next cycle; nothing is answered.
+/// </summary>
+public sealed record SimUpdateEffect(ulong SessionId, long ModuleId, double DurationMs, double CapacitorNeed, SimTurret? Turret, IReadOnlyList<SimChange> Changes) : SimMessage;
 
 /// <summary>The answer to <see cref="SimAdjustCharge"/>: whether the gun runs (when it does not, the host has its rounds and nothing was changed), the rounds it had and the rounds it has.</summary>
 public sealed record SimChargeAdjusted(ulong RequestId, bool Running, long Before, long After) : SimMessage;
@@ -317,7 +323,9 @@ public sealed record SimEffect(
 /// limit), whether the module holds the ship's early deactivation (906), needs an active industrial core (3265), is one, and how long it waits after it stops (669, in ms).
 /// </summary>
 public sealed record SimModuleRules(
-    int GroupId, int MaxGroupActive, bool DisallowEarlyDeactivation, bool RequiresIndustrialCore, bool ProvidesIndustrialCore, double ReactivationDelayMs);
+    int GroupId, int MaxGroupActive, bool DisallowEarlyDeactivation, bool RequiresIndustrialCore, bool ProvidesIndustrialCore, double ReactivationDelayMs,
+    /// <summary>The highest and the lowest speed (m/s) a module starts at (maxVelocityActivationLimit 1334, minVelocityActivationLimit 2608; 0 for none). Protocol 38 (WP19).</summary>
+    double MaxVelocityLimitMs = 0, double MinVelocityLimitMs = 0);
 
 /// <summary>The codes of the work a module asks the host for (<see cref="SimModuleWorkCycle.Command"/>). Its cycles share the drone codes of mining and salvage (7, 8).</summary>
 public static class SimModuleWorkCommands

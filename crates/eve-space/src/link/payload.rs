@@ -318,6 +318,20 @@ impl Message {
                 out.extend_from_slice(&first.to_le_bytes());
                 out.extend_from_slice(&second.to_le_bytes());
             }
+            Self::UpdateEffect { session_id, module_id, duration_ms, capacitor_need, turret, changes } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&module_id.to_le_bytes());
+                out.extend_from_slice(&duration_ms.to_le_bytes());
+                out.extend_from_slice(&capacitor_need.to_le_bytes());
+                match turret {
+                    Some(turret) => {
+                        out.push(1);
+                        put_turret(&mut out, turret);
+                    }
+                    None => out.push(0),
+                }
+                put_changes(&mut out, changes);
+            }
             Self::ChargeAdjusted { request_id, running, before, after } => {
                 out.extend_from_slice(&request_id.to_le_bytes());
                 out.push(u8::from(*running));

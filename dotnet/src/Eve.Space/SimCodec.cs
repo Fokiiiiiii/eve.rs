@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 36;
+    public const ushort ProtocolVersion = 38;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -272,6 +272,23 @@ public static partial class SimCodec
             case Kind.FighterSize:
                 message = new SimFighterSize(r.U64(), r.I64(), r.I32());
                 break;
+            case Kind.UpdateEffect:
+            {
+                var (session, module) = (r.U64(), r.I64());
+                var (duration, capacitor) = (r.F64(), r.F64());
+                if (!double.IsFinite(duration) || duration <= 0 || !double.IsFinite(capacitor) || capacitor < 0)
+                {
+                    throw new SimLinkException(SimLinkError.BadValue, "update effect");
+                }
+                var turret = r.U8() switch
+                {
+                    0 => null,
+                    1 => ReadTurret(ref r),
+                    _ => throw new SimLinkException(SimLinkError.BadValue, "update turret"),
+                };
+                message = new SimUpdateEffect(session, module, duration, capacitor, turret, ReadChanges(ref r));
+                break;
+            }
             case Kind.FighterOrder:
                 {
                     var session = r.U64();

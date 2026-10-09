@@ -214,6 +214,7 @@ pub(super) fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
             out.extend_from_slice(&charge.flag.to_le_bytes());
             out.extend_from_slice(&charge.rounds.to_le_bytes());
             out.extend_from_slice(&charge.per_cycle.to_le_bytes());
+            out.push(u8::from(charge.reloads));
         }
     }
     match &turret.missile {
@@ -295,6 +296,9 @@ pub(super) fn put_effect(out: &mut Vec<u8>, effect: &Effect) {
                 | (u8::from(rules.provides_industrial_core) << 2),
         );
         out.extend_from_slice(&rules.reactivation_delay_ms.to_le_bytes());
+        // the speed limits (protocol 38, WP19): the highest and the lowest speed a module starts at (0 for none)
+        out.extend_from_slice(&rules.max_velocity_limit.to_le_bytes());
+        out.extend_from_slice(&rules.min_velocity_limit.to_le_bytes());
     }
 }
 

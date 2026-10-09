@@ -109,6 +109,9 @@ public interface ISimulation
     /// </summary>
     Task<SimChargeAdjusted> AdjustChargeAsync(SimAdjustCharge request, Action<SimChargeAdjusted>? inOrder = null, CancellationToken cancellationToken = default);
 
+    /// <summary>Refreshes a running effect (protocol 38): the simulation applies it at the start of the effect's next cycle. Nothing is answered.</summary>
+    Task UpdateEffectAsync(SimUpdateEffect request, CancellationToken cancellationToken = default);
+
     /// <summary>Puts a wreck the host made in space (where the ship was destroyed), in the scene of its system if there is one.</summary>
     void PlaceWreck(SimPlaceWreck wreck);
 

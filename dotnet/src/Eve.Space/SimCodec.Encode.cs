@@ -159,6 +159,7 @@ public static partial class SimCodec
             w.I32(charge.Flag);
             w.I64(charge.Rounds);
             w.I64(charge.PerCycle);
+            w.U8(charge.Reloads ? (byte)1 : (byte)0);
         }
         else
         {
@@ -419,12 +420,15 @@ private static void WriteAction(Writer w, SimAction action)
     /// <summary>The module rules of an effect (flag 32, after its action): the group, its limit, the rule bits (1 early deactivation, 2 needs a core, 4 is a core), and the reactivation delay.</summary>
     private static void WriteRules(Writer w, SimModuleRules rules)
     {
-        if (rules.MaxGroupActive < 0 || rules.ReactivationDelayMs < 0 || !double.IsFinite(rules.ReactivationDelayMs))
+        if (rules.MaxGroupActive < 0 || rules.ReactivationDelayMs < 0 || !double.IsFinite(rules.ReactivationDelayMs)
+            || rules.MaxVelocityLimitMs < 0 || !double.IsFinite(rules.MaxVelocityLimitMs) || rules.MinVelocityLimitMs < 0 || !double.IsFinite(rules.MinVelocityLimitMs))
             throw new ArgumentException("invalid module rules", nameof(rules));
         w.I32(rules.GroupId);
         w.I32(rules.MaxGroupActive);
         w.U8((byte)((rules.DisallowEarlyDeactivation ? 1 : 0) | (rules.RequiresIndustrialCore ? 2 : 0) | (rules.ProvidesIndustrialCore ? 4 : 0)));
         w.F64(rules.ReactivationDelayMs);
+        w.F64(rules.MaxVelocityLimitMs);
+        w.F64(rules.MinVelocityLimitMs);
     }
 
     private static void WriteHeatProfile(Writer w, SimHeatProfile p)
@@ -663,6 +667,23 @@ private static void WriteAction(Writer w, SimAction action)
                 w.U64(m.SessionId);
                 w.I64(m.ModuleId);
                 w.I64(m.RoundsLeft);
+                break;
+            case SimUpdateEffect m:
+                w.U8(Kind.UpdateEffect);
+                w.U64(m.SessionId);
+                w.I64(m.ModuleId);
+                w.F64(m.DurationMs);
+                w.F64(m.CapacitorNeed);
+                if (m.Turret is { } turret)
+                {
+                    w.U8(1);
+                    WriteTurret(w, turret);
+                }
+                else
+                {
+                    w.U8(0);
+                }
+                WriteChanges(w, m.Changes);
                 break;
             case SimAdjustCharge m:
                 w.U8(Kind.AdjustCharge);

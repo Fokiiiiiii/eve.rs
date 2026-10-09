@@ -139,6 +139,7 @@ fn turret_of(w: &Value) -> Turret {
             flag: c["flag"].as_i64().unwrap() as i32,
             rounds: c["rounds"].as_i64().unwrap(),
             per_cycle: c["perCycle"].as_i64().unwrap(),
+            reloads: c.get("reloads").and_then(Value::as_bool).unwrap_or(false),
         }),
         missile: w.get("missile").filter(|m| !m.is_null()).map(|m| Missile {
             charge_type_id: m["chargeTypeId"].as_i64().unwrap() as i32,
@@ -200,6 +201,8 @@ fn effect_of(case: &Value) -> Effect {
         requires_industrial_core: r["requiresIndustrialCore"].as_bool().unwrap(),
         provides_industrial_core: r["providesIndustrialCore"].as_bool().unwrap(),
         reactivation_delay_ms: number(r, "reactivationDelayMs"),
+        max_velocity_limit: r.get("maxVelocityLimit").and_then(Value::as_f64).unwrap_or(0.0),
+        min_velocity_limit: r.get("minVelocityLimit").and_then(Value::as_f64).unwrap_or(0.0),
     });
     Effect {
         rules,
@@ -619,6 +622,19 @@ fn wreck_kind_of(wreck: Option<&Value>) -> Option<WreckKind> {
     })
 }
 
+/// The attributes a change tells the client (its item, its attribute and its value).
+fn changes_of(list: &Value) -> Vec<Change> {
+    list.as_array()
+        .unwrap()
+        .iter()
+        .map(|c| Change {
+            item_id: wide(c, "itemId"),
+            attribute_id: c["attributeId"].as_i64().unwrap() as i32,
+            value: c["value"].as_f64().unwrap(),
+        })
+        .collect()
+}
+
 fn message_of(case: &Value) -> Message {
     let number = |field: &str| case[field].as_u64().unwrap_or_else(|| panic!("{field} in {case}"));
     let session_id = || wide(case, "sessionId") as u64;
@@ -758,6 +774,14 @@ fn message_of(case: &Value) -> Message {
             session_id: session_id(),
             module_id: wide(case, "moduleId"),
             rounds_left: wide(case, "roundsLeft"),
+        },
+        "UpdateEffect" => Message::UpdateEffect {
+            session_id: session_id(),
+            module_id: wide(case, "moduleId"),
+            duration_ms: case["durationMs"].as_f64().unwrap(),
+            capacitor_need: case["capacitorNeed"].as_f64().unwrap(),
+            turret: case.get("turret").filter(|t| !t.is_null()).map(|t| Box::new(turret_of(t))),
+            changes: changes_of(&case["changes"]),
         },
         "AdjustCharge" => Message::AdjustCharge {
             request_id: wide(case, "requestId") as u64,

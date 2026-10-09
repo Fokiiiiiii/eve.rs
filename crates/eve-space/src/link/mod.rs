@@ -36,7 +36,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 36;
+pub const PROTOCOL_VERSION: u16 = 38;
 
 /// The message kinds.
 pub mod kind;
@@ -533,6 +533,18 @@ pub enum Message {
         charge_type: i32,
         op: ChargeOp,
     },
+    /// The host refreshes the numbers of an effect that runs (FP-C4b, FP-C5): an overheat, or a tracking computer that starts, stops or overheats, changes
+    /// the cycle, what a cycle costs the capacitor, the turret's numbers and the attributes the client is told. The simulation applies them at the start of
+    /// the next cycle, as it applies an overheat (no effect on the cycle that is on). Nothing is answered.
+    UpdateEffect {
+        session_id: u64,
+        module_id: i64,
+        duration_ms: f64,
+        capacitor_need: f64,
+        turret: Option<Box<Turret>>,
+        /// The attributes the client is told at the change (its item is the module).
+        changes: Vec<Change>,
+    },
     /// The answer to `AdjustCharge`: whether the gun runs (when it does not, the host has the rounds and nothing was changed here), the rounds it had and the
     /// rounds it has.
     ChargeAdjusted {
@@ -631,6 +643,7 @@ impl Message {
             Self::ModuleEnded { .. } => kind::MODULE_ENDED,
             Self::Measured { .. } => kind::MEASURED,
             Self::AdjustCharge { .. } => kind::ADJUST_CHARGE,
+            Self::UpdateEffect { .. } => kind::UPDATE_EFFECT,
             Self::ChargeAdjusted { .. } => kind::CHARGE_ADJUSTED,
             Self::FighterGotoPoint { .. } => kind::FIGHTER_GOTO_POINT,
             Self::FighterSize { .. } => kind::FIGHTER_SIZE,

@@ -38,6 +38,7 @@ fn undocked() -> Sim {
 
 fn afterburner(module: i64) -> crate::modules::Effect {
     crate::modules::Effect {
+        rules: Default::default(),
         burns_fuel: false,
         module_id: module,
         module_type: 21857,

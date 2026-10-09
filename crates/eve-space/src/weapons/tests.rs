@@ -351,6 +351,7 @@ fn laser() -> Turret {
 
 fn laser_effect(target_id: i64, turret: Turret) -> Effect {
     Effect {
+        rules: Default::default(),
         burns_fuel: false,
         module_id: NPC_SHIP,
         module_type: 23_312,
@@ -1346,6 +1347,7 @@ fn strike_of(pulses: i32) -> crate::strike::Strike {
 
 fn strike_effect(module_id: i64, strike: crate::strike::Strike) -> Effect {
     Effect {
+        rules: Default::default(),
         burns_fuel: false,
         module_id,
         module_type: 40_633,
@@ -1367,7 +1369,7 @@ fn strike_effect(module_id: i64, strike: crate::strike::Strike) -> Effect {
 /// Runs `body` on its own thread and fails the test when it has not returned within `seconds`. A simulation whose moment never clears (a
 /// module moment that is due again at once) spins in the caller's loop forever; here it is a failure in `seconds`, and a panic in `body` is
 /// re-raised with its message.
-fn finishes_within(seconds: u64, body: impl FnOnce() + Send + 'static) {
+pub(crate) fn finishes_within(seconds: u64, body: impl FnOnce() + Send + 'static) {
     use std::sync::mpsc::RecvTimeoutError;
     let (done, finished) = std::sync::mpsc::channel::<()>();
     let worker = std::thread::spawn(move || {
@@ -1683,6 +1685,7 @@ fn a_strike_neutralisation_is_weakened_by_the_targets_energy_warfare_resistance(
 /// A titan doomsday's effect: one hit on `target_id`, the module of a Judgment (24550, effect 4489), one cycle.
 fn doomsday_effect(module_id: i64, target_id: i64, action: crate::modules::Action) -> Effect {
     Effect {
+        rules: Default::default(),
         burns_fuel: false,
         module_id,
         module_type: 24_550,
@@ -1761,6 +1764,7 @@ fn a_titan_doomsday_is_refused_without_a_locked_target_and_hits_nothing_it_is_no
 
 fn smartbomb_effect(module_id: i64, damage: Damage) -> Effect {
     Effect {
+        rules: Default::default(),
         burns_fuel: false,
         module_id,
         module_type: 3_977,

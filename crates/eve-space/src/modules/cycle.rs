@@ -21,8 +21,8 @@ impl Scene {
             let scrammed = self.pilots.get(&session).is_some_and(|pilot| pilot.incoming.mwd_blocked());
             let (owner, ship_id) = {
                 let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
-                pilot.modules.mjd_cooldowns.retain(|(id, _)| *id != module_id);
-                pilot.modules.mjd_cooldowns.push((module_id, cooldown_until));
+                pilot.modules.reactivation.retain(|(id, _)| *id != module_id);
+                pilot.modules.reactivation.push((module_id, cooldown_until));
                 let identity = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
                 pilot.modules.running.remove(index);
                 identity
@@ -493,7 +493,8 @@ impl Scene {
             .filter(|action| action.is_work())
             .cloned()
         else {
-            return Vec::new();
+            // the effect has no work cycle left to send (its action changed under the parked cycle): it stops, as one that loses its target does (M-1)
+            return self.stop_parked(session, index, at);
         };
         let (module_id, target_id) = (run.effect.module_id, run.effect.target_id);
         let pending = PendingWorkCycle { sent_at: at, ..pending };

@@ -53,7 +53,12 @@ public class SimCodecTests
     private static SimEffect EffectOf(JsonNode e) => new(
         Wide(e, "moduleId"), (int)e["moduleType"]!, (int)e["effectId"]!, (string)e["fx"]!, (double)e["durationMs"]!, (double)e["capacitorNeed"]!, (int)e["repeat"]!, Wide(e, "targetId"),
         NumbersOf(e["on"]), NumbersOf(e["off"]), ChangesOf(e["onChanges"]!), ChangesOf(e["offChanges"]!), e["turret"] is { } turret ? TurretOf(turret) : null,
-        e["action"] is { } action ? ActionOf(action) : null, BurnsFuel: e["burnsFuel"] is { } burns && (bool)burns);
+        e["action"] is { } action ? ActionOf(action) : null, BurnsFuel: e["burnsFuel"] is { } burns && (bool)burns,
+        Rules: e["rules"] is { } rules ? RulesOf(rules) : null);
+
+    private static SimModuleRules RulesOf(JsonNode r) => new(
+        (int)r["groupId"]!, (int)r["maxGroupActive"]!, (bool)r["disallowEarlyDeactivation"]!, (bool)r["requiresIndustrialCore"]!,
+        (bool)r["providesIndustrialCore"]!, (double)r["reactivationDelayMs"]!);
 
     /// <summary>A strike of the fixture (the object of a strike action, or the nested strike of a field).</summary>
     private static SimAction.Strike StrikeOf(JsonNode a)
@@ -497,6 +502,21 @@ public class SimCodecTests
         Assert.True(decodedBurning.BurnsFuel);
         Assert.False(decodedFree.BurnsFuel);
         Assert.Equal(Convert.ToHexString(SimCodec.Encode(new SimActivate(42, burning))), Convert.ToHexString(SimCodec.Encode(new SimActivate(42, decodedBurning))));
+    }
+
+    [Fact]
+    public void An_effect_with_module_rules_roundtrips_them_and_one_without_keeps_the_flag_clear()
+    {
+        var rules = new SimModuleRules(46, 1, true, false, false, 180000.0);
+        var ruled = new SimEffect(10, 21857, 6731, "effects.Afterburner", 10000, 5, 1000, 0, null, null, [], [], null, null, Rules: rules);
+        var plain = ruled with { Rules = null };
+
+        var decodedRuled = Assert.IsType<SimActivate>(SimCodec.Decode(SimCodec.Encode(new SimActivate(42, ruled)).AsMemory(4))).Effect;
+        var decodedPlain = Assert.IsType<SimActivate>(SimCodec.Decode(SimCodec.Encode(new SimActivate(42, plain)).AsMemory(4))).Effect;
+
+        Assert.Equal(rules, decodedRuled.Rules);
+        Assert.Null(decodedPlain.Rules);
+        Assert.Equal(Convert.ToHexString(SimCodec.Encode(new SimActivate(42, ruled))), Convert.ToHexString(SimCodec.Encode(new SimActivate(42, decodedRuled))));
     }
 
     [Fact]

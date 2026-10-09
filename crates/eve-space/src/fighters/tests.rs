@@ -199,6 +199,7 @@ fn a_squadron_runs_an_ability_through_the_simulation_as_a_pilot_does() {
     let (mut scene, squadron, _) = launched();
     // a self buff of the squadron's own type (no capacitor: a squadron has none), started as the host sends any module effect
     let effect = crate::modules::Effect {
+        rules: Default::default(),
         module_id: SQUADRON_SHIP * 8 + 1,
         module_type: 23_055,
         effect_id: 6_441,

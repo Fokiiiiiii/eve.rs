@@ -181,6 +181,31 @@ impl Scene {
         {
             return vec![Out::Refused { session, command: CODE, reason: "MAX_GROUP_ACTIVE" }];
         }
+        // a module of a group of which a limited number run at once (maxGroupActive 763: the afterburner and the microwarpdrive) is refused while that many
+        // of its group run or are starting (EveJS MAX_GROUP_ACTIVE; the client's EffectCrowdedOut is shown as the notice, the count is not carried yet)
+        if effect.rules.max_group_active > 0 && effect.rules.group_id != 0 {
+            let same_group = pilot
+                .modules
+                .running
+                .iter()
+                .filter(|r| r.effect.rules.group_id == effect.rules.group_id)
+                .count()
+                + pilot
+                    .modules
+                    .pending_starts
+                    .iter()
+                    .filter(|s| s.effect.rules.group_id == effect.rules.group_id)
+                    .count();
+            if same_group as i64 >= i64::from(effect.rules.max_group_active) {
+                return vec![Out::Refused { session, command: CODE, reason: "MAX_GROUP_ACTIVE" }];
+            }
+        }
+        // a compressor (activationRequiresActiveIndustrialCore 3265) runs only while an industrial core runs on the ship
+        if effect.rules.requires_industrial_core
+            && !pilot.modules.running.iter().any(|r| r.effect.rules.provides_industrial_core)
+        {
+            return vec![Out::Refused { session, command: CODE, reason: "ACTIVE_INDUSTRIAL_CORE_REQUIRED" }];
+        }
         if let Some(Action::MicroJumpDrive { distance_meters, cooldown_ms }) = effect.action.as_ref() {
             if !distance_meters.is_finite()
                 || *distance_meters <= 0.0
@@ -191,12 +216,22 @@ impl Scene {
             }
             if pilot
                 .modules
-                .mjd_cooldowns
+                .reactivation
                 .iter()
                 .any(|(module_id, until)| *module_id == effect.module_id && *until > now)
             {
                 return vec![Out::Refused { session, command: CODE, reason: "MJD_COOLDOWN" }];
             }
+        }
+        // a module that waits after it stopped (its reactivation delay, 669) does not start again before the time has passed
+        if !matches!(effect.action, Some(Action::MicroJumpDrive { .. }))
+            && pilot
+                .modules
+                .reactivation
+                .iter()
+                .any(|(module_id, until)| *module_id == effect.module_id && *until > now)
+        {
+            return vec![Out::Refused { session, command: CODE, reason: "MODULE_REACTIVATING" }];
         }
         // a smartbomb that the safety forbids does not start with another pilot in its range
         if let Some(Action::Smartbomb { range, hurts_pilots: false, .. }) = effect.action.as_ref()
@@ -208,6 +243,14 @@ impl Scene {
             return vec![Out::Refused { session, command: CODE, reason: "SafetyActivated" }];
         }
         // a warp scrambler that blocks a microwarpdrive keeps one from being started
+        // a module burnt out by its own effect (an emergency hull energizer) does not start again (MODULE_INCAPACITATED)
+        if pilot.modules.burnt_out.contains(&effect.module_id) {
+            return vec![Out::Refused { session, command: CODE, reason: "MODULE_INCAPACITATED" }];
+        }
+        // a module that a running one blocks (activationBlocked 1349, from a sensor array on the capital micro jump drives) does not start
+        if self.overlay(session, effect.module_id, ACTIVATION_BLOCKED) > 0.0 {
+            return vec![Out::Refused { session, command: CODE, reason: "MODULE_BLOCKED" }];
+        }
         if effect.effect_id == MICROWARPDRIVE && pilot.incoming.mwd_blocked() {
             return vec![Out::Refused { session, command: CODE, reason: "MICROWARPDRIVE_BLOCKED" }];
         }
@@ -271,6 +314,10 @@ impl Scene {
             }
         }
         if matches!(effect.action.as_ref(), Some(Action::Cloak)) {
+            // a module that cannot be deactivated early (disallowEarlyDeactivation 906) runs: the ship does not cloak (EveJS CLOAK_MODULE_ACTIVE)
+            if pilot.modules.running.iter().any(|r| r.effect.rules.disallow_early_deactivation) {
+                return vec![Out::Refused { session, command: CODE, reason: "CLOAK_MODULE_ACTIVE" }];
+            }
             if pilot.no_jump_until > now {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_JUMP_OR_CLOAK" }];
             }
@@ -674,6 +721,8 @@ impl Scene {
     }
 
     /// What the running effects and the capacitors have come to by `now`: cycles that end (the next begins, or the effect stops), and the charge told.
+    /// At most `MAX_MOMENTS_PER_SETTLE` moments are taken for a ship in one settle, and a moment that comes back at the same tick with nothing done is a stall
+    /// (the progress guarantee, M-1): the effect it belongs to is ended, so the loop always moves on.
     pub(crate) fn settle_modules(&mut self, now: i64) -> Vec<Out> {
         let sessions: Vec<SessionId> = self
             .in_entry_order()
@@ -689,11 +738,82 @@ impl Scene {
             // what no module renewed lapses
             out.extend(self.expire_incoming(session, now));
             // a cycle that ends is followed by the charge told at the moments in between, in the order they fall
-            while let Some((at, kind)) = self.next_module_moment(session, now) {
+            let mut taken = 0;
+            let mut last: Option<(i64, Moment, i64)> = None;
+            while taken < MAX_MOMENTS_PER_SETTLE
+                && let Some((at, kind)) = self.next_module_moment(session, now)
+            {
+                taken += 1;
+                // the module is part of the key: when an effect ends, the one after it takes its index and may be due at the same tick
+                let key = (at, kind, self.moment_module(session, kind));
+                if last == Some(key) {
+                    match self.stalled(session, kind, at) {
+                        Some(stalled) => out.extend(stalled),
+                        None => break,
+                    }
+                    last = None;
+                    continue;
+                }
+                last = Some(key);
                 out.extend(self.module_moment(session, at, kind));
             }
         }
         out
+    }
+
+    /// The value a running effect of this session sets on an attribute of an item (its `on_changes`: what its modifiers give while it runs), 0 when none does.
+    pub(crate) fn overlay(&self, session: SessionId, item_id: i64, attribute_id: i32) -> f64 {
+        self.pilots.get(&session).map_or(0.0, |pilot| {
+            pilot
+                .modules
+                .running
+                .iter()
+                .flat_map(|run| run.effect.on_changes.iter())
+                .filter(|change| change.item_id == item_id && change.attribute_id == attribute_id)
+                .fold(0.0, |most, change| most.max(change.value))
+        })
+    }
+
+    /// The module a moment belongs to (-1 when it has none, or its index no longer names one).
+    fn moment_module(&self, session: SessionId, kind: Moment) -> i64 {
+        let Some(pilot) = self.pilots.get(&session) else { return -1 };
+        match kind {
+            Moment::CycleEnd(index)
+            | Moment::WorkResend(index)
+            | Moment::WorkStop(index)
+            | Moment::StrikePulse(index)
+            | Moment::DoomsdayHit(index) => {
+                pilot.modules.running.get(index).map_or(-1, |run| run.effect.module_id)
+            }
+            Moment::StartResend(index) => {
+                pilot.modules.pending_starts.get(index).map_or(-1, |start| start.effect.module_id)
+            }
+            Moment::Charge | Moment::Shield => -1,
+        }
+    }
+
+    /// A moment that came back unchanged (M-1): the effect it belongs to is ended (`Ending::Forced`) or the stalled pending start is dropped. `None` when the
+    /// moment has no effect to end (the charge and the shield are told as their ticks come), so the settle is left there.
+    pub(super) fn stalled(&mut self, session: SessionId, kind: Moment, at: i64) -> Option<Vec<Out>> {
+        let module_id = match kind {
+            Moment::CycleEnd(index)
+            | Moment::WorkResend(index)
+            | Moment::WorkStop(index)
+            | Moment::StrikePulse(index)
+            | Moment::DoomsdayHit(index) => {
+                self.pilots.get(&session)?.modules.running.get(index)?.effect.module_id
+            }
+            Moment::StartResend(index) => {
+                let pilot = self.pilots.get_mut(&session)?;
+                if index >= pilot.modules.pending_starts.len() {
+                    return None;
+                }
+                pilot.modules.pending_starts.remove(index);
+                return Some(Vec::new());
+            }
+            Moment::Charge | Moment::Shield => return None,
+        };
+        Some(self.offline_module(session, module_id, at))
     }
 
     /// The next thing due for a ship's modules by `now`: a cycle's end or a charge to tell.

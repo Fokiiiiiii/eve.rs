@@ -263,7 +263,8 @@ pub(super) fn put_effect(out: &mut Vec<u8>, effect: &Effect) {
             | (u8::from(effect.off.is_some()) << 1)
             | (u8::from(effect.turret.is_some()) << 2)
             | (u8::from(effect.action.is_some()) << 3)
-            | (u8::from(effect.burns_fuel) << 4),
+            | (u8::from(effect.burns_fuel) << 4)
+            | (u8::from(effect.rules != Rules::default()) << 5),
     );
     for numbers in [&effect.on, &effect.off].into_iter().flatten() {
         put_numbers(out, numbers);
@@ -275,6 +276,18 @@ pub(super) fn put_effect(out: &mut Vec<u8>, effect: &Effect) {
     }
     if let Some(action) = &effect.action {
         put_action(out, action);
+    }
+    // the module rules (flag 32), after the action: the group, its limit, the rule bits and the reactivation delay
+    if effect.rules != Rules::default() {
+        let rules = &effect.rules;
+        out.extend_from_slice(&rules.group_id.to_le_bytes());
+        out.extend_from_slice(&rules.max_group_active.to_le_bytes());
+        out.push(
+            u8::from(rules.disallow_early_deactivation)
+                | (u8::from(rules.requires_industrial_core) << 1)
+                | (u8::from(rules.provides_industrial_core) << 2),
+        );
+        out.extend_from_slice(&rules.reactivation_delay_ms.to_le_bytes());
     }
 }
 

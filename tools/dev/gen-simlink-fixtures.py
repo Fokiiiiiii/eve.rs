@@ -134,10 +134,10 @@ def action(a):
     # the SimAction tag 14 (ADR 0013 epoch 26): a titan doomsday, one hit on the locked target after a delay, the ship held for its windows
     if kind == "doomsday":
         return bytes([14]) + struct.pack("<d", a["delayMs"]) + struct.pack("<4d", *a["damage"]) + struct.pack("<2d", a["immobileMs"], a["noJumpMs"])
-    # the SimAction tag 16 (protocol 33): a kamikaze squadron's detonation, its damage (four kinds) and the range it detonates at (metres)
+    # the SimAction tag 16 (protocol 34): a kamikaze squadron's detonation, its damage (four kinds) and the range it detonates at (metres)
     if kind == "kamikaze":
         return bytes([16]) + struct.pack("<4d", *a["damage"]) + struct.pack("<d", a["rangeMeters"])
-    # the SimAction tag 17 (protocol 33): a fighter's missiles: the damage (four kinds), the reach (metres) and the explosion (radius, velocity, reduction factor,
+    # the SimAction tag 17 (protocol 34): a fighter's missiles: the damage (four kinds), the reach (metres) and the explosion (radius, velocity, reduction factor,
     # reduction sensitivity), scaled by the application factor for the target
     if kind == "missile":
         return bytes([17]) + struct.pack("<4d", *a["damage"]) + struct.pack("<5d", a["reachMeters"], a["explosionRadius"], a["explosionVelocity"],
@@ -192,9 +192,9 @@ def action(a):
 def effect(e):
     body = i64(e["moduleId"]) + struct.pack("<ii", e["moduleType"], e["effectId"]) + s(e["fx"])
     body += struct.pack("<ddi", e["durationMs"], e["capacitorNeed"], e["repeat"]) + i64(e["targetId"])
-    on, off, gun, act = e.get("on"), e.get("off"), e.get("turret"), e.get("action")
-    # bit 16: the effect burns fuel (the host is asked for the fuel of each cycle that starts, ModuleWorkCycle with command 9)
-    body += bytes([(1 if on else 0) | (2 if off else 0) | (4 if gun else 0) | (8 if act else 0) | (16 if e.get("burnsFuel") else 0)])
+    on, off, gun, act, rules = e.get("on"), e.get("off"), e.get("turret"), e.get("action"), e.get("rules")
+    # bit 16: the effect burns fuel (the host is asked for the fuel of each cycle that starts, ModuleWorkCycle with command 9); bit 32: the module rules (protocol 33)
+    body += bytes([(1 if on else 0) | (2 if off else 0) | (4 if gun else 0) | (8 if act else 0) | (16 if e.get("burnsFuel") else 0) | (32 if rules else 0)])
     for n in (on, off):
         if n:
             body += numbers(n)
@@ -202,6 +202,11 @@ def effect(e):
     body = body + turret(gun) if gun else body
     if act:
         body += action(act)
+    if rules:
+        # the module rules, after the action: the group and its limit (763), the rule bits (1 early deactivation 906, 2 needs an active industrial core 3265,
+        # 4 is an industrial core), and the reactivation delay (669, ms)
+        bits = (1 if rules["disallowEarlyDeactivation"] else 0) | (2 if rules["requiresIndustrialCore"] else 0) | (4 if rules["providesIndustrialCore"] else 0)
+        body += struct.pack("<iiBd", rules["groupId"], rules["maxGroupActive"], bits, rules["reactivationDelayMs"])
     return body
 
 
@@ -389,8 +394,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 33},
-    {"name": "hello ack", "kind": "HelloAck", "version": 33, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 34},
+    {"name": "hello ack", "kind": "HelloAck", "version": 34, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -462,6 +467,18 @@ valid = [
                               {"itemId": "9988400001939", "attributeId": 37, "value": 522.848918}],
                 "offChanges": [{"itemId": "9988400001940", "attributeId": 20, "value": 60.0},
                                {"itemId": "9988400001939", "attributeId": 37, "value": 339.25}]}},
+    {"name": "activate an afterburner with its propulsion group's limit", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400001940", "moduleType": 21857, "effectId": 6731, "fx": "effects.Afterburner",
+                "durationMs": 10000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "0",
+                "onChanges": [], "offChanges": [],
+                "rules": {"groupId": 46, "maxGroupActive": 1, "disallowEarlyDeactivation": False, "requiresIndustrialCore": False,
+                          "providesIndustrialCore": False, "reactivationDelayMs": 0.0}}},
+    {"name": "activate a compressor that needs a running industrial core, with a cloak's early deactivation and reactivation", "kind": "Activate",
+     "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400001950", "moduleType": 4174, "effectId": 6731, "fx": "", "durationMs": 300000.0, "capacitorNeed": 0.0,
+                "repeat": 1, "targetId": "0", "onChanges": [], "offChanges": [],
+                "rules": {"groupId": 4174, "maxGroupActive": 0, "disallowEarlyDeactivation": True, "requiresIndustrialCore": True,
+                          "providesIndustrialCore": False, "reactivationDelayMs": 180000.0}}},
     {"name": "activate an effect that changes nothing of the ship", "kind": "Activate", "sessionId": "1",
      "effect": {"moduleId": "9988400001941", "moduleType": 3651, "effectId": 67, "fx": "", "durationMs": 3000.0,
                 "capacitorNeed": 0.0, "repeat": 1, "targetId": "9988400002151", "onChanges": [], "offChanges": []}},

@@ -43,6 +43,11 @@ public sealed partial class SpaceSessions
                 // the ship is on its way to the station; the client is told how far it was (the reference rounds half up)
                 throw MachoErrors.ThrowUserError("DockingApproach", ("distance", new PyInt((long)Math.Max(0, Math.Floor(distance + 0.5)))));
             }
+            // a module that disallows docking is running (disallowDocking 2354): the wording is EveJS's (beyonceService: DOCKING_DISALLOWED_BY_MODULE)
+            if (reply.Reason == "DOCKING_DISALLOWED_BY_MODULE")
+            {
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You cannot dock while a module that prevents docking is active.")));
+            }
             _log?.Invoke($"docking of session {session.SessionId} at {stationId} refused: {reply.Reason}");
         }
         catch (SimUnavailableException error)

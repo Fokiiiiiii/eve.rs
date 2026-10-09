@@ -124,6 +124,14 @@ public class ModuleOrderTests
         // a cloak the ship cannot take is the client's own UserError, as the client raises it itself (FakeCloaking.PreStartChecks)
         Assert.Equal("CantCloakTooShipUnsuitable", (await RefusedAsync(rig, session, oid, ModuleResult.Refusal("CLOAK_SHIP_UNSUITABLE", 21857, "1MN Civilian Afterburner"))).Name);
         Assert.Equal("CantCloak", (await RefusedAsync(rig, session, oid, ModuleResult.Refusal("CLOAK_DISALLOWED", 21857, "1MN Civilian Afterburner"))).Name);
+        // a module a running one blocks (activationBlocked 1349): the client's own ModuleIsBlocked, named by the module's type
+        var (blocked, blockedValues) = await RefusedAsync(rig, session, oid, ModuleResult.Refusal("MODULE_BLOCKED", 21857, "1MN Civilian Afterburner"));
+        Assert.Equal("ModuleIsBlocked", blocked);
+        Assert.True(blockedValues.ContainsKey("moduleName"));
+        // the rules of a running module the reference words (EveJS moduleOperation.js) and the reactivation delay (a notice until the client's shape carries the time)
+        Assert.Equal("An active industrial core is required to activate that module.", await Said("ACTIVE_INDUSTRIAL_CORE_REQUIRED"));
+        Assert.Equal("You cannot activate a cloaking device while a module that cannot be deactivated early is still running.", await Said("CLOAK_MODULE_ACTIVE"));
+        Assert.Equal("1MN Civilian Afterburner cannot be reactivated yet.", await Said("MODULE_REACTIVATING"));
         Assert.Equal("1MN Civilian Afterburner cannot be activated.", await Said("DEFENDER_LAUNCHER_NOT_IMPLEMENTED"));
         Assert.Equal("1MN Civilian Afterburner cannot be activated.", await Said("BOMB_LAUNCHER_NOT_IMPLEMENTED"));
         // a firing effect refused by name (F.O.F. missiles, MissileEffect.RefusedFiringEffects) is shown as the same refusal, not as a raw reason

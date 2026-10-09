@@ -1914,6 +1914,7 @@ fn an_overheated_cycle_damages_and_burns_a_fitted_module_in_its_rack() {
     scene.set_module_overheat(SESSION, module_id, true).unwrap();
 
     let effect = crate::modules::Effect {
+        rules: Default::default(),
         burns_fuel: false,
         module_id,
         module_type: 21_857,

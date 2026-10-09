@@ -1,6 +1,6 @@
 # ADR 0015: Player fighters are companion sessions on the drone machinery, with abilities as effect handlers
 
-- Status: accepted. The fighter track is complete at protocol 33 except LaunchBomb, which is refused by name (fourth amendment).
+- Status: accepted. The fighter track is complete at protocol 34 except LaunchBomb, which is refused by name (fourth amendment).
 - Date: 2026-10-08
 - Decided by: the project lead, for the player fighters track. All recommendations were accepted; the decisions are the numbered items FIG-D-1 to FIG-D-11 and FIG-X-1 to FIG-X-4 below.
 
@@ -78,12 +78,12 @@ The items that the second amendment refused are now served, except where a named
 
 ## Amendment (2026-10-09, fourth): the remainder
 
-- **Kamikaze (FIG-S9) is in the simulation.** `SimAction` tag 16 (`Kamikaze`, protocol 33): the squadron closes in on its locked target to its range (a Follow course, as the reference's `syncFighterOffensiveMovement`), and once within range (one metre of slack) the target takes the squadron's damage (four kinds, each member's damage times the squadron size) and the squadron is destroyed through the ordinary death path. A window that ends before the squadron reaches the target ends without a detonation.
+- **Kamikaze (FIG-S9) is in the simulation.** `SimAction` tag 16 (`Kamikaze`, protocol 34): the squadron closes in on its locked target to its range (a Follow course, as the reference's `syncFighterOffensiveMovement`), and once within range (one metre of slack) the target takes the squadron's damage (four kinds, each member's damage times the squadron size) and the squadron is destroyed through the ordinary death path. A window that ends before the squadron reaches the target ends without a detonation.
 - **Fighter missiles (FIG-S7).** `SimAction` tag 17 (`Missile`): the locked target takes the damage once when it is within the reach (the missile range, plus the falloff for AttackM), scaled by the application factor of the explosion for the target's signature and speed (`missiles.rs` `Blast`, the reference's `resolveMissileAppliedDamage`). A target beyond the reach is followed, and the cycle polls every quarter second.
 - **Neutraliser falloff (FIG-K).** The squadron's energy neutraliser reads the signature resolution (attribute 2451) from its own type, as a ship's neutraliser does. No fighter type carries it in the SDE (the attribute is on capital neutralisers, batteries and structure neutralisers only), so the factor is 1 for every fighter, as in the reference.
 - **Persistence (FIG-S17).** A squadron's ability charges and cooldowns are kept as JSON on its item (custom info): the ship and tube it came from, and each slot's charges and cooldown end. They are resumed when the squadron launches or is taken up again.
 - **Size of a squadron let go.** The simulation tells the size of a squadron without a controller, and the host writes it to the item.
 - **Restart (FIG-D-11, decided A).** A pilot entering space takes up the squadrons its character has out in the solar system: one launched from its ship is controlled again, one let go stays let go. The squadron is placed beside its ship, not where it was (its position is not kept). A host restart in which the simulation still holds the same squadron is not detected.
 - **Refused by name.** LaunchBomb stays `LAUNCH_BOMB_NOT_IN_SIMULATION`: its blast is the general `Area` of ADR 0011, which is not on main.
-- **Wire.** Protocol 33 (ADR 0013 wire epoch log).
+- **Wire.** Protocol 34 (ADR 0013 wire epoch log).
 

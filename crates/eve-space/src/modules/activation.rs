@@ -208,6 +208,10 @@ impl Scene {
             return vec![Out::Refused { session, command: CODE, reason: "SafetyActivated" }];
         }
         // a warp scrambler that blocks a microwarpdrive keeps one from being started
+        // a module that a running one blocks (activationBlocked 1349, from a sensor array on the capital micro jump drives) does not start
+        if self.overlay(session, effect.module_id, ACTIVATION_BLOCKED) > 0.0 {
+            return vec![Out::Refused { session, command: CODE, reason: "MODULE_BLOCKED" }];
+        }
         if effect.effect_id == MICROWARPDRIVE && pilot.incoming.mwd_blocked() {
             return vec![Out::Refused { session, command: CODE, reason: "MICROWARPDRIVE_BLOCKED" }];
         }
@@ -711,6 +715,19 @@ impl Scene {
             }
         }
         out
+    }
+
+    /// The value a running effect of this session sets on an attribute of an item (its `on_changes`: what its modifiers give while it runs), 0 when none does.
+    pub(crate) fn overlay(&self, session: SessionId, item_id: i64, attribute_id: i32) -> f64 {
+        self.pilots.get(&session).map_or(0.0, |pilot| {
+            pilot
+                .modules
+                .running
+                .iter()
+                .flat_map(|run| run.effect.on_changes.iter())
+                .filter(|change| change.item_id == item_id && change.attribute_id == attribute_id)
+                .fold(0.0, |most, change| most.max(change.value))
+        })
     }
 
     /// The module a moment belongs to (-1 when it has none, or its index no longer names one).

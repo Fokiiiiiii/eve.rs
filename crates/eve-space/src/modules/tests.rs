@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use super::*;
+use crate::modules::{ACTIVATION_BLOCKED, DISALLOW_DOCKING, WARP_SCRAMBLE_STATUS};
 use crate::scene::tests::{NOON, STATION, spec, system};
 use crate::scene::{Command, Out};
 use crate::ship::ShipSpec;
@@ -3094,4 +3095,56 @@ fn a_stalled_moment_ends_its_effect_and_a_charge_moment_is_left_to_the_settle() 
     assert!(out.iter().any(|item| matches!(item, Out::ModuleEnded { module_id: MODULE, .. })));
     assert!(scene.pilots[&A].modules.running.is_empty());
     assert!(scene.stalled(A, Moment::Charge, t).is_none());
+}
+
+/// An effect that, while it runs, sets the given attributes of items (what a siege or a sensor array gives its ship or its modules through their modifiers).
+fn sets(module: i64, changes: &[(i64, i32, f64)]) -> Effect {
+    Effect {
+        module_id: module,
+        on_changes: changes
+            .iter()
+            .map(|&(item_id, attribute_id, value)| Change { item_id, attribute_id, value })
+            .collect(),
+        ..afterburner()
+    }
+}
+
+#[test]
+fn a_running_module_that_holds_the_ship_stops_its_warp_and_its_dock_until_it_ends() {
+    let (mut scene, t) = crowd();
+    let ship = spec().ship_id;
+    let siege = sets(MODULE + 400, &[(ship, WARP_SCRAMBLE_STATUS, 100.0), (ship, DISALLOW_DOCKING, 1.0)]);
+    assert!(scene.activate(A, siege, t).iter().any(|out| matches!(out, Out::Accepted { .. })));
+    let warp =
+        Command::WarpToPoint { destination: eve_destiny::Vec3::new(9_000_000.0, 0.0, 0.0), range: 0.0 };
+    let out = scene.command(A, warp.clone(), t + SECOND);
+    assert!(matches!(out.as_slice(), [Out::Refused { reason: "WARP_SCRAMBLED", .. }]), "{out:?}");
+    let out = scene.command(A, Command::Dock { station_id: STATION }, t + SECOND);
+    assert!(
+        matches!(out.as_slice(), [Out::Refused { reason: "DOCKING_DISALLOWED_BY_MODULE", .. }]),
+        "{out:?}"
+    );
+
+    scene.deactivate(A, MODULE + 400, t + SECOND);
+    let (ended, _) = poll_until(&mut scene, t + SECOND, 15.0);
+    assert!(
+        ended
+            .iter()
+            .any(|out| matches!(out, Out::ModuleEnded { module_id, .. } if *module_id == MODULE + 400))
+    );
+    let out = scene.command(A, warp, t + 20 * SECOND);
+    assert!(!out.iter().any(|out| matches!(out, Out::Refused { reason: "WARP_SCRAMBLED", .. })), "{out:?}");
+    assert!(scene.pilots[&A].flight.is_some(), "the warp goes once the module has ended");
+}
+
+#[test]
+fn a_running_module_blocks_the_module_it_names_and_no_other() {
+    let (mut scene, t) = crowd();
+    let blocked = MODULE + 410;
+    let blocker = sets(MODULE + 411, &[(blocked, ACTIVATION_BLOCKED, 1.0)]);
+    assert!(scene.activate(A, blocker, t).iter().any(|out| matches!(out, Out::Accepted { .. })));
+    let out = scene.activate(A, Effect { module_id: blocked, ..afterburner() }, t);
+    assert_eq!(out, [Out::Refused { session: A, command: 17, reason: "MODULE_BLOCKED" }]);
+    let out = scene.activate(A, Effect { module_id: MODULE + 412, ..afterburner() }, t);
+    assert!(out.iter().any(|out| matches!(out, Out::Accepted { .. })), "{out:?}");
 }

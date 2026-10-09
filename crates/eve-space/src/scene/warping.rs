@@ -1,4 +1,5 @@
 use super::*;
+use crate::modules::WARP_SCRAMBLE_STATUS;
 
 impl Scene {
     /// `CmdWarpToStuff`: resolve a body or ship to its warp-in point and start a warp.
@@ -61,6 +62,10 @@ impl Scene {
             return refused("WARP_BLOCKED");
         }
         if pilot.incoming.scrambled() {
+            return refused("WARP_SCRAMBLED");
+        }
+        // a running module of the ship that scrambles it (warpScrambleStatus 104: a siege, a triage, a sensor array) holds it in place
+        if self.overlay(session, pilot.ship.spec.ship_id, WARP_SCRAMBLE_STATUS) > 0.0 {
             return refused("WARP_SCRAMBLED");
         }
         let ship = &pilot.ship;

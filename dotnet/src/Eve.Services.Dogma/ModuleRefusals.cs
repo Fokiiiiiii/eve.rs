@@ -58,6 +58,8 @@ public static class ModuleRefusals
             "NOT_ENOUGH_CAPACITOR" => Notify("You do not have enough capacitor to activate that module."),
             // the reference's wording for a microwarpdrive held by a warp scrambler (moduleOperation.js MICROWARPDRIVE_BLOCKED)
             "MICROWARPDRIVE_BLOCKED" => Notify("That module cannot be activated while you are warp scrambled."),
+            // a running module blocks this one (activationBlocked 1349; the client's own UserError, fittingDogmaLocation: ModuleIsBlocked, moduleName the type)
+            "MODULE_BLOCKED" => MachoErrors.ThrowUserError("ModuleIsBlocked", ("moduleName", new PyTuple([new PyInt(TypeReference), new PyInt(refusal.ModuleType)]))),
             "CLOAK_WARP_BLOCKED" => Notify("You cannot activate that cloaking device while warping."),
             // disallowActivateOnWarp (ModuleRestrictions.CheckWarp): the wording is ours; the static data's rule is the source, not a client UserError
             "MODULE_WARP_BLOCKED" => Notify($"{name} cannot be activated while your ship is warping."),

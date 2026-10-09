@@ -40,6 +40,12 @@ const CYCLE: i32 = 51;
 /// The capacitor's charge is told every half second, worked out at the tick a tenth of a second on from the moment (the reference's ticks).
 pub(crate) const SAMPLE_EVERY: i64 = TICKS_PER_SECOND / 2;
 
+/// The attributes a running module's modifiers set on the ship or on another module (its `on_changes`): the ship's warp scramble (104, a siege, a sensor array),
+/// the ship's docking lock (2354), and a module's activation block (1349: a sensor array blocks the capital micro jump drives).
+pub(crate) const WARP_SCRAMBLE_STATUS: i32 = 104;
+pub(crate) const DISALLOW_DOCKING: i32 = 2354;
+pub(crate) const ACTIVATION_BLOCKED: i32 = 1349;
+
 /// The most module moments one settle takes for a ship (M-1). What is still due is taken by the next settle, so one ship cannot hold the sim thread.
 pub(crate) const MAX_MOMENTS_PER_SETTLE: usize = 10_000;
 

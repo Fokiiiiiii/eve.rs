@@ -53,4 +53,6 @@ public sealed class CharacterSessions
 
     public IReadOnlyList<ClientSession> OfCorporation(long corporationId) =>
         [.. _byCharacter.Values.Where(s => s.CharacterId is not null && s.GetInt("corpid") == corporationId).Distinct()];
+
+public IReadOnlyList<ClientSession> All() => _byCharacter.Values.Distinct().ToArray();
 }

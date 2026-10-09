@@ -877,4 +877,352 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
     {
         if (labelId is < 1 or > 63) throw new CorporationError("ALLIANCE_LABEL_INVALID");
     }
+
+    public async Task<IReadOnlyList<CorporationContact>> CorporationContactsAsync(long corporationId,CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection,null,$"SELECT contact_id,relationship_id,label_mask,in_watchlist FROM {_schema}.corporation_contacts WHERE corporation_id=$1 ORDER BY contact_id",corporationId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        var contacts = new List<CorporationContact>();
+        while (await reader.ReadAsync(token))
+            contacts.Add(new CorporationContact(reader.GetInt64(0),reader.GetInt32(1),reader.GetInt64(2),reader.GetBoolean(3)));
+        return contacts;
+    }
+
+    public async Task<IReadOnlyList<CorporationContactLabel>> CorporationContactLabelsAsync(long corporationId,CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection,null,$"SELECT label_id,name,color FROM {_schema}.corporation_contact_labels WHERE corporation_id=$1 ORDER BY label_id",corporationId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        var labels = new List<CorporationContactLabel>();
+        while (await reader.ReadAsync(token))
+            labels.Add(new CorporationContactLabel(reader.GetInt64(0),reader.GetString(1),reader.GetInt32(2)));
+        return labels;
+    }
+
+    public async Task<IReadOnlyList<CorporationBulletin>> CorporationBulletinsAsync(long corporationId,CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection,null,$"SELECT bulletin_id,corporation_id,create_character_id,create_filetime,edit_character_id,edit_filetime,title,body,sort_order FROM {_schema}.corporation_bulletins WHERE corporation_id=$1 ORDER BY sort_order,bulletin_id",corporationId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        var bulletins = new List<CorporationBulletin>();
+        while (await reader.ReadAsync(token))
+            bulletins.Add(ReadCorpBulletin(reader));
+        return bulletins;
+    }
+
+    public async Task<CorporationBulletin?> CorporationBulletinAsync(long corporationId,long bulletinId,CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection,null,$"SELECT bulletin_id,corporation_id,create_character_id,create_filetime,edit_character_id,edit_filetime,title,body,sort_order FROM {_schema}.corporation_bulletins WHERE corporation_id=$1 AND bulletin_id=$2",corporationId,bulletinId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        return await reader.ReadAsync(token) ? ReadCorpBulletin(reader) : null;
+    }
+
+    public Task AddCorporationContactAsync(long corporationId,long contactId,int relationshipId,CancellationToken token = default)
+    {
+        if (corporationId <= 0 || contactId <= 0 || relationshipId is < -10 or > 10)
+            throw new CorporationError("CORPORATION_CONTACT_INVALID");
+        return WriteAsync(async (connection,tx) =>
+        {
+            await using var command = Command(connection,tx,$"INSERT INTO {_schema}.corporation_contacts(corporation_id,contact_id,relationship_id,label_mask,in_watchlist) VALUES($1,$2,$3,0,false) ON CONFLICT(corporation_id,contact_id) DO UPDATE SET relationship_id=EXCLUDED.relationship_id,label_mask=0,in_watchlist=false",corporationId,contactId,relationshipId);
+            await command.ExecuteNonQueryAsync(token);
+            return true;
+        },token);
+    }
+
+    public Task EditCorporationContactRelationshipsAsync(long corporationId,IReadOnlyCollection<long> contactIds,int relationshipId,CancellationToken token = default)
+    {
+        if (corporationId <= 0 || relationshipId is < -10 or > 10 || contactIds.Any(id => id <= 0))
+            throw new CorporationError("CORPORATION_CONTACT_INVALID");
+        var ids = contactIds.Distinct().ToArray();
+        if (ids.Length == 0) return Task.CompletedTask;
+        return WriteAsync(async (connection,tx) =>
+        {
+            await using var command = Command(connection,tx,$"INSERT INTO {_schema}.corporation_contacts(corporation_id,contact_id,relationship_id) SELECT $1,id,$3 FROM unnest($2::bigint[]) AS ids(id) ON CONFLICT(corporation_id,contact_id) DO UPDATE SET relationship_id=EXCLUDED.relationship_id",corporationId,ids,relationshipId);
+            await command.ExecuteNonQueryAsync(token);
+            return true;
+        },token);
+    }
+
+    public Task RemoveCorporationContactsAsync(long corporationId,IReadOnlyCollection<long> contactIds,CancellationToken token = default)
+    {
+        if (corporationId <= 0 || contactIds.Any(id => id <= 0))
+            throw new CorporationError("CORPORATION_CONTACT_INVALID");
+        var ids = contactIds.Distinct().ToArray();
+        if (ids.Length == 0) return Task.CompletedTask;
+        return WriteAsync(async (connection,tx) =>
+        {
+            await using var command = Command(connection,tx,$"DELETE FROM {_schema}.corporation_contacts WHERE corporation_id=$1 AND contact_id=ANY($2)",corporationId,ids);
+            await command.ExecuteNonQueryAsync(token);
+            return true;
+        },token);
+    }
+
+    public Task<CorporationContactLabel> CreateCorporationContactLabelAsync(long corporationId,string name,int color,CancellationToken token = default)
+    {
+        ValidateCorporationContactLabel(name,color);
+        return WriteAsync(async (connection,tx) =>
+        {
+            await using var corporation = Command(connection,tx,$"SELECT id FROM {_schema}.corporations WHERE id=$1 AND NOT deleted FOR UPDATE",corporationId);
+            if (await corporation.ExecuteScalarAsync(token) is null)
+                throw new CorporationError("CORPORATION_NOT_FOUND");
+            await using var counterInsert = Command(connection,tx,$"INSERT INTO {_schema}.corporation_contact_label_counters(corporation_id,next_label_id) VALUES($1,1) ON CONFLICT(corporation_id) DO NOTHING",corporationId);
+            await counterInsert.ExecuteNonQueryAsync(token);
+            await using var counterRead = Command(connection,tx,$"SELECT next_label_id FROM {_schema}.corporation_contact_label_counters WHERE corporation_id=$1 FOR UPDATE",corporationId);
+            var labelId = Convert.ToInt64(await counterRead.ExecuteScalarAsync(token));
+            if (labelId == 0)
+                throw new CorporationError("CORPORATION_LABEL_LIMIT");
+            await using var duplicate = Command(connection,tx,$"SELECT 1 FROM {_schema}.corporation_contact_labels WHERE corporation_id=$1 AND lower(name)=lower($2)",corporationId,name);
+            if (await duplicate.ExecuteScalarAsync(token) is not null)
+                throw new CorporationError("CORPORATION_LABEL_EXISTS");
+            var nextLabelId = labelId > 2305843009213693952L ? 0 : labelId * 2;
+            await using var counterUpdate = Command(connection,tx,$"UPDATE {_schema}.corporation_contact_label_counters SET next_label_id=$2 WHERE corporation_id=$1",corporationId,nextLabelId);
+            await counterUpdate.ExecuteNonQueryAsync(token);
+            await using var insert = Command(connection,tx,$"INSERT INTO {_schema}.corporation_contact_labels(corporation_id,label_id,name,color) VALUES($1,$2,$3,$4)",corporationId,labelId,name,color);
+            await insert.ExecuteNonQueryAsync(token);
+            return new CorporationContactLabel(labelId,name,color);
+        },token);
+    }
+
+    public Task EditCorporationContactLabelAsync(long corporationId,long labelId,string? name,int? color,CancellationToken token = default)
+    {
+        if (corporationId <= 0 || !IsCorporationLabelId(labelId) || name is not null && (name.Length is < 1 or > 100) || color is < 0 or > 16777215)
+            throw new CorporationError("CORPORATION_LABEL_INVALID");
+        return WriteAsync(async (connection,tx) =>
+        {
+            await using var command = Command(connection,tx,$"UPDATE {_schema}.corporation_contact_labels SET name=COALESCE($3,name),color=COALESCE($4,color) WHERE corporation_id=$1 AND label_id=$2",corporationId,labelId,name,color);
+            await command.ExecuteNonQueryAsync(token);
+            return true;
+        },token);
+    }
+
+    public Task DeleteCorporationContactLabelAsync(long corporationId,long labelId,CancellationToken token = default)
+    {
+        if (corporationId <= 0 || !IsCorporationLabelId(labelId))
+            throw new CorporationError("CORPORATION_LABEL_INVALID");
+        return WriteAsync(async (connection,tx) =>
+        {
+            await using var clear = Command(connection,tx,$"UPDATE {_schema}.corporation_contacts SET label_mask=label_mask & ~($2::bigint) WHERE corporation_id=$1",corporationId,labelId);
+            await clear.ExecuteNonQueryAsync(token);
+            await using var delete = Command(connection,tx,$"DELETE FROM {_schema}.corporation_contact_labels WHERE corporation_id=$1 AND label_id=$2",corporationId,labelId);
+            await delete.ExecuteNonQueryAsync(token);
+            return true;
+        },token);
+    }
+
+    public Task ChangeCorporationContactLabelsAsync(long corporationId,IReadOnlyCollection<long> contactIds,long labelMask,bool add,CancellationToken token = default)
+    {
+        if (corporationId <= 0 || labelMask < 0 || contactIds.Any(id => id <= 0))
+            throw new CorporationError("CORPORATION_LABEL_INVALID");
+        var ids = contactIds.Distinct().ToArray();
+        if (ids.Length == 0 || labelMask == 0) return Task.CompletedTask;
+        return WriteAsync(async (connection,tx) =>
+        {
+            await using var labels = Command(connection,tx,$"SELECT COALESCE(bit_or(label_id),0) FROM {_schema}.corporation_contact_labels WHERE corporation_id=$1",corporationId);
+            var allowed = Convert.ToInt64(await labels.ExecuteScalarAsync(token));
+            if ((labelMask & ~allowed) != 0)
+                throw new CorporationError("CORPORATION_LABEL_NOT_FOUND");
+            if (add)
+            {
+                await using var command = Command(connection,tx,$"INSERT INTO {_schema}.corporation_contacts(corporation_id,contact_id,relationship_id,label_mask,in_watchlist) SELECT $1,id,0,$3,false FROM unnest($2::bigint[]) AS ids(id) ON CONFLICT(corporation_id,contact_id) DO UPDATE SET label_mask={_schema}.corporation_contacts.label_mask | EXCLUDED.label_mask",corporationId,ids,labelMask);
+                await command.ExecuteNonQueryAsync(token);
+            }
+            else
+            {
+                await using var command = Command(connection,tx,$"UPDATE {_schema}.corporation_contacts SET label_mask=label_mask & ~($3::bigint) WHERE corporation_id=$1 AND contact_id=ANY($2)",corporationId,ids,labelMask);
+                await command.ExecuteNonQueryAsync(token);
+            }
+            return true;
+        },token);
+    }
+
+    public Task<long> AddCorporationBulletinAsync(long corporationId,long actorId,string title,string body,long? bulletinId,long createFiletime,long editFiletime,CancellationToken token = default)
+    {
+        if (corporationId <= 0 || actorId <= 0 || createFiletime <= 0 || editFiletime <= 0 || bulletinId is <= 0)
+            throw new CorporationError("CORPORATION_BULLETIN_INVALID");
+        return WriteAsync(async (connection,tx) =>
+        {
+            await using var corporation = Command(connection,tx,$"SELECT id FROM {_schema}.corporations WHERE id=$1 AND NOT deleted FOR UPDATE",corporationId);
+            if (await corporation.ExecuteScalarAsync(token) is null)
+                throw new CorporationError("CORPORATION_NOT_FOUND");
+            var id = bulletinId ?? 0;
+            if (id == 0)
+            {
+                await using var next = Command(connection,tx,$"SELECT COALESCE(MAX(bulletin_id),0)+1 FROM {_schema}.corporation_bulletins WHERE corporation_id=$1",corporationId);
+                id = Convert.ToInt64(await next.ExecuteScalarAsync(token));
+            }
+            await using var existing = Command(connection,tx,$"SELECT 1 FROM {_schema}.corporation_bulletins WHERE corporation_id=$1 AND bulletin_id=$2 FOR UPDATE",corporationId,id);
+            if (await existing.ExecuteScalarAsync(token) is not null)
+            {
+                await using var update = Command(connection,tx,$"UPDATE {_schema}.corporation_bulletins SET edit_character_id=$3,edit_filetime=$4,title=$5,body=$6 WHERE corporation_id=$1 AND bulletin_id=$2",corporationId,id,actorId,editFiletime,title,body);
+                await update.ExecuteNonQueryAsync(token);
+                return id;
+            }
+            await using var order = Command(connection,tx,$"SELECT COALESCE(MAX(sort_order),-1)+1 FROM {_schema}.corporation_bulletins WHERE corporation_id=$1",corporationId);
+            var sortOrder = Convert.ToInt32(await order.ExecuteScalarAsync(token));
+            await using var insert = Command(connection,tx,$"INSERT INTO {_schema}.corporation_bulletins(corporation_id,bulletin_id,create_character_id,create_filetime,edit_character_id,edit_filetime,title,body,sort_order) VALUES($1,$2,$3,$4,$3,$5,$6,$7,$8)",corporationId,id,actorId,createFiletime,editFiletime,title,body,sortOrder);
+            await insert.ExecuteNonQueryAsync(token);
+            return id;
+        },token);
+    }
+
+    public Task DeleteCorporationBulletinAsync(long corporationId,long bulletinId,CancellationToken token = default)
+    {
+        if (corporationId <= 0 || bulletinId <= 0)
+            throw new CorporationError("CORPORATION_BULLETIN_INVALID");
+        return WriteAsync(async (connection,tx) =>
+        {
+            await using var command = Command(connection,tx,$"DELETE FROM {_schema}.corporation_bulletins WHERE corporation_id=$1 AND bulletin_id=$2",corporationId,bulletinId);
+            await command.ExecuteNonQueryAsync(token);
+            return true;
+        },token);
+    }
+
+    public Task UpdateCorporationBulletinOrderAsync(long corporationId,IReadOnlyList<long> bulletinIds,CancellationToken token = default)
+    {
+        if (corporationId <= 0 || bulletinIds.Any(id => id <= 0))
+            throw new CorporationError("CORPORATION_BULLETIN_INVALID");
+        var order = new Dictionary<long,int>();
+        for (var index = 0; index < bulletinIds.Count; index++)
+            order[bulletinIds[index]] = index;
+        if (order.Count == 0) return Task.CompletedTask;
+        return WriteAsync(async (connection,tx) =>
+        {
+            foreach (var (id,sortOrder) in order)
+            {
+                await using var command = Command(connection,tx,$"UPDATE {_schema}.corporation_bulletins SET sort_order=$3 WHERE corporation_id=$1 AND bulletin_id=$2",corporationId,id,sortOrder);
+                await command.ExecuteNonQueryAsync(token);
+            }
+            return true;
+        },token);
+    }
+
+    public Task<(long WarId,long BillId)> CreateWarDeclarationAsync(
+        long corporationId,long declaredByCharacterId,long againstId,long? warHqId,long declaredAtFiletime,
+        long startedAtFiletime,long dueFiletime,int billTypeId,decimal amount,long creditorId,string operationKey,
+        Func<NpgsqlConnection,NpgsqlTransaction,long,CancellationToken,Task<long>> createWar,
+        CancellationToken token = default)
+    {
+        if (corporationId <= 0 || declaredByCharacterId <= 0 || againstId <= 0 || againstId == corporationId ||
+            declaredAtFiletime <= 0 || startedAtFiletime <= declaredAtFiletime || dueFiletime <= declaredAtFiletime ||
+            billTypeId <= 0 || amount <= 0 || creditorId <= 0 || string.IsNullOrWhiteSpace(operationKey))
+            throw new CorporationError("CORPORATION_WAR_DECLARATION_INVALID");
+        ArgumentNullException.ThrowIfNull(createWar);
+        var fingerprint = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            corporationId,declaredByCharacterId,againstId,warHqId,billTypeId,amount,creditorId
+        });
+        return WriteAsync(async (connection,tx) =>
+        {
+            await using var corporation = Command(connection,tx,$"SELECT is_npc,deleted FROM {_schema}.corporations WHERE id=$1 FOR UPDATE",corporationId);
+            await using (var reader = await corporation.ExecuteReaderAsync(token))
+            {
+                if (!await reader.ReadAsync(token) || reader.GetBoolean(0) || reader.GetBoolean(1))
+                    throw new CorporationError("CORPORATION_NOT_FOUND");
+            }
+            await using (var prior = Command(connection,tx,$"SELECT bill_id,war_id,request_fingerprint FROM {_schema}.corporation_bills WHERE operation_key=$1 FOR UPDATE",operationKey))
+            await using (var reader = await prior.ExecuteReaderAsync(token))
+            {
+                if (await reader.ReadAsync(token))
+                {
+                    var priorBillId = reader.GetInt64(0);
+                    var priorWarId = reader.IsDBNull(1) ? 0 : reader.GetInt64(1);
+                    if (reader.GetString(2) != fingerprint || priorWarId <= 0)
+                        throw new CorporationError("CORPORATION_WAR_OPERATION_CONFLICT");
+                    return (priorWarId,priorBillId);
+                }
+            }
+            await using var insert = Command(connection,tx,$"""
+                INSERT INTO {_schema}.corporation_bills
+                    (bill_type_id,amount_isk,interest,debtor_id,creditor_id,due_filetime,external_id,external_id2,
+                     war_id,operation_key,request_fingerprint)
+                VALUES($1,$2,0,$3,$4,$5,$6,-1,NULL,$7,$8)
+                RETURNING bill_id
+                """,billTypeId,amount,corporationId,creditorId,dueFiletime,againstId,operationKey,fingerprint);
+            var billId = Convert.ToInt64(await insert.ExecuteScalarAsync(token));
+            var warId = await createWar(connection,tx,billId,token);
+            if (warId <= 0)
+                throw new CorporationError("CORPORATION_WAR_DECLARATION_FAILED");
+            await using var link = Command(connection,tx,$"UPDATE {_schema}.corporation_bills SET war_id=$2 WHERE bill_id=$1",billId,warId);
+            await link.ExecuteNonQueryAsync(token);
+            return (warId,billId);
+        },token);
+    }
+
+    public async Task<IReadOnlyList<CorporationBill>> CorporationBillsAsync(long corporationId,CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection,null,$"SELECT bill_id,bill_type_id,amount_isk,interest,debtor_id,creditor_id,due_filetime,external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key FROM {_schema}.corporation_bills WHERE debtor_id=$1 AND NOT paid ORDER BY due_filetime,bill_id",corporationId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        var bills = new List<CorporationBill>();
+        while (await reader.ReadAsync(token)) bills.Add(ReadCorporationBill(reader));
+        return bills;
+    }
+
+    public async Task<IReadOnlyList<CorporationBill>> CorporationBillsReceivableAsync(long corporationId,CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection,null,$"SELECT bill_id,bill_type_id,amount_isk,interest,debtor_id,creditor_id,due_filetime,external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key FROM {_schema}.corporation_bills WHERE creditor_id=$1 AND NOT paid ORDER BY due_filetime,bill_id",corporationId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        var bills = new List<CorporationBill>();
+        while (await reader.ReadAsync(token)) bills.Add(ReadCorporationBill(reader));
+        return bills;
+    }
+
+    public async Task<bool> PayCorporationBillAsync(long billId,long corporationId,long paidByOwnerId,int accountKey,long paidAtMs,CancellationToken token = default)
+    {
+        if (billId <= 0 || corporationId <= 0 || paidByOwnerId <= 0 || accountKey is < 1000 or > 1006 || paidAtMs < 0)
+            return false;
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+        await using var command = Command(connection,transaction,$"SELECT bill_id,bill_type_id,amount_isk,interest,debtor_id,creditor_id,due_filetime,external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key FROM {_schema}.corporation_bills WHERE bill_id=$1 AND debtor_id=$2 AND NOT paid FOR UPDATE",billId,corporationId);
+        CorporationBill bill;
+        await using (var reader = await command.ExecuteReaderAsync(token))
+        {
+            if (!await reader.ReadAsync(token))
+                return false;
+            bill = ReadCorporationBill(reader);
+        }
+        Eve.Wallet.WalletSettlement settlement;
+        try
+        {
+            settlement = await _wallets.TransferAsync(connection,transaction,
+                new Eve.Wallet.WalletAccount(corporationId,accountKey),new Eve.Wallet.WalletAccount(bill.CreditorId,1000),
+                bill.AmountIsk,17,"Bill payment",paidAtMs,$"corporation-bill:{billId}:payment","bill_payment",token);
+        }
+        catch (Exception error) when (error is Eve.Wallet.InsufficientFundsException or Eve.Wallet.MoneyLimitException or
+            Eve.Wallet.WalletNotFoundException or Eve.Wallet.WalletOperationConflictException)
+        {
+            return false;
+        }
+        var paidFiletime = checked((paidAtMs+11_644_473_600_000L)*10_000L);
+        await using var mark = Command(connection,transaction,$"UPDATE {_schema}.corporation_bills SET paid=true,paid_filetime=$2,paid_by_owner_id=$3 WHERE bill_id=$1 AND NOT paid",billId,paidFiletime,paidByOwnerId);
+        if (await mark.ExecuteNonQueryAsync(token) != 1)
+            throw new CorporationError("BILL_NOT_PAYABLE");
+        await transaction.CommitAsync(token);
+        if (!settlement.Replayed)
+            foreach (var entry in settlement.Entries.GroupBy(entry => (entry.OwnerId,entry.AccountKey)).Select(group => group.Last()))
+                _wallets.AnnounceCommitted(new Eve.Wallet.WalletBalanceChange(entry.OwnerId,entry.AccountKey,entry.Balance));
+        return true;
+    }
+
+    private static CorporationBill ReadCorporationBill(NpgsqlDataReader reader) =>
+        new(reader.GetInt64(0),reader.GetInt32(1),reader.GetDecimal(2),reader.GetDecimal(3),reader.GetInt64(4),
+            reader.GetInt64(5),reader.GetInt64(6),reader.GetInt64(7),reader.GetInt64(8),reader.GetInt64(9),
+            reader.GetBoolean(10),reader.IsDBNull(11) ? null : reader.GetInt64(11),
+            reader.IsDBNull(12) ? null : reader.GetInt64(12),reader.GetString(13));
+
+    private static CorporationBulletin ReadCorpBulletin(NpgsqlDataReader reader) =>
+        new(reader.GetInt64(0),reader.GetInt64(1),reader.GetInt64(2),reader.GetInt64(3),
+            reader.GetInt64(4),reader.GetInt64(5),reader.GetString(6),reader.GetString(7),reader.GetInt32(8));
+
+    private static void ValidateCorporationContactLabel(string name,int color)
+    {
+        if (name.Length is < 1 or > 100 || color is < 0 or > 16777215)
+            throw new CorporationError("CORPORATION_LABEL_INVALID");
+    }
+
+    private static bool IsCorporationLabelId(long labelId) =>
+        labelId > 0 && labelId <= 4611686018427387904L && (labelId & (labelId - 1)) == 0;
 }

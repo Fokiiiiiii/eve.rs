@@ -66,6 +66,7 @@ internal sealed partial class CharacterServicesComposition
               economyWallets,
               stationId => stations.Get(stationId)?.OwnerId,
               now)];
+        services = [.. services, allianceRegistry];
         return Task.CompletedTask;
     }
 }

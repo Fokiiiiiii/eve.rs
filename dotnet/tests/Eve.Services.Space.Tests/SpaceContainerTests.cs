@@ -65,11 +65,11 @@ public class SpaceContainerTests
         Assert.Equal([Events.Number(InventoryWire.Id(flying.Stack))], jettisoned.Items.Select(Events.Number));
         Assert.Empty(launched.Items);
         // the scene is asked for a can ahead of the ship, then told something is in it
-        var placing = Assert.IsType<SimPlaceContainer>(rig.Sim.Heard[heard]);
+        var placing = Assert.IsType<SimPlaceContainer>(rig.Sim.Heard.ToArray()[heard]);
         Assert.Equal(((ulong)flying.Session.SessionId, 23, "Cargo Container", 1176, 275.0), (placing.SessionId, placing.Kind.TypeId, placing.Kind.Name, placing.Kind.GraphicId, placing.Distance));
         Assert.Equal((flying.Character.ShipId, flying.Character.CharacterId), (placing.LauncherId, placing.Credit.CharacterId));
         Assert.Equal(0, placing.Credit.WarFactionId);
-        Assert.Equal(new SimChangeWreck((ulong)flying.Session.SessionId, placing.ContainerId, false), rig.Sim.Heard[heard + 1]);
+        Assert.Equal(new SimChangeWreck((ulong)flying.Session.SessionId, placing.ContainerId, false), rig.Sim.Heard.ToArray()[heard + 1]);
         // the can is an item in the solar system and the stack is in it with the id it had
         var can = (await rig.Items.GetAsync(placing.ContainerId))!;
         Assert.Equal((23, flying.Character.CharacterId, system, 0), (can.TypeId, can.OwnerId, can.LocationId, can.Flag));

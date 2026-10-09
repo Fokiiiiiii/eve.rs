@@ -106,6 +106,131 @@ public static class CorporationWire
             ("header",ShareholderDescriptor.Header),("RowClass",new PyToken("util.Row")),
             ("lines",new PyList([.. holdings.Select(holding => (PyValue)new PyPackedRow(ShareholderDescriptor,
                 [new PyInt(holding.ShareholderId),new PyInt(holding.CorporationId),new PyInt(holding.Shares)]))]))));
+
+public static PyValue MemberTrackingCRowset(IEnumerable<PyValue[]> rows) =>
+          new PyObject(new PyStr("carbon.common.script.sys.crowset.CRowset"),Py.Dict(
+              ("header",MemberTrackingDescriptor.Header),("RowClass",new PyToken("util.Row")),
+              ("lines",new PyList([.. rows.Select(row => (PyValue)new PyPackedRow(MemberTrackingDescriptor,row))]))));
+
+  private static readonly Descriptor BulletinDescriptor = DescriptorOf(
+      ("bulletinID",0x03),("ownerID",0x03),("createCharacterID",0x03),("createDateTime",0x40),
+      ("editCharacterID",0x03),("editDateTime",0x40),("title",0x82),("body",0x82),("sortOrder",0x03));
+
+  public static PyValue BulletinRow(CorporationBulletin bulletin) =>
+      new PyPackedRow(BulletinDescriptor,
+      [
+          new PyInt(bulletin.BulletinId),new PyInt(bulletin.CorporationId),new PyInt(bulletin.CreateCharacterId),
+          new PyLong(bulletin.CreateDateTime),new PyInt(bulletin.EditCharacterId),new PyLong(bulletin.EditDateTime),
+          new PyWString(bulletin.Title),new PyWString(bulletin.Body),new PyInt(bulletin.SortOrder)
+      ]);
+
+  public static PyValue BulletinsCRowset(IEnumerable<CorporationBulletin> bulletins) =>
+      new PyObject(new PyStr("carbon.common.script.sys.crowset.CRowset"),Py.Dict(
+          ("header",BulletinDescriptor.Header),("RowClass",new PyToken("util.Row")),
+          ("lines",new PyList([.. bulletins.Select(BulletinRow)]))));
+
+  private static readonly Descriptor KillmailDescriptor = DescriptorOf(
+      ("killID",0x03),("solarSystemID",0x03),("victimCharacterID",0x03),("victimCorporationID",0x03),
+      ("victimAllianceID",0x03),("victimFactionID",0x03),("victimShipTypeID",0x03),("finalCharacterID",0x03),
+      ("finalCorporationID",0x03),("finalAllianceID",0x03),("finalFactionID",0x03),("finalShipTypeID",0x03),
+      ("finalWeaponTypeID",0x03),("killBlob",0x82),("killTime",0x40),("victimDamageTaken",0x03),
+      ("finalSecurityStatus",0x05),("finalDamageDone",0x03),("moonID",0x03),("warID",0x03),
+      ("iskLost",0x06),("bountyClaimed",0x06),("loyaltyPoints",0x03),("iskDestroyed",0x06),
+      ("killRightSupplied",0x03));
+
+  public static PyValue KillmailCRowset(IEnumerable<PyValue> records) =>
+      new PyObject(new PyStr("carbon.common.script.sys.crowset.CRowset"),Py.Dict(
+          ("header",KillmailDescriptor.Header),("RowClass",new PyToken("util.Row")),
+          ("lines",new PyList([.. records.Select(KillmailRow)]))));
+
+  private static PyValue KillmailRow(PyValue record)
+  {
+      PyValue Value(string key)
+      {
+          if (record is PyDict dictionary)
+              foreach (var entry in dictionary.Entries)
+                  if (entry.Key is PyStr name && name.Value == key)
+                      return entry.Value;
+          return PyNone.Instance;
+      }
+      long Number(string key) => KillmailLong(Value(key));
+      PyValue Positive(string key) => Number(key) is var value && value > 0 ? new PyInt(value) : PyNone.Instance;
+      PyValue Integer(string key) => new PyInt(Number(key));
+      PyValue Money(string key) => Py.Number(KillmailReal(Value(key)));
+      return new PyPackedRow(KillmailDescriptor,
+      [
+          Positive("killID"),Positive("solarSystemID"),Positive("victimCharacterID"),Positive("victimCorporationID"),
+          Positive("victimAllianceID"),Positive("victimFactionID"),Positive("victimShipTypeID"),Positive("finalCharacterID"),
+          Positive("finalCorporationID"),Positive("finalAllianceID"),Positive("finalFactionID"),Positive("finalShipTypeID"),
+          Positive("finalWeaponTypeID"),new PyWString(KillmailText(Value("killBlob"))),new PyLong(KillmailFiletime(Value("killTime"))),
+          new PyInt(Math.Max(0,Number("victimDamageTaken"))),Py.Number(KillmailReal(Value("finalSecurityStatus"))),
+          new PyInt(Math.Max(0,Number("finalDamageDone"))),Positive("moonID"),Positive("warID"),
+          Money("iskLost"),Money("bountyClaimed"),Integer("loyaltyPoints"),Money("iskDestroyed"),Positive("killRightSupplied")
+      ]);
+  }
+
+  private static long KillmailLong(PyValue value) => value switch
+  {
+      PyInt integer => integer.Value,
+      PyLong integer => integer.Value,
+      PyReal real when double.IsFinite(real.Value) && real.Value >= long.MinValue && real.Value <= long.MaxValue => (long)real.Value,
+      PyStr text when long.TryParse(text.Value,System.Globalization.NumberStyles.Integer,System.Globalization.CultureInfo.InvariantCulture,out var number) => number,
+      PyWString text when long.TryParse(text.Value,System.Globalization.NumberStyles.Integer,System.Globalization.CultureInfo.InvariantCulture,out var number) => number,
+      _ => 0
+  };
+
+  private static double KillmailReal(PyValue value) => value switch
+  {
+      PyReal real when double.IsFinite(real.Value) => real.Value,
+      PyInt integer => integer.Value,
+      PyLong integer => integer.Value,
+      PyStr text when double.TryParse(text.Value,System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out var number) && double.IsFinite(number) => number,
+      PyWString text when double.TryParse(text.Value,System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out var number) && double.IsFinite(number) => number,
+      _ => 0
+  };
+
+  private static string KillmailText(PyValue value) => value switch
+  {
+      PyStr text => text.Value,
+      PyWString text => text.Value,
+      _ => ""
+  };
+
+  private static long KillmailFiletime(PyValue value)
+  {
+      var text = KillmailText(value);
+      var number = KillmailLong(value);
+      if (number > 0)
+          return number > 100_000_000_000_000L ? number : Py.FileTimeFromUnixMs(number);
+      if (DateTimeOffset.TryParse(text,System.Globalization.CultureInfo.InvariantCulture,
+              System.Globalization.DateTimeStyles.AssumeUniversal,out var timestamp))
+          return Py.FileTimeFromUnixMs(timestamp.ToUnixTimeMilliseconds());
+      return DateTime.UtcNow.ToFileTimeUtc();
+  }
+
+    public static PyValue RecruitmentAdRow(CorporationRecruitmentAd ad,long? allianceId,int memberCount) =>
+        new PyObject(new PyStr("util.Row"),Py.Dict(
+            ("header",new PyList([
+                new PyStr("adID"),new PyStr("corporationID"),new PyStr("allianceID"),new PyStr("channelID"),
+                new PyStr("typeMask"),new PyStr("langMask"),new PyStr("description"),new PyStr("title"),
+                new PyStr("createDateTime"),new PyStr("expiryDateTime"),new PyStr("hourMask1"),
+                new PyStr("minSP"),new PyStr("otherMask"),new PyStr("memberCount")
+            ])),
+            ("line",new PyList([
+                new PyInt(ad.Id),new PyInt(ad.CorporationId),Id(allianceId),new PyInt(ad.ChannelId),
+                new PyInt(ad.TypeMask),new PyInt(ad.LangMask),new PyWString(ad.Description),new PyWString(ad.Title),
+                new PyLong(ad.CreateFiletime),new PyLong(ad.ExpiryFiletime),new PyInt(ad.HourMask1),
+                new PyInt(ad.MinSP),new PyInt(ad.OtherMask),new PyInt(memberCount)
+            ]))));
+private static readonly (string Name,int Type)[] MemberTrackingColumns =
+      [
+          ("characterID",3),("corporationID",3),("title",0x82),("roles",0x14),("grantableRoles",0x14),
+          ("baseID",3),("startDateTime",0x40),("logonDateTime",0x40),("logoffDateTime",0x40),("lastOnline",3),
+          ("locationID",0x14),("shipTypeID",3),("rolesAtHQ",0x14),("grantableRolesAtHQ",0x14),
+          ("rolesAtBase",0x14),("grantableRolesAtBase",0x14),("rolesAtOther",0x14),("grantableRolesAtOther",0x14),
+          ("factionID",3)
+      ];
+      private static readonly Descriptor MemberTrackingDescriptor = DescriptorOf(MemberTrackingColumns);
     private static readonly Descriptor MemberDescriptor = DescriptorOf(
         ("characterID",3),("corporationID",3),("divisionID",3),("squadronID",3),("title",130),("roles",64),("grantableRoles",64),
         ("startDateTime",64),("baseID",3),("rolesAtHQ",64),("grantableRolesAtHQ",64),("rolesAtBase",64),("grantableRolesAtBase",64),

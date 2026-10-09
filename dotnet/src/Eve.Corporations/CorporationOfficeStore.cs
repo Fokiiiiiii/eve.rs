@@ -249,6 +249,7 @@ public sealed class CorporationOfficeStore
         await using var billReader = await billCommand.ExecuteReaderAsync(cancellationToken);
         if (!await billReader.ReadAsync(cancellationToken))
         {
+            await billReader.CloseAsync();
             await transaction.RollbackAsync(cancellationToken);
             return false;
         }

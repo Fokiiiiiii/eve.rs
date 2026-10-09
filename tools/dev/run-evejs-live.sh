@@ -34,7 +34,7 @@ echo "generating the reference server's data from $SDE"
 node "$EVEJS/tools/DatabaseCreator/database-creator.js" --sde-dir "$SDE" --out "$DATA/gameStore/data" --force
 
 echo "starting the reference server (data root $DATA)"
-( cd "$EVEJS/server" && EVEJS_DATA_ROOT="$DATA" EVEJS_GAMESTORE_DATA_DIR="$DATA/gameStore/data" node index.js >"$LOG" 2>&1 ) &
+( cd "$EVEJS/server" && exec env EVEJS_DATA_ROOT="$DATA" EVEJS_GAMESTORE_DATA_DIR="$DATA/gameStore/data" node index.js >"$LOG" 2>&1 ) &  # exec: the kill in cleanup must reach node
 server_pid=$!
 
 # the reference server loads every table before it listens: about five minutes on a cold start

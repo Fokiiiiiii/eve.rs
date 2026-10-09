@@ -32,11 +32,12 @@ Use this whenever a change touches client-visible RPCs or notifications. The ref
 2. Run the same scenario against eve.rs (the front is on 26100; the proxy is on 26200 again):
    ```
    tools/mitm/mitm capture --upstream 127.0.0.1:26100 --listen 127.0.0.1:26200 --out captures/eve-rs-live.jsonl &
-   EVE_LIVE_HOST=127.0.0.1:26200 EVE_RUN='cd tools/headless-client && .venv/bin/python -m pytest -q tests/test_live.py' \
-     tools/dev/run-eve-live.sh
+   EVE_DEV_AUTO_CREATE=1 EVE_LIVE_HOST=127.0.0.1:26200 \
+     EVE_RUN='cd tools/headless-client && .venv/bin/python -m pytest -q tests/test_live.py' tools/dev/run-eve-live.sh
    ```
    `EVE_RUN` replaces the default test list of `run-eve-live.sh` (which is larger than the EVE.js run); both
-   sides run `test_live.py`. To compare a larger scenario, give the same `pytest` selection to both sides.
+   sides run `test_live.py`. `EVE_DEV_AUTO_CREATE=1` lets the host create the test account on first use (the host
+   refuses unknown accounts by default); EVE.js does this already. To compare a larger scenario, give the same `pytest` selection to both sides.
 3. Compare:
    ```
    tools/mitm/mitm diff captures/evejs-live.jsonl captures/eve-rs-live.jsonl --ignore-volatile
@@ -92,16 +93,19 @@ Values use evecli's description: `{"$long": n}`, `{"$tuple": [...]}`, `{"$dict":
 
 ## What `diff` compares
 
-Both captures are reduced to the same list of MachoNet events, in capture order: calls (`call`), results
-(`result`), errors (`error`), notifications, session changes. Each result or error is matched to its call by
-connection and call id. Pings and the handshake are not compared.
+Two streams are compared, each in capture order: the **client calls** (every `CallReq`), and the **server events**
+(results, errors, notifications, session changes). Results and errors take the service and method of their call,
+matched by connection and call id. Pings and the handshake are not compared.
 
-For the first position where the two lists differ, `diff` reports the kind:
+The two streams are compared separately, not interleaved: a server notification can race the client's first call on
+a new connection, and that order depends on timing. For the first position where a stream differs, `diff` reports
+the stream and the kind:
 
 1. **call order**: a different service or method (or a result that answers a different call).
-2. **argument / result shape**: the same call with different structure (tuple lengths, dictionary keys, types).
+2. **argument / result / notification shape**: the same event with different structure (tuple lengths, dictionary
+   keys, types).
 3. **value**: the same shape, different values.
-4. **length**: one side has more events.
+4. **length**: one stream has more events.
 
 `--ignore-volatile` does not compare what legitimately differs between runs and servers:
 
@@ -109,13 +113,14 @@ For the first position where the two lists differ, `diff` reports the kind:
   `user_clientid`, `callID`, `callId`, `time`, `timestamp`, `fileTime`, `now`, `seed`, `randomSeed`, `nonce`,
   `serverTime` are compared by type only;
 - the result of `GetTime` and `GetCurrentTime` is compared by shape only;
-- bound-object ids (`OID+n`, `OID-n`) in a service address are masked to `OID`.
+- bound-object ids (`OID+n`, `OID-n`) in a service address are masked to `OID`;
+- the session id that leads a `SessionChangeNotification` or `SessionInitialStateNotification` payload.
 
 Call ids are never compared; they are matched, not checked. Shape and order still are: a volatile key does not
-hide a different structure.
+hide a different structure. The first element of a session notification (the session id) is masked too.
 
-Limit: events are compared in capture order. If two servers answer pipelined calls in a different order, the
-first divergence is reported at the first reordered event even when every answer is right. Look at the
+Limit: within a stream, the order is the capture order. If a server answers pipelined calls in a different order,
+the first divergence is reported at the first reordered event even when every answer is right. Look at the
 reported kind before concluding.
 
 ## What it covers on the wire
@@ -129,24 +134,29 @@ reported kind before concluding.
 
 ## Verified and not verified
 
-Verified here (run in this repository):
+Verified (run in this repository, this session):
 
-- `tools/headless-client/tests/test_mitm.py` (14 tests, passing): every packet of `oracle/fixtures/services/
+- `tools/headless-client/tests/test_mitm.py` (15 tests, passing): every packet of `oracle/fixtures/services/
   dispatch.json` decodes and survives an encode/decode round trip with the same meaning; frames split across reads
   and zlib-wrapped frames are reassembled; an undecodable payload is logged as hex and the stream goes on; the
   proxy forwards the bytes exactly in both directions; a real login (handshake) and a `GetTime` call through the
-  proxy to the headless `MockServer` are decoded and answered; diff rules (order, shape, value, volatile masking)
-  behave as described above.
-- The CLI end to end: `capture` in front of the mock server with a login and a call, then `show` and `diff` of
-  two runs (identical with `--ignore-volatile`, one value divergence without it).
+  proxy to the headless `MockServer` are decoded and answered; the diff rules behave as described above.
+- The CLI end to end against the mock server (`capture`, then `show`, then `diff` of two runs).
+- The recipe, both sides, with `tests/test_live.py`:
+  - EVE.js (`evejs-v0.12.9`, `tools/dev/run-evejs-live.sh`, its SDE): 4 passed, 1 skipped (the strict-password test).
+  - eve.rs (`tools/dev/run-eve-live.sh` with `EVE_RUN`, and `EVE_DEV_AUTO_CREATE=1` because the test account is
+    created on first use): 4 passed, 1 skipped; the same run with `EVE_STRICT_RPC=1` also passed.
+  - `mitm diff` of the EVE.js capture against the eve.rs capture: the client calls match; the first server
+    divergence is the `SessionInitialStateNotification` payload: EVE.js omits `maxSessionTime` and `inDetention`,
+    and eve.rs sends them. This is a real difference and is not fixed by this change.
+  - `mitm diff` of the eve.rs default run against the `EVE_STRICT_RPC=1` run: the first divergence is the
+    unknown-service call, which strict mode answers with an error packet carrying a correlation id, as designed.
 
 Not verified:
 
-- The real graphical client through the proxy. It cannot run on this machine, so the handshake and the call
-  shapes are checked only against evecli and the recorded reference fixtures.
-- The reference recipe itself against EVE.js and eve.rs. The steps are the existing harness commands with the
-  proxy in front, but a full EVE.js capture needs Node, the SDE and about five minutes of boot, and it was not run
-  for this change.
+- The real graphical client through the proxy. It cannot run on this machine, so the handshake and the call shapes
+  are checked only against evecli and the recorded reference fixtures.
+- The other test files of the headless suite through the proxy: only `test_live.py` was run through it.
 
 ## Known gaps
 

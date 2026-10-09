@@ -223,9 +223,18 @@ def test_session_ids_and_times_only_count_without_ignore_volatile(tmp_path):
     assert diff(tmp_path, a, b, ignore=False) == 1
 
 
+def test_the_session_id_that_leads_a_session_notification_is_volatile(tmp_path):
+    def initial(session_id):
+        return {"seq": 1, "dir": "s2c", "conn": 1, "stage": "macho", "type": "SessionInitialStateNotification",
+                "service": None, "call_id": None, "payload": {"$tuple": [{"$long": session_id}, 5, {"$dict": [["userid", 1]]}]}}
+
+    assert diff(tmp_path, [initial(1)], [initial(2)], ignore=True) == 0
+    assert diff(tmp_path, [initial(1)], [initial(2)], ignore=False) == 1
+
+
 def test_get_time_values_and_bound_object_ids_are_volatile(tmp_path):
-    a = [call(1, "GetTime"), result(2, {"$long": 100}), call(3, "Do", service="OID+1"), result(4, {"$none": None}, service="OID+1")]
-    b = [call(1, "GetTime"), result(2, {"$long": 999}), call(3, "Do", service="OID+7"), result(4, {"$none": None}, service="OID+7")]
+    a = [call(1, "GetTime"), result(2, {"$long": 100}), call(3, "Do", service="OID+1", call_id=2), result(4, {"$none": None}, service="OID+1", call_id=2)]
+    b = [call(1, "GetTime"), result(2, {"$long": 999}), call(3, "Do", service="OID+7", call_id=2), result(4, {"$none": None}, service="OID+7", call_id=2)]
     assert diff(tmp_path, a, b, ignore=True) == 0
     assert diff(tmp_path, a, b, ignore=False) == 1
 

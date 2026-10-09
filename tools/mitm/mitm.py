@@ -39,6 +39,7 @@ VOLATILE_KEYS = frozenset({
     "callId", "time", "timestamp", "fileTime", "now", "seed", "randomSeed", "nonce", "serverTime",
 })
 VOLATILE_METHODS = frozenset({"GetTime", "GetCurrentTime"})
+SESSION_TYPES = frozenset({"SessionChangeNotification", "SessionInitialStateNotification"})
 
 
 def _text(value):
@@ -295,36 +296,46 @@ def load(path):
         return [json.loads(line) for line in source if line.strip()]
 
 
+def _normal_service(name, ignore_volatile):
+    return re.sub(r"OID[+-]\d+", "OID", name) if (ignore_volatile and name) else name
+
+
 def events(records, ignore_volatile):
-    """The MachoNet events a diff compares, in capture order: (category, service, method, value)."""
-    pending = {}
-    out = []
+    """Two streams, each in capture order: the calls the client made, and what the server sent.
+
+    The two directions are not interleaved: a server notification can race the client's first call on a new
+    connection, and that order depends on timing. Results and errors take the service and method of their call."""
+    calls = {}
+    for rec in records:
+        if rec.get("stage") == "macho" and rec["type"] == "CallReq":
+            calls[(rec.get("conn"), rec.get("call_id"))] = (rec.get("service"), rec.get("method"))
+    client, server = [], []
     for rec in records:
         if rec.get("stage") != "macho" or rec["type"].startswith("Ping"):
             continue
-        kind, service, method = rec["type"], rec.get("service"), rec.get("method")
-        if ignore_volatile and service:
-            service = re.sub(r"OID[+-]\d+", "OID", service)
-        key = (rec.get("conn"), rec.get("call_id"))
+        kind, key = rec["type"], (rec.get("conn"), rec.get("call_id"))
         if kind == "CallReq":
-            pending[key] = (service, method)
-            out.append(("call", service, method, rec.get("args")))
+            client.append(("call", _normal_service(rec.get("service"), ignore_volatile), rec.get("method"), rec.get("args")))
         elif kind in ("CallRsp", "ErrorResponse"):
-            service, method = pending.pop(key, (service, None))
-            category = "result" if kind == "CallRsp" else "error"
+            service, method = calls.get(key, (rec.get("service"), None))
             value = rec.get("result") if kind == "CallRsp" else rec.get("error")
-            if ignore_volatile and method in VOLATILE_METHODS:
+            if ignore_volatile and method in VOLATILE_METHODS and kind == "CallRsp":
                 value = shape(value)
-            out.append((category, service, method, value))
+            category = "result" if kind == "CallRsp" else "error"
+            server.append((category, _normal_service(service, ignore_volatile), method, value))
         elif kind == "Notification":
-            out.append(("notification", service, method, rec.get("args")))
+            server.append(("notification", _normal_service(rec.get("service"), ignore_volatile), rec.get("method"), rec.get("args")))
         else:
-            out.append((kind, service, None, rec.get("payload")))
-    return out
+            value = rec.get("payload")
+            if ignore_volatile and kind in SESSION_TYPES and isinstance(value, dict) and value.get("$tuple"):
+                # the payload leads with the session id: (sessionID, changeKind, changes)
+                value = {"$tuple": [shape(value["$tuple"][0]), *value["$tuple"][1:]]}
+            server.append((kind, None, None, value))
+    return client, server
 
 
-def compare(reference, candidate, ignore_volatile):
-    """The first divergence of two event lists, or None: call order, then argument/result shape, then values."""
+def _first_divergence(reference, candidate, ignore_volatile):
+    """The first divergence of two event lists, or None: call order, then shape, then values."""
     volatile = VOLATILE_KEYS if ignore_volatile else frozenset()
     for index, (a, b) in enumerate(zip(reference, candidate)):
         if a[:3] != b[:3]:
@@ -336,21 +347,34 @@ def compare(reference, candidate, ignore_volatile):
             return index, f"{a[0]} value", found[:10]
     if len(reference) != len(candidate):
         longer = "reference" if len(reference) > len(candidate) else "candidate"
-        return min(len(reference), len(candidate)), "length", [f"{longer} has {max(len(reference), len(candidate)) - min(len(reference), len(candidate))} more events"]
+        extra = abs(len(reference) - len(candidate))
+        return min(len(reference), len(candidate)), "length", [f"{longer} has {extra} more events"]
+    return None
+
+
+def compare(reference, candidate, ignore_volatile):
+    """The first divergence in the client's calls, else in the server's events: (stream, index, kind, details, a, b)."""
+    for stream, a, b in (("client calls", reference[0], candidate[0]), ("server events", reference[1], candidate[1])):
+        found = _first_divergence(a, b, ignore_volatile)
+        if found:
+            index, kind, details = found
+            at_a = a[index] if index < len(a) else None
+            at_b = b[index] if index < len(b) else None
+            return stream, index, kind, details, at_a, at_b, max(len(a), len(b))
     return None
 
 
 def cmd_diff(args):
     reference, candidate = events(load(args.reference), args.ignore_volatile), events(load(args.candidate), args.ignore_volatile)
-    found = compare(reference, candidate, args.ignore_volatile)
     mode = "volatile fields ignored" if args.ignore_volatile else "exact values"
+    found = compare(reference, candidate, args.ignore_volatile)
     if found is None:
-        print(f"identical: {len(reference)} MachoNet events in call order, {mode}")
+        print(f"identical: {len(reference[0])} client calls and {len(reference[1])} server events, {mode}")
         return 0
-    index, kind, details = found
-    print(f"first divergence at event {index} of {max(len(reference), len(candidate))} ({kind}; {mode})")
-    print(f"  reference: {_brief(reference[index], 400) if index < len(reference) else '(none)'}")
-    print(f"  candidate: {_brief(candidate[index], 400) if index < len(candidate) else '(none)'}")
+    stream, index, kind, details, at_a, at_b, total = found
+    print(f"first divergence at event {index} of {total} in {stream} ({kind}; {mode})")
+    print(f"  reference: {_brief(at_a, 400) if at_a is not None else '(none)'}")
+    print(f"  candidate: {_brief(at_b, 400) if at_b is not None else '(none)'}")
     for line in details:
         print(f"  - {line}")
     return 1

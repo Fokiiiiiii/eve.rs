@@ -1,4 +1,4 @@
 # The client itself is standard library only. pycryptodome is used by the
 # optional encrypted-transport path (AES-256-CBC), which the Placebo handshake
 # does not need.
-pycryptodome>=3.23.0
+pycryptodome>=3.24.0

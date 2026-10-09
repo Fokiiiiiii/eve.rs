@@ -187,7 +187,7 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             Ok(Action::Bomb { ball, kind, lifetime_ms, blast_radius, damage, ecm, neutralize })
         }
         29 => {
-            // the Nexus invulnerability core (protocol 42): the reach of its fleet effect in metres
+            // the Nexus invulnerability core (protocol 43): the reach of its fleet effect in metres
             let range_meters = reader.f64()?;
             if !range_meters.is_finite() || range_meters < 0.0 {
                 return Err(DecodeError::BadValue("panic action"));
@@ -195,7 +195,7 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             Ok(Action::Panic { range_meters })
         }
         28 => {
-            // a command burst (protocol 42): the reach in metres; its buffs are the host's, read from the charge when it settles
+            // a command burst (protocol 43): the reach in metres; its buffs are the host's, read from the charge when it settles
             let range_meters = reader.f64()?;
             if !range_meters.is_finite() || range_meters < 0.0 {
                 return Err(DecodeError::BadValue("command burst action"));

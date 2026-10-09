@@ -3449,7 +3449,7 @@ fn a_scan_whose_target_leaves_its_reach_by_the_cycle_end_stops_and_asks_the_host
     assert_eq!(ended(&out), vec![2], "the scan stops as its target is lost: {out:?}");
 }
 
-/// A command burst's effect (protocol 42): a Shield Command Burst I's cycle of one minute, reaching `range` metres, charged with two rounds, one a cycle.
+/// A command burst's effect (protocol 43): a Shield Command Burst I's cycle of one minute, reaching `range` metres, charged with two rounds, one a cycle.
 fn burst(range: f64) -> Effect {
     let mut effect = repairer(Layer::Shield, 0.0, Applies::CycleEnd);
     effect.module_type = 42529;
@@ -3591,7 +3591,7 @@ fn a_ships_buffs_are_told_to_its_pilot_as_on_dbuff_updated_with_the_time_left() 
     assert!(scene.set_buffs(A, ship + 1, Vec::new(), t).is_empty());
 }
 
-/// A P.A.N.I.C. (type 42522, protocol 42): one cycle of its duration (240 s), reaching `range` metres, with no capacitor and no charge.
+/// A P.A.N.I.C. (type 42522, protocol 43): one cycle of its duration (240 s), reaching `range` metres, with no capacitor and no charge.
 fn panic_effect(range: f64) -> Effect {
     let mut effect = repairer(Layer::Shield, 0.0, Applies::CycleEnd);
     effect.module_type = 42522;

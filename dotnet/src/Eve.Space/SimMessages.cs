@@ -302,7 +302,7 @@ public sealed record SimAdjustCharge(ulong RequestId, ulong SessionId, long Modu
 public sealed record SimBuffEntry(int CollectionId, double Value, double RemainingMs);
 
 /// <summary>
-/// The timed buffs of a ship of this session (protocol 42, track C6): the host sends them after each change, and the simulation tells the client <c>OnDbuffUpdated</c>
+/// The timed buffs of a ship of this session (protocol 43, track C6): the host sends them after each change, and the simulation tells the client <c>OnDbuffUpdated</c>
 /// with them. An empty list clears the client's buffs. Nothing is answered.
 /// </summary>
 public sealed record SimBuffState(ulong SessionId, long ShipId, IReadOnlyList<SimBuffEntry> Entries) : SimMessage;
@@ -364,10 +364,10 @@ public static class SimModuleWorkCommands
     /// <summary>A Ship Scanner's cycle ended with its target in reach: the host reveals the target's fitted hardware (protocol 40). It carries no mining numbers.</summary>
     public const byte ScanShip = 11;
 
-    /// <summary>A command burst's cycle ended: the host applies the burst's buffs to the ships it reaches (<see cref="SimModuleWorkCycle.Recipients"/>), protocol 42.</summary>
+    /// <summary>A command burst's cycle ended: the host applies the burst's buffs to the ships it reaches (<see cref="SimModuleWorkCycle.Recipients"/>), protocol 43.</summary>
     public const byte Burst = 12;
 
-    /// <summary>A P.A.N.I.C.'s start: the host grants the ships it reaches (<see cref="SimModuleWorkCycle.Recipients"/>) their buffs before the effect starts (protocol 42).</summary>
+    /// <summary>A P.A.N.I.C.'s start: the host grants the ships it reaches (<see cref="SimModuleWorkCycle.Recipients"/>) their buffs before the effect starts (protocol 43).</summary>
     public const byte Panic = 13;
 }
 
@@ -463,13 +463,13 @@ public abstract record SimAction
     public sealed record CynoField(SimDeployable Ball, double LifetimeMs) : SimAction;
 
     /// <summary>
-    /// A command burst's cycle (tag 28, protocol 42): non-targeted. At the cycle's end the simulation sends the host the ships within <paramref name="RangeMeters"/> (plus one
+    /// A command burst's cycle (tag 28, protocol 43): non-targeted. At the cycle's end the simulation sends the host the ships within <paramref name="RangeMeters"/> (plus one
     /// metre) as a work cycle (<see cref="SimModuleWorkCommands.Burst"/>) and parks until the host answers; the host reads the buffs from the charge and the module.
     /// </summary>
     public sealed record CommandBurst(double RangeMeters) : SimAction;
 
     /// <summary>
-    /// The Pulse Activated Nexus Invulnerability Core (tag 29, protocol 42): non-targeted, one cycle of its duration. It needs an asteroid the pilot holds the lock on, and
+    /// The Pulse Activated Nexus Invulnerability Core (tag 29, protocol 43): non-targeted, one cycle of its duration. It needs an asteroid the pilot holds the lock on, and
     /// parks its start until the host grants the ships of its fleet in <paramref name="RangeMeters"/> (plus one metre) their buffs (<see cref="SimModuleWorkCommands.Panic"/>).
     /// </summary>
     public sealed record Panic(double RangeMeters) : SimAction;

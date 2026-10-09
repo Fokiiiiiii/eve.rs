@@ -36,7 +36,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 42;
+pub const PROTOCOL_VERSION: u16 = 43;
 
 /// The message kinds.
 pub mod kind;
@@ -509,7 +509,7 @@ pub enum Message {
         /// The ships a command burst reaches (`WORK_BURST` only, empty for every other command): the ships of the scene within reach, the host decides.
         recipients: Vec<i64>,
     },
-    /// The timed buffs of a ship of this session (a command burst's, protocol 42): the host sends them after each change, the simulation tells the client
+    /// The timed buffs of a ship of this session (a command burst's, protocol 43): the host sends them after each change, the simulation tells the client
     /// `OnDbuffUpdated` with them. An empty list clears the client's buffs. Nothing is answered.
     BuffState {
         session_id: u64,

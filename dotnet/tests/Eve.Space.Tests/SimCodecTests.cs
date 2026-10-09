@@ -23,7 +23,7 @@ public class SimCodecTests
 
     private static long Wide(JsonNode node, string field) => long.Parse((string)node[field]!, CultureInfo.InvariantCulture);
 
-    /// <summary>The ships a command burst's cycle reaches (protocol 42): the fixture's ids are strings, as the other ids are; none for another command.</summary>
+    /// <summary>The ships a command burst's cycle reaches (protocol 43): the fixture's ids are strings, as the other ids are; none for another command.</summary>
     private static IReadOnlyList<long>? RecipientsOf(JsonNode node) =>
         (node["recipients"] as JsonArray)?.Select(ship => long.Parse((string)ship!, CultureInfo.InvariantCulture)).ToArray();
 

@@ -8,7 +8,7 @@ namespace Eve.Services.Space;
 public sealed partial class SpaceContainers
 {
     /// <summary>
-    /// The settlement of one command burst's cycle (track C6, protocol 42). The pilot must run the burst in its ship in space, and the burst must carry buffs. The
+    /// The settlement of one command burst's cycle (track C6, protocol 43). The pilot must run the burst in its ship in space, and the burst must carry buffs. The
     /// ships the simulation found in reach are the candidates, with the source's own; the host keeps those of the source's fleet, at most
     /// <see cref="BurstRecipients.MaxRecipients"/> (<see cref="BurstRecipients"/>). Each of them has the burst's buffs for the buff duration, and its pilot is sent the
     /// ship and the buff state.
@@ -77,7 +77,7 @@ public sealed partial class SpaceContainers
     }
 
     /// <summary>
-    /// The grant of a P.A.N.I.C. (track C6, protocol 42): the core starts when the host has given its fleet the buffs. The source is always granted; another ship the
+    /// The grant of a P.A.N.I.C. (track C6, protocol 43): the core starts when the host has given its fleet the buffs. The source is always granted; another ship the
     /// simulation found in reach is granted when it is the source's fleet's and a subcapital mining or hauling ship (<see cref="PanicGroups"/>). The grant lasts the
     /// core's duration (panicDuration), and a granted ship's running modules that its buffs block (activationBlocked) are stopped.
     /// </summary>

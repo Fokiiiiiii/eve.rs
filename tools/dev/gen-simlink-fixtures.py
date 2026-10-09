@@ -144,10 +144,10 @@ def action(a):
     if kind == "warpProbe":
         return bytes([19]) + deployable(a["ball"]) + struct.pack("<2d", a["range"], a["lifetimeMs"])
     # a cynosural field (tag 27): the field's ball and its lifetime (the field type's explosionDelay); it is lit at the end of the generator's cycle
-    # the SimAction tag 28 (protocol 42): a command burst's reach in metres (its buffs are the host's, read from the charge when it settles)
+    # the SimAction tag 28 (protocol 43): a command burst's reach in metres (its buffs are the host's, read from the charge when it settles)
     if kind == "commandBurst":
         return bytes([28]) + struct.pack("<d", a["rangeMeters"])
-    # the SimAction tag 29 (protocol 42, track C6): the Pulse Activated Nexus Invulnerability Core's fleet reach, in metres
+    # the SimAction tag 29 (protocol 43, track C6): the Pulse Activated Nexus Invulnerability Core's fleet reach, in metres
     if kind == "panic":
         return bytes([29]) + struct.pack("<d", a["rangeMeters"])
     if kind == "cynoField":
@@ -296,9 +296,9 @@ def build(m):
                      + i64(m["moduleId"]) + i64(m["targetId"]) + u64(m["cycleId"]) + bytes([m["command"]])
                      + struct.pack("<9d", m["miningAmountM3"], m["wasteMultiplier"], m["wasteProbability"], m["critProbability"],
                                    m["critMultiplier"], m["accessDifficultyBonus"], m["wasteRoll"], m["roundingRoll"], m["critRoll"])
-                     # protocol 42: the ships a command burst reaches (a count, then each ship's id); empty for every other command
+                     # protocol 43: the ships a command burst reaches (a count, then each ship's id); empty for every other command
                      + struct.pack("<I", len(m.get("recipients", []))) + b"".join(i64(ship) for ship in m.get("recipients", [])))
-    # protocol 42 (track C6): the timed buffs of a ship of this session (the command burst's), host to simulation
+    # protocol 43 (track C6): the timed buffs of a ship of this session (the command burst's), host to simulation
     if k == "BuffState":
         return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + struct.pack("<I", len(m["entries"]))
                      + b"".join(struct.pack("<idd", e["collectionId"], e["value"], e["remainingMs"]) for e in m["entries"]))
@@ -457,8 +457,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 42},
-    {"name": "hello ack", "kind": "HelloAck", "version": 42, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 43},
+    {"name": "hello ack", "kind": "HelloAck", "version": 43, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -699,14 +699,14 @@ valid = [
                            "action": {"kind": "repair", "layer": "armor", "amount": 10.0, "when": "end"},
                            "fallback": {"kind": "repair", "layer": "armor", "amount": 5.0, "when": "end"}},
                 "onChanges": [], "offChanges": []}},
-    # protocol 42 (track C6): a Shield Command Burst I (42529) with a Shield Harmonizing charge (42695): its cycle is charged, one round a cycle, and reaches 15 km
+    # protocol 43 (track C6): a Shield Command Burst I (42529) with a Shield Harmonizing charge (42695): its cycle is charged, one round a cycle, and reaches 15 km
     {"name": "activate a command burst (Shield Command Burst I, a Shield Harmonizing charge loaded)", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 42529, "effectId": 6733, "fx": "",
                 "durationMs": 60000.0, "capacitorNeed": 25.0, "repeat": 1000, "targetId": "0",
                 "action": {"kind": "charged", "chargeTypeId": 42695, "chargeFlag": 27, "chargePerCycle": 1, "charges": 2,
                            "action": {"kind": "commandBurst", "rangeMeters": 15000.0}},
                 "onChanges": [], "offChanges": []}},
-    # protocol 42 (track C6): the Pulse Activated Nexus Invulnerability Core (42522): one cycle of 240 s, its fleet within 200 km; no charge, no capacitor
+    # protocol 43 (track C6): the Pulse Activated Nexus Invulnerability Core (42522): one cycle of 240 s, its fleet within 200 km; no charge, no capacitor
     {"name": "activate the invulnerability core (Pulse Activated Nexus Invulnerability Core, 200 km)", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 42522, "effectId": 6719, "fx": "",
                 "durationMs": 240000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
@@ -944,7 +944,7 @@ valid = [
      "targetId": "0", "cycleId": "7301444403200000003", "command": 9, "miningAmountM3": 0.0,
      "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
      "accessDifficultyBonus": 0.0, "wasteRoll": 0.0, "roundingRoll": 0.0, "critRoll": 0.0},
-    # protocol 42 (track C6): a command burst's cycle asks the host with the ships of the scene in reach (the host decides the fleet); a cargo scan's cycle carries no numbers
+    # protocol 43 (track C6): a command burst's cycle asks the host with the ships of the scene in reach (the host decides the fleet); a cargo scan's cycle carries no numbers
     {"name": "module work cycle of a command burst reaching two ships", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
      "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
      "targetId": "0", "cycleId": "7301444403200000004", "command": 12, "miningAmountM3": 0.0,
@@ -961,8 +961,8 @@ valid = [
      "targetId": "1000000000003", "cycleId": "7301444403200000006", "command": 10, "miningAmountM3": 0.0,
      "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
      "accessDifficultyBonus": 0.0, "wasteRoll": 0.0, "roundingRoll": 0.0, "critRoll": 0.0},
-    # protocol 42: the timed buffs of a ship of this session, after each change (an empty list clears them)
-    # protocol 42 (track C6): the invulnerability core's grant asks the host with the ships in reach (command 13, no mining numbers)
+    # protocol 43: the timed buffs of a ship of this session, after each change (an empty list clears them)
+    # protocol 43 (track C6): the invulnerability core's grant asks the host with the ships in reach (command 13, no mining numbers)
     {"name": "module work cycle of the invulnerability core's grant, two ships in reach", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
      "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
      "targetId": "0", "cycleId": "7301444403200000007", "command": 13, "miningAmountM3": 0.0,

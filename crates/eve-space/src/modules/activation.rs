@@ -691,7 +691,7 @@ impl Scene {
         Vec::new()
     }
 
-    /// The host's state of a ship's buffs (`BuffState`, protocol 42): the client is told `OnDbuffUpdated` with them, as the reference tells it. The numbers
+    /// The host's state of a ship's buffs (`BuffState`, protocol 43): the client is told `OnDbuffUpdated` with them, as the reference tells it. The numbers
     /// of the ship are the host's (it sends them with the buffs); nothing is answered. A state for a ship that is not this session's is not told.
     pub(crate) fn set_buffs(
         &mut self,

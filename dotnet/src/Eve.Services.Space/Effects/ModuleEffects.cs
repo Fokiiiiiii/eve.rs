@@ -74,7 +74,7 @@ internal static class ModuleEffects
         .Register(new CargoScanEffect())
         .Register(new ShipScanEffect())
         .Register(new ScanStrengthEffect())
-        // the command bursts (track C6, protocol 42): the five families and the expedition bursts, settled at each cycle's end by the host (SpaceContainers.Burst.cs)
+        // the command bursts (track C6, protocol 43): the five families and the expedition bursts, settled at each cycle's end by the host (SpaceContainers.Burst.cs)
         .Register(new CommandBurstEffect())
         .Register(new ScanStrengthTargetEffect());
 }

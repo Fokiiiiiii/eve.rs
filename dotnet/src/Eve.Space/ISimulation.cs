@@ -125,7 +125,7 @@ public interface ISimulation
     /// <summary>The host's decision for a module work cycle (ADR 0013); the module is parked until it arrives.</summary>
     void ModuleWorkResult(SimModuleWorkResult result);
 
-    /// <summary>The timed buffs of a ship of this session (a command burst's, protocol 42): the simulation tells the client what they are.</summary>
+    /// <summary>The timed buffs of a ship of this session (a command burst's, protocol 43): the simulation tells the client what they are.</summary>
     void BuffState(ulong sessionId, long shipId, IReadOnlyList<SimBuffEntry> entries);
 
     /// <summary>Puts a can the host made ahead of a pilot's ship and waits for the answer: where it lies (<see cref="CommandReply.Position"/>), or why it could not be done.</summary>

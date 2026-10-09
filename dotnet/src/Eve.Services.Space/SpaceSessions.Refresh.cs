@@ -59,7 +59,7 @@ public sealed partial class SpaceSessions
     }
 
     /// <summary>
-    /// Tells the simulation that a ship's numbers changed through its buffs (a command burst's, protocol 42): the ship is sent again, and the modules it runs are
+    /// Tells the simulation that a ship's numbers changed through its buffs (a command burst's, protocol 43): the ship is sent again, and the modules it runs are
     /// refreshed (their numbers change while they run). Nothing is sent for a pilot who is not in space.
     /// </summary>
     public async Task BuffedAsync(ClientSession session, CancellationToken cancellationToken)

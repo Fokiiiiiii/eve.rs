@@ -895,7 +895,7 @@ private static void WriteAction(Writer w, SimAction action)
                 w.F64(m.WasteRoll);
                 w.F64(m.RoundingRoll);
                 w.F64(m.CritRoll);
-                // protocol 42: the ships a command burst reaches (a count, then each id); only a burst names any
+                // protocol 43: the ships a command burst reaches (a count, then each id); only a burst names any
                 var recipients = m.Recipients ?? [];
                 if (recipients.Count > 0 && m.Command is not (SimModuleWorkCommands.Burst or SimModuleWorkCommands.Panic))
                 {

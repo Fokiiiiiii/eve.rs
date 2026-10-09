@@ -6,7 +6,7 @@ using static Eve.Services.Space.Effects.ModuleAttributes;
 namespace Eve.Services.Space.Effects;
 
 /// <summary>
-/// The command bursts (track C6, protocol 42): the warfare link modules of the five families (Shield, Armor, Skirmish, Information, Mining Foreman, effects 6732
+/// The command bursts (track C6, protocol 43): the warfare link modules of the five families (Shield, Armor, Skirmish, Information, Mining Foreman, effects 6732
 /// to 6736) and the expedition bursts, which carry the same effects with the expedition charges (group 4905). The module cycles and spends one of its charge's rounds
 /// a cycle (<c>Charged</c>, the charge's rounds). At each cycle's end the host applies the burst's buffs to the ships of the source's fleet in reach
 /// (<see cref="SpaceContainers.SettleBurstAsync"/>); the numbers are the SDE's (the charge's buff ids, and the module's values after effect 6737).

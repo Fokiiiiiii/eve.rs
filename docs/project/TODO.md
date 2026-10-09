@@ -531,7 +531,7 @@ OPEN (each with its blocker):
 
 ## 22. Track C6: command bursts end to end, P.A.N.I.C. (2026-10-09)
 
-Supersedes the OPEN items of section 21. Sources and choices: DEVIATIONS, "Command bursts end to end and P.A.N.I.C. (track C6, 2026-10-09)". Wire: protocol 42 (ADR 0013, epoch 42).
+Supersedes the OPEN items of section 21. Sources and choices: DEVIATIONS, "Command bursts end to end and P.A.N.I.C. (track C6, 2026-10-09)". Wire: protocol 43 (ADR 0013, epoch 42).
 
 DONE (each has tests; the PostgreSQL-backed ones are listed as run under the shared lock in the track's report):
 - The burst's activation and cycle: `CommandBurstEffect` for the five families and the expedition bursts (`Charged`, one round a cycle; no charge is `NO_AMMO`). At each cycle's end the simulation asks the host with the ships it found in reach (`WORK_BURST`, the recipients on `ModuleWorkCycle`). The host keeps the source's fleet, caps at 256, applies the buffs through the registry for the buff duration, sends each granted ship its numbers and running modules, and tells its pilot its state (`BuffState`, the simulation's `OnDbuffUpdated`). The sweep ends buffs that ran out and tells their pilots. Tests: `modules::tests` (burst cycle, reach, refusal), `CommandBurstHostTests`, `CommandBurstFamiliesTests` (SDE: Armor, Information, Mining Foreman, Shield, Skirmish, Expedition, named and presidential), `BuffRegistryTests`, the fixtures (`simlink_fixtures`, `SimCodecTests`).

@@ -7,7 +7,7 @@ using Eve.Space;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The host's side of a command burst (track C6, protocol 42): a cycle settles the buffs of its source's fleet in reach, gives each ship the buffed numbers and tells
+/// The host's side of a command burst (track C6, protocol 43): a cycle settles the buffs of its source's fleet in reach, gives each ship the buffed numbers and tells
 /// each pilot its buff state (<c>OnDbuffUpdated</c>); a later cycle refreshes them, and they run out when their time does.
 /// </summary>
 public class CommandBurstHostTests

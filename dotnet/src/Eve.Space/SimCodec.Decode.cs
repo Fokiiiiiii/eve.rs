@@ -146,7 +146,7 @@ public static partial class SimCodec
     private static SimNumbers ReadNumbers(ref Reader r) => new(r.F64(), r.F64(), r.F64());
 
     /// <summary>
-    /// The ships a command burst reaches (protocol 42): a count, then each ship's id. A count the frame cannot hold is refused before it is read. None (a count of
+    /// The ships a command burst reaches (protocol 43): a count, then each ship's id. A count the frame cannot hold is refused before it is read. None (a count of
     /// zero, the case of every other command) is null, as the message is made without it.
     /// </summary>
     private static IReadOnlyList<long>? ReadRecipients(ref Reader r)

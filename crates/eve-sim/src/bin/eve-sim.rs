@@ -15,6 +15,7 @@ use eve_sim::{filetime_now, serve_connection};
 use eve_space::sde::Sde;
 use eve_space::sim::Universe;
 use eve_space::world::World;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
@@ -28,6 +29,24 @@ fn env_or(name: &str, default: &str) -> String {
     std::env::var(name).ok().filter(|value| !value.is_empty()).unwrap_or_else(|| default.to_owned())
 }
 
+/// Serves one host until it goes away. True when Ctrl-C came first, so the caller stops listening. Serving is raced
+/// against Ctrl-C because the accept loop is not polled while a host is connected.
+async fn serve_host<S>(stream: S, universe: Arc<Universe>) -> bool
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    tokio::select! {
+        served = serve_connection(stream, universe, filetime_now) => {
+            match served {
+                Ok(()) => eprintln!("eve-sim: the host went away"),
+                Err(error) => eprintln!("eve-sim: the host connection ended: {error}"),
+            }
+            false
+        }
+        _ = tokio::signal::ctrl_c() => true,
+    }
+}
+
 async fn serve_tcp(address: &str, universe: Arc<Universe>) -> std::io::Result<()> {
     let listener = TcpListener::bind(address).await?;
     eprintln!("eve-sim: listening on {}", listener.local_addr()?);
@@ -36,9 +55,8 @@ async fn serve_tcp(address: &str, universe: Arc<Universe>) -> std::io::Result<()
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
                     eprintln!("eve-sim: the host connected");
-                    match serve_connection(stream, Arc::clone(&universe), filetime_now).await {
-                        Ok(()) => eprintln!("eve-sim: the host went away"),
-                        Err(error) => eprintln!("eve-sim: the host connection ended: {error}"),
+                    if serve_host(stream, Arc::clone(&universe)).await {
+                        break;
                     }
                 }
                 Err(error) => eprintln!("eve-sim: accept failed: {error}"),
@@ -67,9 +85,8 @@ async fn serve_unix(socket: PathBuf, universe: Arc<Universe>) -> std::io::Result
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
                     eprintln!("eve-sim: the host connected");
-                    match serve_connection(stream, Arc::clone(&universe), filetime_now).await {
-                        Ok(()) => eprintln!("eve-sim: the host went away"),
-                        Err(error) => eprintln!("eve-sim: the host connection ended: {error}"),
+                    if serve_host(stream, Arc::clone(&universe)).await {
+                        break;
                     }
                 }
                 Err(error) => eprintln!("eve-sim: accept failed: {error}"),

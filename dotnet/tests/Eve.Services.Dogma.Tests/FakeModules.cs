@@ -16,6 +16,25 @@ internal sealed class FakeModules : ISpaceModules
         return Task.FromResult(Answer);
     }
 
+    /// <summary>What every repair start is answered with (null: no ship in space); a stop is answered with <see cref="Repair"/>.</summary>
+    public ModuleRepairStart? RepairStart { get; set; }
+
+    public ModuleRepairRecord? Repair { get; set; }
+
+    public Task<ModuleRepairStart?> StartRepairAsync(ClientSession session, IReadOnlyList<long> moduleIds, CancellationToken cancellationToken)
+    {
+        Asked.Add($"repair {string.Join(",", moduleIds)}");
+        return Task.FromResult(RepairStart);
+    }
+
+    public Task<ModuleRepairRecord?> EndRepairAsync(ClientSession session, long moduleId, CancellationToken cancellationToken)
+    {
+        Asked.Add($"stop repair {moduleId}");
+        var record = Repair;
+        Repair = null;
+        return Task.FromResult(record);
+    }
+
     public Task<ModuleResult?> DeactivateAsync(ClientSession session, long moduleId, string effectName, CancellationToken cancellationToken)
     {
         Asked.Add($"deactivate {moduleId} {effectName}");

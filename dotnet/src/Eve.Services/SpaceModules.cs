@@ -47,4 +47,22 @@ public interface ISpaceModules
     /// is sent for a session with no ship in space.
     /// </summary>
     Task RefreshShipAsync(ClientSession session, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Starts the nanite paste repair of fitted modules (<c>InitiateModuleRepair</c>, <c>InitiateModuleRepairMany</c>): each module is started, short of
+    /// paste, or refused. Null when the session has no ship in space.
+    /// </summary>
+    Task<ModuleRepairStart?> StartRepairAsync(ClientSession session, IReadOnlyList<long> moduleIds, CancellationToken cancellationToken);
+
+    /// <summary>Takes a module's repair out of the ones under way (<c>StopModuleRepair</c>); null when the module is not being repaired.</summary>
+    Task<ModuleRepairRecord?> EndRepairAsync(ClientSession session, long moduleId, CancellationToken cancellationToken);
 }
+
+/// <summary>The answer to a repair start: the modules whose repair started, those short of nanite repair paste, and those refused.</summary>
+public sealed record ModuleRepairStart(IReadOnlyList<long> Started, IReadOnlyList<long> MissingPaste, IReadOnlyList<long> Failed);
+
+/// <summary>
+/// A module repair under way: the ship it is in, when it began (ms since the epoch), the rate it repairs at (hit points a minute), the damage it began with (hit points)
+/// and the paste it was priced at (the paste for the whole damage).
+/// </summary>
+public sealed record ModuleRepairRecord(long ModuleId, long ShipId, long StartedMs, double RateHpPerMinute, double DamageHp, long PasteUnits);

@@ -123,6 +123,22 @@ public class ModuleEffectsTests
     }
 
     [Fact]
+    public void A_sensor_booster_adds_its_sensor_strengths_to_the_ship_as_the_remote_booster_does()
+    {
+        // the SDE gives Sensor Booster I 40 on each sensor strength (scanGravimetric, Ladar, Magnetometric, Radar StrengthPercent 1027 to 1030); an ECCM charge
+        // the ship runs adds to them, and the booster's own radar strength here is 80
+        var fixture = Fixture(
+            2670, "sensorBoosterActivePercentage", EffectDef.Activation,
+            new Dictionary<int, double> { [6] = 10, [73] = 12000, [309] = 25, [566] = 25, [1027] = 40, [1028] = 40, [1029] = 40, [1030] = 80 });
+        var result = Eve.Services.Space.ModulePackages.Of(
+            fixture.Snapshot, fixture.Statics, fixture.ModuleId, "sensorBoosterActivePercentage", 0, 1);
+
+        var package = Assert.IsType<Eve.Space.SimEffect>(result.Effect);
+        var action = Assert.IsType<Eve.Space.SimAction.Remote>(package.Action);
+        Assert.Equal(new Eve.Space.SimRemote.Damp(25, 25, 40, 40, 40, 80), action.What);
+    }
+
+    [Fact]
     public void The_mass_entangler_uses_its_static_modifier_values_for_the_space_numbers()
     {
         var modifiers = new[]

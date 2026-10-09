@@ -64,6 +64,9 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
         /// </summary>
         public ConcurrentDictionary<long, ItemState> ActiveModules { get; } = new();
 
+        /// <summary>The module repairs under way (nanite paste): what each began with. Ended by a stop, or by the pilot leaving the ship (<see cref="CancelRepairsAsync"/>).</summary>
+        public ConcurrentDictionary<long, ModuleRepairRecord> Repairs { get; } = new();
+
     /// <summary>The modules whose overheat the pilot asked for (accepted by the simulation as the request, applied at its next cycle): dogma sees them Overloaded.</summary>
     public ConcurrentDictionary<long, byte> Overheated { get; } = new();
 
@@ -817,6 +820,7 @@ private readonly TransitionRuntime _transitions;
         pilot.End();
         try
         {
+            await CancelRepairsAsync(pilot, CancellationToken.None).ConfigureAwait(false);
             var chargesSaved = true;
             try
             {

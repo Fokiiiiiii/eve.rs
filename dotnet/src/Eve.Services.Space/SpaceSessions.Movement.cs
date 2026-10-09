@@ -266,6 +266,7 @@ public sealed partial class SpaceSessions
                 result => result.Moved is not null,
                 async (_, token) =>
                 {
+                    await CancelRepairsAsync(pilot, token);
                     if (!_pilots.Values.Any(other => other.SolarSystemId == jumped.ToSystem))
                         ForgetNpcsOf(jumped.ToSystem);
                     if (_systems.Get(jumped.ToSystem) is { } enteredSystem
@@ -340,6 +341,7 @@ public sealed partial class SpaceSessions
             var transition = await _transitions.ExecuteAsync(
                 async cancellationToken =>
                 {
+                    await CancelRepairsAsync(pilot, cancellationToken);
                     await _charges.CloseAsync((ulong)session.SessionId).ConfigureAwait(false);
                     var shipCondition = condition is null
                         ? null

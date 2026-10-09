@@ -14,6 +14,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TARGET="${CARGO_TARGET_DIR:-$HERE/target}"
 PORT="${EVE_LIVE_PORT:-26100}"
 SOCK="$(mktemp -u /tmp/eve-host.XXXXXX.sock)"
 SIMSOCK="$(mktemp -u /tmp/eve-sim.XXXXXX.sock)"
@@ -49,7 +50,7 @@ echo "building the host, the front and the simulation"
 (cd "$HERE" && cargo build -q --release -p eve-net -p eve-sim)
 
 # the simulation reads the static data itself (EVE_SDE_DIR, or the copy `eve-sde ensure` keeps under .cache/sde)
-(cd "$HERE" && exec env EVE_SIM_SOCKET="$SIMSOCK" "$HERE/target/release/eve-sim" >"$LOG/sim.out" 2>&1) &
+(cd "$HERE" && exec env EVE_SIM_SOCKET="$SIMSOCK" "$TARGET/release/eve-sim" >"$LOG/sim.out" 2>&1) &
 sim_pid=$!
 for _ in $(seq 1 300); do
   [ -S "$SIMSOCK" ] && break
@@ -66,7 +67,7 @@ for _ in $(seq 1 600); do
   sleep 0.1
 done
 
-EVE_HOST="$SOCK" EVE_NET_LISTEN="127.0.0.1:$PORT" "$HERE/target/release/eve-net" >"$LOG/net.out" 2>&1 &
+EVE_HOST="$SOCK" EVE_NET_LISTEN="127.0.0.1:$PORT" "$TARGET/release/eve-net" >"$LOG/net.out" 2>&1 &
 net_pid=$!
 for _ in $(seq 1 100); do
   (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null && break

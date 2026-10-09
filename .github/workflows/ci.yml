@@ -5,8 +5,9 @@ name: CI
 # fixtures are what their generators write, and run the fast end-to-end tests (the whole server stack and the
 # headless client). The slow end-to-end tests are live-slow.yml (also by hand).
 
-# Automatic runs are switched off (2026-10-04, the owner's request): nothing starts this workflow by itself. Run it by hand from the
-# Actions tab (or `gh workflow run ci.yml`), or give `on:` back its `push: branches: ["**"]` to run on every push again.
+# Manual only, by design: the repository is private and Actions minutes are limited, so nothing starts this workflow by itself.
+# Run it from the Actions tab or with `gh workflow run ci.yml`. The same jobs, in the same order and environment, run locally
+# with tools/dev/check-all.sh, the primary check before a push.
 on:
   workflow_dispatch:
 
@@ -33,6 +34,21 @@ jobs:
     name: Rust (fmt, clippy, test)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: eve
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d eve"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      EVE_PG_URL: postgres://postgres:postgres@127.0.0.1:5432/eve
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
@@ -53,7 +69,8 @@ jobs:
         run: cargo run -q -p eve-sde -- ensure
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - name: Test
+        run: cargo test --workspace
 
   rust-latest:
     name: Rust on the latest stable (advisory)
@@ -114,6 +131,8 @@ jobs:
         run: cargo run -q -p eve-sde -- ensure --pg "$EVE_PG_URL"
       - name: Test
         working-directory: dotnet
+        env:
+          EVE_PG_URL: Host=127.0.0.1;Port=5432;Username=postgres;Password=postgres;Database=eve
         run: dotnet test EveRs.slnx -c Release -nologo --verbosity minimal
 
   python:

@@ -24,3 +24,6 @@ __pycache__/
 
 # SDE archives and extracted builds are fetched on first start (eve-sde ensure), never committed
 /sde/data/
+
+# Local server settings (they may hold a password): copy server.env.example
+/server.env

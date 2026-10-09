@@ -1125,10 +1125,12 @@ public class HostServerTests : IAsyncLifetime
         var industryJobs = new Eve.Services.Core.IndustryJobsService(
             _ => ValueTask.FromResult<System.Text.Json.Nodes.JsonObject?>(null),
             new EmptyIndustryJobOperations());
-        var characterMining = new Eve.Services.Core.CharacterMiningLedgerService(
-            _ => Task.FromResult(new System.Text.Json.Nodes.JsonObject()));
-        var corporationMining = new Eve.Services.Core.CorpMiningLedgerService(
-            _ => Task.FromResult(new System.Text.Json.Nodes.JsonObject()));
+        // the ledger queries are only registered here (the registry test does not run them): the source is never opened
+        var ledgerReads = Eve.Services.Core.MiningLedgerQueries.Register(new Eve.ReadSide.ReadSide(
+            Npgsql.NpgsqlDataSource.Create("Host=127.0.0.1;Port=1;Database=unused"),
+            new Dictionary<string, string> { [Eve.Services.Core.MiningLedgerQueries.SpaceSchema] = "unused" }));
+        var characterMining = new Eve.Services.Core.CharacterMiningLedgerService(ledgerReads);
+        var corporationMining = new Eve.Services.Core.CorpMiningLedgerService(ledgerReads);
         var agents = new Eve.Services.Core.AgentMissionService(
             (_, _) => ValueTask.FromResult<System.Text.Json.Nodes.JsonObject?>(null),
             (_, _, _) => ValueTask.FromResult<IReadOnlyDictionary<long, System.Text.Json.Nodes.JsonObject>>(new Dictionary<long, System.Text.Json.Nodes.JsonObject>()),

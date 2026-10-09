@@ -352,26 +352,31 @@ public class SpaceContainerTests
 
 
     [PgFact]
-    public async Task A_belt_arrival_seeds_a_persisted_sde_asteroid_for_mining()
+    public async Task A_belt_arrival_seeds_each_ore_its_system_security_holds_as_a_persisted_sde_asteroid()
     {
         await using var rig = await Rig.CreateAsync();
         var flying = await FlyingWithCargoAsync(rig);
         var system = (int)flying.Session.GetInt("solarsystemid")!.Value;
         const long beltId = 9_000_000_001;
+        var ores = Eve.Ships.BeltOres.For(rig.Systems.Get(system)!.Security);
 
         rig.Sim.Say(new Eve.Space.SimArrived(
             (ulong)flying.Session.SessionId, beltId, [1000, 2000, 3000]));
-        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>().Any(p => p.Name == "Veldspar"));
+        await Rig.UntilAsync(() => ores.All(ore => rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>().Any(p => p.Name == ore)));
 
-        var placed = Assert.Single(rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>(), p => p.Name == "Veldspar");
-        Assert.Equal((system, "Veldspar", 1_000L),
-            (placed.SolarSystemId, placed.Name, placed.UnitsRemaining));
-        Assert.True(placed.AsteroidId > 0);
-        var saved = Assert.Single(await rig.SpaceItems.InSystemAsync(system), spaceItem => spaceItem.ItemId == placed.AsteroidId);
-        Assert.Equal(beltId, saved.LauncherId);
-        var asteroid = (await rig.Items.GetAsync(saved.ItemId))!;
-        Assert.Equal((placed.AsteroidId, placed.UnitsRemaining, "Veldspar"),
-            (asteroid.Id, asteroid.Quantity, rig.Statics.Type(asteroid.TypeId)!.Name));
+        var placed = rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>().Where(p => ores.Contains(p.Name)).ToList();
+        Assert.Equal(ores.Count, placed.Count);
+        foreach (var rock in placed)
+        {
+            Assert.Equal(system, rock.SolarSystemId);
+            Assert.True(rock.AsteroidId > 0);
+            var saved = Assert.Single(await rig.SpaceItems.InSystemAsync(system), spaceItem => spaceItem.ItemId == rock.AsteroidId);
+            Assert.Equal(beltId, saved.LauncherId);
+            var asteroid = (await rig.Items.GetAsync(saved.ItemId))!;
+            var unitVolume = rig.Statics.Type(asteroid.TypeId)!.Attributes[rig.Statics.AttributeId("volume")!.Value];
+            Assert.Equal(Eve.Ships.BeltOres.UnitsFor(unitVolume), asteroid.Quantity);
+            Assert.Equal(asteroid.Quantity, rock.UnitsRemaining);
+        }
     }
 
     [PgFact]
@@ -383,6 +388,7 @@ public class SpaceContainerTests
         const long beltId = 9_000_000_002;
         var types = await new Eve.Sde.SdeReader(rig.Source).ReadTypeSummariesAsync();
         var veldspar = Assert.Single(types, type => type.Published && type.Name == "Veldspar").TypeId;
+        var ores = Eve.Ships.BeltOres.For(rig.Systems.Get(system)!.Security);
         var (depleted, _) = await rig.Ships.CreateAsteroidAsync(veldspar, system, beltId, 1000, [1000, 2000, 3000], [1, 0, 0], 25, rig.SpaceItems);
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
@@ -392,10 +398,11 @@ public class SpaceContainerTests
         }
 
         rig.Sim.Say(new Eve.Space.SimArrived((ulong)flying.Session.SessionId, beltId, [1000, 2000, 3000]));
-        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>().Any(p => p.Name == "Veldspar"));
+        await Rig.UntilAsync(() => ores.All(ore => rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>().Any(p => p.Name == ore)));
 
-        var placed = Assert.Single(rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>(), p => p.Name == "Veldspar");
-        Assert.Equal((1_000L, false), (placed.UnitsRemaining, placed.AsteroidId == depleted.Id));
+        var placed = rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>().Where(p => ores.Contains(p.Name)).ToList();
+        Assert.Equal(ores.Count, placed.Count);
+        Assert.DoesNotContain(placed, p => p.AsteroidId == depleted.Id);
     }
 
     [PgFact]
@@ -405,11 +412,12 @@ public class SpaceContainerTests
         var flying = await FlyingWithCargoAsync(rig);
         var system = (int)flying.Session.GetInt("solarsystemid")!.Value;
         const long beltId = 9_000_000_003;
+        bool IsCloud(Eve.Space.SimPlaceAsteroid p) => rig.Statics.GroupName(rig.Statics.Type(p.TypeId)!.GroupId) == "Harvestable Cloud";
 
         rig.Sim.Say(new Eve.Space.SimArrived((ulong)flying.Session.SessionId, beltId, [1000, 2000, 3000]));
-        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>().Count() >= 2);
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>().Any(IsCloud));
 
-        var cloud = Assert.Single(rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>(), p => p.Name != "Veldspar");
+        var cloud = Assert.Single(rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>(), IsCloud);
         Assert.Equal((system, 1_000L), (cloud.SolarSystemId, cloud.UnitsRemaining));
         var saved = Assert.Single(await rig.SpaceItems.InSystemAsync(system), spaceItem => spaceItem.ItemId == cloud.AsteroidId);
         Assert.Equal(beltId, saved.LauncherId);

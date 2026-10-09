@@ -54,7 +54,8 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
     private readonly Func<long> _nowUnixMs;
     private readonly Action<string>? _log;
     private readonly ConcurrentDictionary<long, byte> _placed = new();
-    private readonly ConcurrentDictionary<(int SystemId, long BeltId), byte> _seededAsteroidBelts = new();
+    /// <summary>The belts whose rocks are being seeded now (a second arrival does not seed the same belt twice). Whether a belt has rocks is read from the store.</summary>
+    private readonly ConcurrentDictionary<(int SystemId, long BeltId), byte> _seedingBelts = new();
     /// <summary>The belts whose gas cloud is being seeded now (a second arrival does not make a second cloud).</summary>
     private readonly ConcurrentDictionary<(int SystemId, long BeltId), byte> _seedingClouds = new();
     private readonly ConcurrentDictionary<ulong, long> _cooldownUntil = new();
@@ -611,8 +612,14 @@ private void OnReceived(SimMessage message)
         }
 
         var belt = (system, arrived.BeltId);
+        // one arrival seeds a belt at a time; a second that comes meanwhile finds the rocks the first one made
+        if (!_seedingBelts.TryAdd(belt, 0))
+        {
+            return;
+        }
         try
         {
+            var live = 0;
             foreach (var spaceItem in await _spaceItems.InSystemAsync(system))
             {
                 if (spaceItem.LauncherId != arrived.BeltId
@@ -629,11 +636,11 @@ private void OnReceived(SimMessage message)
 
                 if (stored.Quantity <= 0)
                 {
-                    // a depleted rock is not the belt's any more: when only depleted ones are left, the belt is seeded again below (EVE.js resets belts)
+                    // a depleted rock is not the belt's any more: it does not stop the belt being seeded again
                     _placed.TryAdd(stored.Id, 0);
                     continue;
                 }
-                _seededAsteroidBelts.TryAdd(belt, 0);
+                live++;
                 if (_placed.TryAdd(stored.Id, 0))
                 {
                     try
@@ -649,55 +656,60 @@ private void OnReceived(SimMessage message)
                         _log?.Invoke($"asteroid {stored.Id} in belt {arrived.BeltId} could not be placed: {error.Message}");
                     }
                 }
-                return;
             }
-
-            if (!_seededAsteroidBelts.TryAdd(belt, 0))
+            if (live > 0)
             {
                 return;
             }
 
-            var type = (await _statics.TypesInCategoryAsync("Asteroid"))
-                .FirstOrDefault(candidate => candidate.Name.Equals("Veldspar", StringComparison.OrdinalIgnoreCase));
-            if (type is null)
-            {
-                _seededAsteroidBelts.TryRemove(belt, out _);
-                _log?.Invoke($"no published Veldspar asteroid type is available for belt {arrived.BeltId}");
-                return;
-            }
-
+            // no rock is left in the belt: it is seeded with the ores its system's security holds (BeltOres, from the EVE University belt rows)
+            // shortcut: a store error part-way through leaves the belt short of ores until the rocks it has deplete and it is seeded again
+            var types = await _statics.TypesInCategoryAsync("Asteroid");
             var radiusId = _statics.AttributeId("radius");
-            var radius = radiusId is { } id ? type.Attributes.GetValueOrDefault(id, 25d) : 25d;
-            if (!double.IsFinite(radius) || radius <= 0)
+            var volumeId = _statics.AttributeId("volume");
+            var index = 0;
+            foreach (var name in BeltOres.For(_space.SecurityOfSystem(system) ?? 0d))
             {
-                radius = 25d;
-            }
-            var position = arrived.Position.ToArray();
-            position[0] += Math.Max(1_000d, radius * 2d);
-
-            // ponytail: seed one belt rock with 1,000 units; replace this cap when authoritative per-rock stock data is available.
-            const long initialUnits = 1_000;
-            var created = await _ships.CreateAsteroidAsync(
-                type.TypeId, system, arrived.BeltId, initialUnits, position, [1d, 0d, 0d], radius, _spaceItems);
-            if (_placed.TryAdd(created.Item.Id, 0))
-            {
-                try
+                var type = types.FirstOrDefault(candidate => candidate.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+                var unitVolume = type is not null && volumeId is { } volumeAttribute ? type.Attributes.GetValueOrDefault(volumeAttribute) : 0d;
+                if (type is null || !(unitVolume > 0))
                 {
-                    _sim.PlaceAsteroid(new SimPlaceAsteroid(
-                        system, created.Item.Id, type.TypeId, type.GroupId, type.CategoryId, type.Name, type.GraphicId,
-                        created.SpaceItem.Position, created.SpaceItem.Direction, created.SpaceItem.Radius, created.Item.Quantity));
+                    _log?.Invoke($"ore {name} for belt {arrived.BeltId} has no published asteroid type with a volume");
+                    continue;
                 }
-                catch (Exception error)
+
+                var radius = radiusId is { } id ? type.Attributes.GetValueOrDefault(id, 25d) : 25d;
+                if (!double.IsFinite(radius) || radius <= 0)
                 {
-                    _placed.TryRemove(created.Item.Id, out _);
-                    _log?.Invoke($"seed asteroid {created.Item.Id} was saved but could not be placed: {error.Message}");
+                    radius = 25d;
+                }
+                var position = arrived.Position.ToArray();
+                position[0] += (++index) * Math.Max(1_000d, radius * 2d);
+                var created = await _ships.CreateAsteroidAsync(
+                    type.TypeId, system, arrived.BeltId, BeltOres.UnitsFor(unitVolume), position, [1d, 0d, 0d], radius, _spaceItems);
+                if (_placed.TryAdd(created.Item.Id, 0))
+                {
+                    try
+                    {
+                        _sim.PlaceAsteroid(new SimPlaceAsteroid(
+                            system, created.Item.Id, type.TypeId, type.GroupId, type.CategoryId, type.Name, type.GraphicId,
+                            created.SpaceItem.Position, created.SpaceItem.Direction, created.SpaceItem.Radius, created.Item.Quantity));
+                    }
+                    catch (Exception error)
+                    {
+                        _placed.TryRemove(created.Item.Id, out _);
+                        _log?.Invoke($"seed asteroid {created.Item.Id} was saved but could not be placed: {error.Message}");
+                    }
                 }
             }
         }
         catch (Exception error)
         {
-            _seededAsteroidBelts.TryRemove(belt, out _);
             _log?.Invoke($"asteroids for belt {arrived.BeltId} could not be seeded: {error.Message}");
+        }
+        finally
+        {
+            _seedingBelts.TryRemove(belt, out _);
         }
     }
 
@@ -1251,10 +1263,6 @@ private void OnReceived(SimMessage message)
                     var type = _statics.Type(stored.TypeId);
                     if (type is not null && _statics.CategoryName(type.CategoryId) == "Asteroid")
                     {
-                        if (item.LauncherId > 0)
-                        {
-                            _seededAsteroidBelts.TryAdd((system, item.LauncherId), 0);
-                        }
                         if (stored.Quantity <= 0)
                         {
                             continue;

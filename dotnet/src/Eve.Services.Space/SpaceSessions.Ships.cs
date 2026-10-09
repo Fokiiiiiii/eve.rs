@@ -142,6 +142,14 @@ public sealed partial class SpaceSessions
         }
         if (blockers.Count != 0)
             return new PyList([.. blockers.Select(label => new PyStr(label))]);
+        // a running module that prevents ejection (disallowEarlyDeactivation 906, the SDE's "prevent ejection from the ship it is fitted to"): the
+        // refusal is the reference's shape (a CustomNotify, as the entosis link's), in words of ours: no client or EVE.js text names this module
+        if (await FlownShipAsync(pilot, cancellationToken) is { } flown
+            && flown.Fitted.Any(module => pilot.ActiveModules.ContainsKey(module.Id)
+                && flown.World.Get(module.Id, Eve.Services.Space.Effects.ModuleAttributes.DisallowEarlyDeactivation) == 1))
+        {
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You cannot eject while a module that prevents ejection is active.")));
+        }
 
         var position = await PositionOfAsync(session, pilot.ShipId, cancellationToken);
         if (position is not { } place)
@@ -154,6 +162,7 @@ public sealed partial class SpaceSessions
             async (result, token) =>
             {
                 var ejected = result!;
+                await CancelRepairsAsync(pilot, token);
                 await _charges.CloseAsync(id);
                 foreach (var moduleId in ejected.ModulesToStop)
                     await _sim.OfflineModuleAsync(id, moduleId, token);
@@ -310,6 +319,7 @@ public sealed partial class SpaceSessions
             async (result, token) =>
             {
                 var boarding = result!;
+                await CancelRepairsAsync(currentPilot, token);
                 _ejectedShips[currentShipId] = new EjectedShip(
                     characterId, boarding.BoarderCorporationId, currentPilot.TypeId, currentPilot.SolarSystemId);
                 _ejectedShips.TryRemove(shipId, out _);

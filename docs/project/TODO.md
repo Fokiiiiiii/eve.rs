@@ -404,3 +404,20 @@ Open, each with its exact blocker:
 - M-6 scanner, analyzer and relic modules: no simulation bodies.
 - WP17 assistance and jam overlays (stacking rule not in the sources read); WP19 velocity limits (no carrier object); WP13 mode events (no subscriber, so none is published).
 - Host-level database tests for the smartbomb refusal and the bastion refusal are not written (unit and simulation tests only).
+
+## 18. Module rules track B4 (2026-10-09)
+
+Done (decisions in DEVIATIONS "Module rules, track B4"; tests in the projects named): WG-5 nanite paste repair end to end (`dotnet/src/Eve.Ships/CharacterShips.Repair.cs`, `Eve.Services.Space/SpaceSessions.Repair.cs`, `Eve.Services.Dogma/DogmaIMService.Repair.cs`; tests `RepairTests`, `ModuleRepairHostTests`); the 906 eject refusal (`SpaceSessions.Ships.cs`); WP13 mode events (`ShipModeTopics`, `ShipModeEventTests`); FP-8 target resistance, host-side (`Effects/RemoteResistance.cs`, `RemoteResistanceTests`); WG-3 sensor booster strengths (`SensorBoosterEffect.cs`, `ModuleEffectsTests`); WG-7 and WG-8 decided (DEVIATIONS). The protocol is not bumped in this track.
+
+Open, each with its exact blocker:
+- WG-5: a repair ended by a leave takes its paste and damage, but the client is not told the cargo change then (no notification path from the space layer to the client's cargo for a ship that has left). The rate and cost come from the character's dogma world; only the no-skill values are tested.
+- WG-3: the tracking, guidance, flex hardener and ECCM charges reach their modules through the charge pairing in `Eve.Dogma/DogmaWorld.cs` (around 342-386). None is verified with a loaded script: a host test with the charge fitted and loaded is needed.
+- FP-C4b and FP-C5 (refresh a running effect when the overheat or a computer changes): not built. Needs a new `SimUpdateEffect` message: `crates/eve-space/src/link`, `SimCodec`, the Python generator `tools/dev/gen-simlink-fixtures.py`, and one protocol bump at the next free number (37 if track C2 takes 36).
+- FP-C7 (an ECM burst: the ships it jams, and its offensive gate): not built. The simulation does not report a landed burst (a wire message), and no source read gives the burst's safety rule.
+- FP-C8 (automatic reload from the hold): not built. The simulation ends the run at the last round with `NO_CHARGES` (`crates/eve-space/src/modules/effects.rs` around 613) before the host sees `ChargeSpent`. The design: a pending-reload state that waits for the next cycle boundary for an `AdjustCharge` from the host (the message exists, `SimAdjustCharge`), and resumes if one arrives. Needs the simulation change and host tests.
+- M-6 (Cargo Scanner, Ship Scanner, Data Analyzer, Subverter, relics): not built. The reference is EVE.js `server/src/space/modules/scannerModuleRuntime.js` (ranges, rows, and the client notifications `OnCargoScanComplete` and `OnShipScanCompleted`); none of the simulation bodies exist.
+- WP17 (assistance and jam overlays): the resistance part is FP-8. The EVE.js resistance code (`hostileModuleRuntime.js`, `assistanceModuleRuntime.js`) gives one resistance per remote; no rule for several overlays stacking was found there.
+- WP19 (velocity limits 1334 and 2608): not built. The activation check needs the ship's velocity on the simulation side and a rule field (a wire change), and the carriers (the cynosural field generator and the bomb launcher) have no bodies.
+- WP12 and 1934 (logout and the 906 log-out timer): not built; no reference text (MR-D9).
+- Host PG tests for the sensor booster strengths in a fitted scene: the effect is tested through `ModulePackages` only.
+

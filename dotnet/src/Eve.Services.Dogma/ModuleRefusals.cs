@@ -68,6 +68,9 @@ public static class ModuleRefusals
             // module id, which the refusal does not carry yet; until then the pilot is told in words of ours
             "MODULE_REACTIVATING" => Notify($"{name} cannot be reactivated yet."),
             "CLOAK_WARP_BLOCKED" => Notify("You cannot activate that cloaking device while warping."),
+            // a module under nanite repair does not run, and no module is overheated while one is repaired (the wording is ours: the client has no text for it)
+            "MODULE_REPAIRING" => Notify($"{name} cannot be activated while it is being repaired."),
+            "REPAIR_IN_PROGRESS" => Notify("You cannot overheat a module while a module is being repaired."),
             // disallowActivateOnWarp (ModuleRestrictions.CheckWarp): the wording is ours; the static data's rule is the source, not a client UserError
             "MODULE_WARP_BLOCKED" => Notify($"{name} cannot be activated while your ship is warping."),
             // the client's own UserErrors (FakeCloaking.PreStartChecks): the ship cannot cloak, or disallows a cloak

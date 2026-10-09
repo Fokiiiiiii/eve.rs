@@ -2,11 +2,13 @@
 //! several working alone and the others inert until it runs out, and the effect ending when the ship leaves the scene.
 
 use super::*;
+use crate::brains::rat_tests::actions_named;
 use crate::missiles::Missile;
 use crate::modules::{Action, Effect};
 use crate::scene::Scene;
 use crate::scene::tests::{NOON, STATION, spec, system};
 use crate::weapons::Turret;
+use crate::wire::{id, int, real};
 
 const A: SessionId = 7;
 const B: SessionId = 8;
@@ -268,4 +270,120 @@ fn the_effect_ends_when_the_ship_leaves_the_scene() {
     scene.pilots.remove(&B);
     scene.poll(t + SECOND);
     assert!(scene.dots.is_empty(), "a ship that left the scene carries no effect");
+}
+
+/// The applications of each `OnDotVictimUpdated` that `B`, the ship hit, was told: the state of every `DotApplicationInfo` in its set.
+/// (Each update goes to everyone who has the ship in view, so the same update is told to `A` too.)
+fn infos_told(told: &[Out]) -> Vec<Vec<Vec<(String, Value)>>> {
+    let told: Vec<Out> =
+        told.iter().filter(|o| matches!(o, Out::Notify { session, .. } if *session == B)).cloned().collect();
+    actions_named(&told, "OnDotVictimUpdated")
+        .into_iter()
+        .map(|args| {
+            let Value::ObjectEx { header, .. } = &args[1] else { panic!("a set: {args:?}") };
+            let Value::Tuple(parts) = header.as_ref() else { panic!("a set header") };
+            let Value::Tuple(set_args) = &parts[1] else { panic!("a set argument tuple") };
+            let Value::List(items) = &set_args[0] else { panic!("a set of applications") };
+            items
+                .iter()
+                .map(|item| {
+                    let Value::ObjectEx { header, .. } = item else { panic!("an application: {item:?}") };
+                    let Value::Tuple(parts) = header.as_ref() else { panic!("an application header") };
+                    let Value::Dict(entries) = &parts[2] else { panic!("an application state") };
+                    entries
+                        .iter()
+                        .map(|(key, value)| match key {
+                            Value::Str(key) => (key.to_string(), value.clone()),
+                            other => panic!("a state key {other:?}"),
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn state<'a>(application: &'a [(String, Value)], key: &str) -> &'a Value {
+    &application.iter().find(|(k, _)| k == key).unwrap_or_else(|| panic!("no {key}")).1
+}
+
+fn shooter_a(scene: &Scene) -> Shooter {
+    Shooter {
+        session: A,
+        ship_id: scene.pilots[&A].ship.spec.ship_id,
+        module_id: MODULE,
+        weapon_type_id: 85_084,
+        owner_id: 4_242,
+        corporation_id: 0,
+        alliance_id: 0,
+    }
+}
+
+#[test]
+fn a_hit_tells_the_ship_its_applications_as_a_set_and_the_first_tick_makes_one_working() {
+    let (mut scene, t) = crowd();
+    let b_ship = scene.pilots[&B].ship.spec.ship_id;
+    let shooter = shooter_a(&scene);
+    let mut told = scene.apply_dot(b_ship, STRONG, shooter.clone(), t);
+    told.extend(scene.apply_dot(b_ship, WEAK, shooter.clone(), t));
+    let sets = infos_told(&told);
+    assert_eq!(sets.len(), 2, "each hit tells the ship what it holds now");
+    let held = &sets[1];
+    assert_eq!(held.len(), 2);
+    for application in held {
+        assert_eq!(state(application, "_attackerID"), &id(4_242), "the character that fired the pod");
+        assert_eq!(state(application, "_weaponTypeID"), &int(85_084), "the launcher's type");
+        assert_eq!(state(application, "_targetID"), &id(b_ship));
+        assert_eq!(
+            state(application, "_activityState"),
+            &int(DOT_IDLE),
+            "nothing works before the first tick"
+        );
+    }
+    // the first tick: the stronger one (1 % a tick) works, and the weaker one (0.5 %) waits
+    let mut now = t;
+    let mut later = Vec::new();
+    while now < t + SECOND + SECOND / 2 {
+        now += SECOND / 4;
+        later.extend(scene.poll(now));
+    }
+    let after = infos_told(&later);
+    assert_eq!(after.len(), 1, "the first tick is a change of the working application, told once");
+    let working: Vec<&Value> = after[0]
+        .iter()
+        .filter(|application| state(application, "_activityState") == &int(DOT_ACTIVE))
+        .map(|application| state(application, "_maxHPNormalizedRatio"))
+        .collect();
+    assert_eq!(working, [&real(0.01)], "the strong application is the one working");
+    // the working one expires after its remaining time, the waiting one at the end of the queue: it runs its whole length after the working one
+    let expiry = |application: &[(String, Value)]| match state(application, "_expiryTime") {
+        Value::Long(ticks) => *ticks,
+        other => panic!("an expiry: {other:?}"),
+    };
+    let set = &after[0];
+    let working_end = expiry(set.iter().find(|a| state(a, "_activityState") == &int(DOT_ACTIVE)).unwrap());
+    let waiting_end = expiry(set.iter().find(|a| state(a, "_activityState") == &int(DOT_IDLE)).unwrap());
+    assert_eq!(
+        waiting_end - working_end,
+        40 * SECOND,
+        "the waiting application ends 40 s after the working one"
+    );
+}
+
+#[test]
+fn the_ship_is_told_an_empty_set_when_its_last_application_ends() {
+    let (mut scene, t) = crowd();
+    let b_ship = scene.pilots[&B].ship.spec.ship_id;
+    let mut told = scene.apply_dot(b_ship, SMALL, shooter_a(&scene), t);
+    let mut now = t;
+    while now < t + 42 * SECOND {
+        now += SECOND / 4;
+        told.extend(scene.poll(now));
+    }
+    let sets = infos_told(&told);
+    // the hit, the first tick (the application starts working) and the end of its forty seconds, and nothing between
+    assert_eq!(sets.len(), 3, "told on the hit, on the change to working and on the end: {sets:?}");
+    assert_eq!(sets[0].len(), 1);
+    assert_eq!(sets[1].len(), 1);
+    assert!(sets[2].is_empty(), "the ship holds nothing once its effect is over");
 }

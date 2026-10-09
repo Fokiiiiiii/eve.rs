@@ -377,7 +377,7 @@ Open (each with its exact blocker):
 - WG-8 fitting restrictions on the server: not started (low priority).
 - FP-8 target resistances for ewar and assistance (2112 to 2116, 2135): not started; needs `resist` fields on the ship's sensors block and on each `Remote` (a second wire change, not in this bump).
 - FP-C4b and FP-C5 (refresh running effects when overheat or a computer changes): not started; needs a new `SimUpdateEffect` message (wire).
-- FP-C7 ECM burst aggression and its offensive gate: DONE (track B6a, protocol 43, section 23).
+- FP-C7 ECM burst aggression and its offensive gate: DONE (track B6a, protocol 43, section 24).
 - FP-C8 automatic reload from the hold: not started. EVE.js queues the reload when the last round is spent (`localCycleRuntime.js`) and resumes at the next cycle; eve.rs would need the host to reload and re-activate and to suppress the no-charges error that the simulation sends now.
 - Cloak types (covert, prototype, non-warp cloak states): not started.
 - M-6 scanner, analyzer and relic modules: not started (Cargo and Ship Scanner results, Data Analyzer and Subverter bodies).
@@ -402,7 +402,7 @@ Open, each with its exact blocker:
 - WG-3 module scripts: PostgreSQL cases per script family are in section 22 (track B7); the disruption scripts are open there.
 - FP-8, FP-C4b, FP-C5, FP-C7: each needs a wire change (resist fields, `SimUpdateEffect`, a burst's jammed ships).
 
-- FP-8, FP-C4b, FP-C5: each needs a wire change (resist fields, `SimUpdateEffect`). FP-C7 is closed (section 23).
+- FP-8, FP-C4b, FP-C5: each needs a wire change (resist fields, `SimUpdateEffect`). FP-C7 is closed (section 24).
 - FP-C8 automatic reload: the simulation ends the effect at the last round (`NO_CHARGES`) before the host sees the spent charge; a pending-reload state is needed in the simulation.
 - M-6 scanner, analyzer and relic modules: no simulation bodies.
 - WP17 assistance and jam overlays (the sim-side overlays are not built); WP19 cynosural field (the body is built in track B7, section 22, with open items there); WP13 mode events (no subscriber, so none is published).
@@ -428,7 +428,7 @@ Open, each with its exact blocker:
 - WG-5: a repair ended by a leave takes its paste and damage, but the client is not told the cargo change then (no notification path from the space layer to the client's cargo for a ship that has left). The rate and cost come from the character's dogma world; only the no-skill values are tested.
 - WG-3: the tracking and optimal range scripts are verified with a loaded script (`ModuleScriptTests`, through the charge pairing in `Eve.Dogma/DogmaWorld.cs`, `otherID`). Guidance, flex hardener and ECCM are verified with a loaded script in track B7 (section 22).
 - FP-C4b and FP-C5 (refresh a running effect when the overheat or a computer changes): not built. Closed in track B5 (section 20). Needs a new `SimUpdateEffect` message: `crates/eve-space/src/link`, `SimCodec`, the Python generator `tools/dev/gen-simlink-fixtures.py`, and one protocol bump at the next free number (37 if track C2 takes 36).
-- FP-C7 (an ECM burst: the ships it jams, and its offensive gate): closed in track B6a (section 23).
+- FP-C7 (an ECM burst: the ships it jams, and its offensive gate): closed in track B6a (section 24).
 - FP-C8 (automatic reload from the hold): not built. Closed in track B5 (section 20). The simulation ends the run at the last round with `NO_CHARGES` (`crates/eve-space/src/modules/effects.rs` around 613) before the host sees `ChargeSpent`. The design: a pending-reload state that waits for the next cycle boundary for an `AdjustCharge` from the host (the message exists, `SimAdjustCharge`), and resumes if one arrives. Needs the simulation change and host tests.
 - M-6 (Cargo Scanner, Ship Scanner, Data Analyzer, Subverter, relics): not built. The reference is EVE.js `server/src/space/modules/scannerModuleRuntime.js` (ranges, rows, and the client notifications `OnCargoScanComplete` and `OnShipScanCompleted`); none of the simulation bodies exist.
 - WP17 (assistance and jam overlays): the resistance part is FP-8. The stacking rule is the SDE stackable flag (all overlay attributes are stackable=true, so no penalty; client `itemAttributeFactory.py:35`). EveJS gives one resistance per remote (`hostileModuleRuntime.js`, `assistanceModuleRuntime.js`).
@@ -444,12 +444,12 @@ Done (decisions in DEVIATIONS "Module rules, track B5"; wire in ADR 0013 epoch 3
 - WP19 (velocity limits 1334 and 2608): the rule fields are on the wire (protocol 38) and the simulation refuses an activation outside the band (`velocity_refusal`). The bomb launcher reaches it (tested); the cynosural field generator does not (no body).
 
 Open, each with its exact blocker:
-- FP-C7: closed in track B6a (section 23).
+- FP-C7: closed in track B6a (section 24).
 - M-6 (Cargo Scanner, Ship Scanner, Data Analyzer, Subverter, relics): no simulation bodies; EVE.js `scannerModuleRuntime.js` is the reference and was not ported in this track.
 - WP17 (stacking of overlapping assistance and jam modifiers): answered by the SDE stackable flag (all overlay attributes are stackable=true, so no penalty; client `itemAttributeFactory.py:35`).
 - WG-3 (scripts and charges with a loaded script): tracking and optimal range have PostgreSQL cases (`ModuleScriptTests`); flex, ECCM and guidance have none yet.
 - WP12 and 1934 (`deactivateIfOffensive`, SDE default 1): located. `OnSessionClosedAsync` (`SpaceSessions.cs:820`) calls `_sim.Leave(LoggedOff)`, and `Scene::leave` (`scene/docking.rs:64`) drops the pilot, so default-1934 modules stop. A bastion (1934 = 0) is not kept running after logoff (open, DEVIATIONS).
-- Host PostgreSQL run (the Safe logoff refusal): closed in track B6a (section 23).
+- Host PostgreSQL run (the Safe logoff refusal): closed in track B6a (section 24).
 
 ## 21. Scanner modules (track M-6, 2026-10-09)
 
@@ -531,7 +531,20 @@ OPEN (each with its blocker):
 - MITM: no scenario driven (`tools/mitm/README.md`); there is no client trace of a burst cycle yet.
 - Skill, ship and mindlink bonuses are not tested with a skilled character; the wiki's Max column (Shield Harmonizing +23.44 %) is the check.
 
-## 23. Track B6a (2026-10-09): ECM burst report, and the baseline failures
+## 23. Track A5: OnDotVictimUpdated, probes, cyno jammer, jump drive and mobile objects (2026-10-09)
+
+Done (tests in the crates named; decisions in DEVIATIONS "Track A5"):
+- The Python `set` in both marshal codecs: `Value::python_set` (`crates/eve-marshal`) and `PyValue.PythonSet` (`Eve.Marshal`); `InventoryWire.Set` delegates. Round-trip tests in both. Protocol unchanged (42).
+- OnDotVictimUpdated, A4's open item: the sim tells a ship its breacher applications as a destiny action on each hit, on each change of the working application and on each end (`crates/eve-space/src/dot_weapons.rs`, `dot_victim_update`). Tests: `dot_weapons/tests.rs` (two new). The client was not run.
+
+Open, each with its exact blocker:
+- LaunchProbes (RC-7, E-06, section 7): not started. EveJS `services/dogma/dogmaService/moduleOperation.js` `Handle_LaunchProbes` (line 3388) and `_resolveValidatedProbeLaunchContext` (425 to 567) give the checks and messages (NOT_IN_SPACE, MODULE_NOT_FOUND, INVALID_LAUNCHER, MODULE_NOT_ONLINE, NO_CHARGES, INVALID_CHARGE, INCOMPATIBLE_CHARGE, NOT_ENOUGH_CHARGES, and the cap of 8 active probes). Blocker: no probe record, no probe object in the simulation, and no scan lifecycle (E-06's notifications follow the scan).
+- GetCynoJammerState (E-03): the host callback stays unassigned, so the answer is None (no jammer). That is correct while no jammer exists. A source would be the Tenebrex cyno suppression (EveJS `services/sovereignty/sovSuppressionState.js` `getCynoJammerOnlineSimTime`, line 259) or the Mobile Cynosural Inhibitor (below). Blocker: neither is built.
+- WP-8 mobile warp disruptors: not started. Blocker: ADR 0012's `Deployed` record is not built. The cyno field from B7 is a sim-timed deployable too, and a restart drops it, so the shared record comes first.
+- Capital jump drive, cyno targeting, jump range and fuel, and the jump to the cyno field: not started. B7's field exists on main (`CynoGeneratorEffect`, `SimAction.CynoField`), so the jump can target it. Blocker: the jump-drive module body and the cross-system jump are to be built; the restrictions follow the drive.
+- Breacher pods (A4): the DoT notification is now built, but the breacher launcher's client flow and the per-tick damage message (`OnDamageMessage`, no wire shape in the sources) remain as A4 recorded them.
+
+## 24. Track B6a (2026-10-09): ECM burst report, and the baseline failures
 
 Done (tests in the projects named; the rules and their sources are in DEVIATIONS "Track B6a"):
 

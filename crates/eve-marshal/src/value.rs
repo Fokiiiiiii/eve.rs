@@ -100,6 +100,22 @@ impl Value {
     {
         Self::Dict(entries.into_iter().map(|(k, v)| (k.into(), v.into())).collect())
     }
+
+    /// A Python `set`. The protocol has no set opcode: `set.__reduce__` gives
+    /// `(set, (list(items),))`, so the wire is a PyObjectEx1 whose header is
+    /// the token `__builtin__.set` and a tuple holding the list (the JS
+    /// reference's `buildPythonSet`, and the client's unpickling).
+    pub fn python_set(items: Vec<Value>) -> Self {
+        Self::ObjectEx {
+            kind: ObjectExKind::Ex1,
+            header: Box::new(Self::Tuple(vec![
+                Self::Token(Cow::Borrowed("__builtin__.set")),
+                Self::Tuple(vec![Self::List(items)]),
+            ])),
+            list: Vec::new(),
+            dict: Vec::new(),
+        }
+    }
 }
 
 impl From<i64> for Value {

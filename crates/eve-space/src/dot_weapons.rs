@@ -10,16 +10,23 @@
 //!
 //! Nothing is persisted: a restart drops the applications, as it drops the missiles in flight.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
+
+use eve_marshal::{ObjectExKind, Value};
 
 use crate::missile_entity::Shooter;
 use crate::missiles::Dot;
 use crate::payload;
 use crate::scene::{Out, Scene, SessionId, TICKS_PER_SECOND};
-use crate::wire::real;
+use crate::wire::{dict, filetime, id, int, real, tuple};
 
 /// One second of a tick, in the milliseconds a `Dot`'s duration is in.
 const TICK_MS: f64 = 1_000.0;
+
+/// The client's `DOT_IDLE` and `DOT_ACTIVE` (eve-logic `dotWeapons/common/dotConst.py`): the states of an application in its `activityState`.
+const DOT_IDLE: i64 = 1;
+const DOT_ACTIVE: i64 = 2;
 
 /// One hit's application of a `Dot` to a ship.
 #[derive(Debug, Clone, PartialEq)]
@@ -50,14 +57,40 @@ pub fn tick_damage(dot: &Dot, total: f64) -> f64 {
 
 impl Scene {
     /// A breacher pod hit lands on the ship `ship_id` at `at`: the application joins the ship's, and its first tick is a second on (when it is the first).
-    pub(crate) fn apply_dot(&mut self, ship_id: i64, dot: Dot, shooter: Shooter, at: i64) {
-        let id = self.dot_sequence;
+    pub(crate) fn apply_dot(&mut self, ship_id: i64, dot: Dot, shooter: Shooter, at: i64) -> Vec<Out> {
+        let sequence = self.dot_sequence;
         self.dot_sequence += 1;
         let target = self.dots.entry(ship_id).or_default();
         if target.applications.is_empty() {
             target.next_tick = at + TICKS_PER_SECOND;
         }
-        target.applications.push(Application { id, dot, shooter, remaining_ms: dot.duration_ms });
+        target.applications.push(Application { id: sequence, dot, shooter, remaining_ms: dot.duration_ms });
+        self.dot_victim_update(ship_id, at)
+    }
+
+    /// The client's list of the applications on `ship` (`OnDotVictimUpdated`, a destiny action on the ship, told to whoever has it in view). The set
+    /// holds each application as a `DotApplicationInfo`: the working one expires at the end of its remaining time; an inert one expires at the end of
+    /// the queue, because its clock stops while it waits and the queue ends when the working one does. Both times stay right until the next change,
+    /// which is when this is told again (on a hit, when the working application changes, and when one ends).
+    fn dot_victim_update(&mut self, ship: i64, at: i64) -> Vec<Out> {
+        let Some(subject) = self.session_of(ship) else { return Vec::new() };
+        let (working, apps): (Option<u64>, &[Application]) = match self.dots.get(&ship) {
+            Some(target) => (target.working, &target.applications),
+            None => (None, &[]),
+        };
+        let ticks = |ms: f64| (ms * (TICKS_PER_SECOND as f64 / 1_000.0)).round() as i64;
+        let queue_end = at + ticks(apps.iter().map(|app| app.remaining_ms).sum());
+        let infos: Vec<Value> = apps
+            .iter()
+            .map(|app| {
+                let is_working = working == Some(app.id);
+                let expiry = if is_working { at + ticks(app.remaining_ms) } else { queue_end };
+                application_info(app, ship, expiry, is_working)
+            })
+            .collect();
+        let stamp = self.next_stamp(at);
+        let action = payload::action(stamp, "OnDotVictimUpdated", [id(ship), Value::python_set(infos)]);
+        self.tell_all(subject, vec![action])
     }
 
     /// Every tick due by `now`, for each ship that carries an application. A ship that is no longer in the scene carries none.
@@ -106,6 +139,7 @@ impl Scene {
             })
             .map(|a| a.id);
         target.working = strongest;
+        let switched = previous != strongest;
         let Some(index) = target.applications.iter().position(|a| Some(a.id) == strongest) else {
             return Vec::new();
         };
@@ -132,6 +166,9 @@ impl Scene {
                 return out;
             }
         }
+        if switched || ended {
+            out.extend(self.dot_victim_update(ship, at));
+        }
         if changed {
             out.extend(self.dot_slim(session, at, (shown > 0.0).then_some(shown)));
         }
@@ -152,6 +189,28 @@ impl Scene {
             None => payload::ship_slim_item_change(stamp, &pilot.ship),
         };
         self.tell_all(session, vec![change])
+    }
+}
+
+/// One application as the client's `DotApplicationInfo` (eve-logic `dotWeapons/common/dotAppInfo.py`): an instance of the class, whose state
+/// is the properties' backing attributes. The attacker is the character that fired the pod; the weapon is its launcher's type.
+fn application_info(app: &Application, ship: i64, expiry: i64, working: bool) -> Value {
+    let ratio = (app.dot.max_hp_percent_per_tick / 100.0).clamp(0.0, 1.0);
+    let state = dict([
+        ("_attackerID", id(app.shooter.owner_id)),
+        ("_weaponTypeID", int(i64::from(app.shooter.weapon_type_id))),
+        ("_expiryTime", filetime(expiry)),
+        ("_maxDamage", real(app.dot.max_damage_per_tick)),
+        ("_maxHPNormalizedRatio", real(ratio)),
+        ("_activityState", int(if working { DOT_ACTIVE } else { DOT_IDLE })),
+        ("_targetID", id(ship)),
+    ]);
+    let class = Value::Token(Cow::Borrowed("dotWeapons.common.dotAppInfo.DotApplicationInfo"));
+    Value::ObjectEx {
+        kind: ObjectExKind::Ex1,
+        header: Box::new(tuple([class, tuple(Vec::new()), state])),
+        list: Vec::new(),
+        dict: Vec::new(),
     }
 }
 

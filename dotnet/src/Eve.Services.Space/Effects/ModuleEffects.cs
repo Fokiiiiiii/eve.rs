@@ -72,6 +72,5 @@ internal static class ModuleEffects
         .Register(new DataSubverterEffect())
         .Register(new CargoScanEffect())
         .Register(new ShipScanEffect())
-        .Register(new ScanStrengthActivateEffect())
         .Register(new ScanStrengthTargetEffect());
 }

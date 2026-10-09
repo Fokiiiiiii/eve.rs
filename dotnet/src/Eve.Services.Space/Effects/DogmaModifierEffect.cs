@@ -26,6 +26,7 @@ internal sealed class DogmaModifierEffect : ShipEffect
         "moduleBonusOmnidirectionalTrackingLink",
         "moduleBonusSiegeModule",
         "moduleBonusTriageModule",
+        "scanStrengthBonusPercentActivate",
         "targetSpectrumBreakerBonus",
     ];
 

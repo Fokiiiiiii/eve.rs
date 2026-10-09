@@ -24,7 +24,7 @@ public sealed class SpaceFightersTests
         await using var rig = await Rig.CreateAsync();
         var pilot = await rig.NewCharacterAsync("Fighter Pilot");
         var session = await rig.SessionAsync(pilot);
-        var fighters = new SpaceFighters(rig.Ships, rig.Statics, _ => null);
+        var fighters = new SpaceFighters(new FakeSim(), rig.Ships, rig.Statics, _ => null);
 
         var answer = Assert.IsType<PyTuple>(await fighters.GetFightersForShipAsync(Call("GetFightersForShip", session)));
 
@@ -40,7 +40,7 @@ public sealed class SpaceFightersTests
         await using var rig = await Rig.CreateAsync();
         var pilot = await rig.NewCharacterAsync("Fighter Pilot");
         var session = await rig.SessionAsync(pilot);
-        var fighters = new SpaceFighters(rig.Ships, rig.Statics, _ => null);
+        var fighters = new SpaceFighters(new FakeSim(), rig.Ships, rig.Statics, _ => null);
 
         var load = await Assert.ThrowsAsync<MachoWrappedException>(() =>
             fighters.LoadFightersToTubeAsync(Call("LoadFightersToTube", session, new PyInt(NoSquadron), new PyInt(159))).AsTask());
@@ -56,7 +56,7 @@ public sealed class SpaceFightersTests
         await using var rig = await Rig.CreateAsync();
         var pilot = await rig.NewCharacterAsync("Fighter Pilot");
         var session = await rig.SessionAsync(pilot);
-        var fighters = new SpaceFighters(rig.Ships, rig.Statics, _ => null);
+        var fighters = new SpaceFighters(new FakeSim(), rig.Ships, rig.Statics, _ => null);
         var ids = new PyList([new PyInt(NoSquadron)]);
 
         foreach (var method in new[] { "RecallFightersToTubes", "CmdActivateAbilitySlots", "CmdDeactivateAbilitySlots" })
@@ -86,7 +86,7 @@ public sealed class SpaceFightersTests
         await using var rig = await Rig.CreateAsync();
         var pilot = await rig.NewCharacterAsync("Fighter Pilot");
         var session = await rig.SessionAsync(pilot);
-        var fighters = new SpaceFighters(rig.Ships, rig.Statics, _ => null);
+        var fighters = new SpaceFighters(new FakeSim(), rig.Ships, rig.Statics, _ => null);
 
         var cargo = await Assert.ThrowsAsync<MachoWrappedException>(() =>
             fighters.CmdScoopAbandonedFighterFromSpaceAsync(Call("CmdScoopAbandonedFighterFromSpace", session, new PyInt(NoSquadron), new PyInt(5))).AsTask());

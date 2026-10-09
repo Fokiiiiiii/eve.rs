@@ -9,6 +9,7 @@ public enum FighterMoveRefusal
 {
     NoShip,
     NotInBay,
+    NotInSpace,
     NotASquadron,
     NoSuchTube,
     TubeOccupied,
@@ -118,6 +119,75 @@ public sealed partial class CharacterShips
         await items.MoveAsync(connection, transaction, fighter.Id, shipId, FighterBayFlag, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new(null, new ItemChanged(fighter with { Flag = FighterBayFlag }, shipId, tubeFlag, fighter.Quantity));
+    }
+
+    /// <summary>
+    /// The squadron in a launch tube goes out of the ship into its solar system, flagged as in space: the simulation then has it (a launch that the
+    /// simulation refuses is taken back with <see cref="TakeFighterIntoTubeAsync"/>).
+    /// </summary>
+    public async Task<FighterMove> LaunchFighterFromTubeAsync(long characterId, long shipId, int tubeFlag, int solarSystemId, CancellationToken cancellationToken = default)
+    {
+        if (!FighterTubes.IsTube(tubeFlag))
+        {
+            return new(FighterMoveRefusal.NoSuchTube);
+        }
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+
+        if (await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Id != shipId)
+        {
+            return new(FighterMoveRefusal.NoShip);
+        }
+        var inTube = (await items.InContainerAsync(shipId, cancellationToken)).FirstOrDefault(i => i.Flag == tubeFlag);
+        if (inTube is null || await items.LockAndGetAsync(connection, transaction, inTube.Id, cancellationToken) is not { } fighter
+            || fighter.OwnerId != characterId || fighter.LocationId != shipId || fighter.Flag != tubeFlag)
+        {
+            return new(FighterMoveRefusal.TubeEmpty);
+        }
+        if (await SquadronTypeAsync(fighter.TypeId, cancellationToken) is null)
+        {
+            return new(FighterMoveRefusal.NotASquadron);
+        }
+
+        await items.MoveAsync(connection, transaction, fighter.Id, solarSystemId, InSpaceFlag, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new(null, new ItemChanged(fighter with { LocationId = solarSystemId, Flag = InSpaceFlag }, shipId, tubeFlag, fighter.Quantity));
+    }
+
+    /// <summary>A squadron that is out in the solar system goes back into a launch tube of its ship: a recall that has landed, or a launch the simulation refused.</summary>
+    public async Task<FighterMove> TakeFighterIntoTubeAsync(long characterId, long shipId, long fighterId, int tubeFlag, int solarSystemId, CancellationToken cancellationToken = default)
+    {
+        if (!FighterTubes.IsTube(tubeFlag))
+        {
+            return new(FighterMoveRefusal.NoSuchTube);
+        }
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+
+        if (await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Id != shipId)
+        {
+            return new(FighterMoveRefusal.NoShip);
+        }
+        if (await items.LockAndGetAsync(connection, transaction, fighterId, cancellationToken) is not { } fighter
+            || fighter.OwnerId != characterId || fighter.LocationId != solarSystemId || fighter.Flag != InSpaceFlag)
+        {
+            return new(FighterMoveRefusal.NotInSpace);
+        }
+        if (await SquadronTypeAsync(fighter.TypeId, cancellationToken) is null)
+        {
+            return new(FighterMoveRefusal.NotASquadron);
+        }
+        var tubes = (await items.InContainerAsync(shipId, cancellationToken)).Where(i => FighterTubes.IsTube(i.Flag)).ToList();
+        if (tubes.Any(i => i.Flag == tubeFlag))
+        {
+            return new(FighterMoveRefusal.TubeOccupied);
+        }
+
+        await items.MoveAsync(connection, transaction, fighter.Id, shipId, tubeFlag, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new(null, new ItemChanged(fighter with { LocationId = shipId, Flag = tubeFlag }, solarSystemId, InSpaceFlag, fighter.Quantity));
     }
 
     /// <summary>The squadrons of a ship: the ones in its tubes and the ones in its fighter bay, as the database has them.</summary>

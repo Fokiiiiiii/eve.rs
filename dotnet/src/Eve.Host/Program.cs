@@ -760,6 +760,13 @@ static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimCl
         // a mining cycle's ledger entry: written in the event's transaction, so a replayed event writes nothing (the entry id is the event id)
         var miningLedger = new MiningLedgerRecorder(mailStore, mailStoreOwner.Fence);
         foundations.Events.Subscribe("mining.ledger", [Eve.Ships.OreMinedEvent.Topic], (context, token) => miningLedger.RecordAsync(context, token));
+        // the daily goals of mining and salvage: content defined before the foundations attach, advanced by one subscriber (DailyGoalRecorder)
+        var dailyGoals = new DailyGoalRecorder(foundations.Content, foundations.Scheduler);
+        foreach (var definition in DailyGoalRecorder.Definitions)
+        {
+            foundations.Content.Define(definition);
+        }
+        foundations.Events.Subscribe(DailyGoalRecorder.SubscriberName, [Eve.Ships.OreMinedEvent.Topic, Eve.Ships.SalvageWreckedEvent.Topic], (context, token) => dailyGoals.RecordAsync(context, token));
         foundations.Events.Subscribe("npc.security-status-recovery", ["npc.killed"],
             async (context, token) => await securityRecovery.HandleAsync(context, context.Event.Id, context.Event.PayloadJson, token));
         foundations.Events.Subscribe("npc.security-status-notifications", ["npc.security_status.recovered"],

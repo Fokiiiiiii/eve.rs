@@ -137,6 +137,14 @@ public sealed class ContentRuntime
     // ---- starting ----------------------------------------------------------------------------------------------------------------------------------
 
     /// <summary>
+    /// The newest instance of a kind with this unique key, in any state (a finished one too), or null. <see cref="StartAsync"/> makes a new instance when the one with the
+    /// key has finished, so a feature that starts one once a period asks first.
+    /// </summary>
+    public async Task<long?> FindAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string kind, string uniqueKey, CancellationToken cancellationToken = default) =>
+        (long?)await Sql.ScalarAsync(connection, transaction, Q("SELECT id FROM {schema}.instances WHERE kind = $1 AND unique_key = $2 ORDER BY id DESC LIMIT 1"),
+            cancellationToken, kind, uniqueKey);
+
+    /// <summary>
     /// Starts an instance of a definition for an owner, in the caller's transaction. With a <paramref name="uniqueKey"/> only one active instance of the kind may have it (an anomaly in
     /// a system): asking again returns the one that exists. The first objective (every objective, for parallel content) is active at once.
     /// </summary>

@@ -331,6 +331,18 @@ fn launch_from_a(
     scene.launch_missile(A, &effect, t)
 }
 
+/// Records that `attacker` (a ship) fired on `target` (a ship), as the scene's aggressions do for a launch or a shot.
+fn fired_on(scene: &mut Scene, attacker: i64, target: i64) {
+    let owner = scene.combat_owner(A);
+    scene.aggressions.push(crate::weapons::Aggression {
+        attacker_ship: attacker,
+        target_ship: target,
+        module_type_id: 1,
+        source_owner_id: owner,
+        target_type_id: 0,
+    });
+}
+
 /// A third ship, of `corporation` (A's own, or another), undocked and placed `metres` from A along x.
 fn third_ship(scene: &mut Scene, corporation: i32, metres: f64, t: i64) -> i64 {
     let mut spec = other_spec();
@@ -348,14 +360,17 @@ fn third_ship(scene: &mut Scene, corporation: i32, metres: f64, t: i64) -> i64 {
 }
 
 #[test]
-fn an_fof_launch_goes_for_the_nearest_valid_hostile_in_its_reach_and_locks_none() {
+fn an_fof_launch_goes_for_the_nearest_enemy_that_fired_on_the_shooter_and_locks_none() {
     let (mut scene, t) = crowd();
-    // B is of another corporation (a hostile); the corporation-mate below is A's
+    // B is of another corporation and fired on A (the wiki: the nearest enemy that has previously fired on you); the corporation-mate below is A's
     scene.pilots.get_mut(&B).unwrap().ship.spec.corporation_id = 98_000_001;
     let a_corp = scene.pilots[&A].ship.spec.corporation_id;
-    // B is five kilometres off; a ship of A's own corporation is nearer, and is not a hostile
-    let _mate = third_ship(&mut scene, a_corp, 3_000.0, t);
     let b_ship = scene.pilots[&B].ship.spec.ship_id;
+    let a_ship = scene.pilots[&A].ship.spec.ship_id;
+    fired_on(&mut scene, b_ship, a_ship);
+    // a ship of A's own corporation is nearer, and fired on A too: it is not an enemy
+    let mate = third_ship(&mut scene, a_corp, 3_000.0, t);
+    fired_on(&mut scene, mate, a_ship);
     let out = launch_from_a(&mut scene, crate::missile_entity::AUTO_TARGET_ID, 100.0, fof_missile(), t);
     let _ = out;
     let missile = scene.missiles.values().next().expect("a missile was fired");
@@ -368,9 +383,11 @@ fn an_fof_launch_goes_for_the_nearest_valid_hostile_in_its_reach_and_locks_none(
 }
 
 #[test]
-fn an_fof_launch_with_no_valid_hostile_in_its_reach_fires_nothing() {
+fn an_fof_launch_with_no_enemy_in_its_reach_fires_nothing() {
     let (mut scene, t) = crowd();
-    // B is pushed beyond the missile's ten kilometres of reach
+    // B fired on A, but is pushed beyond the missile's ten kilometres of reach
+    let (b_ship, a_ship) = (scene.pilots[&B].ship.spec.ship_id, scene.pilots[&A].ship.spec.ship_id);
+    fired_on(&mut scene, b_ship, a_ship);
     let a = scene.pilots[&A].ship.position;
     place(&mut scene, B, eve_destiny::Vec3::new(a.x + 30_000.0, a.y, a.z));
     let out = launch_from_a(&mut scene, crate::missile_entity::AUTO_TARGET_ID, 100.0, fof_missile(), t);

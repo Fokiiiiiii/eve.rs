@@ -387,17 +387,21 @@ impl Scene {
             .collect()
     }
 
-    /// The nearest valid hostile to a launcher's ship within `range` metres of the surface of both: another owner's ship (not the shooter's corporation or alliance),
-    /// not in warp and not in its undock protection; ties go to the lower ship id. Returns the ship id, which is the target of the launch.
+    /// The nearest enemy that has fired on a launcher's ship and is within `range` metres of the surface of both (EVE University wiki, auto-targeting
+    /// missiles: "the nearest enemy ship or drone that has previously fired on you"; no lock is needed). An enemy is another owner's ship, not the shooter's
+    /// corporation or alliance, not in warp and not in its undock protection. The aggressions the scene has recorded name who fired on whom; a drone's shots are
+    /// aggressions of its controller's ship, so the controller's position is the drone's. Ties go to the lower ship id. Returns the ship id, the launch's target.
     pub(crate) fn nearest_hostile(&self, session: SessionId, range: f64, now: i64) -> Option<i64> {
         let shooter = &self.pilots.get(&session)?.ship;
-        let owner = self.combat_owner(session);
+        let (own_ship, owner) = (shooter.spec.ship_id, self.combat_owner(session));
         let (origin, radius) = (shooter.position, shooter.spec.radius);
         let mut best: Option<(f64, i64)> = None;
-        for (other, pilot) in &self.pilots {
+        for fired_on_me in self.aggressions.iter().filter(|a| a.target_ship == own_ship) {
+            let Some(attacker) = self.session_of(fired_on_me.attacker_ship) else { continue };
+            let Some(pilot) = self.pilots.get(&attacker) else { continue };
             let target = &pilot.ship.spec;
-            if *other == session
-                || self.combat_owner(*other) == owner
+            if attacker == session
+                || self.combat_owner(attacker) == owner
                 || (shooter.spec.corporation_id != 0 && target.corporation_id == shooter.spec.corporation_id)
                 || (shooter.spec.alliance_id != 0 && target.alliance_id == shooter.spec.alliance_id)
                 || pilot.flight.as_ref().is_some_and(|flight| flight.is_warping())

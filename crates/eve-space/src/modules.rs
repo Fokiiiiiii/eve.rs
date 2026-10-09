@@ -13,6 +13,7 @@ use crate::link::ChargeOp;
 use crate::payload;
 use crate::scene::{Out, Scene, SessionId, TICKS_PER_SECOND};
 use crate::strike::{DISRUPTED_REMOTE_REPAIR, Strike};
+use crate::targeting::{LockOrigin, Order};
 use crate::weapons::{Spool, SpoolState, Turret};
 use crate::wire::{dict, filetime, id, int, real, text, tuple, word};
 
@@ -240,7 +241,7 @@ impl Action {
     /// Whether the simulation does not run the action yet (its package has not landed): such an activation is refused, never run as a no-op.
     fn not_implemented(&self) -> bool {
         match self {
-            Self::Tractor { .. } | Self::PassiveLock | Self::AutoTarget { .. } => true,
+            Self::Tractor { .. } | Self::AutoTarget { .. } => true,
             Self::Charged { action, fallback, .. } => {
                 action.not_implemented() || fallback.as_deref().is_some_and(Action::not_implemented)
             }
@@ -334,7 +335,7 @@ pub enum Action {
     Salvage { access_bonus: f64 },
     /// A tractor beam (tag 9). Its package has not landed: the activation is refused (`NOT_IMPLEMENTED`), so it never runs.
     Tractor { velocity: f64, hold: f64 },
-    /// A passive lock (tag 10). Its package has not landed: the activation is refused (`NOT_IMPLEMENTED`), so it never runs.
+    /// A passive lock (tag 10): when its cycle starts the target is locked with its notice suppressed (see `passive_lock`).
     PassiveLock,
     /// An auto-target sweep (tag 11). Its package has not landed: the activation is refused (`NOT_IMPLEMENTED`), so it never runs.
     AutoTarget { range: f64 },
@@ -2016,6 +2017,7 @@ impl Scene {
             Some(Action::ResistanceShift { attribute_ids, .. }) if when == Applies::CycleEnd => {
                 self.shift_armor(session, *attribute_ids, at)
             }
+            Some(Action::PassiveLock) if when == Applies::CycleStart => self.passive_lock(session, effect.target_id, at),
             Some(Action::Cloak) if when == Applies::CycleStart => {
                 let changed = if let Some(pilot) = self.pilots.get_mut(&session) {
                     let changed = pilot.cloak != crate::visibility::CloakState::Cloaked;
@@ -2031,6 +2033,12 @@ impl Scene {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// A passive targeter's cycle starts: its target is locked through the one lock path, with the target not told (EVE.js `suppressTargetNotice`). A lock the
+    /// pilot has already is answered as it is; a refusal (range, capacity, a target that is not there) is told to the pilot as any lock's is.
+    fn passive_lock(&mut self, session: SessionId, target: i64, at: i64) -> Vec<Out> {
+        self.lock(session, target, &Order::Lock(target), LockOrigin::Passive { suppress_notice: true }, at)
     }
 
     /// The attributes a running reactive armor hardener tells the armor's resonances as, if one runs.
@@ -5034,14 +5042,24 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn tractor_passive_lock_and_auto_target_are_refused_until_they_run() {
+    fn a_passive_targeter_locks_its_target_as_its_cycle_starts() {
+        let (mut scene, t) = crowd();
+        let mut passive = afterburner();
+        passive.action = Some(Action::PassiveLock);
+        passive.target_id = partner();
+        let out = scene.activate(A, passive, t);
+        assert!(!out.iter().any(|o| matches!(o, Out::Refused { .. })), "{out:?}");
+        let (_, t) = poll_until(&mut scene, t, 6.0);
+        assert_eq!(scene.locked_by(A), vec![partner()]);
+        assert_eq!(scene.pilots[&A].modules.running.len(), 1);
+    }
+
+    #[test]
+    fn tractor_and_auto_target_are_refused_until_they_run() {
         let (mut scene, t) = crowd();
         let mut tractor = afterburner();
         tractor.action = Some(Action::Tractor { velocity: 500.0, hold: 500.0 });
         assert!(matches!(scene.activate(A, tractor, t).first(), Some(Out::Refused { reason: "NOT_IMPLEMENTED", .. })));
-        let mut passive = afterburner();
-        passive.action = Some(Action::PassiveLock);
-        assert!(matches!(scene.activate(A, passive, t).first(), Some(Out::Refused { reason: "NOT_IMPLEMENTED", .. })));
         let mut auto = afterburner();
         auto.action = Some(Action::AutoTarget { range: 50_000.0 });
         assert!(matches!(scene.activate(A, auto, t).first(), Some(Out::Refused { reason: "NOT_IMPLEMENTED", .. })));

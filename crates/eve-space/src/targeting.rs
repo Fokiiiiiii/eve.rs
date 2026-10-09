@@ -364,7 +364,7 @@ impl Scene {
     }
 
     /// The one lock path: every origin is checked the same way; the origin only decides who is told (see `finish_lock`).
-    fn lock(
+    pub(crate) fn lock(
         &mut self,
         session: SessionId,
         target: i64,

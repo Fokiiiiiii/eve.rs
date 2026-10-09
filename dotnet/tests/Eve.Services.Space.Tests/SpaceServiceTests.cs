@@ -1147,6 +1147,33 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task A_passive_targeter_asks_the_simulation_for_a_passive_lock_on_its_target_and_needs_a_target_for_it()
+    {
+        var (rig, character, _) = await DockedAsync();
+        await using var _ = rig;
+        const int passiveTargeterI = 581;
+        await rig.Statics.EnsureTypesAsync([passiveTargeterI]);
+        long targeter;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            targeter = await rig.Items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(passiveTargeterI, character.CharacterId, character.ShipId, Eve.Inventory.ItemFlags.LowSlot0, 1, true));
+            await rig.Modules.SetAsync(connection, transaction, targeter, Eve.Dogma.ItemState.Online);
+            await transaction.CommitAsync();
+        }
+        var (snapshot, _, _, _) = await ShipAsync(rig, character);
+
+        var refused = ModulePackages.Of(snapshot, rig.Statics, targeter, "targetPassively", 0, 1);
+        var package = ModulePackages.Of(snapshot, rig.Statics, targeter, "targetPassively", 9988400002215, 1);
+
+        Assert.Equal("TARGET_REQUIRED", refused.Reason);
+        Assert.Null(package.Reason);
+        Assert.IsType<SimAction.PassiveLock>(package.Effect!.Action);
+        Assert.Equal(9988400002215, package.Effect.TargetId);
+    }
+
+    [PgFact]
     public async Task What_cannot_be_run_is_refused_with_the_reason_and_the_module_that_the_message_names()
     {
         var (rig, character, _) = await DockedAsync();

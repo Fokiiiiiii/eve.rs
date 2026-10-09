@@ -732,7 +732,6 @@ public class ModuleEffectsTests
             "scanStrengthTargetPercentBonus",
             "shipScan",
             "targetHostiles",
-            "targetPassively",
             "tractorBeamCan",
             "warpDisruptSphere",
         ];

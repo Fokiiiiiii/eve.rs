@@ -22,6 +22,7 @@ fn scourge() -> Missile {
         explosion_velocity: 150.0,
         damage_reduction_factor: 0.644,
         damage_reduction_sensitivity: 5.5,
+        dot: None,
     }
 }
 

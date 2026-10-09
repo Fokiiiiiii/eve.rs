@@ -241,6 +241,7 @@ impl Scene {
         told.extend(self.settle_modules(now));
         told.extend(self.apply_overheating(heat, now));
         told.extend(self.advance_missiles(now));
+        told.extend(self.advance_dots(now));
         told.extend(self.advance_deployables(now));
         told.extend(self.advance_drones(now));
         told.extend(self.reconcile(now));

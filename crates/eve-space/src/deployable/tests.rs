@@ -231,6 +231,7 @@ fn a_defender_launcher_shoots_down_the_hostile_missile_in_its_reach() {
         explosion_velocity: 400.0,
         damage_reduction_factor: 0.1,
         damage_reduction_sensitivity: 5.5,
+        dot: None,
     };
     let shooter = Shooter {
         session: B,
@@ -270,6 +271,7 @@ fn a_defender_launcher_shoots_down_the_hostile_missile_in_its_reach() {
         explosion_velocity: 400.0,
         damage_reduction_factor: 0.1,
         damage_reduction_sensitivity: 5.5,
+        dot: None,
     };
     let launcher = Effect {
         module_id: MODULE + 301,
@@ -300,6 +302,7 @@ fn fof_missile() -> crate::missiles::Missile {
         explosion_velocity: 400.0,
         damage_reduction_factor: 0.1,
         damage_reduction_sensitivity: 5.5,
+        dot: None,
     }
 }
 

@@ -112,6 +112,13 @@ pub fn ship_slim_item_change(stamp: u32, ship: &Ship) -> Value {
     action(stamp, "OnSlimItemChange", [id(ship.spec.ship_id), slim_object(slim::ship_entries(ship))])
 }
 
+/// `OnSlimItemChange` for a ship with `extra` entries added to its slim item (the damage over time it takes, `dotHpPercentageApplied`).
+pub fn ship_slim_item_change_with(stamp: u32, ship: &Ship, extra: Vec<(&'static str, Value)>) -> Value {
+    let mut entries = slim::ship_entries(ship);
+    entries.extend(extra);
+    action(stamp, "OnSlimItemChange", [id(ship.spec.ship_id), slim_object(entries)])
+}
+
 /// The effect the client plays where a pilot jettisons cargo (`effects.Jettison`, played on the can: it has no module, target or charge).
 pub fn jettison_effect(stamp: u32, can_id: i64) -> Value {
     action(

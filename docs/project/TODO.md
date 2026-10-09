@@ -465,7 +465,10 @@ Done (decisions in DEVIATIONS "Scanner modules, track M-6"; wire in ADR 0013 epo
 Open, each with its blocker:
 - Data Analyzer (`doHacking`, effect 1738), Relic Analyzer (same effect) and Data Subverter (`hackOrbital`, effect 4773): not started. The reference is EVE.js
   `moduleOperation.js` (the analyzer section) and the hacking window of the client; the minigame and the loot container interior are the only named refusal
-  allowed for them, and neither is written.
+  allowed for them, and neither is written. The EVE University wiki "Hacking" page gives the analyzer numbers (base virus coherence 40 and strength 20 for tier 1,
+  60 and 30 for tier 2; Hacking and Archaeology add 10 coherence per level; the minigame's failure penalties). It does not give the range, the cycle, the activation
+  or the Data Subverter: those stay on the SDE attributes (54, 73, 902, 1909 to 1911). The body is blocked: eve.rs has no hackable site entity (a materialised
+  container with a hacking state) for the target to be validated against.
 - Survey Scanner: not part of this runtime. The reference's scanner module runtime has no survey effect; `surveyScan` belongs to the mining chipsets (section 7).
 - Resistance at activation: EVE.js refuses the start before a cycle is spent. The host reads the target's resistance at the cycle's end, so the eve.rs scanner
   spends one cycle. A pre-activation check needs the target's resistance in the activation request (a wire field).

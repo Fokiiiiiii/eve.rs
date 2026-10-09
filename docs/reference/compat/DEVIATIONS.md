@@ -457,7 +457,10 @@ Each item names the source that decided it: the SDE first (effect records 46 and
 - **Limit: NPC ships are refused as `NO_TARGET`.** The hold and fittings come from the item store, which holds no NPC inventory. EVE.js scans any entity.
 - **Not built in this track (each with its blocker).**
   - Data Analyzer (`doHacking`), Relic Analyzer and Data Subverter (`hackOrbital`): the reference is EVE.js `moduleOperation.js` (the analyzer section) and the client's
-    hacking window. The minigame and loot container interior is the only named refusal allowed for them, and no body is written.
+    hacking window. The minigame and loot container interior is the only named refusal allowed for them, and no body is written. The EVE University wiki "Hacking"
+    page (read for this track) gives tier 1 analyzers a base virus coherence of 40 and strength of 20, tier 2 60 and 30, and +10 coherence per Hacking or
+    Archaeology level. It is silent on range, cycle time, activation and the Data Subverter, so those come from the SDE. Blocked: eve.rs has no hackable site entity
+    for the target to be validated against (EVE.js `_resolveAnalyzerHackingContext` reads a materialised container's hacking state).
   - Survey Scanner: no effect in the scanner runtime. `surveyScan` belongs to the mining chipsets (TODO section 7).
   - Probe lifecycle notifications (E-06): depend on `LaunchProbes` (RC-7).
 - **Limitation: no graphical client run.** The MITM recipe needs a live EVE.js and a headless scenario that scripts a scanner. Neither exists, so the client's windows

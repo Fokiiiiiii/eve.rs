@@ -361,23 +361,26 @@ overlays (104, 2354, 1349), WP6 (`scene/warping.rs`, `scene/docking.rs`); the do
 delay (669, generic), burnt-out modules (energizer), WP3, WP4, WP5 (in part), WP14; fixed 1014 repeat cap (FP-C2); tracking computer not hostile (FP-3); guidance
 disruptor is an attack (FP-C6, Rust and host); the fixture generator carries the rules (`tools/dev/gen-simlink-fixtures.py`).
 
-Open (module rules, each with its exact blocker):
-- WP13 mode events: deferred (decision MR-D2 (b)); no subscriber exists, and the topic table is owned by superweapons S4.
-- WP16 bastion micro jump drive block (client python effect 5788, `bastionMode.py:89`): needs the client modifier table, decision MR-D7 (a); not built.
-- WP17 assistance and jam overlays (2135, 2116, 2112 to 2114, 2253 on the target): not read by `ewar.rs` or the remote paths; stacking rule not decided.
-- WP19 velocity limits (1334, 2608): the only carriers are the cynosural field generator and the missile launcher bomb, which are refused as not implemented, so no
-  reachable carrier exists yet.
-- 906 for eject and logoff, 1934, WP12 logout design: no reference text (MR-D9 (b)); not built.
-- Reactivation refusal: the client's `ModuleReactivationDelayed2` needs the time since the stop and the module id; the refusal does not carry them yet (the host
-  shows a notice).
-- MAX_GROUP_ACTIVE: the client's `EffectCrowdedOut {module, count}` needs the count of running modules; the refusal does not carry it yet.
-- Burnt-out and reactivation state is kept by the simulation, so a host restart clears it (module_rules T17 is not met for these two).
-- Audit A remainders: FP-8 (resistances on ewar and assistance), FP-10 (gunnery-only tracking disruption), FP-9 done earlier.
-- Audit C remainders: FP-C3 (spool telemetry 5804/5818), FP-C4a (overload visible to dogma), FP-C4b and FP-C5 (refresh running effects), FP-C7 (ECM burst
-  aggression), FP-C8 (automatic reload after depletion, also M-7).
-- Audit D: M-4 general maxGroupActive for every group is done; the Hull Energizer burn-out is done; M-6 (scanner, analyzer and relic modules) not built.
-- Wiki gaps: WG-1 decided without change (see DEVIATIONS); WG-2 to WG-8 open (WG-3 needs the module script tests, WG-4 a reference for gate and station
-  proximity, WG-5 heat repair on dock, WG-6 safety-colour gating, WG-7 weapons timer on jam, WG-8 fitting restrictions on the server).
+Track B2 (2026-10-09), done (tests in the crates named; source and mutation checks in DEVIATIONS "Module rules, track B2"): WG-1 entropic disintegrator stops off optimal (`scene`/`weapons`); WG-2 charge exemption pinned to the V24.01 client (`Eve.Dogma.Tests`); a stargate jump stops every running module, so a reactive armor hardener's profile resets (`scene/jump.rs`); a dock leaves no rack heat; FP-C4a overheat is Overloaded to dogma for a running module (`SpaceSessions.Modules.cs`); FP-10 tracking disruption reaches gunnery weapons only (protocol 34, `SimTurret.RequiresGunnery`, ADR 0013 epoch 34). FP-C3 closed: the V24.01 client reads 5804/5818 nowhere.
+
+Open (each with its exact blocker):
+- WG-3 module scripts (tracking, sensor booster/ECCM, guidance, flex hardener): not started; needs SDE-backed `ModuleEffectsTests` cases for each script's attribute.
+- WG-4 smartbomb near gates and stations: not built; no sourced rule (wiki distances carry a [Verify] mark; EVE.js and the client have no check).
+- WG-5 nanite paste while overheated: not built; no refusal text in EVE.js or the V24.01 client.
+- WG-6 safety-colour gating of remote assistance and WG-7 jam weapons timer: not started; both need the Crimewatch assistance facts and the timer code, and WG-7 follows WG-6.
+- WG-8 fitting restrictions on the server: not started (low priority).
+- FP-8 target resistances for ewar and assistance (2112 to 2116, 2135): not started; needs `resist` fields on the ship's sensors block and on each `Remote` (a second wire change, not in this bump).
+- FP-C4b and FP-C5 (refresh running effects when overheat or a computer changes): not started; needs a new `SimUpdateEffect` message (wire).
+- FP-C7 ECM burst aggression and its offensive gate: not started; needs the sim to report the ships a burst jammed (wire), and no reference text for the burst's safety rule was found.
+- FP-C8 automatic reload from the hold: not started. EVE.js queues the reload when the last round is spent (`localCycleRuntime.js`) and resumes at the next cycle; eve.rs would need the host to reload and re-activate and to suppress the no-charges error that the simulation sends now.
 - Cloak types (covert, prototype, non-warp cloak states): not started.
-- Reactive armor hardener follow-ups (restart, death and gate-jump behaviour of the shift profile): not started.
-- Protocol 33: this is the one bump of track B; re-check `main` before a push.
+- M-6 scanner, analyzer and relic modules: not started (Cargo and Ship Scanner results, Data Analyzer and Subverter bodies).
+- M-3 leftovers outside track A: not started.
+- WP13 mode events (MR-D2): stays deferred. No subscriber exists in the reference, and a subscriber with no consumer is the no-op AGENTS rule 5 forbids.
+- WP16 bastion micro jump drive block: needs the client's modifier 5788 to 6658 mapping (MR-D7), which the decisions brief marks as a client-derived table needing sign-off; not built.
+- WP17 assistance and jam overlays: not built; the stacking rule is not in any reference read (MR-D13).
+- WP19 velocity limits (1334, 2608): no reachable carrier (both carriers are refused as not implemented).
+- 906 eject and logoff, 1934, WP12: no reference text (MR-D9 (b)); not built.
+- Reactivation refusal and MAX_GROUP_ACTIVE: the refusal does not carry the time since the stop or the running count yet (the client's `ModuleReactivationDelayed2` and `EffectCrowdedOut` need them).
+- Reactive armor hardener: restart clears the profile (in memory, by design); death and gate jump are covered (section 8b). A host-level test of a jump with a running module is not in this change.
+- Protocol: this bump is 34 on this branch. `mod-a` is at 34 on its branch; the integrator renumbers it after `mod-a` lands. Re-check `main` before a push.

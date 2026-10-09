@@ -474,3 +474,24 @@ fn a_missile_blast_scales_the_damage_by_the_signature_against_the_explosion_radi
     assert_eq!(blast.applied([100.0, 0.0, 0.0, 0.0], 40.0, 0.0), [50.0, 0.0, 0.0, 0.0]);
     assert_eq!(blast.applied([100.0, 0.0, 0.0, 0.0], 160.0, 0.0), [100.0, 0.0, 0.0, 0.0]);
 }
+
+#[test]
+fn an_abandoned_squadron_that_loses_members_is_still_told_its_size_for_its_item() {
+    // let go, the squadron has no controller: the size it loses is told with its id (the host writes it to the item, and no pilot is told)
+    let (mut scene, squadron, _) = launched();
+    let order = scene.fighter_order(PLAYER, &[SQUADRON_SHIP], FighterOrder::Abandon, LATER + SECOND);
+    assert_eq!(results_of(&order), [(SQUADRON_SHIP, None)]);
+    let (_, whole) = scene.pilots[&squadron].ship.health.points_left(LATER + SECOND);
+    let member = whole / 6.0;
+    // the squadron resists half of a raw hit (the hull), so three members of raw damage land as one and a half
+    let (told, _) = scene.damage(SQUADRON_SHIP, [member * 3.0, 0.0, 0.0, 0.0], LATER + 2 * SECOND);
+    let sizes: Vec<i32> = told
+        .iter()
+        .filter_map(|out| match out {
+            Out::FighterSize { fighter_id, size, .. } if *fighter_id == SQUADRON_SHIP => Some(*size),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sizes, [5], "{told:?}");
+    assert!(scene.is_fighter(squadron) && scene.controller_of_drone(squadron) == Some(0));
+}

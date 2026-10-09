@@ -17,7 +17,9 @@ namespace Eve.Services.Space;
 /// the ship in the database: a squadron goes into a tube, out of a tube into space, and back into a tube here. A squadron out in space is the simulation's
 /// (<see cref="ISimulation.LaunchFighterAsync"/>, <see cref="ISimulation.FighterOrderAsync"/>): it flies, and it lands or is let go as the simulation says
 /// (<c>SimFighterLanded</c>, <c>SimFighterReleased</c>). Without a simulation no squadron goes out, and each such call is refused with its reason.
-/// Abilities, the scoop of an abandoned squadron and the point movement are not in the simulation yet, so they are refused with the reason (ADR 0015).
+/// The abilities of a squadron run in the simulation as effects built from its type (<see cref="FighterAbilityEffects"/>); their charges and cooldowns are
+/// kept here in memory. A squadron lost (destroyed) is removed from the database and its pilot is told. The scoop of an abandoned squadron takes it back
+/// into the bay or a tube (ADR 0015). Kamikaze and launch bomb are refused with their blockers.
 /// </summary>
 public sealed class SpaceFighters : ISpaceFighters, IDisposable
 {

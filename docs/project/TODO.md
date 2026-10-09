@@ -172,10 +172,12 @@ Decisions and work packages: ADR 0015 and `scratchpad/specs/fighters.md`. Deviat
 | DONE | Fighter bay and launch tubes: load, unload, the tube rules and the bay volume check, in the database | `dotnet/src/Eve.Ships/CharacterShips.Fighters.cs`, `FighterTubes.cs` |
 | DONE | `fighterMgr` refuses every call it cannot serve with a user error; no fallback answers success | `ClientStartupServices.cs`, `ISpaceFighters.cs`, `SpaceFighters.cs` |
 | DONE | Ability slot table (EVE.js data, families checked against the SDE) | `dotnet/src/Eve.Services.Space/Effects/FighterAbilityCatalogue.cs` |
-| OPEN | Squadrons in space: launch, recall, orders, movement, abandon, scoop; protocol kinds and the squadron controller | ADR 0015 WP-E, WP-F, WP-G, WP-H |
-| OPEN | Squadron health, death and size notices | ADR 0015 WP-I, WP-J |
-| OPEN | Ability effects: EWAR, self buffs, missile and AttackM attacks, kamikaze, Tackle | ADR 0015 WP-K, WP-L, WP-M |
-| OPEN | LaunchBomb (needs the ADR 0011 area mechanism) | ADR 0015 FIG-D-6 |
-| OPEN | Recovery of squadrons on logoff and on simulation loss | ADR 0015 WP-R |
-| OPEN | Live recording against EVE.js and a headless test | ADR 0015 WP-S |
-| OPEN | Protocol bump for the fighter kinds (main is at 30 with the tractor beam; the fighter kinds take 31 when WP-E lands) | ADR 0013, ADR 0015 FIG-X-1 |
+| DONE (not run in the client) | Squadrons in space: launch, recall and landing, orbit, follow, stop, GOTO_POINT (a point course), abandon, scoop back within 5000 m of the ship it came from, recovery on logoff (within 5000 m lands, else let go) | ADR 0015; `crates/eve-space/src/fighters.rs`, `dotnet/src/Eve.Services.Space/SpaceFighters.cs` |
+| DONE (not run in the client) | Squadron health: the points of all members together; a member lost is told as `OnInSpaceSquadronSizeChanged` and the item keeps the size; the last member destroys the squadron and its item is removed | `fighters.rs` (`tell_squadron_size`), `SpaceFighters.cs` (`OnReceived`, `LoseAsync`) |
+| DONE (not run in the client) | Abilities that run in the simulation: warp disruption, stasis webifier, energy neutralizer, ECM, tackle (one remote: a scramble and a web), microwarpdrive, afterburner, evasive maneuvers, micro jump drive, missiles and AttackM (per member, on the locked target) | `Effects/FighterAbilityEffects.cs`, `Effects/ProjectedEffect.cs`, `ewar.rs`, `modules.rs` (`Remote::Tackle`) |
+| LIMITATION | Ability charges and cooldowns are kept by the host in memory: a host restart resets them | `SpaceFighters.cs` (`AbilitySlot`) |
+| LIMITATION | A squadron let go keeps the size it had at release in its item; members it loses while abandoned are not written back | `SpaceFighters.cs` |
+| BLOCKED | Kamikaze: the simulation has no approach-and-detonate action (the squadron follows its target to 500 m, detonates with its damage, and is destroyed). Refused with `KAMIKAZE_NOT_IN_SIMULATION`. Reference: EVE.js `fighterRuntime.js:2912-2943` | `Effects/FighterAbilityEffects.cs` |
+| BLOCKED | LaunchBomb: the general `Area` of ADR 0011 is not built, and the bomb's detonation delay and trajectory are not in the SDE (they need a captured V24.01 trace). Refused with `LAUNCH_BOMB_NOT_IN_SIMULATION` | ADR 0011 addendum; `Effects/FighterAbilityEffects.cs` |
+| DONE (protocol 32) | Protocol: fighter kinds 54 to 60, `LaunchFighter` with the squadron size, GOTO_POINT (kind 59), `FighterSize` (kind 60), Tackle remote tag 12 | `link.rs`, `SimCodec.cs`, `oracle/fixtures/simlink/messages.json` |
+| REPLACED | Live recording against EVE.js (WP-S, `oracle/fixtures/scenarios/fighter_flight.json`): no graphical client runs on this host, so no recording was made. The wire shapes are pinned by `oracle/fixtures/simlink/messages.json`, whose fighter entries were written from the EVE.js and eve-logic source (see DEVIATIONS, Player fighters) | ADR 0015 WP-S |

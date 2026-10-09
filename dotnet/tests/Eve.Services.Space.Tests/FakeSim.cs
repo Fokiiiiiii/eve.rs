@@ -178,6 +178,10 @@ internal sealed class FakeSim : ISimulation
 
     public void RemoveWreck(long wreckId, int effect) => Heard.Enqueue(new SimRemoveWreck(wreckId, effect));
 
+    public void RestoreDeployed(SimDeployed deployed) => Heard.Enqueue(deployed);
+
+    public void RemoveDeployed(long deployableId) => Heard.Enqueue(new SimRemoveDeployed(deployableId));
+
     public void Destroy(long shipId, SimCredit credit) => Heard.Enqueue(new SimDestroy(shipId, credit));
 
     public void Report(SimMessage message) => Received?.Invoke(message);

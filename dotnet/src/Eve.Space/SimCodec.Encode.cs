@@ -790,6 +790,25 @@ private static void WriteAction(Writer w, SimAction action)
                 w.I64(m.WreckId);
                 w.I32(m.Effect);
                 break;
+            case SimDeployed m:
+                w.U8(Kind.Deployed);
+                w.I32(m.SolarSystemId);
+                w.I64(m.DeployableId);
+                w.Text(m.Name);
+                w.I32(m.TypeId);
+                w.I32(m.GroupId);
+                WriteVector(w, m.Position);
+                w.F64(m.Radius);
+                w.I64(m.OwnerId);
+                w.I32(m.CorporationId);
+                w.I32(m.AllianceId);
+                w.I64(m.ShipId);
+                w.F64(m.LifetimeMs);
+                break;
+            case SimRemoveDeployed m:
+                w.U8(Kind.RemoveDeployed);
+                w.I64(m.DeployableId);
+                break;
             case SimPlaceAsteroid m:
                 w.U8(Kind.PlaceAsteroid);
                 w.I32(m.SolarSystemId);

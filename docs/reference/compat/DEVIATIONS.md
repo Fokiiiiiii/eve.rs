@@ -678,3 +678,18 @@ Source order: the SDE and the wiki first (A4's breacher section, which this trac
 - **Not told: a ship that leaves the scene.** A jump, a dock or a death ends the applications without an empty set. The client clears its list on a change of ship or location (`incomingDotTracker.OnSessionChanged`). A ship that comes into view mid-effect has no set until the next change, as with the slim field (A4).
 - **Protocol: no change.** The action rides the existing `DoDestinyUpdate`. Tests: `dot_weapons/tests.rs` `a_hit_tells_the_ship_its_applications_as_a_set_and_the_first_tick_makes_one_working` and `the_ship_is_told_an_empty_set_when_its_last_application_ends`, with the full `eve-space` suite passing.
 - **NOT RUN: the client.** No MITM capture and no graphical client are on this host, so the HUD button, the attacker's timer and the expiry clearing are not seen in the client.
+
+## Track A5: the cynosural field record (ADR 0012, 2026-10-09)
+
+- **A lit field is kept as a record, built.** The simulation says a field was lit (`Deployed`, protocol 43: place, name, type, owner, corporation, alliance, ship and
+  its whole life). The host keeps it in `space.deployed` until its time is up. Source: ADR 0012 decision 1 (a cynosural field is a `Deployed` kind). Tests:
+  `CynoFieldRecordHostTests` (PostgreSQL) and `deployable/tests.rs` `a_lit_cynosural_field_is_told_to_the_host_with_its_place_and_its_whole_life`.
+- **A restart puts the field back for what is left of its life, built.** The same message goes back to the simulation when a ship comes into the system; the
+  field keeps its id; its life is the record's deadline minus the host's clock. A record whose deadline has passed is not put back. Source: ADR 0012 decision 1
+  (the deadline is a row, and the sweep is the owner). Test: `a_field_the_host_puts_back_after_a_restart_lives_what_was_left_and_is_removed_on_request`.
+- **The simulation keeps the field's own end, a choice that departs from ADR 0012 decision 3.** Decision 3 says the simulation does not decide expiry. The field's
+  end in the simulation is B7's behaviour (`a_cynosural_field_is_lit_where_the_ship_is_as_its_activation_ends_and_is_taken_out_when_its_lifetime_is_up`), which the
+  pilots see as the field going at its time. The record's sweep (up to 30 s later) sends `RemoveDeployed`, which the simulation answers with nothing once the field
+  is gone. Changing B7's end is a client-visible change and is not made here. Source: EVE.js `cynosuralField` lifetime (explosionDelay 600000 ms, from the SDE).
+- **Lateness: up to 30 s for the record.** ADR 0012 consequences accept a sweep interval of up to 30 s for lifetimes of 30 s and more; a field lives ten minutes.
+- **NOT RUN: the client.** No graphical client on this host; the field's appearance after a restart is not seen in the client.

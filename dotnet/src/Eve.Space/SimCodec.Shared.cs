@@ -70,6 +70,8 @@ public static partial class SimCodec
 
 /// <summary>Protocol 38 (FP-C4b, FP-C5): a refresh of a running effect (host to simulation).</summary>
 public const byte UpdateEffect = 61;
+        public const byte Deployed = 62;
+        public const byte RemoveDeployed = 63;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)

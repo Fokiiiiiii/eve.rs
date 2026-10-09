@@ -48,6 +48,8 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
     private readonly PgItemStore _items;
     private readonly PgSpaceItemStore _spaceItems;
     private readonly PgWorkCycleLedger _cycles;
+    private readonly PgDeployedStore? _deployed;
+    private readonly Dictionary<string, Func<DeployedRecord, Task>> _deployedExpiry;
     private readonly IFactBus _events;
     private readonly DogmaStatic _statics;
     private readonly SpaceSessions _space;
@@ -67,9 +69,10 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
 
     public SpaceContainers(
         ISimulation sim, CharacterShips ships, PgItemStore items, PgSpaceItemStore spaceItems, PgWorkCycleLedger cycles, IFactBus events, DogmaStatic statics,
-        SpaceSessions space, Func<long> nowUnixMs, Action<string>? log = null, TimeSpan? sweepEvery = null)
+        SpaceSessions space, Func<long> nowUnixMs, Action<string>? log = null, TimeSpan? sweepEvery = null, PgDeployedStore? deployed = null)
     {
         (_sim, _ships, _items, _spaceItems, _cycles, _events, _statics, _space, _nowUnixMs, _log) = (sim, ships, items, spaceItems, cycles, events, statics, space, nowUnixMs, log);
+        (_deployed, _deployedExpiry) = (deployed, new() { [CynoFieldKind] = ExpireCynoFieldAsync });
         // what the simulation held is gone with it; a scene that is made gets what lies in its system, and a wreck the host puts in space is kept
         _sim.Received += OnReceived;
         _sim.Lost += Forgotten;
@@ -463,6 +466,7 @@ public async Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long>
             await ForgetAsync(due.ItemId);
             _sim.RemoveWreck(due.ItemId, 0);
         }
+        await ExpireDeployedAsync(nowUnixMs);
     }
 
     /// <summary>An item that is not in space any more is forgotten: its place is not kept and the simulation will not be given it again.</summary>
@@ -490,6 +494,10 @@ private void OnReceived(SimMessage message)
         {
             _ = SeedAsteroidBeltAsync(arrived);
             _ = SeedGasCloudAsync(arrived);
+        }
+        else if (message is SimDeployed lit)
+        {
+            _ = KeepDeployedAsync(lit);
         }
     }
 
@@ -519,7 +527,11 @@ private void OnReceived(SimMessage message)
         }
     }
 
-    private void SystemEntered(int system) => _ = RestoreAsync(system);
+    private void SystemEntered(int system)
+    {
+        _ = RestoreAsync(system);
+        _ = RestoreDeployedAsync(system);
+    }
 
     /// <summary>
     /// A ship has come into the scene of a solar system: what lies there (the cans and the wrecks that were put in space before the host last started, or before the

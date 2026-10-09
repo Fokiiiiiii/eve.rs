@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 42;
+    public const ushort ProtocolVersion = 43;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -563,6 +563,30 @@ public static partial class SimCodec
                 }
             case Kind.RemoveWreck:
                 message = new SimRemoveWreck(r.I64(), r.I32());
+                break;
+            case Kind.Deployed:
+                {
+                    var system = r.I32();
+                    var deployable = r.I64();
+                    var name = r.Text();
+                    var type = r.I32();
+                    var group = r.I32();
+                    var position = ReadVector(ref r);
+                    var radius = r.F64();
+                    var owner = r.I64();
+                    var corporation = r.I32();
+                    var alliance = r.I32();
+                    var ship = r.I64();
+                    var lifetime = r.F64();
+                    if (!(double.IsFinite(lifetime) && lifetime >= 0 && double.IsFinite(radius) && radius >= 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad deployed");
+                    }
+                    message = new SimDeployed(system, deployable, name, type, group, position, radius, owner, corporation, alliance, ship, lifetime);
+                    break;
+                }
+            case Kind.RemoveDeployed:
+                message = new SimRemoveDeployed(r.I64());
                 break;
             case Kind.Measured:
                 {

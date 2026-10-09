@@ -59,11 +59,11 @@ internal sealed class ProjectedEffect : ShipEffect
         ["remoteSensorBoostFalloff"] = v => (new SimRemote.Damp(Signed(v, MaxTargetRangeBonus), Signed(v, ScanResolutionBonus), Signed(v, ScanGravimetricStrengthPercent), Signed(v, ScanLadarStrengthPercent), Signed(v, ScanMagnetometricStrengthPercent), Signed(v, ScanRadarStrengthPercent)), false, "remoteSensorBoost"),
         ["warpScrambleBlockMWDWithNPCEffect"] = v => (new SimRemote.Scramble(Amount(v, WarpScrambleStrength), true), false, "warpScramblerMWD"),
         ["warpDisrupt"] = v => (new SimRemote.Scramble(Amount(v, WarpScrambleStrength), false), false, "warpScrambler"),
-        // the focus scripts of a warp disruption field generator (group 908; the script is the charge, its effect is the generator's): a focused disruption is one point,
-        // as a Warp Disruptor I's strength is, and a focused scrambling is two, as a Warp Scrambler I's is (SDE attribute 105 of those modules; the script's own
-        // attributes give no strength). The scrambling one blocks a microwarpdrive, as the scrambler does.
-        ["shipModuleFocusedWarpDisruptionScript"] = _ => (new SimRemote.Scramble(FocusedDisruptionPoints, false), false, "warpScrambler"),
-        ["shipModuleFocusedWarpScramblingScript"] = _ => (new SimRemote.Scramble(FocusedScramblingPoints, true), false, "warpScramblerMWD"),
+        // the focus scripts of a warp disruption field generator (group 908; the script is the charge, its effect is the generator's): the strength is the module's, as the
+        // script's own modifier gives it (effect 6849 and 6848: a ModAdd of the target's warp scramble status by the modifying item's attribute 105); the scrambling one
+        // stops a microwarpdrive (its EffectStopper), as the scrambler does.
+        ["shipModuleFocusedWarpDisruptionScript"] = v => (new SimRemote.Scramble(Amount(v, WarpScrambleStrength), false), false, "warpScrambler"),
+        ["shipModuleFocusedWarpScramblingScript"] = v => (new SimRemote.Scramble(Amount(v, WarpScrambleStrength), true), false, "warpScramblerMWD"),
         ["shipModuleTrackingDisruptor"] = TrackingDisrupt,
         ["shipModuleRemoteTrackingComputer"] = v => (new SimRemote.Disrupt(Signed(v, RangeDisruption), Signed(v, FalloffDisruption), Signed(v, TrackingDisruption)), false, "ewTrackingDisrupt"),
         ["npcEntityWeaponDisruptor"] = TrackingDisrupt,
@@ -78,10 +78,6 @@ internal sealed class ProjectedEffect : ShipEffect
         ["fighterAbilityTackle"] = v => (new SimRemote.Tackle(Amount(v, FighterTackleScramble), Signed(v, FighterTackleWeb)), false, "warpScrambler"),
         ["fighterAbilityECM"] = v => (new SimRemote.Jam(Amount(v, FighterGravimetricStrength), Amount(v, FighterLadarStrength), Amount(v, FighterMagnetometricStrength), Amount(v, FighterRadarStrength)), false, ""),
     };
-
-    /// <summary>The scramble points of a focused disruption (one) and of a focused scrambling (two).</summary>
-    internal const double FocusedDisruptionPoints = 1.0;
-    internal const double FocusedScramblingPoints = 2.0;
 
     /// <summary>The range bonus of a focus script (SDE attribute 1327, a percentage of the module's warp scramble range).</summary>
     internal const int ScriptRangeBonus = 1327;

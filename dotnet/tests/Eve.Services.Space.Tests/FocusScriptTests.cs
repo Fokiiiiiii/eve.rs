@@ -8,8 +8,8 @@ namespace Eve.Services.Space.Tests;
 
 /// <summary>
 /// The focus scripts of a warp disruption field generator (group 908): loaded as the generator's charge, a script's effect runs on a target ship. The disruption
-/// script reaches the generator's warp scramble range (16 km) with its own range bonus (+50 %, so 24 km), with one point of scramble; the scrambling script (-20 %)
-/// blocks a microwarpdrive, with two points.
+/// script reaches the generator's warp scramble range (16 km) with its own range bonus (+50 %, so 24 km), with the generator's scramble strength (100); the
+/// scrambling script (-20 %) has the same strength and blocks a microwarpdrive.
 /// </summary>
 public class FocusScriptTests
 {
@@ -29,13 +29,13 @@ public class FocusScriptTests
         var disruption = Package(statics, FocusedDisruptionScript, "shipModuleFocusedWarpDisruptionScript");
         Assert.Null(disruption.Reason);
         var disrupt = Assert.IsType<SimAction.Remote>(disruption.Effect!.Action);
-        Assert.Equal(new SimRemote.Scramble(1.0, false), disrupt.What);
+        Assert.Equal(new SimRemote.Scramble(100.0, false), disrupt.What);
         Assert.Equal(16_000.0 * 1.5, disrupt.Optimal, 3);
 
         var scrambling = Package(statics, FocusedScramblingScript, "shipModuleFocusedWarpScramblingScript");
         Assert.Null(scrambling.Reason);
         var scramble = Assert.IsType<SimAction.Remote>(scrambling.Effect!.Action);
-        Assert.Equal(new SimRemote.Scramble(2.0, true), scramble.What);
+        Assert.Equal(new SimRemote.Scramble(100.0, true), scramble.What);
         Assert.Equal(16_000.0 * 0.8, scramble.Optimal, 3);
     }
 

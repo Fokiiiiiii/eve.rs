@@ -170,6 +170,31 @@ Protocol 25 (ADR 0013, epoch 25). The strike is the simulation's area action for
 | 141 | The Gravitational Transportation Field Oscillator (HOG, 40634): the sources and their weight | The record of the sources read for row 135: CCP static data (the SDE attribute values and the English description), the V24.01 client callsites (`positionalControl.py`, `shipmodulebutton.py`, `superWeapon.py`, `controlPaths.py`), the CCP Citadel 1.9 patch note (the 2016 expansion added the oscillator as a teleportation; the 1.9 fix stops tethered ships from being affected), the EVE University wiki (no page for the oscillator was found in the search), item databases (everef, EveTools, eve-kill: the same figures as the SDE), and one player forum post (a random spot in the same system, about 30 s without warp) | Resolved as in row 135: the SDE's attribute and the client decide the point count, the SDE's 60 s block applies to capitals, and the random destination and the 30 s block are not used | none of the code paths depend on the forum post | the wiki page for the item is not in the index consulted; the tether exclusion (142) is taken from the patch note |
 | 142 | The tether exclusion of the transport field (CCP Citadel 1.9), and the structure variant (Standup Gravitational Transportation Field Oscillator, 47068, category 66) | CCP patch note: the oscillator's teleportation and warp scramble do not affect tethered ships. The SDE: 47068 is a structure module (one per structure) with the same effect 6474 | The tether exclusion is not applied: tethering has no state in eve.rs (no tether command, attribute or host state exists), so no ship can be tethered to exclude. The structure variant is refused by name with `STRUCTURE_SUPERWEAPON_NOT_IMPLEMENTED` (`StructureHogEffect`, module and wiring only, O5): no structure host exists, so the refusal is the only honest answer; it is never a success | `SuperWeaponEffectsTests.A_hog_builds_a_transport_field_...` (the structure refusal, real SDE) | a tether state, and its exclusion from the field, when tethering is built; a structure host for 47068 |
 
+## Mining tracks (2026-10-09)
+
+- **Gas clouds sit beside belt rocks.** CCP keeps harvestable gas clouds in gas sites found by scanning, and EveJS places them through its mining-resource
+  sites (`miningResourceSiteService.js`). Here a published cloud is seeded beside each belt's rock on a pilot's arrival, when no live cloud is in the belt.
+  Site generation is not built.
+- **Yield of a cloud.** The SDE material of the cloud (`typeMaterials`), else the compressed gas it is named for (`Compressed <name>`, group Compressed Gas).
+- **Quantity of a rock and of a cloud.** 1,000 units each, a fixed shortcut. EveJS estimates a rock's quantity from its radius and a template
+  (`miningRuntimeState.js`, `estimateOriginalQuantity`). The source of per-belt contents is decision D8.
+- **Crystal volatility is rolled by the host.** EveJS rolls it in the process (`applyCrystalVolatility`). The simulation does not carry the roll, so the
+  protocol stays at 29. The host draws it with `SpaceContainers.VolatilityRoll`.
+- **Crystal damage** is kept as the crystal item's custom info, and is not announced to the client (EveJS `notifyMiningChargeDamageChange`). A crystal at full
+  damage is removed (`applyCrystalVolatility`).
+- **Crystal consumption.** None per cycle, as in EveJS (`executeMiningCycle` takes no charge per cycle).
+- **Crystal yield.** EveJS reads the crystal's yield multiplier (attribute 782) in its module snapshot and does not read the waste bonuses (attributes
+  3159 and 3160, `miningDogma.js`, `buildMiningModuleSnapshot`). eve.rs checks the crystal's type list at activation and does not apply the multiplier
+  directly. Whether the multiplier reaches the yield through dogma is not checked in this code path.
+- **Passive lock.** The lock stays on the target after the targeter stops. EveJS's deactivation path for `passiveTargetingEffect` was not read.
+- **Auto-target at a full lock list.** The sweep passes over the ships it cannot lock, silently. A refusal the sweep did not ask for is not sent.
+- **Mining ledger.** One entry per granted cycle. The entry id is the event id, which keeps a replayed event from writing twice. A character's entry is
+  visible 10 minutes after its cycle (EveJS `miningCharacterLedgerDelayMs`) and kept for 90 days. There are no observer rows: a ship's laser has no observer
+  structure.
+- **Yield destination.** The general cargo hold. EveJS prefers the mining hold (`resolveDestinationFlagForPlayer`).
+- **Client text.** `TARGET_INVALID_FOR_MODULE` and `CHARGE_NOT_COMPATIBLE` have no dedicated text in EveJS's switch, so the client shows the default
+  "Failed to activate" text. The salvage notices use EveJS's names (`SalvagingFailure`, `CustomNotify`); their text in the client is not checked here.
+
 ## Not yet matched
 
 Behaviour of the reference that eve.rs does not have yet, and where it will come from. These are gaps, not

@@ -15,10 +15,11 @@ use eve_destiny::Vec3;
 
 use eve_marshal::Value;
 
-use crate::drones::{DroneCommand, DroneFlight};
+use crate::drones::{DroneCommand, DroneFlight, DroneWorkAnswer};
 
 use crate::link::{Enter, How, LaunchDrone, Message, PROTOCOL_VERSION, Spawn};
 
+use crate::modules::ModuleWorkAnswer;
 use crate::npc::{NpcPlace, is_npc_session};
 
 use crate::scene::{Command, Departure, Out, Scene, SceneError, SessionId, Traveller};

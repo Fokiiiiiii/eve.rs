@@ -813,7 +813,7 @@ fn message_of(case: &Value) -> Message {
         "LaunchFighter" => Message::LaunchFighter {
             request_id: wide(case, "requestId") as u64,
             session_id: session_id(),
-            ship: ship_of(&case["ship"]),
+            ship: Box::new(ship_of(&case["ship"])),
             graphic_id: number("graphicId") as i32,
             cruise_fraction: case["cruiseFraction"].as_f64().unwrap(),
             squadron_size: number("squadronSize") as i32,

@@ -212,7 +212,7 @@ fn the_watcher_is_told_of_each_order_as_the_reference_told_it() {
         let mut command_updates = Vec::new();
         let mut collision_updates = Vec::new();
         for update in &told {
-            let args = out_args(*update);
+            let args = out_args(update);
             if action_names_of(&args) == expected_names {
                 command_updates.push(args);
             } else {

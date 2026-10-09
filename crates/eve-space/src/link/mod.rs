@@ -346,7 +346,7 @@ pub enum Message {
         request_id: u64,
         session_id: u64,
         /// The squadron, whose vitals are those of all its members together (`squadron_size` of them, each as tough as one).
-        ship: ShipSpec,
+        ship: Box<ShipSpec>,
         graphic_id: i32,
         cruise_fraction: f64,
         squadron_size: i32,

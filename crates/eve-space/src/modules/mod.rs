@@ -7,6 +7,7 @@
 //! is told every half second while it is below the capacity, as the reference does.
 mod activation;
 mod cycle;
+pub use cycle::ModuleWorkAnswer;
 mod effects;
 
 use eve_marshal::Value;

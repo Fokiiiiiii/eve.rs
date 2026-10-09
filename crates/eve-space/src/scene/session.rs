@@ -98,10 +98,8 @@ impl Scene {
             }
         }
         told.push(update(numbers));
-        if login_visuals_sent {
-            if let Some(pilot) = self.pilots.get_mut(&session) {
-                pilot.login_visuals_sent = false;
-            }
+        if login_visuals_sent && let Some(pilot) = self.pilots.get_mut(&session) {
+            pilot.login_visuals_sent = false;
         }
         self.with_backlog(told)
     }

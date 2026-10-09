@@ -447,7 +447,7 @@ impl Scene {
                     out.extend(self.go_home(session, IDLE, now));
                 }
                 DroneCommand::MineRepeatedly { target } => {
-                    if !self.asteroids.get(&target).is_some_and(|asteroid| asteroid.units_remaining > 0) {
+                    if self.asteroids.get(&target).is_none_or(|asteroid| asteroid.units_remaining <= 0) {
                         results.push((drone_id, Some("NO_TARGET")));
                         continue;
                     }
@@ -491,9 +491,7 @@ impl Scene {
                     let auto_salvage = target.is_none();
                     let target = match target {
                         Some(id) => {
-                            if !self
-                                .wreck(id)
-                                .is_some_and(|wreck| wreck.group_id == crate::wreck::WRECK_GROUP)
+                            if self.wreck(id).is_none_or(|wreck| wreck.group_id != crate::wreck::WRECK_GROUP)
                             {
                                 results.push((drone_id, Some("NO_WRECK")));
                                 continue;

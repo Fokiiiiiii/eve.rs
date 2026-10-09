@@ -12,6 +12,7 @@ mod fight;
 mod launch;
 mod threats;
 mod work;
+pub use work::DroneWorkAnswer;
 
 use eve_destiny::Vec3;
 

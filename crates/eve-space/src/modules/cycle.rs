@@ -1,5 +1,14 @@
 use super::*;
 
+/// The host's answer to one module work cycle (`ModuleWorkResult`): the cycle it answers and what the host decided.
+pub struct ModuleWorkAnswer<'a> {
+    pub target_id: i64,
+    pub cycle_id: u64,
+    pub accepted: bool,
+    pub reason: &'a str,
+    pub depleted: bool,
+}
+
 impl Scene {
     /// A cycle ends: what it does at its end is done, then the next begins (and costs capacitor), or, when the pilot asked to stop or the capacitor cannot pay, the
     /// effect ends.
@@ -274,9 +283,9 @@ impl Scene {
         if self_capacitor_boost || self_sensor_boost {
             true
         } else if effect.turret.is_some() {
-            self.turret_target_ok(session, &effect)
+            self.turret_target_ok(session, effect)
         } else if let Some((_, reach, _)) = effect.remote() {
-            self.turret_target_ok(session, &effect)
+            self.turret_target_ok(session, effect)
                 && self
                     .session_of(effect.target_id)
                     .and_then(|target| self.apart(session, target))
@@ -291,7 +300,7 @@ impl Scene {
             .is_some_and(Action::is_work)
         {
             // a work target (a rock, a wreck) is there while the pilot holds its lock
-            self.work_target_ok(session, &effect)
+            self.work_target_ok(session, effect)
         } else {
             true
         }
@@ -510,13 +519,10 @@ impl Scene {
         &mut self,
         session: SessionId,
         module_id: i64,
-        target_id: i64,
-        cycle_id: u64,
-        accepted: bool,
-        reason: &str,
-        depleted: bool,
+        answer: ModuleWorkAnswer<'_>,
         now: i64,
     ) -> Vec<Out> {
+        let ModuleWorkAnswer { target_id, cycle_id, accepted, reason, depleted } = answer;
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         // a start parked for its fuel: accepted, it starts; refused, it is refused with the host's reason
         if let Some(position) = pilot.modules.pending_starts.iter().position(|start| {

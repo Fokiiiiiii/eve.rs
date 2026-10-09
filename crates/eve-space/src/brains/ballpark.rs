@@ -234,13 +234,13 @@ impl Ballpark for SceneWorld<'_> {
         let candidates = self.all_ball_ids().into_iter().enumerate().filter_map(|(order, id)| {
             let order = order as u64;
             let position = self.ball_position(id)?;
-            if let Some(session) = self.session_of(id) {
-                if let Some(pilot) = self.scene.pilots.get(&session) {
-                    let mut entity = self.scene.spatial_ship(session, pilot);
-                    entity.position = position;
-                    entity.item = order;
-                    return Some(entity);
-                }
+            if let Some(session) = self.session_of(id)
+                && let Some(pilot) = self.scene.pilots.get(&session)
+            {
+                let mut entity = self.scene.spatial_ship(session, pilot);
+                entity.position = position;
+                entity.item = order;
+                return Some(entity);
             }
             let (kind, radius) = match self.scene.system().body(id) {
                 Some(body) => (crate::geo::SpatialKind::SystemBody, body.radius),

@@ -12,14 +12,14 @@ impl Scene {
         let mut ships: Vec<(SessionId, i64, Ship)> = self
             .pilots
             .iter()
-            .filter_map(|(session, pilot)| {
-                (pilot.settled_at == now
+            .filter(|&(session, pilot)| {
+                pilot.settled_at == now
                     && !self.drones.contains_key(session)
                     && pilot.flight.is_none()
                     && pilot.docking.is_none()
-                    && pilot.jump.is_none())
-                .then(|| (*session, pilot.protected_until, pilot.ship.clone()))
+                    && pilot.jump.is_none()
             })
+            .map(|(session, pilot)| (*session, pilot.protected_until, pilot.ship.clone()))
             .collect();
         let mut active: BTreeSet<SessionId> = match only {
             Some(session) => [session].into_iter().collect(),

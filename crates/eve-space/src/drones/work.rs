@@ -1,5 +1,14 @@
 use super::*;
 
+/// The host's answer to one drone work cycle (`DroneWorkResult`): the cycle it answers and what the host granted.
+pub struct DroneWorkAnswer {
+    pub target_id: i64,
+    pub cycle_id: u64,
+    pub accepted: bool,
+    pub units_remaining: i64,
+    pub complete: bool,
+}
+
 impl Scene {
     pub(crate) fn advance_drones(&mut self, now: i64) -> Vec<Out> {
         if self.drones.is_empty() {
@@ -42,40 +51,6 @@ impl Scene {
             }
         }
         out
-    }
-
-    pub(super) fn work_round_trip_ms(
-        &mut self,
-        session: SessionId,
-        target: i64,
-        command: u8,
-        now: i64,
-    ) -> i64 {
-        let Some(controller) = self.controller_of_drone(session) else { return 0 };
-        let distance = if command == 7 {
-            self.distance_to_asteroid(controller, target, now)
-        } else {
-            self.distance_to_wreck(controller, target, now)
-        }
-        .unwrap_or(0.0);
-        let speed = self
-            .pilots
-            .get(&session)
-            .and_then(|pilot| {
-                pilot
-                    .ship
-                    .npc
-                    .as_ref()?
-                    .drone
-                    .as_ref()
-                    .map(|link| pilot.ship.spec.max_velocity * link.cruise_fraction.max(0.01))
-            })
-            .unwrap_or(0.0);
-        if speed.is_finite() && speed > 0.0 {
-            (distance * 2_000.0 / speed).ceil().clamp(0.0, i64::MAX as f64) as i64
-        } else {
-            0
-        }
     }
 
     pub(super) fn advance_drone_work(
@@ -201,13 +176,10 @@ impl Scene {
         &mut self,
         controller: SessionId,
         drone_id: i64,
-        target_id: i64,
-        cycle_id: u64,
-        accepted: bool,
-        units_remaining: i64,
-        complete: bool,
+        answer: DroneWorkAnswer,
         now: i64,
     ) -> Vec<Out> {
+        let DroneWorkAnswer { target_id, cycle_id, accepted, units_remaining, complete } = answer;
         let Some(session) = self
             .session_of(drone_id)
             .filter(|session| self.controller_of_drone(*session) == Some(controller))
@@ -254,7 +226,7 @@ impl Scene {
             return out;
         }
         if operation == 7 {
-            if !self.asteroids.get(&target_id).is_some_and(|asteroid| asteroid.units_remaining > 0) {
+            if self.asteroids.get(&target_id).is_none_or(|asteroid| asteroid.units_remaining <= 0) {
                 if let Some(ai) = self.drones.get_mut(&session) {
                     ai.task = Task::Idle;
                     ai.follow = None;
@@ -322,7 +294,7 @@ impl Scene {
             return out;
         }
         if operation == 8
-            && !self.wreck(target_id).is_some_and(|wreck| wreck.group_id == crate::wreck::WRECK_GROUP)
+            && self.wreck(target_id).is_none_or(|wreck| wreck.group_id != crate::wreck::WRECK_GROUP)
         {
             if let Some(ai) = self.drones.get_mut(&session) {
                 ai.task = Task::Idle;

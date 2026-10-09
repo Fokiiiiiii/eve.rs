@@ -1564,7 +1564,7 @@ fn a_transport_field_carries_the_ships_of_its_sphere_and_holds_the_capitals_in_i
     assert_eq!(scene.pilots[&npc].ship.position, before, "a held ship is not carried");
     let warp =
         Command::WarpToPoint { destination: eve_destiny::Vec3::new(9_000_000.0, 0.0, 0.0), range: 0.0 };
-    let refused = scene.command(npc, warp.clone(), now + 124 * SECOND);
+    let refused = scene.command(npc, warp, now + 124 * SECOND);
     assert_eq!(
         refused,
         [Out::Refused { session: npc, command: 21, reason: "WARP_BLOCKED" }],

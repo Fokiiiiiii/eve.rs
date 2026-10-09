@@ -446,7 +446,7 @@ impl Sim {
                 return Ok(
                     match scene.launch_fighter(
                         session_id,
-                        ship,
+                        *ship,
                         graphic_id,
                         cruise_fraction,
                         squadron_size,
@@ -691,11 +691,7 @@ impl Sim {
                     scene.drone_work_result(
                         session_id,
                         drone_id,
-                        target_id,
-                        cycle_id,
-                        accepted,
-                        units_remaining,
-                        complete,
+                        DroneWorkAnswer { target_id, cycle_id, accepted, units_remaining, complete },
                         now,
                     )
                 })
@@ -732,7 +728,16 @@ impl Sim {
                     self.scene_of(session_id)
                         .map(|scene| {
                             scene.module_work_result(
-                                session_id, module_id, target_id, cycle_id, accepted, &reason, complete, now,
+                                session_id,
+                                module_id,
+                                ModuleWorkAnswer {
+                                    target_id,
+                                    cycle_id,
+                                    accepted,
+                                    reason: &reason,
+                                    depleted: complete,
+                                },
+                                now,
                             )
                         })
                         .unwrap_or_default(),

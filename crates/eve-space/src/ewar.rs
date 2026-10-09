@@ -34,7 +34,6 @@ pub(crate) fn jam_chance(strength: &[f64; 4], sensor: &[f64; 4], resistance: f64
 }
 
 #[cfg(test)]
-
 fn burst_reaches(
     source_position: [f64; 3],
     source_radius: f64,

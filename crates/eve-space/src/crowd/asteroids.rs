@@ -109,10 +109,10 @@ impl Scene {
             }
             for id in coming {
                 let stamp = self.next_stamp(now);
-                if let Some(asteroid) = self.asteroids.get(&id) {
-                    if let Ok(added) = payload::add_asteroid(stamp, asteroid, now) {
-                        out.push(Self::update(observer, vec![added]));
-                    }
+                if let Some(asteroid) = self.asteroids.get(&id)
+                    && let Ok(added) = payload::add_asteroid(stamp, asteroid, now)
+                {
+                    out.push(Self::update(observer, vec![added]));
                 }
             }
             if let Some(pilot) = self.pilots.get_mut(&observer) {

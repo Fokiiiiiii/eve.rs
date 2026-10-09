@@ -589,7 +589,7 @@ impl Message {
                 Message::LaunchFighter {
                     request_id,
                     session_id,
-                    ship,
+                    ship: Box::new(ship),
                     graphic_id,
                     cruise_fraction,
                     squadron_size,
@@ -669,7 +669,7 @@ impl Message {
                 let numbers = [mining_amount_m3, waste_multiplier, crit_multiplier, access_difficulty_bonus];
                 // probabilities are at most one, the rolls below one, and every number finite and not negative; a mining cycle mines something
                 if cycle_id == 0
-                    || !matches!(command, 7 | 8 | 9)
+                    || !matches!(command, 7..=9)
                     || numbers
                         .iter()
                         .chain([

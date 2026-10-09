@@ -906,21 +906,69 @@ fn mining_results_mirror_stock_monotonically_then_remove_depleted_rocks() {
     }
 
     assert!(
-        scene.drone_work_result(u64::MAX, DRONE_SHIP, target, 1, true, 40, false, LATER + SECOND).is_empty()
+        scene
+            .drone_work_result(
+                u64::MAX,
+                DRONE_SHIP,
+                DroneWorkAnswer {
+                    target_id: target,
+                    cycle_id: 1,
+                    accepted: true,
+                    units_remaining: 40,
+                    complete: false
+                },
+                LATER + SECOND
+            )
+            .is_empty()
     );
     assert!(
         scene
-            .drone_work_result(PLAYER, DRONE_SHIP, target + 1, 1, true, 40, false, LATER + SECOND)
+            .drone_work_result(
+                PLAYER,
+                DRONE_SHIP,
+                DroneWorkAnswer {
+                    target_id: target + 1,
+                    cycle_id: 1,
+                    accepted: true,
+                    units_remaining: 40,
+                    complete: false
+                },
+                LATER + SECOND
+            )
             .is_empty()
     );
     assert_eq!(scene.asteroids[&target].units_remaining, 100);
     assert!(scene.drones[&drone].awaiting_work);
 
-    let _ = scene.drone_work_result(PLAYER, DRONE_SHIP, target, 1, true, 40, false, LATER + SECOND);
+    let _ = scene.drone_work_result(
+        PLAYER,
+        DRONE_SHIP,
+        DroneWorkAnswer {
+            target_id: target,
+            cycle_id: 1,
+            accepted: true,
+            units_remaining: 40,
+            complete: false,
+        },
+        LATER + SECOND,
+    );
     assert_eq!(scene.asteroids[&target].units_remaining, 40);
     assert_eq!(scene.drones[&drone].task, Task::MineRepeatedly { target });
     assert!(
-        scene.drone_work_result(PLAYER, DRONE_SHIP, target, 1, true, 20, false, LATER + SECOND).is_empty()
+        scene
+            .drone_work_result(
+                PLAYER,
+                DRONE_SHIP,
+                DroneWorkAnswer {
+                    target_id: target,
+                    cycle_id: 1,
+                    accepted: true,
+                    units_remaining: 20,
+                    complete: false
+                },
+                LATER + SECOND
+            )
+            .is_empty()
     );
     assert_eq!(scene.asteroids[&target].units_remaining, 40);
 
@@ -929,7 +977,18 @@ fn mining_results_mirror_stock_monotonically_then_remove_depleted_rocks() {
         ai.awaiting_work = true;
         ai.work_cycle_id = 2;
     }
-    let _ = scene.drone_work_result(PLAYER, DRONE_SHIP, target, 2, true, 60, false, LATER + 2 * SECOND);
+    let _ = scene.drone_work_result(
+        PLAYER,
+        DRONE_SHIP,
+        DroneWorkAnswer {
+            target_id: target,
+            cycle_id: 2,
+            accepted: true,
+            units_remaining: 60,
+            complete: false,
+        },
+        LATER + 2 * SECOND,
+    );
     assert_eq!(scene.asteroids[&target].units_remaining, 40);
 
     {
@@ -937,7 +996,18 @@ fn mining_results_mirror_stock_monotonically_then_remove_depleted_rocks() {
         ai.awaiting_work = true;
         ai.work_cycle_id = 3;
     }
-    let _ = scene.drone_work_result(PLAYER, DRONE_SHIP, target, 3, true, 0, true, LATER + 3 * SECOND);
+    let _ = scene.drone_work_result(
+        PLAYER,
+        DRONE_SHIP,
+        DroneWorkAnswer {
+            target_id: target,
+            cycle_id: 3,
+            accepted: true,
+            units_remaining: 0,
+            complete: true,
+        },
+        LATER + 3 * SECOND,
+    );
     assert!(!scene.asteroids.contains_key(&target));
     assert_eq!(scene.drones[&drone].task, Task::Idle);
 }
@@ -995,7 +1065,18 @@ fn auto_salvage_rejects_foreign_wrecks_but_manual_salvage_repeats_until_complete
         ai.work_cycle_id = 1;
     }
 
-    let _ = scene.drone_work_result(PLAYER, DRONE_SHIP, target, 1, true, 1, false, LATER + 2 * SECOND);
+    let _ = scene.drone_work_result(
+        PLAYER,
+        DRONE_SHIP,
+        DroneWorkAnswer {
+            target_id: target,
+            cycle_id: 1,
+            accepted: true,
+            units_remaining: 1,
+            complete: false,
+        },
+        LATER + 2 * SECOND,
+    );
     assert!(scene.wreck(target).is_some_and(|wreck| wreck.is_empty));
     assert_eq!(scene.drones[&drone].task, Task::Salvage { target: Some(target) });
 
@@ -1004,7 +1085,18 @@ fn auto_salvage_rejects_foreign_wrecks_but_manual_salvage_repeats_until_complete
         ai.awaiting_work = true;
         ai.work_cycle_id = 2;
     }
-    let _ = scene.drone_work_result(PLAYER, DRONE_SHIP, target, 2, true, 0, true, LATER + 3 * SECOND);
+    let _ = scene.drone_work_result(
+        PLAYER,
+        DRONE_SHIP,
+        DroneWorkAnswer {
+            target_id: target,
+            cycle_id: 2,
+            accepted: true,
+            units_remaining: 0,
+            complete: true,
+        },
+        LATER + 3 * SECOND,
+    );
     assert!(scene.wreck(target).is_none());
     assert_eq!(scene.drones[&drone].task, Task::Idle);
 }

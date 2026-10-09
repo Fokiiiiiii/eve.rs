@@ -2275,7 +2275,12 @@ fn a_granted_mining_cycle_tells_the_other_pilot_what_came_off_the_rock_and_not_t
     assert_eq!(scene.asteroids[&rock].units_remaining, 90, "the rock's stock follows the grant");
 
     // the answer settles the cycle, so a repeat of the same grant tells nobody again
-    scene.module_work_result(A, MODULE, rock, cycle, true, "", false, at);
+    scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer { target_id: rock, cycle_id: cycle, accepted: true, reason: "", depleted: false },
+        at,
+    );
     assert!(scene.module_mined(A, MODULE, rock, cycle, 90, at).is_empty(), "a replay tells nobody");
 }
 
@@ -2307,7 +2312,18 @@ fn a_short_cycled_ore_cycle_asks_for_what_it_mined_so_far_and_stops_when_the_hos
     // a 2 s cycle stopped about half way: about half of its 20 m3
     assert!(asked[0].2 > 8.0 && asked[0].2 < 12.0, "{asked:?}");
     assert!(ended(&out).is_empty(), "the effect ends with the answer, not before: {out:?}");
-    let answer = scene.module_work_result(A, MODULE, partner(), asked[0].0, true, "", false, at);
+    let answer = scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer {
+            target_id: partner(),
+            cycle_id: asked[0].0,
+            accepted: true,
+            reason: "",
+            depleted: false,
+        },
+        at,
+    );
     assert_eq!(ended(&answer), [1], "{answer:?}");
     assert!(scene.pilots[&A].modules.running.is_empty());
 }
@@ -2341,7 +2357,18 @@ fn a_depleted_rock_stops_the_effect_as_its_target_is_lost_and_no_next_cycle_is_a
     let (first, at) = poll_until(&mut scene, t, 2.5);
     let asked = work_cycles(&first);
     assert_eq!(asked.len(), 1, "{first:?}");
-    let answer = scene.module_work_result(A, MODULE, partner(), asked[0].0, true, "", true, at);
+    let answer = scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer {
+            target_id: partner(),
+            cycle_id: asked[0].0,
+            accepted: true,
+            reason: "",
+            depleted: true,
+        },
+        at,
+    );
     assert_eq!(ended(&answer), [2], "a depleted target ends the effect as lost: {answer:?}");
     let (later, _) = poll_until(&mut scene, at, 3.0);
     assert!(work_cycles(&later).is_empty(), "{later:?}");
@@ -2398,7 +2425,18 @@ fn a_mining_cycle_asks_the_host_at_its_end_and_parks_until_the_answer() {
     assert!(again.iter().all(|sent| *sent == asked[0]), "a repeat is the same cycle with the same rolls");
 
     // the answer resumes the module: the next cycle begins from the answer and asks again under a new id
-    let out = scene.module_work_result(A, MODULE, partner(), cycle, true, "", false, at);
+    let out = scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer {
+            target_id: partner(),
+            cycle_id: cycle,
+            accepted: true,
+            reason: "",
+            depleted: false,
+        },
+        at,
+    );
     assert!(ended(&out).is_empty(), "an accepted cycle does not end the effect: {out:?}");
     assert_eq!(cycles_of(&scene), 2);
     let (next, _) = poll_until(&mut scene, at, 2.5);
@@ -2415,23 +2453,86 @@ fn a_repeated_or_stale_answer_settles_nothing() {
     let (cycle, ..) = work_cycles(&first)[0];
 
     assert!(
-        scene.module_work_result(A, MODULE, partner(), cycle + 1, true, "", false, at).is_empty(),
+        scene
+            .module_work_result(
+                A,
+                MODULE,
+                ModuleWorkAnswer {
+                    target_id: partner(),
+                    cycle_id: cycle + 1,
+                    accepted: true,
+                    reason: "",
+                    depleted: false
+                },
+                at
+            )
+            .is_empty(),
         "another cycle"
     );
     assert!(
-        scene.module_work_result(A, MODULE, partner() + 1, cycle, true, "", false, at).is_empty(),
+        scene
+            .module_work_result(
+                A,
+                MODULE,
+                ModuleWorkAnswer {
+                    target_id: partner() + 1,
+                    cycle_id: cycle,
+                    accepted: true,
+                    reason: "",
+                    depleted: false
+                },
+                at
+            )
+            .is_empty(),
         "another target"
     );
     assert!(
-        scene.module_work_result(B, MODULE, partner(), cycle, true, "", false, at).is_empty(),
+        scene
+            .module_work_result(
+                B,
+                MODULE,
+                ModuleWorkAnswer {
+                    target_id: partner(),
+                    cycle_id: cycle,
+                    accepted: true,
+                    reason: "",
+                    depleted: false
+                },
+                at
+            )
+            .is_empty(),
         "another pilot"
     );
     assert_eq!(cycles_of(&scene), 1);
 
-    scene.module_work_result(A, MODULE, partner(), cycle, true, "", false, at);
+    scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer {
+            target_id: partner(),
+            cycle_id: cycle,
+            accepted: true,
+            reason: "",
+            depleted: false,
+        },
+        at,
+    );
     assert_eq!(cycles_of(&scene), 2);
     assert!(
-        scene.module_work_result(A, MODULE, partner(), cycle, true, "", false, at + SECOND).is_empty(),
+        scene
+            .module_work_result(
+                A,
+                MODULE,
+                ModuleWorkAnswer {
+                    target_id: partner(),
+                    cycle_id: cycle,
+                    accepted: true,
+                    reason: "",
+                    depleted: false
+                },
+                at + SECOND
+            )
+            .is_empty(),
         "a replay settles nothing"
     );
     assert_eq!(cycles_of(&scene), 2, "the replay does not start a cycle either");
@@ -2444,7 +2545,18 @@ fn a_refused_work_cycle_stops_the_effect_and_tells_the_host_once() {
     let (first, at) = poll_until(&mut scene, t, 2.5);
     let (cycle, ..) = work_cycles(&first)[0];
 
-    let out = scene.module_work_result(A, MODULE, partner(), cycle, false, "", false, at);
+    let out = scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer {
+            target_id: partner(),
+            cycle_id: cycle,
+            accepted: false,
+            reason: "",
+            depleted: false,
+        },
+        at,
+    );
     assert_eq!(ended(&out), [5], "the host refused: reason 5 once: {out:?}");
     assert!(out.iter().any(|item| matches!(item, Out::ModuleEnded { session: A, module_id: MODULE, .. })));
     assert_eq!(scene.pilots[&A].modules.running.len(), 0);
@@ -2504,7 +2616,7 @@ fn a_passive_targeter_locks_its_target_as_its_cycle_starts() {
     passive.target_id = partner();
     let out = scene.activate(A, passive, t);
     assert!(!out.iter().any(|o| matches!(o, Out::Refused { .. })), "{out:?}");
-    let (_, t) = poll_until(&mut scene, t, 6.0);
+    let _ = poll_until(&mut scene, t, 6.0);
     assert_eq!(scene.locked_by(A), vec![partner()]);
     assert_eq!(scene.pilots[&A].modules.running.len(), 1);
 }
@@ -2682,7 +2794,7 @@ fn every_end_of_an_effect_is_told_to_the_host_once_natural_or_asked() {
     let mut once = afterburner();
     once.repeat = 1;
     scene.activate(A, once, t);
-    let (out, t) = poll_until(&mut scene, t, 12.0);
+    let (out, _) = poll_until(&mut scene, t, 12.0);
     assert_eq!(ended(&out), [1], "a one-cycle run ends by itself: {out:?}");
 
     // the capacitor cannot pay for the next cycle: one end, as it was before
@@ -2690,7 +2802,7 @@ fn every_end_of_an_effect_is_told_to_the_host_once_natural_or_asked() {
     let mut all = afterburner();
     all.capacitor_need = 149.0;
     scene.activate(A, all, t);
-    let (out, t) = poll_until(&mut scene, t, 11.0);
+    let (out, _) = poll_until(&mut scene, t, 11.0);
     assert_eq!(ended(&out), [1], "a capacitor that is short ends the effect: {out:?}");
 
     // the pilot asks to stop: one end, when the cycle it is in ends
@@ -2756,11 +2868,29 @@ fn a_fuel_burning_effect_asks_the_host_for_the_fuel_of_its_first_cycle_before_it
 fn an_accepted_fuel_ask_starts_the_effect_and_a_repeated_answer_starts_nothing_more() {
     let (mut scene, t) = reaching(0.0);
     let (cycle, module, target) = fuel_asks(&scene.activate(A, burning(3), t))[0];
-    let started = scene.module_work_result(A, module, target, cycle, true, "", false, t);
+    let started = scene.module_work_result(
+        A,
+        module,
+        ModuleWorkAnswer { target_id: target, cycle_id: cycle, accepted: true, reason: "", depleted: false },
+        t,
+    );
     assert!(matches!(started.first(), Some(Out::Accepted { command: 17, .. })), "{started:?}");
     assert_eq!(scene.pilots[&A].modules.running.len(), 1);
     assert!(
-        scene.module_work_result(A, module, target, cycle, true, "", false, t + SECOND).is_empty(),
+        scene
+            .module_work_result(
+                A,
+                module,
+                ModuleWorkAnswer {
+                    target_id: target,
+                    cycle_id: cycle,
+                    accepted: true,
+                    reason: "",
+                    depleted: false
+                },
+                t + SECOND
+            )
+            .is_empty(),
         "a replay settles nothing"
     );
     assert_eq!(scene.pilots[&A].modules.running.len(), 1);
@@ -2770,7 +2900,18 @@ fn an_accepted_fuel_ask_starts_the_effect_and_a_repeated_answer_starts_nothing_m
 fn a_refused_fuel_ask_starts_nothing_and_says_the_host_reason() {
     let (mut scene, t) = reaching(0.0);
     let (cycle, module, target) = fuel_asks(&scene.activate(A, burning(3), t))[0];
-    let out = scene.module_work_result(A, module, target, cycle, false, "NO_FUEL", false, t);
+    let out = scene.module_work_result(
+        A,
+        module,
+        ModuleWorkAnswer {
+            target_id: target,
+            cycle_id: cycle,
+            accepted: false,
+            reason: "NO_FUEL",
+            depleted: false,
+        },
+        t,
+    );
     assert_eq!(refusals(&out), ["NO_FUEL"], "{out:?}");
     assert!(scene.pilots[&A].modules.running.is_empty());
     assert!(scene.pilots[&A].modules.pending_starts.is_empty());
@@ -2796,13 +2937,29 @@ fn a_parked_start_is_asked_again_with_the_same_cycle_id() {
 fn the_fuel_of_each_following_cycle_is_asked_at_the_cycle_end_and_taken_before_it_starts() {
     let (mut scene, t) = reaching(0.0);
     let (cycle, module, target) = fuel_asks(&scene.activate(A, burning(3), t))[0];
-    scene.module_work_result(A, module, target, cycle, true, "", false, t);
+    scene.module_work_result(
+        A,
+        module,
+        ModuleWorkAnswer { target_id: target, cycle_id: cycle, accepted: true, reason: "", depleted: false },
+        t,
+    );
     // the first cycle ends after 2 s: the fuel of the next is asked, and the next cycle does not start until it is taken
     let (first, at) = poll_until(&mut scene, t, 2.5);
     let asks = fuel_asks(&first);
     assert_eq!(asks.len(), 1, "{first:?}");
     assert_eq!(cycles_of(&scene), 1, "the next cycle has not started");
-    scene.module_work_result(A, MODULE, target, asks[0].0, true, "", false, at);
+    scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer {
+            target_id: target,
+            cycle_id: asks[0].0,
+            accepted: true,
+            reason: "",
+            depleted: false,
+        },
+        at,
+    );
     assert_eq!(cycles_of(&scene), 2);
 }
 
@@ -2810,10 +2967,26 @@ fn the_fuel_of_each_following_cycle_is_asked_at_the_cycle_end_and_taken_before_i
 fn a_refused_fuel_ask_at_a_cycle_end_stops_the_effect_with_the_fuel_reason_and_nothing_follows() {
     let (mut scene, t) = reaching(0.0);
     let (cycle, module, target) = fuel_asks(&scene.activate(A, burning(3), t))[0];
-    scene.module_work_result(A, module, target, cycle, true, "", false, t);
+    scene.module_work_result(
+        A,
+        module,
+        ModuleWorkAnswer { target_id: target, cycle_id: cycle, accepted: true, reason: "", depleted: false },
+        t,
+    );
     let (first, at) = poll_until(&mut scene, t, 2.5);
     let ask = fuel_asks(&first)[0].0;
-    let out = scene.module_work_result(A, MODULE, target, ask, false, "NO_FUEL", false, at);
+    let out = scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer {
+            target_id: target,
+            cycle_id: ask,
+            accepted: false,
+            reason: "NO_FUEL",
+            depleted: false,
+        },
+        at,
+    );
     assert_eq!(ended(&out), [6], "the stop names the fuel: {out:?}");
     assert!(scene.pilots[&A].modules.running.is_empty());
     let (later, _) = poll_until(&mut scene, at, 3.0);
@@ -2824,7 +2997,12 @@ fn a_refused_fuel_ask_at_a_cycle_end_stops_the_effect_with_the_fuel_reason_and_n
 fn the_last_cycle_of_a_fuel_effect_asks_for_no_more_fuel() {
     let (mut scene, t) = reaching(0.0);
     let (cycle, module, target) = fuel_asks(&scene.activate(A, burning(1), t))[0];
-    scene.module_work_result(A, module, target, cycle, true, "", false, t);
+    scene.module_work_result(
+        A,
+        module,
+        ModuleWorkAnswer { target_id: target, cycle_id: cycle, accepted: true, reason: "", depleted: false },
+        t,
+    );
     let (out, _) = poll_until(&mut scene, t, 2.5);
     assert!(fuel_asks(&out).is_empty(), "{out:?}");
     assert_eq!(ended(&out), [1], "the cycles were done: {out:?}");
@@ -2849,6 +3027,21 @@ fn a_deactivation_while_the_fuel_of_the_first_cycle_is_asked_cancels_the_start()
     assert_eq!(refusals(&out), ["DEACTIVATED"], "{out:?}");
     assert!(out.iter().any(|item| matches!(item, Out::Accepted { command: 16, .. })), "{out:?}");
     // the host's answer to the cancelled ask starts nothing
-    assert!(scene.module_work_result(A, module, target, cycle, true, "", false, t + SECOND).is_empty());
+    assert!(
+        scene
+            .module_work_result(
+                A,
+                module,
+                ModuleWorkAnswer {
+                    target_id: target,
+                    cycle_id: cycle,
+                    accepted: true,
+                    reason: "",
+                    depleted: false
+                },
+                t + SECOND
+            )
+            .is_empty()
+    );
     assert!(scene.pilots[&A].modules.running.is_empty());
 }

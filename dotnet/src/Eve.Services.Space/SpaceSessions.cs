@@ -316,6 +316,10 @@ private readonly TransitionRuntime _transitions;
     public ClientSession? ClientSessionOf(ulong sessionId) =>
         _pilots.TryGetValue(sessionId, out var pilot) ? pilot.Session : null;
 
+    /// <summary>The session of the pilot whose ship is <paramref name="shipId"/> and is in space, or null (a ship a scanner reads the capacitor of).</summary>
+    public ClientSession? SessionOfShip(long shipId) =>
+        _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == shipId)?.Session;
+
     public double? SecurityOfSystem(int solarSystemId) => _systems.Get(solarSystemId)?.Security;
 
     private static MachoWrappedException Notify(string text) => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(text)));

@@ -12,6 +12,7 @@ internal static class ModuleAttributes
     public const int MassAddition = 796;
 
     public const int CapacitorNeed = 6;
+public const int CapacitorCapacity = 482;
     public const int Speed = 51;
     public const int MaxRange = 54;
     public const int DamageMultiplier = 64;

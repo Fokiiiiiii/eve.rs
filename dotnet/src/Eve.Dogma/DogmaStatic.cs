@@ -312,6 +312,7 @@ public sealed class DogmaStatic
                 Guid = row.Doc.TryGetProperty("guid", out var guid) && guid.ValueKind == JsonValueKind.String ? guid.GetString() ?? "" : "",
                 RangeAttributeId = row.Doc.TryGetProperty("rangeAttributeID", out var range) && range.ValueKind == JsonValueKind.Number ? range.GetInt32() : 0,
                 DurationAttributeId = row.Doc.TryGetProperty("durationAttributeID", out var duration) && duration.ValueKind == JsonValueKind.Number ? duration.GetInt32() : 0,
+                FalloffAttributeId = row.Doc.TryGetProperty("falloffAttributeID", out var falloff) && falloff.ValueKind == JsonValueKind.Number ? falloff.GetInt32() : 0,
                 DischargeAttributeId = row.Doc.TryGetProperty("dischargeAttributeID", out var discharge) && discharge.ValueKind == JsonValueKind.Number ? discharge.GetInt32() : 0,
                 ChanceAttributeId = row.Doc.TryGetProperty("chanceAttributeID", out var chance) && chance.ValueKind == JsonValueKind.Number ? chance.GetInt32() : 0,
             };

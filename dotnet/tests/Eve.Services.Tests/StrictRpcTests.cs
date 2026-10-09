@@ -9,6 +9,7 @@ namespace Eve.Services.Tests;
 /// EVE_STRICT_RPC: an unknown service, an unknown method, an unregistered bound object or a failing handler is
 /// answered with a Macho error and logged. With the flag off each one is answered None, as before.
 /// </summary>
+[Collection(TraceSettings.Name)]
 public class StrictRpcTests
 {
     private const int CallResponse = 7;

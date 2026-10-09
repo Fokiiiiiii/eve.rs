@@ -64,6 +64,12 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
         /// </summary>
         public ConcurrentDictionary<long, ItemState> ActiveModules { get; } = new();
 
+        /// <summary>The effects the pilot's modules run, as asked and as the simulation holds them (<see cref="RunningModule"/>): a refresh rebuilds them.</summary>
+        public ConcurrentDictionary<long, RunningModule> RunningModules { get; } = new();
+
+        /// <summary>The module repairs under way (nanite paste): what each began with. Ended by a stop, or by the pilot leaving the ship (<see cref="CancelRepairsAsync"/>).</summary>
+        public ConcurrentDictionary<long, ModuleRepairRecord> Repairs { get; } = new();
+
     /// <summary>The modules whose overheat the pilot asked for (accepted by the simulation as the request, applied at its next cycle): dogma sees them Overloaded.</summary>
     public ConcurrentDictionary<long, byte> Overheated { get; } = new();
 
@@ -310,6 +316,10 @@ private readonly TransitionRuntime _transitions;
     public ClientSession? ClientSessionOf(ulong sessionId) =>
         _pilots.TryGetValue(sessionId, out var pilot) ? pilot.Session : null;
 
+    /// <summary>The session of the pilot whose ship is <paramref name="shipId"/> and is in space, or null (a ship a scanner reads the capacitor of).</summary>
+    public ClientSession? SessionOfShip(long shipId) =>
+        _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == shipId)?.Session;
+
     public double? SecurityOfSystem(int solarSystemId) => _systems.Get(solarSystemId)?.Security;
 
     private static MachoWrappedException Notify(string text) => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(text)));
@@ -432,6 +442,9 @@ private readonly TransitionRuntime _transitions;
         await OnSessionClosedAsync(session);
     }
 
+    /// <summary>What a pilot that enters space does once it is in the scene (the squadrons its character has out there are taken up again).</summary>
+    public Func<ClientSession, long, Task>? PilotEntered { get; set; }
+
     public async ValueTask OnCharacterEnteredAsync(
         ClientSession session, long characterId, CancellationToken cancellationToken)
     {
@@ -475,6 +488,17 @@ private readonly TransitionRuntime _transitions;
         _pilots[sessionId] = new Pilot(
             session, characterId, pending.Snapshot.Ship.Id, pending.Snapshot.Ship.TypeId,
             systemId, FileTimeNow(), pending.Snapshot.Character.StationId);
+        if (PilotEntered is { } entered)
+        {
+            try
+            {
+                await entered(session, characterId);
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                _log?.Invoke($"space login for character {characterId}: the squadrons in space could not be taken up: {error.Message}");
+            }
+        }
         session.Set(LoginInventoryBootstrapPending, new PyInt(1));
         session.Closed += () => OnSessionClosed(session);
         if (_spaceItems is not null)
@@ -631,12 +655,19 @@ private readonly TransitionRuntime _transitions;
                     break;
                 case SimChargeSpent spent when _pilots.TryGetValue(spent.SessionId, out var shooter):
                     _charges.Enqueue(spent.SessionId, shooter.CharacterId, spent.ModuleId, spent.RoundsLeft);
+                    // a gun that reloads from its hold and has no round left for its next cycle asks for its load (FP-C8)
+                    if (shooter.RunningModules.TryGetValue(spent.ModuleId, out var gun) && gun.Reloads && spent.RoundsLeft < gun.PerCycle)
+                    {
+                        GunRanDry?.Invoke(new SpentGun(shooter.Session, shooter.CharacterId, shooter.ShipId, spent.ModuleId, gun.ChargeTypeId));
+                    }
                     break;
                 // an effect the simulation ended on its own account (the cycles done, the capacitor short, the target gone): the module is taken out of the
                 // numbers the ship is sent with, and the ship is sent again so the simulation drops the module's modifiers (FP-C1)
                 case SimModuleEnded ended when _pilots.TryGetValue(ended.SessionId, out var endedPilot) && endedPilot.ActiveModules.TryRemove(ended.ModuleId, out _):
                     Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Reset(ended.ModuleId);
+                    endedPilot.RunningModules.TryRemove(ended.ModuleId, out _);
                     _ = Task.Run(() => SendShipAsync(ended.SessionId, endedPilot, null, CancellationToken.None));
+                    _ = Task.Run(() => RefreshRunningAsync(endedPilot, ended.SessionId, CancellationToken.None));
                     break;
                 case SimRefused { Command: SimCommands.Stop, Reason: "IN_WARP" } inWarp when _pilots.TryGetValue(inWarp.SessionId, out var warping):
                     _warping[inWarp.SessionId] = 0;
@@ -803,6 +834,7 @@ private readonly TransitionRuntime _transitions;
         pilot.End();
         try
         {
+            await CancelRepairsAsync(pilot, CancellationToken.None).ConfigureAwait(false);
             var chargesSaved = true;
             try
             {

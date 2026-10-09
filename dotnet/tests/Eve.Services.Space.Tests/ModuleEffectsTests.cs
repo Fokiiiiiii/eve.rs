@@ -123,6 +123,22 @@ public class ModuleEffectsTests
     }
 
     [Fact]
+    public void A_sensor_booster_adds_its_sensor_strengths_to_the_ship_as_the_remote_booster_does()
+    {
+        // the SDE gives Sensor Booster I 40 on each sensor strength (scanGravimetric, Ladar, Magnetometric, Radar StrengthPercent 1027 to 1030); an ECCM charge
+        // the ship runs adds to them, and the booster's own radar strength here is 80
+        var fixture = Fixture(
+            2670, "sensorBoosterActivePercentage", EffectDef.Activation,
+            new Dictionary<int, double> { [6] = 10, [73] = 12000, [309] = 25, [566] = 25, [1027] = 40, [1028] = 40, [1029] = 40, [1030] = 80 });
+        var result = Eve.Services.Space.ModulePackages.Of(
+            fixture.Snapshot, fixture.Statics, fixture.ModuleId, "sensorBoosterActivePercentage", 0, 1);
+
+        var package = Assert.IsType<Eve.Space.SimEffect>(result.Effect);
+        var action = Assert.IsType<Eve.Space.SimAction.Remote>(package.Action);
+        Assert.Equal(new Eve.Space.SimRemote.Damp(25, 25, 40, 40, 40, 80), action.What);
+    }
+
+    [Fact]
     public void The_mass_entangler_uses_its_static_modifier_values_for_the_space_numbers()
     {
         var modifiers = new[]
@@ -250,9 +266,6 @@ public class ModuleEffectsTests
     [Theory]
     [InlineData(1738, "doHacking", EffectDef.Target)]
     [InlineData(4773, "hackOrbital", EffectDef.Target)]
-    [InlineData(47, "cargoScan", EffectDef.Target)]
-    [InlineData(46, "shipScan", EffectDef.Target)]
-    [InlineData(2231, "scanStrengthBonusPercentActivate", EffectDef.Activation)]
     [InlineData(2246, "scanStrengthTargetPercentBonus", EffectDef.Target)]
     public void A_scanner_or_hacking_effect_with_no_body_yet_is_refused_as_not_implemented_and_packages_nothing(int effectId, string effectName, int category)
     {
@@ -265,6 +278,24 @@ public class ModuleEffectsTests
             Assert.Null(result.Effect);
             Assert.Equal("EFFECT_NOT_IMPLEMENTED", result.Reason);
         }
+    }
+
+    // The scanners have bodies (ScannerModuleEffects.cs): a cargo scan is its range with no falloff, a ship scan its range with the falloff of its effect, each one cycle
+    [Fact]
+    public void A_cargo_scan_and_a_ship_scan_are_built_as_their_range_and_a_ship_scan_also_as_its_falloff_and_a_scanner_with_no_range_is_refused()
+    {
+        var cargo = Fixture(47, "cargoScan", EffectDef.Target, new Dictionary<int, double> { [6] = 4, [73] = 5000, [126] = 50000, [1014] = 1 });
+        var ship = Fixture(46, "shipScan", EffectDef.Target, new Dictionary<int, double> { [6] = 5, [73] = 2000, [125] = 50000, [510] = 30000, [1014] = 1 }, falloffAttributeId: 510);
+        var empty = Fixture(47, "cargoScan", EffectDef.Target, new Dictionary<int, double> { [6] = 4, [73] = 5000, [126] = 0, [1014] = 1 });
+
+        var cargoResult = Eve.Services.Space.ModulePackages.Of(cargo.Snapshot, cargo.Statics, cargo.ModuleId, "cargoScan", 70005, 1);
+        var shipResult = Eve.Services.Space.ModulePackages.Of(ship.Snapshot, ship.Statics, ship.ModuleId, "shipScan", 70005, 1);
+        var emptyResult = Eve.Services.Space.ModulePackages.Of(empty.Snapshot, empty.Statics, empty.ModuleId, "cargoScan", 70005, 1);
+
+        Assert.Equal(new Eve.Space.SimAction.Scan(Eve.Space.SimScanKinds.Cargo, 50000, 0), cargoResult.Effect!.Action);
+        Assert.Equal(new Eve.Space.SimAction.Scan(Eve.Space.SimScanKinds.Ship, 50000, 30000), shipResult.Effect!.Action);
+        Assert.Equal((5000d, 4d, 1), (cargoResult.Effect.DurationMs, cargoResult.Effect.CapacitorNeed, cargoResult.Effect.Repeat));
+        Assert.Equal("UNSUPPORTED_EFFECT", emptyResult.Reason);
     }
 
     [Fact]
@@ -288,7 +319,7 @@ public class ModuleEffectsTests
             ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
         var statics = await DogmaStatic.LoadAsync(sde);
         var registry = Eve.Services.Space.Effects.ModuleEffects.Default;
-        string[] pending = ["doHacking", "hackOrbital", "cargoScan", "shipScan", "scanStrengthBonusPercentActivate", "scanStrengthTargetPercentBonus"];
+        string[] pending = ["doHacking", "hackOrbital", "scanStrengthTargetPercentBonus"];
         var uncovered = registry.Uncovered(statics).Select(e => e.Name.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var moduleGroups = (await sde.ReadAsync("groups"))
             .Where(row => row.Doc.GetProperty("categoryID").GetInt32() == 7)
@@ -747,7 +778,6 @@ public class ModuleEffectsTests
         string[] currentSdeGaps =
         [
             "barrage",
-            "cargoScan",
             "cloneRespawnBay",
             "doHacking",
             "doomsdayAOEBubble",
@@ -769,9 +799,7 @@ public class ModuleEffectsTests
             "moduleBonusWarfareLinkShield",
             "moduleBonusWarfareLinkSkirmish",
             "moduleTitanEffectGenerator",
-            "scanStrengthBonusPercentActivate",
             "scanStrengthTargetPercentBonus",
-            "shipScan",
         ];
         // Reconcile the manifest against the catalog this test actually opened. A newer unhandled
         // effect adds a failure; an older catalog simply does not assign effects introduced later.
@@ -1032,7 +1060,8 @@ public class ModuleEffectsTests
     Eve.Inventory.Item? charge = null,
     IReadOnlyDictionary<int, double>? chargeAttributes = null,
     IReadOnlyList<int>? additionalEffectIds = null,
-    IReadOnlyList<EffectDef>? additionalEffects = null)
+    IReadOnlyList<EffectDef>? additionalEffects = null,
+    int falloffAttributeId = 0)
 {
     const long characterId = 70001;
     const long shipId = 70002;
@@ -1045,6 +1074,7 @@ public class ModuleEffectsTests
         Guid = $"effects.{char.ToUpperInvariant(effectName[0])}{effectName[1..]}",
         DurationAttributeId = 73,
         DischargeAttributeId = 6,
+        FalloffAttributeId = falloffAttributeId,
     };
     var shipType = new TypeDef(shipTypeId, 1, 6, shipAttributes ?? new Dictionary<int, double>(), []);
     var moduleEffectIds = new List<int> { effectId };

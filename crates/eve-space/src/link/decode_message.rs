@@ -416,6 +416,25 @@ impl Message {
                 };
                 Message::AdjustCharge { request_id, session_id, module_id, charge_type, op }
             }
+            kind::UPDATE_EFFECT => {
+                let session_id = r.u64()?;
+                let module_id = r.i64()?;
+                let (duration_ms, capacitor_need) = (r.f64()?, r.f64()?);
+                if !duration_ms.is_finite()
+                    || duration_ms <= 0.0
+                    || !capacitor_need.is_finite()
+                    || capacitor_need < 0.0
+                {
+                    return Err(DecodeError::BadValue("update effect"));
+                }
+                let turret = match r.u8()? {
+                    0 => None,
+                    1 => Some(Box::new(read_turret(&mut r)?)),
+                    _ => return Err(DecodeError::BadValue("update turret")),
+                };
+                let changes = read_changes(&mut r)?;
+                Message::UpdateEffect { session_id, module_id, duration_ms, capacitor_need, turret, changes }
+            }
             kind::CHARGE_ADJUSTED => {
                 let request_id = r.u64()?;
                 let running = match r.u8()? {

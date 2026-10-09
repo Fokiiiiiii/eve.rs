@@ -49,10 +49,13 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             throw CorporationAccessDenied();
 
         var alliance = Number(call.Arg(0));
+        var previousApplication = (await store.AllianceApplicationsAsync(alliance,call.Cancellation))
+            .LastOrDefault(item => item.CorporationId == corporation.Id && !item.Archived);
         var applicationText = JsSemantics.StringValue(call.Arg(1)) ?? "";
+        long applicationId;
         try
         {
-            await store.ApplyToAllianceAsync(actor,alliance,applicationText,true,true,call.Cancellation);
+            applicationId = await store.ApplyToAllianceAsync(actor,alliance,applicationText,true,true,call.Cancellation);
         }
         catch (CorporationError error) when (error.Code is "CORPORATION_ACCESS_DENIED" or "CHARACTER_NOT_FOUND" or "ALLIANCE_NOT_FOUND" or "CORPORATION_ALREADY_IN_ALLIANCE" or "ALLIANCE_APPLICATION_TEXT_TOO_LONG")
         {
@@ -62,6 +65,15 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         {
             throw MachoErrors.ThrowUserError("CantApplyTwiceToAlliance");
         }
+        var application = (await store.AllianceApplicationsAsync(alliance,call.Cancellation))
+            .FirstOrDefault(item => item.Id == applicationId);
+        if (application is not null)
+        {
+            var recipients = await CorporationNotificationAdapter.AllianceApplicationRecipientCharacterIdsAsync(
+                store,alliance,corporation.Id,call.Cancellation);
+            CorporationNotificationAdapter.AllianceApplicationChanged(
+                characterSessions,call,alliance,corporation.Id,previousApplication,application,recipients);
+        }
         return PyNone.Instance;
     }
 
@@ -69,16 +81,28 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     public async ValueTask<PyValue> DeleteAllianceApplication(ServiceCall call)
     {
         if (call.Session.CharacterId is not { } actor ||
-            await characters.GetAsync(actor,call.Cancellation) is null)
+            await characters.GetAsync(actor,call.Cancellation) is not { } character ||
+            await store.GetAsync(character.CorporationId,call.Cancellation) is not { } corporation)
             throw CorporationAccessDenied();
 
+        var alliance = Number(call.Arg(0));
+        var before = (await store.AllianceApplicationsAsync(alliance,call.Cancellation))
+            .LastOrDefault(application => application.CorporationId == corporation.Id);
+        bool withdrawn;
         try
         {
-            await store.WithdrawAllianceApplicationAsync(actor,Number(call.Arg(0)),call.Cancellation);
+            withdrawn = await store.WithdrawAllianceApplicationAsync(actor,alliance,call.Cancellation);
         }
         catch (CorporationError error) when (error.Code is "CORPORATION_ACCESS_DENIED" or "CORPORATION_NOT_FOUND" or "CHARACTER_NOT_FOUND" or "ALLIANCE_APPLICATION_INVALID_STATE")
         {
             throw CorporationAccessDenied();
+        }
+        if (withdrawn && before is not null)
+        {
+            var recipients = await CorporationNotificationAdapter.AllianceApplicationRecipientCharacterIdsAsync(
+                store,alliance,corporation.Id,call.Cancellation);
+            CorporationNotificationAdapter.AllianceApplicationChanged(
+                characterSessions,call,alliance,corporation.Id,before,null,recipients);
         }
         return PyNone.Instance;
     }

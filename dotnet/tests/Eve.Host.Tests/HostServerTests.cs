@@ -2929,10 +2929,117 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
 
 
     [Fact]
+    public async Task Closing_an_alliance_drops_only_its_sovereignty_claims_and_hub_projection()
+    {
+        const long allianceId = 99000041;
+        const long corporationId = 98000041;
+        const long otherAllianceId = 99000042;
+        const long systemId = 30000142;
+        const long otherSystemId = 30000143;
+        const long claimStructureId = 9000041;
+        const long hubId = 9000042;
+        var sovereignty = new System.Text.Json.Nodes.JsonObject
+        {
+            ["systems"] = new System.Text.Json.Nodes.JsonObject
+            {
+                [systemId.ToString(System.Globalization.CultureInfo.InvariantCulture)] =
+                    new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["solarSystemID"] = systemId,
+                        ["allianceID"] = allianceId,
+                        ["corporationID"] = corporationId,
+                        ["claimStructureID"] = claimStructureId,
+                        ["infrastructureHubID"] = hubId,
+                        ["claimTime"] = "133000000000000000",
+                        ["fuelAccessGroupID"] = 5001,
+                        ["currentData"] = new System.Text.Json.Nodes.JsonArray(
+                            new System.Text.Json.Nodes.JsonObject { ["level"] = 1 }),
+                        ["devIndices"] = new System.Text.Json.Nodes.JsonObject { ["claimedForDays"] = 10 },
+                        ["structures"] = new System.Text.Json.Nodes.JsonArray(
+                            new System.Text.Json.Nodes.JsonObject { ["itemID"] = claimStructureId },
+                            new System.Text.Json.Nodes.JsonObject { ["itemID"] = hubId }),
+                        ["recentActivity"] = new System.Text.Json.Nodes.JsonArray()
+                    },
+                [otherSystemId.ToString(System.Globalization.CultureInfo.InvariantCulture)] =
+                    new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["solarSystemID"] = otherSystemId,
+                        ["allianceID"] = otherAllianceId,
+                        ["corporationID"] = 98000042,
+                        ["claimStructureID"] = 9000043,
+                        ["infrastructureHubID"] = 9000044,
+                        ["structures"] = new System.Text.Json.Nodes.JsonArray(
+                            new System.Text.Json.Nodes.JsonObject { ["itemID"] = 9000044 })
+                    }
+            },
+            ["hubs"] = new System.Text.Json.Nodes.JsonObject
+            {
+                [hubId.ToString(System.Globalization.CultureInfo.InvariantCulture)] =
+                    new System.Text.Json.Nodes.JsonObject { ["hubID"] = hubId, ["allianceID"] = allianceId },
+                ["9000044"] = new System.Text.Json.Nodes.JsonObject { ["hubID"] = 9000044, ["allianceID"] = otherAllianceId }
+            },
+            ["alliances"] = new System.Text.Json.Nodes.JsonObject
+            {
+                [allianceId.ToString(System.Globalization.CultureInfo.InvariantCulture)] =
+                    new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["capitalInfo"] = new System.Text.Json.Nodes.JsonObject
+                        {
+                            ["currentCapitalSystem"] = systemId,
+                            ["newCapitalSystem"] = systemId,
+                            ["newCapitalSystemValidAfter"] = "133000000000000000"
+                        }
+                    }
+            }
+        };
+        var tables = new Dictionary<string, System.Text.Json.Nodes.JsonObject>
+        {
+            ["sovereignty"] = sovereignty
+        };
+        System.Text.Json.Nodes.JsonObject Read(string table) =>
+            (System.Text.Json.Nodes.JsonObject)tables[table].DeepClone();
+        Eve.GameStore.WriteResult Write(string table, string? path, System.Text.Json.Nodes.JsonNode? data)
+        {
+            if (path is not null || data is not System.Text.Json.Nodes.JsonObject root)
+                return new Eve.GameStore.WriteResult(false, "unexpected path write");
+            tables[table] = (System.Text.Json.Nodes.JsonObject)root.DeepClone();
+            return new Eve.GameStore.WriteResult(true, null);
+        }
+
+        var writer = new Eve.Host.PersistenceSovFwWriteOperations(
+            Read, Write, (_, _) => Task.FromResult(1),
+            (table, _) => Task.FromResult(Read(table)),
+            (_, _, _) => ValueTask.FromResult(false),
+            new SemaphoreSlim(1, 1),
+            (_, _) => ValueTask.FromResult(false),
+            (_, _) => ValueTask.FromResult(false));
+
+        Assert.True(await writer.DropAllianceSovereigntyClaimsAsync(allianceId, 1_800_000_000_000L));
+
+        var saved = tables["sovereignty"];
+        var dropped = saved["systems"]![systemId.ToString(System.Globalization.CultureInfo.InvariantCulture)]!;
+        Assert.Null(dropped["allianceID"]);
+        Assert.Null(dropped["corporationID"]);
+        Assert.Null(dropped["claimStructureID"]);
+        Assert.Null(dropped["infrastructureHubID"]);
+        Assert.Equal("0", dropped["claimTime"]!.GetValue<string>());
+        Assert.Null(dropped["fuelAccessGroupID"]);
+        Assert.Empty(dropped["currentData"]!.AsArray());
+        Assert.Equal(0, dropped["devIndices"]!["claimedForDays"]!.GetValue<int>());
+        Assert.Single(dropped["recentActivity"]!.AsArray());
+        Assert.Empty(dropped["structures"]!.AsArray());
+        Assert.Null(saved["hubs"]![hubId.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
+        Assert.NotNull(saved["hubs"]!["9000044"]);
+        Assert.Equal(otherAllianceId, saved["systems"]![otherSystemId.ToString(System.Globalization.CultureInfo.InvariantCulture)]!["allianceID"]!.GetValue<long>());
+    }
+
+    [Fact]
     public async Task Mail_host_adapter_commits_mail_and_notification_before_returning_id()
     {
         const long senderId = 90000031;
         const long recipientId = 90000032;
+        const long allianceId = 90000033;
+        const long allianceBillId = 90000034;
         var cache = new Dictionary<string, System.Text.Json.Nodes.JsonObject>
         {
             ["mail"] = new()
@@ -3049,6 +3156,12 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                 Assert.Equal(typeId, saved["typeID"]!.GetValue<int>());
                 if (typeId == 1004)
                     Assert.Equal(12, saved["data"]!["msg"]!["messageID"]!.GetValue<long>());
+                else if (typeId == 4)
+                {
+                    Assert.Equal(2, saved["groupID"]!.GetValue<int>());
+                    Assert.Equal(1_000_125, saved["senderID"]!.GetValue<long>());
+                    Assert.Equal(allianceId, saved["data"]!["allianceID"]!.GetValue<long>());
+                }
                 else
                 {
                     Assert.Equal(Eve.Services.Crimewatch.KillRightNotificationTypes.Used, typeId);
@@ -3105,6 +3218,22 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.Equal(Eve.Services.Crimewatch.KillRightNotificationTypes.MiscGroup, usedNotification["groupID"]!.GetValue<int>());
         Assert.Equal(senderId, usedNotification["data"]!["charID"]!.GetValue<long>());
         Assert.Equal(2, liveNotifications.Count);
+
+        await adapter.WriteAllianceMaintenanceBillNotificationAsync(
+            recipientId, allianceId, allianceBillId, CancellationToken.None);
+        await adapter.WriteAllianceMaintenanceBillNotificationAsync(
+            recipientId, allianceId, allianceBillId, CancellationToken.None);
+        var billNotification = Assert.Single(
+            committed["notifications"]["boxes"]![recipientId.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)]!["byID"]!.AsObject()
+                .Select(pair => pair.Value).OfType<System.Text.Json.Nodes.JsonObject>(),
+            notification => notification["idempotencyKey"]?.GetValue<string>() ==
+                $"alliance-maintenance-bill:{allianceBillId}:receiver:{recipientId}");
+        Assert.Equal(4, billNotification["typeID"]!.GetValue<int>());
+        Assert.Equal(2, billNotification["groupID"]!.GetValue<int>());
+        Assert.Equal(1_000_125, billNotification["senderID"]!.GetValue<long>());
+        Assert.Equal(allianceId, billNotification["data"]!["allianceID"]!.GetValue<long>());
+        Assert.Equal(3, liveNotifications.Count);
     }
 
     [Fact]

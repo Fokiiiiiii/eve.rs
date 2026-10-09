@@ -193,11 +193,13 @@ public static partial class SimCodec
         var maxGroupActive = r.I32();
         var bits = r.U8();
         var reactivation = r.F64();
-        if (bits > 7 || maxGroupActive < 0 || reactivation < 0 || !double.IsFinite(reactivation))
+        var (maxVelocity, minVelocity) = (r.F64(), r.F64());
+        if (bits > 7 || maxGroupActive < 0 || reactivation < 0 || !double.IsFinite(reactivation)
+            || maxVelocity < 0 || !double.IsFinite(maxVelocity) || minVelocity < 0 || !double.IsFinite(minVelocity))
         {
             throw new SimLinkException(SimLinkError.BadValue, "bad module rules");
         }
-        return new SimModuleRules(group, maxGroupActive, (bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0, reactivation);
+        return new SimModuleRules(group, maxGroupActive, (bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0, reactivation, maxVelocity, minVelocity);
     }
 
     /// <summary>The list <see cref="WriteIds"/> writes; more than 4096 ids is refused (no fleet is that large in a field).</summary>
@@ -240,8 +242,14 @@ public static partial class SimCodec
         {
             throw new SimLinkException(SimLinkError.BadValue, "bad strike sweep flag");
         }
+        var beaconFlag = r.U8();
+        double[] beacon = [r.F64(), r.F64(), r.F64()];
+        if (beaconFlag > 1)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad strike beacon flag");
+        }
         var strike = new SimAction.Strike(shape, direction, length, radius, warning, pulse, pulses, damage, signature, immobile, noJump, neutAmount, neutRadius, neutSignature,
-            debuff, sweepFlag == 1 ? sweepEnd : null);
+            debuff, sweepFlag == 1 ? sweepEnd : null, beaconFlag == 1 ? beacon : null);
         if (!strike.IsValid)
         {
             throw new SimLinkException(SimLinkError.BadValue, "bad strike action");
@@ -250,8 +258,18 @@ public static partial class SimCodec
     }
 
     /// <summary>What a launcher flies (see <c>WriteMissile</c>).</summary>
-    private static SimMissile ReadMissile(ref Reader r) =>
-        new(r.I32(), r.I32(), r.Text(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64());
+    private static SimMissile ReadMissile(ref Reader r)
+    {
+        var missile = new SimMissile(r.I32(), r.I32(), r.Text(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64());
+        // the damage over time of a breacher pod (protocol 42): a flag, then its duration, its cap per tick and its percentage per tick
+        var dot = r.U8() switch
+        {
+            0 => null,
+            1 => new SimDot(r.F64(), r.F64(), r.F64()),
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad dot"),
+        };
+        return missile with { Dot = dot };
+    }
 
     /// <summary>A deployable's charge (see <c>WriteDeployable</c>): the radius of its ball must be a positive number.</summary>
     private static SimDeployable ReadDeployable(ref Reader r)
@@ -333,6 +351,16 @@ public static partial class SimCodec
                         throw new SimLinkException(SimLinkError.BadValue, "bad scramble status action");
                     }
                     return new SimAction.ScrambleStatus(delta);
+                }
+            case 27:
+                {
+                    var ball = ReadDeployable(ref r);
+                    var lifetime = r.F64();
+                    if (!(double.IsFinite(lifetime) && lifetime > 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad cynosural field action");
+                    }
+                    return new SimAction.CynoField(ball, lifetime);
                 }
             case 19:
                 {
@@ -439,6 +467,56 @@ public static partial class SimCodec
                         throw new SimLinkException(SimLinkError.BadValue, "bad doomsday action");
                     }
                     return doomsday;
+                }
+            case 26:
+                {
+                    var kind = r.U8();
+                    var optimal = r.F64();
+                    var falloff = r.F64();
+                    var scan = new SimAction.Scan(kind, optimal, falloff);
+                    if (!scan.IsValid)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad scan action");
+                    }
+                    return scan;
+                }
+            case 23:
+                {
+                    double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    var range = r.F64();
+                    var kamikaze = new SimAction.Kamikaze(damage, range);
+                    if (!kamikaze.IsValid)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad kamikaze action");
+                    }
+                    return kamikaze;
+                }
+            case 25:
+                {
+                    double[] centre = [r.F64(), r.F64(), r.F64()];
+                    var radius = r.F64();
+                    double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    var blast = new SimAction.Blast(centre, radius, damage);
+                    if (!blast.IsValid)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad fighter blast action");
+                    }
+                    return blast;
+                }
+            case 24:
+                {
+                    double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    var reach = r.F64();
+                    var radius = r.F64();
+                    var velocity = r.F64();
+                    var factor = r.F64();
+                    var sensitivity = r.F64();
+                    var missile = new SimAction.FighterMissile(damage, reach, radius, velocity, factor, sensitivity);
+                    if (!missile.IsValid)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad fighter missile action");
+                    }
+                    return missile;
                 }
             case 12:
                 {
@@ -553,7 +631,12 @@ public static partial class SimCodec
         var charge = r.U8() switch
         {
             0 => null,
-            1 => new SimTurretCharge(r.I32(), r.I32(), r.I64(), r.I64()),
+            1 => new SimTurretCharge(r.I32(), r.I32(), r.I64(), r.I64(), r.U8() switch
+            {
+                0 => false,
+                1 => true,
+                _ => throw new SimLinkException(SimLinkError.BadValue, "bad charge reloads"),
+            }),
             _ => throw new SimLinkException(SimLinkError.BadValue, "bad charge"),
         };
         var missile = r.U8() switch

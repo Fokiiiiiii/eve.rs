@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::missiles::Dot;
+
 pub(super) fn read_weapon(reader: &mut Reader) -> Result<NpcWeapon, DecodeError> {
     let (module_id, effect_id, cycle_ms, capacitor_need) =
         (reader.i64()?, reader.i32()?, reader.f64()?, reader.f64()?);
@@ -54,6 +56,15 @@ pub(super) fn read_missile(reader: &mut Reader) -> Result<Missile, DecodeError> 
         explosion_velocity: reader.f64()?,
         damage_reduction_factor: reader.f64()?,
         damage_reduction_sensitivity: reader.f64()?,
+        dot: match reader.u8()? {
+            0 => None,
+            1 => Some(Dot {
+                duration_ms: reader.f64()?,
+                max_damage_per_tick: reader.f64()?,
+                max_hp_percent_per_tick: reader.f64()?,
+            }),
+            _ => return Err(DecodeError::BadValue("dot")),
+        },
     })
 }
 
@@ -65,12 +76,16 @@ pub(super) fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
         (reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?);
     let charge = match reader.u8()? {
         0 => None,
-        1 => Some(Charge {
-            type_id: reader.i32()?,
-            flag: reader.i32()?,
-            rounds: reader.i64()?,
-            per_cycle: reader.i64()?,
-        }),
+        1 => {
+            let (type_id, flag, rounds, per_cycle) =
+                (reader.i32()?, reader.i32()?, reader.i64()?, reader.i64()?);
+            let reloads = match reader.u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(DecodeError::BadValue("charge reloads")),
+            };
+            Some(Charge { type_id, flag, rounds, per_cycle, reloads })
+        }
         _ => return Err(DecodeError::BadValue("charge")),
     };
     let missile = match reader.u8()? {
@@ -218,9 +233,18 @@ pub(super) fn read_strike(reader: &mut Reader) -> Result<Strike, DecodeError> {
         1 => Some([reader.f64()?, reader.f64()?, reader.f64()?]),
         _ => return Err(DecodeError::BadValue("strike sweep flag")),
     };
+    let beacon = match reader.u8()? {
+        0 => {
+            let _unused = [reader.f64()?, reader.f64()?, reader.f64()?];
+            None
+        }
+        1 => Some([reader.f64()?, reader.f64()?, reader.f64()?]),
+        _ => return Err(DecodeError::BadValue("strike beacon flag")),
+    };
     let strike = Strike {
         debuff_ms,
         sweep_end,
+        beacon,
         shape,
         direction,
         length,
@@ -318,13 +342,24 @@ pub(super) fn read_rules(reader: &mut Reader) -> Result<Rules, DecodeError> {
     if bits > 7 {
         return Err(DecodeError::BadValue("rule bits"));
     }
+    let reactivation_delay_ms = reader.f64()?;
+    let (max_velocity_limit, min_velocity_limit) = (reader.f64()?, reader.f64()?);
+    if !(max_velocity_limit.is_finite()
+        && max_velocity_limit >= 0.0
+        && min_velocity_limit.is_finite()
+        && min_velocity_limit >= 0.0)
+    {
+        return Err(DecodeError::BadValue("velocity limit"));
+    }
     Ok(Rules {
         group_id,
         max_group_active,
         disallow_early_deactivation: bits & 1 != 0,
         requires_industrial_core: bits & 2 != 0,
         provides_industrial_core: bits & 4 != 0,
-        reactivation_delay_ms: reader.f64()?,
+        reactivation_delay_ms,
+        max_velocity_limit,
+        min_velocity_limit,
     })
 }
 

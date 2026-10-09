@@ -38,6 +38,18 @@ namespace Eve.Host;
 internal sealed partial class CharacterServicesComposition
 {
     /// <summary>Character select, lookup, security, faction warfare, fighters, ess and resource services, ship kill counter.</summary>
+    /// <summary>The fighter provider: a pilot that enters space takes up the squadrons its character has out there (a restart leaves them in space).</summary>
+    private Eve.Services.Space.SpaceFighters FighterProvider()
+    {
+        var fighters = new Eve.Services.Space.SpaceFighters(sim, ships, dogma, session => spaceSessions?.SolarSystemOf(session), message => Console.Error.WriteLine($"eve-host: fighters: {message}"),
+            systemId => spaceSessions?.SecurityOfSystem(systemId));
+        if (spaceSessions is not null)
+        {
+            spaceSessions.PilotEntered = fighters.RebuildAsync;
+        }
+        return fighters;
+    }
+
     private IReadOnlyList<IService> CoreRpc() =>
     [
             new CharUnboundMgrService(
@@ -72,7 +84,7 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Services.Core.FwVictoryPointMgrService(),
             new Eve.Services.Core.InsurgencySolarsystemService(),
             new Eve.Services.Core.AlertService(),
-            new Eve.Services.Core.FighterMgrService { Provider = new Eve.Services.Space.SpaceFighters(sim, ships, dogma, session => spaceSessions?.SolarSystemOf(session), message => Console.Error.WriteLine($"eve-host: fighters: {message}")) },
+            new Eve.Services.Core.FighterMgrService { Provider = FighterProvider() },
             new Eve.Services.Space.EssMgrService(),
             new Eve.Services.Space.DynamicResourceCacheMgrService(),
             new Eve.Services.Core.ShipKillCounterService(ct => ReadGameStoreTableAsync("shipKillCounters", ct)),

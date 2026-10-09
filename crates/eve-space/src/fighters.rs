@@ -242,7 +242,7 @@ impl Scene {
     }
 
     /// The squadron follows the ship `target` at `range`, telling whoever sees it (the action the reference sends for a follow).
-    fn follow(&mut self, session: SessionId, target: i64, range: f64, now: i64) -> Vec<Out> {
+    pub(crate) fn follow(&mut self, session: SessionId, target: i64, range: f64, now: i64) -> Vec<Out> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         pilot.ship.course = Course::Follow { target, range };
         pilot.ship.speed_fraction = 1.0;

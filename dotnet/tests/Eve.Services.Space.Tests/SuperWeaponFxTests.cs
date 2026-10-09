@@ -10,7 +10,7 @@ namespace Eve.Services.Space.Tests;
 /// <summary>
 /// The superweapon graphics (<see cref="SuperWeaponFx"/>): the titan doomsday guids are the SDE's effect rows, and each lance, reaper and disruptive lance graphic
 /// is the one its module's race (raceID in the static data) names. The lance names are the client's table (superWeapon.py effectData); the reaper names are EveJS's
-/// catalog, UNVERIFIED in the client.
+/// catalog (superWeaponCatalog.js).
 /// </summary>
 public class SuperWeaponFxTests
 {
@@ -63,7 +63,7 @@ public class SuperWeaponFxTests
         {
             Assert.Equal(SuperWeaponFx.Lance(race), SuperWeaponFx.DisruptiveLance(race));
         }
-        // the reapers (EveJS superweaponCatalog.js, UNVERIFIED in the client)
+        // the reapers (EveJS superweaponCatalog.js)
         Assert.Equal("effects.SWSlashBeamAmarr", SuperWeaponFx.Reaper(4));
         Assert.Equal("effects.SWSlashBeamCaldari", SuperWeaponFx.Reaper(1));
         Assert.Equal("effects.SWSlashBeamGallente", SuperWeaponFx.Reaper(8));

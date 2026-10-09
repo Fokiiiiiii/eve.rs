@@ -74,7 +74,7 @@ internal sealed class ProjectedEffect : ShipEffect
         // the fighter abilities of the SDE (ADR 0015, WP-K): their attributes are the fighter type's own (the ids of the SDE attributes below)
         ["fighterAbilityWarpDisruption"] = v => (new SimRemote.Scramble(Amount(v, FighterWarpDisruptionStrength), false), false, "warpScrambler"),
         ["fighterAbilityStasisWebifier"] = v => (new SimRemote.Web(Signed(v, FighterWebSpeedPenalty)), false, "webify"),
-        ["fighterAbilityEnergyNeutralizer"] = v => (new SimRemote.Neutralize(Amount(v, FighterNeutralizerAmount), 0), false, "ewEnergyNeut"),
+        ["fighterAbilityEnergyNeutralizer"] = v => (new SimRemote.Neutralize(Amount(v, FighterNeutralizerAmount), Amount(v, NeutralizerSignatureResolution)), false, "ewEnergyNeut"),
         ["fighterAbilityTackle"] = v => (new SimRemote.Tackle(Amount(v, FighterTackleScramble), Signed(v, FighterTackleWeb)), false, "warpScrambler"),
         ["fighterAbilityECM"] = v => (new SimRemote.Jam(Amount(v, FighterGravimetricStrength), Amount(v, FighterLadarStrength), Amount(v, FighterMagnetometricStrength), Amount(v, FighterRadarStrength)), false, ""),
     };

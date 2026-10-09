@@ -29,6 +29,20 @@ pub struct Missile {
     pub explosion_velocity: f64,
     pub damage_reduction_factor: f64,
     pub damage_reduction_sensitivity: f64,
+    /// The damage-over-time a hit applies instead of damage (a breacher pod's charge); None for a missile that does damage.
+    pub dot: Option<Dot>,
+}
+
+/// The damage-over-time of a breacher pod (SDE attributes `dotDuration` 5735, `dotMaxDamagePerTick` 5736 and `dotMaxHPPercentagePerTick` 5737): the effect a hit
+/// starts on the ship it reaches (`dot_weapons`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Dot {
+    /// Milliseconds the effect runs once it is the one that works on its ship.
+    pub duration_ms: f64,
+    /// The most a tick does, in points (a flat cap).
+    pub max_damage_per_tick: f64,
+    /// The most a tick does, as a percentage of the target's total hit points (0.6 is 0.6 %).
+    pub max_hp_percent_per_tick: f64,
 }
 
 /// What a guidance disruptor leaves a launcher's missiles with, as factors of their speed, flight time, explosion velocity and explosion radius (1 for none).
@@ -88,6 +102,32 @@ pub fn application_factor_of(
         if raised.is_finite() { raised } else { 1.0 }
     };
     round6(1.0_f64.min(round6(signature_factor)).min(velocity_factor))
+}
+
+/// The explosion of a missile as its launcher's numbers give it (a fighter's missiles: the squadron's own, no missile in flight). What a target takes is the
+/// damage times the application factor of `application_factor_of`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Blast {
+    pub explosion_radius: f64,
+    pub explosion_velocity: f64,
+    pub reduction_factor: f64,
+    pub reduction_sensitivity: f64,
+}
+
+impl Blast {
+    /// What the explosion does to a target of this signature radius moving at this speed.
+    pub fn applied(&self, raw: Damage, target_signature: f64, target_speed: f64) -> Damage {
+        let factor = application_factor_of(
+            self.explosion_radius,
+            self.explosion_velocity,
+            self.reduction_factor,
+            self.reduction_sensitivity,
+            target_signature,
+            target_speed,
+        )
+        .clamp(0.0, 1.0);
+        raw.map(|amount| round6(amount.max(0.0) * factor))
+    }
 }
 
 impl Missile {
@@ -325,6 +365,7 @@ mod tests {
             explosion_velocity: 170.0,
             damage_reduction_factor: 0.5,
             damage_reduction_sensitivity: DEFAULT_REDUCTION_SENSITIVITY,
+            dot: None,
         }
     }
 

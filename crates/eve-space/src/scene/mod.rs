@@ -569,6 +569,9 @@ pub struct Scene {
     pub(crate) missiles: BTreeMap<i64, crate::missile_entity::MissileEntity>,
     /// How many missiles have been fired in this scene (their ids are numbered from it).
     pub(crate) missile_sequence: u64,
+    /// The damage-over-time applications (breacher pods) on each ship, by ship id (`dot_weapons`).
+    pub(crate) dots: BTreeMap<i64, crate::dot_weapons::Target>,
+    pub(crate) dot_sequence: u64,
     /// The probes and bombs in space, by id (`crate::deployable`), and how many have been released in this scene.
     pub(crate) deployables: BTreeMap<i64, crate::deployable::Deployable>,
     pub(crate) deployable_sequence: u64,
@@ -625,6 +628,8 @@ impl Scene {
             aggressions: Vec::new(),
             missiles: BTreeMap::new(),
             missile_sequence: 0,
+            dots: BTreeMap::new(),
+            dot_sequence: 0,
             deployables: BTreeMap::new(),
             deployable_sequence: 0,
             drones: BTreeMap::new(),

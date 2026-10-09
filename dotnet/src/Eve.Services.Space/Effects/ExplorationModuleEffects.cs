@@ -1,7 +1,7 @@
 namespace Eve.Services.Space.Effects;
 
-// The exploration, hacking and scanner module effects that have no body yet. Each is wired (fitted, onlined, registered in ModuleEffects.Default) and refused with
-// PendingModuleEffect.NotImplemented; none of them cycles, takes capacitor or reports success. The SDE rows are the published facts; the attributes listed are those
+// The hacking module effects and the projected ECCM that have no body yet. Each is wired (fitted, onlined, registered in ModuleEffects.Default) and refused with
+// PendingModuleEffect.NotImplemented; none of them cycles, takes capacitor or reports success. (The scanners have bodies: ScannerModuleEffects.cs.) The SDE rows are the published facts; the attributes listed are those
 // the real body must read, on the module's values after dogma (ModuleEffectContext.Cycle reads duration and capacitor for every one of them).
 //
 // Shared for every effect below (SDE effect records of this build, guid as the static data gives it):
@@ -32,48 +32,6 @@ internal sealed class DataAnalyzerEffect : PendingModuleEffect
 internal sealed class DataSubverterEffect : PendingModuleEffect
 {
     public DataSubverterEffect() : base("hackOrbital") { }
-}
-
-/// <summary>
-/// <c>cargoScan</c> (effect 47, guid <c>effects.CargoScan</c>, category 2): the Cargo Scanners (6 types, 4 published: Cargo Scanner I and II, PL-0 Scoped, Type-E
-/// Enduring; the unpublished Surface and Interior Type-E ones are the same effect).
-/// Reads: <c>cargoScanRange</c> 126 (the effect's rangeAttributeID: 50 km on Cargo Scanner I, 70 km on II, a hard cutoff; the effect declares no falloff). The
-/// cargo rows come from the target's hold, descending one level into containers.
-/// Reference: EveJS v0.12.9 <c>server/src/space/modules/scannerModuleRuntime.js</c> (<c>buildCargoScanRows</c>, <c>resolveScanRevealChance</c>, the
-/// <c>OnCargoScanComplete</c> payload). The V24 client unpacks that payload in <c>eve/client/script/ui/inflight/shipscan.py</c>.
-/// </summary>
-internal sealed class CargoScanEffect : PendingModuleEffect
-{
-    public CargoScanEffect() : base("cargoScan") { }
-}
-
-/// <summary>
-/// <c>shipScan</c> (effect 46, guid <c>effects.ShipScan</c>, category 2): the Ship Scanners (7 types, 3 published: Ship Scanner I and II, Ta3 Compact Ship
-/// Scanner; the rest are unpublished probes of the same effect).
-/// Reads: <c>shipScanRange</c> 125 (the effect's rangeAttributeID: 50 km on Ship Scanner I) and <c>shipScanFalloff</c> 510 (the effect's falloffAttributeID: 30 km
-/// on Ship Scanner I). The reveal chance beyond optimal follows the standard falloff curve on 510, with a hard refusal past one falloff.
-/// Reference: EveJS v0.12.9 <c>server/src/space/modules/scannerModuleRuntime.js</c> (<c>resolveScanRevealChance</c>, <c>buildShipScanRows</c>, the
-/// <c>OnShipScanCompleted</c> payload). The V24 client: <c>eve/client/script/ui/inflight/shipscan.py</c>.
-/// </summary>
-internal sealed class ShipScanEffect : PendingModuleEffect
-{
-    public ShipScanEffect() : base("shipScan") { }
-}
-
-/// <summary>
-/// <c>scanStrengthBonusPercentActivate</c> (effect 2231, guid <c>effects.ScanStrengthBonusActivate</c>, category 1 activation): the self-applied ECCMs (44 types
-/// in groups 202 ECCM and 353 QA Module; none published). The SDE effect carries four <c>modifierInfo</c> entries: on the ship, the scan strengths
-/// <c>scanRadarStrength</c> 208, <c>scanLadarStrength</c> 209, <c>scanMagnetometricStrength</c> 210 and <c>scanGravimetricStrength</c> 211 are changed by the
-/// module's <c>scanRadarStrengthPercent</c> 1030, <c>scanLadarStrengthPercent</c> 1028, <c>scanMagnetometricStrengthPercent</c> 1029 and
-/// <c>scanGravimetricStrengthPercent</c> 1027 (operation 6, PostPercent). The body may therefore be the existing dogma-modifier path (<c>DogmaModifierEffect</c>),
-/// which is not done here: this pass only wires the effect.
-/// Reads: <c>duration</c> and <c>capacitorNeed</c> (the shared attributes above).
-/// Reference: EveJS v0.12.9 names no handler by this effect name. Its scan-strength attributes are in <c>server/src/space/modules/assistanceModuleRuntime.js</c>
-/// (lines 86-100 and the modifier entries at 190-210, for the projected modules).
-/// </summary>
-internal sealed class ScanStrengthActivateEffect : PendingModuleEffect
-{
-    public ScanStrengthActivateEffect() : base("scanStrengthBonusPercentActivate") { }
 }
 
 /// <summary>

@@ -1,4 +1,5 @@
 use super::*;
+use crate::missiles::Blast;
 
 /// A deployable's charge: its type, its group, its name and the radius of its ball (a positive number).
 fn read_deployable(reader: &mut Reader) -> Result<Spec, DecodeError> {
@@ -185,6 +186,14 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             }
             Ok(Action::Bomb { ball, kind, lifetime_ms, blast_radius, damage, ecm, neutralize })
         }
+        27 => {
+            let ball = read_deployable(reader)?;
+            let lifetime_ms = reader.f64()?;
+            if !(lifetime_ms.is_finite() && lifetime_ms > 0.0) {
+                return Err(DecodeError::BadValue("cynosural field"));
+            }
+            Ok(Action::CynoField { ball, lifetime_ms })
+        }
         6 => {
             let distance_meters = reader.f64()?;
             let cooldown_ms = reader.i64()?;
@@ -232,6 +241,59 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
                 return Err(DecodeError::BadValue("doomsday"));
             }
             Ok(Action::Doomsday { delay_ms, damage, immobile_ms, no_jump_ms })
+        }
+        23 => {
+            let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+            let range = reader.f64()?;
+            if !damage.iter().chain([&range]).all(|n| n.is_finite() && *n >= 0.0) {
+                return Err(DecodeError::BadValue("kamikaze"));
+            }
+            Ok(Action::Kamikaze { damage, range })
+        }
+        25 => {
+            let centre = [reader.f64()?, reader.f64()?, reader.f64()?];
+            let radius = reader.f64()?;
+            let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+            let numbers = centre.iter().copied().chain([radius]).chain(damage);
+            if !numbers.clone().all(f64::is_finite) || radius <= 0.0 || damage.iter().any(|d| *d < 0.0) {
+                return Err(DecodeError::BadValue("blast"));
+            }
+            Ok(Action::Blast { centre, radius, damage })
+        }
+        24 => {
+            let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+            let reach = reader.f64()?;
+            let blast = Blast {
+                explosion_radius: reader.f64()?,
+                explosion_velocity: reader.f64()?,
+                reduction_factor: reader.f64()?,
+                reduction_sensitivity: reader.f64()?,
+            };
+            let numbers = [
+                reach,
+                blast.explosion_radius,
+                blast.explosion_velocity,
+                blast.reduction_factor,
+                blast.reduction_sensitivity,
+            ];
+            if !damage.iter().chain(numbers.iter()).all(|n| n.is_finite() && *n >= 0.0) {
+                return Err(DecodeError::BadValue("missile"));
+            }
+            Ok(Action::Missile { damage, reach, blast })
+        }
+        26 => {
+            // a scanner (protocol 40): 0 cargo, 1 ship; the scan's optimal range and its falloff (none for a cargo scan), in metres
+            let cargo = match reader.u8()? {
+                0 => true,
+                1 => false,
+                _ => return Err(DecodeError::BadValue("scan kind")),
+            };
+            let optimal = reader.f64()?;
+            let falloff = reader.f64()?;
+            if !optimal.is_finite() || optimal <= 0.0 || !falloff.is_finite() || falloff < 0.0 {
+                return Err(DecodeError::BadValue("scan action"));
+            }
+            Ok(Action::Scan { cargo, reach: Reach { optimal, falloff } })
         }
         7 => {
             let family = match reader.u8()? {

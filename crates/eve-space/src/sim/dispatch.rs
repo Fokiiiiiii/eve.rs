@@ -281,6 +281,7 @@ impl Sim {
             | Message::ModuleWorkResult { .. }
             | Message::RemoteRepairCycleResult { .. }
             | Message::AdjustCharge { .. }
+            | Message::UpdateEffect { .. }
             | Message::ShipSpec { .. } => self.handle_fitting(message, now),
             Message::Command { .. } => self.handle_command(message, now),
             Message::LaunchDrone(..)
@@ -503,7 +504,9 @@ impl Sim {
                 .unwrap_or_default(),
             Message::AdjustCharge { request_id, session_id, module_id, charge_type, op } => {
                 match self.scene_of(session_id) {
-                    Some(scene) => scene.adjust_charge(request_id, session_id, module_id, charge_type, op),
+                    Some(scene) => {
+                        scene.adjust_charge(request_id, session_id, module_id, charge_type, op, now)
+                    }
                     // a session that is not in space has no gun that runs: the host has its rounds
                     None => vec![Out::ChargeAdjusted {
                         session: session_id,
@@ -512,6 +515,22 @@ impl Sim {
                         before: 0,
                         after: 0,
                     }],
+                }
+            }
+            Message::UpdateEffect { session_id, module_id, duration_ms, capacitor_need, turret, changes } => {
+                match self.scene_of(session_id) {
+                    Some(scene) => scene.update_effect(
+                        session_id,
+                        module_id,
+                        crate::modules::PendingUpdate {
+                            duration_ms,
+                            capacitor_need,
+                            turret: turret.map(|t| *t),
+                            changes,
+                        },
+                    ),
+                    // a session that is not in space has no effect that runs to refresh
+                    None => Vec::new(),
                 }
             }
             Message::ShipSpec { session_id, ship } => {

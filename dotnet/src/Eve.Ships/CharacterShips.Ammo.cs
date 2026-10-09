@@ -422,7 +422,8 @@ public sealed partial class CharacterShips
     /// asked again while it waits is the caller's to refuse. Nothing is changed: the rounds move when the time has run (<see cref="CompleteReloadAsync"/>).
     /// </summary>
     public async Task<IReadOnlyList<ReloadPlan>> PlanReloadsAsync(
-        long characterId, long shipId, IReadOnlyList<long> moduleIds, IReadOnlyList<long> chargeItemIds, long ammoLocationId, CancellationToken cancellationToken = default)
+        long characterId, long shipId, IReadOnlyList<long> moduleIds, IReadOnlyList<long> chargeItemIds, long ammoLocationId, CancellationToken cancellationToken = default,
+        int chargeTypeId = 0)
     {
         if (await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Id != shipId || snapshot.Ship.Flag != InSpaceFlag || ammoLocationId != shipId)
         {
@@ -447,7 +448,8 @@ public sealed partial class CharacterShips
                 continue;
             }
             charges.TryGetValue(module.Flag, out var charge);
-            var typeId = requested.FirstOrDefault(i => i.OwnerId == characterId) is { } first ? first.TypeId : charge?.TypeId ?? 0;
+            // the kind asked for: the one named, else the one given, else the kind of the charge the module has (a reloading gun whose slot is empty names its kind)
+            var typeId = requested.FirstOrDefault(i => i.OwnerId == characterId) is { } first ? first.TypeId : chargeTypeId > 0 ? chargeTypeId : charge?.TypeId ?? 0;
             if (typeId <= 0 || statics.Type(typeId) is not { } chargeType || AmmoRules.Capacity(moduleType, chargeType) is not (> 0 and var capacity))
             {
                 continue;

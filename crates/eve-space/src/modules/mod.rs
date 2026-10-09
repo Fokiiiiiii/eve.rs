@@ -281,7 +281,11 @@ impl Action {
             | Self::EcmBurst { .. }
             | Self::Strike { .. }
             | Self::Field { .. }
-            | Self::Doomsday { .. } => true,
+            | Self::Doomsday { .. }
+            | Self::Kamikaze { .. }
+            | Self::Missile { .. }
+            | Self::Blast { .. }
+            | Self::Bomb { .. } => true,
             Self::Cloak { .. }
             | Self::MicroJumpDrive { .. }
             | Self::ResistanceShift { .. }
@@ -289,15 +293,16 @@ impl Action {
             | Self::WarpImmunity
             | Self::ScrambleStatus { .. }
             | Self::WarpProbe { .. }
+            | Self::CynoField { .. }
             | Self::StasisBurst { .. }
             | Self::Defender { .. } => false,
-            Self::Bomb { .. } => true,
             Self::Charged { action, fallback, .. } => {
                 action.offensive() || fallback.as_deref().is_some_and(Action::offensive)
             }
             Self::Repair { .. } => false,
             Self::Mining { .. }
             | Self::Salvage { .. }
+            | Self::Scan { .. }
             | Self::Tractor { .. }
             | Self::PassiveLock
             | Self::AutoTarget { .. } => false,
@@ -316,7 +321,7 @@ impl Action {
 
     /// Whether the cycle hands its outcome to the host (a work cycle, ADR 0013).
     fn is_work(&self) -> bool {
-        matches!(self, Self::Mining { .. } | Self::Salvage { .. })
+        matches!(self, Self::Mining { .. } | Self::Salvage { .. } | Self::Scan { .. })
     }
 }
 
@@ -328,6 +333,12 @@ pub(crate) const WORK_SALVAGE: u8 = 8;
 
 /// The fuel of the next cycle of a module that burns fuel (the wire's `SimModuleWorkCommands.ConsumeFuel`): the host takes it from the ship, or refuses.
 pub(crate) const WORK_FUEL: u8 = 9;
+
+/// The work command of a Cargo Scanner's cycle (`SimModuleWorkCommands.ScanCargo`): the host reveals the target's hold.
+pub(crate) const WORK_SCAN_CARGO: u8 = 10;
+
+/// The work command of a Ship Scanner's cycle (`SimModuleWorkCommands.ScanShip`): the host reveals the target's fitted hardware.
+pub(crate) const WORK_SCAN_SHIP: u8 = 11;
 
 /// How long a parked work cycle waits before the same `cycle_id` is sent again (2 s of the simulation clock; DEVIATIONS.md, ADR 0013 rule 3).
 pub(crate) const WORK_RESEND_TICKS: i64 = 2 * TICKS_PER_SECOND;
@@ -406,6 +417,13 @@ pub enum Action {
     Salvage {
         access_bonus: f64,
     },
+    /// A scanner's cycle (tag 26, protocol 40): at the cycle's end the host reveals the locked ship's cargo (`cargo`, a Cargo Scanner) or its fitted hardware
+    /// (a Ship Scanner) to the pilot. `reach` is the scan's range: whole to its optimal, then the standard falloff, out of reach past it (a cargo scan has no
+    /// falloff, a hard cutoff). A work cycle (ADR 0013): the host decides the rows, the simulation the lock and the range.
+    Scan {
+        cargo: bool,
+        reach: Reach,
+    },
     /// A tractor beam (tag 9, protocol 30): it pulls the wreck or can it is locked on, at `velocity` metres a second, until it is `hold` metres off the
     /// ship's surface. `range` is the module's reach (`maxRange`): a target further off is out of reach, and the pull ends when it is out of reach
     /// at a cycle's end.
@@ -430,6 +448,12 @@ pub enum Action {
     WarpProbe {
         ball: crate::deployable::Spec,
         range: f64,
+        lifetime_ms: f64,
+    },
+    /// A cynosural field (tag 27, the cynosural field generators): as the cycle ends the field is lit where the ship is, and it lives `lifetime_ms`
+    /// (the field type's explosionDelay, 600000 for all three types). The ship is not moved; the field is not taken down when the generator stops.
+    CynoField {
+        ball: crate::deployable::Spec,
         lifetime_ms: f64,
     },
     /// A bomb (tag 20): as each cycle starts it is released at the ship; `lifetime_ms` later it detonates where it is (`crate::deployable`). The ships within
@@ -484,6 +508,26 @@ pub enum Action {
         moved: Vec<i64>,
         held: Vec<i64>,
     },
+    /// A kamikaze squadron's detonation (tag 23, protocol 36): it closes in on its locked target to `range` metres and, once there, hits it with `damage`
+    /// (the four kinds) and is destroyed. Its cycle ends without a detonation when the window runs out first.
+    Kamikaze {
+        damage: crate::health::Damage,
+        range: f64,
+    },
+    /// A fighter's missiles (tag 24, protocol 36): the locked target takes `damage` once, scaled by the application factor of `blast` for its signature and
+    /// speed, when it is within `reach` metres (the range gate of the reference's `executeFighterOffensiveCycle`).
+    Missile {
+        damage: crate::health::Damage,
+        reach: f64,
+        blast: crate::missiles::Blast,
+    },
+    /// A fighter's LaunchBomb (tag 25, protocol 37): when its window ends the blast goes off at `centre` and every ship within `radius` metres of it takes
+    /// `damage` once (`Scene::blast_at`, the area of ADR 0011).
+    Blast {
+        centre: [f64; 3],
+        radius: f64,
+        damage: crate::health::Damage,
+    },
 }
 
 /// The strike an action runs, if it runs one (a cone, a cylinder or a sphere; the transport field is a strike too).
@@ -513,6 +557,10 @@ pub struct Rules {
     pub requires_industrial_core: bool,
     pub provides_industrial_core: bool,
     pub reactivation_delay_ms: f64,
+    /// The highest speed (m/s) at which the module may start (maxVelocityActivationLimit 1334, a cynosural field generator's 500), 0 for none.
+    pub max_velocity_limit: f64,
+    /// The lowest speed (m/s) at which the module may start (minVelocityActivationLimit 2608, a bomb launcher's 1), 0 for none.
+    pub min_velocity_limit: f64,
 }
 
 /// An effect the host asks the scene to run, with everything the host has worked out for it.
@@ -743,8 +791,10 @@ pub(crate) struct Running {
     cycles: i32,
     /// The pulses of a strike the cycle has made (the next one is due at its `pulse_offset_ms`).
     strike_done: i32,
-    /// Whether a titan doomsday has hit its target in the cycle that is on.
+    /// Whether a titan doomsday has hit its target in the cycle that is on (a kamikaze or a missile hit lands once in it too).
     doomsday_hit: bool,
+    /// When a kamikaze or a missile next checks whether its target is within reach (the cycle's polls, every quarter second).
+    reach_poll_at: i64,
     /// The pilot asked for it to stop: it does when the cycle ends.
     stopping: bool,
     /// The rounds a turret or charge-using module has left.
@@ -756,6 +806,20 @@ pub(crate) struct Running {
     pending_work: Option<PendingWorkCycle>,
     /// The damage ramp a precursor weapon has built on its target; it ends with the effect, so a new one starts from none.
     spool: SpoolState,
+    /// The turret ran out of rounds and reloads from its hold: it waits here (no cycle is timed) for the host's load, which resumes it at the start of the next
+    /// cycle, or stops it when nothing comes (FP-C8).
+    pub(crate) pending_reload: bool,
+    /// The numbers a refresh of the host (`UpdateEffect`, FP-C4b and FP-C5) brought: they take effect at the start of the next cycle.
+    pub(crate) pending_update: Option<PendingUpdate>,
+}
+
+/// The numbers a refresh of a running effect brings: the cycle, what a cycle costs the capacitor, the turret's numbers and the attributes the client is told.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PendingUpdate {
+    pub(crate) duration_ms: f64,
+    pub(crate) capacitor_need: f64,
+    pub(crate) turret: Option<Turret>,
+    pub(crate) changes: Vec<Change>,
 }
 
 /// The modules of a ship that run, and its capacitor.
@@ -905,6 +969,7 @@ enum Moment {
     StrikePulse(usize),
     /// The hit of a titan doomsday is due (the running effect at this index).
     DoomsdayHit(usize),
+    ReachCheck(usize),
 }
 
 /// The share of a neutralisation a target takes for its resistance: the value itself, never below 0 (immune), and whole if the value is not a number.

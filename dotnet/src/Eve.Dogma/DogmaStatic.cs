@@ -77,6 +77,9 @@ public sealed class DogmaStatic
     /// </summary>
     public IReadOnlySet<int> MissileLauncherGroups { get; }
 
+    /// <summary>The timed buff collections of the static data (<c>dbuffCollections</c>), by id. Empty when the static data has none.</summary>
+    public IReadOnlyDictionary<int, BuffCollection> BuffCollections { get; init; } = new Dictionary<int, BuffCollection>();
+
     public AttributeDef? Attribute(int id) => _attributes.GetValueOrDefault(id);
 
     public EffectDef? Effect(int id) => _effects.GetValueOrDefault(id);
@@ -312,6 +315,7 @@ public sealed class DogmaStatic
                 Guid = row.Doc.TryGetProperty("guid", out var guid) && guid.ValueKind == JsonValueKind.String ? guid.GetString() ?? "" : "",
                 RangeAttributeId = row.Doc.TryGetProperty("rangeAttributeID", out var range) && range.ValueKind == JsonValueKind.Number ? range.GetInt32() : 0,
                 DurationAttributeId = row.Doc.TryGetProperty("durationAttributeID", out var duration) && duration.ValueKind == JsonValueKind.Number ? duration.GetInt32() : 0,
+                FalloffAttributeId = row.Doc.TryGetProperty("falloffAttributeID", out var falloff) && falloff.ValueKind == JsonValueKind.Number ? falloff.GetInt32() : 0,
                 DischargeAttributeId = row.Doc.TryGetProperty("dischargeAttributeID", out var discharge) && discharge.ValueKind == JsonValueKind.Number ? discharge.GetInt32() : 0,
                 ChanceAttributeId = row.Doc.TryGetProperty("chanceAttributeID", out var chance) && chance.ValueKind == JsonValueKind.Number ? chance.GetInt32() : 0,
             };
@@ -326,7 +330,14 @@ public sealed class DogmaStatic
             .ToDictionary(f => (int)f.Key, f => f.Doc.TryGetProperty("name", out var n) ? SdeReader.English(n) : "");
         var effectNames = effects.ToDictionary(e => e.Id, e => e.Name);
         var missileLaunchers = await MissileLauncherGroupsAsync(sde, effectNames, groups, cancellationToken);
-        return new DogmaStatic(attributes, BuiltInEffects.Merge(effects), [], sde, groups, groupNames, categoryNames, factionNames, missileLaunchers);
+        var buffs = (await sde.ReadAsync("dbuffCollections", cancellationToken: cancellationToken))
+            .Select(row => BuffCollection.From((int)row.Key, row.Doc))
+            .OfType<BuffCollection>()
+            .ToDictionary(collection => collection.Id);
+        return new DogmaStatic(attributes, BuiltInEffects.Merge(effects), [], sde, groups, groupNames, categoryNames, factionNames, missileLaunchers)
+        {
+            BuffCollections = buffs,
+        };
     }
 
     /// <summary>

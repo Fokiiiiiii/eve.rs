@@ -58,7 +58,7 @@ public class SimCodecTests
 
     private static SimModuleRules RulesOf(JsonNode r) => new(
         (int)r["groupId"]!, (int)r["maxGroupActive"]!, (bool)r["disallowEarlyDeactivation"]!, (bool)r["requiresIndustrialCore"]!,
-        (bool)r["providesIndustrialCore"]!, (double)r["reactivationDelayMs"]!);
+        (bool)r["providesIndustrialCore"]!, (double)r["reactivationDelayMs"]!, (double?)r["maxVelocityLimit"] ?? 0, (double?)r["minVelocityLimit"] ?? 0);
 
     /// <summary>A strike of the fixture (the object of a strike action, or the nested strike of a field).</summary>
     private static SimAction.Strike StrikeOf(JsonNode a)
@@ -69,7 +69,8 @@ public class SimCodecTests
             Four(a["damage"]!), (double)a["signatureRadius"]!, (double)a["immobileMs"]!, (double)a["noJumpMs"]!,
             (double)a["neutAmount"]!, (double)a["neutRadius"]!, (double)a["neutSignatureRadius"]!,
             a["debuffMs"] is { } debuff ? (double)debuff : 0.0,
-            a["sweepEnd"] is JsonArray sweepEnd ? sweepEnd.Select(x => (double)x!).ToArray() : null);
+            a["sweepEnd"] is JsonArray sweepEnd ? sweepEnd.Select(x => (double)x!).ToArray() : null,
+            a["beacon"] is JsonArray beacon ? beacon.Select(x => (double)x!).ToArray() : null);
     }
 
     private static SimDeployable DeployableOf(JsonNode d) =>
@@ -86,9 +87,31 @@ public class SimCodecTests
         {
             return new SimAction.Salvage((double)a["accessBonus"]!);
         }
+        if ((string)a["kind"]! == "scan")
+        {
+            return new SimAction.Scan((bool)a["cargo"]! ? SimScanKinds.Cargo : SimScanKinds.Ship, (double)a["optimalMeters"]!, (double)a["falloffMeters"]!);
+        }
         if ((string)a["kind"]! == "tractor")
         {
             return new SimAction.Tractor((double)a["velocity"]!, (double)a["hold"]!, (double)a["range"]!);
+        }
+        if ((string)a["kind"]! == "kamikaze")
+        {
+            var d = a["damage"]!;
+            return new SimAction.Kamikaze([(double)d[0]!, (double)d[1]!, (double)d[2]!, (double)d[3]!], (double)a["rangeMeters"]!);
+        }
+        if ((string)a["kind"]! == "blast")
+        {
+            var c = a["centre"]!;
+            var d = a["damage"]!;
+            return new SimAction.Blast([(double)c[0]!, (double)c[1]!, (double)c[2]!], (double)a["radiusMeters"]!,
+                [(double)d[0]!, (double)d[1]!, (double)d[2]!, (double)d[3]!]);
+        }
+        if ((string)a["kind"]! == "missile")
+        {
+            var d = a["damage"]!;
+            return new SimAction.FighterMissile([(double)d[0]!, (double)d[1]!, (double)d[2]!, (double)d[3]!], (double)a["reachMeters"]!,
+                (double)a["explosionRadius"]!, (double)a["explosionVelocity"]!, (double)a["reductionFactor"]!, (double)a["reductionSensitivity"]!);
         }
         if ((string)a["kind"]! == "doomsday")
         {
@@ -134,6 +157,10 @@ public class SimCodecTests
         if ((string)a["kind"]! == "stasisBurst")
         {
             return new SimAction.StasisBurst((double)a["range"]!, (double)a["durationMs"]!, (double)a["speedFactor"]!);
+        }
+        if ((string)a["kind"]! == "cynoField")
+        {
+            return new SimAction.CynoField(DeployableOf(a["ball"]!), (double)a["lifetimeMs"]!);
         }
         if ((string)a["kind"]! == "warpProbe")
         {
@@ -205,11 +232,14 @@ public class SimCodecTests
 
     private static SimArc? ArcOf(JsonNode? a) => a is null ? null : new SimArc((double)a["range"]!, (int)a["targets"]!);
 
-    private static SimMissile? MissileOf(JsonNode? m) => m is null ? null : new SimMissile(
-        (int)m["chargeTypeId"]!, (int)m["groupId"]!, (string)m["name"]!, (double)m["radius"]!, (double)m["mass"]!, (double)m["agility"]!, (double)m["hitPoints"]!, (double)m["maxVelocity"]!, (double)m["flightTimeMs"]!, (double)m["explosionRadius"]!, (double)m["explosionVelocity"]!,
-        (double)m["damageReductionFactor"]!, (double)m["damageReductionSensitivity"]!);
+    private static SimMissile? MissileOf(JsonNode? m) => m is null ? null : MissileWith(m);
 
-    private static SimTurretCharge? ChargeOf(JsonNode? c) => c is null ? null : new SimTurretCharge((int)c["typeId"]!, (int)c["flag"]!, (long)c["rounds"]!, (long)c["perCycle"]!);
+    private static SimMissile MissileWith(JsonNode m) => new SimMissile(
+        (int)m["chargeTypeId"]!, (int)m["groupId"]!, (string)m["name"]!, (double)m["radius"]!, (double)m["mass"]!, (double)m["agility"]!, (double)m["hitPoints"]!, (double)m["maxVelocity"]!, (double)m["flightTimeMs"]!, (double)m["explosionRadius"]!, (double)m["explosionVelocity"]!,
+        (double)m["damageReductionFactor"]!, (double)m["damageReductionSensitivity"]!,
+        m["dot"] is { } d ? new SimDot((double)d["durationMs"]!, (double)d["maxDamagePerTick"]!, (double)d["maxHpPercentPerTick"]!) : null);
+
+    private static SimTurretCharge? ChargeOf(JsonNode? c) => c is null ? null : new SimTurretCharge((int)c["typeId"]!, (int)c["flag"]!, (long)c["rounds"]!, (long)c["perCycle"]!, (bool?)c["reloads"] ?? false);
 
     private static double[] VectorOf(JsonNode n) => [.. ((JsonArray)n).Select(x => (double)x!)];
 
@@ -261,6 +291,7 @@ public class SimCodecTests
                 Wide(c, "deliveredUnits"), (bool)c["complete"]!),
             "ModuleEnded" => new SimModuleEnded(Session(), Wide(c, "moduleId"), (byte)(int)c["reason"]!),
             "ChargeSpent" => new SimChargeSpent(Session(), Wide(c, "moduleId"), Wide(c, "roundsLeft")),
+            "UpdateEffect" => new SimUpdateEffect(Session(), Wide(c, "moduleId"), (double)c["durationMs"]!, (double)c["capacitorNeed"]!, c["turret"] is null ? null : TurretOf(c["turret"]!), ChangesOf(c["changes"]!)),
             "AdjustCharge" => new SimAdjustCharge(
                 (ulong)Wide(c, "requestId"), Session(), Wide(c, "moduleId"), (int)c["chargeType"]!,
                 (string)c["op"]! == "add" ? new SimChargeOp.Add(Wide(c, "capacity"), Wide(c, "available")) : new SimChargeOp.Remove(Wide(c, "quantity"))),
@@ -307,7 +338,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-        Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "Destroy", "Destroyed", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceContainer", "PlaceWreck", "Refused", "RemoveWreck", "Respawn", "ShipSpec", "Spawn", "SpawnReply", "TargetRefused", "Targets", "UpdateState"], kinds);
+        Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "Destroy", "Destroyed", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceContainer", "PlaceWreck", "Refused", "RemoveWreck", "Respawn", "ShipSpec", "Spawn", "SpawnReply", "TargetRefused", "Targets", "UpdateEffect", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);
     }
 

@@ -9,7 +9,6 @@ internal sealed class DogmaModifierEffect : ShipEffect
     public override IReadOnlyCollection<string> EffectNames { get; } =
     [
         "cloneJumpAccepting",
-        "cynosuralGeneration",
         "gunneryMaxRangeFalloffTrackingSpeedBonus",
         "industrialCompactCoreEffect2",
         "industrialCoreEffect2",
@@ -30,12 +29,12 @@ internal sealed class DogmaModifierEffect : ShipEffect
     ];
 
     /// <summary>
-    /// The modifier effects whose body is not in the space host yet: the cyno field, the jump portal and the clone vat's acceptance. Their modifiers alone would be a
-    /// success the reference does not give (the field or portal is never made), so they are refused by name (EFFECT_NOT_IMPLEMENTED), fuel or not.
+    /// The modifier effects whose body is not in the space host yet: the jump portal and the clone vat's acceptance. Their modifiers alone would be a
+    /// success the reference does not give (the portal is never made), so they are refused by name (EFFECT_NOT_IMPLEMENTED), fuel or not. (The cynosural
+    /// field generator has its body in <see cref="CynoGeneratorEffect"/>.)
     /// </summary>
     private static readonly HashSet<string> BodiesNotImplemented = new(StringComparer.OrdinalIgnoreCase)
     {
-        "cynosuralGeneration",
         "jumpPortalGeneration",
         "jumpPortalGenerationBO",
         "cloneJumpAccepting",

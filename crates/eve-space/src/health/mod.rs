@@ -59,7 +59,7 @@ pub struct Vitals {
 }
 
 impl Vitals {
-    fn layers(&self) -> Layers {
+    pub(crate) fn layers(&self) -> Layers {
         Layers {
             shield: self.shield_capacity.max(0.0),
             armor: self.armor_hp.max(0.0),
@@ -277,6 +277,16 @@ impl Health {
 
     /// A hit of `raw` damage at `now`: the shield takes what it can, then the armor, then the hull. None when there is nothing to hurt.
     pub fn apply(&mut self, now: i64, raw: Damage) -> Option<Applied> {
+        self.apply_through(now, raw, true)
+    }
+
+    /// A hit of `raw` damage that the layers take as it is (a damage-over-time tick: the resistances do not apply to it).
+    pub fn apply_unresisted(&mut self, now: i64, raw: Damage) -> Option<Applied> {
+        self.apply_through(now, raw, false)
+    }
+
+    /// `apply`, with the resonances of the layers when `resisted`, and with none (every kind goes through whole) when not.
+    fn apply_through(&mut self, now: i64, raw: Damage, resisted: bool) -> Option<Applied> {
         if !self.vitals.hurtable() {
             return None;
         }
@@ -287,7 +297,11 @@ impl Health {
         let mut now_layers = before;
         let mut taken = Layers { shield: 0.0, armor: 0.0, structure: 0.0 };
         let pinned = self.vitals.armor_pinned;
-        let resonances = Resonances { armor: self.armor_resonance(), ..self.vitals.resonances };
+        let resonances = if resisted {
+            Resonances { armor: self.armor_resonance(), ..self.vitals.resonances }
+        } else {
+            Resonances::default()
+        };
         for layer in 0..3 {
             let (most, hp, resonance) = match layer {
                 0 => (max.shield, now_layers.shield, resonances.shield),

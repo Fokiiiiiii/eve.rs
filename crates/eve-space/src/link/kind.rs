@@ -59,4 +59,5 @@ pub const FIGHTER_RELEASED: u8 = 58;
 pub const FIGHTER_GOTO_POINT: u8 = 59;
 pub const FIGHTER_SIZE: u8 = 60;
 pub const UPDATE_EFFECT: u8 = 61;
-pub const ECM_BURST: u8 = 62;
+pub const BUFF_STATE: u8 = 62;
+pub const ECM_BURST: u8 = 63;

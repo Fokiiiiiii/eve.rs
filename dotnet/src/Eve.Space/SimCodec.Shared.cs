@@ -71,8 +71,11 @@ public static partial class SimCodec
 /// <summary>Protocol 38 (FP-C4b, FP-C5): a refresh of a running effect (host to simulation).</summary>
 public const byte UpdateEffect = 61;
 
+        /// <summary>The timed buffs of a ship of this session (protocol 43, track C6), host to simulation.</summary>
+        public const byte BuffState = 62;
+
 /// <summary>Protocol 39 (FP-C7): an ECM burst reached ships; the ship that ran it and each ship reached, with whether its roll jammed it (simulation to host).</summary>
-public const byte EcmBurst = 62;
+public const byte EcmBurst = 63;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)

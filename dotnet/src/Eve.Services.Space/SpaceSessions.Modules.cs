@@ -320,16 +320,34 @@ public sealed partial class SpaceSessions
                 package = package with { Action = bomb with { HurtsPilots = false } };
             }
         }
-        var reply = await AskSimAsync(id, () => _sim.ActivateAsync(id, package, cancellationToken), session);
+        // the module is marked active while its start is pending: a start the simulation parks for the host (a fuel ask, a P.A.N.I.C.'s grant) asks the host
+        // whether the module runs, and its answer comes only when the start is accepted (track C6); a refused start is unmarked below
+        var markedHere = pilot.ActiveModules.TryAdd(moduleId, ItemState.Active);
+        CommandReply reply;
+        try
+        {
+            reply = await AskSimAsync(id, () => _sim.ActivateAsync(id, package, cancellationToken), session);
+        }
+        catch
+        {
+            if (markedHere)
+            {
+                pilot.ActiveModules.TryRemove(moduleId, out _);
+            }
+            throw;
+        }
         if (!reply.Accepted)
         {
+            if (markedHere)
+            {
+                pilot.ActiveModules.TryRemove(moduleId, out _);
+            }
             var refusal = ModuleResult.Refusal(reply.Reason == "ALREADY_ACTIVE" ? "MODULE_ALREADY_ACTIVE" : reply.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
             // a target out of reach is told with how far the module reaches and how far the target is
             return reply.Reason == "TARGET_OUT_OF_RANGE"
                 ? refusal with { TargetType = reply.TargetType, ShipType = snapshot.Ship.TypeId, DesiredRange = reply.DesiredRange, ActualDistance = reply.ActualDistance, EffectName = effectName }
                 : refusal;
         }
-        pilot.ActiveModules[moduleId] = ItemState.Active;
         pilot.RunningModules[moduleId] = RunningModule.Of(effectName, targetId, repeat, aim, aimEnd, package);
         await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
         AnnounceModeChange(pilot, snapshot, moduleId, started: true);
@@ -544,6 +562,8 @@ public sealed partial class SpaceSessions
                 snapshot.World.SetState(moduleId, ItemState.Overloaded);
             }
         }
+        // the ship carries the buffs of the command bursts that reach it (track C6), so its numbers are the buffed ones
+        Buffs.Sync(snapshot.World, pilot.ShipId, _nowUnixMs());
         return snapshot;
     }
 

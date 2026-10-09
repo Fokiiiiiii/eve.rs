@@ -121,4 +121,32 @@ public class BuffRegistryTests
         using var document = System.Text.Json.JsonDocument.Parse("""{"operationName":"PostSomething","aggregateMode":"Maximum","itemModifiers":[{"dogmaAttributeID":1}]}""");
         Assert.Null(BuffCollection.From(1, document.RootElement));
     }
+
+    [Fact]
+    public void The_state_of_an_item_is_each_collections_value_with_the_latest_expiry_of_its_active_inputs()
+    {
+        var registry = new BuffRegistry();
+        registry.Apply(Ship, Weakest, -8, nowMs: 0, durationMs: 60_000);
+        registry.Apply(Ship, Weakest, -10, nowMs: 10_000, durationMs: 60_000);
+        registry.Apply(Ship, Strongest, 20, nowMs: 0, durationMs: 30_000);
+
+        var told = registry.StateOf(Ship, 20_000).OrderBy(state => state.CollectionId).ToArray();
+        Assert.Equal(
+            new[] { new BuffState(ShieldResistance, -10, 70_000), new BuffState(Strongest.Id, 20, 30_000) },
+            told);
+        // the strongest ran out at 30 000 ms: the state no longer names it
+        Assert.Equal(new[] { new BuffState(ShieldResistance, -10, 70_000) }, registry.StateOf(Ship, 40_000));
+    }
+
+    [Fact]
+    public void Prune_reports_the_items_that_lost_an_input_and_only_those()
+    {
+        var registry = new BuffRegistry();
+        registry.Apply(Ship, Weakest, -8, nowMs: 0, durationMs: 60_000);
+        registry.Apply(Ship + 1, Weakest, -8, nowMs: 0, durationMs: 120_000);
+
+        Assert.Equal(new[] { Ship }, registry.Prune(60_001));
+        Assert.Empty(registry.Prune(60_002));
+        Assert.Equal(new[] { Ship + 1 }, registry.Prune(120_001));
+    }
 }

@@ -29,7 +29,7 @@ public sealed partial class SpaceContainers
     private sealed record WorkCycle(
         bool IsModule, ulong SessionId, long CharacterId, long ShipId, int SolarSystemId, long OwnerId, long TargetId, ulong CycleId, byte Command,
         double MiningAmountM3, double WasteVolumeMultiplier, double WasteProbability, double AccessDifficultyBonus, double Roll,
-        double RoundingRoll, double CritRoll, double CritProbability, double CritQuantityMultiplier)
+        double RoundingRoll, double CritRoll, double CritProbability, double CritQuantityMultiplier, IReadOnlyList<long>? Recipients = null)
     {
         public static WorkCycle OfDrone(SimDroneWorkCycle cycle) => new(
             false, cycle.SessionId, cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.DroneId, cycle.TargetId, cycle.CycleId, cycle.Command,
@@ -38,7 +38,7 @@ public sealed partial class SpaceContainers
         public static WorkCycle OfModule(SimModuleWorkCycle cycle) => new(
             true, cycle.SessionId, cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.ModuleId, cycle.TargetId, cycle.CycleId, cycle.Command,
             cycle.MiningAmountM3, cycle.WasteVolumeMultiplier, cycle.WasteProbability, cycle.AccessDifficultyBonus, cycle.WasteRoll,
-            cycle.RoundingRoll, cycle.CritRoll, cycle.CritProbability, cycle.CritQuantityMultiplier);
+            cycle.RoundingRoll, cycle.CritRoll, cycle.CritProbability, cycle.CritQuantityMultiplier, cycle.Recipients);
 
         public string Kind => IsModule ? "module" : "drone";
     }
@@ -171,6 +171,16 @@ public sealed partial class SpaceContainers
     /// <summary>The checks and the settlement of one work cycle: the owner must be the pilot's (a drone flown, or a module that runs), the target there, in reach.</summary>
     private async Task<WorkOutcome> SettleWorkCycleAsync(WorkCycle cycle)
     {
+        // a command burst's cycle applies its buffs to the ships it reaches (track C6, SpaceContainers.Burst.cs)
+        if (cycle.IsModule && cycle.Command == SimModuleWorkCommands.Burst)
+        {
+            return await SettleBurstAsync(cycle);
+        }
+        // a P.A.N.I.C.'s start is granted its fleet's buffs before the effect starts (track C6)
+        if (cycle.IsModule && cycle.Command == SimModuleWorkCommands.Panic)
+        {
+            return await SettlePanicAsync(cycle);
+        }
         if (cycle.IsModule && cycle.Command is SimModuleWorkCommands.ScanCargo or SimModuleWorkCommands.ScanShip)
         {
             return await SettleScanAsync(cycle);

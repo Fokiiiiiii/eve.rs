@@ -245,6 +245,7 @@ impl Message {
                 waste_roll,
                 rounding_roll,
                 crit_roll,
+                recipients,
             } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&character_id.to_le_bytes());
@@ -266,6 +267,10 @@ impl Message {
                     crit_roll,
                 ] {
                     out.extend_from_slice(&number.to_le_bytes());
+                }
+                out.extend_from_slice(&(recipients.len() as u32).to_le_bytes());
+                for ship in recipients {
+                    out.extend_from_slice(&ship.to_le_bytes());
                 }
             }
             Self::ModuleWorkResult {
@@ -317,6 +322,16 @@ impl Message {
                 out.push(code);
                 out.extend_from_slice(&first.to_le_bytes());
                 out.extend_from_slice(&second.to_le_bytes());
+            }
+            Self::BuffState { session_id, ship_id, entries } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                out.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+                for entry in entries {
+                    out.extend_from_slice(&entry.collection_id.to_le_bytes());
+                    out.extend_from_slice(&entry.value.to_le_bytes());
+                    out.extend_from_slice(&entry.remaining_ms.to_le_bytes());
+                }
             }
             Self::UpdateEffect { session_id, module_id, duration_ms, capacitor_need, turret, changes } => {
                 out.extend_from_slice(&session_id.to_le_bytes());

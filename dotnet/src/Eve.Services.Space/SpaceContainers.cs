@@ -447,6 +447,7 @@ public async Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long>
         try
         {
             await ExpireDueAsync(_nowUnixMs());
+            await ExpireBuffsAsync(_nowUnixMs());
         }
         catch (Exception error)
         {

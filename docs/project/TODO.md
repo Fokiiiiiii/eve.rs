@@ -377,7 +377,7 @@ Open (each with its exact blocker):
 - WG-8 fitting restrictions on the server: not started (low priority).
 - FP-8 target resistances for ewar and assistance (2112 to 2116, 2135): not started; needs `resist` fields on the ship's sensors block and on each `Remote` (a second wire change, not in this bump).
 - FP-C4b and FP-C5 (refresh running effects when overheat or a computer changes): not started; needs a new `SimUpdateEffect` message (wire).
-- FP-C7 ECM burst aggression and its offensive gate: DONE (track B6a, protocol 43, section 24).
+- FP-C7 ECM burst aggression and its offensive gate: DONE (track B6a, protocol 44, section 24).
 - FP-C8 automatic reload from the hold: not started. EVE.js queues the reload when the last round is spent (`localCycleRuntime.js`) and resumes at the next cycle; eve.rs would need the host to reload and re-activate and to suppress the no-charges error that the simulation sends now.
 - Cloak types (covert, prototype, non-warp cloak states): not started.
 - M-6 scanner, analyzer and relic modules: not started (Cargo and Ship Scanner results, Data Analyzer and Subverter bodies).
@@ -531,6 +531,24 @@ OPEN (each with its blocker):
 - MITM: no scenario driven (`tools/mitm/README.md`); there is no client trace of a burst cycle yet.
 - Skill, ship and mindlink bonuses are not tested with a skilled character; the wiki's Max column (Shield Harmonizing +23.44 %) is the check.
 
+## 22. Track C6: command bursts end to end, P.A.N.I.C. (2026-10-09)
+
+Supersedes the OPEN items of section 21. Sources and choices: DEVIATIONS, "Command bursts end to end and P.A.N.I.C. (track C6, 2026-10-09)". Wire: protocol 43 (ADR 0013, epoch 42).
+
+DONE (each has tests; the PostgreSQL-backed ones are listed as run under the shared lock in the track's report):
+- The burst's activation and cycle: `CommandBurstEffect` for the five families and the expedition bursts (`Charged`, one round a cycle; no charge is `NO_AMMO`). At each cycle's end the simulation asks the host with the ships it found in reach (`WORK_BURST`, the recipients on `ModuleWorkCycle`). The host keeps the source's fleet, caps at 256, applies the buffs through the registry for the buff duration, sends each granted ship its numbers and running modules, and tells its pilot its state (`BuffState`, the simulation's `OnDbuffUpdated`). The sweep ends buffs that ran out and tells their pilots. Tests: `modules::tests` (burst cycle, reach, refusal), `CommandBurstHostTests`, `CommandBurstFamiliesTests` (SDE: Armor, Information, Mining Foreman, Shield, Skirmish, Expedition, named and presidential), `BuffRegistryTests`, the fixtures (`simlink_fixtures`, `SimCodecTests`).
+- P.A.N.I.C. (42522): the start needs a locked asteroid (the simulation: `TARGET_REQUIRED`) and parks until the host grants the fleet (`WORK_PANIC`, the ships within 200 km). The grant gives the source and the subcapital mining and hauling ships of its fleet the twelve SDE collections with the client's values, for the core's duration. The numbers reach the simulation through the ship (resonances, recharge, mass, scan resolution, warp speed). Refused by the host: warp (`WARP_SCRAMBLED`), docking, jump, and the cloak (existing check). Running modules that the buffs block are stopped. Tests: `modules::tests` (four P.A.N.I.C. tests), `CommandBurstHostTests` (grant, group, not running, SDE collections), the fixtures.
+- Found on the way and fixed here: a pending start was marked active only after the simulation's answer, which a parked start gives only once it is granted, so the host's own check of a fuel ask or a grant saw the module as not running. The module is now marked while the start is pending and unmarked on refusal. The Rust decoder of module work cycles accepted only commands 7 to 9, refusing the scans (10, 11) of protocol 40; its set is now the C# codec's (7 to 13).
+
+OPEN (each with its blocker):
+- Login and re-entry: a pilot who enters space within a burst's time is not told its buff state (the client's HUD). Blocker: the enter path sends the ship but not the state. Upgrade: send `BuffState` after the ship enters (eve-logic `michelle.py` takes `bag.dbuffState` at the ball's bootstrap).
+- Drone damage (the wiki: the protected ships cannot deal damage; collection 58 writes attribute 2580 on the ship): no drone path in eve.rs reads it, and running drones are not recalled. Blocker: which attribute a drone's damage takes from its ship is not read in this track.
+- Velocity penalty (collection 3) writes attribute 3171, which the SDE marks as deprecated, so no top speed changes. Blocker: a source that links 3171 to the speed (the wiki's "cannot move" gives no number).
+- The jump refusal's words ("You cannot jump at this time.") are ours: the client's notice is not in the tables read.
+- Tether (57) and entosis (61) are applied; eve.rs has no tether or entosis use. The SCARAB Breacher bypass does not apply (no such pods in eve.rs).
+- No separate state for the buffs in the simulation (the request for "general status effects" in the simulation is not built): the numbers and the host's checks carry them (DEVIATIONS).
+- MITM: no client trace of a burst cycle or a grant was driven (`tools/mitm/README.md`).
+- The burst wiki pages were not re-read in this track (the rules are those C4 and C5 recorded); the Capital Ship Modules page was re-read for P.A.N.I.C.
 ## 23. Track A5: OnDotVictimUpdated, probes, cyno jammer, jump drive and mobile objects (2026-10-09)
 
 Done (tests in the crates named; decisions in DEVIATIONS "Track A5"):
@@ -548,7 +566,7 @@ Open, each with its exact blocker:
 
 Done (tests in the projects named; the rules and their sources are in DEVIATIONS "Track B6a"):
 
-- FP-C7, the ECM burst report: `SimEcmBurst` (kind 62, protocol 41) tells the host the ship that runs a burst and each ship it reached, with whether its roll jammed it. The host records the attack on each reached pilot (`SpaceSessions.RecordEcmBurstAsync`). Tests: `crates/eve-space` (`modules/tests.rs`: the report, a resisting ship, a cloaked ship), `simlink_fixtures.rs` and `oracle/fixtures/simlink/messages.json` (one valid and three invalid frames), `SimCodecTests`, and `EcmBurstHostTests` (the attack recorded on the reached pilot; a ship that is not a pilot's is skipped; a burst from a ship that is not in space is not recorded; the high-security refusal).
+- FP-C7, the ECM burst report: `SimEcmBurst` (kind 63, protocol 44) tells the host the ship that runs a burst and each ship it reached, with whether its roll jammed it. The host records the attack on each reached pilot (`SpaceSessions.RecordEcmBurstAsync`). Tests: `crates/eve-space` (`modules/tests.rs`: the report, a resisting ship, a cloaked ship), `simlink_fixtures.rs` and `oracle/fixtures/simlink/messages.json` (one valid and three invalid frames), `SimCodecTests`, and `EcmBurstHostTests` (the attack recorded on the reached pilot; a ship that is not a pilot's is skipped; a burst from a ship that is not in space is not recorded; the high-security refusal).
 - The high-security gate of an ECM burst (wiki, Electronic Countermeasures): refused `SafetyActivated` in high security space unless the safety is none. `RepairHostTests` packaging test sets the safety to none, as its rig is in high security (Manifest, 1.0).
 - Safe logoff: the refusal during the undock's 10 s session change is removed (the wiki's Timers page does not list it; EVE.js accepts every logoff). The cause of the earlier failure was the race between that refusal and the test harness's timers; the same failure happens at 863d259 (4 runs of 4).
 - Fleet finder advert (`Fleet_finder_advert_operations_match_evejs_arguments_and_persist_the_full_payload`): a real bug. `RemoveFleetFinderAdvert` ran a `DELETE` from `fleet_advert_allowed_entities`, which migration 006 drops. Removed.

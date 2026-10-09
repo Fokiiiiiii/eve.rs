@@ -376,7 +376,7 @@ Open (each with its exact blocker):
 - WG-8 fitting restrictions on the server: not started (low priority).
 - FP-8 target resistances for ewar and assistance (2112 to 2116, 2135): not started; needs `resist` fields on the ship's sensors block and on each `Remote` (a second wire change, not in this bump).
 - FP-C4b and FP-C5 (refresh running effects when overheat or a computer changes): not started; needs a new `SimUpdateEffect` message (wire).
-- FP-C7 ECM burst aggression and its offensive gate: DONE (track B6, protocol 39, section 21).
+- FP-C7 ECM burst aggression and its offensive gate: DONE (track B6a, protocol 41, section 22).
 - FP-C8 automatic reload from the hold: not started. EVE.js queues the reload when the last round is spent (`localCycleRuntime.js`) and resumes at the next cycle; eve.rs would need the host to reload and re-activate and to suppress the no-charges error that the simulation sends now.
 - Cloak types (covert, prototype, non-warp cloak states): not started.
 - M-6 scanner, analyzer and relic modules: not started (Cargo and Ship Scanner results, Data Analyzer and Subverter bodies).
@@ -399,7 +399,7 @@ Decided, not applied: WG-7 (no source says a jam gives the target a weapons time
 Open, each with its exact blocker:
 - WG-5 nanite paste repair: the client's `godma.RepairModule` and `StopRepairModule` have no host handler; paste repair, its clock, its cancellation on a jump and the overheat interlock need building. Heat repair on a dock is done (B2).
 - WG-3 module scripts: needs an SDE-backed PostgreSQL case per script attribute.
-- FP-8, FP-C4b, FP-C5: each needs a wire change (resist fields, `SimUpdateEffect`). FP-C7 is closed (section 21).
+- FP-8, FP-C4b, FP-C5: each needs a wire change (resist fields, `SimUpdateEffect`). FP-C7 is closed (section 22).
 - FP-C8 automatic reload: the simulation ends the effect at the last round (`NO_CHARGES`) before the host sees the spent charge; a pending-reload state is needed in the simulation.
 - M-6 scanner, analyzer and relic modules: no simulation bodies.
 - WP17 assistance and jam overlays (the sim-side overlays are not built); WP19 cynosural field body; WP13 mode events (no subscriber, so none is published).
@@ -425,7 +425,7 @@ Open, each with its exact blocker:
 - WG-5: a repair ended by a leave takes its paste and damage, but the client is not told the cargo change then (no notification path from the space layer to the client's cargo for a ship that has left). The rate and cost come from the character's dogma world; only the no-skill values are tested.
 - WG-3: the tracking and optimal range scripts are verified with a loaded script (`ModuleScriptTests`, through the charge pairing in `Eve.Dogma/DogmaWorld.cs`, `otherID`). Guidance, flex hardener and ECCM are not verified with a loaded script yet.
 - FP-C4b and FP-C5 (refresh a running effect when the overheat or a computer changes): not built. Closed in track B5 (section 20). Needs a new `SimUpdateEffect` message: `crates/eve-space/src/link`, `SimCodec`, the Python generator `tools/dev/gen-simlink-fixtures.py`, and one protocol bump at the next free number (37 if track C2 takes 36).
-- FP-C7 (an ECM burst: the ships it jams, and its offensive gate): closed in track B6 (section 21).
+- FP-C7 (an ECM burst: the ships it jams, and its offensive gate): closed in track B6a (section 22).
 - FP-C8 (automatic reload from the hold): not built. Closed in track B5 (section 20). The simulation ends the run at the last round with `NO_CHARGES` (`crates/eve-space/src/modules/effects.rs` around 613) before the host sees `ChargeSpent`. The design: a pending-reload state that waits for the next cycle boundary for an `AdjustCharge` from the host (the message exists, `SimAdjustCharge`), and resumes if one arrives. Needs the simulation change and host tests.
 - M-6 (Cargo Scanner, Ship Scanner, Data Analyzer, Subverter, relics): not built. The reference is EVE.js `server/src/space/modules/scannerModuleRuntime.js` (ranges, rows, and the client notifications `OnCargoScanComplete` and `OnShipScanCompleted`); none of the simulation bodies exist.
 - WP17 (assistance and jam overlays): the resistance part is FP-8. The stacking rule is the SDE stackable flag (all overlay attributes are stackable=true, so no penalty; client `itemAttributeFactory.py:35`). EveJS gives one resistance per remote (`hostileModuleRuntime.js`, `assistanceModuleRuntime.js`).
@@ -441,12 +441,12 @@ Done (decisions in DEVIATIONS "Module rules, track B5"; wire in ADR 0013 epoch 3
 - WP19 (velocity limits 1334 and 2608): the rule fields are on the wire (protocol 38) and the simulation refuses an activation outside the band (`velocity_refusal`). The bomb launcher reaches it (tested); the cynosural field generator does not (no body).
 
 Open, each with its exact blocker:
-- FP-C7: closed in track B6 (section 21).
+- FP-C7: closed in track B6a (section 22).
 - M-6 (Cargo Scanner, Ship Scanner, Data Analyzer, Subverter, relics): no simulation bodies; EVE.js `scannerModuleRuntime.js` is the reference and was not ported in this track.
 - WP17 (stacking of overlapping assistance and jam modifiers): answered by the SDE stackable flag (all overlay attributes are stackable=true, so no penalty; client `itemAttributeFactory.py:35`).
 - WG-3 (scripts and charges with a loaded script): tracking and optimal range have PostgreSQL cases (`ModuleScriptTests`); flex, ECCM and guidance have none yet.
 - WP12 and 1934 (`deactivateIfOffensive`, SDE default 1): located. `OnSessionClosedAsync` (`SpaceSessions.cs:820`) calls `_sim.Leave(LoggedOff)`, and `Scene::leave` (`scene/docking.rs:64`) drops the pilot, so default-1934 modules stop. A bastion (1934 = 0) is not kept running after logoff (open, DEVIATIONS).
-- Host PostgreSQL run: `SpaceServiceTests.Safe_logoff_closes_the_space_session_after_its_timer` and `Aborting_safe_logoff_keeps_the_session_and_ship_in_space` fail alone with the refusal `ConditionsFailedHeader` (the baseline's safe-logoff group); the cause was not traced in this track.
+- Host PostgreSQL run (the Safe logoff refusal): closed in track B6a (section 22).
 
 ## 21. Scanner modules (track M-6, 2026-10-09)
 
@@ -485,3 +485,19 @@ Sources, the SDE facts and the blockers are in DEVIATIONS "Track C4". Summary of
 - NOT BUILT: the buff registry (persistent source list on `DogmaWorld` items, expiry by the scheduler, restart drops it, client `OnDogmaAttributeChanged` for the recipients). Built with its first consumer, the burst.
 - NOT BUILT: P.A.N.I.C. (42522). Its fleet effect needs the registry, the wire batch, and the simulation state for shield resistance, shield recharge, drone damage, weapons, mass, scan resolution, entosis and jump/dock/tether flags.
 - NOT RUN: a MITM capture of a burst or P.A.N.I.C. cycle (`tools/mitm/README.md`). No scenario was driven.
+
+## 22. Track B6a (2026-10-09): ECM burst report, and the baseline failures
+
+Done (tests in the projects named; the rules and their sources are in DEVIATIONS "Track B6a"):
+
+- FP-C7, the ECM burst report: `SimEcmBurst` (kind 62, protocol 41) tells the host the ship that runs a burst and each ship it reached, with whether its roll jammed it. The host records the attack on each reached pilot (`SpaceSessions.RecordEcmBurstAsync`). Tests: `crates/eve-space` (`modules/tests.rs`: the report, a resisting ship, a cloaked ship), `simlink_fixtures.rs` and `oracle/fixtures/simlink/messages.json` (one valid and three invalid frames), `SimCodecTests`, and `EcmBurstHostTests` (the attack recorded on the reached pilot; a ship that is not a pilot's is skipped; a burst from a ship that is not in space is not recorded; the high-security refusal).
+- The high-security gate of an ECM burst (wiki, Electronic Countermeasures): refused `SafetyActivated` in high security space unless the safety is none. `RepairHostTests` packaging test sets the safety to none, as its rig is in high security (Manifest, 1.0).
+- Safe logoff: the refusal during the undock's 10 s session change is removed (the wiki's Timers page does not list it; EVE.js accepts every logoff). The cause of the earlier failure was the race between that refusal and the test harness's timers; the same failure happens at 863d259 (4 runs of 4).
+- Fleet finder advert (`Fleet_finder_advert_operations_match_evejs_arguments_and_persist_the_full_payload`): a real bug. `RemoveFleetFinderAdvert` ran a `DELETE` from `fleet_advert_allowed_entities`, which migration 006 drops. Removed.
+- Mutadaptive (`RepairHostTests`, `ModuleEffectsTests`): `SpaceSessions.Dispose` and `OnLost` reset the process-wide spool, so one host cleared another host's spools. Each host now resets only its own running modules.
+- Test races: `NpcBountyHostTests.Kills_of_several_npcs_in_one_window...` and `RuntimeTests.A_persisted_engagement_expires_once_and_notifies_both_online_pilots` waited for the state, not for the notices sent after it; they now wait for the notices.
+- Stale names: `ConfigPrime` and `SessionEndsHangar` are not in the repository and are dropped from the baseline list.
+
+Open, each with its exact blocker:
+
+- The bomb's ECM kind (`jam_at`) is not reported to the host: its aggression and its cloak rule are not built (the wiki's bomb page is not read yet).

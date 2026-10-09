@@ -1,7 +1,7 @@
 # Project status and RPC coverage
 
-**Verified source:** main commit `93f92e633747fbadb0d12374606bd1712ce7ff51`
-**Updated:** 2026-10-08
+**Verified source:** main commit `7379a70fdeee0e93d2ac38c1b7a7bd9ecd29da60`
+**Updated:** 2026-10-09
 
 This is the current project summary. The dated migration log, old service backlog, and 2026-10-06 audit snapshot were removed; keep current status here and remaining work in [TODO.md](TODO.md).
 
@@ -20,21 +20,17 @@ A route count does not prove wire-shape parity or a connected runtime provider. 
 
 ## Verification baseline
 
-On source commit `39fcd15224b78f94d4e2c68b0dcbc8eee2d88c6e`, with the configured PostgreSQL test connection:
-
-- `dotnet test dotnet/EveRs.slnx -m:1`: **3,859 passed, 0 failed, 0 skipped**.
-- Core build: succeeded, **0 warnings / 0 errors**.
-- Host build: succeeded, **0 warnings / 0 errors**.
-- `git diff --check`: passed before the source commit.
-- `main` was pushed to `origin/main`; HEAD and remote main matched.
-
-The documentation reorganization is a separate, docs-only change and is checked for local links and whitespace errors.
+- Before the final upstream fast-forward to `4c84224`, `dotnet test dotnet/EveRs.slnx -m:1` ran against PostgreSQL test database `eve_rs_test`: 4,282 passed, 0 failed, 0 skipped.
+- After that fast-forward, affected suites passed: `Eve.Services.Space.Tests` 453/453, `Eve.Space.Tests` 217/217, and `Eve.Services.Dogma.Tests` 121/121. `cargo test --workspace --locked` passed.
+- `dotnet build dotnet/src/Eve.Host/Eve.Host.csproj -c Release -m:1 --no-restore`: succeeded, 0 warnings / 0 errors.
+- `git diff --check`: passed.
+- Native V24.01 client verification was not run; graphical acceptance remains open.
 
 ## Closed in the latest RPC work
 
 - The FleetProxy callbacks and FleetObject `CreateFleet`/`LoadFleetSetup` paths use FleetStore and saved character settings. Migration 006 stores the full advert payload for new writes.
 - `storeManager.buy_offer` and Insurance are connected to their existing persistence providers.
-- Character entry builds the supported session state, restores saved space pose, and orders selection, session, hangar, Dogma, and guest notifications. The first active-space ship List also primes visual AddBalls2 before the later full bind. Real V24.01 client login has not been run; the PostgreSQL character-selection test was skipped without `EVE_PG_URL`.
+- Character entry builds the supported session state, restores saved space pose, and orders selection, session, hangar, Dogma, and guest notifications. The first active-space ship List also primes visual AddBalls2 before the later full bind. PostgreSQL character-selection and TCP headless tests pass; the native V24.01 client was not launched in this verification, so graphical acceptance remains open.
 - `station.GetGuests` resolves through the `stationSvc` alias; its four-field response, observer ledger seed, and station/structure join/leave broadcasts are implemented and unit-tested.
 - `industryMonitor.ConnectJob` filters the input inventory flag and excludes blueprint-category items.
 - SignalTracker session registration and its full-state publish hook are wired; the snapshot producer itself remains an open provider item.

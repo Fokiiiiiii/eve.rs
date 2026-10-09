@@ -786,6 +786,18 @@ fn an_accepted_docking_stops_the_ship_and_takes_four_seconds() {
 }
 
 #[test]
+fn a_ship_that_docks_leaves_the_station_with_no_rack_heat() {
+    // EVE.js resets the rack heat when the ship is healed on a dock (resetEntityRackHeat); here the ship is taken off the scene and the one
+    // that undocks has none. Nothing of the heat is kept by the host.
+    let mut scene = near_the_station();
+    scene.pilots.get_mut(&SESSION).unwrap().heat.levels = [40.0, 10.0, 5.0];
+    scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
+    assert!(matches!(scene.poll(NOON + seconds(4)).first(), Some(Out::Docked { .. })));
+    scene.undock(SESSION, spec(), STATION, NOON + seconds(10)).unwrap();
+    assert_eq!(scene.pilots[&SESSION].heat.levels, [0.0, 0.0, 0.0]);
+}
+
+#[test]
 fn a_docking_asked_for_again_is_accepted_with_the_first_time_and_orders_are_ignored_meanwhile() {
     let mut scene = near_the_station();
     scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
@@ -1646,6 +1658,62 @@ fn jumped(scene: &mut Scene) -> Traveller {
     scene.due_jumps(NOON + seconds(6)).0.pop().unwrap()
 }
 
+/// A reactive armor hardener (type 4403, effect 4928) and a second module the pilot runs, both started on the ship at rest.
+fn a_running_hardener_and_a_module(scene: &mut Scene) -> (i64, i64) {
+    let hardener = crate::modules::Effect {
+        rules: Default::default(),
+        burns_fuel: false,
+        module_id: 9_001,
+        module_type: 4403,
+        effect_id: 4928,
+        fx: "effects.AdaptiveArmorHardener".to_string(),
+        duration_ms: 10_000.0,
+        capacitor_need: 0.0,
+        repeat: 1000,
+        target_id: 0,
+        turret: None,
+        action: Some(crate::modules::Action::ResistanceShift {
+            seed: [0.85; 4],
+            shift: 0.06,
+            attribute_ids: [267, 270, 269, 268],
+        }),
+        on: None,
+        off: None,
+        on_changes: Vec::new(),
+        off_changes: Vec::new(),
+    };
+    let started = scene.activate(SESSION, hardener, NOON);
+    assert!(matches!(started.first(), Some(Out::Accepted { .. })), "{started:?}");
+    assert!(scene.pilots[&SESSION].ship.health.shift_profile().is_some());
+    (9_001, 9_002)
+}
+
+#[test]
+fn a_stargate_jump_stops_every_module_the_ship_runs_and_the_hardener_profile_with_it() {
+    let mut scene = scene_by_a_gate();
+    let (hardener, _) = a_running_hardener_and_a_module(&mut scene);
+    scene.command(SESSION, jump(NEAR_GATE, 0), NOON);
+    let (travellers, told) = scene.due_jumps(NOON + seconds(6));
+    let traveller = travellers.into_iter().next().expect("the ship jumps");
+    // the host is told each module ended once, for the reason a forbidden effect has
+    let ended: Vec<(i64, u8)> = told
+        .iter()
+        .filter_map(|o| match o {
+            Out::ModuleEnded { session, module_id, reason } if *session == SESSION => {
+                Some((*module_id, *reason))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ended, [(hardener, 3)]);
+    assert_eq!(traveller.pilot.modules.running_count(), 0, "nothing the pilot ran goes through the gate");
+    assert_eq!(
+        traveller.pilot.ship.health.shift_profile(),
+        None,
+        "the profile is reset, not kept for a later start"
+    );
+}
+
 #[test]
 fn a_ship_appears_in_front_of_the_gate_it_comes_out_of_at_rest() {
     let mut scene = scene_by_a_gate();
@@ -1943,4 +2011,22 @@ fn an_overheated_cycle_damages_and_burns_a_fitted_module_in_its_rack() {
     let damaged = &scene.pilots[&SESSION].heat.modules[&module_id].profile;
     assert_eq!(damaged.damage_hp, damaged.structure_hp);
     assert!(!damaged.online);
+}
+
+/// Moves every ship of the scene by one offset, out past the station's surface, so that none is within a smartbomb's restriction of it
+/// (the ships keep their places among themselves).
+pub(crate) fn clear_of_the_station(scene: &mut Scene) {
+    let (sx, sy, sz) = {
+        let station = scene.system().body(STATION).unwrap();
+        (station.position.x, station.position.y, station.position.z)
+    };
+    let ship = scene.pilots.values().next().unwrap().ship.position;
+    let (dx, dy, dz) = (ship.x - sx, ship.y - sy, ship.z - sz);
+    let length = (dx * dx + dy * dy + dz * dz).sqrt().max(1.0);
+    let away = 20_000.0;
+    let offset = (dx / length * away, dy / length * away, dz / length * away);
+    for pilot in scene.pilots.values_mut() {
+        let p = pilot.ship.position;
+        pilot.ship.position = eve_destiny::Vec3::new(p.x + offset.0, p.y + offset.1, p.z + offset.2);
+    }
 }

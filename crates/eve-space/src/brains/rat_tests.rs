@@ -85,6 +85,7 @@ pub(crate) fn rat_identity(aggression_range: f64) -> NpcIdentity {
                     spool: None,
                     aoe: None,
                     arc: None,
+                    requires_gunnery: true,
                 },
             }],
         },
@@ -302,6 +303,7 @@ fn missile_rat_identity(aggression_range: f64) -> NpcIdentity {
         spool: None,
         aoe: None,
         arc: None,
+        requires_gunnery: true,
     };
     identity
 }

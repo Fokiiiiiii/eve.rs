@@ -11,7 +11,7 @@ internal sealed class FakeSim : ISimulation
 
     public event Action? Lost;
 
-    public List<SimMessage> Heard { get; } = [];
+    public System.Collections.Concurrent.ConcurrentQueue<SimMessage> Heard { get; } = new();
 
     /// <summary>What an <c>Enter</c> is answered with: null (done) or a reason.</summary>
     public string? EnterAnswer { get; set; }
@@ -36,7 +36,7 @@ internal sealed class FakeSim : ISimulation
         {
             throw new SimUnavailableException("the simulation is not running");
         }
-        Heard.Add(spawn);
+        Heard.Enqueue(spawn);
         return Task.FromResult(SpawnAnswer is { } answer ? answer with { RequestId = spawn.RequestId } : new SimSpawnReply(spawn.RequestId, (ulong)Heard.Count + (1UL << 62), null));
     }
 
@@ -49,7 +49,7 @@ internal sealed class FakeSim : ISimulation
         {
             throw new SimUnavailableException("the simulation is not running");
         }
-        Heard.Add(launch);
+        Heard.Enqueue(launch);
         return Task.FromResult(LaunchAnswer is { } answer ? answer with { RequestId = launch.RequestId } : new SimSpawnReply(launch.RequestId, (ulong)Heard.Count + (1UL << 62), null));
     }
 
@@ -62,7 +62,7 @@ internal sealed class FakeSim : ISimulation
         {
             throw new SimUnavailableException("the simulation is not running");
         }
-        Heard.Add(new SimDroneCommand(sessionId, command, targetId, droneIds, controlRange));
+        Heard.Enqueue(new SimDroneCommand(sessionId, command, targetId, droneIds, controlRange));
         return Task.FromResult(DroneAnswer?.Invoke(sessionId, command, targetId, droneIds)
             ?? new CommandReply(true, 0, null) { Drones = [.. droneIds.Select(id => new SimDroneResult(id, ""))] });
     }
@@ -76,7 +76,7 @@ internal sealed class FakeSim : ISimulation
         {
             throw new SimUnavailableException("the simulation is not running");
         }
-        Heard.Add(launch);
+        Heard.Enqueue(launch);
         return Task.FromResult(FighterLaunchAnswer is { } answer ? answer with { RequestId = launch.RequestId } : new SimSpawnReply(launch.RequestId, (ulong)Heard.Count + (1UL << 62), null));
     }
 
@@ -89,7 +89,7 @@ internal sealed class FakeSim : ISimulation
         {
             throw new SimUnavailableException("the simulation is not running");
         }
-        Heard.Add(new SimFighterOrder(sessionId, command, targetId, fighterIds, range));
+        Heard.Enqueue(new SimFighterOrder(sessionId, command, targetId, fighterIds, range));
         return Task.FromResult(FighterAnswer?.Invoke(sessionId, command, targetId, fighterIds)
             ?? new CommandReply(true, 0, null) { Fighters = [.. fighterIds.Select(id => new SimFighterResult(id, ""))] });
     }
@@ -100,7 +100,7 @@ internal sealed class FakeSim : ISimulation
         {
             throw new SimUnavailableException("the simulation is not running");
         }
-        Heard.Add(new SimFighterGotoPoint(sessionId, fighterIds, point));
+        Heard.Enqueue(new SimFighterGotoPoint(sessionId, fighterIds, point));
         return Task.FromResult(new CommandReply(true, 0, null) { Fighters = [.. fighterIds.Select(id => new SimFighterResult(id, ""))] });
     }
 
@@ -112,7 +112,7 @@ internal sealed class FakeSim : ISimulation
 
     public async Task<string?> RespawnAsync(SimRespawn respawn, CancellationToken cancellationToken = default)
     {
-        Heard.Add(respawn);
+        Heard.Enqueue(respawn);
         if (RespawnGate is { } gate)
         {
             await gate.Task;
@@ -120,15 +120,15 @@ internal sealed class FakeSim : ISimulation
         return RespawnAnswer;
     }
 
-    public void PlaceWreck(SimPlaceWreck wreck) => Heard.Add(wreck);
+    public void PlaceWreck(SimPlaceWreck wreck) => Heard.Enqueue(wreck);
 
-    public void PlaceAsteroid(SimPlaceAsteroid asteroid) => Heard.Add(asteroid);
+    public void PlaceAsteroid(SimPlaceAsteroid asteroid) => Heard.Enqueue(asteroid);
 
-    public void DroneWorkResult(SimDroneWorkResult result) => Heard.Add(result);
+    public void DroneWorkResult(SimDroneWorkResult result) => Heard.Enqueue(result);
 
-    public void RemoteRepairCycleResult(SimRemoteRepairCycleResult result) => Heard.Add(result);
+    public void RemoteRepairCycleResult(SimRemoteRepairCycleResult result) => Heard.Enqueue(result);
 
-    public void ModuleWorkResult(SimModuleWorkResult result) => Heard.Add(result);
+    public void ModuleWorkResult(SimModuleWorkResult result) => Heard.Enqueue(result);
 
     /// <summary>What a can that is placed is answered with: where it lies (the test's own place when none is set), or why not.</summary>
     public CommandReply? PlaceContainerAnswer { get; set; }
@@ -139,11 +139,19 @@ internal sealed class FakeSim : ISimulation
         {
             throw new SimUnavailableException("the simulation is not running");
         }
-        Heard.Add(can);
+        Heard.Enqueue(can);
         return Task.FromResult(PlaceContainerAnswer ?? new CommandReply(true, 0, null) { Position = [1000.0, 2000.0, 3000.0], Direction = [1.0, 0.0, 0.0] });
     }
 
     /// <summary>What a change of the rounds of a gun is answered with (the default: the gun does not run, the host has its rounds).</summary>
+    public List<SimUpdateEffect> Updates { get; } = [];
+
+    public Task UpdateEffectAsync(SimUpdateEffect request, CancellationToken cancellationToken = default)
+    {
+        Updates.Add(request);
+        return Task.CompletedTask;
+    }
+
     public Func<SimAdjustCharge, SimChargeAdjusted> AdjustAnswer { get; set; } = request => new SimChargeAdjusted(request.RequestId, false, 0, 0);
 
     /// <summary>What the simulation tells right after it has answered a change of rounds (a count of the gun, as it goes on shooting).</summary>
@@ -155,7 +163,7 @@ internal sealed class FakeSim : ISimulation
         {
             throw new SimUnavailableException("the simulation is not running");
         }
-        Heard.Add(request);
+        Heard.Enqueue(request);
         var answer = AdjustAnswer(request) with { RequestId = request.RequestId };
         inOrder?.Invoke(answer);
         AfterAnswer?.Invoke(request);
@@ -164,37 +172,37 @@ internal sealed class FakeSim : ISimulation
 
     public Task<CommandReply> ChangeWreckAsync(ulong sessionId, long wreckId, bool isEmpty, CancellationToken cancellationToken = default)
     {
-        Heard.Add(new SimChangeWreck(sessionId, wreckId, isEmpty));
+        Heard.Enqueue(new SimChangeWreck(sessionId, wreckId, isEmpty));
         return Task.FromResult(new CommandReply(true, 0, null));
     }
 
-    public void RemoveWreck(long wreckId, int effect) => Heard.Add(new SimRemoveWreck(wreckId, effect));
+    public void RemoveWreck(long wreckId, int effect) => Heard.Enqueue(new SimRemoveWreck(wreckId, effect));
 
-    public void Destroy(long shipId, SimCredit credit) => Heard.Add(new SimDestroy(shipId, credit));
+    public void Destroy(long shipId, SimCredit credit) => Heard.Enqueue(new SimDestroy(shipId, credit));
 
     public void Report(SimMessage message) => Received?.Invoke(message);
 
     public Task SetHeatProfileAsync(ulong sessionId, SimHeatProfile profile, CancellationToken cancellationToken = default)
     {
-        Heard.Add(new SimSetHeatProfile(sessionId, profile));
+        Heard.Enqueue(new SimSetHeatProfile(sessionId, profile));
         return Task.CompletedTask;
     }
 
     public Task SetModuleOverheatAsync(ulong sessionId, long moduleId, bool active, CancellationToken cancellationToken = default)
     {
-        Heard.Add(new SimSetModuleOverheat(sessionId, moduleId, active));
+        Heard.Enqueue(new SimSetModuleOverheat(sessionId, moduleId, active));
         return Task.CompletedTask;
     }
 
     public Task OfflineModuleAsync(ulong sessionId, long moduleId, CancellationToken cancellationToken = default)
     {
-        Heard.Add(new SimSetModuleOffline(sessionId, moduleId));
+        Heard.Enqueue(new SimSetModuleOffline(sessionId, moduleId));
         return Task.CompletedTask;
     }
 
     public Task SetRackOverheatAsync(ulong sessionId, int rack, bool active, CancellationToken cancellationToken = default)
     {
-        Heard.Add(new SimSetRackOverheat(sessionId, rack, active));
+        Heard.Enqueue(new SimSetRackOverheat(sessionId, rack, active));
         return Task.CompletedTask;
     }
 
@@ -204,7 +212,7 @@ internal sealed class FakeSim : ISimulation
         {
             throw new SimUnavailableException("the simulation is not running");
         }
-        Heard.Add(enter);
+        Heard.Enqueue(enter);
         return Task.FromResult(EnterAnswer);
     }
 
@@ -219,7 +227,7 @@ internal sealed class FakeSim : ISimulation
 
     public Task<CommandReply> CommandAsync(ulong sessionId, byte code, double[] args, CancellationToken cancellationToken = default)
     {
-        Heard.Add(new SimCommand(sessionId, code, args));
+        Heard.Enqueue(new SimCommand(sessionId, code, args));
         if (code is >= SimCommands.AddTarget and <= SimCommands.GetTargeters)
         {
             if (TargetsUnavailable)
@@ -283,19 +291,19 @@ internal sealed class FakeSim : ISimulation
         {
             throw new SimUnavailableException("the link to the simulation broke");
         }
-        Heard.Add(new SimActivate(sessionId, effect));
+        Heard.Enqueue(new SimActivate(sessionId, effect));
         return ActivateGate is { } gate ? gate.Task.ContinueWith(_ => ActivateAnswer, cancellationToken) : Task.FromResult(ActivateAnswer);
     }
 
-    public void Leave(ulong sessionId, LeaveWhy why) => Heard.Add(new SimLeave(sessionId, why));
+    public void Leave(ulong sessionId, LeaveWhy why) => Heard.Enqueue(new SimLeave(sessionId, why));
 
-    public void Bind(ulong sessionId) => Heard.Add(new SimBind(sessionId));
+    public void Bind(ulong sessionId) => Heard.Enqueue(new SimBind(sessionId));
 
-    public void UpdateState(ulong sessionId) => Heard.Add(new SimUpdateState(sessionId));
+    public void UpdateState(ulong sessionId) => Heard.Enqueue(new SimUpdateState(sessionId));
 
-    public void Command(ulong sessionId, byte code, params double[] args) => Heard.Add(new SimCommand(sessionId, code, args));
+    public void Command(ulong sessionId, byte code, params double[] args) => Heard.Enqueue(new SimCommand(sessionId, code, args));
 
-    public void ShipChanged(ulong sessionId, SimShip ship) => Heard.Add(new SimShipChanged(sessionId, ship));
+    public void ShipChanged(ulong sessionId, SimShip ship) => Heard.Enqueue(new SimShipChanged(sessionId, ship));
 
     public void Say(SimMessage message) => Received?.Invoke(message);
 

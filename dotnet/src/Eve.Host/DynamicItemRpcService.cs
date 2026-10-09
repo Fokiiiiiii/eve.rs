@@ -21,9 +21,11 @@ public sealed class DynamicItemRpcService : IService
     private readonly ItemMutationService _mutations;
     private readonly DogmaStatic _dogma;
     private readonly ItemTypeCatalog _itemTypes;
+    private readonly CharacterShips? _ships;
 
-    public DynamicItemRpcService(PgItemStore items, ItemMutationService mutations, DogmaStatic dogma, ItemTypeCatalog itemTypes)
-        => (_items, _mutations, _dogma, _itemTypes) = (items, mutations, dogma, itemTypes);
+    /// <param name="ships">The ships of the characters: an item fitted or bayed in a ship is read in that ship's world. Null only where no item is in a ship.</param>
+    public DynamicItemRpcService(PgItemStore items, ItemMutationService mutations, DogmaStatic dogma, ItemTypeCatalog itemTypes, CharacterShips? ships)
+        => (_items, _mutations, _dogma, _itemTypes, _ships) = (items, mutations, dogma, itemTypes, ships);
 
     public string Name => "dynamicItemService";
     public bool HasMethod(string method) => method is "CreateDynamicItem" or "GetDynamicItemInfo";
@@ -85,8 +87,7 @@ public sealed class DynamicItemRpcService : IService
 
         // the effective attributes are the server's own dogma for the item: what the client reads as the item's attributes
         await _dogma.EnsureTypesAsync([record.SourceTypeId, item.TypeId], call.Cancellation);
-        var world = new DogmaWorld(_dogma);
-        world.Add(ItemDogma.Of(item, item.OwnerId, item.LocationId, item.Flag, mutation: record));
+        var world = await WorldOfAsync(item, record, call.Cancellation);
 
         return Py.KeyVal(
             ("itemID", new PyInt(item.Id)),
@@ -100,6 +101,30 @@ public sealed class DynamicItemRpcService : IService
             ("attributes", NumericDict(world.Attributes(item.Id))),
             ("modifiers", NumericDict(record.Rolls)),
             ("baseAttributes", NumericDict(record.BaseValues)));
+    }
+
+    /// <summary>
+    /// The world the item's attributes are read in. An item fitted to a ship, or in its bays and tubes, is read in that ship's world, so the ship's modifiers
+    /// apply to it as they do to the fit and to a launch (DEVIATIONS 143). Any other item is read in its own world, where no ship acts on it.
+    /// </summary>
+    private async Task<DogmaWorld> WorldOfAsync(Item item, ItemMutationRecord record, CancellationToken cancellationToken)
+    {
+        if (_ships is not null && await _items.GetAsync(item.LocationId, cancellationToken) is { } container && container.OwnerId == item.OwnerId)
+        {
+            await _dogma.EnsureTypesAsync([container.TypeId], cancellationToken);
+            if (_dogma.Type(container.TypeId) is { } containerType && containerType.CategoryId == (_dogma.CategoryId("Ship") ?? 6)
+                && await _ships.LoadShipAsync(item.OwnerId, container.Id, cancellationToken) is { } ship)
+            {
+                if (ship.World.Item(item.Id) is null)
+                {
+                    ship.World.Add(ItemDogma.Of(item, item.OwnerId, item.LocationId, item.Flag, mutation: record));
+                }
+                return ship.World;
+            }
+        }
+        var world = new DogmaWorld(_dogma);
+        world.Add(ItemDogma.Of(item, item.OwnerId, item.LocationId, item.Flag, mutation: record));
+        return world;
     }
 
     /// <summary>The client's reason for a refusal: the text its own mutation uses where the reference has one (dynamicItemService.js:393-416).</summary>

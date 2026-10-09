@@ -7,7 +7,7 @@ use eve_space::health::{Condition, Layer, Resonances, Vitals};
 use eve_space::link::{
     ChargeOp, ContainerPlacement, DecodeError, Enter, How, LaunchDrone, Message, Spawn, WreckPlacement,
 };
-use eve_space::missiles::Missile;
+use eve_space::missiles::{Blast, Missile};
 use eve_space::modules::{Action, Applies, Change, Effect, MiningFamily, Numbers, Reach, Remote, Rules};
 use eve_space::scene::{HeatModuleProfile, HeatProfile, HeatRack};
 use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
@@ -139,6 +139,7 @@ fn turret_of(w: &Value) -> Turret {
             flag: c["flag"].as_i64().unwrap() as i32,
             rounds: c["rounds"].as_i64().unwrap(),
             per_cycle: c["perCycle"].as_i64().unwrap(),
+            reloads: c.get("reloads").and_then(Value::as_bool).unwrap_or(false),
         }),
         missile: w.get("missile").filter(|m| !m.is_null()).map(|m| Missile {
             charge_type_id: m["chargeTypeId"].as_i64().unwrap() as i32,
@@ -169,6 +170,7 @@ fn turret_of(w: &Value) -> Turret {
             range: a["range"].as_f64().unwrap(),
             targets: a["targets"].as_i64().unwrap() as i32,
         }),
+        requires_gunnery: w["requiresGunnery"].as_bool().unwrap_or_else(|| panic!("requiresGunnery in {w}")),
     }
 }
 
@@ -199,6 +201,8 @@ fn effect_of(case: &Value) -> Effect {
         requires_industrial_core: r["requiresIndustrialCore"].as_bool().unwrap(),
         provides_industrial_core: r["providesIndustrialCore"].as_bool().unwrap(),
         reactivation_delay_ms: number(r, "reactivationDelayMs"),
+        max_velocity_limit: r.get("maxVelocityLimit").and_then(Value::as_f64).unwrap_or(0.0),
+        min_velocity_limit: r.get("minVelocityLimit").and_then(Value::as_f64).unwrap_or(0.0),
     });
     Effect {
         rules,
@@ -343,6 +347,15 @@ fn effect_of(case: &Value) -> Effect {
                     crit_multiplier: a["critMultiplier"].as_f64().unwrap(),
                 };
             }
+            if a["kind"] == "scan" {
+                return Action::Scan {
+                    cargo: a["cargo"].as_bool().unwrap(),
+                    reach: Reach {
+                        optimal: a["optimalMeters"].as_f64().unwrap(),
+                        falloff: a["falloffMeters"].as_f64().unwrap(),
+                    },
+                };
+            }
             if a["kind"] == "salvage" {
                 return Action::Salvage { access_bonus: a["accessBonus"].as_f64().unwrap() };
             }
@@ -429,6 +442,7 @@ fn effect_of(case: &Value) -> Effect {
                         neut_signature_radius: number(s, "neutSignatureRadius"),
                         debuff_ms: s["debuffMs"].as_f64().unwrap_or(0.0),
                         sweep_end: None,
+                        beacon: None,
                     },
                     destination: vector(&a["destination"]),
                     warp_block_ms: number(a, "warpBlockMs"),
@@ -470,11 +484,52 @@ fn effect_of(case: &Value) -> Effect {
                         sweep_end: a["sweepEnd"].as_array().map(|end| {
                             [end[0].as_f64().unwrap(), end[1].as_f64().unwrap(), end[2].as_f64().unwrap()]
                         }),
+                        beacon: a["beacon"].as_array().map(|offset| {
+                            [
+                                offset[0].as_f64().unwrap(),
+                                offset[1].as_f64().unwrap(),
+                                offset[2].as_f64().unwrap(),
+                            ]
+                        }),
                     },
                 };
             }
             if a["kind"] == "repair" {
                 return Action::Repair { layer: layer(), amount, when };
+            }
+            let four = |key: &str| -> [f64; 4] {
+                let v = a[key].as_array().unwrap();
+                [
+                    v[0].as_f64().unwrap(),
+                    v[1].as_f64().unwrap(),
+                    v[2].as_f64().unwrap(),
+                    v[3].as_f64().unwrap(),
+                ]
+            };
+            if a["kind"] == "kamikaze" {
+                return Action::Kamikaze {
+                    damage: four("damage"),
+                    range: a["rangeMeters"].as_f64().unwrap(),
+                };
+            }
+            if a["kind"] == "blast" {
+                let c = &a["centre"];
+                let centre = [c[0].as_f64().unwrap(), c[1].as_f64().unwrap(), c[2].as_f64().unwrap()];
+                return Action::Blast {
+                    centre,
+                    radius: a["radiusMeters"].as_f64().unwrap(),
+                    damage: four("damage"),
+                };
+            }
+            if a["kind"] == "missile" {
+                let num = |key: &str| a[key].as_f64().unwrap();
+                let blast = Blast {
+                    explosion_radius: num("explosionRadius"),
+                    explosion_velocity: num("explosionVelocity"),
+                    reduction_factor: num("reductionFactor"),
+                    reduction_sensitivity: num("reductionSensitivity"),
+                };
+                return Action::Missile { damage: four("damage"), reach: num("reachMeters"), blast };
             }
             let resolution = || a["signatureResolution"].as_f64().unwrap();
             let percent = || a["percent"].as_f64().unwrap();
@@ -591,6 +646,19 @@ fn wreck_kind_of(wreck: Option<&Value>) -> Option<WreckKind> {
         name: text(w, "name"),
         graphic_id: Some(w["graphicId"].as_i64().unwrap() as i32).filter(|g| *g != 0),
     })
+}
+
+/// The attributes a change tells the client (its item, its attribute and its value).
+fn changes_of(list: &Value) -> Vec<Change> {
+    list.as_array()
+        .unwrap()
+        .iter()
+        .map(|c| Change {
+            item_id: wide(c, "itemId"),
+            attribute_id: c["attributeId"].as_i64().unwrap() as i32,
+            value: c["value"].as_f64().unwrap(),
+        })
+        .collect()
 }
 
 fn message_of(case: &Value) -> Message {
@@ -732,6 +800,14 @@ fn message_of(case: &Value) -> Message {
             session_id: session_id(),
             module_id: wide(case, "moduleId"),
             rounds_left: wide(case, "roundsLeft"),
+        },
+        "UpdateEffect" => Message::UpdateEffect {
+            session_id: session_id(),
+            module_id: wide(case, "moduleId"),
+            duration_ms: case["durationMs"].as_f64().unwrap(),
+            capacitor_need: case["capacitorNeed"].as_f64().unwrap(),
+            turret: case.get("turret").filter(|t| !t.is_null()).map(|t| Box::new(turret_of(t))),
+            changes: changes_of(&case["changes"]),
         },
         "AdjustCharge" => Message::AdjustCharge {
             request_id: wide(case, "requestId") as u64,

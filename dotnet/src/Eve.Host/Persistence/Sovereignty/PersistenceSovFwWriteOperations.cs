@@ -766,6 +766,116 @@ private async ValueTask<IReadOnlyList<long>> ReadCommittedAcquisitionsAsync(
         }).Order().ToArray();
     }
 
+    public async Task<bool> DropAllianceSovereigntyClaimsAsync(
+        long allianceId, long nowUnixMs, CancellationToken cancellationToken = default)
+    {
+        if (allianceId <= 0 || nowUnixMs < 0)
+            return false;
+        await writeGate.WaitAsync(cancellationToken);
+        try
+        {
+            var root = (JsonObject)readCacheTable("sovereignty").DeepClone();
+            if (root["systems"] is not JsonObject systems)
+                return true;
+            var droppedSystems = new HashSet<long>();
+            var removedHubIds = new HashSet<long>();
+            var changed = false;
+            foreach (var (key, node) in systems.ToArray())
+            {
+                if (node is not JsonObject system || Positive(Integer(system["allianceID"])) != allianceId)
+                    continue;
+                if (!long.TryParse(key, System.Globalization.NumberStyles.Integer,
+                        System.Globalization.CultureInfo.InvariantCulture, out var solarSystemId) ||
+                    solarSystemId <= 0)
+                    solarSystemId = Positive(Integer(system["solarSystemID"]));
+                if (solarSystemId <= 0)
+                    continue;
+
+                var claimStructureId = Positive(Integer(system["claimStructureID"]));
+                var hubId = Positive(Integer(system["infrastructureHubID"]));
+                if (hubId > 0) removedHubIds.Add(hubId);
+                var removedStructureIds = new HashSet<long>([claimStructureId, hubId]);
+                removedStructureIds.RemoveWhere(id => id <= 0);
+                if (system["structures"] is JsonArray structures)
+                    system["structures"] = new JsonArray(structures
+                        .Where(structure => structure is not JsonObject row ||
+                            !removedStructureIds.Contains(Positive(Integer(row["itemID"] ?? row["structureID"]))))
+                        .Select(structure => structure?.DeepClone()).ToArray());
+
+                system["allianceID"] = null;
+                system["corporationID"] = null;
+                system["claimStructureID"] = null;
+                system["infrastructureHubID"] = null;
+                system["claimTime"] = "0";
+                system["fuelAccessGroupID"] = null;
+                system["currentData"] = new JsonArray();
+                var devIndices = system["devIndices"] as JsonObject ?? new JsonObject();
+                devIndices["claimedForDays"] = 0;
+                system["devIndices"] = devIndices;
+                var recentActivity = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["solarSystemID"] = solarSystemId,
+                        ["ownerID"] = null,
+                        ["oldOwnerID"] = allianceId,
+                        ["stationID"] = null,
+                        ["changeTime"] = DateTimeOffset.FromUnixTimeMilliseconds(nowUnixMs)
+                            .UtcDateTime.ToFileTimeUtc().ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    }
+                };
+                if (system["recentActivity"] is JsonArray history)
+                    foreach (var entry in history) recentActivity.Add(entry?.DeepClone());
+                system["recentActivity"] = recentActivity;
+                droppedSystems.Add(solarSystemId);
+                changed = true;
+            }
+
+            if (root["hubs"] is JsonObject hubs)
+                foreach (var (key, node) in hubs.ToArray())
+                {
+                    var hubId = Positive(Integer((node as JsonObject)?["hubID"]));
+                    var hubAllianceId = Positive(Integer((node as JsonObject)?["allianceID"]));
+                    if (removedHubIds.Contains(hubId) || hubAllianceId == allianceId)
+                    {
+                        hubs.Remove(key);
+                        changed = true;
+                    }
+                }
+
+            var allianceKey = allianceId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (root["alliances"] is JsonObject alliances &&
+                alliances[allianceKey] is JsonObject alliance &&
+                alliance["capitalInfo"] is JsonObject capital)
+            {
+                if (droppedSystems.Contains(Positive(Integer(capital["currentCapitalSystem"]))))
+                    capital["currentCapitalSystem"] = null;
+                if (droppedSystems.Contains(Positive(Integer(capital["newCapitalSystem"]))))
+                {
+                    capital["newCapitalSystem"] = null;
+                    capital["newCapitalSystemValidAfter"] = "0";
+                }
+            }
+            if (!changed) return true;
+
+            var result = write("sovereignty", null, root);
+            if (!result.Success)
+                throw new InvalidOperationException($"Could not persist sovereignty closure for alliance {allianceId}: {result.ErrorMsg}");
+            await flushTableAsync("sovereignty", cancellationToken);
+            var persisted = await readPersistedTableAsync("sovereignty", cancellationToken);
+            var claimsRemain = (persisted["systems"] as JsonObject)?.Any(entry =>
+                entry.Value is JsonObject system && Positive(Integer(system["allianceID"])) == allianceId) == true;
+            var hubsRemain = (persisted["hubs"] as JsonObject)?.Any(entry =>
+                entry.Value is JsonObject hub && Positive(Integer(hub["allianceID"])) == allianceId) == true;
+            return !claimsRemain && !hubsRemain;
+        }
+        finally
+        {
+            writeGate.Release();
+        }
+    }
+
+
     private async Task<bool> MutateSystemAsync(
         Eve.Services.ServiceCall call,
         long solarSystemId,

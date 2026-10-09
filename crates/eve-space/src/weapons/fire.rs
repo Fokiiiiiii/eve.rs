@@ -11,6 +11,33 @@ impl Scene {
         self.session_of(effect.target_id).is_some() && self.locked_by(session).contains(&effect.target_id)
     }
 
+    /// Whether a precursor weapon that builds its damage up (a spool) has its target past its optimal range (with the shooter's range disruption
+    /// counted): the turret then stops, and what it built goes with it. The reference has no falloff for it (wiki: Entropic Disintegrator).
+    pub(crate) fn spool_target_out_of_optimal(&self, session: SessionId, effect: &Effect) -> bool {
+        let Some(turret) = effect.turret.as_ref() else { return false };
+        if turret.spool.is_none() {
+            return false;
+        }
+        let (Some(attacker), Some(target)) = (
+            self.kinematics_of(session),
+            self.session_of(effect.target_id).and_then(|target| self.kinematics_of(target)),
+        ) else {
+            return false;
+        };
+        let (range, _, _) = self.weapon_disruption(session, turret);
+        surface_distance(&attacker, &target) > turret.optimal_range.max(0.0) * range + 1e-6
+    }
+
+    /// What the shooter's disruption does to this weapon (range, falloff, tracking): a tracking disruptor or computer reaches only a weapon that
+    /// requires Gunnery; any other weapon is shot with its own numbers.
+    pub(crate) fn weapon_disruption(&self, session: SessionId, turret: &Turret) -> (f64, f64, f64) {
+        if turret.requires_gunnery {
+            self.pilots[&session].incoming.weapon_factors()
+        } else {
+            (1.0, 1.0, 1.0)
+        }
+    }
+
     /// The kinematics of a ship of the scene, for a shot.
     pub(crate) fn kinematics_of(&self, session: SessionId) -> Option<Kinematics> {
         let ship = &self.pilots.get(&session)?.ship;
@@ -203,7 +230,7 @@ impl Scene {
             turret
         };
         // what disrupts the shooter's turrets works on the numbers the shot is rolled with
-        let (range, falloff, tracking) = self.pilots[&session].incoming.weapon_factors();
+        let (range, falloff, tracking) = self.weapon_disruption(session, turret);
         let disrupted;
         let turret = if (range, falloff, tracking) == (1.0, 1.0, 1.0) {
             turret

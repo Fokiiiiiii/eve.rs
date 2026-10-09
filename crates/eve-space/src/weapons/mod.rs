@@ -65,6 +65,9 @@ pub struct Turret {
     pub aoe: Option<Aoe>,
     /// The chain a shot links from its target to other ships (a vorton projector's arc); none for the others.
     pub arc: Option<Arc>,
+    /// Whether the weapon requires Gunnery (its SDE `requiredSkill` list names it): a tracking disruptor or computer reaches only such a weapon
+    /// (the client's `SKILL_MODIFIER_CHANGES_FOR_LOCATION` is keyed on `typeGunnery`); a vorton projector, which requires its own skill, is not reached.
+    pub requires_gunnery: bool,
 }
 
 /// The explosion of a shot that does not roll to hit (a vorton projector): the cloud's radius and velocity, and the damage reduction factor and its
@@ -124,6 +127,9 @@ pub struct Charge {
     pub flag: i32,
     pub rounds: i64,
     pub per_cycle: i64,
+    /// The gun reloads from the hold when its rounds run out (the host answers the spend with a load): the simulation waits for that answer
+    /// instead of stopping the gun (FP-C8).
+    pub reloads: bool,
 }
 
 /// Where and how a ship moves, for the sake of a shot.

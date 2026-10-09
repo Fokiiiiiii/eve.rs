@@ -67,6 +67,9 @@ public static partial class SimCodec
         public const byte FighterReleased = 58;
         public const byte FighterGotoPoint = 59;
         public const byte FighterSize = 60;
+
+/// <summary>Protocol 38 (FP-C4b, FP-C5): a refresh of a running effect (host to simulation).</summary>
+public const byte UpdateEffect = 61;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)

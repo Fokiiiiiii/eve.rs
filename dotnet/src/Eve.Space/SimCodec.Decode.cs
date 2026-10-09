@@ -32,7 +32,7 @@ public static partial class SimCodec
         var turret = ReadTurret(ref r);
         return new SimNpcWeapon(
             moduleId, effectId, cycleMs, capacitorNeed, turret.WeaponTypeId, turret.Fx, turret.RawDamage, turret.OptimalRange, turret.Falloff, turret.TrackingSpeed,
-            turret.SignatureResolution, turret.Charge, turret.Missile);
+            turret.SignatureResolution, turret.Charge, turret.Missile, turret.RequiresGunnery);
     }
 
     /// <summary>The effect a drone runs at its target, when it has one (a flag, then the effect and its action).</summary>
@@ -193,11 +193,13 @@ public static partial class SimCodec
         var maxGroupActive = r.I32();
         var bits = r.U8();
         var reactivation = r.F64();
-        if (bits > 7 || maxGroupActive < 0 || reactivation < 0 || !double.IsFinite(reactivation))
+        var (maxVelocity, minVelocity) = (r.F64(), r.F64());
+        if (bits > 7 || maxGroupActive < 0 || reactivation < 0 || !double.IsFinite(reactivation)
+            || maxVelocity < 0 || !double.IsFinite(maxVelocity) || minVelocity < 0 || !double.IsFinite(minVelocity))
         {
             throw new SimLinkException(SimLinkError.BadValue, "bad module rules");
         }
-        return new SimModuleRules(group, maxGroupActive, (bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0, reactivation);
+        return new SimModuleRules(group, maxGroupActive, (bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0, reactivation, maxVelocity, minVelocity);
     }
 
     /// <summary>The list <see cref="WriteIds"/> writes; more than 4096 ids is refused (no fleet is that large in a field).</summary>
@@ -240,8 +242,14 @@ public static partial class SimCodec
         {
             throw new SimLinkException(SimLinkError.BadValue, "bad strike sweep flag");
         }
+        var beaconFlag = r.U8();
+        double[] beacon = [r.F64(), r.F64(), r.F64()];
+        if (beaconFlag > 1)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad strike beacon flag");
+        }
         var strike = new SimAction.Strike(shape, direction, length, radius, warning, pulse, pulses, damage, signature, immobile, noJump, neutAmount, neutRadius, neutSignature,
-            debuff, sweepFlag == 1 ? sweepEnd : null);
+            debuff, sweepFlag == 1 ? sweepEnd : null, beaconFlag == 1 ? beacon : null);
         if (!strike.IsValid)
         {
             throw new SimLinkException(SimLinkError.BadValue, "bad strike action");
@@ -440,6 +448,56 @@ public static partial class SimCodec
                     }
                     return doomsday;
                 }
+            case 26:
+                {
+                    var kind = r.U8();
+                    var optimal = r.F64();
+                    var falloff = r.F64();
+                    var scan = new SimAction.Scan(kind, optimal, falloff);
+                    if (!scan.IsValid)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad scan action");
+                    }
+                    return scan;
+                }
+            case 23:
+                {
+                    double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    var range = r.F64();
+                    var kamikaze = new SimAction.Kamikaze(damage, range);
+                    if (!kamikaze.IsValid)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad kamikaze action");
+                    }
+                    return kamikaze;
+                }
+            case 25:
+                {
+                    double[] centre = [r.F64(), r.F64(), r.F64()];
+                    var radius = r.F64();
+                    double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    var blast = new SimAction.Blast(centre, radius, damage);
+                    if (!blast.IsValid)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad fighter blast action");
+                    }
+                    return blast;
+                }
+            case 24:
+                {
+                    double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    var reach = r.F64();
+                    var radius = r.F64();
+                    var velocity = r.F64();
+                    var factor = r.F64();
+                    var sensitivity = r.F64();
+                    var missile = new SimAction.FighterMissile(damage, reach, radius, velocity, factor, sensitivity);
+                    if (!missile.IsValid)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad fighter missile action");
+                    }
+                    return missile;
+                }
             case 12:
                 {
                     double[] seed = [r.F64(), r.F64(), r.F64(), r.F64()];
@@ -553,7 +611,12 @@ public static partial class SimCodec
         var charge = r.U8() switch
         {
             0 => null,
-            1 => new SimTurretCharge(r.I32(), r.I32(), r.I64(), r.I64()),
+            1 => new SimTurretCharge(r.I32(), r.I32(), r.I64(), r.I64(), r.U8() switch
+            {
+                0 => false,
+                1 => true,
+                _ => throw new SimLinkException(SimLinkError.BadValue, "bad charge reloads"),
+            }),
             _ => throw new SimLinkException(SimLinkError.BadValue, "bad charge"),
         };
         var missile = r.U8() switch
@@ -580,7 +643,13 @@ public static partial class SimCodec
             1 => ReadArc(ref r),
             _ => throw new SimLinkException(SimLinkError.BadValue, "bad arc"),
         };
-        return new SimTurret(weaponType, fx, damage, optimal, falloff, tracking, resolution, charge, missile, spool, aoe, arc);
+        var requiresGunnery = r.U8() switch
+        {
+            0 => false,
+            1 => true,
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad requires_gunnery"),
+        };
+        return new SimTurret(weaponType, fx, damage, optimal, falloff, tracking, resolution, charge, missile, spool, aoe, arc, requiresGunnery);
     }
 
     private static SimAoe ReadAoe(ref Reader r)

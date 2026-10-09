@@ -221,7 +221,9 @@ public sealed record SimChange(long ItemId, int AttributeId, double Value);
 /// </summary>
 public sealed record SimTurret(
     int WeaponTypeId, string Fx, IReadOnlyList<double> RawDamage, double OptimalRange, double Falloff, double TrackingSpeed, double SignatureResolution,
-    SimTurretCharge? Charge = null, SimMissile? Missile = null, SimSpool? Spool = null, SimAoe? Aoe = null, SimArc? Arc = null);
+    SimTurretCharge? Charge = null, SimMissile? Missile = null, SimSpool? Spool = null, SimAoe? Aoe = null, SimArc? Arc = null,
+    /// <summary>The weapon requires Gunnery: a tracking disruptor or computer on the shooter reaches it (a vorton projector does not require it).</summary>
+    bool RequiresGunnery = false);
 
 /// <summary>
 /// The damage ramp of a weapon that builds up its damage on the target it keeps shooting at (a precursor weapon: <c>damageMultiplierBonusPerCycle</c> and
@@ -268,7 +270,7 @@ public sealed record SimMissile(
 /// The charge a turret fires: its type, the flag it sits at in the ship (the slot of the module), the rounds left and the rounds a cycle takes. The simulation
 /// spends them cycle by cycle (<see cref="SimChargeSpent"/>) and stops the weapon when they are gone.
 /// </summary>
-public sealed record SimTurretCharge(int TypeId, int Flag, long Rounds, long PerCycle);
+public sealed record SimTurretCharge(int TypeId, int Flag, long Rounds, long PerCycle, bool Reloads = false);
 
 /// <summary>What the host changes in the rounds of a gun that runs: rounds go in (up to the capacity, and no more than the hold has) or come out (all of them when the quantity is 0).</summary>
 public abstract record SimChargeOp
@@ -289,6 +291,12 @@ public abstract record SimChargeOp
 /// says what they come to; it answers with <see cref="SimChargeAdjusted"/>, after every <see cref="SimChargeSpent"/> it told before.
 /// </summary>
 public sealed record SimAdjustCharge(ulong RequestId, ulong SessionId, long ModuleId, int ChargeType, SimChargeOp Op) : SimMessage;
+
+/// <summary>
+/// A refresh of a running effect (protocol 38, FP-C4b and FP-C5): an overheat, or a tracking computer that starts, stops or overheats, changes the cycle, what a
+/// cycle costs the capacitor, the turret's numbers and the attributes the client is told. The simulation applies it at the start of the next cycle; nothing is answered.
+/// </summary>
+public sealed record SimUpdateEffect(ulong SessionId, long ModuleId, double DurationMs, double CapacitorNeed, SimTurret? Turret, IReadOnlyList<SimChange> Changes) : SimMessage;
 
 /// <summary>The answer to <see cref="SimAdjustCharge"/>: whether the gun runs (when it does not, the host has its rounds and nothing was changed), the rounds it had and the rounds it has.</summary>
 public sealed record SimChargeAdjusted(ulong RequestId, bool Running, long Before, long After) : SimMessage;
@@ -315,13 +323,31 @@ public sealed record SimEffect(
 /// limit), whether the module holds the ship's early deactivation (906), needs an active industrial core (3265), is one, and how long it waits after it stops (669, in ms).
 /// </summary>
 public sealed record SimModuleRules(
-    int GroupId, int MaxGroupActive, bool DisallowEarlyDeactivation, bool RequiresIndustrialCore, bool ProvidesIndustrialCore, double ReactivationDelayMs);
+    int GroupId, int MaxGroupActive, bool DisallowEarlyDeactivation, bool RequiresIndustrialCore, bool ProvidesIndustrialCore, double ReactivationDelayMs,
+    /// <summary>The highest and the lowest speed (m/s) a module starts at (maxVelocityActivationLimit 1334, minVelocityActivationLimit 2608; 0 for none). Protocol 38 (WP19).</summary>
+    double MaxVelocityLimitMs = 0, double MinVelocityLimitMs = 0);
+
+/// <summary>The kinds of scan a scanner's cycle is (<see cref="SimAction.Scan.Kind"/>).</summary>
+public static class SimScanKinds
+{
+    /// <summary>A Cargo Scanner: the target's hold, one container deep.</summary>
+    public const byte Cargo = 0;
+
+    /// <summary>A Ship Scanner: the target's fitted hardware, each item rolled against the reach's falloff.</summary>
+    public const byte Ship = 1;
+}
 
 /// <summary>The codes of the work a module asks the host for (<see cref="SimModuleWorkCycle.Command"/>). Its cycles share the drone codes of mining and salvage (7, 8).</summary>
 public static class SimModuleWorkCommands
 {
     /// <summary>The fuel of the next cycle: the host takes the module's consumption quantity of its consumption type from the ship, or refuses (<c>NO_FUEL</c>).</summary>
     public const byte ConsumeFuel = 9;
+
+    /// <summary>A Cargo Scanner's cycle ended with its target in reach: the host reveals the target's hold (protocol 40). It carries no mining numbers.</summary>
+    public const byte ScanCargo = 10;
+
+    /// <summary>A Ship Scanner's cycle ended with its target in reach: the host reveals the target's fitted hardware (protocol 40). It carries no mining numbers.</summary>
+    public const byte ScanShip = 11;
 }
 
 /// <summary>A layer of a ship's health.</summary>
@@ -428,6 +454,19 @@ public abstract record SimAction
     /// <summary>A salvager's cycle (tag 8): as a mining cycle, with the wreck's access chance moved by <paramref name="AccessBonusPercent"/>.</summary>
     public sealed record Salvage(double AccessBonusPercent) : SimAction;
 
+    /// <summary>
+    /// A scanner's cycle (tag 26, protocol 40): a cargo scan (<see cref="SimScanKinds.Cargo"/>) or a ship scan (<see cref="SimScanKinds.Ship"/>) of the locked ship.
+    /// The reach is <paramref name="OptimalMeters"/> whole, then <paramref name="FalloffMeters"/> of falloff (0 for a hard cutoff, as a cargo scan has). The
+    /// simulation parks the module at the cycle's end and the host settles the reveal (<see cref="SimModuleWorkCommands.ScanCargo"/> or <c>ScanShip</c>).
+    /// </summary>
+    public sealed record Scan(byte Kind, double OptimalMeters, double FalloffMeters) : SimAction
+    {
+        /// <summary>Whether the numbers are ones the simulation runs: a known kind, a positive optimal range and a falloff that is not negative.</summary>
+        public bool IsValid => Kind is SimScanKinds.Cargo or SimScanKinds.Ship
+            && double.IsFinite(OptimalMeters) && OptimalMeters > 0
+            && double.IsFinite(FalloffMeters) && FalloffMeters >= 0;
+    }
+
     /// <summary>A tractor beam (tag 9, protocol 30): it pulls the locked wreck or can at <paramref name="VelocityMetersPerSecond"/> until it is
     /// <paramref name="HoldDistanceMeters"/> off the ship, and a target beyond <paramref name="RangeMeters"/> (the module's reach) is out of range.</summary>
     public sealed record Tractor(double VelocityMetersPerSecond, double HoldDistanceMeters, double RangeMeters) : SimAction;
@@ -457,6 +496,52 @@ public abstract record SimAction
             && Damage.All(d => double.IsFinite(d) && d >= 0);
     }
 
+    /// <summary>
+    /// A kamikaze squadron's detonation (tag 23, protocol 36): the squadron closes in on its locked target to <paramref name="RangeMeters"/> and, once there, the
+    /// target takes <paramref name="Damage"/> (the four kinds) and the squadron is destroyed.
+    /// </summary>
+    public sealed record Kamikaze(IReadOnlyList<double> Damage, double RangeMeters) : SimAction
+    {
+        /// <summary>Whether the numbers are ones the simulation runs (finite and not negative, four kinds of damage).</summary>
+        public bool IsValid =>
+            Damage.Count == 4
+            && double.IsFinite(RangeMeters) && RangeMeters >= 0
+            && Damage.All(d => double.IsFinite(d) && d >= 0);
+    }
+
+    /// <summary>
+    /// A fighter's missiles (tag 24, protocol 36): the locked target takes <paramref name="Damage"/> once, scaled by the application factor of the explosion
+    /// (<paramref name="ExplosionRadius"/>, <paramref name="ExplosionVelocity"/>, the reduction factor and its sensitivity) for the target's signature and
+    /// speed, when it is within <paramref name="ReachMeters"/>.
+    /// </summary>
+    public sealed record FighterMissile(
+        IReadOnlyList<double> Damage,
+        double ReachMeters,
+        double ExplosionRadius,
+        double ExplosionVelocity,
+        double ReductionFactor,
+        double ReductionSensitivity) : SimAction
+    {
+        /// <summary>Whether the numbers are ones the simulation runs (finite and not negative, four kinds of damage).</summary>
+        public bool IsValid =>
+            Damage.Count == 4
+            && new[] { ReachMeters, ExplosionRadius, ExplosionVelocity, ReductionFactor, ReductionSensitivity }.All(n => double.IsFinite(n) && n >= 0)
+            && Damage.All(d => double.IsFinite(d) && d >= 0);
+    }
+
+    /// <summary>
+    /// A fighter's LaunchBomb blast (tag 25, protocol 37): when its window ends the blast goes off at <paramref name="Centre"/> (metres), and each ship within
+    /// <paramref name="RadiusMeters"/> of it (its surface) takes <paramref name="Damage"/> (the four kinds) once. The area of ADR 0011.
+    /// </summary>
+    public sealed record Blast(IReadOnlyList<double> Centre, double RadiusMeters, IReadOnlyList<double> Damage) : SimAction
+    {
+        /// <summary>Whether the numbers are ones the simulation runs (a finite centre, a positive radius, four finite and not negative damages).</summary>
+        public bool IsValid =>
+            Centre.Count == 3 && Centre.All(double.IsFinite)
+            && double.IsFinite(RadiusMeters) && RadiusMeters > 0
+            && Damage.Count == 4 && Damage.All(d => double.IsFinite(d) && d >= 0);
+    }
+
     public sealed record Strike(
         byte Shape,
         IReadOnlyList<double> Direction,
@@ -473,7 +558,8 @@ public abstract record SimAction
         double NeutRadius,
         double NeutSignatureRadius,
         double DebuffMs = 0,
-        IReadOnlyList<double>? SweepEnd = null) : SimAction
+        IReadOnlyList<double>? SweepEnd = null,
+        IReadOnlyList<double>? Beacon = null) : SimAction
     {
         /// <summary>Whether the numbers are ones the simulation runs (the same checks the simulation makes on decode).</summary>
         public bool IsValid =>
@@ -492,6 +578,7 @@ public abstract record SimAction
             && double.IsFinite(ImmobileMs) && ImmobileMs >= 0
             && double.IsFinite(DebuffMs) && DebuffMs >= 0
             && (SweepEnd is null || (SweepEnd.Count == 3 && SweepEnd.All(double.IsFinite) && SweepEnd.Any(c => c != 0)))
+            && (Beacon is null || (Beacon.Count == 3 && Beacon.All(double.IsFinite)))
             && double.IsFinite(NoJumpMs) && NoJumpMs >= 0
             && double.IsFinite(NeutAmount) && NeutAmount >= 0
             && double.IsFinite(NeutRadius) && NeutRadius >= 0
@@ -594,7 +681,7 @@ public sealed record SimDestroyed(
 /// <summary>A weapon of an NPC: an effect of the NPC's own ship, so the module is the ship. One that flies a <see cref="SimMissile"/> is a launcher (the NPC's own: no rounds to spend).</summary>
 public sealed record SimNpcWeapon(
     long ModuleId, int EffectId, double CycleMs, double CapacitorNeed, int WeaponTypeId, string Fx, IReadOnlyList<double> RawDamage, double OptimalRange, double Falloff,
-    double TrackingSpeed, double SignatureResolution, SimTurretCharge? Charge = null, SimMissile? Missile = null);
+    double TrackingSpeed, double SignatureResolution, SimTurretCharge? Charge = null, SimMissile? Missile = null, bool RequiresGunnery = false);
 
 /// <summary>What a ship leaves when it is destroyed.</summary>
 public sealed record SimWreckKind(int TypeId, string Name, int GraphicId);

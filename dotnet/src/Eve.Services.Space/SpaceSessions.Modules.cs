@@ -98,6 +98,11 @@ public sealed partial class SpaceSessions
         {
             return null;
         }
+        // a module under nanite repair does not run (the EVE University wiki, Overheating)
+        if (pilot.Repairs.ContainsKey(moduleId) && snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is { } repairing)
+        {
+            return ModuleResult.Refusal("MODULE_REPAIRING", repairing.TypeId, _statics.Type(repairing.TypeId)?.Name ?? "");
+        }
         // where the module may be used (the client's dogmaLM refuses before it works out anything)
         if (snapshot.Fitted.Any(m => m.Id == moduleId)
             && _systems.Get(pilot.SolarSystemId) is { } place
@@ -182,6 +187,20 @@ public sealed partial class SpaceSessions
         {
             targetTypeId = npc.TypeId;
         }
+        // a target's resistance weakens a remote effect that lands on it (FP-8, EVE.js resolveTargetResistanceMultiplier): the host resolves it from the target's attributes
+        IReadOnlyDictionary<int, double>? targetAttributes = null;
+        // the target as it flies: the overlays of its running modules (a siege, a triage) are in the numbers it has
+        if (targetPilot is { CharacterId: > 0 } resisting && await FlownShipAsync(resisting, cancellationToken) is { } resistingSnapshot)
+            targetAttributes = resistingSnapshot.World.Attributes(resisting.ShipId);
+        else if (targetTypeId is { } resistingType)
+            targetAttributes = _statics.Type(resistingType)?.Attributes;
+        if (package.Action is SimAction.Remote remoteAction && targetAttributes is not null)
+        {
+            var multiplier = Eve.Services.Space.Effects.RemoteResistance.MultiplierOf(
+                Eve.Services.Space.Effects.RemoteResistance.AttributeOf(remoteAction.What, id => snapshot.World.Get(moduleId, id)), targetAttributes);
+            package = package with { Action = remoteAction with { What = Eve.Services.Space.Effects.RemoteResistance.Weakened(remoteAction.What, multiplier) } };
+        }
+
         if (package.TargetId > 0
             && targetTypeId is { } immuneTypeId
             && _statics.Type(immuneTypeId) is { } immuneType
@@ -190,6 +209,11 @@ public sealed partial class SpaceSessions
         {
             // the client's own refusal for a target that cannot be hit by offensive modules (dogma/effects/util.py PreCheckIfImmune)
             throw MachoErrors.ThrowUserError("DeniedActivateTargetModuleDisallowed");
+        }
+        // a module that the ship's dogma blocks (activationBlocked 1349, a bastion's block on what needs its skill) does not start (fittingDogmaLocation ModuleIsBlocked)
+        if (snapshot.World.Get(moduleId, ModuleAttributes.ActivationBlocked) > 0)
+        {
+            return ModuleResult.Refusal("MODULE_BLOCKED", made.ModuleType, made.ModuleName);
         }
         if (assistance)
         {
@@ -274,6 +298,9 @@ public sealed partial class SpaceSessions
                 : refusal;
         }
         pilot.ActiveModules[moduleId] = ItemState.Active;
+        pilot.RunningModules[moduleId] = RunningModule.Of(effectName, targetId, repeat, aim, aimEnd, package);
+        await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
+        AnnounceModeChange(pilot, snapshot, moduleId, started: true);
         await SendShipAsync(id, pilot, SimShips.VitalsOf(snapshot), cancellationToken);
         made.Accepted?.Invoke();
         // a module that may run in a gate cloak (canActivateInGateCloak: the warp core stabilizers and interdiction nullifiers) keeps the cloak of a jump
@@ -398,8 +425,11 @@ public sealed partial class SpaceSessions
         {
             Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.StopAfterCurrentCycle(moduleId);
             // the simulation ends the effect at the end of its cycle; the host takes the module out of its numbers now, and the ship is sent again
-            pilot.ActiveModules.TryRemove(moduleId, out _);
+            if (pilot.ActiveModules.TryRemove(moduleId, out _))
+                AnnounceModeChange(pilot, snapshot, moduleId, started: false);
+            pilot.RunningModules.TryRemove(moduleId, out _);
             await SendShipAsync(id, pilot, snapshot is null ? null : SimShips.VitalsOf(snapshot), cancellationToken);
+            await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
         }
         return reply.Accepted ? ModuleResult.Done : ModuleResult.Refusal(reply.Reason == "NOT_ACTIVE" ? "MODULE_NOT_ACTIVE" : reply.Reason ?? "REFUSED", module?.TypeId ?? 0, type?.Name ?? "");
     }
@@ -408,6 +438,25 @@ public sealed partial class SpaceSessions
     /// The ship a pilot flies as dogma has it now: the stored module states, with the modules the pilot has started (<see cref="Pilot.ActiveModules"/>) active.
     /// Null when the ship is not the one the pilot flies.
     /// </summary>
+    /// <summary>The group of the siege modules (SDE group 515); a siege module's start and stop are announced as the siege topics as well.</summary>
+    private const int SiegeModuleGroupId = 515;
+
+    /// <summary>A module of the ship started or stopped: the bus is told (<see cref="ShipModeTopics"/>), and a siege module's start and stop as the siege topics.</summary>
+    private void AnnounceModeChange(Pilot pilot, ShipSnapshot? snapshot, long moduleId, bool started)
+    {
+        if (snapshot?.Fitted.FirstOrDefault(m => m.Id == moduleId) is not { } module)
+        {
+            return;
+        }
+        var payload = new ShipModeEvent(pilot.CharacterId, pilot.ShipId, moduleId, module.TypeId, pilot.SolarSystemId);
+        var key = pilot.CharacterId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        Announce(started ? ShipModeTopics.ModuleStarted : ShipModeTopics.ModuleStopped, payload, key);
+        if (_statics.Type(module.TypeId)?.GroupId == SiegeModuleGroupId)
+        {
+            Announce(started ? ShipModeTopics.SiegeEntered : ShipModeTopics.SiegeLeft, payload, key);
+        }
+    }
+
     private async Task<ShipSnapshot?> FlownShipAsync(Pilot pilot, CancellationToken cancellationToken)
     {
         if (await _ships.LoadAsync(pilot.CharacterId, cancellationToken) is not { } snapshot || snapshot.Ship.Id != pilot.ShipId)
@@ -418,7 +467,31 @@ public sealed partial class SpaceSessions
         {
             snapshot.World.SetState(moduleId, state);
         }
+        // an overheated module that runs is Overloaded to dogma: its overload effects apply to what it runs (DogmaWorld runs an Overload effect from Overloaded up)
+        foreach (var moduleId in pilot.Overheated.Keys)
+        {
+            if (snapshot.World.Item(moduleId) is { State: >= ItemState.Active })
+            {
+                snapshot.World.SetState(moduleId, ItemState.Overloaded);
+            }
+        }
         return snapshot;
+    }
+
+    /// <summary>The overheat the pilot asked for, kept until it is asked off (FP-C4a); a module that goes offline is not Overloaded to dogma.</summary>
+    private static void MarkOverheated(Pilot pilot, IEnumerable<long> moduleIds, bool active)
+    {
+        foreach (var moduleId in moduleIds)
+        {
+            if (active)
+            {
+                pilot.Overheated[moduleId] = 0;
+            }
+            else
+            {
+                pilot.Overheated.TryRemove(moduleId, out _);
+            }
+        }
     }
 
     /// <summary>
@@ -465,21 +538,25 @@ public sealed partial class SpaceSessions
         if (snapshot is not null)
             await _sim.SetHeatProfileAsync(id, SimShips.HeatProfileOf(snapshot, _statics), cancellationToken);
         await _sim.OfflineModuleAsync(id, moduleId, cancellationToken);
-        pilot.ActiveModules.TryRemove(moduleId, out _);
+        if (pilot.ActiveModules.TryRemove(moduleId, out _))
+            AnnounceModeChange(pilot, snapshot, moduleId, started: false);
+        pilot.RunningModules.TryRemove(moduleId, out _);
         Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Reset(moduleId);
+        await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
         return ModuleResult.Done;
     }
 
     public async Task<ModuleResult?> OverloadAsync(ClientSession session, long moduleId, int effectId, bool active, CancellationToken cancellationToken)
     {
         var id = (ulong)session.SessionId;
-        if (!_pilots.ContainsKey(id) || session.CharacterId is not { } characterId) return null;
+        if (!_pilots.TryGetValue(id, out var overheating) || session.CharacterId is not { } characterId) return null;
         if (!_sim.IsConnected) return ModuleResult.Refusal("SIM_UNAVAILABLE");
 
         var snapshot = await _ships.LoadAsync(characterId, cancellationToken);
         var module = snapshot?.Fitted.FirstOrDefault(item => item.Id == moduleId);
         if (module is null || snapshot is null) return ModuleResult.Refusal("MODULE_NOT_FOUND");
         var type = _statics.Type(module.TypeId);
+        if (active && !overheating.Repairs.IsEmpty) return ModuleResult.Refusal("REPAIR_IN_PROGRESS", module.TypeId, type?.Name ?? "");
         var overload = type?.EffectIds.Select(_statics.Effect)
             .FirstOrDefault(effect => effect is { Category: EffectDef.Overload } && effect.Id == effectId);
         if (overload is null) return ModuleResult.Refusal("MODULE_NOT_OVERLOADABLE", module.TypeId, type?.Name ?? "");
@@ -491,6 +568,8 @@ public sealed partial class SpaceSessions
 
         await _sim.SetHeatProfileAsync(id, SimShips.HeatProfileOf(snapshot, _statics), cancellationToken);
         await _sim.SetModuleOverheatAsync(id, moduleId, active, cancellationToken);
+        MarkOverheated(overheating, [moduleId], active);
+        await RefreshRunningAsync(overheating, id, cancellationToken).ConfigureAwait(false);
         return ModuleResult.Done;
     }
 
@@ -505,6 +584,7 @@ public sealed partial class SpaceSessions
         var anchor = snapshot?.Fitted.FirstOrDefault(item => item.Id == moduleId);
         if (snapshot is null || anchor is null) return ModuleResult.Refusal("MODULE_NOT_FOUND");
         static int RackOf(int flag) => flag switch { >= 27 and <= 34 => 0, >= 19 and <= 26 => 1, >= 11 and <= 18 => 2, _ => -1 };
+        if (active && !pilot.Repairs.IsEmpty) return ModuleResult.Refusal("REPAIR_IN_PROGRESS", anchor.TypeId, _statics.Type(anchor.TypeId)?.Name ?? "");
         var rack = RackOf(anchor.Flag);
         if (rack < 0) return ModuleResult.Refusal("MODULE_NOT_OVERLOADABLE", anchor.TypeId, _statics.Type(anchor.TypeId)?.Name ?? "");
         if (active && snapshot.Skills.FirstOrDefault(skill => skill.TypeId == 28164)?.Level is not > 0)
@@ -522,6 +602,8 @@ public sealed partial class SpaceSessions
 
         await _sim.SetHeatProfileAsync(id, SimShips.HeatProfileOf(snapshot, _statics), cancellationToken);
         await _sim.SetRackOverheatAsync(id, rack, active, cancellationToken);
+        MarkOverheated(pilot, modules, active);
+        await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
         return ModuleResult.Done with { ModuleIds = modules };
     }
 

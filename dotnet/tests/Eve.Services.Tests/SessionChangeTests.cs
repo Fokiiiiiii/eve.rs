@@ -140,7 +140,7 @@ public class SessionChangeTests
     {
         string[] reference =
         [
-            "role", "countryCode", "charid", "corpid", "corpAccountKey", "hqID", "allianceid", "factionid", "warfactionid", "genderID",
+            "role", "countryCode", "charid", "corpid", "corpAccountKey", "hqID", "baseID", "allianceid", "factionid", "warfactionid", "genderID",
             "bloodlineID", "raceID", "schoolID", "stationid", "stationid2", "structureid", "solarsystemid", "solarsystemid2", "locationid",
             "worldspaceid", "constellationid", "regionid", "shipid", "fleetid", "fleetrole", "wingid", "squadid", "corprole", "rolesAtAll",
             "rolesAtBase", "rolesAtHQ", "rolesAtOther",

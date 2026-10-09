@@ -21,6 +21,7 @@ public sealed class ProjectDiscoveryServiceTests
                      "get_player_state",
                      "get_player_statistics",
                      "get_tutorial_completion_status",
+                     "is_enabled",
                  })
             Assert.True(service!.HasMethod(method), method);
     }
@@ -42,6 +43,7 @@ public sealed class ProjectDiscoveryServiceTests
             await service.CallAsync(Request("get_player_state", session)));
         Assert.Equal(new PyInt(0), await service.CallAsync(Request("get_player_analysis_kredits", session)));
         Assert.Equal(PyBool.False, await service.CallAsync(Request("get_tutorial_completion_status", session)));
+        Assert.Equal(PyBool.True, await service.CallAsync(Request("is_enabled", session)));
         Assert.Equal(PyNone.Instance, await service.CallAsync(Request("fix_task_id", session, new PyStr("42"))));
         Assert.Equal(
             new PyDict(

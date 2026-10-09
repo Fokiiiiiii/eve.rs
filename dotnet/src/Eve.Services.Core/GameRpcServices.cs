@@ -52,6 +52,46 @@ public sealed partial class RaffleMgrService(Func<int?, CancellationToken, Value
     };
 }
 
+
+[Service("raffleProxy")]
+public sealed partial class RaffleProxyService
+{
+    [Method("AmIBanned")]
+    public PyValue AmIBanned(ServiceCall call)
+    {
+        // shortcut: HyperNet account bans are not persisted yet; replace when raffle moderation is modeled.
+        return PyBool.False;
+    }
+}
+
+
+[Service("expertSystemMgr")]
+public sealed partial class ExpertSystemMgrService
+{
+    // shortcut: expert-system ownership is not persisted; read per-character records when that store exists.
+    [Method("GetMyExpertSystems")]
+    public PyValue GetMyExpertSystems(ServiceCall _) => new PyDict([]);
+}
+
+[Service("contractProxy")]
+public sealed partial class ContractProxyService
+{
+    // shortcut: contract records are not persisted; calculate escrow from the contract store once it exists.
+    [Method("GetMyContractEscrow")]
+    public PyValue GetMyContractEscrow(ServiceCall _) =>
+        Eve.Services.Py.KeyVal(
+            ("iskEscrow", Eve.Services.Py.Number(0d)),
+            ("itemsEscrow", new PyInt(0)));
+}
+
+[Service("jumpCloneSvc")]
+public sealed partial class JumpCloneService
+{
+    [Method("MachoResolveObject")]
+    public PyValue MachoResolveObject(ServiceCall _) =>
+        new PyInt(Eve.Macho.MachoMessage.ProxyNodeId);
+}
+
 [Service("serviceGatewayMgr")]
 public sealed partial class ServiceGatewayMgrService(
     Action<bool, PyValue, PyValue>? setHijackMode = null,

@@ -93,6 +93,47 @@ public sealed class CompatibilityRpcServiceTests
         Assert.Equal(new PyInt(2), secondMonitor.Items[0]);
     }
 
+
+    [Fact]
+    public async Task Config_blacklisted_planets_returns_the_reference_empty_list()
+    {
+        IService config = new Eve.Services.CharacterInfo.ConfigService(null!, null!, null!, null!);
+
+        Assert.True(config.HasMethod("GetBlackListedPlanets"));
+        Assert.Empty(Assert.IsType<PyList>(await config.CallAsync(Call("GetBlackListedPlanets"))).Items);
+    }
+
+
+    [Fact]
+    public void Paper_doll_normalization_defaults_missing_sculpt_weights_and_header_fields()
+    {
+        var source = Py.Dict(
+            ("sculptLocationID", new PyInt(4)),
+            ("weightUpDown", PyNone.Instance),
+            ("weightLeftRight", new PyReal(0.25d)));
+        var normalized = Assert.IsType<PyDict>(
+            PaperDollServerRpcService.NormalizePaperDollPayload(source));
+        var fields = normalized.Entries
+            .ToDictionary(entry => Assert.IsType<PyStr>(entry.Key).Value, entry => entry.Value);
+        Assert.Equal(new PyReal(0d), fields["weightUpDown"]);
+        Assert.Equal(new PyReal(0.25d), fields["weightLeftRight"]);
+        Assert.Equal(new PyReal(0d), fields["weightForwardBack"]);
+
+        var sculptingRow = new PyObjectEx(
+            ObjectExKind.Ex2,
+            Py.Tuple(Py.Tuple(new PyToken("eve.client.script.paperDoll.SculptingRow"), new PyInt(4),
+                PyNone.Instance, PyNone.Instance), Py.Dict()),
+            [],
+            []);
+        var normalizedRow = Assert.IsType<PyObjectEx>(
+            PaperDollServerRpcService.NormalizePaperDollPayload(sculptingRow));
+        var objectHeader = Assert.IsType<PyTuple>(normalizedRow.Header);
+        var rowHeader = Assert.IsType<PyTuple>(objectHeader.Items[0]);
+        Assert.Equal(5, rowHeader.Items.Count);
+        Assert.Equal((new PyInt(0), new PyInt(0), new PyInt(0)),
+            (rowHeader.Items[2], rowHeader.Items[3], rowHeader.Items[4]));
+    }
+
     [Fact]
     public async Task Game_store_backed_calls_read_and_write_the_existing_runtime_tables()
     {

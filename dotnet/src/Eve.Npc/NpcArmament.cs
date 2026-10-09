@@ -171,7 +171,7 @@ public static class NpcArmament
             guid.Equals("none", StringComparison.OrdinalIgnoreCase) ? "" : guid,
             [Shot(EmDamage), Shot(ThermalDamage), Shot(KineticDamage), Shot(ExplosiveDamage)],
             Math.Max(0, Round6(Value(hull, MaxRange, 0))), Math.Max(0, Round6(Value(hull, Falloff, 0))), Math.Max(0, Round6(Value(hull, TrackingSpeed, 0))),
-            Math.Max(1, Round6(Value(hull, OptimalSigRadius, 40_000))));
+            Math.Max(1, Round6(Value(hull, OptimalSigRadius, 40_000))), RequiresGunnery: true);
     }
 
     /// <summary>The type of the missile a hull launches (<c>entityMissileTypeID</c>), or 0: what the host must have loaded before it can arm the hull with <see cref="HullWeapon"/>.</summary>

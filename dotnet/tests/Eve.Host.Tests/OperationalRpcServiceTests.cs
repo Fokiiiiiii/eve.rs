@@ -264,7 +264,7 @@ public sealed class OperationalRpcServiceTests
         Assert.Equal("CustomNotify", ((PyStr)arguments[0]).Value);
         var values = ((PyDict)arguments[1]).Entries.ToDictionary(e => ((PyStr)e.Key).Value, e => e.Value);
         Assert.Equal(
-            "In-space ore compression is not available on this server yet.",
+            "In-space ore compression needs a compressor structure, and structures are not on this server yet (phase 3).",
             ((PyStr)values["notify"]).Value);
     }
 }

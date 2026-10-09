@@ -49,7 +49,7 @@ public class MutationHarnessTests
         var catalog = await MutatorCatalog.LoadAsync(sde);
         var mutations = new ItemMutationService(rig.Source, rig.Items, rig.Items.Mutations, catalog, rig.Statics, new BusItemMutationEvents(rig.Events), () => ClockMs,
             attribute => Rolls.GetValueOrDefault(attribute, 0.5));
-        return new DynamicItemRpcService(rig.Items, mutations, rig.Statics, new ItemTypeCatalog(sde));
+        return new DynamicItemRpcService(rig.Items, mutations, rig.Statics, new ItemTypeCatalog(sde), rig.Ships);
     }
 
     private static async Task<long> MutateAsync(Rig rig, ServiceRegistry registry, ClientSession session, long mutator, long source)

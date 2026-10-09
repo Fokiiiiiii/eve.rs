@@ -18,6 +18,7 @@ fn turret(damage: Damage, tracking: f64, resolution: f64, optimal: f64, falloff:
         spool: None,
         aoe: None,
         arc: None,
+        requires_gunnery: true,
     }
 }
 
@@ -389,6 +390,8 @@ fn vorton(arc: Option<Arc>) -> Turret {
     weapon.tracking_speed = 0.0;
     weapon.aoe = Some(vorton_aoe());
     weapon.arc = arc;
+    // a vorton projector requires its own skill, not Gunnery: a tracking disruptor does not reach it
+    weapon.requires_gunnery = false;
     weapon
 }
 
@@ -618,6 +621,48 @@ fn a_precursor_weapon_that_stops_starts_its_ramp_again_from_none_when_it_runs_ag
     assert_bonus_close(scene.spool_of(npc, NPC_SHIP).unwrap().bonus, 0.07);
 }
 
+#[test]
+fn a_precursor_weapon_stops_when_its_target_leaves_optimal_range_and_its_ramp_goes_with_it() {
+    let (mut scene, npc, now) = duel();
+    let cycle = 2_500 * SECOND / 1_000;
+    let mut weapon = laser();
+    // the NPC is two kilometres off: inside this optimal range at the start
+    weapon.optimal_range = 3_000.0;
+    weapon.spool = Some(Spool { per_cycle: 0.07, max: 2.125 });
+    scene.activate(npc, laser_effect(spec().ship_id, weapon.clone()), now);
+    scene.poll(now + cycle + 1);
+    assert_bonus_close(scene.spool_of(npc, NPC_SHIP).unwrap().bonus, 0.14);
+    // the player orbits the NPC at five kilometres, past the optimal range, and the turret stops at a cycle boundary
+    let mut at = now + 2 * cycle + 2;
+    scene.command(PLAYER, Command::Orbit { target_id: npc_spec().ship_id, distance: 5_000.0 }, at);
+    let mut told = Vec::new();
+    while scene.spool_of(npc, NPC_SHIP).is_some() && at < now + 600 * SECOND {
+        at += SECOND / 4;
+        told.extend(scene.poll(at));
+    }
+    assert_eq!(scene.spool_of(npc, NPC_SHIP), None, "the turret stopped with the ramp");
+    assert_eq!(scene.locked_by(npc), [spec().ship_id], "the stop is for the range, not for a lost lock");
+    let ended: Vec<i64> = told
+        .iter()
+        .filter_map(|o| match o {
+            Out::ModuleEnded { session, module_id, reason } if *session == npc => {
+                assert_eq!(*reason, 2, "the target was lost to it: wire reason 2");
+                Some(*module_id)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ended, [NPC_SHIP], "the host is told the turret ended once");
+    // a turret that is still inside its optimal range keeps shooting (the same geometry, a larger optimal)
+    let (mut scene, npc, now) = duel();
+    let mut near = laser();
+    near.optimal_range = 10_000.0;
+    near.spool = Some(Spool { per_cycle: 0.07, max: 2.125 });
+    scene.activate(npc, laser_effect(spec().ship_id, near), now);
+    scene.poll(now + cycle + 1);
+    assert_bonus_close(scene.spool_of(npc, NPC_SHIP).unwrap().bonus, 0.14);
+}
+
 /// A player who has bound the ballpark, and an NPC two kilometres off that has locked it (the moment is a minute after noon).
 fn duel() -> (Scene, SessionId, i64) {
     let mut scene = Scene::new(system());
@@ -752,6 +797,30 @@ fn clearing_the_targets_stops_the_weapons_aimed_at_them_too() {
 }
 
 #[test]
+fn a_tracking_disruptor_reaches_a_gunnery_turret_and_not_a_vorton_projector() {
+    // the disruptor takes the whole of a laser's range and falloff, so the laser has nothing to reach with; a vorton projector does not require
+    // Gunnery (its SDE skills are its own), so the same disruptor leaves its explosion where it was
+    let disruptor = crate::ewar::Lasting::Disrupt {
+        range_percent: -100.0,
+        falloff_percent: -100.0,
+        tracking_percent: 0.0,
+    };
+    let told_for = |weapon: Turret, disrupted: bool| {
+        let (mut scene, npc, now) = duel();
+        if disrupted {
+            scene.pilots.get_mut(&npc).unwrap().incoming.upsert(777, 888, disruptor, now + 60 * SECOND);
+        }
+        let out = scene.activate(npc, laser_effect(spec().ship_id, weapon), now);
+        messages(&out, PLAYER, "OnDamageMessage")[0].clone()
+    };
+    assert_eq!(entry(&told_for(laser(), true), "damage"), number6(0.0));
+    assert_eq!(
+        entry(&told_for(vorton(None), true), "damage"),
+        entry(&told_for(vorton(None), false), "damage")
+    );
+}
+
+#[test]
 fn a_turret_that_is_disrupted_is_rolled_with_the_numbers_it_is_left_and_the_shot_misses_where_it_hit() {
     // undisrupted, the laser (10 km and 5 km of falloff) hits the player two kilometres off at the first cycle
     let (mut scene, npc, now) = duel();
@@ -820,7 +889,8 @@ fn a_turret_shoots_at_the_start_of_each_cycle_and_the_one_shot_at_is_told() {
 /// A gun that fires antimatter, with this many rounds in it and a cycle that spends one.
 fn charged_gun(rounds: i64) -> Effect {
     let mut gun = laser_effect(spec().ship_id, laser());
-    gun.turret.as_mut().unwrap().charge = Some(Charge { type_id: 222, flag: 28, rounds, per_cycle: 1 });
+    gun.turret.as_mut().unwrap().charge =
+        Some(Charge { type_id: 222, flag: 28, rounds, per_cycle: 1, reloads: false });
     gun
 }
 
@@ -876,17 +946,25 @@ fn rounds_the_host_adds_to_a_gun_that_runs_are_spent_by_the_shots_that_follow() 
     assert_eq!(rounds_left(&started), [2]);
     // a gun that does not run is not here (the host has its rounds), and neither is a session that is not in space
     assert_eq!(
-        adjusted(&scene.adjust_charge(1, PLAYER, 999, 222, ChargeOp::Add { capacity: 8, available: 100 })),
+        adjusted(&scene.adjust_charge(
+            1,
+            PLAYER,
+            999,
+            222,
+            ChargeOp::Add { capacity: 8, available: 100 },
+            now
+        )),
         (false, 0, 0)
     );
     // up to the capacity and no more than the hold has: 2 rounds in it, room for 6, and the hold has 4
-    let topped = scene.adjust_charge(2, npc, NPC_SHIP, 222, ChargeOp::Add { capacity: 8, available: 4 });
+    let topped = scene.adjust_charge(2, npc, NPC_SHIP, 222, ChargeOp::Add { capacity: 8, available: 4 }, now);
     assert_eq!(adjusted(&topped), (true, 2, 6));
     // a kind that is not the one it fires is left as it is (it has room: 6 of 8)
-    let other = scene.adjust_charge(4, npc, NPC_SHIP, 223, ChargeOp::Add { capacity: 8, available: 100 });
+    let other =
+        scene.adjust_charge(4, npc, NPC_SHIP, 223, ChargeOp::Add { capacity: 8, available: 100 }, now);
     assert_eq!(adjusted(&other), (true, 6, 6));
     // the hold has more than the gun takes
-    let more = scene.adjust_charge(3, npc, NPC_SHIP, 222, ChargeOp::Add { capacity: 8, available: 100 });
+    let more = scene.adjust_charge(3, npc, NPC_SHIP, 222, ChargeOp::Add { capacity: 8, available: 100 }, now);
     assert_eq!(adjusted(&more), (true, 6, 8));
     // the next shot spends from what it comes to now
     let next = scene.poll(now + 2_500 * SECOND / 1_000 + 1);
@@ -898,9 +976,9 @@ fn rounds_the_host_takes_out_of_a_gun_that_runs_leave_it_with_what_is_left_and_s
     use crate::link::ChargeOp;
     let (mut scene, npc, now) = duel();
     scene.activate(npc, charged_gun(8), now);
-    let part = scene.adjust_charge(1, npc, NPC_SHIP, 0, ChargeOp::Remove { quantity: 3 });
+    let part = scene.adjust_charge(1, npc, NPC_SHIP, 0, ChargeOp::Remove { quantity: 3 }, now);
     assert_eq!(adjusted(&part), (true, 7, 4));
-    let all = scene.adjust_charge(2, npc, NPC_SHIP, 0, ChargeOp::Remove { quantity: 0 });
+    let all = scene.adjust_charge(2, npc, NPC_SHIP, 0, ChargeOp::Remove { quantity: 0 }, now);
     assert_eq!(adjusted(&all), (true, 4, 0));
     // the cycle that was on ends, and the gun does not shoot again: it stops with the error the client shows
     let ended = scene.poll(now + 2_500 * SECOND / 1_000 + 1);
@@ -920,7 +998,8 @@ fn a_turret_with_fewer_rounds_than_a_cycle_spends_is_refused_and_one_without_a_c
         scene.activate(npc, empty.clone(), now).as_slice(),
         [Out::Refused { reason: "NO_AMMO", .. }]
     ));
-    empty.turret.as_mut().unwrap().charge = Some(Charge { type_id: 222, flag: 28, rounds: 5, per_cycle: 8 });
+    empty.turret.as_mut().unwrap().charge =
+        Some(Charge { type_id: 222, flag: 28, rounds: 5, per_cycle: 8, reloads: false });
     assert!(matches!(scene.activate(npc, empty, now).as_slice(), [Out::Refused { reason: "NO_AMMO", .. }]));
     // a gun that takes no charge is never short of rounds
     let started = scene.activate(npc, laser_effect(spec().ship_id, laser()), now);
@@ -1086,6 +1165,7 @@ fn launcher(max_velocity: f64, flight_time_ms: f64, explosion_radius: f64) -> Tu
         spool: None,
         aoe: None,
         arc: None,
+        requires_gunnery: false,
     }
 }
 
@@ -1342,6 +1422,7 @@ fn strike_of(pulses: i32) -> crate::strike::Strike {
         neut_signature_radius: 1.0,
         debuff_ms: 0.0,
         sweep_end: None,
+        beacon: None,
     }
 }
 
@@ -1507,6 +1588,7 @@ fn field_effect(
         neut_signature_radius: 0.0,
         debuff_ms: 0.0,
         sweep_end: None,
+        beacon: None,
     };
     Effect {
         action: Some(crate::modules::Action::Field { strike, destination, warp_block_ms, moved, held }),
@@ -1786,6 +1868,7 @@ fn smartbomb_effect(module_id: i64, damage: Damage) -> Effect {
 #[test]
 fn a_smartbomb_shoots_down_the_missiles_of_others_in_its_reach_and_spares_its_own_pilot_s() {
     let (mut scene, npc, now) = duel();
+    crate::scene::tests::clear_of_the_station(&mut scene);
     scene.activate(npc, missile_effect(spec().ship_id, launcher(300.0, 5_000.0, 56.0)), now);
     assert_eq!(scene.missiles.len(), 1);
     // the pilot who fired the missile sets off a bomb of its own: its missile is not hurt
@@ -1851,4 +1934,140 @@ fn the_same_calls_at_the_same_times_shoot_the_same_shots() {
     };
     assert_eq!(run(), run());
     assert!(run().iter().any(|o| o.session() == PLAYER && !is_npc_session(o.session())));
+}
+
+/// A gun that fires antimatter from `rounds` rounds and reloads from its hold when they are spent (FP-C8).
+fn reloading_gun(rounds: i64) -> Effect {
+    let mut gun = charged_gun(rounds);
+    if let Some(charge) = gun.turret.as_mut().and_then(|t| t.charge.as_mut()) {
+        charge.reloads = true;
+    }
+    gun
+}
+
+/// The answer to the host's change of the rounds, when the answer is among what the simulation told.
+fn answered(out: &[Out]) -> (bool, i64, i64) {
+    out.iter()
+        .find_map(|o| match o {
+            Out::ChargeAdjusted { running, before, after, .. } => Some((*running, *before, *after)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no answer in {out:?}"))
+}
+
+#[test]
+fn a_turret_that_reloads_waits_for_its_load_and_resumes_with_it_at_the_next_cycle() {
+    use crate::link::ChargeOp;
+    let (mut scene, npc, now) = duel();
+    let mut out = scene.activate(npc, reloading_gun(3), now);
+    let mut at = now;
+    for _ in 0..80 {
+        at += SECOND / 4;
+        out.extend(scene.poll(at));
+    }
+    // the three rounds are spent, and the gun waits for its load instead of stopping with NoCharges
+    assert_eq!(rounds_left(&out), [2, 1, 0], "{out:?}");
+    assert!(!format!("{out:?}").contains("NoCharges"), "a reloading gun is not stopped: {out:?}");
+    let mut waiting = Vec::new();
+    for _ in 0..40 {
+        at += SECOND / 4;
+        waiting.extend(scene.poll(at));
+    }
+    assert!(rounds_left(&waiting).is_empty() && !format!("{waiting:?}").contains("NoCharges"), "{waiting:?}");
+    // the host loads five rounds: the gun starts its next cycle at once, with the shot of that cycle spending one
+    let loaded = scene.adjust_charge(1, npc, NPC_SHIP, 222, ChargeOp::Add { capacity: 8, available: 5 }, at);
+    assert_eq!(answered(&loaded), (true, 0, 5), "{loaded:?}");
+    assert_eq!(rounds_left(&loaded), [4], "{loaded:?}");
+    // the gun runs on until the five are spent, then waits again
+    let mut more = Vec::new();
+    for _ in 0..80 {
+        at += SECOND / 4;
+        more.extend(scene.poll(at));
+    }
+    assert_eq!(rounds_left(&more), [3, 2, 1, 0], "{more:?}");
+    assert!(!format!("{more:?}").contains("NoCharges"), "{more:?}");
+    // a load that brings nothing stops it with the error the client shows, and nothing more is fired
+    let empty = scene.adjust_charge(2, npc, NPC_SHIP, 222, ChargeOp::Add { capacity: 8, available: 0 }, at);
+    assert_eq!(answered(&empty), (true, 0, 0), "{empty:?}");
+    assert!(format!("{empty:?}").contains("NoCharges"), "{empty:?}");
+    let mut after = Vec::new();
+    for _ in 0..40 {
+        at += SECOND / 4;
+        after.extend(scene.poll(at));
+    }
+    assert!(
+        rounds_left(&after).is_empty() && !order(&after, npc).contains(&"OnGodmaShipEffect"),
+        "{after:?}"
+    );
+}
+
+#[test]
+fn a_reloading_gun_that_is_switched_off_while_it_waits_stops_at_once() {
+    let (mut scene, npc, now) = duel();
+    let mut out = scene.activate(npc, reloading_gun(1), now);
+    let mut at = now;
+    for _ in 0..40 {
+        at += SECOND / 4;
+        out.extend(scene.poll(at));
+    }
+    assert_eq!(rounds_left(&out), [0], "{out:?}");
+    let stopped = scene.deactivate(npc, NPC_SHIP, at);
+    assert!(
+        format!("{stopped:?}").contains("ModuleEnded") || format!("{stopped:?}").contains("Accepted"),
+        "{stopped:?}"
+    );
+    let mut later = Vec::new();
+    for _ in 0..40 {
+        at += SECOND / 4;
+        later.extend(scene.poll(at));
+    }
+    assert!(
+        rounds_left(&later).is_empty() && !order(&later, npc).contains(&"OnGodmaShipEffect"),
+        "{later:?}"
+    );
+}
+
+#[test]
+fn a_refresh_of_a_running_effect_takes_effect_at_the_start_of_its_next_cycle() {
+    use crate::modules::{Change, PendingUpdate};
+    let (mut scene, npc, now) = duel();
+    scene.activate(npc, laser_effect(spec().ship_id, laser()), now);
+    // the cycle is 2.5 s: a shot at its end, then the next cycle. One second in, the host refreshes it to 4 s and doubles its damage.
+    let at_refresh = now + SECOND;
+    let mut refreshed = laser();
+    refreshed.raw_damage = [0.0, 28.0, 28.0, 0.0];
+    let update = PendingUpdate {
+        duration_ms: 4_000.0,
+        capacitor_need: 0.0,
+        turret: Some(refreshed),
+        changes: vec![Change { item_id: NPC_SHIP, attribute_id: 51, value: 4_000.0 }],
+    };
+    assert!(scene.update_effect(npc, NPC_SHIP, update.clone()).is_empty());
+    let mut shots = Vec::new();
+    let mut told = Vec::new();
+    let mut at = now;
+    while at < now + 12 * SECOND {
+        at += SECOND / 20;
+        let out = scene.poll(at);
+        if out.iter().any(|o| matches!(o, Out::Notify { name: "OnDamageMessage", .. })) {
+            shots.push(at - now);
+        }
+        // the speed the client is told of the change: the refreshed duration (4000 ms) in a line of its own, at the cycle that takes it
+        if out.iter().any(|o| {
+            matches!(o, Out::Notify { name: "OnModuleAttributeChanges", .. })
+                && format!("{o:?}").contains("4000.0")
+        }) {
+            told.push(at - now);
+        }
+    }
+    // the first shot is at the end of the cycle that was on (2.5 s); the cycle that starts then lasts the refreshed 4 s, so the next shot is at 6.5 s
+    assert!(shots.len() >= 2, "{shots:?}");
+    assert!((shots[0] - 2_500 * SECOND / 1_000).abs() <= SECOND / 10, "{shots:?}");
+    assert!((shots[1] - 6_500 * SECOND / 1_000).abs() <= SECOND / 10, "{shots:?}");
+    assert!(!told.is_empty(), "the change is told: {told:?}");
+    assert!(
+        told.iter().all(|t| *t >= 2_500 * SECOND / 1_000 && *t < 2_500 * SECOND / 1_000 + SECOND / 10),
+        "the change is told at the cycle it takes effect: {told:?}"
+    );
+    assert!(at_refresh < now + 2_500 * SECOND / 1_000, "the refresh is sent before the cycle ends");
 }

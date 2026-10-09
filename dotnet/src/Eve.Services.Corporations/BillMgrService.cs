@@ -63,7 +63,9 @@ public sealed class BillMgrService(
                 IReadOnlyList<PyValue> bills = _callbacks.GetCorporationBillsReceivableAsync is { } readReceivable
                     ? await readReceivable(corporationId, call.Cancellation)
                     : (await officeStore.BillsForCreditorAsync(corporationId, stationOwnerOf, call.Cancellation))
-                        .Select(WireBill).ToArray();
+                        .Select(WireBill)
+                        .Concat((await corporations.CorporationBillsReceivableAsync(corporationId,call.Cancellation)).Select(WireBill))
+                        .ToArray();
                 return Py.List(bills.ToArray());
             }
 
@@ -79,14 +81,15 @@ public sealed class BillMgrService(
     }
 
     private async ValueTask<PyValue> GetCorporationBillsAsync(ServiceCall call)
-    {
-        var corporationId = SessionCorporationId(call.Session);
-        if (corporationId <= 0) return new PyList([]);
-        if (_callbacks.GetCorporationBillsAsync is { } readBills)
-            return Py.List((await readBills(corporationId, call.Cancellation)).ToArray());
-        var bills = await officeStore.BillsForCorporationAsync(corporationId, call.Cancellation);
-        return Py.List(bills.Select(WireBill).ToArray());
-    }
+      {
+          var corporationId = SessionCorporationId(call.Session);
+          if (corporationId <= 0) return new PyList([]);
+          if (_callbacks.GetCorporationBillsAsync is { } readBills)
+              return Py.List((await readBills(corporationId, call.Cancellation)).ToArray());
+          var bills = (await officeStore.BillsForCorporationAsync(corporationId,call.Cancellation)).Select(WireBill)
+              .Concat((await corporations.CorporationBillsAsync(corporationId,call.Cancellation)).Select(WireBill));
+          return Py.List(bills.ToArray());
+      }
 
     private async ValueTask<PyValue> GetAutomaticPaySettingsAsync(ServiceCall call)
     {
@@ -109,40 +112,43 @@ public sealed class BillMgrService(
     }
 
     private async ValueTask<PyValue> PayCorporationBillAsync(ServiceCall call)
-    {
-        var authority = await RequireAuthorityAsync(call, CorporationRoles.Accountant);
-        var billId = PositiveId(call.Arg(0));
-        var accountKey = NormalizeWalletKey(call.Kwarg("fromAccountKey") ?? call.Arg(1));
-        var paidAtMs = nowUnixMs();
-        var paid = await officeStore.PayBillAsync(
-            billId,
-            authority.Corporation.Id,
-            authority.Corporation.Id,
-            paidAtMs,
-            async (connection, transaction, bill) =>
-            {
-                var creditorId = stationOwnerOf(bill.StationId);
-                if (creditorId is not > 0) throw new CorporationError("BILL_NOT_PAYABLE");
-                await wallets.AdjustAsync(
-                    connection,
-                    transaction,
-                    new WalletAccount(authority.Corporation.Id, accountKey),
-                    -bill.AmountIsk,
-                    creditorId.Value,
-                    OfficeRentReferenceType,
-                    "Corporation office rental",
-                    paidAtMs,
-                    $"office-rent-bill:{bill.BillId}:payment",
-                    "office_rental_fee",
-                    call.Cancellation);
-            },
-            call.Cancellation);
-        if (!paid && _callbacks.PayCorporationBillAsync is { } payOtherBill)
-            paid = await payOtherBill(billId, authority.Corporation.Id,
-                call.Session.CharacterId.GetValueOrDefault(), accountKey, call.Cancellation);
-        if (!paid) throw new CorporationError("BILL_NOT_PAYABLE");
-        return PyNone.Instance;
-    }
+      {
+          var authority = await RequireAuthorityAsync(call, CorporationRoles.Accountant);
+          var billId = PositiveId(call.Arg(0));
+          var accountKey = NormalizeWalletKey(call.Kwarg("fromAccountKey") ?? call.Arg(1));
+          var paidAtMs = nowUnixMs();
+          var paid = await officeStore.PayBillAsync(
+              billId,
+              authority.Corporation.Id,
+              authority.Corporation.Id,
+              paidAtMs,
+              async (connection, transaction, bill) =>
+              {
+                  var creditorId = stationOwnerOf(bill.StationId);
+                  if (creditorId is not > 0) throw new CorporationError("BILL_NOT_PAYABLE");
+                  await wallets.AdjustAsync(
+                      connection,
+                      transaction,
+                      new WalletAccount(authority.Corporation.Id, accountKey),
+                      -bill.AmountIsk,
+                      creditorId.Value,
+                      OfficeRentReferenceType,
+                      "Corporation office rental",
+                      paidAtMs,
+                      $"office-rent-bill:{bill.BillId}:payment",
+                      "office_rental_fee",
+                      call.Cancellation);
+              },
+              call.Cancellation);
+          if (!paid)
+              paid = await corporations.PayCorporationBillAsync(billId,authority.Corporation.Id,
+                  call.Session.CharacterId.GetValueOrDefault(),accountKey,paidAtMs,call.Cancellation);
+          if (!paid && _callbacks.PayCorporationBillAsync is { } payOtherBill)
+              paid = await payOtherBill(billId, authority.Corporation.Id,
+                  call.Session.CharacterId.GetValueOrDefault(), accountKey, call.Cancellation);
+          if (!paid) throw new CorporationError("BILL_NOT_PAYABLE");
+          return PyNone.Instance;
+      }
 
     private async ValueTask<IReadOnlyList<long>> AutomaticPayOwnerIdsAsync(
         CorporationAuthority authority, CancellationToken cancellationToken)
@@ -187,6 +193,20 @@ public sealed class BillMgrService(
         ("paidByOwnerID", Py.Number(bill.PaidByOwnerId ?? 0)),
         ("externalID", new PyInt(-1)),
         ("externalID2", new PyInt(-1)));
+
+      private static PyValue WireBill(CorporationBill bill) => Py.KeyVal(
+          ("billID",Py.Number(bill.BillId)),
+          ("billTypeID",new PyInt(bill.BillTypeId)),
+          ("amount",Py.Number((double)bill.AmountIsk)),
+          ("interest",Py.Number((double)bill.Interest)),
+          ("debtorID",Py.Number(bill.DebtorId)),
+          ("creditorID",Py.Number(bill.CreditorId)),
+          ("dueDateTime",new PyLong(bill.DueFiletime)),
+          ("paid",new PyInt(bill.Paid ? 1 : 0)),
+          ("paidDateTime",bill.PaidFiletime is { } paidAt ? new PyLong(paidAt) : PyNone.Instance),
+          ("paidByOwnerID",Py.Number(bill.PaidByOwnerId ?? 0)),
+          ("externalID",Py.Number(bill.ExternalId)),
+          ("externalID2",Py.Number(bill.ExternalId2)));
 
     private static PyValue WireSettings(CorporationBillAutomaticPaySettings settings) => new PyDict(
     [

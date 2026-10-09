@@ -272,6 +272,27 @@ public class AggressionTests
 
 
     [Fact]
+    public void Remote_assistance_is_held_back_by_the_safety_colour_the_pilot_has_set()
+    {
+        // green stops a suspect or criminal action, yellow a criminal one and red neither (EVE University wiki, Remote assistance)
+        var suspect = new PolicyFacts(AttackerIsPlayer: true, TargetIsPlayerProperty: true, TargetFlag: Flag.Suspect);
+        var criminal = suspect with { TargetFlag = Flag.Criminal };
+
+        Assert.False(Decide(SecurityClass.LowSec, suspect, SafetyLevel.Full).Allowed);
+        Assert.Equal(PolicyBlockReason.Safety, Decide(SecurityClass.LowSec, suspect, SafetyLevel.Full).BlockReason);
+        Assert.True(Decide(SecurityClass.LowSec, suspect, SafetyLevel.Partial).Allowed);
+        Assert.True(Decide(SecurityClass.LowSec, suspect, SafetyLevel.None).Allowed);
+        Assert.False(Decide(SecurityClass.LowSec, criminal, SafetyLevel.Partial).Allowed);
+        Assert.Equal(PolicyBlockReason.Safety, Decide(SecurityClass.LowSec, criminal, SafetyLevel.Partial).BlockReason);
+        Assert.True(Decide(SecurityClass.LowSec, criminal, SafetyLevel.None).Allowed);
+        Assert.False(Decide(SecurityClass.HighSec, criminal, SafetyLevel.Partial).Allowed);
+        Assert.True(Decide(SecurityClass.HighSec, criminal, SafetyLevel.None).Allowed);
+    }
+
+    private static PolicyDecision Decide(SecurityClass where, PolicyFacts facts, int safetyLevel) =>
+        PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, where, facts, safetyLevel));
+
+    [Fact]
     public void Remote_assistance_inherits_combat_timers_and_applies_the_shared_policy_result()
     {
         var recipient = CombatState.Idle with

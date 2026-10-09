@@ -206,7 +206,8 @@ public class SimCodecTests
 
     private static SimTurret TurretOf(JsonNode t) => new(
         (int)t["weaponTypeId"]!, (string)t["fx"]!, VectorOf(t["rawDamage"]!), (double)t["optimalRange"]!, (double)t["falloff"]!, (double)t["trackingSpeed"]!,
-        (double)t["signatureResolution"]!, ChargeOf(t["charge"]), MissileOf(t["missile"]), SpoolOf(t["spool"]), AoeOf(t["aoe"]), ArcOf(t["arc"]));
+        (double)t["signatureResolution"]!, ChargeOf(t["charge"]), MissileOf(t["missile"]), SpoolOf(t["spool"]), AoeOf(t["aoe"]), ArcOf(t["arc"]),
+        (bool)t["requiresGunnery"]!);
 
     private static SimSpool? SpoolOf(JsonNode? s) => s is null ? null : new SimSpool((double)s["perCycle"]!, (double)s["max"]!);
 
@@ -225,7 +226,8 @@ public class SimCodecTests
 
     private static SimNpcWeapon WeaponOf(JsonNode w) => new(
         Wide(w, "moduleId"), (int)w["effectId"]!, (double)w["cycleMs"]!, (double)w["capacitorNeed"]!, (int)w["weaponTypeId"]!, (string)w["fx"]!,
-        VectorOf(w["rawDamage"]!), (double)w["optimalRange"]!, (double)w["falloff"]!, (double)w["trackingSpeed"]!, (double)w["signatureResolution"]!, ChargeOf(w["charge"]), MissileOf(w["missile"]));
+        VectorOf(w["rawDamage"]!), (double)w["optimalRange"]!, (double)w["falloff"]!, (double)w["trackingSpeed"]!, (double)w["signatureResolution"]!, ChargeOf(w["charge"]), MissileOf(w["missile"]),
+        (bool)w["requiresGunnery"]!);
 
     private static SimNpcIdentity IdentityOf(JsonNode i) => new(
         (long)i["hostileResponseThreshold"]!, (long)i["friendlyResponseThreshold"]!, (double)i["aggressionRange"]!,

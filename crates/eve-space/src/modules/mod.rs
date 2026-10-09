@@ -486,13 +486,13 @@ pub enum Action {
         moved: Vec<i64>,
         held: Vec<i64>,
     },
-    /// A kamikaze squadron's detonation (tag 23, protocol 35): it closes in on its locked target to `range` metres and, once there, hits it with `damage`
+    /// A kamikaze squadron's detonation (tag 23, protocol 36): it closes in on its locked target to `range` metres and, once there, hits it with `damage`
     /// (the four kinds) and is destroyed. Its cycle ends without a detonation when the window runs out first.
     Kamikaze {
         damage: crate::health::Damage,
         range: f64,
     },
-    /// A fighter's missiles (tag 24, protocol 35): the locked target takes `damage` once, scaled by the application factor of `blast` for its signature and
+    /// A fighter's missiles (tag 24, protocol 36): the locked target takes `damage` once, scaled by the application factor of `blast` for its signature and
     /// speed, when it is within `reach` metres (the range gate of the reference's `executeFighterOffensiveCycle`).
     Missile {
         damage: crate::health::Damage,

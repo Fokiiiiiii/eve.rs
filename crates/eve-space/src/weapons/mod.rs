@@ -65,6 +65,9 @@ pub struct Turret {
     pub aoe: Option<Aoe>,
     /// The chain a shot links from its target to other ships (a vorton projector's arc); none for the others.
     pub arc: Option<Arc>,
+    /// Whether the weapon requires Gunnery (its SDE `requiredSkill` list names it): a tracking disruptor or computer reaches only such a weapon
+    /// (the client's `SKILL_MODIFIER_CHANGES_FOR_LOCATION` is keyed on `typeGunnery`); a vorton projector, which requires its own skill, is not reached.
+    pub requires_gunnery: bool,
 }
 
 /// The explosion of a shot that does not roll to hit (a vorton projector): the cloud's radius and velocity, and the damage reduction factor and its

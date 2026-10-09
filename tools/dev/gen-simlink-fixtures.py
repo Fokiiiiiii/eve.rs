@@ -94,7 +94,9 @@ def turret(t):
     body += bytes([1]) + struct.pack("<4d", a["explosionRadius"], a["explosionVelocity"], a["damageReductionFactor"],
                                      a["damageReductionSensitivity"]) if a else bytes([0])
     c = t.get("arc")
-    return body + (bytes([1]) + struct.pack("<di", c["range"], c["targets"]) if c else bytes([0]))
+    body += bytes([1]) + struct.pack("<di", c["range"], c["targets"]) if c else bytes([0])
+    # whether the weapon requires Gunnery: a tracking disruptor or computer reaches only such a weapon (FP-10)
+    return body + bytes([1 if t.get("requiresGunnery", False) else 0])
 
 
 LAYERS = {"shield": 0, "armor": 1, "structure": 2}
@@ -161,10 +163,10 @@ def action(a):
     # the SimAction tag 14 (ADR 0013 epoch 26): a titan doomsday, one hit on the locked target after a delay, the ship held for its windows
     if kind == "doomsday":
         return bytes([14]) + struct.pack("<d", a["delayMs"]) + struct.pack("<4d", *a["damage"]) + struct.pack("<2d", a["immobileMs"], a["noJumpMs"])
-    # the SimAction tag 23 (protocol 35): a kamikaze squadron's detonation, its damage (four kinds) and the range it detonates at (metres)
+    # the SimAction tag 23 (protocol 36): a kamikaze squadron's detonation, its damage (four kinds) and the range it detonates at (metres)
     if kind == "kamikaze":
         return bytes([23]) + struct.pack("<4d", *a["damage"]) + struct.pack("<d", a["rangeMeters"])
-    # the SimAction tag 24 (protocol 35): a fighter's missiles: the damage (four kinds), the reach (metres) and the explosion (radius, velocity, reduction factor,
+    # the SimAction tag 24 (protocol 36): a fighter's missiles: the damage (four kinds), the reach (metres) and the explosion (radius, velocity, reduction factor,
     # reduction sensitivity), scaled by the application factor for the target
     if kind == "missile":
         return bytes([24]) + struct.pack("<4d", *a["damage"]) + struct.pack("<5d", a["reachMeters"], a["explosionRadius"], a["explosionVelocity"],
@@ -242,7 +244,7 @@ def weapon(w):
 
 
 # what the host sends for a drone with no weapon: no module, no turret
-EMPTY_WEAPON = {"moduleId": 0, "effectId": 0, "cycleMs": 0.0, "capacitorNeed": 0.0, "weaponTypeId": 0, "fx": "",
+EMPTY_WEAPON = {"moduleId": 0, "effectId": 0, "cycleMs": 0.0, "capacitorNeed": 0.0, "weaponTypeId": 0, "fx": "", "requiresGunnery": False,
                 "rawDamage": [0.0, 0.0, 0.0, 0.0], "optimalRange": 0.0, "falloff": 0.0, "trackingSpeed": 0.0,
                 "signatureResolution": 0.0}
 
@@ -421,8 +423,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 35},
-    {"name": "hello ack", "kind": "HelloAck", "version": 35, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 36},
+    {"name": "hello ack", "kind": "HelloAck", "version": 36, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -512,7 +514,7 @@ valid = [
     {"name": "activate a gun at a rat", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002665", "moduleType": 3638, "effectId": 10, "fx": "effects.Laser",
                 "durationMs": 1692.8, "capacitorNeed": 0.9, "repeat": 1000, "targetId": "980050000105",
-                "turret": {"weaponTypeId": 3638, "fx": "effects.Laser", "rawDamage": [0.0, 2.5, 3.75, 0.0],
+                "turret": {"weaponTypeId": 3638, "requiresGunnery": True, "fx": "effects.Laser", "rawDamage": [0.0, 2.5, 3.75, 0.0],
                            "optimalRange": 5280.0, "falloff": 2000.0, "trackingSpeed": 0.5, "signatureResolution": 40000.0},
                 "onChanges": [{"itemId": "9988400002665", "attributeId": 6, "value": 0.9},
                               {"itemId": "9988400002665", "attributeId": 51, "value": 1692.8},
@@ -671,7 +673,7 @@ valid = [
     {"name": "activate a railgun that fires antimatter", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002719", "moduleType": 10678, "effectId": 34, "fx": "effects.ProjectileFired",
                 "durationMs": 2750.8, "capacitorNeed": 1.3545, "repeat": 1000, "targetId": "980050000108",
-                "turret": {"weaponTypeId": 10678, "fx": "effects.ProjectileFired", "rawDamage": [0.0, 9.05, 12.67, 0.0],
+                "turret": {"weaponTypeId": 10678, "requiresGunnery": True, "fx": "effects.ProjectileFired", "rawDamage": [0.0, 9.05, 12.67, 0.0],
                            "optimalRange": 5940.0, "falloff": 5250.0, "trackingSpeed": 0.098, "signatureResolution": 40000.0,
                            "charge": {"typeId": 222, "flag": 28, "rounds": 80, "perCycle": 1}},
                 "onChanges": [{"itemId": "9988400002719", "attributeId": 6, "value": 1.3545},
@@ -683,7 +685,7 @@ valid = [
     {"name": "activate a rocket launcher that fires scourge rockets", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400003564", "moduleType": 10629, "effectId": 101, "fx": "effects.MissileDeployment",
                 "durationMs": 4900.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "980050000111",
-                "turret": {"weaponTypeId": 10629, "fx": "effects.MissileDeployment", "rawDamage": [0.0, 0.0, 38.115, 0.0],
+                "turret": {"weaponTypeId": 10629, "requiresGunnery": False, "fx": "effects.MissileDeployment", "rawDamage": [0.0, 0.0, 38.115, 0.0],
                            "optimalRange": 4500.0, "falloff": 0.0, "trackingSpeed": 0.0, "signatureResolution": 40000.0,
                            "charge": {"typeId": 266, "flag": 28, "rounds": 3, "perCycle": 1},
                            "missile": {"chargeTypeId": 266, "groupId": 387, "name": "Scourge Rocket", "radius": 300.0, "mass": 100.0,
@@ -695,7 +697,7 @@ valid = [
     {"name": "activate a precursor weapon that builds its damage up", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002720", "moduleType": 47272, "effectId": 6995, "fx": "effects.Laser",
                 "durationMs": 3500.0, "capacitorNeed": 4.5, "repeat": 1000, "targetId": "980050000108",
-                "turret": {"weaponTypeId": 47272, "fx": "effects.Laser", "rawDamage": [0.0, 0.0, 2.5, 0.0],
+                "turret": {"weaponTypeId": 47272, "requiresGunnery": True, "fx": "effects.Laser", "rawDamage": [0.0, 0.0, 2.5, 0.0],
                            "optimalRange": 6000.0, "falloff": 0.0, "trackingSpeed": 410.0, "signatureResolution": 40000.0,
                            "spool": {"perCycle": 0.07, "max": 2.125}},
                 "onChanges": [{"itemId": "9988400002720", "attributeId": 6, "value": 4.5},
@@ -708,7 +710,7 @@ valid = [
      "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002721", "moduleType": 54739, "effectId": 8037, "fx": "effects.AttackMode",
                 "durationMs": 6000.0, "capacitorNeed": 7.0, "repeat": 1000, "targetId": "980050000108",
-                "turret": {"weaponTypeId": 54739, "fx": "effects.AttackMode", "rawDamage": [116.0, 0.0, 17.0, 0.0],
+                "turret": {"weaponTypeId": 54739, "requiresGunnery": False, "fx": "effects.AttackMode", "rawDamage": [116.0, 0.0, 17.0, 0.0],
                            "optimalRange": 22464.0, "falloff": 0.0, "trackingSpeed": 0.0, "signatureResolution": 40000.0,
                            "charge": {"typeId": 54769, "flag": 11, "rounds": 1000, "perCycle": 1},
                            "aoe": {"explosionRadius": 43.0, "explosionVelocity": 190.0, "damageReductionFactor": 0.4,
@@ -769,7 +771,7 @@ valid = [
      "anchorShipId": "0", "position": [1000500.0, 100.0, 100.0], "velocity": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0], "behavior": "belt rat",
      "identity": {"hostileResponseThreshold": -11, "friendlyResponseThreshold": 11, "aggressionRange": 15000.0,
                   "weapons": [{"moduleId": "980050000077", "effectId": 10, "cycleMs": 4000.0, "capacitorNeed": 0.0,
-                               "weaponTypeId": 5678, "fx": "effects.Laser", "rawDamage": [0.0, 0.0, 6.0, 4.0],
+                               "weaponTypeId": 5678, "fx": "effects.Laser", "requiresGunnery": True, "rawDamage": [0.0, 0.0, 6.0, 4.0],
                                "optimalRange": 20000.0, "falloff": 10000.0, "trackingSpeed": 0.4, "signatureResolution": 40.0}],
                   "wreck": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117}}},
     {"name": "spawn of a bare NPC: no tree, no weapons, no wreck", "kind": "Spawn", "requestId": "8", "solarSystemId": 30000142,
@@ -785,7 +787,7 @@ valid = [
     {"name": "spawn refused", "kind": "SpawnReply", "requestId": "8", "ok": False, "reason": "NO_SCENE 30000142"},
     {"name": "launch of a drone", "kind": "LaunchDrone", "requestId": "11", "sessionId": "1790646377000015",
      "ship": dict(BARE, shipId="9988400003716", characterId="0", ownerId="140000342", categoryId=18, groupId=100, typeId=2454, name="Hobgoblin I"),
-     "weapon": {"moduleId": "9988400003716", "effectId": 10, "cycleMs": 4000.0, "capacitorNeed": 0.0, "weaponTypeId": 2454, "fx": "effects.Laser",
+     "weapon": {"moduleId": "9988400003716", "effectId": 10, "cycleMs": 4000.0, "capacitorNeed": 0.0, "weaponTypeId": 2454, "fx": "effects.Laser", "requiresGunnery": True,
                 "rawDamage": [0.0, 32.0, 0.0, 0.0], "optimalRange": 2100.0, "falloff": 2000.0, "trackingSpeed": 1.815, "signatureResolution": 25.0},
      "graphicId": 1099, "orbitDistance": 700.0, "attackRange": 2800.0, "cruiseFraction": 0.2357142857142857},
     {"name": "launch of a web drone", "kind": "LaunchDrone", "requestId": "12", "sessionId": "1790646377000015",

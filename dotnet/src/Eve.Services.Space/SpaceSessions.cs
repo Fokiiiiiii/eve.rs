@@ -64,6 +64,9 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
         /// </summary>
         public ConcurrentDictionary<long, ItemState> ActiveModules { get; } = new();
 
+    /// <summary>The modules whose overheat the pilot asked for (accepted by the simulation as the request, applied at its next cycle): dogma sees them Overloaded.</summary>
+    public ConcurrentDictionary<long, byte> Overheated { get; } = new();
+
         /// <summary>Marks the protection ended; false when it had ended already (each ending is told once).</summary>
         public bool End()
         {

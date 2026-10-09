@@ -221,7 +221,9 @@ public sealed record SimChange(long ItemId, int AttributeId, double Value);
 /// </summary>
 public sealed record SimTurret(
     int WeaponTypeId, string Fx, IReadOnlyList<double> RawDamage, double OptimalRange, double Falloff, double TrackingSpeed, double SignatureResolution,
-    SimTurretCharge? Charge = null, SimMissile? Missile = null, SimSpool? Spool = null, SimAoe? Aoe = null, SimArc? Arc = null);
+    SimTurretCharge? Charge = null, SimMissile? Missile = null, SimSpool? Spool = null, SimAoe? Aoe = null, SimArc? Arc = null,
+    /// <summary>The weapon requires Gunnery: a tracking disruptor or computer on the shooter reaches it (a vorton projector does not require it).</summary>
+    bool RequiresGunnery = false);
 
 /// <summary>
 /// The damage ramp of a weapon that builds up its damage on the target it keeps shooting at (a precursor weapon: <c>damageMultiplierBonusPerCycle</c> and
@@ -458,7 +460,7 @@ public abstract record SimAction
     }
 
     /// <summary>
-    /// A kamikaze squadron's detonation (tag 23, protocol 35): the squadron closes in on its locked target to <paramref name="RangeMeters"/> and, once there, the
+    /// A kamikaze squadron's detonation (tag 23, protocol 36): the squadron closes in on its locked target to <paramref name="RangeMeters"/> and, once there, the
     /// target takes <paramref name="Damage"/> (the four kinds) and the squadron is destroyed.
     /// </summary>
     public sealed record Kamikaze(IReadOnlyList<double> Damage, double RangeMeters) : SimAction
@@ -471,7 +473,7 @@ public abstract record SimAction
     }
 
     /// <summary>
-    /// A fighter's missiles (tag 24, protocol 35): the locked target takes <paramref name="Damage"/> once, scaled by the application factor of the explosion
+    /// A fighter's missiles (tag 24, protocol 36): the locked target takes <paramref name="Damage"/> once, scaled by the application factor of the explosion
     /// (<paramref name="ExplosionRadius"/>, <paramref name="ExplosionVelocity"/>, the reduction factor and its sensitivity) for the target's signature and
     /// speed, when it is within <paramref name="ReachMeters"/>.
     /// </summary>
@@ -627,7 +629,7 @@ public sealed record SimDestroyed(
 /// <summary>A weapon of an NPC: an effect of the NPC's own ship, so the module is the ship. One that flies a <see cref="SimMissile"/> is a launcher (the NPC's own: no rounds to spend).</summary>
 public sealed record SimNpcWeapon(
     long ModuleId, int EffectId, double CycleMs, double CapacitorNeed, int WeaponTypeId, string Fx, IReadOnlyList<double> RawDamage, double OptimalRange, double Falloff,
-    double TrackingSpeed, double SignatureResolution, SimTurretCharge? Charge = null, SimMissile? Missile = null);
+    double TrackingSpeed, double SignatureResolution, SimTurretCharge? Charge = null, SimMissile? Missile = null, bool RequiresGunnery = false);
 
 /// <summary>What a ship leaves when it is destroyed.</summary>
 public sealed record SimWreckKind(int TypeId, string Name, int GraphicId);

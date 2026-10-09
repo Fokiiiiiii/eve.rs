@@ -812,6 +812,19 @@ impl Scene {
         out
     }
 
+    /// A stargate jump stops every module the ship runs, as EVE.js `deactivateActiveModulesForSpaceTransition` does (reason `stargate-jump`): what they
+    /// held (a reactive armor hardener's profile included) goes with them, and a later start begins again.
+    pub(crate) fn stop_all_modules(&mut self, session: SessionId, now: i64) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+        let stopped = std::mem::take(&mut pilot.modules.running);
+        let mut out = Vec::new();
+        for run in stopped {
+            out.extend(self.effect_ended(session, run, owner, ship_id, now, Ending::Forced));
+        }
+        out
+    }
+
     pub(crate) fn stop_weapons_at(&mut self, session: SessionId, targets: &[i64], now: i64) -> Vec<Out> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);

@@ -411,6 +411,7 @@ impl Message {
                                 spool: None,
                                 aoe: None,
                                 arc: None,
+                                requires_gunnery: false,
                             },
                         },
                     ),

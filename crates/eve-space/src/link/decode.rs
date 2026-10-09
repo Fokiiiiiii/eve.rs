@@ -119,6 +119,11 @@ pub(super) fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
         }
         _ => return Err(DecodeError::BadValue("arc")),
     };
+    let requires_gunnery = match reader.u8()? {
+        0 => false,
+        1 => true,
+        _ => return Err(DecodeError::BadValue("requires_gunnery")),
+    };
     Ok(Turret {
         weapon_type_id,
         fx,
@@ -132,6 +137,7 @@ pub(super) fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
         spool,
         aoe,
         arc,
+        requires_gunnery,
     })
 }
 

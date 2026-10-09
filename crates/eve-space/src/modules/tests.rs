@@ -1836,6 +1836,56 @@ fn an_ecm_burst_breaks_nearby_locks_at_cycle_start_but_does_not_leave_a_jam() {
     assert!(!scene.pilots[&B].incoming.jammed());
 }
 
+fn ecm_burst_of(strength: f64) -> Effect {
+    Effect {
+        burns_fuel: false,
+        fx: "effects.EcmBurstJammer".to_string(),
+        action: Some(Action::EcmBurst { range: 3_000.0, strength: [strength; 4] }),
+        ..smartbomb(0.0, [0.0; 4], true)
+    }
+}
+
+#[test]
+fn an_ecm_burst_tells_the_host_each_ship_it_reached_and_whether_its_roll_jammed_it() {
+    let (mut scene, t) = reaching(2_000.0);
+    let (burster, reached) = (scene.pilots[&A].ship.spec.ship_id, scene.pilots[&B].ship.spec.ship_id);
+    // B's sensors are under the burst: the roll is a jam every time
+    scene.pilots.get_mut(&B).unwrap().ship.spec.sensor_strength = [10.0; 4];
+    scene.pilots.get_mut(&B).unwrap().ship.spec.ecm_resistance = 1.0;
+    let out = scene.activate(A, ecm_burst_of(1_000.0), t);
+    assert!(
+        out.iter().any(|o| matches!(o, Out::EcmBurst { session: A, ship_id, reached: r } if *ship_id == burster && r == &[(reached, true)])),
+        "{:?}",
+        labels(&out)
+    );
+}
+
+#[test]
+fn an_ecm_burst_reports_a_ship_it_reached_that_resists_the_jam_as_not_jammed() {
+    let (mut scene, t) = reaching(2_000.0);
+    let (burster, reached) = (scene.pilots[&A].ship.spec.ship_id, scene.pilots[&B].ship.spec.ship_id);
+    // an ECM-immune hull is reached (it is told of the burst) but its roll cannot land
+    scene.pilots.get_mut(&B).unwrap().ship.spec.ecm_resistance = 0.0;
+    let out = scene.activate(A, ecm_burst_of(1_000.0), t);
+    assert!(
+        out.iter().any(|o| matches!(o, Out::EcmBurst { session: A, ship_id, reached: r } if *ship_id == burster && r == &[(reached, false)])),
+        "{:?}",
+        labels(&out)
+    );
+    assert!(!scene.pilots[&B].incoming.jammed());
+}
+
+#[test]
+fn a_cloaked_ship_is_not_reached_by_an_ecm_burst() {
+    let (mut scene, t) = reaching(2_000.0);
+    scene.pilots.get_mut(&B).unwrap().ship.spec.sensor_strength = [10.0; 4];
+    scene.pilots.get_mut(&B).unwrap().ship.spec.ecm_resistance = 1.0;
+    scene.pilots.get_mut(&B).unwrap().cloak = crate::visibility::CloakState::Cloaked;
+    let out = scene.activate(A, ecm_burst_of(1_000.0), t);
+    assert!(!out.iter().any(|o| matches!(o, Out::EcmBurst { .. })), "{:?}", labels(&out));
+    assert!(!scene.pilots[&B].incoming.jammed());
+}
+
 #[test]
 fn a_smartbomb_the_safety_forbids_does_not_start_with_a_pilot_in_range_and_stops_when_one_comes_in() {
     let (mut scene, t) = reaching(2_000.0);

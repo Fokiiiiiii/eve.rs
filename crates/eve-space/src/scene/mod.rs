@@ -222,6 +222,8 @@ pub enum Out {
     FighterResults { session: SessionId, command: u8, results: Vec<(i64, Option<&'static str>)> },
     /// A squadron out in space lost members: its size now (the squadron is never told a size of zero, its destruction is told instead).
     FighterSize { session: SessionId, fighter_id: i64, size: i32 },
+    /// An ECM burst reached the ships about it (not cloaked ones): the ship that runs it, and each ship reached with whether its roll jammed it.
+    EcmBurst { session: SessionId, ship_id: i64, reached: Vec<(i64, bool)> },
     /// The answer to an order to drones: for each drone `None` when it took the order, the reason when it did not.
     DroneResults { session: SessionId, command: u8, results: Vec<(i64, Option<&'static str>)> },
     /// A completed drone work cycle waiting for authoritative inventory/cargo settlement by the host.
@@ -316,6 +318,7 @@ impl Out {
             | Out::FighterReleased { session, .. }
             | Out::FighterResults { session, .. }
             | Out::FighterSize { session, .. }
+            | Out::EcmBurst { session, .. }
             | Out::TargetRefused { session, .. }
             | Out::Position { session, .. } => *session,
         }

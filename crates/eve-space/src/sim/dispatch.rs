@@ -136,6 +136,9 @@ impl Sim {
                 fighter_id,
                 position: [position.x, position.y, position.z],
             },
+            Out::EcmBurst { session, ship_id, reached } => {
+                Message::EcmBurst { session_id: session, ship_id, reached }
+            }
             Out::FighterSize { session, fighter_id, size } => {
                 Message::FighterSize { session_id: session, fighter_id, size }
             }

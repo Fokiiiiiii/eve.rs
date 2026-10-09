@@ -1030,6 +1030,17 @@ private static void WriteAction(Writer w, SimAction action)
                     w.Text(result.Reason);
                 }
                 break;
+            case SimEcmBurst m:
+                w.U8(Kind.EcmBurst);
+                w.U64(m.SessionId);
+                w.I64(m.ShipId);
+                w.U32((uint)m.Reached.Count);
+                foreach (var reach in m.Reached)
+                {
+                    w.I64(reach.ShipId);
+                    w.U8(reach.Jammed ? (byte)1 : (byte)0);
+                }
+                break;
             case SimFighterLanded m:
                 w.U8(Kind.FighterLanded);
                 w.U64(m.SessionId);

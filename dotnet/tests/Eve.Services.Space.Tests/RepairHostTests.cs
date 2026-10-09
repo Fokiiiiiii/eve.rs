@@ -336,6 +336,8 @@ public class ProjectedHostTests
         var (rig, session, character, module) = await ReadyAsync(BurstJammerI, MidSlot, shipTypeId: Raven);
         await using var _ = rig;
         Assert.Equal(MidSlot, (await rig.Items.GetAsync(module))!.Flag);
+        // the rig's system is high security: an ECM burst starts there only with the safety at none (EcmBurstHostTests covers the refusal)
+        rig.Space.SafetyLevelOf = (_, _) => Task.FromResult(Eve.Crimewatch.SafetyLevel.None);
         Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, module, "ecmBurstJammer", 0, 1000, CancellationToken.None));
         var effect = Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect;
         var burst = Assert.IsType<SimAction.EcmBurst>(effect.Action);

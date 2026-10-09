@@ -55,7 +55,7 @@ public sealed class DynamicItemRpcServiceTests
             var bus = new EventBus(source, new DurableScheduler(source, () => ClockMs, new SchedulerOptions { Concurrency = 1 }, schemas[2]), null, schemas[1]);
             var mutations = new ItemMutationService(source, items, items.Mutations, catalog, dogma, new BusItemMutationEvents(bus), () => ClockMs,
                 attribute => Rolls[attribute]);
-            var service = new DynamicItemRpcService(items, mutations, dogma, new ItemTypeCatalog(sde));
+            var service = new DynamicItemRpcService(items, mutations, dogma, new ItemTypeCatalog(sde), null);
             var packets = new Sink();
             var session = new ClientSession(packets);
             session.Set("charid", new PyInt(Character));

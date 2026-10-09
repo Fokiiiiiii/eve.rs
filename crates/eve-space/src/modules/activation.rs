@@ -673,6 +673,8 @@ impl Scene {
     }
 
     /// What the running effects and the capacitors have come to by `now`: cycles that end (the next begins, or the effect stops), and the charge told.
+    /// At most `MAX_MOMENTS_PER_SETTLE` moments are taken for a ship in one settle, and a moment that comes back at the same tick with nothing done is a stall
+    /// (the progress guarantee, M-1): the effect it belongs to is ended, so the loop always moves on.
     pub(crate) fn settle_modules(&mut self, now: i64) -> Vec<Out> {
         let sessions: Vec<SessionId> = self
             .in_entry_order()
@@ -688,11 +690,69 @@ impl Scene {
             // what no module renewed lapses
             out.extend(self.expire_incoming(session, now));
             // a cycle that ends is followed by the charge told at the moments in between, in the order they fall
-            while let Some((at, kind)) = self.next_module_moment(session, now) {
+            let mut taken = 0;
+            let mut last: Option<(i64, Moment, i64)> = None;
+            while taken < MAX_MOMENTS_PER_SETTLE
+                && let Some((at, kind)) = self.next_module_moment(session, now)
+            {
+                taken += 1;
+                // the module is part of the key: when an effect ends, the one after it takes its index and may be due at the same tick
+                let key = (at, kind, self.moment_module(session, kind));
+                if last == Some(key) {
+                    match self.stalled(session, kind, at) {
+                        Some(stalled) => out.extend(stalled),
+                        None => break,
+                    }
+                    last = None;
+                    continue;
+                }
+                last = Some(key);
                 out.extend(self.module_moment(session, at, kind));
             }
         }
         out
+    }
+
+    /// The module a moment belongs to (-1 when it has none, or its index no longer names one).
+    fn moment_module(&self, session: SessionId, kind: Moment) -> i64 {
+        let Some(pilot) = self.pilots.get(&session) else { return -1 };
+        match kind {
+            Moment::CycleEnd(index)
+            | Moment::WorkResend(index)
+            | Moment::WorkStop(index)
+            | Moment::StrikePulse(index)
+            | Moment::DoomsdayHit(index) => {
+                pilot.modules.running.get(index).map_or(-1, |run| run.effect.module_id)
+            }
+            Moment::StartResend(index) => {
+                pilot.modules.pending_starts.get(index).map_or(-1, |start| start.effect.module_id)
+            }
+            Moment::Charge | Moment::Shield => -1,
+        }
+    }
+
+    /// A moment that came back unchanged (M-1): the effect it belongs to is ended (`Ending::Forced`) or the stalled pending start is dropped. `None` when the
+    /// moment has no effect to end (the charge and the shield are told as their ticks come), so the settle is left there.
+    pub(super) fn stalled(&mut self, session: SessionId, kind: Moment, at: i64) -> Option<Vec<Out>> {
+        let module_id = match kind {
+            Moment::CycleEnd(index)
+            | Moment::WorkResend(index)
+            | Moment::WorkStop(index)
+            | Moment::StrikePulse(index)
+            | Moment::DoomsdayHit(index) => {
+                self.pilots.get(&session)?.modules.running.get(index)?.effect.module_id
+            }
+            Moment::StartResend(index) => {
+                let pilot = self.pilots.get_mut(&session)?;
+                if index >= pilot.modules.pending_starts.len() {
+                    return None;
+                }
+                pilot.modules.pending_starts.remove(index);
+                return Some(Vec::new());
+            }
+            Moment::Charge | Moment::Shield => return None,
+        };
+        Some(self.offline_module(session, module_id, at))
     }
 
     /// The next thing due for a ship's modules by `now`: a cycle's end or a charge to tell.

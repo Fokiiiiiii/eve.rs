@@ -40,6 +40,9 @@ const CYCLE: i32 = 51;
 /// The capacitor's charge is told every half second, worked out at the tick a tenth of a second on from the moment (the reference's ticks).
 pub(crate) const SAMPLE_EVERY: i64 = TICKS_PER_SECOND / 2;
 
+/// The most module moments one settle takes for a ship (M-1). What is still due is taken by the next settle, so one ship cannot hold the sim thread.
+pub(crate) const MAX_MOMENTS_PER_SETTLE: usize = 10_000;
+
 pub(crate) const TICK: i64 = TICKS_PER_SECOND / 10;
 
 /// The dogma effect of a microwarpdrive (`moduleBonusMicrowarpdrive`): what a warp scrambler that blocks one keeps from running.
@@ -789,7 +792,7 @@ pub(crate) enum Jam {
     End,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Moment {
     CycleEnd(usize),
     Charge,

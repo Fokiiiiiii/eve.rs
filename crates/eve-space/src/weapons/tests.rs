@@ -1367,7 +1367,7 @@ fn strike_effect(module_id: i64, strike: crate::strike::Strike) -> Effect {
 /// Runs `body` on its own thread and fails the test when it has not returned within `seconds`. A simulation whose moment never clears (a
 /// module moment that is due again at once) spins in the caller's loop forever; here it is a failure in `seconds`, and a panic in `body` is
 /// re-raised with its message.
-fn finishes_within(seconds: u64, body: impl FnOnce() + Send + 'static) {
+pub(crate) fn finishes_within(seconds: u64, body: impl FnOnce() + Send + 'static) {
     use std::sync::mpsc::RecvTimeoutError;
     let (done, finished) = std::sync::mpsc::channel::<()>();
     let worker = std::thread::spawn(move || {

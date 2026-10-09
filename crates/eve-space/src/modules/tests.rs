@@ -4,6 +4,7 @@ use super::*;
 use crate::scene::tests::{NOON, STATION, spec, system};
 use crate::scene::{Command, Out};
 use crate::ship::ShipSpec;
+use crate::weapons::tests::finishes_within;
 
 const A: SessionId = 7;
 const B: SessionId = 8;
@@ -3044,4 +3045,53 @@ fn a_deactivation_while_the_fuel_of_the_first_cycle_is_asked_cancels_the_start()
             .is_empty()
     );
     assert!(scene.pilots[&A].modules.running.is_empty());
+}
+
+#[test]
+fn a_settle_takes_a_bounded_number_of_moments_and_the_next_one_takes_the_rest() {
+    // bounded: a millisecond cycle left for a thousand seconds is a million cycle ends, which held the sim thread in one settle (M-1)
+    finishes_within(20, || {
+        let (mut scene, t) = crowd();
+        let quick = Effect { duration_ms: 1.0, capacitor_need: 0.0, repeat: 10_000_000, ..afterburner() };
+        assert!(scene.activate(A, quick, t).iter().any(|out| matches!(out, Out::Accepted { .. })));
+        let later = t + 1_000 * SECOND;
+        scene.settle_modules(later);
+        let first = scene.pilots[&A].modules.running[0].cycles as usize;
+        assert!(first <= MAX_MOMENTS_PER_SETTLE + 1, "one settle took {first} cycles");
+        assert!(scene.next_module_moment(A, later).is_some(), "the rest is still due");
+        scene.settle_modules(later);
+        assert!(scene.pilots[&A].modules.running[0].cycles as usize > first, "the next settle goes on");
+    });
+}
+
+#[test]
+fn a_parked_work_cycle_whose_action_is_gone_ends_the_effect_and_the_settle_comes_back() {
+    // bounded: the parked cycle was sent again at the same tick with nothing changed, so the settle never came back (M-1)
+    finishes_within(20, || {
+        let (mut scene, t) = crowd();
+        let now = lock_for_tractor(&mut scene, other_spec().ship_id, t);
+        let effect = Effect { target_id: other_spec().ship_id, ..afterburner() };
+        assert!(scene.activate(A, effect, now).iter().any(|out| matches!(out, Out::Accepted { .. })));
+        let pilot = scene.pilots.get_mut(&A).expect("the pilot is in the scene");
+        pilot.modules.running[0].pending_work = Some(PendingWorkCycle {
+            cycle_id: 1,
+            at: now,
+            sent_at: now - 3 * SECOND,
+            rolls: [0.0; 3],
+            fuel: false,
+        });
+        let out = scene.settle_modules(now + SECOND);
+        assert!(out.iter().any(|item| matches!(item, Out::ModuleEnded { module_id: MODULE, .. })), "{out:?}");
+        assert!(scene.pilots[&A].modules.running.is_empty());
+    });
+}
+
+#[test]
+fn a_stalled_moment_ends_its_effect_and_a_charge_moment_is_left_to_the_settle() {
+    let (mut scene, t) = crowd();
+    assert!(scene.activate(A, afterburner(), t).iter().any(|out| matches!(out, Out::Accepted { .. })));
+    let out = scene.stalled(A, Moment::CycleEnd(0), t + SECOND).expect("the effect is ended");
+    assert!(out.iter().any(|item| matches!(item, Out::ModuleEnded { module_id: MODULE, .. })));
+    assert!(scene.pilots[&A].modules.running.is_empty());
+    assert!(scene.stalled(A, Moment::Charge, t).is_none());
 }

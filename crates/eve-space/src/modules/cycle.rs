@@ -493,7 +493,8 @@ impl Scene {
             .filter(|action| action.is_work())
             .cloned()
         else {
-            return Vec::new();
+            // the effect has no work cycle left to send (its action changed under the parked cycle): it stops, as one that loses its target does (M-1)
+            return self.stop_parked(session, index, at);
         };
         let (module_id, target_id) = (run.effect.module_id, run.effect.target_id);
         let pending = PendingWorkCycle { sent_at: at, ..pending };

@@ -472,6 +472,7 @@ impl Scene {
             cycles: 1,
             strike_done: 0,
             doomsday_hit: false,
+            reach_poll_at: now,
             stopping: false,
             rounds,
             charged_this_cycle,
@@ -787,7 +788,8 @@ impl Scene {
             | Moment::WorkResend(index)
             | Moment::WorkStop(index)
             | Moment::StrikePulse(index)
-            | Moment::DoomsdayHit(index) => {
+            | Moment::DoomsdayHit(index)
+            | Moment::ReachCheck(index) => {
                 pilot.modules.running.get(index).map_or(-1, |run| run.effect.module_id)
             }
             Moment::StartResend(index) => {
@@ -805,7 +807,8 @@ impl Scene {
             | Moment::WorkResend(index)
             | Moment::WorkStop(index)
             | Moment::StrikePulse(index)
-            | Moment::DoomsdayHit(index) => {
+            | Moment::DoomsdayHit(index)
+            | Moment::ReachCheck(index) => {
                 self.pilots.get(&session)?.modules.running.get(index)?.effect.module_id
             }
             Moment::StartResend(index) => {
@@ -860,6 +863,13 @@ impl Scene {
                     Moment::DoomsdayHit(index),
                 );
             }
+            if matches!(run.effect.action.as_ref(), Some(Action::Kamikaze { .. } | Action::Missile { .. }))
+                && !run.doomsday_hit
+                && run.reach_poll_at
+                    < run.cycle_start + (run.effect.duration_ms * TICKS_PER_SECOND as f64 / 1000.0) as i64
+            {
+                consider(run.reach_poll_at, Moment::ReachCheck(index));
+            }
             if let Some(strike) = strike_of(run.effect.action.as_ref())
                 && run.strike_done < strike.pulses
             {
@@ -894,6 +904,7 @@ impl Scene {
             Moment::StartResend(index) => self.resend_start(session, index, at),
             Moment::StrikePulse(index) => self.strike_pulse(session, index, at),
             Moment::DoomsdayHit(index) => self.doomsday_hit(session, index, at),
+            Moment::ReachCheck(index) => self.reach_check(session, index, at),
         }
     }
 

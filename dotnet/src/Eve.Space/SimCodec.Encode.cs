@@ -329,6 +329,25 @@ private static void WriteAction(Writer w, SimAction action)
                 foreach (var number in doomsday.Damage) w.F64(number);
                 w.F64(doomsday.ImmobileMs); w.F64(doomsday.NoJumpMs);
                 break;
+            case SimAction.Kamikaze kamikaze:
+                if (!kamikaze.IsValid)
+                {
+                    throw new ArgumentException("a kamikaze has finite, non-negative damage and range", nameof(action));
+                }
+                w.U8(23);
+                foreach (var number in kamikaze.Damage) w.F64(number);
+                w.F64(kamikaze.RangeMeters);
+                break;
+            case SimAction.FighterMissile missile:
+                if (!missile.IsValid)
+                {
+                    throw new ArgumentException("a fighter missile has finite, non-negative damage and explosion", nameof(action));
+                }
+                w.U8(24);
+                foreach (var number in missile.Damage) w.F64(number);
+                w.F64(missile.ReachMeters); w.F64(missile.ExplosionRadius); w.F64(missile.ExplosionVelocity);
+                w.F64(missile.ReductionFactor); w.F64(missile.ReductionSensitivity);
+                break;
             case SimAction.ResistanceShift shift:
                 if (shift.Seed.Count != 4 || shift.AttributeIds.Count != 4)
                 {

@@ -1,7 +1,12 @@
 use eve_destiny::Kind;
 
 use super::*;
-use crate::brains::rat_tests::{LATER, PLAYER, SECOND, actions_named, notified, run, scene_with_a_player};
+use crate::brains::rat_tests::{
+    LATER, PLAYER, RAT_SHIP, SECOND, actions_named, notified, place_near, rat_identity, rat_spec, run,
+    scene_with_a_player,
+};
+use crate::missiles::Blast;
+use crate::modules::{Action, Effect};
 
 const SQUADRON_SHIP: i64 = 9_988_400_004_100;
 
@@ -309,4 +314,186 @@ fn an_abandoned_squadron_stays_in_space_under_nobody_and_the_host_is_told_where_
     assert!(scene.session_of(SQUADRON_SHIP).is_some(), "it is still in the scene");
     let refused = scene.fighter_order(PLAYER, &[SQUADRON_SHIP], FighterOrder::Stop, LATER + 2 * SECOND);
     assert_eq!(results_of(&refused), [(SQUADRON_SHIP, Some(NOT_CONTROLLED))]);
+}
+
+/// Every answer of the simulation from `from` for `seconds`, as the poll gives them (the squadron's own too).
+fn poll_all(scene: &mut Scene, from: i64, seconds: i64) -> Vec<Out> {
+    let mut told = Vec::new();
+    let mut now = from;
+    while now <= from + seconds * SECOND {
+        told.extend(scene.poll(now));
+        now += SECOND / 4;
+    }
+    told
+}
+
+/// A rat `metres` off the pilot's ship (the target the squadron is sent at).
+fn rat_at(scene: &mut Scene, metres: f64) {
+    let mut rat = rat_spec();
+    rat.ship_id = RAT_SHIP;
+    let place = place_near(scene, metres);
+    scene.spawn_npc(rat, rat_identity(0.0), place, LATER);
+}
+
+/// A squadron's kamikaze ability, locked on `target` (the effect the host builds from the type's dogma).
+fn kamikaze(target: i64, range: f64, damage: f64) -> Effect {
+    Effect {
+        burns_fuel: false,
+        module_id: SQUADRON_SHIP * 8 + 2,
+        module_type: 23_055,
+        effect_id: 6_554,
+        fx: String::new(),
+        duration_ms: 60_000.0,
+        capacitor_need: 0.0,
+        repeat: 1,
+        target_id: target,
+        turret: None,
+        action: Some(Action::Kamikaze { damage: [damage, 0.0, 0.0, 0.0], range }),
+        on: None,
+        off: None,
+        on_changes: Vec::new(),
+        off_changes: Vec::new(),
+        rules: Default::default(),
+    }
+}
+
+/// A squadron's missiles, locked on `target`, reaching `reach` metres, with the explosion `blast` (the squadron's own numbers).
+fn missiles(target: i64, reach: f64, blast: Blast, damage: f64) -> Effect {
+    Effect {
+        module_id: SQUADRON_SHIP * 8 + 3,
+        effect_id: 6_441,
+        duration_ms: 6_000.0,
+        action: Some(Action::Missile { damage: [damage, 0.0, 0.0, 0.0], reach, blast }),
+        ..kamikaze(target, 0.0, 0.0)
+    }
+}
+
+/// The points a ship has left, from the pilot of its session.
+fn points_of(scene: &Scene, ship: i64, now: i64) -> f64 {
+    let session = scene.session_of(ship).expect("the ship is in the scene");
+    scene.pilots[&session].ship.health.points_left(now).0
+}
+
+#[test]
+fn a_kamikaze_squadron_closes_in_on_its_target_detonates_and_is_destroyed() {
+    let (mut scene, squadron, _) = launched();
+    rat_at(&mut scene, 3_000.0);
+    let before = points_of(&scene, RAT_SHIP, LATER);
+    let told = scene.activate(squadron, kamikaze(RAT_SHIP, 500.0, 5_000.0), LATER + SECOND);
+    assert!(told.iter().any(|out| matches!(out, Out::Accepted { command: 17, .. })), "{told:?}");
+    // the squadron flies to within its range of the rat first (the reference's approach), and has not yet detonated
+    assert!(matches!(
+        scene.pilots[&squadron].ship.course,
+        Course::Follow { target, range } if target == RAT_SHIP && range == 500.0
+    ));
+    let told = poll_all(&mut scene, LATER + SECOND, 60);
+    assert!(
+        told.iter().any(|out| matches!(out, Out::Destroyed { ship_id, .. } if *ship_id == SQUADRON_SHIP)),
+        "the squadron detonates and is destroyed: {told:?}"
+    );
+    assert!(scene.session_of(SQUADRON_SHIP).is_none(), "a detonated squadron is out of the scene");
+    let hurt =
+        scene.session_of(RAT_SHIP).is_none_or(|_| points_of(&scene, RAT_SHIP, LATER + 61 * SECOND) < before);
+    assert!(hurt, "the rat took the detonation");
+}
+
+#[test]
+fn a_kamikaze_out_of_its_window_before_it_reaches_its_target_does_not_detonate() {
+    let (mut scene, squadron, _) = launched();
+    rat_at(&mut scene, 40_000.0);
+    let mut effect = kamikaze(RAT_SHIP, 500.0, 5_000.0);
+    effect.duration_ms = 2_000.0;
+    scene.activate(squadron, effect, LATER + SECOND);
+    let told = poll_all(&mut scene, LATER + SECOND, 10);
+    assert!(
+        !told.iter().any(|out| matches!(out, Out::Destroyed { ship_id, .. } if *ship_id == SQUADRON_SHIP)),
+        "a squadron that never reached its target is not destroyed: {told:?}"
+    );
+    assert!(scene.session_of(SQUADRON_SHIP).is_some());
+}
+
+#[test]
+fn a_missile_within_reach_hits_its_target_scaled_by_the_application_factor() {
+    // a target the explosion covers entirely: the full damage lands
+    let (mut scene, squadron, _) = launched();
+    rat_at(&mut scene, 3_000.0);
+    let before = points_of(&scene, RAT_SHIP, LATER);
+    let full = Blast {
+        explosion_radius: 1.0,
+        explosion_velocity: 1.0,
+        reduction_factor: 1.0,
+        reduction_sensitivity: 5.5,
+    };
+    scene.activate(squadron, missiles(RAT_SHIP, 5_000.0, full, 500.0), LATER + SECOND);
+    poll_all(&mut scene, LATER + SECOND, 8);
+    let full_loss = before - points_of(&scene, RAT_SHIP, LATER + 9 * SECOND);
+    assert!(full_loss > 0.0, "the missile hits a target in reach");
+
+    // the same missile on a target its explosion barely reaches: almost nothing lands
+    let (mut scene, squadron, _) = launched();
+    rat_at(&mut scene, 3_000.0);
+    let before = points_of(&scene, RAT_SHIP, LATER);
+    let wide = Blast { explosion_radius: 1.0e9, ..full };
+    scene.activate(squadron, missiles(RAT_SHIP, 5_000.0, wide, 500.0), LATER + SECOND);
+    poll_all(&mut scene, LATER + SECOND, 8);
+    let thin_loss = before - points_of(&scene, RAT_SHIP, LATER + 9 * SECOND);
+    assert!(
+        thin_loss < full_loss / 100.0,
+        "the application factor scales the damage: {thin_loss} against {full_loss}"
+    );
+}
+
+#[test]
+fn a_missile_is_not_fired_beyond_its_reach_and_the_squadron_closes_in_first() {
+    let (mut scene, squadron, _) = launched();
+    rat_at(&mut scene, 30_000.0);
+    let before = points_of(&scene, RAT_SHIP, LATER);
+    let full = Blast {
+        explosion_radius: 1.0,
+        explosion_velocity: 1.0,
+        reduction_factor: 1.0,
+        reduction_sensitivity: 5.5,
+    };
+    let told = scene.activate(squadron, missiles(RAT_SHIP, 5_000.0, full, 500.0), LATER + SECOND);
+    assert!(told.iter().any(|out| matches!(out, Out::Accepted { command: 17, .. })), "{told:?}");
+    assert!(matches!(
+        scene.pilots[&squadron].ship.course,
+        Course::Follow { target, range } if target == RAT_SHIP && range == 5_000.0
+    ));
+    // the cycle ends before the squadron gets there: nothing hits the rat
+    poll_all(&mut scene, LATER + SECOND, 8);
+    assert_eq!(points_of(&scene, RAT_SHIP, LATER + 9 * SECOND), before, "no hit beyond reach");
+}
+
+#[test]
+fn a_missile_blast_scales_the_damage_by_the_signature_against_the_explosion_radius() {
+    let blast = Blast {
+        explosion_radius: 80.0,
+        explosion_velocity: 1.0,
+        reduction_factor: 1.0,
+        reduction_sensitivity: 5.5,
+    };
+    assert_eq!(blast.applied([100.0, 0.0, 0.0, 0.0], 40.0, 0.0), [50.0, 0.0, 0.0, 0.0]);
+    assert_eq!(blast.applied([100.0, 0.0, 0.0, 0.0], 160.0, 0.0), [100.0, 0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn an_abandoned_squadron_that_loses_members_is_still_told_its_size_for_its_item() {
+    // let go, the squadron has no controller: the size it loses is told with its id (the host writes it to the item, and no pilot is told)
+    let (mut scene, squadron, _) = launched();
+    let order = scene.fighter_order(PLAYER, &[SQUADRON_SHIP], FighterOrder::Abandon, LATER + SECOND);
+    assert_eq!(results_of(&order), [(SQUADRON_SHIP, None)]);
+    let (_, whole) = scene.pilots[&squadron].ship.health.points_left(LATER + SECOND);
+    let member = whole / 6.0;
+    // the squadron resists half of a raw hit (the hull), so three members of raw damage land as one and a half
+    let (told, _) = scene.damage(SQUADRON_SHIP, [member * 3.0, 0.0, 0.0, 0.0], LATER + 2 * SECOND);
+    let sizes: Vec<i32> = told
+        .iter()
+        .filter_map(|out| match out {
+            Out::FighterSize { fighter_id, size, .. } if *fighter_id == SQUADRON_SHIP => Some(*size),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sizes, [5], "{told:?}");
+    assert!(scene.is_fighter(squadron) && scene.controller_of_drone(squadron) == Some(0));
 }

@@ -63,7 +63,7 @@ internal sealed partial class CharacterServicesComposition
                       var changes = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(9), InventoryWire.Id(before.Quantity))]);
                       session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(row), changes, PyNone.Instance);
                   }),
-              new Eve.Host.DynamicItemRpcService(items, itemMutations, dogma, itemTypes),
+              new Eve.Host.DynamicItemRpcService(items, itemMutations, dogma, itemTypes, ships),
               new Eve.Host.CharacterEnergyMgrRpcService(mailCache, now),
               new Eve.Host.PaperDollServerRpcService(characters),
               new Eve.Host.PlanetMgrRpcService(mailCache, sde, now),

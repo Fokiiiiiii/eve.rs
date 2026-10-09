@@ -459,6 +459,39 @@ public abstract record SimAction
             && Damage.All(d => double.IsFinite(d) && d >= 0);
     }
 
+    /// <summary>
+    /// A kamikaze squadron's detonation (tag 23, protocol 36): the squadron closes in on its locked target to <paramref name="RangeMeters"/> and, once there, the
+    /// target takes <paramref name="Damage"/> (the four kinds) and the squadron is destroyed.
+    /// </summary>
+    public sealed record Kamikaze(IReadOnlyList<double> Damage, double RangeMeters) : SimAction
+    {
+        /// <summary>Whether the numbers are ones the simulation runs (finite and not negative, four kinds of damage).</summary>
+        public bool IsValid =>
+            Damage.Count == 4
+            && double.IsFinite(RangeMeters) && RangeMeters >= 0
+            && Damage.All(d => double.IsFinite(d) && d >= 0);
+    }
+
+    /// <summary>
+    /// A fighter's missiles (tag 24, protocol 36): the locked target takes <paramref name="Damage"/> once, scaled by the application factor of the explosion
+    /// (<paramref name="ExplosionRadius"/>, <paramref name="ExplosionVelocity"/>, the reduction factor and its sensitivity) for the target's signature and
+    /// speed, when it is within <paramref name="ReachMeters"/>.
+    /// </summary>
+    public sealed record FighterMissile(
+        IReadOnlyList<double> Damage,
+        double ReachMeters,
+        double ExplosionRadius,
+        double ExplosionVelocity,
+        double ReductionFactor,
+        double ReductionSensitivity) : SimAction
+    {
+        /// <summary>Whether the numbers are ones the simulation runs (finite and not negative, four kinds of damage).</summary>
+        public bool IsValid =>
+            Damage.Count == 4
+            && new[] { ReachMeters, ExplosionRadius, ExplosionVelocity, ReductionFactor, ReductionSensitivity }.All(n => double.IsFinite(n) && n >= 0)
+            && Damage.All(d => double.IsFinite(d) && d >= 0);
+    }
+
     public sealed record Strike(
         byte Shape,
         IReadOnlyList<double> Direction,

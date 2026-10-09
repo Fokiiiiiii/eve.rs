@@ -435,6 +435,9 @@ private readonly TransitionRuntime _transitions;
         await OnSessionClosedAsync(session);
     }
 
+    /// <summary>What a pilot that enters space does once it is in the scene (the squadrons its character has out there are taken up again).</summary>
+    public Func<ClientSession, long, Task>? PilotEntered { get; set; }
+
     public async ValueTask OnCharacterEnteredAsync(
         ClientSession session, long characterId, CancellationToken cancellationToken)
     {
@@ -478,6 +481,17 @@ private readonly TransitionRuntime _transitions;
         _pilots[sessionId] = new Pilot(
             session, characterId, pending.Snapshot.Ship.Id, pending.Snapshot.Ship.TypeId,
             systemId, FileTimeNow(), pending.Snapshot.Character.StationId);
+        if (PilotEntered is { } entered)
+        {
+            try
+            {
+                await entered(session, characterId);
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                _log?.Invoke($"space login for character {characterId}: the squadrons in space could not be taken up: {error.Message}");
+            }
+        }
         session.Set(LoginInventoryBootstrapPending, new PyInt(1));
         session.Closed += () => OnSessionClosed(session);
         if (_spaceItems is not null)

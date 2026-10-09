@@ -46,7 +46,7 @@ pub enum Role {
     WarpSource { range: f64 },
     /// A bomb: at its end the ships within `blast_radius` take its kind of effect (`ecm` for the jam, `neutralize` for the capacitor, `damage` for the hit).
     Bomb { kind: BombKind, blast_radius: f64, damage: Damage, ecm: [f64; 4], neutralize: f64 },
-    /// A lance's beacon (EVE.js `spawnLanceBeacon`, protocol 37): a transient container the beam is drawn to. It does nothing but exist; it is taken out when
+    /// A lance's beacon (EVE.js `spawnLanceBeacon`, protocol 39): a transient container the beam is drawn to. It does nothing but exist; it is taken out when
     /// its strike's effect ends (or stops), or when its lifetime is up.
     Beacon,
 }

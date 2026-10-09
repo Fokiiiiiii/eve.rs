@@ -207,6 +207,12 @@ impl Scene {
         {
             return vec![Out::Refused { session, command: CODE, reason: "ACTIVE_INDUSTRIAL_CORE_REQUIRED" }];
         }
+        // a module that starts only within a band of the ship's speed (WP19: maxVelocityActivationLimit 1334, minVelocityActivationLimit 2608) is refused
+        // outside it; the speed is the ship's velocity as the scene moves it (a stopped ship has none)
+        let v = pilot.ship.velocity;
+        if let Some(reason) = velocity_refusal(&effect.rules, (v.x * v.x + v.y * v.y + v.z * v.z).sqrt()) {
+            return vec![Out::Refused { session, command: CODE, reason }];
+        }
         if let Some(Action::MicroJumpDrive { distance_meters, cooldown_ms }) = effect.action.as_ref() {
             if !distance_meters.is_finite()
                 || *distance_meters <= 0.0
@@ -480,6 +486,8 @@ impl Scene {
             pending_remote_repair: None,
             pending_work: None,
             spool: SpoolState::default(),
+            pending_reload: false,
+            pending_update: None,
         };
         let (before, after) = match pilot.modules.capacitor.as_mut() {
             Some(capacitor) => capacitor.draw(now, run.effect.capacitor_need),
@@ -537,6 +545,7 @@ impl Scene {
             matches!(effect.action.as_ref(), Some(Action::Charged { fallback: None, .. }));
         if !goes_on
             && (effect.turret.is_some() || stop_without_charge)
+            && !self.park_for_reload(session, effect.module_id)
             && let Some(pilot) = self.pilots.get_mut(&session)
             && let Some(at) =
                 pilot.modules.running.iter().position(|r| r.effect.module_id == effect.module_id)
@@ -558,6 +567,7 @@ impl Scene {
         module_id: i64,
         charge_type: i32,
         op: ChargeOp,
+        now: i64,
     ) -> Vec<Out> {
         let answer = |running, before, after| {
             vec![Out::ChargeAdjusted { session, request_id, running, before, after }]
@@ -580,7 +590,55 @@ impl Scene {
             ChargeOp::Remove { quantity } if quantity > 0 => (before - quantity).max(0),
             ChargeOp::Remove { .. } => 0,
         };
-        answer(true, before, *rounds)
+        let after = *rounds;
+        // a gun that waited for its load (FP-C8) starts its next cycle with the rounds it has, or stops when none came
+        let waiting = std::mem::take(&mut run.pending_reload);
+        let mut out = answer(true, before, after);
+        if waiting {
+            out.extend(if after > 0 {
+                self.finish_cycle(session, module_id, now, Vec::new(), true)
+            } else {
+                self.end_without_rounds(session, module_id, now)
+            });
+        }
+        out
+    }
+
+    /// A turret that has spent its last round and reloads from its hold waits for the host's load (`AdjustCharge`); nothing is ended. Returns whether it waits.
+    pub(super) fn park_for_reload(&mut self, session: SessionId, module_id: i64) -> bool {
+        let Some(run) = self.running_mut(session, module_id) else { return false };
+        let reloads =
+            run.effect.turret.as_ref().and_then(|turret| turret.charge).is_some_and(|charge| charge.reloads);
+        if reloads {
+            run.pending_reload = true;
+        }
+        reloads
+    }
+
+    /// The effect of a module ends for want of rounds (the host gave none to a gun that waited for them).
+    fn end_without_rounds(&mut self, session: SessionId, module_id: i64, at: i64) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+        let Some(index) = pilot.modules.running.iter().position(|run| run.effect.module_id == module_id)
+        else {
+            return Vec::new();
+        };
+        let run = pilot.modules.running.remove(index);
+        self.effect_ended(session, run, owner, ship_id, at, Ending::NoRounds)
+    }
+
+    /// The host refreshes the numbers of a running effect (`UpdateEffect`): they are kept and take effect at the start of its next cycle. An effect that is not
+    /// running is not changed, and nothing is answered.
+    pub(crate) fn update_effect(
+        &mut self,
+        session: SessionId,
+        module_id: i64,
+        update: PendingUpdate,
+    ) -> Vec<Out> {
+        if let Some(run) = self.running_mut(session, module_id) {
+            run.pending_update = Some(update);
+        }
+        Vec::new()
     }
 
     /// The running effect of a module of this session, if it runs.
@@ -652,7 +710,10 @@ impl Scene {
         *rounds = new;
         let line = attribute_change_of(
             owner,
-            charge_key(ship_id, &crate::weapons::Charge { type_id, flag, rounds: old, per_cycle }),
+            charge_key(
+                ship_id,
+                &crate::weapons::Charge { type_id, flag, rounds: old, per_cycle, reloads: false },
+            ),
             805,
             at,
             number(new as f64),
@@ -686,8 +747,9 @@ impl Scene {
         let Some(index) = pilot.modules.running.iter().position(|r| r.effect.module_id == module_id) else {
             return vec![Out::Refused { session, command: CODE, reason: "NOT_ACTIVE" }];
         };
-        if pilot.modules.running[index].pending_work.is_some() {
-            // parked on a work cycle: there is no cycle left to finish, so the effect stops now
+        if pilot.modules.running[index].pending_work.is_some() || pilot.modules.running[index].pending_reload
+        {
+            // parked on a work cycle or a reload: there is no cycle left to finish, so the effect stops now
             let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
             let run = pilot.modules.running.remove(index);
             let mut out = vec![Out::Accepted { session, command: CODE, at: now }];
@@ -867,7 +929,8 @@ impl Scene {
                 }
                 continue;
             }
-            if run.pending_remote_repair.is_some() {
+            // parked on a reload: no cycle is timed until the host's load answers it
+            if run.pending_remote_repair.is_some() || run.pending_reload {
                 continue;
             }
             if let Some(Action::Doomsday { delay_ms, .. }) = run.effect.action.as_ref()
@@ -952,5 +1015,35 @@ impl Scene {
                 (dx * dx + dy * dy + dz * dz).sqrt() - body.radius < metres
             }
         })
+    }
+}
+
+/// The refusal of a module whose rules limit the speed it starts at (WP19), for a ship going `speed` m/s: `None` when the speed is within the limits (a limit of 0 is none).
+pub(crate) fn velocity_refusal(rules: &Rules, speed: f64) -> Option<&'static str> {
+    if rules.max_velocity_limit > 0.0 && speed > rules.max_velocity_limit {
+        return Some("VELOCITY_TOO_HIGH");
+    }
+    if rules.min_velocity_limit > 0.0 && speed < rules.min_velocity_limit {
+        return Some("VELOCITY_TOO_LOW");
+    }
+    None
+}
+
+#[cfg(test)]
+mod velocity_tests {
+    use super::*;
+
+    #[test]
+    fn a_module_with_a_speed_band_starts_only_within_it() {
+        // a cynosural field generator: up to 500 m/s; a bomb launcher: at least 1 m/s; neither: any speed
+        let cyno = Rules { max_velocity_limit: 500.0, ..Default::default() };
+        let launcher = Rules { min_velocity_limit: 1.0, ..Default::default() };
+        assert_eq!(velocity_refusal(&cyno, 0.0), None);
+        assert_eq!(velocity_refusal(&cyno, 500.0), None, "the limit itself is within");
+        assert_eq!(velocity_refusal(&cyno, 500.5), Some("VELOCITY_TOO_HIGH"));
+        assert_eq!(velocity_refusal(&launcher, 0.0), Some("VELOCITY_TOO_LOW"));
+        assert_eq!(velocity_refusal(&launcher, 1.0), None);
+        assert_eq!(velocity_refusal(&launcher, 250.0), None);
+        assert_eq!(velocity_refusal(&Rules::default(), 9_999.0), None, "no limit: any speed starts it");
     }
 }

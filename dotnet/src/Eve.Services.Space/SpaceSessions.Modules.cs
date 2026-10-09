@@ -298,6 +298,8 @@ public sealed partial class SpaceSessions
                 : refusal;
         }
         pilot.ActiveModules[moduleId] = ItemState.Active;
+        pilot.RunningModules[moduleId] = RunningModule.Of(effectName, targetId, repeat, aim, aimEnd, package);
+        await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
         AnnounceModeChange(pilot, snapshot, moduleId, started: true);
         await SendShipAsync(id, pilot, SimShips.VitalsOf(snapshot), cancellationToken);
         made.Accepted?.Invoke();
@@ -425,7 +427,9 @@ public sealed partial class SpaceSessions
             // the simulation ends the effect at the end of its cycle; the host takes the module out of its numbers now, and the ship is sent again
             if (pilot.ActiveModules.TryRemove(moduleId, out _))
                 AnnounceModeChange(pilot, snapshot, moduleId, started: false);
+            pilot.RunningModules.TryRemove(moduleId, out _);
             await SendShipAsync(id, pilot, snapshot is null ? null : SimShips.VitalsOf(snapshot), cancellationToken);
+            await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
         }
         return reply.Accepted ? ModuleResult.Done : ModuleResult.Refusal(reply.Reason == "NOT_ACTIVE" ? "MODULE_NOT_ACTIVE" : reply.Reason ?? "REFUSED", module?.TypeId ?? 0, type?.Name ?? "");
     }
@@ -536,7 +540,9 @@ public sealed partial class SpaceSessions
         await _sim.OfflineModuleAsync(id, moduleId, cancellationToken);
         if (pilot.ActiveModules.TryRemove(moduleId, out _))
             AnnounceModeChange(pilot, snapshot, moduleId, started: false);
+        pilot.RunningModules.TryRemove(moduleId, out _);
         Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Reset(moduleId);
+        await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
         return ModuleResult.Done;
     }
 
@@ -563,6 +569,7 @@ public sealed partial class SpaceSessions
         await _sim.SetHeatProfileAsync(id, SimShips.HeatProfileOf(snapshot, _statics), cancellationToken);
         await _sim.SetModuleOverheatAsync(id, moduleId, active, cancellationToken);
         MarkOverheated(overheating, [moduleId], active);
+        await RefreshRunningAsync(overheating, id, cancellationToken).ConfigureAwait(false);
         return ModuleResult.Done;
     }
 
@@ -596,6 +603,7 @@ public sealed partial class SpaceSessions
         await _sim.SetHeatProfileAsync(id, SimShips.HeatProfileOf(snapshot, _statics), cancellationToken);
         await _sim.SetRackOverheatAsync(id, rack, active, cancellationToken);
         MarkOverheated(pilot, modules, active);
+        await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
         return ModuleResult.Done with { ModuleIds = modules };
     }
 

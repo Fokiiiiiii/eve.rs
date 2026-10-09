@@ -95,7 +95,7 @@ internal sealed class TurretEffect : ShipEffect
         var gun = new SimTurret(
             module.Module.TypeId, fx, [Shot(EmDamage), Shot(ThermalDamage), Shot(KineticDamage), Shot(ExplosiveDamage)], optimal, Math.Max(0, NpcArmament.Round6(module.Value(Falloff, 0))),
             Math.Max(0, NpcArmament.Round6(module.Value(TrackingSpeed, 0))), Math.Max(1, NpcArmament.Round6(module.Value(OptimalSigRadius, 40_000))),
-            charge is null ? null : new SimTurretCharge(charge.TypeId, charge.Flag, charge.Quantity, ChargesPerCycle(attributes)), Spool: SpoolOf(attributes),
+            charge is null ? null : new SimTurretCharge(charge.TypeId, charge.Flag, charge.Quantity, ChargesPerCycle(attributes), Reloads: module.Value(ReloadTime, 0) > 0), Spool: SpoolOf(attributes),
             Aoe: AoeOf(attributes), Arc: ArcOf(attributes), RequiresGunnery: module.Type.RequiredSkills.Contains(GunnerySkill));
         SimChange[] told = [new(module.ModuleId, CapacitorNeed, capacitor), new(module.ModuleId, Speed, Three(duration)), new(module.ModuleId, MaxRange, optimal)];
         return new SimEffect(module.ModuleId, module.Module.TypeId, module.Effect.Id, fx, duration, capacitor, Math.Max(1, module.Repeat), Math.Max(0, module.TargetId), null, null, told, told, gun);

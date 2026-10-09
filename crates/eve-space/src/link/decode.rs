@@ -65,12 +65,16 @@ pub(super) fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
         (reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?);
     let charge = match reader.u8()? {
         0 => None,
-        1 => Some(Charge {
-            type_id: reader.i32()?,
-            flag: reader.i32()?,
-            rounds: reader.i64()?,
-            per_cycle: reader.i64()?,
-        }),
+        1 => {
+            let (type_id, flag, rounds, per_cycle) =
+                (reader.i32()?, reader.i32()?, reader.i64()?, reader.i64()?);
+            let reloads = match reader.u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(DecodeError::BadValue("charge reloads")),
+            };
+            Some(Charge { type_id, flag, rounds, per_cycle, reloads })
+        }
         _ => return Err(DecodeError::BadValue("charge")),
     };
     let missile = match reader.u8()? {
@@ -327,13 +331,24 @@ pub(super) fn read_rules(reader: &mut Reader) -> Result<Rules, DecodeError> {
     if bits > 7 {
         return Err(DecodeError::BadValue("rule bits"));
     }
+    let reactivation_delay_ms = reader.f64()?;
+    let (max_velocity_limit, min_velocity_limit) = (reader.f64()?, reader.f64()?);
+    if !(max_velocity_limit.is_finite()
+        && max_velocity_limit >= 0.0
+        && min_velocity_limit.is_finite()
+        && min_velocity_limit >= 0.0)
+    {
+        return Err(DecodeError::BadValue("velocity limit"));
+    }
     Ok(Rules {
         group_id,
         max_group_active,
         disallow_early_deactivation: bits & 1 != 0,
         requires_industrial_core: bits & 2 != 0,
         provides_industrial_core: bits & 4 != 0,
-        reactivation_delay_ms: reader.f64()?,
+        reactivation_delay_ms,
+        max_velocity_limit,
+        min_velocity_limit,
     })
 }
 

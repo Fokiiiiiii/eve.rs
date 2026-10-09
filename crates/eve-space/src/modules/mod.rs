@@ -536,6 +536,10 @@ pub struct Rules {
     pub requires_industrial_core: bool,
     pub provides_industrial_core: bool,
     pub reactivation_delay_ms: f64,
+    /// The highest speed (m/s) at which the module may start (maxVelocityActivationLimit 1334, a cynosural field generator's 500), 0 for none.
+    pub max_velocity_limit: f64,
+    /// The lowest speed (m/s) at which the module may start (minVelocityActivationLimit 2608, a bomb launcher's 1), 0 for none.
+    pub min_velocity_limit: f64,
 }
 
 /// An effect the host asks the scene to run, with everything the host has worked out for it.
@@ -781,6 +785,20 @@ pub(crate) struct Running {
     pending_work: Option<PendingWorkCycle>,
     /// The damage ramp a precursor weapon has built on its target; it ends with the effect, so a new one starts from none.
     spool: SpoolState,
+    /// The turret ran out of rounds and reloads from its hold: it waits here (no cycle is timed) for the host's load, which resumes it at the start of the next
+    /// cycle, or stops it when nothing comes (FP-C8).
+    pub(crate) pending_reload: bool,
+    /// The numbers a refresh of the host (`UpdateEffect`, FP-C4b and FP-C5) brought: they take effect at the start of the next cycle.
+    pub(crate) pending_update: Option<PendingUpdate>,
+}
+
+/// The numbers a refresh of a running effect brings: the cycle, what a cycle costs the capacitor, the turret's numbers and the attributes the client is told.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PendingUpdate {
+    pub(crate) duration_ms: f64,
+    pub(crate) capacitor_need: f64,
+    pub(crate) turret: Option<Turret>,
+    pub(crate) changes: Vec<Change>,
 }
 
 /// The modules of a ship that run, and its capacitor.

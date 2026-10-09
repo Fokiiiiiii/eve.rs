@@ -93,7 +93,9 @@ internal abstract class ShipEffect : IEffectHandler<ShipSnapshot, SimEffect>
         module.Value(ModuleAttributes.DisallowEarlyDeactivation, 0) == 1,
         module.Value(ModuleAttributes.ActivationRequiresActiveIndustrialCore, 0) == 1,
         module.Effect.Name is "industrialCoreEffect2" or "industrialCompactCoreEffect2",
-        Math.Max(0, module.Value(ModuleAttributes.ModuleReactivationDelay, 0)));
+        Math.Max(0, module.Value(ModuleAttributes.ModuleReactivationDelay, 0)),
+        Math.Max(0, module.Value(ModuleAttributes.MaxVelocityActivationLimit, 0)),
+        Math.Max(0, module.Value(ModuleAttributes.MinVelocityActivationLimit, 0)));
 
     /// <summary>
     /// The length of a cycle of an effect, what it costs the capacitor, and the attribute the duration was read from: the item's own values after dogma (a module's, or a

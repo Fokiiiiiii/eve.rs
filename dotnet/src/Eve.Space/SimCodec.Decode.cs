@@ -193,11 +193,13 @@ public static partial class SimCodec
         var maxGroupActive = r.I32();
         var bits = r.U8();
         var reactivation = r.F64();
-        if (bits > 7 || maxGroupActive < 0 || reactivation < 0 || !double.IsFinite(reactivation))
+        var (maxVelocity, minVelocity) = (r.F64(), r.F64());
+        if (bits > 7 || maxGroupActive < 0 || reactivation < 0 || !double.IsFinite(reactivation)
+            || maxVelocity < 0 || !double.IsFinite(maxVelocity) || minVelocity < 0 || !double.IsFinite(minVelocity))
         {
             throw new SimLinkException(SimLinkError.BadValue, "bad module rules");
         }
-        return new SimModuleRules(group, maxGroupActive, (bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0, reactivation);
+        return new SimModuleRules(group, maxGroupActive, (bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0, reactivation, maxVelocity, minVelocity);
     }
 
     /// <summary>The list <see cref="WriteIds"/> writes; more than 4096 ids is refused (no fleet is that large in a field).</summary>
@@ -597,7 +599,12 @@ public static partial class SimCodec
         var charge = r.U8() switch
         {
             0 => null,
-            1 => new SimTurretCharge(r.I32(), r.I32(), r.I64(), r.I64()),
+            1 => new SimTurretCharge(r.I32(), r.I32(), r.I64(), r.I64(), r.U8() switch
+            {
+                0 => false,
+                1 => true,
+                _ => throw new SimLinkException(SimLinkError.BadValue, "bad charge reloads"),
+            }),
             _ => throw new SimLinkException(SimLinkError.BadValue, "bad charge"),
         };
         var missile = r.U8() switch

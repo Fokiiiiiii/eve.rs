@@ -67,7 +67,8 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         Source = source;
         FleetStore = new Eve.Services.Space.FleetStore(source);
         _suffix = suffix;
-        _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}", $"pp_{suffix}"];
+        _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}", $"pp_{suffix}", $"pd_{suffix}", $"pe_{suffix}"];
+        Events = new Eve.Events.EventBus(source, new Eve.Scheduler.DurableScheduler(source, () => Now, null, _schemas[7]), null, _schemas[8]);
         SpaceItems = new PgSpaceItemStore(source, _schemas[6]);
         Characters = new PgCharacterStore(source, _schemas[0]);
         Items = new PgItemStore(source, _schemas[1]);
@@ -84,7 +85,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         var npcAuthorityOf = npcAuthority ?? Eve.Npc.NpcAuthority.Load();
         Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => Now, Log.Add, protection, jumpCloak, localTimers) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(npcAuthorityOf), NpcWrecks = npcLoot ? new NpcWrecks(_ => LootTable, () => Task.FromResult(new Eve.Npc.NpcLoot(LootPool)), Ships, () => 0) : null, BeltRats = beltRats is null ? null : new Eve.Npc.BeltRats(npcAuthorityOf, beltRats, type => Eve.Npc.NpcHull.HasHitPoints(statics.Type(type))) };
         Space.UseBounties(Bounties);
-        Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, new Eve.Ships.PgWorkCycleLedger(source, _schemas[6]), statics, Space, () => Now, Log.Add);
+        Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, new Eve.Ships.PgWorkCycleLedger(source, _schemas[6]), Events, statics, Space, () => Now, Log.Add);
         Drones = new SpaceDrones(Sim, Ships, statics, Space, () => Now, Log.Add);
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Ships, statics, () => Now, Containers, Drones);
         Ship = new ShipService(Space, () => ClockMs, Containers, Drones);
@@ -187,6 +188,8 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         await PgModuleStateStore.MigrateAsync(source, $"pf_{suffix}");
         await Eve.Npc.PgBountyStore.MigrateAsync(source, $"pn_{suffix}");
         await PgSpaceItemStore.MigrateAsync(source, $"pp_{suffix}");
+        await Eve.Scheduler.DurableScheduler.MigrateAsync(source, $"pd_{suffix}");
+        await Eve.Events.EventBus.MigrateAsync(source, $"pe_{suffix}");
         await Eve.Data.Migrations.ApplyAsync(source, Eve.Services.Space.FleetStore.DefaultSchema,
         [
             new Eve.Data.Migration("001_fleet_core", """
@@ -408,6 +411,9 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
 
     /// <summary>The events bus of the foundations, when a test asked for it (<see cref="UseBusAsync"/>); what space announced on it is in <see cref="Announced"/>.</summary>
     public Eve.Events.EventBus? Bus { get; private set; }
+
+    /// <summary>The bus the space containers publish their mining facts on (its outbox is in this rig's schema).</summary>
+    public Eve.Events.EventBus Events { get; }
 
     public List<(string Topic, string Json)> Announced { get; } = [];
 

@@ -1,4 +1,5 @@
 using Eve.Dogma;
+using Eve.Events;
 using Eve.Fitting;
 using Eve.Inventory;
 
@@ -15,6 +16,18 @@ public sealed record DroneMiningCommit(
 
 /// <summary>The numbers of one mining cycle as the miner has them: the volume it mines, the waste and the critical yield (a chance is 0 to 1, a waste chance a percent).</summary>
 public sealed record MiningNumbers(double YieldM3, double WasteVolumeMultiplier, double WasteProbability, double CritProbability, double CritQuantityMultiplier);
+
+/// <summary>
+/// The fact of a granted mining cycle (topic <see cref="Topic"/>), written in the grant's transaction: the mining ledger and the other readers of mining
+/// take it from the event bus. <c>Quantity</c> is what went to the hold, <c>QuantityWasted</c> what the rock lost and nobody kept, and <c>QuantityCritical</c>
+/// the critical bonus (as EVE.js records them). <c>MinerTypeId</c> is the module's type (0 for a drone).
+/// </summary>
+public sealed record OreMinedEvent(
+    long CharacterId, int CorporationId, int SolarSystemId, long ShipId, int ShipTypeId, long MinerId, int MinerTypeId, MiningSource Source,
+    int OreTypeId, string YieldKind, long Quantity, long QuantityWasted, long QuantityCritical)
+{
+    public const string Topic = "mining.ore_mined";
+}
 public sealed record DroneSalvageCommit(bool Accepted, string Reason, ShipChanged? Change, Item? Container, SpaceItem? ContainerSpaceItem);
 
 /// <summary>
@@ -266,7 +279,7 @@ private sealed record ShipHoldRule(
     /// </summary>
     public async Task<DroneMiningCommit> MineAsteroidAsync(
         long characterId, long shipId, int solarSystemId, long minerId, long asteroidId, MiningSource kind, MiningNumbers numbers, MiningRolls rolls,
-        long cycleId, PgWorkCycleLedger ledger, PgSpaceItemStore spaceItems, CancellationToken cancellationToken = default)
+        long cycleId, PgWorkCycleLedger ledger, PgSpaceItemStore spaceItems, EventBus events, int corporationId, CancellationToken cancellationToken = default)
     {
         static bool IsRoll(double value) => value >= 0d && value <= 1d;
         if (!double.IsFinite(numbers.YieldM3) || numbers.YieldM3 <= 0 || !double.IsFinite(numbers.WasteVolumeMultiplier)
@@ -337,7 +350,16 @@ private sealed record ShipHoldRule(
         }
         await items.SetQuantityAsync(connection, transaction, asteroidId, remaining, cancellationToken);
         await ledger.RecordAsync(connection, transaction, new WorkCycleRecord(minerId, cycleId, true, "", remaining, delivered, remaining == 0), cancellationToken);
+        // the fact of the grant is written with it (the mining ledger and every other reader take it from the bus), so a rolled-back grant announces nothing
+        if (mined.TransferredQuantity > 0 || mined.WastedQuantity > 0)
+        {
+            var yieldKind = statics.GroupName(type.GroupId).Equals("Ice", StringComparison.OrdinalIgnoreCase) ? "ice" : "ore";
+            await events.PublishInTransactionAsync(connection, transaction, OreMinedEvent.Topic, new OreMinedEvent(
+                characterId, corporationId, solarSystemId, shipId, snapshot.Ship.TypeId, minerId, kind == MiningSource.Module ? miner.TypeId : 0, kind,
+                asteroid.TypeId, yieldKind, mined.TransferredQuantity, mined.WastedQuantity, mined.CriticalQuantity), $"char:{characterId}", cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
+        events.Wake();
         return new(true, "", remaining, delivered, remaining == 0,
             change is null ? null : new ShipChanged(change.After.Id, shipId, [], [], [change]), mined, asteroid.TypeId);
     }

@@ -13,6 +13,7 @@
     <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />
     <ProjectReference Include="../Eve.Crimewatch/Eve.Crimewatch.csproj" />
     <ProjectReference Include="../Eve.Events/Eve.Events.csproj" />
+    <ProjectReference Include="../Eve.GameStore/Eve.GameStore.csproj" />
     <ProjectReference Include="../Eve.Services.Generator/Eve.Services.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>

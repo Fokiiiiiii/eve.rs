@@ -221,6 +221,18 @@ public sealed partial class PersistenceStore
         return RowCodec.Assemble(table, rows.Select(row => new KeyValuePair<string, JsonNode?>(row.Key, JsonNode.Parse(row.Json))));
     }
 
+    /// <summary>
+    /// One stored row, read in the caller's transaction (a subscriber reads the row it is about to write, in the same transaction). The table is created
+    /// when missing, as a writer does. Null when the row is not there.
+    /// </summary>
+    public async Task<string?> ReadRowAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string table, string key, CancellationToken ct = default)
+    {
+        var name = TableNames.RequirePersistence(table);
+        await CreateTableAsync(connection, transaction, name, ct);
+        await using var command = Command(connection, transaction, $"SELECT doc::text FROM {Qualified(name)} WHERE key = @key", ("key", NpgsqlDbType.Text, key));
+        return (string?)await command.ExecuteScalarAsync(ct);
+    }
+
     public async Task<long> RowCountAsync(string table, CancellationToken ct = default)
     {
         var name = TableNames.RequirePersistence(table);

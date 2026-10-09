@@ -1,8 +1,10 @@
 using Eve.Characters;
 using Eve.Data;
 using Eve.Dogma;
+using Eve.Events;
 using Eve.Fitting;
 using Eve.Inventory;
+using Eve.Scheduler;
 using Eve.Sde;
 using Eve.Skills;
 using Eve.Wallet;
@@ -37,7 +39,7 @@ internal sealed class Rig : IAsyncDisposable
     private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, IShipInsuranceInvalidator? shipInsuranceInvalidator)
     {
         Source = source;
-        _schemas = [$"sc_{suffix}", $"si_{suffix}", $"ss_{suffix}", $"sw_{suffix}", $"sf_{suffix}"];
+        _schemas = [$"sc_{suffix}", $"si_{suffix}", $"ss_{suffix}", $"sw_{suffix}", $"sf_{suffix}", $"pd_{suffix}", $"pe_{suffix}"];
         Characters = new PgCharacterStore(source, _schemas[0]);
         Items = new PgItemStore(source, _schemas[1], shipInsuranceInvalidator);
         Skills = new PgSkillStore(source, _schemas[2]);
@@ -45,6 +47,7 @@ internal sealed class Rig : IAsyncDisposable
         Statics = statics;
         Creation = creation;
         Ships = new CharacterShips(source, statics, Characters, Items, Skills, Modules);
+        Events = new EventBus(source, new DurableScheduler(source, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), schema: _schemas[5]), schema: _schemas[6]);
     }
 
     public NpgsqlDataSource Source { get; }
@@ -65,6 +68,9 @@ internal sealed class Rig : IAsyncDisposable
     public CharacterCreation Creation { get; }
 
     public CharacterShips Ships { get; }
+
+    /// <summary>The event bus the mining cycles publish on (its outbox is kept in this rig's schema).</summary>
+    public EventBus Events { get; }
 
     public const int Cockroach = 11019;
     private const int CaldariRookieShip = 601;
@@ -211,6 +217,8 @@ internal sealed class Rig : IAsyncDisposable
         await PgSkillStore.MigrateAsync(source, $"ss_{suffix}");
         await PgWalletStore.MigrateAsync(source, $"sw_{suffix}");
         await PgModuleStateStore.MigrateAsync(source, $"sf_{suffix}");
+        await DurableScheduler.MigrateAsync(source, $"pd_{suffix}");
+        await EventBus.MigrateAsync(source, $"pe_{suffix}");
         var creation = new CharacterCreation(
             source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), CockroachCatalog(await CreationCatalog.LoadAsync(sde, Station)), modules);
         var statics = await DogmaStatic.LoadAsync(sde);

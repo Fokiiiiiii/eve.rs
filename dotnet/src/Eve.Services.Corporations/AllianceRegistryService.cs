@@ -1269,12 +1269,15 @@ public sealed class AllianceMaintenanceBillWorker(
     CorporationStore store,
     Eve.Corporations.CorporationOfficeStore officeStore,
     Eve.Scheduler.DurableScheduler scheduler,
-    Func<long> now)
+    Func<long> now,
+    Func<long, long, long, CancellationToken, Task>? notifyBillIssued = null)
 {
     private const int BillTypeId = 5;
     private const long FiletimeEpochOffsetMs = 11_644_473_600_000L;
     private const long RetryDelayMs = 24L * 60 * 60 * 1000;
     private const string JobKind = "alliance-maintenance-bill";
+
+    public Func<long, long, long, CancellationToken, Task>? BillNotificationWriter { get; set; } = notifyBillIssued;
 
     public async Task RegisterAsync(CancellationToken token = default)
     {
@@ -1290,14 +1293,30 @@ public sealed class AllianceMaintenanceBillWorker(
                 await EnsureAndScheduleAsync(alliance.Id, token);
 
         foreach (var bill in await store.PendingAllianceMaintenanceBillsAsync(token))
+        {
+            if (!bill.Paid) await NotifyBillAsync(bill, token);
             await scheduler.ScheduleAsync(Spec(bill), token);
+        }
     }
 
     private async Task EnsureAndScheduleAsync(long allianceId, CancellationToken token)
     {
         var bill = await store.EnsureInitialAllianceMaintenanceBillAsync(allianceId, token);
         if (bill is { Paid: false })
+        {
+            await NotifyBillAsync(bill, token);
             await scheduler.ScheduleAsync(Spec(bill), token);
+        }
+    }
+
+    private async Task NotifyBillAsync(CorporationBill bill, CancellationToken token)
+    {
+        if (BillNotificationWriter is not { } notify) return;
+        var alliance = await store.AllianceAsync(bill.DebtorId, token);
+        if (alliance is not { Deleted: false } || alliance.ActiveExecutorId is not { } executorCorporationId)
+            return;
+        foreach (var member in await store.MembersAsync(executorCorporationId, token))
+            await notify(member.CharacterId, alliance.Id, bill.BillId, token);
     }
 
     private async Task HandleAsync(Eve.Scheduler.JobContext job, CancellationToken token)
@@ -1347,7 +1366,10 @@ public sealed class AllianceMaintenanceBillWorker(
         var next = await store.CreateNextAllianceMaintenanceBillAsync(
             paidBill.DebtorId, paidBill.DueFiletime, token);
         if (next is not null)
+        {
+            await NotifyBillAsync(next, token);
             await scheduler.ScheduleAsync(Spec(next), token);
+        }
     }
 
     private static Eve.Scheduler.JobSpec Spec(CorporationBill bill) =>

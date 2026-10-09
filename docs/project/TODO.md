@@ -411,7 +411,7 @@ The client-facing allianceRegistry paths used by V24.01 alliance wrappers now pe
 
 Open before calling Alliance parity complete:
 
-- Alliance maintenance bills: the initial monthly invoice, durable due scheduling, executor-wallet auto-payment and paid renewal are implemented and PostgreSQL-tested. Unpaid closure at the next downtime and its sovereignty/war transfers remain open; due invoices retry daily meanwhile. The bill-issued notification is not wired yet.
+- Alliance maintenance bills: the initial monthly invoice, durable due scheduling, executor-wallet auto-payment and paid renewal are implemented and PostgreSQL-tested. Unpaid closure at the next downtime and its sovereignty/war transfers remain open; due invoices retry daily meanwhile. Bill-issued notification type 4 reaches executor-corporation members and is idempotent.
 - War lifecycle: due-bill renewal/default, and inheriting an active alliance war when a corporation leaves.
 - Sovereignty ownership transfer on member departure and alliance closure.
 - GetAllianceSovereigntyStructuresInfo and GetEveOwners remain unimplemented; no direct V24.01 callsite has been verified for these two EveJS handlers.

@@ -16,7 +16,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Arc, Aoe, Charge, Spool, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 29;
+pub const PROTOCOL_VERSION: u16 = 30;
 
 /// The message kinds.
 pub mod kind {
@@ -1202,10 +1202,11 @@ fn put_action(out: &mut Vec<u8>, action: &Action) {
             out.push(8);
             out.extend_from_slice(&access_bonus.to_le_bytes());
         }
-        Action::Tractor { velocity, hold } => {
+        Action::Tractor { velocity, hold, range } => {
             out.push(9);
             out.extend_from_slice(&velocity.to_le_bytes());
             out.extend_from_slice(&hold.to_le_bytes());
+            out.extend_from_slice(&range.to_le_bytes());
         }
         Action::PassiveLock => out.push(10),
         Action::AutoTarget { range } => {
@@ -1533,10 +1534,11 @@ fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
         9 => {
             let velocity = reader.f64()?;
             let hold = reader.f64()?;
-            if !velocity.is_finite() || velocity <= 0.0 || !hold.is_finite() || hold < 0.0 {
+            let range = reader.f64()?;
+            if !velocity.is_finite() || velocity <= 0.0 || !hold.is_finite() || hold < 0.0 || !range.is_finite() || range <= 0.0 {
                 return Err(DecodeError::BadValue("tractor action"));
             }
-            Ok(Action::Tractor { velocity, hold })
+            Ok(Action::Tractor { velocity, hold, range })
         }
         10 => Ok(Action::PassiveLock),
         11 => {

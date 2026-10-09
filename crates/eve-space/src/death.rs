@@ -143,7 +143,7 @@ impl Scene {
                 },
                 launcher_id: ship_id,
                 is_empty: true,
-                rights_known: false,
+                rights_known: false, pull: None, velocity: eve_destiny::Vec3::ZERO,
                 expires_at: now + WRECK_LIFETIME,
             }
         });

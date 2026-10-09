@@ -27,6 +27,7 @@ internal static class ModuleEffects
         .Register(new MiningLaserEffect())
         .Register(new GasHarvesterEffect())
         .Register(new SalvagerEffect())
+        .Register(new TractorBeamEffect())
         .Register(new PassiveTargetingEffect())
         .Register(new AutoTargetingEffect())
         .Register(new PropulsionEffect())

@@ -268,7 +268,11 @@ fn effect_of(case: &Value) -> Effect {
                 return Action::Salvage { access_bonus: a["accessBonus"].as_f64().unwrap() };
             }
             if a["kind"] == "tractor" {
-                return Action::Tractor { velocity: a["velocity"].as_f64().unwrap(), hold: a["hold"].as_f64().unwrap() };
+                return Action::Tractor {
+                    velocity: a["velocity"].as_f64().unwrap(),
+                    hold: a["hold"].as_f64().unwrap(),
+                    range: a["range"].as_f64().unwrap(),
+                };
             }
             if a["kind"] == "passiveLock" {
                 return Action::PassiveLock;

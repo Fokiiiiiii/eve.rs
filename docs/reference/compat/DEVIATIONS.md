@@ -195,6 +195,19 @@ Protocol 25 (ADR 0013, epoch 25). The strike is the simulation's area action for
 - **Client text.** `TARGET_INVALID_FOR_MODULE` and `CHARGE_NOT_COMPATIBLE` have no dedicated text in EveJS's switch, so the client shows the default
   "Failed to activate" text. The salvage notices use EveJS's names (`SalvagingFailure`, `CustomNotify`); their text in the client is not checked here.
 
+## Tractor beam (protocol 30)
+
+- **A pulled wreck is a ball that follows its puller (D6).** EVE.js `applyTractorActivationCommand` sends `SetBallFree`, `SetBallMass` (10), `SetMaxSpeed`, `SetSpeedFraction` (1) and `FollowBall` to any ball it pulls, wreck or can alike. The client's tactical display reads a ball's `followId` whatever the ball's kind (eve-logic `tacticalNavigation/actionDisplay.py`, `_GetMode`). eve.rs sends the same presentation (`tractor.rs`), and the follow step is generalised to any body (`motion::Kinematics`), not a new motion kind.
+- **Inertia of the pulled wreck stays at the ball default (1.0).** EVE.js's beam does not set it; eve.rs's `BallEntity` default is 1.0 (`ball.rs`).
+- **Thrust of a light body (a fix to the motion model; ships unchanged).** The thrust is the one whose equilibrium is the speed (`speed * friction / inertial mass`). The old `agility_seconds` floor of 0.05 s held a 10 kg body to about 0.1 m/s. Ships sit far above the floor, so their motion is unchanged (the ship motion tests pass).
+- **Hold distance 500 m, the beam's constant (EVE.js `TRACTOR_FOLLOW_RANGE_METERS`).** The speed is the module's `maxTractorVelocity` (attribute 1045).
+- **Release.** EVE.js `stopTractorTarget` restores the ball's top speed, zeroes the speed fraction and velocity, and sends `Stop`; it leaves the mass at 10. eve.rs does the same, restoring the top speed of a ball that lies still (0).
+- **Loot rights (D13): checked at activation, not every cycle.** EVE.js checks `hasTractorLootRight` every cycle, through the space loot entitlement (`moduleRuntimeCallbacks.hasLootRightForTarget`). eve.rs checks the wreck's stored rights when the beam is activated (`SpaceContainers.MayPullAsync`, the rule of `MayTakeFromAsync`: abandoned, the pilot's own, or its corporation's). The rights change only by abandonment during a pull, which widens them. Choice: the stored snapshot, as the salvage credit uses it.
+- **Two pulls on one wreck.** The later beam takes the wreck over; the earlier beam's end leaves it alone. EVE.js does not state this case; this is the simplest rule that keeps one follow target per ball.
+- **A puller that leaves.** The pull is let go at the next settlement (`Scene::release_orphaned_pulls`). EVE.js ends the beam with the ship's removal.
+- **Corpses are not tractorable.** EVE.js gives a corpse its own runtime kind (`getRuntimeInventoryEntityKind`: the biomass group, scooped to the cargo hold), and `TRACTORABLE_ENTITY_KINDS` names only wreck and container. eve.rs refuses a corpse as not there (`TARGET_NOT_FOUND`).
+- **Mobile Tractor Units (group 1250)** are not ship modules and their runtime (EVE.js `mobileTractorUnitRuntime.js`) is not built; the handler is for the ship's `tractorBeamCan`.
+
 ## Not yet matched
 
 Behaviour of the reference that eve.rs does not have yet, and where it will come from. These are gaps, not

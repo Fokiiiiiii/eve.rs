@@ -116,8 +116,9 @@ def action(a):
         return bytes([7, FAMILIES[a["family"]]]) + struct.pack("<5d", a["miningAmountM3"], a["wasteMultiplier"], a["wasteProbability"], a["critProbability"], a["critMultiplier"])
     if kind == "salvage":
         return bytes([8]) + struct.pack("<d", a["accessBonus"])
+    # the SimAction tag 9 (protocol 30): the beam's speed, the hold distance, and the module's reach (the range a target is out of reach past)
     if kind == "tractor":
-        return bytes([9]) + struct.pack("<2d", a["velocity"], a["hold"])
+        return bytes([9]) + struct.pack("<3d", a["velocity"], a["hold"], a["range"])
     if kind == "passiveLock":
         return bytes([10])
     if kind == "autoTarget":
@@ -361,8 +362,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 29},
-    {"name": "hello ack", "kind": "HelloAck", "version": 29, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 30},
+    {"name": "hello ack", "kind": "HelloAck", "version": 30, "pollHz": 4},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
@@ -759,7 +760,7 @@ valid = [
     {"name": "activate a tractor beam", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 24348, "effectId": 9, "fx": "effects.TractorBeam",
                 "durationMs": 5000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "1000000000002",
-                "action": {"kind": "tractor", "velocity": 500.0, "hold": 500.0}, "onChanges": [], "offChanges": []}},
+                "action": {"kind": "tractor", "velocity": 500.0, "hold": 500.0, "range": 20000.0}, "onChanges": [], "offChanges": []}},
     {"name": "activate a passive targeter", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 1100, "effectId": 10, "fx": "effects.TargetPassively",
                 "durationMs": 1000.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "1000000000002",

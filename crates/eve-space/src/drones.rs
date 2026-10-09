@@ -2339,7 +2339,7 @@ fn work_drone() -> (Scene, SessionId, Vec<Out>) {
             rights: crate::wreck::LootRights { character_id, corporation_id },
             launcher_id: 0,
             is_empty: false,
-            rights_known: true,
+            rights_known: true, pull: None, velocity: eve_destiny::Vec3::ZERO,
             expires_at: LATER + 60 * SECOND,
         }, LATER);
         let salvaged = scene.drone_command(
@@ -2443,7 +2443,7 @@ fn work_drone() -> (Scene, SessionId, Vec<Out>) {
             rights: crate::wreck::LootRights { character_id: character_id + 1, corporation_id: corporation_id + 1 },
             launcher_id: 0,
             is_empty: true,
-            rights_known: true,
+            rights_known: true, pull: None, velocity: eve_destiny::Vec3::ZERO,
             expires_at: LATER + 60 * SECOND,
         }, LATER);
 

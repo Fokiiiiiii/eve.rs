@@ -1348,7 +1348,7 @@ mod tests {
                 rights: crate::wreck::LootRights::default(),
                 launcher_id: 1_000_001,
                 is_empty: true,
-                rights_known: false,
+                rights_known: false, pull: None, velocity: eve_destiny::Vec3::ZERO,
                 expires_at: i64::MAX,
             },
         );

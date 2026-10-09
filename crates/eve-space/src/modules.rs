@@ -241,7 +241,6 @@ impl Action {
     /// Whether the simulation does not run the action yet (its package has not landed): such an activation is refused, never run as a no-op.
     fn not_implemented(&self) -> bool {
         match self {
-            Self::Tractor { .. } => true,
             Self::Charged { action, fallback, .. } => {
                 action.not_implemented() || fallback.as_deref().is_some_and(Action::not_implemented)
             }
@@ -333,8 +332,10 @@ pub enum Action {
     },
     /// A salvager's cycle (tag 8): as a mining cycle, with the wreck's access chance moved by `access_bonus` (percent) and one roll.
     Salvage { access_bonus: f64 },
-    /// A tractor beam (tag 9). Its package has not landed: the activation is refused (`NOT_IMPLEMENTED`), so it never runs.
-    Tractor { velocity: f64, hold: f64 },
+    /// A tractor beam (tag 9, protocol 30): it pulls the wreck or can it is locked on, at `velocity` metres a second, until it is `hold` metres off the
+    /// ship's surface. `range` is the module's reach (`maxRange`): a target further off is out of reach, and the pull ends when it is out of reach
+    /// at a cycle's end.
+    Tractor { velocity: f64, hold: f64, range: f64 },
     /// A passive lock (tag 10): when its cycle starts the target is locked with its notice suppressed (see `passive_lock`).
     PassiveLock,
     /// An auto-target sweep (tag 11): at each cycle start the ships that target the pilot within `range` are locked (see `auto_target_sweep`).
@@ -936,6 +937,30 @@ impl Scene {
             }
             if pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()) {
                 return vec![Out::Refused { session, command: CODE, reason: "CANNOT_ACTIVATE_IN_WARP" }];
+            }
+        }
+        if let Some(Action::Tractor { range, .. }) = effect.action.as_ref() {
+            if effect.target_id <= 0 {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_REQUIRED" }];
+            }
+            // a beam pulls a wreck or a can (EVE.js: anything else is TARGET_NOT_FOUND); the pilot must hold its lock, and it must be in reach
+            let Some(wreck) = self.wrecks.get(&effect.target_id).filter(|wreck| wreck.group_id != crate::wreck::CORPSE_GROUP) else {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_FOUND" }];
+            };
+            let target_type = wreck.kind.type_id;
+            if !self.locked_by(session).contains(&effect.target_id) {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_LOCKED" }];
+            }
+            let apart = self.surface_distance_to_wreck(session, effect.target_id).unwrap_or(f64::INFINITY);
+            if apart > range + crate::tractor::REACH_GRACE_METERS {
+                return vec![Out::TargetRefused {
+                    session,
+                    command: CODE,
+                    reason: "TARGET_OUT_OF_RANGE",
+                    target_type,
+                    desired_range: *range,
+                    actual_distance: apart,
+                }];
             }
         }
         if let Some(Action::Doomsday { delay_ms, damage, immobile_ms, no_jump_ms }) = effect.action.as_ref() {
@@ -1701,6 +1726,9 @@ impl Scene {
                     .session_of(effect.target_id)
                     .and_then(|target| self.apart(session, target))
                     .is_some_and(|apart| reach.share(apart).is_some())
+        } else if let Some(Action::Tractor { range, .. }) = effect.action.as_ref() {
+            // a tractor's target is a wreck or a can it holds the lock on, within reach
+            self.tractor_target_ok(session, effect.target_id, *range)
         } else if effect.action.as_ref().and_then(|action| action.with_charges(charged)).is_some_and(Action::is_work) {
             // a work target (a rock, a wreck) is there while the pilot holds its lock
             self.work_target_ok(session, &effect)
@@ -2019,6 +2047,9 @@ impl Scene {
             }
             Some(Action::PassiveLock) if when == Applies::CycleStart => self.passive_lock(session, effect.target_id, at),
             Some(Action::AutoTarget { range }) if when == Applies::CycleStart => self.auto_target_sweep(session, *range, at),
+            Some(Action::Tractor { velocity, hold, .. }) if when == Applies::CycleStart => {
+                self.tractor_pull(session, effect.target_id, *velocity, *hold, at)
+            }
             Some(Action::Cloak) if when == Applies::CycleStart => {
                 let changed = if let Some(pilot) = self.pilots.get_mut(&session) {
                     let changed = pilot.cloak != crate::visibility::CloakState::Cloaked;
@@ -2471,6 +2502,10 @@ impl Scene {
             out.extend(update);
         }
         out.extend(self.jam_told(session, &run.effect, at, Jam::End));
+        // a tractor beam that stops lets go of the wreck it pulled (another ship's pull on that wreck is left alone)
+        if let Some(Action::Tractor { .. }) = run.effect.action {
+            out.extend(self.tractor_release(run.effect.target_id, ship_id, at));
+        }
         // what it did to its target for as long as it ran is lifted
         if run
             .effect
@@ -5083,12 +5118,138 @@ pub(crate) mod tests {
         assert!(scene.locked_by(A).is_empty());
     }
 
+    const WRECK: i64 = 90_010;
+
+    /// The first outcome's refusal reason (the activation is refused).
+    fn refusal_of(out: &[Out]) -> &'static str {
+        match out.first() {
+            Some(Out::Refused { reason, .. }) => reason,
+            other => panic!("the activation is refused, not {other:?}"),
+        }
+    }
+
+    /// A wreck three kilometres off the test pilot's ship, along +x.
+    fn tractor_wreck(scene: &Scene, id: i64) -> crate::wreck::Wreck {
+        let ship = scene.pilots[&A].ship.position;
+        crate::wreck::Wreck {
+            id,
+            group_id: crate::wreck::WRECK_GROUP,
+            kind: crate::wreck::WreckKind { type_id: 1, name: "Wreck".into(), graphic_id: None },
+            position: eve_destiny::Vec3::new(ship.x + 3_000.0, ship.y, ship.z),
+            direction: eve_destiny::Vec3::new(1.0, 0.0, 0.0),
+            radius: 20.0,
+            owner_id: 0,
+            corporation_id: 0,
+            alliance_id: 0,
+            war_faction_id: 0,
+            rights: crate::wreck::LootRights::default(),
+            launcher_id: 0,
+            is_empty: false,
+            rights_known: false,
+            pull: None,
+            velocity: eve_destiny::Vec3::ZERO,
+            expires_at: NOON + 3_600 * TICKS_PER_SECOND,
+        }
+    }
+
+    /// Locks `target` for the test pilot, as the client's order does, and returns the time the lock is had.
+    fn lock_for_tractor(scene: &mut Scene, target: i64, now: i64) -> i64 {
+        scene.target_order(A, Order::Lock(target), now);
+        let mut now = now;
+        for _ in 0..40 {
+            now += TICKS_PER_SECOND / 4;
+            scene.poll(now);
+        }
+        assert!(scene.locked_by(A).contains(&target), "the lock on {target} is had");
+        now
+    }
+
     #[test]
-    fn tractor_is_refused_until_it_runs() {
+    fn a_tractor_refuses_what_it_cannot_pull() {
         let (mut scene, t) = crowd();
         let mut tractor = afterburner();
-        tractor.action = Some(Action::Tractor { velocity: 500.0, hold: 500.0 });
-        assert!(matches!(scene.activate(A, tractor, t).first(), Some(Out::Refused { reason: "NOT_IMPLEMENTED", .. })));
+        tractor.action = Some(Action::Tractor { velocity: 500.0, hold: 500.0, range: 20_000.0 });
+        tractor.repeat = 1000;
+        assert_eq!(refusal_of(&scene.activate(A, tractor.clone(), t)), "TARGET_REQUIRED");
+        // a ship is not a wreck or a can, so it is not there for a tractor (the reference's TARGET_NOT_FOUND)
+        tractor.target_id = scene.pilots[&B].ship.spec.ship_id;
+        assert_eq!(refusal_of(&scene.activate(A, tractor.clone(), t)), "TARGET_NOT_FOUND");
+        let wreck = tractor_wreck(&scene, WRECK);
+        scene.place_wreck(wreck, t);
+        tractor.target_id = WRECK;
+        assert_eq!(refusal_of(&scene.activate(A, tractor.clone(), t)), "TARGET_NOT_LOCKED");
+        // a corpse is not a wreck for a beam, though it lies where a wreck does
+        let corpse = crate::wreck::Wreck { id: WRECK + 1, group_id: crate::wreck::CORPSE_GROUP, ..tractor_wreck(&scene, WRECK + 1) };
+        scene.place_wreck(corpse, t);
+        tractor.target_id = WRECK + 1;
+        assert_eq!(refusal_of(&scene.activate(A, tractor.clone(), t)), "TARGET_NOT_FOUND");
+    }
+
+    #[test]
+    fn a_tractor_locked_on_a_wreck_out_of_its_reach_is_refused_with_the_range() {
+        let (mut scene, t) = crowd();
+        let wreck = tractor_wreck(&scene, WRECK);
+        scene.place_wreck(wreck, t);
+        let t = lock_for_tractor(&mut scene, WRECK, t);
+        let mut tractor = afterburner();
+        // the wreck is 3 km off, past the module's 2 km reach
+        tractor.action = Some(Action::Tractor { velocity: 500.0, hold: 500.0, range: 2_000.0 });
+        tractor.repeat = 1000;
+        tractor.target_id = WRECK;
+        assert!(matches!(
+            scene.activate(A, tractor, t).first(),
+            Some(Out::TargetRefused { reason: "TARGET_OUT_OF_RANGE", desired_range, .. }) if *desired_range == 2_000.0
+        ));
+    }
+
+    #[test]
+    fn a_tractor_pulls_its_locked_wreck_to_the_hold_distance_and_lets_go_when_stopped() {
+        let (mut scene, t) = crowd();
+        let wreck = tractor_wreck(&scene, WRECK);
+        scene.place_wreck(wreck, t);
+        let t = lock_for_tractor(&mut scene, WRECK, t);
+        let mut tractor = afterburner();
+        tractor.action = Some(Action::Tractor { velocity: 500.0, hold: 500.0, range: 20_000.0 });
+        tractor.repeat = 1000;
+        tractor.target_id = WRECK;
+        let module = tractor.module_id;
+        let accepted = scene.activate(A, tractor, t);
+        assert!(!accepted.iter().any(|out| matches!(out, Out::Refused { .. })), "the beam is accepted");
+        let source = scene.pilots[&A].ship.spec.ship_id;
+        assert_eq!(scene.wrecks[&WRECK].pull.map(|pull| pull.source_ship), Some(source));
+        // over a minute the wreck comes in to the hold distance, the surface of the ship being the reference's
+        let mut now = t;
+        for _ in 0..240 {
+            now += TICKS_PER_SECOND / 4;
+            scene.settle_all(now);
+        }
+        let ship_radius = scene.pilots[&A].ship.spec.radius;
+        let apart = scene.distance_to_wreck(A, WRECK, now).unwrap();
+        // the follow step holds the wreck at 499.5 m (the 0.999 standoff share of 500 m) from the ship's centre plus the ship's radius
+        assert!((apart - ship_radius - 499.5).abs() < 5.0, "the wreck is held at the hold distance, {apart} m");
+        // stopping the beam lets the wreck go where it is
+        let stop = scene.stop_module(A, module, now);
+        assert!(scene.wrecks[&WRECK].pull.is_none(), "the pull ends with the beam");
+        assert!(stop.iter().any(|out| matches!(out, Out::ModuleEnded { module_id, .. } if *module_id == module)));
+    }
+
+    #[test]
+    fn a_wreck_pulled_by_a_ship_that_leaves_the_scene_is_let_go() {
+        let (mut scene, t) = crowd();
+        let wreck = tractor_wreck(&scene, WRECK);
+        scene.place_wreck(wreck, t);
+        let t = lock_for_tractor(&mut scene, WRECK, t);
+        let mut tractor = afterburner();
+        tractor.action = Some(Action::Tractor { velocity: 500.0, hold: 500.0, range: 20_000.0 });
+        tractor.repeat = 1000;
+        tractor.target_id = WRECK;
+        scene.activate(A, tractor, t);
+        assert!(scene.wrecks[&WRECK].pull.is_some(), "the beam pulls the wreck");
+        // the pilot logs off while the beam runs: nothing follows the wreck any more, so the next settlement lets it go
+        let later = t + TICKS_PER_SECOND;
+        let _ = scene.leave(A, crate::scene::Departure::LoggedOff, later);
+        scene.settle_all(later + TICKS_PER_SECOND / 4);
+        assert!(scene.wrecks[&WRECK].pull.is_none(), "a wreck whose puller left is let go");
     }
 
 

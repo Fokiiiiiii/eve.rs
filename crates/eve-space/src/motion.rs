@@ -53,104 +53,154 @@ pub fn unit(a: Vec3) -> Option<Vec3> {
     (l.is_finite() && l > 1e-12).then(|| Vec3::new(a.x / l, a.y / l, a.z / l))
 }
 
-/// How long the ship takes to reach the speed it is asked for, in seconds: its mass times its inertia over the friction of space.
-pub(crate) fn agility_seconds(ship: &Ship) -> f64 {
-    (ship.spec.mass * ship.spec.agility / DESTINY_SPACE_FRICTION).max(0.05)
+/// What a body moves with: where it is, how it moves and what moves it. A ship has these from its spec and its motion; a wreck or a can that a tractor beam
+/// pulls has the mass and top speed the beam gives it (EVE.js `applyTractorActivationCommand`: mass 10, the beam's speed, speed fraction 1).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Kinematics {
+    pub position: Vec3,
+    pub velocity: Vec3,
+    /// A unit vector.
+    pub direction: Vec3,
+    pub speed_fraction: f64,
+    pub radius: f64,
+    pub mass: f64,
+    pub agility: f64,
+    pub max_velocity: f64,
 }
 
-/// The speed the ship is asked to fly at, in metres a second.
-fn cruise(ship: &Ship) -> f64 {
-    ship.spec.max_velocity * ship.speed_fraction
+impl Kinematics {
+    /// The motion of a ship, as the steps read and write it.
+    pub(crate) fn of_ship(ship: &Ship) -> Self {
+        Self {
+            position: ship.position,
+            velocity: ship.velocity,
+            direction: ship.direction,
+            speed_fraction: ship.speed_fraction,
+            radius: ship.spec.radius,
+            mass: ship.spec.mass,
+            agility: ship.spec.agility,
+            max_velocity: ship.spec.max_velocity,
+        }
+    }
+
+    /// Puts the place, velocity and heading that the steps made back into the ship.
+    pub(crate) fn write_ship(self, ship: &mut Ship) {
+        ship.position = self.position;
+        ship.velocity = self.velocity;
+        ship.direction = self.direction;
+    }
 }
 
-/// Moves the ship for `seconds` under a thrust that carries it to `cruise` along `direction` (the acceleration is the steady speed over the time it takes).
-pub(crate) fn integrate(ship: &mut Ship, thrust_direction: Vec3, speed: f64, seconds: f64) {
-    let inertial_mass = ship.spec.mass * ship.spec.agility;
-    let thrust = speed / agility_seconds(ship);
+/// How long a body takes to reach the speed it is asked for, in seconds: its mass times its inertia over the friction of space.
+pub(crate) fn agility_seconds(body: &Kinematics) -> f64 {
+    (body.mass * body.agility / DESTINY_SPACE_FRICTION).max(0.05)
+}
+
+/// The speed the body is asked to fly at, in metres a second.
+fn cruise(body: &Kinematics) -> f64 {
+    body.max_velocity * body.speed_fraction
+}
+
+/// Moves the body for `seconds` under a thrust that carries it to `speed` along `thrust_direction` (the acceleration is the steady speed over the time
+/// it takes).
+pub(crate) fn integrate(body: &mut Kinematics, thrust_direction: Vec3, speed: f64, seconds: f64) {
+    let inertial_mass = body.mass * body.agility;
+    // the thrust whose equilibrium is `speed` (drag over inertia), not clamped to the agility floor of `agility_seconds`: a light body (a wreck a
+    // beam pulls, 10 kg) is not held to the floor a ship's inertia never reaches
+    let thrust = speed * DESTINY_SPACE_FRICTION / inertial_mass.max(1e-9);
     let motion = integrate_carbon_motion(
-        ship.position,
-        ship.velocity,
+        body.position,
+        body.velocity,
         scale(thrust_direction, thrust),
         inertial_mass,
         DESTINY_SPACE_FRICTION,
         seconds,
     );
-    ship.position = motion.position;
-    ship.velocity = motion.velocity;
+    body.position = motion.position;
+    body.velocity = motion.velocity;
 }
 
-fn straight(ship: &mut Ship, seconds: f64) {
-    let speed = match ship.course {
-        Course::Goto => cruise(ship),
-        _ => 0.0,
-    };
-    integrate(ship, ship.direction, speed, seconds);
+/// [`integrate`] for a ship: its own numbers, and its place, velocity and heading written back.
+pub(crate) fn integrate_ship(ship: &mut Ship, thrust_direction: Vec3, speed: f64, seconds: f64) {
+    let mut body = Kinematics::of_ship(ship);
+    integrate(&mut body, thrust_direction, speed, seconds);
+    body.write_ship(ship);
 }
 
-/// How much of its range a following ship keeps: it settles a little inside it, so that a ship told to follow at the docking range is in it.
+/// How much of its range a following body keeps: it settles a little inside it, so that a body told to follow at the docking range is in it.
 const FOLLOW_STANDOFF_SHARE: f64 = 0.999;
-/// How many times the ship's reaction time it eases its approach over (the speed it asks for falls with its distance to the point it makes for).
+/// How many times the body's reaction time it eases its approach over (the speed it asks for falls with its distance to the point it makes for).
 const APPROACH_EASE: f64 = 3.0;
-/// The distance and speed under which a following ship is taken to have arrived and is set down at the point.
+/// The distance and speed under which a following body is taken to have arrived and is set down at the point.
 const ARRIVED_DISTANCE: f64 = 1.0;
 const ARRIVED_SPEED: f64 = 1.0;
 
-/// One step of following: towards the point on the line from the target to the ship that is the standoff away from the target, at a speed that
-/// falls as the point comes near, so that the ship comes to rest at it.
-fn follow_step(ship: &mut Ship, range: f64, target: Target, seconds: f64) {
-    let standoff = range * FOLLOW_STANDOFF_SHARE + ship.spec.radius + target.radius;
-    let away = sub(ship.position, target.position);
+/// One step of following: towards the point on the line from the target to the body that is the standoff away from the target, at a speed that falls
+/// as the point comes near, so that the body comes to rest at it.
+fn follow_step(body: &mut Kinematics, range: f64, target: Target, seconds: f64) {
+    let standoff = range * FOLLOW_STANDOFF_SHARE + body.radius + target.radius;
+    let away = sub(body.position, target.position);
     let outward = unit(away).unwrap_or(Vec3::new(1.0, 0.0, 0.0));
     let point = add(target.position, scale(outward, standoff));
-    let separation = sub(point, ship.position);
+    let separation = sub(point, body.position);
     let distance = length(separation);
-    if distance < ARRIVED_DISTANCE && length(ship.velocity) < ARRIVED_SPEED {
-        ship.position = point;
-        ship.velocity = Vec3::ZERO;
+    if distance < ARRIVED_DISTANCE && length(body.velocity) < ARRIVED_SPEED {
+        body.position = point;
+        body.velocity = Vec3::ZERO;
         return;
     }
     let Some(direction) = unit(separation) else {
-        integrate(ship, ship.direction, 0.0, seconds);
+        integrate(body, body.direction, 0.0, seconds);
         return;
     };
-    ship.direction = direction;
-    let closing = cruise(ship).min(distance / (APPROACH_EASE * agility_seconds(ship)));
-    // a target that moves is kept up with: the ship flies at the speed it closes at plus the target's own
+    body.direction = direction;
+    let closing = cruise(body).min(distance / (APPROACH_EASE * agility_seconds(body)));
+    // a target that moves is kept up with: the body flies at the speed it closes at plus the target's own
     let wanted = add(scale(direction, closing), target.velocity);
-    let speed = length(wanted).min(cruise(ship));
+    let speed = length(wanted).min(cruise(body));
     let Some(course) = unit(wanted) else {
-        integrate(ship, direction, 0.0, seconds);
+        integrate(body, direction, 0.0, seconds);
         return;
     };
-    ship.direction = course;
-    integrate(ship, course, speed, seconds);
+    body.direction = course;
+    integrate(body, course, speed, seconds);
 }
 
 /// One step of orbiting: along the tangent of the circle about the target at the orbit's radius, drawn in or out to it.
-fn orbit_step(ship: &mut Ship, distance: f64, target: Target, seconds: f64) {
-    let radius = distance + ship.spec.radius + target.radius;
-    let away = sub(ship.position, target.position);
+fn orbit_step(body: &mut Kinematics, distance: f64, target: Target, seconds: f64) {
+    let radius = distance + body.radius + target.radius;
+    let away = sub(body.position, target.position);
     let outward = unit(away).unwrap_or(Vec3::new(1.0, 0.0, 0.0));
     let up = Vec3::new(0.0, 1.0, 0.0);
     let tangent = unit(cross(up, outward))
         .or_else(|| unit(cross(Vec3::new(1.0, 0.0, 0.0), outward)))
-        .unwrap_or(ship.direction);
-    let speed = cruise(ship);
+        .unwrap_or(body.direction);
+    let speed = cruise(body);
     let radial_error = radius - length(away);
     let pull = scale(outward, radial_error.clamp(-speed, speed));
     let wanted = add(add(scale(tangent, speed), pull), target.velocity);
     let Some(direction) = unit(wanted) else {
-        integrate(ship, ship.direction, 0.0, seconds);
+        integrate(body, body.direction, 0.0, seconds);
         return;
     };
-    ship.direction = direction;
-    integrate(ship, direction, length(wanted).min(speed), seconds);
+    body.direction = direction;
+    integrate(body, direction, length(wanted).min(speed), seconds);
 }
 
-/// Where a target that moves was `remaining` seconds before the place it is given at (a step steers by the positions at its start, as the ship
+/// Where a target that moves was `remaining` seconds before the place it is given at (a step steers by the positions at its start, as the body
 /// and the target then are the same time apart).
 fn target_at_start(target: Target, remaining: f64) -> Target {
     Target { position: sub(target.position, scale(target.velocity, remaining)), ..target }
+}
+
+/// Moves a body that a tractor beam pulls for `seconds`: it follows its puller at `range` (the follow step, in steps of at most [`MAX_STEP`]).
+pub(crate) fn pull(body: &mut Kinematics, range: f64, target: Target, seconds: f64) {
+    let mut remaining = seconds;
+    while remaining > 1e-9 {
+        let step = remaining.min(MAX_STEP);
+        follow_step(body, range, target_at_start(target, remaining), step);
+        remaining -= step;
+    }
 }
 
 /// Moves `ship` for `seconds`. `target` is what the ship follows or orbits, when its course has one and the scene knows it.
@@ -159,24 +209,26 @@ pub fn advance(ship: &mut Ship, seconds: f64, target: Option<Target>) {
     if seconds.is_nan() || seconds <= 0.0 {
         return;
     }
-    let mut remaining = seconds;
+    let mut body = Kinematics::of_ship(ship);
     match (ship.course, target) {
-        (Course::Follow { range, .. }, Some(target)) => {
-            while remaining > 1e-9 {
-                let step = remaining.min(MAX_STEP);
-                follow_step(ship, range, target_at_start(target, remaining), step);
-                remaining -= step;
-            }
-        }
+        (Course::Follow { range, .. }, Some(target)) => pull(&mut body, range, target, seconds),
         (Course::Orbit { distance, .. }, Some(target)) => {
+            let mut remaining = seconds;
             while remaining > 1e-9 {
                 let step = remaining.min(MAX_STEP);
-                orbit_step(ship, distance, target_at_start(target, remaining), step);
+                orbit_step(&mut body, distance, target_at_start(target, remaining), step);
                 remaining -= step;
             }
         }
-        _ => straight(ship, seconds),
+        _ => {
+            let speed = match ship.course {
+                Course::Goto => cruise(&body),
+                _ => 0.0,
+            };
+            integrate(&mut body, ship.direction, speed, seconds);
+        }
     }
+    body.write_ship(ship);
 }
 
 #[cfg(test)]

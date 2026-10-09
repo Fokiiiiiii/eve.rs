@@ -101,7 +101,7 @@ impl Flight {
         }
         let wanted = motion::unit(sub(self.raw_destination, ship.position)).unwrap_or(ship.direction);
         ship.direction = wanted;
-        motion::integrate(ship, wanted, ship.spec.max_velocity, seconds(span));
+        motion::integrate_ship(ship, wanted, ship.spec.max_velocity, seconds(span));
     }
 
     fn lined_up(&self, ship: &Ship) -> bool {

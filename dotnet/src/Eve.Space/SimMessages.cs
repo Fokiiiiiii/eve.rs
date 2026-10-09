@@ -368,8 +368,9 @@ public abstract record SimAction
     /// <summary>A salvager's cycle (tag 8): as a mining cycle, with the wreck's access chance moved by <paramref name="AccessBonusPercent"/>.</summary>
     public sealed record Salvage(double AccessBonusPercent) : SimAction;
 
-    /// <summary>A tractor beam (tag 9). Its package has not landed: the activation is refused until it has (the simulation never runs it).</summary>
-    public sealed record Tractor(double VelocityMetersPerSecond, double HoldDistanceMeters) : SimAction;
+    /// <summary>A tractor beam (tag 9, protocol 30): it pulls the locked wreck or can at <paramref name="VelocityMetersPerSecond"/> until it is
+    /// <paramref name="HoldDistanceMeters"/> off the ship, and a target beyond <paramref name="RangeMeters"/> (the module's reach) is out of range.</summary>
+    public sealed record Tractor(double VelocityMetersPerSecond, double HoldDistanceMeters, double RangeMeters) : SimAction;
 
     /// <summary>A passive targeter (tag 10). Its package has not landed: the activation is refused until it has.</summary>
     public sealed record PassiveLock : SimAction;

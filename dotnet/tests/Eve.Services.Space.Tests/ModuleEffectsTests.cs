@@ -730,7 +730,7 @@ public class ModuleEffectsTests
             "scanStrengthBonusPercentActivate",
             "scanStrengthTargetPercentBonus",
             "shipScan",
-            "tractorBeamCan",
+            
             "warpDisruptSphere",
         ];
         // Reconcile the manifest against the catalog this test actually opened. A newer unhandled

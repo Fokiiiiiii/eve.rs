@@ -546,7 +546,7 @@ public sealed record SimDestroyed(
 /// <summary>A weapon of an NPC: an effect of the NPC's own ship, so the module is the ship. One that flies a <see cref="SimMissile"/> is a launcher (the NPC's own: no rounds to spend).</summary>
 public sealed record SimNpcWeapon(
     long ModuleId, int EffectId, double CycleMs, double CapacitorNeed, int WeaponTypeId, string Fx, IReadOnlyList<double> RawDamage, double OptimalRange, double Falloff,
-    double TrackingSpeed, double SignatureResolution, SimTurretCharge? Charge = null, SimMissile? Missile = null);
+    double TrackingSpeed, double SignatureResolution, SimTurretCharge? Charge = null, SimMissile? Missile = null, bool RequiresGunnery = false);
 
 /// <summary>What a ship leaves when it is destroyed.</summary>
 public sealed record SimWreckKind(int TypeId, string Name, int GraphicId);

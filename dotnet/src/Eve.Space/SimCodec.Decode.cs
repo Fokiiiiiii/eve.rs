@@ -32,7 +32,7 @@ public static partial class SimCodec
         var turret = ReadTurret(ref r);
         return new SimNpcWeapon(
             moduleId, effectId, cycleMs, capacitorNeed, turret.WeaponTypeId, turret.Fx, turret.RawDamage, turret.OptimalRange, turret.Falloff, turret.TrackingSpeed,
-            turret.SignatureResolution, turret.Charge, turret.Missile);
+            turret.SignatureResolution, turret.Charge, turret.Missile, turret.RequiresGunnery);
     }
 
     /// <summary>The effect a drone runs at its target, when it has one (a flag, then the effect and its action).</summary>

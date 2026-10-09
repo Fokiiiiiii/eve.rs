@@ -18,7 +18,8 @@ public static partial class SimCodec
         w.F64(weapon.CycleMs);
         w.F64(weapon.CapacitorNeed);
         WriteTurret(w, new SimTurret(
-            weapon.WeaponTypeId, weapon.Fx, weapon.RawDamage, weapon.OptimalRange, weapon.Falloff, weapon.TrackingSpeed, weapon.SignatureResolution, weapon.Charge, weapon.Missile));
+            weapon.WeaponTypeId, weapon.Fx, weapon.RawDamage, weapon.OptimalRange, weapon.Falloff, weapon.TrackingSpeed, weapon.SignatureResolution, weapon.Charge, weapon.Missile,
+            RequiresGunnery: weapon.RequiresGunnery));
     }
 
     /// <summary>A strike's body (tags 13 and 15): the shape, the aim, the numbers and the sweep (see <see cref="ReadStrike"/>).</summary>

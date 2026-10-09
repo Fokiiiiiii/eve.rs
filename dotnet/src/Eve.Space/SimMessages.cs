@@ -360,6 +360,9 @@ public static class SimModuleWorkCommands
 
     /// <summary>A command burst's cycle ended: the host applies the burst's buffs to the ships it reaches (<see cref="SimModuleWorkCycle.Recipients"/>), protocol 42.</summary>
     public const byte Burst = 12;
+
+    /// <summary>A P.A.N.I.C.'s start: the host grants the ships it reaches (<see cref="SimModuleWorkCycle.Recipients"/>) their buffs before the effect starts (protocol 42).</summary>
+    public const byte Panic = 13;
 }
 
 /// <summary>A layer of a ship's health.</summary>
@@ -458,6 +461,12 @@ public abstract record SimAction
     /// metre) as a work cycle (<see cref="SimModuleWorkCommands.Burst"/>) and parks until the host answers; the host reads the buffs from the charge and the module.
     /// </summary>
     public sealed record CommandBurst(double RangeMeters) : SimAction;
+
+    /// <summary>
+    /// The Pulse Activated Nexus Invulnerability Core (tag 29, protocol 42): non-targeted, one cycle of its duration. It needs an asteroid the pilot holds the lock on, and
+    /// parks its start until the host grants the ships of its fleet in <paramref name="RangeMeters"/> (plus one metre) their buffs (<see cref="SimModuleWorkCommands.Panic"/>).
+    /// </summary>
+    public sealed record Panic(double RangeMeters) : SimAction;
 
     /// <summary>Spools once, then shifts the ship along its heading; cooldown begins when the spool succeeds or is interrupted.</summary>
     public sealed record MicroJumpDrive(double DistanceMeters, long CooldownMs) : SimAction;

@@ -365,6 +365,15 @@ public static partial class SimCodec
                     }
                     return new SimAction.ScrambleStatus(delta);
                 }
+            case 29:
+                {
+                    var range = r.F64();
+                    if (!(double.IsFinite(range) && range >= 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad invulnerability core action");
+                    }
+                    return new SimAction.Panic(range);
+                }
             case 28:
                 {
                     var range = r.F64();

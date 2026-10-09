@@ -162,6 +162,10 @@ public class SimCodecTests
         {
             return new SimAction.StasisBurst((double)a["range"]!, (double)a["durationMs"]!, (double)a["speedFactor"]!);
         }
+        if ((string)a["kind"]! == "panic")
+        {
+            return new SimAction.Panic((double)a["rangeMeters"]!);
+        }
         if ((string)a["kind"]! == "commandBurst")
         {
             return new SimAction.CommandBurst((double)a["rangeMeters"]!);

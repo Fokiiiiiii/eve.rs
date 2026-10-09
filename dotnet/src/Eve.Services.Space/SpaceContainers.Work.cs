@@ -176,6 +176,11 @@ public sealed partial class SpaceContainers
         {
             return await SettleBurstAsync(cycle);
         }
+        // a P.A.N.I.C.'s start is granted its fleet's buffs before the effect starts (track C6)
+        if (cycle.IsModule && cycle.Command == SimModuleWorkCommands.Panic)
+        {
+            return await SettlePanicAsync(cycle);
+        }
         if (cycle.IsModule && cycle.Command is SimModuleWorkCommands.ScanCargo or SimModuleWorkCommands.ScanShip)
         {
             return await SettleScanAsync(cycle);

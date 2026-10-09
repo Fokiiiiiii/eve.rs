@@ -273,6 +273,13 @@ private static void WriteAction(Writer w, SimAction action)
                 }
                 w.U8(18); w.F64(status.Delta);
                 break;
+            case SimAction.Panic panic:
+                if (!(double.IsFinite(panic.RangeMeters) && panic.RangeMeters >= 0))
+                {
+                    throw new ArgumentException("the invulnerability core has a reach of zero or more metres", nameof(action));
+                }
+                w.U8(29); w.F64(panic.RangeMeters);
+                break;
             case SimAction.CommandBurst burst:
                 if (!(double.IsFinite(burst.RangeMeters) && burst.RangeMeters >= 0))
                 {
@@ -878,7 +885,7 @@ private static void WriteAction(Writer w, SimAction action)
                 w.F64(m.CritRoll);
                 // protocol 42: the ships a command burst reaches (a count, then each id); only a burst names any
                 var recipients = m.Recipients ?? [];
-                if (recipients.Count > 0 && m.Command != SimModuleWorkCommands.Burst)
+                if (recipients.Count > 0 && m.Command is not (SimModuleWorkCommands.Burst or SimModuleWorkCommands.Panic))
                 {
                     throw new ArgumentException("only a command burst's cycle names ships", nameof(message));
                 }

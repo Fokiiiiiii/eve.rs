@@ -1,6 +1,7 @@
 //! eve-sim: the space simulation.
 //!
 //!   EVE_SIM_SOCKET   the Unix socket the host connects to        (default /tmp/eve-sim.sock)
+//!   EVE_SIM_LISTEN   a TCP address to listen on instead, on any platform (off Unix: 127.0.0.1:26011)
 //!   EVE_SDE_DIR      the static data (the SDE's JSONL files)      (default: .cache/sde, as the tools find it)
 //!
 //! One host at a time; a host that goes away takes its ships with it.
@@ -17,6 +18,10 @@ use eve_space::world::World;
 use tokio::net::TcpListener;
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
+
+/// Off Unix there is no socket path to default to: the simulation listens on a local TCP port.
+#[cfg(not(unix))]
+const DEFAULT_SIM_LISTEN: &str = "127.0.0.1:26011";
 
 #[cfg(unix)]
 fn env_or(name: &str, default: &str) -> String {
@@ -93,30 +98,18 @@ async fn main() -> ExitCode {
     eprintln!("eve-sim: static data read in {:.1}s", started.elapsed().as_secs_f64());
     let universe = Arc::new(Universe::new(world));
 
-    if let Ok(address) = std::env::var("EVE_SIM_LISTEN") {
-        return match serve_tcp(&address, universe).await {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                eprintln!("eve-sim: cannot listen on {address}: {error}");
-                ExitCode::FAILURE
-            }
-        };
-    }
-
-    #[cfg(unix)]
-    {
-        let socket = PathBuf::from(env_or("EVE_SIM_SOCKET", "/tmp/eve-sim.sock"));
-        match serve_unix(socket, universe).await {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                eprintln!("eve-sim: cannot listen on the Unix socket: {error}");
-                ExitCode::FAILURE
-            }
+    let served = match std::env::var("EVE_SIM_LISTEN").ok().filter(|value| !value.is_empty()) {
+        Some(address) => serve_tcp(&address, universe).await,
+        #[cfg(unix)]
+        None => serve_unix(PathBuf::from(env_or("EVE_SIM_SOCKET", "/tmp/eve-sim.sock")), universe).await,
+        #[cfg(not(unix))]
+        None => serve_tcp(DEFAULT_SIM_LISTEN, universe).await,
+    };
+    match served {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("eve-sim: cannot listen: {error}");
+            ExitCode::FAILURE
         }
-    }
-    #[cfg(not(unix))]
-    {
-        eprintln!("eve-sim: set EVE_SIM_LISTEN to a local TCP address on this platform");
-        ExitCode::FAILURE
     }
 }

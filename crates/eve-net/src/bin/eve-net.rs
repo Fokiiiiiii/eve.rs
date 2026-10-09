@@ -2,7 +2,7 @@
 //!
 //!   EVE_NET_LISTEN   address clients connect to           (default 127.0.0.1:26000)
 //!   EVE_HOST         the service host: a socket path, `unix:/path` or `tcp:host:port`
-//!                                                          (default /tmp/eve-host.sock)
+//!                                                          (default /tmp/eve-host.sock; tcp:127.0.0.1:26010 off Unix)
 //!   EVE_NODE_ID      the proxy node id clients are told   (default 65450)
 //!
 //! The host is waited for (up to 60 s) so the two can be started in either order.
@@ -11,7 +11,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use eve_net::host::{Endpoint, HostLink};
+use eve_net::host::{DEFAULT_HOST, Endpoint, HostLink};
 use eve_net::profile::PROXY_NODE_ID;
 use eve_net::server::{ServeConfig, serve};
 use tokio::net::TcpListener;
@@ -37,7 +37,7 @@ async fn connect_with_retry(endpoint: &Endpoint, node_id: u32) -> Result<HostLin
 #[tokio::main]
 async fn main() -> ExitCode {
     let listen = env_or("EVE_NET_LISTEN", "127.0.0.1:26000");
-    let host = Endpoint::parse(&env_or("EVE_HOST", "/tmp/eve-host.sock"));
+    let host = Endpoint::parse(&env_or("EVE_HOST", DEFAULT_HOST));
     let node_id: u32 = match env_or("EVE_NODE_ID", &PROXY_NODE_ID.to_string()).parse() {
         Ok(id) => id,
         Err(_) => {

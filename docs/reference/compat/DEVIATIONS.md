@@ -541,7 +541,7 @@ page used is the Revenant expansion notes' breacher section (mirrored on the EVE
   `dotMaxHPPercentagePerTick` 0.6 (5737). The simulation reads the charge's values after dogma, so the pilot's skills apply: Operation (86260) at level 1 gives
   0.63 (the wiki's "+5 % max target HP damaged per second per level"; the host test pins it). The brief's "600 cap" is the medium's; the small charge's cap is 200. The wiki gives 160 (small) and 800 (medium) a second,
   and 200 and 1000 with max skills: the SDE is used, and the wiki's numbers conflict with it (the SDE wins). The wiki's 50 to 75 s duration (with skills) is the
-  base 40 s plus skill bonuses; the skill bonuses (5749, 5750) are not read yet, so no skill changes a pod here.
+  base 40 s plus skill bonuses; the breacher code does not read the bonus attributes 5749 and 5750 itself; the dogma layer applies the pilot's skills to the charge's attributes before the simulation reads them (see the percentage above).
 - Launcher: 4807, the small (85084) and medium (85085) launchers. The charge's firing effect is `dotMissileLaunching` (12174), which the SDE marks offensive;
   its launch is an aggression though it does no damage. The rate of fire is the launcher's own attribute, as for the other missile launchers.
 - A hit: the wiki says "they will not affect their target unless they actually reach and hit" and that a smartbomb can kill a pod before it arrives. The pod flies

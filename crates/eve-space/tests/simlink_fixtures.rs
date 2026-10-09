@@ -492,6 +492,15 @@ fn effect_of(case: &Value) -> Effect {
                     range: a["rangeMeters"].as_f64().unwrap(),
                 };
             }
+            if a["kind"] == "blast" {
+                let c = &a["centre"];
+                let centre = [c[0].as_f64().unwrap(), c[1].as_f64().unwrap(), c[2].as_f64().unwrap()];
+                return Action::Blast {
+                    centre,
+                    radius: a["radiusMeters"].as_f64().unwrap(),
+                    damage: four("damage"),
+                };
+            }
             if a["kind"] == "missile" {
                 let num = |key: &str| a[key].as_f64().unwrap();
                 let blast = Blast {

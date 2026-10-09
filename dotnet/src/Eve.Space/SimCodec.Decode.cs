@@ -451,6 +451,18 @@ public static partial class SimCodec
                     }
                     return kamikaze;
                 }
+            case 25:
+                {
+                    double[] centre = [r.F64(), r.F64(), r.F64()];
+                    var radius = r.F64();
+                    double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];
+                    var blast = new SimAction.Blast(centre, radius, damage);
+                    if (!blast.IsValid)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad fighter blast action");
+                    }
+                    return blast;
+                }
             case 24:
                 {
                     double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];

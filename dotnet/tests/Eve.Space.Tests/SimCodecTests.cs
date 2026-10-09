@@ -95,6 +95,13 @@ public class SimCodecTests
             var d = a["damage"]!;
             return new SimAction.Kamikaze([(double)d[0]!, (double)d[1]!, (double)d[2]!, (double)d[3]!], (double)a["rangeMeters"]!);
         }
+        if ((string)a["kind"]! == "blast")
+        {
+            var c = a["centre"]!;
+            var d = a["damage"]!;
+            return new SimAction.Blast([(double)c[0]!, (double)c[1]!, (double)c[2]!], (double)a["radiusMeters"]!,
+                [(double)d[0]!, (double)d[1]!, (double)d[2]!, (double)d[3]!]);
+        }
         if ((string)a["kind"]! == "missile")
         {
             var d = a["damage"]!;

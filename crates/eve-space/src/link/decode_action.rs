@@ -242,6 +242,16 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             }
             Ok(Action::Kamikaze { damage, range })
         }
+        25 => {
+            let centre = [reader.f64()?, reader.f64()?, reader.f64()?];
+            let radius = reader.f64()?;
+            let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+            let numbers = centre.iter().copied().chain([radius]).chain(damage);
+            if !numbers.clone().all(f64::is_finite) || radius <= 0.0 || damage.iter().any(|d| *d < 0.0) {
+                return Err(DecodeError::BadValue("blast"));
+            }
+            Ok(Action::Blast { centre, radius, damage })
+        }
         24 => {
             let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
             let reach = reader.f64()?;

@@ -171,6 +171,9 @@ def action(a):
     if kind == "missile":
         return bytes([24]) + struct.pack("<4d", *a["damage"]) + struct.pack("<5d", a["reachMeters"], a["explosionRadius"], a["explosionVelocity"],
                                                                               a["reductionFactor"], a["reductionSensitivity"])
+    # the SimAction tag 25 (protocol 37): a fighter's LaunchBomb blast: the centre (metres), the radius (metres) and the four damages (EM, thermal, kinetic, explosive)
+    if kind == "blast":
+        return bytes([25]) + struct.pack("<3d", *a["centre"]) + struct.pack("<d", a["radiusMeters"]) + struct.pack("<4d", *a["damage"])
     # the SimAction tag 15 (protocol 29): the Gravitational Transportation Field Oscillator's field, a sphere strike (shape 4) whose body follows the tag, then the
     # offset of the destination from the firing ship, the warp block of the held capitals (ms), and the ship ids moved and held (a u32 count, then each as i64)
     if kind == "field":
@@ -904,6 +907,11 @@ valid = [
                 "action": {"kind": "missile", "damage": [1500.0, 0.0, 1500.0, 0.0], "reachMeters": 20000.0, "explosionRadius": 40.0,
                            "explosionVelocity": 135.0, "reductionFactor": 0.4, "reductionSensitivity": 5.5},
                 "onChanges": [], "offChanges": []}},
+    {"name": "activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400004104", "moduleType": 40362, "effectId": 6485, "fx": "",
+                "durationMs": 60000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0", "burnsFuel": False,
+                "action": {"kind": "blast", "centre": [12000.0, -3000.0, 45000.0], "radiusMeters": 15000.0, "damage": [640.0, 0.0, 0.0, 0.0]},
+                "onChanges": [], "offChanges": []}},
     {"name": "activate a doomsday strike (Bosonic Field Generator)", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002814", "moduleType": 40633, "effectId": 6473, "fx": "",
                 "durationMs": 300000.0, "capacitorNeed": 30000.0, "repeat": 1, "targetId": "0", "burnsFuel": True,
@@ -993,6 +1001,12 @@ invalid = [
     {"name": "fighter missile with a negative explosion radius", "reason": "bad-value",
      "hex": build(dict(named("activate a fighter's missiles (Templar: a missile reaching 20 km)"), effect=dict(named("activate a fighter's missiles (Templar: a missile reaching 20 km)")["effect"],
                        action=dict(named("activate a fighter's missiles (Templar: a missile reaching 20 km)")["effect"]["action"], explosionRadius=-40.0)))).hex()},
+    {"name": "fighter bomb with no radius", "reason": "bad-value",
+     "hex": build(dict(named("activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)"), effect=dict(named("activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)")["effect"],
+                       action=dict(named("activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)")["effect"]["action"], radiusMeters=0.0)))).hex()},
+    {"name": "fighter bomb with a negative damage", "reason": "bad-value",
+     "hex": build(dict(named("activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)"), effect=dict(named("activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)")["effect"],
+                       action=dict(named("activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)")["effect"]["action"], damage=[-640.0, 0.0, 0.0, 0.0])))).hex()},
     {"name": "strike with an aim that is not a unit vector", "reason": "bad-value",
      "hex": build(dict(named("activate a doomsday strike (Bosonic Field Generator)"), effect=dict(named("activate a doomsday strike (Bosonic Field Generator)")["effect"],
                        action=dict(named("activate a doomsday strike (Bosonic Field Generator)")["effect"]["action"], direction=[0.6, 0.0, 0.9])))).hex()},

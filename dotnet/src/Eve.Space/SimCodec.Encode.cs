@@ -338,6 +338,16 @@ private static void WriteAction(Writer w, SimAction action)
                 foreach (var number in kamikaze.Damage) w.F64(number);
                 w.F64(kamikaze.RangeMeters);
                 break;
+            case SimAction.Blast blast:
+                if (!blast.IsValid)
+                {
+                    throw new ArgumentException("a fighter blast has a finite centre, a positive radius and four kinds of damage", nameof(action));
+                }
+                w.U8(25);
+                foreach (var number in blast.Centre) w.F64(number);
+                w.F64(blast.RadiusMeters);
+                foreach (var number in blast.Damage) w.F64(number);
+                break;
             case SimAction.FighterMissile missile:
                 if (!missile.IsValid)
                 {

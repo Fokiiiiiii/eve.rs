@@ -41,7 +41,8 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>The fighter provider: a pilot that enters space takes up the squadrons its character has out there (a restart leaves them in space).</summary>
     private Eve.Services.Space.SpaceFighters FighterProvider()
     {
-        var fighters = new Eve.Services.Space.SpaceFighters(sim, ships, dogma, session => spaceSessions?.SolarSystemOf(session), message => Console.Error.WriteLine($"eve-host: fighters: {message}"));
+        var fighters = new Eve.Services.Space.SpaceFighters(sim, ships, dogma, session => spaceSessions?.SolarSystemOf(session), message => Console.Error.WriteLine($"eve-host: fighters: {message}"),
+            systemId => spaceSessions?.SecurityOfSystem(systemId));
         if (spaceSessions is not null)
         {
             spaceSessions.PilotEntered = fighters.RebuildAsync;

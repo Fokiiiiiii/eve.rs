@@ -327,6 +327,7 @@ fn launch_from_a(
         spool: None,
         aoe: None,
         arc: None,
+        requires_gunnery: false,
     });
     scene.launch_missile(A, &effect, t)
 }
@@ -380,6 +381,7 @@ fn an_fof_launch_goes_for_the_nearest_enemy_that_fired_on_the_shooter_and_locks_
         Some(b_ship),
         "the aggression is the target it chose"
     );
+}
 
 /// The `OnDamageMessage` notices a list of outputs carries for a session.
 fn damage_told(out: &[Out], who: SessionId) -> usize {
@@ -441,6 +443,7 @@ fn a_launch_that_does_no_damage_makes_no_aggression_and_a_damaging_one_does() {
     assert_eq!(scene.aggressions.len(), 1, "a damaging missile aggresses its target");
 }
 
+#[test]
 fn a_fighter_blast_does_not_reach_a_ship_beyond_its_radius() {
     let (mut scene, t) = crowd();
     // the blast is centred on the launcher's ship; the other ship is 40 km off, beyond the 15 km radius

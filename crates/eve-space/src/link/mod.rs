@@ -5,12 +5,13 @@
 //! [`Message::decode`] reads a frame's payload (the kind and the body), so the same functions serve any framing layer.
 //! `oracle/fixtures/simlink/messages.json` pins the layout for both sides.
 mod decode;
+mod decode_action;
 mod decode_message;
 mod encode;
 mod payload;
 mod reader;
 use self::decode::*;
-use self::decode_message::*;
+use self::decode_action::*;
 use self::encode::*;
 
 use crate::death::Credit;

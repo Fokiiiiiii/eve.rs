@@ -137,6 +137,8 @@ impl Scene {
         let mut told = Vec::new();
         for session in due {
             self.settle_pilot(session, now);
+            // the jump stops what the ship runs before it leaves (EVE.js stops every active module at a stargate jump)
+            told.extend(self.stop_all_modules(session, now));
             let Some(mut pilot) = self.pilots.remove(&session) else { continue };
             let Some(jump) = pilot.jump.take() else { continue };
             pilot.clear_overheat_for_jump();

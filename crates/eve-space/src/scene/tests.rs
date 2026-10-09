@@ -1646,6 +1646,52 @@ fn jumped(scene: &mut Scene) -> Traveller {
     scene.due_jumps(NOON + seconds(6)).0.pop().unwrap()
 }
 
+/// A reactive armor hardener (type 4403, effect 4928) and a second module the pilot runs, both started on the ship at rest.
+fn a_running_hardener_and_a_module(scene: &mut Scene) -> (i64, i64) {
+    let hardener = crate::modules::Effect {
+        rules: Default::default(),
+        burns_fuel: false,
+        module_id: 9_001,
+        module_type: 4403,
+        effect_id: 4928,
+        fx: "effects.AdaptiveArmorHardener".to_string(),
+        duration_ms: 10_000.0,
+        capacitor_need: 0.0,
+        repeat: 1000,
+        target_id: 0,
+        turret: None,
+        action: Some(crate::modules::Action::ResistanceShift { seed: [0.85; 4], shift: 0.06, attribute_ids: [267, 270, 269, 268] }),
+        on: None,
+        off: None,
+        on_changes: Vec::new(),
+        off_changes: Vec::new(),
+    };
+    let started = scene.activate(SESSION, hardener, NOON);
+    assert!(matches!(started.first(), Some(Out::Accepted { .. })), "{started:?}");
+    assert!(scene.pilots[&SESSION].ship.health.shift_profile().is_some());
+    (9_001, 9_002)
+}
+
+#[test]
+fn a_stargate_jump_stops_every_module_the_ship_runs_and_the_hardener_profile_with_it() {
+    let mut scene = scene_by_a_gate();
+    let (hardener, _) = a_running_hardener_and_a_module(&mut scene);
+    scene.command(SESSION, jump(NEAR_GATE, 0), NOON);
+    let (travellers, told) = scene.due_jumps(NOON + seconds(6));
+    let traveller = travellers.into_iter().next().expect("the ship jumps");
+    // the host is told each module ended once, for the reason a forbidden effect has
+    let ended: Vec<(i64, u8)> = told
+        .iter()
+        .filter_map(|o| match o {
+            Out::ModuleEnded { session, module_id, reason } if *session == SESSION => Some((*module_id, *reason)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ended, [(hardener, 3)]);
+    assert_eq!(traveller.pilot.modules.running_count(), 0, "nothing the pilot ran goes through the gate");
+    assert_eq!(traveller.pilot.ship.health.shift_profile(), None, "the profile is reset, not kept for a later start");
+}
+
 #[test]
 fn a_ship_appears_in_front_of_the_gate_it_comes_out_of_at_rest() {
     let mut scene = scene_by_a_gate();

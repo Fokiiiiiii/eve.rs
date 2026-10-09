@@ -98,6 +98,19 @@ public class TargetingTests
         Assert.All(rig.Targeting.Asked, a => Assert.Equal(TargetingOrder.Targets, a.Order));
     }
 
+    [Fact]
+    public void A_mining_laser_out_of_reach_is_told_too_far_and_another_module_is_not()
+    {
+        var far = ModuleResult.Refusal("TARGET_OUT_OF_RANGE", 22, "Mining Laser") with
+        {
+            EffectName = "miningLaser", TargetType = 92885, DesiredRange = 29700, ActualDistance = 1,
+        };
+        var (name, values) = UserError(ModuleRefusals.Of(far, starting: true));
+        Assert.Equal("TargetTooFar", name);
+        Assert.Equal((new PyInt(29700), new PyInt(22)), (values["distance"], values["module"]));
+        Assert.Equal("TargetNotWithinRangeGeneric", UserError(ModuleRefusals.Of(far with { EffectName = "shipModuleRemoteArmorRepairer" }, starting: true)).Name);
+    }
+
     [PgFact]
     public async Task A_lock_that_is_refused_is_the_error_the_reference_raises_for_the_reason()
     {

@@ -1246,7 +1246,7 @@ private readonly TransitionRuntime _transitions;
             var refusal = ModuleResult.Refusal(reply.Reason == "ALREADY_ACTIVE" ? "MODULE_ALREADY_ACTIVE" : reply.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
             // a target out of reach is told with how far the module reaches and how far the target is
             return reply.Reason == "TARGET_OUT_OF_RANGE"
-                ? refusal with { TargetType = reply.TargetType, ShipType = snapshot.Ship.TypeId, DesiredRange = reply.DesiredRange, ActualDistance = reply.ActualDistance }
+                ? refusal with { TargetType = reply.TargetType, ShipType = snapshot.Ship.TypeId, DesiredRange = reply.DesiredRange, ActualDistance = reply.ActualDistance, EffectName = effectName }
                 : refusal;
         }
         pilot.ActiveModules[moduleId] = ItemState.Active;

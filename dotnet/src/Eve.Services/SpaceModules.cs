@@ -9,6 +9,9 @@ public sealed record ModuleResult(bool Ok, string? Reason = null, int ModuleType
     /// <summary>For <c>TARGET_OUT_OF_RANGE</c>: the type of the target, the type of the ship that runs the module, how far the module reaches and how far the target is (metres, surface to surface).</summary>
     public int TargetType { get; init; }
 
+    /// <summary>The effect the refusal is for (<c>miningLaser</c> is told <c>TargetTooFar</c> when its target is out of reach, as the reference does).</summary>
+    public string EffectName { get; init; } = "";
+
     public IReadOnlyList<long> ModuleIds { get; init; } = [];
 
     public int ShipType { get; init; }

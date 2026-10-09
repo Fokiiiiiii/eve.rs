@@ -37,6 +37,12 @@ public static class ModuleRefusals
             "TARGET_REQUIRED" => Notify("You need an active target to activate that module."),
             "TARGET_NOT_LOCKED" => Notify("That target is not locked."),
             "TARGET_NOT_FOUND" => MachoErrors.ThrowUserError("DeniedActivateTargetNotPresent"),
+            // a mining laser's target out of reach is TargetTooFar with the distance, the target and the module (moduleOperation.js: _buildModuleTargetTooFarUserErrorValues)
+            "TARGET_OUT_OF_RANGE" when string.Equals(refusal.EffectName, "miningLaser", StringComparison.OrdinalIgnoreCase) => MachoErrors.ThrowUserError(
+                "TargetTooFar",
+                ("distance", Py.Number(Math.Max(0, refusal.DesiredRange))),
+                ("targetname", refusal.TargetType > 0 ? new PyTuple([new PyInt(TypeReference), new PyInt(refusal.TargetType)]) : new PyStr("That target")),
+                ("module", new PyInt(refusal.ModuleType))),
             "TARGET_OUT_OF_RANGE" => MachoErrors.ThrowUserError(
                 "TargetNotWithinRangeGeneric",
                 ("desiredRange", Py.Number(Math.Max(0, refusal.DesiredRange))),

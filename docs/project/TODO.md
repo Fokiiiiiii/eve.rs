@@ -377,7 +377,7 @@ Open (each with its exact blocker):
 - WG-8 fitting restrictions on the server: not started (low priority).
 - FP-8 target resistances for ewar and assistance (2112 to 2116, 2135): not started; needs `resist` fields on the ship's sensors block and on each `Remote` (a second wire change, not in this bump).
 - FP-C4b and FP-C5 (refresh running effects when overheat or a computer changes): not started; needs a new `SimUpdateEffect` message (wire).
-- FP-C7 ECM burst aggression and its offensive gate: DONE (track B6a, protocol 42, section 23).
+- FP-C7 ECM burst aggression and its offensive gate: DONE (track B6a, protocol 43, section 23).
 - FP-C8 automatic reload from the hold: not started. EVE.js queues the reload when the last round is spent (`localCycleRuntime.js`) and resumes at the next cycle; eve.rs would need the host to reload and re-activate and to suppress the no-charges error that the simulation sends now.
 - Cloak types (covert, prototype, non-warp cloak states): not started.
 - M-6 scanner, analyzer and relic modules: not started (Cargo and Ship Scanner results, Data Analyzer and Subverter bodies).

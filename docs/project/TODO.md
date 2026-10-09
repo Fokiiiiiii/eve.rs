@@ -529,29 +529,15 @@ OPEN (each with its blocker):
 - MITM: no scenario driven (`tools/mitm/README.md`); there is no client trace of a burst cycle yet.
 - Skill, ship and mindlink bonuses are not tested with a skilled character; the wiki's Max column (Shield Harmonizing +23.44 %) is the check.
 
-## 23. Track A5: probes, DoT notification, jump drive and mobile objects (2026-10-09)
+## 23. Track A5: OnDotVictimUpdated, probes, cyno jammer, jump drive and mobile objects (2026-10-09)
 
-Done: the Python `set` encoding in both marshal codecs (`Value::python_set`, `PyValue.PythonSet`; `InventoryWire.Set` delegates), with
-round-trip tests. Protocol unchanged (42 on main). DEVIATIONS "Track A5: Python set on the wire".
+Done (tests in the crates named; decisions in DEVIATIONS "Track A5"):
+- The Python `set` in both marshal codecs: `Value::python_set` (`crates/eve-marshal`) and `PyValue.PythonSet` (`Eve.Marshal`); `InventoryWire.Set` delegates. Round-trip tests in both. Protocol unchanged (42).
+- OnDotVictimUpdated, A4's open item: the sim tells a ship its breacher applications as a destiny action on each hit, on each change of the working application and on each end (`crates/eve-space/src/dot_weapons.rs`, `dot_victim_update`). Tests: `dot_weapons/tests.rs` (two new). The client was not run.
 
-Found, not built (each with its exact blocker; sources are the SDE, the EVE University wiki where it decides, EveJS and eve-logic):
-- OnDotVictimUpdated (michelle.py:1578 to dotWeaponSvc, eve-logic `dotWeapons/`): the payload is now encodable, but the producer is the
-  SCARAB Breacher Pod (SDE groups 4807 launcher and 4808 charges, types 85088 and 85089, effect `dotMissileLaunching` 12174). The breacher
-  launcher is refused with `*_LAUNCHER_NOT_IMPLEMENTED` (section 9). EveJS has no breacher and no DoT code (grep of `server/src`),
-  so the applied damage, stacking (`dotPriorityQueue`, `dotApplicationStore`) and expiry must come from the wiki's Breacher Pod page,
-  not yet read. Blocker: the breacher launcher and its DoT body, then the notification.
-- LaunchProbes (RC-7, E-06): EveJS `services/dogma/dogmaService/moduleOperation.js` `Handle_LaunchProbes` (line 3388) and
-  `_resolveValidatedProbeLaunchContext` (425 to 567) give the validation order and the messages; the active cap is 8
-  (`probeRuntimeState.MAX_ACTIVE_PROBES`). Section 7 names the probe owner. eve.rs has no route, no probe record (`probeRuntimeState` is a store name only) and no probe
-  object in the simulation. Blocker: probe objects in the simulation, the probe records, scanning and the lifecycle notifications
-  (OnNewProbe, OnRemoveProbe, OnProbesIdle, OnSystemScanStarted, OnSystemScanStopped, OnProbeWarpStart, OnProbeWarpEnd).
-- GetCynoJammerState (E-03): the C# route returns None when no source is assigned (`BeyonceService.cs` 137). None is the answer while no
-  jammer exists, which is always the case on main: eve.rs has no Tenebrex cyno-suppression state and no mobile cyno inhibitor. EveJS
-  takes it from `services/sovereignty/sovSuppressionState.js` `getCynoJammerOnlineSimTime` (259) and
-  `services/starbase/starbaseTravelRuntime.js` `getJammerActivationTimeMs`. Blocker: the sovereignty structures (none in `dotnet/src`)
-  or the mobile inhibitor (WP-8).
-- WP-8 mobile warp disruptors: blocked on ADR 0012, whose `Deployed` record is not on main (the wreck and can sweep
-  `space.containers.sweep` is the only timed-object owner). The `placed.rs` extraction from `crowd.rs` is also not done. Blocker: build
-  the `Deployed` store and its migration, then the anchorDrop item effect, the custody path, the sim object and the scramble source.
-- Capital jump drive, cyno targeting and jump execution (B7 list): blocked on the cyno field. Section 12 says nothing spawns a field yet
-  (`CynoFieldTypesTests`), and no B7 branch is on origin or in a worktree. Blocker: the cyno field (ADR 0012 `Deployed`) first.
+Open, each with its exact blocker:
+- LaunchProbes (RC-7, E-06, section 7): not started. EveJS `services/dogma/dogmaService/moduleOperation.js` `Handle_LaunchProbes` (line 3388) and `_resolveValidatedProbeLaunchContext` (425 to 567) give the checks and messages (NOT_IN_SPACE, MODULE_NOT_FOUND, INVALID_LAUNCHER, MODULE_NOT_ONLINE, NO_CHARGES, INVALID_CHARGE, INCOMPATIBLE_CHARGE, NOT_ENOUGH_CHARGES, and the cap of 8 active probes). Blocker: no probe record, no probe object in the simulation, and no scan lifecycle (E-06's notifications follow the scan).
+- GetCynoJammerState (E-03): the host callback stays unassigned, so the answer is None (no jammer). That is correct while no jammer exists. A source would be the Tenebrex cyno suppression (EveJS `services/sovereignty/sovSuppressionState.js` `getCynoJammerOnlineSimTime`, line 259) or the Mobile Cynosural Inhibitor (below). Blocker: neither is built.
+- WP-8 mobile warp disruptors: not started. Blocker: ADR 0012's `Deployed` record is not built. The cyno field from B7 is a sim-timed deployable too, and a restart drops it, so the shared record comes first.
+- Capital jump drive, cyno targeting, jump range and fuel, and the jump to the cyno field: not started. B7's field exists on main (`CynoGeneratorEffect`, `SimAction.CynoField`), so the jump can target it. Blocker: the jump-drive module body and the cross-system jump are to be built; the restrictions follow the drive.
+- Breacher pods (A4): the DoT notification is now built, but the breacher launcher's client flow and the per-tick damage message (`OnDamageMessage`, no wire shape in the sources) remain as A4 recorded them.

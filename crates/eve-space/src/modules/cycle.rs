@@ -254,6 +254,10 @@ impl Scene {
 
     /// A work target (a rock, a wreck) is there while the pilot holds its lock: a depleted rock drops its locks.
     pub(super) fn work_target_ok(&self, session: SessionId, effect: &Effect) -> bool {
+        // a command burst reaches its ships, not a target: it is there while its pilot runs it
+        if effect.action.as_ref().is_some_and(Action::targets_nothing) {
+            return true;
+        }
         let locked = self.locked_by(session).contains(&effect.target_id);
         // a scan's target is also in its reach: the lock alone is not enough once the ship has moved off (scanner range, cycle end)
         let in_reach = match effect.action.as_ref() {
@@ -320,6 +324,54 @@ impl Scene {
         }
     }
 
+    /// The ships a command burst of `range_meters` reaches from this ship, as the scene measures them: every ship of the scene within the range plus one metre
+    /// (surface to surface), the source among them. The host decides which of them its fleet has, and caps the list (`BurstRecipients`).
+    pub(super) fn burst_recipients(&self, session: SessionId, range_meters: f64) -> Vec<i64> {
+        let mut ships: Vec<i64> = self
+            .pilots
+            .iter()
+            .filter(|(other, _)| {
+                **other == session
+                    || self.apart(session, **other).is_some_and(|apart| apart <= range_meters + 1.0)
+            })
+            .map(|(_, pilot)| pilot.ship.spec.ship_id)
+            .collect();
+        ships.sort_unstable();
+        ships
+    }
+
+    /// The `ModuleWorkCycle` that asks the host to grant a P.A.N.I.C. its fleet's buffs before it starts (`WORK_PANIC`), with the ships in reach (the source among them).
+    pub(super) fn panic_cycle_out(
+        &self,
+        session: SessionId,
+        module_id: i64,
+        target_id: i64,
+        cycle_id: u64,
+        recipients: Vec<i64>,
+    ) -> Option<Out> {
+        let pilot = self.pilots.get(&session)?;
+        Some(Out::ModuleWorkCycle {
+            session,
+            character_id: pilot.ship.spec.character_id,
+            ship_id: pilot.ship.spec.ship_id,
+            solar_system_id: self.solar_system_id(),
+            module_id,
+            target_id,
+            cycle_id,
+            command: WORK_PANIC,
+            mining_amount_m3: 0.0,
+            waste_multiplier: 0.0,
+            waste_probability: 0.0,
+            crit_probability: 0.0,
+            crit_multiplier: 0.0,
+            access_difficulty_bonus: 0.0,
+            waste_roll: 0.0,
+            rounding_roll: 0.0,
+            crit_roll: 0.0,
+            recipients,
+        })
+    }
+
     /// The `ModuleWorkCycle` that asks the host for the fuel of a cycle (`WORK_FUEL`): nothing is mined or salvaged, the host takes the fuel or refuses.
     pub(super) fn fuel_cycle_out(
         &self,
@@ -338,6 +390,7 @@ impl Scene {
             target_id,
             cycle_id,
             command: WORK_FUEL,
+            recipients: Vec::new(),
             mining_amount_m3: 0.0,
             waste_multiplier: 0.0,
             waste_probability: 0.0,
@@ -393,7 +446,24 @@ impl Scene {
         start.sent_at = at;
         let (module_id, target_id, cycle_id) =
             (start.effect.module_id, start.effect.target_id, start.cycle_id);
-        self.fuel_cycle_out(session, module_id, target_id, cycle_id).into_iter().collect()
+        match start.effect.action {
+            // a P.A.N.I.C. asks the ships in reach again, under the same id (the host answers a repeat from its record)
+            Some(Action::Panic { range_meters }) => {
+                let recipients = self.burst_recipients(session, range_meters);
+                self.panic_cycle_out(session, module_id, target_id, cycle_id, recipients)
+                    .into_iter()
+                    .collect()
+            }
+            _ => self.fuel_cycle_out(session, module_id, target_id, cycle_id).into_iter().collect(),
+        }
+    }
+
+    /// The reason a P.A.N.I.C. whose grant the host refused is shown with: a ship the host no longer has in space as that, anything else as a refused grant.
+    pub(super) fn panic_refusal(reason: &str) -> &'static str {
+        match reason {
+            "NO_PILOT" | "NO_SHIP" | "NOT_CONTROLLED" => "NO_SHIP_IN_SPACE",
+            _ => "PANIC_REFUSED",
+        }
     }
 
     /// The reason a refused start is shown with: the host's `NO_FUEL` as it is; a ship the host no longer has in space as that; anything else as a refused fuel.
@@ -441,12 +511,17 @@ impl Scene {
                 *crit_multiplier,
                 0.0,
             ),
+            Action::CommandBurst { .. } => (WORK_BURST, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
             Action::Salvage { access_bonus } => (WORK_SALVAGE, 0.0, 0.0, 0.0, 0.0, 0.0, *access_bonus),
             // a scan carries no mining numbers: the host reads the target and decides what it reveals
             Action::Scan { cargo, .. } => {
                 (if *cargo { WORK_SCAN_CARGO } else { WORK_SCAN_SHIP }, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
             }
             _ => return None,
+        };
+        let recipients = match work {
+            Action::CommandBurst { range_meters } => self.burst_recipients(session, *range_meters),
+            _ => Vec::new(),
         };
         Some(Out::ModuleWorkCycle {
             session,
@@ -466,6 +541,7 @@ impl Scene {
             waste_roll: pending.rolls[0],
             rounding_roll: pending.rolls[1],
             crit_roll: pending.rolls[2],
+            recipients,
         })
     }
 
@@ -551,7 +627,13 @@ impl Scene {
         }) {
             let start = pilot.modules.pending_starts.remove(position);
             if !accepted {
-                return vec![Out::Refused { session, command: 17, reason: Self::fuel_refusal(reason) }];
+                // a P.A.N.I.C.'s grant is refused under the host's reason, a fuel ask under the fuel's (see `fuel_refusal`)
+                let reason = if matches!(start.effect.action, Some(Action::Panic { .. })) {
+                    Self::panic_refusal(reason)
+                } else {
+                    Self::fuel_refusal(reason)
+                };
+                return vec![Out::Refused { session, command: 17, reason }];
             }
             return self.start_effect(session, start.effect, now);
         }

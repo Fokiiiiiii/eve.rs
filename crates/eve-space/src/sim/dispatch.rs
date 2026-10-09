@@ -228,6 +228,7 @@ impl Sim {
                 waste_roll,
                 rounding_roll,
                 crit_roll,
+                recipients,
             } => Message::ModuleWorkCycle {
                 session_id: session,
                 character_id,
@@ -246,6 +247,7 @@ impl Sim {
                 waste_roll,
                 rounding_roll,
                 crit_roll,
+                recipients,
             },
             Out::ModuleEnded { session, module_id, reason } => {
                 Message::ModuleEnded { session_id: session, module_id, reason }
@@ -283,6 +285,7 @@ impl Sim {
             | Message::RemoteRepairCycleResult { .. }
             | Message::AdjustCharge { .. }
             | Message::UpdateEffect { .. }
+            | Message::BuffState { .. }
             | Message::ShipSpec { .. } => self.handle_fitting(message, now),
             Message::Command { .. } => self.handle_command(message, now),
             Message::LaunchDrone(..)
@@ -536,6 +539,11 @@ impl Sim {
                     None => Vec::new(),
                 }
             }
+            Message::BuffState { session_id, ship_id, entries } => match self.scene_of(session_id) {
+                Some(scene) => scene.set_buffs(session_id, ship_id, entries, now),
+                // a session that is not in space has no ship whose buffs to tell
+                None => Vec::new(),
+            },
             Message::ShipSpec { session_id, ship } => {
                 self.scene_of(session_id).map(|s| s.respec(session_id, *ship, now)).unwrap_or_default()
             }

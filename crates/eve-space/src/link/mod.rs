@@ -36,7 +36,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 43;
+pub const PROTOCOL_VERSION: u16 = 44;
 
 /// The message kinds.
 pub mod kind;
@@ -120,7 +120,7 @@ pub struct WreckPlacement {
     pub is_empty: bool,
 }
 
-/// A deployable the host keeps a record of (a cynosural field, protocol 43): where it lies, whose it is and how long it lives from now. The simulation
+/// A deployable the host keeps a record of (a cynosural field, protocol 44): where it lies, whose it is and how long it lives from now. The simulation
 /// says so when it is lit, and the host sends the same message back to put it in space again after a restart (with what is left of its life).
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeployedPlacement {
@@ -177,6 +177,14 @@ pub struct Enter {
     pub ship: ShipSpec,
     pub position: Option<[f64; 3]>,
     pub direction: Option<[f64; 3]>,
+}
+
+/// One buff of a ship (`BuffState`): its buff collection, the value the buff gives the ship, and the time left, in milliseconds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BuffEntry {
+    pub collection_id: i32,
+    pub value: f64,
+    pub remaining_ms: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -522,6 +530,15 @@ pub enum Message {
         waste_roll: f64,
         rounding_roll: f64,
         crit_roll: f64,
+        /// The ships a command burst reaches (`WORK_BURST` only, empty for every other command): the ships of the scene within reach, the host decides.
+        recipients: Vec<i64>,
+    },
+    /// The timed buffs of a ship of this session (a command burst's, protocol 43): the host sends them after each change, the simulation tells the client
+    /// `OnDbuffUpdated` with them. An empty list clears the client's buffs. Nothing is answered.
+    BuffState {
+        session_id: u64,
+        ship_id: i64,
+        entries: Vec<BuffEntry>,
     },
     /// The host's decision for one module work cycle (the same fields as a drone's `DroneWorkResult`).
     ModuleWorkResult {
@@ -668,6 +685,7 @@ impl Message {
             Self::Measured { .. } => kind::MEASURED,
             Self::AdjustCharge { .. } => kind::ADJUST_CHARGE,
             Self::UpdateEffect { .. } => kind::UPDATE_EFFECT,
+            Self::BuffState { .. } => kind::BUFF_STATE,
             Self::ChargeAdjusted { .. } => kind::CHARGE_ADJUSTED,
             Self::FighterGotoPoint { .. } => kind::FIGHTER_GOTO_POINT,
             Self::FighterSize { .. } => kind::FIGHTER_SIZE,

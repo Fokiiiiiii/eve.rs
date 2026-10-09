@@ -55,7 +55,7 @@ internal static class ModuleEffects
         .Register(new PowerBoosterEffect())
         .Register(new FueledArmorRepairEffect())
         .Register(new FueledShieldBoostingEffect())
-        // the Nexus invulnerability core: wired, its rules checked, refused as EFFECT_NOT_IMPLEMENTED until the fleet effect has a body (needs wire bump W2)
+        // the Nexus invulnerability core (P.A.N.I.C., track C6): its start waits for the host's grant of the fleet's buffs (SpaceContainers.Burst.cs)
         .Register(new IndustrialInvulnerabilityEffect())
         // the superweapons of group 588 (not P.A.N.I.C.): wired, each refused by its own name until its body exists (Effects/SuperWeaponEffects.cs, docs/project/TODO.md section 12)
         .Register(new DoomsdayTitanEffect())
@@ -74,5 +74,7 @@ internal static class ModuleEffects
         .Register(new CargoScanEffect())
         .Register(new ShipScanEffect())
         .Register(new ScanStrengthEffect())
+        // the command bursts (track C6, protocol 43): the five families and the expedition bursts, settled at each cycle's end by the host (SpaceContainers.Burst.cs)
+        .Register(new CommandBurstEffect())
         .Register(new ScanStrengthTargetEffect());
 }

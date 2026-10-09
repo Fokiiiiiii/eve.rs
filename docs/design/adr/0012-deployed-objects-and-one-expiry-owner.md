@@ -58,7 +58,7 @@ deadline is a row, it survives a restart. The sim also has its own timer-like ex
 ## Addendum (2026-10-09, track A5: the cynosural field record)
 
 - A lit cynosural field has a `Deployed` record: the table `space.deployed` (migration 0004, kind `cyno_field`), written when the simulation says the field was lit
-  (`Deployed`, protocol 43) and read by the host on its own clock. `space.containers.sweep` owns the record's expiry: `ExpireDeployedAsync` runs each record's
+  (`Deployed`, protocol 44) and read by the host on its own clock. `space.containers.sweep` owns the record's expiry: `ExpireDeployedAsync` runs each record's
   kind entry (one entry per kind) and forgets the record.
 - A restart: when a ship comes into the field's system, a record whose time is not up is put back in space (`RestoreDeployedAsync`) with the id it had and what
   is left of its life. A record whose time is up is left to the sweep.

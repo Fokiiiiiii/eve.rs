@@ -292,6 +292,15 @@ pub(super) fn read_changes(reader: &mut Reader) -> Result<Vec<Change>, DecodeErr
     Ok(changes)
 }
 
+/// The ships a command burst reaches (`ModuleWorkCycle`, protocol 43): a count, then each ship's id. A count the frame cannot hold is refused before it is read.
+pub(super) fn read_recipients(reader: &mut Reader) -> Result<Vec<i64>, DecodeError> {
+    let count = reader.u32()? as usize;
+    if count > reader.data.len() / 8 {
+        return Err(DecodeError::Truncated);
+    }
+    (0..count).map(|_| reader.i64()).collect()
+}
+
 pub(super) fn read_effect(reader: &mut Reader) -> Result<Effect, DecodeError> {
     let module_id = reader.i64()?;
     let module_type = reader.i32()?;

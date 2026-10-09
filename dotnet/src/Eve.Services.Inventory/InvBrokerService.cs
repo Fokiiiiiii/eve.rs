@@ -9,22 +9,6 @@ using Eve.Universe;
 
 namespace Eve.Services.Inventory;
 
-/// <summary>
-/// The inventory broker: it hands out the inventories the client opens (the hangar of its station, the station, the ship in
-/// the hangar) as bound objects, and each of them lists what is in it. Only reading is here: moving, stacking and fitting
-/// items come later.
-/// </summary>
-public enum CorporationHangarOperation
-{
-    Query,
-    Take,
-    Deposit,
-}
-
-public delegate ValueTask<bool> CorporationHangarAccess(
-    long characterId, long corporationId, long stationId, int divisionFlag,
-    CorporationHangarOperation operation, CancellationToken cancellationToken);
-
 [Service("invbroker")]
 public sealed partial class InvBrokerService(
     PgItemStore items, ItemTypeCatalog types, StationCatalog stations, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs, ISpaceContainers? space = null, ISpaceDroneBays? droneBays = null, CorporationHangarAccess? corporationHangarAccess = null, IReadOnlyList<Eve.Services.ICharacterEntryHook>? entryHooks = null) : IBoundObjectReleaseHandler
@@ -1013,11 +997,4 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
         }
         return Py.Tuple(opened, result);
     }
-}
-
-[Service("repackagingSvc")]
-public sealed partial class RepackagingService(InvBrokerService inventory)
-{
-    [Method("RepackageItems")]
-    public ValueTask<PyValue> RepackageItems(ServiceCall call) => inventory.RepackageItems(call);
 }

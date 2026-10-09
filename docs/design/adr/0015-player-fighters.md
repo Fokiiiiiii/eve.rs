@@ -1,8 +1,8 @@
 # ADR 0015: Player fighters are companion sessions on the drone machinery, with abilities as effect handlers
 
-- Status: accepted
+- Status: accepted. The fighter track is complete at protocol 32 except kamikaze and LaunchBomb, which are refused by name (third amendment).
 - Date: 2026-10-08
-- Decided by: the lead's final decisions on `fighters_decisions_brief.md` (all recommendations accepted, FIG-D-1..D-11, FIG-X-1..X-4); see `scratchpad/specs/DECISIONS.md`.
+- Decided by: the project lead, for the player fighters track. All recommendations were accepted; the decisions are the numbered items FIG-D-1 to FIG-D-11 and FIG-X-1 to FIG-X-4 below.
 
 ## Context
 
@@ -30,7 +30,7 @@ cooldowns or the charge counts (the client reads those from its own static resou
 7. **Notification order (FIG-D-7).** Reply first, then the queued ability notice; tube and removal notices synchronously; all
    published after commit (FOUNDATIONS rule 2).
 8. **GOTO_POINT (FIG-D-8).** An additive point variant of `Course` (the shared enum also serves drones and ships).
-9. **Scoop into cargo or fleet hangar (FIG-D-9).** EveJS refusal, as a `UserError` (not silent). CCP behaviour is unverified.
+9. **Scoop into cargo or fleet hangar (FIG-D-9).** EveJS refusal, as a `UserError` (not silent). No CCP source for it is recorded.
 10. **No fighter provider installed (FIG-D-10).** `UserError` per id or per call, through `MachoErrors.UserErrorPayload` so the
     client reads `error.args`. Never `None`, `False` or an empty result as success.
 11. **Restart (FIG-D-11).** Squadrons in space are not rebuilt on restart. The item row stays and is recovered on logon, as drones
@@ -47,8 +47,8 @@ cooldowns or the charge counts (the client reads those from its own static resou
 * Abilities beyond slot 0 stay refused until the owner supplies the facts file. The file needs a client install to generate, so
   it cannot be produced by the repository alone. This is a LIMITATION, not a success path.
 * Work cycles for fighters are not part of `CompanionBridge`; the mining work cycle (ADR 0013) keeps them.
-* Unverified and open items (CCP scoop rules, AttackM damage model, event names from the client, abandoned-squadron cleanup,
-  destruction item removal, the capacitor check on a companion pilot) are listed in `DECISIONS.md`; none is claimed as verified.
+* Open items (CCP scoop rules, AttackM damage model, event names from the client, abandoned-squadron cleanup,
+  destruction item removal, the capacitor check on a companion pilot) are recorded in DEVIATIONS "Player fighters" where a row names them; none is claimed as checked in the graphical client.
 
 ## Amendment (2026-10-09): ability facts from EVE.js and the SDE
 

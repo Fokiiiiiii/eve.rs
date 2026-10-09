@@ -55,8 +55,6 @@ internal static class HostComposition
         SimClient? simulation = null;
         LegacyGameStore? legacy = null;
         var online = new OnlineCharacters();
-            GameStoreCache? mailCache = legacy?.Cache;
-            PersistenceStore? mailStore = legacy?.Store;
         if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
         {
             var schema = Env("EVE_IDENTITY_SCHEMA", PgAccountDirectory.DefaultSchema);
@@ -78,6 +76,8 @@ internal static class HostComposition
             accounts = new InMemoryAccountDirectory(accountOptions);
         }
 
+        GameStoreCache? mailCache = legacy?.Cache;
+        PersistenceStore? mailStore = legacy?.Store;
         var registry = new ServiceRegistry();
         Func<long> now = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         ReadJumpTimersCallback? readJumpTimers = mailCache is { } characterCache

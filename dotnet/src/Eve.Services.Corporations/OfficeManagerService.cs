@@ -1,0 +1,328 @@
+using Eve.Characters;
+using Eve.Corporations;
+using Eve.Macho;
+using Eve.Marshal;
+
+namespace Eve.Services.Corporations;
+
+/// <summary>Client contract for station corporation offices and their impounded assets.</summary>
+[Service("officeManager")]
+public sealed partial class OfficeManagerService(
+    CorporationOfficeStore store,
+    CorporationStore corporations,
+    PgCharacterStore characters,
+    Eve.Inventory.PgItemStore items,
+    Eve.Wallet.WalletTransactions wallets,
+    Func<long,CorporationOfficeStation?> readStation,
+    Func<long> now)
+{
+    private const long RentOfficeRole = CorporationRoles.RentOffice;
+    // The SDE inventory flag for the station's Impounded location.
+    private const int ImpoundedFlag = CorporationOfficeStore.ImpoundedFlag;
+    private const int OfficeRentReferenceType = 13;
+    private const int ImpoundReleaseReferenceType = 41;
+    private const long EveDayMs = 24L * 60 * 60 * 1000;
+
+    [Method("GetMyCorporationsOffices")]
+    public async ValueTask<PyValue> GetMyCorporationsOffices(ServiceCall call)
+    {
+        var corporationId = SessionCorporationId(call.Session);
+        if (corporationId <= 0) return new PyList([]);
+        var offices = await store.ForCorporationAsync(corporationId, call.Cancellation);
+        return new PyList([.. offices.Select(OfficeRow)]);
+    }
+
+    [Method("GetPriceQuote")]
+    public async ValueTask<PyValue> GetPriceQuote(ServiceCall call)
+    {
+        var corporationId = Integral(call.Arg(0)) ?? 0;
+        var sessionCorporationId = SessionCorporationId(call.Session);
+        if (corporationId <= 0 || corporationId != sessionCorporationId)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var station = CurrentStation(call.Session);
+        var price = await QuoteAsync(station, call.Cancellation);
+        return new PyReal((double)price);
+    }
+
+    [Method("RentOffice")]
+    public async ValueTask<PyValue> RentOffice(ServiceCall call)
+    {
+        var actor = RequireActor(call.Session);
+        var corporationId = SessionCorporationId(call.Session);
+        var station = CurrentStation(call.Session);
+        var authority = await RequireAuthorityAsync(actor, corporationId, station.Id, call.Cancellation);
+        if ((authority.Roles.AtAll & RentOfficeRole) == 0)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+
+        var submittedQuote = Money(call.Arg(0)) ?? throw new CorporationError("OFFICE_PRICE_REQUIRED");
+        if (submittedQuote < CorporationOfficeStore.MinimumRentIsk)
+            throw new CorporationError("OFFICE_PRICE_INVALID");
+        var existingItems = await items.InLocationAsync(station.Id, corporationId, call.Cancellation);
+        var atStation = now();
+        await store.WriteAsync(async (connection, transaction) =>
+        {
+            await store.LockStationAsync(connection, transaction, station.Id, call.Cancellation);
+            if (await store.GetAsync(connection, transaction, corporationId, station.Id, forUpdate: true,
+                cancellationToken: call.Cancellation) is not null)
+                return 0;
+
+            var occupied = await store.CountAtStationAsync(connection, transaction, station.Id, call.Cancellation);
+            if (occupied >= station.OfficeCapacity) throw new CorporationError("OFFICE_SLOTS_FULL");
+            var price = await store.PriceQuoteAsync(connection, transaction, station, occupied, atStation, call.Cancellation);
+            if (submittedQuote != price) throw new CorporationError("OFFICE_PRICE_CHANGED");
+
+            var officeFolderId = await items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(CorporationOfficeStore.OfficeFolderTypeId, corporationId, station.Id,
+                    Eve.Inventory.ItemFlags.Hangar, Singleton: true), call.Cancellation);
+            var office = await store.RentAsync(connection, transaction, corporationId, officeFolderId, station, price, atStation,
+                call.Cancellation);
+            await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(corporationId), -price,
+                station.OwnerId, OfficeRentReferenceType, "Corporation office rental", atStation,
+                $"office-rent:{office.OfficeId}:charge", "office_rental_fee", call.Cancellation);
+
+            foreach (var item in existingItems.Where(item => item.Flag == ImpoundedFlag))
+                await MoveIfCurrentAsync(connection, transaction, item, corporationId, station.Id,
+                    ImpoundedFlag, Eve.Inventory.ItemFlags.CorpSAG1, call.Cancellation);
+            return 0;
+        }, call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    [Method("UnrentOffice")]
+    public async ValueTask<PyValue> UnrentOffice(ServiceCall call)
+    {
+        var actor = RequireActor(call.Session);
+        var corporationId = SessionCorporationId(call.Session);
+        var station = CurrentStation(call.Session);
+        var authority = await RequireAuthorityAsync(actor, corporationId, station.Id, call.Cancellation);
+        if (!IsCeoOrDirector(actor, authority))
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+
+        var assets = await items.InLocationAsync(station.Id, corporationId, call.Cancellation);
+        var atStation = now();
+        await store.WriteAsync(async (connection, transaction) =>
+        {
+            await store.LockStationAsync(connection, transaction, station.Id, call.Cancellation);
+            var office = await store.GetAsync(connection, transaction, corporationId, station.Id,
+                forUpdate: true, cancellationToken: call.Cancellation);
+            if (office is null) return 0;
+
+            foreach (var item in assets.Where(item => Eve.Inventory.ItemFlags.IsCorporationHangar(item.Flag)))
+                await MoveIfCurrentAsync(connection, transaction, item, corporationId, station.Id,
+                    item.Flag, ImpoundedFlag, call.Cancellation);
+            var folder = await items.LockAndGetAsync(connection, transaction, office.OfficeFolderId, call.Cancellation);
+            if (folder is { OwnerId: var folderOwner, LocationId: var folderLocation, TypeId: CorporationOfficeStore.OfficeFolderTypeId } &&
+                folderOwner == corporationId && folderLocation == station.Id)
+                await items.DeleteAsync(connection, transaction, folder.Id, call.Cancellation);
+            await store.UnrentAsync(connection, transaction, office, atStation, call.Cancellation);
+            return 0;
+        }, call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    [Method("GetItemsFromImpound")]
+    public async ValueTask<PyValue> GetItemsFromImpound(ServiceCall call)
+    {
+        var actor = RequireActor(call.Session);
+        var corporationId = SessionCorporationId(call.Session);
+        var station = CurrentStation(call.Session);
+        var authority = await RequireAuthorityAsync(actor, corporationId, station.Id, call.Cancellation);
+        if (!IsCeoOrDirector(actor, authority)) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+
+        var impounded = (await items.InLocationAsync(station.Id, corporationId, call.Cancellation))
+            .Where(item => item.Flag == ImpoundedFlag).ToArray();
+        if (impounded.Length == 0) return PyNone.Instance;
+        var quotedFee = Money(call.Arg(0)) ?? throw new CorporationError("IMPOUND_PRICE_REQUIRED");
+        var atStation = now();
+        await store.WriteAsync(async (connection, transaction) =>
+        {
+            await store.LockStationAsync(connection, transaction, station.Id, call.Cancellation);
+            var occupied = await store.CountAtStationAsync(connection, transaction, station.Id, call.Cancellation);
+            var rent = await store.PriceQuoteAsync(connection, transaction, station, occupied, atStation, call.Cancellation);
+            var fee = decimal.Round(rent / 2m, 2, MidpointRounding.AwayFromZero);
+            if (quotedFee != fee) throw new CorporationError("IMPOUND_PRICE_CHANGED");
+
+            await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(corporationId), -fee,
+                station.OwnerId, ImpoundReleaseReferenceType, "Corporation impound release", atStation,
+                $"office-impound-release:{corporationId}:{station.Id}:{atStation}",
+                "office_impound_release", call.Cancellation);
+            foreach (var item in impounded)
+                await MoveIfCurrentAsync(connection, transaction, item, corporationId, station.Id,
+                    ImpoundedFlag, Eve.Inventory.ItemFlags.CorpSAG1, call.Cancellation);
+            return 0;
+        }, call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    public async ValueTask<PyValue> GetCorporationsWithOffices(ServiceCall call)
+    {
+        var stationId = call.Session.GetInt("stationid") ?? call.Session.GetInt("structureid");
+        if (stationId is not > 0) return new PyList([]);
+        var ids = await store.CorporationsAtStationAsync(stationId.Value, call.Cancellation);
+        return new PyList([.. ids.Select(id => (PyValue)new PyLong(id))]);
+    }
+
+    public async ValueTask<PyValue> GetEmptyOfficeCount(ServiceCall call)
+    {
+        var station = CurrentStation(call.Session);
+        var occupied = await store.WriteAsync((connection, transaction) =>
+            store.CountAtStationAsync(connection, transaction, station.Id, call.Cancellation), call.Cancellation);
+        return new PyInt(Math.Max(0, station.OfficeCapacity - occupied));
+    }
+
+    public async ValueTask<PyValue> HasCorpImpoundedItems(ServiceCall call)
+    {
+        var corporationId = SessionCorporationId(call.Session);
+        if (corporationId <= 0) return PyBool.False;
+        var corporation = await corporations.GetAsync(corporationId, call.Cancellation);
+        if (corporation is null || corporation.IsNpc) return PyBool.False;
+        var station = CurrentStation(call.Session);
+        if (await store.WriteAsync(async (connection, transaction) =>
+        {
+            var office = await store.GetAsync(connection, transaction, corporationId, station.Id,
+                cancellationToken: call.Cancellation);
+            return office is not null;
+        }, call.Cancellation))
+            return PyBool.False;
+        var contents = await items.InLocationAsync(station.Id, corporationId, call.Cancellation);
+        return contents.Any(item => item.Flag == ImpoundedFlag) ? PyBool.True : PyBool.False;
+    }
+
+    public async ValueTask<PyValue> GetImpoundReleasePrice(ServiceCall call)
+    {
+        var corporationId = SessionCorporationId(call.Session);
+        if (corporationId <= 0) return PyNone.Instance;
+        var corporation = await corporations.GetAsync(corporationId, call.Cancellation);
+        if (corporation is null || corporation.IsNpc) return PyNone.Instance;
+        var station = CurrentStation(call.Session);
+        if (await store.WriteAsync(async (connection, transaction) =>
+        {
+            var office = await store.GetAsync(connection, transaction, corporationId, station.Id,
+                cancellationToken: call.Cancellation);
+            return office is not null;
+        }, call.Cancellation))
+            return PyNone.Instance;
+        var contents = await items.InLocationAsync(station.Id, corporationId, call.Cancellation);
+        if (!contents.Any(item => item.Flag == ImpoundedFlag)) return PyNone.Instance;
+        var rent = await QuoteAsync(station, call.Cancellation);
+        return new PyReal((double)decimal.Round(rent / 2m, 2, MidpointRounding.AwayFromZero));
+    }
+
+    public async ValueTask<PyValue> TrashImpoundedOffice(ServiceCall call)
+    {
+        var actor = RequireActor(call.Session);
+        var corporationId = SessionCorporationId(call.Session);
+        var station = CurrentStation(call.Session);
+        var authority = await RequireAuthorityAsync(actor, corporationId, station.Id, call.Cancellation);
+        if (!IsCeoOrDirector(actor, authority)) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var impounded = (await items.InLocationAsync(station.Id, corporationId, call.Cancellation))
+            .Where(item => item.Flag == ImpoundedFlag).ToArray();
+        await store.WriteAsync(async (connection, transaction) =>
+        {
+            await store.LockStationAsync(connection, transaction, station.Id, call.Cancellation);
+            foreach (var item in impounded)
+            {
+                var current = await items.LockAndGetAsync(connection, transaction, item.Id, call.Cancellation);
+                if (current is { OwnerId: var owner, LocationId: var location, Flag: ImpoundedFlag } &&
+                    owner == corporationId && location == station.Id)
+                    await items.DeleteAsync(connection, transaction, item.Id, call.Cancellation);
+            }
+            return 0;
+        }, call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    public async ValueTask<PyValue> PrimeOfficeItem(ServiceCall call)
+    {
+        var corporationId = SessionCorporationId(call.Session);
+        if (corporationId <= 0) return PyNone.Instance;
+        var station = CurrentStation(call.Session);
+        var office = await store.WriteAsync((connection, transaction) =>
+            store.GetAsync(connection, transaction, corporationId, station.Id,
+                cancellationToken: call.Cancellation), call.Cancellation);
+        return office is null ? PyNone.Instance : OfficeRow(office);
+    }
+
+    private async Task<decimal> QuoteAsync(CorporationOfficeStation station, CancellationToken token) =>
+        await store.WriteAsync(async (connection, transaction) =>
+        {
+            await store.LockStationAsync(connection, transaction, station.Id, token);
+            var occupied = await store.CountAtStationAsync(connection, transaction, station.Id, token);
+            return await store.PriceQuoteAsync(connection, transaction, station, occupied, now(), token);
+        }, token);
+
+    private async Task<(Corporation Corporation, SessionRoles Roles)> RequireAuthorityAsync(long actor,
+        long corporationId, long stationId, CancellationToken token)
+    {
+        if (corporationId <= 0) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var character = await characters.GetAsync(actor, token) ??
+            throw new CorporationError("CHARACTER_NOT_FOUND");
+        var corporation = await corporations.GetAsync(corporationId, token) ??
+            throw new CorporationError("CORPORATION_NOT_FOUND");
+        var member = await corporations.MemberAsync(actor, token);
+        if (corporation.IsNpc || character.CorporationId != corporationId ||
+            member is null || member.CorporationId != corporationId)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var titles = await corporations.TitlesAsync(corporationId, token);
+        return (corporation, CorporationRoles.Session(corporation, member, stationId, titles));
+    }
+
+    private static bool IsCeoOrDirector(long actor, (Corporation Corporation, SessionRoles Roles) authority) =>
+        (!authority.Corporation.CeoRolesSuspended && authority.Corporation.CeoId == actor) ||
+        (authority.Roles.AtAll & CorporationRoles.Director) != 0;
+
+    private async Task MoveIfCurrentAsync(Npgsql.NpgsqlConnection connection, Npgsql.NpgsqlTransaction transaction,
+        Eve.Inventory.Item snapshot, long corporationId, long stationId, int expectedFlag, int destinationFlag,
+        CancellationToken token)
+    {
+        var current = await items.LockAndGetAsync(connection, transaction, snapshot.Id, token);
+        if (current is { OwnerId: var owner, LocationId: var location, Flag: var flag } &&
+            owner == corporationId && location == stationId && flag == expectedFlag)
+            await items.MoveAsync(connection, transaction, current.Id, stationId, destinationFlag, token);
+    }
+
+    private CorporationOfficeStation CurrentStation(ClientSession session)
+    {
+        var stationId = session.GetInt("stationid") ?? session.GetInt("structureid") ?? 0;
+        if (stationId <= 0) throw new CorporationError("OFFICE_STATION_REQUIRED");
+        return readStation(stationId) ?? throw new CorporationError("OFFICE_STATION_NOT_FOUND");
+    }
+
+    private static long RequireActor(ClientSession session) =>
+        session.CharacterId is > 0 ? session.CharacterId.Value : throw new CorporationError("CHARACTER_NOT_FOUND");
+
+    private static long SessionCorporationId(ClientSession session)
+    {
+        var id = session.GetInt("corporationID") ?? 0;
+        return id > 0 ? id : session.GetInt("corpid") ?? 0;
+    }
+
+    private static long? Integral(PyValue value) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        _ => null,
+    };
+
+    private static decimal? Money(PyValue value) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        PyReal number when double.IsFinite(number.Value) => (decimal)number.Value,
+        _ => null,
+    };
+
+    private static PyValue OfficeRow(CorporationOffice office) => Py.KeyVal(
+        ("officeID", new PyLong(office.OfficeId)),
+        ("stationID", new PyLong(office.StationId)),
+        ("solarSystemID", new PyLong(office.SolarSystemId)),
+        ("corporationID", new PyLong(office.CorporationId)),
+        ("ownerID", new PyLong(office.CorporationId)),
+        ("itemID", new PyLong(office.OfficeFolderId)),
+        ("officeFolderID", new PyLong(office.OfficeFolderId)),
+        ("typeID", new PyInt(CorporationOfficeStore.OfficeFolderTypeId)),
+        ("flagID", new PyInt(Eve.Inventory.ItemFlags.Hangar)),
+        ("locationID", new PyLong(office.StationId)),
+        ("rent", new PyReal((double)office.RentIsk)),
+        ("billDate", new PyLong(office.ExpiresAtMs)));
+}

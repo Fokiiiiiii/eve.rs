@@ -1,8 +1,8 @@
 # ADR 0011: One `Area` shape for radius effects (decided now, wire deferred)
 
-- Status: accepted (shape only; no wire change until the bombs spec exists)
+- Status: accepted (shape only). The general `Area` is not built. The doomsday strike (protocol 25, ADR 0013 epoch 25) is the first area action and has no recipient list. Fighter LaunchBomb stays refused (ADR 0015).
 - Date: 2026-10-08
-- Decided by: the lead's final decisions on the superweapons brief (SW-D1, SW-D3, SW-D7, SW-O1), recorded in `scratchpad/specs/DECISIONS.md`.
+- Decided by: the project lead, for the superweapons work. The decisions are the numbered rules and the addenda of this record.
 
 ## Context
 
@@ -27,8 +27,7 @@ The bombs spec is not in the repository, so the bomb-specific parts (blast, dela
 5. Recipients are computed by the host and sent as a list per cycle (SW-D3). The sim does not ask the host or read fleet state.
    Fleet and hostile filters are host lists (SW-O1 resolved by SW-D1 and SW-D3).
 6. Fallback, only if `Area` cannot ship for a package: host fan-out of `SimRemote` per target per pulse, with no wire change.
-7. Until the bombs spec exists this ADR records the shape and nothing is wired. Superweapon items that need `Area` stay
-   draft (SW-D1 and the bombs gate).
+7. Until the bombs spec exists this ADR records the shape only: the general `Area` is not built, and the superweapon items that need it stay unbuilt.
 
 ## Consequences
 

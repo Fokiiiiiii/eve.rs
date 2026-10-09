@@ -364,6 +364,31 @@ impl Scene {
     }
 
     /// The one lock path: every origin is checked the same way; the origin only decides who is told (see `finish_lock`).
+    /// The auto-target sweep of an activation or a cycle (EVE.js `executeAutoTargetingCycle`): each ship that has this pilot locked, within `range` of it and not
+    /// locked by the pilot yet, is locked with the origin `Auto` (the ship is told, as any lock tells it). A ship the lock would refuse, and any ship beyond a
+    /// full lock list, is passed over silently: a sweep asks only for what the pilot can have.
+    pub(crate) fn auto_target_sweep(&mut self, session: SessionId, range: f64, now: i64) -> Vec<Out> {
+        let Some(me) = self.pilots.get(&session).map(|p| p.ship.spec.ship_id) else { return Vec::new() };
+        let mut out = Vec::new();
+        for candidate in self.targeters_of(me) {
+            let Some(pilot) = self.pilots.get(&session) else { break };
+            if candidate == me
+                || pilot.targeting.locked.iter().any(|l| l.target == candidate)
+                || pilot.targeting.pending.iter().any(|p| p.target == candidate)
+                || pilot.targeting.locked.len() + pilot.targeting.pending.len() >= pilot.ship.spec.max_locked_targets.max(0) as usize
+            {
+                continue;
+            }
+            let Some(subject) = self.subject(candidate, now) else { continue };
+            let apart = (distance(pilot.ship.position, subject.position) - pilot.ship.spec.radius - subject.radius).max(0.0);
+            if apart >= range || self.check_lock(session, &subject, true).is_err() {
+                continue;
+            }
+            out.extend(self.lock(session, candidate, &Order::Lock(candidate), LockOrigin::Auto, now));
+        }
+        out
+    }
+
     pub(crate) fn lock(
         &mut self,
         session: SessionId,

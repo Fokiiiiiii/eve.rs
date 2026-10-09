@@ -1174,6 +1174,31 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task An_auto_targeting_system_sweeps_for_the_ships_that_target_its_pilot_within_its_sweep_range_and_needs_no_target()
+    {
+        var (rig, character, _) = await DockedAsync();
+        await using var _ = rig;
+        const int autoTargetingSystemI = 1182;
+        await rig.Statics.EnsureTypesAsync([autoTargetingSystemI]);
+        long system;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            system = await rig.Items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(autoTargetingSystemI, character.CharacterId, character.ShipId, Eve.Inventory.ItemFlags.LowSlot0 + 1, 1, true));
+            await rig.Modules.SetAsync(connection, transaction, system, Eve.Dogma.ItemState.Online);
+            await transaction.CommitAsync();
+        }
+        var (snapshot, _, _, _) = await ShipAsync(rig, character);
+
+        var package = ModulePackages.Of(snapshot, rig.Statics, system, "targetHostiles", 0, 1);
+
+        Assert.Null(package.Reason);
+        // the sweep range is the module's own targetHostileRange (50 km for the six modules of the group)
+        Assert.Equal(50_000d, Assert.IsType<SimAction.AutoTarget>(package.Effect!.Action).RangeMeters);
+    }
+
+    [PgFact]
     public async Task What_cannot_be_run_is_refused_with_the_reason_and_the_module_that_the_message_names()
     {
         var (rig, character, _) = await DockedAsync();

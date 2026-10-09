@@ -27,6 +27,7 @@ internal static class ModuleEffects
         .Register(new MiningLaserEffect())
         .Register(new SalvagerEffect())
         .Register(new PassiveTargetingEffect())
+        .Register(new AutoTargetingEffect())
         .Register(new PropulsionEffect())
         .Register(new TurretEffect())
         .Register(new BarragePendingEffect())

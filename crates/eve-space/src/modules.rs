@@ -241,7 +241,7 @@ impl Action {
     /// Whether the simulation does not run the action yet (its package has not landed): such an activation is refused, never run as a no-op.
     fn not_implemented(&self) -> bool {
         match self {
-            Self::Tractor { .. } | Self::AutoTarget { .. } => true,
+            Self::Tractor { .. } => true,
             Self::Charged { action, fallback, .. } => {
                 action.not_implemented() || fallback.as_deref().is_some_and(Action::not_implemented)
             }
@@ -337,7 +337,7 @@ pub enum Action {
     Tractor { velocity: f64, hold: f64 },
     /// A passive lock (tag 10): when its cycle starts the target is locked with its notice suppressed (see `passive_lock`).
     PassiveLock,
-    /// An auto-target sweep (tag 11). Its package has not landed: the activation is refused (`NOT_IMPLEMENTED`), so it never runs.
+    /// An auto-target sweep (tag 11): at each cycle start the ships that target the pilot within `range` are locked (see `auto_target_sweep`).
     AutoTarget { range: f64 },
     /// A doomsday's strike (tag 13, ADR 0013 epoch 25): the area in front of the ship is hit after a warning, pulse by pulse, and the ship is held for its windows.
     Strike { strike: Strike },
@@ -2018,6 +2018,7 @@ impl Scene {
                 self.shift_armor(session, *attribute_ids, at)
             }
             Some(Action::PassiveLock) if when == Applies::CycleStart => self.passive_lock(session, effect.target_id, at),
+            Some(Action::AutoTarget { range }) if when == Applies::CycleStart => self.auto_target_sweep(session, *range, at),
             Some(Action::Cloak) if when == Applies::CycleStart => {
                 let changed = if let Some(pilot) = self.pilots.get_mut(&session) {
                     let changed = pilot.cloak != crate::visibility::CloakState::Cloaked;
@@ -5055,16 +5056,42 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn tractor_and_auto_target_are_refused_until_they_run() {
+    fn an_auto_targeter_locks_the_ship_that_targets_its_pilot_within_its_range() {
+        // the partner locks the pilot first; the pilot's auto-targeter then locks the partner, and only within its range
+        for (range, locked) in [(50_000.0, true), (1.0, false)] {
+            let (mut scene, t) = crowd();
+            let (a_ship, b_ship) = (scene.pilots[&A].ship.spec.ship_id, scene.pilots[&B].ship.spec.ship_id);
+            scene.target_order(B, Order::Lock(a_ship), t);
+            let (_, t) = poll_until(&mut scene, t, 6.0);
+            assert_eq!(scene.locked_by(B), vec![a_ship]);
+            let mut auto = afterburner();
+            auto.action = Some(Action::AutoTarget { range });
+            scene.activate(A, auto, t);
+            let (_, _) = poll_until(&mut scene, t, 6.0);
+            assert_eq!(scene.locked_by(A), if locked { vec![b_ship] } else { Vec::new() }, "range {range}");
+        }
+    }
+
+    #[test]
+    fn an_auto_targeter_is_told_nothing_and_locks_nothing_when_nothing_targets_its_pilot() {
+        let (mut scene, t) = crowd();
+        let mut auto = afterburner();
+        auto.action = Some(Action::AutoTarget { range: 50_000.0 });
+        let out = scene.activate(A, auto, t);
+        assert!(!out.iter().any(|o| matches!(o, Out::Refused { .. })), "{out:?}");
+        let (_, _) = poll_until(&mut scene, t, 6.0);
+        assert!(scene.locked_by(A).is_empty());
+    }
+
+    #[test]
+    fn tractor_is_refused_until_it_runs() {
         let (mut scene, t) = crowd();
         let mut tractor = afterburner();
         tractor.action = Some(Action::Tractor { velocity: 500.0, hold: 500.0 });
         assert!(matches!(scene.activate(A, tractor, t).first(), Some(Out::Refused { reason: "NOT_IMPLEMENTED", .. })));
-        let mut auto = afterburner();
-        auto.action = Some(Action::AutoTarget { range: 50_000.0 });
-        assert!(matches!(scene.activate(A, auto, t).first(), Some(Out::Refused { reason: "NOT_IMPLEMENTED", .. })));
-        assert_eq!(scene.pilots[&A].modules.running.len(), 0);
     }
+
+
 
     #[test]
     fn every_end_of_an_effect_is_told_to_the_host_once_natural_or_asked() {

@@ -1760,10 +1760,18 @@ fn a_smartbomb_does_not_start_within_five_kilometres_of_a_station_or_its_range_w
     // the least restriction is 5 km; a bomb of 6 km range is held off to 6 km (the wiki's two data points, see DEVIATIONS)
     let (mut scene, t) = crowd_off_the_station(4_000.0);
     let refused = scene.activate(A, smartbomb(3_000.0, [0.0, 40.0, 0.0, 40.0], true), t);
-    assert!(refused.iter().any(|o| matches!(o, Out::Refused { reason: "SMARTBOMB_NEAR_STATION", .. })), "{:?}", labels(&refused));
+    assert!(
+        refused.iter().any(|o| matches!(o, Out::Refused { reason: "SMARTBOMB_NEAR_STATION", .. })),
+        "{:?}",
+        labels(&refused)
+    );
     let (mut scene, t) = crowd_off_the_station(5_500.0);
     let refused = scene.activate(A, smartbomb(6_000.0, [0.0, 40.0, 0.0, 40.0], true), t);
-    assert!(refused.iter().any(|o| matches!(o, Out::Refused { reason: "SMARTBOMB_NEAR_STATION", .. })), "{:?}", labels(&refused));
+    assert!(
+        refused.iter().any(|o| matches!(o, Out::Refused { reason: "SMARTBOMB_NEAR_STATION", .. })),
+        "{:?}",
+        labels(&refused)
+    );
     let (mut scene, t) = crowd_off_the_station(6_500.0);
     let started = scene.activate(A, smartbomb(6_000.0, [0.0, 40.0, 0.0, 40.0], true), t);
     assert!(started.iter().any(|o| matches!(o, Out::Accepted { .. })), "{:?}", labels(&started));

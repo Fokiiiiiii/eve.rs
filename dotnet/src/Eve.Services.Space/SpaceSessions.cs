@@ -1140,6 +1140,21 @@ private readonly TransitionRuntime _transitions;
             return ModuleResult.Refusal(made.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
         }
 
+        // a mining laser mines the family of its rock only (EVE.js isFamilyCompatibleWithYield): an ore laser takes ore, an ice laser takes ice
+        if (package.Action is SimAction.Mining mining && TypeOfSpaceItemAsync is { } typeOfSpaceItem
+            && await typeOfSpaceItem(package.TargetId, cancellationToken).ConfigureAwait(false) is { } rockTypeId)
+        {
+            await _statics.EnsureTypesAsync([rockTypeId], cancellationToken).ConfigureAwait(false);
+            var rock = _statics.Type(rockTypeId);
+            byte? rockFamily = rock is not null && _statics.CategoryName(rock.CategoryId) == "Asteroid"
+                ? _statics.GroupName(rock.GroupId).Equals("Ice", StringComparison.OrdinalIgnoreCase) ? SimMiningFamilies.Ice : SimMiningFamilies.Ore
+                : null;
+            if (rockFamily != mining.Family)
+            {
+                return ModuleResult.Refusal("TARGET_INVALID_FOR_MODULE", made.ModuleType, made.ModuleName);
+            }
+        }
+
         var targetPilot = _pilots.Values.FirstOrDefault(other => other.ShipId == package.TargetId);
         var securityClass = _systems.Get(pilot.SolarSystemId) is { } system
             ? Security.ClassFromLevel(system.Security)
@@ -3020,6 +3035,9 @@ private readonly TransitionRuntime _transitions;
     private const int CorpseTypeFemale = 29148;
 
     /// <summary>The rookie ship type of a race (what a pilot wakes in after its capsule is destroyed), set by the host that knows the races.</summary>
+    /// <summary>The type of an item in space (an asteroid, a wreck), when the host has it; null when there is none. A module's target is looked up here.</summary>
+    public Func<long, CancellationToken, Task<int?>>? TypeOfSpaceItemAsync { get; set; }
+
     public Func<int, int?>? RookieShipOfRace { get; set; }
 
     /// <summary>

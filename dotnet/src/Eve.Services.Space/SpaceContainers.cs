@@ -70,6 +70,8 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
         _sim.Lost += Forgotten;
         _space.SystemEntered += SystemEntered;
         _space.WreckPlaced += WreckPlaced;
+        // the rocks of a belt are items of the store: a module's target is looked up here (SpaceSessions.ActivateAsync)
+        _space.TypeOfSpaceItemAsync = async (id, _) => (await _items.GetAsync(id))?.TypeId;
     }
 
     public void Dispose()

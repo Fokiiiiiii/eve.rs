@@ -432,3 +432,19 @@ Open, each with its exact blocker:
 - WP19 (velocity limits 1334 and 2608): not built. The activation check needs the ship's velocity on the simulation side and a rule field (a wire change), and the carriers (the cynosural field generator and the bomb launcher) have no bodies.
 - WP12 and 1934 (logout and the 906 log-out timer): not built; no reference text (MR-D9).
 - Host PG tests for the sensor booster strengths in a fitted scene: the effect is tested through `ModulePackages` only.
+
+## 20. Module rules track B5 (2026-10-09)
+
+Done (decisions in DEVIATIONS "Module rules, track B5"; wire in ADR 0013 epoch 38, protocol 37 to 38 in one bump; track C3 took 37):
+- FP-C4b and FP-C5 (refresh a running effect when an overheat or a computer changes): `SimUpdateEffect` (kind 61), applied by the simulation at the start of the effect's next cycle; the host rebuilds each running effect with `ModulePackages.Of` after overheat, activation, deactivation, offline and a simulation end, and sends it only when the numbers differ (`crates/eve-space/src/modules/cycle.rs` `refresh_running`, `dotnet/src/Eve.Services.Space/SpaceSessions.Refresh.cs`). Tests: `a_refresh_of_a_running_effect_takes_effect_at_the_start_of_its_next_cycle`, `RefreshHostTests`, the codec fixtures. The computer path shares the activation refresh and has no test yet.
+- FP-C8 (automatic reload from the hold): the simulation parks a reloading turret when its rounds run out (`Charge.reloads`, `crates/eve-space/src/modules/activation.rs` `park_for_reload`, `adjust_charge`); the host loads the kind from the hold when a gun runs dry (`GunRanDry`, `DogmaIMService.Reloads.cs` `ReloadEmptiedGunAsync`) and always answers the simulation. Tests: `a_turret_that_reloads_waits_for_its_load_and_resumes_with_it_at_the_next_cycle`, `a_reloading_gun_that_is_switched_off_while_it_waits_stops_at_once`, and `ReloadServiceTests` (two PostgreSQL cases). Client reload window: the in-space load's notices, not checked against the client.
+- WP19 (velocity limits 1334 and 2608): the rule fields are on the wire (protocol 38) and the simulation refuses an activation outside the band (`velocity_refusal`). No module reaches it yet: the carriers are refused as not implemented.
+
+Open, each with its exact blocker:
+- FP-C7 (ECM burst: the ships it jams and its offensive gate): the simulation does not report a landed burst; a sim-to-host message is needed, and the burst's safety gate has no source read.
+- M-6 (Cargo Scanner, Ship Scanner, Data Analyzer, Subverter, relics): no simulation bodies; EVE.js `scannerModuleRuntime.js` is the reference and was not ported in this track.
+- WP17 (stacking of overlapping assistance and jam modifiers): no source read states the rule.
+- WG-3 (scripts and charges with a loaded script): the pairing in `Eve.Dogma/DogmaWorld.cs` has no PostgreSQL case with a loaded script yet.
+- WP12 and 1934 (`deactivateIfOffensive`, SDE default 1: an offensive module deactivates when its pilot disconnects): the disconnect path that would stop the modules is not located (`HostServer.Disconnect` posts the disconnect; the space release is not traced).
+- Host PostgreSQL run: `SpaceServiceTests.Safe_logoff_closes_the_space_session_after_its_timer` and `Aborting_safe_logoff_keeps_the_session_and_ship_in_space` fail alone with the refusal `ConditionsFailedHeader` (the baseline's safe-logoff group); the cause was not traced in this track.
+

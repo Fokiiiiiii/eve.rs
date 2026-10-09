@@ -492,16 +492,17 @@ Investigated, not built. The reasons are below, with the sources read. The lance
 
 What was checked: `sde.dbuffCollections` has the PANIC keys (8, 9, 55, 56, 58, 59, 61) and the burst keys (for example 2498); `eve-logic` `dbuff/common/industrialInvulnConst.py`; EveJS `space/modules/commandBurstRuntime.js` and the timed invulnerability runtime (`space/runtime/timedInvulnerability.js`, which is the undock protection and not P.A.N.I.C.); the simulation's `ship.rs`, `health/`, `ewar.rs` (`Lasting`).
 
-## Source priority for the scanner track (user rule, final, 2026-10-09)
+## Source priority for the scanner track (user rule, FINAL, 2026-10-09)
 
 - STATS, NUMBERS and ATTRIBUTES: the SDE first.
-- LOGIC and MECHANICS: EVE.js next, then the EVE University wiki, the CCP documents and eve-logic, at equal rank as the last line.
+- LOGIC and MECHANICS: the EVE University wiki next, implemented as written. EVE.js, the CCP documents and eve-logic come at equal rank as the last line.
 - Client wire shapes and contracts: eve-logic decides.
-- When no source states a spec, the wiki is read and the spec is implemented as written.
+- When no source states a spec, the wiki decides.
 - A conflict between sources is recorded here with the source that was chosen.
 
 Applied to the scanners:
-- The numbers (ranges 125, 126, falloff 510, cycle 73, capacitor 6, resistances 188 and 511, capacitor capacity 482, and the one-cycle attribute 1014) are the SDE's.
-- The mechanics (lock and reach, the reveal, the per-item roll, the resistance, the notice, and the one-container-level rule) are EVE.js `scannerModuleRuntime.js`.
-- The wire shapes (`OnCargoScanComplete(shipID, cargoList)` and `OnShipScanCompleted(shipID, capacitorCharge, capacitorCapacity, hardwareList)`) are eve-logic's `shipUI.py` and `shipscan.py`.
-- The wiki pages read for this track (`Scanning`, `Hacking`) give no rule for the Cargo Scanner or the Ship Scanner (no page is reachable under `Cargo_Scanner` or `Ship_Scanner`), so no conflict arises for the scanners. For the hacking analyzers the wiki's tier 1 and tier 2 coherence and strength (40/20, 60/30) agree with the SDE (1909 and 1910, both tiers), so no number was changed.
+- Numbers (ranges 125 and 126, falloff 510, cycle 73, capacitor 6, resistances 188 and 511, capacitor capacity 482, one-cycle attribute 1014): the SDE.
+- Mechanics (lock and reach, the reveal, the per-item roll, the resistance, the notice, the one-container-level rule): the wiki has no page that states them. The EVE University pages read (`Scanning`, `Hacking`, and the `Cargo_Scanner` and `Ship_Scanner` slugs, which return 404) give no rule for the Cargo or Ship Scanner. So the mechanics come from EVE.js `scannerModuleRuntime.js`, the last line of the order, and no wiki conflict is recorded.
+- Wire shapes (`OnCargoScanComplete(shipID, cargoList)`, `OnShipScanCompleted(shipID, capacitorCharge, capacitorCapacity, hardwareList)`): eve-logic's `shipUI.py` and `shipscan.py`.
+- Hacking analyzers: the wiki's tier 1 and tier 2 coherence and strength (40/20, 60/30) agree with the SDE (1909 and 1910). The wiki's range, cycle, activation and Data Subverter are not stated, so the SDE attributes stand for those.
+- The wiki's survey scanner range (15 km, 23 km with T2) belongs to a different module, which is not part of this runtime. No conflict arises.

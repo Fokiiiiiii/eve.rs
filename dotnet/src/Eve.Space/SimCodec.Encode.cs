@@ -273,6 +273,13 @@ private static void WriteAction(Writer w, SimAction action)
                 }
                 w.U8(18); w.F64(status.Delta);
                 break;
+            case SimAction.CynoField cyno:
+                if (!(double.IsFinite(cyno.LifetimeMs) && cyno.LifetimeMs > 0))
+                {
+                    throw new ArgumentException("a cynosural field has a positive lifetime", nameof(action));
+                }
+                w.U8(27); WriteDeployable(w, cyno.Ball, nameof(action)); w.F64(cyno.LifetimeMs);
+                break;
             case SimAction.WarpProbe probe:
                 if (!(double.IsFinite(probe.RangeMeters) && probe.RangeMeters > 0 && double.IsFinite(probe.LifetimeMs) && probe.LifetimeMs > 0))
                 {

@@ -342,6 +342,16 @@ public static partial class SimCodec
                     }
                     return new SimAction.ScrambleStatus(delta);
                 }
+            case 27:
+                {
+                    var ball = ReadDeployable(ref r);
+                    var lifetime = r.F64();
+                    if (!(double.IsFinite(lifetime) && lifetime > 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad cynosural field action");
+                    }
+                    return new SimAction.CynoField(ball, lifetime);
+                }
             case 19:
                 {
                     var ball = ReadDeployable(ref r);

@@ -2,6 +2,7 @@ using Eve.Host;
 using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using Eve.Identity;
 using Eve.Macho;
 using Eve.Marshal;
@@ -36,7 +37,7 @@ public class HostServerTests : IAsyncLifetime
 
     public Task InitializeAsync() => Task.CompletedTask;
 
-    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null)
+    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false)
     {
         var registry = new ServiceRegistry();
         configure?.Invoke(registry);
@@ -49,7 +50,7 @@ public class HostServerTests : IAsyncLifetime
         }
         var config = GlobalConfig.Build(Options);
         registry.Register(new MachoNetService(new Info(registry, config), now));
-        var dispatcher = new PacketDispatcher(registry, now);
+        var dispatcher = new PacketDispatcher(registry, now) { StrictRpc = strictRpc };
         var encoded = MarshalCodec.Encode(config);
         _server = new HostServer(
             new HostOptions { MaxPendingPacketsPerSession = maxPending, Log = message => { lock (_log) { _log.Add(message); } } },
@@ -1284,6 +1285,35 @@ public class HostServerTests : IAsyncLifetime
         await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 2, "noSuchService", "Nothing"))));
         var none = Assert.IsType<Send>(await front.ReceiveAsync());
         Assert.IsType<PyNone>(Result(MarshalCodec.Decode(none.Payload)));
+    }
+
+    [Fact]
+    public async Task With_strict_rpc_a_throwing_handler_surfaces_as_an_error_packet()
+    {
+        Start(strictRpc: true, configure: registry => registry.Register(new BoomService()));
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync(); // the initial state
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 1, "boomSvc", "Boom"))));
+        var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+        var state = ((PyTuple)((PyObject)MarshalCodec.Decode(reply.Payload)).Args).Items;
+        Assert.Equal(15, ((PyInt)state[0]).Value); // ERRORRESPONSE, not a CALL_RSP carrying None
+        var text = Encoding.ASCII.GetString(reply.Payload.Span);
+        Assert.Contains("eveexceptions.UserError", text);
+        Assert.Contains("InvalidOperationException: boom went the handler", text);
+        Assert.Contains("Server error ", text);
+    }
+
+    /// <summary>A service whose only method throws.</summary>
+    private sealed class BoomService : IService
+    {
+        public string Name => "boomSvc";
+
+        public bool HasMethod(string method) => method is "Boom";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call) => throw new InvalidOperationException("boom went the handler");
     }
 
     [Fact]

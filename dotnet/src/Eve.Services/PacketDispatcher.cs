@@ -26,6 +26,12 @@ public sealed class PacketDispatcher
     public Action<string, Exception?>? OnProblem { get; set; }
 
     /// <summary>
+    /// Strict mode (EVE_STRICT_RPC=1): an unknown service or method, a call with no service and a failing handler
+    /// are answered with a Macho error and logged with their details, instead of a None result.
+    /// </summary>
+    public bool StrictRpc { get; init; }
+
+    /// <summary>
     /// Handles one decoded packet from <paramref name="session"/>. Returns whether it was handled;
     /// responses go out through the session's sink.
     /// </summary>
@@ -73,16 +79,25 @@ public sealed class PacketDispatcher
             serviceName = BoundObjects.ExtractName(call.RemoteObject) ?? serviceName;
         }
 
+        // EVE_TRACE_RPC=1 traces unhandled calls; =full adds the argument and result trees to every call.
+        var traceMode = Environment.GetEnvironmentVariable("EVE_TRACE_RPC");
+        var traceRpc = traceMode is "1" or "full";
+        var traceFull = traceMode == "full";
+
         if (string.IsNullOrEmpty(serviceName))
         {
-            if (string.Equals(Environment.GetEnvironmentVariable("EVE_TRACE_RPC"), "1", StringComparison.Ordinal))
+            if (traceRpc)
                 Console.Error.WriteLine($"[rpc-trace] unhandled session={session.SessionId} service=<none> method={call.Method} reason=missing-service-address");
+            if (StrictRpc)
+            {
+                FailStrictly(packet, session, null, call, "unknown service", "the call names no service");
+                return true;
+            }
             SendCallResponse(packet, PyNone.Instance, session, null);
             return true;
         }
 
         var service = _registry.Lookup(serviceName);
-        var traceRpc = string.Equals(Environment.GetEnvironmentVariable("EVE_TRACE_RPC"), "1", StringComparison.Ordinal);
         var traceLogin = string.Equals(
             Environment.GetEnvironmentVariable("EVE_TRACE_LOGIN"), "1", StringComparison.Ordinal);
         var trace = traceRpc || traceLogin;
@@ -91,7 +106,8 @@ public sealed class PacketDispatcher
         {
             Console.Error.WriteLine(
                 $"[{traceLabel}] request session={session.SessionId} service={service?.Name ?? serviceName} " +
-                $"method={call.Method} args={call.Args.Count} bound={call.RemoteObject is not null}");
+                $"method={call.Method} args={call.Args.Count} bound={call.RemoteObject is not null}" +
+                (traceFull ? $" values={RpcDiagnostics.Args(call.Args)}" : ""));
         }
         if (service is null)
         {
@@ -99,10 +115,17 @@ public sealed class PacketDispatcher
             {
                 if (traceRpc)
                     Console.Error.WriteLine($"[rpc-trace] unhandled session={session.SessionId} service={serviceName} method={call.Method} reason=released-bound-object");
+                if (StrictRpc)
+                    Console.Error.WriteLine($"[strict-rpc] unregistered bound object {serviceName}.{call.Method} session={session.SessionId}: answered UnMachoDestination");
                 // A released bound object. Answering None would be read as the call's result (a colony
                 // that dies on None.level); UnMachoDestination makes the client unresolve, rebind and
                 // retry once.
                 SendError(packet, MachoErrors.UserError("UnMachoDestination"), session, serviceName);
+                return true;
+            }
+            if (StrictRpc)
+            {
+                FailStrictly(packet, session, serviceName, call, "unknown service", serviceName);
                 return true;
             }
             if (traceRpc)
@@ -113,6 +136,11 @@ public sealed class PacketDispatcher
 
         if (traceRpc && !service.HasMethod(call.Method))
             Console.Error.WriteLine($"[rpc-trace] unhandled session={session.SessionId} service={service.Name} method={call.Method} reason=method-not-registered");
+        if (StrictRpc && !service.HasMethod(call.Method))
+        {
+            FailStrictly(packet, session, service.Name, call, "unknown method", $"{service.Name}.{call.Method}");
+            return true;
+        }
 
         var previousBoundObjectId = session.CurrentBoundObjectId;
         try
@@ -135,7 +163,8 @@ public sealed class PacketDispatcher
             {
                 Console.Error.WriteLine(
                     $"[{traceLabel}] response session={session.SessionId} service={service.Name} " +
-                    $"method={call.Method} result={result.GetType().Name}");
+                    $"method={call.Method} result={result.GetType().Name}" +
+                    (traceFull ? $" tree={RpcDiagnostics.Describe(result)}" : ""));
             }
 
             if (result is PyDeferred deferred)
@@ -182,6 +211,11 @@ public sealed class PacketDispatcher
             }
             session.DropAfterResponse();
             OnProblem?.Invoke($"{service.Name}.{call.Method}: {ex.Message}", ex);
+            if (StrictRpc)
+            {
+                FailStrictly(packet, session, service.Name, call, "unhandled exception", $"{ex.GetType().Name}: {ex.Message}", ex);
+                return true;
+            }
             SendCallResponse(packet, PyNone.Instance, session, service.Name);
             return true;
         }
@@ -189,6 +223,20 @@ public sealed class PacketDispatcher
         {
             session.CurrentBoundObjectId = previousBoundObjectId;
         }
+    }
+
+    /// <summary>
+    /// Strict mode: answers the call with a Macho error that names the failure and a correlation id, and logs the
+    /// failure with the call's arguments (and the exception's stack trace, when there is one) to stderr.
+    /// </summary>
+    private void FailStrictly(MachoPacket packet, ClientSession session, string? serviceName, CallRequest call, string kind, string detail, Exception? error = null)
+    {
+        var correlation = RpcDiagnostics.CorrelationId();
+        Console.Error.WriteLine(
+            $"[strict-rpc] {correlation} session={session.SessionId} {kind}: {detail} at {serviceName ?? "<none>"}.{call.Method} args={RpcDiagnostics.Args(call.Args)}");
+        if (error is not null)
+            Console.Error.WriteLine(error.ToString());
+        SendError(packet, MachoErrors.UserError("CustomNotify", ("notify", new PyStr($"Server error {correlation}: {kind}: {detail}"))), session, serviceName);
     }
 
     private static void SendCallResponse(MachoPacket packet, PyValue result, ClientSession session, string? serviceName) =>

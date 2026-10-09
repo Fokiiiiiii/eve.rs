@@ -132,7 +132,7 @@ internal static class HostComposition
         var info = new HostMachoNetInfo(registry, config);
         registry.Register(new MachoNetService(info, now));
 
-        var dispatcher = new PacketDispatcher(registry, now);
+        var dispatcher = new PacketDispatcher(registry, now) { StrictRpc = settings.StrictRpc };
         dispatcher.OnProblem = (message, error) =>
         {
             Console.Error.WriteLine($"eve-host: {message}{(error is null ? "" : ": " + error.Message)}");

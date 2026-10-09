@@ -132,7 +132,7 @@ public class DispatchGoldenTests
         }
     }
 
-    private static PyValue CallRequestPacket(string service, string method)
+    internal static PyValue CallRequestPacket(string service, string method)
     {
         var source = new PyTuple([new PyInt(MachoAddress.TypeClient), new PyLong(7), new PyInt(9), PyNone.Instance]);
         var body = new PyTuple([new PyInt(1), new PyStr(method), new PyTuple([]), PyNone.Instance]);

@@ -45,7 +45,7 @@ internal sealed partial class CharacterServicesComposition
         spaceDrones = null;
         if (Env("EVE_SIM", "on") is not ("off" or "0" or "false"))
         {
-            var socket = Env("EVE_SIM_SOCKET", "/tmp/eve-sim.sock");
+            var socket = Env("EVE_SIM_SOCKET", DefaultSimSocket(OperatingSystem.IsWindows()));
             sim = socket.StartsWith("tcp:", StringComparison.Ordinal)
                 ? SimClient.ToTcpSocket(socket["tcp:".Length..], message => Console.Error.WriteLine($"eve-host: {message}"))
                 : SimClient.ToUnixSocket(socket, message => Console.Error.WriteLine($"eve-host: {message}"));
@@ -239,7 +239,7 @@ internal sealed partial class CharacterServicesComposition
             spaceDrones = new SpaceDrones(sim, ships, dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: {message}"));
             foundations.Scheduler.Register("space.containers.sweep", async (_, _) => await containers.SweepAsync());
             await foundations.Scheduler.EnsureRecurringAsync("space.containers.sweep", "sweep", TimeSpan.FromSeconds(30));
-            Console.Error.WriteLine($"eve-host: the space simulation is expected at {Env("EVE_SIM_SOCKET", "/tmp/eve-sim.sock")}");
+            Console.Error.WriteLine($"eve-host: the space simulation is expected at {socket}");
         }
         await crimewatchRuntime.ResumeAsync();
     }

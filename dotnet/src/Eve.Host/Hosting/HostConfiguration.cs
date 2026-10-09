@@ -41,7 +41,7 @@ internal static class HostConfiguration
 {
     // eve-host: the service host.
     //
-    //   EVE_HOST               where to listen: a socket path, "unix:/path" or "tcp:host:port"   (default /tmp/eve-host.sock)
+    //   EVE_HOST               where to listen: a socket path, "unix:/path" or "tcp:host:port"   (default /tmp/eve-host.sock; tcp:127.0.0.1:26010 on Windows)
     //   EVE_IMAGE_SERVER_URL   the image server the client is told about                         (default http://127.0.0.1:26001/)
     //   EVE_PG_URL             PostgreSQL for accounts (postgres://... or an Npgsql string); without it accounts
     //                          live in memory and are lost when the host stops
@@ -52,7 +52,7 @@ internal static class HostConfiguration
     //   EVE_WALLET_SCHEMA      the schema of the wallet module                                    (default wallet)
     //   EVE_FITTING_SCHEMA     the schema of the fitting module (which modules are online)        (default fitting)
     //   EVE_SPACE_SCHEMA       the schema of what lies in space (cans and wrecks: where, until when) (default space)
-    //   EVE_SIM_SOCKET         the Unix socket of the space simulation (eve-sim)                  (default /tmp/eve-sim.sock)
+    //   EVE_SIM_SOCKET         the Unix socket, or "tcp:host:port", of the space simulation (eve-sim)   (default /tmp/eve-sim.sock; tcp:127.0.0.1:26011 on Windows)
     //   EVE_SIM                off runs without the simulation: nobody can undock                 (default on)
     //   EVE_START_ISK / EVE_START_PLEX   what a new character starts with                         (100000 / 2222, the reference's)
     //   EVE_START_STATION      the station every new character starts at (the reference's; 60015249), or
@@ -66,13 +66,19 @@ internal static class HostConfiguration
     //   EVE_DEV_SKIP_PASSWORD  1 accepts any password (development only)                          (default 0)
     //   EVE_DEV_AUTO_CREATE    0 refuses unknown user names                                       (default 0)
 
+    /// <summary>The default listening endpoint. Windows has no Unix socket for the front to meet us on, so it is a local port.</summary>
+    internal static string DefaultEndpoint(bool windows) => windows ? "tcp:127.0.0.1:26010" : "/tmp/eve-host.sock";
+
+    /// <summary>The default simulation endpoint, matching <see cref="DefaultEndpoint"/>: a local port on Windows.</summary>
+    internal static string DefaultSimSocket(bool windows) => windows ? "tcp:127.0.0.1:26011" : "/tmp/eve-sim.sock";
+
     internal static string Env(string name, string fallback) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : fallback;
 
     internal static bool Flag(string name, bool fallback) => Env(name, fallback ? "1" : "0") is "1" or "true" or "TRUE" or "yes";
 
     internal static HostSettings Read()
     {
-        var endpoint = Env("EVE_HOST", "/tmp/eve-host.sock");
+        var endpoint = Env("EVE_HOST", DefaultEndpoint(OperatingSystem.IsWindows()));
         var newCharacterExperienceMode = Env(
             "EVE_NEW_CHARACTER_EXPERIENCE_MODE",
             Flag("EVE_AIR_NPE_ENABLED", false) ? "tutorial" : "disabled").Trim().ToLowerInvariant();

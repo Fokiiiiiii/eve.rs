@@ -15,6 +15,7 @@ const PLANET: i64 = 40_000_001;
 
 pub(crate) fn afterburner() -> Effect {
     Effect {
+        rules: Default::default(),
         burns_fuel: false,
         module_id: MODULE,
         module_type: 21857,
@@ -602,6 +603,7 @@ fn a_ship_that_leaves_takes_its_effects_with_it() {
 /// An armor repairer of the Ibis: 30 points a cycle of five seconds, applied at the end of the cycle.
 fn repairer(layer: Layer, amount: f64, when: Applies) -> Effect {
     Effect {
+        rules: Default::default(),
         burns_fuel: false,
         module_id: MODULE,
         module_type: 3530,
@@ -733,6 +735,7 @@ fn a_power_booster_transfers_to_its_own_ship_and_spends_one_charge_per_cycle() {
     let (mut scene, t) = reaching(2_000.0);
     let ship_id = scene.pilots[&A].ship.spec.ship_id;
     let effect = Effect {
+        rules: Default::default(),
         burns_fuel: false,
         module_id: MODULE,
         module_type: 3566,
@@ -831,6 +834,7 @@ fn partner() -> i64 {
 /// A module that runs `what` on the ship `target`, reaching 10 km and falling off through another 5 km.
 fn projected(what: Remote, when: Applies, target: i64) -> Effect {
     Effect {
+        rules: Default::default(),
         burns_fuel: false,
         module_id: MODULE,
         module_type: 3520,
@@ -2009,6 +2013,7 @@ fn hardener(module: i64) -> Effect {
     let ship = spec().ship_id;
     let seeded = |base: f64| base * 0.85;
     Effect {
+        rules: Default::default(),
         burns_fuel: false,
         module_id: module,
         module_type: 4403,
@@ -3172,4 +3177,113 @@ fn a_computer_is_not_hostile_and_a_disruptor_is_whatever_its_percentages_say() {
     };
     assert!(!guidance_computer.hostile());
     assert!(guidance_disruptor.hostile());
+}
+
+fn accepted(out: &[Out]) -> bool {
+    out.iter().any(|out| matches!(out, Out::Accepted { .. }))
+}
+
+#[test]
+fn a_group_with_a_limit_runs_that_many_modules_at_once_and_the_next_one_waits_for_it() {
+    // maxGroupActive 763 (the afterburner and the microwarpdrive share the propulsion group, one at a time)
+    let (mut scene, t) = crowd();
+    let propulsion = Rules { group_id: 46, max_group_active: 1, ..Default::default() };
+    assert!(accepted(&scene.activate(A, Effect { rules: propulsion, ..afterburner() }, t)));
+    let mwd = Effect { rules: propulsion, ..microwarpdrive() };
+    assert_eq!(
+        scene.activate(A, mwd.clone(), t),
+        [Out::Refused { session: A, command: 17, reason: "MAX_GROUP_ACTIVE" }]
+    );
+    scene.deactivate(A, MODULE, t + SECOND);
+    poll_until(&mut scene, t + SECOND, 15.0);
+    assert!(
+        accepted(&scene.activate(A, mwd, t + 20 * SECOND)),
+        "the group has room once the afterburner has ended"
+    );
+}
+
+#[test]
+fn a_cloak_is_refused_while_a_module_that_cannot_be_deactivated_early_runs() {
+    // disallowEarlyDeactivation 906 on a running module: the ship cannot cloak (EveJS CLOAK_MODULE_ACTIVE)
+    let (mut scene, t) = crowd();
+    let held =
+        Effect { rules: Rules { disallow_early_deactivation: true, ..Default::default() }, ..afterburner() };
+    assert!(accepted(&scene.activate(A, held, t)));
+    let cloak = Effect { module_id: MODULE + 500, action: Some(Action::Cloak), ..afterburner() };
+    assert_eq!(
+        scene.activate(A, cloak.clone(), t),
+        [Out::Refused { session: A, command: 17, reason: "CLOAK_MODULE_ACTIVE" }]
+    );
+    scene.deactivate(A, MODULE, t + SECOND);
+    poll_until(&mut scene, t + SECOND, 15.0);
+    assert!(accepted(&scene.activate(A, cloak, t + 20 * SECOND)), "the cloak goes once the module has ended");
+}
+
+#[test]
+fn a_module_that_needs_an_industrial_core_runs_only_while_one_runs_and_stops_with_it() {
+    // activationRequiresActiveIndustrialCore 3265: a compressor waits for a core, and stops when the last core that runs stops
+    let (mut scene, t) = crowd();
+    let compressor = Effect {
+        module_id: MODULE + 510,
+        rules: Rules { requires_industrial_core: true, ..Default::default() },
+        ..afterburner()
+    };
+    assert_eq!(
+        scene.activate(A, compressor.clone(), t),
+        [Out::Refused { session: A, command: 17, reason: "ACTIVE_INDUSTRIAL_CORE_REQUIRED" }]
+    );
+    let core = Effect {
+        module_id: MODULE + 511,
+        rules: Rules { provides_industrial_core: true, ..Default::default() },
+        ..afterburner()
+    };
+    assert!(accepted(&scene.activate(A, core, t)));
+    assert!(accepted(&scene.activate(A, compressor, t)));
+    scene.deactivate(A, MODULE + 511, t + SECOND);
+    let (ended, _) = poll_until(&mut scene, t + SECOND, 15.0);
+    assert!(
+        ended
+            .iter()
+            .any(|out| matches!(out, Out::ModuleEnded { module_id, .. } if *module_id == MODULE + 510)),
+        "the compressor stops with its core"
+    );
+}
+
+#[test]
+fn a_module_with_a_reactivation_delay_waits_after_it_stops() {
+    // the reactivation delay (669) runs from the stop, on the simulation's clock
+    let (mut scene, t) = crowd();
+    let cloaking = Effect {
+        module_id: MODULE + 520,
+        rules: Rules { reactivation_delay_ms: 30_000.0, ..Default::default() },
+        ..afterburner()
+    };
+    assert!(accepted(&scene.activate(A, cloaking.clone(), t)));
+    scene.deactivate(A, MODULE + 520, t + SECOND);
+    poll_until(&mut scene, t + SECOND, 15.0);
+    assert_eq!(
+        scene.activate(A, cloaking.clone(), t + 20 * SECOND),
+        [Out::Refused { session: A, command: 17, reason: "MODULE_REACTIVATING" }]
+    );
+    assert!(
+        accepted(&scene.activate(A, cloaking, t + 60 * SECOND)),
+        "it starts again once the delay has passed"
+    );
+}
+
+#[test]
+fn a_module_that_its_own_effect_burns_out_does_not_start_again() {
+    // an emergency hull energizer sets its module's damage to its hit points as it ends, and stays burnt out (MODULE_INCAPACITATED)
+    let (mut scene, t) = crowd();
+    let burning = Effect {
+        off_changes: vec![Change { item_id: MODULE, attribute_id: MODULE_DAMAGE, value: 100.0 }],
+        ..afterburner()
+    };
+    assert!(accepted(&scene.activate(A, burning.clone(), t)));
+    scene.deactivate(A, MODULE, t + SECOND);
+    poll_until(&mut scene, t + SECOND, 15.0);
+    assert_eq!(
+        scene.activate(A, burning, t + 20 * SECOND),
+        [Out::Refused { session: A, command: 17, reason: "MODULE_INCAPACITATED" }]
+    );
 }

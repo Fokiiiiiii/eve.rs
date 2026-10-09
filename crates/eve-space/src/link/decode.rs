@@ -267,8 +267,8 @@ pub(super) fn read_effect(reader: &mut Reader) -> Result<Effect, DecodeError> {
     let repeat = reader.i32()?;
     let target_id = reader.i64()?;
     let flags = reader.u8()?;
-    // bits: 1 on, 2 off, 4 turret, 8 action, 16 burns fuel (a fuel cycle is asked of the host before each cycle that starts)
-    if flags > 31 {
+    // bits: 1 on, 2 off, 4 turret, 8 action, 16 burns fuel (a fuel cycle is asked of the host before each cycle that starts), 32 the module rules
+    if flags > 63 {
         return Err(DecodeError::BadValue("flags"));
     }
     let on = if flags & 1 != 0 { Some(read_numbers(reader)?) } else { None };
@@ -277,7 +277,9 @@ pub(super) fn read_effect(reader: &mut Reader) -> Result<Effect, DecodeError> {
     let off_changes = read_changes(reader)?;
     let turret = if flags & 4 != 0 { Some(read_turret(reader)?) } else { None };
     let action = if flags & 8 != 0 { Some(read_action(reader)?) } else { None };
+    let rules = if flags & 32 != 0 { read_rules(reader)? } else { Rules::default() };
     Ok(Effect {
+        rules,
         burns_fuel: flags & 16 != 0,
         module_id,
         module_type,
@@ -293,6 +295,25 @@ pub(super) fn read_effect(reader: &mut Reader) -> Result<Effect, DecodeError> {
         off,
         on_changes,
         off_changes,
+    })
+}
+
+/// The module rules of an effect (flag 32, after its action): the group and its limit, the rule bits (1 early deactivation, 2 needs a core, 4 is a core), and the
+/// reactivation delay.
+pub(super) fn read_rules(reader: &mut Reader) -> Result<Rules, DecodeError> {
+    let group_id = reader.i32()?;
+    let max_group_active = reader.i32()?;
+    let bits = reader.u8()?;
+    if bits > 7 {
+        return Err(DecodeError::BadValue("rule bits"));
+    }
+    Ok(Rules {
+        group_id,
+        max_group_active,
+        disallow_early_deactivation: bits & 1 != 0,
+        requires_industrial_core: bits & 2 != 0,
+        provides_industrial_core: bits & 4 != 0,
+        reactivation_delay_ms: reader.f64()?,
     })
 }
 

@@ -295,7 +295,17 @@ public sealed record SimEffect(
     IReadOnlyList<SimChange> OnChanges, IReadOnlyList<SimChange> OffChanges, SimTurret? Turret = null, SimAction? Action = null,
     /// <summary>The effect burns the fuel its consumption attributes name (713 and 714) each cycle: the simulation asks the host for it before each cycle that starts
     /// (<see cref="SimModuleWorkCommands.ConsumeFuel"/>), and does not start one the host refuses.</summary>
-    bool BurnsFuel = false);
+    bool BurnsFuel = false,
+    /// <summary>The module rules of the module's type (the group and its limit, the early deactivation, the industrial core and the reactivation delay): what the
+    /// simulation enforces on the activation. Null when the host sends none (a module the rules do not name).</summary>
+    SimModuleRules? Rules = null);
+
+/// <summary>
+/// The module rules of an effect the simulation enforces: the group the module belongs to and how many of it run at once (<paramref name="MaxGroupActive"/>, 0 for no
+/// limit), whether the module holds the ship's early deactivation (906), needs an active industrial core (3265), is one, and how long it waits after it stops (669, in ms).
+/// </summary>
+public sealed record SimModuleRules(
+    int GroupId, int MaxGroupActive, bool DisallowEarlyDeactivation, bool RequiresIndustrialCore, bool ProvidesIndustrialCore, double ReactivationDelayMs);
 
 /// <summary>The codes of the work a module asks the host for (<see cref="SimModuleWorkCycle.Command"/>). Its cycles share the drone codes of mining and salvage (7, 8).</summary>
 public static class SimModuleWorkCommands

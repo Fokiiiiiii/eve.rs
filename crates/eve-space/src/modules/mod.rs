@@ -45,6 +45,8 @@ pub(crate) const SAMPLE_EVERY: i64 = TICKS_PER_SECOND / 2;
 pub(crate) const WARP_SCRAMBLE_STATUS: i32 = 104;
 pub(crate) const DISALLOW_DOCKING: i32 = 2354;
 pub(crate) const ACTIVATION_BLOCKED: i32 = 1349;
+/// A module's damage (dogma attribute `damage`, 3): a module whose damage reaches its hit points (9) is burnt out.
+pub(crate) const MODULE_DAMAGE: i32 = 3;
 
 /// The most module moments one settle takes for a ship (M-1). What is still due is taken by the next settle, so one ship cannot hold the sim thread.
 pub(crate) const MAX_MOMENTS_PER_SETTLE: usize = 10_000;
@@ -446,6 +448,19 @@ pub enum MiningFamily {
     Gas,
 }
 
+/// The module rules the host works out from a module's type, for the rules the scene enforces (`activate`, `effect_ended`): the group a module belongs to and
+/// how many of that group run at once (maxGroupActive 763, 0 for no limit), whether it holds the ship's early deactivation (906) or needs an active industrial
+/// core (3265), whether it is one (`industrialCoreEffect2`, its compact variant), and how long it waits after it stops before it starts again (669, 0 for none).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Rules {
+    pub group_id: i32,
+    pub max_group_active: i32,
+    pub disallow_early_deactivation: bool,
+    pub requires_industrial_core: bool,
+    pub provides_industrial_core: bool,
+    pub reactivation_delay_ms: f64,
+}
+
 /// An effect the host asks the scene to run, with everything the host has worked out for it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Effect {
@@ -473,6 +488,8 @@ pub struct Effect {
     /// The effect burns the fuel its consumption attributes name each cycle: a fuel cycle is asked of the host before each cycle that starts, and the cycle
     /// does not start when the host refuses it (`ConsumeFuel`, the host takes the fuel from the ship).
     pub burns_fuel: bool,
+    /// The module rules of the module's type (`Rules`); the default is none (a module the host sends no rules for).
+    pub rules: Rules,
 }
 
 impl Effect {
@@ -692,7 +709,11 @@ pub(crate) struct Running {
 pub(crate) struct Modules {
     pub(crate) capacitor: Option<Capacitor>,
     running: Vec<Running>,
-    mjd_cooldowns: Vec<(i64, i64)>,
+    /// The modules that wait after they stopped: the micro jump drives' cooldowns and the reactivation delay of any module (669), until the tick given.
+    reactivation: Vec<(i64, i64)>,
+    /// The modules burned out by an effect that sets their damage as it ends (an emergency hull energizer sets its module's damage to its hit points): they
+    /// cannot start again (the reference's MODULE_INCAPACITATED).
+    burnt_out: Vec<i64>,
     next_remote_repair_cycle_id: u64,
     /// Fuel-burning effects that wait for the host to take the fuel of their first cycle.
     pending_starts: Vec<PendingStart>,
@@ -711,7 +732,8 @@ impl Modules {
         Self {
             capacitor: Some(Capacitor::filled(capacity, recharge_s, ratio, now)),
             running: Vec::new(),
-            mjd_cooldowns: Vec::new(),
+            reactivation: Vec::new(),
+            burnt_out: Vec::new(),
             next_remote_repair_cycle_id: 0,
             pending_starts: Vec::new(),
         }

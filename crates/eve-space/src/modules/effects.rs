@@ -564,6 +564,28 @@ impl Scene {
         {
             pilot.ship.health.stop_shift();
         }
+        // a module whose effect sets its damage (the energizer burns its module out) is burnt out: it does not start again
+        if run
+            .effect
+            .off_changes
+            .iter()
+            .any(|c| c.item_id == run.effect.module_id && c.attribute_id == MODULE_DAMAGE)
+            && let Some(pilot) = self.pilots.get_mut(&session)
+            && !pilot.modules.burnt_out.contains(&run.effect.module_id)
+        {
+            pilot.modules.burnt_out.push(run.effect.module_id);
+        }
+        // a module that waits after it stops (its reactivation delay, 669) starts again only when the time has passed; a micro jump drive's cooldown is the jump's
+        if run.effect.rules.reactivation_delay_ms > 0.0
+            && !matches!(run.effect.action, Some(Action::MicroJumpDrive { .. }))
+        {
+            let until =
+                at + (run.effect.rules.reactivation_delay_ms * TICKS_PER_SECOND as f64 / 1000.0) as i64;
+            if let Some(pilot) = self.pilots.get_mut(&session) {
+                pilot.modules.reactivation.retain(|(id, _)| *id != run.effect.module_id);
+                pilot.modules.reactivation.push((run.effect.module_id, until));
+            }
+        }
         let mut out = Vec::new();
         let changes = Self::changes_told(session, owner, &run.effect, &run.effect.off_changes, at);
         let error = out_of_rounds.then(|| no_charges(run.effect.module_type));
@@ -607,6 +629,27 @@ impl Scene {
             };
             if changed {
                 self.boxes.clear();
+            }
+        }
+        // a compressor (3265) stops with the industrial core it runs on: when the last core that runs stops, the modules that need one stop too
+        if run.effect.rules.provides_industrial_core {
+            let dependents: Vec<i64> = self
+                .pilots
+                .get(&session)
+                .filter(|pilot| {
+                    !pilot.modules.running.iter().any(|r| r.effect.rules.provides_industrial_core)
+                })
+                .map_or_else(Vec::new, |pilot| {
+                    pilot
+                        .modules
+                        .running
+                        .iter()
+                        .filter(|r| r.effect.rules.requires_industrial_core)
+                        .map(|r| r.effect.module_id)
+                        .collect()
+                });
+            for module_id in dependents {
+                out.extend(self.offline_module(session, module_id, at));
             }
         }
         // the host is told every end once, so the ship it sends no longer has the module running (FP-C1)

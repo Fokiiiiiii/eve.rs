@@ -21,8 +21,8 @@ impl Scene {
             let scrammed = self.pilots.get(&session).is_some_and(|pilot| pilot.incoming.mwd_blocked());
             let (owner, ship_id) = {
                 let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
-                pilot.modules.mjd_cooldowns.retain(|(id, _)| *id != module_id);
-                pilot.modules.mjd_cooldowns.push((module_id, cooldown_until));
+                pilot.modules.reactivation.retain(|(id, _)| *id != module_id);
+                pilot.modules.reactivation.push((module_id, cooldown_until));
                 let identity = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
                 pilot.modules.running.remove(index);
                 identity

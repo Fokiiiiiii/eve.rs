@@ -295,6 +295,7 @@ impl Dogma for SceneWorld<'_> {
             return Err(WorldError::User("NoSuchEffect".to_string()));
         }
         let effect = Effect {
+            rules: Default::default(),
             burns_fuel: false,
             module_id,
             module_type: weapon.turret.weapon_type_id,

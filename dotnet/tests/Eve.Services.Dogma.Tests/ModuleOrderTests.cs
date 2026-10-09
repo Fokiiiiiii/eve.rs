@@ -128,6 +128,10 @@ public class ModuleOrderTests
         var (blocked, blockedValues) = await RefusedAsync(rig, session, oid, ModuleResult.Refusal("MODULE_BLOCKED", 21857, "1MN Civilian Afterburner"));
         Assert.Equal("ModuleIsBlocked", blocked);
         Assert.True(blockedValues.ContainsKey("moduleName"));
+        // the rules of a running module the reference words (EveJS moduleOperation.js) and the reactivation delay (a notice until the client's shape carries the time)
+        Assert.Equal("An active industrial core is required to activate that module.", await Said("ACTIVE_INDUSTRIAL_CORE_REQUIRED"));
+        Assert.Equal("You cannot activate a cloaking device while a module that cannot be deactivated early is still running.", await Said("CLOAK_MODULE_ACTIVE"));
+        Assert.Equal("1MN Civilian Afterburner cannot be reactivated yet.", await Said("MODULE_REACTIVATING"));
         Assert.Equal("1MN Civilian Afterburner cannot be activated.", await Said("DEFENDER_LAUNCHER_NOT_IMPLEMENTED"));
         Assert.Equal("1MN Civilian Afterburner cannot be activated.", await Said("BOMB_LAUNCHER_NOT_IMPLEMENTED"));
         // a firing effect refused by name (F.O.F. missiles, MissileEffect.RefusedFiringEffects) is shown as the same refusal, not as a raw reason

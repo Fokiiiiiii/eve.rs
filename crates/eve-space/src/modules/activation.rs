@@ -181,6 +181,31 @@ impl Scene {
         {
             return vec![Out::Refused { session, command: CODE, reason: "MAX_GROUP_ACTIVE" }];
         }
+        // a module of a group of which a limited number run at once (maxGroupActive 763: the afterburner and the microwarpdrive) is refused while that many
+        // of its group run or are starting (EveJS MAX_GROUP_ACTIVE; the client's EffectCrowdedOut is shown as the notice, the count is not carried yet)
+        if effect.rules.max_group_active > 0 && effect.rules.group_id != 0 {
+            let same_group = pilot
+                .modules
+                .running
+                .iter()
+                .filter(|r| r.effect.rules.group_id == effect.rules.group_id)
+                .count()
+                + pilot
+                    .modules
+                    .pending_starts
+                    .iter()
+                    .filter(|s| s.effect.rules.group_id == effect.rules.group_id)
+                    .count();
+            if same_group as i64 >= i64::from(effect.rules.max_group_active) {
+                return vec![Out::Refused { session, command: CODE, reason: "MAX_GROUP_ACTIVE" }];
+            }
+        }
+        // a compressor (activationRequiresActiveIndustrialCore 3265) runs only while an industrial core runs on the ship
+        if effect.rules.requires_industrial_core
+            && !pilot.modules.running.iter().any(|r| r.effect.rules.provides_industrial_core)
+        {
+            return vec![Out::Refused { session, command: CODE, reason: "ACTIVE_INDUSTRIAL_CORE_REQUIRED" }];
+        }
         if let Some(Action::MicroJumpDrive { distance_meters, cooldown_ms }) = effect.action.as_ref() {
             if !distance_meters.is_finite()
                 || *distance_meters <= 0.0
@@ -191,12 +216,22 @@ impl Scene {
             }
             if pilot
                 .modules
-                .mjd_cooldowns
+                .reactivation
                 .iter()
                 .any(|(module_id, until)| *module_id == effect.module_id && *until > now)
             {
                 return vec![Out::Refused { session, command: CODE, reason: "MJD_COOLDOWN" }];
             }
+        }
+        // a module that waits after it stopped (its reactivation delay, 669) does not start again before the time has passed
+        if !matches!(effect.action, Some(Action::MicroJumpDrive { .. }))
+            && pilot
+                .modules
+                .reactivation
+                .iter()
+                .any(|(module_id, until)| *module_id == effect.module_id && *until > now)
+        {
+            return vec![Out::Refused { session, command: CODE, reason: "MODULE_REACTIVATING" }];
         }
         // a smartbomb that the safety forbids does not start with another pilot in its range
         if let Some(Action::Smartbomb { range, hurts_pilots: false, .. }) = effect.action.as_ref()
@@ -208,6 +243,10 @@ impl Scene {
             return vec![Out::Refused { session, command: CODE, reason: "SafetyActivated" }];
         }
         // a warp scrambler that blocks a microwarpdrive keeps one from being started
+        // a module burnt out by its own effect (an emergency hull energizer) does not start again (MODULE_INCAPACITATED)
+        if pilot.modules.burnt_out.contains(&effect.module_id) {
+            return vec![Out::Refused { session, command: CODE, reason: "MODULE_INCAPACITATED" }];
+        }
         // a module that a running one blocks (activationBlocked 1349, from a sensor array on the capital micro jump drives) does not start
         if self.overlay(session, effect.module_id, ACTIVATION_BLOCKED) > 0.0 {
             return vec![Out::Refused { session, command: CODE, reason: "MODULE_BLOCKED" }];
@@ -275,6 +314,10 @@ impl Scene {
             }
         }
         if matches!(effect.action.as_ref(), Some(Action::Cloak)) {
+            // a module that cannot be deactivated early (disallowEarlyDeactivation 906) runs: the ship does not cloak (EveJS CLOAK_MODULE_ACTIVE)
+            if pilot.modules.running.iter().any(|r| r.effect.rules.disallow_early_deactivation) {
+                return vec![Out::Refused { session, command: CODE, reason: "CLOAK_MODULE_ACTIVE" }];
+            }
             if pilot.no_jump_until > now {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_JUMP_OR_CLOAK" }];
             }

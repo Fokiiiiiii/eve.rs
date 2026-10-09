@@ -351,6 +351,7 @@ fn laser() -> Turret {
 
 fn laser_effect(target_id: i64, turret: Turret) -> Effect {
     Effect {
+        rules: Default::default(),
         burns_fuel: false,
         module_id: NPC_SHIP,
         module_type: 23_312,
@@ -1346,6 +1347,7 @@ fn strike_of(pulses: i32) -> crate::strike::Strike {
 
 fn strike_effect(module_id: i64, strike: crate::strike::Strike) -> Effect {
     Effect {
+        rules: Default::default(),
         burns_fuel: false,
         module_id,
         module_type: 40_633,
@@ -1683,6 +1685,7 @@ fn a_strike_neutralisation_is_weakened_by_the_targets_energy_warfare_resistance(
 /// A titan doomsday's effect: one hit on `target_id`, the module of a Judgment (24550, effect 4489), one cycle.
 fn doomsday_effect(module_id: i64, target_id: i64, action: crate::modules::Action) -> Effect {
     Effect {
+        rules: Default::default(),
         burns_fuel: false,
         module_id,
         module_type: 24_550,
@@ -1761,6 +1764,7 @@ fn a_titan_doomsday_is_refused_without_a_locked_target_and_hits_nothing_it_is_no
 
 fn smartbomb_effect(module_id: i64, damage: Damage) -> Effect {
     Effect {
+        rules: Default::default(),
         burns_fuel: false,
         module_id,
         module_type: 3_977,

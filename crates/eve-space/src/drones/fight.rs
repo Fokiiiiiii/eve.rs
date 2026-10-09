@@ -105,6 +105,7 @@ impl Scene {
         let remote = self.drones.get(&session)?.remote.as_ref()?;
         let spec = &self.pilots.get(&session)?.ship.spec;
         let effect = Effect {
+            rules: Default::default(),
             burns_fuel: false,
             module_id: spec.ship_id,
             module_type: spec.type_id,
@@ -202,6 +203,7 @@ impl Scene {
     pub(super) fn drone_effect(&self, session: SessionId, target: i64) -> Option<Effect> {
         let weapon = self.pilots.get(&session)?.ship.npc.as_ref()?.combat.weapons.first()?.clone();
         Some(Effect {
+            rules: Default::default(),
             burns_fuel: false,
             module_id: weapon.module_id,
             module_type: weapon.turret.weapon_type_id,

@@ -60,6 +60,13 @@ public static class ModuleRefusals
             "MICROWARPDRIVE_BLOCKED" => Notify("That module cannot be activated while you are warp scrambled."),
             // a running module blocks this one (activationBlocked 1349; the client's own UserError, fittingDogmaLocation: ModuleIsBlocked, moduleName the type)
             "MODULE_BLOCKED" => MachoErrors.ThrowUserError("ModuleIsBlocked", ("moduleName", new PyTuple([new PyInt(TypeReference), new PyInt(refusal.ModuleType)]))),
+            // a compressor needs an industrial core that runs (activationRequiresActiveIndustrialCore 3265): the reference's words (EveJS moduleOperation.js)
+            "ACTIVE_INDUSTRIAL_CORE_REQUIRED" => Notify("An active industrial core is required to activate that module."),
+            // a module that cannot be deactivated early runs (disallowEarlyDeactivation 906): the reference's words for a cloak refused by it (EveJS moduleOperation.js)
+            "CLOAK_MODULE_ACTIVE" => Notify("You cannot activate a cloaking device while a module that cannot be deactivated early is still running."),
+            // a module that waits after it stopped (its reactivation delay, 669). shortcut: the client's ModuleReactivationDelayed2 wants the time since the stop and the
+            // module id, which the refusal does not carry yet; until then the pilot is told in words of ours
+            "MODULE_REACTIVATING" => Notify($"{name} cannot be reactivated yet."),
             "CLOAK_WARP_BLOCKED" => Notify("You cannot activate that cloaking device while warping."),
             // disallowActivateOnWarp (ModuleRestrictions.CheckWarp): the wording is ours; the static data's rule is the source, not a client UserError
             "MODULE_WARP_BLOCKED" => Notify($"{name} cannot be activated while your ship is warping."),

@@ -39,6 +39,28 @@ public class ModuleEffectsTests
 
 
     [Fact]
+    public void A_module_carries_the_rules_the_simulation_enforces_from_its_type()
+    {
+        // maxGroupActive 763, disallowEarlyDeactivation 906, activationRequiresActiveIndustrialCore 3265, moduleReactivationDelay 669; a core effect says it is one
+        var fixture = Fixture(
+            5230, "modifyActiveShieldResonancePostPercent", EffectDef.Activation,
+            new Dictionary<int, double> { [6] = 5, [73] = 1000, [763] = 1, [906] = 1, [3265] = 1, [669] = 180000 },
+            [],
+            new Dictionary<int, double> { [900] = 100 });
+        var result = Eve.Services.Space.ModulePackages.Of(
+            fixture.Snapshot, fixture.Statics, fixture.ModuleId, "modifyActiveShieldResonancePostPercent", 0, 1);
+
+        Assert.Null(result.Reason);
+        var rules = Assert.IsType<Eve.Space.SimEffect>(result.Effect).Rules;
+        Assert.NotNull(rules);
+        Assert.Equal(1, rules.MaxGroupActive);
+        Assert.True(rules.DisallowEarlyDeactivation);
+        Assert.True(rules.RequiresIndustrialCore);
+        Assert.False(rules.ProvidesIndustrialCore);
+        Assert.Equal(180000, rules.ReactivationDelayMs);
+    }
+
+    [Fact]
     public void A_module_that_disallows_repeating_activation_has_one_cycle_whatever_repeat_is_asked()
     {
         // disallowRepeatingActivation (1014): the server's cycle budget is one, so a module that must fire once cannot be held on by a repeat (EveJS

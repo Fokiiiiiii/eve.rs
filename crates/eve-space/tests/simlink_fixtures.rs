@@ -8,7 +8,7 @@ use eve_space::link::{
     ChargeOp, ContainerPlacement, DecodeError, Enter, How, LaunchDrone, Message, Spawn, WreckPlacement,
 };
 use eve_space::missiles::Missile;
-use eve_space::modules::{Action, Applies, Change, Effect, MiningFamily, Numbers, Reach, Remote};
+use eve_space::modules::{Action, Applies, Change, Effect, MiningFamily, Numbers, Reach, Remote, Rules};
 use eve_space::scene::{HeatModuleProfile, HeatProfile, HeatRack};
 use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use eve_space::weapons::{Aoe, Arc, Charge, Spool, Turret};
@@ -192,7 +192,16 @@ fn effect_of(case: &Value) -> Effect {
             })
             .collect()
     };
+    let rules = case.get("rules").map_or_else(Rules::default, |r| Rules {
+        group_id: r["groupId"].as_i64().unwrap() as i32,
+        max_group_active: r["maxGroupActive"].as_i64().unwrap() as i32,
+        disallow_early_deactivation: r["disallowEarlyDeactivation"].as_bool().unwrap(),
+        requires_industrial_core: r["requiresIndustrialCore"].as_bool().unwrap(),
+        provides_industrial_core: r["providesIndustrialCore"].as_bool().unwrap(),
+        reactivation_delay_ms: number(r, "reactivationDelayMs"),
+    });
     Effect {
+        rules,
         burns_fuel: case.get("burnsFuel").and_then(|v| v.as_bool()).unwrap_or(false),
         module_id: wide(case, "moduleId"),
         module_type: case["moduleType"].as_i64().unwrap() as i32,
@@ -999,6 +1008,7 @@ fn module_offline_and_rack_overheat_orders_roundtrip_through_the_link() {
 #[test]
 fn mutadaptive_remote_repair_action_and_cycle_messages_roundtrip_through_the_link() {
     let effect = eve_space::modules::Effect {
+        rules: Default::default(),
         burns_fuel: false,
         module_id: 700,
         module_type: 35298,

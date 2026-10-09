@@ -75,13 +75,25 @@ internal abstract class ShipEffect : IEffectHandler<ShipSnapshot, SimEffect>
     SimEffect IEffectHandler<ShipSnapshot, SimEffect>.Build(EffectContext<ShipSnapshot> context)
     {
         var module = new ModuleEffectContext(context);
-        var built = Build(module) with { BurnsFuel = module.Value(ModuleAttributes.ConsumptionType, 0) > 0 };
+        var built = Build(module) with { BurnsFuel = module.Value(ModuleAttributes.ConsumptionType, 0) > 0, Rules = RulesOf(module) };
         // a module that cannot be made to autorepeat (disallowRepeatingActivation 1014) has one cycle as its budget, whatever repeat the client asks for (EveJS
         // moduleCycleSchedule.js). shortcut: the repeat count the client is told for the effect's FX is one too; EveJS keeps the client's, UNVERIFIED which the client shows.
         return module.Value(ModuleAttributes.DisallowRepeatingActivation, 0) == 1 ? built with { Repeat = 1 } : built;
     }
 
     void IEffectHandler<ShipSnapshot, SimEffect>.Accepted(EffectContext<ShipSnapshot> context) => Accepted(new ModuleEffectContext(context));
+
+    /// <summary>
+    /// The module rules the simulation enforces, worked out from the module's type (module_rules WP3/WP4): the group and its limit (763), the early deactivation
+    /// (906), the industrial core a module needs (3265) and the cores themselves (their effects), and the reactivation delay (669). Every handler's effect carries them.
+    /// </summary>
+    private static SimModuleRules RulesOf(ModuleEffectContext module) => new(
+        module.Type.GroupId,
+        (int)Math.Max(0, module.Value(ModuleAttributes.MaxGroupActive, 0)),
+        module.Value(ModuleAttributes.DisallowEarlyDeactivation, 0) == 1,
+        module.Value(ModuleAttributes.ActivationRequiresActiveIndustrialCore, 0) == 1,
+        module.Effect.Name is "industrialCoreEffect2" or "industrialCompactCoreEffect2",
+        Math.Max(0, module.Value(ModuleAttributes.ModuleReactivationDelay, 0)));
 
     /// <summary>
     /// The length of a cycle of an effect, what it costs the capacitor, and the attribute the duration was read from: the item's own values after dogma (a module's, or a

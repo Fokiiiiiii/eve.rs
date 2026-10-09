@@ -104,7 +104,7 @@ public sealed class SpaceFightersRemainderTests
         Assert.Equal(2, missiles.Count);
         foreach (var action in missiles)
         {
-            var missile = Assert.IsType<SimAction.Missile>(action);
+            var missile = Assert.IsType<SimAction.FighterMissile>(action);
             Assert.Equal(4, missile.Damage.Count);
             Assert.True(missile.ReachMeters > 0 && missile.ExplosionRadius > 0, "a missile has a reach and an explosion");
         }

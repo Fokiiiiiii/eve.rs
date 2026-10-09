@@ -336,7 +336,7 @@ private static void WriteAction(Writer w, SimAction action)
                 foreach (var number in kamikaze.Damage) w.F64(number);
                 w.F64(kamikaze.RangeMeters);
                 break;
-            case SimAction.Missile missile:
+            case SimAction.FighterMissile missile:
                 if (!missile.IsValid)
                 {
                     throw new ArgumentException("a fighter missile has finite, non-negative damage and explosion", nameof(action));

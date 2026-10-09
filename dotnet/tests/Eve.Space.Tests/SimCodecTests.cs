@@ -98,7 +98,7 @@ public class SimCodecTests
         if ((string)a["kind"]! == "missile")
         {
             var d = a["damage"]!;
-            return new SimAction.Missile([(double)d[0]!, (double)d[1]!, (double)d[2]!, (double)d[3]!], (double)a["reachMeters"]!,
+            return new SimAction.FighterMissile([(double)d[0]!, (double)d[1]!, (double)d[2]!, (double)d[3]!], (double)a["reachMeters"]!,
                 (double)a["explosionRadius"]!, (double)a["explosionVelocity"]!, (double)a["reductionFactor"]!, (double)a["reductionSensitivity"]!);
         }
         if ((string)a["kind"]! == "doomsday")

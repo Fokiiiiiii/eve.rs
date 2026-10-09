@@ -142,9 +142,9 @@ internal static class FighterAbilityEffects
                 // the reach is the range and the falloff the reference gates the cycle on (missiles have no falloff)
                 var reach = missiles ? Value(MissilesRange) : Value(AttackMRange) + Value(AttackMFalloff);
                 var blast = missiles
-                    ? new SimAction.Missile(damage, reach, Math.Max(1, Or(MissilesExplosionRadius, 1)), Math.Max(0.001, Or(MissilesExplosionVelocity, 0.001)),
+                    ? new SimAction.FighterMissile(damage, reach, Math.Max(1, Or(MissilesExplosionRadius, 1)), Math.Max(0.001, Or(MissilesExplosionVelocity, 0.001)),
                         Math.Max(0.000001, Or(MissilesReductionFactor, 1)), Math.Max(0.000001, Or(MissilesReductionSensitivity, 5.5)))
-                    : new SimAction.Missile(damage, reach, Math.Max(1, Or(AttackMExplosionRadius, 1)), Math.Max(0.001, Or(AttackMExplosionVelocity, 0.001)),
+                    : new SimAction.FighterMissile(damage, reach, Math.Max(1, Or(AttackMExplosionRadius, 1)), Math.Max(0.001, Or(AttackMExplosionVelocity, 0.001)),
                         Math.Max(0.000001, Or(AttackMReductionFactor, 1)), Math.Max(0.000001, Or(AttackMReductionSensitivity, 5.5)));
                 return (new SimEffect(moduleId, type.TypeId, effect.Id, effect.Guid, CycleOr(duration), 0, 1, targetId, null, null, [], [], null, blast), null);
             }

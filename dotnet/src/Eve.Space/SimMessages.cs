@@ -475,7 +475,7 @@ public abstract record SimAction
     /// (<paramref name="ExplosionRadius"/>, <paramref name="ExplosionVelocity"/>, the reduction factor and its sensitivity) for the target's signature and
     /// speed, when it is within <paramref name="ReachMeters"/>.
     /// </summary>
-    public sealed record Missile(
+    public sealed record FighterMissile(
         IReadOnlyList<double> Damage,
         double ReachMeters,
         double ExplosionRadius,

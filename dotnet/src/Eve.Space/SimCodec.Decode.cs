@@ -459,7 +459,7 @@ public static partial class SimCodec
                     var velocity = r.F64();
                     var factor = r.F64();
                     var sensitivity = r.F64();
-                    var missile = new SimAction.Missile(damage, reach, radius, velocity, factor, sensitivity);
+                    var missile = new SimAction.FighterMissile(damage, reach, radius, velocity, factor, sensitivity);
                     if (!missile.IsValid)
                     {
                         throw new SimLinkException(SimLinkError.BadValue, "bad fighter missile action");

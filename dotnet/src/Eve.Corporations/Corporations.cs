@@ -46,6 +46,8 @@ public sealed record Alliance(long Id, string Name, string ShortName, string Des
 public sealed record AllianceApplication(long Id,long AllianceId,long CorporationId,string Text,int Status,long CreatedMs,long UpdatedMs,bool Archived,long? DueMs);
 public sealed record AllianceMember(long AllianceId, long CorporationId, long StartedMs, long? ChosenExecutorId);
 
+public sealed record AllianceDepartureMutation(AllianceMember? Member, Alliance? Before, Alliance? After, bool Duplicate);
+
 /// <summary>Rules and numeric masks ported from corporationRuntimeState.js. No protocol or database dependency.</summary>
 public static class CorporationRoles
 {

@@ -339,6 +339,29 @@ Decisions taken where the sources left a choice (EveJS is the trusted reference;
   whose action has gone stops the effect. The budget is 10,000 moments a ship per settle; the rest is due at the next settle.
 - ProtocolVersion 32 to 33: one bump for the module rules (flag 32). The fixture generator and `messages.json` carry the frames.
 
+## Launchers A3: festival, countermeasure, F.O.F. (track A leftovers)
+
+- F.O.F. (auto-targeting) missiles: the rule is the EVE University wiki's ("Missiles", auto-targeting missiles): the launcher goes for "the nearest enemy ship
+  or drone that has previously fired on you", and no lock is needed. The simulation takes the enemies that the scene's aggressions name as having fired on the
+  shooter, the nearest of them within the missile's flight range (speed times explosion delay, from the SDE). The wiki gives a "hard maximum range" with no
+  number; EVE Ref lists 200 km for a cruise F.O.F. The SDE number is used (numbers from the SDE, rules from the wiki). Excluded: the shooter's corporation and
+  alliance, the shooter's own owner, ships in warp, and ships in undock protection. Standings and war declarations are not consulted (the simulation has none),
+  so the rule is the wiki's wording only. A drone's shot is an aggression of its controller's ship, so the controller's position stands in for the drone.
+  Ties go to the lower ship id. Nothing in reach: nothing fires and nothing is charged.
+- Breacher pods (launcher 4807; SDE numbers, wiki rules): the pod's damage-over-time has the SDE values dotDuration 40 s (attribute 5735), a cap of 600 damage
+  per tick (5736), and 0.6% of the target's hit points per tick (5737). The wiki gives the tick as one second ("damage per second cap", "percentage of target
+  HP damaged per second"), so the tick is one second. The wiki's rules: a pod does nothing unless it reaches its target; it can be killed by a smartbomb before
+  it arrives; it hits only player ships and NPCs; one DoT per target at a time, while several ships can carry DoTs from one launcher. The per-tick bonuses (5749, 5750) are
+  skill bonuses to the same numbers and are not read yet. The wiki's "75 seconds with max skills" is a skill-modified duration; the base duration is the SDE's
+  40 s, and the duration bonus is not read from the SDE yet. Not built yet: the DoT needs a protocol change, since a pod's DoT is not in the missile the wire carries.
+- The F.O.F. launch is sent as the target id -1 (`AUTO_TARGET_ID`), so no wire change was needed. The simulation resolves it at the launch.
+- The wiki's remark that F.O.F. missiles only engage after the pilot has been aggressed is from forum posts, not from CCP or the wiki's own page: not applied.
+- Festival launchers (501, charge group 500, `snowBallLaunching`): the snowballs are launched at a target, do no damage (the charge's damage is zero or
+  negative, clamped to zero), and make no aggression (the SDE marks the effect not offensive, `isOffensive` false). A launch with no damage makes no
+  aggression in the simulation; a damaging launch always does. Structure festival launchers (1974, category 66) stay refused (structure phase).
+- Countermeasure launcher (308, unpublished): it fires torpedoes and missiles (group 89) or defenders (group 88). The loaded charge chooses the handler:
+  `MissileEffect` for the first, `DefenderEffect` for the second. Groups 84 and 91 accepted by the launcher have no types in the SDE.
+
 ## Module rules, track B2 (2026-10-09)
 
 Each item names the source that decided it. The wiki (EVE University) is secondary; CCP material and the SDE come first, then EVE.js and the V24.01 client code (eve-logic).

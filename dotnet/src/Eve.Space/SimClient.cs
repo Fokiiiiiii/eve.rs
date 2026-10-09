@@ -402,6 +402,9 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public Task<CommandReply> FighterOrderAsync(ulong sessionId, byte command, long targetId, IReadOnlyList<long> fighterIds, double range, CancellationToken cancellationToken = default) =>
         AwaitAsync(_answered, (sessionId, SimFighterOrders.Key(command)), new SimFighterOrder(sessionId, command, targetId, fighterIds, range), cancellationToken);
 
+    public Task<CommandReply> FighterGotoPointAsync(ulong sessionId, IReadOnlyList<long> fighterIds, IReadOnlyList<double> point, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_answered, (sessionId, SimFighterOrders.Key(SimFighterOrders.GotoPoint)), new SimFighterGotoPoint(sessionId, fighterIds, point), cancellationToken);
+
     public Task<string?> RespawnAsync(SimRespawn respawn, CancellationToken cancellationToken = default) =>
         AwaitAsync(_entering, respawn.SessionId, respawn, cancellationToken);
 

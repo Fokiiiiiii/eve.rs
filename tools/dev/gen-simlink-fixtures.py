@@ -17,7 +17,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27,
          "PlaceContainer": 28, "ContainerPlaced": 29, "ChangeWreck": 30, "RemoveWreck": 31, "Measured": 32,
          "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35, "LaunchDrone": 36, "DroneCommand": 37, "DroneResults": 38,
-         "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59}
+         "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60}
 
 
 def s(text):  # u16 length + UTF-8
@@ -342,10 +342,12 @@ def build(m):
     if k == "LaunchFighter":
         # the squadron's ship, the graphic of its type, and its cruise fraction (no weapon, no work, no effect: a squadron is not a drone)
         return frame(k, u64(m["requestId"]) + u64(m["sessionId"]) + ship(m["ship"])
-                     + struct.pack("<id", m["graphicId"], m["cruiseFraction"]))
+                     + struct.pack("<idi", m["graphicId"], m["cruiseFraction"], m["squadronSize"]))
     if k == "FighterOrder":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + i64(m["targetId"]) + struct.pack("<I", len(m["fighterIds"]))
                      + b"".join(i64(f) for f in m["fighterIds"]) + struct.pack("<d", m["range"]))
+    if k == "FighterSize":
+        return frame(k, u64(m["sessionId"]) + i64(m["fighterId"]) + struct.pack("<i", m["size"]))
     if k == "FighterGotoPoint":
         return frame(k, u64(m["sessionId"]) + struct.pack("<I", len(m["fighterIds"]))
                      + b"".join(i64(f) for f in m["fighterIds"]) + struct.pack("<3d", *m["point"]))
@@ -708,7 +710,9 @@ valid = [
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
     {"name": "launch of a fighter squadron", "kind": "LaunchFighter", "requestId": "13", "sessionId": "1790646377000015",
      "ship": dict(IBIS, shipId="9988400004100", typeId=23055, groupId=1652, name="Templar I", modules=[]),
-     "graphicId": 1200, "cruiseFraction": 0.5},
+     "graphicId": 1200, "cruiseFraction": 0.5, "squadronSize": 6},
+    {"name": "a squadron of the pilot's fighter tube lost a member", "kind": "FighterSize", "sessionId": "1790646377000015",
+     "fighterId": "9988400004100", "size": 5},
     {"name": "a fighter order to orbit a ship", "kind": "FighterOrder", "sessionId": "1790646377000015", "command": 1,
      "targetId": "980050000077", "fighterIds": ["9988400004100"], "range": 800.0},
     {"name": "what the fighters did with an order", "kind": "FighterResults", "sessionId": "1790646377000015", "command": 4,

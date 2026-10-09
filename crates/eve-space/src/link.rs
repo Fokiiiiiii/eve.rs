@@ -79,6 +79,7 @@ pub mod kind {
     pub const FIGHTER_LANDED: u8 = 57;
     pub const FIGHTER_RELEASED: u8 = 58;
     pub const FIGHTER_GOTO_POINT: u8 = 59;
+    pub const FIGHTER_SIZE: u8 = 60;
 }
 
 /// What the host changes in the rounds of a gun, in the order the simulation hears it (the host asks for it when a pilot loads or unloads a gun in space).
@@ -386,9 +387,17 @@ pub enum Message {
     LaunchFighter {
         request_id: u64,
         session_id: u64,
+        /// The squadron, whose vitals are those of all its members together (`squadron_size` of them, each as tough as one).
         ship: ShipSpec,
         graphic_id: i32,
         cruise_fraction: f64,
+        squadron_size: i32,
+    },
+    /// A squadron out in space lost members (or got back some): its size now, for the pilot who controls it.
+    FighterSize {
+        session_id: u64,
+        fighter_id: i64,
+        size: i32,
     },
     /// A pilot gives its fighter squadrons an order: the command (`FighterOrder::code`), the target (orbit and follow), the range (the orbit distance or the follow
     /// range, metres) and the squadrons (their item ids).
@@ -1904,6 +1913,7 @@ impl Message {
             Self::AdjustCharge { .. } => kind::ADJUST_CHARGE,
             Self::ChargeAdjusted { .. } => kind::CHARGE_ADJUSTED,
             Self::FighterGotoPoint { .. } => kind::FIGHTER_GOTO_POINT,
+            Self::FighterSize { .. } => kind::FIGHTER_SIZE,
         }
     }
 
@@ -2308,12 +2318,18 @@ impl Message {
                 out.extend_from_slice(&drone_id.to_le_bytes());
                 put_vector(&mut out, position);
             }
-            Self::LaunchFighter { request_id, session_id, ship, graphic_id, cruise_fraction } => {
+            Self::LaunchFighter { request_id, session_id, ship, graphic_id, cruise_fraction, squadron_size } => {
                 out.extend_from_slice(&request_id.to_le_bytes());
                 out.extend_from_slice(&session_id.to_le_bytes());
                 put_ship(&mut out, ship);
                 out.extend_from_slice(&graphic_id.to_le_bytes());
                 out.extend_from_slice(&cruise_fraction.to_le_bytes());
+                out.extend_from_slice(&squadron_size.to_le_bytes());
+            }
+            Self::FighterSize { session_id, fighter_id, size } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&fighter_id.to_le_bytes());
+                out.extend_from_slice(&size.to_le_bytes());
             }
             Self::FighterOrder { session_id, command, target_id, fighter_ids, range } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
@@ -2797,13 +2813,19 @@ impl Message {
                 drone_id: r.i64()?,
                 position: read_vector(&mut r)?,
             },
-            kind::LAUNCH_FIGHTER => Message::LaunchFighter {
-                request_id: r.u64()?,
-                session_id: r.u64()?,
-                ship: read_ship(&mut r)?,
-                graphic_id: r.i32()?,
-                cruise_fraction: r.f64()?,
-            },
+            kind::LAUNCH_FIGHTER => {
+                let request_id = r.u64()?;
+                let session_id = r.u64()?;
+                let ship = read_ship(&mut r)?;
+                let graphic_id = r.i32()?;
+                let cruise_fraction = r.f64()?;
+                let squadron_size = r.i32()?;
+                if !(1..=64).contains(&squadron_size) {
+                    return Err(DecodeError::BadValue("squadron size"));
+                }
+                Message::LaunchFighter { request_id, session_id, ship, graphic_id, cruise_fraction, squadron_size }
+            }
+            kind::FIGHTER_SIZE => Message::FighterSize { session_id: r.u64()?, fighter_id: r.i64()?, size: r.i32()? },
             kind::FIGHTER_ORDER => {
                 let (session_id, command, target_id) = (r.u64()?, r.u8()?, r.i64()?);
                 let count = r.u32()? as usize;

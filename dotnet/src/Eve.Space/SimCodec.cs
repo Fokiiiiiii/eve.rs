@@ -95,6 +95,7 @@ public static class SimCodec
         public const byte FighterLanded = 57;
         public const byte FighterReleased = 58;
         public const byte FighterGotoPoint = 59;
+        public const byte FighterSize = 60;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)
@@ -932,7 +933,22 @@ public static class SimCodec
                 message = new SimDroneReleased(r.U64(), r.I64(), ReadVector(ref r));
                 break;
             case Kind.LaunchFighter:
-                message = new SimLaunchFighter(r.U64(), r.U64(), ReadShip(ref r), r.I32(), r.F64());
+                {
+                    var requestId = r.U64();
+                    var session = r.U64();
+                    var ship = ReadShip(ref r);
+                    var graphic = r.I32();
+                    var cruise = r.F64();
+                    var members = r.I32();
+                    if (members is < 1 or > 64)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "the squadron has no members");
+                    }
+                    message = new SimLaunchFighter(requestId, session, ship, graphic, cruise, members);
+                }
+                break;
+            case Kind.FighterSize:
+                message = new SimFighterSize(r.U64(), r.I64(), r.I32());
                 break;
             case Kind.FighterOrder:
                 {
@@ -2101,6 +2117,13 @@ private static void WriteAction(Writer w, SimAction action)
                 WriteShip(w, m.Ship);
                 w.I32(m.GraphicId);
                 w.F64(m.CruiseFraction);
+                w.I32(m.SquadronSize);
+                break;
+            case SimFighterSize m:
+                w.U8(Kind.FighterSize);
+                w.U64(m.SessionId);
+                w.I64(m.FighterId);
+                w.I32(m.Size);
                 break;
             case SimFighterOrder m:
                 w.U8(Kind.FighterOrder);

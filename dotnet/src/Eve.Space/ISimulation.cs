@@ -95,6 +95,9 @@ public interface ISimulation
     /// <summary>Gives a pilot's fighter squadrons an order (<see cref="SimFighterOrders"/>) and waits for what each did with it (<see cref="CommandReply.Fighters"/>).</summary>
     Task<CommandReply> FighterOrderAsync(ulong sessionId, byte command, long targetId, IReadOnlyList<long> fighterIds, double range, CancellationToken cancellationToken = default);
 
+    /// <summary>Sends a pilot's fighter squadrons to a point (GOTO_POINT) and waits for what each did with it (<see cref="CommandReply.Fighters"/>).</summary>
+    Task<CommandReply> FighterGotoPointAsync(ulong sessionId, IReadOnlyList<long> fighterIds, IReadOnlyList<double> point, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Gives a session whose ship was destroyed another (the capsule the host made), at rest at the place; null when it was done, else why not.
     /// </summary>

@@ -94,6 +94,16 @@ internal sealed class FakeSim : ISimulation
             ?? new CommandReply(true, 0, null) { Fighters = [.. fighterIds.Select(id => new SimFighterResult(id, ""))] });
     }
 
+    public Task<CommandReply> FighterGotoPointAsync(ulong sessionId, IReadOnlyList<long> fighterIds, IReadOnlyList<double> point, CancellationToken cancellationToken = default)
+    {
+        if (!IsConnected)
+        {
+            throw new SimUnavailableException("the simulation is not running");
+        }
+        Heard.Add(new SimFighterGotoPoint(sessionId, fighterIds, point));
+        return Task.FromResult(new CommandReply(true, 0, null) { Fighters = [.. fighterIds.Select(id => new SimFighterResult(id, ""))] });
+    }
+
     /// <summary>What a respawn is answered with: null (done) or a reason.</summary>
     public string? RespawnAnswer { get; set; }
 

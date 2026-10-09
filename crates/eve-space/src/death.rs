@@ -90,7 +90,8 @@ impl Scene {
         }
         // a drone that is destroyed is gone: its controller is told what the reference tells (idle, nobody's) and nothing is left of it
         let drone = ship.npc.as_ref().and_then(|npc| npc.drone.as_ref());
-        if let Some(link) = drone {
+        // a squadron's controller is told nothing of drones: its destruction is the host's to tell the pilot
+        if let Some(link) = drone.filter(|link| link.kind == crate::ship::CompanionKind::Drone) {
             out.push(Out::Notify {
                 session: link.controller,
                 name: "OnDroneStateChange",

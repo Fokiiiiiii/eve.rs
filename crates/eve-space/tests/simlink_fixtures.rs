@@ -797,6 +797,7 @@ fn message_of(case: &Value) -> Message {
             ship: ship_of(&case["ship"]),
             graphic_id: number("graphicId") as i32,
             cruise_fraction: case["cruiseFraction"].as_f64().unwrap(),
+            squadron_size: number("squadronSize") as i32,
         },
         "FighterOrder" => Message::FighterOrder {
             session_id: session_id(),
@@ -809,6 +810,11 @@ fn message_of(case: &Value) -> Message {
             session_id: session_id(),
             command: number("command") as u8,
             results: case["results"].as_array().unwrap().iter().map(|r| (wide(r, "fighterId"), text(r, "reason"))).collect(),
+        },
+        "FighterSize" => Message::FighterSize {
+            session_id: session_id(),
+            fighter_id: wide(case, "fighterId"),
+            size: number("size") as i32,
         },
         "FighterGotoPoint" => Message::FighterGotoPoint {
             session_id: session_id(),

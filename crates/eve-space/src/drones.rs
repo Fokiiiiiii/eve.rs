@@ -301,6 +301,7 @@ impl Scene {
                 cruise_fraction,
                 activity: IDLE,
                 kind,
+                squadron: None,
             }),
             ..NpcIdentity::default()
         };
@@ -989,7 +990,10 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
     }
 
     /// The drones of a pilot that has left the scene (docked, jumped, gone offline or been destroyed) are let go: they are taken out of the scene and the host is told of each.
-    pub(crate) fn release_drones(&mut self, controller: SessionId, now: i64) -> Vec<Out> {
+    ///
+    /// When the pilot logs off (`logoff_at`: where its ship was), a squadron within the recovery distance of that place lands in its tube instead, as the
+    /// reference's `attemptFighterTubeRecovery` does on a logoff (the host moves its item in).
+    pub(crate) fn release_drones(&mut self, controller: SessionId, logoff_at: Option<Vec3>, now: i64) -> Vec<Out> {
         let sessions: Vec<SessionId> = self
             .drones
             .keys()
@@ -998,7 +1002,17 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
             .collect();
         let mut out = Vec::new();
         for session in sessions {
-            out.extend(self.abandon(session, now));
+            let recovered = logoff_at.is_some_and(|at| {
+                self.is_fighter(session) && {
+                    let p = self.pilots[&session].ship.position;
+                    ((p.x - at.x).powi(2) + (p.y - at.y).powi(2) + (p.z - at.z).powi(2)).sqrt() <= FIGHTER_RECOVERY_DISTANCE
+                }
+            });
+            if recovered {
+                out.extend(self.take_in(session, controller, now));
+            } else {
+                out.extend(self.abandon(session, now));
+            }
         }
         out
     }
@@ -1305,11 +1319,18 @@ fn can_reconnect(&self, controller: SessionId, drone_session: SessionId) -> bool
     fn scoop_if_near(&mut self, session: SessionId, now: i64) -> Vec<Out> {
         let Some(controller) = self.controller_of_drone(session) else { return Vec::new() };
         let Some(apart) = self.apart(session, controller) else { return Vec::new() };
-        let fighter = self.is_fighter(session);
-        let reach = if fighter { FIGHTER_RECOVERY_DISTANCE } else { SCOOP_DISTANCE };
+        let reach = if self.is_fighter(session) { FIGHTER_RECOVERY_DISTANCE } else { SCOOP_DISTANCE };
         if apart > reach {
             return Vec::new();
         }
+        self.take_in(session, controller, now)
+    }
+
+    /// A companion leaves the scene for its controller's ship: its ball is removed from every pilot's view and the controller is told (a drone is
+    /// scooped, a squadron lands); the host moves the item. Shared by the landing of a recalled squadron, the scoop of a drone and the scoop of an
+    /// abandoned squadron.
+    pub(crate) fn take_in(&mut self, session: SessionId, controller: SessionId, now: i64) -> Vec<Out> {
+        let fighter = self.is_fighter(session);
         let mut out = self.stop_remote(session, now);
         let Some(pilot) = self.pilots.remove(&session) else { return Vec::new() };
         self.drones.remove(&session);

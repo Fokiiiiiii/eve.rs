@@ -20,6 +20,8 @@ namespace Eve.Services.Space;
 /// </summary>
 public sealed class SpaceFighters : ISpaceFighters, IDisposable
 {
+    /// <summary>The location of an item that is gone (the junkyard, as the drones' items are sent there).</summary>
+    private const long Junkyard = 6;
     private const string NoShipText = "Your ship could not be found.";
     private const string NotInSpaceText = "That fighter is not in space.";
     private const string NotInBayOrTubeText = "A fighter can only be scooped into the fighter bay or a launch tube.";
@@ -27,9 +29,7 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
     private const string StillOutText = "That launch tube's squadron is still in space.";
     private const string NoSimulationText = "The space simulation is not running, so fighter squadrons cannot go out.";
     private const string NoSolarSystemText = "Your ship is not in space.";
-    private const string NoPointText = "A squadron cannot be sent to a point yet: the simulation has no point course (ADR 0015, FIG-D-8).";
     private const string AbilityText = "Fighter abilities are not in the simulation yet (ADR 0015).";
-    private const string ScoopText = "Scooping an abandoned squadron back is not in the simulation yet (ADR 0015, WP-R).";
 
     /// <summary>The orbit an order gives when it names no distance, metres (the reference's default).</summary>
     private const double DefaultOrbitMeters = 1_500;
@@ -43,6 +43,8 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
     private readonly Func<ClientSession, int?> _solarSystemOf;
     private readonly Action<string>? _log;
     private readonly ConcurrentDictionary<long, Launched> _launched = new();
+    /// <summary>The squadrons let go in space: their items stay there until they are scooped back or destroyed (the simulation keeps them).</summary>
+    private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
     private long _requests;
 
     public SpaceFighters(ISimulation? sim, CharacterShips ships, DogmaStatic statics, Func<ClientSession, int?> solarSystemOf, Action<string>? log = null)
@@ -201,12 +203,15 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
             throw MachoErrors.ThrowUserError("None of the selected fighters is in space.");
         }
         var command = call.Arg(1) is PyStr text ? text.Value : "";
+        if (command == "GOTO_POINT")
+        {
+            return await GotoPointAsync(session, inSpace, call.Arg(2), call.Cancellation);
+        }
         var (code, target, range) = command switch
         {
             "STOP" => (SimFighterOrders.Stop, 0L, 0.0),
             "ORBIT" => (SimFighterOrders.Orbit, IdOf(call.Arg(2)), NumberOf(call.Arg(3), DefaultOrbitMeters)),
             "FOLLOW" => (SimFighterOrders.Follow, IdOf(call.Arg(2)), NumberOf(call.Arg(3), DefaultOrbitMeters)),
-            "GOTO_POINT" => throw MachoErrors.ThrowUserError(NoPointText),
             _ => throw MachoErrors.ThrowUserError($"{command} is not a movement order for fighters."),
         };
         var reply = await OrderAsync(session, code, target, range, inSpace, call.Cancellation);
@@ -217,6 +222,38 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
             {
                 throw MachoErrors.ThrowUserError(NoSimulationText);
             }
+            if (reason.Length > 0)
+            {
+                throw MachoErrors.ThrowUserError(reason);
+            }
+        }
+        return PyNone.Instance;
+    }
+
+    /// <summary>The squadrons fly to the point the pilot names (GOTO_POINT, the reference's `issueFighterGotoPoint`); each the simulation refuses is refused with its reason.</summary>
+    private async Task<PyValue> GotoPointAsync(ClientSession session, IReadOnlyList<long> fighters, PyValue pointValue, CancellationToken cancellationToken)
+    {
+        if (PointOf(pointValue) is not { } point)
+        {
+            throw MachoErrors.ThrowUserError("A fighter flies to a point of three coordinates.");
+        }
+        if (_sim is null)
+        {
+            throw MachoErrors.ThrowUserError(NoSimulationText);
+        }
+        CommandReply? reply;
+        try
+        {
+            reply = await _sim.FighterGotoPointAsync((ulong)session.SessionId, fighters, point, cancellationToken).ConfigureAwait(false);
+        }
+        catch (SimUnavailableException error)
+        {
+            _log?.Invoke($"fighters: {error.Message}");
+            throw MachoErrors.ThrowUserError(NoSimulationText);
+        }
+        foreach (var id in fighters)
+        {
+            var reason = ReasonOf(reply, id) ?? NoSimulationText;
             if (reason.Length > 0)
             {
                 throw MachoErrors.ThrowUserError(reason);
@@ -249,13 +286,49 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
     /// <summary>A squadron in space cannot be scooped back yet (the simulation has no scoop); a squadron out of space says so.</summary>
     public async ValueTask<PyValue> CmdScoopAbandonedFighterFromSpaceAsync(ServiceCall call)
     {
-        var (session, characterId, _) = Pilot(call);
-        if (!IsFighterSlot((int)IdOf(call.Arg(1))))
+        var (session, characterId, shipId) = Pilot(call);
+        var flag = (int)IdOf(call.Arg(1));
+        if (!IsFighterSlot(flag))
         {
             throw MachoErrors.ThrowUserError(NotInBayOrTubeText);
         }
-        var inSpace = await SquadronInSpaceAsync(session, characterId, IdOf(call.Arg(0)), call.Cancellation);
-        throw MachoErrors.ThrowUserError(inSpace is null ? NotInSpaceText : ScoopText);
+        var id = IdOf(call.Arg(0));
+        if (_sim is null)
+        {
+            throw MachoErrors.ThrowUserError(NoSimulationText);
+        }
+        // only a squadron this ship let go, and that the simulation still has (it is not recorded once the host restarts: NotInSpaceText)
+        if (!_abandoned.TryGetValue(id, out var squadron) || squadron.CharacterId != characterId || squadron.ShipId != shipId)
+        {
+            throw MachoErrors.ThrowUserError(NotInSpaceText);
+        }
+        if (_solarSystemOf(session) is not { } system)
+        {
+            throw MachoErrors.ThrowUserError(NoSolarSystemText);
+        }
+        // the database takes the squadron in first (the room and the tube rules), then the simulation is asked; a refusal puts it back in space
+        var move = await _ships.ScoopFighterAsync(characterId, shipId, id, system, flag, call.Cancellation);
+        if (!move.Accepted)
+        {
+            throw MachoErrors.ThrowUserError(MessageOf(move));
+        }
+        var reason = ReasonOf(await OrderAsync(session, SimFighterOrders.Scoop, 0, 0, [id], call.Cancellation), id);
+        if (reason is null || reason.Length > 0)
+        {
+            await _ships.ReleaseScoopedFighterAsync(characterId, shipId, id, system, call.Cancellation);
+            throw MachoErrors.ThrowUserError(reason ?? NoSimulationText);
+        }
+        _abandoned.TryRemove(id, out _);
+        var taken = move.Change!.After;
+        ShipNotifications.SendItemChange(session, move.Change!, RowOf);
+        if (FighterTubes.IsTube(flag))
+        {
+            session.SendNotification("OnFighterTubeContentUpdate", "clientID",
+                new PyInt(flag), InventoryWire.Id(taken.Id), new PyInt(taken.TypeId),
+                new PyInt((int)FighterTubes.InventorySize(taken.Singleton, taken.Quantity)));
+            NotifyTubeState(session, flag, "READY");
+        }
+        return PyBool.True;
     }
 
     /// <summary>A squadron out in space gets no ability yet; one that is not out is refused with that reason.</summary>
@@ -309,6 +382,9 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
 
         // the squadron is the pilot's ship: its owner and corporation are the character's, as a drone's are
         var character = snapshot.Character;
+        // the squadron's health is that of all its members together: each member is as tough as one ship of the type (the simulation loses a member as
+        // its points run out, and tells the size)
+        var members = (int)Math.Clamp(FighterTubes.InventorySize(squadron.Singleton, squadron.Quantity), 1, 64);
         var hull = SimShips.OfType(squadron.Id, type) with
         {
             OwnerId = character.Id,
@@ -316,10 +392,22 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
             AllianceId = (int)(character.AllianceId ?? 0),
             WarFactionId = (int)(character.FactionId ?? 0),
         };
+        if (hull.Vitals is { } vitals)
+        {
+            hull = hull with
+            {
+                Vitals = vitals with
+                {
+                    ShieldCapacity = vitals.ShieldCapacity * members,
+                    ArmorHp = vitals.ArmorHp * members,
+                    StructureHp = vitals.StructureHp * members,
+                },
+            };
+        }
         SimSpawnReply? reply = null;
         try
         {
-            reply = await _sim.LaunchFighterAsync(new SimLaunchFighter((ulong)Interlocked.Increment(ref _requests), (ulong)session.SessionId, hull, type.GraphicId, 1.0), cancellationToken).ConfigureAwait(false);
+            reply = await _sim.LaunchFighterAsync(new SimLaunchFighter((ulong)Interlocked.Increment(ref _requests), (ulong)session.SessionId, hull, type.GraphicId, 1.0, members), cancellationToken).ConfigureAwait(false);
         }
         catch (SimUnavailableException error)
         {
@@ -345,14 +433,31 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
 
     private void OnReceived(SimMessage message)
     {
-        switch (message)
+        try
         {
-            case SimFighterLanded landed when _launched.TryRemove(landed.FighterId, out var squadron):
-                Background(() => LandAsync(squadron), $"fighter {squadron.FighterId} landing");
-                break;
-            case SimFighterReleased released when _launched.TryRemove(released.FighterId, out var squadron):
-                ReleasedTo(squadron);
-                break;
+            switch (message)
+            {
+                case SimFighterLanded landed when _launched.TryRemove(landed.FighterId, out var squadron):
+                    Background(() => LandAsync(squadron), $"fighter {squadron.FighterId} landing");
+                    break;
+                case SimFighterReleased released when _launched.TryRemove(released.FighterId, out var squadron):
+                    _abandoned[released.FighterId] = squadron;
+                    ReleasedTo(squadron);
+                    break;
+                case SimFighterSize size when _launched.TryGetValue(size.FighterId, out var squadron):
+                    Background(() => ResizeAsync(squadron, size.Size), $"fighter {size.FighterId} size");
+                    break;
+                case SimDestroyed destroyed when _launched.TryRemove(destroyed.ShipId, out var lost):
+                    Background(() => LoseAsync(lost), $"fighter {destroyed.ShipId} destroyed");
+                    break;
+                case SimDestroyed destroyed when _abandoned.TryRemove(destroyed.ShipId, out var abandoned):
+                    Background(() => LoseAsync(abandoned, controlled: false), $"fighter {destroyed.ShipId} destroyed");
+                    break;
+            }
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"fighters: a message of the simulation could not be handled: {error}");
         }
     }
 
@@ -360,6 +465,34 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
     private void OnLost()
     {
         _launched.Clear();
+        _abandoned.Clear();
+    }
+
+    /// <summary>A squadron out in space lost members: the item keeps the members it has, and the pilot is told the size (the reference's notice).</summary>
+    private async Task ResizeAsync(Launched squadron, int size)
+    {
+        await _ships.SetSquadronSizeAsync(squadron.CharacterId, squadron.FighterId, size).ConfigureAwait(false);
+        squadron.Pilot.SendNotification("OnInSpaceSquadronSizeChanged", "clientID", InventoryWire.Id(squadron.FighterId), new PyInt(size));
+    }
+
+    /// <summary>
+    /// A squadron was destroyed: its item is deleted and the pilot is told it is gone from its controller and its tube is empty (the drone path deletes
+    /// the item the same way, and the client is told it went to the junkyard).
+    /// </summary>
+    private async Task LoseAsync(Launched squadron, bool controlled = true)
+    {
+        _abandoned.TryRemove(squadron.FighterId, out _);
+        if (await _ships.RemoveFighterAsync(squadron.CharacterId, squadron.FighterId).ConfigureAwait(false) is not { } removed)
+        {
+            return;
+        }
+        await _statics.EnsureTypesAsync([removed.TypeId]).ConfigureAwait(false);
+        ShipNotifications.SendItemChange(squadron.Pilot, new ItemChanged(removed with { LocationId = Junkyard }, removed.LocationId, removed.Flag, removed.Quantity), RowOf);
+        // a squadron that was let go was already removed from its controller and its tube is already empty
+        if (controlled)
+        {
+            ReleasedTo(squadron);
+        }
     }
 
     /// <summary>A squadron came back and lands in its tube: it is moved in, and its tube is told READY as the reference does.</summary>
@@ -432,6 +565,9 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
                 "" => "",
                 "NOT_CONTROLLED" => NotInSpaceText,
                 "NO_TARGET" => "That target is not in space.",
+                "NOT_ABANDONED" => "That fighter is not let go in space.",
+                "NOT_YOURS" => "That fighter was launched from another ship.",
+                "TOO_FAR" => "That fighter is too far away to be scooped back into your ship.",
                 var other => other,
             }
             : null;
@@ -514,4 +650,20 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
         PyLong integer => integer.Value,
         _ => fallback,
     };
+
+    /// <summary>The point a GOTO_POINT names: three numbers in a tuple or a list (metres), or null when it is not three numbers.</summary>
+    private static double[]? PointOf(PyValue value)
+    {
+        var parts = (value switch
+        {
+            PyTuple tuple => tuple.Items.ToArray(),
+            PyList list => list.Items.ToArray(),
+            _ => null,
+        });
+        if (parts is not { Length: 3 } || !parts.All(part => part is PyReal or PyInt or PyLong))
+        {
+            return null;
+        }
+        return parts.Select(part => NumberOf(part, 0)).ToArray();
+    }
 }

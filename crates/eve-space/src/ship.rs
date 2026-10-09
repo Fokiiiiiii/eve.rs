@@ -123,6 +123,16 @@ pub struct DroneLink {
     pub activity: i32,
     /// Whether this companion is a drone or a fighter squadron (the fighter path shares this link; see `fighters.rs`).
     pub kind: CompanionKind,
+    /// A squadron's members (a drone has none): how many it had at launch, and the size it was last told.
+    pub squadron: Option<Squadron>,
+}
+
+/// The members of a fighter squadron. Its health is the points of all its members together (each as much as one member), so a member is lost when
+/// the points left are less than another member's worth: the squadron's size is the members that still have points (`fighters.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Squadron {
+    pub members_max: i32,
+    pub told_size: i32,
 }
 
 /// What a companion of a ship is: a drone of the drone bay, or a fighter squadron of the fighter tubes and bay.

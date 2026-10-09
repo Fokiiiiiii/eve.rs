@@ -184,6 +184,8 @@ pub enum Out {
     FighterReleased { session: SessionId, fighter_id: i64, position: Vec3 },
     /// The answer to an order to fighter squadrons: for each `None` when it took the order, the reason when it did not.
     FighterResults { session: SessionId, command: u8, results: Vec<(i64, Option<&'static str>)> },
+    /// A squadron out in space lost members: its size now (the squadron is never told a size of zero, its destruction is told instead).
+    FighterSize { session: SessionId, fighter_id: i64, size: i32 },
     /// The answer to an order to drones: for each drone `None` when it took the order, the reason when it did not.
     DroneResults { session: SessionId, command: u8, results: Vec<(i64, Option<&'static str>)> },
     /// A completed drone work cycle waiting for authoritative inventory/cargo settlement by the host.
@@ -277,6 +279,7 @@ impl Out {
             | Out::FighterLanded { session, .. }
             | Out::FighterReleased { session, .. }
             | Out::FighterResults { session, .. }
+            | Out::FighterSize { session, .. }
             | Out::TargetRefused { session, .. }
             | Out::Position { session, .. } => *session,
         }
@@ -722,7 +725,8 @@ pub(crate) fn solar_system_id(&self) -> i32 {
         }
         let ship_id = pilot.ship.spec.ship_id;
         let mut out = self.drop_targeting(ship_id, &pilot.targeting, now);
-        out.extend(self.release_drones(session, now));
+        let logoff_at = matches!(why, Departure::LoggedOff).then_some(pilot.ship.position);
+        out.extend(self.release_drones(session, logoff_at, now));
 
         if matches!(why, Departure::Ejected | Departure::Boarded) {
             // Preserve the client's ballpark while its active ship changes.
@@ -1966,7 +1970,7 @@ pub(crate) fn solar_system_id(&self) -> i32 {
                 told.push(Out::Docked { session, station_id, condition: Self::condition_of(&pilot, now) });
                 told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting, now));
                 told.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
-                told.extend(self.release_drones(session, now));
+                told.extend(self.release_drones(session, None, now));
             }
         }
         told.extend(self.note_drone_threats(now));

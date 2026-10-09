@@ -324,6 +324,13 @@ impl Health {
         }
     }
 
+    /// The points left in all the layers together at `now`, and the points the layers hold when whole.
+    pub fn points_left(&self, now: i64) -> (f64, f64) {
+        let left = self.layers_at(now);
+        let whole = self.vitals.layers();
+        (left.shield + left.armor + left.structure, whole.shield + whole.armor + whole.structure)
+    }
+
     fn armor_gone(&self) -> f64 {
         self.vitals.armor_hp.max(0.0) * self.condition.armor_damage.max(0.0)
     }
@@ -561,6 +568,10 @@ impl Scene {
             && let Some(subject) = self.subject(ship_id, now)
         {
             out.extend(self.announce_damage_state(&subject, now));
+        }
+        // a squadron that lost members is told its size (one with none left is destroyed, and told so)
+        if !applied.destroyed {
+            out.extend(self.tell_squadron_size(session, now));
         }
         (out, Some(applied))
     }

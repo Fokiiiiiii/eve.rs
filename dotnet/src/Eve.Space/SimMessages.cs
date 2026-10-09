@@ -595,7 +595,10 @@ public sealed record SimDroneResults(ulong SessionId, byte Command, IReadOnlyLis
 /// A pilot's fighter squadron is launched beside its ship: the squadron's ship, the graphic of its type and its cruise fraction (no weapon, no work and no
 /// effect: a squadron is not a drone). Answered with <see cref="SimSpawnReply"/>.
 /// </summary>
-public sealed record SimLaunchFighter(ulong RequestId, ulong SessionId, SimShip Ship, int GraphicId, double CruiseFraction) : SimMessage;
+public sealed record SimLaunchFighter(ulong RequestId, ulong SessionId, SimShip Ship, int GraphicId, double CruiseFraction, int SquadronSize) : SimMessage;
+
+/// <summary>A squadron out in space lost members (or got back some): its size now, for the pilot who controls it (the host keeps the item's quantity to it).</summary>
+public sealed record SimFighterSize(ulong SessionId, long FighterId, int Size) : SimMessage;
 
 /// <summary>The codes of the orders to fighter squadrons (<see cref="SimFighterOrder"/>), as the simulation numbers them.</summary>
 public static class SimFighterOrders
@@ -605,6 +608,10 @@ public static class SimFighterOrders
     public const byte Stop = 3;
     public const byte Recall = 4;
     public const byte Abandon = 5;
+    /// <summary>GOTO_POINT: the squadron flies to a point (sent as <see cref="SimFighterGotoPoint"/>, answered under this command).</summary>
+    public const byte GotoPoint = 6;
+    /// <summary>Takes back a squadron let go in space, from within reach of its ship (answered under this command: the squadrons taken, and why not).</summary>
+    public const byte Scoop = 7;
 
     /// <summary>The key an order is answered under in <see cref="CommandReply"/>s: apart from the drones' (<see cref="SimDroneCommands.Key"/>).</summary>
     public static byte Key(byte command) => (byte)(0xF0 + command);

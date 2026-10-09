@@ -227,6 +227,9 @@ impl Sim {
                 fighter_id,
                 position: [position.x, position.y, position.z],
             },
+            Out::FighterSize { session, fighter_id, size } => {
+                Message::FighterSize { session_id: session, fighter_id, size }
+            }
             Out::FighterResults { session, command, results } => Message::FighterResults {
                 session_id: session,
                 command,
@@ -495,12 +498,12 @@ impl Sim {
             }
             Message::Spawn(spawn) => return Ok(self.spawn(*spawn, now)),
             Message::LaunchDrone(launch) => return Ok(self.launch_drone(*launch, now)),
-            Message::LaunchFighter { request_id, session_id, ship, graphic_id, cruise_fraction } => {
+            Message::LaunchFighter { request_id, session_id, ship, graphic_id, cruise_fraction, squadron_size } => {
                 let reply = |outcome| Message::SpawnReply { request_id, outcome };
                 let Some(scene) = self.scene_of(session_id) else {
                     return Ok(vec![reply(Err(format!("NO_SHIP {session_id}")))]);
                 };
-                return Ok(match scene.launch_fighter(session_id, ship, graphic_id, cruise_fraction, now) {
+                return Ok(match scene.launch_fighter(session_id, ship, graphic_id, cruise_fraction, squadron_size, now) {
                     Ok((session, told)) => {
                         let mut messages = Self::messages(told);
                         messages.push(reply(Ok(session)));
@@ -517,6 +520,7 @@ impl Sim {
                     3 => FighterOrder::Stop,
                     4 => FighterOrder::Recall,
                     5 => FighterOrder::Abandon,
+                    7 => FighterOrder::Scoop,
                     other => return Err(ProtocolError(format!("unknown fighter order {other}"))),
                 };
                 // no ship in space: nothing is under this pilot's control, and each squadron is told so

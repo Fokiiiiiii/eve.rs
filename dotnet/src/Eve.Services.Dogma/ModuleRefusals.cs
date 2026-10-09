@@ -96,7 +96,7 @@ public static class ModuleRefusals
             "STRUCTURES_PHASE_3" => Notify($"{name} acts on a structure, and structures are not on this server yet (phase 3)."),
             // a module of a group of which one runs at a time (the reactive armor hardeners) while another of its group runs
             "MAX_GROUP_ACTIVE" => Notify($"{name} cannot run while another module of its group is active."),
-            // a launcher or firing effect whose kind is not run yet names its reason (MissileEffect.RefusedLauncherGroups, RefusedFiringEffects, e.g. F.O.F.):
+            // a launcher whose kind is not run yet names its reason (MissileEffect.RefusedLauncherGroups):
             // shown as the same refusal
             _ when refusal.Reason?.EndsWith("_NOT_IMPLEMENTED", StringComparison.Ordinal) == true => Notify($"{name} cannot be activated."),
             _ => Notify($"Failed to activate {name}: {refusal.Reason ?? "unknown error"}."),

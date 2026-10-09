@@ -326,3 +326,19 @@ Decisions taken where the sources left a choice (EveJS is the trusted reference;
 - Stall guard (M-1): a module moment that comes back at the same tick for the same module ends that module's effect (Ending::Forced). A parked work cycle
   whose action has gone stops the effect. The budget is 10,000 moments a ship per settle; the rest is due at the next settle.
 - ProtocolVersion 32 to 33: one bump for the module rules (flag 32). The fixture generator and `messages.json` carry the frames.
+
+## Launchers A3: festival, countermeasure, F.O.F. (track A leftovers)
+
+- F.O.F. (auto-targeting) missiles: the sources agree that no lock is needed and the launcher goes for the nearest hostile in range (EVE University wiki,
+  "Auto-targeting missile"; EVE Ref lists a maximum auto-targeting range of 200 km for cruise). The launch picks the nearest valid hostile within the
+  missile's flight range (speed times explosion delay), not the 200 km acquisition range: the flight range is what the SDE gives the charge, so it is the
+  range the missile can reach. Valid hostile here: another owner's ship, not the shooter's corporation or alliance, not in warp, not in undock protection.
+  Standings, war declarations and the CONCORD safety of the weapon setting are not consulted (the simulation has no standings); an F.O.F. missile can
+  therefore hit a neutral ship in reach. Ties go to the lower ship id. Nothing in reach: nothing fires and nothing is charged.
+- The F.O.F. launch is sent as the target id -1 (`AUTO_TARGET_ID`), so no wire change was needed. The simulation resolves it at the launch.
+- The wiki's remark that F.O.F. missiles only engage after the pilot has been aggressed is from forum posts, not from CCP or the wiki's own page: not applied.
+- Festival launchers (501, charge group 500, `snowBallLaunching`): the snowballs are launched at a target, do no damage (the charge's damage is zero or
+  negative, clamped to zero), and make no aggression (the SDE marks the effect not offensive, `isOffensive` false). A launch with no damage makes no
+  aggression in the simulation; a damaging launch always does. Structure festival launchers (1974, category 66) stay refused (structure phase).
+- Countermeasure launcher (308, unpublished): it fires torpedoes and missiles (group 89) or defenders (group 88). The loaded charge chooses the handler:
+  `MissileEffect` for the first, `DefenderEffect` for the second. Groups 84 and 91 accepted by the launcher have no types in the SDE.

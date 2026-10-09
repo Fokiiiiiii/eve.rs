@@ -1286,8 +1286,45 @@ impl Scene {
             out.extend(self.effect_ended(session, run, owner, ship_id, now, Ending::Done));
             return out;
         }
-        pilot.modules.running[index].stopping = true;
-        vec![Out::Accepted { session, command: CODE, at: now }]
+        // A mining cycle that is short-cycled by the pilot pays what it has mined so far, as the reference does (`deactivateGenericModule`). An ice cycle is not
+        // short-cycled: it mines nothing short, so it runs to its boundary as the reference does.
+        let run = &pilot.modules.running[index];
+        let efficiency = ((now - run.cycle_start) as f64 / (run.effect.duration_ms * TICKS_PER_SECOND as f64 / 1000.0)).clamp(0.0, 1.0);
+        let short = match run.effect.action.as_ref().and_then(|action| action.with_charges(run.charged_this_cycle)) {
+            Some(Action::Mining { family, mining_amount_m3, waste_multiplier, waste_probability, crit_probability, crit_multiplier })
+                if *family != MiningFamily::Ice =>
+            {
+                Some(Action::Mining {
+                    family: *family,
+                    mining_amount_m3: mining_amount_m3 * efficiency,
+                    waste_multiplier: *waste_multiplier,
+                    waste_probability: *waste_probability,
+                    crit_probability: *crit_probability,
+                    crit_multiplier: *crit_multiplier,
+                })
+            }
+            _ => None,
+        };
+        let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
+        match short {
+            Some(work) if efficiency > 0.0 => {
+                pilot.modules.running[index].stopping = true;
+                let mut out = vec![Out::Accepted { session, command: CODE, at: now }];
+                out.extend(self.park_work_cycle(session, module_id, &work, now));
+                out
+            }
+            // nothing was mined yet: the effect stops at once, with no cycle to pay for
+            Some(_) => {
+                let run = pilot.modules.running.remove(index);
+                let mut out = vec![Out::Accepted { session, command: CODE, at: now }];
+                out.extend(self.effect_ended(session, run, owner, ship_id, now, Ending::Done));
+                out
+            }
+            None => {
+                pilot.modules.running[index].stopping = true;
+                vec![Out::Accepted { session, command: CODE, at: now }]
+            }
+        }
     }
 
     /// What the running effects and the capacitors have come to by `now`: cycles that end (the next begins, or the effect stops), and the charge told.
@@ -1816,7 +1853,10 @@ impl Scene {
 
     /// The host's answer to a work cycle (`ModuleWorkResult`). An accepted one ends that cycle and the effect goes on, or ends when it must; a refused one
     /// stops the effect (the host has granted nothing). An answer that matches no parked cycle (a repeat, or a cycle the module has left) does nothing.
-    pub fn module_work_result(&mut self, session: SessionId, module_id: i64, target_id: i64, cycle_id: u64, accepted: bool, reason: &str, now: i64) -> Vec<Out> {
+    /// `depleted` is the host's `complete`: the rock is mined out (or the wreck is gone), so the effect stops as its target is lost.
+    pub fn module_work_result(
+        &mut self, session: SessionId, module_id: i64, target_id: i64, cycle_id: u64, accepted: bool, reason: &str, depleted: bool, now: i64,
+    ) -> Vec<Out> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         // a start parked for its fuel: accepted, it starts; refused, it is refused with the host's reason
         if let Some(position) = pilot.modules.pending_starts.iter().position(|start| {
@@ -1849,7 +1889,7 @@ impl Scene {
         let target_ok = if fuel {
             self.cycle_target_ok(session, &run.effect, run.charged_this_cycle)
         } else {
-            self.work_target_ok(session, &run.effect)
+            self.work_target_ok(session, &run.effect) && !depleted
         };
         self.finish_cycle(session, module_id, now, Vec::new(), target_ok)
     }
@@ -4707,6 +4747,57 @@ pub(crate) mod tests {
         effect
     }
 
+    #[test]
+    fn a_short_cycled_ore_cycle_asks_for_what_it_mined_so_far_and_stops_when_the_host_answers() {
+        let (mut scene, t) = reaching(0.0);
+        scene.activate(A, mining(3), t);
+        let (_, at) = poll_until(&mut scene, t, 1.0);
+        let out = scene.deactivate(A, MODULE, at);
+        let asked = work_cycles(&out);
+        assert_eq!(asked.len(), 1, "a short cycle still asks the host for what it mined: {out:?}");
+        // a 2 s cycle stopped about half way: about half of its 20 m3
+        assert!(asked[0].2 > 8.0 && asked[0].2 < 12.0, "{asked:?}");
+        assert!(ended(&out).is_empty(), "the effect ends with the answer, not before: {out:?}");
+        let answer = scene.module_work_result(A, MODULE, partner(), asked[0].0, true, "", false, at);
+        assert_eq!(ended(&answer), [1], "{answer:?}");
+        assert!(scene.pilots[&A].modules.running.is_empty());
+    }
+
+    #[test]
+    fn a_short_cycled_ice_cycle_mines_nothing_short_and_runs_to_its_boundary() {
+        let (mut scene, t) = reaching(0.0);
+        let mut effect = mining(3);
+        effect.action = Some(Action::Mining {
+            family: MiningFamily::Ice,
+            mining_amount_m3: 20.0,
+            waste_multiplier: 0.0,
+            waste_probability: 0.0,
+            crit_probability: 0.0,
+            crit_multiplier: 0.0,
+        });
+        scene.activate(A, effect, t);
+        let (_, at) = poll_until(&mut scene, t, 1.0);
+        let out = scene.deactivate(A, MODULE, at);
+        assert!(work_cycles(&out).is_empty(), "an ice cycle is not short-cycled: {out:?}");
+        let (boundary, _) = poll_until(&mut scene, at, 1.5);
+        let asked = work_cycles(&boundary);
+        assert_eq!(asked.len(), 1, "the cycle ends at its boundary and asks in full: {boundary:?}");
+        assert_eq!(asked[0].2, 20.0, "{asked:?}");
+    }
+
+    #[test]
+    fn a_depleted_rock_stops_the_effect_as_its_target_is_lost_and_no_next_cycle_is_asked() {
+        let (mut scene, t) = reaching(0.0);
+        scene.activate(A, mining(3), t);
+        let (first, at) = poll_until(&mut scene, t, 2.5);
+        let asked = work_cycles(&first);
+        assert_eq!(asked.len(), 1, "{first:?}");
+        let answer = scene.module_work_result(A, MODULE, partner(), asked[0].0, true, "", true, at);
+        assert_eq!(ended(&answer), [2], "a depleted target ends the effect as lost: {answer:?}");
+        let (later, _) = poll_until(&mut scene, at, 3.0);
+        assert!(work_cycles(&later).is_empty(), "{later:?}");
+    }
+
     fn work_cycles(out: &[Out]) -> Vec<(u64, u8, f64, [f64; 3])> {
         out.iter()
             .filter_map(|item| match item {
@@ -4747,7 +4838,7 @@ pub(crate) mod tests {
         assert!(again.iter().all(|sent| *sent == asked[0]), "a repeat is the same cycle with the same rolls");
 
         // the answer resumes the module: the next cycle begins from the answer and asks again under a new id
-        let out = scene.module_work_result(A, MODULE, partner(), cycle, true, "", at);
+        let out = scene.module_work_result(A, MODULE, partner(), cycle, true, "", false, at);
         assert!(ended(&out).is_empty(), "an accepted cycle does not end the effect: {out:?}");
         assert_eq!(cycles_of(&scene), 2);
         let (next, _) = poll_until(&mut scene, at, 2.5);
@@ -4763,14 +4854,14 @@ pub(crate) mod tests {
         let (first, at) = poll_until(&mut scene, t, 2.5);
         let (cycle, ..) = work_cycles(&first)[0];
 
-        assert!(scene.module_work_result(A, MODULE, partner(), cycle + 1, true, "", at).is_empty(), "another cycle");
-        assert!(scene.module_work_result(A, MODULE, partner() + 1, cycle, true, "", at).is_empty(), "another target");
-        assert!(scene.module_work_result(B, MODULE, partner(), cycle, true, "", at).is_empty(), "another pilot");
+        assert!(scene.module_work_result(A, MODULE, partner(), cycle + 1, true, "", false, at).is_empty(), "another cycle");
+        assert!(scene.module_work_result(A, MODULE, partner() + 1, cycle, true, "", false, at).is_empty(), "another target");
+        assert!(scene.module_work_result(B, MODULE, partner(), cycle, true, "", false, at).is_empty(), "another pilot");
         assert_eq!(cycles_of(&scene), 1);
 
-        scene.module_work_result(A, MODULE, partner(), cycle, true, "", at);
+        scene.module_work_result(A, MODULE, partner(), cycle, true, "", false, at);
         assert_eq!(cycles_of(&scene), 2);
-        assert!(scene.module_work_result(A, MODULE, partner(), cycle, true, "", at + SECOND).is_empty(), "a replay settles nothing");
+        assert!(scene.module_work_result(A, MODULE, partner(), cycle, true, "", false, at + SECOND).is_empty(), "a replay settles nothing");
         assert_eq!(cycles_of(&scene), 2, "the replay does not start a cycle either");
     }
 
@@ -4781,7 +4872,7 @@ pub(crate) mod tests {
         let (first, at) = poll_until(&mut scene, t, 2.5);
         let (cycle, ..) = work_cycles(&first)[0];
 
-        let out = scene.module_work_result(A, MODULE, partner(), cycle, false, "", at);
+        let out = scene.module_work_result(A, MODULE, partner(), cycle, false, "", false, at);
         assert_eq!(ended(&out), [5], "the host refused: reason 5 once: {out:?}");
         assert!(out.iter().any(|item| matches!(item, Out::ModuleEnded { session: A, module_id: MODULE, .. })));
         assert_eq!(scene.pilots[&A].modules.running.len(), 0);
@@ -4916,10 +5007,10 @@ pub(crate) mod tests {
     fn an_accepted_fuel_ask_starts_the_effect_and_a_repeated_answer_starts_nothing_more() {
         let (mut scene, t) = reaching(0.0);
         let (cycle, module, target) = fuel_asks(&scene.activate(A, burning(3), t))[0];
-        let started = scene.module_work_result(A, module, target, cycle, true, "", t);
+        let started = scene.module_work_result(A, module, target, cycle, true, "", false, t);
         assert!(matches!(started.first(), Some(Out::Accepted { command: 17, .. })), "{started:?}");
         assert_eq!(scene.pilots[&A].modules.running.len(), 1);
-        assert!(scene.module_work_result(A, module, target, cycle, true, "", t + SECOND).is_empty(), "a replay settles nothing");
+        assert!(scene.module_work_result(A, module, target, cycle, true, "", false, t + SECOND).is_empty(), "a replay settles nothing");
         assert_eq!(scene.pilots[&A].modules.running.len(), 1);
     }
 
@@ -4927,7 +5018,7 @@ pub(crate) mod tests {
     fn a_refused_fuel_ask_starts_nothing_and_says_the_host_reason() {
         let (mut scene, t) = reaching(0.0);
         let (cycle, module, target) = fuel_asks(&scene.activate(A, burning(3), t))[0];
-        let out = scene.module_work_result(A, module, target, cycle, false, "NO_FUEL", t);
+        let out = scene.module_work_result(A, module, target, cycle, false, "NO_FUEL", false, t);
         assert_eq!(refusals(&out), ["NO_FUEL"], "{out:?}");
         assert!(scene.pilots[&A].modules.running.is_empty());
         assert!(scene.pilots[&A].modules.pending_starts.is_empty());
@@ -4953,13 +5044,13 @@ pub(crate) mod tests {
     fn the_fuel_of_each_following_cycle_is_asked_at_the_cycle_end_and_taken_before_it_starts() {
         let (mut scene, t) = reaching(0.0);
         let (cycle, module, target) = fuel_asks(&scene.activate(A, burning(3), t))[0];
-        scene.module_work_result(A, module, target, cycle, true, "", t);
+        scene.module_work_result(A, module, target, cycle, true, "", false, t);
         // the first cycle ends after 2 s: the fuel of the next is asked, and the next cycle does not start until it is taken
         let (first, at) = poll_until(&mut scene, t, 2.5);
         let asks = fuel_asks(&first);
         assert_eq!(asks.len(), 1, "{first:?}");
         assert_eq!(cycles_of(&scene), 1, "the next cycle has not started");
-        scene.module_work_result(A, MODULE, target, asks[0].0, true, "", at);
+        scene.module_work_result(A, MODULE, target, asks[0].0, true, "", false, at);
         assert_eq!(cycles_of(&scene), 2);
     }
 
@@ -4967,10 +5058,10 @@ pub(crate) mod tests {
     fn a_refused_fuel_ask_at_a_cycle_end_stops_the_effect_with_the_fuel_reason_and_nothing_follows() {
         let (mut scene, t) = reaching(0.0);
         let (cycle, module, target) = fuel_asks(&scene.activate(A, burning(3), t))[0];
-        scene.module_work_result(A, module, target, cycle, true, "", t);
+        scene.module_work_result(A, module, target, cycle, true, "", false, t);
         let (first, at) = poll_until(&mut scene, t, 2.5);
         let ask = fuel_asks(&first)[0].0;
-        let out = scene.module_work_result(A, MODULE, target, ask, false, "NO_FUEL", at);
+        let out = scene.module_work_result(A, MODULE, target, ask, false, "NO_FUEL", false, at);
         assert_eq!(ended(&out), [6], "the stop names the fuel: {out:?}");
         assert!(scene.pilots[&A].modules.running.is_empty());
         let (later, _) = poll_until(&mut scene, at, 3.0);
@@ -4981,7 +5072,7 @@ pub(crate) mod tests {
     fn the_last_cycle_of_a_fuel_effect_asks_for_no_more_fuel() {
         let (mut scene, t) = reaching(0.0);
         let (cycle, module, target) = fuel_asks(&scene.activate(A, burning(1), t))[0];
-        scene.module_work_result(A, module, target, cycle, true, "", t);
+        scene.module_work_result(A, module, target, cycle, true, "", false, t);
         let (out, _) = poll_until(&mut scene, t, 2.5);
         assert!(fuel_asks(&out).is_empty(), "{out:?}");
         assert_eq!(ended(&out), [1], "the cycles were done: {out:?}");
@@ -5006,7 +5097,7 @@ pub(crate) mod tests {
         assert_eq!(refusals(&out), ["DEACTIVATED"], "{out:?}");
         assert!(out.iter().any(|item| matches!(item, Out::Accepted { command: 16, .. })), "{out:?}");
         // the host's answer to the cancelled ask starts nothing
-        assert!(scene.module_work_result(A, module, target, cycle, true, "", t + SECOND).is_empty());
+        assert!(scene.module_work_result(A, module, target, cycle, true, "", false, t + SECOND).is_empty());
         assert!(scene.pilots[&A].modules.running.is_empty());
     }
 }

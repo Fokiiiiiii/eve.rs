@@ -653,9 +653,9 @@ impl Sim {
                     .map(|scene| scene.drone_work_result(session_id, drone_id, target_id, cycle_id, accepted, units_remaining, complete, now))
                     .unwrap_or_default()
             },
-            Message::ModuleWorkResult { session_id, module_id, target_id, cycle_id, accepted, reason, units_remaining: _, delivered_units: _, complete: _ } => {
+            Message::ModuleWorkResult { session_id, module_id, target_id, cycle_id, accepted, reason, units_remaining: _, delivered_units: _, complete } => {
                 self.scene_of(session_id)
-                    .map(|scene| scene.module_work_result(session_id, module_id, target_id, cycle_id, accepted, &reason, now))
+                    .map(|scene| scene.module_work_result(session_id, module_id, target_id, cycle_id, accepted, &reason, complete, now))
                     .unwrap_or_default()
             },
             Message::RemoteRepairCycleResult { session_id, module_id, target_id, cycle_id, accepted, reason: _, amount } => {

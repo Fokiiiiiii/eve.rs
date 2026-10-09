@@ -77,7 +77,8 @@ public sealed class DogmaWorld
     /// <summary>The power and processing attributes are kept to two decimals.</summary>
     private static readonly HashSet<int> RoundedAttributes = [49, 15, 11, 48, 50, 30];
 
-    private readonly record struct Source(DogmaItem Item, EffectDef Effect, Modifier Modifier, long DomainItemId);
+    /// <param name="Buff">A buff's modifier (<see cref="SetBuffs"/>): its stacking penalty follows its attribute, as EVE.js does for a buff, whatever its source.</param>
+    private readonly record struct Source(DogmaItem Item, EffectDef Effect, Modifier Modifier, long DomainItemId, bool Buff = false);
 
     private readonly DogmaStatic _static;
     private readonly Dictionary<long, DogmaItem> _items = [];
@@ -86,6 +87,8 @@ public sealed class DogmaWorld
     private Dictionary<int, List<Source>>? _sources;
     /// <summary>The modifiers an assumption (<see cref="Assume"/>) adds, each with the item it is on.</summary>
     private readonly List<(DogmaItem Item, EffectDef Effect)> _assumed = [];
+    /// <summary>The buffs each item carries (<see cref="SetBuffs"/>): passive effects that run on the item whatever its state.</summary>
+    private readonly Dictionary<long, IReadOnlyList<EffectDef>> _buffs = [];
 
     public DogmaWorld(DogmaStatic statics, long characterId = 0, long shipId = 0, long structureId = 0)
     {
@@ -282,6 +285,23 @@ public sealed class DogmaWorld
         _ => false, // an effect on a target or an area needs a target or an area
     };
 
+    /// <summary>
+    /// Replaces the buffs an item carries (the modifiers of the timed buff collections, <see cref="BuffRegistry"/>): each effect runs on the item as a passive
+    /// effect, and its modifiers carry their own values (<see cref="Modifier.Literal"/>). An empty list takes the item's buffs away.
+    /// </summary>
+    public void SetBuffs(long itemId, IReadOnlyList<EffectDef> effects)
+    {
+        if (effects.Count == 0)
+        {
+            _buffs.Remove(itemId);
+        }
+        else
+        {
+            _buffs[itemId] = effects;
+        }
+        Changed();
+    }
+
     private void Changed()
     {
         _values.Clear();
@@ -295,7 +315,7 @@ public sealed class DogmaWorld
             return _sources;
         }
         var index = new Dictionary<int, List<Source>>();
-        void Index(DogmaItem item, EffectDef effect)
+        void Index(DogmaItem item, EffectDef effect, bool buff = false)
         {
             foreach (var modifier in effect.Modifiers)
             {
@@ -308,7 +328,7 @@ public sealed class DogmaWorld
                 {
                     index[modifier.ModifiedAttributeId] = list = [];
                 }
-                list.Add(new Source(item, effect, modifier, domain));
+                list.Add(new Source(item, effect, modifier, domain, buff));
             }
         }
         foreach (var item in _items.Values.OrderBy(i => i.Id))
@@ -321,6 +341,16 @@ public sealed class DogmaWorld
         foreach (var (item, effect) in _assumed)
         {
             Index(item, effect);
+        }
+        foreach (var (itemId, effects) in _buffs)
+        {
+            if (_items.TryGetValue(itemId, out var buffed))
+            {
+                foreach (var effect in effects)
+                {
+                    Index(buffed, effect, buff: true);
+                }
+            }
         }
         return _sources = index;
     }
@@ -507,8 +537,9 @@ public sealed class DogmaWorld
                 continue;
             }
             var op = source.Modifier.Operation;
-            var penalised = !stackable && Operations.IsPenalisable(op) && !UnpenalisedCategories.Contains(_static.Type(source.Item.TypeId)?.CategoryId ?? 0);
-            incoming.Add((op, Get(source.Item.Id, source.Modifier.ModifyingAttributeId), penalised));
+            var penalised = !stackable && Operations.IsPenalisable(op)
+                && (source.Buff || !UnpenalisedCategories.Contains(_static.Type(source.Item.TypeId)?.CategoryId ?? 0));
+            incoming.Add((op, source.Modifier.Literal ?? Get(source.Item.Id, source.Modifier.ModifyingAttributeId), penalised));
         }
         if (incoming.Count == 0)
         {

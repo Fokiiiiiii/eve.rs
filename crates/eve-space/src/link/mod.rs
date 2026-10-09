@@ -16,6 +16,8 @@ use self::encode::*;
 
 use crate::death::Credit;
 
+use crate::deployable::{BombKind, Spec};
+
 use crate::health::{Condition, Layer, Resonances, Vitals};
 
 use crate::missiles::Missile;
@@ -34,7 +36,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 32;
+pub const PROTOCOL_VERSION: u16 = 33;
 
 /// The message kinds.
 pub mod kind;

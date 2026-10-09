@@ -171,8 +171,10 @@ impl Incoming {
         self.records.iter().any(|r| matches!(r.what, Lasting::Scramble { blocks_mwd: true, .. }))
     }
 
-    pub(crate) fn scrambled(&self) -> bool {
-        self.scramble_points() > 1e-6
+    /// Whether the scrambles on the ship, with the change its own modules make to its scramble status (`status`, a warp core stabilizer's -2), leave it
+    /// scrambled: a point the status cancels is not a scramble.
+    pub(crate) fn scrambled_with(&self, status: f64) -> bool {
+        self.scramble_points() + status > 1e-6
     }
 
     /// The ships that jam this one (it can lock these and nothing else for as long as any does).
@@ -296,10 +298,24 @@ impl Scene {
         at: i64,
     ) -> Vec<Out> {
         let Some(target) = self.session_of(effect.target_id) else { return Vec::new() };
+        self.hold_for(source, target, effect.module_id, what, effect.duration_ms, at)
+    }
+
+    /// What `hold` does for a ship that is not the target of the effect (an area's recipients): the module `module_id` of the ship of `source` lands `what` on
+    /// the ship of `target` for `duration_ms`.
+    pub(crate) fn hold_for(
+        &mut self,
+        source: SessionId,
+        target: SessionId,
+        module_id: i64,
+        what: Lasting,
+        duration_ms: f64,
+        at: i64,
+    ) -> Vec<Out> {
         let Some(source_ship) = self.pilots.get(&source).map(|pilot| pilot.ship.spec.ship_id) else {
             return Vec::new();
         };
-        let until = at + (effect.duration_ms * TICKS_PER_SECOND as f64 / 1000.0) as i64 + TICK;
+        let until = at + (duration_ms * TICKS_PER_SECOND as f64 / 1000.0) as i64 + TICK;
         let Some(pilot) = self.pilots.get_mut(&target) else { return Vec::new() };
         if pilot.incoming.base.is_none() {
             let spec = &pilot.ship.spec;
@@ -311,7 +327,7 @@ impl Scene {
                 sensor_strength: spec.sensor_strength,
             });
         }
-        pilot.incoming.upsert(source_ship, effect.module_id, what, until);
+        pilot.incoming.upsert(source_ship, module_id, what, until);
         let mut out = self.retune(target, at);
         // a ship that is still lining up for a warp it can no longer make is stopped (the reference stops it as the scramble lands)
         if matches!(what, Lasting::Scramble { .. } | Lasting::Tackle { .. }) {
@@ -441,17 +457,31 @@ impl Scene {
         let source_position =
             [source_pilot.ship.position.x, source_pilot.ship.position.y, source_pilot.ship.position.z];
         let source_radius = source_pilot.ship.spec.radius;
+        self.jam_at(source_position, source_radius, Some(source_ship_id), strength, radius, at)
+    }
+
+    /// A burst of ECM from a point (a ship's own burst, or a bomb that goes off): each ship within `radius` of its surface, but `exclude_ship`, rolls its
+    /// sensors against `strength` and loses its locks when the roll lands. Nothing is rolled for a radius that is not a number above zero.
+    pub(crate) fn jam_at(
+        &mut self,
+        centre: [f64; 3],
+        centre_radius: f64,
+        exclude_ship: Option<i64>,
+        strength: &[f64; 4],
+        radius: f64,
+        at: i64,
+    ) -> Vec<Out> {
+        if !radius.is_finite() || radius <= 0.0 {
+            return Vec::new();
+        }
         let candidates = self.pilots.iter().map(|(target, pilot)| self.spatial_ship(*target, pilot));
         // Keep the random rolls in arrival order, matching the order of EVE.js dynamic entities.
         let mut targets: Vec<(u64, SessionId)> = crate::geo::SpatialQuery::surface_radius(
-            source_position,
-            source_radius,
+            centre,
+            centre_radius,
             radius,
             1.0,
-            crate::geo::SpatialFilter {
-                exclude_id: Some(source_ship_id),
-                ..crate::geo::SpatialFilter::default()
-            },
+            crate::geo::SpatialFilter { exclude_id: exclude_ship, ..crate::geo::SpatialFilter::default() },
         )
         .execute(candidates)
         .into_iter()

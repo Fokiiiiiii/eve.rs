@@ -701,7 +701,7 @@ fn an_active_cloak_hides_a_ship_from_locking_until_the_module_ends() {
     effect.module_type = 11577;
     effect.effect_id = 197;
     effect.fx = "effects.Cloaking".to_string();
-    effect.action = Some(Action::Cloak);
+    effect.action = Some(Action::Cloak { warp_safe: false });
     let started = scene.activate(A, effect, t);
     assert!(
         started.iter().any(|event| matches!(event, Out::Accepted { command: 17, .. })),
@@ -1904,7 +1904,7 @@ fn a_scrambler_that_blocks_a_microwarpdrive_stops_the_one_that_runs_and_keeps_an
     );
     scene.deactivate(A, MODULE, t + 2 * SECOND);
     let (_, t2) = poll_until(&mut scene, t + 2 * SECOND, 8.0);
-    assert!(!scene.pilots[&B].incoming.scrambled());
+    assert!(!scene.pilots[&B].incoming.scrambled_with(0.0));
     let scram = holding(MODULE + 1, Remote::Scramble { strength: 2.0, blocks_mwd: true }, "warpScramblerMWD");
     let stopped = scene.activate(A, scram, t2);
     assert!(
@@ -1937,7 +1937,7 @@ fn a_ship_that_is_scrambled_cannot_warp_and_a_scramble_stops_one_that_is_lining_
         holding(MODULE, Remote::Scramble { strength: 2.0, blocks_mwd: true }, "warpScramblerMWD"),
         t,
     );
-    assert!(scene.pilots[&B].incoming.scrambled());
+    assert!(scene.pilots[&B].incoming.scrambled_with(0.0));
     let refused = scene.command(B, Command::WarpTo { target_id: PLANET, range: 0.0 }, t + SECOND);
     assert!(
         refused.iter().any(|o| matches!(o, Out::Refused { command: 8, reason: "WARP_SCRAMBLED", .. })),
@@ -1946,7 +1946,7 @@ fn a_ship_that_is_scrambled_cannot_warp_and_a_scramble_stops_one_that_is_lining_
     // it is let go when the effect stops, and the ship warps
     scene.deactivate(A, MODULE, t + 2 * SECOND);
     let (_, t2) = poll_until(&mut scene, t + 2 * SECOND, 6.0);
-    assert!(!scene.pilots[&B].incoming.scrambled());
+    assert!(!scene.pilots[&B].incoming.scrambled_with(0.0));
     let accepted = scene.command(B, Command::WarpTo { target_id: PLANET, range: 0.0 }, t2);
     assert!(!accepted.iter().any(|o| matches!(o, Out::Refused { .. })), "{accepted:?}");
     assert!(scene.pilots[&B].flight.is_some());

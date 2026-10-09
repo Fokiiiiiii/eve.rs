@@ -244,6 +244,76 @@ fn effect_of(case: &Value) -> Effect {
                     charges: a["charges"].as_i64().unwrap(),
                 };
             }
+            let deployable = |v: &Value| eve_space::deployable::Spec {
+                charge_type_id: v["chargeTypeId"].as_i64().unwrap() as i32,
+                group_id: v["groupId"].as_i64().unwrap() as i32,
+                name: v["name"].as_str().unwrap().to_string(),
+                radius: v["radius"].as_f64().unwrap(),
+            };
+            if a["kind"] == "cloak" {
+                return Action::Cloak { warp_safe: a["warpSafe"].as_bool().unwrap_or(false) };
+            }
+            if a["kind"] == "warpBubble" {
+                return Action::WarpBubble { range: a["range"].as_f64().unwrap() };
+            }
+            if a["kind"] == "warpImmunity" {
+                return Action::WarpImmunity;
+            }
+            if a["kind"] == "scrambleStatus" {
+                return Action::ScrambleStatus { delta: a["delta"].as_f64().unwrap() };
+            }
+            if a["kind"] == "defender" {
+                let m = &a["missile"];
+                let number = |key: &str| m[key].as_f64().unwrap();
+                return Action::Defender {
+                    missile: eve_space::missiles::Missile {
+                        charge_type_id: m["chargeTypeId"].as_i64().unwrap() as i32,
+                        group_id: m["groupId"].as_i64().unwrap() as i32,
+                        name: m["name"].as_str().unwrap().to_string(),
+                        radius: number("radius"),
+                        mass: number("mass"),
+                        agility: number("agility"),
+                        hit_points: number("hitPoints"),
+                        max_velocity: number("maxVelocity"),
+                        flight_time_ms: number("flightTimeMs"),
+                        explosion_radius: number("explosionRadius"),
+                        explosion_velocity: number("explosionVelocity"),
+                        damage_reduction_factor: number("damageReductionFactor"),
+                        damage_reduction_sensitivity: number("damageReductionSensitivity"),
+                    },
+                    damage: sensors_of(&a["damage"]),
+                };
+            }
+            if a["kind"] == "stasisBurst" {
+                return Action::StasisBurst {
+                    range: a["range"].as_f64().unwrap(),
+                    duration_ms: a["durationMs"].as_f64().unwrap(),
+                    speed_factor: a["speedFactor"].as_f64().unwrap(),
+                };
+            }
+            if a["kind"] == "warpProbe" {
+                return Action::WarpProbe {
+                    ball: deployable(&a["ball"]),
+                    range: a["range"].as_f64().unwrap(),
+                    lifetime_ms: a["lifetimeMs"].as_f64().unwrap(),
+                };
+            }
+            if a["kind"] == "bomb" {
+                let numbers = |key: &str| sensors_of(&a[key]);
+                return Action::Bomb {
+                    ball: deployable(&a["ball"]),
+                    kind: match a["bombKind"].as_i64().unwrap() {
+                        0 => eve_space::deployable::BombKind::Damage,
+                        1 => eve_space::deployable::BombKind::Ecm,
+                        _ => eve_space::deployable::BombKind::Neutralize,
+                    },
+                    lifetime_ms: a["lifetimeMs"].as_f64().unwrap(),
+                    blast_radius: a["blastRadius"].as_f64().unwrap(),
+                    damage: numbers("damage"),
+                    ecm: numbers("ecm"),
+                    neutralize: a["neutralize"].as_f64().unwrap(),
+                };
+            }
             if a["kind"] == "ecmBurst" {
                 return Action::EcmBurst {
                     range: a["range"].as_f64().unwrap(),

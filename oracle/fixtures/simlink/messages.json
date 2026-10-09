@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 31,
-   "hex": "03000000011f00"
+   "version": 33,
+   "hex": "03000000012100"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 31,
+   "version": 33,
    "pollHz": 4,
-   "hex": "07000000021f0004000000"
+   "hex": "0700000002210004000000"
   },
   {
    "name": "enter by undocking",
@@ -1057,6 +1057,231 @@
     "offChanges": []
    },
    "hex": "79000000134f2c3859955c0600fdb6089b150900001b060000260000000f00656666656374732e456d7057617665000000000088c3400000000000003e40e8030000000000000000000008000000000000000002000000000070a740000000000000494000000000000000000000000000000000000000000000000001"
+  },
+  {
+   "name": "activate a cloak that is not warp-safe",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 11577,
+    "effectId": 197,
+    "fx": "effects.Cloaking",
+    "durationMs": 10000.0,
+    "capacitorNeed": 30.0,
+    "repeat": 1000,
+    "targetId": "0",
+    "action": {
+     "kind": "cloak",
+     "warpSafe": false
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "52000000134f2c3859955c0600fdb6089b15090000392d0000c50000001000656666656374732e436c6f616b696e67000000000088c3400000000000003e40e803000000000000000000000800000000000000000500"
+  },
+  {
+   "name": "activate a field generator's bubble",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 28654,
+    "effectId": 1,
+    "fx": "effects.WarpDisruptFieldGenerating",
+    "durationMs": 30000.0,
+    "capacitorNeed": 150.0,
+    "repeat": 1000,
+    "targetId": "0",
+    "action": {
+     "kind": "warpBubble",
+     "range": 16000.0
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "6b000000134f2c3859955c0600fdb6089b15090000ee6f0000010000002200656666656374732e57617270446973727570744669656c6447656e65726174696e6700000000004cdd400000000000c06240e8030000000000000000000008000000000000000010000000000040cf40"
+  },
+  {
+   "name": "activate a nullifier's immunity",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 58919,
+    "effectId": 1,
+    "fx": "",
+    "durationMs": 10000.0,
+    "capacitorNeed": 0.0,
+    "repeat": 1,
+    "targetId": "0",
+    "action": {
+     "kind": "warpImmunity"
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "41000000134f2c3859955c0600fdb6089b1509000027e60000010000000000000000000088c340000000000000000001000000000000000000000008000000000000000011"
+  },
+  {
+   "name": "activate a stabilizer's scramble status",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 10998,
+    "effectId": 1,
+    "fx": "",
+    "durationMs": 10000.0,
+    "capacitorNeed": 0.0,
+    "repeat": 1,
+    "targetId": "0",
+    "action": {
+     "kind": "scrambleStatus",
+     "delta": -2.0
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "49000000134f2c3859955c0600fdb6089b15090000f62a0000010000000000000000000088c34000000000000000000100000000000000000000000800000000000000001200000000000000c0"
+  },
+  {
+   "name": "activate a defender launcher",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 44102,
+    "effectId": 1,
+    "fx": "",
+    "durationMs": 10000.0,
+    "capacitorNeed": 50.0,
+    "repeat": 1,
+    "targetId": "0",
+    "action": {
+     "kind": "defender",
+     "missile": {
+      "chargeTypeId": 32782,
+      "groupId": 88,
+      "name": "Defender Missile I",
+      "radius": 1.0,
+      "mass": 1.0,
+      "agility": 1.0,
+      "hitPoints": 5.0,
+      "maxVelocity": 10000.0,
+      "flightTimeMs": 3000.0,
+      "explosionRadius": 10.0,
+      "explosionVelocity": 400.0,
+      "damageReductionFactor": 0.1,
+      "damageReductionSensitivity": 5.5
+     },
+     "damage": [
+      200.0,
+      200.0,
+      200.0,
+      200.0
+     ]
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "cd000000134f2c3859955c0600fdb6089b1509000046ac0000010000000000000000000088c3400000000000004940010000000000000000000000080000000000000000160e800000580000001200446566656e646572204d697373696c652049000000000000f03f000000000000f03f000000000000f03f0000000000001440000000000088c340000000000070a740000000000000244000000000000079409a9999999999b93f00000000000016400000000000006940000000000000694000000000000069400000000000006940"
+  },
+  {
+   "name": "activate a stasis webification burst",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 22782,
+    "effectId": 1,
+    "fx": "effects.TorpedoDeployment",
+    "durationMs": 10000.0,
+    "capacitorNeed": 30.0,
+    "repeat": 1,
+    "targetId": "0",
+    "action": {
+     "kind": "stasisBurst",
+     "range": 15000.0,
+     "durationMs": 30000.0,
+     "speedFactor": -20.0
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "72000000134f2c3859955c0600fdb6089b15090000fe580000010000001900656666656374732e546f727065646f4465706c6f796d656e74000000000088c3400000000000003e400100000000000000000000000800000000000000001500000000004ccd4000000000004cdd4000000000000034c0"
+  },
+  {
+   "name": "activate an interdiction probe",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 22782,
+    "effectId": 1,
+    "fx": "effects.TorpedoDeployment",
+    "durationMs": 10000.0,
+    "capacitorNeed": 30.0,
+    "repeat": 1,
+    "targetId": "0",
+    "action": {
+     "kind": "warpProbe",
+     "ball": {
+      "chargeTypeId": 22778,
+      "groupId": 548,
+      "name": "Warp Disrupt Probe",
+      "radius": 40.0
+     },
+     "range": 20000.0,
+     "lifetimeMs": 120000.0
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "8e000000134f2c3859955c0600fdb6089b15090000fe580000010000001900656666656374732e546f727065646f4465706c6f796d656e74000000000088c3400000000000003e4001000000000000000000000008000000000000000013fa5800002402000012005761727020446973727570742050726f62650000000000004440000000000088d34000000000004cfd40"
+  },
+  {
+   "name": "activate a bomb",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 4256,
+    "effectId": 1,
+    "fx": "effects.MissileDeployment",
+    "durationMs": 10000.0,
+    "capacitorNeed": 30.0,
+    "repeat": 1,
+    "targetId": "0",
+    "action": {
+     "kind": "bomb",
+     "ball": {
+      "chargeTypeId": 27920,
+      "groupId": 90,
+      "name": "Electron Bomb",
+      "radius": 40.0
+     },
+     "bombKind": 0,
+     "lifetimeMs": 12000.0,
+     "blastRadius": 400.0,
+     "damage": [
+      5800.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "ecm": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "neutralize": 0.0
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "d2000000134f2c3859955c0600fdb6089b15090000a0100000010000001900656666656374732e4d697373696c654465706c6f796d656e74000000000088c3400000000000003e4001000000000000000000000008000000000000000014106d00005a0000000d00456c656374726f6e20426f6d62000000000000444000000000000070c74000000000000079400000000000a8b64000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
   },
   {
    "name": "activate an ECM burst",
@@ -3420,6 +3645,16 @@
    "name": "module ended with an unknown reason",
    "reason": "bad-value",
    "hex": "12000000354f2c3859955c0600fdb6089b1509000009"
+  },
+  {
+   "name": "warp probe with no lifetime",
+   "reason": "bad-value",
+   "hex": "8e000000134f2c3859955c0600fdb6089b15090000fe580000010000001900656666656374732e546f727065646f4465706c6f796d656e74000000000088c3400000000000003e4001000000000000000000000008000000000000000013fa5800002402000012005761727020446973727570742050726f62650000000000004440000000000088d3400000000000000000"
+  },
+  {
+   "name": "bomb of an unknown kind",
+   "reason": "bad-value",
+   "hex": "d2000000134f2c3859955c0600fdb6089b15090000a0100000010000001900656666656374732e4d697373696c654465706c6f796d656e74000000000088c3400000000000003e4001000000000000000000000008000000000000000014106d00005a0000000d00456c656374726f6e20426f6d62000000000000444007000000000070c74000000000000079400000000000a8b64000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
   },
   {
    "name": "mining action with a crit chance above one",

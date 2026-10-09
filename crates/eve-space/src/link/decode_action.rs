@@ -1,5 +1,19 @@
 use super::*;
 
+/// A deployable's charge: its type, its group, its name and the radius of its ball (a positive number).
+fn read_deployable(reader: &mut Reader) -> Result<Spec, DecodeError> {
+    let spec = Spec {
+        charge_type_id: reader.i32()?,
+        group_id: reader.i32()?,
+        name: reader.text()?,
+        radius: reader.f64()?,
+    };
+    if !spec.radius.is_finite() || spec.radius <= 0.0 {
+        return Err(DecodeError::BadValue("deployable"));
+    }
+    Ok(spec)
+}
+
 pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
     match reader.u8()? {
         0 => {
@@ -94,7 +108,83 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             range: reader.f64()?,
             strength: [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?],
         }),
-        5 => Ok(Action::Cloak),
+        5 => Ok(Action::Cloak {
+            warp_safe: match reader.u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(DecodeError::BadValue("warp_safe")),
+            },
+        }),
+        16 => {
+            let range = reader.f64()?;
+            if !range.is_finite() || range <= 0.0 {
+                return Err(DecodeError::BadValue("warp bubble"));
+            }
+            Ok(Action::WarpBubble { range })
+        }
+        17 => Ok(Action::WarpImmunity),
+        22 => {
+            let missile = read_missile(reader)?;
+            let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+            if missile.max_velocity < 0.0 || !damage.iter().all(|d| d.is_finite() && *d >= 0.0) {
+                return Err(DecodeError::BadValue("defender"));
+            }
+            Ok(Action::Defender { missile, damage })
+        }
+        21 => {
+            let range = reader.f64()?;
+            let duration_ms = reader.f64()?;
+            let speed_factor = reader.f64()?;
+            if !(range.is_finite()
+                && range > 0.0
+                && duration_ms.is_finite()
+                && duration_ms > 0.0
+                && speed_factor.is_finite())
+            {
+                return Err(DecodeError::BadValue("stasis burst"));
+            }
+            Ok(Action::StasisBurst { range, duration_ms, speed_factor })
+        }
+        18 => {
+            let delta = reader.f64()?;
+            if !delta.is_finite() {
+                return Err(DecodeError::BadValue("scramble status"));
+            }
+            Ok(Action::ScrambleStatus { delta })
+        }
+        19 => {
+            let ball = read_deployable(reader)?;
+            let range = reader.f64()?;
+            let lifetime_ms = reader.f64()?;
+            if !(range.is_finite() && range > 0.0 && lifetime_ms.is_finite() && lifetime_ms > 0.0) {
+                return Err(DecodeError::BadValue("warp probe"));
+            }
+            Ok(Action::WarpProbe { ball, range, lifetime_ms })
+        }
+        20 => {
+            let ball = read_deployable(reader)?;
+            let kind = match reader.u8()? {
+                0 => BombKind::Damage,
+                1 => BombKind::Ecm,
+                2 => BombKind::Neutralize,
+                _ => return Err(DecodeError::BadValue("bomb kind")),
+            };
+            let lifetime_ms = reader.f64()?;
+            let blast_radius = reader.f64()?;
+            let damage = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+            let ecm = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
+            let neutralize = reader.f64()?;
+            let amounts = damage.iter().chain(ecm.iter()).chain([&neutralize]);
+            if !(lifetime_ms.is_finite()
+                && lifetime_ms > 0.0
+                && blast_radius.is_finite()
+                && blast_radius > 0.0)
+                || amounts.clone().any(|n| !n.is_finite() || *n < 0.0)
+            {
+                return Err(DecodeError::BadValue("bomb"));
+            }
+            Ok(Action::Bomb { ball, kind, lifetime_ms, blast_radius, damage, ecm, neutralize })
+        }
         6 => {
             let distance_meters = reader.f64()?;
             let cooldown_ms = reader.i64()?;

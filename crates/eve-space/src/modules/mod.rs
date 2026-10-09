@@ -255,7 +255,16 @@ impl Action {
             | Self::Strike { .. }
             | Self::Field { .. }
             | Self::Doomsday { .. } => true,
-            Self::Cloak | Self::MicroJumpDrive { .. } | Self::ResistanceShift { .. } => false,
+            Self::Cloak { .. }
+            | Self::MicroJumpDrive { .. }
+            | Self::ResistanceShift { .. }
+            | Self::WarpBubble { .. }
+            | Self::WarpImmunity
+            | Self::ScrambleStatus { .. }
+            | Self::WarpProbe { .. }
+            | Self::StasisBurst { .. }
+            | Self::Defender { .. } => false,
+            Self::Bomb { .. } => true,
             Self::Charged { action, fallback, .. } => {
                 action.offensive() || fallback.as_deref().is_some_and(Action::offensive)
             }
@@ -332,7 +341,10 @@ pub enum Action {
         range: f64,
         strength: [f64; 4],
     },
-    Cloak,
+    /// Engages the ship's cloaking device (tag 5). A cloak that is not warp-safe (a standard cloaking device) holds the ship out of warp (`warp_safe` false).
+    Cloak {
+        warp_safe: bool,
+    },
     MicroJumpDrive {
         distance_meters: f64,
         cooldown_ms: i64,
@@ -374,6 +386,48 @@ pub enum Action {
         velocity: f64,
         hold: f64,
         range: f64,
+    },
+    /// A warp disruption field generator's bubble (tag 16): while the effect runs, the ship is a warp-disruption source of `range` metres around its own
+    /// position (`crate::warp_source`). A ship in it cannot start a warp; the bubble ends when the effect stops.
+    WarpBubble {
+        range: f64,
+    },
+    /// The ship is immune to warp bubbles while the effect runs (tag 17; an Interdiction Nullifier, attribute 1538).
+    WarpImmunity,
+    /// The ship's warp scramble status changes by `delta` while the effect runs (tag 18; a Warp Core Stabilizer, attribute 104, a ModAdd of -2).
+    ScrambleStatus {
+        delta: f64,
+    },
+    /// An interdiction probe (tag 19): as each cycle starts a probe is put in space at the ship, a warp-disruption source of `range` metres for
+    /// `lifetime_ms`, and then it is gone (`crate::deployable`; the simulation's own timer, so a restart drops it).
+    WarpProbe {
+        ball: crate::deployable::Spec,
+        range: f64,
+        lifetime_ms: f64,
+    },
+    /// A bomb (tag 20): as each cycle starts it is released at the ship; `lifetime_ms` later it detonates where it is (`crate::deployable`). The ships within
+    /// `blast_radius` take its effect, by its kind (its damage, or its ECM strength, or the amount it neutralises).
+    Bomb {
+        ball: crate::deployable::Spec,
+        kind: crate::deployable::BombKind,
+        lifetime_ms: f64,
+        blast_radius: f64,
+        damage: crate::health::Damage,
+        ecm: [f64; 4],
+        neutralize: f64,
+    },
+    /// A stasis webification burst (tag 21, the Stasis Webification Probe): as each cycle starts, every ship within `range` metres of the ship that runs it is webbed
+    /// by `speed_factor` percent (a negative number slows it) for `duration_ms`. The probe is spent by the charge; no ball is put in space.
+    StasisBurst {
+        range: f64,
+        duration_ms: f64,
+        speed_factor: f64,
+    },
+    /// A defender launcher's cycle (tag 22, the Defender Launcher I): as the cycle starts its defender missile (`missile`, the charge's flight) goes for the nearest hostile
+    /// missile in its reach and shoots it down, or hurts it by `damage` when it does not destroy it (`Scene::defender_intercept`). Target-less.
+    Defender {
+        missile: crate::missiles::Missile,
+        damage: crate::health::Damage,
     },
     /// A passive lock (tag 10): when its cycle starts the target is locked with its notice suppressed (see `passive_lock`).
     PassiveLock,
@@ -641,7 +695,7 @@ struct PendingRemoteRepairCycle {
 /// An effect that is running.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Running {
-    effect: Effect,
+    pub(crate) effect: Effect,
     /// When the cycle that is on began.
     cycle_start: i64,
     cycles: i32,
@@ -666,7 +720,7 @@ pub(crate) struct Running {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Modules {
     pub(crate) capacitor: Option<Capacitor>,
-    running: Vec<Running>,
+    pub(crate) running: Vec<Running>,
     mjd_cooldowns: Vec<(i64, i64)>,
     next_remote_repair_cycle_id: u64,
     /// Fuel-burning effects that wait for the host to take the fuel of their first cycle.

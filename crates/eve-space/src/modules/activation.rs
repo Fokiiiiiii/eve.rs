@@ -270,7 +270,7 @@ impl Scene {
                 return vec![Out::Refused { session, command: CODE, reason }];
             }
         }
-        if matches!(effect.action.as_ref(), Some(Action::Cloak)) {
+        if matches!(effect.action.as_ref(), Some(Action::Cloak { .. })) {
             if pilot.no_jump_until > now {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_JUMP_OR_CLOAK" }];
             }

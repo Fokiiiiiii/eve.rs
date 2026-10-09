@@ -1331,6 +1331,11 @@ fn put_action(out: &mut Vec<u8>, action: &Action) {
                     out.extend_from_slice(&strength.to_le_bytes());
                     out.push(u8::from(*blocks_mwd));
                 }
+                Remote::Tackle { strength, web_percent } => {
+                    out.push(12);
+                    out.extend_from_slice(&strength.to_le_bytes());
+                    out.extend_from_slice(&web_percent.to_le_bytes());
+                }
                 Remote::Disrupt { range_percent, falloff_percent, tracking_percent } => {
                     out.push(9);
                     out.extend_from_slice(&range_percent.to_le_bytes());
@@ -1482,6 +1487,14 @@ fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
                         _ => return Err(DecodeError::BadValue("blocks_mwd")),
                     },
                 },
+                12 => {
+                    let strength = reader.f64()?;
+                    let web_percent = reader.f64()?;
+                    if !strength.is_finite() || strength < 0.0 || !web_percent.is_finite() {
+                        return Err(DecodeError::BadValue("tackle"));
+                    }
+                    Remote::Tackle { strength, web_percent }
+                }
                 9 => Remote::Disrupt {
                     range_percent: reader.f64()?,
                     falloff_percent: reader.f64()?,

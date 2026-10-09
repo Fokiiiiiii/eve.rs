@@ -504,6 +504,9 @@ public abstract record SimRemote
     /// <summary>The target is held out of warp: <paramref name="Strength"/> points of scramble (a warp scrambler 2, a warp disruptor 1); <paramref name="BlocksMwd"/>: and out of its microwarpdrive.</summary>
     public sealed record Scramble(double Strength, bool BlocksMwd) : SimRemote;
 
+    /// <summary>A fighter's tackle: a warp scramble of <paramref name="Strength"/> points and a web of <paramref name="WebPercent"/> of the target's top speed (negative), both as long as it lands (one remote for both: the wire's tag 12).</summary>
+    public sealed record Tackle(double Strength, double WebPercent) : SimRemote;
+
     /// <summary>The turrets the target fires are changed by these percentages of their optimal range, falloff and tracking speed for as long as the effect lands (a tracking disruptor: negative).</summary>
     public sealed record Disrupt(double RangePercent, double FalloffPercent, double TrackingPercent) : SimRemote;
 

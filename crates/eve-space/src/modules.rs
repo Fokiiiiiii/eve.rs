@@ -128,6 +128,9 @@ pub enum Remote {
     /// The target is held out of warp: `strength` points of scramble (a warp scrambler 2, a warp disruptor 1; the ship's own warp core subtracts). `blocks_mwd`: and out
     /// of its microwarpdrive.
     Scramble { strength: f64, blocks_mwd: bool },
+    /// A fighter's tackle: a warp scramble of `strength` points and a web of `web_percent` of the target's top speed, both for as long as the effect lands
+    /// (one remote for both, so one module runs it: ADR 0015, FIG-D-3).
+    Tackle { strength: f64, web_percent: f64 },
     /// The target's locks are broken and it cannot lock anything but the ships that jam it, for as long as a cycle, when `strength` for the kind of sensor the target has
     /// (gravimetric, ladar, magnetometric, radar) beats the roll against that sensor's strength (an ECM jammer).
     Jam { strength: [f64; 4] },
@@ -180,6 +183,9 @@ impl Remote {
             }),
             Self::Scramble { strength, blocks_mwd } => {
                 Some(Lasting::Scramble { strength: strength * share, blocks_mwd })
+            }
+            Self::Tackle { strength, web_percent } => {
+                Some(Lasting::Tackle { strength: strength * share, web_percent: web_percent * share })
             }
             Self::Disrupt { range_percent, falloff_percent, tracking_percent } => Some(Lasting::Disrupt {
                 range_percent: range_percent * share,
@@ -2158,6 +2164,7 @@ impl Scene {
             | Remote::Paint { .. }
             | Remote::Damp { .. }
             | Remote::Scramble { .. }
+            | Remote::Tackle { .. }
             | Remote::Disrupt { .. }
             | Remote::GuidanceDisrupt { .. } => {
                 let lasting = what.lasting(share).expect("these last");

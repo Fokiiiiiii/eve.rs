@@ -66,7 +66,24 @@ internal sealed class ProjectedEffect : ShipEffect
         ["shipModuleGuidanceDisruptor"] = v => (new SimRemote.GuidanceDisrupt(Signed(v, MissileVelocityBonus), Signed(v, ExplosionDelayBonus), Signed(v, AoeVelocityBonus), Signed(v, AoeCloudSizeBonus)), false, "ewGuidanceDisrupt"),
         ["remoteECMFalloff"] = Jam,
         ["entityECMFalloff"] = Jam,
+        // the fighter abilities of the SDE (ADR 0015, WP-K): their attributes are the fighter type's own (the ids of the SDE attributes below)
+        ["fighterAbilityWarpDisruption"] = v => (new SimRemote.Scramble(Amount(v, FighterWarpDisruptionStrength), false), false, "warpScrambler"),
+        ["fighterAbilityStasisWebifier"] = v => (new SimRemote.Web(Signed(v, FighterWebSpeedPenalty)), false, "webify"),
+        ["fighterAbilityEnergyNeutralizer"] = v => (new SimRemote.Neutralize(Amount(v, FighterNeutralizerAmount), 0), false, "ewEnergyNeut"),
+        ["fighterAbilityTackle"] = v => (new SimRemote.Tackle(Amount(v, FighterTackleScramble), Signed(v, FighterTackleWeb)), false, "warpScrambler"),
+        ["fighterAbilityECM"] = v => (new SimRemote.Jam(Amount(v, FighterGravimetricStrength), Amount(v, FighterLadarStrength), Amount(v, FighterMagnetometricStrength), Amount(v, FighterRadarStrength)), false, ""),
     };
+
+    /// <summary>The fighter attributes the rows above read (SDE dogma attribute ids: warp disruption point strength 2205, stasis speed penalty 2184, neutralized amount 2211, ECM strengths 2246 to 2249).</summary>
+    internal const int FighterWarpDisruptionStrength = 2205;
+    internal const int FighterWebSpeedPenalty = 2184;
+    internal const int FighterNeutralizerAmount = 2211;
+    internal const int FighterGravimetricStrength = 2246;
+    internal const int FighterLadarStrength = 2247;
+    internal const int FighterMagnetometricStrength = 2248;
+    internal const int FighterRadarStrength = 2249;
+    internal const int FighterTackleScramble = 2425;
+    internal const int FighterTackleWeb = 2242;
 
     public override IReadOnlyCollection<string> EffectNames { get; } = [.. Specs.Keys];
 
@@ -97,7 +114,10 @@ internal sealed class ProjectedEffect : ShipEffect
         var (cycle, _, _) = ShipEffect.CycleOf(effect, (attribute, fallback) => value(attribute) is var v && v != 0 ? v : fallback);
         var range = effect.RangeAttributeId > 0 ? effect.RangeAttributeId : MaxRange;
         var optimal = Math.Max(0, NpcArmament.Round6(value(range)));
-        var lasting = what is SimRemote.Jam ? Math.Max(1, NpcArmament.Round6(value(EcmJamDuration))) : cycle;
+        // a module's jam lasts its own duration (shorter than its cycle); a fighter's ECM lasts its cycle (its duration is the effect's, not the module's)
+        var lasting = what is SimRemote.Jam && !effect.Name.Trim().StartsWith("fighterAbility", StringComparison.OrdinalIgnoreCase)
+            ? Math.Max(1, NpcArmament.Round6(value(EcmJamDuration)))
+            : cycle;
         return new SimDroneEffect(effect.Id, effect.Guid, cycle, lasting, new SimAction.Remote(what, optimal, 0, atEnd, jam));
     }
 

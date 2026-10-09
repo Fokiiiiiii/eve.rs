@@ -431,6 +431,37 @@ mod tests {
     }
 
     #[test]
+    fn a_squadron_runs_an_ability_through_the_simulation_as_a_pilot_does() {
+        let (mut scene, squadron, _) = launched();
+        // a self buff of the squadron's own type (no capacitor: a squadron has none), started as the host sends any module effect
+        let effect = crate::modules::Effect {
+            module_id: SQUADRON_SHIP * 8 + 1,
+            module_type: 23_055,
+            effect_id: 6_441,
+            fx: "effects.MicroWarpDrive".to_string(),
+            duration_ms: 20_000.0,
+            capacitor_need: 0.0,
+            repeat: 1,
+            target_id: 0,
+            turret: None,
+            action: None,
+            on: None,
+            off: None,
+            on_changes: Vec::new(),
+            off_changes: Vec::new(),
+            burns_fuel: false,
+        };
+        let told = scene.activate(squadron, effect.clone(), LATER + SECOND);
+        assert!(told.iter().any(|out| matches!(out, Out::Accepted { command: 17, .. })), "{told:?}");
+        // the same ability is not started again while it runs
+        let again = scene.activate(squadron, effect, LATER + 2 * SECOND);
+        assert!(
+            again.iter().any(|out| matches!(out, Out::Refused { command: 17, reason, .. } if *reason == "ALREADY_ACTIVE")),
+            "{again:?}"
+        );
+    }
+
+    #[test]
     fn a_squadron_let_go_is_scooped_back_from_within_reach_and_only_from_its_own_ship() {
         let (mut scene, squadron, _) = launched();
         // one with a controller is not let go

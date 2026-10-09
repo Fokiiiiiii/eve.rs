@@ -5,6 +5,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
+using Eve.Services.Space.Effects;
 using Eve.Services.Ships;
 using Eve.Ships;
 using Eve.Space;
@@ -29,13 +30,16 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
     private const string StillOutText = "That launch tube's squadron is still in space.";
     private const string NoSimulationText = "The space simulation is not running, so fighter squadrons cannot go out.";
     private const string NoSolarSystemText = "Your ship is not in space.";
-    private const string AbilityText = "Fighter abilities are not in the simulation yet (ADR 0015).";
 
     /// <summary>The orbit an order gives when it names no distance, metres (the reference's default).</summary>
     private const double DefaultOrbitMeters = 1_500;
 
     /// <summary>A squadron that is out in space: the item it is, the character and ship that launched it, the tube it came from and the pilot to tell.</summary>
-    private sealed record Launched(long FighterId, int TypeId, long CharacterId, long ShipId, int SolarSystemId, int TubeFlag, ClientSession Pilot);
+    private sealed record Launched(long FighterId, int TypeId, long CharacterId, long ShipId, int SolarSystemId, int TubeFlag, ClientSession Pilot, ulong? SquadronSession = null);
+
+    /// <summary>The members of each squadron out in space now (what its abilities land per member), and the state of its ability slots.</summary>
+    private readonly ConcurrentDictionary<long, int> _sizes = new();
+    private readonly ConcurrentDictionary<(long Fighter, int Slot), AbilitySlot> _slots = new();
 
     private readonly ISimulation? _sim;
     private readonly CharacterShips _ships;
@@ -182,9 +186,269 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
         return new PyDict(entries);
     }
 
-    public ValueTask<PyValue> CmdActivateAbilitySlotsAsync(ServiceCall call) => RefuseAbilitiesAsync(call);
+    /// <summary>
+    /// Starts an ability slot of each squadron the pilot names (EVE.js <c>activateAbilitySlots</c>: the fighters, the slot and the target). Each is answered
+    /// with what it did: nothing when it started, else the reason as a user error. The notice that it is running is queued after the answer.
+    /// </summary>
+    public async ValueTask<PyValue> CmdActivateAbilitySlotsAsync(ServiceCall call)
+    {
+        var (session, characterId, _) = Pilot(call);
+        var slot = (int)IdOf(call.Arg(1));
+        var target = IdOf(call.Arg(2));
+        var entries = new List<KeyValuePair<PyValue, PyValue>>();
+        foreach (var id in IdsOf(call.Arg(0)))
+        {
+            var refusal = await ActivateAbilityAsync(session, characterId, id, slot, target, call.Cancellation);
+            entries.Add(new(InventoryWire.Id(id), refusal is null ? PyNone.Instance : MachoErrors.UserErrorPayload(refusal)));
+        }
+        return new PyDict(entries);
+    }
 
-    public ValueTask<PyValue> CmdDeactivateAbilitySlotsAsync(ServiceCall call) => RefuseAbilitiesAsync(call);
+    /// <summary>Stops an ability slot that is running on each squadron the pilot names; the notice that it stopped is queued after the answer.</summary>
+    public async ValueTask<PyValue> CmdDeactivateAbilitySlotsAsync(ServiceCall call)
+    {
+        var (session, characterId, _) = Pilot(call);
+        var slot = (int)IdOf(call.Arg(1));
+        var entries = new List<KeyValuePair<PyValue, PyValue>>();
+        foreach (var id in IdsOf(call.Arg(0)))
+        {
+            var refusal = await DeactivateAbilityAsync(session, characterId, id, slot, call.Cancellation);
+            entries.Add(new(InventoryWire.Id(id), refusal is null ? PyNone.Instance : MachoErrors.UserErrorPayload(refusal)));
+        }
+        return new PyDict(entries);
+    }
+
+    /// <summary>The id of a squadron's ability module in the simulation: the squadron's item id and its slot (the slots are 0 to 7).</summary>
+    private static long ModuleIdOf(long fighterId, int slot) => fighterId * 8 + slot;
+
+    private async Task<string?> ActivateAbilityAsync(ClientSession session, long characterId, long fighterId, int slot, long target, CancellationToken cancellationToken)
+    {
+        if (_sim is null)
+        {
+            return NoSimulationText;
+        }
+        if (!_launched.TryGetValue(fighterId, out var squadron) || squadron.CharacterId != characterId || squadron.SquadronSession is not { } squadronSession)
+        {
+            return NotInSpaceText;
+        }
+        await _statics.EnsureTypesAsync([squadron.TypeId], cancellationToken).ConfigureAwait(false);
+        if (_statics.Type(squadron.TypeId) is not { } type || FighterAbilityCatalogue.Default.Slot(squadron.TypeId, slot) is not { } entry
+            || FighterAbilityCatalogue.Default.Ability(entry.AbilityId) is not { } ability)
+        {
+            return "That fighter has no such ability slot.";
+        }
+        var state = _slots.GetOrAdd((fighterId, slot), _ => new AbilitySlot());
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (state.Begin(now, entry.Charges is { } charges ? charges.ChargeCount : null) is { } refused)
+        {
+            return refused;
+        }
+        var members = _sizes.GetValueOrDefault(fighterId, 1);
+        var (effect, reason) = FighterAbilityEffects.Build(FighterAbilityEffects.EffectNameOf(ability.EffectFamily), type, _statics,
+            ModuleIdOf(fighterId, slot), target, members, entry.CooldownSeconds);
+        if (effect is null)
+        {
+            state.Cancel();
+            return Describe(reason ?? UnsupportedEffectCode);
+        }
+        CommandReply reply;
+        try
+        {
+            reply = await _sim.ActivateAsync(squadronSession, effect, cancellationToken).ConfigureAwait(false);
+        }
+        catch (SimUnavailableException error)
+        {
+            state.Cancel();
+            _log?.Invoke($"fighters: {error.Message}");
+            return NoSimulationText;
+        }
+        if (!reply.Accepted)
+        {
+            state.Cancel();
+            return Describe(reply.Reason ?? UnsupportedEffectCode);
+        }
+        state.Started(now, effect.DurationMs, entry.CooldownSeconds);
+        var pilot = squadron.Pilot;
+        Later(() => pilot.SendNotification("OnFighterAbilitySlotActivated", "clientID",
+            InventoryWire.Id(fighterId), new PyInt(slot), state.ChargesLeftValue is { } left ? new PyInt(left) : PyNone.Instance,
+            FileTimeOf(now), new PyInt((int)Math.Max(1, effect.DurationMs)), state.CooldownNotice(FileTimeOf)));
+        return null;
+    }
+
+    private async Task<string?> DeactivateAbilityAsync(ClientSession session, long characterId, long fighterId, int slot, CancellationToken cancellationToken)
+    {
+        if (_sim is null)
+        {
+            return NoSimulationText;
+        }
+        if (!_launched.TryGetValue(fighterId, out var squadron) || squadron.CharacterId != characterId || squadron.SquadronSession is not { } squadronSession)
+        {
+            return NotInSpaceText;
+        }
+        if (!_slots.TryGetValue((fighterId, slot), out var state) || !state.IsActive)
+        {
+            return "That ability is not running.";
+        }
+        CommandReply reply;
+        try
+        {
+            reply = await _sim.CommandAsync(squadronSession, SimCommands.Deactivate, [ModuleIdOf(fighterId, slot)], cancellationToken).ConfigureAwait(false);
+        }
+        catch (SimUnavailableException error)
+        {
+            _log?.Invoke($"fighters: {error.Message}");
+            return NoSimulationText;
+        }
+        if (!reply.Accepted)
+        {
+            return Describe(reply.Reason ?? UnsupportedEffectCode);
+        }
+        // the ability ends at the end of its cycle in the simulation: the pilot is told it stopped (the notice of the reference, queued after the answer)
+        var pilot = squadron.Pilot;
+        Later(() => pilot.SendNotification("OnFighterAbilitySlotDeactivated", "clientID", InventoryWire.Id(fighterId), new PyInt(slot)));
+        state.Stop();
+        return null;
+    }
+
+    /// <summary>Whatever a squadron's ability ends at the simulation (its cycles are done, it was stopped, or its target was lost): the slot is free again.</summary>
+    private void OnAbilityEnded(long fighterId, int slot)
+    {
+        if (!_launched.TryGetValue(fighterId, out var squadron) || !_slots.TryGetValue((fighterId, slot), out var state) || !state.IsActive)
+        {
+            return;
+        }
+        state.Stop();
+        var pilot = squadron.Pilot;
+        Later(() => pilot.SendNotification("OnFighterAbilitySlotDeactivated", "clientID", InventoryWire.Id(fighterId), new PyInt(slot)));
+    }
+
+    /// <summary>The reason an ability's refusal code is said to the pilot.</summary>
+    private static string Describe(string reason) => reason switch
+    {
+        FighterAbilityEffects.KamikazeRefusal => "Kamikaze squadrons cannot detonate yet: the simulation has no approach and detonation (ADR 0015).",
+        FighterAbilityEffects.LaunchBombRefusal => "Launch bomb needs the area mechanism of ADR 0011, which the simulation does not have yet.",
+        "ALREADY_ACTIVE" => "That ability is already running.",
+        "NO_COOLDOWN" => "That ability has no cooldown to jump on.",
+        "TARGET_REQUIRED" => "That ability needs a target.",
+        "MJD_COOLDOWN" => "That ability is still cooling down.",
+        "NO_CHARGES" => "That ability has no charges left.",
+        "COOLING_DOWN" => "That ability is still cooling down.",
+        "NOT_ACTIVE" => "That ability is not running.",
+        "UNSUPPORTED_EFFECT" => "That ability is not in the simulation yet (ADR 0015).",
+        _ => reason,
+    };
+
+    private const string UnsupportedEffectCode = "UNSUPPORTED_EFFECT";
+
+    /// <summary>The filetime of a moment, as the client reads a notice's time.</summary>
+    private static PyValue FileTimeOf(long unixMs) => new PyLong(Py.FileTimeFromUnixMs(unixMs));
+
+    /// <summary>Runs an action after the answer to the call is sent (the reference queues these notices after its reply).</summary>
+    private void Later(Action action) => _ = Task.Run(async () =>
+    {
+        try
+        {
+            await Task.Delay(AfterAnswer).ConfigureAwait(false);
+            action();
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"fighters: a notice could not be sent: {error.Message}");
+        }
+    });
+
+    /// <summary>How long after its answer a queued notice is sent (a reply is sent within this, the reference's setImmediate).</summary>
+    private static readonly TimeSpan AfterAnswer = TimeSpan.FromMilliseconds(50);
+
+    /// <summary>The state of one ability slot of a squadron: whether it runs, when it may run again, and the charges it has left.</summary>
+    private sealed class AbilitySlot
+    {
+        private readonly object _lock = new();
+        private bool _active;
+        private long _activeSince;
+        private double _duration;
+        private long _cooldownUntil;
+        private long _cooldownStart;
+        private int? _charges;
+
+        public bool IsActive { get { lock (_lock) { return _active; } } }
+
+        /// <summary>The charges left, or null for a slot without charges.</summary>
+        public int? ChargesLeftValue { get { lock (_lock) { return _charges; } } }
+
+        /// <summary>Checks the slot may start now, and holds it (returns the refusal when it may not).</summary>
+        public string? Begin(long now, int? charges)
+        {
+            lock (_lock)
+            {
+                if (_active)
+                {
+                    return "ALREADY_ACTIVE";
+                }
+                if (now < _cooldownUntil)
+                {
+                    return "COOLING_DOWN";
+                }
+                if (charges is not null)
+                {
+                    _charges ??= charges;
+                    if (_charges <= 0)
+                    {
+                        return "NO_CHARGES";
+                    }
+                }
+                _active = true;
+                return null;
+            }
+        }
+
+        /// <summary>The simulation took the start: the slot runs for its duration, its cooldown begins and a charge is spent.</summary>
+        public void Started(long now, double durationMs, double? cooldownSeconds)
+        {
+            lock (_lock)
+            {
+                _activeSince = now;
+                _duration = durationMs;
+                if (_charges is { } left)
+                {
+                    _charges = left - 1;
+                }
+                if (cooldownSeconds is > 0)
+                {
+                    _cooldownStart = now;
+                    _cooldownUntil = now + (long)Math.Round(cooldownSeconds.Value * 1000);
+                }
+            }
+        }
+
+        /// <summary>The start was refused: the slot is as it was.</summary>
+        public void Cancel()
+        {
+            lock (_lock)
+            {
+                _active = false;
+            }
+        }
+
+        public void Stop()
+        {
+            lock (_lock)
+            {
+                _active = false;
+            }
+        }
+
+        /// <summary>The cooldown the notice tells, as the reference's pair of times, or none when the slot has none running.</summary>
+        public PyValue CooldownNotice(Func<long, PyValue> filetime)
+        {
+            lock (_lock)
+            {
+                return _cooldownUntil > _cooldownStart && _cooldownStart > 0
+                    ? new PyList([filetime(_cooldownStart), filetime(_cooldownUntil)])
+                    : PyNone.Instance;
+            }
+        }
+    }
 
     /// <summary>The squadrons out in space are given the movement order: stop, orbit or follow. A point is not in the simulation yet, and is refused.</summary>
     public async ValueTask<PyValue> ExecuteMovementCommandOnFightersAsync(ServiceCall call)
@@ -331,18 +595,6 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
         return PyBool.True;
     }
 
-    /// <summary>A squadron out in space gets no ability yet; one that is not out is refused with that reason.</summary>
-    private async ValueTask<PyValue> RefuseAbilitiesAsync(ServiceCall call)
-    {
-        var (session, characterId, _) = Pilot(call);
-        var entries = new List<KeyValuePair<PyValue, PyValue>>();
-        foreach (var id in IdsOf(call.Arg(0)))
-        {
-            var text = await SquadronInSpaceAsync(session, characterId, id, call.Cancellation) is null ? NotInSpaceText : AbilityText;
-            entries.Add(new(InventoryWire.Id(id), MachoErrors.UserErrorPayload(text)));
-        }
-        return new PyDict(entries);
-    }
 
     /// <summary>
     /// Takes a squadron out of its tube and sends it out into space: the database moves it first, then the simulation launches it; a launch the simulation
@@ -420,7 +672,8 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
             return reply?.Error ?? NoSimulationText;
         }
 
-        _launched[squadron.Id] = new Launched(squadron.Id, squadron.TypeId, characterId, shipId, system, tubeFlag, session);
+        _launched[squadron.Id] = new Launched(squadron.Id, squadron.TypeId, characterId, shipId, system, tubeFlag, session, reply.Session);
+        _sizes[squadron.Id] = members;
         ShipNotifications.SendItemChange(session, move.Change!, RowOf);
         // the order of the reference: the tube is empty, the squadron is added to its controller, and the tube is in space
         session.SendNotification("OnFighterTubeContentEmpty", "clientID", new PyInt(tubeFlag));
@@ -445,7 +698,11 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
                     ReleasedTo(squadron);
                     break;
                 case SimFighterSize size when _launched.TryGetValue(size.FighterId, out var squadron):
+                    _sizes[size.FighterId] = size.Size;
                     Background(() => ResizeAsync(squadron, size.Size), $"fighter {size.FighterId} size");
+                    break;
+                case SimModuleEnded ended when _launched.ContainsKey(ended.ModuleId / 8) && ended.ModuleId % 8 is >= 0 and <= 7:
+                    OnAbilityEnded(ended.ModuleId / 8, (int)(ended.ModuleId % 8));
                     break;
                 case SimDestroyed destroyed when _launched.TryRemove(destroyed.ShipId, out var lost):
                     Background(() => LoseAsync(lost), $"fighter {destroyed.ShipId} destroyed");
@@ -466,6 +723,18 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
     {
         _launched.Clear();
         _abandoned.Clear();
+        _sizes.Clear();
+        _slots.Clear();
+    }
+
+    /// <summary>A squadron that is no longer the host's (destroyed) keeps no size and no ability state.</summary>
+    private void Forget(long fighterId)
+    {
+        _sizes.TryRemove(fighterId, out _);
+        foreach (var key in _slots.Keys.Where(key => key.Fighter == fighterId).ToList())
+        {
+            _slots.TryRemove(key, out _);
+        }
     }
 
     /// <summary>A squadron out in space lost members: the item keeps the members it has, and the pilot is told the size (the reference's notice).</summary>
@@ -482,6 +751,7 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
     private async Task LoseAsync(Launched squadron, bool controlled = true)
     {
         _abandoned.TryRemove(squadron.FighterId, out _);
+        Forget(squadron.FighterId);
         if (await _ships.RemoveFighterAsync(squadron.CharacterId, squadron.FighterId).ConfigureAwait(false) is not { } removed)
         {
             return;

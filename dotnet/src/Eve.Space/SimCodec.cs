@@ -1543,6 +1543,8 @@ private static void WriteAction(Writer w, SimAction action)
                         w.U8(10); w.F64(guidance.VelocityPercent); w.F64(guidance.DelayPercent); w.F64(guidance.AoeVelocityPercent); w.F64(guidance.AoeCloudPercent); break;
                     case SimRemote.Jam jam:
                         w.U8(8); w.F64(jam.Gravimetric); w.F64(jam.Ladar); w.F64(jam.Magnetometric); w.F64(jam.Radar); break;
+                    case SimRemote.Tackle tackle:
+                        w.U8(12); w.F64(tackle.Strength); w.F64(tackle.WebPercent); break;
                 }
                 break;
         }

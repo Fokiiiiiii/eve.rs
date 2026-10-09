@@ -82,6 +82,9 @@ pub(crate) enum Lasting {
     },
     /// Points of warp scramble: more than the ship's own warp core holds it out of warp (`blocks_mwd`: a microwarpdrive too).
     Scramble { strength: f64, blocks_mwd: bool },
+    /// A fighter's tackle: a warp scramble of `strength` points and a web of `web_percent` of the top speed, both for as long as it lands (the SDE's
+    /// `fighterAbilityTackle`: warp disruption point strength and web speed penalty, both on the one effect).
+    Tackle { strength: f64, web_percent: f64 },
     /// Percentages of the optimal range, the falloff and the tracking speed of the turrets the ship fires (negative for a tracking disruptor).
     Disrupt { range_percent: f64, falloff_percent: f64, tracking_percent: f64 },
     /// Percentages of the speed, flight time, explosion velocity and explosion radius of the missiles the ship launches (negative but for the radius for a guidance disruptor).
@@ -158,7 +161,7 @@ impl Incoming {
         self.records
             .iter()
             .filter_map(|r| match r.what {
-                Lasting::Scramble { strength, .. } => Some(strength),
+                Lasting::Scramble { strength, .. } | Lasting::Tackle { strength, .. } => Some(strength),
                 _ => None,
             })
             .sum()
@@ -247,7 +250,7 @@ impl Incoming {
         Base {
             max_velocity: base.max_velocity
                 * self.factor(|w| match w {
-                    Lasting::Web { percent } => Some(*percent),
+                    Lasting::Web { percent } | Lasting::Tackle { web_percent: percent, .. } => Some(*percent),
                     _ => None,
                 }),
             signature_radius: base.signature_radius
@@ -312,7 +315,7 @@ impl Scene {
         pilot.incoming.upsert(source_ship, effect.module_id, what, until);
         let mut out = self.retune(target, at);
         // a ship that is still lining up for a warp it can no longer make is stopped (the reference stops it as the scramble lands)
-        if matches!(what, Lasting::Scramble { .. }) {
+        if matches!(what, Lasting::Scramble { .. } | Lasting::Tackle { .. }) {
             out.extend(self.cancel_alignment(target, at));
         }
         // and a microwarpdrive that is running on it is stopped when the scrambler blocks one

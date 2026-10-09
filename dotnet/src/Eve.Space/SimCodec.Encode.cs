@@ -298,6 +298,9 @@ private static void WriteAction(Writer w, SimAction action)
             case SimAction.Salvage salvage:
                 w.U8(8); w.F64(salvage.AccessBonusPercent);
                 break;
+            case SimAction.Scan scan:
+                w.U8(26); w.U8(scan.Kind); w.F64(scan.OptimalMeters); w.F64(scan.FalloffMeters);
+                break;
             case SimAction.Tractor tractor:
                 w.U8(9); w.F64(tractor.VelocityMetersPerSecond); w.F64(tractor.HoldDistanceMeters); w.F64(tractor.RangeMeters);
                 break;

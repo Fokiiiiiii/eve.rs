@@ -302,6 +302,33 @@ impl Scene {
                 }];
             }
         }
+        // a scanner reads a ship it holds the lock on, within its reach (the reference's TARGET_REQUIRED, TARGET_NOT_FOUND, TARGET_NOT_LOCKED and
+        // TARGET_OUT_OF_RANGE); the reveal itself is settled by the host when the cycle ends (`work_target_ok` keeps the same two checks)
+        if let Some(Action::Scan { reach, .. }) = effect.action.as_ref() {
+            if effect.target_id <= 0 {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_REQUIRED" }];
+            }
+            if effect.target_id == self.pilots[&session].ship.spec.ship_id {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_SELF" }];
+            }
+            let Some(target) = self.session_of(effect.target_id) else {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_FOUND" }];
+            };
+            if !self.locked_by(session).contains(&effect.target_id) {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_LOCKED" }];
+            }
+            let apart = self.apart(session, target).unwrap_or(f64::INFINITY);
+            if reach.share(apart).is_none() {
+                return vec![Out::TargetRefused {
+                    session,
+                    command: CODE,
+                    reason: "TARGET_OUT_OF_RANGE",
+                    target_type: self.pilots[&target].ship.spec.type_id,
+                    desired_range: reach.farthest(),
+                    actual_distance: apart,
+                }];
+            }
+        }
         if let Some(Action::Doomsday { delay_ms, damage, immobile_ms, no_jump_ms }) = effect.action.as_ref() {
             let numbers = [*delay_ms, *immobile_ms, *no_jump_ms];
             if !numbers.iter().all(|n| n.is_finite() && *n >= 0.0)

@@ -86,6 +86,10 @@ public class SimCodecTests
         {
             return new SimAction.Salvage((double)a["accessBonus"]!);
         }
+        if ((string)a["kind"]! == "scan")
+        {
+            return new SimAction.Scan((bool)a["cargo"]! ? SimScanKinds.Cargo : SimScanKinds.Ship, (double)a["optimalMeters"]!, (double)a["falloffMeters"]!);
+        }
         if ((string)a["kind"]! == "tractor")
         {
             return new SimAction.Tractor((double)a["velocity"]!, (double)a["hold"]!, (double)a["range"]!);

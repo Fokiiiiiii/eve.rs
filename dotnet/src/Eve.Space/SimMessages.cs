@@ -327,11 +327,27 @@ public sealed record SimModuleRules(
     /// <summary>The highest and the lowest speed (m/s) a module starts at (maxVelocityActivationLimit 1334, minVelocityActivationLimit 2608; 0 for none). Protocol 38 (WP19).</summary>
     double MaxVelocityLimitMs = 0, double MinVelocityLimitMs = 0);
 
+/// <summary>The kinds of scan a scanner's cycle is (<see cref="SimAction.Scan.Kind"/>).</summary>
+public static class SimScanKinds
+{
+    /// <summary>A Cargo Scanner: the target's hold, one container deep.</summary>
+    public const byte Cargo = 0;
+
+    /// <summary>A Ship Scanner: the target's fitted hardware, each item rolled against the reach's falloff.</summary>
+    public const byte Ship = 1;
+}
+
 /// <summary>The codes of the work a module asks the host for (<see cref="SimModuleWorkCycle.Command"/>). Its cycles share the drone codes of mining and salvage (7, 8).</summary>
 public static class SimModuleWorkCommands
 {
     /// <summary>The fuel of the next cycle: the host takes the module's consumption quantity of its consumption type from the ship, or refuses (<c>NO_FUEL</c>).</summary>
     public const byte ConsumeFuel = 9;
+
+    /// <summary>A Cargo Scanner's cycle ended with its target in reach: the host reveals the target's hold (protocol 39). It carries no mining numbers.</summary>
+    public const byte ScanCargo = 10;
+
+    /// <summary>A Ship Scanner's cycle ended with its target in reach: the host reveals the target's fitted hardware (protocol 39). It carries no mining numbers.</summary>
+    public const byte ScanShip = 11;
 }
 
 /// <summary>A layer of a ship's health.</summary>
@@ -437,6 +453,19 @@ public abstract record SimAction
 
     /// <summary>A salvager's cycle (tag 8): as a mining cycle, with the wreck's access chance moved by <paramref name="AccessBonusPercent"/>.</summary>
     public sealed record Salvage(double AccessBonusPercent) : SimAction;
+
+    /// <summary>
+    /// A scanner's cycle (tag 26, protocol 39): a cargo scan (<see cref="SimScanKinds.Cargo"/>) or a ship scan (<see cref="SimScanKinds.Ship"/>) of the locked ship.
+    /// The reach is <paramref name="OptimalMeters"/> whole, then <paramref name="FalloffMeters"/> of falloff (0 for a hard cutoff, as a cargo scan has). The
+    /// simulation parks the module at the cycle's end and the host settles the reveal (<see cref="SimModuleWorkCommands.ScanCargo"/> or <c>ScanShip</c>).
+    /// </summary>
+    public sealed record Scan(byte Kind, double OptimalMeters, double FalloffMeters) : SimAction
+    {
+        /// <summary>Whether the numbers are ones the simulation runs: a known kind, a positive optimal range and a falloff that is not negative.</summary>
+        public bool IsValid => Kind is SimScanKinds.Cargo or SimScanKinds.Ship
+            && double.IsFinite(OptimalMeters) && OptimalMeters > 0
+            && double.IsFinite(FalloffMeters) && FalloffMeters >= 0;
+    }
 
     /// <summary>A tractor beam (tag 9, protocol 30): it pulls the locked wreck or can at <paramref name="VelocityMetersPerSecond"/> until it is
     /// <paramref name="HoldDistanceMeters"/> off the ship, and a target beyond <paramref name="RangeMeters"/> (the module's reach) is out of range.</summary>

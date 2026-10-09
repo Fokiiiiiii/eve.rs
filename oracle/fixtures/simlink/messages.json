@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 38,
-   "hex": "03000000012600"
+   "version": 39,
+   "hex": "03000000012700"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 38,
+   "version": 39,
    "pollHz": 4,
-   "hex": "0700000002260004000000"
+   "hex": "0700000002270004000000"
   },
   {
    "name": "enter by undocking",
@@ -3403,6 +3403,56 @@
    "hex": "6c000000134f2c3859955c0600fdb6089b150900001c5f0000090000001300656666656374732e54726163746f724265616d000000000088b3400000000000001440e80300000210a5d4e8000000080000000000000000090000000000407f400000000000407f40000000000088d340"
   },
   {
+   "name": "activate a cargo scanner (Cargo Scanner I: 50 km, no falloff)",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 442,
+    "effectId": 47,
+    "fx": "effects.CargoScan",
+    "durationMs": 5000.0,
+    "capacitorNeed": 4.0,
+    "repeat": 1,
+    "targetId": "1000000000002",
+    "burnsFuel": false,
+    "action": {
+     "kind": "scan",
+     "cargo": true,
+     "optimalMeters": 50000.0,
+     "falloffMeters": 0.0
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "63000000134f2c3859955c0600fdb6089b15090000ba0100002f0000001100656666656374732e436172676f5363616e000000000088b3400000000000001040010000000210a5d4e80000000800000000000000001a0000000000006ae8400000000000000000"
+  },
+  {
+   "name": "activate a ship scanner (Ship Scanner I: 50 km, 30 km falloff)",
+   "kind": "Activate",
+   "sessionId": "1790646377000015",
+   "effect": {
+    "moduleId": "9988400002813",
+    "moduleType": 443,
+    "effectId": 46,
+    "fx": "effects.ShipScan",
+    "durationMs": 2000.0,
+    "capacitorNeed": 5.0,
+    "repeat": 1,
+    "targetId": "1000000000002",
+    "burnsFuel": false,
+    "action": {
+     "kind": "scan",
+     "cargo": false,
+     "optimalMeters": 50000.0,
+     "falloffMeters": 30000.0
+    },
+    "onChanges": [],
+    "offChanges": []
+   },
+   "hex": "62000000134f2c3859955c0600fdb6089b15090000bb0100002e0000001000656666656374732e536869705363616e0000000000409f400000000000001440010000000210a5d4e80000000800000000000000001a0100000000006ae84000000000004cdd40"
+  },
+  {
    "name": "activate a passive targeter",
    "kind": "Activate",
    "sessionId": "1790646377000015",
@@ -3918,7 +3968,17 @@
   {
    "name": "module work cycle of an unknown command",
    "reason": "bad-value",
-   "hex": "7e000000334f2c3859955c0600563c58080000000093b3089b15090000404acb01fdb6089b150900000110a5d4e80000000100000000f153650a0000000000003440000000000000f03f9a9999999999b93f9a9999999999a93f00000000000000400000000000000000000000000000d03f000000000000e03f000000000000e83f"
+   "hex": "7e000000334f2c3859955c0600563c58080000000093b3089b15090000404acb01fdb6089b150900000110a5d4e80000000100000000f153650c0000000000003440000000000000f03f9a9999999999b93f9a9999999999a93f00000000000000400000000000000000000000000000d03f000000000000e03f000000000000e83f"
+  },
+  {
+   "name": "scan with no optimal range",
+   "reason": "bad-value",
+   "hex": "63000000134f2c3859955c0600fdb6089b15090000ba0100002f0000001100656666656374732e436172676f5363616e000000000088b3400000000000001040010000000210a5d4e80000000800000000000000001a0000000000000000000000000000000000"
+  },
+  {
+   "name": "ship scan with a negative falloff",
+   "reason": "bad-value",
+   "hex": "62000000134f2c3859955c0600fdb6089b15090000bb0100002e0000001000656666656374732e536869705363616e0000000000409f400000000000001440010000000210a5d4e80000000800000000000000001a0100000000006ae840000000000000f0bf"
   },
   {
    "name": "module work cycle with a probability above one",

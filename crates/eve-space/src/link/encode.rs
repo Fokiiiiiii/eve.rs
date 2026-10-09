@@ -511,6 +511,12 @@ pub(super) fn put_action(out: &mut Vec<u8>, action: &Action) {
                 out.extend_from_slice(&number.to_le_bytes());
             }
         }
+        Action::Scan { cargo, reach } => {
+            out.push(26);
+            out.push(u8::from(!*cargo));
+            out.extend_from_slice(&reach.optimal.to_le_bytes());
+            out.extend_from_slice(&reach.falloff.to_le_bytes());
+        }
         Action::Mining {
             family,
             mining_amount_m3,

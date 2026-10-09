@@ -442,6 +442,18 @@ public static partial class SimCodec
                     }
                     return doomsday;
                 }
+            case 26:
+                {
+                    var kind = r.U8();
+                    var optimal = r.F64();
+                    var falloff = r.F64();
+                    var scan = new SimAction.Scan(kind, optimal, falloff);
+                    if (!scan.IsValid)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad scan action");
+                    }
+                    return scan;
+                }
             case 23:
                 {
                     double[] damage = [r.F64(), r.F64(), r.F64(), r.F64()];

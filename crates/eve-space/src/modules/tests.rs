@@ -3324,3 +3324,127 @@ fn a_module_that_its_own_effect_burns_out_does_not_start_again() {
         [Out::Refused { session: A, command: 17, reason: "MODULE_INCAPACITATED" }]
     );
 }
+
+// ---- scanners (protocol 39): a cargo or ship scan is a work cycle the host settles; the simulation keeps the lock and the reach ----
+
+/// A scanner of `cargo` or ship kind, one cycle, locked on the partner ship: its reach is `optimal` metres, then `falloff` metres of falloff.
+fn scanner(cargo: bool, optimal: f64, falloff: f64) -> Effect {
+    let mut effect = afterburner();
+    effect.target_id = partner();
+    effect.action = Some(Action::Scan { cargo, reach: Reach { optimal, falloff } });
+    effect.effect_id = if cargo { 47 } else { 46 };
+    effect.duration_ms = 2_000.0;
+    effect.capacitor_need = 0.0;
+    effect.repeat = 1;
+    effect
+}
+
+#[test]
+fn a_scanner_needs_a_target_it_holds_a_lock_on_that_is_a_ship_and_in_reach() {
+    let (mut scene, t) = crowd();
+    let mut scan = scanner(true, 50_000.0, 0.0);
+    scan.target_id = 0;
+    assert_eq!(refusal_of(&scene.activate(A, scan.clone(), t)), "TARGET_REQUIRED");
+    scan.target_id = scene.pilots[&A].ship.spec.ship_id;
+    assert_eq!(refusal_of(&scene.activate(A, scan.clone(), t)), "TARGET_SELF");
+    scan.target_id = WRECK;
+    assert_eq!(refusal_of(&scene.activate(A, scan.clone(), t)), "TARGET_NOT_FOUND");
+    // the partner is there but not locked: the scanner does not reach what the pilot does not hold
+    scan.target_id = partner();
+    assert_eq!(refusal_of(&scene.activate(A, scan.clone(), t)), "TARGET_NOT_LOCKED");
+    let (mut locked, t) = reaching(0.0);
+    assert!(matches!(
+        locked.activate(A, scanner(true, 50_000.0, 0.0), t).first(),
+        Some(Out::Accepted { command: 17, .. })
+    ));
+}
+
+#[test]
+fn a_cargo_scan_is_a_hard_cutoff_and_a_ship_scan_falls_off_past_its_optimal_range() {
+    // 10 km off: a 5 km cargo scanner is out of its reach and told how far it reaches; a 5 km ship scanner with 3 km falloff still reaches it at 7 km
+    let (mut scene, t) = reaching(10_000.0);
+    assert!(matches!(
+        scene.activate(A, scanner(true, 5_000.0, 0.0), t).first(),
+        Some(Out::TargetRefused { reason: "TARGET_OUT_OF_RANGE", desired_range, .. }) if *desired_range == 5_000.0
+    ));
+    let (mut scene, t) = reaching(7_000.0);
+    assert!(matches!(
+        scene.activate(A, scanner(false, 5_000.0, 3_000.0), t).first(),
+        Some(Out::Accepted { command: 17, .. })
+    ));
+    let (mut scene, t) = reaching(9_000.0);
+    assert!(matches!(
+        scene.activate(A, scanner(false, 5_000.0, 3_000.0), t).first(),
+        Some(Out::TargetRefused { reason: "TARGET_OUT_OF_RANGE", desired_range, .. }) if *desired_range == 8_000.0
+    ));
+}
+
+#[test]
+fn a_scan_asks_the_host_at_its_end_for_the_reveal_and_ends_when_the_host_grants_it() {
+    let (mut scene, t) = reaching(0.0);
+    assert!(matches!(
+        scene.activate(A, scanner(true, 50_000.0, 0.0), t).first(),
+        Some(Out::Accepted { command: 17, .. })
+    ));
+    let (first, at) = poll_until(&mut scene, t, 3.0);
+    let asked = work_cycles(&first);
+    assert_eq!(asked.len(), 1, "the scan's end asks the host once: {first:?}");
+    let (cycle, command, amount, _) = asked[0];
+    assert_eq!((command, amount), (10, 0.0), "a cargo scan is command 10 with no mining numbers");
+    // parked until the answer; the host reveals the hold and says the target stays (complete = false), so the effect ends as done, not as target lost
+    let out = scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer {
+            target_id: partner(),
+            cycle_id: cycle,
+            accepted: true,
+            reason: "",
+            depleted: false,
+        },
+        at,
+    );
+    assert_eq!(ended(&out), vec![1], "the one cycle is done: {out:?}");
+    assert_eq!(scene.pilots[&A].modules.running_count(), 0);
+}
+
+#[test]
+fn a_ship_scan_asks_for_command_11_and_a_refused_answer_ends_the_scan_with_the_host_reason() {
+    let (mut scene, t) = reaching(0.0);
+    assert!(matches!(
+        scene.activate(A, scanner(false, 50_000.0, 10_000.0), t).first(),
+        Some(Out::Accepted { command: 17, .. })
+    ));
+    let (first, at) = poll_until(&mut scene, t, 3.0);
+    let asked = work_cycles(&first);
+    assert_eq!(asked.len(), 1, "{first:?}");
+    assert_eq!(asked[0].1, 11, "a ship scan is command 11");
+    let out = scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer {
+            target_id: partner(),
+            cycle_id: asked[0].0,
+            accepted: false,
+            reason: "TARGET_RESISTS_SCAN",
+            depleted: false,
+        },
+        at,
+    );
+    assert_eq!(ended(&out), vec![5], "a refused answer stops the scan (WorkRefused): {out:?}");
+}
+
+#[test]
+fn a_scan_whose_target_leaves_its_reach_by_the_cycle_end_stops_and_asks_the_host_nothing() {
+    let (mut scene, t) = reaching(0.0);
+    assert!(matches!(
+        scene.activate(A, scanner(true, 50_000.0, 0.0), t).first(),
+        Some(Out::Accepted { command: 17, .. })
+    ));
+    let mut far = scene.pilots[&B].ship.position;
+    far.x += 500_000.0;
+    scene.pilots.get_mut(&B).unwrap().ship.position = far;
+    let (out, _) = poll_until(&mut scene, t, 3.0);
+    assert!(work_cycles(&out).is_empty(), "no reveal is asked for a target out of reach: {out:?}");
+    assert_eq!(ended(&out), vec![2], "the scan stops as its target is lost: {out:?}");
+}

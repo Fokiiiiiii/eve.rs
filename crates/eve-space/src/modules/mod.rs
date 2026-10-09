@@ -182,6 +182,22 @@ impl Remote {
             ]
             .into_iter()
             .all(|percent| percent >= 0.0),
+            // a computer (a tracking or guidance computer) gives every percentage its own way; a disruptor takes some of them the other way (FP-3: a
+            // positive tracking disruption is assistance, not an attack)
+            Self::Disrupt { range_percent, falloff_percent, tracking_percent } => {
+                [*range_percent, *falloff_percent, *tracking_percent].into_iter().any(|percent| percent < 0.0)
+            }
+            Self::GuidanceDisrupt {
+                velocity_percent,
+                delay_percent,
+                aoe_velocity_percent,
+                aoe_cloud_percent,
+            } => {
+                *velocity_percent < 0.0
+                    || *delay_percent > 0.0
+                    || *aoe_velocity_percent < 0.0
+                    || *aoe_cloud_percent > 0.0
+            }
             _ => true,
         }
     }

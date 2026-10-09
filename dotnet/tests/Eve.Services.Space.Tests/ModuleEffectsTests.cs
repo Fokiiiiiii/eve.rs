@@ -39,6 +39,26 @@ public class ModuleEffectsTests
 
 
     [Fact]
+    public void A_module_that_disallows_repeating_activation_has_one_cycle_whatever_repeat_is_asked()
+    {
+        // disallowRepeatingActivation (1014): the server's cycle budget is one, so a module that must fire once cannot be held on by a repeat (EveJS
+        // moduleCycleSchedule.js); a module without it keeps the repeat asked for
+        foreach (var (disallows, expected) in new[] { (1.0, 1), (0.0, 3) })
+        {
+            var fixture = Fixture(
+                5230, "modifyActiveShieldResonancePostPercent", EffectDef.Activation,
+                new Dictionary<int, double> { [6] = 5, [73] = 1000, [1014] = disallows },
+                [],
+                new Dictionary<int, double> { [900] = 100 });
+            var result = Eve.Services.Space.ModulePackages.Of(
+                fixture.Snapshot, fixture.Statics, fixture.ModuleId, "modifyActiveShieldResonancePostPercent", 0, 3);
+
+            Assert.Null(result.Reason);
+            Assert.Equal(expected, Assert.IsType<Eve.Space.SimEffect>(result.Effect).Repeat);
+        }
+    }
+
+    [Fact]
     public void A_modifier_backed_effect_packages_cycles_and_activates_its_sde_dogma_modifiers()
     {
         var modifier = new Modifier(ModifierFunc.Item, "shipID", Operation.PostPercent, 900, 901);

@@ -75,7 +75,10 @@ internal abstract class ShipEffect : IEffectHandler<ShipSnapshot, SimEffect>
     SimEffect IEffectHandler<ShipSnapshot, SimEffect>.Build(EffectContext<ShipSnapshot> context)
     {
         var module = new ModuleEffectContext(context);
-        return Build(module) with { BurnsFuel = module.Value(ModuleAttributes.ConsumptionType, 0) > 0 };
+        var built = Build(module) with { BurnsFuel = module.Value(ModuleAttributes.ConsumptionType, 0) > 0 };
+        // a module that cannot be made to autorepeat (disallowRepeatingActivation 1014) has one cycle as its budget, whatever repeat the client asks for (EveJS
+        // moduleCycleSchedule.js). shortcut: the repeat count the client is told for the effect's FX is one too; EveJS keeps the client's, UNVERIFIED which the client shows.
+        return module.Value(ModuleAttributes.DisallowRepeatingActivation, 0) == 1 ? built with { Repeat = 1 } : built;
     }
 
     void IEffectHandler<ShipSnapshot, SimEffect>.Accepted(EffectContext<ShipSnapshot> context) => Accepted(new ModuleEffectContext(context));

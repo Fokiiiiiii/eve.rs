@@ -3148,3 +3148,28 @@ fn a_running_module_blocks_the_module_it_names_and_no_other() {
     let out = scene.activate(A, Effect { module_id: MODULE + 412, ..afterburner() }, t);
     assert!(out.iter().any(|out| matches!(out, Out::Accepted { .. })), "{out:?}");
 }
+
+#[test]
+fn a_computer_is_not_hostile_and_a_disruptor_is_whatever_its_percentages_say() {
+    // FP-3 and FP-C6: a positive tracking disruption (a tracking computer) helps; a guidance computer does the other way round from a guidance disruptor
+    let tracking_computer =
+        Remote::Disrupt { range_percent: 20.0, falloff_percent: 10.0, tracking_percent: 15.0 };
+    let tracking_disruptor =
+        Remote::Disrupt { range_percent: -20.0, falloff_percent: -10.0, tracking_percent: -15.0 };
+    assert!(!tracking_computer.hostile());
+    assert!(tracking_disruptor.hostile());
+    let guidance_computer = Remote::GuidanceDisrupt {
+        velocity_percent: 10.0,
+        delay_percent: -10.0,
+        aoe_velocity_percent: 10.0,
+        aoe_cloud_percent: -10.0,
+    };
+    let guidance_disruptor = Remote::GuidanceDisrupt {
+        velocity_percent: -10.0,
+        delay_percent: 10.0,
+        aoe_velocity_percent: -10.0,
+        aoe_cloud_percent: 10.0,
+    };
+    assert!(!guidance_computer.hostile());
+    assert!(guidance_disruptor.hostile());
+}

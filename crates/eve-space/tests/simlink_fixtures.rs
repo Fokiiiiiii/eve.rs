@@ -155,6 +155,11 @@ fn turret_of(w: &Value) -> Turret {
             explosion_velocity: m["explosionVelocity"].as_f64().unwrap(),
             damage_reduction_factor: m["damageReductionFactor"].as_f64().unwrap(),
             damage_reduction_sensitivity: m["damageReductionSensitivity"].as_f64().unwrap(),
+            dot: m.get("dot").filter(|d| !d.is_null()).map(|d| eve_space::missiles::Dot {
+                duration_ms: d["durationMs"].as_f64().unwrap(),
+                max_damage_per_tick: d["maxDamagePerTick"].as_f64().unwrap(),
+                max_hp_percent_per_tick: d["maxHpPercentPerTick"].as_f64().unwrap(),
+            }),
         }),
         spool: w
             .get("spool")
@@ -293,6 +298,7 @@ fn effect_of(case: &Value) -> Effect {
                         explosion_velocity: number("explosionVelocity"),
                         damage_reduction_factor: number("damageReductionFactor"),
                         damage_reduction_sensitivity: number("damageReductionSensitivity"),
+                        dot: None,
                     },
                     damage: sensors_of(&a["damage"]),
                 };

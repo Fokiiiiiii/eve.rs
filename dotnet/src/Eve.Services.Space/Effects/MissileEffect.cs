@@ -32,6 +32,13 @@ internal sealed class MissileEffect : ShipEffect
     private const int FestivalLauncherGroup = 501;
     private const int CountermeasureLauncherGroup = 308;
     private const int DefenderChargeGroup = 88;
+    /// <summary>The breacher pod launchers (SCARAB pods): the charge's firing effect is <c>dotMissileLaunching</c>, and a hit starts its damage over time.</summary>
+    private const int BreacherLauncherGroup = 4807;
+    private const string DotMissileLaunching = "dotMissileLaunching";
+    /// <summary>The breacher pod charge's damage over time (<c>dotDuration</c>, <c>dotMaxDamagePerTick</c>, <c>dotMaxHPPercentagePerTick</c>).</summary>
+    private const int DotDuration = 5735;
+    private const int DotMaxDamagePerTick = 5736;
+    private const int DotMaxHpPercentPerTick = 5737;
 
     /// <summary>
     /// The firing effects a launcher of a group that is not in the missile family takes (the festival launcher's snowballs, the countermeasure launcher's torpedoes and defenders).
@@ -41,6 +48,7 @@ internal sealed class MissileEffect : ShipEffect
     {
         [FestivalLauncherGroup] = [SnowBallLaunching],
         [CountermeasureLauncherGroup] = ["missileLaunching", "torpedoLaunching", DefenderMissileLaunching],
+        [BreacherLauncherGroup] = [DotMissileLaunching],
     };
 
     /// <summary>The firing effects of the launchers that put a deployable in space or fire at no target (<see cref="BombEffect"/>, <see cref="InterdictionSphereEffect"/>,
@@ -82,13 +90,12 @@ internal sealed class MissileEffect : ShipEffect
     /// The groups whose launchers carry <c>useMissiles</c> in the static data but are not run yet, each with the reason it is refused (the client shows the module cannot be
     /// started). Every such group is named here, so no launcher group of the static data is left to an unexplained <c>UNSUPPORTED_EFFECT</c>.
     /// The structure launchers (category 66) run on a structure, and no structure service exists yet (the structures are the last phase, DECISIONS); the probe launchers
-    /// need the probe lifecycle and the breacher pods need the damage-over-time effect, neither written yet.
+    /// need the probe lifecycle, which is not written yet. The breacher pods run (their damage over time is in the simulation, <see cref="BreacherLauncherGroup"/>).
     /// </summary>
     public static readonly IReadOnlyDictionary<int, string> RefusedLauncherGroups = new Dictionary<int, string>
     {
         [481] = "PROBE_LAUNCHER_NOT_IMPLEMENTED",
         [1226] = "PROBE_LAUNCHER_NOT_IMPLEMENTED",
-        [4807] = "BREACHER_POD_LAUNCHER_NOT_IMPLEMENTED",
         [1327] = "STRUCTURE_LAUNCHER_NOT_IMPLEMENTED",
         [1328] = "STRUCTURE_LAUNCHER_NOT_IMPLEMENTED",
         [1562] = "STRUCTURE_LAUNCHER_NOT_IMPLEMENTED",
@@ -123,7 +130,7 @@ internal sealed class MissileEffect : ShipEffect
     /// <summary>The missile family, the festival launcher, and the countermeasure launcher when its charge is a missile (a defender is <see cref="DefenderEffect"/>'s).</summary>
     protected override bool Handles(ModuleEffectContext module) =>
         module.Statics.MissileLauncherGroups.Contains(module.Type.GroupId) || module.Type.GroupId == FestivalLauncherGroup
-        || module.Type.GroupId == CountermeasureLauncherGroup && !IsDefenderCharge(module);
+        || module.Type.GroupId == BreacherLauncherGroup || module.Type.GroupId == CountermeasureLauncherGroup && !IsDefenderCharge(module);
 
     /// <summary>Whether the loaded charge of a launcher is a defender missile (its group, 88).</summary>
     internal static bool IsDefenderCharge(ModuleEffectContext module) =>
@@ -181,13 +188,18 @@ internal sealed class MissileEffect : ShipEffect
         var flightTime = Math.Max(1, NpcArmament.Round6(Charge(ExplosionDelay, 1000)));
         // the ball of the missile: what the charge's type says of its size and weight, and its agility (a missile turns at once, so it is small); the reference's defaults where it says nothing
         double Positive(int attribute, double fallback) => Charge(attribute, 0) is var value and > 0 ? value : fallback;
+        // a breacher pod's hit starts the damage over time its charge carries (a charge with no duration has none)
+        var duration = Charge(DotDuration, 0);
+        var dot = duration > 0
+            ? new SimDot(NpcArmament.Round6(duration), Math.Max(0, NpcArmament.Round6(Charge(DotMaxDamagePerTick, 0))), Math.Max(0, NpcArmament.Round6(Charge(DotMaxHpPercentPerTick, 0))))
+            : null;
         var missile = new SimMissile(
             charge.TypeId, module.Statics.Type(charge.TypeId)?.GroupId ?? 0, module.Statics.Type(charge.TypeId)?.Name ?? "Missile",
             Positive(Radius, 1), Positive(Mass, 1), Positive(Agility, 0.1), Math.Max(0, Charge(StructureHitPoints, 0)), maxVelocity, flightTime,
             Math.Max(1, NpcArmament.Round6(Charge(AoeCloudSize, 1))),
             Math.Max(0.001, NpcArmament.Round6(Charge(AoeVelocity, 0.001))),
             Math.Clamp(Charge(AoeDamageReductionFactor, 1), 0.000001, 1),
-            Math.Max(0.000001, NpcArmament.Round6(Charge(AoeDamageReductionSensitivity, DefaultReductionSensitivity))));
+            Math.Max(0.000001, NpcArmament.Round6(Charge(AoeDamageReductionSensitivity, DefaultReductionSensitivity))), dot);
         return missile;
     }
 

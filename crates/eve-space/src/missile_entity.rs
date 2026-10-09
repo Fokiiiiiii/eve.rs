@@ -465,7 +465,7 @@ impl Scene {
         };
         let target_type_id = self.pilots.get(&target_session).map_or(0, |pilot| pilot.ship.spec.type_id);
         // a launch that does no damage (the festival launcher's snowballs, whose effect is not offensive) makes no aggression
-        if turret.raw_damage.iter().any(|damage| *damage > 0.0) {
+        if turret.raw_damage.iter().any(|damage| *damage > 0.0) || spec.dot.is_some() {
             self.aggressions.push(Aggression {
                 attacker_ship: ship_id,
                 target_ship: target_id,
@@ -559,6 +559,10 @@ impl Scene {
         };
         let applied = missile.spec.applied(missile.raw_damage, signature, length(vec(kinematics.velocity)));
         let (mut out, hit) = self.damage(missile.target, applied, at);
+        // a breacher pod's hit starts its damage over time on the ship it reached (`dot_weapons`)
+        if let Some(dot) = missile.spec.dot {
+            self.apply_dot(missile.target, dot, missile.shooter.clone(), at);
+        }
         let taken = hit.map_or(0.0, |hit| hit.taken.shield + hit.taken.armor + hit.taken.structure);
         let destroyed = hit.is_some_and(|hit| hit.destroyed);
         let tier = if applied.iter().sum::<f64>() > 0.0 { 3 } else { 0 };

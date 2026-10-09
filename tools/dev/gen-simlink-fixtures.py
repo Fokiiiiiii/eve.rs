@@ -78,6 +78,11 @@ def changes(items):
         i64(c["itemId"]) + struct.pack("<id", c["attributeId"], c["value"]) for c in items)
 
 
+def dot_bytes(d):
+    # a breacher pod's damage over time (protocol 42): a flag, then its duration, its cap per tick and its percentage per tick
+    return bytes([1]) + struct.pack("<3d", d["durationMs"], d["maxDamagePerTick"], d["maxHpPercentPerTick"]) if d else bytes([0])
+
+
 def turret(t):
     body = struct.pack("<i", t["weaponTypeId"]) + s(t["fx"])
     body += struct.pack("<8d", *t["rawDamage"], t["optimalRange"], t["falloff"], t["trackingSpeed"], t["signatureResolution"])
@@ -87,7 +92,7 @@ def turret(t):
     m = t.get("missile")
     body += bytes([0]) if not m else (bytes([1]) + struct.pack("<ii", m["chargeTypeId"], m["groupId"]) + s(m["name"])
                                       + struct.pack("<10d", m["radius"], m["mass"], m["agility"], m["hitPoints"], m["maxVelocity"], m["flightTimeMs"],
-                                                    m["explosionRadius"], m["explosionVelocity"], m["damageReductionFactor"], m["damageReductionSensitivity"]))
+                                                    m["explosionRadius"], m["explosionVelocity"], m["damageReductionFactor"], m["damageReductionSensitivity"]) + dot_bytes(m.get("dot")))
     # a precursor weapon's damage ramp: the bonus a cycle adds and the most it reaches (absent for the others)
     p = t.get("spool")
     body += bytes([1]) + struct.pack("<2d", p["perCycle"], p["max"]) if p else bytes([0])
@@ -134,7 +139,7 @@ def action(a):
         return (bytes([22]) + struct.pack("<ii", m["chargeTypeId"], m["groupId"]) + s(m["name"])
                 + struct.pack("<10d", m["radius"], m["mass"], m["agility"], m["hitPoints"], m["maxVelocity"], m["flightTimeMs"],
                               m["explosionRadius"], m["explosionVelocity"], m["damageReductionFactor"], m["damageReductionSensitivity"])
-                + struct.pack("<4d", *a["damage"]))
+                + dot_bytes(None) + struct.pack("<4d", *a["damage"]))
     if kind == "stasisBurst":
         return bytes([21]) + struct.pack("<3d", a["range"], a["durationMs"], a["speedFactor"])
     if kind == "warpProbe":
@@ -731,6 +736,19 @@ valid = [
                                        "damageReductionSensitivity": 5.5}},
                 "onChanges": [{"itemId": "9988400003564", "attributeId": 51, "value": 4900.0}],
                 "offChanges": [{"itemId": "9988400003564", "attributeId": 51, "value": 4900.0}]}},
+    {"name": "activate a breacher pod launcher whose pod starts a damage over time", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400003600", "moduleType": 85084, "effectId": 101, "fx": "effects.MissileDeployment",
+                "durationMs": 20000.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "980050000111",
+                "turret": {"weaponTypeId": 85084, "requiresGunnery": False, "fx": "effects.MissileDeployment", "rawDamage": [0.0, 0.0, 0.0, 0.0],
+                           "optimalRange": 4000.0, "falloff": 0.0, "trackingSpeed": 0.0, "signatureResolution": 40000.0,
+                           "charge": {"typeId": 85088, "flag": 28, "rounds": 4, "perCycle": 1},
+                           "missile": {"chargeTypeId": 85088, "groupId": 4808, "name": "SCARAB Breacher Pod S", "radius": 1.0, "mass": 1.0,
+                                       "agility": 1.0, "hitPoints": 0.0, "maxVelocity": 2000.0, "flightTimeMs": 2000.0,
+                                       "explosionRadius": 35.0, "explosionVelocity": 2000.0, "damageReductionFactor": 1.0,
+                                       "damageReductionSensitivity": 5.5,
+                                       "dot": {"durationMs": 40000.0, "maxDamagePerTick": 200.0, "maxHpPercentPerTick": 0.6}}},
+                "onChanges": [{"itemId": "9988400003600", "attributeId": 51, "value": 20000.0}],
+                "offChanges": [{"itemId": "9988400003600", "attributeId": 51, "value": 20000.0}]}},
     {"name": "activate a precursor weapon that builds its damage up", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002720", "moduleType": 47272, "effectId": 6995, "fx": "effects.Laser",
                 "durationMs": 3500.0, "capacitorNeed": 4.5, "repeat": 1000, "targetId": "980050000108",

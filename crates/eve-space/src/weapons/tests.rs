@@ -1161,6 +1161,7 @@ fn launcher(max_velocity: f64, flight_time_ms: f64, explosion_radius: f64) -> Tu
             explosion_velocity: 1.0e9,
             damage_reduction_factor: 0.5,
             damage_reduction_sensitivity: crate::missiles::DEFAULT_REDUCTION_SENSITIVITY,
+            dot: None,
         }),
         spool: None,
         aoe: None,

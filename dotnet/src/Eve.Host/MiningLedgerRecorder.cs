@@ -4,7 +4,7 @@ using Eve.Events;
 using Eve.GameStore;
 using Eve.Ships;
 
-namespace Eve.Services.Space;
+namespace Eve.Host;
 
 /// <summary>
 /// The mining ledger writer: the subscriber <c>mining.ledger</c> on <c>mining.ore_mined</c>. One entry per granted cycle goes to the character's row of the

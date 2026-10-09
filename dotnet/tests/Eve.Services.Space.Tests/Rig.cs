@@ -85,7 +85,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         var npcAuthorityOf = npcAuthority ?? Eve.Npc.NpcAuthority.Load();
         Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => Now, Log.Add, protection, jumpCloak, localTimers) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(npcAuthorityOf), NpcWrecks = npcLoot ? new NpcWrecks(_ => LootTable, () => Task.FromResult(new Eve.Npc.NpcLoot(LootPool)), Ships, () => 0) : null, BeltRats = beltRats is null ? null : new Eve.Npc.BeltRats(npcAuthorityOf, beltRats, type => Eve.Npc.NpcHull.HasHitPoints(statics.Type(type))) };
         Space.UseBounties(Bounties);
-        Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, new Eve.Ships.PgWorkCycleLedger(source, _schemas[6]), Events, statics, Space, () => Now, Log.Add);
+        Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, new Eve.Ships.PgWorkCycleLedger(source, _schemas[6]), new EventBusFacts(Events), statics, Space, () => Now, Log.Add);
         Drones = new SpaceDrones(Sim, Ships, statics, Space, () => Now, Log.Add);
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Ships, statics, () => Now, Containers, Drones);
         Ship = new ShipService(Space, () => ClockMs, Containers, Drones);

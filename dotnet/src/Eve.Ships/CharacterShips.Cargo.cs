@@ -1,5 +1,4 @@
 using Eve.Dogma;
-using Eve.Events;
 using Eve.Fitting;
 using Eve.Inventory;
 
@@ -295,7 +294,7 @@ private sealed record ShipHoldRule(
     /// </summary>
     public async Task<DroneMiningCommit> MineAsteroidAsync(
         long characterId, long shipId, int solarSystemId, long minerId, long asteroidId, MiningSource kind, MiningNumbers numbers, MiningRolls rolls,
-        long cycleId, PgWorkCycleLedger ledger, PgSpaceItemStore spaceItems, EventBus events, int corporationId, CancellationToken cancellationToken = default)
+        long cycleId, PgWorkCycleLedger ledger, PgSpaceItemStore spaceItems, IFactBus events, int corporationId, CancellationToken cancellationToken = default)
     {
         static bool IsRoll(double value) => value >= 0d && value <= 1d;
         if (!double.IsFinite(numbers.YieldM3) || numbers.YieldM3 <= 0 || !double.IsFinite(numbers.WasteVolumeMultiplier)
@@ -433,7 +432,7 @@ private sealed record ShipHoldRule(
     /// </summary>
     public async Task<DroneSalvageCommit> SalvageWreckAsync(
         long characterId, long shipId, int solarSystemId, MiningSource kind, long minerId, long wreckId, int? productTypeId,
-        SpaceItem wreckSpace, long containerExpiresAtMs, PgSpaceItemStore spaceItems, long cycleId, PgWorkCycleLedger ledger, EventBus events,
+        SpaceItem wreckSpace, long containerExpiresAtMs, PgSpaceItemStore spaceItems, long cycleId, PgWorkCycleLedger ledger, IFactBus events,
         CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);

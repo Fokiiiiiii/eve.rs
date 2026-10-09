@@ -95,24 +95,24 @@ public class MiningProfileTests
         var rolls = new MiningRolls(0.5, 0.5, 0.5, 0.5, 0.5);
 
         // a drone is refused as a module, and a module as a drone: nothing is mined
-        var asModule = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, drone, rock, MiningSource.Module, numbers, rolls, 1, ledger, spaceItems, rig.Events, 0);
-        var asDrone = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, module, rock, MiningSource.Drone, numbers, rolls, 1, ledger, spaceItems, rig.Events, 0);
+        var asModule = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, drone, rock, MiningSource.Module, numbers, rolls, 1, ledger, spaceItems, rig.Facts, 0);
+        var asDrone = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, module, rock, MiningSource.Drone, numbers, rolls, 1, ledger, spaceItems, rig.Facts, 0);
         Assert.Equal(("NOT_CONTROLLED", false), (asModule.Reason, asModule.Accepted));
         Assert.Equal(("NOT_CONTROLLED", false), (asDrone.Reason, asDrone.Accepted));
 
         // 10 m3 of Veldspar (0.1 m3 a unit) is 100 units, for either source: the rock keeps what is left
-        var byModule = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, module, rock, MiningSource.Module, numbers, rolls, 2, ledger, spaceItems, rig.Events, 0);
+        var byModule = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, module, rock, MiningSource.Module, numbers, rolls, 2, ledger, spaceItems, rig.Facts, 0);
         Assert.Equal((true, "", 900L, 100L, false), (byModule.Accepted, byModule.Reason, byModule.UnitsRemaining, byModule.DeliveredUnits, byModule.Depleted));
 
         // the same cycle again is answered from its record inside the grant transaction: the rock gives nothing more
-        var again = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, module, rock, MiningSource.Module, numbers, rolls, 2, ledger, spaceItems, rig.Events, 0);
+        var again = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, module, rock, MiningSource.Module, numbers, rolls, 2, ledger, spaceItems, rig.Facts, 0);
         Assert.Equal((true, "", 900L, 100L, false), (again.Accepted, again.Reason, again.UnitsRemaining, again.DeliveredUnits, again.Depleted));
         Assert.Equal(900L, (await rig.Items.GetAsync(rock))!.Quantity);
 
         var type = rig.Statics.Type(MiningDroneI);
         Assert.Equal((true, true, 18, "Drone"), ((await rig.Items.GetAsync(drone)) is not null, type is not null, type?.CategoryId ?? -1, rig.Statics.CategoryName(type?.CategoryId ?? -1)));
 
-        var byDrone = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, drone, rock, MiningSource.Drone, numbers, rolls, 3, ledger, spaceItems, rig.Events, 0);
+        var byDrone = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, drone, rock, MiningSource.Drone, numbers, rolls, 3, ledger, spaceItems, rig.Facts, 0);
         Assert.Equal((true, "", 800L, 100L, false), (byDrone.Accepted, byDrone.Reason, byDrone.UnitsRemaining, byDrone.DeliveredUnits, byDrone.Depleted));
     }
 
@@ -141,9 +141,9 @@ public class MiningProfileTests
         });
         await rig.Events.PumpAsync();   // the subscriber starts here
 
-        var refused = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, drone, rock, MiningSource.Module, numbers, rolls, 1, ledger, spaceItems, rig.Events, 7);
-        var granted = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, module, rock, MiningSource.Module, numbers, rolls, 2, ledger, spaceItems, rig.Events, 7);
-        var repeated = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, module, rock, MiningSource.Module, numbers, rolls, 2, ledger, spaceItems, rig.Events, 7);
+        var refused = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, drone, rock, MiningSource.Module, numbers, rolls, 1, ledger, spaceItems, rig.Facts, 7);
+        var granted = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, module, rock, MiningSource.Module, numbers, rolls, 2, ledger, spaceItems, rig.Facts, 7);
+        var repeated = await rig.Ships.MineAsteroidAsync(c.CharacterId, c.ShipId, system, module, rock, MiningSource.Module, numbers, rolls, 2, ledger, spaceItems, rig.Facts, 7);
         await rig.Events.PumpAsync();
 
         Assert.Equal(("NOT_CONTROLLED", true, "", true), (refused.Reason, granted.Accepted, repeated.Reason, repeated.Accepted));

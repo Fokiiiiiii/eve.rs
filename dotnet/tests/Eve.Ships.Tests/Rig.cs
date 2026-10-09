@@ -12,6 +12,16 @@ using Npgsql;
 
 namespace Eve.Ships.Tests;
 
+/// <summary>The rig's event bus as the fact bus of the cycles.</summary>
+internal sealed class BusFacts(EventBus bus) : Eve.Ships.IFactBus
+{
+    public Task PublishInTransactionAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, string topic, object payload, string key, CancellationToken cancellationToken = default) =>
+        bus.PublishAsync(connection, transaction, topic, payload, key, cancellationToken);
+
+    public void Wake() => bus.Wake();
+}
+
 /// <summary>Skips a test, loudly, when there is no PostgreSQL with the SDE loaded (see tools/dev/pg18.sh).</summary>
 public sealed class PgFactAttribute : FactAttribute
 {
@@ -48,6 +58,7 @@ internal sealed class Rig : IAsyncDisposable
         Creation = creation;
         Ships = new CharacterShips(source, statics, Characters, Items, Skills, Modules);
         Events = new EventBus(source, new DurableScheduler(source, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), schema: _schemas[5]), schema: _schemas[6]);
+        Facts = new BusFacts(Events);
     }
 
     public NpgsqlDataSource Source { get; }
@@ -71,6 +82,9 @@ internal sealed class Rig : IAsyncDisposable
 
     /// <summary>The event bus the mining cycles publish on (its outbox is kept in this rig's schema).</summary>
     public EventBus Events { get; }
+
+    /// <summary>The bus as the cycles see it: the facts go to <see cref="Events"/> in the grant's transaction.</summary>
+    public Eve.Ships.IFactBus Facts { get; }
 
     public const int Cockroach = 11019;
     private const int CaldariRookieShip = 601;

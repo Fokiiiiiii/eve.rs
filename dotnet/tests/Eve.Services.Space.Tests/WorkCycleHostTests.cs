@@ -127,7 +127,7 @@ public class WorkCycleHostTests
         // the host restarts: the old dispatcher goes, a new one reads the same schema
         rig.Containers.Dispose();
         using var restarted = new SpaceContainers(
-            rig.Sim, rig.Ships, rig.Items, rig.SpaceItems, new PgWorkCycleLedger(rig.Source, rig.SpaceSchema), rig.Events, rig.Statics, rig.Space, () => rig.Now);
+            rig.Sim, rig.Ships, rig.Items, rig.SpaceItems, new PgWorkCycleLedger(rig.Source, rig.SpaceSchema), new EventBusFacts(rig.Events), rig.Statics, rig.Space, () => rig.Now);
         rig.Sim.MeasureAnswer = 100;
 
         var repeat = await SettleAsync(rig, ModuleCycle(flying, flying.Module, rock, 41));

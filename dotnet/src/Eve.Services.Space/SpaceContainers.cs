@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using Eve.Dogma;
-using Eve.Events;
 using Eve.Inventory;
 using Eve.Marshal;
 using Eve.Services.Ships;
@@ -49,7 +48,7 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
     private readonly PgItemStore _items;
     private readonly PgSpaceItemStore _spaceItems;
     private readonly PgWorkCycleLedger _cycles;
-    private readonly EventBus _events;
+    private readonly IFactBus _events;
     private readonly DogmaStatic _statics;
     private readonly SpaceSessions _space;
     private readonly Func<long> _nowUnixMs;
@@ -66,7 +65,7 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
     private readonly System.Collections.Concurrent.ConcurrentDictionary<long, byte> _abandonedLoot = new();
 
     public SpaceContainers(
-        ISimulation sim, CharacterShips ships, PgItemStore items, PgSpaceItemStore spaceItems, PgWorkCycleLedger cycles, EventBus events, DogmaStatic statics,
+        ISimulation sim, CharacterShips ships, PgItemStore items, PgSpaceItemStore spaceItems, PgWorkCycleLedger cycles, IFactBus events, DogmaStatic statics,
         SpaceSessions space, Func<long> nowUnixMs, Action<string>? log = null, TimeSpan? sweepEvery = null)
     {
         (_sim, _ships, _items, _spaceItems, _cycles, _events, _statics, _space, _nowUnixMs, _log) = (sim, ships, items, spaceItems, cycles, events, statics, space, nowUnixMs, log);

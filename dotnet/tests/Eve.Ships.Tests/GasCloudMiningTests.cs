@@ -27,7 +27,7 @@ public class GasCloudMiningTests
 
         var mined = await rig.Ships.MineAsteroidAsync(
             c.CharacterId, c.ShipId, system, harvester, cloud, MiningSource.Module,
-            new MiningNumbers(10, 0, 0, 0, 0), new MiningRolls(0.5, 0.5, 0.5, 0.5, 0.5), 1, ledger, spaceItems, rig.Events, 0);
+            new MiningNumbers(10, 0, 0, 0, 0), new MiningRolls(0.5, 0.5, 0.5, 0.5, 0.5), 1, ledger, spaceItems, rig.Facts, 0);
 
         Assert.True(mined.Accepted, mined.Reason);
         Assert.Equal(gas!.Value, mined.OreTypeId);

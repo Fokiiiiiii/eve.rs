@@ -1,5 +1,4 @@
 using Eve.Data;
-using Eve.Events;
 using Npgsql;
 
 namespace Eve.Ships;
@@ -61,7 +60,7 @@ public sealed class PgWorkCycleLedger
     }
 
     /// <summary>Records the answer to the owner's cycle and publishes its fact on the bus, in one transaction: the fact is announced if and only if the answer is kept.</summary>
-    public async Task RecordWithFactAsync(WorkCycleRecord record, EventBus events, string topic, object payload, string key, CancellationToken cancellationToken = default)
+    public async Task RecordWithFactAsync(WorkCycleRecord record, IFactBus events, string topic, object payload, string key, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);

@@ -96,7 +96,7 @@ public class ModuleFuelHostTests
         // the host restarts: the old dispatcher goes, a new one reads the same ledger
         rig.Containers.Dispose();
         using var restarted = new SpaceContainers(
-            rig.Sim, rig.Ships, rig.Items, rig.SpaceItems, new PgWorkCycleLedger(rig.Source, rig.SpaceSchema), rig.Events, rig.Statics, rig.Space, () => rig.Now);
+            rig.Sim, rig.Ships, rig.Items, rig.SpaceItems, new PgWorkCycleLedger(rig.Source, rig.SpaceSchema), new EventBusFacts(rig.Events), rig.Statics, rig.Space, () => rig.Now);
         var repeat = await SettleAsync(rig, FuelCycle(flying, flying.Module, 5));
 
         Assert.True(repeat.Accepted);

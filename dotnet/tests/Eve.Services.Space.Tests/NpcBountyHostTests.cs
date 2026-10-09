@@ -142,6 +142,8 @@ public class NpcBountyHostTests
         await Rig.UntilAsync(() => rig.Bounties.PendingAsync().Result.Count == 1);
         rig.Sim.Say(Destroyed(second, c.ShipId));
         await Rig.UntilAsync(() => rig.Bounties.PendingAsync().Result.Single().Kills == 2);
+        // the pilot is told of each kill after its bucket is written, so both notices are waited for
+        await Rig.UntilAsync(() => Events.Of(session, clear: false).Count(e => e.Name == "OnBountyAddedToPayout") == 2);
 
         Assert.Equal(30_000m, Assert.Single(await rig.Bounties.PendingAsync()).Amount);
         Assert.Equal(2, Events.Of(session).Count(e => e.Name == "OnBountyAddedToPayout"));

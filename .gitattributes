@@ -1,0 +1,7 @@
+# Line endings: the repository stores LF. Windows checkouts get CRLF only for the scripts cmd.exe and
+# PowerShell read; shell scripts stay LF so bash keeps working under Git Bash and WSL.
+* text=auto
+*.sh text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

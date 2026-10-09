@@ -10,6 +10,7 @@ using Eve.Services.Space.Effects;
 using Eve.Services.Ships;
 using Eve.Ships;
 using Eve.Space;
+using Eve.Universe;
 
 namespace Eve.Services.Space;
 
@@ -49,19 +50,22 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
     private readonly CharacterShips _ships;
     private readonly DogmaStatic _statics;
     private readonly Func<ClientSession, int?> _solarSystemOf;
+    private readonly Func<int, double?>? _securityOf;
     private readonly Action<string>? _log;
     private readonly ConcurrentDictionary<long, Launched> _launched = new();
     /// <summary>The squadrons let go in space: their items stay there until they are scooped back or destroyed (the simulation keeps them).</summary>
     private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
     private long _requests;
 
-    public SpaceFighters(ISimulation? sim, CharacterShips ships, DogmaStatic statics, Func<ClientSession, int?> solarSystemOf, Action<string>? log = null)
+    public SpaceFighters(ISimulation? sim, CharacterShips ships, DogmaStatic statics, Func<ClientSession, int?> solarSystemOf, Action<string>? log = null,
+        Func<int, double?>? securityOf = null)
     {
         _sim = sim;
         _ships = ships;
         _statics = statics;
         _solarSystemOf = solarSystemOf;
         _log = log;
+        _securityOf = securityOf;
         if (_sim is not null)
         {
             _sim.Received += OnReceived;
@@ -198,11 +202,13 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
     {
         var (session, characterId, _) = Pilot(call);
         var slot = (int)IdOf(call.Arg(1));
-        var target = IdOf(call.Arg(2));
+        // a point-targeted ability (a LaunchBomb) names a point, any other names a target (the client's ActivateAbilitySlotsAtPoint and OnTarget)
+        var point = PointOf(call.Arg(2));
+        var target = point is null ? IdOf(call.Arg(2)) : 0;
         var entries = new List<KeyValuePair<PyValue, PyValue>>();
         foreach (var id in IdsOf(call.Arg(0)))
         {
-            var refusal = await ActivateAbilityAsync(session, characterId, id, slot, target, call.Cancellation);
+            var refusal = await ActivateAbilityAsync(session, characterId, id, slot, target, point, call.Cancellation);
             entries.Add(new(InventoryWire.Id(id), refusal is null ? PyNone.Instance : MachoErrors.UserErrorPayload(refusal)));
         }
         return new PyDict(entries);
@@ -225,7 +231,8 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
     /// <summary>The id of a squadron's ability module in the simulation: the squadron's item id and its slot (the slots are 0 to 7).</summary>
     private static long ModuleIdOf(long fighterId, int slot) => fighterId * 8 + slot;
 
-    private async Task<string?> ActivateAbilityAsync(ClientSession session, long characterId, long fighterId, int slot, long target, CancellationToken cancellationToken)
+    private async Task<string?> ActivateAbilityAsync(ClientSession session, long characterId, long fighterId, int slot, long target, double[]? point,
+        CancellationToken cancellationToken)
     {
         if (_sim is null)
         {
@@ -241,6 +248,17 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
         {
             return "That fighter has no such ability slot.";
         }
+        if (SecurityRefusal(ability, squadron) is { } securityRefusal)
+        {
+            return Describe(securityRefusal);
+        }
+        // the bomb a LaunchBomb launches is the squadron type's own (its SDE attribute 2324); the blast reads its numbers
+        var bombTypeId = (int)type.Attributes.GetValueOrDefault(FighterAbilityEffects.LaunchBombTypeAttribute, 0);
+        if (bombTypeId > 0)
+        {
+            await _statics.EnsureTypesAsync([bombTypeId], cancellationToken).ConfigureAwait(false);
+        }
+        var bomb = bombTypeId > 0 ? _statics.Type(bombTypeId) : null;
         var state = _slots.GetOrAdd((fighterId, slot), _ => new AbilitySlot());
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (state.Begin(now, entry.Charges is { } charges ? charges.ChargeCount : null) is { } refused)
@@ -249,7 +267,7 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
         }
         var members = _sizes.GetValueOrDefault(fighterId, 1);
         var (effect, reason) = FighterAbilityEffects.Build(FighterAbilityEffects.EffectNameOf(ability.EffectFamily), type, _statics,
-            ModuleIdOf(fighterId, slot), target, members, entry.CooldownSeconds);
+            ModuleIdOf(fighterId, slot), target, members, entry.CooldownSeconds, point, bomb);
         if (effect is null)
         {
             state.Cancel();
@@ -278,6 +296,24 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
             InventoryWire.Id(fighterId), new PyInt(slot), state.ChargesLeftValue is { } left ? new PyInt(left) : PyNone.Instance,
             FileTimeOf(now), new PyInt((int)Math.Max(1, effect.DurationMs)), state.CooldownNotice(FileTimeOf)));
         return null;
+    }
+
+    /// <summary>
+    /// The refusal of an ability the system's security class forbids (EVE.js <c>buildAbilitySecurityRestrictionError</c>: a high-security system refuses an ability
+    /// flagged for high security, a low-security one one flagged for low security), or null. A system the catalogue does not know is not refused.
+    /// </summary>
+    private string? SecurityRefusal(FighterAbility ability, Launched squadron)
+    {
+        if (_securityOf is null || _solarSystemOf(squadron.Pilot) is not { } system || _securityOf(system) is not { } level)
+        {
+            return null;
+        }
+        var securityClass = Security.ClassFromLevel(level);
+        if (Security.IsHighSecOrHigher(securityClass) && ability.DisallowInHighSec)
+        {
+            return ModuleRestrictions.CantInHighSecSpace;
+        }
+        return Security.IsLowSec(securityClass) && ability.DisallowInLowSec ? ModuleRestrictions.CantInEmpireSpace : null;
     }
 
     private async Task<string?> DeactivateAbilityAsync(ClientSession session, long characterId, long fighterId, int slot, CancellationToken cancellationToken)
@@ -330,7 +366,10 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
     /// <summary>The reason an ability's refusal code is said to the pilot.</summary>
     private static string Describe(string reason) => reason switch
     {
-        FighterAbilityEffects.LaunchBombRefusal => "Launch bomb needs the area mechanism of ADR 0011, which the simulation does not have yet.",
+        FighterAbilityEffects.PointRequired => "That fighter ability requires a target point.",
+        FighterAbilityEffects.NoBomb => "That fighter has no bomb to launch.",
+        ModuleRestrictions.CantInHighSecSpace => "That ability cannot be used in high security space.",
+        ModuleRestrictions.CantInEmpireSpace => "That ability cannot be used in low security space.",
         "ALREADY_ACTIVE" => "That ability is already running.",
         "NO_COOLDOWN" => "That ability has no cooldown to jump on.",
         "TARGET_REQUIRED" => "That ability needs a target.",

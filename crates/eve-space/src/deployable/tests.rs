@@ -283,3 +283,52 @@ fn a_defender_launcher_shoots_down_the_hostile_missile_in_its_reach() {
         "the interception is played as an explosion"
     );
 }
+
+/// The `OnDamageMessage` notices a list of outputs carries for a session.
+fn damage_told(out: &[Out], who: SessionId) -> usize {
+    out.iter()
+        .filter(|o| matches!(o, Out::Notify { session, name: "OnDamageMessage", .. } if *session == who))
+        .count()
+}
+
+#[test]
+fn a_fighter_blast_goes_off_when_its_window_ends_and_hurts_every_ship_in_its_radius_the_launcher_too() {
+    let (mut scene, t) = crowd();
+    // the target and the launcher's ship hold still, the launcher 100 m from the blast's centre: both are within its 15 km
+    let b = scene.pilots[&B].ship.position;
+    place(&mut scene, B, b);
+    place(&mut scene, A, eve_destiny::Vec3::new(b.x + 100.0, b.y, b.z));
+    let blast = Action::Blast { centre: [b.x, b.y, b.z], radius: 15_000.0, damage: [640.0, 0.0, 0.0, 0.0] };
+    let started = scene.activate(A, module(MODULE, blast, 60_000.0), t);
+    assert!(accepted(&started), "{started:?}");
+    let (before, t2) = poll_for(&mut scene, t, 59.0);
+    assert_eq!(
+        damage_told(&before, B) + damage_told(&before, A),
+        0,
+        "nothing goes off before the window ends"
+    );
+    let (after, _) = poll_for(&mut scene, t2, 2.0);
+    assert!(damage_told(&after, B) >= 1, "the ship in the blast is hit once its window ends");
+    assert!(
+        damage_told(&after, A) >= 1,
+        "the launcher's own ship is not spared (EVE.js executeFighterBombCycle)"
+    );
+    assert!(
+        scene.pilots[&A].modules.running.is_empty(),
+        "the window is one cycle: the blast ends the ability"
+    );
+}
+
+#[test]
+fn a_fighter_blast_does_not_reach_a_ship_beyond_its_radius() {
+    let (mut scene, t) = crowd();
+    // the blast is centred on the launcher's ship; the other ship is 40 km off, beyond the 15 km radius
+    let a = scene.pilots[&A].ship.position;
+    place(&mut scene, A, a);
+    place(&mut scene, B, eve_destiny::Vec3::new(a.x + 40_000.0, a.y, a.z));
+    let blast = Action::Blast { centre: [a.x, a.y, a.z], radius: 15_000.0, damage: [640.0, 0.0, 0.0, 0.0] };
+    assert!(accepted(&scene.activate(A, module(MODULE, blast, 10_000.0), t)));
+    let (out, _) = poll_for(&mut scene, t, 12.0);
+    assert_eq!(damage_told(&out, B), 0, "a ship 40 km off is outside the blast");
+    assert!(damage_told(&out, A) >= 1, "the blast went off at the launcher's ship");
+}

@@ -500,6 +500,19 @@ public abstract record SimAction
             && Damage.All(d => double.IsFinite(d) && d >= 0);
     }
 
+    /// <summary>
+    /// A fighter's LaunchBomb blast (tag 25, protocol 37): when its window ends the blast goes off at <paramref name="Centre"/> (metres), and each ship within
+    /// <paramref name="RadiusMeters"/> of it (its surface) takes <paramref name="Damage"/> (the four kinds) once. The area of ADR 0011.
+    /// </summary>
+    public sealed record Blast(IReadOnlyList<double> Centre, double RadiusMeters, IReadOnlyList<double> Damage) : SimAction
+    {
+        /// <summary>Whether the numbers are ones the simulation runs (a finite centre, a positive radius, four finite and not negative damages).</summary>
+        public bool IsValid =>
+            Centre.Count == 3 && Centre.All(double.IsFinite)
+            && double.IsFinite(RadiusMeters) && RadiusMeters > 0
+            && Damage.Count == 4 && Damage.All(d => double.IsFinite(d) && d >= 0);
+    }
+
     public sealed record Strike(
         byte Shape,
         IReadOnlyList<double> Direction,

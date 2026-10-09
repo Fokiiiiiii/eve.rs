@@ -94,6 +94,9 @@ impl Scene {
             {
                 self.reach_cycle_start(session, effect, *range, at)
             }
+            Some(Action::Blast { centre, radius, damage }) if when == Applies::CycleEnd => {
+                self.blast_at(session, effect.module_type, *centre, *radius, *damage, at)
+            }
             Some(Action::EcmBurst { range, strength }) if when == Applies::CycleStart => {
                 self.jam_burst(session, strength, *range, at)
             }

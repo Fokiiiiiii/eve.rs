@@ -284,6 +284,7 @@ impl Action {
             | Self::Doomsday { .. }
             | Self::Kamikaze { .. }
             | Self::Missile { .. }
+            | Self::Blast { .. }
             | Self::Bomb { .. } => true,
             Self::Cloak { .. }
             | Self::MicroJumpDrive { .. }
@@ -498,6 +499,13 @@ pub enum Action {
         damage: crate::health::Damage,
         reach: f64,
         blast: crate::missiles::Blast,
+    },
+    /// A fighter's LaunchBomb (tag 25, protocol 37): when its window ends the blast goes off at `centre` and every ship within `radius` metres of it takes
+    /// `damage` once (`Scene::blast_at`, the area of ADR 0011).
+    Blast {
+        centre: [f64; 3],
+        radius: f64,
+        damage: crate::health::Damage,
     },
 }
 

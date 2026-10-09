@@ -12,8 +12,20 @@ namespace Eve.Services.Space.Effects;
 /// </summary>
 internal static class FighterAbilityEffects
 {
-    /// <summary>LaunchBomb: the bomb's blast needs the superweapons' area mechanism (ADR 0011), which is not in the simulation yet.</summary>
-    public const string LaunchBombRefusal = "LAUNCH_BOMB_NOT_IN_SIMULATION";
+    /// <summary>LaunchBomb is point-targeted: the client names a point (<c>ActivateAbilitySlotsAtPoint</c>), and the ability has none.</summary>
+    public const string PointRequired = "TARGET_POINT_REQUIRED";
+
+    /// <summary>LaunchBomb's bomb (<c>fighterAbilityLaunchBombType</c>) is not in the static data, or it has no blast radius or damage.</summary>
+    public const string NoBomb = "NO_BOMB";
+
+    /// <summary>The squadron type's attribute that names the bomb it launches (SDE 2324, <c>fighterAbilityLaunchBombType</c>).</summary>
+    public const int LaunchBombTypeAttribute = 2324;
+
+    // the bomb type's attributes (SDE ids): the blast radius (the field range, else the explosion range), the four damages (em, thermal, kinetic, explosive) and
+    // the window the squadron keeps the bomb for (on the squadron's effect: the ability's duration)
+    private static readonly int[] BombRadiusAttributes = [99, 107];
+    private static readonly int[] BombDamageAttributes = [114, 118, 117, 116];
+    private const int LaunchBombDuration = 2349;
 
     private const string UnsupportedEffect = "UNSUPPORTED_EFFECT";
 
@@ -64,7 +76,8 @@ internal static class FighterAbilityEffects
     /// is held on (0 for a self buff) and the slot's cooldown (a jump drive's). Null with the reason when the ability cannot be run.
     /// </summary>
     public static (SimEffect? Effect, string? Refusal) Build(
-        string effectName, TypeDef type, DogmaStatic statics, long moduleId, long targetId, int squadronSize, double? cooldownSeconds)
+        string effectName, TypeDef type, DogmaStatic statics, long moduleId, long targetId, int squadronSize, double? cooldownSeconds,
+        double[]? point = null, TypeDef? bomb = null)
     {
         var effect = type.EffectIds.Select(statics.Effect).FirstOrDefault(e => e is not null && e.Name.Trim().Equals(effectName, StringComparison.OrdinalIgnoreCase));
         if (effect is null)
@@ -162,7 +175,26 @@ internal static class FighterAbilityEffects
                     new SimAction.Kamikaze(damage, Value(KamikazeRange))), null);
             }
             case "fighterAbilityLaunchBomb":
-                return (null, LaunchBombRefusal);
+            {
+                // the blast is the area of ADR 0011 at the point the pilot names: the bomb type's radius and four damages, dealt once when the window ends
+                // (EVE.js executeFighterBombCycle, which reads empFieldRange or else explosionRange, and emDamage, thermalDamage, kineticDamage, explosiveDamage)
+                if (point is null || point.Any(coordinate => !double.IsFinite(coordinate)))
+                {
+                    return (null, PointRequired);
+                }
+                if (bomb is null)
+                {
+                    return (null, NoBomb);
+                }
+                var radius = BombRadiusAttributes.Select(attribute => bomb.Attributes.GetValueOrDefault(attribute, 0)).FirstOrDefault(value => value > 0);
+                var damage = BombDamageAttributes.Select(attribute => bomb.Attributes.GetValueOrDefault(attribute, 0)).ToArray();
+                if (radius <= 0 || damage.Sum() <= 0)
+                {
+                    return (null, NoBomb);
+                }
+                return (new SimEffect(moduleId, type.TypeId, effect.Id, effect.Guid, CycleOr(LaunchBombDuration), 0, 1, 0, null, null, [], [], null,
+                    new SimAction.Blast(point, radius, damage)), null);
+            }
             default:
                 return (null, UnsupportedEffect);
         }

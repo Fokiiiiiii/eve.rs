@@ -52,3 +52,8 @@ The bombs spec is not in the repository, so the bomb-specific parts (blast, dela
 - Used by: the bomb (`SimAction.Bomb`, protocol 34; its kinds are damage, ECM and neutralisation), and the stasis burst (`SimAction.StasisBurst`, the web of a charge's doomsday area, centred on the launcher's ship). Not used by the field generator (a bubble is the ship's own source, `SimAction.WarpBubble`) nor the probe (a point source, `WarpProbe`).
 - The defender is not an area: its interception is a single missile (`Scene::defender_intercept`).
 
+## Addendum (2026-10-09, track C3: the fighter's LaunchBomb uses the Area)
+
+- A fighter's LaunchBomb is the second user of the area of the bombs track, not a new mechanism: `SimAction.Blast` (tag 25, protocol 37) carries the point the pilot names, the radius and the four damages. When the squadron's window ends, `Scene::blast_at` (`crates/eve-space/src/deployable.rs`) hits each ship from `ships_in_area` with the same `damage_ship` path as a bomb. There is no ball and no delay: the reference applies the blast at the window's end (EVE.js `executeFighterBombCycle`). The fighter-specific choices (no spared launcher, no undock-protection check, no damage multiplier, surface distance) are in DEVIATIONS, "Fighter LaunchBomb".
+- The Area stays one radius mechanism: a fleet or hostile filter still comes as a host list in a later wire batch (decision 5).
+

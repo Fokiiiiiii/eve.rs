@@ -39,6 +39,7 @@ internal sealed partial class CharacterServicesComposition
 {
     private Eve.Services.Corporations.AllianceMaintenanceBillWorker? allianceMaintenanceBillWorker;
 
+
     private async Task CorporationMigrations()
     {
         // Codex-owned corporation registration; keep combat/NPC construction in its own block below.
@@ -144,10 +145,18 @@ internal sealed partial class CharacterServicesComposition
             corporations, characters, foundations.Scheduler, foundations.Relations, foundations.Events,
             allianceAffiliationNotify, characterSessions);
         await allianceDue.RegisterAsync();
-        allianceMaintenanceBillWorker = new Eve.Services.Corporations.AllianceMaintenanceBillWorker(
-            corporations, new Eve.Corporations.CorporationOfficeStore(source, corporationSchema),
-            foundations.Scheduler, now);
-        await allianceMaintenanceBillWorker.RegisterAsync();
+        var officeStore = new Eve.Corporations.CorporationOfficeStore(source, corporationSchema);
+        var warInheritance = new Eve.Services.Corporations.AllianceWarInheritanceWorker(
+            source, corporations, officeStore, foundations.Relations, foundations.Scheduler, now, characterSessions);
+        await warInheritance.RegisterAsync();
+        var maintenance = new Eve.Services.Corporations.AllianceMaintenanceBillWorker(
+            corporations, officeStore, foundations.Scheduler, now);
+        maintenance.NextDowntimeAtMs = at => DailyGoalRecorder.PeriodAt(at).UntilMs;
+        maintenance.CharacterSessions = characterSessions;
+        maintenance.InheritAllianceWarsForClosureAsync = warInheritance.InheritForAllianceClosureAsync;
+        maintenance.EndAllianceWarsAtClosureAsync = warInheritance.EndAllianceWarsAsync;
+        allianceMaintenanceBillWorker = maintenance;
+        await maintenance.RegisterAsync();
         allianceRegistry = new Eve.Services.Corporations.AllianceRegistryService(
             corporations, characters, now,
             scheduleAllianceApplication: allianceDue.ScheduleAcceptedAsync,

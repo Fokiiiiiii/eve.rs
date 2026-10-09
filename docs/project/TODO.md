@@ -540,7 +540,7 @@ DONE (each has tests; the PostgreSQL-backed ones are listed as run under the sha
 
 OPEN (each with its blocker):
 - Login and re-entry: a pilot who enters space within a burst's time is not told its buff state (the client's HUD). Blocker: the enter path sends the ship but not the state. Upgrade: send `BuffState` after the ship enters (eve-logic `michelle.py` takes `bag.dbuffState` at the ball's bootstrap).
-- Drone damage penalty (collection 58 writes attribute 2580 on the ship): no drone path in eve.rs reads it. Blocker: which attribute a drone's damage takes from its ship is not read in this track.
+- Drone damage (the wiki: the protected ships cannot deal damage; collection 58 writes attribute 2580 on the ship): no drone path in eve.rs reads it, and running drones are not recalled. Blocker: which attribute a drone's damage takes from its ship is not read in this track.
 - Velocity penalty (collection 3) writes attribute 3171, which the SDE marks as deprecated, so no top speed changes. Blocker: a source that links 3171 to the speed (the wiki's "cannot move" gives no number).
 - The jump refusal's words ("You cannot jump at this time.") are ours: the client's notice is not in the tables read.
 - Tether (57) and entosis (61) are applied; eve.rs has no tether or entosis use. The SCARAB Breacher bypass does not apply (no such pods in eve.rs).

@@ -730,8 +730,6 @@ public class ModuleEffectsTests
             "scanStrengthBonusPercentActivate",
             "scanStrengthTargetPercentBonus",
             "shipScan",
-            
-            "warpDisruptSphere",
         ];
         // Reconcile the manifest against the catalog this test actually opened. A newer unhandled
         // effect adds a failure; an older catalog simply does not assign effects introduced later.

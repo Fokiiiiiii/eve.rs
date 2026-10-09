@@ -179,7 +179,7 @@ public class ModuleRuleTests
     }
 
     /// <summary>A published ship type, the hull the module is fitted to.</summary>
-    private static async Task<int> ShipTypeIdAsync(SdeReader sde, DogmaStatic statics)
+    internal static async Task<int> ShipTypeIdAsync(SdeReader sde, DogmaStatic statics)
     {
         var shipGroupIds = (await sde.ReadAsync("groups"))
             .Where(row => row.Doc.GetProperty("categoryID").GetInt32() == 6)
@@ -191,7 +191,7 @@ public class ModuleRuleTests
     }
 
     /// <summary>A ship with one module fitted and online, as the host's snapshot has them (the character is not needed by these rules).</summary>
-    private static (Eve.Ships.ShipSnapshot Snapshot, long ModuleId) FittedModule(DogmaStatic statics, int shipTypeId, int moduleTypeId)
+    internal static (Eve.Ships.ShipSnapshot Snapshot, long ModuleId) FittedModule(DogmaStatic statics, int shipTypeId, int moduleTypeId)
     {
         const long characterId = 74001;
         const long shipId = 74002;

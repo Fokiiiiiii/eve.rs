@@ -13,7 +13,6 @@ internal sealed class DogmaModifierEffect : ShipEffect
         "gunneryMaxRangeFalloffTrackingSpeedBonus",
         "industrialCompactCoreEffect2",
         "industrialCoreEffect2",
-        "interdictionNullifierBonus",
         "jumpPortalGeneration",
         "jumpPortalGenerationBO",
         "massEntanglerEffect5",
@@ -28,7 +27,6 @@ internal sealed class DogmaModifierEffect : ShipEffect
         "moduleBonusSiegeModule",
         "moduleBonusTriageModule",
         "targetSpectrumBreakerBonus",
-        "warpCoreStabilizerActive",
     ];
 
     /// <summary>
@@ -46,7 +44,13 @@ internal sealed class DogmaModifierEffect : ShipEffect
     protected override string? Refusal(ModuleEffectContext module) =>
         BodiesNotImplemented.Contains(module.Effect.Name) ? PendingModuleEffect.NotImplemented : null;
 
-    protected override SimEffect Build(ModuleEffectContext module)
+    protected override SimEffect Build(ModuleEffectContext module) => BuildModifier(module);
+
+    /// <summary>
+    /// The effect of a module whose modifiers change the ship and the items of the ship as dogma works them out, as the client is told them. Shared with the
+    /// warp core stabilizer and the interdiction nullifier (<see cref="WarpModifierEffect"/>), which add the simulation's part of their modifiers to it.
+    /// </summary>
+    internal static SimEffect BuildModifier(ModuleEffectContext module)
     {
         var (duration, capacitor, durationAttribute) = module.Cycle();
         var shipId = module.Snapshot.Ship.Id;

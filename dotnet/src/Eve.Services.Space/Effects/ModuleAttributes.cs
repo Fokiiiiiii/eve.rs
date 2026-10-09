@@ -117,6 +117,27 @@ internal static class ModuleAttributes
 
     // Module rules the static data states as attributes (docs/project/TODO.md section 9; the names are the SDE's, verified by ModuleRuleAttributesTests).
     public const int WarpScrambleStatus = 104;
+
+    /// <summary>The radius of a ship or a ball (attribute 162, metres).</summary>
+    public const int Radius = 162;
+
+    /// <summary>The range of a warp disruption field (attribute 103, the bubble's radius in metres).</summary>
+    public const int WarpScrambleRange = 103;
+
+    /// <summary>The field generator's bonus on the ship's mass (a percentage, <c>massBonusPercentage</c>; client <c>warpDisruptSphere.py</c>).</summary>
+    public const int MassBonusPercentage = 1131;
+
+    /// <summary>The field generator's bonus on the ship's maximum velocity (a percentage; the client's <c>attributeVelocityModifier</c>).</summary>
+    public const int VelocityModifier = 1076;
+
+    /// <summary>The field generator's bonus on the speed factor of the ship's propulsion modules (a percentage; zero on every generator in the static data).</summary>
+    public const int SpeedFactorBonus = 1164;
+
+    /// <summary>The field generator's bonus on the speed boost factor of the ship's propulsion modules (a percentage; zero on every generator in the static data).</summary>
+    public const int SpeedBoostFactorBonus = 1270;
+
+    /// <summary>The ship's warp bubble immunity (attribute 1538): above zero, the ship is not held by a warp bubble (an interdiction nullifier sets it).</summary>
+    public const int WarpBubbleImmune = 1538;
     public const int SiegeModeWarpStatus = 852;
     public const int DisallowDocking = 2354;
     public const int DisallowTethering = 2343;

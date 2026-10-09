@@ -20,8 +20,21 @@ internal sealed class MissileEffect : ShipEffect
     /// <summary>The effect a launcher runs (<c>useMissiles</c>).</summary>
     public const string LauncherEffectName = "useMissiles";
 
-    /// <summary>The effects of a charge that name the firing of a launcher: the client asks for one of them, the launcher runs <see cref="LauncherEffectName"/>.</summary>
+    /// <summary>The effects of a charge that name the firing of a launcher of the missile family: the client asks for one of them, the launcher runs <see cref="LauncherEffectName"/>.</summary>
     private static readonly string[] ClientNames = ["missileLaunching", "torpedoLaunching"];
+
+    /// <summary>The firing effects of the launchers that put a deployable in space or fire at no target (<see cref="BombEffect"/>, <see cref="InterdictionSphereEffect"/>,
+    /// <see cref="DefenderEffect"/>), by group.</summary>
+    private static readonly IReadOnlyDictionary<int, string[]> DeployableLaunchers = new Dictionary<int, string[]>
+    {
+        [512] = ["defenderMissileLaunching"],
+        [589] = ["torpedoLaunching"],
+        [862] = ["bombLaunching"],
+    };
+
+    /// <summary>Every firing effect a charge can name (the default effect of the client's request), so a launcher that is refused is refused by name, not as unknown.</summary>
+    private static readonly string[] KnownFiringNames =
+        ["missileLaunching", "torpedoLaunching", "fofMissileLaunching", "bombLaunching", "defenderMissileLaunching", "probeLaunching", "snowBallLaunching", "dotMissileLaunching"];
 
     /// <summary>The attribute of a pilot that scales the damage of every missile (<c>missileDamageMultiplier</c>).</summary>
     private const int MissileDamageMultiplier = 212;
@@ -67,9 +80,6 @@ internal sealed class MissileEffect : ShipEffect
     /// </summary>
     public static readonly IReadOnlyDictionary<int, string> RefusedLauncherGroups = new Dictionary<int, string>
     {
-        [512] = "DEFENDER_LAUNCHER_NOT_IMPLEMENTED",
-        [862] = "BOMB_LAUNCHER_NOT_IMPLEMENTED",
-        [589] = "INTERDICTION_SPHERE_LAUNCHER_NOT_IMPLEMENTED",
         [481] = "PROBE_LAUNCHER_NOT_IMPLEMENTED",
         [1226] = "PROBE_LAUNCHER_NOT_IMPLEMENTED",
         [501] = "FESTIVAL_LAUNCHER_NOT_IMPLEMENTED",
@@ -81,6 +91,9 @@ internal sealed class MissileEffect : ShipEffect
         [1974] = "STRUCTURE_LAUNCHER_NOT_IMPLEMENTED",
     };
 
+    /// <summary>The launchers that put a deployable in space or fire at no target (<see cref="BombEffect"/>, <see cref="InterdictionSphereEffect"/>, <see cref="DefenderEffect"/>).</summary>
+    public static IReadOnlySet<int> DeployableLauncherGroups { get; } = DeployableLaunchers.Keys.ToHashSet();
+
     /// <summary>The launcher groups this effect runs: the missile family derived from the static data (<see cref="LauncherFamilies"/>).</summary>
     public static IReadOnlySet<int> ServedLauncherGroups(DogmaStatic statics) => statics.MissileLauncherGroups;
 
@@ -90,10 +103,16 @@ internal sealed class MissileEffect : ShipEffect
     /// The effect a launcher runs when the pilot asks for the firing effect of its charge: the launcher's own, or null when the module is no launcher or the name is not one of the firing effects.
     /// A launcher that is refused (<see cref="RefusedLauncherGroups"/>) is a launcher too: it is asked for its own effect and refused there.
     /// </summary>
-    public static EffectDef? LauncherEffectFor(TypeDef type, DogmaStatic statics, string requested) =>
-        (statics.MissileLauncherGroups.Contains(type.GroupId) || RefusedLauncherGroups.ContainsKey(type.GroupId)) && ClientNames.Any(n => n.Equals(requested, StringComparison.OrdinalIgnoreCase))
+    public static EffectDef? LauncherEffectFor(TypeDef type, DogmaStatic statics, string requested)
+    {
+        var group = type.GroupId;
+        var names = statics.MissileLauncherGroups.Contains(group) ? ClientNames
+            : RefusedLauncherGroups.ContainsKey(group) ? KnownFiringNames
+            : DeployableLaunchers.GetValueOrDefault(group, []);
+        return names.Any(n => n.Equals(requested, StringComparison.OrdinalIgnoreCase))
             ? type.EffectIds.Select(statics.Effect).FirstOrDefault(e => e is not null && e.Name.Equals(LauncherEffectName, StringComparison.OrdinalIgnoreCase))
             : null;
+    }
 
     protected override bool Handles(ModuleEffectContext module) => module.Statics.MissileLauncherGroups.Contains(module.Type.GroupId);
 
@@ -116,8 +135,28 @@ internal sealed class MissileEffect : ShipEffect
         var pilot = module.World.Attributes(module.Snapshot.Character.Id);
         var multiplier = Math.Max(0, pilot.TryGetValue(MissileDamageMultiplier, out var m) && double.IsFinite(m) ? m : 1);
         double Damage(int attribute) => NpcArmament.Round6(Math.Max(0, shot.TryGetValue(attribute, out var damage) && double.IsFinite(damage) ? damage : 0) * multiplier);
-        double Charge(int attribute, double fallback) => shot.TryGetValue(attribute, out var value) && double.IsFinite(value) ? value : fallback;
 
+        var missile = MissileOf(module, charge);
+        var range = NpcArmament.Round6(missile.MaxVelocity * (missile.FlightTimeMs / 1000));
+
+        var (duration, capacitor, _) = module.Cycle();
+        var fx = FxOf(module, charge);
+        var launcher = new SimTurret(
+            module.Module.TypeId, fx, [Damage(EmDamage), Damage(ThermalDamage), Damage(KineticDamage), Damage(ExplosiveDamage)], range, 0, 0, 40_000,
+            new SimTurretCharge(charge.TypeId, charge.Flag, charge.Quantity, ChargesPerCycle(attributes)), missile);
+        // the client is told the cost and the cycle of the launcher as it starts and stops (and no range: a missile's is its own)
+        SimChange[] told = [new(module.ModuleId, CapacitorNeed, capacitor), new(module.ModuleId, Speed, Three(duration))];
+        return new SimEffect(module.ModuleId, module.Module.TypeId, module.Effect.Id, fx, duration, capacitor, Math.Max(1, module.Repeat), Math.Max(0, module.TargetId), null, null, told, told, launcher);
+    }
+
+    /// <summary>
+    /// The missile a charge is, from its dogma: the ball of the charge (its size, weight and agility, its hit points, its speed and its flight time) and its explosion
+    /// (radius, velocity, damage reduction factor and sensitivity). The launchers that fire a missile (<see cref="MissileEffect"/>, and the defender launcher) use it.
+    /// </summary>
+    internal static SimMissile MissileOf(ModuleEffectContext module, Item charge)
+    {
+        var shot = module.World.Attributes(charge.Id);
+        double Charge(int attribute, double fallback) => shot.TryGetValue(attribute, out var value) && double.IsFinite(value) ? value : fallback;
         var maxVelocity = Math.Max(0, NpcArmament.Round6(Charge(MaxVelocity, 0)));
         var flightTime = Math.Max(1, NpcArmament.Round6(Charge(ExplosionDelay, 1000)));
         // the ball of the missile: what the charge's type says of its size and weight, and its agility (a missile turns at once, so it is small); the reference's defaults where it says nothing
@@ -129,16 +168,7 @@ internal sealed class MissileEffect : ShipEffect
             Math.Max(0.001, NpcArmament.Round6(Charge(AoeVelocity, 0.001))),
             Math.Clamp(Charge(AoeDamageReductionFactor, 1), 0.000001, 1),
             Math.Max(0.000001, NpcArmament.Round6(Charge(AoeDamageReductionSensitivity, DefaultReductionSensitivity))));
-        var range = NpcArmament.Round6(maxVelocity * (flightTime / 1000));
-
-        var (duration, capacitor, _) = module.Cycle();
-        var fx = FxOf(module, charge);
-        var launcher = new SimTurret(
-            module.Module.TypeId, fx, [Damage(EmDamage), Damage(ThermalDamage), Damage(KineticDamage), Damage(ExplosiveDamage)], range, 0, 0, 40_000,
-            new SimTurretCharge(charge.TypeId, charge.Flag, charge.Quantity, ChargesPerCycle(attributes)), missile);
-        // the client is told the cost and the cycle of the launcher as it starts and stops (and no range: a missile's is its own)
-        SimChange[] told = [new(module.ModuleId, CapacitorNeed, capacitor), new(module.ModuleId, Speed, Three(duration))];
-        return new SimEffect(module.ModuleId, module.Module.TypeId, module.Effect.Id, fx, duration, capacitor, Math.Max(1, module.Repeat), Math.Max(0, module.TargetId), null, null, told, told, launcher);
+        return missile;
     }
 
     /// <summary>What the client plays: the effect's own, else the deployment of the missiles, or of the torpedoes for a torpedo launcher or charge (<c>resolveWeaponSpecialFxGUID</c>).</summary>

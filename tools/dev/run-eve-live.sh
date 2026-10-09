@@ -58,7 +58,7 @@ for _ in $(seq 1 300); do
   sleep 0.1
 done
 
-EVE_HOST="$SOCK" EVE_SIM_SOCKET="$SIMSOCK" dotnet "$HERE/dotnet/src/Eve.Host/bin/Release/net10.0/eve-host.dll" >"$LOG/host.out" 2>&1 &
+EVE_DEV_AUTO_CREATE=1 EVE_HOST="$SOCK" EVE_SIM_SOCKET="$SIMSOCK" dotnet "$HERE/dotnet/src/Eve.Host/bin/Release/net10.0/eve-host.dll" >"$LOG/host.out" 2>&1 &
 host_pid=$!
 # a first start loads the static data catalogs: give a slow machine a minute
 for _ in $(seq 1 600); do

@@ -94,6 +94,28 @@ public class BuffRegistryTests
     }
 
     [Fact]
+    public void Two_collections_on_a_non_stackable_attribute_take_the_stacking_penalty_as_EVE_js_does()
+    {
+        var first = new BuffCollection(10, "first", true, [new Modifier(ModifierFunc.Item, "itemID", Operation.PostPercent, Resistance, 0)]);
+        var second = new BuffCollection(11, "second", true, [new Modifier(ModifierFunc.Item, "itemID", Operation.PostPercent, Resistance, 0)]);
+        var statics = new DogmaStatic(
+            [new AttributeDef(Resistance, "resistance", 0, Stackable: false, HighIsGood: false, DataType: 0)],
+            [],
+            [new TypeDef(ShipType, 1, 6, new Dictionary<int, double> { [Resistance] = 100 }, [])]);
+        var world = new DogmaWorld(statics, 0, Ship);
+        world.Add(new DogmaItem(Ship, ShipType, Owner, 0, 0, ItemState.Online));
+
+        var registry = new BuffRegistry();
+        registry.Apply(Ship, first, -10, nowMs: 0, durationMs: 60_000);
+        registry.Apply(Ship, second, -10, nowMs: 0, durationMs: 60_000);
+        registry.Sync(world, Ship, 1_000);
+
+        // unpenalised, two -10 percents would give 81; the penalty takes the second one part of the way back
+        var value = world.Get(Ship, Resistance);
+        Assert.True(value > 81 && value < 90, $"the penalised value is {value}");
+    }
+
+    [Fact]
     public void A_collection_row_with_an_unknown_operation_is_not_a_buff()
     {
         using var document = System.Text.Json.JsonDocument.Parse("""{"operationName":"PostSomething","aggregateMode":"Maximum","itemModifiers":[{"dogmaAttributeID":1}]}""");

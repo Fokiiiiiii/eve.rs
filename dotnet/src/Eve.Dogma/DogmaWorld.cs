@@ -77,7 +77,8 @@ public sealed class DogmaWorld
     /// <summary>The power and processing attributes are kept to two decimals.</summary>
     private static readonly HashSet<int> RoundedAttributes = [49, 15, 11, 48, 50, 30];
 
-    private readonly record struct Source(DogmaItem Item, EffectDef Effect, Modifier Modifier, long DomainItemId);
+    /// <param name="Buff">A buff's modifier (<see cref="SetBuffs"/>): its stacking penalty follows its attribute, as EVE.js does for a buff, whatever its source.</param>
+    private readonly record struct Source(DogmaItem Item, EffectDef Effect, Modifier Modifier, long DomainItemId, bool Buff = false);
 
     private readonly DogmaStatic _static;
     private readonly Dictionary<long, DogmaItem> _items = [];
@@ -314,7 +315,7 @@ public sealed class DogmaWorld
             return _sources;
         }
         var index = new Dictionary<int, List<Source>>();
-        void Index(DogmaItem item, EffectDef effect)
+        void Index(DogmaItem item, EffectDef effect, bool buff = false)
         {
             foreach (var modifier in effect.Modifiers)
             {
@@ -327,7 +328,7 @@ public sealed class DogmaWorld
                 {
                     index[modifier.ModifiedAttributeId] = list = [];
                 }
-                list.Add(new Source(item, effect, modifier, domain));
+                list.Add(new Source(item, effect, modifier, domain, buff));
             }
         }
         foreach (var item in _items.Values.OrderBy(i => i.Id))
@@ -347,7 +348,7 @@ public sealed class DogmaWorld
             {
                 foreach (var effect in effects)
                 {
-                    Index(buffed, effect);
+                    Index(buffed, effect, buff: true);
                 }
             }
         }
@@ -536,7 +537,8 @@ public sealed class DogmaWorld
                 continue;
             }
             var op = source.Modifier.Operation;
-            var penalised = !stackable && Operations.IsPenalisable(op) && !UnpenalisedCategories.Contains(_static.Type(source.Item.TypeId)?.CategoryId ?? 0);
+            var penalised = !stackable && Operations.IsPenalisable(op)
+                && (source.Buff || !UnpenalisedCategories.Contains(_static.Type(source.Item.TypeId)?.CategoryId ?? 0));
             incoming.Add((op, source.Modifier.Literal ?? Get(source.Item.Id, source.Modifier.ModifyingAttributeId), penalised));
         }
         if (incoming.Count == 0)

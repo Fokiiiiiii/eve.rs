@@ -14,6 +14,8 @@ public sealed class DogmaStatic
     public static readonly (int Attribute, string Field)[] IntrinsicAttributes = [(4, "mass"), (38, "capacity"), (161, "volume"), (162, "radius")];
 
     private readonly SdeReader? _sde;
+    /// <summary>The compressed gas types by name, read once: a cloud's yield is looked up by name when its material is not in the SDE.</summary>
+    private Dictionary<string, int>? _compressedGasTypeIds;
     private readonly ConcurrentDictionary<int, TypeDef> _types = new();
     private readonly Dictionary<int, AttributeDef> _attributes;
     private readonly Dictionary<int, EffectDef> _effects;
@@ -173,6 +175,32 @@ public sealed class DogmaStatic
             }
         }
         return false;
+    }
+
+    /// <summary>
+    /// The type a harvestable gas cloud yields: its material in the SDE (<c>typeMaterials</c>), else the compressed gas it is named for (<c>Compressed &lt;name&gt;</c>
+    /// in the Compressed Gas group). Null when neither exists. A cloud type must be loaded (<see cref="EnsureTypesAsync"/> first).
+    /// </summary>
+    public async Task<int?> GasYieldTypeAsync(int cloudTypeId, CancellationToken cancellationToken = default)
+    {
+        if (_sde is null || Type(cloudTypeId) is not { } cloud)
+        {
+            return null;
+        }
+        foreach (var row in await _sde.ReadAsync("typeMaterials", [(long)cloudTypeId], cancellationToken))
+        {
+            if (row.Doc.TryGetProperty("materials", out var materials) && materials.ValueKind == System.Text.Json.JsonValueKind.Array
+                && materials.EnumerateArray().FirstOrDefault().TryGetProperty("materialTypeID", out var material)
+                && material.TryGetInt32(out var materialTypeId) && materialTypeId > 0)
+            {
+                return materialTypeId;
+            }
+        }
+        _compressedGasTypeIds ??= (await TypesInGroupsAsync(["Compressed Gas"], cancellationToken))
+            .Where(candidate => candidate.Name is not null)
+            .GroupBy(candidate => candidate.Name!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().TypeId, StringComparer.OrdinalIgnoreCase);
+        return _compressedGasTypeIds.TryGetValue($"Compressed {cloud.Name}", out var compressed) ? compressed : null;
     }
 
     /// <summary>Published SDE types in the named groups, with their dogma loaded.</summary>

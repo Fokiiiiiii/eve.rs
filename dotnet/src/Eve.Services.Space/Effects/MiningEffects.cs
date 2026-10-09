@@ -21,10 +21,29 @@ internal sealed class MiningLaserEffect : ShipEffect
 
     protected override SimEffect Build(ModuleEffectContext module)
     {
+        var name = module.Statics.Type(module.Module.TypeId)?.Name ?? string.Empty;
+        return MiningEffect.Build(module, name.Contains("ice", StringComparison.OrdinalIgnoreCase) ? SimMiningFamilies.Ice : SimMiningFamilies.Ore);
+    }
+}
+
+/// <summary>
+/// The gas harvester (<c>miningClouds</c>): the cycle of a harvestable gas cloud (<see cref="MiningTargets"/>), the lasers' own cycle with the gas family. The
+/// cloud yields its compressed gas, and the host settles it as it settles a rock.
+/// </summary>
+internal sealed class GasHarvesterEffect : ShipEffect
+{
+    public override IReadOnlyCollection<string> EffectNames { get; } = ["miningClouds"];
+
+    protected override SimEffect Build(ModuleEffectContext module) => MiningEffect.Build(module, SimMiningFamilies.Gas);
+}
+
+/// <summary>The cycle a mining module runs (a laser or a harvester): its numbers are the module's own, read by attribute name, as the reference reads them.</summary>
+internal static class MiningEffect
+{
+    public static SimEffect Build(ModuleEffectContext module, byte family)
+    {
         var (duration, capacitor, durationAttribute) = module.Cycle();
         var profile = MiningProfile.From(module.World, module.Statics, module.ModuleId);
-        var name = module.Statics.Type(module.Module.TypeId)?.Name ?? string.Empty;
-        var family = name.Contains("ice", StringComparison.OrdinalIgnoreCase) ? SimMiningFamilies.Ice : SimMiningFamilies.Ore;
         SimChange[] told =
         [
             new(module.ModuleId, CapacitorNeed, capacitor),

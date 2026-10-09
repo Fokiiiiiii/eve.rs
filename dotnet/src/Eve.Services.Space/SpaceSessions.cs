@@ -1146,9 +1146,10 @@ private readonly TransitionRuntime _transitions;
         {
             await _statics.EnsureTypesAsync([rockTypeId], cancellationToken).ConfigureAwait(false);
             var rock = _statics.Type(rockTypeId);
-            byte? rockFamily = rock is not null && _statics.CategoryName(rock.CategoryId) == "Asteroid"
-                ? _statics.GroupName(rock.GroupId).Equals("Ice", StringComparison.OrdinalIgnoreCase) ? SimMiningFamilies.Ice : SimMiningFamilies.Ore
-                : null;
+            byte? rockFamily = rock is null || !MiningTargets.IsMineable(_statics, rock) ? null
+                : MiningTargets.IsGasCloud(_statics, rock) ? SimMiningFamilies.Gas
+                : _statics.GroupName(rock.GroupId).Equals("Ice", StringComparison.OrdinalIgnoreCase) ? SimMiningFamilies.Ice
+                : SimMiningFamilies.Ore;
             if (rockFamily != mining.Family)
             {
                 return ModuleResult.Refusal("TARGET_INVALID_FOR_MODULE", made.ModuleType, made.ModuleName);

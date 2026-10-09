@@ -361,13 +361,13 @@ public class SpaceContainerTests
 
         rig.Sim.Say(new Eve.Space.SimArrived(
             (ulong)flying.Session.SessionId, beltId, [1000, 2000, 3000]));
-        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>().Any());
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>().Any(p => p.Name == "Veldspar"));
 
-        var placed = Assert.Single(rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>());
+        var placed = Assert.Single(rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>(), p => p.Name == "Veldspar");
         Assert.Equal((system, "Veldspar", 1_000L),
             (placed.SolarSystemId, placed.Name, placed.UnitsRemaining));
         Assert.True(placed.AsteroidId > 0);
-        var saved = Assert.Single(await rig.SpaceItems.InSystemAsync(system), spaceItem => spaceItem.LauncherId == beltId);
+        var saved = Assert.Single(await rig.SpaceItems.InSystemAsync(system), spaceItem => spaceItem.ItemId == placed.AsteroidId);
         Assert.Equal(beltId, saved.LauncherId);
         var asteroid = (await rig.Items.GetAsync(saved.ItemId))!;
         Assert.Equal((placed.AsteroidId, placed.UnitsRemaining, "Veldspar"),
@@ -392,11 +392,31 @@ public class SpaceContainerTests
         }
 
         rig.Sim.Say(new Eve.Space.SimArrived((ulong)flying.Session.SessionId, beltId, [1000, 2000, 3000]));
-        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>().Any());
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>().Any(p => p.Name == "Veldspar"));
 
-        var placed = Assert.Single(rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>());
+        var placed = Assert.Single(rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>(), p => p.Name == "Veldspar");
         Assert.Equal((1_000L, false), (placed.UnitsRemaining, placed.AsteroidId == depleted.Id));
     }
+
+    [PgFact]
+    public async Task A_belt_arrival_seeds_a_harvestable_gas_cloud_beside_its_rock()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await FlyingWithCargoAsync(rig);
+        var system = (int)flying.Session.GetInt("solarsystemid")!.Value;
+        const long beltId = 9_000_000_003;
+
+        rig.Sim.Say(new Eve.Space.SimArrived((ulong)flying.Session.SessionId, beltId, [1000, 2000, 3000]));
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>().Count() >= 2);
+
+        var cloud = Assert.Single(rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>(), p => p.Name != "Veldspar");
+        Assert.Equal((system, 1_000L), (cloud.SolarSystemId, cloud.UnitsRemaining));
+        var saved = Assert.Single(await rig.SpaceItems.InSystemAsync(system), spaceItem => spaceItem.ItemId == cloud.AsteroidId);
+        Assert.Equal(beltId, saved.LauncherId);
+        var item = (await rig.Items.GetAsync(saved.ItemId))!;
+        Assert.Equal("Harvestable Cloud", rig.Statics.GroupName(rig.Statics.Type(item.TypeId)!.GroupId));
+    }
+
 
     [PgFact]
     public async Task Mine_cycles_check_drone_ownership_and_range_then_persist_ore_and_notify_the_pilot()

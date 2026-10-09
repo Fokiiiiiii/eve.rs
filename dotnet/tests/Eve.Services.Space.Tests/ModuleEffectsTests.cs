@@ -720,7 +720,6 @@ public class ModuleEffectsTests
             "industrialItemCompression",
             "microJumpPortalDrive",
             "microJumpPortalDriveCapital",
-            "miningClouds",
             "moduleBonusIndustrialInvulnerability",
             "moduleBonusWarfareLinkArmor",
             "moduleBonusWarfareLinkInfo",

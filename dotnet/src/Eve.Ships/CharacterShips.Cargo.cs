@@ -259,7 +259,7 @@ private sealed record ShipHoldRule(
         double radius, PgSpaceItemStore spaceItems, CancellationToken cancellationToken = default)
     {
         await statics.EnsureTypesAsync([typeId], cancellationToken);
-        if (statics.Type(typeId) is not { } type || statics.CategoryName(type.CategoryId) != "Asteroid" || units <= 0)
+        if (statics.Type(typeId) is not { } type || !MiningTargets.IsMineable(statics, type) || units <= 0)
         {
             throw new ArgumentException("The SDE type is not a published asteroid ore type.", nameof(typeId));
         }
@@ -331,11 +331,19 @@ private sealed record ShipHoldRule(
         }
         await statics.EnsureTypesAsync([asteroid.TypeId], cancellationToken);
         var type = statics.Type(asteroid.TypeId);
+        // a gas cloud yields its compressed gas, and its units are that gas's (MiningTargets)
+        var gas = type is not null && MiningTargets.IsGasCloud(statics, type);
+        var yieldTypeId = gas ? (await statics.GasYieldTypeAsync(asteroid.TypeId, cancellationToken) ?? 0) : asteroid.TypeId;
+        if (yieldTypeId > 0)
+        {
+            await statics.EnsureTypesAsync([yieldTypeId], cancellationToken);
+        }
+        var yieldType = yieldTypeId > 0 ? statics.Type(yieldTypeId) : null;
         var volumeAttribute = statics.AttributeId("volume");
-        var unitVolume = type is null || volumeAttribute is not { } volumeId
+        var unitVolume = yieldType is null || volumeAttribute is not { } volumeId
             ? 0d
-            : type.Attributes.GetValueOrDefault(volumeId, 0d);
-        if (type is null || statics.CategoryName(type.CategoryId) != "Asteroid" || !double.IsFinite(unitVolume) || unitVolume <= 0)
+            : yieldType.Attributes.GetValueOrDefault(volumeId, 0d);
+        if (type is null || !MiningTargets.IsMineable(statics, type) || yieldType is null || !double.IsFinite(unitVolume) || unitVolume <= 0)
         {
             return new(false, "NO_TARGET", asteroid.Quantity, 0, false, null);
         }
@@ -352,7 +360,7 @@ private sealed record ShipHoldRule(
         var remaining = asteroid.Quantity - mined.DepletedQuantity;
         if (delivered > 0)
         {
-            var candidate = new Item(0, asteroid.TypeId, characterId, shipId, CargoFlag, delivered, false, null);
+            var candidate = new Item(0, yieldTypeId, characterId, shipId, CargoFlag, delivered, false, null);
             if (await RefuseWhatDoesNotFitTogetherAsync(snapshot, [candidate], CargoFlag, cancellationToken) is not null)
             {
                 return new(false, "CARGO_FULL", asteroid.Quantity, 0, false, null);
@@ -361,23 +369,23 @@ private sealed record ShipHoldRule(
         ItemChanged? change = null;
         if (delivered > 0)
         {
-            var id = await items.CreateAsync(connection, transaction, new NewItem(asteroid.TypeId, characterId, shipId, CargoFlag, delivered, false), cancellationToken);
-            change = new ItemChanged(new Item(id, asteroid.TypeId, characterId, shipId, CargoFlag, delivered, false, null), solarSystemId, InSpaceFlag, 0);
+            var id = await items.CreateAsync(connection, transaction, new NewItem(yieldTypeId, characterId, shipId, CargoFlag, delivered, false), cancellationToken);
+            change = new ItemChanged(new Item(id, yieldTypeId, characterId, shipId, CargoFlag, delivered, false, null), solarSystemId, InSpaceFlag, 0);
         }
         await items.SetQuantityAsync(connection, transaction, asteroidId, remaining, cancellationToken);
         await ledger.RecordAsync(connection, transaction, new WorkCycleRecord(minerId, cycleId, true, "", remaining, delivered, remaining == 0), cancellationToken);
         // the fact of the grant is written with it (the mining ledger and every other reader take it from the bus), so a rolled-back grant announces nothing
         if (mined.TransferredQuantity > 0 || mined.WastedQuantity > 0)
         {
-            var yieldKind = statics.GroupName(type.GroupId).Equals("Ice", StringComparison.OrdinalIgnoreCase) ? "ice" : "ore";
+            var yieldKind = gas ? "gas" : statics.GroupName(type.GroupId).Equals("Ice", StringComparison.OrdinalIgnoreCase) ? "ice" : "ore";
             await events.PublishInTransactionAsync(connection, transaction, OreMinedEvent.Topic, new OreMinedEvent(
                 characterId, corporationId, solarSystemId, shipId, snapshot.Ship.TypeId, minerId, kind == MiningSource.Module ? miner.TypeId : 0, kind,
-                asteroid.TypeId, yieldKind, mined.TransferredQuantity, mined.WastedQuantity, mined.CriticalQuantity), $"char:{characterId}", cancellationToken);
+                yieldTypeId, yieldKind, mined.TransferredQuantity, mined.WastedQuantity, mined.CriticalQuantity), $"char:{characterId}", cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
         events.Wake();
         return new(true, "", remaining, delivered, remaining == 0,
-            change is null ? null : new ShipChanged(change.After.Id, shipId, [], [], [change]), mined, asteroid.TypeId);
+            change is null ? null : new ShipChanged(change.After.Id, shipId, [], [], [change]), mined, yieldTypeId);
     }
 
     /// <summary>

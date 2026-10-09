@@ -34,7 +34,7 @@ using Eve.Services.Wallet;
 
 namespace Eve.Host;
 
-internal sealed record HostSettings(string Endpoint, string NewCharacterExperienceMode, ClusterOptions Options, AccountOptions AccountOptions);
+internal sealed record HostSettings(string Endpoint, string NewCharacterExperienceMode, ClusterOptions Options, AccountOptions AccountOptions, bool StrictRpc);
 
 /// <summary>Every EVE_* read of the host, in one place. The catalogue of variables is below.</summary>
 internal static class HostConfiguration
@@ -65,6 +65,11 @@ internal static class HostConfiguration
     //   EVE_CRIMEWATCH_SCHEMA  the schema of crimewatch (ship safety levels)                          (default crimewatch)
     //   EVE_DEV_SKIP_PASSWORD  1 accepts any password (development only)                          (default 0)
     //   EVE_DEV_AUTO_CREATE    0 refuses unknown user names                                       (default 0)
+    //   EVE_STRICT_RPC         1 answers an unknown service or method, an unhandled exception or a call with no service
+    //                          with a Macho error (naming a correlation id) and logs its stack trace to stderr; the default
+    //                          answers None and logs one line (what the reference does)                  (default 0)
+    //   EVE_TRACE_RPC          1 traces unhandled calls to stderr; full also logs every call's arguments and result type tree
+    //                          (the dispatcher reads it, not this class)                               (default off)
 
     /// <summary>The default listening endpoint. Windows has no Unix socket for the front to meet us on, so it is a local port.</summary>
     internal static string DefaultEndpoint(bool windows) => windows ? "tcp:127.0.0.1:26010" : "/tmp/eve-host.sock";
@@ -95,6 +100,6 @@ internal static class HostConfiguration
             SkipPasswordCheck = Flag("EVE_DEV_SKIP_PASSWORD", false),
             AutoCreate = Flag("EVE_DEV_AUTO_CREATE", false),
         };
-        return new HostSettings(endpoint, newCharacterExperienceMode, options, accountOptions);
+        return new HostSettings(endpoint, newCharacterExperienceMode, options, accountOptions, Flag("EVE_STRICT_RPC", false));
     }
 }

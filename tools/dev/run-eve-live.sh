@@ -74,7 +74,7 @@ for _ in $(seq 1 100); do
   sleep 0.1
 done
 
-export EVE_LIVE_HOST="127.0.0.1:$PORT"
+export EVE_LIVE_HOST="${EVE_LIVE_HOST:-127.0.0.1:$PORT}"  # a preset value points the tests at a proxy (tools/mitm)
 if [ -n "${EVE_RUN:-}" ]; then
   # any other command against the running server, e.g. EVE_RUN='target/release/eve-loadgen $EVE_LIVE_HOST'
   cd "$HERE" && bash -c "$EVE_RUN"

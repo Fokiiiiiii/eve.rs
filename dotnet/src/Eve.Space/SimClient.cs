@@ -425,6 +425,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void ModuleWorkResult(SimModuleWorkResult result) => Send(result);
 
+    public void BuffState(ulong sessionId, long shipId, IReadOnlyList<SimBuffEntry> entries) => Send(new SimBuffState(sessionId, shipId, entries));
+
     public Task<CommandReply> PlaceContainerAsync(SimPlaceContainer can, CancellationToken cancellationToken = default) =>
         AwaitAsync(_answered, (can.SessionId, SimCommands.PlaceContainer), can, cancellationToken);
 

@@ -130,6 +130,11 @@ internal sealed class FakeSim : ISimulation
 
     public void ModuleWorkResult(SimModuleWorkResult result) => Heard.Enqueue(result);
 
+    /// <summary>The buff states the host sent, in order (a command burst's, protocol 42).</summary>
+    public List<SimBuffState> BuffStates { get; } = [];
+
+    public void BuffState(ulong sessionId, long shipId, IReadOnlyList<SimBuffEntry> entries) => BuffStates.Add(new SimBuffState(sessionId, shipId, entries));
+
     /// <summary>What a can that is placed is answered with: where it lies (the test's own place when none is set), or why not.</summary>
     public CommandReply? PlaceContainerAnswer { get; set; }
 

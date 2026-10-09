@@ -145,6 +145,29 @@ public static partial class SimCodec
 
     private static SimNumbers ReadNumbers(ref Reader r) => new(r.F64(), r.F64(), r.F64());
 
+    /// <summary>
+    /// The ships a command burst reaches (protocol 42): a count, then each ship's id. A count the frame cannot hold is refused before it is read. None (a count of
+    /// zero, the case of every other command) is null, as the message is made without it.
+    /// </summary>
+    private static IReadOnlyList<long>? ReadRecipients(ref Reader r)
+    {
+        var count = r.U32();
+        if (count > r.Remaining / 8)
+        {
+            throw new SimLinkException(SimLinkError.Truncated, "recipients count");
+        }
+        if (count == 0)
+        {
+            return null;
+        }
+        var ships = new long[count];
+        for (var i = 0; i < ships.Length; i++)
+        {
+            ships[i] = r.I64();
+        }
+        return ships;
+    }
+
     private static SimChange[] ReadChanges(ref Reader r)
     {
         var count = r.U32();
@@ -341,6 +364,15 @@ public static partial class SimCodec
                         throw new SimLinkException(SimLinkError.BadValue, "bad scramble status action");
                     }
                     return new SimAction.ScrambleStatus(delta);
+                }
+            case 28:
+                {
+                    var range = r.F64();
+                    if (!(double.IsFinite(range) && range >= 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad command burst action");
+                    }
+                    return new SimAction.CommandBurst(range);
                 }
             case 27:
                 {

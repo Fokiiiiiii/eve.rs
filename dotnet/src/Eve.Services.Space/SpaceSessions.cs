@@ -88,6 +88,12 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
     private readonly PgSpaceItemStore? _spaceItems;
     private readonly ConcurrentDictionary<long, PendingSpaceLogin> _pendingLoginRestores = new();
     public Func<long, CancellationToken, Task<bool>>? StructureExistsAsync { get; set; }
+
+    /// <summary>The fleet a character is in (its id), or null when it is in none: a command burst reaches the ships of its source's fleet (track C6).</summary>
+    public Func<long, CancellationToken, Task<long?>>? FleetIdOfAsync { get; set; }
+
+    /// <summary>The timed buffs of the ships in space (the command bursts', track C6). In memory: a restart drops them.</summary>
+    public ShipBuffs Buffs { get; } = new();
     private readonly DogmaStatic _statics;
     private readonly StationCatalog _stations;
     private readonly SolarSystemCatalog _systems;

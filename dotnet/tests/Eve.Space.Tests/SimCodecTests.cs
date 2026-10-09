@@ -23,6 +23,10 @@ public class SimCodecTests
 
     private static long Wide(JsonNode node, string field) => long.Parse((string)node[field]!, CultureInfo.InvariantCulture);
 
+    /// <summary>The ships a command burst's cycle reaches (protocol 42): the fixture's ids are strings, as the other ids are; none for another command.</summary>
+    private static IReadOnlyList<long>? RecipientsOf(JsonNode node) =>
+        (node["recipients"] as JsonArray)?.Select(ship => long.Parse((string)ship!, CultureInfo.InvariantCulture)).ToArray();
+
     private static SimShip ShipOf(JsonNode s) => new(
         Wide(s, "shipId"), Wide(s, "characterId"), (int)s["typeId"]!, (int)s["groupId"]!, (int)s["categoryId"]!, (string)s["name"]!, Wide(s, "ownerId"),
         (int)s["corporationId"]!, (int)s["allianceId"]!, (int)s["warFactionId"]!, (double)s["securityStatus"]!, (double)s["radius"]!, (double)s["mass"]!,
@@ -158,6 +162,10 @@ public class SimCodecTests
         {
             return new SimAction.StasisBurst((double)a["range"]!, (double)a["durationMs"]!, (double)a["speedFactor"]!);
         }
+        if ((string)a["kind"]! == "commandBurst")
+        {
+            return new SimAction.CommandBurst((double)a["rangeMeters"]!);
+        }
         if ((string)a["kind"]! == "cynoField")
         {
             return new SimAction.CynoField(DeployableOf(a["ball"]!), (double)a["lifetimeMs"]!);
@@ -282,10 +290,11 @@ public class SimCodecTests
             "ModuleWorkCycle" => new SimModuleWorkCycle(
                 Session(), Wide(c, "characterId"), Wide(c, "shipId"), (int)c["solarSystemId"]!, Wide(c, "moduleId"), Wide(c, "targetId"), (ulong)Wide(c, "cycleId"),
                 (byte)(int)c["command"]!, (double)c["miningAmountM3"]!, (double)c["wasteMultiplier"]!, (double)c["wasteProbability"]!, (double)c["critProbability"]!,
-                (double)c["critMultiplier"]!, (double)c["accessDifficultyBonus"]!, (double)c["wasteRoll"]!, (double)c["roundingRoll"]!, (double)c["critRoll"]!),
+                (double)c["critMultiplier"]!, (double)c["accessDifficultyBonus"]!, (double)c["wasteRoll"]!, (double)c["roundingRoll"]!, (double)c["critRoll"]!, RecipientsOf(c)),
             "ModuleWorkResult" => new SimModuleWorkResult(
                 Session(), Wide(c, "moduleId"), Wide(c, "targetId"), (ulong)Wide(c, "cycleId"), (bool)c["accepted"]!, (string)c["reason"]!, Wide(c, "unitsRemaining"),
                 Wide(c, "deliveredUnits"), (bool)c["complete"]!),
+            "BuffState" => new SimBuffState(Session(), Wide(c, "shipId"), ((JsonArray)c["entries"]!).Select(entry => new SimBuffEntry((int)entry!["collectionId"]!, (double)entry["value"]!, (double)entry["remainingMs"]!)).ToArray()),
             "ModuleEnded" => new SimModuleEnded(Session(), Wide(c, "moduleId"), (byte)(int)c["reason"]!),
             "ChargeSpent" => new SimChargeSpent(Session(), Wide(c, "moduleId"), Wide(c, "roundsLeft")),
             "UpdateEffect" => new SimUpdateEffect(Session(), Wide(c, "moduleId"), (double)c["durationMs"]!, (double)c["capacitorNeed"]!, c["turret"] is null ? null : TurretOf(c["turret"]!), ChangesOf(c["changes"]!)),
@@ -335,7 +344,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-        Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "Destroy", "Destroyed", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceContainer", "PlaceWreck", "Refused", "RemoveWreck", "Respawn", "ShipSpec", "Spawn", "SpawnReply", "TargetRefused", "Targets", "UpdateEffect", "UpdateState"], kinds);
+        Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "Destroy", "Destroyed", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceContainer", "PlaceWreck", "Refused", "RemoveWreck", "Respawn", "ShipSpec", "Spawn", "SpawnReply", "TargetRefused", "Targets", "UpdateEffect", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);
     }
 

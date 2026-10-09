@@ -273,6 +273,13 @@ private static void WriteAction(Writer w, SimAction action)
                 }
                 w.U8(18); w.F64(status.Delta);
                 break;
+            case SimAction.CommandBurst burst:
+                if (!(double.IsFinite(burst.RangeMeters) && burst.RangeMeters >= 0))
+                {
+                    throw new ArgumentException("a command burst has a reach of zero or more metres", nameof(action));
+                }
+                w.U8(28); w.F64(burst.RangeMeters);
+                break;
             case SimAction.CynoField cyno:
                 if (!(double.IsFinite(cyno.LifetimeMs) && cyno.LifetimeMs > 0))
                 {
@@ -691,6 +698,18 @@ private static void WriteAction(Writer w, SimAction action)
                 w.I64(m.ModuleId);
                 w.I64(m.RoundsLeft);
                 break;
+            case SimBuffState m:
+                w.U8(Kind.BuffState);
+                w.U64(m.SessionId);
+                w.I64(m.ShipId);
+                w.U32((uint)m.Entries.Count);
+                foreach (var entry in m.Entries)
+                {
+                    w.I32(entry.CollectionId);
+                    w.F64(entry.Value);
+                    w.F64(entry.RemainingMs);
+                }
+                break;
             case SimUpdateEffect m:
                 w.U8(Kind.UpdateEffect);
                 w.U64(m.SessionId);
@@ -857,6 +876,17 @@ private static void WriteAction(Writer w, SimAction action)
                 w.F64(m.WasteRoll);
                 w.F64(m.RoundingRoll);
                 w.F64(m.CritRoll);
+                // protocol 42: the ships a command burst reaches (a count, then each id); only a burst names any
+                var recipients = m.Recipients ?? [];
+                if (recipients.Count > 0 && m.Command != SimModuleWorkCommands.Burst)
+                {
+                    throw new ArgumentException("only a command burst's cycle names ships", nameof(message));
+                }
+                w.U32((uint)recipients.Count);
+                foreach (var ship in recipients)
+                {
+                    w.I64(ship);
+                }
                 break;
             case SimModuleWorkResult m:
                 w.U8(Kind.ModuleWorkResult);

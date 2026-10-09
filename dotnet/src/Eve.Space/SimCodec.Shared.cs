@@ -70,6 +70,9 @@ public static partial class SimCodec
 
 /// <summary>Protocol 38 (FP-C4b, FP-C5): a refresh of a running effect (host to simulation).</summary>
 public const byte UpdateEffect = 61;
+
+        /// <summary>The timed buffs of a ship of this session (protocol 42, track C6), host to simulation.</summary>
+        public const byte BuffState = 62;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)

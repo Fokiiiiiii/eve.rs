@@ -44,6 +44,7 @@ internal sealed partial class CharacterServicesComposition
         if (spaceSessions is not null)
         {
             spaceSessions.IsInFleetAsync = async (characterId, token) => await fleetStore.FleetIdForCharacterAsync(characterId, token) is not null;
+            spaceSessions.FleetIdOfAsync = (characterId, token) => fleetStore.FleetIdForCharacterAsync(characterId, token);
         }
         return AgentRpcServices();
     }

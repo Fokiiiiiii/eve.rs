@@ -39,6 +39,21 @@ public sealed partial class SpaceSessions
     /// Rebuilds each effect the pilot's modules run from the ship as it flies, and sends the simulation the ones whose numbers changed. Nothing is sent for an effect that
     /// is unchanged (so a refresh that changes nothing is silent).
     /// </summary>
+    /// <summary>
+    /// Tells the simulation that a ship's numbers changed through its buffs (a command burst's, protocol 42): the ship is sent again, and the modules it runs are
+    /// refreshed (their numbers change while they run). Nothing is sent for a pilot who is not in space.
+    /// </summary>
+    public async Task BuffedAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
+        {
+            return;
+        }
+        var sessionId = (ulong)session.SessionId;
+        await SendShipAsync(sessionId, pilot, null, cancellationToken);
+        await RefreshRunningAsync(pilot, sessionId, cancellationToken);
+    }
+
     private async Task RefreshRunningAsync(Pilot pilot, ulong sessionId, CancellationToken cancellationToken)
     {
         if (pilot.RunningModules.IsEmpty || !_sim.IsConnected || await FlownShipAsync(pilot, cancellationToken) is not { } snapshot)

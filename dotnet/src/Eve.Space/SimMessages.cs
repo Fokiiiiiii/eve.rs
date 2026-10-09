@@ -292,6 +292,15 @@ public abstract record SimChargeOp
 /// </summary>
 public sealed record SimAdjustCharge(ulong RequestId, ulong SessionId, long ModuleId, int ChargeType, SimChargeOp Op) : SimMessage;
 
+/// <summary>One buff of a ship (<see cref="SimBuffState"/>): its buff collection, the value it gives the ship, and the time it has left, in milliseconds.</summary>
+public sealed record SimBuffEntry(int CollectionId, double Value, double RemainingMs);
+
+/// <summary>
+/// The timed buffs of a ship of this session (protocol 42, track C6): the host sends them after each change, and the simulation tells the client <c>OnDbuffUpdated</c>
+/// with them. An empty list clears the client's buffs. Nothing is answered.
+/// </summary>
+public sealed record SimBuffState(ulong SessionId, long ShipId, IReadOnlyList<SimBuffEntry> Entries) : SimMessage;
+
 /// <summary>
 /// A refresh of a running effect (protocol 38, FP-C4b and FP-C5): an overheat, or a tracking computer that starts, stops or overheats, changes the cycle, what a
 /// cycle costs the capacitor, the turret's numbers and the attributes the client is told. The simulation applies it at the start of the next cycle; nothing is answered.
@@ -348,6 +357,9 @@ public static class SimModuleWorkCommands
 
     /// <summary>A Ship Scanner's cycle ended with its target in reach: the host reveals the target's fitted hardware (protocol 40). It carries no mining numbers.</summary>
     public const byte ScanShip = 11;
+
+    /// <summary>A command burst's cycle ended: the host applies the burst's buffs to the ships it reaches (<see cref="SimModuleWorkCycle.Recipients"/>), protocol 42.</summary>
+    public const byte Burst = 12;
 }
 
 /// <summary>A layer of a ship's health.</summary>
@@ -440,6 +452,12 @@ public abstract record SimAction
     /// The simulation releases it as a deployable; it is not taken down when the generator stops.
     /// </summary>
     public sealed record CynoField(SimDeployable Ball, double LifetimeMs) : SimAction;
+
+    /// <summary>
+    /// A command burst's cycle (tag 28, protocol 42): non-targeted. At the cycle's end the simulation sends the host the ships within <paramref name="RangeMeters"/> (plus one
+    /// metre) as a work cycle (<see cref="SimModuleWorkCommands.Burst"/>) and parks until the host answers; the host reads the buffs from the charge and the module.
+    /// </summary>
+    public sealed record CommandBurst(double RangeMeters) : SimAction;
 
     /// <summary>Spools once, then shifts the ship along its heading; cooldown begins when the spool succeeds or is interrupted.</summary>
     public sealed record MicroJumpDrive(double DistanceMeters, long CooldownMs) : SimAction;
@@ -814,7 +832,9 @@ public sealed record SimDroneWorkCycle(
 public sealed record SimModuleWorkCycle(
     ulong SessionId, long CharacterId, long ShipId, int SolarSystemId, long ModuleId, long TargetId, ulong CycleId, byte Command,
     double MiningAmountM3, double WasteVolumeMultiplier, double WasteProbability, double CritProbability, double CritQuantityMultiplier,
-    double AccessDifficultyBonus, double WasteRoll, double RoundingRoll, double CritRoll) : SimMessage;
+    double AccessDifficultyBonus, double WasteRoll, double RoundingRoll, double CritRoll,
+    /// <summary>The ships a command burst reaches (<see cref="SimModuleWorkCommands.Burst"/> only; null or empty for every other command): the ships of the scene within reach.</summary>
+    IReadOnlyList<long>? Recipients = null) : SimMessage;
 
 /// <summary>The host's decision for one module work cycle; the fields are those of <see cref="SimDroneWorkResult"/>.</summary>
 public sealed record SimModuleWorkResult(

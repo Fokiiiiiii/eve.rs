@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 41;
+    public const ushort ProtocolVersion = 42;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -289,6 +289,29 @@ public static partial class SimCodec
                 message = new SimUpdateEffect(session, module, duration, capacitor, turret, ReadChanges(ref r));
                 break;
             }
+            case Kind.BuffState:
+                {
+                    var session = r.U64();
+                    var ship = r.I64();
+                    var count = r.U32();
+                    // an entry takes 20 bytes, so a count the frame cannot hold is refused before anything is read for it
+                    if (count > r.Remaining / 20)
+                    {
+                        throw new SimLinkException(SimLinkError.Truncated, "buff state count");
+                    }
+                    var entries = new SimBuffEntry[count];
+                    for (var i = 0; i < entries.Length; i++)
+                    {
+                        var (collection, value, remaining) = (r.I32(), r.F64(), r.F64());
+                        if (!double.IsFinite(value) || !double.IsFinite(remaining) || remaining < 0)
+                        {
+                            throw new SimLinkException(SimLinkError.BadValue, "buff state");
+                        }
+                        entries[i] = new SimBuffEntry(collection, value, remaining);
+                    }
+                    message = new SimBuffState(session, ship, entries);
+                    break;
+                }
             case Kind.FighterOrder:
                 {
                     var session = r.U64();
@@ -423,22 +446,25 @@ public static partial class SimCodec
                     var wasteRoll = r.F64();
                     var roundingRoll = r.F64();
                     var critRoll = r.F64();
+                    var recipients = ReadRecipients(ref r);
                     // probabilities are at most one, the rolls below one, the numbers finite and not negative; a mining cycle mines something
                     if (cycleId == 0 || command is not (SimDroneCommands.MineRepeatedly or SimDroneCommands.Salvage or SimModuleWorkCommands.ConsumeFuel
-                            or SimModuleWorkCommands.ScanCargo or SimModuleWorkCommands.ScanShip)
+                            or SimModuleWorkCommands.ScanCargo or SimModuleWorkCommands.ScanShip or SimModuleWorkCommands.Burst)
                         || new[] { mining, wasteMultiplier, critMultiplier, accessBonus }.Any(n => !double.IsFinite(n) || n < 0)
                         || new[] { wasteProbability, critProbability }.Any(p => !double.IsFinite(p) || p < 0 || p > 1)
                         || new[] { wasteRoll, roundingRoll, critRoll }.Any(roll => !double.IsFinite(roll) || roll < 0 || roll >= 1)
                         || (command == SimDroneCommands.MineRepeatedly && mining <= 0)
                         // a fuel cycle and a scan carry no mining numbers: they ask for fuel or reveal a target only
-                        || (command is SimModuleWorkCommands.ConsumeFuel or SimModuleWorkCommands.ScanCargo or SimModuleWorkCommands.ScanShip
-                            && new[] { mining, wasteMultiplier, wasteProbability, critProbability, critMultiplier, accessBonus }.Any(n => n != 0)))
+                        || (command is SimModuleWorkCommands.ConsumeFuel or SimModuleWorkCommands.ScanCargo or SimModuleWorkCommands.ScanShip or SimModuleWorkCommands.Burst
+                            && new[] { mining, wasteMultiplier, wasteProbability, critProbability, critMultiplier, accessBonus }.Any(n => n != 0))
+                        // only a command burst names ships: the ships in reach of its cycle
+                        || (command != SimModuleWorkCommands.Burst && recipients is { Count: > 0 }))
                     {
                         throw new SimLinkException(SimLinkError.BadValue, "bad module work cycle");
                     }
                     message = new SimModuleWorkCycle(
                         session, character, ship, system, module, target, cycleId, command, mining, wasteMultiplier, wasteProbability, critProbability,
-                        critMultiplier, accessBonus, wasteRoll, roundingRoll, critRoll);
+                        critMultiplier, accessBonus, wasteRoll, roundingRoll, critRoll, recipients);
                     break;
                 }
             case Kind.ModuleWorkResult:

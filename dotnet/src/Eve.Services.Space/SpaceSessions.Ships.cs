@@ -37,6 +37,7 @@ public sealed partial class SpaceSessions
         {
             return None;
         }
+        Buffs.Sync(snapshot.World, snapshot.Ship.Id, _nowUnixMs());
         // a ship comes out of its station with its shield and capacitor full; what it has lost of its armor and hull it keeps (the reference's)
         var spec = SimShips.Of(snapshot, _statics, await SecurityStatusAsync(characterId, cancellationToken));
         spec = spec with { Condition = (spec.Condition ?? SimCondition.Full) with { ShieldCharge = 1, Charge = 1 } };

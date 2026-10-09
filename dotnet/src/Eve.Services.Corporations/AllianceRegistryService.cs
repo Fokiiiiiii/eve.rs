@@ -1274,23 +1274,38 @@ public sealed class AllianceMaintenanceBillWorker(
 {
     private const int BillTypeId = 5;
     private const long FiletimeEpochOffsetMs = 11_644_473_600_000L;
-    private const long RetryDelayMs = 24L * 60 * 60 * 1000;
     private const string JobKind = "alliance-maintenance-bill";
 
     public Func<long, long, long, CancellationToken, Task>? BillNotificationWriter { get; set; } = notifyBillIssued;
+    public Func<long, long>? NextDowntimeAtMs { get; set; }
+    public Func<long, long, CancellationToken, Task<bool>>? DropSovereigntyClaimsAsync { get; set; }
+    public CharacterSessions? CharacterSessions { get; set; }
+
+    public Func<long, IReadOnlyList<AllianceMember>, long, CancellationToken, Task>? InheritAllianceWarsForClosureAsync { get; set; }
+    public Func<long, long, CancellationToken, Task>? EndAllianceWarsAtClosureAsync { get; set; }
 
     public async Task RegisterAsync(CancellationToken token = default)
     {
         scheduler.Register(JobKind, HandleAsync);
         store.AllianceMaintenanceBillWriter = EnsureAndScheduleAsync;
+        store.AllianceEmptyClosureWriter = ScheduleEmptyAllianceClosureAsync;
         await ReconcileAsync(token);
     }
 
     public async Task ReconcileAsync(CancellationToken token = default)
     {
         foreach (var alliance in await store.AllAlliancesAsync(token))
+        {
+            var members = await store.AllianceMembersAsync(alliance.Id, token);
+            if (alliance.Suspended && members.Count == 0)
+            {
+                if (await store.AllianceEmptySinceMsAsync(alliance.Id, token) is { } emptySinceMs)
+                    await ScheduleEmptyAllianceClosureAsync(alliance.Id, emptySinceMs, token);
+                continue;
+            }
             if ((await store.AllianceMaintenanceBillsAsync(alliance.Id, token)).Count == 0)
                 await EnsureAndScheduleAsync(alliance.Id, token);
+        }
 
         foreach (var bill in await store.PendingAllianceMaintenanceBillsAsync(token))
         {
@@ -1319,47 +1334,149 @@ public sealed class AllianceMaintenanceBillWorker(
             await notify(member.CharacterId, alliance.Id, bill.BillId, token);
     }
 
-    private async Task HandleAsync(Eve.Scheduler.JobContext job, CancellationToken token)
-    {
-        var payload = job.Payload<AllianceMaintenanceBillDue>()
-            ?? throw new InvalidOperationException("alliance maintenance bill job has no payload");
-        var bill = (await store.AllianceMaintenanceBillsAsync(payload.AllianceId, token))
-            .SingleOrDefault(entry => entry.BillId == payload.BillId);
-        if (bill is null) return;
 
-        var dueAtMs = UnixMilliseconds(bill.DueFiletime);
-        if (dueAtMs > now())
-        {
-            job.RunAgainAt(dueAtMs, payload);
-            return;
-        }
-        if (bill.Paid)
+    private async Task CloseAllianceAtDowntimeAsync(
+    AllianceMaintenanceBillDue payload, CancellationToken token)
+{
+    if (payload.MemberSnapshots is { } members &&
+        InheritAllianceWarsForClosureAsync is { } inheritWars)
+        await inheritWars(payload.AllianceId, members, now(), token);
+    if (DropSovereigntyClaimsAsync is not { } dropSovereignty ||
+        !await dropSovereignty(payload.AllianceId, now(), token))
+        throw new InvalidOperationException($"could not drop sovereignty for alliance {payload.AllianceId}");
+    if (store.AllianceAffiliationWriter is not { } writeAffiliation)
+        throw new InvalidOperationException("alliance affiliation writer is not registered");
+
+    var closed = await store.CloseAllianceForMaintenanceAsync(
+        payload.AllianceId, now(), writeAffiliation, token,
+        payload.BillId > 0 ? payload.BillId : null);
+    if (!closed.After.Deleted)
+        throw new InvalidOperationException($"alliance {payload.AllianceId} did not close");
+    if (EndAllianceWarsAtClosureAsync is { } endWars)
+        await endWars(payload.AllianceId, now(), token);
+
+    if (CharacterSessions is not { } sessions || payload.AllianceSnapshot is not { } before)
+        return;
+    foreach (var member in payload.MemberSnapshots ?? [])
+        CorporationNotificationAdapter.AllianceMemberChanged(
+            sessions, payload.AllianceId, member.CorporationId, member, null);
+    var beforeFields = AllianceRegistryService.AllianceFields(before, payload.CharacterCount);
+    CorporationNotificationAdapter.AllianceChanged(sessions, payload.AllianceId, beforeFields, null);
+    foreach (var member in payload.MemberSnapshots ?? [])
+        CorporationNotificationAdapter.CorporationChanged(
+            sessions, member.CorporationId, "allianceID",
+            new PyInt(payload.AllianceId), PyNone.Instance);
+}
+
+    public async Task ScheduleEmptyAllianceClosureAsync(
+    System.Data.Common.DbConnection connection,
+    System.Data.Common.DbTransaction transaction,
+    long allianceId,
+    long emptySinceMs,
+    CancellationToken token)
+{
+    if (allianceId <= 0 || emptySinceMs <= 0) return;
+    if (connection is not Npgsql.NpgsqlConnection npgsqlConnection ||
+        transaction is not Npgsql.NpgsqlTransaction npgsqlTransaction ||
+        !ReferenceEquals(transaction.Connection, connection))
+        throw new ArgumentException("empty-alliance closure must be scheduled in the membership transaction");
+    var closeAt = NextDowntimeAtMs?.Invoke(emptySinceMs)
+        ?? throw new InvalidOperationException("alliance closure downtime is not configured");
+    await scheduler.ScheduleAsync(npgsqlConnection, npgsqlTransaction,
+        EmptyClosureSpec(allianceId, emptySinceMs, Math.Max(now(), closeAt)), token);
+}
+
+private async Task ScheduleEmptyAllianceClosureAsync(long allianceId, long emptySinceMs, CancellationToken token)
+{
+    if (allianceId <= 0 || emptySinceMs <= 0) return;
+    var alliance = await store.AllianceAsync(allianceId, token);
+    if (alliance is not { Deleted: false, Suspended: true } ||
+        (await store.AllianceMembersAsync(allianceId, token)).Count != 0)
+        return;
+    var closeAt = NextDowntimeAtMs?.Invoke(emptySinceMs)
+        ?? throw new InvalidOperationException("alliance closure downtime is not configured");
+    await scheduler.ScheduleAsync(
+        EmptyClosureSpec(allianceId, emptySinceMs, Math.Max(now(), closeAt)), token);
+}
+
+private static Eve.Scheduler.JobSpec EmptyClosureSpec(long allianceId, long emptySinceMs, long closeAtMs) =>
+    new(JobKind, closeAtMs)
+    {
+        Key = $"alliance-empty-closure:{allianceId}:{emptySinceMs}",
+        Payload = new AllianceMaintenanceBillDue(allianceId, 0, CloseAtDowntime: true),
+        OnDuplicate = Eve.Scheduler.OnDuplicate.Replace
+    };
+
+    private async Task HandleAsync(Eve.Scheduler.JobContext job, CancellationToken token)
+{
+    var payload = job.Payload<AllianceMaintenanceBillDue>()
+        ?? throw new InvalidOperationException("alliance maintenance bill job has no payload");
+    CorporationBill? bill = payload.BillId > 0
+        ? (await store.AllianceMaintenanceBillsAsync(payload.AllianceId, token))
+            .SingleOrDefault(entry => entry.BillId == payload.BillId)
+        : null;
+    if (payload.BillId > 0 && bill is null && !payload.CloseAtDowntime) return;
+
+    var nowMs = now();
+    var dueAtMs = bill is null ? nowMs : UnixMilliseconds(bill.DueFiletime);
+    if (dueAtMs > nowMs)
+    {
+        job.RunAgainAt(dueAtMs, payload);
+        return;
+    }
+    if (payload.CloseAtDowntime)
+    {
+        if (bill is { Paid: true })
         {
             await RenewAsync(bill, token);
             return;
         }
-
-        var alliance = await store.AllianceAsync(payload.AllianceId, token);
-        if (alliance is not { Deleted: false } || alliance.ActiveExecutorId is not { } executorCorporationId)
-            return;
-        var allianceSettings = await officeStore.AutomaticPaySettingsAsync([alliance.Id], token);
-        if (allianceSettings.TryGetValue(alliance.Id, out var payerPolicy) &&
-            payerPolicy.EnabledBillTypes.GetValueOrDefault(BillTypeId))
+        if (payload.AllianceSnapshot is null || payload.MemberSnapshots is null)
         {
-            var executorSettings = await officeStore.AutomaticPaySettingsAsync([executorCorporationId], token);
-            var accountKey = executorSettings.TryGetValue(executorCorporationId, out var settings) &&
-                settings.DivisionId is >= 1000 and <= 1006 ? settings.DivisionId : 1000;
-            if (await store.PayAllianceMaintenanceBillAsync(
-                    bill.BillId, alliance.Id, executorCorporationId, accountKey, now(), token))
+            var alliance = await store.AllianceAsync(payload.AllianceId, token);
+            if (alliance is null) return;
+            var members = await store.AllianceMembersAsync(payload.AllianceId, token);
+            var counts = await store.AllianceCharacterCountsAsync([payload.AllianceId], token);
+            job.RunAgainAt(checked(nowMs + 1), payload with
             {
-                await RenewAsync(bill, token);
-                return;
-            }
+                AllianceSnapshot = alliance,
+                MemberSnapshots = members.ToArray(),
+                CharacterCount = counts.GetValueOrDefault(payload.AllianceId)
+            });
+            return;
         }
-
-        // shortcut: unpaid-bill closure is pending the durable sovereignty and war transfer lifecycle.
-        job.RunAgainAt(checked(now() + RetryDelayMs), payload);
+        await CloseAllianceAtDowntimeAsync(payload, token);
+        return;
     }
+    if (bill is null) return;
+    if (bill.Paid)
+    {
+        await RenewAsync(bill, token);
+        return;
+    }
+
+    var allianceState = await store.AllianceAsync(payload.AllianceId, token);
+    if (allianceState is not { Deleted: false } || allianceState.ActiveExecutorId is not { } executorCorporationId)
+        return;
+    var allianceSettings = await officeStore.AutomaticPaySettingsAsync([allianceState.Id], token);
+    if (allianceSettings.TryGetValue(allianceState.Id, out var payerPolicy) &&
+        payerPolicy.EnabledBillTypes.GetValueOrDefault(BillTypeId))
+    {
+        var executorSettings = await officeStore.AutomaticPaySettingsAsync([executorCorporationId], token);
+        var accountKey = executorSettings.TryGetValue(executorCorporationId, out var settings) &&
+            settings.DivisionId is >= 1000 and <= 1006 ? settings.DivisionId : 1000;
+        if (await store.PayAllianceMaintenanceBillAsync(
+                bill.BillId, allianceState.Id, executorCorporationId, accountKey, nowMs, token))
+        {
+            await RenewAsync(bill, token);
+            return;
+        }
+    }
+
+    var closeAt = NextDowntimeAtMs?.Invoke(dueAtMs)
+        ?? throw new InvalidOperationException("alliance closure downtime is not configured");
+    job.RunAgainAt(Math.Max(nowMs, closeAt), payload with { CloseAtDowntime = true });
+}
 
     private async Task RenewAsync(CorporationBill paidBill, CancellationToken token)
     {
@@ -1383,5 +1500,715 @@ public sealed class AllianceMaintenanceBillWorker(
     private static long UnixMilliseconds(long filetime) =>
         Math.Max(0, filetime / 10_000L - FiletimeEpochOffsetMs);
 
-    private sealed record AllianceMaintenanceBillDue(long AllianceId, long BillId);
+    private sealed record AllianceMaintenanceBillDue(
+    long AllianceId,
+    long BillId,
+    bool CloseAtDowntime = false,
+    Alliance? AllianceSnapshot = null,
+    AllianceMember[]? MemberSnapshots = null,
+    long CharacterCount = 0);
+}
+
+
+public sealed class AllianceWarInheritanceWorker(
+    Npgsql.NpgsqlDataSource source,
+    CorporationStore store,
+    Eve.Corporations.CorporationOfficeStore officeStore,
+    Eve.Relations.RelationStore relations,
+    Eve.Scheduler.DurableScheduler scheduler,
+    Func<long> now,
+    CharacterSessions? characterSessions = null)
+{
+    private const string JobKind = "alliance-war-inheritance";
+    private const string WarBillJobKind = "alliance-war-bill-due";
+    private const int WarBillTypeId = 4;
+    private const long WarBillAmount = 100_000_000;
+    private const long ConcordCorporationId = 1_000_125;
+    private const long FiletimeEpochOffsetMs = 11_644_473_600_000L;
+    private const long WeekFiletime = 7L * 24 * 60 * 60 * 10_000_000;
+
+    public Task RegisterAsync()
+    {
+        scheduler.Register(JobKind, HandleAsync);
+        scheduler.Register(WarBillJobKind, HandleWarBillAsync);
+        store.AllianceWarInheritanceWriter = ScheduleAsync;
+        store.WarBillDueWriter = ScheduleWarBillAsync;
+        return ReconcileWarBillsAsync();
+    }
+
+    public async Task ScheduleAsync(
+        System.Data.Common.DbConnection databaseConnection,
+        System.Data.Common.DbTransaction databaseTransaction,
+        long allianceId, long corporationId, long membershipStartedMs, long leftAtMs,
+        CancellationToken token)
+    {
+        if (databaseConnection is not Npgsql.NpgsqlConnection connection ||
+            databaseTransaction is not Npgsql.NpgsqlTransaction transaction ||
+            !ReferenceEquals(databaseTransaction.Connection, databaseConnection))
+            throw new ArgumentException("alliance war inheritance must share the departure transaction");
+        var wars = await ReadWarSnapshotsAsync(connection, transaction, allianceId, leftAtMs, token);
+        if (wars.Length == 0) return;
+        var payload = new AllianceWarInheritanceDue(
+            allianceId, corporationId, membershipStartedMs, leftAtMs, wars);
+        await scheduler.ScheduleAsync(connection, transaction, Spec(payload), token);
+    }
+
+    public async Task ReconcileWarBillsAsync(CancellationToken token = default)
+    {
+        foreach (var bill in await store.PendingWarBillsAsync(token))
+        {
+            var war = bill.WarId > 0
+                ? await relations.GetByIdAsync(bill.WarId, cancellationToken: token)
+                : null;
+            if (WarBillInvalidStatus(bill, war) is { } status)
+            {
+                await store.MarkWarBillProcessedAsync(bill.BillId, status, token);
+                continue;
+            }
+            await scheduler.ScheduleAsync(WarBillSpec(bill), token);
+        }
+    }
+
+    public async Task ScheduleWarBillAsync(long billId, CancellationToken token = default)
+    {
+        var bill = await store.PendingWarBillAsync(billId, token);
+        if (bill is null || bill.WarId <= 0) return;
+        var war = await relations.GetByIdAsync(bill.WarId, cancellationToken: token);
+        if (war is null || Long(war.Attrs<System.Text.Json.JsonElement>(), "billID") != bill.BillId) return;
+        await scheduler.ScheduleAsync(WarBillSpec(bill), token);
+    }
+
+    private Task ScheduleWarBillAsync(
+        Npgsql.NpgsqlConnection connection, Npgsql.NpgsqlTransaction transaction,
+        long billId, long dueFiletime, CancellationToken token) =>
+        scheduler.ScheduleAsync(connection, transaction, WarBillSpec(billId, dueFiletime), token);
+
+    private async Task HandleWarBillAsync(Eve.Scheduler.JobContext job, CancellationToken token)
+    {
+        var payload = job.Payload<WarBillDue>()
+            ?? throw new InvalidOperationException("war bill job has no payload");
+        var bill = await store.PendingWarBillAsync(payload.BillId, token);
+        if (bill is null) return;
+        var nowMs = now();
+        var dueAtMs = UnixMilliseconds(bill.DueFiletime);
+        if (dueAtMs > nowMs)
+        {
+            job.RunAgainAt(dueAtMs, payload);
+            return;
+        }
+        if (bill.WarId <= 0)
+        {
+            await store.MarkWarBillProcessedAsync(bill.BillId, "orphaned", token);
+            return;
+        }
+        var war = await relations.GetByIdAsync(bill.WarId, cancellationToken: token);
+        if (WarBillInvalidStatus(bill, war) is { } status)
+        {
+            await store.MarkWarBillProcessedAsync(bill.BillId, status, token);
+            return;
+        }
+        if (war!.UntilMs is { } untilMs && untilMs <= nowMs)
+        {
+            await store.MarkWarBillProcessedAsync(bill.BillId, "inactive", token);
+            return;
+        }
+
+        if (!bill.Paid)
+            await TryAutoPayWarBillAsync(bill, nowMs, token);
+        var currentBill = await store.PendingWarBillAsync(payload.BillId, token);
+        if (currentBill is null) return;
+        if (currentBill.Paid)
+        {
+            await RenewPaidWarBillAsync(currentBill, war, token);
+            return;
+        }
+        await DefaultWarBillAsync(currentBill, war, nowMs, payload, job, token);
+    }
+
+    private async Task TryAutoPayWarBillAsync(CorporationBill bill, long paidAtMs, CancellationToken token)
+    {
+        var debtorSettings = await officeStore.AutomaticPaySettingsAsync([bill.DebtorId], token);
+        if (!debtorSettings.TryGetValue(bill.DebtorId, out var policy) ||
+            !policy.EnabledBillTypes.GetValueOrDefault(WarBillTypeId))
+            return;
+
+        var corporation = await store.GetAsync(bill.DebtorId, token);
+        if (corporation is not null)
+        {
+            if (corporation is not { IsNpc: false, Deleted: false }) return;
+            var accountKey = policy.DivisionId is >= 1000 and <= 1006 ? policy.DivisionId : 1000;
+            await store.PayCorporationWarBillAsync(bill.BillId, corporation.Id, accountKey, paidAtMs, token);
+            return;
+        }
+
+        var alliance = await store.AllianceAsync(bill.DebtorId, token);
+        if (alliance is not { Deleted: false, ActiveExecutorId: { } executorCorporationId })
+            return;
+        var executorSettings = await officeStore.AutomaticPaySettingsAsync([executorCorporationId], token);
+        var executorPolicy = executorSettings[executorCorporationId];
+        var walletDivision = executorPolicy.DivisionId is >= 1000 and <= 1006
+            ? executorPolicy.DivisionId
+            : 1000;
+        await store.PayAllianceWarBillAsync(
+            bill.BillId, alliance.Id, executorCorporationId, walletDivision, paidAtMs, token);
+    }
+
+    private async Task RenewPaidWarBillAsync(
+        CorporationBill bill, Eve.Relations.Relation war, CancellationToken token)
+    {
+        System.Text.Json.Nodes.JsonObject? updatedAttributes = null;
+        var nextDueFiletime = checked(bill.DueFiletime + WeekFiletime);
+        await store.RenewWarBillAsync(
+            bill.BillId,
+            async (connection, transaction, warId, nextBillId, cancellationToken) =>
+            {
+                var current = await relations.GetAsync(
+                    "war", war.Subject, war.Object, connection, transaction, cancellationToken, forUpdate: true);
+                if (current is null || current.Id != warId ||
+                    WarBillInvalidStatus(bill, current) is not null)
+                    throw new CorporationError("WAR_BILL_RENEWAL_WAR_INACTIVE");
+                var attributes = Attributes(current.Attrs<System.Text.Json.JsonElement>());
+                attributes["billID"] = nextBillId;
+                await relations.SetAsync(
+                    connection, transaction, "war", current.Subject, current.Object, current.Value,
+                    "war-bill-renewed", attributes, current.UntilMs, cancellationToken);
+                await scheduler.ScheduleAsync(
+                    connection, transaction, WarBillSpec(nextBillId, nextDueFiletime), cancellationToken);
+                updatedAttributes = attributes;
+            },
+            token);
+        if (updatedAttributes is null) return;
+        CorporationNotificationAdapter.WarChangedBackground(
+            characterSessions, war.Subject, war.Object,
+            WireWar(war.Id, war.Subject, war.Object, updatedAttributes));
+    }
+
+    private async Task DefaultWarBillAsync(
+        CorporationBill bill, Eve.Relations.Relation war, long nowMs,
+        WarBillDue payload, Eve.Scheduler.JobContext job, CancellationToken token)
+    {
+        var finishAtMs = checked(nowMs + 24L * 60 * 60 * 1000);
+        var finishAtFiletime = Filetime(finishAtMs);
+        System.Text.Json.Nodes.JsonObject? endedAttributes = null;
+        var processed = await store.MarkWarBillProcessedAsync(
+            bill.BillId, "defaulted", token,
+            async (connection, transaction, pendingBill, cancellationToken) =>
+            {
+                var current = await relations.GetAsync(
+                    "war", war.Subject, war.Object, connection, transaction, cancellationToken, forUpdate: true);
+                if (current is null || current.Id != pendingBill.WarId ||
+                    current.UntilMs is { } until && until <= nowMs ||
+                    WarBillInvalidStatus(pendingBill, current) is not null)
+                    return false;
+                var attributes = Attributes(current.Attrs<System.Text.Json.JsonElement>());
+                attributes["timeFinished"] = finishAtFiletime.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture);
+                attributes["reasonEnded"] = 10;
+                await relations.SetAsync(
+                    connection, transaction, "war", current.Subject, current.Object, current.Value,
+                    "war-unpaid-bill", attributes, finishAtMs, cancellationToken);
+                endedAttributes = attributes;
+                return true;
+            });
+        if (!processed)
+        {
+            var latest = await store.PendingWarBillAsync(bill.BillId, token);
+            if (latest is { Paid: true })
+            {
+                await RenewPaidWarBillAsync(latest, war, token);
+                return;
+            }
+            if (latest is not null)
+                job.RunAgainAt(checked(nowMs + 1000), payload);
+            return;
+        }
+        if (endedAttributes is null) return;
+        CorporationNotificationAdapter.WarChangedBackground(
+            characterSessions, war.Subject, war.Object,
+            WireWar(war.Id, war.Subject, war.Object, endedAttributes));
+    }
+
+    private static string? WarBillInvalidStatus(
+        CorporationBill bill, Eve.Relations.Relation? war)
+    {
+        if (bill.WarId <= 0 || war is null) return "orphaned";
+        var attributes = war.Attrs<System.Text.Json.JsonElement>();
+        if (Long(attributes, "billID") != bill.BillId) return "superseded";
+        if (Bool(attributes, "mutual") || NullableLong(attributes, "timeFinished") is not null ||
+            war.Subject != bill.DebtorId || war.Subject <= 0 || war.Object <= 0)
+            return "inactive";
+        return null;
+    }
+
+    private static Eve.Scheduler.JobSpec WarBillSpec(CorporationBill bill) =>
+        WarBillSpec(bill.BillId, bill.DueFiletime);
+
+    private static Eve.Scheduler.JobSpec WarBillSpec(long billId, long dueFiletime) =>
+        new(WarBillJobKind, UnixMilliseconds(dueFiletime))
+        {
+            Key = $"war-bill:{billId}",
+            Payload = new WarBillDue(billId),
+            OnDuplicate = Eve.Scheduler.OnDuplicate.Replace
+        };
+
+    public async Task InheritForAllianceClosureAsync(
+        long allianceId, IReadOnlyList<AllianceMember> members, long closedAtMs,
+        CancellationToken token = default)
+    {
+        foreach (var member in members.OrderBy(member => member.CorporationId))
+        {
+            var wars = await ReadWarSnapshotsAsync(allianceId, closedAtMs, token);
+            if (wars.Length == 0) continue;
+            await InheritAsync(new AllianceWarInheritanceDue(
+                allianceId, member.CorporationId, member.StartedMs, closedAtMs, wars), token);
+        }
+    }
+
+    public async Task EndAllianceWarsAsync(long allianceId, long endedAtMs, CancellationToken token = default)
+    {
+        if (allianceId <= 0 || endedAtMs < 0) return;
+        var endedAtFiletime = Filetime(endedAtMs);
+        var endedWars = new List<(long DeclaredBy, long Against, long WarId, System.Text.Json.Nodes.JsonObject Attributes)>();
+        await using (var connection = await source.OpenConnectionAsync(token))
+        await using (var transaction = await connection.BeginTransactionAsync(token))
+        {
+            var wars = (await relations.FromAsync("war", allianceId, connection, transaction, token))
+                .Concat(await relations.ToAsync("war", allianceId, connection, transaction, token))
+                .DistinctBy(war => war.Id)
+                .ToArray();
+            foreach (var war in wars)
+            {
+                var attributes = Attributes(war.Attrs<System.Text.Json.JsonElement>());
+                var finished = NullableLong(attributes, "timeFinished");
+                if (finished is { } finish && finish <= endedAtFiletime) continue;
+                var updated = (System.Text.Json.Nodes.JsonObject)attributes.DeepClone();
+                updated["timeFinished"] = endedAtFiletime.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                updated["reasonEnded"] = 13;
+                await relations.SetAsync(connection, transaction, "war", war.Subject, war.Object,
+                    war.Value, "alliance-closed", updated, null, token);
+                await relations.EndAsync(connection, transaction, "war", war.Subject, war.Object,
+                    "alliance-closed", token);
+                endedWars.Add((war.Subject, war.Object, war.Id, updated));
+            }
+            await transaction.CommitAsync(token);
+        }
+        foreach (var war in endedWars)
+            CorporationNotificationAdapter.WarChangedBackground(
+                characterSessions, war.DeclaredBy, war.Against, WireWar(war.WarId, war.DeclaredBy, war.Against, war.Attributes));
+    }
+
+    private async Task HandleAsync(Eve.Scheduler.JobContext job, CancellationToken token)
+    {
+        var payload = job.Payload<AllianceWarInheritanceDue>()
+            ?? throw new InvalidOperationException("alliance war inheritance job has no payload");
+        if (payload.LeftAtMs > now())
+        {
+            job.RunAgainAt(payload.LeftAtMs, payload);
+            return;
+        }
+        await InheritAsync(payload, token);
+    }
+
+    private async Task InheritAsync(AllianceWarInheritanceDue job, CancellationToken token)
+    {
+        foreach (var sourceWar in job.Wars.OrderBy(war => war.WarId))
+        {
+            if (sourceWar.AllianceAlly is { } ally)
+                await InheritAllyAsync(job, sourceWar, ally, token);
+            else
+                await InheritPrincipalAsync(job, sourceWar, token);
+        }
+    }
+
+    private async Task InheritPrincipalAsync(
+        AllianceWarInheritanceDue job, AllianceWarSnapshot sourceWar, CancellationToken token)
+    {
+        var allianceIsAggressor = sourceWar.DeclaredById == job.AllianceId;
+        var allianceIsDefender = sourceWar.AgainstId == job.AllianceId;
+        if (allianceIsAggressor == allianceIsDefender) return;
+
+        var declaredById = allianceIsAggressor ? job.CorporationId : sourceWar.DeclaredById;
+        var againstId = allianceIsDefender ? job.CorporationId : sourceWar.AgainstId;
+        if (declaredById <= 0 || againstId <= 0 || declaredById == againstId) return;
+        var operationKey = $"alliance-war-inheritance:{job.AllianceId}:{job.CorporationId}:{job.MembershipStartedMs}:{sourceWar.WarId}";
+        var inheritedFinish = sourceWar.TimeFinishedFiletime;
+        if (!sourceWar.Mutual && inheritedFinish is null && sourceWar.CycleInferred)
+            inheritedFinish = sourceWar.CycleEndFiletime;
+        var needsBill = !sourceWar.Mutual && sourceWar.TimeFinishedFiletime is null &&
+            !sourceWar.CycleInferred && sourceWar.CycleEndFiletime is not null;
+        var warHqId = allianceIsDefender ? sourceWar.WarHqId : null;
+
+        if (needsBill)
+        {
+            var due = sourceWar.CycleEndFiletime!.Value;
+            var payerCorporation = await store.GetAsync(declaredById, token);
+            if (payerCorporation is not null)
+            {
+                var actorId = sourceWar.DeclaredByCharacterId > 0
+                    ? sourceWar.DeclaredByCharacterId
+                    : payerCorporation.CeoId;
+                var result = await store.CreateWarDeclarationAsync(
+                    declaredById, actorId, againstId, warHqId,
+                    sourceWar.TimeDeclaredFiletime, sourceWar.TimeStartedFiletime, due,
+                    WarBillTypeId, WarBillAmount, ConcordCorporationId, operationKey,
+                    (connection, transaction, billId, cancellationToken) =>
+                        CreateInheritedRelationAsync(connection, transaction, job, sourceWar,
+                            declaredById, againstId, warHqId, inheritedFinish, billId, operationKey, cancellationToken),
+                    token);
+                var attrs = BuildInheritedAttributes(job, sourceWar, declaredById, againstId,
+                    warHqId, inheritedFinish, result.BillId);
+                CorporationNotificationAdapter.WarChangedBackground(
+                    characterSessions, declaredById, againstId, WireWar(result.WarId, declaredById, againstId, attrs));
+                return;
+            }
+
+            if (await store.AllianceAsync(declaredById, token) is not { Deleted: false })
+                throw new CorporationError("INHERITED_WAR_OWNER_NOT_FOUND");
+            var inherited = await store.CreateInheritedAllianceWarAsync(
+                declaredById, againstId, warHqId, sourceWar.TimeDeclaredFiletime,
+                sourceWar.TimeStartedFiletime, due, WarBillTypeId, WarBillAmount,
+                ConcordCorporationId, operationKey,
+                (connection, transaction, billId, cancellationToken) =>
+                    CreateInheritedRelationAsync(connection, transaction, job, sourceWar,
+                        declaredById, againstId, warHqId, inheritedFinish, billId, operationKey, cancellationToken),
+                token);
+            var inheritedAttrs = BuildInheritedAttributes(job, sourceWar, declaredById, againstId,
+                warHqId, inheritedFinish, inherited.BillId);
+            CorporationNotificationAdapter.WarChangedBackground(
+                characterSessions, declaredById, againstId, WireWar(inherited.WarId, declaredById, againstId, inheritedAttrs));
+            return;
+        }
+
+        await using var connection = await source.OpenConnectionAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+        var existing = await relations.GetAsync("war", declaredById, againstId,
+            connection, transaction, token, forUpdate: true);
+        if (existing is not null)
+        {
+            var existingAttributes = Attributes(existing.Attrs<System.Text.Json.JsonElement>());
+            if (Long(existingAttributes, "createdFromWarID") == sourceWar.WarId &&
+                Long(existingAttributes, "inheritedFromAllianceID") == job.AllianceId)
+            {
+                await transaction.CommitAsync(token);
+                return;
+            }
+            await transaction.CommitAsync(token);
+            return;
+        }
+        var attributesWithoutBill = BuildInheritedAttributes(
+            job, sourceWar, declaredById, againstId, warHqId, inheritedFinish, null);
+        var untilMs = inheritedFinish is { } finish ? UnixMilliseconds(finish) : (long?)null;
+        var change = await relations.SetAsync(connection, transaction, "war", declaredById, againstId,
+            1.0, "alliance-inherited", attributesWithoutBill, untilMs, token);
+        var relationId = change?.RelationId ??
+            (await relations.GetAsync("war", declaredById, againstId, connection, transaction, token))?.Id ?? 0;
+        await transaction.CommitAsync(token);
+        if (relationId > 0)
+            CorporationNotificationAdapter.WarChangedBackground(
+                characterSessions, declaredById, againstId, WireWar(relationId, declaredById, againstId, attributesWithoutBill));
+    }
+
+    private async Task<long> CreateInheritedRelationAsync(
+        Npgsql.NpgsqlConnection connection, Npgsql.NpgsqlTransaction transaction,
+        AllianceWarInheritanceDue job, AllianceWarSnapshot sourceWar, long declaredById,
+        long againstId, long? warHqId, long? inheritedFinish, long billId, string operationKey,
+        CancellationToken token)
+    {
+        var existing = await relations.GetAsync("war", declaredById, againstId,
+            connection, transaction, token, forUpdate: true);
+        if (existing is not null)
+        {
+            var existingAttributes = Attributes(existing.Attrs<System.Text.Json.JsonElement>());
+            if (Long(existingAttributes, "createdFromWarID") == sourceWar.WarId &&
+                Long(existingAttributes, "inheritedFromAllianceID") == job.AllianceId)
+                return existing.Id;
+            throw new CorporationError("INHERITED_WAR_ALREADY_EXISTS");
+        }
+        var attributes = BuildInheritedAttributes(job, sourceWar, declaredById, againstId,
+            warHqId, inheritedFinish, billId);
+        var untilMs = inheritedFinish is { } finish ? UnixMilliseconds(finish) : (long?)null;
+        var change = await relations.SetAsync(connection, transaction, "war", declaredById, againstId,
+            1.0, "alliance-inherited", attributes, untilMs, token);
+        return change?.RelationId ??
+            (await relations.GetAsync("war", declaredById, againstId, connection, transaction, token))?.Id ?? 0;
+    }
+
+    private async Task InheritAllyAsync(
+        AllianceWarInheritanceDue job, AllianceWarSnapshot sourceWar, AllianceWarAlly allianceAlly,
+        CancellationToken token)
+    {
+        await using var connection = await source.OpenConnectionAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+        var relation = await relations.GetAsync("war", sourceWar.SubjectId, sourceWar.ObjectId,
+            connection, transaction, token, forUpdate: true);
+        if (relation is null)
+        {
+            await transaction.CommitAsync(token);
+            return;
+        }
+        var attrs = System.Text.Json.Nodes.JsonNode.Parse(relation.AttrsJson) as System.Text.Json.Nodes.JsonObject
+            ?? new System.Text.Json.Nodes.JsonObject();
+        var allies = attrs["allies"] as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
+        var corporationKey = job.CorporationId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (allies[corporationKey] is null)
+            allies[corporationKey] = new System.Text.Json.Nodes.JsonObject
+            {
+                ["timeStarted"] = allianceAlly.TimeStartedFiletime.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["timeFinished"] = allianceAlly.TimeFinishedFiletime?.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            };
+        attrs["allies"] = allies;
+        await relations.SetAsync(connection, transaction, "war", relation.Subject, relation.Object,
+            relation.Value, "alliance-ally-inherited", attrs, relation.UntilMs, token);
+        await transaction.CommitAsync(token);
+        var wire = WireWar(relation.Id, sourceWar.DeclaredById, sourceWar.AgainstId, attrs);
+        CorporationNotificationAdapter.WarChangedBackground(
+            characterSessions, sourceWar.DeclaredById, sourceWar.AgainstId, wire);
+    }
+
+    private async Task<AllianceWarSnapshot[]> ReadWarSnapshotsAsync(
+        Npgsql.NpgsqlConnection connection, Npgsql.NpgsqlTransaction transaction,
+        long allianceId, long atMs, CancellationToken token)
+    {
+        var atFiletime = Filetime(atMs);
+        var relationsForAlliance = (await relations.FromAsync("war", allianceId, connection, transaction, token))
+            .Concat(await relations.ToAsync("war", allianceId, connection, transaction, token))
+            .DistinctBy(war => war.Id)
+            .ToArray();
+        var result = new List<AllianceWarSnapshot>();
+        foreach (var relation in relationsForAlliance)
+        {
+            var element = relation.Attrs<System.Text.Json.JsonElement>();
+            if (element.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+            var attrs = Attributes(element);
+            var declaredBy = Long(attrs, "declaredByID", relation.Subject);
+            var against = Long(attrs, "againstID", relation.Object);
+            var principal = declaredBy == allianceId || against == allianceId;
+            var allianceAlly = ReadAllianceAlly(element, allianceId);
+            if (!principal && allianceAlly is null) continue;
+            if (relation.UntilMs is { } until && until <= atMs) continue;
+
+            var declaredAt = Long(attrs, "timeDeclared");
+            var startedAt = Long(attrs, "timeStarted", declaredAt);
+            var finishedAt = NullableLong(attrs, "timeFinished");
+            if ((declaredAt > 0 && declaredAt > atFiletime) ||
+                (finishedAt is { } finish && finish <= atFiletime))
+                continue;
+
+            var mutual = Bool(attrs, "mutual");
+            var billId = NullableLong(attrs, "billID");
+            var bill = billId is { } id
+                ? await store.ReadBillByIdAsync(connection, transaction, id, token)
+                : null;
+            long? cycleEnd = null;
+            var cycleInferred = false;
+            if (!mutual)
+            {
+                if (bill is { DueFiletime: > 0 } && bill.DueFiletime >= atFiletime)
+                    cycleEnd = bill.DueFiletime;
+                else if (finishedAt is { } explicitFinish && explicitFinish > atFiletime)
+                    cycleEnd = explicitFinish;
+                else
+                {
+                    var start = declaredAt > 0 ? declaredAt : atFiletime;
+                    var elapsed = Math.Max(0, atFiletime - start);
+                    cycleEnd = checked(start + (elapsed / WeekFiletime + 1) * WeekFiletime);
+                    cycleInferred = true;
+                }
+            }
+            result.Add(new AllianceWarSnapshot(
+                relation.Id, relation.Subject, relation.Object, declaredBy, against,
+                Long(attrs, "declaredByCharacterID"), declaredAt, startedAt, finishedAt,
+                billId, Long(attrs, "warHQID", Long(attrs, "warHQ")) is var hq && hq > 0 ? hq : null,
+                attrs["retracted"]?.ToString(), NullableLong(attrs, "retractedBy"),
+                mutual, Bool(attrs, "fightingLegalNotified"), Bool(attrs, "openForAllies"),
+                (int)Long(attrs, "reasonEnded"), (int)Long(attrs, "reasonStarted"),
+                Double(attrs, "reward"), cycleEnd, cycleInferred, allianceAlly, ReadWarAllies(element),
+                relation.AttrsJson));
+        }
+        return result.ToArray();
+    }
+
+    private async Task<AllianceWarSnapshot[]> ReadWarSnapshotsAsync(
+        long allianceId, long atMs, CancellationToken token)
+    {
+        await using var connection = await source.OpenConnectionAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+        var wars = await ReadWarSnapshotsAsync(connection, transaction, allianceId, atMs, token);
+        await transaction.CommitAsync(token);
+        return wars;
+    }
+
+    private async Task<AllianceWarSnapshot[]> ReadWarSnapshotsAsync(
+        Npgsql.NpgsqlConnection connection, Npgsql.NpgsqlTransaction transaction,
+        long allianceId, long corporationId, long membershipStartedMs, long leftAtMs,
+        CancellationToken token) =>
+        await ReadWarSnapshotsAsync(connection, transaction, allianceId, leftAtMs, token);
+
+    private static AllianceWarInheritanceDue SpecPayload(
+        long allianceId, long corporationId, long membershipStartedMs, long leftAtMs,
+        AllianceWarSnapshot[] wars) =>
+        new(allianceId, corporationId, membershipStartedMs, leftAtMs, wars);
+
+    private static Eve.Scheduler.JobSpec Spec(AllianceWarInheritanceDue payload) =>
+        new(JobKind, payload.LeftAtMs)
+        {
+            Key = $"alliance-war-inheritance:{payload.AllianceId}:{payload.CorporationId}:{payload.MembershipStartedMs}",
+            Payload = payload,
+            OnDuplicate = Eve.Scheduler.OnDuplicate.Replace
+        };
+
+    private static System.Text.Json.Nodes.JsonObject BuildInheritedAttributes(
+        AllianceWarInheritanceDue job, AllianceWarSnapshot sourceWar, long declaredById,
+        long againstId, long? warHqId, long? finishedAt, long? billId)
+    {
+        var attrs = System.Text.Json.Nodes.JsonNode.Parse(sourceWar.AttrsJson) as System.Text.Json.Nodes.JsonObject
+            ?? new System.Text.Json.Nodes.JsonObject();
+        attrs["declaredByCharacterID"] = sourceWar.DeclaredByCharacterId > 0 ? sourceWar.DeclaredByCharacterId : null;
+        attrs["timeDeclared"] = sourceWar.TimeDeclaredFiletime.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        attrs["timeStarted"] = sourceWar.TimeStartedFiletime.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        attrs["timeFinished"] = finishedAt?.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        attrs["retracted"] = sourceWar.Retracted;
+        attrs["retractedBy"] = sourceWar.RetractedBy;
+        attrs["billID"] = billId;
+        attrs["mutual"] = sourceWar.Mutual ? 1 : 0;
+        attrs["fightingLegalNotified"] = sourceWar.FightingLegalNotified ? 1 : 0;
+        attrs["openForAllies"] = sourceWar.OpenForAllies ? 1 : 0;
+        attrs["createdFromWarID"] = sourceWar.WarId;
+        attrs["warHQID"] = warHqId;
+        attrs["warHQ"] = warHqId;
+        attrs["reasonEnded"] = sourceWar.ReasonEnded;
+        attrs["reasonStarted"] = sourceWar.ReasonStarted;
+        attrs["reward"] = sourceWar.Reward;
+        attrs["inheritedFromAllianceID"] = job.AllianceId;
+        attrs["inheritedFromCorporationID"] = job.CorporationId;
+        attrs["inheritanceOperationID"] = $"alliance-war-inheritance:{job.AllianceId}:{job.CorporationId}:{job.MembershipStartedMs}:{sourceWar.WarId}";
+        return attrs;
+    }
+
+    private static Eve.Marshal.PyValue WireWar(
+        long warId, long declaredById, long againstId,
+        System.Text.Json.Nodes.JsonObject attrs)
+    {
+        Eve.Marshal.PyValue Id(long? value) => value is { } id ? new Eve.Marshal.PyInt(id) : Eve.Marshal.PyNone.Instance;
+        Eve.Marshal.PyValue Time(string key)
+        {
+            var value = NullableLong(attrs, key);
+            return value is { } filetime ? new Eve.Marshal.PyLong(filetime) : Eve.Marshal.PyNone.Instance;
+        }
+        return Py.KeyVal(
+            ("warID", new Eve.Marshal.PyInt(warId)),
+            ("declaredByID", new Eve.Marshal.PyInt(declaredById)),
+            ("againstID", new Eve.Marshal.PyInt(againstId)),
+            ("warHQID", Id(NullableLong(attrs, "warHQID"))),
+            ("timeDeclared", new Eve.Marshal.PyLong(Long(attrs, "timeDeclared"))),
+            ("timeStarted", new Eve.Marshal.PyLong(Long(attrs, "timeStarted"))),
+            ("timeFinished", Time("timeFinished")),
+            ("retracted", Time("retracted")),
+            ("retractedBy", Id(NullableLong(attrs, "retractedBy"))),
+            ("billID", Id(NullableLong(attrs, "billID"))),
+            ("mutual", new Eve.Marshal.PyInt(Bool(attrs, "mutual") ? 1 : 0)),
+            ("fightingLegalNotified", new Eve.Marshal.PyInt(Bool(attrs, "fightingLegalNotified") ? 1 : 0)),
+            ("openForAllies", new Eve.Marshal.PyInt(Bool(attrs, "openForAllies") ? 1 : 0)),
+            ("allies", new Eve.Marshal.PyDict([])),
+            ("createdFromWarID", Id(NullableLong(attrs, "createdFromWarID"))),
+            ("reward", Py.Number(Double(attrs, "reward"))));
+    }
+
+    private static AllianceWarAlly? ReadAllianceAlly(System.Text.Json.JsonElement attrs, long allianceId)
+    {
+        if (!attrs.TryGetProperty("allies", out var allies) ||
+            allies.ValueKind != System.Text.Json.JsonValueKind.Object ||
+            !allies.TryGetProperty(allianceId.ToString(System.Globalization.CultureInfo.InvariantCulture), out var ally) ||
+            ally.ValueKind != System.Text.Json.JsonValueKind.Object)
+            return null;
+        return new AllianceWarAlly(allianceId, Long(ally, "timeStarted"),
+            NullableLong(ally, "timeFinished"));
+    }
+
+    private static AllianceWarAlly[] ReadWarAllies(System.Text.Json.JsonElement attrs)
+    {
+        if (!attrs.TryGetProperty("allies", out var allies) ||
+            allies.ValueKind != System.Text.Json.JsonValueKind.Object)
+            return [];
+        return allies.EnumerateObject()
+            .Select(entry => new AllianceWarAlly(
+                long.TryParse(entry.Name, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var id) ? id : 0,
+                Long(entry.Value, "timeStarted"), NullableLong(entry.Value, "timeFinished")))
+            .Where(ally => ally.AllianceId > 0)
+            .ToArray();
+    }
+
+    private static System.Text.Json.Nodes.JsonObject Attributes(System.Text.Json.JsonElement element) =>
+        System.Text.Json.Nodes.JsonNode.Parse(element.GetRawText()) as System.Text.Json.Nodes.JsonObject
+        ?? new System.Text.Json.Nodes.JsonObject();
+
+    private static long Long(System.Text.Json.JsonElement element, string name, long fallback = 0) =>
+        element.ValueKind == System.Text.Json.JsonValueKind.Object &&
+        element.TryGetProperty(name, out var value) ? Long(value, fallback) : fallback;
+
+    private static long Long(System.Text.Json.Nodes.JsonObject attrs, string name, long fallback = 0) =>
+        attrs[name] is { } value ? Long(value, fallback) : fallback;
+
+    private static long Long(System.Text.Json.JsonElement value, long fallback = 0)
+    {
+        if (value.ValueKind == System.Text.Json.JsonValueKind.Number && value.TryGetInt64(out var number)) return number;
+        return long.TryParse(value.ToString(), System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? parsed : fallback;
+    }
+
+    private static long Long(System.Text.Json.Nodes.JsonNode? value, long fallback = 0) =>
+        value is not null && long.TryParse(value.ToString(), System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? parsed : fallback;
+
+    private static long? NullableLong(System.Text.Json.JsonElement element, string name)
+    {
+        var value = Long(element, name);
+        return value > 0 ? value : null;
+    }
+
+    private static long? NullableLong(System.Text.Json.Nodes.JsonObject attrs, string name)
+    {
+        var value = Long(attrs, name);
+        return value > 0 ? value : null;
+    }
+
+    private static bool Bool(System.Text.Json.JsonElement attrs, string name) =>
+        attrs.ValueKind == System.Text.Json.JsonValueKind.Object &&
+        attrs.TryGetProperty(name, out var value) && Bool(value);
+
+    private static bool Bool(System.Text.Json.Nodes.JsonObject attrs, string name) =>
+        attrs[name] is { } value && Bool(value);
+
+    private static bool Bool(System.Text.Json.JsonElement value) =>
+        value.ValueKind == System.Text.Json.JsonValueKind.True ||
+        value.ValueKind == System.Text.Json.JsonValueKind.Number && Long(value) != 0 ||
+        string.Equals(value.ToString(), "true", StringComparison.OrdinalIgnoreCase) ||
+        value.ToString() == "1";
+
+    private static bool Bool(System.Text.Json.Nodes.JsonNode? value) =>
+        value is not null && (bool.TryParse(value.ToString(), out var boolean) ? boolean : Long(value) != 0);
+
+    private static double Double(System.Text.Json.Nodes.JsonObject attrs, string name) =>
+        attrs[name] is { } value &&
+        double.TryParse(value.ToString(), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var number) ? number : 0;
+
+    private static long Filetime(long unixMs) => checked((unixMs + FiletimeEpochOffsetMs) * 10_000L);
+    private static long UnixMilliseconds(long filetime) => Math.Max(0, filetime / 10_000L - FiletimeEpochOffsetMs);
+
+    private sealed record WarBillDue(long BillId);
+
+    private sealed record AllianceWarInheritanceDue(
+        long AllianceId, long CorporationId, long MembershipStartedMs, long LeftAtMs,
+        AllianceWarSnapshot[] Wars);
+    private sealed record AllianceWarSnapshot(
+    long WarId, long SubjectId, long ObjectId, long DeclaredById, long AgainstId,
+    long DeclaredByCharacterId, long TimeDeclaredFiletime, long TimeStartedFiletime,
+    long? TimeFinishedFiletime, long? BillId, long? WarHqId,
+    string? Retracted, long? RetractedBy,
+    bool Mutual, bool FightingLegalNotified, bool OpenForAllies, int ReasonEnded,
+    int ReasonStarted, double Reward, long? CycleEndFiletime, bool CycleInferred,
+    AllianceWarAlly? AllianceAlly, AllianceWarAlly[] Allies, string AttrsJson);
+    private sealed record AllianceWarAlly(long AllianceId, long TimeStartedFiletime, long? TimeFinishedFiletime);
 }

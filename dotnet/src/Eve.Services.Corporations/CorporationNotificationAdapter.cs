@@ -107,6 +107,19 @@ public static void ApplicationChanged(CharacterSessions? sessions,ServiceCall ca
           });
       }
 
+    public static void WarChangedBackground(
+        CharacterSessions? sessions, long declaredById, long againstId, PyValue war)
+    {
+        if (sessions is null || war is not PyObject { Args: PyDict fields }) return;
+        var owners = new PyList([.. new[] { declaredById, againstId }.Distinct().Order()
+            .Select(id => (PyValue)new PyInt(id))]);
+        var changes = new PyDict(fields.Entries.Select(entry =>
+            new KeyValuePair<PyValue, PyValue>(entry.Key, new PyList([PyNone.Instance, entry.Value]))).ToArray());
+        var payload = new PyList([war, owners, changes]);
+        foreach (var session in sessions.All())
+            Send(session, "OnWarChanged", "ownerid", payload);
+    }
+
     public static void RecruitmentAdChanged(CharacterSessions? sessions,ServiceCall call)
     {
         if (sessions is null) return;

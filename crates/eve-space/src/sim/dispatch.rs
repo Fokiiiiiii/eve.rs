@@ -264,11 +264,135 @@ impl Sim {
 
     /// One message from the host.
     pub fn handle(&mut self, message: Message, now: i64) -> Result<Vec<Message>, ProtocolError> {
+        match message {
+            Message::Hello { .. }
+            | Message::Enter(..)
+            | Message::Leave { .. }
+            | Message::Bind { .. }
+            | Message::UpdateState { .. }
+            | Message::Spawn(..)
+            | Message::Destroy { .. }
+            | Message::Respawn { .. } => self.handle_session(message, now),
+            Message::HeatProfile { .. }
+            | Message::ModuleOverheat { .. }
+            | Message::ModuleOffline { .. }
+            | Message::RackOverheat { .. }
+            | Message::Activate { .. }
+            | Message::ModuleWorkResult { .. }
+            | Message::RemoteRepairCycleResult { .. }
+            | Message::AdjustCharge { .. }
+            | Message::ShipSpec { .. } => self.handle_fitting(message, now),
+            Message::Command { .. } => self.handle_command(message, now),
+            Message::LaunchDrone(..)
+            | Message::LaunchFighter { .. }
+            | Message::FighterOrder { .. }
+            | Message::FighterGotoPoint { .. }
+            | Message::DroneCommand { .. }
+            | Message::DroneWorkResult { .. } => self.handle_fleet(message, now),
+            Message::PlaceAsteroid(..)
+            | Message::PlaceWreck(..)
+            | Message::PlaceContainer(..)
+            | Message::ChangeWreck { .. }
+            | Message::RemoveWreck { .. } => self.handle_world(message, now),
+            other => Err(ProtocolError(format!(
+                "a message of kind {} is for the host, not the simulation",
+                other.kind()
+            ))),
+        }
+    }
+
+    /// A pilot's session in space: its arrival and departure, its ship's destruction and respawn.
+    fn handle_session(&mut self, message: Message, now: i64) -> Result<Vec<Message>, ProtocolError> {
         let outs = match message {
             Message::Hello { .. } => {
                 return Ok(vec![Message::HelloAck { version: PROTOCOL_VERSION, poll_hz: POLL_HZ }]);
             }
             Message::Enter(enter) => return Ok(self.enter(*enter, now)),
+            Message::Leave { session_id, why } => {
+                let why = match why {
+                    0 => Departure::Docked,
+                    1 => Departure::LoggedOff,
+                    2 => Departure::Jumped,
+                    3 => Departure::Ejected,
+                    _ => Departure::Boarded,
+                };
+                let told = match self.scene_of(session_id) {
+                    Some(scene) => scene.leave(session_id, why, now).unwrap_or_default(),
+                    None => Vec::new(),
+                };
+                if matches!(why, Departure::Ejected | Departure::Boarded) {
+                    if let Some(system) = self.sessions.remove(&session_id) {
+                        self.widowed.insert(session_id, system);
+                    }
+                } else {
+                    self.forget(session_id);
+                }
+                told
+            }
+            Message::Bind { session_id } => {
+                self.scene_of(session_id).map(|s| s.bind(session_id, now)).unwrap_or_default()
+            }
+            Message::UpdateState { session_id } => {
+                self.scene_of(session_id).map(|s| s.update_state(session_id, now)).unwrap_or_default()
+            }
+            Message::Spawn(spawn) => return Ok(self.spawn(*spawn, now)),
+            Message::Destroy { ship_id, credit } => {
+                let target = self
+                    .scenes
+                    .values_mut()
+                    .find_map(|scene| scene.session_of(ship_id).map(|session| (scene, session)));
+                match target {
+                    Some((scene, session)) => scene.destroy_credited(session, credit, None, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::Respawn { session_id, ship, position, direction } => {
+                let reply = |outcome| vec![Message::EnterReply { session_id, outcome }];
+                let Some(system) = self
+                    .widowed
+                    .get(&session_id)
+                    .copied()
+                    .or_else(|| self.sessions.get(&session_id).copied())
+                else {
+                    return Ok(reply(Err(format!("NOT_DESTROYED {session_id}"))));
+                };
+                let Some(scene) = self.scenes.get_mut(&system) else {
+                    return Ok(reply(Err(format!("NO_SCENE {session_id}"))));
+                };
+                let (position, direction) = (
+                    Vec3::new(position[0], position[1], position[2]),
+                    Vec3::new(direction[0], direction[1], direction[2]),
+                );
+                let respawned = scene.respawn(session_id, *ship, position, direction, now);
+                if respawned.is_ok() {
+                    self.widowed.remove(&session_id);
+                    self.sessions.insert(session_id, system);
+                }
+                return Ok(match respawned {
+                    // the answer comes after what the pilot is told, so that the host goes on when the client has been sent the ball
+                    Ok(told) => {
+                        let mut messages = Self::messages(told);
+                        messages.extend(reply(Ok(())));
+                        messages
+                    }
+                    Err(SceneError::NotDestroyed(_)) => reply(Err(format!("NOT_DESTROYED {session_id}"))),
+                    Err(SceneError::AlreadyInSpace(_)) => {
+                        reply(Err(format!("ALREADY_IN_SPACE {session_id}")))
+                    }
+                    Err(SceneError::UnknownStation(station)) => {
+                        reply(Err(format!("UNKNOWN_STATION {station}")))
+                    }
+                });
+            }
+            _ => unreachable!("handle sends only the session messages here"),
+        };
+        self.forget_the_destroyed(&outs);
+        Ok(Self::messages(outs))
+    }
+
+    /// The ship's fittings: heat, modules, charges and the answers to their work cycles.
+    fn handle_fitting(&mut self, message: Message, now: i64) -> Result<Vec<Message>, ProtocolError> {
+        let outs = match message {
             Message::HeatProfile { session_id, profile } => {
                 let Some(scene) = self.scene_of(session_id) else {
                     return Err(ProtocolError("a heat profile names a session not in space".to_string()));
@@ -309,37 +433,99 @@ impl Sim {
                     .map_err(|error| ProtocolError(format!("rack overheat request failed: {error:?}")))?;
                 return Ok(Vec::new());
             }
-            Message::Leave { session_id, why } => {
-                let why = match why {
-                    0 => Departure::Docked,
-                    1 => Departure::LoggedOff,
-                    2 => Departure::Jumped,
-                    3 => Departure::Ejected,
-                    _ => Departure::Boarded,
-                };
-                let told = match self.scene_of(session_id) {
-                    Some(scene) => scene.leave(session_id, why, now).unwrap_or_default(),
-                    None => Vec::new(),
-                };
-                if matches!(why, Departure::Ejected | Departure::Boarded) {
-                    if let Some(system) = self.sessions.remove(&session_id) {
-                        self.widowed.insert(session_id, system);
-                    }
-                } else {
-                    self.forget(session_id);
-                }
-                told
-            }
-            Message::Bind { session_id } => {
-                self.scene_of(session_id).map(|s| s.bind(session_id, now)).unwrap_or_default()
-            }
-            Message::UpdateState { session_id } => {
-                self.scene_of(session_id).map(|s| s.update_state(session_id, now)).unwrap_or_default()
-            }
             Message::Activate { session_id, effect } => match self.scene_of(session_id) {
                 Some(scene) => scene.activate(session_id, *effect, now),
                 None => vec![Out::Refused { session: session_id, command: 17, reason: "NO_SHIP_IN_SPACE" }],
             },
+            Message::ModuleWorkResult {
+                session_id,
+                module_id,
+                target_id,
+                cycle_id,
+                accepted,
+                reason,
+                units_remaining,
+                delivered_units: _,
+                complete,
+            } => {
+                // a granted cycle moves the rock's stock and tells the other miners while the cycle is still parked; then the module takes its answer
+                let mut told = if accepted {
+                    self.scene_of(session_id)
+                        .map(|scene| {
+                            scene.module_mined(
+                                session_id,
+                                module_id,
+                                target_id,
+                                cycle_id,
+                                units_remaining,
+                                now,
+                            )
+                        })
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                told.extend(
+                    self.scene_of(session_id)
+                        .map(|scene| {
+                            scene.module_work_result(
+                                session_id,
+                                module_id,
+                                ModuleWorkAnswer {
+                                    target_id,
+                                    cycle_id,
+                                    accepted,
+                                    reason: &reason,
+                                    depleted: complete,
+                                },
+                                now,
+                            )
+                        })
+                        .unwrap_or_default(),
+                );
+                told
+            }
+            Message::RemoteRepairCycleResult {
+                session_id,
+                module_id,
+                target_id,
+                cycle_id,
+                accepted,
+                reason: _,
+                amount,
+            } => self
+                .scene_of(session_id)
+                .map(|scene| {
+                    scene.remote_repair_cycle_result(
+                        session_id, module_id, target_id, cycle_id, accepted, amount,
+                    )
+                })
+                .unwrap_or_default(),
+            Message::AdjustCharge { request_id, session_id, module_id, charge_type, op } => {
+                match self.scene_of(session_id) {
+                    Some(scene) => scene.adjust_charge(request_id, session_id, module_id, charge_type, op),
+                    // a session that is not in space has no gun that runs: the host has its rounds
+                    None => vec![Out::ChargeAdjusted {
+                        session: session_id,
+                        request_id,
+                        running: false,
+                        before: 0,
+                        after: 0,
+                    }],
+                }
+            }
+            Message::ShipSpec { session_id, ship } => {
+                self.scene_of(session_id).map(|s| s.respec(session_id, *ship, now)).unwrap_or_default()
+            }
+            _ => unreachable!("handle sends only the fitting messages here"),
+        };
+        self.forget_the_destroyed(&outs);
+        Ok(Self::messages(outs))
+    }
+
+    /// A pilot's commands to its ship, by their command codes.
+    fn handle_command(&mut self, message: Message, now: i64) -> Result<Vec<Message>, ProtocolError> {
+        let outs = match message {
             Message::Command { session_id, command: 16, args } => {
                 match (self.scene_of(session_id), args.as_slice()) {
                     (Some(scene), [module]) if is_id(*module) => {
@@ -429,7 +615,15 @@ impl Sim {
                     }
                 }
             }
-            Message::Spawn(spawn) => return Ok(self.spawn(*spawn, now)),
+            _ => unreachable!("handle sends only the command messages here"),
+        };
+        self.forget_the_destroyed(&outs);
+        Ok(Self::messages(outs))
+    }
+
+    /// Drones and fighters: launched, commanded, and answered for their work cycles.
+    fn handle_fleet(&mut self, message: Message, now: i64) -> Result<Vec<Message>, ProtocolError> {
+        let outs = match message {
             Message::LaunchDrone(launch) => return Ok(self.launch_drone(*launch, now)),
             Message::LaunchFighter {
                 request_id,
@@ -527,54 +721,38 @@ impl Sim {
                     None => Vec::new(),
                 }
             }
-            Message::Destroy { ship_id, credit } => {
-                let target = self
-                    .scenes
-                    .values_mut()
-                    .find_map(|scene| scene.session_of(ship_id).map(|session| (scene, session)));
-                match target {
-                    Some((scene, session)) => scene.destroy_credited(session, credit, None, now),
-                    None => Vec::new(),
-                }
-            }
-            Message::Respawn { session_id, ship, position, direction } => {
-                let reply = |outcome| vec![Message::EnterReply { session_id, outcome }];
-                let Some(system) = self
-                    .widowed
-                    .get(&session_id)
-                    .copied()
-                    .or_else(|| self.sessions.get(&session_id).copied())
-                else {
-                    return Ok(reply(Err(format!("NOT_DESTROYED {session_id}"))));
-                };
-                let Some(scene) = self.scenes.get_mut(&system) else {
-                    return Ok(reply(Err(format!("NO_SCENE {session_id}"))));
-                };
-                let (position, direction) = (
-                    Vec3::new(position[0], position[1], position[2]),
-                    Vec3::new(direction[0], direction[1], direction[2]),
-                );
-                let respawned = scene.respawn(session_id, *ship, position, direction, now);
-                if respawned.is_ok() {
-                    self.widowed.remove(&session_id);
-                    self.sessions.insert(session_id, system);
-                }
-                return Ok(match respawned {
-                    // the answer comes after what the pilot is told, so that the host goes on when the client has been sent the ball
-                    Ok(told) => {
-                        let mut messages = Self::messages(told);
-                        messages.extend(reply(Ok(())));
-                        messages
-                    }
-                    Err(SceneError::NotDestroyed(_)) => reply(Err(format!("NOT_DESTROYED {session_id}"))),
-                    Err(SceneError::AlreadyInSpace(_)) => {
-                        reply(Err(format!("ALREADY_IN_SPACE {session_id}")))
-                    }
-                    Err(SceneError::UnknownStation(station)) => {
-                        reply(Err(format!("UNKNOWN_STATION {station}")))
-                    }
-                });
-            }
+            Message::DroneWorkResult {
+                session_id,
+                drone_id,
+                target_id,
+                cycle_id,
+                accepted,
+                reason: _,
+                units_remaining,
+                delivered_units: _,
+                complete,
+            } => self
+                .scenes
+                .values_mut()
+                .find(|scene| scene.session_of(drone_id).is_some())
+                .map(|scene| {
+                    scene.drone_work_result(
+                        session_id,
+                        drone_id,
+                        DroneWorkAnswer { target_id, cycle_id, accepted, units_remaining, complete },
+                        now,
+                    )
+                })
+                .unwrap_or_default(),
+            _ => unreachable!("handle sends only the fleet messages here"),
+        };
+        self.forget_the_destroyed(&outs);
+        Ok(Self::messages(outs))
+    }
+
+    /// Asteroids, wrecks and containers that the host places in a system or removes from it.
+    fn handle_world(&mut self, message: Message, now: i64) -> Result<Vec<Message>, ProtocolError> {
+        let outs = match message {
             Message::PlaceAsteroid(placement) => match self.scenes.get_mut(&placement.solar_system_id) {
                 Some(scene) => {
                     let p = *placement;
@@ -673,115 +851,7 @@ impl Sim {
                 .find(|scene| scene.wreck(wreck_id).is_some())
                 .map(|scene| scene.remove_wreck(wreck_id, i64::from(effect), now))
                 .unwrap_or_default(),
-            Message::DroneWorkResult {
-                session_id,
-                drone_id,
-                target_id,
-                cycle_id,
-                accepted,
-                reason: _,
-                units_remaining,
-                delivered_units: _,
-                complete,
-            } => self
-                .scenes
-                .values_mut()
-                .find(|scene| scene.session_of(drone_id).is_some())
-                .map(|scene| {
-                    scene.drone_work_result(
-                        session_id,
-                        drone_id,
-                        DroneWorkAnswer { target_id, cycle_id, accepted, units_remaining, complete },
-                        now,
-                    )
-                })
-                .unwrap_or_default(),
-            Message::ModuleWorkResult {
-                session_id,
-                module_id,
-                target_id,
-                cycle_id,
-                accepted,
-                reason,
-                units_remaining,
-                delivered_units: _,
-                complete,
-            } => {
-                // a granted cycle moves the rock's stock and tells the other miners while the cycle is still parked; then the module takes its answer
-                let mut told = if accepted {
-                    self.scene_of(session_id)
-                        .map(|scene| {
-                            scene.module_mined(
-                                session_id,
-                                module_id,
-                                target_id,
-                                cycle_id,
-                                units_remaining,
-                                now,
-                            )
-                        })
-                        .unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
-                told.extend(
-                    self.scene_of(session_id)
-                        .map(|scene| {
-                            scene.module_work_result(
-                                session_id,
-                                module_id,
-                                ModuleWorkAnswer {
-                                    target_id,
-                                    cycle_id,
-                                    accepted,
-                                    reason: &reason,
-                                    depleted: complete,
-                                },
-                                now,
-                            )
-                        })
-                        .unwrap_or_default(),
-                );
-                told
-            }
-            Message::RemoteRepairCycleResult {
-                session_id,
-                module_id,
-                target_id,
-                cycle_id,
-                accepted,
-                reason: _,
-                amount,
-            } => self
-                .scene_of(session_id)
-                .map(|scene| {
-                    scene.remote_repair_cycle_result(
-                        session_id, module_id, target_id, cycle_id, accepted, amount,
-                    )
-                })
-                .unwrap_or_default(),
-            Message::AdjustCharge { request_id, session_id, module_id, charge_type, op } => {
-                match self.scene_of(session_id) {
-                    Some(scene) => scene.adjust_charge(request_id, session_id, module_id, charge_type, op),
-                    // a session that is not in space has no gun that runs: the host has its rounds
-                    None => vec![Out::ChargeAdjusted {
-                        session: session_id,
-                        request_id,
-                        running: false,
-                        before: 0,
-                        after: 0,
-                    }],
-                }
-            }
-            Message::ShipSpec { session_id, ship } => {
-                self.scene_of(session_id).map(|s| s.respec(session_id, *ship, now)).unwrap_or_default()
-            }
-            other => {
-                return Err(ProtocolError(format!(
-                    "a message of kind {} is for the host, not the simulation",
-                    other.kind()
-                )));
-            }
+            _ => unreachable!("handle sends only the world messages here"),
         };
         self.forget_the_destroyed(&outs);
         Ok(Self::messages(outs))

@@ -339,7 +339,7 @@ The primary check before a push is `tools/dev/check-all.sh`: the jobs of `.githu
 | OPEN | Live E2E: undock and align-to-station produce one extra `DoDestinyUpdate` after `OnInvulnCancelled`. Failing: `test_a_ship_undocks_flies_and_docks_as_the_reference_did[race-1]` and `[race-4]`, `test_orders_in_space_make_the_updates_the_reference_sent[race-1]`. Reference order: `DoDestinyUpdate`, `OnInvulnCancelled`; eve.rs: plus a trailing `DoDestinyUpdate`. The invulnerability ends in `SpaceSessions.EndInvulnerability` / the target-lock path (`SpaceSessions.cs` ~1005, ~1088), after the simulation's notify; the trailing update is from a later simulation tick, not yet traced | `tools/headless-client/tests/test_movement.py:85`; run 2026-10-09 with `tools/dev/check-all.sh` |
 | OBSERVED ONCE | Live run: the host's event pump reported `relation "live_<pid>_events.outbox" does not exist` at start (PostgreSQL log, one statement); the same schema was complete in the next run, and logins then failed only because of the auto-create flag. Not reproduced; watch for it | `dotnet/src/Eve.Events/EventBus.cs` (horizon query), `Eve.Data/Migrations.cs` |
 
-Known failures in the full .NET run of 2026-10-09 (4,244 tests; 4 failed, all on the baseline list):
+Known failures in the .NET runs of 2026-10-09 (4,244 tests). The first full run had 4 failures, all on the baseline list; the final run had those 4 and 2 Safe-logoff tests:
 
 | Test | Status |
 |---|---|
@@ -348,6 +348,7 @@ Known failures in the full .NET run of 2026-10-09 (4,244 tests; 4 failed, all on
 | `Eve.Services.Space.Tests` `Fleet_finder_advert_operations_match_evejs_arguments_and_persist_the_full_payload` | fails |
 | `Eve.Services.Space.Tests` `When_a_session_ends_in_space_the_simulation_is_told_and_the_ship_is_put_back_in_the_hangar` | fails |
 | ConfigPrime, SessionEndsHangar, capsule death | not failing in this run |
-| Safe logoff, NpcBounty, Mutadaptive (flaky; rerun alone) | not failing in this run |
+| Safe logoff: `A_movement_command_aborts_a_running_safe_logoff`, `Safe_logoff_closes_the_space_session_after_its_timer` (final run); `Aborting_safe_logoff_keeps_the_session_and_ship_in_space` (one rerun). Flaky: all three passed when rerun alone, the group together 3 of 3 on the second rerun | flaky |
+| NpcBounty, Mutadaptive | not failing in these runs |
 
 Rust: 1,272 tests passed, 0 failed. Python client: 1,066 passed, 97 skipped (the live tests need a server).

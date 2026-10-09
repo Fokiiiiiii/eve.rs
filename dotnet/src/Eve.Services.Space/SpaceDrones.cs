@@ -68,7 +68,7 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
     private const string NotUnderControl = "That drone is not currently under this ship's control.";
 
     /// <summary>A drone that is out: the item it is, the ship it belongs to and the pilot to tell.</summary>
-    private sealed record Launched(long ItemId, int TypeId, long CharacterId, long ShipId, int SolarSystemId, ulong Controller, ClientSession Pilot);
+    private sealed record Launched(long ItemId, int TypeId, long CharacterId, long ShipId, int SolarSystemId, ulong Controller, ClientSession Pilot, IReadOnlyDictionary<int, double> Attributes);
 
     private readonly ISimulation _sim;
     private readonly CharacterShips _ships;
@@ -169,8 +169,7 @@ private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
         var bandwidth = Math.Max(0, snapshot.World.Get(shipId, DroneBandwidthAttribute));
         var alreadyOut = _launched.Values.Where(d => d.Controller == controller).ToList();
         var active = alreadyOut.Count;
-        await _statics.EnsureTypesAsync(alreadyOut.Select(d => d.TypeId), cancellationToken).ConfigureAwait(false);
-        var used = alreadyOut.Sum(d => BandwidthOf(d.TypeId));
+        var used = alreadyOut.Sum(d => BandwidthOf(d.Attributes));
 
         var answer = new List<KeyValuePair<PyValue, PyValue>>();
         var launchedNow = new List<(Launched Drone, DroneLaunch Launch)>();
@@ -190,6 +189,9 @@ private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
                 results.Add(Refusal("That drone is not available in the active ship drone bay."));
                 continue;
             }
+            // a drone flies with the numbers dogma has of it: a mutated one takes its base from its input and its rolls from its own record
+            var attributes = await _ships.DroneAttributesAsync(source, cancellationToken).ConfigureAwait(false);
+            var stats = type with { Attributes = attributes };
             for (var count = 0; count < Math.Max(1, request.Quantity); count++)
             {
                 if (maxActive <= 0 || active >= maxActive)
@@ -197,17 +199,17 @@ private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
                     results.Add(Refusal("Maximum active drones already in space."));
                     break;
                 }
-                var load = BandwidthOf(type.TypeId);
+                var load = BandwidthOf(attributes);
                 if ((load > 0 && bandwidth <= 0) || used + load > bandwidth)
                 {
                     results.Add(Refusal("Not enough drone bandwidth to launch that drone."));
                     break;
                 }
-                var previewWeapon = NpcArmament.HullWeapon(type, source.Id, _statics);
-                var cycleMs = StaticDogma(type, "duration");
+                var previewWeapon = NpcArmament.HullWeapon(stats, source.Id, _statics);
+                var cycleMs = StaticDogma(stats, "duration");
                 var workCapable = cycleMs > 0
-                    && (StaticDogma(type, "miningAmount") > 0 || StaticDogma(type, "accessDifficultyBonus") > 0);
-                if (previewWeapon is null && !workCapable && RemoteOf(type, attribute => type.Attributes.GetValueOrDefault(attribute, 0)) is null)
+                    && (StaticDogma(stats, "miningAmount") > 0 || StaticDogma(stats, "accessDifficultyBonus") > 0);
+                if (previewWeapon is null && !workCapable && RemoteOf(stats, attribute => attributes.GetValueOrDefault(attribute, 0)) is null)
                 {
                     results.Add(Refusal("That drone has no supported operation profile."));
                     break;
@@ -224,20 +226,20 @@ private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
                 {
                     ShipNotifications.SendItemChange(session, change, RowOf);
                 }
-                SendPrime(session, InventoryWire.Id(shipId), drone with { LocationId = shipId, Flag = CharacterShips.DroneBayFlag }, drone.TypeId);
                 snapshot.World.Add(ItemDogma.Of(drone, characterId, shipId, CharacterShips.DroneBayFlag, mutation: launch.Mutation));
-                var baseDamageMultiplier = type.Attributes.GetValueOrDefault(NpcArmament.DamageMultiplier, 1d);
-                var damageMultiplier = snapshot.World.Get(drone.Id, NpcArmament.DamageMultiplier);
-                var damageScale = baseDamageMultiplier > 0 ? damageMultiplier / baseDamageMultiplier : 0;
-                var weapon = previewWeapon is null ? null : NpcArmament.HullWeapon(type, drone.Id, _statics, damageScale);
-                var remote = RemoteOf(type, attribute => snapshot.World.Get(drone.Id, attribute));
-                if (!await SpawnAsync(session, snapshot, drone, type, weapon, remote, cancellationToken).ConfigureAwait(false))
+                // what the ship's world does to the drone (its modules' bonuses) is part of the numbers the client and the simulation are given
+                var effective = snapshot.World.Attributes(drone.Id);
+                var flown = type with { Attributes = effective };
+                SendPrime(session, InventoryWire.Id(shipId), drone with { LocationId = shipId, Flag = CharacterShips.DroneBayFlag }, effective);
+                var weapon = previewWeapon is null ? null : NpcArmament.HullWeapon(flown, drone.Id, _statics);
+                var remote = RemoteOf(flown, attribute => snapshot.World.Get(drone.Id, attribute));
+                if (!await SpawnAsync(session, snapshot, drone, flown, weapon, remote, cancellationToken).ConfigureAwait(false))
                 {
                     results.Add(Refusal("Unable to materialize drone in space."));
                     await _ships.ScoopDroneAsync(characterId, shipId, drone.Id, system, [], CancellationToken.None).ConfigureAwait(false);
                     break;
                 }
-                var entry = new Launched(drone.Id, drone.TypeId, characterId, shipId, system, controller, session);
+                var entry = new Launched(drone.Id, drone.TypeId, characterId, shipId, system, controller, session, effective);
                 _launched[drone.Id] = entry;
                 launchedNow.Add((entry, launch));
                 results.Add(InventoryWire.Id(drone.Id));
@@ -308,18 +310,17 @@ private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
         return type.Attributes.TryGetValue(OrbitRangeAttribute, out var orbit) && orbit > 0 ? Math.Clamp(orbit, MinimumOrbitMeters, MaximumOrbitMeters) : MinimumOrbitMeters;
     }
 
-    private double BandwidthOf(int typeId) => _statics.Type(typeId)?.Attributes.GetValueOrDefault(DroneBandwidthUsedAttribute, 0) ?? 0;
+    private static double BandwidthOf(IReadOnlyDictionary<int, double> attributes) => attributes.GetValueOrDefault(DroneBandwidthUsedAttribute, 0);
 
     /// <summary>
-    /// <c>OnGodmaPrimeItem</c> of a drone: what dogma has of it, its type's attributes and the quantity, with the item as it is now. The client needs it before the drone comes into space or is told to
+    /// <c>OnGodmaPrimeItem</c> of a drone: what dogma has of it (its attributes as the ship's world gives them), and the quantity, with the item as it is now. The client needs it before the drone comes into space or is told to
     /// come back; <paramref name="location"/> is where the reference says it is primed (the ship for a drone in the bay, the solar system for one in space).
     /// </summary>
-    private void SendPrime(ClientSession session, PyValue location, Item drone, int typeId)
+    private void SendPrime(ClientSession session, PyValue location, Item drone, IReadOnlyDictionary<int, double> dogma)
     {
-        var type = _statics.Type(typeId);
         // what the reference primes is the type's dogma attributes and the quantity: not the mass, volume and radius that the type's own columns give (they are told with the numbers of a whole as the
         // JavaScript marshal writes them: an int when whole, the same for the ones that are reals in the ship's own info)
-        var attributes = (type?.Attributes ?? new Dictionary<int, double>()).Where(a => a.Key is not (MassAttribute or VolumeAttribute or RadiusAttribute)).ToDictionary(a => a.Key, a => a.Value);
+        var attributes = dogma.Where(a => a.Key is not (MassAttribute or VolumeAttribute or RadiusAttribute)).ToDictionary(a => a.Key, a => a.Value);
         attributes[QuantityAttribute] = 1;
         var fileTime = FileTimeNow();
         session.SendNotification(
@@ -363,9 +364,8 @@ private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
             {
                 if (_launched.TryGetValue(id, out var drone) && drone.Controller == controller)
                 {
-                    await _statics.EnsureTypesAsync([drone.TypeId], cancellationToken).ConfigureAwait(false);
                     var inSpace = new Item(drone.ItemId, drone.TypeId, drone.CharacterId, drone.SolarSystemId, CharacterShips.InSpaceFlag, 1, true, null);
-                    SendPrime(session, new PyInt(drone.SolarSystemId), inSpace, drone.TypeId);
+                    SendPrime(session, new PyInt(drone.SolarSystemId), inSpace, drone.Attributes);
                 }
             }
         }
@@ -437,17 +437,15 @@ public async Task<PyValue> ReconnectAsync(ClientSession session, CancellationTok
         var controlSlots = Math.Max(0, maxActive - controlled.Count);
         if (controlSlots == 0) return Dict([]);
 
-        await _statics.EnsureTypesAsync(controlled.Select(drone => drone.TypeId), cancellationToken).ConfigureAwait(false);
         var bandwidth = Math.Max(0, snapshot.World.Get(shipId, DroneBandwidthAttribute));
-        var usedBandwidth = controlled.Sum(drone => BandwidthOf(drone.TypeId));
+        var usedBandwidth = controlled.Sum(drone => BandwidthOf(drone.Attributes));
         var candidates = new List<Launched>(controlSlots);
         foreach (var drone in _abandoned.Values
                      .Where(drone => drone.CharacterId == characterId && drone.SolarSystemId == system && drone.ShipId == shipId)
                      .OrderBy(drone => drone.ItemId))
         {
             if (candidates.Count >= controlSlots) break;
-            await _statics.EnsureTypesAsync([drone.TypeId], cancellationToken).ConfigureAwait(false);
-            var droneBandwidth = BandwidthOf(drone.TypeId);
+            var droneBandwidth = BandwidthOf(drone.Attributes);
             if (droneBandwidth > 0 && (bandwidth <= 0 || usedBandwidth + droneBandwidth > bandwidth)) continue;
             candidates.Add(drone);
             usedBandwidth += droneBandwidth;
@@ -457,7 +455,7 @@ public async Task<PyValue> ReconnectAsync(ClientSession session, CancellationTok
         foreach (var drone in candidates)
         {
             var item = new Item(drone.ItemId, drone.TypeId, characterId, system, CharacterShips.InSpaceFlag, 1, true, null);
-            SendPrime(session, InventoryWire.Id(shipId), item with { LocationId = shipId, Flag = CharacterShips.DroneBayFlag }, drone.TypeId);
+            SendPrime(session, InventoryWire.Id(shipId), item with { LocationId = shipId, Flag = CharacterShips.DroneBayFlag }, drone.Attributes);
         }
 
         var controlRange = snapshot.World.Get(characterId, DroneControlDistanceAttribute);

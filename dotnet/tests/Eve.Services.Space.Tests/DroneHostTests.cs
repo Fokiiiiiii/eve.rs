@@ -1,9 +1,12 @@
 using Eve.Inventory;
+using Eve.Inventory.Mutation;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Ships;
 using Eve.Skills;
 using Eve.Space;
+using Eve.Sde;
+using Npgsql;
 
 namespace Eve.Services.Space.Tests;
 
@@ -15,12 +18,15 @@ public class DroneHostTests
 {
     private const int Hobgoblin = 2454, DronesSkill = 3436, DroneDamageAmplifier = 47447;
 
+    /// <summary>The rolls a mutated drone is given in tests (a roll that is not named is the middle of its band).</summary>
+    internal static readonly Dictionary<int, double> MutationRolls = new() { [9] = 0, [37] = 0.5, [64] = 1, [263] = 0.5, [265] = 1 };
+
     internal sealed record Flying(Rig Rig, Eve.Services.ClientSession Session, long Drone, long Character, string Ship, string Entity, int System, long Module = 0);
 
     /// <summary>A pilot in space with a Hobgoblin I in the drone bay of its ship, and the Drones skill at level 1 unless <paramref name="skill"/> is 0.</summary>
     internal static async Task<Flying> FlyingWithADroneAsync(
         Rig rig, int skill = 1, bool withDroneDamageAmplifier = false, bool withDroneLinkAugmentor = false, int? droneTypeId = null, int? minerTypeId = null,
-        int? solarSystemId = null, string characterName = "Space Tester")
+        int? solarSystemId = null, string characterName = "Space Tester", int? mutatorTypeId = null)
     {
         var character = await rig.NewCharacterAsync(characterName);
         if (solarSystemId is { } system)
@@ -69,7 +75,9 @@ public class DroneHostTests
             await rig.Modules.SetAsync(connection, transaction, moduleId, Eve.Dogma.ItemState.Online);
             await transaction.CommitAsync();
         }
-        var drone = (await rig.Ships.GrantAsync(character.CharacterId, droneTypeId ?? Hobgoblin, 1, singleton: false))!.Single().After;
+        var drone = mutatorTypeId is { } mutator
+            ? await MutatedDroneAsync(rig, character.CharacterId, mutator)
+            : (await rig.Ships.GrantAsync(character.CharacterId, droneTypeId ?? Hobgoblin, 1, singleton: false))!.Single().After;
         Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(character.CharacterId, drone.Id, Rig.Station, character.ShipId, CharacterShips.DroneBayFlag, null));
         var session = await rig.SessionAsync(character, 1);
         var oid = await rig.BindShipAsync(session);
@@ -81,7 +89,34 @@ public class DroneHostTests
         return new Flying(rig, session, drone.Id, character.CharacterId, ship, entity, (int)session.GetInt("solarsystemid")!.Value, moduleId);
     }
 
-    private static Task<PyValue> LaunchAsync(Flying flying) =>
+    /// <summary>A Hobgoblin I made into the drone of <paramref name="mutaplasmid"/> in the station hangar (ADR 0016): both inputs are created and mutated.</summary>
+    internal static async Task<Item> MutatedDroneAsync(Rig rig, long characterId, int mutaplasmid, int input = Hobgoblin)
+    {
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var mutatorId = await rig.Items.CreateAsync(connection, transaction, new NewItem(mutaplasmid, characterId, Rig.Station, Eve.Inventory.ItemFlags.Hangar, 1, true));
+        var sourceId = await rig.Items.CreateAsync(connection, transaction, new NewItem(input, characterId, Rig.Station, Eve.Inventory.ItemFlags.Hangar, 1, true));
+        await transaction.CommitAsync();
+        var catalog = await MutatorCatalog.LoadAsync(new SdeReader(rig.Source));
+        var mutations = new ItemMutationService(rig.Source, rig.Items, rig.Items.Mutations, catalog, rig.Statics, new SilentMutationEvents(), () => Rig.ClockMs,
+            attribute => MutationRolls.GetValueOrDefault(attribute, 0.5));
+        var outcome = await mutations.MutateAsync(new ItemMutationRequest(characterId, Rig.Station, mutatorId, sourceId));
+        var made = Assert.IsType<ItemMutationAccepted>(outcome).Receipt;
+        return (await rig.Items.GetAsync(made.ItemId))!;
+    }
+
+    /// <summary>The mutation's announcements are not under test here: the publish is taken as made.</summary>
+    private sealed class SilentMutationEvents : IItemMutationEvents
+    {
+        public Task PublishMutatedAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, ItemMutationService.ItemMutated payload, string key, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public void Wake()
+        {
+        }
+    }
+
+    internal static Task<PyValue> LaunchAsync(Flying flying) =>
         flying.Rig.ShipCallAsync(flying.Session, "LaunchDrones", flying.Ship, new PyList([Py.Tuple(InventoryWire.Id(flying.Drone), new PyInt(1))]), PyNone.Instance, PyBool.False);
 
     private static string[] Refusals(PyValue answer) =>

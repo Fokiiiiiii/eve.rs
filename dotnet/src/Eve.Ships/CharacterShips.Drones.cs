@@ -1,3 +1,4 @@
+using Eve.Dogma;
 using Eve.Inventory;
 using Eve.Inventory.Mutation;
 using Npgsql;
@@ -110,6 +111,20 @@ public sealed partial class CharacterShips
         await items.MoveAsync(connection, transaction, drone.Id, shipId, DroneBayFlag, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new DroneScooped(new ItemChanged(drone with { LocationId = shipId, Flag = DroneBayFlag }, drone.LocationId, InSpaceFlag, drone.Quantity));
+    }
+
+    /// <summary>
+    /// The attributes a drone has on its own: its base (the input it was made from, when it was mutated), its rolled values and its result's skill
+    /// requirements. The ship's modifiers are not in this world; a launch takes the drone's numbers from the ship's world once the drone is in it.
+    /// Used before the drone leaves the bay, to refuse a drone that has no operation and to count its bandwidth.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<int, double>> DroneAttributesAsync(Item drone, CancellationToken cancellationToken = default)
+    {
+        var provenance = await items.Mutations.GetAsync(drone.Id, cancellationToken);
+        await statics.EnsureTypesAsync(ItemDogma.TypeIdsOf(drone, provenance), cancellationToken);
+        var world = new DogmaWorld(statics);
+        world.Add(ItemDogma.Of(drone, drone.OwnerId, drone.LocationId, drone.Flag, mutation: provenance));
+        return world.Attributes(drone.Id);
     }
 
     /// <summary>A drone is gone (it was destroyed, or let go): its item is deleted. Returns the item as it was, or null when it was not there.</summary>

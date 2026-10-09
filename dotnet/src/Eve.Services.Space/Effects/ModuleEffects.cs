@@ -46,6 +46,7 @@ internal static class ModuleEffects
         .Register(new CloakingEffect())
         .Register(new MicroJumpDriveEffect())
         .Register(new DogmaModifierEffect())
+        .Register(new CynoGeneratorEffect())
         .Register(new WarpModifierEffect())
         .Register(new TypeAttributeResistanceEffect())
         .Register(new ReactiveArmorHardenerEffect())
@@ -72,6 +73,6 @@ internal static class ModuleEffects
         .Register(new DataSubverterEffect())
         .Register(new CargoScanEffect())
         .Register(new ShipScanEffect())
-        .Register(new ScanStrengthActivateEffect())
+        .Register(new ScanStrengthEffect())
         .Register(new ScanStrengthTargetEffect());
 }

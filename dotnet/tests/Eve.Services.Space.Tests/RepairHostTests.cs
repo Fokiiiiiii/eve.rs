@@ -54,7 +54,7 @@ public class RepairHostTests
     {
         await using var connection = await rig.Source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
-        await rig.Skills.GrantAsync(connection, transaction, character, new[] { 3392, 3393, 3416, 3419, 3413, 3426, 3318, 3422, 3423, 16069, 27902, 3435, 3449, 3433, 19921, 3427, 3434, 3421 }.Select(type => new Eve.Skills.CharacterSkill(type, 5, 0)));
+        await rig.Skills.GrantAsync(connection, transaction, character, new[] { 3392, 3393, 3416, 3419, 3413, 3426, 3318, 3422, 3423, 16069, 27902, 3435, 3449, 3433, 19921, 3427, 3434, 3421, 21603 }.Select(type => new Eve.Skills.CharacterSkill(type, 5, 0)));
         await transaction.CommitAsync();
     }
 

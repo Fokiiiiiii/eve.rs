@@ -144,7 +144,7 @@ public static partial class SimCodec
         w.F64(missile.ExplosionVelocity);
         w.F64(missile.DamageReductionFactor);
         w.F64(missile.DamageReductionSensitivity);
-        // the damage over time of a breacher pod (protocol 41): a flag, then its duration, its cap per tick and its percentage per tick
+        // the damage over time of a breacher pod (protocol 42): a flag, then its duration, its cap per tick and its percentage per tick
         if (missile.Dot is { } dot)
         {
             w.U8(1);
@@ -284,6 +284,13 @@ private static void WriteAction(Writer w, SimAction action)
                     throw new ArgumentException("a scramble status change is a finite number", nameof(action));
                 }
                 w.U8(18); w.F64(status.Delta);
+                break;
+            case SimAction.CynoField cyno:
+                if (!(double.IsFinite(cyno.LifetimeMs) && cyno.LifetimeMs > 0))
+                {
+                    throw new ArgumentException("a cynosural field has a positive lifetime", nameof(action));
+                }
+                w.U8(27); WriteDeployable(w, cyno.Ball, nameof(action)); w.F64(cyno.LifetimeMs);
                 break;
             case SimAction.WarpProbe probe:
                 if (!(double.IsFinite(probe.RangeMeters) && probe.RangeMeters > 0 && double.IsFinite(probe.LifetimeMs) && probe.LifetimeMs > 0))

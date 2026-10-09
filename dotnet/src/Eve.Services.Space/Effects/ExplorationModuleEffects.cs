@@ -1,6 +1,6 @@
 namespace Eve.Services.Space.Effects;
 
-// The hacking and ECCM module effects that have no body yet. Each is wired (fitted, onlined, registered in ModuleEffects.Default) and refused with
+// The hacking module effects and the projected ECCM that have no body yet. Each is wired (fitted, onlined, registered in ModuleEffects.Default) and refused with
 // PendingModuleEffect.NotImplemented; none of them cycles, takes capacitor or reports success. (The scanners have bodies: ScannerModuleEffects.cs.) The SDE rows are the published facts; the attributes listed are those
 // the real body must read, on the module's values after dogma (ModuleEffectContext.Cycle reads duration and capacitor for every one of them).
 //
@@ -32,22 +32,6 @@ internal sealed class DataAnalyzerEffect : PendingModuleEffect
 internal sealed class DataSubverterEffect : PendingModuleEffect
 {
     public DataSubverterEffect() : base("hackOrbital") { }
-}
-
-/// <summary>
-/// <c>scanStrengthBonusPercentActivate</c> (effect 2231, guid <c>effects.ScanStrengthBonusActivate</c>, category 1 activation): the self-applied ECCMs (44 types
-/// in groups 202 ECCM and 353 QA Module; none published). The SDE effect carries four <c>modifierInfo</c> entries: on the ship, the scan strengths
-/// <c>scanRadarStrength</c> 208, <c>scanLadarStrength</c> 209, <c>scanMagnetometricStrength</c> 210 and <c>scanGravimetricStrength</c> 211 are changed by the
-/// module's <c>scanRadarStrengthPercent</c> 1030, <c>scanLadarStrengthPercent</c> 1028, <c>scanMagnetometricStrengthPercent</c> 1029 and
-/// <c>scanGravimetricStrengthPercent</c> 1027 (operation 6, PostPercent). The body may therefore be the existing dogma-modifier path (<c>DogmaModifierEffect</c>),
-/// which is not done here: this pass only wires the effect.
-/// Reads: <c>duration</c> and <c>capacitorNeed</c> (the shared attributes above).
-/// Reference: EveJS v0.12.9 names no handler by this effect name. Its scan-strength attributes are in <c>server/src/space/modules/assistanceModuleRuntime.js</c>
-/// (lines 86-100 and the modifier entries at 190-210, for the projected modules).
-/// </summary>
-internal sealed class ScanStrengthActivateEffect : PendingModuleEffect
-{
-    public ScanStrengthActivateEffect() : base("scanStrengthBonusPercentActivate") { }
 }
 
 /// <summary>

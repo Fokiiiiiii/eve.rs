@@ -193,7 +193,7 @@ pub(super) fn put_missile(out: &mut Vec<u8>, missile: &Missile) {
     ] {
         out.extend_from_slice(&number.to_le_bytes());
     }
-    // the damage-over-time of a breacher pod: a flag, then its duration, its cap per tick and its percentage per tick (protocol 41)
+    // the damage-over-time of a breacher pod: a flag, then its duration, its cap per tick and its percentage per tick (protocol 42)
     match missile.dot {
         None => out.push(0),
         Some(dot) => {
@@ -468,6 +468,11 @@ pub(super) fn put_action(out: &mut Vec<u8>, action: &Action) {
             for number in damage.iter().chain(ecm.iter()).chain([neutralize]) {
                 out.extend_from_slice(&number.to_le_bytes());
             }
+        }
+        Action::CynoField { ball, lifetime_ms } => {
+            out.push(27);
+            put_deployable(out, ball);
+            out.extend_from_slice(&lifetime_ms.to_le_bytes());
         }
         Action::MicroJumpDrive { distance_meters, cooldown_ms } => {
             out.push(6);

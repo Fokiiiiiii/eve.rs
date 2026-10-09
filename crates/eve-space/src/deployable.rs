@@ -46,6 +46,8 @@ pub enum Role {
     WarpSource { range: f64 },
     /// A bomb: at its end the ships within `blast_radius` take its kind of effect (`ecm` for the jam, `neutralize` for the capacitor, `damage` for the hit).
     Bomb { kind: BombKind, blast_radius: f64, damage: Damage, ecm: [f64; 4], neutralize: f64 },
+    /// A cynosural field (the field types of the generators, group 2020 or 897): it lives until its lifetime is up, and does nothing else. Lit where its ship is.
+    CynoField,
     /// A lance's beacon (EVE.js `spawnLanceBeacon`, protocol 39): a transient container the beam is drawn to. It does nothing but exist; it is taken out when
     /// its strike's effect ends (or stops), or when its lifetime is up.
     Beacon,
@@ -56,6 +58,8 @@ pub const LANCE_BEACON: (i32, i32) = (41_233, 1_704);
 pub const LANCE_BEACON_RADIUS: f64 = 250.0;
 /// The category of the beacon's container (EVE.js `MODULAR_EFFECT_BEACON_CATEGORY_ID`).
 const BEACON_CATEGORY: i32 = 2;
+/// The category of a cynosural field (EVE.js `cynosuralField.js`, the category it falls back to: 2).
+const CYNO_FIELD_CATEGORY: i32 = 2;
 
 /// A deployable in space: where it is, when it ends, and who put it there (its launcher, for a bomb's blast and the aggression it makes).
 #[derive(Debug, Clone, PartialEq)]
@@ -91,8 +95,13 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         Role::WarpSource { .. } => (Kind::WarpDisruptionProbe, LegacyMode::Stop),
         Role::Bomb { .. } => (Kind::Missile, LegacyMode::Stop),
         Role::Beacon => (Kind::Container, LegacyMode::Stop),
+        Role::CynoField => (Kind::Other, LegacyMode::Stop),
     };
-    let category = if matches!(deployable.role, Role::Beacon) { BEACON_CATEGORY } else { CHARGE_CATEGORY };
+    let category = match deployable.role {
+        Role::Beacon => BEACON_CATEGORY,
+        Role::CynoField => CYNO_FIELD_CATEGORY,
+        _ => CHARGE_CATEGORY,
+    };
     let ball = BallEntity {
         item_id: IdRef::Valid(deployable.id),
         kind,
@@ -408,7 +417,7 @@ impl Scene {
                 Role::WarpSource { range } => {
                     deployable.ends_at > now && distance(position, deployable.position) <= range
                 }
-                Role::Bomb { .. } | Role::Beacon => false,
+                Role::Bomb { .. } | Role::Beacon | Role::CynoField => false,
             })
     }
 }

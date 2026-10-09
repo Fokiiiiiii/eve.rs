@@ -186,6 +186,14 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             }
             Ok(Action::Bomb { ball, kind, lifetime_ms, blast_radius, damage, ecm, neutralize })
         }
+        27 => {
+            let ball = read_deployable(reader)?;
+            let lifetime_ms = reader.f64()?;
+            if !(lifetime_ms.is_finite() && lifetime_ms > 0.0) {
+                return Err(DecodeError::BadValue("cynosural field"));
+            }
+            Ok(Action::CynoField { ball, lifetime_ms })
+        }
         6 => {
             let distance_meters = reader.f64()?;
             let cooldown_ms = reader.i64()?;

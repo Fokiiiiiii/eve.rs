@@ -577,3 +577,80 @@ page used is the Revenant expansion notes' breacher section (mirrored on the EVE
   through the ordinary hit path.
 - Protocol 40 to 41: the missile block (`put_missile`, `read_missile`) ends with a damage-over-time flag, then duration, cap and percentage. A defender's action
   carries the same missile block with a 0 flag. The fixture generator writes the new block and one breacher frame in `oracle/fixtures/simlink/messages.json`.
+
+## Module rules, track B7: ECCM, scripts, the cynosural field generator (2026-10-09)
+
+Precedence applied as in track B6c: SDE for numbers and attributes; the EVE University wiki for mechanics; EveJS (`cynosuralField.js`,
+`activationSpaceRestrictions.js`, `modules.js`) as the functional reference; CCP documents and eve-logic not re-read for this track's wire
+shapes (the existing codecs were reused and extended by one action, tag 27, ADR 0017).
+
+- **ECCM, self-applied (effect 2231 `scanStrengthBonusPercentActivate`).** SDE: four PostPercent modifiers on the ship's scan strengths (208 to 211)
+  from the module's percents (1027 to 1030). Decided: its body is the generic dogma-modifier path (`ScanStrengthEffect` calls
+  `DogmaModifierEffect.BuildModifier`), replacing the pending handler. Its types are unpublished in this build, so it is not one of the published-module
+  modifier names that `ModuleEffectsTests` checks. Wiki (Electronic warfare, "Countering ECM"): an ECCM script "doubles the sensor strength effect", which
+  matches the SDE's +100 on the sensor strength bonus (2282). Tests: `ModuleScriptTests.An_ECCM_script_loaded_in_an_ECCM_module_...`.
+- **Projected ECCM (effect 2246 `scanStrengthTargetPercentBonus`).** Still pending: it is a target effect and needs the projected path.
+- **Scripts, flex (groups 1701 and 1702: Armor and Shield EM, thermal, kinetic and explosive scripts).** SDE: +200 on the hardener's EM resistance
+  bonus and -100 on the other three (2402 to 2405, PostPercent), on the hardener's bonus (984 to 987), which resonance activation (5230, 5231) reads.
+  Numbers from the SDE only; the wiki page for these scripts was not read in this track. Tests: `ModuleScriptTests` (armour and shield).
+- **Scripts, guidance (group 1400 Missile Range and Missile Precision Script, on the Missile Guidance Computer, group 1396).** SDE: Range adds +100 to
+  missile velocity and explosion delay and -100 to the AoE cloud and velocity; Precision is the mirror. Tests: `ModuleScriptTests` (range and precision).
+  Open: the Guidance Disruption scripts (group 1569, 40334 and 40335) carry the same modifiers with launcher group 1396, but the computer's charge group is
+  1400, so their pairing is not decided here; not tested.
+- **Category of ECCM.** The ECCM modules are category 7 (group 202); the ECCM Script is a charge of category 8 (group 910, type 41155). The pairing of a
+  script with its module uses the category (`DogmaWorld.Partner`, `IsCharge`), so it works without a special case. Tested with `ModuleScriptTests`.
+- **Cynosural field generators (21096 normal, 28646 covert, 52694 industrial; group 658).** SDE numbers: activation duration 600000 ms (normal and
+  industrial) and 60000 ms (covert); fuel per cycle 500, 50 and 800 Liquid Ozone (type 16273); speed ceiling 1334 = 500 m/s; spawn radius 2455 = 5000.
+  Wiki: activation ten minutes (matches), covert one tenth (matches), fuel 500 normal (matches), industrial base 800 (matches), covert fuel "always 25":
+  the SDE says 50. Decided: SDE 50 (SDE first for numbers).
+- **When the field is lit.** Wiki: the generator has an activation time of ten minutes before the field is lit. Decided: the field is released at the end
+  of the generator's cycle (`SimAction.CynoField`, applied at `CycleEnd`). EveJS (`cynosuralField.js`, `spawnCynosuralFieldForEffect`) spawns the field at
+  activation; the difference is recorded here and not copied.
+- **Field lifetime.** SDE: each field type has explosionDelay 281 = 600000 ms (21094, 28650, 52696); the same expiry rule as bombs. Decided: the field lives
+  its explosionDelay and does not explode. EveJS uses the generator's duration as the field's life and removes the field when the effect stops; with the
+  covert generator (60000 ms) that differs from the SDE's field lifetime (600000 ms). Decided: the SDE number; the field is not removed when the generator
+  stops. Test: `CynoFieldTypes`, `deployable::tests::a_cynosural_field_is_lit_...`.
+- **One cycle per lighting.** The generator's repeat is one: it lights its field once and stops. Fuel is taken before that cycle through the shared
+  mechanism (`BurnsFuel`, set by `ShipEffect` from the consumption type).
+- **Lighting refusals.** Wiki: "only fleet members can jump to that cyno", "a ship must be in a fleet and slower than 500 m/s" (EveJS `modules.js` quotes
+  the same), and "cynos cannot be lit in high-sec". The speed rule is attribute 1334, enforced by the generic velocity rule. Decided: the fleet is
+  checked by the host's fleet store (`SpaceSessions.IsInFleetAsync`, set in `AgentRpc`), refused as `CYNO_NOT_IN_FLEET` with our wording, because the
+  client's own wording for it is not in the tables read; the high-security rule (the high and the safe classes, `Security.IsHighSecOrHigher`, as the
+  wiki's "high-sec" covers 1.0 too) is refused with the client's `CantInHighSecSpace`, as EveJS does for `MODULE_DISALLOWED_IN_HIGHSEC`. The order of the two refusals is the host's choice: the fleet is checked first, so both are reachable in the test rig
+  (whose station is in Manifest, security 1.0). EveJS checks the security first.
+- **Open, each with its blocker.**
+  - Jump-in (fleet-only for normal fields, Black Ops for covert, jump freighters and capital industrial ships for industrial): not built. eve.rs has no
+    capital jump drive, so there is no jump to a field to restrict.
+  - Mobile Cynosural Inhibitor (200 km): not applied. No inhibitor body exists in eve.rs (a module and a deployable that do not exist yet).
+  - Cynosural System Jammer (E-03, a system-wide jam of non-covert generators, EveJS `activationSpaceRestrictions.js`): not applied. The host's
+    `BeyonceService.CynoJammerOnlineSimTimeForSystem` is not assigned (E-03), so the jammed state has no source yet.
+  - The fleet beacon state (EveJS `setFleetCynoBeaconState` when a field is lit) is not set: the fleet runtime has no beacon state in eve.rs.
+  - Persistence: ADR 0012 asks for a `Deployed` record expired by the sweep for cyno fields. This field is a sim-timed deployable (as the bombs and
+    probes are), so a restart drops it. Open; see ADR 0017.
+  - The lighting positive path (a fleet member in low or null security lighting a field and the fuel taken) has no host PostgreSQL test: the rig's station
+    is high-security, and a low-security undock is not in the rig. The field's life, its announcement and its expiry are tested in the simulation.
+- **Bastion and logoff (WP12, 1934).** Not built in this track. Wiki (Bastion Module) says nothing about logoff, so no source states it; the SDE sets
+  1934 = 0 for the bastion. Keeping the module running needs a logged-off ship that stays in space, which eve.rs does not have (see DEVIATIONS, track B6c).
+  Open.
+- **Sim-side overlays (WP17, assistance and jam).** Not started in this track. The B6c notes name them as the sim-side part of the assistance and jam
+  overlays (EveJS `hostileModuleRuntime.js`, `assistanceModuleRuntime.js`), and the definition of that part is not settled in the sources read. Open.
+- **Probe launcher and probe lifecycle notifications (E-06).** Not started. Depends on the probe launcher (`LaunchProbes`, RC-7), which eve.rs does not
+  have. Open.
+- **Protocol.** 40 to 41 (one bump for this track): tag 27 `CynoField`, and the two version constants. `oracle/fixtures/simlink/messages.json` gained the
+  two entries the generator writes for the field.
+## Command bursts and the buff registry (track C5, 2026-10-09)
+
+Sources, in the order the user set (SDE for numbers; the EVE University wiki for mechanics as written; EVE.js, CCP documents and eve-logic at equal rank after it; eve-logic decides the client's wire shapes). What is built, and what is not, is in TODO section 21.
+
+- **The burst value chain evaluates on this SDE build; the C4 finding is corrected.** Track C4 read the burst's strength from `warfareBuffNValue` (2469) with a default of 0, and said the module carries no 2469. The rows say otherwise. A Tech II Shield Command Burst II (43555) has 2469 = 1.25 and a Tech I (42529) 2469 = 1.0 in `typeDogma`. The strength is the charge's `warfareBuffNMultiplier` (2596): Shield Harmonizing (42695) has buff 10 (shield resistance) and multiplier -8. Effect 6737 (`chargeBonusWarfareCharge`, `modifierInfo`) copies the charge's buff id (2468, PreAssign) and multiplies the module's value by the charge's multiplier (2469 PostMul by 2596). So the Tech I value is -8 and the Tech II value -10 (the wiki: Tech II is 25 % stronger; base +8 % for Shield Harmonizing, shown inverted). Test: `CommandBurstValueTests` (PgFact, real SDE, two tests on the two module tiers). Source: SDE `typeDogma` and `dogmaEffects` 6737; wiki "Command Bursts", section 1 and 2.
+- **The buff collections are the SDE's.** `sde.dbuffCollections` rows: the operation (`operationName`), the aggregate mode (`aggregateMode`), and the modifiers (`itemModifiers`, `locationGroupModifiers`, `locationRequiredSkillModifiers`). Each becomes a `BuffCollection` (`dotnet/src/Eve.Dogma/BuffCollections.cs`). A row whose operation the engine does not know is left out. Source: SDE; the shape is the same as EVE.js `collectDefinitionModifierEntries`.
+- **Operation codes follow eve-logic, not EVE.js.** eve-logic `dogma/const.py` has `dgmAssPreAssignment = -1` and `dgmAssPostAssignment = 7`; the C# `Operation` enum agrees. EVE.js `commandBurstRuntime.js` names `DOGMA_OP_PRE_ASSIGNMENT = 7`. The client's table decides the code, so the EVE.js constant is not copied. Source: eve-logic `dogma/const.py` (lines 7 and 15).
+- **A buff carries its own value.** `Modifier` gained an optional `Literal` value, used instead of a source attribute, so a buff needs no carrier item. `DogmaWorld.SetBuffs(item, effects)` runs an item's buffs as passive effects (in `Sources`, with the item's other effects). Test: `BuffRegistryTests.Sync_makes_the_items_buffs_the_worlds_numbers_until_they_run_out`.
+- **Aggregation: the strongest active input of a Maximum collection, the weakest of a Minimum one; no stacking between bursts of one collection.** The wiki's Command Bursts page does not state stacking or refresh (its section 2: "Not stated on the page: ... stacking or refresh behavior between bursts"), so the next source decides: EVE.js `commandBurstRuntime.js`, the `Aggregator`, `AggregatorMaximum` and `AggregatorMinimum` classes, and `applyTimedCommandBurstToEntity` (a refresh is a new timed input; the value is the best of the inputs still running). The `aggregateMode` is the SDE's (`Maximum` or `Minimum`). Tests: `BuffRegistryTests` (strongest, weakest, expiry, refresh, invalid input, restart, prune).
+- **An input is active up to and including its expiry.** EVE.js `discardExpiredTimedInputs` drops an input only when its expiry is strictly before now. `BuffRegistry.Prune` and `ValuesOf` follow that. Test: `An_input_is_active_up_to_and_including_its_expiry_and_a_refresh_extends_it`.
+- **Stacking penalty on buff modifiers follows the attribute.** EVE.js `collectDefinitionModifierEntries` sets `stackingPenalized: shouldApplyStackingPenalty(attribute, true)` for every collection modifier (`liveFittingState.js` line 1273: penalised when the attribute is not stackable). A buff's source is the ship, whose category is unpenalised in `DogmaWorld`, so a buff is exempted unless the buff flag is set; `Source.Buff` sets it. Test: `Two_collections_on_a_non_stackable_attribute_take_the_stacking_penalty_as_EVE_js_does`.
+- **Restart drops every buff.** EVE.js keeps the timed history per entity in memory (`timedCommandBurstHistoryByEntity`, a `WeakMap`), so a restart drops it. `BuffRegistry` is in memory only.
+- **Who a burst reaches on a cycle (`BurstRecipients.Resolve`).** The reference's `isBurstRecipient`: the source ship always (when eligible); another ship needs a shared fleet (two different pilots, `isInSameFleet`) or a shared explicit affinity group, or a burst that reaches every ship (the Phenomena Generator family, not a command burst). The range is the surface distance plus one metre (`<= range + 1`). Source: EVE.js `commandBurstRuntime.js` `isBurstRecipient`, `resolveCommandBurstRecipients`. The wiki's "up to 256 people" is applied as a cap, the source among them; the wiki does not say which ships are cut, so the rest are taken in ship id order (EVE.js order). Tests: `BurstRecipientsTests` (8, including the cap and the one-metre allowance). Mutation: the range rule (`<= range + 1` changed to `<= range`) fails the allowance test.
+- **Mutation checks (bounded).** Three on the registry (`values.Max()` to `Min()`; expiry `>=` to `>`; the literal ignored in `DogmaWorld`): each fails `BuffRegistryTests`. Restored after each run.
+- **Not built (each with its blocker, in TODO section 20).** The burst module's activation, cycle, charge use and refusal are still `UNSUPPORTED_EFFECT` (no change to the simulation or the host's module path). The burst's recipients on the wire, and the live numbers of the recipients' running modules, need a protocol change (a parked work cycle that carries the recipient list and the buff set, and a live-numbers message); no protocol number is spent in this track. The client's `OnDbuffUpdated` (eve-logic, the Destiny payload that EVE.js sends from `buildClientDbuffStateEntries`) has no host sender. The Phenomena Generator (`moduleTitanEffectGenerator`, EVE.js) is not a command burst and is not in this track. Expedition bursts (charge group 4905, EVE.js `EXPEDITION_DBUFF_COLLECTION_IDS`) are not in this track. P.A.N.I.C. (42522) is not in this track; it stays `EFFECT_NOT_IMPLEMENTED`.
+- **Not checked in this track.** The skill, ship and mindlink bonuses reach the strength through the SDE's dogma modifiers, which this track did not test with a skilled character; the wiki's Max column (+23.44 % for Shield Harmonizing) is the check to make when they are. The wiki's table entry marked [Verify] (Expedition Strength, Analyzer Coherence) is outside this track.

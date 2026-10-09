@@ -441,6 +441,12 @@ public abstract record SimAction
     /// </summary>
     public sealed record Bomb(SimDeployable Ball, SimBombKind Kind, double LifetimeMs, double BlastRadius, IReadOnlyList<double> Damage, IReadOnlyList<double> Ecm, double Neutralize) : SimAction;
 
+    /// <summary>
+    /// A cynosural field (tag 27): as the cycle ends the field is lit where the ship is, and it lives <paramref name="LifetimeMs"/> (the field type's explosionDelay).
+    /// The simulation releases it as a deployable; it is not taken down when the generator stops.
+    /// </summary>
+    public sealed record CynoField(SimDeployable Ball, double LifetimeMs) : SimAction;
+
     /// <summary>Spools once, then shifts the ship along its heading; cooldown begins when the spool succeeds or is interrupted.</summary>
     public sealed record MicroJumpDrive(double DistanceMeters, long CooldownMs) : SimAction;
 

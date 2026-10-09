@@ -261,7 +261,7 @@ public static partial class SimCodec
     private static SimMissile ReadMissile(ref Reader r)
     {
         var missile = new SimMissile(r.I32(), r.I32(), r.Text(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64());
-        // the damage over time of a breacher pod (protocol 41): a flag, then its duration, its cap per tick and its percentage per tick
+        // the damage over time of a breacher pod (protocol 42): a flag, then its duration, its cap per tick and its percentage per tick
         var dot = r.U8() switch
         {
             0 => null,
@@ -351,6 +351,16 @@ public static partial class SimCodec
                         throw new SimLinkException(SimLinkError.BadValue, "bad scramble status action");
                     }
                     return new SimAction.ScrambleStatus(delta);
+                }
+            case 27:
+                {
+                    var ball = ReadDeployable(ref r);
+                    var lifetime = r.F64();
+                    if (!(double.IsFinite(lifetime) && lifetime > 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad cynosural field action");
+                    }
+                    return new SimAction.CynoField(ball, lifetime);
                 }
             case 19:
                 {

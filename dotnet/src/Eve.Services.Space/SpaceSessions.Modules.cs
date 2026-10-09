@@ -19,6 +19,12 @@ namespace Eve.Services.Space;
 public sealed partial class SpaceSessions
 {
     /// <summary>
+    /// Whether a character is in a fleet, as the host's fleet store has it (the cynosural field generator's rule). Null when the host has no fleets, which
+    /// refuses the lighting: no fleet is assumed.
+    /// </summary>
+    public Func<long, CancellationToken, Task<bool>>? IsInFleetAsync { get; set; }
+
+    /// <summary>
     /// An order about the ship's targets. The simulation keeps the locks (a lock takes time, and ends when either ship warps or goes); this asks and
     /// hears back. A lock the simulation accepts ends the undocking protection, and the client is told once more that it is over, as the reference
     /// does after every lock it accepts. One order of a pilot is asked at a time (the answers are matched by what was asked).
@@ -109,6 +115,21 @@ public sealed partial class SpaceSessions
             && ModuleRestrictions.Check(Security.ClassFromLevel(place.Security), attribute => snapshot.World.Get(moduleId, attribute)) is { } forbidden)
         {
             throw MachoErrors.ThrowUserError(forbidden);
+        }
+        // a cynosural field generator is lit by a fleet member and never in high-security space (EVE University wiki, Cynosural Field Generator: the
+        // generator does not carry attribute 1970, so the rule is the wiki's; EveJS activationSpaceRestrictions.js says the same)
+        if (snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is { } cynoModule
+            && _statics.Type(cynoModule.TypeId)?.GroupId == Eve.Services.Space.Effects.CynoFieldTypes.GeneratorGroup)
+        {
+            // the fleet is asked first: the order of the two refusals is the host's choice (EveJS checks the security first); with the fleet first both are reachable
+            if (IsInFleetAsync is not { } inFleet || !await inFleet(pilot.CharacterId, cancellationToken).ConfigureAwait(false))
+            {
+                return ModuleResult.Refusal("CYNO_NOT_IN_FLEET", cynoModule.TypeId, _statics.Type(cynoModule.TypeId)?.Name ?? "");
+            }
+            if (_systems.Get(pilot.SolarSystemId) is { } cynoPlace && Security.IsHighSecOrHigher(Security.ClassFromLevel(cynoPlace.Security)))
+            {
+                throw MachoErrors.ThrowUserError(ModuleRestrictions.CantInHighSecSpace);
+            }
         }
         // a module that may not be used on warp (disallowActivateOnWarp) is refused while the ship aligns to warp or is in it: the host's warp state
         if (snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is { } warpModule

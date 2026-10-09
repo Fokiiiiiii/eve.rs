@@ -78,7 +78,7 @@ def changes(items):
 
 
 def dot_bytes(d):
-    # a breacher pod's damage over time (protocol 41): a flag, then its duration, its cap per tick and its percentage per tick
+    # a breacher pod's damage over time (protocol 42): a flag, then its duration, its cap per tick and its percentage per tick
     return bytes([1]) + struct.pack("<3d", d["durationMs"], d["maxDamagePerTick"], d["maxHpPercentPerTick"]) if d else bytes([0])
 
 
@@ -143,6 +143,9 @@ def action(a):
         return bytes([21]) + struct.pack("<3d", a["range"], a["durationMs"], a["speedFactor"])
     if kind == "warpProbe":
         return bytes([19]) + deployable(a["ball"]) + struct.pack("<2d", a["range"], a["lifetimeMs"])
+    # a cynosural field (tag 27): the field's ball and its lifetime (the field type's explosionDelay); it is lit at the end of the generator's cycle
+    if kind == "cynoField":
+        return bytes([27]) + deployable(a["ball"]) + struct.pack("<d", a["lifetimeMs"])
     if kind == "bomb":
         return (bytes([20]) + deployable(a["ball"]) + bytes([a["bombKind"]]) + struct.pack("<2d", a["lifetimeMs"], a["blastRadius"])
                 + struct.pack("<4d", *a["damage"]) + struct.pack("<4d", *a["ecm"]) + struct.pack("<d", a["neutralize"]))
@@ -665,6 +668,11 @@ valid = [
                 "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1, "targetId": "0",
                 "action": {"kind": "bomb", "ball": {"chargeTypeId": 27920, "groupId": 90, "name": "Electron Bomb", "radius": 40.0}, "bombKind": 0, "lifetimeMs": 12000.0, "blastRadius": 400.0,
                            "damage": [5800.0, 0.0, 0.0, 0.0], "ecm": [0.0, 0.0, 0.0, 0.0], "neutralize": 0.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a cynosural field generator (a field of 21094, lit at the end of its cycle, ten minutes)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 21096, "effectId": 2857, "fx": "effects.CynoGenerator",
+                "durationMs": 600000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "cynoField", "ball": {"chargeTypeId": 21094, "groupId": 2020, "name": "Cynosural Field", "radius": 250.0}, "lifetimeMs": 600000.0},
                 "onChanges": [], "offChanges": []}},
     {"name": "activate an ECM burst", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 580, "effectId": 38, "fx": "effects.EcmBurstJammer",

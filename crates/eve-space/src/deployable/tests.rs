@@ -196,6 +196,35 @@ fn a_bomb_goes_off_where_it_is_and_hurts_the_ships_in_its_blast_but_not_its_laun
 }
 
 #[test]
+fn a_cynosural_field_is_lit_where_the_ship_is_as_its_activation_ends_and_is_taken_out_when_its_lifetime_is_up()
+ {
+    // the wiki: a field is lit after the generator's activation time; the SDE: a field lives its explosionDelay (600000 ms) and does not explode
+    let (mut scene, t) = crowd();
+    let field = Action::CynoField {
+        ball: Spec {
+            charge_type_id: 21_094,
+            group_id: 2_020,
+            name: "Cynosural Field".to_string(),
+            radius: 250.0,
+        },
+        lifetime_ms: 600_000.0,
+    };
+    let started = scene.activate(A, module(MODULE, field, 20_000.0), t);
+    assert!(accepted(&started), "{started:?}");
+    assert!(scene.deployables.is_empty(), "no field while the generator is still activating");
+    let (lit, t2) = poll_for(&mut scene, t, 21.0);
+    assert_eq!(scene.deployables.len(), 1, "the field is lit at the end of the activation");
+    assert!(lit.iter().any(|o| format!("{o:?}").contains("AddBalls2")), "the pilots are told of the field");
+    let (ended, _) = poll_for(&mut scene, t2, 601.0);
+    assert!(scene.deployables.is_empty(), "the field is gone when its lifetime is up");
+    assert!(ended.iter().any(|o| format!("{o:?}").contains("RemoveBalls")));
+    assert!(
+        !ended.iter().any(|o| format!("{o:?}").contains("TerminalPlayDestructionEffect")),
+        "a field does not explode"
+    );
+}
+
+#[test]
 fn a_stasis_burst_webs_the_ships_in_its_range_for_its_duration_and_spares_its_own_ship() {
     let (mut scene, t) = crowd();
     let base = scene.pilots[&B].ship.spec.max_velocity;

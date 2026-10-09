@@ -158,6 +158,10 @@ public class SimCodecTests
         {
             return new SimAction.StasisBurst((double)a["range"]!, (double)a["durationMs"]!, (double)a["speedFactor"]!);
         }
+        if ((string)a["kind"]! == "cynoField")
+        {
+            return new SimAction.CynoField(DeployableOf(a["ball"]!), (double)a["lifetimeMs"]!);
+        }
         if ((string)a["kind"]! == "warpProbe")
         {
             return new SimAction.WarpProbe(DeployableOf(a["ball"]!), (double)a["range"]!, (double)a["lifetimeMs"]!);

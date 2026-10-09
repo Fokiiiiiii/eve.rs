@@ -293,6 +293,7 @@ impl Action {
             | Self::WarpImmunity
             | Self::ScrambleStatus { .. }
             | Self::WarpProbe { .. }
+            | Self::CynoField { .. }
             | Self::StasisBurst { .. }
             | Self::Defender { .. } => false,
             Self::Charged { action, fallback, .. } => {
@@ -447,6 +448,12 @@ pub enum Action {
     WarpProbe {
         ball: crate::deployable::Spec,
         range: f64,
+        lifetime_ms: f64,
+    },
+    /// A cynosural field (tag 27, the cynosural field generators): as the cycle ends the field is lit where the ship is, and it lives `lifetime_ms`
+    /// (the field type's explosionDelay, 600000 for all three types). The ship is not moved; the field is not taken down when the generator stops.
+    CynoField {
+        ball: crate::deployable::Spec,
         lifetime_ms: f64,
     },
     /// A bomb (tag 20): as each cycle starts it is released at the ship; `lifetime_ms` later it detonates where it is (`crate::deployable`). The ships within

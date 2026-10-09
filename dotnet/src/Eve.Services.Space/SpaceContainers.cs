@@ -501,12 +501,13 @@ private void OnReceived(SimMessage message)
                     continue;
                 }
 
-                _seededAsteroidBelts.TryAdd(belt, 0);
                 if (stored.Quantity <= 0)
                 {
+                    // a depleted rock is not the belt's any more: when only depleted ones are left, the belt is seeded again below (EVE.js resets belts)
                     _placed.TryAdd(stored.Id, 0);
-                    return;
+                    continue;
                 }
+                _seededAsteroidBelts.TryAdd(belt, 0);
                 if (_placed.TryAdd(stored.Id, 0))
                 {
                     try

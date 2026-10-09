@@ -375,6 +375,30 @@ public class SpaceContainerTests
     }
 
     [PgFact]
+    public async Task A_belt_whose_rocks_are_all_depleted_is_seeded_again_when_a_pilot_arrives()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await FlyingWithCargoAsync(rig);
+        var system = (int)flying.Session.GetInt("solarsystemid")!.Value;
+        const long beltId = 9_000_000_002;
+        var types = await new Eve.Sde.SdeReader(rig.Source).ReadTypeSummariesAsync();
+        var veldspar = Assert.Single(types, type => type.Published && type.Name == "Veldspar").TypeId;
+        var (depleted, _) = await rig.Ships.CreateAsteroidAsync(veldspar, system, beltId, 1000, [1000, 2000, 3000], [1, 0, 0], 25, rig.SpaceItems);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.SetQuantityAsync(connection, transaction, depleted.Id, 0);
+            await transaction.CommitAsync();
+        }
+
+        rig.Sim.Say(new Eve.Space.SimArrived((ulong)flying.Session.SessionId, beltId, [1000, 2000, 3000]));
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>().Any());
+
+        var placed = Assert.Single(rig.Sim.Heard.OfType<Eve.Space.SimPlaceAsteroid>());
+        Assert.Equal((1_000L, false), (placed.UnitsRemaining, placed.AsteroidId == depleted.Id));
+    }
+
+    [PgFact]
     public async Task Mine_cycles_check_drone_ownership_and_range_then_persist_ore_and_notify_the_pilot()
     {
         await using var rig = await Rig.CreateAsync();

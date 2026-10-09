@@ -124,13 +124,37 @@ public class CommandBurstHostTests
 
         Assert.True(result.Accepted, result.Reason);
         var granted = rig.Space.Buffs.StateOf(ShipIdOf(source), rig.Now);
-        Assert.Contains(granted, state => state.CollectionId == ShieldInvulnerability && state.Value == -99.99);
+        Assert.Contains(granted, state => state.CollectionId == ShieldInvulnerability && state.Value == -100);
         Assert.Contains(granted, state => state.CollectionId == DisallowWeapons && state.Value == 1);
         Assert.All(granted, state => Assert.Equal(rig.Now + CoreMs, state.ExpiresAtMs));
         Assert.Empty(rig.Space.Buffs.StateOf(ShipIdOf(frigate), rig.Now));
         Assert.Contains(
             rig.Sim.BuffStates,
             told => told.SessionId == (ulong)source.Session.SessionId && told.Entries.Any(entry => entry.CollectionId == ShieldInvulnerability));
+    }
+
+    [PgFact]
+    public async Task A_granted_ship_is_stopped_and_takes_no_movement_order_while_the_grant_holds()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var source = await FlyingWithAsync(rig, PanicCore);
+        rig.Space.StartModuleForTest((ulong)source.Session.SessionId, source.Module);
+        var before = rig.Sim.Heard.Count;
+
+        var result = await ModuleFuelHostTests.SettleAsync(rig, GrantCycle(source, 9, ShipIdOf(source)));
+        Assert.True(result.Accepted, result.Reason);
+        var sent = rig.Sim.Heard.Skip(before).OfType<SimCommand>().Select(command => command.Code).ToList();
+        Assert.Contains(SimCommands.Stop, sent);
+
+        // a movement order is not sent while the grant holds the ship still; a stop is still allowed
+        var moved = rig.Sim.Heard.Count;
+        rig.Space.Command(source.Session, SimCommands.GotoDirection, 1, 0, 0);
+        rig.Space.Command(source.Session, SimCommands.SetSpeedFraction, 0.5);
+        rig.Space.Command(source.Session, SimCommands.Stop);
+        var after = rig.Sim.Heard.Skip(moved).OfType<SimCommand>().Select(command => command.Code).ToList();
+        Assert.DoesNotContain(SimCommands.GotoDirection, after);
+        Assert.DoesNotContain(SimCommands.SetSpeedFraction, after);
+        Assert.Contains(SimCommands.Stop, after);
     }
 
     [PgFact]
@@ -149,9 +173,9 @@ public class CommandBurstHostTests
     [Fact]
     public void The_grant_reaches_the_subcapital_mining_and_hauling_groups_and_no_other_ship()
     {
-        Assert.All(new[] { 463, 543, 28, 380, 1202 }, group => Assert.True(PanicGroups.Allows(group)));
-        // a Rorqual (883), an Orca (941), a Freighter (513) and a Rifter's frigate group (25) are not granted
-        Assert.All(new[] { 883, 941, 513, 25 }, group => Assert.False(PanicGroups.Allows(group)));
+        Assert.All(new[] { 463, 543, 28, 380, 1202, 513, 902, 941 }, group => Assert.True(PanicGroups.Allows(group)));
+        // another Rorqual (883) and a frigate (Rifter, 25) are not granted
+        Assert.All(new[] { 883, 25 }, group => Assert.False(PanicGroups.Allows(group)));
     }
 
     [PgFact]

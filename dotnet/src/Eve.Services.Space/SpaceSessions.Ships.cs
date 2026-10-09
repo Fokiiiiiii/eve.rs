@@ -468,11 +468,25 @@ public sealed partial class SpaceSessions
     public void Command(ClientSession session, byte code, params double[] args)
     {
         CancelSafeLogoff(session);
-        if (_pilots.ContainsKey((ulong)session.SessionId))
+        if (_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
         {
+            // a ship a fleet grant of the invulnerability core holds still (the wiki: protected ships cannot move) takes no movement order
+            if (IsMovementOrder(code, args) && Buffs.IsImmobile(pilot.ShipId, _nowUnixMs()))
+            {
+                _log?.Invoke($"movement command {code} of session {session.SessionId} refused: the ship is held still by a fleet grant");
+                return;
+            }
             _sim.Command((ulong)session.SessionId, code, args);
         }
     }
+
+    /// <summary>A movement order that takes the ship somewhere: a speed above zero, a direction, a target to follow or orbit, or an alignment.</summary>
+    private static bool IsMovementOrder(byte code, double[] args) => code switch
+    {
+        SimCommands.SetSpeedFraction => args.Length > 0 && args[0] > 0,
+        SimCommands.GotoDirection or SimCommands.FollowBall or SimCommands.Orbit or SimCommands.AlignTo => true,
+        _ => false,
+    };
 
     /// <summary>The effect of a module is offensive: it damages, jams, webs, paints or scrambles another ship (the attacks the crimewatch and the safety judge).</summary>
     private static bool IsOffensive(SimEffect package) =>

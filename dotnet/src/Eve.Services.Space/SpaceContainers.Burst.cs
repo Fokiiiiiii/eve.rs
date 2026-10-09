@@ -148,6 +148,9 @@ public sealed partial class SpaceContainers
         }
         foreach (var target in reached)
         {
+            // the wiki: the protected ships cannot move, so each is held still for the grant's duration and stopped now
+            _space.Buffs.Immobilize(target, now + duration);
+            _sim.Command((ulong)pilots[target].SessionId, SimCommands.Stop, []);
             await TellBuffsAsync(pilots[target], target, now);
             StopBlockedLater(pilots[target]);
         }

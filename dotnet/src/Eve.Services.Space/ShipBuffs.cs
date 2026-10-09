@@ -38,6 +38,30 @@ public sealed class ShipBuffs
         }
     }
 
+    /// <summary>
+    /// The ships a grant holds still until a time (the wiki: the protected ships cannot move, so the simulation's stop is kept by the host's movement
+    /// commands, <see cref="SpaceSessions.Command"/>). In memory, as the buffs are.
+    /// </summary>
+    private readonly Dictionary<long, double> _immobileUntil = [];
+
+    /// <summary>Holds a ship still until <paramref name="untilMs"/> (the later time is kept when one is held already).</summary>
+    public void Immobilize(long shipId, double untilMs)
+    {
+        lock (_gate)
+        {
+            _immobileUntil[shipId] = _immobileUntil.TryGetValue(shipId, out var held) ? Math.Max(held, untilMs) : untilMs;
+        }
+    }
+
+    /// <summary>Whether a ship is held still at <paramref name="nowMs"/>.</summary>
+    public bool IsImmobile(long shipId, double nowMs)
+    {
+        lock (_gate)
+        {
+            return _immobileUntil.TryGetValue(shipId, out var until) && nowMs <= until;
+        }
+    }
+
     /// <summary>Drops the buffs that ran out before <paramref name="nowMs"/>; returns the ships that lost one.</summary>
     public IReadOnlyList<long> Prune(double nowMs)
     {

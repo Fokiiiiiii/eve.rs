@@ -172,7 +172,7 @@ def test_call_request_wire_shape():
     assert int(request.source.client_id) == 7_000_001
     assert request.user_id == 7
     is_bound, stream = request.payload[0]
-    assert is_bound == 0 and isinstance(stream, m.SubStream)
+    assert is_bound == 1 and isinstance(stream, m.SubStream)  # a direct call has its official isBound flag set (4d289a7)
     remote_object, method, args, kwargs = stream.value
     assert (remote_object, args) == (1, ()) and bytes(method).decode() == "GetTime"
 

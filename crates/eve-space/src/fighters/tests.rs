@@ -353,6 +353,7 @@ fn kamikaze(target: i64, range: f64, damage: f64) -> Effect {
         off: None,
         on_changes: Vec::new(),
         off_changes: Vec::new(),
+        rules: Default::default(),
     }
 }
 

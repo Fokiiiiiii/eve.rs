@@ -782,7 +782,8 @@ impl Scene {
             | Moment::WorkResend(index)
             | Moment::WorkStop(index)
             | Moment::StrikePulse(index)
-            | Moment::DoomsdayHit(index) => {
+            | Moment::DoomsdayHit(index)
+            | Moment::ReachCheck(index) => {
                 pilot.modules.running.get(index).map_or(-1, |run| run.effect.module_id)
             }
             Moment::StartResend(index) => {
@@ -800,7 +801,8 @@ impl Scene {
             | Moment::WorkResend(index)
             | Moment::WorkStop(index)
             | Moment::StrikePulse(index)
-            | Moment::DoomsdayHit(index) => {
+            | Moment::DoomsdayHit(index)
+            | Moment::ReachCheck(index) => {
                 self.pilots.get(&session)?.modules.running.get(index)?.effect.module_id
             }
             Moment::StartResend(index) => {

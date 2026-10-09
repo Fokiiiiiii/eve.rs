@@ -65,10 +65,11 @@ public sealed partial class SpaceContainers
             return WorkOutcome.Refuse("INVALID_PROFILE");
         }
 
+        // a ship in space is a pilot's session in that system (ships have no space-item row); the item is the ship's record
         var target = await _items.GetAsync(cycle.TargetId);
-        var targetSpace = await _spaceItems.GetAsync(cycle.TargetId);
+        var targetSession = target is null ? null : _space.SessionOfShip(target.Id);
         if (target is null || target.LocationId != cycle.SolarSystemId || target.Flag != CharacterShips.InSpaceFlag
-            || targetSpace is null || targetSpace.SolarSystemId != cycle.SolarSystemId)
+            || targetSession is null || _space.SolarSystemOf(targetSession) != cycle.SolarSystemId)
         {
             return WorkOutcome.Refuse("NO_TARGET");
         }

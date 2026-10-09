@@ -31,7 +31,9 @@ public class ScannerHostTests
         Assert.False(result.Complete, "the target stays: the cycle is done, not the target gone");
         var (shipId, rows) = Assert.Single(Revealed(scanner, "OnCargoScanComplete"));
         Assert.Equal(ShipOf(target), shipId);
-        Assert.Equal(new[] { (Tritanium, 100L) }, rows);
+        // the rig's ship carries its own cargo, so the hold is checked for the item put there and for nothing fitted
+        Assert.Contains((Tritanium, 100L), rows);
+        Assert.DoesNotContain(rows, row => row.TypeId == scannerType);
 
         // a repeat of the cycle is answered from the record and reveals nothing again
         var again = await WorkCycleHostTests.SettleAsync(rig, ScanCycle(scanner, target, 1, Cargo));
@@ -56,7 +58,9 @@ public class ScannerHostTests
         Assert.True(result.Accepted, result.Reason);
         var (shipId, charge, capacity, rows) = Assert.Single(ShipScansOf(scanner));
         Assert.Equal(ShipOf(target), shipId);
-        Assert.Equal(new[] { (scannerType, 1L) }, rows);
+        // the scanned ship's own fittings are there too; the item put in its slot is one of them
+        Assert.Contains((scannerType, 1L), rows);
+        Assert.DoesNotContain(rows, row => row.TypeId == Tritanium);
         Assert.True(capacity > 0 && charge == capacity, $"a full capacitor of {capacity} GJ, told as the charge: {charge}");
     }
 

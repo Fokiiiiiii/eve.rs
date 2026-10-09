@@ -50,3 +50,8 @@ deadline is a row, it survives a restart. The sim also has its own timer-like ex
 - The warp bubble of a field generator is not a deployable: it is the ship's own source while its effect runs (`SimAction.WarpBubble`), and it ends with the effect.
 - Mobile warp disruptors are still not deployable: their anchoring and expiry are the deployable store and the durable jobs of this record, not started.
 
+## Addendum (2026-10-09, track C3: the lance beacon)
+
+- The lance beacon (EVE.js `spawnLanceBeacon`, a container of type 41233) is a simulation deployable (`Role::Beacon` in `crates/eve-space/src/deployable.rs`), not a `Deployed` row. Its lifetime is the lance's effect: it is put in space when the strike starts and taken out when the effect ends or stops (the same reasoning as the bomb: a row swept every 30 s would outlive the beam). A restart drops it (a stated limitation).
+- The cone's beacon (EVE.js family `lance`) is put in space without a beam: its FX guid is empty in the reference, so only the ball is shown.
+

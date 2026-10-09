@@ -1422,6 +1422,7 @@ fn strike_of(pulses: i32) -> crate::strike::Strike {
         neut_signature_radius: 1.0,
         debuff_ms: 0.0,
         sweep_end: None,
+        beacon: None,
     }
 }
 
@@ -1587,6 +1588,7 @@ fn field_effect(
         neut_signature_radius: 0.0,
         debuff_ms: 0.0,
         sweep_end: None,
+        beacon: None,
     };
     Effect {
         action: Some(crate::modules::Action::Field { strike, destination, warp_block_ms, moved, held }),

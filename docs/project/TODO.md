@@ -546,4 +546,16 @@ OPEN (each with its blocker):
 - Tether (57) and entosis (61) are applied; eve.rs has no tether or entosis use. The SCARAB Breacher bypass does not apply (no such pods in eve.rs).
 - No separate state for the buffs in the simulation (the request for "general status effects" in the simulation is not built): the numbers and the host's checks carry them (DEVIATIONS).
 - MITM: no client trace of a burst cycle or a grant was driven (`tools/mitm/README.md`).
-- The wiki pages of both families were not re-read in this track; the rules are those C4 and C5 recorded.
+- The burst wiki pages were not re-read in this track (the rules are those C4 and C5 recorded); the Capital Ship Modules page was re-read for P.A.N.I.C.
+## 23. Track A5: OnDotVictimUpdated, probes, cyno jammer, jump drive and mobile objects (2026-10-09)
+
+Done (tests in the crates named; decisions in DEVIATIONS "Track A5"):
+- The Python `set` in both marshal codecs: `Value::python_set` (`crates/eve-marshal`) and `PyValue.PythonSet` (`Eve.Marshal`); `InventoryWire.Set` delegates. Round-trip tests in both. Protocol unchanged (42).
+- OnDotVictimUpdated, A4's open item: the sim tells a ship its breacher applications as a destiny action on each hit, on each change of the working application and on each end (`crates/eve-space/src/dot_weapons.rs`, `dot_victim_update`). Tests: `dot_weapons/tests.rs` (two new). The client was not run.
+
+Open, each with its exact blocker:
+- LaunchProbes (RC-7, E-06, section 7): not started. EveJS `services/dogma/dogmaService/moduleOperation.js` `Handle_LaunchProbes` (line 3388) and `_resolveValidatedProbeLaunchContext` (425 to 567) give the checks and messages (NOT_IN_SPACE, MODULE_NOT_FOUND, INVALID_LAUNCHER, MODULE_NOT_ONLINE, NO_CHARGES, INVALID_CHARGE, INCOMPATIBLE_CHARGE, NOT_ENOUGH_CHARGES, and the cap of 8 active probes). Blocker: no probe record, no probe object in the simulation, and no scan lifecycle (E-06's notifications follow the scan).
+- GetCynoJammerState (E-03): the host callback stays unassigned, so the answer is None (no jammer). That is correct while no jammer exists. A source would be the Tenebrex cyno suppression (EveJS `services/sovereignty/sovSuppressionState.js` `getCynoJammerOnlineSimTime`, line 259) or the Mobile Cynosural Inhibitor (below). Blocker: neither is built.
+- WP-8 mobile warp disruptors: not started. Blocker: ADR 0012's `Deployed` record is not built. The cyno field from B7 is a sim-timed deployable too, and a restart drops it, so the shared record comes first.
+- Capital jump drive, cyno targeting, jump range and fuel, and the jump to the cyno field: not started. B7's field exists on main (`CynoGeneratorEffect`, `SimAction.CynoField`), so the jump can target it. Blocker: the jump-drive module body and the cross-system jump are to be built; the restrictions follow the drive.
+- Breacher pods (A4): the DoT notification is now built, but the breacher launcher's client flow and the per-tick damage message (`OnDamageMessage`, no wire shape in the sources) remain as A4 recorded them.

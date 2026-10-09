@@ -561,7 +561,7 @@ impl Scene {
         let (mut out, hit) = self.damage(missile.target, applied, at);
         // a breacher pod's hit starts its damage over time on the ship it reached (`dot_weapons`)
         if let Some(dot) = missile.spec.dot {
-            self.apply_dot(missile.target, dot, missile.shooter.clone(), at);
+            out.extend(self.apply_dot(missile.target, dot, missile.shooter.clone(), at));
         }
         let taken = hit.map_or(0.0, |hit| hit.taken.shield + hit.taken.armor + hit.taken.structure);
         let destroyed = hit.is_some_and(|hit| hit.destroyed);

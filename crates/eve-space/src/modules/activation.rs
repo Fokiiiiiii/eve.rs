@@ -242,6 +242,12 @@ impl Scene {
         {
             return vec![Out::Refused { session, command: CODE, reason: "SafetyActivated" }];
         }
+        // a smartbomb does not start close to a station or a stargate: the larger of 5 km and its own range (wiki "Smartbombs", see DEVIATIONS)
+        if let Some(Action::Smartbomb { range, .. }) = effect.action.as_ref()
+            && self.station_or_gate_within(pilot.ship.position, range.max(SMARTBOMB_NEAR_METERS))
+        {
+            return vec![Out::Refused { session, command: CODE, reason: "SMARTBOMB_NEAR_STATION" }];
+        }
         // a warp scrambler that blocks a microwarpdrive keeps one from being started
         // a module burnt out by its own effect (an emergency hull energizer) does not start again (MODULE_INCAPACITATED)
         if pilot.modules.burnt_out.contains(&effect.module_id) {
@@ -905,5 +911,20 @@ impl Scene {
         // the tick that fills it is told when it is a tick that tells (the reference tells the change on every fifth tick)
         capacitor.next_sample = (new < capacitor.capacity).then_some(at + SAMPLE_EVERY);
         vec![Self::charge_told(session, owner, ship, at, new, old)]
+    }
+}
+
+/// The distance from a station or a stargate, short of which a smartbomb does not start (5 km, the least of the wiki's restrictions).
+const SMARTBOMB_NEAR_METERS: f64 = 5_000.0;
+
+impl Scene {
+    /// Whether the surface of a station or a stargate of this system is less than `metres` from `at`.
+    pub(super) fn station_or_gate_within(&self, at: eve_destiny::Vec3, metres: f64) -> bool {
+        self.system().bodies.iter().any(|body| {
+            matches!(body.kind, crate::world::BodyKind::Station | crate::world::BodyKind::Stargate) && {
+                let (dx, dy, dz) = (body.position.x - at.x, body.position.y - at.y, body.position.z - at.z);
+                (dx * dx + dy * dy + dz * dz).sqrt() - body.radius < metres
+            }
+        })
     }
 }

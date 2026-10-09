@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::modules::{ACTIVATION_BLOCKED, DISALLOW_DOCKING, WARP_SCRAMBLE_STATUS};
-use crate::scene::tests::{NOON, STATION, spec, system};
+use crate::scene::tests::{NOON, STATION, clear_of_the_station, spec, system};
 use crate::scene::{Command, Out};
 use crate::ship::ShipSpec;
 use crate::weapons::tests::finishes_within;
@@ -1744,10 +1744,36 @@ fn total(layers: &crate::health::Layers) -> f64 {
     layers.shield + layers.armor + layers.structure
 }
 
+/// A crowd with A moved `gap` metres off the surface of the test system's station.
+fn crowd_off_the_station(gap: f64) -> (Scene, i64) {
+    let (mut scene, t) = crowd();
+    let (x, y, z, radius) = {
+        let station = scene.system().body(STATION).unwrap();
+        (station.position.x, station.position.y, station.position.z, station.radius)
+    };
+    scene.pilots.get_mut(&A).unwrap().ship.position = eve_destiny::Vec3::new(x + radius + gap, y, z);
+    (scene, t)
+}
+
+#[test]
+fn a_smartbomb_does_not_start_within_five_kilometres_of_a_station_or_its_range_when_that_is_more() {
+    // the least restriction is 5 km; a bomb of 6 km range is held off to 6 km (the wiki's two data points, see DEVIATIONS)
+    let (mut scene, t) = crowd_off_the_station(4_000.0);
+    let refused = scene.activate(A, smartbomb(3_000.0, [0.0, 40.0, 0.0, 40.0], true), t);
+    assert!(refused.iter().any(|o| matches!(o, Out::Refused { reason: "SMARTBOMB_NEAR_STATION", .. })), "{:?}", labels(&refused));
+    let (mut scene, t) = crowd_off_the_station(5_500.0);
+    let refused = scene.activate(A, smartbomb(6_000.0, [0.0, 40.0, 0.0, 40.0], true), t);
+    assert!(refused.iter().any(|o| matches!(o, Out::Refused { reason: "SMARTBOMB_NEAR_STATION", .. })), "{:?}", labels(&refused));
+    let (mut scene, t) = crowd_off_the_station(6_500.0);
+    let started = scene.activate(A, smartbomb(6_000.0, [0.0, 40.0, 0.0, 40.0], true), t);
+    assert!(started.iter().any(|o| matches!(o, Out::Accepted { .. })), "{:?}", labels(&started));
+}
+
 #[test]
 fn a_smartbomb_hurts_every_ship_in_its_range_each_cycle_and_nothing_beyond_it() {
     // B stands two kilometres off A's surface: inside a three kilometre field, with no lock between them
     let (mut scene, t) = reaching(2_000.0);
+    clear_of_the_station(&mut scene);
     scene.target_order(A, crate::targeting::Order::Clear, t);
     let before = total(&partner_layers(&scene, t));
     let started = scene.activate(A, smartbomb(3_000.0, [0.0, 40.0, 0.0, 40.0], true), t);
@@ -1805,6 +1831,7 @@ fn an_ecm_burst_breaks_nearby_locks_at_cycle_start_but_does_not_leave_a_jam() {
 #[test]
 fn a_smartbomb_the_safety_forbids_does_not_start_with_a_pilot_in_range_and_stops_when_one_comes_in() {
     let (mut scene, t) = reaching(2_000.0);
+    clear_of_the_station(&mut scene);
     scene.target_order(A, crate::targeting::Order::Clear, t);
     let before = total(&partner_layers(&scene, t));
     let refused = scene.activate(A, smartbomb(3_000.0, [0.0, 40.0, 0.0, 40.0], false), t);
@@ -1816,6 +1843,7 @@ fn a_smartbomb_the_safety_forbids_does_not_start_with_a_pilot_in_range_and_stops
     assert_eq!(total(&partner_layers(&scene, t)), before);
     // with nobody in range it starts, and a pilot that comes in range stops it at the next cycle
     let (mut quiet, tq) = reaching(8_000.0);
+    clear_of_the_station(&mut quiet);
     quiet.target_order(A, crate::targeting::Order::Clear, tq);
     let started = quiet.activate(A, smartbomb(3_000.0, [0.0, 40.0, 0.0, 40.0], false), tq);
     assert!(started.iter().any(|o| matches!(o, Out::Accepted { .. })), "{:?}", labels(&started));

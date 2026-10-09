@@ -1856,6 +1856,7 @@ fn smartbomb_effect(module_id: i64, damage: Damage) -> Effect {
 #[test]
 fn a_smartbomb_shoots_down_the_missiles_of_others_in_its_reach_and_spares_its_own_pilot_s() {
     let (mut scene, npc, now) = duel();
+    crate::scene::tests::clear_of_the_station(&mut scene);
     scene.activate(npc, missile_effect(spec().ship_id, launcher(300.0, 5_000.0, 56.0)), now);
     assert_eq!(scene.missiles.len(), 1);
     // the pilot who fired the missile sets off a bomb of its own: its missile is not hurt

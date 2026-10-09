@@ -191,6 +191,11 @@ public sealed partial class SpaceSessions
             // the client's own refusal for a target that cannot be hit by offensive modules (dogma/effects/util.py PreCheckIfImmune)
             throw MachoErrors.ThrowUserError("DeniedActivateTargetModuleDisallowed");
         }
+        // a module that the ship's dogma blocks (activationBlocked 1349, a bastion's block on what needs its skill) does not start (fittingDogmaLocation ModuleIsBlocked)
+        if (snapshot.World.Get(moduleId, ModuleAttributes.ActivationBlocked) > 0)
+        {
+            return ModuleResult.Refusal("MODULE_BLOCKED", made.ModuleType, made.ModuleName);
+        }
         if (assistance)
         {
             if (targetTypeId is not { } targetTypeIdValue)

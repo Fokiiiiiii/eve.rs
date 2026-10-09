@@ -5,13 +5,17 @@
 //! shield, then the armor, then the hull, each layer's resonances taken off the four kinds of damage; whatever a hit does not use in one layer goes
 //! on to the next. The shield recharges along CCP's curve while it is below full. The reference rounds what it keeps of a hit to six places (the
 //! stored fractions, not the points it tells), and this does the same, so the numbers a client is told are the same to the last digit.
+mod scene_api;
+mod shift;
 
 use crate::scene::TICKS_PER_SECOND;
 
 /// The attribute of a ship that holds its shield's charge, in points.
 pub const SHIELD_CHARGE: i32 = 264;
+
 /// The attribute that holds how much of its armor is gone, in points.
 pub const ARMOR_DAMAGE: i32 = 266;
+
 /// The attribute that holds how much of its hull is gone, in points.
 pub const HULL_DAMAGE: i32 = 3;
 
@@ -20,6 +24,7 @@ pub type Damage = [f64; 4];
 
 /// A shield within this many points of full is full (the reference settles it so).
 const FULL_SNAP_POINTS: f64 = 1.0;
+
 /// What a station's or an unhurtable thing's damage state says the shield's recharge is.
 pub const UNHURTABLE_TAU_MS: f64 = 110_000.0;
 
@@ -196,71 +201,6 @@ impl Health {
             },
             shift: None,
         }
-    }
-
-    /// The armor's resonances as they are now: the ship's own, each times the adaptive profile of a running reactive armor hardener, or all one while
-    /// a Polarized weapon pins them (the pin wins: the profile is not applied over it).
-    pub fn armor_resonance(&self) -> Damage {
-        if self.vitals.armor_pinned {
-            return [1.0; 4];
-        }
-        let base = self.vitals.resonances.armor;
-        match self.shift {
-            Some(shift) => std::array::from_fn(|i| base[i] * shift.profile[i]),
-            None => base,
-        }
-    }
-
-    /// The adaptive profile of the running reactive armor hardener, if one runs.
-    pub fn shift_profile(&self) -> Option<Damage> {
-        self.shift.map(|shift| shift.profile)
-    }
-
-    /// A reactive armor hardener starts on the ship: its resonances are `seed` (the module's own values, in the order of a damage vector) and move
-    /// by `step` a cycle. Its tally starts from nothing, so a hardener that starts again starts from its seed.
-    pub fn start_shift(&mut self, seed: Damage, step: f64) {
-        self.shift = Some(Shift { profile: seed.map(|r| r.clamp(0.0, 1.0)), tally: [0.0; 4], step });
-    }
-
-    /// The hardener stops: the armor is the ship's own again, and nothing is kept for a later start.
-    pub fn stop_shift(&mut self) {
-        self.shift = None;
-    }
-
-    /// A cycle of the running hardener ends: its resonances move as the damage the armor took in the cycle says, and the tally starts again. The new
-    /// profile when it moved (the armor's resonances then change), None when nothing runs, when it did not move, or when the armor is pinned (a pinned
-    /// armor takes no shift and keeps no tally).
-    pub fn shift_cycle(&mut self) -> Option<Damage> {
-        let pinned = self.vitals.armor_pinned;
-        let shift = self.shift.as_mut()?;
-        let tally = std::mem::replace(&mut shift.tally, [0.0; 4]);
-        if pinned {
-            return None;
-        }
-        let next = crate::resistance_shift::next_profile(shift.profile, tally, shift.step)?;
-        shift.profile = next;
-        Some(next)
-    }
-
-    /// The ship has new numbers: its absolute damage stays the same, while capacitor charge keeps its fraction.
-    pub fn respec(&mut self, vitals: Vitals, shield_recharge_ms: f64, now: i64) {
-        let condition = self.condition_at(now);
-        let before = self.vitals.layers();
-        let after = vitals.layers();
-        let shield_damage = (before.shield * (1.0 - condition.shield_charge)).max(0.0);
-        let armor_damage = (before.armor * condition.armor_damage).max(0.0);
-        let hull_damage = (before.structure * condition.damage).max(0.0);
-
-        self.vitals = vitals;
-        self.recharge_s = shield_recharge_ms / 1000.0;
-        self.tau_ms = shield_recharge_ms / 5.0;
-        self.condition = Condition {
-            damage: if after.structure > 0.0 { hull_damage / after.structure } else { 0.0 },
-            armor_damage: if after.armor > 0.0 { armor_damage / after.armor } else { 0.0 },
-            shield_charge: if after.shield > 0.0 { 1.0 - shield_damage / after.shield } else { 1.0 },
-            charge: condition.charge,
-        };
-        self.at = now;
     }
 
     pub fn vitals(&self) -> &Vitals {
@@ -519,132 +459,8 @@ impl Health {
 use eve_marshal::Value;
 
 use crate::modules::{SAMPLE_EVERY, attribute_change, number};
+
 use crate::scene::{Out, Pilot, Scene, SessionId};
-
-impl Scene {
-    /// The pilot is told which of its ship's attributes changed (one notification for all of them), or nothing when none did.
-    pub(crate) fn health_told(
-        session: SessionId,
-        owner: i64,
-        ship: i64,
-        when: i64,
-        changes: &[(i32, f64, f64)],
-    ) -> Option<Out> {
-        if changes.is_empty() {
-            return None;
-        }
-        let lines: Vec<Value> = changes
-            .iter()
-            .map(|&(attribute, new, old)| {
-                attribute_change(owner, ship, attribute, when, number(new), number(old))
-            })
-            .collect();
-        Some(Self::dogma_notify(session, "OnModuleAttributeChanges", vec![Value::List(lines)]))
-    }
-
-    /// What a pilot's ship has taken, and how full its capacitor is, at `now`.
-    pub(crate) fn condition_of(pilot: &Pilot, now: i64) -> Condition {
-        Condition {
-            charge: pilot.modules.capacitor.as_ref().map_or(1.0, |c| c.ratio_at(now)),
-            ..pilot.ship.health.condition_at(now)
-        }
-    }
-
-    /// A hit of `raw` damage lands on the ship `ship_id` at `now`: its layers take it, the pilot is told the attributes that changed and everyone who
-    /// can see the ship, has it locked or flies it is told its damage state. What the hit did comes back (None when the ship is not here or has
-    /// nothing to hurt).
-    pub fn damage(&mut self, ship_id: i64, raw: Damage, now: i64) -> (Vec<Out>, Option<Applied>) {
-        let Some(session) = self.pilots.iter().find(|(_, p)| p.ship.spec.ship_id == ship_id).map(|(s, _)| *s)
-        else {
-            return (Vec::new(), None);
-        };
-        let pilot = self.pilots.get_mut(&session).expect("the pilot is in the scene");
-        let owner = pilot.ship.spec.character_id;
-        let Some(applied) = pilot.ship.health.apply(now, raw) else { return (Vec::new(), None) };
-        let mut out: Vec<Out> = Self::health_told(session, owner, ship_id, now, &applied.attribute_changes())
-            .into_iter()
-            .collect();
-        if applied.changed
-            && let Some(subject) = self.subject(ship_id, now)
-        {
-            out.extend(self.announce_damage_state(&subject, now));
-        }
-        // a squadron that lost members is told its size (one with none left is destroyed, and told so)
-        if !applied.destroyed {
-            out.extend(self.tell_squadron_size(session, now));
-        }
-        (out, Some(applied))
-    }
-
-    /// `amount` points are given back to a layer of the ship `ship_id` at `now` (a repairer, a booster, a remote repairer): the pilot is told the attributes that
-    /// changed and everyone who can see the ship, has it locked or flies it is told its damage state when it changed. Nothing is told when nothing was
-    /// mended (the layer is whole, or the ship is not here).
-    pub(crate) fn mend(&mut self, ship_id: i64, layer: Layer, amount: f64, now: i64) -> Vec<Out> {
-        let Some(session) = self.session_of(ship_id) else { return Vec::new() };
-        let pilot = self.pilots.get_mut(&session).expect("the pilot is in the scene");
-        let owner = pilot.ship.spec.character_id;
-        let Some(applied) = pilot.ship.health.repair(now, layer, amount) else { return Vec::new() };
-        let mut out: Vec<Out> = Self::health_told(session, owner, ship_id, now, &applied.attribute_changes())
-            .into_iter()
-            .collect();
-        if applied.changed
-            && let Some(subject) = self.subject(ship_id, now)
-        {
-            out.extend(self.announce_damage_state(&subject, now));
-        }
-        out
-    }
-
-    /// The host asks for the ship to be mended (`Heal`, command 18): full shield, armor, hull and capacitor. The pilot is told the attributes that
-    /// changed and the capacitor, those who can see the ship are told its damage state when it changed, and the command is answered last.
-    pub fn heal(&mut self, session: SessionId, now: i64) -> Vec<Out> {
-        const CODE: u8 = 18;
-        let Some(pilot) = self.pilots.get_mut(&session) else {
-            return vec![Out::Refused { session, command: CODE, reason: "NO_SHIP_IN_SPACE" }];
-        };
-        let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
-        let mended = pilot.ship.health.restore(now);
-        let (before, after) = pilot.modules.capacitor.as_mut().map_or((0.0, 0.0), |c| c.refill(now));
-        let mut out: Vec<Out> = Self::health_told(session, owner, ship_id, now, &mended.attribute_changes())
-            .into_iter()
-            .collect();
-        if after > 0.0 {
-            out.push(Self::charge_told(session, owner, ship_id, now, after, before));
-        }
-        if mended.changed
-            && let Some(subject) = self.subject(ship_id, now)
-        {
-            out.extend(self.announce_damage_state(&subject, now));
-        }
-        out.push(Out::Accepted { session, command: CODE, at: now });
-        out
-    }
-
-    /// The host asks what the ship has taken (`GetCondition`, command 19).
-    pub fn condition(&mut self, session: SessionId, now: i64) -> Vec<Out> {
-        const CODE: u8 = 19;
-        match self.pilots.get(&session) {
-            Some(pilot) => {
-                vec![Out::Condition { session, command: CODE, condition: Self::condition_of(pilot, now) }]
-            }
-            None => vec![Out::Refused { session, command: CODE, reason: "NO_SHIP_IN_SPACE" }],
-        }
-    }
-
-    /// The shield's charge is told: now, and a tenth of a second before; the next time is half a second on while the shield is below full.
-    pub(crate) fn tell_shield(&mut self, session: SessionId, at: i64) -> Vec<Out> {
-        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
-        let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
-        let health = &mut pilot.ship.health;
-        let told = health.shield_told(at);
-        health.next_sample = if health.shield_full_at(at) { None } else { Some(at + SAMPLE_EVERY) };
-        told.into_iter()
-            .filter_map(|(new, old)| {
-                Self::health_told(session, owner, ship_id, at, &[(SHIELD_CHARGE, new, old)])
-            })
-            .collect()
-    }
-}
 
 #[cfg(test)]
 mod tests;

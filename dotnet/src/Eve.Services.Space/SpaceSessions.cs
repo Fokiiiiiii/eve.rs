@@ -1153,6 +1153,18 @@ private readonly TransitionRuntime _transitions;
             {
                 return ModuleResult.Refusal("TARGET_INVALID_FOR_MODULE", made.ModuleType, made.ModuleName);
             }
+            // a crystal in the laser takes only the asteroids its list names (EVE.js isCrystalTargetCompatibleWithYield)
+            if (snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is { } laser && snapshot.ChargeOf(laser) is { Quantity: > 0 } crystal)
+            {
+                await _statics.EnsureTypesAsync([crystal.TypeId], cancellationToken).ConfigureAwait(false);
+                var listId = _statics.AttributeId("specializationAsteroidTypeList") is { } listAttribute && _statics.Type(crystal.TypeId) is { } crystalType
+                    ? (int)crystalType.Attributes.GetValueOrDefault(listAttribute, 0d)
+                    : 0;
+                if (!await _statics.TypeListNamesAsync(listId, rockTypeId, cancellationToken).ConfigureAwait(false))
+                {
+                    return ModuleResult.Refusal("CHARGE_NOT_COMPATIBLE", made.ModuleType, made.ModuleName);
+                }
+            }
         }
 
         var targetPilot = _pilots.Values.FirstOrDefault(other => other.ShipId == package.TargetId);

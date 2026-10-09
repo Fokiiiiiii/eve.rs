@@ -152,6 +152,29 @@ public sealed class DogmaStatic
         }
     }
 
+    /// <summary>
+    /// Whether the SDE type list <paramref name="listId"/> names the type, by its id or its group (the <c>typeLists</c> of the SDE). An unknown list names
+    /// nothing, and so does a type that is not loaded (<see cref="EnsureTypesAsync"/> first).
+    /// </summary>
+    public async Task<bool> TypeListNamesAsync(int listId, int typeId, CancellationToken cancellationToken = default)
+    {
+        if (_sde is null || listId <= 0 || Type(typeId) is not { } type)
+        {
+            return false;
+        }
+        static bool Names(System.Text.Json.JsonElement list, string property, int id) =>
+            id > 0 && list.TryGetProperty(property, out var values) && values.ValueKind == System.Text.Json.JsonValueKind.Array
+            && values.EnumerateArray().Any(value => value.TryGetInt32(out var candidate) && candidate == id);
+        foreach (var list in await _sde.ReadAsync("typeLists", [(long)listId], cancellationToken))
+        {
+            if (Names(list.Doc, "includedTypeIDs", typeId) || Names(list.Doc, "includedGroupIDs", type.GroupId))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// <summary>Published SDE types in the named groups, with their dogma loaded.</summary>
     public async Task<IReadOnlyList<TypeDef>> TypesInGroupsAsync(IEnumerable<string> groupNames, CancellationToken cancellationToken = default)
     {

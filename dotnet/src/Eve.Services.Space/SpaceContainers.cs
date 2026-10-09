@@ -58,6 +58,9 @@ public sealed class SpaceContainers : ISpaceContainers, IDisposable
     private readonly ConcurrentDictionary<(int SystemId, long BeltId), byte> _seededAsteroidBelts = new();
     private readonly ConcurrentDictionary<ulong, long> _cooldownUntil = new();
 
+    /// <summary>The roll of a mining crystal's volatility (a number in 0 to 1, a hit at or under the chance): the host draws it, as EVE.js does.</summary>
+    public Func<double> VolatilityRoll { get; set; } = Random.Shared.NextDouble;
+
     private readonly System.Collections.Concurrent.ConcurrentDictionary<long, byte> _abandonedLoot = new();
 
     public SpaceContainers(
@@ -870,6 +873,19 @@ private void OnReceived(SimMessage message)
             {
                 session.SendNotification(
                     "OnOreMined", "charid", Eve.Services.Ships.ShipNotifications.OreMined(cycle.TargetId, cycle.OwnerId, mined.OreTypeId, yield));
+            }
+            // a laser with a crystal loaded rolls the crystal's volatility once the grant is kept (EVE.js applyCrystalVolatility)
+            if (mined.Accepted && cycle.IsModule && ship.Fitted.FirstOrDefault(m => m.Id == cycle.OwnerId) is { } laser
+                && ship.ChargeOf(laser) is { Quantity: > 0 } crystal)
+            {
+                await _statics.EnsureTypesAsync([crystal.TypeId]);
+                if (_statics.Type(crystal.TypeId) is { } crystalType
+                    && _statics.AttributeId("crystalVolatilityChance") is { } chanceId
+                    && _statics.AttributeId("crystalVolatilityDamage") is { } damageId)
+                {
+                    await _ships.ApplyCrystalVolatilityAsync(
+                        crystal.Id, VolatilityRoll(), crystalType.Attributes.GetValueOrDefault(chanceId, 0d), crystalType.Attributes.GetValueOrDefault(damageId, 0d));
+                }
             }
             return new WorkOutcome(mined.Accepted, mined.Reason, mined.UnitsRemaining, mined.DeliveredUnits, mined.Depleted);
         }

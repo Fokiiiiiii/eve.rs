@@ -1174,6 +1174,29 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task A_frequency_mining_laser_without_a_crystal_has_nothing_to_mine_with()
+    {
+        var (rig, character, _) = await DockedAsync();
+        await using var _ = rig;
+        const int modulatedStripMinerII = 17912;
+        await rig.Statics.EnsureTypesAsync([modulatedStripMinerII]);
+        long laser;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            laser = await rig.Items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(modulatedStripMinerII, character.CharacterId, character.ShipId, Eve.Inventory.ItemFlags.HiSlot0, 1, true));
+            await rig.Modules.SetAsync(connection, transaction, laser, Eve.Dogma.ItemState.Online);
+            await transaction.CommitAsync();
+        }
+        var (snapshot, _, _, _) = await ShipAsync(rig, character);
+
+        var refused = ModulePackages.Of(snapshot, rig.Statics, laser, "miningLaser", 9988400002215, 1);
+
+        Assert.Equal("NO_AMMO", refused.Reason);
+    }
+
+    [PgFact]
     public async Task An_auto_targeting_system_sweeps_for_the_ships_that_target_its_pilot_within_its_sweep_range_and_needs_no_target()
     {
         var (rig, character, _) = await DockedAsync();

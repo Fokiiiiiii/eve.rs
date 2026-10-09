@@ -176,6 +176,17 @@ public sealed class PgItemStore
             await invalidator.InvalidateAsync(connection, transaction, id, ShipContractInvalidationReason.OwnerChanged, cancellationToken);
     }
 
+    /// <summary>Sets an item's custom info (the text the host keeps on it, such as a crystal's damage), inside the caller's transaction.</summary>
+    public async Task SetCustomInfoAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, string? customInfo, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"UPDATE {_schema}.items SET custom_info = $2 WHERE id = $1", connection, transaction)
+        {
+            Parameters = { new() { Value = id }, new() { Value = (object?)customInfo ?? DBNull.Value } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>Gives a stack another quantity, inside the caller's transaction.</summary>
     public async Task SetQuantityAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, long quantity, CancellationToken cancellationToken = default)
     {

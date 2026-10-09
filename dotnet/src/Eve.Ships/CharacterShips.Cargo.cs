@@ -29,6 +29,9 @@ public sealed record OreMinedEvent(
     public const string Topic = "mining.ore_mined";
 }
 
+/// <summary>What one volatility roll of a mining crystal did: whether it hit, whether the crystal broke (and was removed), and its damage after the roll.</summary>
+public sealed record CrystalVolatility(bool Hit, bool Broke, double Damage);
+
 /// <summary>The fact of a granted salvage cycle (<c>salvage.wreck_salvaged</c>), written in the grant's transaction; <c>ContainerId</c> is 0 when no can was left.</summary>
 public sealed record SalvageWreckedEvent(
     long CharacterId, int SolarSystemId, long ShipId, long MinerId, MiningSource Source, long WreckId, int WreckTypeId, int ProductTypeId, long ContainerId)
@@ -375,6 +378,45 @@ private sealed record ShipHoldRule(
         events.Wake();
         return new(true, "", remaining, delivered, remaining == 0,
             change is null ? null : new ShipChanged(change.After.Id, shipId, [], [], [change]), mined, asteroid.TypeId);
+    }
+
+    /// <summary>
+    /// One cycle's volatility roll of the crystal a laser has loaded (EVE.js applyCrystalVolatility): a roll at or under the crystal's chance (already scaled
+    /// by the cycle's efficiency) adds the crystal's damage to it, and a crystal at full damage is removed. The damage is kept as the crystal's custom info.
+    /// It runs in its own transaction after the cycle's grant, which is the one the cycle ledger keeps (a replayed cycle does not roll again).
+    /// </summary>
+    public async Task<CrystalVolatility> ApplyCrystalVolatilityAsync(
+        long crystalId, double roll, double chance, double damage, CancellationToken cancellationToken = default)
+    {
+        if (!double.IsFinite(roll) || !double.IsFinite(chance) || !double.IsFinite(damage) || chance <= 0 || damage <= 0 || roll > chance)
+        {
+            return new(false, false, 0);
+        }
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        if (await items.LockAndGetAsync(connection, transaction, crystalId, cancellationToken) is not { } crystal)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return new(false, false, 0);
+        }
+        var previous = double.TryParse(crystal.CustomInfo, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var stored)
+            ? Math.Clamp(stored, 0, 1)
+            : 0;
+        var next = Math.Min(1, previous + damage);
+        if (next <= previous + 1e-9)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return new(true, false, previous);
+        }
+        if (next < 1 - 1e-9)
+        {
+            await items.SetCustomInfoAsync(connection, transaction, crystalId, next.ToString("R", System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return new(true, false, next);
+        }
+        await items.DeleteAsync(connection, transaction, crystalId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new(true, true, 1);
     }
 
     /// <summary>

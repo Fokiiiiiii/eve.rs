@@ -13,9 +13,11 @@ internal sealed class MiningLaserEffect : ShipEffect
 {
     public override IReadOnlyCollection<string> EffectNames { get; } = ["miningLaser"];
 
-    // the frequency mining lasers take a crystal, whose yield and volatility are not wired yet: refused by name until they are (decisions M3, M9)
+    // a frequency mining laser mines with the crystal it has loaded: its crystal is checked against the rock at activation (SpaceSessions), its volatility is
+    // rolled per cycle (SpaceContainers). Without a crystal it has nothing to mine with, and says so before it asks for a target
     protected override string? Refusal(ModuleEffectContext module) =>
-        module.Statics.GroupName(module.Type.GroupId).Equals("Frequency Mining Laser", StringComparison.OrdinalIgnoreCase) ? PendingModuleEffect.NotImplemented : null;
+        module.Statics.GroupName(module.Type.GroupId).Equals("Frequency Mining Laser", StringComparison.OrdinalIgnoreCase)
+        && module.Snapshot.ChargeOf(module.Module) is not { Quantity: > 0 } ? "NO_AMMO" : null;
 
     protected override SimEffect Build(ModuleEffectContext module)
     {

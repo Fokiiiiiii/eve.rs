@@ -244,6 +244,64 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
             CREATE INDEX corporation_bills_debtor ON corporation_bills(debtor_id,due_filetime,bill_id);
             CREATE INDEX corporation_bills_creditor ON corporation_bills(creditor_id,due_filetime,bill_id);
             """),
+        new Migration("011_alliance_registry_state", """
+            ALTER TABLE alliance_employment ALTER COLUMN alliance_id DROP NOT NULL;
+            CREATE TABLE alliance_departures (
+                alliance_id bigint NOT NULL REFERENCES alliances(id) ON DELETE CASCADE,
+                corporation_id bigint NOT NULL REFERENCES corporations(id) ON DELETE CASCADE,
+                membership_started_ms bigint NOT NULL CHECK (membership_started_ms > 0),
+                actor_id bigint NOT NULL CHECK (actor_id > 0),
+                mode text NOT NULL CHECK (mode IN ('self-leave','executor-kick')),
+                left_ms bigint NOT NULL CHECK (left_ms > 0),
+                PRIMARY KEY (alliance_id,corporation_id,membership_started_ms)
+            );
+            CREATE INDEX alliance_departures_corporation
+                ON alliance_departures(corporation_id,left_ms DESC);
+
+            CREATE SEQUENCE alliance_bill_ids AS bigint START WITH 1000000000;
+            SELECT setval('alliance_bill_ids',
+                GREATEST(1000000000,COALESCE((SELECT MAX(bill_id)+1 FROM corporation_bills),1000000000)),
+                false);
+            ALTER TABLE corporation_bills ALTER COLUMN bill_id DROP IDENTITY;
+            ALTER TABLE corporation_bills ALTER COLUMN bill_id SET DEFAULT nextval('alliance_bill_ids');
+
+            CREATE TABLE alliance_bulletins (
+                alliance_id bigint NOT NULL REFERENCES alliances(id) ON DELETE CASCADE,
+                bulletin_id bigint NOT NULL CHECK (bulletin_id > 0),
+                create_character_id bigint NOT NULL CHECK (create_character_id > 0),
+                create_filetime bigint NOT NULL CHECK (create_filetime > 0),
+                edit_character_id bigint NOT NULL CHECK (edit_character_id > 0),
+                edit_filetime bigint NOT NULL CHECK (edit_filetime > 0),
+                title text NOT NULL,
+                body text NOT NULL,
+                sort_order integer NOT NULL CHECK (sort_order >= 0),
+                PRIMARY KEY (alliance_id,bulletin_id)
+            );
+            CREATE INDEX alliance_bulletins_order
+                ON alliance_bulletins(alliance_id,sort_order,edit_filetime DESC,bulletin_id);
+
+            CREATE TABLE alliance_bills (
+                bill_id bigint PRIMARY KEY DEFAULT nextval('alliance_bill_ids'),
+                bill_type_id integer NOT NULL,
+                amount_isk numeric(38,2) NOT NULL CHECK (amount_isk > 0),
+                interest numeric(38,2) NOT NULL DEFAULT 0 CHECK (interest >= 0),
+                debtor_alliance_id bigint NOT NULL REFERENCES alliances(id) ON DELETE CASCADE,
+                creditor_id bigint NOT NULL CHECK (creditor_id > 0),
+                due_filetime bigint NOT NULL CHECK (due_filetime > 0),
+                external_id bigint NOT NULL DEFAULT -1,
+                external_id2 bigint NOT NULL DEFAULT -1,
+                war_id bigint UNIQUE CHECK (war_id IS NULL OR war_id > 0),
+                paid boolean NOT NULL DEFAULT false,
+                paid_filetime bigint,
+                paid_by_owner_id bigint,
+                operation_key text NOT NULL UNIQUE CHECK (length(operation_key) > 0),
+                request_fingerprint text NOT NULL
+            );
+            CREATE INDEX alliance_bills_debtor
+                ON alliance_bills(debtor_alliance_id,due_filetime,bill_id);
+            CREATE INDEX alliance_bills_creditor
+                ON alliance_bills(creditor_id,due_filetime,bill_id);
+            """),
     ];
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);

@@ -404,3 +404,15 @@ Open, each with its exact blocker:
 - M-6 scanner, analyzer and relic modules: no simulation bodies.
 - WP17 assistance and jam overlays (stacking rule not in the sources read); WP19 velocity limits (no carrier object); WP13 mode events (no subscriber, so none is published).
 - Host-level database tests for the smartbomb refusal and the bastion refusal are not written (unit and simulation tests only).
+
+## 18. Alliance registry (2026-10-10)
+
+The client-facing allianceRegistry paths used by V24.01 alliance wrappers now persist bulletins, executor support, member departure, alliance war bills, bill payment and GML application acceptance. Member-affiliation, alliance and corporation notifications are emitted after the database transaction. alliance_employment records a null-alliance row when a corporation leaves so GetEmploymentRecord retains the transition.
+
+Open before calling Alliance parity complete:
+
+- Alliance maintenance bills: create the initial monthly bill, schedule due processing and renewal, automatic payment and unpaid closure.
+- War lifecycle: due-bill renewal/default, and inheriting an active alliance war when a corporation leaves.
+- Sovereignty ownership transfer on member departure and alliance closure.
+- GetAllianceSovereigntyStructuresInfo and GetEveOwners remain unimplemented; no direct V24.01 callsite has been verified for these two EveJS handlers.
+- Real graphical-client verification remains unrun.

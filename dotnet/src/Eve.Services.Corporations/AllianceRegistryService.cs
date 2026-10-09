@@ -14,7 +14,7 @@ public sealed record AllianceSovSnapshot(
     long? NextVulnerabilityWindowEndFileTime);
 
 [Service("allianceRegistry")]
-public sealed partial class AllianceRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,AllianceApplicationScheduleCallback? scheduleAllianceApplication = null,Action? wakeAllianceApplicationScheduler = null,Eve.Relations.RelationStore? relations = null,Func<long,CancellationToken,Task<AllianceSovSnapshot?>>? readSovSnapshot = null) : IBoundObjectReleaseHandler
+public sealed partial class AllianceRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,AllianceApplicationScheduleCallback? scheduleAllianceApplication = null,Action? wakeAllianceApplicationScheduler = null,Eve.Relations.RelationStore? relations = null,Func<long,CancellationToken,Task<AllianceSovSnapshot?>>? readSovSnapshot = null,CharacterSessions? characterSessions = null) : IBoundObjectReleaseHandler
 {
 public AllianceRegistryService(CorporationStore store, PgCharacterStore characters, Func<long> now,
         Func<long, CancellationToken, Task>? legacyAffiliationChanged)
@@ -31,7 +31,7 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         "newPrimeHour","newPrimeHourValidAfter","deleted"
     ];
 
-    private static (string Key,PyValue Value)[] AllianceFields(
+    internal static (string Key,PyValue Value)[] AllianceFields(
         Alliance a,
         long memberCount,
         short currentPrimeHour = 0,
@@ -202,14 +202,11 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         if (alliance is not { Deleted:false } || alliance.ActiveExecutorId != corporation.Id)
             throw AllianceAccessDenied();
 
-        if (corporation.CeoId != actor)
-        {
-            var member = await store.MemberAsync(actor,call.Cancellation);
-            if (member is null || member.CorporationId != corporation.Id ||
-                (CorporationRoles.Session(corporation,member,null,await store.TitlesAsync(corporation.Id,call.Cancellation)).AtAll &
-                    CorporationRoles.Director) == 0)
-                throw AllianceAccessDenied();
-        }
+        var member = await store.MemberAsync(actor,call.Cancellation);
+        if (member is null || member.CorporationId != corporation.Id ||
+            (CorporationRoles.Session(corporation,member,null,
+                await store.TitlesAsync(corporation.Id,call.Cancellation)).AtAll & CorporationRoles.Director) == 0)
+            throw AllianceAccessDenied();
         return (actor,allianceId);
     }
 
@@ -217,6 +214,7 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     public async ValueTask<PyValue> UpdateAlliance(ServiceCall call)
     {
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
+        var beforeAlliance = await AllianceNotificationFieldsAsync(alliance,call.Cancellation);
         var description = JsSemantics.StringValue(call.Arg(0)) ?? "";
         var url = JsSemantics.StringValue(call.Arg(1)) ?? "";
         try
@@ -228,6 +226,8 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         {
             throw AllianceAccessDenied();
         }
+        var afterAlliance = await AllianceNotificationFieldsAsync(alliance,call.Cancellation);
+        CorporationNotificationAdapter.AllianceChanged(characterSessions,call,alliance,beforeAlliance,afterAlliance);
         return PyNone.Instance;
     }
 
@@ -236,6 +236,7 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     public async ValueTask<PyValue> SetPrimeHour(ServiceCall call)
     {
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
+        var beforeAlliance = await AllianceNotificationFieldsAsync(alliance,call.Cancellation);
         var hour = call.Arg(0) is PyInt or PyLong ? Number(call.Arg(0)) : -1;
         if (hour is < 0 or > 23) throw AllianceAccessDenied();
 
@@ -252,6 +253,8 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         {
             throw AllianceAccessDenied();
         }
+        var afterAlliance = await AllianceNotificationFieldsAsync(alliance,call.Cancellation);
+        CorporationNotificationAdapter.AllianceChanged(characterSessions,call,alliance,beforeAlliance,afterAlliance);
         return PyNone.Instance;
     }
 
@@ -285,6 +288,7 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     public async ValueTask<PyValue> SetCapitalSystem(ServiceCall call)
     {
         var (actor, alliance) = await RequireAllianceExecutorDirector(call);
+        var beforeAlliance = await AllianceNotificationFieldsAsync(alliance,call.Cancellation);
         var solarSystemId = call.Arg(0) is PyInt or PyLong ? Number(call.Arg(0)) : 0;
         if (solarSystemId <= 0) throw new CorporationError("ALLIANCE_CAPITAL_SYSTEM_INVALID");
 
@@ -297,6 +301,8 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
             throw new CorporationError("ALLIANCE_CAPITAL_SYSTEM_NOT_SOV_HUB");
 
         await store.SetAllianceCapitalSystemAsync(actor, alliance, solarSystemId, soleSystemId, call.Cancellation);
+        var afterAlliance = await AllianceNotificationFieldsAsync(alliance,call.Cancellation);
+        CorporationNotificationAdapter.AllianceChanged(characterSessions,call,alliance,beforeAlliance,afterAlliance);
         return PyNone.Instance;
     }
 
@@ -304,9 +310,12 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     public async ValueTask<PyValue> CancelCapitalSystemTransition(ServiceCall call)
     {
         var (actor, alliance) = await RequireAllianceExecutorDirector(call);
+        var beforeAlliance = await AllianceNotificationFieldsAsync(alliance,call.Cancellation);
         var sovereignty = await ReadAllianceSovSnapshotAsync(alliance, call.Cancellation);
         await store.CancelAllianceCapitalSystemTransitionAsync(
             actor, alliance, SoleSovereigntySystemId(sovereignty, alliance), call.Cancellation);
+        var afterAlliance = await AllianceNotificationFieldsAsync(alliance,call.Cancellation);
+        CorporationNotificationAdapter.AllianceChanged(characterSessions,call,alliance,beforeAlliance,afterAlliance);
         return PyNone.Instance;
     }
 
@@ -355,19 +364,259 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
             .LastOrDefault(item => item.CorporationId == corporationId);
         if (application is null) throw new CorporationError("ALLIANCE_APPLICATION_NOT_FOUND");
 
+        AllianceApplication updated;
         if (state == 2)
         {
             if (scheduleAllianceApplication is null) throw new CorporationError("ALLIANCE_DUE_SCHEDULER_UNAVAILABLE");
-            await store.RespondToAllianceAsync(actor, application.Id, applicationText, (int)state,
+            updated = await store.RespondToAllianceAsync(actor, application.Id, applicationText, (int)state,
                 scheduleAllianceApplication, call.Cancellation);
             wakeAllianceApplicationScheduler?.Invoke();
         }
         else
         {
-            await store.RespondToAllianceAsync(actor, application.Id, applicationText, (int)state, call.Cancellation);
+            updated = await store.RespondToAllianceAsync(actor, application.Id, applicationText, (int)state,
+                call.Cancellation);
         }
+        var recipients = await CorporationNotificationAdapter.AllianceApplicationRecipientCharacterIdsAsync(
+            store,allianceId,corporationId,call.Cancellation);
+        CorporationNotificationAdapter.AllianceApplicationChanged(
+            characterSessions,call,allianceId,corporationId,application,updated,recipients);
         return PyNone.Instance;
     }
+
+    [Method("DeclareExecutorSupport")]
+    public async ValueTask<PyValue> DeclareExecutorSupport(ServiceCall call)
+    {
+        var (actor, allianceId) = await RequireAllianceDirector(call);
+        var corporationId = (await characters.GetAsync(actor, call.Cancellation))?.CorporationId
+            ?? throw AllianceAccessDenied();
+        var beforeMember = (await store.AllianceMembersAsync(allianceId, call.Cancellation))
+            .SingleOrDefault(member => member.CorporationId == corporationId);
+        var beforeAlliance = await AllianceNotificationFieldsAsync(allianceId, call.Cancellation);
+
+        await store.ChooseExecutorAsync(actor, Number(call.Arg(0)), call.Cancellation);
+
+        var afterMember = (await store.AllianceMembersAsync(allianceId, call.Cancellation))
+            .SingleOrDefault(member => member.CorporationId == corporationId);
+        var afterAlliance = await AllianceNotificationFieldsAsync(allianceId, call.Cancellation);
+        CorporationNotificationAdapter.AllianceMemberChanged(
+            characterSessions, call, allianceId, corporationId, beforeMember, afterMember);
+        CorporationNotificationAdapter.AllianceChanged(
+            characterSessions, call, allianceId, beforeAlliance, afterAlliance);
+        return PyNone.Instance;
+    }
+
+
+    [Method("DeleteMember")]
+    public async ValueTask<PyValue> DeleteMember(ServiceCall call)
+    {
+        var actor = call.Session.CharacterId ?? throw AllianceAccessDenied();
+        var character = await characters.GetAsync(actor, call.Cancellation) ?? throw AllianceAccessDenied();
+        var actorCorporation = await store.GetAsync(character.CorporationId, call.Cancellation)
+            ?? throw AllianceAccessDenied();
+        var corporationId = Number(call.Arg(0));
+        if (corporationId <= 0) throw AllianceAccessDenied();
+        var mode = corporationId == actorCorporation.Id ? "self-leave" : "executor-kick";
+        var allianceId = call.BoundObjectId is { } oid && _alliancesByObject.TryGetValue(oid, out var bound)
+            ? bound
+            : actorCorporation.AllianceId ?? call.Session.GetInt("allianceid") ?? 0;
+
+        if (allianceId <= 0) throw AllianceAccessDenied();
+        var target = await store.GetAsync(corporationId, call.Cancellation);
+        if (target?.AllianceId != allianceId)
+        {
+            if (await store.HasAllianceDepartureReceiptAsync(allianceId, corporationId, actor, mode, call.Cancellation))
+                return PyNone.Instance;
+            throw AllianceAccessDenied();
+        }
+
+        var authority = mode == "self-leave"
+            ? await RequireAllianceDirector(call)
+            : await RequireAllianceExecutorDirector(call);
+        if (authority.Alliance != allianceId) throw AllianceAccessDenied();
+        var beforeMember = (await store.AllianceMembersAsync(allianceId, call.Cancellation))
+            .SingleOrDefault(member => member.CorporationId == corporationId);
+        if (beforeMember is null) throw AllianceAccessDenied();
+        var beforeAlliance = await AllianceNotificationFieldsAsync(allianceId, call.Cancellation);
+        var result = await store.RemoveAllianceMemberAsync(allianceId, corporationId, actor, mode, now(),
+            WriteAllianceAffiliationAsync, call.Cancellation);
+        if (result.Duplicate) return PyNone.Instance;
+        var afterAlliance = await AllianceNotificationFieldsAsync(allianceId, call.Cancellation);
+        CorporationNotificationAdapter.AllianceMemberChanged(
+            characterSessions, call, allianceId, corporationId, result.Member, null);
+        CorporationNotificationAdapter.AllianceChanged(
+            characterSessions, call, allianceId, beforeAlliance, afterAlliance);
+        CorporationNotificationAdapter.CorporationChanged(
+            characterSessions, call, corporationId, "allianceID",
+            new PyInt(allianceId), PyNone.Instance);
+        return PyNone.Instance;
+    }
+
+    private async Task WriteAllianceAffiliationAsync(System.Data.Common.DbConnection connection,
+        System.Data.Common.DbTransaction transaction,long corporationId,long? allianceId,CancellationToken token)
+    {
+        if (relations is null) throw new CorporationError("ALLIANCE_RELATIONS_UNAVAILABLE");
+        var pgConnection = (Npgsql.NpgsqlConnection)connection;
+        var pgTransaction = (Npgsql.NpgsqlTransaction)transaction;
+        var kind = Eve.Relations.RelationKinds.AllianceMember.Name;
+        if (allianceId is > 0)
+        {
+            await relations.SetAsync(pgConnection,pgTransaction,kind,corporationId,allianceId.Value,1,
+                "alliance membership",cancellationToken:token);
+            return;
+        }
+        foreach (var current in await relations.FromAsync(kind,corporationId,pgConnection,pgTransaction,token))
+            await relations.EndAsync(pgConnection,pgTransaction,kind,corporationId,current.Object,
+                "alliance membership ended",token);
+    }
+
+
+    [Method("GetBills")]
+    public async ValueTask<PyValue> GetBills(ServiceCall call)
+    {
+        var authority = await RequireAllianceRole(call,
+            CorporationRoles.Accountant | CorporationRoles.JuniorAccountant,false);
+        return Py.List((await store.AllianceBillsAsync(authority.Alliance,call.Cancellation))
+            .Select(AllianceBill).ToArray());
+    }
+
+    [Method("GetBillsReceivable")]
+    public async ValueTask<PyValue> GetBillsReceivable(ServiceCall call)
+    {
+        var authority = await RequireAllianceRole(call,
+            CorporationRoles.Accountant | CorporationRoles.JuniorAccountant,false);
+        return Py.List((await store.AllianceBillsReceivableAsync(authority.Alliance,call.Cancellation))
+            .Select(AllianceBill).ToArray());
+    }
+
+    [Method("GetBillBalance")]
+    public async ValueTask<PyValue> GetBillBalance(ServiceCall call)
+    {
+        var authority = await RequireAllianceRole(call,
+            CorporationRoles.Accountant | CorporationRoles.JuniorAccountant,false);
+        var accountKey = call.Session.GetInt("corpAccountKey") ?? call.Session.GetInt("corpaccountkey") ?? 1000;
+        if (accountKey is < 1000 or > 1006) accountKey = 1000;
+        var balance = await store.CorporationWalletBalanceAsync(authority.Corporation,(int)accountKey,call.Cancellation);
+        return Py.Number((double)(balance ?? 0m));
+    }
+
+    [Method("PayBill")]
+    public async ValueTask<PyValue> PayBill(ServiceCall call)
+    {
+        var authority = await RequireAllianceRole(call,CorporationRoles.Accountant,true);
+        var billId = Number(call.Arg(0));
+        var accountKey = Number(call.Kwarg("fromAccountKey") ?? call.Arg(1));
+        if (accountKey is < 1000 or > 1006) accountKey = 1000;
+        var paid = await store.PayAllianceBillAsync(billId,authority.Alliance,authority.Corporation,
+            authority.Actor,(int)accountKey,now(),call.Cancellation);
+        if (!paid) throw new CorporationError("BILL_NOT_PAYABLE");
+        return PyNone.Instance;
+    }
+
+    [Method("DeclareWarAgainst")]
+    public async ValueTask<PyValue> DeclareWarAgainst(ServiceCall call)
+    {
+        var (actor,allianceId) = await RequireAllianceExecutorDirector(call);
+        if (relations is null) throw new CorporationError("WAR_DECLARATION_UNAVAILABLE");
+        var againstId = Number(call.Arg(0));
+        if (againstId <= 0 || againstId == allianceId)
+            throw new CorporationError("ALLIANCE_WAR_DECLARATION_INVALID");
+        var warHq = Number(call.Arg(1));
+        var warHqId = warHq > 0 ? warHq : (long?)null;
+        var declaredAt = Number(CorporationWire.Time(now()));
+        var startedAt = checked(declaredAt + 864_000_000_000L);
+        var dueAt = checked(declaredAt + 6_048_000_000_000L);
+        var callId = Number(call.CallId);
+        var operationKey = callId > 0
+            ? $"alliance-war:{allianceId}:{actor}:{callId}"
+            : Guid.NewGuid().ToString("N");
+        var result = await store.CreateAllianceWarDeclarationAsync(
+            allianceId,actor,againstId,warHqId,declaredAt,startedAt,dueAt,4,100_000_000m,1_000_125,
+            operationKey,
+            async (connection,transaction,billId,token) =>
+            {
+                if (await relations.GetAsync("war",allianceId,againstId,connection,transaction,token,forUpdate:true) is not null)
+                    throw new CorporationError("WAR_ALREADY_DECLARED");
+                var attributes = new
+                {
+                    declaredByCharacterID=actor,
+                    timeDeclared=declaredAt.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    timeStarted=startedAt.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    timeFinished=(string?)null,
+                    retracted=(string?)null,
+                    retractedBy=(long?)null,
+                    billID=billId,
+                    mutual=0,
+                    fightingLegalNotified=0,
+                    openForAllies=0,
+                    createdFromWarID=(long?)null,
+                    warHQID=warHqId,
+                    warHQ=warHqId,
+                    reasonEnded=0,
+                    reasonStarted=0,
+                    reward=0
+                };
+                var change = await relations.SetAsync(connection,transaction,"war",allianceId,againstId,1.0,
+                    "declared",attributes,cancellationToken:token);
+                if (change is not null) return change.RelationId;
+                return (await relations.GetAsync("war",allianceId,againstId,connection,transaction,token,forUpdate:true))?.Id ?? 0;
+            },call.Cancellation);
+        var warRecord = Py.KeyVal(
+            ("warID",CorporationWire.Id(result.WarId)),("declaredByID",CorporationWire.Id(allianceId)),
+            ("againstID",CorporationWire.Id(againstId)),
+            ("warHQID",CorporationWire.Id(warHqId)),("timeDeclared",new PyLong(declaredAt)),
+            ("timeStarted",new PyLong(startedAt)),("timeFinished",PyNone.Instance),("retracted",PyNone.Instance),
+            ("retractedBy",PyNone.Instance),("billID",CorporationWire.Id(result.BillId)),
+            ("mutual",new PyInt(0)),("fightingLegalNotified",new PyInt(0)),("openForAllies",new PyInt(0)),
+            ("allies",new PyDict([])),("createdFromWarID",PyNone.Instance),("reward",Py.Number(0)));
+        if (!result.Replayed) CorporationNotificationAdapter.WarChanged(characterSessions,call,allianceId,againstId,warRecord);
+        return warRecord;
+    }
+
+    private static PyValue AllianceBill(CorporationBill bill) => Py.KeyVal(
+        ("billID",Py.Number(bill.BillId)),
+        ("billTypeID",new PyInt(bill.BillTypeId)),
+        ("amount",Py.Number((double)bill.AmountIsk)),
+        ("interest",Py.Number((double)bill.Interest)),
+        ("debtorID",Py.Number(bill.DebtorId)),
+        ("creditorID",Py.Number(bill.CreditorId)),
+        ("dueDateTime",new PyLong(bill.DueFiletime)),
+        ("paid",new PyInt(bill.Paid ? 1 : 0)),
+        ("paidDateTime",bill.PaidFiletime is { } paidAt ? new PyLong(paidAt) : PyNone.Instance),
+        ("paidByOwnerID",Py.Number(bill.PaidByOwnerId ?? 0)),
+        ("externalID",Py.Number(bill.ExternalId)),
+        ("externalID2",Py.Number(bill.ExternalId2)));
+
+
+    [Method("GMForceAcceptApplication")]
+    public async ValueTask<PyValue> GMForceAcceptApplication(ServiceCall call)
+    {
+        const long gmlRole = 1L << 54;
+        if (((call.Session.GetInt("role") ?? 0) & gmlRole) == 0)
+            throw AllianceAccessDenied();
+        var allianceId = call.BoundObjectId is { } oid && _alliancesByObject.TryGetValue(oid,out var bound)
+            ? bound
+            : call.Session.GetInt("allianceid") ?? 0;
+        if (allianceId <= 0 && call.Session.CharacterId is { } characterId)
+            allianceId = (await characters.GetAsync(characterId,call.Cancellation))?.AllianceId ?? 0;
+        if (allianceId <= 0) throw new CorporationError("ALLIANCE_NOT_FOUND");
+        RequireBoundAlliance(call,allianceId);
+        if (scheduleAllianceApplication is null)
+            throw new CorporationError("ALLIANCE_DUE_SCHEDULER_UNAVAILABLE");
+        var corporationId = Number(call.Arg(0));
+        var application = (await store.AllianceApplicationsAsync(allianceId,call.Cancellation))
+            .LastOrDefault(item => item.CorporationId == corporationId);
+        if (application is null) throw new CorporationError("ALLIANCE_APPLICATION_NOT_FOUND");
+        var updated = await store.ForceAcceptAllianceApplicationAsync(
+            application.Id,scheduleAllianceApplication,call.Cancellation);
+        wakeAllianceApplicationScheduler?.Invoke();
+        var recipients = await CorporationNotificationAdapter.AllianceApplicationRecipientCharacterIdsAsync(
+            store,allianceId,corporationId,call.Cancellation);
+        CorporationNotificationAdapter.AllianceApplicationChanged(
+            characterSessions,call,allianceId,corporationId,application,updated,recipients);
+        return PyNone.Instance;
+    }
+
     [Method("GetRelationships")]
     public async ValueTask<PyValue> GetRelationships(ServiceCall call)
     {
@@ -391,11 +640,18 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         var toId = Number(call.Arg(1));
         if (toId <= 0 || toId == alliance) throw AllianceAccessDenied();
         var relationStore = relations ?? throw new InvalidOperationException("Alliance relationship RPCs require RelationStore registration.");
+        var kind = Eve.Relations.RelationKinds.Standing.Name;
+        var before = await relationStore.GetAsync(kind,alliance,toId,cancellationToken:call.Cancellation);
         await store.WriteAllianceRelationshipAsync(actor,alliance,async (connection,transaction) =>
         {
-            await relationStore.SetAsync(connection,transaction,Eve.Relations.RelationKinds.Standing.Name,
+            await relationStore.SetAsync(connection,transaction,kind,
                 alliance,toId,relationship,"alliance relationship",cancellationToken:call.Cancellation);
         },call.Cancellation);
+        var after = await relationStore.GetAsync(kind,alliance,toId,cancellationToken:call.Cancellation);
+        var recipients = (await store.AllianceMembersAsync(alliance,call.Cancellation))
+            .Select(member => member.CorporationId).ToArray();
+        CorporationNotificationAdapter.AllianceRelationshipChanged(
+            characterSessions,call,alliance,toId,before?.Value,after?.Value,recipients);
         return PyNone.Instance;
     }
 
@@ -407,11 +663,18 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         var toId = Number(call.Arg(0));
         if (toId <= 0 || toId == alliance) throw AllianceAccessDenied();
         var relationStore = relations ?? throw new InvalidOperationException("Alliance relationship RPCs require RelationStore registration.");
+        var kind = Eve.Relations.RelationKinds.Standing.Name;
+        var before = await relationStore.GetAsync(kind,alliance,toId,cancellationToken:call.Cancellation);
         await store.WriteAllianceRelationshipAsync(actor,alliance,async (connection,transaction) =>
         {
-            await relationStore.EndAsync(connection,transaction,Eve.Relations.RelationKinds.Standing.Name,
+            await relationStore.EndAsync(connection,transaction,kind,
                 alliance,toId,"alliance relationship deleted",call.Cancellation);
         },call.Cancellation);
+        var after = await relationStore.GetAsync(kind,alliance,toId,cancellationToken:call.Cancellation);
+        var recipients = (await store.AllianceMembersAsync(alliance,call.Cancellation))
+            .Select(member => member.CorporationId).ToArray();
+        CorporationNotificationAdapter.AllianceRelationshipChanged(
+            characterSessions,call,alliance,toId,before?.Value,after?.Value,recipients);
         return PyNone.Instance;
     }
 
@@ -590,6 +853,136 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         return Py.Tuple(new PySubStruct(new PySubStream(Py.Tuple(new PyStr(oid),CorporationWire.Time(now())))),result);
     }
     public void OnBoundObjectReleased(string oid,ClientSession? session) => _alliancesByObject.TryRemove(oid,out _);
+
+    [Method("GetBulletins")]
+    public async ValueTask<PyValue> GetBulletins(ServiceCall call)
+    {
+        var authority = await RequireAllianceMember(call);
+        var bulletins = await store.AllianceBulletinsAsync(authority.Alliance, call.Cancellation);
+        var descriptor = AllianceBulletinDescriptor;
+        return new PyObject(new PyStr("carbon.common.script.sys.crowset.CRowset"), Py.Dict(
+            ("header", descriptor.Header),
+            ("RowClass", new PyToken("util.Row")),
+            ("lines", new PyList([.. bulletins.Select(bulletin => AllianceBulletinRow(descriptor, bulletin))]))));
+    }
+
+    [Method("GetBulletinEntries")]
+    public ValueTask<PyValue> GetBulletinEntries(ServiceCall call) => GetBulletins(call);
+
+    [Method("GetBulletin")]
+    public async ValueTask<PyValue> GetBulletin(ServiceCall call)
+    {
+        var authority = await RequireAllianceMember(call);
+        var bulletin = await store.AllianceBulletinAsync(authority.Alliance, Number(call.Arg(0)), call.Cancellation);
+        return bulletin is null ? PyNone.Instance : AllianceBulletinRow(AllianceBulletinDescriptor, bulletin);
+    }
+
+    [Method("AddBulletin")]
+    public async ValueTask<PyValue> AddBulletin(ServiceCall call)
+    {
+        var (actor, alliance) = await RequireAllianceDirector(call);
+        var nowFiletime = Number(CorporationWire.Time(now()));
+        var editFiletime = Number(call.Arg(3));
+        var bulletinId = Number(call.Arg(2));
+        var id = await store.AddAllianceBulletinAsync(alliance, actor,
+            JsSemantics.StringValue(call.Arg(0)) ?? "", JsSemantics.StringValue(call.Arg(1)) ?? "",
+            bulletinId > 0 ? bulletinId : null, nowFiletime,
+            editFiletime > 0 ? editFiletime : nowFiletime, call.Cancellation);
+        return new PyInt(id);
+    }
+
+    [Method("UpdateBulletin")]
+    public async ValueTask<PyValue> UpdateBulletin(ServiceCall call)
+    {
+        var (actor, alliance) = await RequireAllianceDirector(call);
+        var bulletinId = Number(call.Arg(0));
+        if (bulletinId <= 0) throw new CorporationError("ALLIANCE_BULLETIN_INVALID");
+        var nowFiletime = Number(CorporationWire.Time(now()));
+        var editFiletime = Number(call.Arg(3));
+        return new PyInt(await store.AddAllianceBulletinAsync(alliance, actor,
+            JsSemantics.StringValue(call.Arg(1)) ?? "", JsSemantics.StringValue(call.Arg(2)) ?? "",
+            bulletinId, nowFiletime, editFiletime > 0 ? editFiletime : nowFiletime, call.Cancellation));
+    }
+
+    [Method("DeleteBulletin")]
+    public async ValueTask<PyValue> DeleteBulletin(ServiceCall call)
+    {
+        var (actor, alliance) = await RequireAllianceDirector(call);
+        var bulletinId = Number(call.Arg(0));
+        if (bulletinId > 0)
+            await store.DeleteAllianceBulletinAsync(alliance, actor, bulletinId, call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    [Method("UpdateBulletinOrder")]
+    public async ValueTask<PyValue> UpdateBulletinOrder(ServiceCall call)
+    {
+        var (actor, alliance) = await RequireAllianceDirector(call);
+        await store.UpdateAllianceBulletinOrderAsync(alliance, actor, ContactIds(call.Arg(0)), call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    private async Task<(long Actor,long Alliance)> RequireAllianceDirector(ServiceCall call)
+    {
+        var (actor, allianceId) = await RequireAllianceMember(call);
+        var character = await characters.GetAsync(actor, call.Cancellation);
+        var corporation = character is null
+            ? null
+            : await store.GetAsync(character.CorporationId, call.Cancellation);
+        var member = await store.MemberAsync(actor, call.Cancellation);
+        if (corporation is null || corporation.IsNpc || member is null || member.CorporationId != corporation.Id ||
+            (CorporationRoles.Session(corporation, member, null,
+                await store.TitlesAsync(corporation.Id, call.Cancellation)).AtAll & CorporationRoles.Director) == 0)
+            throw AllianceAccessDenied();
+        return (actor, allianceId);
+    }
+
+    private async Task<(long Actor,long Alliance,long Corporation)> RequireAllianceRole(
+        ServiceCall call,long roleMask,bool executorOnly)
+    {
+        var (actor,allianceId) = await RequireAllianceMember(call);
+        var character = await characters.GetAsync(actor,call.Cancellation);
+        var corporation = character is null
+            ? null
+            : await store.GetAsync(character.CorporationId,call.Cancellation);
+        var member = await store.MemberAsync(actor,call.Cancellation);
+        if (corporation is null || corporation.IsNpc || member?.CorporationId != corporation.Id)
+            throw AllianceAccessDenied();
+        var roles = CorporationRoles.Session(corporation,member,call.Session.GetInt("stationid"),
+            await store.TitlesAsync(corporation.Id,call.Cancellation));
+        if ((roles.AtAll & roleMask) == 0)
+            throw AllianceAccessDenied();
+        if (executorOnly && (await store.AllianceAsync(allianceId,call.Cancellation))?.ActiveExecutorId != corporation.Id)
+            throw AllianceAccessDenied();
+        return (actor,allianceId,corporation.Id);
+    }
+
+    private async Task<(string Key,PyValue Value)[]?> AllianceNotificationFieldsAsync(
+        long allianceId, CancellationToken token)
+    {
+        var alliance = await store.AllianceAsync(allianceId, token);
+        if (alliance is null) return null;
+        var counts = await store.AllianceCharacterCountsAsync([allianceId], token);
+        var prime = await store.AlliancePrimeTimeAsync(allianceId, token);
+        var sovereignty = readSovSnapshot is null ? null : await readSovSnapshot(allianceId, token);
+        var soleSystemId = sovereignty is null ? null : SoleSovereigntySystemId(sovereignty, allianceId);
+        var capital = await store.AllianceCapitalSystemAsync(allianceId, soleSystemId, token);
+        return AllianceFields(alliance, counts.GetValueOrDefault(allianceId),
+            prime.CurrentHour, prime.NewHour, prime.ValidAfterFileTime, capital.CurrentSystemId);
+    }
+
+    private static Descriptor AllianceBulletinDescriptor => CorporationWire.DescriptorOf(
+        ("bulletinID", 0x03), ("ownerID", 0x03), ("createDateTime", 0x40), ("editDateTime", 0x40),
+        ("editCharacterID", 0x03), ("title", 0x82), ("body", 0x82), ("sortOrder", 0x03));
+
+    private static PyValue AllianceBulletinRow(Descriptor descriptor, CorporationBulletin bulletin) =>
+        new PyPackedRow(descriptor,
+        [
+            new PyInt(bulletin.BulletinId), new PyInt(bulletin.CorporationId),
+            new PyLong(bulletin.CreateDateTime), new PyLong(bulletin.EditDateTime),
+            new PyInt(bulletin.EditCharacterId), new PyWString(bulletin.Title),
+            new PyWString(bulletin.Body), new PyInt(bulletin.SortOrder)
+        ]);
 }
 
 
@@ -600,7 +993,7 @@ public sealed class AllianceApplicationDueWorker(
     Eve.Scheduler.DurableScheduler scheduler,
     Eve.Relations.RelationStore relations,
     Eve.Events.EventBus events,
-    Func<long, CancellationToken, Task> affiliationChanged)
+    Func<long, CancellationToken, Task> affiliationChanged,CharacterSessions? characterSessions = null)
 {
     public const string JobKind = "alliance.application.effective";
     private const string AffiliationSubscriber = "alliance.affiliation.sessions";
@@ -752,6 +1145,27 @@ public sealed class AllianceApplicationDueWorker(
         {
             foreach (var character in await characters.ForCorporationAsync(change.Subject, token))
                 await affiliationChanged(character.Id, token);
+            if (!ended && characterSessions is not null)
+            {
+                var alliance = await store.AllianceAsync(change.Object,token);
+                var member = (await store.AllianceMembersAsync(change.Object,token))
+                    .SingleOrDefault(row => row.CorporationId == change.Subject);
+                if (alliance is not null && member is not null && member.StartedMs != alliance.CreatedMs)
+                {
+                    var counts = await store.AllianceCharacterCountsAsync([alliance.Id],token);
+                    var prime = await store.AlliancePrimeTimeAsync(alliance.Id,token);
+                    var capital = await store.AllianceCapitalSystemAsync(alliance.Id,null,token);
+                    var fields = AllianceRegistryService.AllianceFields(alliance,
+                        counts.GetValueOrDefault(alliance.Id),prime.CurrentHour,prime.NewHour,
+                        prime.ValidAfterFileTime,capital.CurrentSystemId);
+                    CorporationNotificationAdapter.AllianceChanged(
+                        characterSessions,alliance.Id,null,fields);
+                    CorporationNotificationAdapter.AllianceMemberChanged(
+                        characterSessions,alliance.Id,change.Subject,null,member);
+                    CorporationNotificationAdapter.CorporationChanged(
+                        characterSessions,change.Subject,"allianceID",PyNone.Instance,new PyInt(alliance.Id));
+                }
+            }
             return;
         }
         throw new InvalidOperationException($"unexpected affiliation event kind '{change.Kind}'");
@@ -797,6 +1211,7 @@ public sealed partial class CorpRegistryService
             corporation.CeoId != actor)
             throw CorporationAccessDenied();
 
+        var wasAlreadyInAlliance = corporation.AllianceId is not null;
         var request = new NewAlliance(
             JsSemantics.StringValue(call.Arg(0)) ?? "", JsSemantics.StringValue(call.Arg(1)) ?? "",
             JsSemantics.StringValue(call.Arg(2)) ?? "", JsSemantics.StringValue(call.Arg(3)) ?? "");
@@ -804,6 +1219,18 @@ public sealed partial class CorpRegistryService
         if (store.AllianceAffiliationWriter is not { } writer)
             throw new CorporationError("ALLIANCE_AFFILIATION_UNAVAILABLE");
         var alliance = await store.CreateAllianceAsync(actor, request, operationKey, writer, call.Cancellation);
+        if (!wasAlreadyInAlliance)
+        {
+            var counts = await store.AllianceCharacterCountsAsync([alliance.Id],call.Cancellation);
+            var fields = AllianceRegistryService.AllianceFields(alliance,counts.GetValueOrDefault(alliance.Id));
+            var member = (await store.AllianceMembersAsync(alliance.Id,call.Cancellation))
+                .Single(item => item.CorporationId == corporation.Id);
+            CorporationNotificationAdapter.AllianceChanged(characterSessions,call,alliance.Id,null,fields);
+            CorporationNotificationAdapter.AllianceMemberChanged(
+                characterSessions,call,alliance.Id,corporation.Id,null,member);
+            CorporationNotificationAdapter.CorporationChanged(
+                characterSessions,call,corporation.Id,"allianceID",PyNone.Instance,new PyInt(alliance.Id));
+        }
         return new PyInt(alliance.Id);
     }
 

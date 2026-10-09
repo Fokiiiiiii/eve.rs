@@ -302,6 +302,26 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
             CREATE INDEX alliance_bills_creditor
                 ON alliance_bills(creditor_id,due_filetime,bill_id);
             """),
+                new Migration("012_alliance_bill_lifecycle", """
+                    ALTER TABLE corporation_bills
+                        ADD COLUMN processing_status text CHECK (
+                            processing_status IS NULL OR processing_status IN ('renewed','defaulted','inactive','orphaned','superseded')
+                        );
+                    ALTER TABLE corporation_bills
+                        ADD COLUMN renewed_bill_id bigint UNIQUE REFERENCES corporation_bills(bill_id);
+                    ALTER TABLE alliance_bills
+                        ADD COLUMN processing_status text CHECK (
+                            processing_status IS NULL OR processing_status IN ('renewed','defaulted','inactive','orphaned','superseded')
+                        );
+                    ALTER TABLE alliance_bills
+                        ADD COLUMN renewed_bill_id bigint UNIQUE REFERENCES alliance_bills(bill_id);
+                    CREATE INDEX corporation_bills_due
+                        ON corporation_bills(bill_type_id,due_filetime,bill_id)
+                        WHERE processing_status IS NULL;
+                    CREATE INDEX alliance_bills_due
+                        ON alliance_bills(bill_type_id,due_filetime,bill_id)
+                        WHERE processing_status IS NULL;
+                """),
     ];
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);

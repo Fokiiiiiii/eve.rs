@@ -144,7 +144,7 @@ public sealed partial class CorporationStore
         return WriteAsync(async (connection,tx) =>
         {
             var target = await AllianceAsync(connection,tx,alliance,true,token);
-            if (target is null || target.Deleted) throw new CorporationError("ALLIANCE_NOT_FOUND");
+            if (target is null || target.Deleted || target.Suspended) throw new CorporationError("ALLIANCE_NOT_FOUND");
             var character = await _characters.LockAndGetAsync(connection,tx,actor,token) ?? throw new CorporationError("CHARACTER_NOT_FOUND");
             var corp = await RequireRoleAsync(connection,tx,character.CorporationId,actor,CorporationRoles.Director,token);
             if (requireCeo && corp.CeoId != actor) throw new CorporationError("CORPORATION_ACCESS_DENIED");
@@ -215,7 +215,7 @@ public sealed partial class CorporationStore
             await using (var r = await command.ExecuteReaderAsync(token))
                 app = await r.ReadAsync(token) ? ReadAllianceApplication(r) : throw new CorporationError("ALLIANCE_APPLICATION_NOT_FOUND");
             var alliance = await AllianceAsync(connection, tx, app.AllianceId, true, token);
-            if (alliance is not { Deleted:false })
+            if (alliance is not { Deleted:false, Suspended:false })
                 throw new CorporationError("ALLIANCE_NOT_FOUND");
             if (!gameMaster)
             {
@@ -335,7 +335,7 @@ public sealed partial class CorporationStore
 
         var alliance = await AllianceAsync(connection, tx, application.AllianceId, true, token);
         var corporation = await GetAsync(connection, tx, application.CorporationId, true, token);
-        if (alliance is not { Deleted: false } || corporation is null || corporation.Deleted || corporation.IsNpc ||
+        if (alliance is not { Deleted: false, Suspended: false } || corporation is null || corporation.Deleted || corporation.IsNpc ||
             (corporation.AllianceId is { } currentAlliance && currentAlliance != application.AllianceId))
         {
             await using var reject = Command(connection, tx,
@@ -1162,7 +1162,10 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             if (warId <= 0)
                 throw new CorporationError("CORPORATION_WAR_DECLARATION_FAILED");
             await using var link = Command(connection,tx,$"UPDATE {_schema}.corporation_bills SET war_id=$2 WHERE bill_id=$1",billId,warId);
-            await link.ExecuteNonQueryAsync(token);
+            if (await link.ExecuteNonQueryAsync(token) != 1)
+                throw new CorporationError("CORPORATION_WAR_DECLARATION_LINK_FAILED");
+            if (WarBillDueWriter is { } scheduleWarBill)
+                await scheduleWarBill(connection, tx, billId, dueFiletime, token);
             return (warId,billId);
         },token);
     }
@@ -1170,7 +1173,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
     public async Task<IReadOnlyList<CorporationBill>> CorporationBillsAsync(long corporationId,CancellationToken token = default)
     {
         await using var connection = await _source.OpenConnectionAsync(token);
-        await using var command = Command(connection,null,$"SELECT bill_id,bill_type_id,amount_isk,interest,debtor_id,creditor_id,due_filetime,external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key FROM {_schema}.corporation_bills WHERE debtor_id=$1 AND NOT paid ORDER BY due_filetime,bill_id",corporationId);
+        await using var command = Command(connection,null,$"SELECT bill_id,bill_type_id,amount_isk,interest,debtor_id,creditor_id,due_filetime,external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key FROM {_schema}.corporation_bills WHERE debtor_id=$1 AND NOT paid AND processing_status IS NULL ORDER BY due_filetime,bill_id",corporationId);
         await using var reader = await command.ExecuteReaderAsync(token);
         var bills = new List<CorporationBill>();
         while (await reader.ReadAsync(token)) bills.Add(ReadCorporationBill(reader));
@@ -1180,7 +1183,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
     public async Task<IReadOnlyList<CorporationBill>> CorporationBillsReceivableAsync(long corporationId,CancellationToken token = default)
     {
         await using var connection = await _source.OpenConnectionAsync(token);
-        await using var command = Command(connection,null,$"SELECT bill_id,bill_type_id,amount_isk,interest,debtor_id,creditor_id,due_filetime,external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key FROM {_schema}.corporation_bills WHERE creditor_id=$1 AND NOT paid ORDER BY due_filetime,bill_id",corporationId);
+        await using var command = Command(connection,null,$"SELECT bill_id,bill_type_id,amount_isk,interest,debtor_id,creditor_id,due_filetime,external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key FROM {_schema}.corporation_bills WHERE creditor_id=$1 AND NOT paid AND processing_status IS NULL ORDER BY due_filetime,bill_id",corporationId);
         await using var reader = await command.ExecuteReaderAsync(token);
         var bills = new List<CorporationBill>();
         while (await reader.ReadAsync(token)) bills.Add(ReadCorporationBill(reader));
@@ -1193,7 +1196,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             return false;
         await using var connection = await _source.OpenConnectionAsync(token);
         await using var transaction = await connection.BeginTransactionAsync(token);
-        await using var command = Command(connection,transaction,$"SELECT bill_id,bill_type_id,amount_isk,interest,debtor_id,creditor_id,due_filetime,external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key FROM {_schema}.corporation_bills WHERE bill_id=$1 AND debtor_id=$2 AND NOT paid FOR UPDATE",billId,corporationId);
+        await using var command = Command(connection,transaction,$"SELECT bill_id,bill_type_id,amount_isk,interest,debtor_id,creditor_id,due_filetime,external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key FROM {_schema}.corporation_bills WHERE bill_id=$1 AND debtor_id=$2 AND NOT paid AND processing_status IS NULL FOR UPDATE",billId,corporationId);
         CorporationBill bill;
         await using (var reader = await command.ExecuteReaderAsync(token))
         {
@@ -1214,7 +1217,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             return false;
         }
         var paidFiletime = checked((paidAtMs+11_644_473_600_000L)*10_000L);
-        await using var mark = Command(connection,transaction,$"UPDATE {_schema}.corporation_bills SET paid=true,paid_filetime=$2,paid_by_owner_id=$3 WHERE bill_id=$1 AND NOT paid",billId,paidFiletime,paidByOwnerId);
+        await using var mark = Command(connection,transaction,$"UPDATE {_schema}.corporation_bills SET paid=true,paid_filetime=$2,paid_by_owner_id=$3 WHERE bill_id=$1 AND NOT paid AND processing_status IS NULL",billId,paidFiletime,paidByOwnerId);
         if (await mark.ExecuteNonQueryAsync(token) != 1)
             throw new CorporationError("BILL_NOT_PAYABLE");
         await transaction.CommitAsync(token);
@@ -1464,6 +1467,8 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
                 VALUES($1,$2,$3,$4,$5,$6)
                 """,allianceId,corporationId,member.StartedMs,actorId,mode,leftMs))
                 await receipt.ExecuteNonQueryAsync(token);
+            if (AllianceWarInheritanceWriter is { } scheduleWarInheritance)
+                await scheduleWarInheritance(connection,tx,allianceId,corporationId,member.StartedMs,leftMs,token);
             await using (var history = Command(connection,tx,$"""
                 UPDATE {_schema}.alliance_employment SET ended_ms=$3
                 WHERE corporation_id=$1 AND alliance_id=$2 AND ended_ms IS NULL
@@ -1502,10 +1507,13 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             {
                 await using var close = Command(connection,tx,$"""
                     UPDATE {_schema}.alliances
-                    SET executor_corporation_id=NULL,suspended=true,deleted=true
+                    SET executor_corporation_id=NULL,suspended=true,deleted=false
                     WHERE id=$1
                     """,allianceId);
                 await close.ExecuteNonQueryAsync(token);
+                if (AllianceEmptyClosureWriter is not { } scheduleEmptyClosure)
+                    throw new CorporationError("ALLIANCE_CLOSURE_SCHEDULER_UNAVAILABLE");
+                await scheduleEmptyClosure(connection, tx, allianceId, leftMs, token);
             }
             else
             {
@@ -1514,6 +1522,98 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             var after = await AllianceAsync(connection,tx,allianceId,false,token);
             return new AllianceDepartureMutation(member,alliance,after,false);
         },token);
+    }
+
+    public Task<(Alliance Before, Alliance After, IReadOnlyList<AllianceMember> Departed, bool Duplicate)>
+        CloseAllianceForMaintenanceAsync(
+            long allianceId, long closedAtMs, AllianceAffiliationMutationCallback writeAffiliation,
+            CancellationToken token = default, long? maintenanceBillId = null)
+    {
+        if (allianceId <= 0 || closedAtMs <= 0)
+            throw new CorporationError("ALLIANCE_CLOSURE_INVALID");
+        ArgumentNullException.ThrowIfNull(writeAffiliation);
+        return WriteAsync(async (connection, transaction) =>
+        {
+            var alliance = await AllianceAsync(connection, transaction, allianceId, true, token)
+                ?? throw new CorporationError("ALLIANCE_NOT_FOUND");
+            if (alliance.Deleted)
+                return (alliance, alliance, (IReadOnlyList<AllianceMember>)Array.Empty<AllianceMember>(), true);
+
+            if (maintenanceBillId is { } billId)
+            {
+                var bill = await ReadWarBillForUpdateAsync(connection, transaction, billId, token);
+                if (bill is null || !bill.AllianceBill ||
+                    bill.Bill.BillTypeId != AllianceMaintenanceBillTypeId ||
+                    bill.Bill.DebtorId != allianceId)
+                    throw new CorporationError("ALLIANCE_MAINTENANCE_BILL_NOT_FOUND");
+                if (bill.Bill.Paid)
+                    throw new CorporationError("ALLIANCE_MAINTENANCE_BILL_PAID");
+                if (bill.ProcessingStatus is null)
+                {
+                    await using var mark = Command(connection, transaction, $"""
+                        UPDATE {_schema}.alliance_bills
+                        SET processing_status='defaulted'
+                        WHERE bill_id=$1 AND debtor_alliance_id=$2 AND bill_type_id=$3
+                          AND NOT paid AND processing_status IS NULL
+                        """, billId, allianceId, AllianceMaintenanceBillTypeId);
+                    if (await mark.ExecuteNonQueryAsync(token) != 1)
+                        throw new CorporationError("ALLIANCE_MAINTENANCE_BILL_PROCESSING_CONFLICT");
+                }
+                else if (bill.ProcessingStatus != "defaulted")
+                {
+                    throw new CorporationError("ALLIANCE_MAINTENANCE_BILL_ALREADY_PROCESSED");
+                }
+            }
+
+            var members = await AllianceMembersAsync(connection, transaction, allianceId, token);
+            foreach (var member in members)
+            {
+                var corporation = await GetAsync(connection, transaction, member.CorporationId, true, token);
+                if (corporation?.AllianceId != allianceId)
+                    throw new CorporationError("ALLIANCE_MEMBERSHIP_CHANGED");
+
+                await using (var history = Command(connection, transaction, $"""
+                    UPDATE {_schema}.alliance_employment SET ended_ms=$3
+                    WHERE corporation_id=$1 AND alliance_id=$2 AND ended_ms IS NULL
+                    """, member.CorporationId, allianceId, closedAtMs))
+                    await history.ExecuteNonQueryAsync(token);
+                await using (var history = Command(connection, transaction, $"""
+                    INSERT INTO {_schema}.alliance_employment(corporation_id,alliance_id,started_ms)
+                    VALUES($1,NULL,$2)
+                    """, member.CorporationId, closedAtMs))
+                    await history.ExecuteNonQueryAsync(token);
+                await using (var affiliation = Command(connection, transaction,
+                    $"UPDATE {_schema}.corporations SET alliance_id=NULL WHERE id=$1 AND alliance_id=$2",
+                    member.CorporationId, allianceId))
+                    if (await affiliation.ExecuteNonQueryAsync(token) != 1)
+                        throw new CorporationError("ALLIANCE_MEMBERSHIP_CHANGED");
+                await _characters.SetCorporationAllianceAsync(connection, transaction, member.CorporationId, null, token);
+                await writeAffiliation(connection, transaction, member.CorporationId, null, token);
+                await using var remove = Command(connection, transaction,
+                    $"DELETE FROM {_schema}.alliance_members WHERE alliance_id=$1 AND corporation_id=$2",
+                    allianceId, member.CorporationId);
+                if (await remove.ExecuteNonQueryAsync(token) != 1)
+                    throw new CorporationError("ALLIANCE_MEMBER_NOT_FOUND");
+            }
+
+            await using (var applications = Command(connection, transaction, $"""
+                UPDATE {_schema}.alliance_applications
+                SET status=4,archived=true,due_ms=NULL,updated_ms=$2
+                WHERE alliance_id=$1 AND NOT archived
+                """, allianceId, closedAtMs))
+                await applications.ExecuteNonQueryAsync(token);
+            await using (var close = Command(connection, transaction, $"""
+                UPDATE {_schema}.alliances
+                SET executor_corporation_id=NULL,suspended=true,deleted=true
+                WHERE id=$1 AND NOT deleted
+                """, allianceId))
+                if (await close.ExecuteNonQueryAsync(token) != 1)
+                    throw new CorporationError("ALLIANCE_CLOSURE_CONFLICT");
+
+            var after = await AllianceAsync(connection, transaction, allianceId, false, token)
+                ?? throw new CorporationError("ALLIANCE_NOT_FOUND");
+            return (alliance, after, members, false);
+        }, token);
     }
 
     public async Task<IReadOnlyList<CorporationBill>> AllianceBillsAsync(long allianceId,
@@ -1525,7 +1625,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             SELECT bill_id,bill_type_id,amount_isk,interest,debtor_alliance_id,creditor_id,due_filetime,
                    external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key
             FROM {_schema}.alliance_bills
-            WHERE debtor_alliance_id=$1 AND NOT paid
+            WHERE debtor_alliance_id=$1 AND NOT paid AND processing_status IS NULL
             ORDER BY due_filetime,bill_id
             """,allianceId);
         await using var reader = await command.ExecuteReaderAsync(token);
@@ -1543,7 +1643,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             SELECT bill_id,bill_type_id,amount_isk,interest,debtor_alliance_id,creditor_id,due_filetime,
                    external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key
             FROM {_schema}.alliance_bills
-            WHERE creditor_id=$1 AND NOT paid
+            WHERE creditor_id=$1 AND NOT paid AND processing_status IS NULL
             ORDER BY due_filetime,bill_id
             """,allianceId);
         await using var reader = await command.ExecuteReaderAsync(token);
@@ -1611,10 +1711,73 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             if (warId <= 0) throw new CorporationError("ALLIANCE_WAR_DECLARATION_FAILED");
             await using var link = Command(connection,tx,
                 $"UPDATE {_schema}.alliance_bills SET war_id=$2 WHERE bill_id=$1",billId,warId);
-            await link.ExecuteNonQueryAsync(token);
+            if (await link.ExecuteNonQueryAsync(token) != 1)
+                throw new CorporationError("ALLIANCE_WAR_DECLARATION_LINK_FAILED");
+            if (WarBillDueWriter is { } scheduleWarBill)
+                await scheduleWarBill(connection, tx, billId, dueFiletime, token);
             return (warId,billId,false);
         },token);
     }
+
+    public Task<(long WarId, long BillId, bool Replayed)> CreateInheritedAllianceWarAsync(
+        long allianceId, long againstId, long? warHqId, long declaredAtFiletime,
+        long startedAtFiletime, long dueFiletime, int billTypeId, decimal amount,
+        long creditorId, string operationKey,
+        Func<NpgsqlConnection, NpgsqlTransaction, long, CancellationToken, Task<long>> createWar,
+        CancellationToken token = default)
+    {
+        if (allianceId <= 0 || againstId <= 0 || againstId == allianceId ||
+            declaredAtFiletime <= 0 || startedAtFiletime <= declaredAtFiletime ||
+            dueFiletime <= declaredAtFiletime || billTypeId <= 0 || amount <= 0 ||
+            creditorId <= 0 || string.IsNullOrWhiteSpace(operationKey))
+            throw new CorporationError("INHERITED_ALLIANCE_WAR_INVALID");
+        ArgumentNullException.ThrowIfNull(createWar);
+        var fingerprint = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            allianceId, againstId, warHqId, declaredAtFiletime, startedAtFiletime,
+            dueFiletime, billTypeId, amount, creditorId
+        });
+        return WriteAsync(async (connection, transaction) =>
+        {
+            var alliance = await AllianceAsync(connection, transaction, allianceId, true, token);
+            if (alliance is not { Deleted: false } || alliance.ActiveExecutorId is null)
+                throw new CorporationError("ALLIANCE_NOT_FOUND");
+            await using (var prior = Command(connection, transaction, $"""
+                SELECT bill_id,war_id,request_fingerprint FROM {_schema}.alliance_bills
+                WHERE operation_key=$1 FOR UPDATE
+                """, operationKey))
+            await using (var reader = await prior.ExecuteReaderAsync(token))
+            {
+                if (await reader.ReadAsync(token))
+                {
+                    var priorBillId = reader.GetInt64(0);
+                    var priorWarId = reader.IsDBNull(1) ? 0 : reader.GetInt64(1);
+                    if (reader.GetString(2) != fingerprint || priorWarId <= 0)
+                        throw new CorporationError("INHERITED_ALLIANCE_WAR_OPERATION_CONFLICT");
+                    return (priorWarId, priorBillId, true);
+                }
+            }
+            await using var insert = Command(connection, transaction, $"""
+                INSERT INTO {_schema}.alliance_bills
+                    (bill_type_id,amount_isk,interest,debtor_alliance_id,creditor_id,due_filetime,
+                     external_id,external_id2,war_id,operation_key,request_fingerprint)
+                VALUES($1,$2,0,$3,$4,$5,$6,-1,NULL,$7,$8)
+                RETURNING bill_id
+                """, billTypeId, amount, allianceId, creditorId, dueFiletime,
+                againstId, operationKey, fingerprint);
+            var billId = Convert.ToInt64(await insert.ExecuteScalarAsync(token));
+            var warId = await createWar(connection, transaction, billId, token);
+            if (warId <= 0) throw new CorporationError("INHERITED_ALLIANCE_WAR_FAILED");
+            await using var link = Command(connection, transaction,
+                $"UPDATE {_schema}.alliance_bills SET war_id=$2 WHERE bill_id=$1", billId, warId);
+            if (await link.ExecuteNonQueryAsync(token) != 1)
+                throw new CorporationError("INHERITED_ALLIANCE_WAR_LINK_FAILED");
+            if (WarBillDueWriter is { } scheduleWarBill)
+                await scheduleWarBill(connection, transaction, billId, dueFiletime, token);
+            return (warId, billId, false);
+        }, token);
+    }
+
 
     public async Task<bool> PayAllianceBillAsync(long billId,long allianceId,long payerCorporationId,
     long paidByOwnerId,int accountKey,long paidAtMs,CancellationToken token = default)
@@ -1656,7 +1819,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             SELECT bill_id,bill_type_id,amount_isk,interest,debtor_alliance_id,creditor_id,due_filetime,
                    external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key
             FROM {_schema}.alliance_bills
-            WHERE bill_id=$1 AND debtor_alliance_id=$2 AND NOT paid
+            WHERE bill_id=$1 AND debtor_alliance_id=$2 AND NOT paid AND processing_status IS NULL
             FOR UPDATE
             """, billId, allianceId);
         CorporationBill bill;
@@ -1684,7 +1847,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
         await using var mark = Command(connection, transaction, $"""
             UPDATE {_schema}.alliance_bills
             SET paid=true,paid_filetime=$2,paid_by_owner_id=$3
-            WHERE bill_id=$1 AND NOT paid
+            WHERE bill_id=$1 AND NOT paid AND processing_status IS NULL
             """, billId, paidFiletime, paidByOwnerId);
         if (await mark.ExecuteNonQueryAsync(token) != 1)
             throw new CorporationError("BILL_NOT_PAYABLE");
@@ -1705,6 +1868,9 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
     private const long ConcordCorporationId = 1_000_125;
 
     public Func<long, CancellationToken, Task>? AllianceMaintenanceBillWriter { get; set; }
+    public Func<System.Data.Common.DbConnection, System.Data.Common.DbTransaction, long, long, CancellationToken, Task>? AllianceEmptyClosureWriter { get; set; }
+    public Func<System.Data.Common.DbConnection, System.Data.Common.DbTransaction, long, long, long, long, CancellationToken, Task>? AllianceWarInheritanceWriter { get; set; }
+    public Func<NpgsqlConnection, NpgsqlTransaction, long, long, CancellationToken, Task>? WarBillDueWriter { get; set; }
 
     public async Task<IReadOnlyList<CorporationBill>> AllianceMaintenanceBillsAsync(
         long allianceId, CancellationToken token = default)
@@ -1716,6 +1882,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
                    external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key
             FROM {_schema}.alliance_bills
             WHERE debtor_alliance_id=$1 AND bill_type_id=$2 AND war_id IS NULL
+              AND processing_status IS NULL
             ORDER BY due_filetime,bill_id
             """, allianceId, AllianceMaintenanceBillTypeId);
         await using var reader = await command.ExecuteReaderAsync(token);
@@ -1732,7 +1899,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             SELECT bill_id,bill_type_id,amount_isk,interest,debtor_alliance_id,creditor_id,due_filetime,
                    external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key
             FROM {_schema}.alliance_bills AS bill
-            WHERE bill.bill_type_id=$1 AND bill.war_id IS NULL
+            WHERE bill.bill_type_id=$1 AND bill.war_id IS NULL AND bill.processing_status IS NULL
               AND (NOT bill.paid OR NOT EXISTS (
                   SELECT 1 FROM {_schema}.alliance_bills AS next
                   WHERE next.debtor_alliance_id=bill.debtor_alliance_id
@@ -1745,6 +1912,17 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
         var bills = new List<CorporationBill>();
         while (await reader.ReadAsync(token)) bills.Add(ReadCorporationBill(reader));
         return bills;
+    }
+
+    public async Task<long?> AllianceEmptySinceMsAsync(long allianceId, CancellationToken token = default)
+    {
+        if (allianceId <= 0) return null;
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection, null,
+            $"SELECT MAX(left_ms) FROM {_schema}.alliance_departures WHERE alliance_id=$1",
+            allianceId);
+        var value = await command.ExecuteScalarAsync(token);
+        return value is null or DBNull ? null : Convert.ToInt64(value);
     }
 
     public Task<CorporationBill?> EnsureInitialAllianceMaintenanceBillAsync(
@@ -1828,4 +2006,269 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
         AnnounceAllianceBillPayment(settlement);
         return true;
     }
+
+    public async Task<bool> PayAllianceWarBillAsync(
+        long billId, long allianceId, long payerCorporationId, int accountKey, long paidAtMs,
+        CancellationToken token = default)
+    {
+        if (billId <= 0 || allianceId <= 0 || payerCorporationId <= 0 ||
+            accountKey is < 1000 or > 1006 || paidAtMs < 0)
+            return false;
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+        var settlement = await SettleAllianceBillAsync(connection, transaction, billId, allianceId,
+            payerCorporationId, payerCorporationId, accountKey, paidAtMs, 4, token);
+        if (settlement is null) return false;
+        await transaction.CommitAsync(token);
+        AnnounceAllianceBillPayment(settlement);
+        return true;
+    }
+
+    public async Task<bool> PayCorporationWarBillAsync(
+        long billId, long payerCorporationId, int accountKey, long paidAtMs,
+        CancellationToken token = default)
+    {
+        if (billId <= 0 || payerCorporationId <= 0 || accountKey is < 1000 or > 1006 || paidAtMs < 0)
+            return false;
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+        if (await GetAsync(connection, transaction, payerCorporationId, true, token) is not { IsNpc: false, Deleted: false })
+            return false;
+        await using var command = Command(connection, transaction, $"""
+            SELECT bill_id,bill_type_id,amount_isk,interest,debtor_id,creditor_id,due_filetime,
+                   external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key
+            FROM {_schema}.corporation_bills
+            WHERE bill_id=$1 AND debtor_id=$2 AND bill_type_id=4 AND NOT paid
+              AND processing_status IS NULL
+            FOR UPDATE
+            """, billId, payerCorporationId);
+        CorporationBill bill;
+        await using (var reader = await command.ExecuteReaderAsync(token))
+        {
+            if (!await reader.ReadAsync(token)) return false;
+            bill = ReadCorporationBill(reader);
+        }
+        Eve.Wallet.WalletSettlement settlement;
+        try
+        {
+            settlement = await _wallets.TransferAsync(connection, transaction,
+                new Eve.Wallet.WalletAccount(payerCorporationId, accountKey),
+                new Eve.Wallet.WalletAccount(bill.CreditorId, 1000), bill.AmountIsk, 17, "Bill payment", paidAtMs,
+                $"corporation-bill:{billId}:payment", "bill_payment", token);
+        }
+        catch (Exception error) when (error is Eve.Wallet.InsufficientFundsException or Eve.Wallet.MoneyLimitException or
+            Eve.Wallet.WalletNotFoundException or Eve.Wallet.WalletOperationConflictException)
+        {
+            return false;
+        }
+        var paidFiletime = checked((paidAtMs + EveFiletimeEpochOffsetMs) * 10_000L);
+        await using var mark = Command(connection, transaction, $"""
+            UPDATE {_schema}.corporation_bills
+            SET paid=true,paid_filetime=$2,paid_by_owner_id=$3
+            WHERE bill_id=$1 AND NOT paid AND processing_status IS NULL
+            """, billId, paidFiletime, payerCorporationId);
+        if (await mark.ExecuteNonQueryAsync(token) != 1)
+            throw new CorporationError("BILL_NOT_PAYABLE");
+        await transaction.CommitAsync(token);
+        if (!settlement.Replayed)
+            foreach (var entry in settlement.Entries.GroupBy(entry => (entry.OwnerId, entry.AccountKey)).Select(group => group.Last()))
+                _wallets.AnnounceCommitted(new Eve.Wallet.WalletBalanceChange(entry.OwnerId, entry.AccountKey, entry.Balance));
+        return true;
+    }
+
+    public async Task<CorporationBill?> ReadBillByIdAsync(
+        System.Data.Common.DbConnection databaseConnection,
+        System.Data.Common.DbTransaction databaseTransaction,
+        long billId,
+        CancellationToken token = default)
+    {
+        if (billId <= 0) return null;
+        if (databaseConnection is not NpgsqlConnection connection ||
+            databaseTransaction is not NpgsqlTransaction transaction ||
+            !ReferenceEquals(databaseTransaction.Connection, databaseConnection))
+            throw new ArgumentException("bill reads require the caller's PostgreSQL transaction");
+        await using var command = Command(connection, transaction, $"""
+            SELECT bill_id,bill_type_id,amount_isk,interest,debtor_id,creditor_id,due_filetime,
+                   external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key
+            FROM {_schema}.corporation_bills WHERE bill_id=$1
+            UNION ALL
+            SELECT bill_id,bill_type_id,amount_isk,interest,debtor_alliance_id,creditor_id,due_filetime,
+                   external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key
+            FROM {_schema}.alliance_bills WHERE bill_id=$1
+            LIMIT 1
+            """, billId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        return await reader.ReadAsync(token) ? ReadCorporationBill(reader) : null;
+    }
+
+    public async Task<IReadOnlyList<CorporationBill>> PendingWarBillsAsync(CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection, null, $"""
+            SELECT bill_id,bill_type_id,amount_isk,interest,debtor_id,creditor_id,due_filetime,
+                   external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key
+            FROM {_schema}.corporation_bills
+            WHERE bill_type_id=4 AND processing_status IS NULL
+            UNION ALL
+            SELECT bill_id,bill_type_id,amount_isk,interest,debtor_alliance_id,creditor_id,due_filetime,
+                   external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key
+            FROM {_schema}.alliance_bills
+            WHERE bill_type_id=4 AND processing_status IS NULL
+            ORDER BY due_filetime,bill_id
+            """);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        var bills = new List<CorporationBill>();
+        while (await reader.ReadAsync(token)) bills.Add(ReadCorporationBill(reader));
+        return bills;
+    }
+
+    public async Task<CorporationBill?> PendingWarBillAsync(long billId, CancellationToken token = default)
+    {
+        if (billId <= 0) return null;
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection, null, $"""
+            SELECT bill_id,bill_type_id,amount_isk,interest,debtor_id,creditor_id,due_filetime,
+                   external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key
+            FROM {_schema}.corporation_bills
+            WHERE bill_id=$1 AND bill_type_id=4 AND processing_status IS NULL
+            UNION ALL
+            SELECT bill_id,bill_type_id,amount_isk,interest,debtor_alliance_id,creditor_id,due_filetime,
+                   external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key
+            FROM {_schema}.alliance_bills
+            WHERE bill_id=$1 AND bill_type_id=4 AND processing_status IS NULL
+            LIMIT 1
+            """, billId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        return await reader.ReadAsync(token) ? ReadCorporationBill(reader) : null;
+    }
+
+    public async Task<CorporationBill?> ReadBillByIdAsync(long billId, CancellationToken token = default)
+    {
+        if (billId <= 0) return null;
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+        var bill = await ReadBillByIdAsync(connection, transaction, billId, token);
+        await transaction.CommitAsync(token);
+        return bill;
+    }
+
+    public async Task<bool> MarkWarBillProcessedAsync(
+        long billId,
+        string status,
+        CancellationToken token = default,
+        Func<NpgsqlConnection, NpgsqlTransaction, CorporationBill, CancellationToken, Task<bool>>? finalizeWar = null)
+    {
+        if (billId <= 0 || status is not ("defaulted" or "inactive" or "orphaned" or "superseded") ||
+            status == "defaulted" && finalizeWar is null)
+            return false;
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+        var state = await ReadWarBillForUpdateAsync(connection, transaction, billId, token);
+        if (state is null || state.Bill.BillTypeId != 4 || state.ProcessingStatus is not null ||
+            status == "defaulted" && (state.Bill.Paid || state.Bill.WarId <= 0))
+            return false;
+        var processedStatus = status;
+        if (status == "defaulted" && !await finalizeWar!(
+                connection, transaction, state.Bill, token))
+            processedStatus = "inactive";
+        var table = state.AllianceBill ? "alliance_bills" : "corporation_bills";
+        await using var command = Command(connection, transaction, $"""
+            UPDATE {_schema}.{table}
+            SET processing_status=$2,war_id=NULL
+            WHERE bill_id=$1 AND bill_type_id=4 AND processing_status IS NULL
+              AND ($2 <> 'defaulted' OR NOT paid)
+            """, billId, processedStatus);
+        if (await command.ExecuteNonQueryAsync(token) != 1)
+            throw new CorporationError("WAR_BILL_PROCESSING_CONFLICT");
+        await transaction.CommitAsync(token);
+        return true;
+    }
+
+    public async Task<CorporationBill?> RenewWarBillAsync(
+        long billId,
+        Func<NpgsqlConnection, NpgsqlTransaction, long, long, CancellationToken, Task> updateWarBill,
+        CancellationToken token = default)
+    {
+        if (billId <= 0) return null;
+        ArgumentNullException.ThrowIfNull(updateWarBill);
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+        var state = await ReadWarBillForUpdateAsync(connection, transaction, billId, token);
+        if (state is null || state.Bill.BillTypeId != 4 || state.Bill.WarId <= 0)
+            return null;
+        if (state.ProcessingStatus == "renewed" && state.RenewedBillId is { } renewedId)
+            return await ReadBillByIdAsync(connection, transaction, renewedId, token);
+        if (state.ProcessingStatus is not null || !state.Bill.Paid) return null;
+
+        var previous = state.Bill;
+        var nextDue = checked(previous.DueFiletime + AllianceMaintenancePeriodFiletime / 30 * 7);
+        var operationKey = $"war-bill-renewal:{previous.WarId}:{nextDue}";
+        var fingerprint = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            debtorId = previous.DebtorId,
+            creditorId = previous.CreditorId,
+            warId = previous.WarId,
+            dueFiletime = nextDue,
+            amount = previous.AmountIsk
+        });
+        var table = state.AllianceBill ? "alliance_bills" : "corporation_bills";
+        await using var insert = Command(connection, transaction, $"""
+            INSERT INTO {_schema}.{table}
+                (bill_type_id,amount_isk,interest,{(state.AllianceBill ? "debtor_alliance_id" : "debtor_id")},
+                 creditor_id,due_filetime,external_id,external_id2,war_id,operation_key,request_fingerprint)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULL,$9,$10)
+            RETURNING bill_id
+            """, previous.BillTypeId, previous.AmountIsk, previous.Interest, previous.DebtorId,
+            previous.CreditorId, nextDue, previous.ExternalId, previous.ExternalId2,
+            operationKey, fingerprint);
+        var nextBillId = Convert.ToInt64(await insert.ExecuteScalarAsync(token));
+        await using var markPrevious = Command(connection, transaction, $"""
+            UPDATE {_schema}.{table}
+            SET processing_status='renewed',renewed_bill_id=$2,war_id=NULL
+            WHERE bill_id=$1 AND processing_status IS NULL AND paid
+            """, billId, nextBillId);
+        if (await markPrevious.ExecuteNonQueryAsync(token) != 1)
+            throw new CorporationError("WAR_BILL_RENEWAL_CONFLICT");
+        await using var linkNext = Command(connection, transaction,
+            $"UPDATE {_schema}.{table} SET war_id=$2 WHERE bill_id=$1", nextBillId, previous.WarId);
+        if (await linkNext.ExecuteNonQueryAsync(token) != 1)
+            throw new CorporationError("WAR_BILL_RENEWAL_LINK_FAILED");
+        await updateWarBill(connection, transaction, previous.WarId, nextBillId, token);
+        await transaction.CommitAsync(token);
+        return new CorporationBill(nextBillId, previous.BillTypeId, previous.AmountIsk, previous.Interest,
+            previous.DebtorId, previous.CreditorId, nextDue, previous.ExternalId, previous.ExternalId2,
+            previous.WarId, false, null, null, operationKey);
+    }
+
+    private async Task<StoredWarBill?> ReadWarBillForUpdateAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long billId, CancellationToken token)
+    {
+        await using (var corporation = Command(connection, transaction, $"""
+            SELECT bill_id,bill_type_id,amount_isk,interest,debtor_id,creditor_id,due_filetime,
+                   external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key,
+                   processing_status,renewed_bill_id
+            FROM {_schema}.corporation_bills WHERE bill_id=$1 FOR UPDATE
+            """, billId))
+        await using (var reader = await corporation.ExecuteReaderAsync(token))
+            if (await reader.ReadAsync(token))
+                return new(ReadCorporationBill(reader), false,
+                    reader.IsDBNull(14) ? null : reader.GetString(14),
+                    reader.IsDBNull(15) ? null : reader.GetInt64(15));
+
+        await using (var alliance = Command(connection, transaction, $"""
+            SELECT bill_id,bill_type_id,amount_isk,interest,debtor_alliance_id,creditor_id,due_filetime,
+                   external_id,external_id2,war_id,paid,paid_filetime,paid_by_owner_id,operation_key,
+                   processing_status,renewed_bill_id
+            FROM {_schema}.alliance_bills WHERE bill_id=$1 FOR UPDATE
+            """, billId))
+        await using (var reader = await alliance.ExecuteReaderAsync(token))
+            if (await reader.ReadAsync(token))
+                return new(ReadCorporationBill(reader), true,
+                    reader.IsDBNull(14) ? null : reader.GetString(14),
+                    reader.IsDBNull(15) ? null : reader.GetInt64(15));
+        return null;
+    }
+
+    private sealed record StoredWarBill(
+        CorporationBill Bill, bool AllianceBill, string? ProcessingStatus, long? RenewedBillId);
 }

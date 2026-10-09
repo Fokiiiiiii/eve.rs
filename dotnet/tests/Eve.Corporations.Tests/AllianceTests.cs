@@ -1426,6 +1426,328 @@ public class AllianceTests
     }
 
     [PgFact]
+    public async Task Unpaid_alliance_maintenance_closes_at_downtime_and_releases_member_affiliations()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schedulerSchema = "alliance_close_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(rig.Source, schedulerSchema);
+            var scheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now, schema: schedulerSchema);
+            var (actor, executorCorp) = await Founder(rig, "Unpaid Alliance", "ALLYDUE");
+            var alliance = await rig.Store.CreateAllianceAsync(actor, Request, "alliance-unpaid-close");
+            rig.Store.AllianceAffiliationWriter = static (_, _, _, _, _) => Task.CompletedTask;
+
+            var sessions = new Eve.Services.CharacterSessions();
+            var sink = new PacketSink();
+            var session = new Eve.Services.ClientSession(sink) { SessionId = actor, CharacterId = actor };
+            session.Set("allianceid", new Eve.Marshal.PyInt(alliance.Id));
+            session.Set("corpid", new Eve.Marshal.PyInt(executorCorp.Id));
+            sessions.Enter(actor, session);
+
+            var sovereigntyDrops = 0;
+            var worker = new Eve.Services.Corporations.AllianceMaintenanceBillWorker(
+                rig.Store, rig.OfficeStore, scheduler, () => rig.Now);
+            worker.CharacterSessions = sessions;
+            worker.NextDowntimeAtMs = dueAt => dueAt + 1000;
+            worker.DropSovereigntyClaimsAsync = (_, _, _) =>
+            {
+                sovereigntyDrops++;
+                return Task.FromResult(true);
+            };
+            await worker.RegisterAsync();
+
+            var bill = Assert.Single(await rig.Store.AllianceMaintenanceBillsAsync(alliance.Id));
+            var dueAtMs = bill.DueFiletime / 10_000L - 11_644_473_600_000L;
+            rig.Now = dueAtMs;
+            Assert.Equal(1, await scheduler.RunDueAsync());
+
+            rig.Now = dueAtMs + 1000;
+            Assert.Equal(1, await scheduler.RunDueAsync());
+            rig.Now += 1;
+            Assert.Equal(1, await scheduler.RunDueAsync());
+            Assert.Equal(0, await scheduler.RunDueAsync());
+
+            var closed = await rig.Store.AllianceAsync(alliance.Id);
+            Assert.True(closed!.Deleted);
+            Assert.Null((await rig.Store.GetAsync(executorCorp.Id))!.AllianceId);
+            Assert.Empty(await rig.Store.AllianceMembersAsync(alliance.Id));
+            Assert.DoesNotContain(await rig.Store.PendingAllianceMaintenanceBillsAsync(),
+                entry => entry.BillId == bill.BillId);
+            Assert.Equal(1, sovereigntyDrops);
+            Assert.Equal(["OnAllianceMemberChanged", "OnAllianceChanged", "OnCorporationChanged"],
+                sink.Packets.Select(NotificationName));
+        }
+        finally
+        {
+            await using var cleanup = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schedulerSchema} CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Last_alliance_member_leaves_but_closure_waits_for_next_downtime()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schedulerSchema = "alliance_empty_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(rig.Source, schedulerSchema);
+            var scheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now, schema: schedulerSchema);
+            var (actor, corporation) = await Founder(rig, "Final Alliance Member", "ALLYEND");
+            var alliance = await rig.Store.CreateAllianceAsync(actor, Request, "alliance-last-member");
+            rig.Store.AllianceAffiliationWriter = static (_, _, _, _, _) => Task.CompletedTask;
+            var worker = new Eve.Services.Corporations.AllianceMaintenanceBillWorker(
+                rig.Store, rig.OfficeStore, scheduler, () => rig.Now);
+            worker.NextDowntimeAtMs = at => at + 1000;
+            worker.DropSovereigntyClaimsAsync = (_, _, _) => Task.FromResult(true);
+            await worker.RegisterAsync();
+
+            var leftAtMs = rig.Now;
+            var departure = await rig.Store.RemoveAllianceMemberAsync(
+                alliance.Id, corporation.Id, actor, "self-leave", leftAtMs,
+                static (_, _, _, _, _) => Task.CompletedTask);
+            Assert.False(departure.Duplicate);
+            var waiting = await rig.Store.AllianceAsync(alliance.Id);
+            Assert.False(waiting!.Deleted);
+            Assert.True(waiting.Suspended);
+            Assert.Null(waiting.ActiveExecutorId);
+            Assert.Empty(await rig.Store.AllianceMembersAsync(alliance.Id));
+
+            rig.Now = leftAtMs + 999;
+            Assert.Equal(0, await scheduler.RunDueAsync());
+            rig.Now = leftAtMs + 1000;
+            Assert.Equal(1, await scheduler.RunDueAsync());
+            rig.Now += 1;
+            Assert.Equal(1, await scheduler.RunDueAsync());
+            Assert.True((await rig.Store.AllianceAsync(alliance.Id))!.Deleted);
+        }
+        finally
+        {
+            await using var cleanup = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schedulerSchema} CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task A_departing_alliance_member_inherits_the_active_war_and_processes_due_war_bills()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var schedulerSchema = "alliance_inherit_sched_" + suffix;
+        var eventsSchema = "alliance_inherit_events_" + suffix;
+        var relationsSchema = "alliance_inherit_relations_" + suffix;
+        try
+        {
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(rig.Source, schedulerSchema);
+            await Eve.Events.EventBus.MigrateAsync(rig.Source, eventsSchema);
+            await Eve.Relations.RelationStore.MigrateAsync(rig.Source, relationsSchema);
+            var scheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now, schema: schedulerSchema);
+            var events = new Eve.Events.EventBus(rig.Source, scheduler, schema: eventsSchema);
+            var relations = new Eve.Relations.RelationStore(rig.Source, scheduler, events, relationsSchema);
+            var (executor, executorCorp) = await Founder(rig, "War Executor", "INHEX");
+            var (leaver, leaverCorp) = await Founder(rig, "War Leaver", "INHLE");
+            var (_, targetCorp) = await Founder(rig, "War Target", "INHTG");
+            var alliance = await rig.Store.CreateAllianceAsync(executor, Request, "alliance-war-inheritance");
+            var application = await rig.Store.ApplyToAllianceAsync(leaver, alliance.Id, "Join for war");
+            var accepted = await AcceptAllianceApplicationAsync(rig.Store, executor, application);
+            rig.Now = accepted.DueMs!.Value;
+            Assert.Equal([leaverCorp.Id], await ProcessAllianceDueAsync(rig.Store));
+
+            var sessions = new Eve.Services.CharacterSessions();
+            var sink = new PacketSink();
+            var session = new Eve.Services.ClientSession(sink) { SessionId = executor, CharacterId = executor };
+            session.Set("corpid", new Eve.Marshal.PyInt(executorCorp.Id));
+            session.Set("allianceid", new Eve.Marshal.PyInt(alliance.Id));
+            sessions.Enter(executor, session);
+            var service = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
+                rig.Store, rig.Characters, () => rig.Now, relations: relations, characterSessions: sessions);
+            await service.CallAsync(new Eve.Services.ServiceCall
+            {
+                Session = session,
+                Method = "DeclareWarAgainst",
+                Args = [new Eve.Marshal.PyInt(targetCorp.Id), Eve.Marshal.PyNone.Instance],
+                CallId = new Eve.Marshal.PyInt(71030)
+            });
+            session.RunAfterResponse();
+            sink.Packets.Clear();
+            var sourceWar = (await relations.GetAsync("war", alliance.Id, targetCorp.Id))!;
+            var sourceAttrs = sourceWar.Attrs<System.Text.Json.JsonElement>();
+            var sourceBillId = sourceAttrs.GetProperty("billID").GetInt64();
+            var sourceBill = Assert.Single(await rig.Store.AllianceBillsAsync(alliance.Id),
+                bill => bill.BillId == sourceBillId);
+
+            var worker = new Eve.Services.Corporations.AllianceWarInheritanceWorker(
+                rig.Source, rig.Store, rig.OfficeStore, relations, scheduler, () => rig.Now, sessions);
+            await worker.RegisterAsync();
+            var departure = await rig.Store.RemoveAllianceMemberAsync(
+                alliance.Id, leaverCorp.Id, leaver, "self-leave", rig.Now,
+                static (_, _, _, _, _) => Task.CompletedTask);
+            Assert.False(departure.Duplicate);
+            Assert.Equal(1, await scheduler.RunDueAsync());
+
+            var inherited = (await relations.GetAsync("war", leaverCorp.Id, targetCorp.Id))!;
+            var inheritedAttrs = inherited.Attrs<System.Text.Json.JsonElement>();
+            Assert.Equal(sourceWar.Id, inheritedAttrs.GetProperty("createdFromWarID").GetInt64());
+            var inheritedBillId = inheritedAttrs.GetProperty("billID").GetInt64();
+            var inheritedBill = Assert.Single(await rig.Store.CorporationBillsAsync(leaverCorp.Id));
+            Assert.Equal(inheritedBillId, inheritedBill.BillId);
+            Assert.Equal(4, inheritedBill.BillTypeId);
+            Assert.Equal(100_000_000m, inheritedBill.AmountIsk);
+            Assert.Equal(sourceBill.DueFiletime, inheritedBill.DueFiletime);
+            Assert.Equal(["OnWarChanged"], sink.Packets.Select(NotificationName));
+
+            await using (var connection = await rig.Source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await rig.Transactions.TransferAsync(connection, transaction,
+                    new Eve.Wallet.WalletAccount(executor, 1000),
+                    new Eve.Wallet.WalletAccount(executorCorp.Id, 1000),
+                    100_000_000m, 17, "Fund alliance war auto-payment", rig.Now,
+                    $"alliance-war-autopay-funding:{suffix}", "test_wallet_transfer");
+                await rig.Wallets.OpenAsync(connection, transaction, 1_000_125, 0m, 0);
+                await transaction.CommitAsync();
+            }
+            await rig.OfficeStore.SetAutomaticPaySettingsAsync(new Dictionary<long, Eve.Corporations.CorporationBillAutomaticPaySettings>
+            {
+                [alliance.Id] = new(1000, new Dictionary<int, bool> { [4] = true }),
+                [executorCorp.Id] = new(1000, new Dictionary<int, bool>())
+            });
+            var payerAccount = new Eve.Wallet.WalletAccount(executorCorp.Id, 1000);
+            var balanceBefore = await rig.Transactions.AccountBalanceAsync(payerAccount);
+            rig.Now = sourceBill.DueFiletime / 10_000L - 11_644_473_600_000L;
+            Assert.Equal(2, await scheduler.RunDueAsync());
+
+            var renewedBill = Assert.Single(await rig.Store.PendingWarBillsAsync(),
+                bill => bill.DebtorId == alliance.Id);
+            Assert.NotEqual(sourceBill.BillId, renewedBill.BillId);
+            Assert.Equal(sourceBill.DueFiletime + 6_048_000_000_000L, renewedBill.DueFiletime);
+            var renewedWar = (await relations.GetAsync("war", alliance.Id, targetCorp.Id))!;
+            Assert.Equal(renewedBill.BillId,
+                renewedWar.Attrs<System.Text.Json.JsonElement>().GetProperty("billID").GetInt64());
+            var balanceAfter = await rig.Transactions.AccountBalanceAsync(payerAccount);
+            Assert.Equal(100_000_000m, balanceBefore - balanceAfter);
+            Assert.DoesNotContain(await rig.Store.PendingWarBillsAsync(),
+                bill => bill.BillId == inheritedBill.BillId);
+
+            var finishAtMs = rig.Now + 24L * 60 * 60 * 1000;
+            var finishingWar = await relations.GetAsync("war", leaverCorp.Id, targetCorp.Id);
+            Assert.NotNull(finishingWar);
+            Assert.Equal(finishAtMs, finishingWar.UntilMs);
+            var finishingAttrs = finishingWar.Attrs<System.Text.Json.JsonElement>();
+            Assert.Equal(10, finishingAttrs.GetProperty("reasonEnded").GetInt32());
+            Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(finishAtMs).ToFileTime().ToString(
+                System.Globalization.CultureInfo.InvariantCulture),
+                finishingAttrs.GetProperty("timeFinished").GetString());
+            Assert.Equal(3, sink.Packets.Count(packet => NotificationName(packet) == "OnWarChanged"));
+
+            rig.Now = finishAtMs;
+            Assert.Equal(1, await scheduler.RunDueAsync());
+            Assert.Null(await relations.GetAsync("war", leaverCorp.Id, targetCorp.Id));
+        }
+        finally
+        {
+            foreach (var schema in new[] { schedulerSchema, eventsSchema, relationsSchema })
+            {
+                await using var cleanup = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+                await cleanup.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
+    [PgFact]
+    public async Task Unpaid_alliance_closure_inherits_current_wars_before_ending_the_alliance_wars()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var schedulerSchema = "alliance_closure_wars_sched_" + suffix;
+        var eventsSchema = "alliance_closure_wars_events_" + suffix;
+        var relationsSchema = "alliance_closure_wars_relations_" + suffix;
+        try
+        {
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(rig.Source, schedulerSchema);
+            await Eve.Events.EventBus.MigrateAsync(rig.Source, eventsSchema);
+            await Eve.Relations.RelationStore.MigrateAsync(rig.Source, relationsSchema);
+            var scheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now, schema: schedulerSchema);
+            var events = new Eve.Events.EventBus(rig.Source, scheduler, schema: eventsSchema);
+            var relations = new Eve.Relations.RelationStore(rig.Source, scheduler, events, relationsSchema);
+            var (executor, executorCorp) = await Founder(rig, "Closing War Executor", "CLSWAR");
+            var (_, targetCorp) = await Founder(rig, "Closing War Target", "CLSTGT");
+            var alliance = await rig.Store.CreateAllianceAsync(executor, Request, "alliance-closure-war");
+            rig.Store.AllianceAffiliationWriter = static (_, _, _, _, _) => Task.CompletedTask;
+
+            var sessions = new Eve.Services.CharacterSessions();
+            var sink = new PacketSink();
+            var session = new Eve.Services.ClientSession(sink) { SessionId = executor, CharacterId = executor };
+            session.Set("allianceid", new Eve.Marshal.PyInt(alliance.Id));
+            session.Set("corpid", new Eve.Marshal.PyInt(executorCorp.Id));
+            sessions.Enter(executor, session);
+
+            var warInheritance = new Eve.Services.Corporations.AllianceWarInheritanceWorker(
+                rig.Source, rig.Store, rig.OfficeStore, relations, scheduler, () => rig.Now, sessions);
+            await warInheritance.RegisterAsync();
+            var sovereigntyDrops = 0;
+            var maintenance = new Eve.Services.Corporations.AllianceMaintenanceBillWorker(
+                rig.Store, rig.OfficeStore, scheduler, () => rig.Now);
+            maintenance.CharacterSessions = sessions;
+            maintenance.NextDowntimeAtMs = at => at + 1000;
+            maintenance.DropSovereigntyClaimsAsync = (_, _, _) =>
+            {
+                sovereigntyDrops++;
+                return Task.FromResult(true);
+            };
+            maintenance.InheritAllianceWarsForClosureAsync = warInheritance.InheritForAllianceClosureAsync;
+            maintenance.EndAllianceWarsAtClosureAsync = warInheritance.EndAllianceWarsAsync;
+            await maintenance.RegisterAsync();
+
+            var maintenanceBill = Assert.Single(await rig.Store.AllianceMaintenanceBillsAsync(alliance.Id));
+            var maintenanceDueMs = maintenanceBill.DueFiletime / 10_000L - 11_644_473_600_000L;
+            rig.Now = maintenanceDueMs - 24L * 60 * 60 * 1000 - 2_000;
+            var service = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
+                rig.Store, rig.Characters, () => rig.Now, relations: relations, characterSessions: sessions);
+            await service.CallAsync(new Eve.Services.ServiceCall
+            {
+                Session = session,
+                Method = "DeclareWarAgainst",
+                Args = [new Eve.Marshal.PyInt(targetCorp.Id), Eve.Marshal.PyNone.Instance],
+                CallId = new Eve.Marshal.PyInt(73010)
+            });
+            session.RunAfterResponse();
+            sink.Packets.Clear();
+            var sourceWar = (await relations.GetAsync("war", alliance.Id, targetCorp.Id))!;
+            var sourceBill = Assert.Single(await rig.Store.AllianceBillsAsync(alliance.Id),
+                bill => bill.BillTypeId == 4);
+
+            rig.Now = maintenanceDueMs;
+            Assert.Equal(1, await scheduler.RunDueAsync());
+            rig.Now = maintenanceDueMs + 1000;
+            Assert.Equal(1, await scheduler.RunDueAsync());
+            rig.Now += 1;
+            Assert.Equal(1, await scheduler.RunDueAsync());
+
+            Assert.True((await rig.Store.AllianceAsync(alliance.Id))!.Deleted);
+            Assert.Null(await relations.GetAsync("war", alliance.Id, targetCorp.Id));
+            var inherited = (await relations.GetAsync("war", executorCorp.Id, targetCorp.Id))!;
+            var inheritedAttrs = inherited.Attrs<System.Text.Json.JsonElement>();
+            Assert.Equal(sourceWar.Id, inheritedAttrs.GetProperty("createdFromWarID").GetInt64());
+            var inheritedBillId = inheritedAttrs.GetProperty("billID").GetInt64();
+            var inheritedBill = Assert.Single(await rig.Store.CorporationBillsAsync(executorCorp.Id));
+            Assert.Equal(inheritedBillId, inheritedBill.BillId);
+            Assert.Equal(sourceBill.DueFiletime, inheritedBill.DueFiletime);
+            Assert.Equal(1, sovereigntyDrops);
+            Assert.Equal(2, sink.Packets.Count(packet => NotificationName(packet) == "OnWarChanged"));
+        }
+        finally
+        {
+            foreach (var schema in new[] { schedulerSchema, eventsSchema, relationsSchema })
+            {
+                await using var cleanup = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+                await cleanup.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
+    [PgFact]
     public async Task Alliance_war_declaration_bills_are_replay_safe_and_pay_from_the_executor_wallet()
     {
         await using var rig = await Rig.CreateAsync();

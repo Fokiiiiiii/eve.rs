@@ -427,3 +427,39 @@ Each item names the source that decided it. CCP material and the SDE come first,
   - WP17 stacking of overlapping assistance and jam modifiers: no source read states a stacking rule for them (the SDE gives the stackable flag per attribute, not per overlay).
   - WG-3 scripts and charges with a loaded script: the pairing in `Eve.Dogma/DogmaWorld.cs` has no PostgreSQL case with a loaded script yet (SDE script types: Tracking Speed Script 29001, Optimal Range Script 28999). Not tested in this track.
   - WP12 and 1934: the SDE gives attribute 1934 `deactivateIfOffensive` (default 1: "If module is offensive should it deactivate on disconnect"). The host's disconnect is `HostServer.Disconnect`; the space release that would stop the modules is not located in this track. Not built.
+
+## Scanner modules, track M-6 (2026-10-09)
+
+Each item names the source that decided it: the SDE first (effect records 46 and 47, attributes 6, 73, 125, 126, 188, 482, 510, 511, 1014), then EVE.js
+(`server/src/space/modules/scannerModuleRuntime.js`, `server/src/space/runtime/moduleRuntimeCallbacks.js`), then the V24.01 client (eve-logic
+`eve/client/script/ui/inflight/shipHud/shipUI.py` 1059-1077 and `eve/client/script/ui/inflight/shipscan.py`).
+
+- **Scanner bodies, built (protocol 39).** A scanner is one cycle (attribute 1014 is 1 on both effects). The simulation keeps the lock and the reach and parks the module
+  at the cycle's end; the host reveals the rows (`SpaceContainers.Scan.cs`). Source: the SDE effect records, EVE.js `executeScannerCycle`.
+- **Decided: the resistance is read at the cycle's end, not at activation.** EVE.js refuses the start (`TARGET_RESISTS_SCAN`, no cycle spent) when the target's
+  resistance wins the roll. The simulation holds no target attributes; the host reads them at the cycle's end, so the first cycle's capacitor is spent. The refusal
+  carries the reference's words: "That ship is resistant to your scan." Open: a pre-activation check needs the resistance in the activation request (a wire field).
+- **Decided: a target out of reach at the cycle's end gets no reveal and the scan ends as its target is lost.** EVE.js stops with the stop reason `range` and sends no
+  notice. eve.rs uses the existing target-lost ending (reason 2), which the client shows as the module stopping.
+- **Decided: a ship scan's capacitor is in GJ.** The charge is the target's charge fraction (`SimCondition.Charge`, asked of the target's session) times its capacity
+  (dogma attribute 482 of the target's ship). EVE.js reads the live entity capacitor. The capacity is the host's dogma value; a fitting change in space shows late.
+- **Decided: the reach is the effect's own attributes.** Range from the effect record's `rangeAttributeID` (125 or 126), falloff from `falloffAttributeID` (510 for the
+  ship scanner, none for the cargo scanner, a hard cutoff). The reveal chance is EVE.js's `resolveScanRevealChance`: whole to optimal plus one metre, then
+  `0.5 ^ ((distance - optimal) / falloff)^2`, nothing past falloff plus one metre.
+- **Decided: a ship scan rolls each fitted item.** EVE.js draws once per fitted item when the chance is short of one. The host draws with `Random.Shared` (a seam,
+  `SpaceContainers.ScanRandom`, for tests). The cycle's own roll decides only the resistance. The reference draws from the scene's random.
+- **Decided: a scan is not an attack.** The SDE gives effects 46 and 47 `isOffensive` false. The simulation starts no weapons timer and no aggression.
+- **Decided: a granted scan is answered `Complete` false.** The simulation ends a work target when `Complete` is true (a rock mined out, a wreck salvaged). A scan
+  leaves the ship in space, so the effect ends as done (reason 1) and the target stays.
+- **Decided: the pilot alone is told the reveal, after the record is kept.** The target is told nothing (EVE.js sends only to the scanning session; the V24.01 client
+  has no "you were scanned" notification). A repeated cycle is answered from the record and reveals nothing again.
+- **Decided: `TARGET_SELF` is the reference's `DeniedTargetSelf`.** Added to `ModuleRefusals` (EVE.js `dogmaService.js` maps `TARGET_SELF` the same way).
+- **Limit: NPC ships are refused as `NO_TARGET`.** The hold and fittings come from the item store, which holds no NPC inventory. EVE.js scans any entity.
+- **Not built in this track (each with its blocker).**
+  - Data Analyzer (`doHacking`), Relic Analyzer and Data Subverter (`hackOrbital`): the reference is EVE.js `moduleOperation.js` (the analyzer section) and the client's
+    hacking window. The minigame and loot container interior is the only named refusal allowed for them, and no body is written.
+  - Survey Scanner: no effect in the scanner runtime. `surveyScan` belongs to the mining chipsets (TODO section 7).
+  - Probe lifecycle notifications (E-06): depend on `LaunchProbes` (RC-7).
+- **Limitation: no graphical client run.** The MITM recipe needs a live EVE.js and a headless scenario that scripts a scanner. Neither exists, so the client's windows
+  were not driven.
+

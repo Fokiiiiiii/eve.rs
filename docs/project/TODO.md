@@ -91,8 +91,8 @@ Each effect below is **OPEN — module wired, effect body pending**. Its handler
 |---|---|---|
 | OPEN | `doHacking`: `DataAnalyzerEffect` (23 types, 10 published) | The hacking site: `maxRange` 54 (the effect's range), `accessDifficultyBonus` 902, `virusCoherence` 1909, `virusStrength` 1910, `virusElementSlots` 1911. The hacking and archaeology skills reach the virus stats through dogma. Reference: EveJS `moduleOperation.js`, analyzer section (about lines 1273-1600). |
 | OPEN | `hackOrbital`: `DataSubverterEffect` (Data Subverter I, unpublished) | No EveJS reference was found for this effect name. Specify it from the client before writing the body. |
-| OPEN | `cargoScan`: `CargoScanEffect` (6 types, 4 published) | The cargo reveal: `cargoScanRange` 126 (hard cutoff, no falloff); `OnCargoScanComplete`. Reference: EveJS `space/modules/scannerModuleRuntime.js`. |
-| OPEN | `shipScan`: `ShipScanEffect` (7 types, 3 published) | The ship reveal: `shipScanRange` 125 and `shipScanFalloff` 510 (standard falloff curve); `OnShipScanCompleted`. Reference: EveJS `space/modules/scannerModuleRuntime.js`. |
+| DONE (M-6) | `cargoScan`: `CargoScanEffect` (6 types, 4 published) | Built in track M-6, section 21: the hold reveal, `OnCargoScanComplete`, range 126 as a hard cutoff. |
+| DONE (M-6) | `shipScan`: `ShipScanEffect` (7 types, 3 published) | Built in track M-6, section 21: the fitted reveal with the falloff of attribute 510, `OnShipScanCompleted`. |
 | OPEN | `scanStrengthBonusPercentActivate`: `ScanStrengthActivateEffect` (44 types, none published) | The SDE effect carries four ship-scope `modifierInfo` entries (`scanRadarStrengthPercent` 1030 and siblings onto `scanRadarStrength` 208 and siblings, PostPercent). The body may be the existing `DogmaModifierEffect` path; decide that when it is written. |
 | OPEN | `scanStrengthTargetPercentBonus`: `ScanStrengthTargetEffect` (7 types, none published) | A target effect: `maxRange` 54 and `falloff` 158, and four `targetID` modifiers (the same percent attributes). Reference: EveJS `space/modules/assistanceModuleRuntime.js` (lines 86-100 and 190-210, projected path). |
 
@@ -447,4 +447,29 @@ Open, each with its exact blocker:
 - WG-3 (scripts and charges with a loaded script): the pairing in `Eve.Dogma/DogmaWorld.cs` has no PostgreSQL case with a loaded script yet.
 - WP12 and 1934 (`deactivateIfOffensive`, SDE default 1: an offensive module deactivates when its pilot disconnects): the disconnect path that would stop the modules is not located (`HostServer.Disconnect` posts the disconnect; the space release is not traced).
 - Host PostgreSQL run: `SpaceServiceTests.Safe_logoff_closes_the_space_session_after_its_timer` and `Aborting_safe_logoff_keeps_the_session_and_ship_in_space` fail alone with the refusal `ConditionsFailedHeader` (the baseline's safe-logoff group); the cause was not traced in this track.
+
+## 21. Scanner modules (track M-6, 2026-10-09)
+
+Done (decisions in DEVIATIONS "Scanner modules, track M-6"; wire in ADR 0013 epoch 39, protocol 38 to 39 in one bump):
+- Cargo Scanner (effect 47) and Ship Scanner (effect 46). Ranges and falloff come from the SDE effect records (cargo 126 with no falloff; ship 125 with the
+  falloff 510). One cycle (attribute 1014). The simulation decides the lock and the reach at activation and at the cycle's end (`crates/eve-space/src/modules/`,
+  `Action::Scan`). The host settles the reveal through the one work-cycle dispatcher (`dotnet/src/Eve.Services.Space/SpaceContainers.Scan.cs`, rules in
+  `Scanning/ScanRows.cs`). `OnCargoScanComplete` and `OnShipScanCompleted` go to the pilot alone, once per granted cycle (a repeat is answered from the record).
+  This is the cargo and ship part of the wiring gap E-08.
+- Refusals by name: `TARGET_REQUIRED`, `TARGET_SELF` (`DeniedTargetSelf`), `TARGET_NOT_FOUND`, `TARGET_NOT_LOCKED`, `TARGET_OUT_OF_RANGE` (the client's
+  `TargetNotWithinRangeGeneric` with the reach), `UNSUPPORTED_EFFECT` for a scanner with no range, and `That ship is resistant to your scan.` when the target's
+  scan resistance (188, 511) takes the cycle.
+- Tests: sim `modules::tests` (the six `a_scan*` and `a_scanner*` tests), simlink fixtures (two valid scans, two invalid scan frames, an unknown work command),
+  `ScanRowsTests` and `ModuleEffectsTests` (the scanners' build), PostgreSQL `ScannerHostTests` (cargo, ship, refusals and replay).
+
+Open, each with its blocker:
+- Data Analyzer (`doHacking`, effect 1738), Relic Analyzer (same effect) and Data Subverter (`hackOrbital`, effect 4773): not started. The reference is EVE.js
+  `moduleOperation.js` (the analyzer section) and the hacking window of the client; the minigame and the loot container interior are the only named refusal
+  allowed for them, and neither is written.
+- Survey Scanner: not part of this runtime. The reference's scanner module runtime has no survey effect; `surveyScan` belongs to the mining chipsets (section 7).
+- Resistance at activation: EVE.js refuses the start before a cycle is spent. The host reads the target's resistance at the cycle's end, so the eve.rs scanner
+  spends one cycle. A pre-activation check needs the target's resistance in the activation request (a wire field).
+- NPC targets: a target needs an item record for its hold and fittings. NPC ships have none, so they are refused as `NO_TARGET`.
+- Probe lifecycle notifications (E-06: `OnNewProbe`, `OnProbeWarpStart` and the rest): not started; they depend on `LaunchProbes` (RC-7).
+- Client check: not run. The MITM recipe (tools/mitm/README.md) needs a live EVE.js run and a headless scenario that scripts a scanner; neither exists.
 

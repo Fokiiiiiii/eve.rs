@@ -43,6 +43,10 @@ public sealed partial class ConfigService(
         return new PyList(rows);
     }
 
+    // shortcut: this server has no planet blocklist source; connect the global config owner if one is added.
+    [Method("GetBlackListedPlanets")]
+    public PyValue GetBlackListedPlanets(ServiceCall call) => new PyList([]);
+
     [Method("GetMultiOwnersEx")]
     public async ValueTask<PyValue> GetMultiOwnersEx(ServiceCall call)
     {

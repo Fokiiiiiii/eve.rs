@@ -81,6 +81,24 @@ public sealed partial class CorporationStore
         return result;
     }
 
+    public async Task<Eve.Wallet.WalletSettlement> DistributeDividendAsync(
+        long corporationId,IReadOnlyList<Eve.Wallet.WalletAllocation> recipients,string operationKey,CancellationToken token = default)
+    {
+        if (corporationId <= 0 || recipients.Count == 0 || string.IsNullOrWhiteSpace(operationKey))
+            throw new CorporationError("CORPORATION_INVALID_DIVIDEND");
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+        var settlement = await _wallets.DistributeAsync(connection,transaction,new Eve.Wallet.WalletAccount(corporationId,1000),
+            recipients,37,"Dividend",_now(),operationKey,$"corporation:{corporationId}",token);
+        await transaction.CommitAsync(token);
+        if (!settlement.Replayed)
+        {
+            foreach (var entry in settlement.Entries.GroupBy(entry => (entry.OwnerId,entry.AccountKey)).Select(group => group.Last()))
+                _wallets.AnnounceCommitted(new Eve.Wallet.WalletBalanceChange(entry.OwnerId,entry.AccountKey,entry.Balance));
+        }
+        return settlement;
+    }
+
     public Task MoveCompanySharesAsync(long corporationId,long actorId,long toOwnerId,long amount,string? operationKey,
         CancellationToken token = default)
     {

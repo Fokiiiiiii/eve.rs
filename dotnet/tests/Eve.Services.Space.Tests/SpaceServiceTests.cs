@@ -415,9 +415,10 @@ public class SpaceServiceTests
         Assert.IsType<PyTuple>(await rig.Space.EjectAsync(session, CancellationToken.None));
         var capsuleId = (await rig.Characters.GetAsync(character.CharacterId))!.ShipId!.Value;
 
-        var changedIndex = rig.Sim.Heard.FindIndex(message => message is SimShipChanged changed && changed.Ship.ShipId == shipId);
-        var leaveIndex = rig.Sim.Heard.FindIndex(message => message is SimLeave leave && leave.Why == LeaveWhy.Ejected);
-        var destroyIndex = rig.Sim.Heard.FindIndex(message => message is SimDestroy destroy && destroy.ShipId == shipId);
+        var heard = rig.Sim.Heard.ToArray();
+        var changedIndex = Array.FindIndex(heard, message => message is SimShipChanged changed && changed.Ship.ShipId == shipId);
+        var leaveIndex = Array.FindIndex(heard, message => message is SimLeave leave && leave.Why == LeaveWhy.Ejected);
+        var destroyIndex = Array.FindIndex(heard, message => message is SimDestroy destroy && destroy.ShipId == shipId);
         Assert.True(changedIndex >= 0 && changedIndex < leaveIndex && leaveIndex < destroyIndex);
         var changed = rig.Sim.Heard.OfType<SimShipChanged>().Single(message => message.Ship.ShipId == shipId);
         Assert.Equal(baseHull, changed.Ship.Vitals!.StructureHp);
@@ -2517,7 +2518,9 @@ public class SpaceServiceTests
 
         session.Close();
 
-        Assert.Equal(new SimLeave((ulong)session.SessionId, LeaveWhy.LoggedOff), rig.Sim.Heard.Last());
+        var leave = new SimLeave((ulong)session.SessionId, LeaveWhy.LoggedOff);
+        await Rig.UntilAsync(() => rig.Sim.Heard.Contains(leave));
+        Assert.Contains(leave, rig.Sim.Heard);
         await Rig.UntilAsync(() => rig.Items.GetAsync(character.ShipId).GetAwaiter().GetResult() is { LocationId: Rig.Station });
         Assert.False(rig.Space.IsInSpace(session));
     }

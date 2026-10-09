@@ -135,6 +135,98 @@ internal sealed partial class CharacterServicesComposition
         return PersistenceCharMgrReadModel.PackKillmailRows(page, CharMgrJsonToPy);
     }
 
+      async ValueTask<IReadOnlyList<PyValue>> ReadRecentCorporationKillmailPageAsync(
+          long corporationId,bool losses,int limit,long? startKillId,CancellationToken cancellationToken)
+      {
+          if (corporationId <= 0)
+              return [];
+          var table = await ReadGameStoreTableAsync("killmails",cancellationToken);
+          var records = new Dictionary<long,JsonObject>();
+          void Add(JsonNode? source)
+          {
+              foreach (var (key,row) in CharMgrRows(source))
+              {
+                  var killmailId = CharMgrJsonLong(row["killID"]);
+                  if (killmailId <= 0)
+                      killmailId = CharMgrJsonLong(row["killmailID"]);
+                  if (killmailId <= 0)
+                      killmailId = CharMgrJsonLong(JsonValue.Create(key));
+                  if (killmailId <= 0 || startKillId is > 0 && killmailId >= startKillId.Value)
+                      continue;
+
+                  var victimCharacter = CharMgrJsonLong(row["victimCharacterID"]);
+                  var victimCorporation = CharMgrJsonLong(row["victimCorporationID"]);
+                  var belongs = losses
+                      ? victimCorporation == corporationId
+                      : (victimCharacter > 0 || victimCorporation >= 2_000_000) &&
+                        (CharMgrJsonLong(row["finalCorporationID"]) == corporationId ||
+                         row["attackers"] is JsonArray attackers && attackers
+                             .OfType<JsonObject>()
+                             .Any(attacker => CharMgrJsonLong(attacker["corporationID"]) == corporationId));
+                  if (!belongs)
+                      continue;
+
+                  var copy = (JsonObject)row.DeepClone();
+                  copy["killID"] ??= JsonValue.Create(killmailId);
+                  if (copy["killTime"] is null)
+                  {
+                      var unixMs = CharMgrKillmailTime(copy);
+                      if (unixMs > 0)
+                          copy["killTime"] = JsonValue.Create(DateTimeOffset.FromUnixTimeMilliseconds(unixMs).ToFileTime());
+                  }
+                  records[killmailId] = copy;
+              }
+          }
+          Add(table["pending"]);
+          Add(table["records"]);
+          var ordered = records
+              .OrderByDescending(entry => CorporationKillmailTime(entry.Value))
+              .ThenByDescending(entry => entry.Key);
+          var page = (limit > 0 ? ordered.Take(limit) : ordered).Select(entry => entry.Value).ToArray();
+          return page.Select(row => CharMgrJsonToPy(row)).ToArray();
+      }
+
+      static long CorporationKillmailTime(JsonObject row)
+      {
+          var value = row["killmailTime"]?.ToString();
+          if (long.TryParse(value,System.Globalization.NumberStyles.Integer,
+                  System.Globalization.CultureInfo.InvariantCulture,out var unixMs))
+              return unixMs;
+          value = row["killTime"]?.ToString();
+          if (long.TryParse(value,System.Globalization.NumberStyles.Integer,
+                  System.Globalization.CultureInfo.InvariantCulture,out var filetime))
+              return filetime > 100_000_000_000_000L
+                  ? (filetime-116_444_736_000_000_000L)/10_000
+                  : filetime;
+          return DateTimeOffset.TryParse(value,System.Globalization.CultureInfo.InvariantCulture,
+              System.Globalization.DateTimeStyles.AssumeUniversal,out var timestamp)
+              ? timestamp.ToUnixTimeMilliseconds()
+              : 0;
+      }
+
+      async ValueTask<long> ReadCharacterAllyBaseCostAsync(long characterId,CancellationToken cancellationToken)
+      {
+          const int diplomaticRelationsTypeId = 3368;
+          const int baseCostAttributeId = 1820;
+          const int modifierAttributeId = 1821;
+          const double defaultBaseCost = 10_000_000;
+          var attributes = dogma.Type(diplomaticRelationsTypeId)?.Attributes;
+          var baseCost = attributes is not null && attributes.TryGetValue(baseCostAttributeId,out var baseAttribute) &&
+              double.IsFinite(baseAttribute)
+              ? Math.Round(baseAttribute*100,MidpointRounding.AwayFromZero)/100
+              : defaultBaseCost;
+          var modifier = attributes is not null && attributes.TryGetValue(modifierAttributeId,out var modifierAttribute) &&
+              double.IsFinite(modifierAttribute)
+              ? Math.Round(modifierAttribute*100,MidpointRounding.AwayFromZero)/100
+              : 0;
+          await using var connection = await source.OpenConnectionAsync(cancellationToken);
+          await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+          var skillLevel = await skills.LevelAsync(connection,transaction,characterId,diplomaticRelationsTypeId,cancellationToken);
+          await transaction.CommitAsync(cancellationToken);
+          var multiplier = Math.Max(0,1+(modifier*skillLevel)/100);
+          return Math.Max(0,(long)Math.Round(baseCost*multiplier,MidpointRounding.AwayFromZero));
+      }
+
     async ValueTask<string?> ReadCharacterDescriptionAsync(long characterId, CancellationToken cancellationToken)
     {
         if (characterId <= 0)

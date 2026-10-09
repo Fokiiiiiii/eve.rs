@@ -213,6 +213,27 @@ public sealed partial class CharMgrService(
             ("stationTypeID", Id(station.TypeId)));
     }
 
+
+    [Method("MachoResolveObject")]
+    public PyValue MachoResolveObject(ServiceCall call)
+    {
+        const long globalAssetsContainerId = 10002;
+        IReadOnlyList<PyValue> parameters = call.Arg(0) switch
+        {
+            PyTuple tuple => tuple.Items,
+            PyList list => list.Items,
+            _ => [],
+        };
+        var sessionCharacterId = call.Session.CharacterId.GetValueOrDefault();
+        var characterId = parameters.Count > 0
+            ? IdOf(parameters[0]) ?? sessionCharacterId
+            : sessionCharacterId;
+        var containerId = parameters.Count > 1 ? IdOf(parameters[1]) : null;
+        return characterId > 0 && containerId == globalAssetsContainerId
+            ? new PyInt(Eve.Macho.MachoMessage.ProxyNodeId)
+            : None;
+    }
+
     [Method("GetPaperdollState")]
     public PyValue GetPaperdollState(ServiceCall call) => new PyInt(0);
 
@@ -801,5 +822,37 @@ public sealed partial class CharMgrService(
         }
 
         return new PyList(await readRecentShipKillmailPage(characterId, num, startIndex, call.Cancellation));
+    }
+}
+
+
+[Service("home_station")]
+public sealed partial class HomeStationService(PgCharacterStore characters, StationCatalog stations)
+{
+    [Method("get_home_station")]
+    public async ValueTask<PyValue> GetHomeStation(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } characterId ||
+            await characters.GetAsync(characterId, call.Cancellation) is not { } character)
+            throw new InvalidOperationException("The current character has no home-station record.");
+
+        var station = stations.Get(character.HomeStationId);
+        var isFallback = false;
+        if (station is null)
+        {
+            station = stations.Get(character.StationId);
+            isFallback = station is not null;
+        }
+        if (station is null)
+            throw new InvalidOperationException($"Home station {character.HomeStationId} is unavailable.");
+
+        var header = Py.Tuple(
+            Py.Tuple(new PyToken("homestation.types.StationData")),
+            Py.Dict(
+                ("is_fallback", isFallback ? PyBool.True : PyBool.False),
+                ("solar_system_id", new PyInt(station.SolarSystemId)),
+                ("id", new PyInt(station.Id)),
+                ("type_id", new PyInt(station.TypeId))));
+        return new PyObjectEx(ObjectExKind.Ex2, header, [], []);
     }
 }

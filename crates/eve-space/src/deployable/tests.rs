@@ -283,3 +283,109 @@ fn a_defender_launcher_shoots_down_the_hostile_missile_in_its_reach() {
         "the interception is played as an explosion"
     );
 }
+
+/// An F.O.F. (auto-targeting) missile of the charge's flight: 1 km a second for ten seconds, so its reach is 10 km.
+fn fof_missile() -> crate::missiles::Missile {
+    crate::missiles::Missile {
+        charge_type_id: 27_100,
+        group_id: 394,
+        name: "Auto-Targeting Light Missile".to_string(),
+        radius: 1.0,
+        mass: 1.0,
+        agility: 1.0,
+        hit_points: 5.0,
+        max_velocity: 1_000.0,
+        flight_time_ms: 10_000.0,
+        explosion_radius: 10.0,
+        explosion_velocity: 400.0,
+        damage_reduction_factor: 0.1,
+        damage_reduction_sensitivity: 5.5,
+    }
+}
+
+/// A launcher of A that fires at `target_id` (the F.O.F. sentinel, or a locked ship), with `damage` a shot.
+fn launch_from_a(
+    scene: &mut Scene,
+    target_id: i64,
+    damage: f64,
+    missile: crate::missiles::Missile,
+    t: i64,
+) -> Vec<Out> {
+    let mut effect = module(MODULE + 500, Action::WarpBubble { range: 0.0 }, 5_000.0);
+    effect.action = None;
+    effect.target_id = target_id;
+    effect.turret = Some(crate::weapons::Turret {
+        weapon_type_id: 1,
+        fx: String::new(),
+        raw_damage: [damage, 0.0, 0.0, 0.0],
+        optimal_range: 0.0,
+        falloff: 0.0,
+        tracking_speed: 0.0,
+        signature_resolution: 0.0,
+        charge: None,
+        missile: Some(missile),
+        spool: None,
+        aoe: None,
+        arc: None,
+    });
+    scene.launch_missile(A, &effect, t)
+}
+
+/// A third ship, of `corporation` (A's own, or another), undocked and placed `metres` from A along x.
+fn third_ship(scene: &mut Scene, corporation: i32, metres: f64, t: i64) -> i64 {
+    let mut spec = other_spec();
+    spec.ship_id += 4;
+    spec.character_id += 1;
+    spec.owner_id += 1;
+    spec.corporation_id = corporation;
+    let ship = spec.ship_id;
+    scene.undock(10, spec, STATION, NOON).unwrap();
+    scene.bind(10, NOON);
+    let a = scene.pilots[&A].ship.position;
+    place(scene, 10, eve_destiny::Vec3::new(a.x + metres, a.y, a.z));
+    let _ = t;
+    ship
+}
+
+#[test]
+fn an_fof_launch_goes_for_the_nearest_valid_hostile_in_its_reach_and_locks_none() {
+    let (mut scene, t) = crowd();
+    // B is of another corporation (a hostile); the corporation-mate below is A's
+    scene.pilots.get_mut(&B).unwrap().ship.spec.corporation_id = 98_000_001;
+    let a_corp = scene.pilots[&A].ship.spec.corporation_id;
+    // B is five kilometres off; a ship of A's own corporation is nearer, and is not a hostile
+    let _mate = third_ship(&mut scene, a_corp, 3_000.0, t);
+    let b_ship = scene.pilots[&B].ship.spec.ship_id;
+    let out = launch_from_a(&mut scene, crate::missile_entity::AUTO_TARGET_ID, 100.0, fof_missile(), t);
+    let _ = out;
+    let missile = scene.missiles.values().next().expect("a missile was fired");
+    assert_eq!(missile.target, b_ship, "the nearest hostile in reach, not the corporation-mate");
+    assert_eq!(
+        scene.aggressions.last().map(|a| a.target_ship),
+        Some(b_ship),
+        "the aggression is the target it chose"
+    );
+}
+
+#[test]
+fn an_fof_launch_with_no_valid_hostile_in_its_reach_fires_nothing() {
+    let (mut scene, t) = crowd();
+    // B is pushed beyond the missile's ten kilometres of reach
+    let a = scene.pilots[&A].ship.position;
+    place(&mut scene, B, eve_destiny::Vec3::new(a.x + 30_000.0, a.y, a.z));
+    let out = launch_from_a(&mut scene, crate::missile_entity::AUTO_TARGET_ID, 100.0, fof_missile(), t);
+    assert!(scene.missiles.is_empty(), "nothing in reach, nothing fired");
+    assert!(out.is_empty());
+}
+
+#[test]
+fn a_launch_that_does_no_damage_makes_no_aggression_and_a_damaging_one_does() {
+    let (mut scene, t) = crowd();
+    scene.pilots.get_mut(&B).unwrap().ship.spec.corporation_id = 98_000_001;
+    let b_ship = scene.pilots[&B].ship.spec.ship_id;
+    launch_from_a(&mut scene, b_ship, 0.0, fof_missile(), t);
+    assert!(scene.aggressions.is_empty(), "a festival-style snowball is not offensive");
+    assert_eq!(scene.missiles.len(), 1, "the snowball still flies");
+    launch_from_a(&mut scene, b_ship, 100.0, fof_missile(), t);
+    assert_eq!(scene.aggressions.len(), 1, "a damaging missile aggresses its target");
+}

@@ -1,4 +1,5 @@
 use super::*;
+use crate::missile_entity::AUTO_TARGET_ID;
 
 impl Scene {
     pub(crate) fn dogma_notify(session: SessionId, name: &'static str, args: Vec<Value>) -> Out {
@@ -337,11 +338,11 @@ impl Scene {
             return vec![Out::Refused { session, command: CODE, reason: "MODULE_CLOAKED" }];
         }
         if effect.turret.is_some() {
-            if effect.target_id <= 0 {
+            if effect.target_id <= 0 && effect.target_id != AUTO_TARGET_ID {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_TARGET" }];
             }
             // a target that is not in the scene is not there (the reference answers `TARGET_NOT_FOUND`), one that is must be locked
-            if self.session_of(effect.target_id).is_none() {
+            if effect.target_id != AUTO_TARGET_ID && self.session_of(effect.target_id).is_none() {
                 return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_FOUND" }];
             }
             if !self.turret_target_ok(session, &effect) {

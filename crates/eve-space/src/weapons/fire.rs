@@ -1,8 +1,13 @@
 use super::*;
+use crate::missile_entity::AUTO_TARGET_ID;
 
 impl Scene {
     /// Whether the weapon of a running effect still has what it shoots at: the target is in the scene and the ship has it locked.
     pub(crate) fn turret_target_ok(&self, session: SessionId, effect: &Effect) -> bool {
+        // an F.O.F. missile locks nothing: its launcher picks the target when it fires (`missile_entity::AUTO_TARGET_ID`)
+        if effect.target_id == AUTO_TARGET_ID {
+            return effect.turret.as_ref().is_some_and(|turret| turret.missile.is_some());
+        }
         self.session_of(effect.target_id).is_some() && self.locked_by(session).contains(&effect.target_id)
     }
 

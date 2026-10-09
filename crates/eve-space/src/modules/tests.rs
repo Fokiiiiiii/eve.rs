@@ -3448,3 +3448,145 @@ fn a_scan_whose_target_leaves_its_reach_by_the_cycle_end_stops_and_asks_the_host
     assert!(work_cycles(&out).is_empty(), "no reveal is asked for a target out of reach: {out:?}");
     assert_eq!(ended(&out), vec![2], "the scan stops as its target is lost: {out:?}");
 }
+
+/// A command burst's effect (protocol 42): a Shield Command Burst I's cycle of one minute, reaching `range` metres, charged with two rounds, one a cycle.
+fn burst(range: f64) -> Effect {
+    let mut effect = repairer(Layer::Shield, 0.0, Applies::CycleEnd);
+    effect.module_type = 42529;
+    effect.effect_id = 6733;
+    effect.fx = String::new();
+    effect.duration_ms = 60_000.0;
+    effect.capacitor_need = 25.0;
+    effect.action = Some(Action::Charged {
+        action: Box::new(Action::CommandBurst { range_meters: range }),
+        fallback: None,
+        charge_type_id: 42695,
+        charge_flag: 27,
+        charge_per_cycle: 1,
+        charges: 2,
+    });
+    effect
+}
+
+/// The burst cycles asked of the host: the cycle id and the ships the simulation found in reach.
+fn burst_asks(out: &[Out]) -> Vec<(u64, Vec<i64>)> {
+    out.iter()
+        .filter_map(|item| match item {
+            Out::ModuleWorkCycle { cycle_id, command: WORK_BURST, recipients, .. } => {
+                Some((*cycle_id, recipients.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The arguments of the `OnDbuffUpdated` the pilot is told (the ship, then the list of buffs), if one is told.
+fn dbuff_arguments(out: &[Out], session: SessionId) -> Option<Vec<Value>> {
+    out.iter().find_map(|o| match o {
+        Out::Notify { session: s, name: "DoDestinyUpdate", args, .. } if *s == session => {
+            let Some(Value::List(actions)) = args.first() else { return None };
+            actions.iter().find_map(|a| {
+                let Value::Tuple(pair) = a else { return None };
+                let Value::Tuple(inner) = &pair[1] else { return None };
+                let (Value::Str(name), Value::Tuple(arguments)) = (&inner[0], &inner[1]) else { return None };
+                (name == "OnDbuffUpdated").then(|| arguments.clone())
+            })
+        }
+        _ => None,
+    })
+}
+
+#[test]
+fn a_command_burst_cycle_asks_the_host_for_the_ships_in_reach_and_is_parked_until_it_is_answered() {
+    let (mut scene, t) = crowd();
+    let (ship_a, ship_b) = (scene.pilots[&A].ship.spec.ship_id, scene.pilots[&B].ship.spec.ship_id);
+    scene.activate(A, burst(15_000.0), t);
+    let (out, at) = poll_until(&mut scene, t, 61.0);
+    let asks = burst_asks(&out);
+    assert_eq!(asks.len(), 1, "{out:?}");
+    let (cycle, recipients) = asks[0].clone();
+    let mut expected = vec![ship_a, ship_b];
+    expected.sort_unstable();
+    assert_eq!(recipients, expected);
+
+    // parked: the same cycle is asked again while the host has not answered, and no other
+    let (waiting, later) = poll_until(&mut scene, at, 10.0);
+    assert!(burst_asks(&waiting).iter().all(|(id, _)| *id == cycle), "{waiting:?}");
+
+    // granted: the effect goes on, and its next cycle asks the host again under a new cycle id
+    scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer { target_id: 0, cycle_id: cycle, accepted: true, reason: "", depleted: false },
+        later,
+    );
+    let (next, end_at) = poll_until(&mut scene, later, 61.0);
+    let second = burst_asks(&next).into_iter().map(|(id, _)| id).find(|id| *id != cycle);
+    let second = second.unwrap_or_else(|| panic!("the second cycle is asked: {:?}", labels(&next)));
+
+    // the second cycle spent the last charge, so it runs to its end: its answer is the last grant, and the burst ends with it
+    let last = scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer { target_id: 0, cycle_id: second, accepted: true, reason: "", depleted: false },
+        end_at,
+    );
+    assert!(
+        last.iter().any(|o| matches!(o, Out::ModuleEnded { module_id: MODULE, reason: 4, .. })),
+        "{last:?}"
+    );
+}
+
+#[test]
+fn a_command_burst_reaches_the_ships_within_its_range_and_no_others() {
+    let (mut scene, t) = crowd();
+    let ship_a = scene.pilots[&A].ship.spec.ship_id;
+    // B is moved 40 km off, beyond a 15 km reach
+    scene.pilots.get_mut(&B).unwrap().ship.position.x += 40_000.0;
+    scene.activate(A, burst(15_000.0), t);
+    let (out, _) = poll_until(&mut scene, t, 61.0);
+    assert_eq!(burst_asks(&out).first().map(|(_, ships)| ships.clone()), Some(vec![ship_a]), "{out:?}");
+}
+
+#[test]
+fn a_refused_command_burst_cycle_ends_the_burst_with_its_work_refused() {
+    let (mut scene, t) = crowd();
+    scene.activate(A, burst(15_000.0), t);
+    let (out, at) = poll_until(&mut scene, t, 61.0);
+    let (cycle, _) = burst_asks(&out)[0].clone();
+    let told = scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer {
+            target_id: 0,
+            cycle_id: cycle,
+            accepted: false,
+            reason: "NOT_CONTROLLED",
+            depleted: false,
+        },
+        at,
+    );
+    assert!(
+        told.iter().any(|o| matches!(o, Out::ModuleEnded { module_id: MODULE, reason: 5, .. })),
+        "{told:?}"
+    );
+}
+
+#[test]
+fn a_ships_buffs_are_told_to_its_pilot_as_on_dbuff_updated_with_the_time_left() {
+    let (mut scene, t) = crowd();
+    let ship = scene.pilots[&A].ship.spec.ship_id;
+    let entries = vec![crate::link::BuffEntry { collection_id: 10, value: -10.0, remaining_ms: 60_000.0 }];
+    let told = scene.set_buffs(A, ship, entries, t);
+    let arguments = dbuff_arguments(&told, A).expect("the pilot is told its buffs");
+    assert_eq!(arguments[0], crate::wire::id(ship));
+    assert_eq!(
+        arguments[1],
+        crate::wire::list([crate::wire::tuple([
+            crate::wire::int(10),
+            crate::wire::tuple([crate::wire::real(-10.0), crate::wire::filetime(t + 600_000_000)]),
+        ])])
+    );
+    // a state for a ship that is not the session's is told to nobody
+    assert!(scene.set_buffs(A, ship + 1, Vec::new(), t).is_empty());
+}

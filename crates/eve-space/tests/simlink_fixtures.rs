@@ -249,7 +249,11 @@ fn effect_of(case: &Value) -> Effect {
                 };
                 let fallback = (!a["fallback"].is_null()).then(|| Box::new(repair(&a["fallback"])));
                 return Action::Charged {
-                    action: Box::new(repair(&a["action"])),
+                    action: Box::new(if a["action"]["kind"] == "commandBurst" {
+                        Action::CommandBurst { range_meters: a["action"]["rangeMeters"].as_f64().unwrap() }
+                    } else {
+                        repair(&a["action"])
+                    }),
                     fallback,
                     charge_type_id: a["chargeTypeId"].as_i64().unwrap() as i32,
                     charge_flag: a["chargeFlag"].as_i64().unwrap() as i32,
@@ -310,6 +314,9 @@ fn effect_of(case: &Value) -> Effect {
                     range: a["range"].as_f64().unwrap(),
                     lifetime_ms: a["lifetimeMs"].as_f64().unwrap(),
                 };
+            }
+            if a["kind"] == "commandBurst" {
+                return Action::CommandBurst { range_meters: a["rangeMeters"].as_f64().unwrap() };
             }
             if a["kind"] == "cynoField" {
                 return Action::CynoField {
@@ -766,6 +773,16 @@ fn message_of(case: &Value) -> Message {
             waste_roll: case["wasteRoll"].as_f64().unwrap(),
             rounding_roll: case["roundingRoll"].as_f64().unwrap(),
             crit_roll: case["critRoll"].as_f64().unwrap(),
+            recipients: case.get("recipients").and_then(|list| list.as_array()).map_or_else(
+                Vec::new,
+                |list| {
+                    list.iter()
+                        .map(|ship| {
+                            ship.as_str().map_or_else(|| ship.as_i64().unwrap(), |text| text.parse().unwrap())
+                        })
+                        .collect()
+                },
+            ),
         },
         "ModuleWorkResult" => Message::ModuleWorkResult {
             session_id: session_id(),
@@ -806,6 +823,20 @@ fn message_of(case: &Value) -> Message {
             session_id: session_id(),
             module_id: wide(case, "moduleId"),
             rounds_left: wide(case, "roundsLeft"),
+        },
+        "BuffState" => Message::BuffState {
+            session_id: session_id(),
+            ship_id: wide(case, "shipId"),
+            entries: case["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| eve_space::link::BuffEntry {
+                    collection_id: entry["collectionId"].as_i64().unwrap() as i32,
+                    value: entry["value"].as_f64().unwrap(),
+                    remaining_ms: entry["remainingMs"].as_f64().unwrap(),
+                })
+                .collect(),
         },
         "UpdateEffect" => Message::UpdateEffect {
             session_id: session_id(),

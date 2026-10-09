@@ -416,6 +416,24 @@ impl Message {
                 };
                 Message::AdjustCharge { request_id, session_id, module_id, charge_type, op }
             }
+            kind::BUFF_STATE => {
+                let session_id = r.u64()?;
+                let ship_id = r.i64()?;
+                let count = r.u32()? as usize;
+                // an entry takes 20 bytes, so a count the frame cannot hold is refused before anything is allocated for it
+                if count > r.data.len() / 20 {
+                    return Err(DecodeError::Truncated);
+                }
+                let mut entries = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let (collection_id, value, remaining_ms) = (r.i32()?, r.f64()?, r.f64()?);
+                    if !value.is_finite() || !remaining_ms.is_finite() || remaining_ms < 0.0 {
+                        return Err(DecodeError::BadValue("buff state"));
+                    }
+                    entries.push(BuffEntry { collection_id, value, remaining_ms });
+                }
+                Message::BuffState { session_id, ship_id, entries }
+            }
             kind::UPDATE_EFFECT => {
                 let session_id = r.u64()?;
                 let module_id = r.i64()?;
@@ -685,10 +703,11 @@ impl Message {
                 let waste_roll = r.f64()?;
                 let rounding_roll = r.f64()?;
                 let crit_roll = r.f64()?;
+                let recipients = read_recipients(&mut r)?;
                 let numbers = [mining_amount_m3, waste_multiplier, crit_multiplier, access_difficulty_bonus];
                 // probabilities are at most one, the rolls below one, and every number finite and not negative; a mining cycle mines something
                 if cycle_id == 0
-                    || !matches!(command, 7..=9)
+                    || !matches!(command, 7..=12)
                     || numbers
                         .iter()
                         .chain([
@@ -703,13 +722,14 @@ impl Message {
                     || crit_probability > 1.0
                     || [waste_roll, rounding_roll, crit_roll].iter().any(|roll| *roll >= 1.0)
                     || (command == 7 && mining_amount_m3 <= 0.0)
-                    || (command == 9
+                    || (matches!(command, 9..=12)
                         && (mining_amount_m3 != 0.0
                             || waste_multiplier != 0.0
                             || waste_probability != 0.0
                             || crit_probability != 0.0
                             || crit_multiplier != 0.0
                             || access_difficulty_bonus != 0.0))
+                    || (command != 12 && !recipients.is_empty())
                 {
                     return Err(DecodeError::BadValue("module work cycle"));
                 }
@@ -731,6 +751,7 @@ impl Message {
                     waste_roll,
                     rounding_roll,
                     crit_roll,
+                    recipients,
                 }
             }
             kind::MODULE_WORK_RESULT => {

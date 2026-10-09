@@ -1,5 +1,6 @@
 use super::*;
 use crate::missile_entity::AUTO_TARGET_ID;
+use crate::wire::{filetime, id, int, list, real, tuple};
 
 impl Scene {
     pub(crate) fn dogma_notify(session: SessionId, name: &'static str, args: Vec<Value>) -> Out {
@@ -669,6 +670,30 @@ impl Scene {
         Vec::new()
     }
 
+    /// The host's state of a ship's buffs (`BuffState`, protocol 42): the client is told `OnDbuffUpdated` with them, as the reference tells it. The numbers
+    /// of the ship are the host's (it sends them with the buffs); nothing is answered. A state for a ship that is not this session's is not told.
+    pub(crate) fn set_buffs(
+        &mut self,
+        session: SessionId,
+        ship_id: i64,
+        entries: Vec<crate::link::BuffEntry>,
+        now: i64,
+    ) -> Vec<Out> {
+        if self.pilots.get(&session).is_none_or(|pilot| pilot.ship.spec.ship_id != ship_id) {
+            return Vec::new();
+        }
+        let stamp = self.next_stamp(now);
+        // a remaining time in milliseconds is a span of ticks (a tick is 100 ns, as the FILETIME is)
+        let entries = entries.into_iter().map(|entry| {
+            let expires_at = now + (entry.remaining_ms * (TICKS_PER_SECOND as f64 / 1000.0)).round() as i64;
+            tuple([int(i64::from(entry.collection_id)), tuple([real(entry.value), filetime(expires_at)])])
+        });
+        vec![Scene::update(
+            session,
+            vec![payload::action(stamp, "OnDbuffUpdated", [id(ship_id), list(entries)])],
+        )]
+    }
+
     /// The running effect of a module of this session, if it runs.
     pub(super) fn running_mut(&mut self, session: SessionId, module_id: i64) -> Option<&mut Running> {
         self.pilots
@@ -747,12 +772,14 @@ impl Scene {
             number(new as f64),
             number(old as f64),
         );
+        // a charged cycle that takes effect at its end (a command burst, a charged repair at the cycle's end) goes on to that end on the round it spent
+        let ends_cycle = matches!(run.effect.action.as_ref(), Some(Action::Charged { action, .. }) if action.ends_its_cycle());
         (
             vec![
                 Self::dogma_notify(session, "OnModuleAttributeChanges", vec![Value::List(vec![line])]),
                 Out::ChargeSpent { session, module_id, rounds_left: new },
             ],
-            action_charge.is_some() && new > 0 || action_charge.is_none() && new >= per_cycle,
+            action_charge.is_some() && (new > 0 || ends_cycle) || action_charge.is_none() && new >= per_cycle,
         )
     }
 

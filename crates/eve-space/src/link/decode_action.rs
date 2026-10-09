@@ -186,6 +186,14 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             }
             Ok(Action::Bomb { ball, kind, lifetime_ms, blast_radius, damage, ecm, neutralize })
         }
+        28 => {
+            // a command burst (protocol 42): the reach in metres; its buffs are the host's, read from the charge when it settles
+            let range_meters = reader.f64()?;
+            if !range_meters.is_finite() || range_meters < 0.0 {
+                return Err(DecodeError::BadValue("command burst action"));
+            }
+            Ok(Action::CommandBurst { range_meters })
+        }
         27 => {
             let ball = read_deployable(reader)?;
             let lifetime_ms = reader.f64()?;

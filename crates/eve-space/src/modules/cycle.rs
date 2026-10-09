@@ -254,6 +254,10 @@ impl Scene {
 
     /// A work target (a rock, a wreck) is there while the pilot holds its lock: a depleted rock drops its locks.
     pub(super) fn work_target_ok(&self, session: SessionId, effect: &Effect) -> bool {
+        // a command burst reaches its ships, not a target: it is there while its pilot runs it
+        if effect.action.as_ref().is_some_and(Action::targets_nothing) {
+            return true;
+        }
         let locked = self.locked_by(session).contains(&effect.target_id);
         // a scan's target is also in its reach: the lock alone is not enough once the ship has moved off (scanner range, cycle end)
         let in_reach = match effect.action.as_ref() {
@@ -320,6 +324,22 @@ impl Scene {
         }
     }
 
+    /// The ships a command burst of `range_meters` reaches from this ship, as the scene measures them: every ship of the scene within the range plus one metre
+    /// (surface to surface), the source among them. The host decides which of them its fleet has, and caps the list (`BurstRecipients`).
+    fn burst_recipients(&self, session: SessionId, range_meters: f64) -> Vec<i64> {
+        let mut ships: Vec<i64> = self
+            .pilots
+            .iter()
+            .filter(|(other, _)| {
+                **other == session
+                    || self.apart(session, **other).is_some_and(|apart| apart <= range_meters + 1.0)
+            })
+            .map(|(_, pilot)| pilot.ship.spec.ship_id)
+            .collect();
+        ships.sort_unstable();
+        ships
+    }
+
     /// The `ModuleWorkCycle` that asks the host for the fuel of a cycle (`WORK_FUEL`): nothing is mined or salvaged, the host takes the fuel or refuses.
     pub(super) fn fuel_cycle_out(
         &self,
@@ -338,6 +358,7 @@ impl Scene {
             target_id,
             cycle_id,
             command: WORK_FUEL,
+            recipients: Vec::new(),
             mining_amount_m3: 0.0,
             waste_multiplier: 0.0,
             waste_probability: 0.0,
@@ -441,12 +462,17 @@ impl Scene {
                 *crit_multiplier,
                 0.0,
             ),
+            Action::CommandBurst { .. } => (WORK_BURST, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
             Action::Salvage { access_bonus } => (WORK_SALVAGE, 0.0, 0.0, 0.0, 0.0, 0.0, *access_bonus),
             // a scan carries no mining numbers: the host reads the target and decides what it reveals
             Action::Scan { cargo, .. } => {
                 (if *cargo { WORK_SCAN_CARGO } else { WORK_SCAN_SHIP }, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
             }
             _ => return None,
+        };
+        let recipients = match work {
+            Action::CommandBurst { range_meters } => self.burst_recipients(session, *range_meters),
+            _ => Vec::new(),
         };
         Some(Out::ModuleWorkCycle {
             session,
@@ -466,6 +492,7 @@ impl Scene {
             waste_roll: pending.rolls[0],
             rounding_roll: pending.rolls[1],
             crit_roll: pending.rolls[2],
+            recipients,
         })
     }
 

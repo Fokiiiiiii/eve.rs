@@ -273,6 +273,8 @@ pub enum Out {
         waste_roll: f64,
         rounding_roll: f64,
         crit_roll: f64,
+        /// The ships a command burst reaches (a burst only; empty for every other command), as the scene measures them.
+        recipients: Vec<i64>,
     },
     /// An effect of a module ended (once per end): the host clears it from the ship it sends (`reason` is `Ending::wire_reason`, FP-C1).
     ModuleEnded { session: SessionId, module_id: i64, reason: u8 },

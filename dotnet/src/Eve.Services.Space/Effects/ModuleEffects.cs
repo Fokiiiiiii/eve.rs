@@ -25,6 +25,7 @@ internal static class ModuleEffects
     public static EffectRegistry<ShipSnapshot, SimEffect> Default { get; } = new EffectRegistry<ShipSnapshot, SimEffect>()
         .Register(SensorBooster)
         .Register(new MiningLaserEffect())
+        .Register(new SalvagerEffect())
         .Register(new PropulsionEffect())
         .Register(new TurretEffect())
         .Register(new BarragePendingEffect())

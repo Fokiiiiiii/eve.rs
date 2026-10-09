@@ -807,12 +807,6 @@ private void OnReceived(SimMessage message)
             return WorkOutcome.Refuse("OUT_OF_RANGE");
         }
 
-        // a module's salvage is not wired yet: refused by name, never granted as a no-op (AGENTS rule 5)
-        if (cycle.IsModule && cycle.Command != SimDroneCommands.MineRepeatedly)
-        {
-            return WorkOutcome.Refuse("NOT_IMPLEMENTED");
-        }
-
         if (cycle.Command == SimDroneCommands.MineRepeatedly)
         {
             // a module's rolls are the simulation's three draws; a drone rounds down and never crits, so its crit draw is unused
@@ -869,7 +863,8 @@ private void OnReceived(SimMessage message)
             return WorkOutcome.Refuse("NO_SALVAGE_PRODUCTS");
         }
         var salvaged = await _ships.SalvageWreckAsync(
-            cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.OwnerId, cycle.TargetId, salvageTypeId,
+            cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.IsModule ? MiningSource.Module : MiningSource.Drone,
+            cycle.OwnerId, cycle.TargetId, salvageTypeId,
             targetSpace, _nowUnixMs() + (long)CanLifetime.TotalMilliseconds, _spaceItems);
         if (!salvaged.Accepted)
         {

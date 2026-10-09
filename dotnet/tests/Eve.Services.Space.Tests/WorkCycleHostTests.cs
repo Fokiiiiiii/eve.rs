@@ -148,6 +148,56 @@ public class WorkCycleHostTests
         Assert.False(rig.Space.IsModuleActive(session, flying.Module));
     }
 
+    [PgFact]
+    public async Task A_salvager_cycle_on_a_wreck_is_granted_its_product_into_the_hold()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var types = await new Eve.Sde.SdeReader(rig.Source).ReadTypeSummariesAsync();
+        var salvagerTypeId = DroneHostTests.SdeTypeId(types, "Salvager I");
+        // a wreck type is not published, as the drone salvage test finds it
+        var wreckTypeId = Assert.Single(types, type => type.Name == "Amarr Frigate Wreck").TypeId;
+        await rig.Statics.EnsureTypesAsync([salvagerTypeId, wreckTypeId]);
+        var flying = await DroneHostTests.FlyingWithADroneAsync(rig, minerTypeId: salvagerTypeId);
+        var wreckId = await WreckInSpaceAsync(rig, flying, wreckTypeId);
+        StartModule(rig, flying);
+
+        var result = await SettleAsync(rig, SalvageCycle(flying, flying.Module, wreckId, 6));
+
+        Assert.True(result.Accepted, result.Reason);
+        var product = Assert.Single(await rig.Items.InContainerAsync(flying.Session.GetInt("shipid")!.Value), item =>
+            rig.Statics.GroupName(rig.Statics.Type(item.TypeId)!.GroupId) == "Salvaged Materials");
+        Assert.Equal(1L, product.Quantity);
+        var recorded = await new PgWorkCycleLedger(rig.Source, rig.SpaceSchema).LastAsync(flying.Module);
+        Assert.Equal((6L, true), (recorded?.CycleId, recorded?.Accepted));
+    }
+
+    /// <summary>A salvage cycle of a module: the access bonus is the module's, and the roll decides the chance (0 is a success at any chance).</summary>
+    private static SimModuleWorkCycle SalvageCycle(DroneHostTests.Flying flying, long moduleId, long targetId, ulong cycleId) => new(
+        (ulong)flying.Session.SessionId, flying.Character, flying.Session.GetInt("shipid")!.Value, flying.System, moduleId, targetId, cycleId,
+        SimDroneCommands.Salvage, 0, 0, 0, 0, 0, 3, 0.0, 0.5, 0.75);
+
+    /// <summary>A wreck of an Amarr frigate in the pilot's system, with no contents: the salvager reaches it and the answer takes its product.</summary>
+    private static async Task<long> WreckInSpaceAsync(Rig rig, DroneHostTests.Flying flying, int wreckTypeId)
+    {
+        var factions = await new Eve.Sde.SdeReader(rig.Source).ReadAsync("factions");
+        var amarr = (int)Assert.Single(factions, faction =>
+            faction.Doc.TryGetProperty("name", out var name)
+            && Eve.Sde.SdeReader.English(name).Equals("Amarr Empire", StringComparison.OrdinalIgnoreCase)).Key;
+        var wreckType = rig.Statics.Type(wreckTypeId)!;
+        long wreckId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            wreckId = await rig.Items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(wreckTypeId, flying.Character, flying.System, Eve.Ships.CharacterShips.InSpaceFlag, 1, true));
+            await transaction.CommitAsync();
+        }
+        await rig.SpaceItems.SaveAsync(new Eve.Ships.SpaceItem(
+            wreckId, flying.System, [1000, 2000, 3000], [1, 0, 0], 14, wreckType.GroupId, flying.Session.GetInt("shipid")!.Value,
+            flying.Character, 0, 0, amarr, long.MaxValue));
+        return wreckId;
+    }
+
     /// <summary>A pilot in space with a Miner I fitted and online, and a rock of Veldspar in its system.</summary>
     private static async Task<(DroneHostTests.Flying Flying, long Rock)> MiningPilotAsync(Rig rig)
     {

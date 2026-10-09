@@ -342,8 +342,12 @@ private sealed record ShipHoldRule(
             change is null ? null : new ShipChanged(change.After.Id, shipId, [], [], [change]), mined, asteroid.TypeId);
     }
 
+    /// <summary>
+    /// One salvage cycle of a wreck by a salvager of the ship: a drone (in space) or a module (fitted). The wreck's product goes to the ship's hold and what
+    /// is left in the wreck goes to a can; the miner checks are the ones of <see cref="MineAsteroidAsync"/>.
+    /// </summary>
     public async Task<DroneSalvageCommit> SalvageWreckAsync(
-        long characterId, long shipId, int solarSystemId, long droneId, long wreckId, int? productTypeId,
+        long characterId, long shipId, int solarSystemId, MiningSource kind, long minerId, long wreckId, int? productTypeId,
         SpaceItem wreckSpace, long containerExpiresAtMs, PgSpaceItemStore spaceItems,
         CancellationToken cancellationToken = default)
     {
@@ -355,9 +359,9 @@ private sealed record ShipHoldRule(
         {
             return new(false, "NO_SHIP", null, null, null);
         }
-        if (await items.LockAndGetAsync(connection, transaction, droneId, cancellationToken) is not { } drone
-            || drone.OwnerId != characterId || drone.LocationId != solarSystemId || drone.Flag != InSpaceFlag
-            || statics.Type(drone.TypeId) is not { } droneType || statics.CategoryName(droneType.CategoryId) != "Drone")
+        if (await items.LockAndGetAsync(connection, transaction, minerId, cancellationToken) is not { } drone
+            || drone.OwnerId != characterId || !IsPlacedFor(kind, drone, solarSystemId, shipId)
+            || statics.Type(drone.TypeId) is not { } droneType || statics.CategoryName(droneType.CategoryId) != CategoryOf(kind))
         {
             return new(false, "NOT_CONTROLLED", null, null, null);
         }

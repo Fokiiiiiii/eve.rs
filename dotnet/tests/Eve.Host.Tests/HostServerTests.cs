@@ -1,3 +1,4 @@
+using Eve.Host;
 using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
@@ -692,7 +693,7 @@ public class HostServerTests : IAsyncLifetime
                 ? new PyInt(integer)
                 : PyNone.Instance;
 
-        var packed = global::PersistenceCharMgrReadModel.PackKillmailRows(rows, ToPy);
+        var packed = global::Eve.Host.PersistenceCharMgrReadModel.PackKillmailRows(rows, ToPy);
         var row = Assert.IsType<PyPackedRow>(Assert.Single(packed));
         var attributes = row.Fields().ToDictionary(field => field.Key, field => field.Value, StringComparer.Ordinal);
 
@@ -845,9 +846,9 @@ public class HostServerTests : IAsyncLifetime
                 hub.CorporationId == corporationId &&
                 hub.AllianceId == allianceId);
 
-        var charges = new List<global::SovSkyhookAcquisitionCharge>();
+        var charges = new List<global::Eve.Host.SovSkyhookAcquisitionCharge>();
         ValueTask<bool> Charge(
-            IReadOnlyList<global::SovSkyhookAcquisitionCharge> requested,
+            IReadOnlyList<global::Eve.Host.SovSkyhookAcquisitionCharge> requested,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -859,14 +860,14 @@ public class HostServerTests : IAsyncLifetime
         }
 
         ValueTask<bool> HasWalletOperation(
-            global::SovSkyhookAcquisitionCharge charge,
+            global::Eve.Host.SovSkyhookAcquisitionCharge charge,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.FromResult(walletOperationKeys.Contains(charge.OperationKey));
         }
 
-        var writer = new global::PersistenceSovFwWriteOperations(
+        var writer = new global::Eve.Host.PersistenceSovFwWriteOperations(
             ReadCache,
             Write,
             Flush,
@@ -1050,7 +1051,7 @@ public class HostServerTests : IAsyncLifetime
             return ValueTask.FromResult(true);
         }
 
-        var writer = new global::PersistenceSkyhookActivationWriter(
+        var writer = new global::Eve.Host.PersistenceSkyhookActivationWriter(
             ReadCacheTable,
             Write,
             Flush,
@@ -1801,8 +1802,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             }
             _readTable = ReadTableAsync;
             _affiliationOf = AffiliationOfAsync;
-            StructureDirectory = new global::PersistenceStructureDirectoryReadModel(ReadTableAsync, AffiliationOfAsync);
-            Store = new global::PersistenceStructureAssetSafetyReadModel(
+            StructureDirectory = new global::Eve.Host.PersistenceStructureDirectoryReadModel(ReadTableAsync, AffiliationOfAsync);
+            Store = new global::Eve.Host.PersistenceStructureAssetSafetyReadModel(
                 source, Items, SpaceItems, Wallets, Sde, ReadTableAsync, AffiliationOfAsync, () => Now,
                 inventorySchema, corporationSchema, assetSafetySchema, StructureDirectory,
                 message => LogMessages.Add(message));
@@ -1827,8 +1828,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         public Eve.Wallet.PgWalletStore WalletStore { get; }
         public Eve.Wallet.WalletTransactions Wallets { get; }
         public Eve.Ships.PgSpaceItemStore SpaceItems { get; }
-        public global::PersistenceStructureDirectoryReadModel StructureDirectory { get; }
-        public global::PersistenceStructureAssetSafetyReadModel Store { get; }
+        public global::Eve.Host.PersistenceStructureDirectoryReadModel StructureDirectory { get; }
+        public global::Eve.Host.PersistenceStructureAssetSafetyReadModel Store { get; }
         public long Now { get; set; }
         public System.Collections.Generic.List<string> LogMessages { get; } = [];
         public long WormholeSystemId { get; private set; }
@@ -1884,7 +1885,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                 await Eve.Inventory.PgItemStore.MigrateAsync(source, inventorySchema);
                 await Eve.Wallet.PgWalletStore.MigrateAsync(source, walletSchema);
                 await Eve.Ships.PgSpaceItemStore.MigrateAsync(source, spaceSchema);
-                await global::PersistenceStructureAssetSafetyReadModel.MigrateAsync(source, assetSafetySchema);
+                await global::Eve.Host.PersistenceStructureAssetSafetyReadModel.MigrateAsync(source, assetSafetySchema);
                 await rig.CreateCorporationSchemaAsync();
 
                 foreach (var (systemId, system) in systems)

@@ -104,7 +104,7 @@ impl SceneWorld<'_> {
         let session = self.session_of(ball_id)?;
         let ship = &self.scene.pilots.get(&session)?.ship;
         let (mode, follow_id) = match ship.course {
-            Course::Goto => (DESTINY_MODE_GOTO, 0),
+            Course::Goto | Course::GotoPoint { .. } => (DESTINY_MODE_GOTO, 0),
             Course::Stop => (DESTINY_MODE_STOP, 0),
             Course::Follow { target, .. } => (DESTINY_MODE_FOLLOW, target),
             Course::Orbit { target, .. } => (DESTINY_MODE_ORBIT, target),

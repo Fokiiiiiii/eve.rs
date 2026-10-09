@@ -64,6 +64,8 @@ pub struct ShipSpec {
 pub enum Course {
     /// Heading along `direction` at `speed_fraction` of the top speed.
     Goto,
+    /// Flying to a point at the speed it is asked for, and stopping there (a fighter's GOTO_POINT; the reference's `GotoPoint`).
+    GotoPoint { point: Vec3 },
     /// Slowing to a halt.
     Stop,
     /// Approaching a body and staying `range` metres off its surface.
@@ -215,7 +217,7 @@ impl Ship {
                 None => Kind::Ship,
             },
             legacy_mode: match self.course {
-                Course::Goto => LegacyMode::Goto,
+                Course::Goto | Course::GotoPoint { .. } => LegacyMode::Goto,
                 Course::Stop => LegacyMode::Stop,
                 Course::Follow { .. } => LegacyMode::Follow,
                 Course::Orbit { .. } => LegacyMode::Orbit,

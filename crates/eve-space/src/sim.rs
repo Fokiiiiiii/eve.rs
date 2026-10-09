@@ -529,6 +529,18 @@ impl Sim {
                 };
                 return Ok(Self::messages(scene.fighter_order(session_id, &fighter_ids, order, now)));
             }
+            Message::FighterGotoPoint { session_id, fighter_ids, point } => {
+                use crate::fighters::FighterOrder;
+                // no ship in space: nothing is under this pilot's control, and each squadron is told so (as for the other fighter orders)
+                let Some(scene) = self.scene_of(session_id) else {
+                    return Ok(vec![Message::FighterResults {
+                        session_id,
+                        command: 6,
+                        results: fighter_ids.into_iter().map(|id| (id, "NOT_CONTROLLED".to_string())).collect(),
+                    }]);
+                };
+                return Ok(Self::messages(scene.fighter_order(session_id, &fighter_ids, FighterOrder::GotoPoint { point }, now)));
+            }
             Message::DroneCommand { session_id, command, target_id, drone_ids, control_range } => {
                 let command = match command {
                     1 => DroneCommand::Engage { target: target_id },

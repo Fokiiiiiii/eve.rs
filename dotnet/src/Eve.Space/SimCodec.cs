@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static class SimCodec
 {
-    public const ushort ProtocolVersion = 31;
+    public const ushort ProtocolVersion = 32;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -94,6 +94,7 @@ public static class SimCodec
         public const byte FighterResults = 56;
         public const byte FighterLanded = 57;
         public const byte FighterReleased = 58;
+        public const byte FighterGotoPoint = 59;
     }
 
     private ref struct Reader(ReadOnlyMemory<byte> data)
@@ -973,6 +974,22 @@ public static class SimCodec
                 break;
             case Kind.FighterReleased:
                 message = new SimFighterReleased(r.U64(), r.I64(), ReadVector(ref r));
+                break;
+            case Kind.FighterGotoPoint:
+                {
+                    var session = r.U64();
+                    var count = r.U32();
+                    if (r.Remaining < 8 || count > (r.Remaining - 8) / 8)
+                    {
+                        throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");
+                    }
+                    var fighters = new long[count];
+                    for (var i = 0; i < fighters.Length; i++)
+                    {
+                        fighters[i] = r.I64();
+                    }
+                    message = new SimFighterGotoPoint(session, fighters, ReadVector(ref r));
+                }
                 break;
             case Kind.DroneWorkCycle:
                 message = new SimDroneWorkCycle(r.U64(), r.I64(), r.I64(), r.I32(), r.I64(), r.I64(), r.U64(), r.U8(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64());
@@ -2096,6 +2113,23 @@ private static void WriteAction(Writer w, SimAction action)
                     w.I64(fighter);
                 }
                 w.F64(m.Range);
+                break;
+            case SimFighterGotoPoint m:
+                w.U8(Kind.FighterGotoPoint);
+                w.U64(m.SessionId);
+                w.U32((uint)m.FighterIds.Count);
+                foreach (var fighter in m.FighterIds)
+                {
+                    w.I64(fighter);
+                }
+                if (m.Point.Count != 3)
+                {
+                    throw new ArgumentException("a point has three coordinates", nameof(m));
+                }
+                foreach (var coordinate in m.Point)
+                {
+                    w.F64(coordinate);
+                }
                 break;
             case SimFighterResults m:
                 w.U8(Kind.FighterResults);

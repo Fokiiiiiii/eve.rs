@@ -616,6 +616,10 @@ public static class SimFighterOrders
 /// </summary>
 public sealed record SimFighterOrder(ulong SessionId, byte Command, long TargetId, IReadOnlyList<long> FighterIds, double Range) : SimMessage;
 
+/// <summary>A pilot sends its squadrons to a point of the scene (GOTO_POINT): the squadrons (their item ids) and the point, in metres. Answered with
+/// <see cref="SimFighterResults"/> under command 6.</summary>
+public sealed record SimFighterGotoPoint(ulong SessionId, IReadOnlyList<long> FighterIds, IReadOnlyList<double> Point) : SimMessage;
+
 /// <summary>What one squadron did with an order: <paramref name="Reason"/> is empty when it took it.</summary>
 public sealed record SimFighterResult(long FighterId, string Reason);
 

@@ -810,6 +810,11 @@ fn message_of(case: &Value) -> Message {
             command: number("command") as u8,
             results: case["results"].as_array().unwrap().iter().map(|r| (wide(r, "fighterId"), text(r, "reason"))).collect(),
         },
+        "FighterGotoPoint" => Message::FighterGotoPoint {
+            session_id: session_id(),
+            fighter_ids: case["fighterIds"].as_array().unwrap().iter().map(|f| f.as_str().unwrap().parse().unwrap()).collect(),
+            point: vector_of(case, "point"),
+        },
         "FighterLanded" => Message::FighterLanded { session_id: session_id(), fighter_id: wide(case, "fighterId") },
         "FighterReleased" => Message::FighterReleased {
             session_id: session_id(),

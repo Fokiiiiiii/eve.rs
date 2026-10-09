@@ -2461,7 +2461,7 @@ fn settle(pilot: &mut Pilot, system: &SolarSystem, ship_target: Option<Target>, 
     let target = match pilot.ship.course {
         Course::Follow { target, .. } | Course::Orbit { target, .. } => ship_target
             .or_else(|| system.body(target).map(|body| Target::at_rest(body.position, body.radius))),
-        Course::Goto | Course::Stop | Course::Warp { .. } => None,
+        Course::Goto | Course::GotoPoint { .. } | Course::Stop | Course::Warp { .. } => None,
     };
     motion::advance(&mut pilot.ship, seconds, target);
     Vec::new()
@@ -2480,6 +2480,7 @@ enum Steering {
 fn heading_name(ship: &Ship) -> &'static str {
     match ship.course {
         Course::Goto => "GotoDirection",
+        Course::GotoPoint { .. } => "GotoPoint",
         Course::Stop => "Stop",
         Course::Follow { .. } => "FollowBall",
         Course::Orbit { .. } => "Orbit",
@@ -2495,6 +2496,7 @@ fn heading_args(ship: &Ship) -> Vec<Value> {
             with_id(&ship_id, vector(ship.direction.x, ship.direction.y, ship.direction.z)).to_vec()
         }
         Course::Stop => vec![ship_id],
+        Course::GotoPoint { point } => vec![ship_id, real(point.x), real(point.y), real(point.z)],
         Course::Follow { target, range } => vec![ship_id, id(target), int(whole(range))],
         Course::Orbit { target, distance } => vec![ship_id, id(target), int(whole(distance))],
         Course::Warp { raw_destination: r, stop_distance, factor, .. } => {

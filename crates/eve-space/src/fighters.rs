@@ -28,6 +28,8 @@ pub enum FighterOrder {
     Recall,
     /// Let go: the squadron stays in space under nobody's control.
     Abandon,
+    /// Fly to a point of the scene and stop there (the reference's GOTO_POINT: the point, in metres).
+    GotoPoint { point: [f64; 3] },
 }
 
 impl FighterOrder {
@@ -39,6 +41,7 @@ impl FighterOrder {
             Self::Stop => 3,
             Self::Recall => 4,
             Self::Abandon => 5,
+            Self::GotoPoint { .. } => 6,
         }
     }
 }
@@ -122,6 +125,10 @@ impl Scene {
                     out.extend(self.go_home(session, DEPARTING, now));
                 }
                 FighterOrder::Abandon => out.extend(self.abandon(session, now)),
+                FighterOrder::GotoPoint { point } => {
+                    self.clear_task(session);
+                    out.extend(self.goto_point(session, point, now));
+                }
             }
             results.push((fighter_id, None));
         }
@@ -149,6 +156,26 @@ impl Scene {
             vec![
                 payload::action(stamp, "SetSpeedFraction", [id(fighter_id), real(1.0)]),
                 payload::action(stamp, "FollowBall", [id(fighter_id), id(target), int(range as i64)]),
+            ],
+        )
+    }
+
+    /// The squadron flies to `point` and stops there, at its speed (full when it had none: the reference's `issueFighterGotoPoint`).
+    fn goto_point(&mut self, session: SessionId, point: [f64; 3], now: i64) -> Vec<Out> {
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        let target = eve_destiny::Vec3::new(point[0], point[1], point[2]);
+        pilot.ship.course = Course::GotoPoint { point: target };
+        if pilot.ship.speed_fraction <= 0.0 {
+            pilot.ship.speed_fraction = 1.0;
+        }
+        let fighter_id = pilot.ship.spec.ship_id;
+        let speed = pilot.ship.speed_fraction;
+        let stamp = self.next_stamp(now);
+        self.tell_all(
+            session,
+            vec![
+                payload::action(stamp, "GotoPoint", [id(fighter_id), real(point[0]), real(point[1]), real(point[2])]),
+                payload::action(stamp, "SetSpeedFraction", [id(fighter_id), real(speed)]),
             ],
         )
     }
@@ -269,6 +296,24 @@ mod tests {
         );
         assert!(scene.session_of(SQUADRON_SHIP).is_none(), "a squadron that landed is out of the scene");
         assert!(!told.iter().any(|out| matches!(out, Out::DroneScooped { .. })), "a squadron is not scooped as a drone");
+    }
+
+    #[test]
+    fn a_squadron_sent_to_a_point_flies_there_and_is_told_the_point_as_the_reference_does() {
+        let (mut scene, squadron, _) = launched();
+        let start = scene.pilots[&squadron].ship.position;
+        let point = [start.x + 2_000.0, start.y, start.z];
+        let order = scene.fighter_order(PLAYER, &[SQUADRON_SHIP], FighterOrder::GotoPoint { point }, LATER + SECOND);
+        assert_eq!(results_of(&order), [(SQUADRON_SHIP, None)]);
+        assert!(matches!(scene.pilots[&squadron].ship.course, Course::GotoPoint { .. }));
+        let told: Vec<Out> = order.into_iter().filter(|out| out.session() == PLAYER).collect();
+        assert!(!actions_named(&told, "GotoPoint").is_empty(), "{told:?}");
+        let told = run(&mut scene, LATER + 2 * SECOND, 200);
+        let at = scene.pilots[&squadron].ship.position;
+        let apart = ((at.x - point[0]).powi(2) + (at.y - point[1]).powi(2) + (at.z - point[2]).powi(2)).sqrt();
+        assert!(apart < 5.0, "{apart} m from the point, {told:?}");
+        // a squadron sent to a point is not recalled or launched by it
+        assert!(scene.is_fighter(squadron));
     }
 
     #[test]

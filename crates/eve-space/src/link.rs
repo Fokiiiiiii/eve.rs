@@ -16,7 +16,7 @@ use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
 use crate::weapons::{Arc, Aoe, Charge, Spool, Turret};
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 31;
+pub const PROTOCOL_VERSION: u16 = 32;
 
 /// The message kinds.
 pub mod kind {
@@ -78,6 +78,7 @@ pub mod kind {
     pub const FIGHTER_RESULTS: u8 = 56;
     pub const FIGHTER_LANDED: u8 = 57;
     pub const FIGHTER_RELEASED: u8 = 58;
+    pub const FIGHTER_GOTO_POINT: u8 = 59;
 }
 
 /// What the host changes in the rounds of a gun, in the order the simulation hears it (the host asks for it when a pilot loads or unloads a gun in space).
@@ -397,6 +398,13 @@ pub enum Message {
         target_id: i64,
         fighter_ids: Vec<i64>,
         range: f64,
+    },
+    /// A pilot sends its fighter squadrons to a point of the scene (GOTO_POINT, metres): the squadrons (their item ids) and the point. What each did is
+    /// answered with `FighterResults` under the order code 6.
+    FighterGotoPoint {
+        session_id: u64,
+        fighter_ids: Vec<i64>,
+        point: [f64; 3],
     },
     /// What each squadron did with the order: its item id and the reason it did not take it (empty when it did).
     FighterResults {
@@ -1895,6 +1903,7 @@ impl Message {
             Self::Measured { .. } => kind::MEASURED,
             Self::AdjustCharge { .. } => kind::ADJUST_CHARGE,
             Self::ChargeAdjusted { .. } => kind::CHARGE_ADJUSTED,
+            Self::FighterGotoPoint { .. } => kind::FIGHTER_GOTO_POINT,
         }
     }
 
@@ -2315,6 +2324,14 @@ impl Message {
                     out.extend_from_slice(&fighter.to_le_bytes());
                 }
                 out.extend_from_slice(&range.to_le_bytes());
+            }
+            Self::FighterGotoPoint { session_id, fighter_ids, point } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&(fighter_ids.len() as u32).to_le_bytes());
+                for fighter in fighter_ids {
+                    out.extend_from_slice(&fighter.to_le_bytes());
+                }
+                put_vector(&mut out, point);
             }
             Self::FighterResults { session_id, command, results } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
@@ -2796,6 +2813,15 @@ impl Message {
                 let fighter_ids = (0..count).map(|_| r.i64()).collect::<Result<Vec<_>, _>>()?;
                 let range = r.f64()?;
                 Message::FighterOrder { session_id, command, target_id, fighter_ids, range }
+            }
+            kind::FIGHTER_GOTO_POINT => {
+                let session_id = r.u64()?;
+                let count = r.u32()? as usize;
+                if count > r.data.len().saturating_sub(8) / 8 {
+                    return Err(DecodeError::Truncated);
+                }
+                let fighter_ids = (0..count).map(|_| r.i64()).collect::<Result<Vec<_>, _>>()?;
+                Message::FighterGotoPoint { session_id, fighter_ids, point: read_vector(&mut r)? }
             }
             kind::FIGHTER_RESULTS => {
                 let (session_id, command) = (r.u64()?, r.u8()?);

@@ -2530,6 +2530,20 @@
    "hex": "290000003a4f2c3859955c060004bc089b150900005fc833c6022952426c5427b7db5708c285e10f7e6c3c4242"
   },
   {
+   "name": "a fighter sent to a point",
+   "kind": "FighterGotoPoint",
+   "sessionId": "1790646377000015",
+   "fighterIds": [
+    "9988400004100"
+   ],
+   "point": [
+    311989835983.1308,
+    -13069154020.916222,
+    156646308895.76187
+   ],
+   "hex": "2d0000003b4f2c3859955c06000100000004bc089b150900005fc833c6022952426c5427b7db5708c285e10f7e6c3c4242"
+  },
+  {
    "name": "destroy for a pilot to loot",
    "kind": "Destroy",
    "shipId": "980050000077",

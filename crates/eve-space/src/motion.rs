@@ -139,6 +139,12 @@ const ARRIVED_SPEED: f64 = 1.0;
 /// as the point comes near, so that the body comes to rest at it.
 fn follow_step(body: &mut Kinematics, range: f64, target: Target, seconds: f64) {
     let standoff = range * FOLLOW_STANDOFF_SHARE + body.radius + target.radius;
+    approach_step(body, standoff, target, seconds);
+}
+
+/// One step of approaching a point `standoff` metres from the target's centre (the follow step, with the standoff given; a goto point is a target at
+/// rest with a standoff of nothing, so the body stops on the point).
+fn approach_step(body: &mut Kinematics, standoff: f64, target: Target, seconds: f64) {
     let away = sub(body.position, target.position);
     let outward = unit(away).unwrap_or(Vec3::new(1.0, 0.0, 0.0));
     let point = add(target.position, scale(outward, standoff));
@@ -220,6 +226,16 @@ pub fn advance(ship: &mut Ship, seconds: f64, target: Option<Target>) {
                 remaining -= step;
             }
         }
+        (Course::GotoPoint { point }, _) => {
+            // the point is a place at rest: the body flies to its centre and stays there
+            let goal = Target::at_rest(point, 0.0);
+            let mut remaining = seconds;
+            while remaining > 1e-9 {
+                let step = remaining.min(MAX_STEP);
+                approach_step(&mut body, 0.0, goal, step);
+                remaining -= step;
+            }
+        }
         _ => {
             let speed = match ship.course {
                 Course::Goto => cruise(&body),
@@ -271,6 +287,24 @@ mod tests {
         // and a long time later it is still there
         advance(&mut s, 200.0, Some(target));
         assert!((distance(&s, target) - standoff).abs() < 5.0);
+    }
+
+    #[test]
+    fn a_ship_sent_to_a_point_flies_there_and_stops_on_it() {
+        let point = Vec3::new(20_000.0, 0.0, 0.0);
+        let mut s = ship(Course::GotoPoint { point });
+        s.speed_fraction = 1.0;
+        advance(&mut s, 120.0, None);
+        // it settles on the point as a follower settles on its standoff (a few metres, as the follow test allows)
+        assert!(distance(&s, Target::at_rest(point, 0.0)) < 5.0, "{:?}", s.position);
+        assert!(length(s.velocity) < 1.0, "it has stopped: {}", length(s.velocity));
+        // and a long time later it is still there; a point it has not reached is not reached in one tick
+        advance(&mut s, 120.0, None);
+        assert!(distance(&s, Target::at_rest(point, 0.0)) < 5.0);
+        let mut far = ship(Course::GotoPoint { point });
+        far.speed_fraction = 1.0;
+        advance(&mut far, 1.0, None);
+        assert!(distance(&far, Target::at_rest(point, 0.0)) > 1_000.0, "{:?}", far.position);
     }
 
     #[test]

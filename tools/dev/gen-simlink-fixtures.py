@@ -17,7 +17,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27,
          "PlaceContainer": 28, "ContainerPlaced": 29, "ChangeWreck": 30, "RemoveWreck": 31, "Measured": 32,
          "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35, "LaunchDrone": 36, "DroneCommand": 37, "DroneResults": 38,
-         "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58}
+         "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59}
 
 
 def s(text):  # u16 length + UTF-8
@@ -346,6 +346,9 @@ def build(m):
     if k == "FighterOrder":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + i64(m["targetId"]) + struct.pack("<I", len(m["fighterIds"]))
                      + b"".join(i64(f) for f in m["fighterIds"]) + struct.pack("<d", m["range"]))
+    if k == "FighterGotoPoint":
+        return frame(k, u64(m["sessionId"]) + struct.pack("<I", len(m["fighterIds"]))
+                     + b"".join(i64(f) for f in m["fighterIds"]) + struct.pack("<3d", *m["point"]))
     if k == "FighterResults":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<I", len(m["results"]))
                      + b"".join(i64(r["fighterId"]) + s(r["reason"]) for r in m["results"]))
@@ -713,6 +716,8 @@ valid = [
     {"name": "a fighter landed in its tube", "kind": "FighterLanded", "sessionId": "1790646377000015", "fighterId": "9988400004100"},
     {"name": "a fighter let go", "kind": "FighterReleased", "sessionId": "1790646377000015", "fighterId": "9988400004100",
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
+    {"name": "a fighter sent to a point", "kind": "FighterGotoPoint", "sessionId": "1790646377000015",
+     "fighterIds": ["9988400004100"], "point": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
     {"name": "destroy for a pilot to loot", "kind": "Destroy", "shipId": "980050000077", "characterId": "140000001",
      "corporationId": "1000006", "allianceId": "0", "warFactionId": "500001"},
     {"name": "respawn of a capsule where the ship was", "kind": "Respawn", "sessionId": "1790646377000015",

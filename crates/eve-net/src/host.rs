@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::io;
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -297,6 +298,9 @@ pub fn client_queue() -> (mpsc::Sender<ClientOut>, mpsc::Receiver<ClientOut>) {
     mpsc::channel(CLIENT_QUEUE)
 }
 
+/// Where the host listens when `EVE_HOST` is not set: a socket path on Unix, a local TCP port elsewhere.
+pub const DEFAULT_HOST: &str = if cfg!(unix) { "/tmp/eve-host.sock" } else { "tcp:127.0.0.1:26010" };
+
 impl Endpoint {
     /// `unix:/path`, `tcp:host:port`, or a bare path.
     pub fn parse(text: &str) -> Self {
@@ -311,5 +315,22 @@ impl Endpoint {
         {
             Self::Tcp(text.to_owned())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_default_host_is_a_socket_path_on_unix_and_a_local_tcp_port_elsewhere() {
+        assert_eq!(matches!(Endpoint::parse(DEFAULT_HOST), Endpoint::Tcp(_)), !cfg!(unix));
+    }
+
+    #[test]
+    fn a_tcp_endpoint_keeps_its_address() {
+        assert!(
+            matches!(Endpoint::parse("tcp:127.0.0.1:26010"), Endpoint::Tcp(address) if address == "127.0.0.1:26010")
+        );
     }
 }

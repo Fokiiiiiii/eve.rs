@@ -1,6 +1,7 @@
 //! eve-sim: the space simulation.
 //!
 //!   EVE_SIM_SOCKET   the Unix socket the host connects to        (default /tmp/eve-sim.sock)
+//!   EVE_SIM_LISTEN   a TCP address to listen on instead, on any platform (off Unix: 127.0.0.1:26011)
 //!   EVE_SDE_DIR      the static data (the SDE's JSONL files)      (default: .cache/sde, as the tools find it)
 //!
 //! One host at a time; a host that goes away takes its ships with it.
@@ -14,13 +15,36 @@ use eve_sim::{filetime_now, serve_connection};
 use eve_space::sde::Sde;
 use eve_space::sim::Universe;
 use eve_space::world::World;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 
+/// Off Unix there is no socket path to default to: the simulation listens on a local TCP port.
+#[cfg(not(unix))]
+const DEFAULT_SIM_LISTEN: &str = "127.0.0.1:26011";
+
 #[cfg(unix)]
 fn env_or(name: &str, default: &str) -> String {
     std::env::var(name).ok().filter(|value| !value.is_empty()).unwrap_or_else(|| default.to_owned())
+}
+
+/// Serves one host until it goes away. True when Ctrl-C came first, so the caller stops listening. Serving is raced
+/// against Ctrl-C because the accept loop is not polled while a host is connected.
+async fn serve_host<S>(stream: S, universe: Arc<Universe>) -> bool
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    tokio::select! {
+        served = serve_connection(stream, universe, filetime_now) => {
+            match served {
+                Ok(()) => eprintln!("eve-sim: the host went away"),
+                Err(error) => eprintln!("eve-sim: the host connection ended: {error}"),
+            }
+            false
+        }
+        _ = tokio::signal::ctrl_c() => true,
+    }
 }
 
 async fn serve_tcp(address: &str, universe: Arc<Universe>) -> std::io::Result<()> {
@@ -31,9 +55,8 @@ async fn serve_tcp(address: &str, universe: Arc<Universe>) -> std::io::Result<()
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
                     eprintln!("eve-sim: the host connected");
-                    match serve_connection(stream, Arc::clone(&universe), filetime_now).await {
-                        Ok(()) => eprintln!("eve-sim: the host went away"),
-                        Err(error) => eprintln!("eve-sim: the host connection ended: {error}"),
+                    if serve_host(stream, Arc::clone(&universe)).await {
+                        break;
                     }
                 }
                 Err(error) => eprintln!("eve-sim: accept failed: {error}"),
@@ -62,9 +85,8 @@ async fn serve_unix(socket: PathBuf, universe: Arc<Universe>) -> std::io::Result
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
                     eprintln!("eve-sim: the host connected");
-                    match serve_connection(stream, Arc::clone(&universe), filetime_now).await {
-                        Ok(()) => eprintln!("eve-sim: the host went away"),
-                        Err(error) => eprintln!("eve-sim: the host connection ended: {error}"),
+                    if serve_host(stream, Arc::clone(&universe)).await {
+                        break;
                     }
                 }
                 Err(error) => eprintln!("eve-sim: accept failed: {error}"),
@@ -93,30 +115,18 @@ async fn main() -> ExitCode {
     eprintln!("eve-sim: static data read in {:.1}s", started.elapsed().as_secs_f64());
     let universe = Arc::new(Universe::new(world));
 
-    if let Ok(address) = std::env::var("EVE_SIM_LISTEN") {
-        return match serve_tcp(&address, universe).await {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                eprintln!("eve-sim: cannot listen on {address}: {error}");
-                ExitCode::FAILURE
-            }
-        };
-    }
-
-    #[cfg(unix)]
-    {
-        let socket = PathBuf::from(env_or("EVE_SIM_SOCKET", "/tmp/eve-sim.sock"));
-        match serve_unix(socket, universe).await {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                eprintln!("eve-sim: cannot listen on the Unix socket: {error}");
-                ExitCode::FAILURE
-            }
+    let served = match std::env::var("EVE_SIM_LISTEN").ok().filter(|value| !value.is_empty()) {
+        Some(address) => serve_tcp(&address, universe).await,
+        #[cfg(unix)]
+        None => serve_unix(PathBuf::from(env_or("EVE_SIM_SOCKET", "/tmp/eve-sim.sock")), universe).await,
+        #[cfg(not(unix))]
+        None => serve_tcp(DEFAULT_SIM_LISTEN, universe).await,
+    };
+    match served {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("eve-sim: cannot listen: {error}");
+            ExitCode::FAILURE
         }
-    }
-    #[cfg(not(unix))]
-    {
-        eprintln!("eve-sim: set EVE_SIM_LISTEN to a local TCP address on this platform");
-        ExitCode::FAILURE
     }
 }

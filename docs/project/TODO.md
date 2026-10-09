@@ -263,6 +263,23 @@ Decisions: ADR 0015 and its amendments. Deviations and their evidence: DEVIATION
 | DONE (protocol 32) | Protocol: fighter kinds 54 to 60, `LaunchFighter` with the squadron size, GOTO_POINT (kind 59), `FighterSize` (kind 60), Tackle remote tag 12 | `link.rs`, `SimCodec.cs`, `oracle/fixtures/simlink/messages.json` |
 | REPLACED | Live recording against EVE.js (WP-S, `oracle/fixtures/scenarios/fighter_flight.json`): no graphical client runs on this host, so no recording was made. The wire shapes are pinned by `oracle/fixtures/simlink/messages.json`, whose fighter entries were written from the EVE.js and eve-logic source (see DEVIATIONS, Player fighters) | ADR 0015 WP-S |
 
+## 14. Windows and the production start (2026-10-09)
+
+The start scripts are `tools/windows/` (`start-server.bat`, `start-server-dev.bat`, `stop-server.bat`, the `.ps1` files) and
+`tools/server/start-server.sh`; the tested and untested parts are listed in [tools/windows/README.md](../../tools/windows/README.md).
+
+| Status | Item | Missing work |
+|---|---|---|
+| OPEN | Windows is not in CI | No Windows job runs `cargo build`, `dotnet test` or the scripts. Add one, or keep the verification in the README current. |
+| OPEN | `.bat` files and PowerShell 5.1 | Run `start-server.bat`, `stop-server.bat` and the `.ps1` files under Windows PowerShell 5.1 and `cmd.exe` on a real Windows machine with PostgreSQL 18. |
+| OPEN | Windows console behaviour | Verify Ctrl-C (and the `Terminate batch job` prompt) and closing the window; closing does not run the orderly shutdown. |
+| OPEN | `global.json` SDK path `../.dotnet` | Confirm the SDK resolves on Windows without that directory. |
+| OPEN | Live test runners on Windows | `tools/dev/run-eve-live.sh`, `run-evejs-live.sh` and `pg18.sh` are bash and use `.venv/bin` and `/tmp`; port them if Windows must run the live tests. |
+| OPEN | Host `tcp:` listener | `HostListener` takes numeric IPv4 addresses only (`IPAddress.Parse`); accept host names or IPv6 if needed. |
+| DONE | Platform-aware defaults | `eve-net` (`DEFAULT_HOST`), `eve-sim` (`127.0.0.1:26011` off Unix) and `HostConfiguration.DefaultEndpoint`/`DefaultSimSocket` default to TCP on Windows; unit tests cover them. |
+| DONE | Ctrl-C of the simulation | `eve-sim` races the connection against Ctrl-C; before, it ignored Ctrl-C while a host was connected. |
+| DONE | Line endings | `.gitattributes`: `* text=auto`, `.sh` LF, `.bat`/`.ps1` CRLF. |
+
 ## Closed items that should stay closed
 
 - `storeManager.buy_offer` and `insuranceSvc.InsureShip` / `UnInsureShip`: existing persistence providers are connected.

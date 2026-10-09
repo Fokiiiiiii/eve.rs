@@ -707,7 +707,7 @@ impl Message {
                 let numbers = [mining_amount_m3, waste_multiplier, crit_multiplier, access_difficulty_bonus];
                 // probabilities are at most one, the rolls below one, and every number finite and not negative; a mining cycle mines something
                 if cycle_id == 0
-                    || !matches!(command, 7..=12)
+                    || !matches!(command, 7..=13)
                     || numbers
                         .iter()
                         .chain([
@@ -722,14 +722,14 @@ impl Message {
                     || crit_probability > 1.0
                     || [waste_roll, rounding_roll, crit_roll].iter().any(|roll| *roll >= 1.0)
                     || (command == 7 && mining_amount_m3 <= 0.0)
-                    || (matches!(command, 9..=12)
+                    || (matches!(command, 9..=13)
                         && (mining_amount_m3 != 0.0
                             || waste_multiplier != 0.0
                             || waste_probability != 0.0
                             || crit_probability != 0.0
                             || crit_multiplier != 0.0
                             || access_difficulty_bonus != 0.0))
-                    || (command != 12 && !recipients.is_empty())
+                    || (!matches!(command, 12 | 13) && !recipients.is_empty())
                 {
                     return Err(DecodeError::BadValue("module work cycle"));
                 }

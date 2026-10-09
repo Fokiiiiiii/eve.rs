@@ -463,11 +463,32 @@ impl Scene {
         if capacitor.charge_at(now) < effect.capacitor_need {
             return vec![Out::Refused { session, command: CODE, reason: "NOT_ENOUGH_CAPACITOR" }];
         }
+        // a P.A.N.I.C. needs an asteroid its pilot holds the lock on, and starts when the host has granted its fleet the buffs (`WORK_PANIC`)
+        if matches!(effect.action, Some(Action::Panic { .. })) {
+            if !self.locked_by(session).iter().any(|id| self.asteroids.contains_key(id)) {
+                return vec![Out::Refused { session, command: CODE, reason: "TARGET_REQUIRED" }];
+            }
+            return self.park_panic(session, effect, now);
+        }
         // an effect that burns fuel starts when the host has taken the fuel of its first cycle (`WORK_FUEL`): it is parked until the answer
         if effect.burns_fuel {
             return self.park_start(session, effect, now);
         }
         self.start_effect(session, effect, now)
+    }
+
+    /// Parks a P.A.N.I.C. until the host grants the ships in reach their buffs (`ModuleWorkCycle`, `WORK_PANIC`) and answers: the effect starts then.
+    pub(super) fn park_panic(&mut self, session: SessionId, effect: Effect, now: i64) -> Vec<Out> {
+        let cycle_id = next_work_cycle_id();
+        let (module_id, target_id) = (effect.module_id, effect.target_id);
+        let range = match effect.action {
+            Some(Action::Panic { range_meters }) => range_meters,
+            _ => 0.0,
+        };
+        let recipients = self.burst_recipients(session, range);
+        let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        pilot.modules.pending_starts.push(PendingStart { effect, cycle_id, sent_at: now });
+        self.panic_cycle_out(session, module_id, target_id, cycle_id, recipients).into_iter().collect()
     }
 
     /// Parks an effect that burns fuel until the host takes the fuel of its first cycle: the host is asked for it (`ModuleWorkCycle`, `WORK_FUEL`) and answers.

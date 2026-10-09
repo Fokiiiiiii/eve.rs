@@ -318,6 +318,9 @@ fn effect_of(case: &Value) -> Effect {
             if a["kind"] == "commandBurst" {
                 return Action::CommandBurst { range_meters: a["rangeMeters"].as_f64().unwrap() };
             }
+            if a["kind"] == "panic" {
+                return Action::Panic { range_meters: a["rangeMeters"].as_f64().unwrap() };
+            }
             if a["kind"] == "cynoField" {
                 return Action::CynoField {
                     ball: deployable(&a["ball"]),

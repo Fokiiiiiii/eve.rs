@@ -459,6 +459,10 @@ pub(super) fn put_action(out: &mut Vec<u8>, action: &Action) {
                 out.extend_from_slice(&number.to_le_bytes());
             }
         }
+        Action::Panic { range_meters } => {
+            out.push(29);
+            out.extend_from_slice(&range_meters.to_le_bytes());
+        }
         Action::CommandBurst { range_meters } => {
             out.push(28);
             out.extend_from_slice(&range_meters.to_le_bytes());

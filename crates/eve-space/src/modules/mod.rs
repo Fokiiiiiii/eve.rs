@@ -296,7 +296,8 @@ impl Action {
             | Self::CynoField { .. }
             | Self::StasisBurst { .. }
             | Self::Defender { .. }
-            | Self::CommandBurst { .. } => false,
+            | Self::CommandBurst { .. }
+            | Self::Panic { .. } => false,
             Self::Charged { action, fallback, .. } => {
                 action.offensive() || fallback.as_deref().is_some_and(Action::offensive)
             }
@@ -333,7 +334,7 @@ impl Action {
     /// Whether the action names no target (a command burst reaches the ships in its range, not one): the charged wrapper is looked through.
     fn targets_nothing(&self) -> bool {
         match self {
-            Self::CommandBurst { .. } => true,
+            Self::CommandBurst { .. } | Self::Panic { .. } => true,
             Self::Charged { action, .. } => action.targets_nothing(),
             _ => false,
         }
@@ -365,6 +366,9 @@ pub(crate) const WORK_SCAN_SHIP: u8 = 11;
 
 /// The work command of a command burst's cycle (`SimModuleWorkCommands.Burst`, protocol 42): the host applies the burst's buffs to the ships it is sent.
 pub(crate) const WORK_BURST: u8 = 12;
+
+/// The work command of a P.A.N.I.C.'s start (`SimModuleWorkCommands.Panic`, protocol 42): the host grants the fleet in reach its buffs before the effect starts.
+pub(crate) const WORK_PANIC: u8 = 13;
 
 /// How long a parked work cycle waits before the same `cycle_id` is sent again (2 s of the simulation clock; DEVIATIONS.md, ADR 0013 rule 3).
 pub(crate) const WORK_RESEND_TICKS: i64 = 2 * TICKS_PER_SECOND;
@@ -416,6 +420,11 @@ pub enum Action {
     /// A command burst's cycle (tag 28, protocol 42): non-targeted. At the cycle's end the simulation sends the host the ships within `range_meters` (plus one
     /// metre) as a work cycle (`WORK_BURST`) and parks until it answers; the host applies the burst's buffs to the ones of its fleet.
     CommandBurst {
+        range_meters: f64,
+    },
+    /// The Pulse Activated Nexus Invulnerability Core (tag 29, protocol 42): non-targeted, one cycle of its duration. It needs an asteroid the pilot holds the
+    /// lock on, and it parks its start until the host grants the ships of its fleet in `range_meters` (plus one metre) its buffs (`WORK_PANIC`).
+    Panic {
         range_meters: f64,
     },
     Charged {

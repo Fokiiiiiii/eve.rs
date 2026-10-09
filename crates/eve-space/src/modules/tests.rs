@@ -3590,3 +3590,108 @@ fn a_ships_buffs_are_told_to_its_pilot_as_on_dbuff_updated_with_the_time_left() 
     // a state for a ship that is not the session's is told to nobody
     assert!(scene.set_buffs(A, ship + 1, Vec::new(), t).is_empty());
 }
+
+/// A P.A.N.I.C. (type 42522, protocol 42): one cycle of its duration (240 s), reaching `range` metres, with no capacitor and no charge.
+fn panic_effect(range: f64) -> Effect {
+    let mut effect = repairer(Layer::Shield, 0.0, Applies::CycleEnd);
+    effect.module_type = 42522;
+    effect.effect_id = 6719;
+    effect.fx = String::new();
+    effect.duration_ms = 240_000.0;
+    effect.capacitor_need = 0.0;
+    effect.repeat = 1;
+    effect.action = Some(Action::Panic { range_meters: range });
+    effect
+}
+
+#[test]
+fn a_panic_without_a_locked_asteroid_is_refused_and_asks_nobody() {
+    let (mut scene, t) = crowd();
+    let out = scene.activate(A, panic_effect(200_000.0), t);
+    assert!(
+        matches!(out.as_slice(), [Out::Refused { session: A, command: 17, reason: "TARGET_REQUIRED" }]),
+        "{out:?}"
+    );
+    assert!(!scene.pilots[&A].modules.running.iter().any(|run| run.effect.module_id == MODULE));
+}
+
+#[test]
+fn a_panic_asks_the_ships_in_its_reach_for_their_buffs_and_starts_when_they_are_granted() {
+    let (mut scene, t) = mining_rock(99_300_001);
+    let (ship_a, ship_b) = (scene.pilots[&A].ship.spec.ship_id, scene.pilots[&B].ship.spec.ship_id);
+    let asked = scene.activate(A, panic_effect(200_000.0), t);
+    let (cycle, recipients) = asked
+        .iter()
+        .find_map(|o| match o {
+            Out::ModuleWorkCycle { cycle_id, command: WORK_PANIC, recipients, .. } => {
+                Some((*cycle_id, recipients.clone()))
+            }
+            _ => None,
+        })
+        .expect("the P.A.N.I.C. asks the host for its fleet's buffs");
+    let mut expected = vec![ship_a, ship_b];
+    expected.sort_unstable();
+    assert_eq!(recipients, expected);
+    assert!(asked.iter().any(|o| matches!(o, Out::ModuleWorkCycle { command: WORK_PANIC, .. })), "{asked:?}");
+    assert!(
+        !scene.pilots[&A].modules.running.iter().any(|run| run.effect.module_id == MODULE),
+        "parked, not running"
+    );
+
+    scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer { target_id: 0, cycle_id: cycle, accepted: true, reason: "", depleted: false },
+        t,
+    );
+    assert!(
+        scene.pilots[&A].modules.running.iter().any(|run| run.effect.module_id == MODULE),
+        "granted, it starts"
+    );
+}
+
+#[test]
+fn a_panic_reaches_only_the_ships_within_200_km() {
+    let (mut scene, t) = mining_rock(99_300_002);
+    let ship_a = scene.pilots[&A].ship.spec.ship_id;
+    scene.pilots.get_mut(&B).unwrap().ship.position.x += 300_000.0;
+    let asked = scene.activate(A, panic_effect(200_000.0), t);
+    let recipients = asked
+        .iter()
+        .find_map(|o| match o {
+            Out::ModuleWorkCycle { command: WORK_PANIC, recipients, .. } => Some(recipients.clone()),
+            _ => None,
+        })
+        .expect("the P.A.N.I.C. asks");
+    assert_eq!(recipients, vec![ship_a], "{asked:?}");
+}
+
+#[test]
+fn a_refused_panic_grant_ends_the_start_with_the_host_reason() {
+    let (mut scene, t) = mining_rock(99_300_003);
+    let asked = scene.activate(A, panic_effect(200_000.0), t);
+    let cycle = asked
+        .iter()
+        .find_map(|o| match o {
+            Out::ModuleWorkCycle { cycle_id, command: WORK_PANIC, .. } => Some(*cycle_id),
+            _ => None,
+        })
+        .expect("the P.A.N.I.C. asks");
+    let refused = scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer {
+            target_id: 0,
+            cycle_id: cycle,
+            accepted: false,
+            reason: "NOT_CONTROLLED",
+            depleted: false,
+        },
+        t,
+    );
+    assert!(
+        matches!(refused.as_slice(), [Out::Refused { session: A, command: 17, reason: "NO_SHIP_IN_SPACE" }]),
+        "{refused:?}"
+    );
+    assert!(!scene.pilots[&A].modules.running.iter().any(|run| run.effect.module_id == MODULE));
+}

@@ -301,6 +301,7 @@ impl Action {
             Self::Repair { .. } => false,
             Self::Mining { .. }
             | Self::Salvage { .. }
+            | Self::Scan { .. }
             | Self::Tractor { .. }
             | Self::PassiveLock
             | Self::AutoTarget { .. } => false,
@@ -319,7 +320,7 @@ impl Action {
 
     /// Whether the cycle hands its outcome to the host (a work cycle, ADR 0013).
     fn is_work(&self) -> bool {
-        matches!(self, Self::Mining { .. } | Self::Salvage { .. })
+        matches!(self, Self::Mining { .. } | Self::Salvage { .. } | Self::Scan { .. })
     }
 }
 
@@ -331,6 +332,12 @@ pub(crate) const WORK_SALVAGE: u8 = 8;
 
 /// The fuel of the next cycle of a module that burns fuel (the wire's `SimModuleWorkCommands.ConsumeFuel`): the host takes it from the ship, or refuses.
 pub(crate) const WORK_FUEL: u8 = 9;
+
+/// The work command of a Cargo Scanner's cycle (`SimModuleWorkCommands.ScanCargo`): the host reveals the target's hold.
+pub(crate) const WORK_SCAN_CARGO: u8 = 10;
+
+/// The work command of a Ship Scanner's cycle (`SimModuleWorkCommands.ScanShip`): the host reveals the target's fitted hardware.
+pub(crate) const WORK_SCAN_SHIP: u8 = 11;
 
 /// How long a parked work cycle waits before the same `cycle_id` is sent again (2 s of the simulation clock; DEVIATIONS.md, ADR 0013 rule 3).
 pub(crate) const WORK_RESEND_TICKS: i64 = 2 * TICKS_PER_SECOND;
@@ -408,6 +415,13 @@ pub enum Action {
     /// A salvager's cycle (tag 8): as a mining cycle, with the wreck's access chance moved by `access_bonus` (percent) and one roll.
     Salvage {
         access_bonus: f64,
+    },
+    /// A scanner's cycle (tag 26, protocol 40): at the cycle's end the host reveals the locked ship's cargo (`cargo`, a Cargo Scanner) or its fitted hardware
+    /// (a Ship Scanner) to the pilot. `reach` is the scan's range: whole to its optimal, then the standard falloff, out of reach past it (a cargo scan has no
+    /// falloff, a hard cutoff). A work cycle (ADR 0013): the host decides the rows, the simulation the lock and the range.
+    Scan {
+        cargo: bool,
+        reach: Reach,
     },
     /// A tractor beam (tag 9, protocol 30): it pulls the wreck or can it is locked on, at `velocity` metres a second, until it is `hold` metres off the
     /// ship's surface. `range` is the module's reach (`maxRange`): a target further off is out of reach, and the pull ends when it is out of reach

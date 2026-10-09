@@ -347,6 +347,15 @@ fn effect_of(case: &Value) -> Effect {
                     crit_multiplier: a["critMultiplier"].as_f64().unwrap(),
                 };
             }
+            if a["kind"] == "scan" {
+                return Action::Scan {
+                    cargo: a["cargo"].as_bool().unwrap(),
+                    reach: Reach {
+                        optimal: a["optimalMeters"].as_f64().unwrap(),
+                        falloff: a["falloffMeters"].as_f64().unwrap(),
+                    },
+                };
+            }
             if a["kind"] == "salvage" {
                 return Action::Salvage { access_bonus: a["accessBonus"].as_f64().unwrap() };
             }
@@ -433,6 +442,7 @@ fn effect_of(case: &Value) -> Effect {
                         neut_signature_radius: number(s, "neutSignatureRadius"),
                         debuff_ms: s["debuffMs"].as_f64().unwrap_or(0.0),
                         sweep_end: None,
+                        beacon: None,
                     },
                     destination: vector(&a["destination"]),
                     warp_block_ms: number(a, "warpBlockMs"),
@@ -473,6 +483,13 @@ fn effect_of(case: &Value) -> Effect {
                         debuff_ms: a["debuffMs"].as_f64().unwrap_or(0.0),
                         sweep_end: a["sweepEnd"].as_array().map(|end| {
                             [end[0].as_f64().unwrap(), end[1].as_f64().unwrap(), end[2].as_f64().unwrap()]
+                        }),
+                        beacon: a["beacon"].as_array().map(|offset| {
+                            [
+                                offset[0].as_f64().unwrap(),
+                                offset[1].as_f64().unwrap(),
+                                offset[2].as_f64().unwrap(),
+                            ]
                         }),
                     },
                 };

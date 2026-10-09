@@ -273,6 +273,20 @@ pub(super) fn read_action(reader: &mut Reader) -> Result<Action, DecodeError> {
             }
             Ok(Action::Missile { damage, reach, blast })
         }
+        26 => {
+            // a scanner (protocol 40): 0 cargo, 1 ship; the scan's optimal range and its falloff (none for a cargo scan), in metres
+            let cargo = match reader.u8()? {
+                0 => true,
+                1 => false,
+                _ => return Err(DecodeError::BadValue("scan kind")),
+            };
+            let optimal = reader.f64()?;
+            let falloff = reader.f64()?;
+            if !optimal.is_finite() || optimal <= 0.0 || !falloff.is_finite() || falloff < 0.0 {
+                return Err(DecodeError::BadValue("scan action"));
+            }
+            Ok(Action::Scan { cargo, reach: Reach { optimal, falloff } })
+        }
         7 => {
             let family = match reader.u8()? {
                 0 => MiningFamily::Ore,

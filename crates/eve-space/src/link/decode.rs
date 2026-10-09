@@ -222,9 +222,18 @@ pub(super) fn read_strike(reader: &mut Reader) -> Result<Strike, DecodeError> {
         1 => Some([reader.f64()?, reader.f64()?, reader.f64()?]),
         _ => return Err(DecodeError::BadValue("strike sweep flag")),
     };
+    let beacon = match reader.u8()? {
+        0 => {
+            let _unused = [reader.f64()?, reader.f64()?, reader.f64()?];
+            None
+        }
+        1 => Some([reader.f64()?, reader.f64()?, reader.f64()?]),
+        _ => return Err(DecodeError::BadValue("strike beacon flag")),
+    };
     let strike = Strike {
         debuff_ms,
         sweep_end,
+        beacon,
         shape,
         direction,
         length,

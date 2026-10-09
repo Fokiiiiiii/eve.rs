@@ -286,7 +286,7 @@ public class WorkCycleHostTests
     }
 
     /// <summary>The pilot's module runs, as an activation the simulation accepted leaves it.</summary>
-    private static void StartModule(Rig rig, DroneHostTests.Flying flying) =>
+    internal static void StartModule(Rig rig, DroneHostTests.Flying flying) =>
         rig.Space.StartModuleForTest((ulong)flying.Session.SessionId, flying.Module);
 
     private static SimModuleWorkCycle ModuleCycle(DroneHostTests.Flying flying, long moduleId, long targetId, ulong cycleId) => new(
@@ -294,7 +294,7 @@ public class WorkCycleHostTests
         20, 1.0, 0.1, 0.05, 2.0, 0, 0.25, 0.5, 0.75);
 
     /// <summary>Sends a cycle and waits for the answer to it (a repeat waits for a second answer).</summary>
-    private static async Task<SimModuleWorkResult> SettleAsync(Rig rig, SimModuleWorkCycle cycle)
+    internal static async Task<SimModuleWorkResult> SettleAsync(Rig rig, SimModuleWorkCycle cycle)
     {
         var answered = rig.Sim.Heard.OfType<SimModuleWorkResult>().Count(result => result.CycleId == cycle.CycleId);
         rig.Sim.Say(cycle);

@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 39;
+    public const ushort ProtocolVersion = 41;
 
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
@@ -448,13 +448,14 @@ public static partial class SimCodec
                     var roundingRoll = r.F64();
                     var critRoll = r.F64();
                     // probabilities are at most one, the rolls below one, the numbers finite and not negative; a mining cycle mines something
-                    if (cycleId == 0 || command is not (SimDroneCommands.MineRepeatedly or SimDroneCommands.Salvage or SimModuleWorkCommands.ConsumeFuel)
+                    if (cycleId == 0 || command is not (SimDroneCommands.MineRepeatedly or SimDroneCommands.Salvage or SimModuleWorkCommands.ConsumeFuel
+                            or SimModuleWorkCommands.ScanCargo or SimModuleWorkCommands.ScanShip)
                         || new[] { mining, wasteMultiplier, critMultiplier, accessBonus }.Any(n => !double.IsFinite(n) || n < 0)
                         || new[] { wasteProbability, critProbability }.Any(p => !double.IsFinite(p) || p < 0 || p > 1)
                         || new[] { wasteRoll, roundingRoll, critRoll }.Any(roll => !double.IsFinite(roll) || roll < 0 || roll >= 1)
                         || (command == SimDroneCommands.MineRepeatedly && mining <= 0)
-                        // a fuel cycle carries no mining numbers: it asks for fuel only
-                        || (command == SimModuleWorkCommands.ConsumeFuel
+                        // a fuel cycle and a scan carry no mining numbers: they ask for fuel or reveal a target only
+                        || (command is SimModuleWorkCommands.ConsumeFuel or SimModuleWorkCommands.ScanCargo or SimModuleWorkCommands.ScanShip
                             && new[] { mining, wasteMultiplier, wasteProbability, critProbability, critMultiplier, accessBonus }.Any(n => n != 0)))
                     {
                         throw new SimLinkException(SimLinkError.BadValue, "bad module work cycle");

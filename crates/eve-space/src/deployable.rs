@@ -46,7 +46,16 @@ pub enum Role {
     WarpSource { range: f64 },
     /// A bomb: at its end the ships within `blast_radius` take its kind of effect (`ecm` for the jam, `neutralize` for the capacitor, `damage` for the hit).
     Bomb { kind: BombKind, blast_radius: f64, damage: Damage, ecm: [f64; 4], neutralize: f64 },
+    /// A lance's beacon (EVE.js `spawnLanceBeacon`, protocol 39): a transient container the beam is drawn to. It does nothing but exist; it is taken out when
+    /// its strike's effect ends (or stops), or when its lifetime is up.
+    Beacon,
 }
+
+/// The beacon of a lance (EVE.js `MODULAR_EFFECT_BEACON_TYPE_ID` 41233, group 1704, radius 250): a transient "Modular Effect Beacon" container.
+pub const LANCE_BEACON: (i32, i32) = (41_233, 1_704);
+pub const LANCE_BEACON_RADIUS: f64 = 250.0;
+/// The category of the beacon's container (EVE.js `MODULAR_EFFECT_BEACON_CATEGORY_ID`).
+const BEACON_CATEGORY: i32 = 2;
 
 /// A deployable in space: where it is, when it ends, and who put it there (its launcher, for a bomb's blast and the aggression it makes).
 #[derive(Debug, Clone, PartialEq)]
@@ -81,7 +90,9 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
     let (kind, mode) = match deployable.role {
         Role::WarpSource { .. } => (Kind::WarpDisruptionProbe, LegacyMode::Stop),
         Role::Bomb { .. } => (Kind::Missile, LegacyMode::Stop),
+        Role::Beacon => (Kind::Container, LegacyMode::Stop),
     };
+    let category = if matches!(deployable.role, Role::Beacon) { BEACON_CATEGORY } else { CHARGE_CATEGORY };
     let ball = BallEntity {
         item_id: IdRef::Valid(deployable.id),
         kind,
@@ -104,7 +115,7 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
             ("ownerID", id(deployable.owner_id)),
             ("name", text(deployable.spec.name.clone())),
             ("groupID", int(i64::from(deployable.spec.group_id))),
-            ("categoryID", int(i64::from(CHARGE_CATEGORY))),
+            ("categoryID", int(i64::from(category))),
             ("sourceShipID", id(deployable.ship_id)),
             ("launchModules", list([id(deployable.module_id)])),
         ]
@@ -127,8 +138,77 @@ impl Scene {
         lifetime_ms: f64,
         at: i64,
     ) -> Vec<Out> {
-        let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
-        let (position, ship_id) = (pilot.ship.position, pilot.ship.spec.ship_id);
+        self.place_deployable(session, effect, spec, role, None, lifetime_ms, at).1
+    }
+
+    /// A lance's beacon is put in space at `offset` from the ship that runs its strike (the strike's `beacon`), for the life of the effect (`lifetime_ms`).
+    /// Returns the beacon's id, which the beam's effect is played on, and what the pilots are told.
+    pub(crate) fn release_beacon(
+        &mut self,
+        session: SessionId,
+        effect: &Effect,
+        offset: [f64; 3],
+        lifetime_ms: f64,
+        at: i64,
+    ) -> (i64, Vec<Out>) {
+        let spec = Spec {
+            charge_type_id: LANCE_BEACON.0,
+            group_id: LANCE_BEACON.1,
+            name: "Modular Effect Beacon".to_string(),
+            radius: LANCE_BEACON_RADIUS,
+        };
+        let Some(pilot) = self.pilots.get(&session) else { return (0, Vec::new()) };
+        let p = pilot.ship.position;
+        let position = eve_destiny::Vec3::new(p.x + offset[0], p.y + offset[1], p.z + offset[2]);
+        self.place_deployable(session, effect, spec, Role::Beacon, Some(position), lifetime_ms, at)
+    }
+
+    /// The beacon of a module's strike that is in space, or 0 (none, or already taken out).
+    pub(crate) fn beacon_of(&self, module_id: i64) -> i64 {
+        self.deployables
+            .values()
+            .find(|deployable| deployable.role == Role::Beacon && deployable.module_id == module_id)
+            .map_or(0, |deployable| deployable.id)
+    }
+
+    /// A module's beacon is taken out now (its effect has ended): the pilots who were told of it are told it is gone.
+    pub(crate) fn take_down_beacon(&mut self, module_id: i64, at: i64) -> Vec<Out> {
+        let due: Vec<i64> = self
+            .deployables
+            .values()
+            .filter(|deployable| deployable.role == Role::Beacon && deployable.module_id == module_id)
+            .map(|deployable| deployable.id)
+            .collect();
+        let mut out = Vec::new();
+        for deployable_id in due {
+            let Some(deployable) = self.deployables.remove(&deployable_id) else { continue };
+            let stamp = self.next_stamp(at);
+            let actions = vec![payload::remove_ships(stamp, [deployable.id])];
+            out.extend(
+                deployable
+                    .watchers
+                    .iter()
+                    .filter(|watcher| self.pilots.get(watcher).is_some_and(|pilot| pilot.bound))
+                    .map(|watcher| Self::update(*watcher, actions.clone())),
+            );
+        }
+        out
+    }
+
+    /// Puts a deployable in space at `position` (its launcher's ship when none is given), and tells those who can see the place of it.
+    #[allow(clippy::too_many_arguments)]
+    fn place_deployable(
+        &mut self,
+        session: SessionId,
+        effect: &Effect,
+        spec: Spec,
+        role: Role,
+        position: Option<eve_destiny::Vec3>,
+        lifetime_ms: f64,
+        at: i64,
+    ) -> (i64, Vec<Out>) {
+        let Some(pilot) = self.pilots.get(&session) else { return (0, Vec::new()) };
+        let (position, ship_id) = (position.unwrap_or(pilot.ship.position), pilot.ship.spec.ship_id);
         let (corporation_id, alliance_id) = (pilot.ship.spec.corporation_id, pilot.ship.spec.alliance_id);
         let owner_id = self.combat_owner(session);
         let deployable_id = DEPLOYABLE_ID_BASE + self.deployable_sequence as i64;
@@ -156,7 +236,7 @@ impl Scene {
         }
         deployable.watchers = watchers.into_iter().collect();
         self.deployables.insert(deployable_id, deployable);
-        out
+        (deployable_id, out)
     }
 
     /// The deployables whose lifetime is up at `now` end, in the order they were released: a probe is taken out of the scene, a bomb goes off where it is
@@ -328,7 +408,7 @@ impl Scene {
                 Role::WarpSource { range } => {
                     deployable.ends_at > now && distance(position, deployable.position) <= range
                 }
-                Role::Bomb { .. } => false,
+                Role::Bomb { .. } | Role::Beacon => false,
             })
     }
 }

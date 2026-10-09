@@ -254,7 +254,16 @@ impl Scene {
 
     /// A work target (a rock, a wreck) is there while the pilot holds its lock: a depleted rock drops its locks.
     pub(super) fn work_target_ok(&self, session: SessionId, effect: &Effect) -> bool {
-        self.locked_by(session).contains(&effect.target_id)
+        let locked = self.locked_by(session).contains(&effect.target_id);
+        // a scan's target is also in its reach: the lock alone is not enough once the ship has moved off (scanner range, cycle end)
+        let in_reach = match effect.action.as_ref() {
+            Some(Action::Scan { reach, .. }) => self
+                .session_of(effect.target_id)
+                .and_then(|target| self.apart(session, target))
+                .is_some_and(|apart| reach.share(apart).is_some()),
+            _ => true,
+        };
+        locked && in_reach
     }
 
     /// Whether the target of the cycle that ends is still there, as the effect needs it: a turret's, a projected effect's, a work target's (or none).
@@ -433,6 +442,10 @@ impl Scene {
                 0.0,
             ),
             Action::Salvage { access_bonus } => (WORK_SALVAGE, 0.0, 0.0, 0.0, 0.0, 0.0, *access_bonus),
+            // a scan carries no mining numbers: the host reads the target and decides what it reveals
+            Action::Scan { cargo, .. } => {
+                (if *cargo { WORK_SCAN_CARGO } else { WORK_SCAN_SHIP }, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+            }
             _ => return None,
         };
         Some(Out::ModuleWorkCycle {

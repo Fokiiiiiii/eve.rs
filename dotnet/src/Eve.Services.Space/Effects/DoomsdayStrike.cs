@@ -17,12 +17,17 @@ internal static class DoomsdayStrike
     /// <param name="aim">The point the strike is aimed at, from the ship (a reaper's start point when <paramref name="sweepEnd"/> is given).</param>
     /// <param name="sweepEnd">A reaper's end point, from the ship: the axis sweeps from <paramref name="aim"/> to it over the window (protocol 28).</param>
     /// <param name="cylinder">A non-cone shape runs as a cylinder (the reference's rule: only shape 3 is a cone). Reapers carry shape 2.</param>
-    public static SimAction.Strike Of(ModuleEffectContext module, IReadOnlyList<double> aim, IReadOnlyList<double>? sweepEnd = null, bool cylinder = false)
+    /// <param name="beacon">A lance or a cone: the beacon is put where the aim ends, clamped to the strike's length (EVE.js <c>clampPointToFixedRange</c>).</param>
+    public static SimAction.Strike Of(ModuleEffectContext module, IReadOnlyList<double> aim, IReadOnlyList<double>? sweepEnd = null, bool cylinder = false,
+        bool beacon = false)
     {
         double Attribute(int attribute) => NpcArmament.Round6(Math.Max(0, module.Value(attribute, 0)));
         var direction = Unit(aim) ?? [0.0, 0.0, 0.0];
         // a sweep's length is its start point's distance, so that its start is the aim exactly (the simulation runs the axis from there)
         var length = sweepEnd is null ? Attribute(MaxRange) : NpcArmament.Round6(Math.Sqrt(aim.Sum(c => c * c)));
+        var beaconOffset = beacon && sweepEnd is null && Unit(aim) is { } unit
+            ? unit.Select(c => NpcArmament.Round6(c * Math.Min(length, Math.Sqrt(aim.Sum(a => a * a))))).ToArray()
+            : null;
         var pulse = Attribute(DoomsdayDamageCycleTime);
         var window = Attribute(DoomsdayDamageDuration);
         // the reference's window is closed at its end: a pulse at its start and at every cycle time after it, up to and including its end
@@ -44,7 +49,8 @@ internal static class DoomsdayStrike
             Attribute(DoomsdayEnergyNeutSignatureRadius),
             // the disruptive lance's applied debuff (60 s); 0 for a doomsday with none
             Attribute(DoomsdayAppliedDBuffDuration),
-            sweepEnd is null ? null : sweepEnd.Select(NpcArmament.Round6).ToArray());
+            sweepEnd is null ? null : sweepEnd.Select(NpcArmament.Round6).ToArray(),
+            beaconOffset);
     }
 
     /// <summary>

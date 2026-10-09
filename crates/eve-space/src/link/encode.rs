@@ -341,6 +341,19 @@ pub(super) fn write_strike(out: &mut Vec<u8>, strike: &Strike) {
             out.extend_from_slice(&[0u8; 24]);
         }
     }
+    // the beacon: a flag, then its offset from the firing ship (zeros without a beacon)
+    match strike.beacon {
+        Some(offset) => {
+            out.push(1);
+            for component in offset {
+                out.extend_from_slice(&component.to_le_bytes());
+            }
+        }
+        None => {
+            out.push(0);
+            out.extend_from_slice(&[0u8; 24]);
+        }
+    }
 }
 
 /// A list of ship ids: a count, then each id (as the protocol's i64).
@@ -510,6 +523,12 @@ pub(super) fn put_action(out: &mut Vec<u8>, action: &Action) {
             ] {
                 out.extend_from_slice(&number.to_le_bytes());
             }
+        }
+        Action::Scan { cargo, reach } => {
+            out.push(26);
+            out.push(u8::from(!*cargo));
+            out.extend_from_slice(&reach.optimal.to_le_bytes());
+            out.extend_from_slice(&reach.falloff.to_le_bytes());
         }
         Action::Mining {
             family,

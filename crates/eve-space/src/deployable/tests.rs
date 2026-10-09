@@ -332,3 +332,93 @@ fn a_fighter_blast_does_not_reach_a_ship_beyond_its_radius() {
     assert_eq!(damage_told(&out, B), 0, "a ship 40 km off is outside the blast");
     assert!(damage_told(&out, A) >= 1, "the blast went off at the launcher's ship");
 }
+
+#[test]
+fn a_bomb_launcher_refuses_a_ship_at_rest_and_releases_its_bomb_once_the_ship_moves() {
+    // the launcher starts only above minVelocityActivationLimit 2608 (1 m/s in the SDE): a stopped ship may not release a bomb
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.position;
+    place(&mut scene, A, a);
+    let bomb = Action::Bomb {
+        ball: Spec { charge_type_id: 27_920, group_id: 90, name: "Electron Bomb".to_string(), radius: 40.0 },
+        kind: BombKind::Damage,
+        lifetime_ms: 12_000.0,
+        blast_radius: 400.0,
+        damage: [5_800.0, 0.0, 0.0, 0.0],
+        ecm: [0.0; 4],
+        neutralize: 0.0,
+    };
+    let mut launcher = module(MODULE, bomb, 10_000.0);
+    launcher.rules = crate::modules::Rules { min_velocity_limit: 1.0, ..Default::default() };
+    let at_rest = scene.activate(A, launcher.clone(), t);
+    assert!(refused_with(&at_rest, "VELOCITY_TOO_LOW"), "{at_rest:?}");
+    assert!(scene.deployables.is_empty(), "a refused launch releases nothing");
+    scene.pilots.get_mut(&A).unwrap().ship.velocity = eve_destiny::Vec3::new(20.0, 0.0, 0.0);
+    let moving = scene.activate(A, launcher, t);
+    assert!(accepted(&moving), "{moving:?}");
+}
+
+/// A lance's strike: a cylinder of 2.5 km for 50 km, its beacon `offset` from the firing ship (protocol 37).
+fn lance(offset: Option<[f64; 3]>) -> crate::strike::Strike {
+    use crate::strike::{Strike, StrikeShape};
+    Strike {
+        shape: StrikeShape::Cylinder,
+        direction: [1.0, 0.0, 0.0],
+        length: 50_000.0,
+        radius: 2_500.0,
+        warning_ms: 15_000.0,
+        pulse_ms: 1_000.0,
+        pulses: 16,
+        damage: [0.0, 0.0, 0.0, 17_000.0],
+        signature_radius: 20_000.0,
+        immobile_ms: 30_000.0,
+        no_jump_ms: 120_000.0,
+        neut_amount: 31_000.0,
+        neut_radius: 10_000.0,
+        neut_signature_radius: 20_000.0,
+        debuff_ms: 60_000.0,
+        sweep_end: None,
+        beacon: offset,
+    }
+}
+
+#[test]
+fn a_lances_beacon_is_put_in_space_at_its_offset_and_taken_out_when_its_effect_ends() {
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.position;
+    place(&mut scene, A, a);
+    let started = scene.activate(
+        A,
+        module(MODULE, Action::Strike { strike: lance(Some([4_000.0, 0.0, 0.0])) }, 20_000.0),
+        t,
+    );
+    assert!(accepted(&started), "{started:?}");
+    let beacon = scene.beacon_of(MODULE);
+    assert!(beacon > 0, "the lance has its beacon in space");
+    let placed = scene.deployables[&beacon].position;
+    assert!(
+        (placed.x - (a.x + 4_000.0)).abs() < 1e-6
+            && (placed.y - a.y).abs() < 1e-6
+            && (placed.z - a.z).abs() < 1e-6,
+        "the beacon is at the offset from the firing ship: {placed:?} from {a:?}"
+    );
+    // the beacon is a container of the lance's type, and the beam is played on it (after the beacon is in the ballpark)
+    let told = format!("{started:?}");
+    assert!(told.contains("AddBalls2"), "the beacon is shown to the pilots who see the place");
+    let fx = told.find("OnSpecialFX").expect("the beam is played");
+    assert!(told[..fx].contains("AddBalls2"), "the beacon comes before the beam that is drawn to it");
+    assert!(told[fx..].contains(&beacon.to_string()), "the beam is drawn to the beacon");
+    // the beacon goes when the effect ends, and the beam stops on it
+    let (out, _) = poll_for(&mut scene, t, 22.0);
+    assert_eq!(scene.beacon_of(MODULE), 0, "the beacon is gone with its effect");
+    assert!(format!("{out:?}").contains("RemoveBalls"), "the pilots who saw it are told it is gone");
+}
+
+#[test]
+fn a_strike_with_no_beacon_puts_nothing_in_space() {
+    let (mut scene, t) = crowd();
+    let started = scene.activate(A, module(MODULE, Action::Strike { strike: lance(None) }, 20_000.0), t);
+    assert!(accepted(&started), "{started:?}");
+    assert_eq!(scene.beacon_of(MODULE), 0);
+    assert!(scene.deployables.is_empty());
+}

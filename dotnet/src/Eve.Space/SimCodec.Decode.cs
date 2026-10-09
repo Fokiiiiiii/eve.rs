@@ -242,8 +242,14 @@ public static partial class SimCodec
         {
             throw new SimLinkException(SimLinkError.BadValue, "bad strike sweep flag");
         }
+        var beaconFlag = r.U8();
+        double[] beacon = [r.F64(), r.F64(), r.F64()];
+        if (beaconFlag > 1)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad strike beacon flag");
+        }
         var strike = new SimAction.Strike(shape, direction, length, radius, warning, pulse, pulses, damage, signature, immobile, noJump, neutAmount, neutRadius, neutSignature,
-            debuff, sweepFlag == 1 ? sweepEnd : null);
+            debuff, sweepFlag == 1 ? sweepEnd : null, beaconFlag == 1 ? beacon : null);
         if (!strike.IsValid)
         {
             throw new SimLinkException(SimLinkError.BadValue, "bad strike action");
@@ -441,6 +447,18 @@ public static partial class SimCodec
                         throw new SimLinkException(SimLinkError.BadValue, "bad doomsday action");
                     }
                     return doomsday;
+                }
+            case 26:
+                {
+                    var kind = r.U8();
+                    var optimal = r.F64();
+                    var falloff = r.F64();
+                    var scan = new SimAction.Scan(kind, optimal, falloff);
+                    if (!scan.IsValid)
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad scan action");
+                    }
+                    return scan;
                 }
             case 23:
                 {

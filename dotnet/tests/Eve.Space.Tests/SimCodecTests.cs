@@ -69,7 +69,8 @@ public class SimCodecTests
             Four(a["damage"]!), (double)a["signatureRadius"]!, (double)a["immobileMs"]!, (double)a["noJumpMs"]!,
             (double)a["neutAmount"]!, (double)a["neutRadius"]!, (double)a["neutSignatureRadius"]!,
             a["debuffMs"] is { } debuff ? (double)debuff : 0.0,
-            a["sweepEnd"] is JsonArray sweepEnd ? sweepEnd.Select(x => (double)x!).ToArray() : null);
+            a["sweepEnd"] is JsonArray sweepEnd ? sweepEnd.Select(x => (double)x!).ToArray() : null,
+            a["beacon"] is JsonArray beacon ? beacon.Select(x => (double)x!).ToArray() : null);
     }
 
     private static SimDeployable DeployableOf(JsonNode d) =>
@@ -85,6 +86,10 @@ public class SimCodecTests
         if ((string)a["kind"]! == "salvage")
         {
             return new SimAction.Salvage((double)a["accessBonus"]!);
+        }
+        if ((string)a["kind"]! == "scan")
+        {
+            return new SimAction.Scan((bool)a["cargo"]! ? SimScanKinds.Cargo : SimScanKinds.Ship, (double)a["optimalMeters"]!, (double)a["falloffMeters"]!);
         }
         if ((string)a["kind"]! == "tractor")
         {

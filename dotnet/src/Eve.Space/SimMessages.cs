@@ -221,7 +221,9 @@ public sealed record SimChange(long ItemId, int AttributeId, double Value);
 /// </summary>
 public sealed record SimTurret(
     int WeaponTypeId, string Fx, IReadOnlyList<double> RawDamage, double OptimalRange, double Falloff, double TrackingSpeed, double SignatureResolution,
-    SimTurretCharge? Charge = null, SimMissile? Missile = null, SimSpool? Spool = null, SimAoe? Aoe = null, SimArc? Arc = null);
+    SimTurretCharge? Charge = null, SimMissile? Missile = null, SimSpool? Spool = null, SimAoe? Aoe = null, SimArc? Arc = null,
+    /// <summary>The weapon requires Gunnery: a tracking disruptor or computer on the shooter reaches it (a vorton projector does not require it).</summary>
+    bool RequiresGunnery = false);
 
 /// <summary>
 /// The damage ramp of a weapon that builds up its damage on the target it keeps shooting at (a precursor weapon: <c>damageMultiplierBonusPerCycle</c> and

@@ -197,6 +197,7 @@ public static partial class SimCodec
         {
             w.U8(0);
         }
+        w.U8(t.RequiresGunnery ? (byte)1 : (byte)0);
     }
 
 private static void WriteAction(Writer w, SimAction action)

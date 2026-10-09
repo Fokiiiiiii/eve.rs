@@ -18,6 +18,7 @@ fn turret(damage: Damage, tracking: f64, resolution: f64, optimal: f64, falloff:
         spool: None,
         aoe: None,
         arc: None,
+        requires_gunnery: true,
     }
 }
 
@@ -389,6 +390,8 @@ fn vorton(arc: Option<Arc>) -> Turret {
     weapon.tracking_speed = 0.0;
     weapon.aoe = Some(vorton_aoe());
     weapon.arc = arc;
+    // a vorton projector requires its own skill, not Gunnery: a tracking disruptor does not reach it
+    weapon.requires_gunnery = false;
     weapon
 }
 
@@ -794,6 +797,30 @@ fn clearing_the_targets_stops_the_weapons_aimed_at_them_too() {
 }
 
 #[test]
+fn a_tracking_disruptor_reaches_a_gunnery_turret_and_not_a_vorton_projector() {
+    // the disruptor takes the whole of a laser's range and falloff, so the laser has nothing to reach with; a vorton projector does not require
+    // Gunnery (its SDE skills are its own), so the same disruptor leaves its explosion where it was
+    let disruptor = crate::ewar::Lasting::Disrupt {
+        range_percent: -100.0,
+        falloff_percent: -100.0,
+        tracking_percent: 0.0,
+    };
+    let told_for = |weapon: Turret, disrupted: bool| {
+        let (mut scene, npc, now) = duel();
+        if disrupted {
+            scene.pilots.get_mut(&npc).unwrap().incoming.upsert(777, 888, disruptor, now + 60 * SECOND);
+        }
+        let out = scene.activate(npc, laser_effect(spec().ship_id, weapon), now);
+        messages(&out, PLAYER, "OnDamageMessage")[0].clone()
+    };
+    assert_eq!(entry(&told_for(laser(), true), "damage"), number6(0.0));
+    assert_eq!(
+        entry(&told_for(vorton(None), true), "damage"),
+        entry(&told_for(vorton(None), false), "damage")
+    );
+}
+
+#[test]
 fn a_turret_that_is_disrupted_is_rolled_with_the_numbers_it_is_left_and_the_shot_misses_where_it_hit() {
     // undisrupted, the laser (10 km and 5 km of falloff) hits the player two kilometres off at the first cycle
     let (mut scene, npc, now) = duel();
@@ -1128,6 +1155,7 @@ fn launcher(max_velocity: f64, flight_time_ms: f64, explosion_radius: f64) -> Tu
         spool: None,
         aoe: None,
         arc: None,
+        requires_gunnery: false,
     }
 }
 

@@ -490,7 +490,13 @@ public static partial class SimCodec
             1 => ReadArc(ref r),
             _ => throw new SimLinkException(SimLinkError.BadValue, "bad arc"),
         };
-        return new SimTurret(weaponType, fx, damage, optimal, falloff, tracking, resolution, charge, missile, spool, aoe, arc);
+        var requiresGunnery = r.U8() switch
+        {
+            0 => false,
+            1 => true,
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad requires_gunnery"),
+        };
+        return new SimTurret(weaponType, fx, damage, optimal, falloff, tracking, resolution, charge, missile, spool, aoe, arc, requiresGunnery);
     }
 
     private static SimAoe ReadAoe(ref Reader r)

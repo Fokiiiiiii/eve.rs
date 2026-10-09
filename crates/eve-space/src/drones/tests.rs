@@ -55,6 +55,7 @@ fn laser() -> NpcWeapon {
             spool: None,
             aoe: None,
             arc: None,
+            requires_gunnery: true,
         },
     }
 }

@@ -19,8 +19,18 @@ impl Scene {
         ) else {
             return false;
         };
-        let (range, _, _) = self.pilots[&session].incoming.weapon_factors();
+        let (range, _, _) = self.weapon_disruption(session, turret);
         surface_distance(&attacker, &target) > turret.optimal_range.max(0.0) * range + 1e-6
+    }
+
+    /// What the shooter's disruption does to this weapon (range, falloff, tracking): a tracking disruptor or computer reaches only a weapon that
+    /// requires Gunnery; any other weapon is shot with its own numbers.
+    pub(crate) fn weapon_disruption(&self, session: SessionId, turret: &Turret) -> (f64, f64, f64) {
+        if turret.requires_gunnery {
+            self.pilots[&session].incoming.weapon_factors()
+        } else {
+            (1.0, 1.0, 1.0)
+        }
     }
 
     /// The kinematics of a ship of the scene, for a shot.
@@ -215,7 +225,7 @@ impl Scene {
             turret
         };
         // what disrupts the shooter's turrets works on the numbers the shot is rolled with
-        let (range, falloff, tracking) = self.pilots[&session].incoming.weapon_factors();
+        let (range, falloff, tracking) = self.weapon_disruption(session, turret);
         let disrupted;
         let turret = if (range, falloff, tracking) == (1.0, 1.0, 1.0) {
             turret

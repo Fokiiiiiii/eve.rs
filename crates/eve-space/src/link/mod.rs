@@ -36,7 +36,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 57;
+pub const PROTOCOL_VERSION: u16 = 58;
 /// The message kinds.
 pub mod kind;
 
@@ -555,6 +555,8 @@ pub enum Message {
     PlaceDisruptor(Box<DisruptorPlacement>),
     /// The host puts a Mobile Cynosural Inhibitor in space where its pilot dropped it (protocol 50); the range is the inhibitor's.
     PlaceInhibitor(Box<DisruptorPlacement>),
+    /// The host puts a Mobile Cynosural Beacon in space where its pilot dropped it (protocol 58); the range is 0.
+    PlaceCynoBeacon(Box<DisruptorPlacement>),
     /// The host says a mobile warp disruptor is anchored (`active`) or not (protocol 48); one not in space is left alone.
     SetDisruptorActive {
         deployable_id: i64,
@@ -790,6 +792,7 @@ impl Message {
             Self::RemoveProbe { .. } => kind::REMOVE_PROBE,
             Self::PlaceDisruptor(_) => kind::PLACE_DISRUPTOR,
             Self::PlaceInhibitor(_) => kind::PLACE_INHIBITOR,
+            Self::PlaceCynoBeacon(_) => kind::PLACE_CYNO_BEACON,
             Self::SetDisruptorActive { .. } => kind::SET_DISRUPTOR_ACTIVE,
         }
     }

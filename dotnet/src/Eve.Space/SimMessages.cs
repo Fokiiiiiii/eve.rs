@@ -1026,6 +1026,12 @@ public sealed record SimPlaceInhibitor(
     long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, double Range, bool Active,
     long OwnerId, int CorporationId, int AllianceId, long ShipId) : SimMessage;
 
+/// <summary>A Mobile Cynosural Beacon the host keeps a record of, put in space where its pilot dropped it (protocol 58). It is a cynosural field a pilot may jump
+/// to while <see cref="Active"/> (anchored); the wire carries it as a disruptor's placement with a range of 0.</summary>
+public sealed record SimPlaceCynoBeacon(
+    long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, bool Active,
+    long OwnerId, int CorporationId, int AllianceId, long ShipId) : SimMessage;
+
 /// <summary>The answer to <see cref="SimCommands.Measure"/>: metres from the centre of the ship to the surface of the wreck or can, or null when there is no such wreck.</summary>
 public sealed record SimMeasured(ulong SessionId, byte Command, double? Distance) : SimMessage;
 

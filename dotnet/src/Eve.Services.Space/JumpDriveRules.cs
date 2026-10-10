@@ -51,6 +51,8 @@ public static class JumpDriveRules
 
     /// <summary>The cynosural field types (SDE): standard 21094, covert 28650, industrial 52696.</summary>
     public const int StandardFieldType = 21094, CovertFieldType = 28650, IndustrialFieldType = 52696;
+    /// <summary>The covert Mobile Cynosural Beacon (SDE 59630): a covert field for the jump drive's rule.</summary>
+    public const int CovertBeaconType = 59630;
 
     /// <summary>The longest a cooldown can run (the wiki: thirty minutes).</summary>
     public const long CooldownCapMs = 30 * 60_000;
@@ -75,7 +77,7 @@ public static class JumpDriveRules
     /// <summary>The kind of a field by its type. An unknown type is a standard field.</summary>
     public static FieldKind KindOf(int fieldTypeId) => fieldTypeId switch
     {
-        CovertFieldType => FieldKind.Covert,
+        CovertFieldType or CovertBeaconType => FieldKind.Covert,
         IndustrialFieldType => FieldKind.Industrial,
         _ => FieldKind.Standard,
     };

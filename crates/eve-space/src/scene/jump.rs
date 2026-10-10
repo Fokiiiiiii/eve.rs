@@ -267,7 +267,10 @@ impl Scene {
             let Some(field) = self
                 .deployables
                 .get(&field_id)
-                .filter(|field| field.role == crate::deployable::Role::CynoField && field.ends_at > now)
+                .filter(|field| {
+                    matches!(field.role, crate::deployable::Role::CynoField | crate::deployable::Role::CynoBeacon { active: true })
+                        && field.ends_at > now
+                })
             else {
                 return Err(Box::new(traveller));
             };

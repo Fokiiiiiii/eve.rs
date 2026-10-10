@@ -12,7 +12,7 @@ namespace Eve.Services.Space.Tests;
 /// </summary>
 public sealed class StructureTravelTests
 {
-    private const string Unwired = "Structure travel is not wired on this server.";
+    private const string Unwired = "A Pharolux or Upwell cynosural beacon cannot be jumped to: the structure service that keeps the beacon's state (the Upwell structure phase) is not built on this server.";
 
     public static TheoryData<string> CynoBeaconMethods { get; } =
     [

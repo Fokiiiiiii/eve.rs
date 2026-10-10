@@ -463,7 +463,7 @@ impl Message {
             }
             kind::REMOVE_PROBE => Message::RemoveProbe { probe_id: r.i64()? },
             // a disruptor and an inhibitor have the same placement (the kind says which of the two it is)
-            kind::PLACE_DISRUPTOR | kind::PLACE_INHIBITOR => {
+            kind::PLACE_DISRUPTOR | kind::PLACE_INHIBITOR | kind::PLACE_CYNO_BEACON => {
                 let deployable_id = r.i64()?;
                 let solar_system_id = r.i32()?;
                 let name = r.text()?;
@@ -497,6 +497,8 @@ impl Message {
                 });
                 if kind == kind::PLACE_INHIBITOR {
                     Message::PlaceInhibitor(placement)
+                } else if kind == kind::PLACE_CYNO_BEACON {
+                    Message::PlaceCynoBeacon(placement)
                 } else {
                     Message::PlaceDisruptor(placement)
                 }

@@ -459,6 +459,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void PlaceInhibitor(SimPlaceInhibitor inhibitor) => Send(inhibitor);
 
+    public void PlaceCynoBeacon(SimPlaceCynoBeacon beacon) => Send(beacon);
+
     public void Destroy(long shipId, SimCredit credit) => Send(new SimDestroy(shipId, credit));
 
     public void Leave(ulong sessionId, LeaveWhy why) => Send(new SimLeave(sessionId, why));

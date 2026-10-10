@@ -90,6 +90,13 @@ public sealed partial class SpaceContainers
                         record.ActivateAtMs <= now, record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));
                     continue;
                 }
+                if (record.Kind == BeaconKind)
+                {
+                    _sim.PlaceCynoBeacon(new SimPlaceCynoBeacon(
+                        record.DeployableId, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.ActivateAtMs <= now,
+                        record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));
+                    continue;
+                }
                 _sim.RestoreDeployed(new SimDeployed(
                     record.SolarSystemId, record.DeployableId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.OwnerId,
                     record.CorporationId, record.AllianceId, record.ShipId, record.ExpiresAtMs - now));

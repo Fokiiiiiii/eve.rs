@@ -48,7 +48,7 @@ impl Scene {
         for deployable in self.deployables.values() {
             let scannable = matches!(
                 deployable.role,
-                Role::CynoField | Role::CynoInhibitor { .. } | Role::MobileWarpSource { .. }
+                Role::CynoField | Role::CynoInhibitor { .. } | Role::MobileWarpSource { .. } | Role::CynoBeacon { .. }
             );
             if scannable && deployable.ends_at > now {
                 let p = deployable.position;

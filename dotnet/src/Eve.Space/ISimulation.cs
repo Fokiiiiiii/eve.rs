@@ -156,6 +156,8 @@ public interface ISimulation
     void SetDisruptorActive(long deployableId, bool active);
     /// <summary>Puts a Mobile Cynosural Inhibitor in space where its pilot dropped it, anchored or not (protocol 50).</summary>
     void PlaceInhibitor(SimPlaceInhibitor inhibitor);
+    /// <summary>Puts a Mobile Cynosural Beacon in space where its pilot dropped it, anchored or not (protocol 58).</summary>
+    void PlaceCynoBeacon(SimPlaceCynoBeacon beacon);
 
     /// <summary>Destroys a ship: the explosion, the wreck (for <paramref name="credit"/> to loot), and (for a player's ship) a <see cref="SimDestroyed"/> that comes back through <see cref="Received"/>.</summary>
     void Destroy(long shipId, SimCredit credit);

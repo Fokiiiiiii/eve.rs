@@ -21,6 +21,18 @@ public sealed partial class SpaceContainers
     /// <summary>The record kind of a Mobile Cynosural Inhibitor.</summary>
     private const string InhibitorKind = "mobile_cyno_inhibitor";
 
+    /// <summary>The record kind of a Mobile Cynosural Beacon (a cynosural field a pilot may jump to while it is anchored).</summary>
+    internal const string BeaconKind = "mobile_cyno_beacon";
+
+    /// <summary>The group of the Mobile Cynosural Beacon (SDE 4093); its types are 57319 (standard), 58906 (highsec authorized) and 59630 (covert).</summary>
+    private const int MobileCynoBeaconGroup = 4093;
+
+    /// <summary>The highsec authorized beacon: the SDE's own type with Polaris 5 for high security, so the security cutoff does not apply to it.</summary>
+    private const int HighsecAuthorizedBeaconType = 58906;
+
+    /// <summary>The security at and above which a standard or covert beacon cannot be deployed (EveJS <c>MOBILE_CYNO_SECURITY_CUTOFF</c>).</summary>
+    private const double BeaconSecurityCutoff = 0.45;
+
     /// <summary>The durable job that anchors a mobile deployable when its anchoring time is over (<see cref="AnchorAsync"/>).</summary>
     public const string AnchorJob = "space.deployed.anchor";
 
@@ -46,6 +58,13 @@ public sealed partial class SpaceContainers
 
     /// <summary>How long a Mobile Cynosural Inhibitor lives: one hour (the wiki).</summary>
     private static readonly TimeSpan InhibitorLifetime = TimeSpan.FromHours(1);
+
+    /// <summary>The activation time of a beacon: two minutes, and one minute for the covert one (EveJS <c>MOBILE_CYNO_ACTIVATION_DELAY_MS</c>,
+    /// <c>COVERT_MOBILE_CYNO_ACTIVATION_DELAY_MS</c>; the SDE carries no anchoring delay for the type).</summary>
+    private static TimeSpan BeaconActivationDelay(int typeId) => typeId == JumpDriveRules.CovertBeaconType ? TimeSpan.FromMinutes(1) : TimeSpan.FromMinutes(2);
+
+    /// <summary>The life of a beacon: one hour, and thirty minutes for the covert one (EveJS <c>MOBILE_CYNO_LIFETIME_MS</c>, <c>COVERT_MOBILE_CYNO_LIFETIME_MS</c>).</summary>
+    private static TimeSpan BeaconLifetime(int typeId) => typeId == JumpDriveRules.CovertBeaconType ? TimeSpan.FromMinutes(30) : TimeSpan.FromHours(1);
 
     /// <summary>The range of a Mobile Cynosural Inhibitor: 100 km (the wiki; the SDE carries none for the type).</summary>
     private const double InhibitorRangeMeters = 100_000;
@@ -76,11 +95,12 @@ public sealed partial class SpaceContainers
             return null;
         }
         await _statics.EnsureTypesAsync([item.TypeId], cancellationToken);
-        if (_statics.Type(item.TypeId) is not { } type || type.GroupId is not (MobileWarpDisruptorGroup or MobileCynoInhibitorGroup))
+        if (_statics.Type(item.TypeId) is not { } type || type.GroupId is not (MobileWarpDisruptorGroup or MobileCynoInhibitorGroup or MobileCynoBeaconGroup))
         {
             return null;
         }
         var inhibitor = type.GroupId == MobileCynoInhibitorGroup;
+        var beacon = type.GroupId == MobileCynoBeaconGroup;
         if (session.CharacterId is not { } character || session.GetInt("shipid") is not { } shipId || shipId <= 0 || _deployed is null || _scheduler is null)
         {
             throw Unavailable();
@@ -104,10 +124,15 @@ public sealed partial class SpaceContainers
         {
             throw Refuse("Mobile Warp Disruptors cannot be activated in empire space.");
         }
-        var range = inhibitor ? InhibitorRangeMeters : type.Attributes.GetValueOrDefault(WarpScrambleRangeAttribute);
-        if (!inhibitor && range <= 0)
+        var range = inhibitor ? InhibitorRangeMeters : beacon ? 0 : type.Attributes.GetValueOrDefault(WarpScrambleRangeAttribute);
+        if (!inhibitor && !beacon && range <= 0)
         {
             throw Refuse("That mobile warp disruptor has no warp disruption range.");
+        }
+        // the security cutoff of a beacon (EveJS); the highsec authorized one is exempt, by its own type
+        if (beacon && item.TypeId != HighsecAuthorizedBeaconType && _space.SecurityOfSystem(system) is { } beaconSecurity && beaconSecurity >= BeaconSecurityCutoff)
+        {
+            throw Refuse("Mobile Cynosural Beacons can only be deployed below 0.5 security.");
         }
         var radius = type.Attributes.GetValueOrDefault(RadiusAttribute);
         if (radius <= 0)
@@ -136,18 +161,25 @@ public sealed partial class SpaceContainers
 
         var anchoringDelayMs = inhibitor
             ? (long)InhibitorAnchoringTime.TotalMilliseconds
-            : (long)Math.Max(0, type.Attributes.GetValueOrDefault(AnchoringDelayAttribute));
+            : beacon
+                ? (long)BeaconActivationDelay(item.TypeId).TotalMilliseconds
+                : (long)Math.Max(0, type.Attributes.GetValueOrDefault(AnchoringDelayAttribute));
         var activateAt = now + anchoringDelayMs;
-        var lifetime = inhibitor ? InhibitorLifetime : LifetimeOf(item.TypeId);
+        var lifetime = inhibitor ? InhibitorLifetime : beacon ? BeaconLifetime(item.TypeId) : LifetimeOf(item.TypeId);
         var corporation = (int)(session.GetInt("corpid") ?? 0);
         var alliance = (int)(session.GetInt("allianceid") ?? 0);
         await _deployed.SaveAsync(new DeployedRecord(
-            deployable.Id, inhibitor ? InhibitorKind : DisruptorKind, system, type.Name, item.TypeId, type.GroupId, position, radius, character, corporation,
+            deployable.Id, inhibitor ? InhibitorKind : beacon ? BeaconKind : DisruptorKind, system, type.Name, item.TypeId, type.GroupId, position, radius, character, corporation,
             alliance, shipId, now + (long)lifetime.TotalMilliseconds, activateAt, range), cancellationToken);
         if (inhibitor)
         {
             _sim.PlaceInhibitor(new SimPlaceInhibitor(
                 deployable.Id, system, type.Name, item.TypeId, type.GroupId, position, radius, range, anchoringDelayMs <= 0, character, corporation, alliance, shipId));
+        }
+        else if (beacon)
+        {
+            _sim.PlaceCynoBeacon(new SimPlaceCynoBeacon(
+                deployable.Id, system, type.Name, item.TypeId, type.GroupId, position, radius, anchoringDelayMs <= 0, character, corporation, alliance, shipId));
         }
         else
         {
@@ -192,7 +224,7 @@ public sealed partial class SpaceContainers
     /// </summary>
     public async Task AnchorAsync(long deployableId, CancellationToken cancellationToken = default)
     {
-        if (_deployed is not null && await _deployed.GetAsync(deployableId, cancellationToken) is { Kind: DisruptorKind or InhibitorKind })
+        if (_deployed is not null && await _deployed.GetAsync(deployableId, cancellationToken) is { Kind: DisruptorKind or InhibitorKind or BeaconKind })
         {
             _sim.SetDisruptorActive(deployableId, true);
         }

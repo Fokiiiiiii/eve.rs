@@ -42,9 +42,59 @@ public sealed class PgTheoryAttribute : TheoryAttribute
 /// <summary>Keeps what the server sent, so a test can read the events.</summary>
 internal sealed class Sink : IPacketSink
 {
-    public List<PyValue> Sent { get; } = [];
+    public SentLog Sent { get; } = new();
 
     public void Send(PyValue packet) => Sent.Add(packet);
+}
+
+/// <summary>
+/// What a session was sent. The host's background work sends from its own threads while a test reads and clears the log, so every access takes the lock (a plain
+/// list read during an add loses or tears what the test reads: a load-dependent failure of the death tests).
+/// </summary>
+internal sealed class SentLog : IEnumerable<PyValue>
+{
+    private readonly object _gate = new();
+    private readonly List<PyValue> _items = [];
+
+    public void Add(PyValue packet)
+    {
+        lock (_gate)
+        {
+            _items.Add(packet);
+        }
+    }
+
+    public void Clear()
+    {
+        lock (_gate)
+        {
+            _items.Clear();
+        }
+    }
+
+    public int Count
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _items.Count;
+            }
+        }
+    }
+
+    /// <summary>A snapshot of what was sent so far.</summary>
+    public PyValue[] ToArray()
+    {
+        lock (_gate)
+        {
+            return _items.ToArray();
+        }
+    }
+
+    public IEnumerator<PyValue> GetEnumerator() => ((IEnumerable<PyValue>)ToArray()).GetEnumerator();
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
 /// <summary>Real stores in throwaway schemas, the real static data, a character made the way the game makes one, and a simulation played by the test.</summary>

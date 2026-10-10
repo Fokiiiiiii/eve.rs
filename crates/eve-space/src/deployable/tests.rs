@@ -829,3 +829,43 @@ fn a_strike_with_no_beacon_puts_nothing_in_space() {
     assert_eq!(scene.beacon_of(MODULE), 0);
     assert!(scene.deployables.is_empty());
 }
+
+#[test]
+fn a_mobile_cynosural_beacon_is_a_field_only_once_anchored_and_is_taken_out_on_request() {
+    let (mut scene, t) = crowd();
+    let b = scene.pilots[&B].ship.position;
+    let beacon = crate::link::DisruptorPlacement {
+        deployable_id: 990_000_000_200,
+        solar_system_id: scene.solar_system_id(),
+        name: "Mobile Cynosural Beacon".to_string(),
+        type_id: 57_319,
+        group_id: 4_093,
+        position: [b.x, b.y, b.z],
+        radius: 100.0,
+        range: 0.0,
+        active: false,
+        owner_id: 4_242,
+        corporation_id: 0,
+        alliance_id: 0,
+        ship_id: 0,
+    };
+    let placed = scene.place_cyno_beacon(beacon.clone(), t);
+    assert!(
+        placed.iter().any(|o| format!("{o:?}").contains("AddBalls2")),
+        "the pilots see it when it is dropped"
+    );
+    assert!(
+        scene.place_cyno_beacon(beacon.clone(), t).is_empty(),
+        "a beacon already in space is not put in twice"
+    );
+    assert_eq!(scene.deployables[&beacon.deployable_id].role, Role::CynoBeacon { active: false });
+
+    // the host anchors it when its activation time is over: it is a field from then on
+    scene.set_disruptor_active(beacon.deployable_id, true);
+    assert_eq!(scene.deployables[&beacon.deployable_id].role, Role::CynoBeacon { active: true });
+
+    // its end is the host's: the host takes it out, and it leaves the pilots' space
+    let removed = scene.remove_field(beacon.deployable_id, t + SECOND);
+    assert!(!scene.deployables.contains_key(&beacon.deployable_id));
+    assert!(!removed.is_empty(), "those who see it are told it is gone");
+}

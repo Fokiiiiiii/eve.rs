@@ -46,8 +46,7 @@ public sealed class SpaceJumpDrive(
         }
         var now = nowUnixMs();
         if (await deployed.GetAsync(fieldId, cancellationToken) is not { } field
-            || field.Kind != SpaceContainers.CynoFieldKind
-            || field.ExpiresAtMs <= now
+            || !SpaceContainers.IsLitField(field, now)
             || field.SolarSystemId != solarSystemId
             || (ownerId != 0 && field.OwnerId != ownerId))
         {

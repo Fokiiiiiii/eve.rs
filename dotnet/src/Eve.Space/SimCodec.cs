@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 57;
+    public const ushort ProtocolVersion = 58;
     /// <summary>The largest frame either side accepts (1 MiB).</summary>
     public const int MaxFrame = 1 << 20;
 
@@ -698,6 +698,7 @@ public static partial class SimCodec
                 break;
             case Kind.PlaceDisruptor:
             case Kind.PlaceInhibitor:
+            case Kind.PlaceCynoBeacon:
                 {
                     var deployable = r.I64();
                     var system = r.I32();
@@ -716,9 +717,12 @@ public static partial class SimCodec
                     {
                         throw new SimLinkException(SimLinkError.BadValue, "bad disruptor");
                     }
-                    message = payload.Span[0] == Kind.PlaceInhibitor
-                        ? new SimPlaceInhibitor(deployable, system, name, type, group, position, radius, range, active, owner, corporation, alliance, ship)
-                        : new SimPlaceDisruptor(deployable, system, name, type, group, position, radius, range, active, owner, corporation, alliance, ship);
+                    message = payload.Span[0] switch
+                    {
+                        Kind.PlaceInhibitor => new SimPlaceInhibitor(deployable, system, name, type, group, position, radius, range, active, owner, corporation, alliance, ship),
+                        Kind.PlaceCynoBeacon => new SimPlaceCynoBeacon(deployable, system, name, type, group, position, radius, active, owner, corporation, alliance, ship),
+                        _ => new SimPlaceDisruptor(deployable, system, name, type, group, position, radius, range, active, owner, corporation, alliance, ship),
+                    };
                     break;
                 }
             case Kind.SetDisruptorActive:

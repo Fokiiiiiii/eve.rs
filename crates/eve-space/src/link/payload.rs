@@ -425,7 +425,9 @@ impl Message {
                 out.extend_from_slice(&probe.ship_id.to_le_bytes());
             }
             Self::RemoveProbe { probe_id } => out.extend_from_slice(&probe_id.to_le_bytes()),
-            Self::PlaceDisruptor(disruptor) | Self::PlaceInhibitor(disruptor) => {
+            Self::PlaceDisruptor(disruptor)
+            | Self::PlaceInhibitor(disruptor)
+            | Self::PlaceCynoBeacon(disruptor) => {
                 out.extend_from_slice(&disruptor.deployable_id.to_le_bytes());
                 out.extend_from_slice(&disruptor.solar_system_id.to_le_bytes());
                 put_text(&mut out, &disruptor.name);

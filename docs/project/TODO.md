@@ -730,6 +730,36 @@ Done (tests: CynoJumpHostTests (A_black_ops_conduit_takes..., A_rorqual_bridges_
 
 Open, each with its blocker:
 - NOT BUILT: the Rorqual's conduit. Blocker: the wiki requires the Rorqual's industrial core to be inactive, and the simulation does not expose the core's active state to the host.
-- NOT BUILT: the mobile cynosural beacon (group 4093: the standard, the highsec authorized and the covert ones, SDE 57319, 58906, 59630) as a jump destination. Blocker: it is launched from the hold and anchored like the mobile inhibitor (SpaceContainers.Disruptors.cs), and its lit field has to be recorded as a cynosural field; this track did not reach it.
-- NOT BUILT: the Pharolux and Upwell cyno beacons (group 2017, category 65, the structure phase, and the structureCynoBeaconMgr remote service): named refusal only (the Upwell structures are the structure phase, not built).
+- BUILT in section 34: the mobile cynosural beacon as a jump destination (the standard, the highsec authorized and the covert ones).
+- NAMED REFUSAL in section 34: the Pharolux and Upwell cyno beacons (group 2017, the structure service is not built).
 - The client was not run on this host: the passenger list, the fleet's notices and the arrival are not seen in the client.
+
+## 34. Track A9 continued: the mobile cynosural beacon, the structure beacon refusal (protocol 58, 2026-10-10)
+
+Done (tests: BeaconHostTests (5), StructureTravelTests, InhibitorHostTests, scene deployable/tests.rs a_mobile_cynosural_beacon_...; decisions in DEVIATIONS "Track A9 continued"):
+- The mobile cynosural beacon (group 4093, 57319, 58906, 59630): dropped from the hold 2 500 m ahead, anchored after its activation time (2 min; covert 1 min), a field only while anchored, gone after its life (1 h; covert 30 min). Skills read from the SDE.
+- Security cutoff 0.45 for the standard and covert beacons; the highsec authorized beacon is exempt (its own SDE type, Polaris 5).
+- Restart: a beacon in space comes back unanchored or anchored as its record says.
+- Protocol 58, kind 73 (PlaceCynoBeacon); migration 0011 widens the deployed kind check.
+- Named refusal for the Pharolux and Upwell cyno beacons: the structure service that keeps their state is not built.
+
+Open, each with its blocker:
+- NOT BUILT: a beacon as the target of a bridge or a conduit (the field-only check refuses it).
+- NOT BUILT: fleet notices for a beacon (no field announcement); the mobile inhibitor's effect on a beacon's activation.
+- NOT BUILT: the wormhole and Pochven refusals of the beacon (EveJS lines 287 to 291).
+- NOT TESTED: a host jump to an anchored beacon and the simulation's arrival at it (the code path exists; no test drives it).
+- NOT RUN: the client.
+
+
+## 35. Track A8c: the mobile beacon as a jump target, the fleet notices, the inhibitor, the wormhole and Pochven rules (2026-10-10)
+
+Increment 1, done (tests: `CynoJumpHostTests`: A_revelation_jumps_to_an_anchored_beacon..., A_titan_bridge_opens_to_an_anchored_beacon..., A_titan_bridge_is_refused_to_a_covert_beacon..., A_black_ops_conduit_jumps_to_an_anchored_covert_beacon; decisions in DEVIATIONS "Track A8c"):
+- A mobile cynosural beacon is a jump, bridge and conduit target while it is anchored and its time is not up (`SpaceContainers.IsLitField`, one rule for the three). A beacon still anchoring is refused "not lit" and the simulation is not asked.
+- A Titan bridge goes to a standard field or a beacon; a covert beacon is a covert field for the cyno rule, so only a Black Ops takes it.
+- A covert bridge and a Black Ops conduit take a beacon of any kind.
+
+Open, each with its blocker (the remaining increments):
+- NOT BUILT: fleet notices for a beacon (`OnFleetJumpBeaconDeployableChange` when it anchors and when it is gone).
+- NOT BUILT: a mobile inhibitor's effect on a beacon's activation (the 100 km refusal at anchoring).
+- NOT BUILT: the wormhole and Pochven rules (jumps into wormhole space and into Pochven; lighting in Pochven).
+- NOT RUN: the client.

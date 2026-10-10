@@ -389,6 +389,7 @@ impl Sim {
             | Message::RemoveProbe { .. }
             | Message::PlaceDisruptor(..)
             | Message::PlaceInhibitor(..)
+            | Message::PlaceCynoBeacon(..)
             | Message::SetDisruptorActive { .. } => self.handle_world(message, now),
             other => Err(ProtocolError(format!(
                 "a message of kind {} is for the host, not the simulation",
@@ -954,6 +955,13 @@ impl Sim {
                 let disruptor = *disruptor;
                 match self.scenes.get_mut(&disruptor.solar_system_id) {
                     Some(scene) => scene.place_disruptor(disruptor, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::PlaceCynoBeacon(beacon) => {
+                let beacon = *beacon;
+                match self.scenes.get_mut(&beacon.solar_system_id) {
+                    Some(scene) => scene.place_cyno_beacon(beacon, now),
                     None => Vec::new(),
                 }
             }

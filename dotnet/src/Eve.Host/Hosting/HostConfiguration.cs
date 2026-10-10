@@ -70,6 +70,8 @@ internal static class HostConfiguration
     //                          answers None and logs one line (what the reference does)                  (default 0)
     //   EVE_TRACE_RPC          1 traces unhandled calls to stderr; full also logs every call's arguments and result type tree
     //                          (the dispatcher reads it, not this class)                               (default off)
+    //   EVE_AUTO_RELOAD_ACCOUNTS  the account ids (comma-separated) of bots with no client UI: the host reloads their guns from the hold
+    //                          when the rounds run out. Every other account reloads its own guns (default none)
 
     /// <summary>The default listening endpoint. Windows has no Unix socket for the front to meet us on, so it is a local port.</summary>
     internal static string DefaultEndpoint(bool windows) => windows ? "tcp:127.0.0.1:26010" : "/tmp/eve-host.sock";
@@ -80,6 +82,12 @@ internal static class HostConfiguration
     internal static string Env(string name, string fallback) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : fallback;
 
     internal static bool Flag(string name, bool fallback) => Env(name, fallback ? "1" : "0") is "1" or "true" or "TRUE" or "yes";
+
+    /// <summary>The accounts EVE_AUTO_RELOAD_ACCOUNTS names. An entry that is not an account id stops the host: a typo must not switch a client's reload on or off unnoticed.</summary>
+    internal static IReadOnlySet<long> AutoReloadUserIds(string value) =>
+        value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(id => long.TryParse(id, out var parsed) && parsed > 0 ? parsed : throw new InvalidOperationException($"EVE_AUTO_RELOAD_ACCOUNTS names {id}, which is not an account id."))
+            .ToHashSet();
 
     internal static HostSettings Read()
     {

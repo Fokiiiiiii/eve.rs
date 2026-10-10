@@ -770,7 +770,8 @@ public class ModuleEffectsTests
             }
         }
 
-        // pending handlers (refusals) are not coverage, so their effects stay in currentSdeGaps
+        // pending handlers (refusals) are not coverage, so their effects stay in currentSdeGaps; the built ones (the command bursts, P.A.N.I.C.,
+        // hackOrbital, scanStrength) have left the manifest
         var handledNames = Eve.Services.Space.Effects.ModuleEffects.Default.ImplementedNames
             .Concat(["missileLaunching", "torpedoLaunching"])
             .ToHashSet(StringComparer.OrdinalIgnoreCase);

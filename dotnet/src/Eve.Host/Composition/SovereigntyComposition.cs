@@ -224,6 +224,8 @@ internal sealed partial class CharacterServicesComposition
             HasSovSkyhookWalletOperationAsync);
         if (allianceMaintenanceBillWorker is { } maintenance)
             maintenance.DropSovereigntyClaimsAsync = sovWriteOperations.DropAllianceSovereigntyClaimsAsync;
+        if (allianceSovereigntyTransferWorker is { } transfer)
+            transfer.TransferSovereigntyAsync = sovWriteOperations.TransferAllianceSovereigntyOwnershipAsync;
         return Task.CompletedTask;
     }
 

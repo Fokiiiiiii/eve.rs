@@ -766,6 +766,178 @@ private async ValueTask<IReadOnlyList<long>> ReadCommittedAcquisitionsAsync(
         }).Order().ToArray();
     }
 
+    public async Task<bool> TransferAllianceSovereigntyOwnershipAsync(
+        long allianceId, long fromCorporationId, long toCorporationId,
+        CancellationToken cancellationToken = default)
+    {
+        if (allianceId <= 0 || fromCorporationId <= 0 || toCorporationId <= 0 ||
+            fromCorporationId == toCorporationId)
+            return false;
+        await writeGate.WaitAsync(cancellationToken);
+        try
+        {
+            var root = (JsonObject)readCacheTable("sovereignty").DeepClone();
+            if (root["systems"] is not JsonObject systems)
+                return true;
+
+            var systemOwnerKeys = new HashSet<string>(StringComparer.Ordinal);
+            var structureOwnerKeys = new HashSet<(string SystemKey, long StructureId)>();
+            var hubOwnerIds = new HashSet<long>();
+            var changed = false;
+            var hubs = root["hubs"] as JsonObject;
+            foreach (var (systemKey, node) in systems.ToArray())
+            {
+                if (node is not JsonObject system ||
+                    Positive(Integer(system["allianceID"])) != allianceId)
+                    continue;
+                var systemId = Positive(Integer(system["solarSystemID"]));
+                if (systemId <= 0 && !long.TryParse(systemKey,
+                        System.Globalization.NumberStyles.Integer,
+                        System.Globalization.CultureInfo.InvariantCulture, out systemId))
+                    continue;
+                var claimStructureId = Positive(Integer(system["claimStructureID"]));
+                var hubId = Positive(Integer(system["infrastructureHubID"]));
+                var coreIds = new HashSet<long> { claimStructureId, hubId };
+                coreIds.RemoveWhere(id => id <= 0);
+                if (coreIds.Count == 0)
+                    continue;
+
+                var systemCorporationId = Positive(Integer(system["corporationID"]));
+                var systemOwnershipSelected = systemCorporationId == fromCorporationId;
+                var coreStructures = (system["structures"] as JsonArray ?? [])
+                    .OfType<JsonObject>()
+                    .Where(structure => coreIds.Contains(
+                        Positive(Integer(structure["itemID"] ?? structure["structureID"]))))
+                    .ToArray();
+                var stale = false;
+                foreach (var structure in coreStructures)
+                {
+                    var structureAllianceId = Positive(Integer(structure["allianceID"]));
+                    if (structureAllianceId > 0 && structureAllianceId != allianceId)
+                    {
+                        stale = true;
+                        break;
+                    }
+                    var explicitOwners = new[]
+                    {
+                        Positive(Integer(structure["corporationID"] ?? structure["ownerCorpID"])),
+                        Positive(Integer(structure["ownerID"]))
+                    }.Where(ownerId => ownerId > 0).Distinct();
+                    if (explicitOwners.Any(ownerId =>
+                            ownerId != fromCorporationId && ownerId != toCorporationId))
+                    {
+                        stale = true;
+                        break;
+                    }
+                }
+                JsonObject? hub = null;
+                if (hubId > 0 && hubs?[hubId.ToString(System.Globalization.CultureInfo.InvariantCulture)]
+                        is JsonObject hubRow)
+                {
+                    hub = hubRow;
+                    var hubAllianceId = Positive(Integer(hub["allianceID"]));
+                    var hubCorporationId = Positive(Integer(hub["corporationID"]));
+                    var hubOwnerId = Positive(Integer(hub["ownerID"]));
+                    if (hubAllianceId > 0 && hubAllianceId != allianceId ||
+                        hubCorporationId > 0 &&
+                            hubCorporationId != fromCorporationId && hubCorporationId != toCorporationId ||
+                        hubOwnerId > 0 && hubOwnerId != fromCorporationId && hubOwnerId != toCorporationId)
+                        stale = true;
+                }
+                if (stale)
+                    continue;
+
+                var systemChanged = false;
+                if (systemOwnershipSelected)
+                {
+                    system["corporationID"] = toCorporationId;
+                    if (system["currentData"] is JsonArray currentData)
+                        foreach (var row in currentData.OfType<JsonObject>())
+                            if (Positive(Integer(row["corporationID"])) == fromCorporationId)
+                                row["corporationID"] = toCorporationId;
+                    systemOwnerKeys.Add(systemKey);
+                    systemChanged = true;
+                }
+
+                foreach (var structure in coreStructures)
+                {
+                    var structureCorporationId = Positive(Integer(
+                        structure["corporationID"] ?? structure["ownerCorpID"]));
+                    var ownerId = Positive(Integer(structure["ownerID"]));
+                    var effectiveOwnerId = structureCorporationId > 0
+                        ? structureCorporationId
+                        : ownerId > 0 ? ownerId : systemCorporationId;
+                    if (effectiveOwnerId != fromCorporationId)
+                        continue;
+                    var structureId = Positive(Integer(
+                        structure["itemID"] ?? structure["structureID"]));
+                    structure["corporationID"] = toCorporationId;
+                    structure["ownerID"] = toCorporationId;
+                    structureOwnerKeys.Add((systemKey, structureId));
+                    systemChanged = true;
+                }
+
+                if (hub is not null)
+                {
+                    var hubCorporationId = Positive(Integer(hub["corporationID"]));
+                    var hubOwnerId = Positive(Integer(hub["ownerID"]));
+                    var effectiveHubOwner = hubCorporationId > 0
+                        ? hubCorporationId
+                        : hubOwnerId > 0 ? hubOwnerId : systemCorporationId;
+                    if (effectiveHubOwner == fromCorporationId)
+                    {
+                        hub["corporationID"] = toCorporationId;
+                        if (hub.ContainsKey("ownerID"))
+                            hub["ownerID"] = toCorporationId;
+                        hubOwnerIds.Add(hubId);
+                        systemChanged = true;
+                    }
+                }
+                changed |= systemChanged;
+            }
+
+            if (!changed)
+                return true;
+            var writeResult = write("sovereignty", null, root);
+            if (!writeResult.Success)
+                throw new InvalidOperationException(
+                    $"Could not persist sovereignty transfer for alliance {allianceId}: {writeResult.ErrorMsg}");
+            await flushTableAsync("sovereignty", cancellationToken);
+            var persisted = await readPersistedTableAsync("sovereignty", cancellationToken);
+            var savedSystems = persisted["systems"] as JsonObject;
+            foreach (var systemKey in systemOwnerKeys)
+                if (savedSystems?[systemKey] is not JsonObject system ||
+                    Positive(Integer(system["corporationID"])) != toCorporationId)
+                    return false;
+            foreach (var (systemKey, structureId) in structureOwnerKeys)
+            {
+                var structure = (savedSystems?[systemKey]?["structures"] as JsonArray ?? [])
+                    .OfType<JsonObject>()
+                    .FirstOrDefault(row => Positive(Integer(
+                        row["itemID"] ?? row["structureID"])) == structureId);
+                if (structure is null ||
+                    Positive(Integer(structure["corporationID"])) != toCorporationId ||
+                    structure.ContainsKey("ownerID") &&
+                        Positive(Integer(structure["ownerID"])) != toCorporationId)
+                    return false;
+            }
+            var savedHubs = persisted["hubs"] as JsonObject;
+            foreach (var hubId in hubOwnerIds)
+            {
+                if (savedHubs?[hubId.ToString(System.Globalization.CultureInfo.InvariantCulture)]
+                    is not JsonObject hub ||
+                    Positive(Integer(hub["corporationID"])) != toCorporationId ||
+                    hub.ContainsKey("ownerID") && Positive(Integer(hub["ownerID"])) != toCorporationId)
+                    return false;
+            }
+            return true;
+        }
+        finally
+        {
+            writeGate.Release();
+        }
+    }
+
     public async Task<bool> DropAllianceSovereigntyClaimsAsync(
         long allianceId, long nowUnixMs, CancellationToken cancellationToken = default)
     {

@@ -10,7 +10,8 @@ namespace Eve.Services.Space.Tests;
 
 /// <summary>
 /// The superweapon family of static data group 588 (docs/project/TODO.md section 12): every activation effect of every type in the group is refused by the reason
-/// its family names, before a package is built, so no simulation action, no fuel and no success. P.A.N.I.C. (42522) keeps its own refusal.
+/// its family names, before a package is built, so no simulation action, no fuel and no success. P.A.N.I.C. (42522) has its own handler and is
+/// checked in IndustrialInvulnerabilityTests.
 /// </summary>
 public class SuperWeaponEffectsTests
 {
@@ -31,8 +32,6 @@ public class SuperWeaponEffectsTests
         // the cone has a body: without a point it is refused for the point (its aimed package is tested in A_cone...)
         ["doomsdayConeDOT"] = "TARGET_POINT_REQUIRED",
         ["doomsdayHOG"] = "TARGET_POINT_REQUIRED",
-        // P.A.N.I.C. 42522: its own handler (IndustrialInvulnerabilityEffect), not part of this family
-        ["moduleBonusIndustrialInvulnerability"] = PendingModuleEffect.NotImplemented,
     };
 
     /// <summary>The slot effects every module carries (power grid class and online): they are not an activation of the module.</summary>
@@ -40,6 +39,7 @@ public class SuperWeaponEffectsTests
 
     private const int Ship = 587;
     private const int CatmageddonType = 37474;
+    private const int PanicType = 42522;
 
     [PgFact]
     public async Task Every_activation_of_every_group_588_type_is_refused_by_the_reason_its_family_names_and_builds_no_package()
@@ -53,7 +53,8 @@ public class SuperWeaponEffectsTests
         await statics.EnsureTypesAsync(typeIds);
         await statics.EnsureTypesAsync([Ship]);
 
-        var types = typeIds.Select(id => statics.Type(id)!).ToArray();
+        // P.A.N.I.C. (42522) is in the group but is not a family activation: it has its own handler, checked in IndustrialInvulnerabilityTests
+        var types = typeIds.Where(id => id != PanicType).Select(id => statics.Type(id)!).ToArray();
         var seen = new List<string>();
         foreach (var type in types)
         {

@@ -762,6 +762,263 @@ public class AllianceTests
     }
 
     [PgFact]
+    public async Task Alliance_sov_and_owner_queries_return_rows_from_their_authoritative_sources()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (actor, corporation) = await Founder(rig, "Alliance Owner Reader", "AOWR");
+        var alliance = await rig.Store.CreateAllianceAsync(actor, Request, "alliance-owner-reader");
+        const long systemId = 30000142;
+        const long hubId = 9000042;
+        const long teamId = 990001;
+        var filetime = DateTimeOffset.FromUnixTimeMilliseconds(rig.Now).ToFileTime();
+        var sovereignty = new Eve.Services.Corporations.AllianceSovSnapshot(
+            new Dictionary<long, long?> { [systemId] = alliance.Id },
+            new Dictionary<long, (long? AllianceId, long? HubId)>
+            {
+                [systemId] = (alliance.Id, hubId)
+            },
+            null)
+        {
+            ClaimStructureIdsBySolarSystemId = new Dictionary<long, long?> { [systemId] = hubId },
+            StructuresBySolarSystemId = new Dictionary<long, IReadOnlyList<Eve.Services.Corporations.AllianceSovStructure>>
+            {
+                [systemId] =
+                [
+                    new Eve.Services.Corporations.AllianceSovStructure(
+                        hubId, systemId, corporation.Id, alliance.Id, 1, filetime,
+                        new Dictionary<long, double> { [teamId] = 42.5 },
+                        filetime + TimeSpan.FromHours(1).Ticks,
+                        filetime + TimeSpan.FromHours(2).Ticks,
+                        1.25)
+                ]
+            }
+        };
+        var service = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
+            rig.Store, rig.Characters, () => rig.Now,
+            readSovSnapshot: (_, _) => Task.FromResult<Eve.Services.Corporations.AllianceSovSnapshot?>(sovereignty),
+            readStaticOwners: (ownerIds, _) => Task.FromResult<IReadOnlyDictionary<long,
+                Eve.Services.Corporations.AllianceOwnerLookupRecord>>(
+                new Dictionary<long, Eve.Services.Corporations.AllianceOwnerLookupRecord>
+                {
+                    [500001] = new(500001, "Caldari State", Eve.Services.Corporations.EveOwnerTypeIds.Faction, 0)
+                }));
+
+        var session = new Eve.Services.ClientSession { SessionId = actor, CharacterId = actor };
+        session.Set("corpid", new Eve.Marshal.PyInt(corporation.Id));
+        session.Set("allianceid", new Eve.Marshal.PyInt(alliance.Id));
+        var sovResult = Assert.IsType<Eve.Marshal.PyTuple>(await service.CallAsync(new Eve.Services.ServiceCall
+        {
+            Session = session,
+            Method = "GetAllianceSovereigntyStructuresInfo",
+            Args = []
+        }));
+        var tcuRows = Assert.IsType<Eve.Marshal.PyList>(sovResult.Items[0]);
+        var hubRows = Assert.IsType<Eve.Marshal.PyList>(sovResult.Items[1]);
+        var campaignRows = Assert.IsType<Eve.Marshal.PyList>(sovResult.Items[2]);
+        var tcu = Assert.Single(tcuRows.Items);
+        var hub = Assert.Single(hubRows.Items);
+        var campaign = Assert.Single(campaignRows.Items);
+        Eve.Marshal.PyValue RowField(Eve.Marshal.PyValue row, string name)
+        {
+            var fields = Assert.IsType<Eve.Marshal.PyDict>(Assert.IsType<Eve.Marshal.PyObject>(row).Args);
+            return fields.Entries.Single(entry => entry.Key == new Eve.Marshal.PyStr(name)).Value;
+        }
+        Eve.Marshal.PyTuple OwnerLine(Eve.Marshal.PyValue row)
+        {
+            var fields = Assert.IsType<Eve.Marshal.PyDict>(Assert.IsType<Eve.Marshal.PyObject>(row).Args);
+            return Assert.IsType<Eve.Marshal.PyTuple>(
+                fields.Entries.Single(entry => entry.Key == new Eve.Marshal.PyStr("line")).Value);
+        }
+        Assert.Equal(new Eve.Marshal.PyInt(hubId), RowField(tcu, "structureID"));
+        Assert.DoesNotContain(Assert.IsType<Eve.Marshal.PyDict>(Assert.IsType<Eve.Marshal.PyObject>(tcu).Args).Entries,
+            entry => entry.Key == new Eve.Marshal.PyStr("corporationID"));
+        Assert.Equal(new Eve.Marshal.PyInt(corporation.Id), RowField(hub, "corporationID"));
+        Assert.Equal(new Eve.Marshal.PyLong(filetime), RowField(hub, "campaignStartTime"));
+        Assert.Equal(new Eve.Marshal.PyInt(teamId), RowField(campaign, "teamID"));
+        Assert.Equal(Eve.Services.Py.Number(42.5), RowField(campaign, "score"));
+
+        var owners = Assert.IsType<Eve.Marshal.PyList>(await service.CallAsync(new Eve.Services.ServiceCall
+        {
+            Session = session,
+            Method = "GetEveOwners",
+            Args =
+            [
+                Eve.Services.Py.List(
+                    new Eve.Marshal.PyInt(actor),
+                    new Eve.Marshal.PyInt(corporation.Id),
+                    new Eve.Marshal.PyInt(alliance.Id),
+                    new Eve.Marshal.PyInt(500001),
+                    new Eve.Marshal.PyInt(999999999))
+            ]
+        }));
+        Assert.Equal(4, owners.Items.Count);
+        var factionOwner = OwnerLine(owners.Items[3]);
+        Assert.Equal(new Eve.Marshal.PyInt(500001), factionOwner.Items[0]);
+        Assert.Equal(new Eve.Marshal.PyWString("Caldari State"), factionOwner.Items[1]);
+        Assert.Equal(new Eve.Marshal.PyInt(Eve.Services.Corporations.EveOwnerTypeIds.Faction),
+            factionOwner.Items[2]);
+        Assert.Equal(Eve.Marshal.PyNone.Instance, factionOwner.Items[4]);
+    }
+
+    [PgFact]
+    public async Task Alliance_departure_schedules_sovereignty_transfer_to_the_active_executor()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schedulerSchema = "alliance_sov_transfer_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(rig.Source, schedulerSchema);
+            var scheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now, schema: schedulerSchema);
+            var (executor, executorCorp) = await Founder(rig, "SOV Executor", "SOVEX");
+            var (leaver, leaverCorp) = await Founder(rig, "SOV Leaver", "SOVLV");
+            var alliance = await rig.Store.CreateAllianceAsync(executor, Request, "alliance-sov-transfer");
+            var application = await rig.Store.ApplyToAllianceAsync(leaver, alliance.Id, "Join for sovereignty");
+            var accepted = await AcceptAllianceApplicationAsync(rig.Store, executor, application);
+            rig.Now = accepted.DueMs!.Value;
+            Assert.Equal([leaverCorp.Id], await ProcessAllianceDueAsync(rig.Store));
+
+            var transfers = new List<(long AllianceId, long FromCorporationId, long ToCorporationId)>();
+            var worker = new Eve.Services.Corporations.AllianceSovereigntyTransferWorker(
+                rig.Store, scheduler, () => rig.Now);
+            worker.TransferSovereigntyAsync = (allianceId, fromCorporationId, toCorporationId, _) =>
+            {
+                transfers.Add((allianceId, fromCorporationId, toCorporationId));
+                return Task.FromResult(true);
+            };
+            await worker.RegisterAsync();
+
+            var departure = await rig.Store.RemoveAllianceMemberAsync(
+                alliance.Id, leaverCorp.Id, leaver, "self-leave", rig.Now,
+                static (_, _, _, _, _) => Task.CompletedTask);
+            Assert.False(departure.Duplicate);
+            Assert.Equal(1, await scheduler.RunDueAsync());
+            Assert.Equal([(alliance.Id, leaverCorp.Id, executorCorp.Id)], transfers);
+        }
+        finally
+        {
+            await using var cleanup = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schedulerSchema} CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
+
+    [PgFact]
+    public async Task Alliance_departure_transfer_still_runs_if_leaver_joins_a_different_alliance_before_job()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schedulerSchema = "alliance_sov_transfer_rejoin_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(rig.Source, schedulerSchema);
+            var scheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now, schema: schedulerSchema);
+            var (executor, executorCorp) = await Founder(rig, "Original SOV Executor", "OSVEX");
+            var (leaver, leaverCorp) = await Founder(rig, "Alliance Leaver", "OSVLV");
+            var (newExecutor, _) = await Founder(rig, "New SOV Executor", "NSVEX");
+            var originalAlliance = await rig.Store.CreateAllianceAsync(executor,
+                new Eve.Corporations.NewAlliance("Original SOV Alliance", "OSOVA", "Original.", ""),
+                "original-sov-owner");
+            var newAlliance = await rig.Store.CreateAllianceAsync(newExecutor,
+                new Eve.Corporations.NewAlliance("New SOV Alliance", "NSOVA", "New.", ""),
+                "new-sov-owner");
+            var worker = new Eve.Services.Corporations.AllianceSovereigntyTransferWorker(
+                rig.Store, scheduler, () => rig.Now);
+            var transfers = new List<(long AllianceId, long FromCorporationId, long ToCorporationId)>();
+            worker.TransferSovereigntyAsync = (allianceId, fromCorporationId, toCorporationId, _) =>
+            {
+                transfers.Add((allianceId, fromCorporationId, toCorporationId));
+                return Task.FromResult(true);
+            };
+            await worker.RegisterAsync();
+
+            var originalApplication = await rig.Store.ApplyToAllianceAsync(
+                leaver, originalAlliance.Id, "Join original alliance");
+            var originalAccepted = await AcceptAllianceApplicationAsync(
+                rig.Store, executor, originalApplication);
+            rig.Now = originalAccepted.DueMs!.Value;
+            Assert.Equal([leaverCorp.Id], await ProcessAllianceDueAsync(rig.Store));
+            await rig.Store.RemoveAllianceMemberAsync(
+                originalAlliance.Id, leaverCorp.Id, leaver, "self-leave", rig.Now,
+                static (_, _, _, _, _) => Task.CompletedTask);
+
+            var newApplication = await rig.Store.ApplyToAllianceAsync(
+                leaver, newAlliance.Id, "Join another alliance before SOV transfer");
+            var newAccepted = await AcceptAllianceApplicationAsync(rig.Store, newExecutor, newApplication);
+            rig.Now = newAccepted.DueMs!.Value;
+            Assert.Equal([leaverCorp.Id], await ProcessAllianceDueAsync(rig.Store));
+
+            Assert.Equal(1, await scheduler.RunDueAsync());
+            Assert.Equal([(originalAlliance.Id, leaverCorp.Id, executorCorp.Id)], transfers);
+        }
+        finally
+        {
+            await using var cleanup = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schedulerSchema} CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
+
+    [PgFact]
+    public async Task Alliance_departure_transfer_waits_until_the_suspended_alliance_has_an_executor()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schedulerSchema = "alliance_sov_transfer_suspended_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await Eve.Scheduler.DurableScheduler.MigrateAsync(rig.Source, schedulerSchema);
+            var scheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now, schema: schedulerSchema);
+            var (executor, executorCorp) = await Founder(rig, "Suspended SOV Executor", "SSVEX");
+            var (leaver, leaverCorp) = await Founder(rig, "Suspended SOV Leaver", "SSVLV");
+            var alliance = await rig.Store.CreateAllianceAsync(
+                executor,
+                new Eve.Corporations.NewAlliance("Suspended SOV Alliance", "SSOVA", "Suspended.", ""),
+                "suspended-sov-alliance");
+            var application = await rig.Store.ApplyToAllianceAsync(leaver, alliance.Id, "Join for SOV");
+            var accepted = await AcceptAllianceApplicationAsync(rig.Store, executor, application);
+            rig.Now = accepted.DueMs!.Value;
+            Assert.Equal([leaverCorp.Id], await ProcessAllianceDueAsync(rig.Store));
+
+            var worker = new Eve.Services.Corporations.AllianceSovereigntyTransferWorker(
+                rig.Store, scheduler, () => rig.Now);
+            var transfers = new List<(long AllianceId, long FromCorporationId, long ToCorporationId)>();
+            worker.TransferSovereigntyAsync = (allianceId, fromCorporationId, toCorporationId, _) =>
+            {
+                transfers.Add((allianceId, fromCorporationId, toCorporationId));
+                return Task.FromResult(true);
+            };
+            await worker.RegisterAsync();
+            await rig.Store.RemoveAllianceMemberAsync(
+                alliance.Id, leaverCorp.Id, leaver, "self-leave", rig.Now,
+                static (_, _, _, _, _) => Task.CompletedTask);
+
+            await using (var suspend = rig.Source.CreateCommand(
+                $"UPDATE {rig.CorporationSchema}.alliances SET executor_corporation_id=NULL,suspended=true WHERE id=$1"))
+            {
+                suspend.Parameters.AddWithValue(alliance.Id);
+                Assert.Equal(1, await suspend.ExecuteNonQueryAsync());
+            }
+            Assert.Equal(1, await scheduler.RunDueAsync());
+            Assert.Empty(transfers);
+
+            await using (var resume = rig.Source.CreateCommand(
+                $"UPDATE {rig.CorporationSchema}.alliances SET executor_corporation_id=$2,suspended=false WHERE id=$1"))
+            {
+                resume.Parameters.AddWithValue(alliance.Id);
+                resume.Parameters.AddWithValue(executorCorp.Id);
+                Assert.Equal(1, await resume.ExecuteNonQueryAsync());
+            }
+            rig.Now = checked(rig.Now + 60_000);
+
+            Assert.Equal(1, await scheduler.RunDueAsync());
+            Assert.Equal([(alliance.Id, leaverCorp.Id, executorCorp.Id)], transfers);
+        }
+        finally
+        {
+            await using var cleanup = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schedulerSchema} CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PgFact]
     public async Task Corp_registry_creates_alliance_idempotently_and_lists_its_applications()
     {
         await using var rig = await Rig.CreateAsync();

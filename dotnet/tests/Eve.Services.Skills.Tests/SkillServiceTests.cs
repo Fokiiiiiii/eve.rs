@@ -41,26 +41,27 @@ internal sealed class Rig : IAsyncDisposable
 
     private Rig(NpgsqlDataSource source, SkillCatalog catalog, TrainingSettings? settings = null,
             Eve.Scheduler.LocalTimers? localTimers = null, bool scheduleAnnouncer = false, Func<long, bool>? isAlphaClone = null)
-        {
-            Source = source;
-            CatalogForTest = catalog;
-            Store = new PgSkillStore(source, _schema);
-            ItemStore = new Eve.Inventory.PgItemStore(source, _schema + "i");
-            WalletStore = new Eve.Wallet.PgWalletStore(source, _schema + "w");
-            Wallet = new Eve.Wallet.WalletTransactions(source, _schema + "w");
-            Dogma = TestDogma();
-            Training = new CharacterTraining(source, CatalogForTest, Store, new PgTrainingStore(source, _schema), settings ?? new TrainingSettings(), () => Now);
-            Sessions = new CharacterSessions();
-            Announcer = new TrainingAnnouncer(Training, CatalogForTest, Sessions, null, () => Now,
-                schedule: scheduleAnnouncer, localTimers: localTimers);
-            Announcer.Attach();
-            Handler = new SkillHandlerService(
-                Store, CatalogForTest, Training, new Eve.Characters.PgCharacterStore(source, _schema + "c"), ItemStore, Dogma, Announcer, () => Now,
-                SkillHandlerService.CreateAugmentationReader(ItemStore, Dogma, Store, () => Now, () => 0d),
-                () => 0d, Wallet, isAlphaClone);
-            Door = new SkillMgr2Service();
-            Hook = new SkillsLoginHook(Training, CatalogForTest, Sessions, Announcer, () => Now);
-        }
+    {
+        Source = source;
+        CatalogForTest = catalog;
+        Store = new PgSkillStore(source, _schema);
+        ItemStore = new Eve.Inventory.PgItemStore(source, _schema + "i");
+        WalletStore = new Eve.Wallet.PgWalletStore(source, _schema + "w");
+        Wallet = new Eve.Wallet.WalletTransactions(source, _schema + "w");
+        Dogma = TestDogma();
+        Training = new CharacterTraining(source, CatalogForTest, Store, new PgTrainingStore(source, _schema),
+            settings ?? new TrainingSettings { Attribute = Store.LearningAttribute }, () => Now);
+        Sessions = new CharacterSessions();
+        Announcer = new TrainingAnnouncer(Training, CatalogForTest, Sessions, null, () => Now,
+            schedule: scheduleAnnouncer, localTimers: localTimers);
+        Announcer.Attach();
+        Handler = new SkillHandlerService(
+            Store, CatalogForTest, Training, new Eve.Characters.PgCharacterStore(source, _schema + "c"), ItemStore, Dogma, Announcer, () => Now,
+            SkillHandlerService.CreateAugmentationReader(ItemStore, Dogma, Store, () => Now, () => 0d),
+            () => 0d, Wallet, isAlphaClone);
+        Door = new SkillMgr2Service();
+        Hook = new SkillsLoginHook(Training, CatalogForTest, Sessions, Announcer, () => Now);
+    }
 
     public long CharacterId { get; private set; }
 
@@ -370,7 +371,6 @@ public class SkillHandlerTests
         Assert.Null(await rig.ItemStore.GetAsync(injector));
     }
 
-
     [PgFact]
     public async Task Daily_alpha_injector_is_limited_to_alpha_characters_and_once_per_day()
     {
@@ -405,7 +405,6 @@ public class SkillHandlerTests
             Assert.Equal("That skill injector cannot be used.", CustomNotifyOf(denied));
         }
     }
-
 
     [PgFact]
     public async Task Alpha_clones_can_extract_only_omega_restricted_skills()
@@ -709,6 +708,108 @@ public class SkillHandlerTests
         Assert.Equal(new PyDict([]), await Ask("GetFreeSkillPointsAppliedToSkills"));
         var respec = ((PyDict)((PyObject)await Ask("GetRespecInfo")).Args).Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
         Assert.Equal((new PyInt(3), PyNone.Instance, PyNone.Instance), ((PyValue)respec["freeRespecs"], respec["lastRespecDate"], respec["nextTimedRespec"]));
+    }
+
+    [PgFact]
+    public async Task RespecCharacter_persists_attributes_uses_the_timed_remap_first_and_notifies_the_client()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, sink) = Rig.Session(rig.CharacterId);
+        var attributes = new PyDict(
+        [
+            new(new PyInt(164), new PyInt(27)),
+            new(new PyInt(165), new PyInt(21)),
+            new(new PyInt(166), new PyInt(17)),
+            new(new PyInt(167), new PyInt(17)),
+            new(new PyInt(168), new PyInt(17)),
+        ]);
+
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.Handler, session, "RespecCharacter", attributes));
+        Assert.Equal(attributes, await Rig.CallAsync(rig.Handler, session, "GetAttributes"));
+
+        var respec = ((PyDict)((PyObject)await Rig.CallAsync(rig.Handler, session, "GetRespecInfo")).Args)
+            .Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
+        var now = Py.FileTimeFromUnixMs(Rig.ClockMs);
+        Assert.Equal(new PyInt(3), respec["freeRespecs"]);
+        Assert.Equal(new PyLong(now), respec["lastRespecDate"]);
+        Assert.Equal(new PyLong(now + 365L * 24 * 60 * 60 * 10_000_000), respec["nextTimedRespec"]);
+        Assert.Contains(sink.Sent, packet =>
+            packet is PyObject { Name: PyStr name, Args: PyTuple args } &&
+            name.Value.EndsWith("Notification", StringComparison.Ordinal) &&
+            Eve.Macho.MachoAddress.Decode(args.Items[2]).BroadcastId == "OnRespecInfoChanged");
+    }
+
+    [PgFact]
+    public async Task A_second_remap_uses_a_bonus_without_advancing_the_timed_remap()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _) = Rig.Session(rig.CharacterId);
+        PyDict Map(int charisma, int intelligence, int memory, int perception, int willpower) => new(
+        [
+            new(new PyInt(164), new PyInt(charisma)),
+            new(new PyInt(165), new PyInt(intelligence)),
+            new(new PyInt(166), new PyInt(memory)),
+            new(new PyInt(167), new PyInt(perception)),
+            new(new PyInt(168), new PyInt(willpower)),
+        ]);
+
+        await Rig.CallAsync(rig.Handler, session, "RespecCharacter", Map(27, 21, 17, 17, 17));
+        var first = ((PyDict)((PyObject)await Rig.CallAsync(rig.Handler, session, "GetRespecInfo")).Args)
+            .Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
+        rig.Wait(TimeSpan.FromHours(1));
+        await Rig.CallAsync(rig.Handler, session, "RespecCharacter", Map(21, 27, 17, 17, 17));
+        var second = ((PyDict)((PyObject)await Rig.CallAsync(rig.Handler, session, "GetRespecInfo")).Args)
+            .Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
+
+        Assert.Equal(new PyInt(2), second["freeRespecs"]);
+        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(Rig.ClockMs + 3_600_000L)), second["lastRespecDate"]);
+        Assert.Equal(first["nextTimedRespec"], second["nextTimedRespec"]);
+    }
+
+    [PgFact]
+    public async Task Concurrent_retries_for_the_same_remap_consume_only_one_respec()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _) = Rig.Session(rig.CharacterId);
+        var attributes = new PyDict(
+        [
+            new(new PyInt(164), new PyInt(27)),
+            new(new PyInt(165), new PyInt(21)),
+            new(new PyInt(166), new PyInt(17)),
+            new(new PyInt(167), new PyInt(17)),
+            new(new PyInt(168), new PyInt(17)),
+        ]);
+
+        await Task.WhenAll(
+            Rig.CallAsync(rig.Handler, session, "RespecCharacter", attributes),
+            Rig.CallAsync(rig.Handler, session, "RespecCharacter", attributes));
+        var respec = ((PyDict)((PyObject)await Rig.CallAsync(rig.Handler, session, "GetRespecInfo")).Args)
+            .Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
+        Assert.Equal(new PyInt(3), respec["freeRespecs"]);
+        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(Rig.ClockMs)), respec["lastRespecDate"]);
+    }
+
+    [PgFact]
+    public async Task An_invalid_remap_is_refused_without_using_a_respec()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _) = Rig.Session(rig.CharacterId);
+        var invalid = new PyDict(
+        [
+            new(new PyInt(164), new PyInt(27)),
+            new(new PyInt(165), new PyInt(20)),
+            new(new PyInt(166), new PyInt(17)),
+            new(new PyInt(167), new PyInt(17)),
+            new(new PyInt(168), new PyInt(17)),
+        ]);
+
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(
+            () => Rig.CallAsync(rig.Handler, session, "RespecCharacter", invalid));
+        var respec = ((PyDict)((PyObject)await Rig.CallAsync(rig.Handler, session, "GetRespecInfo")).Args)
+            .Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
+        Assert.Equal(new PyInt(3), respec["freeRespecs"]);
+        Assert.Equal(PyNone.Instance, respec["lastRespecDate"]);
+        Assert.Equal(PyNone.Instance, respec["nextTimedRespec"]);
     }
 
     [PgFact]

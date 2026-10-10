@@ -68,6 +68,30 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
         TellTheAccount(session, update.AccountId);
     }
 
+    public async Task AnnounceRemappedAsync(ClientSession session, TrainingUpdate update)
+    {
+        Reschedule(update.CharacterId, update.AccountId, update.View);
+        if (update.Finished.Count > 0)
+        {
+            var finished = SkillWire.EntryDictionary(update.CharacterId, catalog, update.Finished);
+            SkillNotifications.ServerSkillsChanged(session, finished, null, NowFileTime);
+            SkillNotifications.LevelsTrained(session, update.Finished);
+            SkillNotifications.SkillsChanged(session, finished);
+        }
+        if (update.Rebased is { } rebased && update.RebaseChanged)
+        {
+            var changed = SkillWire.EntryDictionary(update.CharacterId, catalog, [rebased], metadata: false);
+            SkillNotifications.ServerSkillsChanged(session, changed, null, NowFileTime);
+            SkillNotifications.SkillsChanged(session, changed);
+        }
+        if (update.Finished.Count > 0 || update.RebaseChanged)
+            await SyncDogmaAsync(session, update);
+        SkillNotifications.QueueSaved(session, update.View.Queue);
+        if (!update.View.State.Running)
+            SkillNotifications.QueuePaused(session);
+        TellTheAccount(session, update.AccountId);
+    }
+
     /// <summary>Training was stopped: the skill keeps the points it gained, and the client hears that the queue is paused.</summary>
     public async Task AnnounceStoppedAsync(ClientSession session, TrainingUpdate update)
     {

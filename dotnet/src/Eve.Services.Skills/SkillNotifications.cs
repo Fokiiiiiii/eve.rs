@@ -41,6 +41,9 @@ public static class SkillNotifications
     /// <summary>Nothing trains any more. (<c>clientID</c>)</summary>
     public static void QueuePaused(ClientSession session) => session.SendNotification("OnSkillQueuePausedServer", "clientID");
 
+    public static void RespecInfoChanged(ClientSession session) =>
+        session.SendNotification("OnRespecInfoChanged", "clientID");
+
     /// <summary>The account's training changed, for every client of the account to look at. (<c>userid</c>)</summary>
     public static void MultipleCharactersTrainingUpdated(ClientSession session) => session.SendNotification("OnMultipleCharactersTrainingUpdated", "userid");
 

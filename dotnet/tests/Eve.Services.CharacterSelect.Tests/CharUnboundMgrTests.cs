@@ -85,7 +85,10 @@ public class CharUnboundMgrTests
         Assert.Equal(new PyList([]), await h.CallAsync(session, "GetCharactersToSelect"));
         Assert.Equal(new PyList([]), await h.CallAsync(session, "GetCohortsForUser"));
         Assert.Equal(PyNone.Instance, await h.CallAsync(session, "GetCharacterLockType"));
-        Assert.Equal(PyBool.False, await h.CallAsync(session, "ToggleValidation", PyBool.True));
+        // The recording was made from a GM session: its first toggle turns the check off. This session is not elevated.
+        Assert.Equal(PyBool.True, await h.CallAsync(session, "ToggleValidation", PyBool.True));
+        var (gm, _) = await h.LoginAsync("gm-recording", 1UL << 54);
+        Assert.Equal(PyBool.False, await h.CallAsync(gm, "ToggleValidation", PyBool.True));
 
         // the recorded answers are the same
         Assert.Equal(0, Recorded.Steps("GetNumCharacters")[0]["ok"]!.GetValue<int>());

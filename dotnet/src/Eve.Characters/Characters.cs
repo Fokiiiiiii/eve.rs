@@ -304,6 +304,17 @@ public sealed partial class PgCharacterStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>Moves a character to a solar system (with its constellation and region) in its own transaction; the station is not changed.</summary>
+    public async Task SetSolarSystemAsync(long characterId, int solarSystemId, int constellationId, int regionId, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"UPDATE {_schema}.characters SET solar_system_id = $1, constellation_id = $2, region_id = $3 WHERE id = $4");
+        command.Parameters.Add(new() { Value = solarSystemId });
+        command.Parameters.Add(new() { Value = constellationId });
+        command.Parameters.Add(new() { Value = regionId });
+        command.Parameters.Add(new() { Value = characterId });
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>Records the solar system a character is in (with its constellation and region), inside the caller's transaction.</summary>
     public async Task SetLocationAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, int solarSystemId, int constellationId, int regionId, CancellationToken cancellationToken = default)
     {

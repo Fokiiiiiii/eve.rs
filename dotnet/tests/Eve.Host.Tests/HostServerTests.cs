@@ -1185,7 +1185,7 @@ public class HostServerTests : IAsyncLifetime
         var online = new Eve.Services.CharacterInfo.OnlineStatusService(new Eve.Services.CharacterSessions(),
             (_, _) => ValueTask.FromResult<IReadOnlyCollection<long>>([]));
         var multiLoginBlocker = new Eve.Services.CharacterSelect.MultiLoginBlockerService();
-        var populationCap = new Eve.Services.CharacterSelect.PopulationCapService(null!);
+        var populationCap = new Eve.Services.CharacterSelect.PopulationCapService(null!, null!);
         var config = new Eve.Services.CharacterInfo.ConfigService(null!, null!, null!, null!);
         var securityMgr = new Eve.Services.Core.SecurityMgrService();
         var alert = new Eve.Services.Core.AlertService();
@@ -1257,7 +1257,7 @@ public class HostServerTests : IAsyncLifetime
           Assert.Same(fleetProxy, registry.Lookup("fleetProxy"));
         Assert.Same(online, registry.Lookup("onlineStatus"));
         Assert.Same(multiLoginBlocker, registry.Lookup("multiLoginBlocker"));
-        Assert.Same(PyBool.True, multiLoginBlocker.Login(null!));
+        Assert.Same(PyBool.True, multiLoginBlocker.Login(new ServiceCall { Method = "Login", Args = [], Session = null! }));
         Assert.Same(populationCap, registry.Lookup("populationCap"));
         Assert.Same(config, registry.Lookup("config"));
         Assert.Same(loginCampaigns, registry.Lookup("loginCampaignManager"));

@@ -28,7 +28,8 @@ public sealed partial class CharUnboundMgrService(
     bool newCharacterExperienceEnabled = false,
     Func<long, CancellationToken, Task>? sendWelcomeMailAsync = null,
     Func<long, int>? unreadMailCount = null,
-    Func<long, CancellationToken, Task<double>>? securityStatusOf = null)
+    Func<long, CancellationToken, Task<double>>? securityStatusOf = null,
+    SystemPopulation? population = null)
 {
     /// <summary>What every session's role gets on top of the account's (the client shows staff roles and the base bits alike).</summary>
     public const long SessionBaseRole = 0x6000000080000000;
@@ -43,6 +44,11 @@ public sealed partial class CharUnboundMgrService(
     private const long FallbackCreationFileTime = 132_000_000_000_000_000;
 
     private static readonly PyValue None = PyNone.Instance;
+
+    /// <summary>The roles that may switch name validation off: programmer, QA, GML and content (EveJS CHARACTER_CREATION_VALIDATION_ROLE_MASK).</summary>
+    private const long ValidationToggleRoles = (1L << 51) | (1L << 52) | (1L << 54) | (1L << 55);
+
+    private const string ValidationSessionKey = "characterCreationValidation";
 
     private static CancellationToken Token(ServiceCall call) => call.Cancellation;
 
@@ -132,9 +138,27 @@ public sealed partial class CharUnboundMgrService(
     [Method("GetCharacterLockType")]
     public PyValue GetCharacterLockType(ServiceCall call) => None;
 
-    /// <summary>The client asks to turn name validation on; only staff may turn it off, so it is always on.</summary>
+    /// <summary>
+    /// Switches the character-name validation flag of the session and reports the new state (the client's label reads it).
+    /// Only the content, QA, programmer and GML roles may switch it; every other session keeps it on, as the reference does.
+    /// The flag is per session and is not saved.
+    /// </summary>
     [Method("ToggleValidation")]
-    public PyValue ToggleValidation(ServiceCall call) => PyBool.False;
+    public PyValue ToggleValidation(ServiceCall call)
+    {
+        var roles = call.Session.Get("accountRole") is PyLong role ? role.Value : 0;
+        var current = call.Session.Get(ValidationSessionKey) is PyBool state ? state.Value : true;
+        var next = (roles & ValidationToggleRoles) != 0 ? !current : true;
+        call.Session.Set(ValidationSessionKey, next ? PyBool.True : PyBool.False);
+        return next ? PyBool.True : PyBool.False;
+    }
+
+    /// <summary>
+    /// Whether the account's Omega time has lapsed (the lapsed-subscription warning of the selection screen). Every account
+    /// here has an open-ended subscription (<see cref="SubscriptionEndFileTime"/>), so no account has lapsed.
+    /// </summary>
+    [Method("GetCharOmegaDowngradeStatus")]
+    public PyValue GetCharOmegaDowngradeStatus(ServiceCall call) => PyBool.False;
 
     [Method("GetValidRandomName")]
     public async ValueTask<PyValue> GetValidRandomName(ServiceCall call)
@@ -265,6 +289,9 @@ public sealed partial class CharUnboundMgrService(
             throw Info("That character is not available on this account.");
         if (character.IsQueuedForDeletion)
             throw Info("That character is queued for deletion and cannot enter the game.");
+        // The population cap is checked here as well as on the selection screen, because the screen's answer can be stale by now.
+        if (population is not null && character.SolarSystemId > 0 && !population.HasRoom(character.SolarSystemId, character.Id))
+            throw Info("That solar system has no room for another pilot. Try again later.");
 
         var previousCharacterId = call.Session.CharacterId;
         var previousAttributes = call.Session.SnapshotAttributes();

@@ -1,18 +1,12 @@
 namespace Eve.Services.Space.Effects;
 
 /// <summary>
-/// The modules whose work is done to a structure: the entosis link (<c>entosisLink</c>, which contests a structure's sovereignty) and the industrial item
-/// compression (<c>industrialItemCompression</c>, a structure's compressor). Structures are phase 3 on this server: there is no structure host and no structure
-/// in space, so neither module can lock or act on the target it needs. Both are refused with <see cref="StructuresPhase3"/> before a target is asked for, and
-/// neither is coverage (the gap manifest keeps them). The link's lock and range rules apply to a structure target and are not run.
+/// The module whose work is done to a structure: the entosis link (<c>entosisLink</c>, which contests a sovereignty hub). Structures are phase 3 on this server: there
+/// is no structure host and no structure in space, so the module cannot lock or act on the target it needs. It is refused with <see cref="StructuresPhase3"/> before
+/// a target is asked for, and is not coverage (the gap manifest keeps it). The link's lock and range rules apply to a structure target and are not run.
+/// (The industrial item compressor is a ship module and has its body in <see cref="CompressionModuleEffect"/>.)
 /// </summary>
 internal sealed class EntosisLinkEffect() : PendingModuleEffect("entosisLink")
-{
-    protected override string? Refusal(ModuleEffectContext module) => StructureModuleEffects.StructuresPhase3;
-}
-
-/// <summary>The compressor of a structure (see <see cref="EntosisLinkEffect"/>): refused for the same reason.</summary>
-internal sealed class CompressionModuleEffect() : PendingModuleEffect("industrialItemCompression")
 {
     protected override string? Refusal(ModuleEffectContext module) => StructureModuleEffects.StructuresPhase3;
 }

@@ -789,7 +789,6 @@ public class ModuleEffectsTests
             "doomsdayAOETrack",
             "doomsdayAOEWeb",
             "entosisLink",
-            "industrialItemCompression",
             "microJumpPortalDrive",
             "microJumpPortalDriveCapital",
             "moduleTitanEffectGenerator",

@@ -155,6 +155,8 @@ public const int ReloadTime = 1795;
     public const int ActivationBlocked = 1349;
     public const int ActivationBlockedStrength = 1350;
     public const int ActivationRequiresActiveIndustrialCore = 3265;
+    /// <summary>The SDE type list of the items a compressor compresses (compressibleItemsTypeList).</summary>
+    public const int CompressibleItemsTypeList = 3255;
     public const int ActivationRequiresActiveSiegeModule = 5426;
     /// <summary>1 on a disruptive lance: the ship cannot cloak while the lance is fitted (<c>disruptionLanceDisallowCloaking</c>).</summary>
     public const int DisruptionLanceDisallowCloaking = 5425;

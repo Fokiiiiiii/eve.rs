@@ -180,9 +180,26 @@ public sealed class GlobalConfigStore
 /// </summary>
 public static class GlobalConfigWrites
 {
+    /// <summary>
+    /// Keys no administrator may set or remove: the bug-report server (a value elsewhere would send reports off this machine)
+    /// and the Honeycomb write key (EVE.js <c>globalConfig.js</c> protects the same two). A write to one is refused with an error.
+    /// </summary>
+    public static readonly IReadOnlySet<string> ProtectedKeys = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "bugReporting_BugReportServer",
+        "HoneycombWriteKey",
+    };
+
     public static MachoNetGlobalConfigUpdateCallback Create(GlobalConfigStore config, ConnectedSessions connected, Action clusterConfigChanged) =>
         async (update, _, cancellationToken) =>
         {
+            if (ProtectedKeys.Contains(update.Key))
+            {
+                throw new MachoWrappedException(MachoErrors.Wrapped("exceptions.RuntimeError", [
+                    new PyStr("ProtectedGlobalConfigKey"),
+                    new PyStr($"{update.Key} is not set through machoNet.SetGlobalConfigValue"),
+                ]));
+            }
             var stored = await config.ApplyAsync(update.Key, update.Value, update.IsDelete, cancellationToken);
             if (update.IsUpdateClients)
             {

@@ -245,6 +245,16 @@ public class GlobalConfigWireTests : IAsyncLifetime
         var (_, later) = await ConnectAsync();
         Assert.Equal("1", JsSemantics.StringValue(later["new_mission_giver_enabled"]));
 
+        // The bug-report server is protected: an administrator's write is refused, and the configuration does not change.
+        await front.SendAsync(new Packet(admin.SessionId, MarshalCodec.Encode(
+            Packets.Call(admin, 5, "machoNet", "SetGlobalConfigValue", new PyStr("bugReporting_BugReportServer"), new PyStr("http://elsewhere/")))));
+        var protectedRefusal = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Contains("ProtectedGlobalConfigKey", Ascii(protectedRefusal.Payload));
+        await front.SendAsync(new Packet(admin.SessionId, MarshalCodec.Encode(
+            Packets.Call(admin, 6, "machoNet", "GetGlobalConfigValue", new PyStr("bugReporting_BugReportServer")))));
+        var bugReport = Assert.IsType<PyTuple>(ResultOf(Assert.IsType<Send>(await front.ReceiveAsync()).Payload));
+        Assert.Equal("http://127.0.0.1:26004/api", JsSemantics.StringValue(bugReport.Items[1]));
+
         // A removal is announced as None, and no front or call sees the key any more.
         await front.SendAsync(new Packet(admin.SessionId, MarshalCodec.Encode(
             Packets.Call(admin, 4, "machoNet", "SetGlobalConfigValue", new PyStr("new_mission_giver_enabled"), PyNone.Instance, new PyInt(1)))));

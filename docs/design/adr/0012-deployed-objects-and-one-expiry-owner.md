@@ -66,3 +66,13 @@ deadline is a row, it survives a restart. The sim also has its own timer-like ex
   simulation not decide expiry; for the field the end is kept in the simulation for this track, because B7's end-of-life behaviour is tested and the sweep may
   run up to 30 s after it. The sweep's `RemoveDeployed` then finds the field gone and does nothing. Recorded in DEVIATIONS "Track A5: the cynosural field record".
 - Probes, bombs and the lance beacon stay simulation-only, as the addenda above say. Mobile warp disruptors are still not deployable (see TODO section 23).
+
+## Addendum (2026-10-10, track A5: scanner probes)
+
+- A launched scanner probe is a host record (`space.scan_probes`, migration 0005) and a simulation ball (`PlaceProbe`, protocol 45). It is not a `Deployed` row: its life is
+  its explosion delay (an hour or more), and the sweep that owns `Deployed` runs every 30 s, which is accepted for these lifetimes. Its own sweep is
+  `space.probes.sweep`, the same interval.
+- The simulation never ends a probe ball by its own clock (`ends_at` is unbounded); the host recalls it (`RemoveProbe`) or its time is up. The first addendum
+  above, which kept probes simulation-only, is superseded for scanner probes: the record survives a restart, the ball does not yet (see DEVIATIONS "Track A5:
+  scanner probes").
+

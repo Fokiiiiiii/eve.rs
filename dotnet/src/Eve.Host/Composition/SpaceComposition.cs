@@ -236,6 +236,10 @@ internal sealed partial class CharacterServicesComposition
             await foundations.Scheduler.EnsureRecurringAsync("space.bounty.pay", "pay", TimeSpan.FromSeconds(10));
             spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), new PgWorkCycleLedger(source, spaceSchema), new Eve.Services.Space.EventBusFacts(foundations.Events), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), deployed: new PgDeployedStore(source, spaceSchema));
             var containers = spaceContainers;
+            var probes = new Eve.Services.Space.SpaceProbes(ships, dogma, new Eve.Ships.PgProbeStore(source, spaceSchema), spaceSessions, sim, now, message => Console.Error.WriteLine($"eve-host: probes: {message}"));
+            spaceSessions.Probes = probes;
+            foundations.Scheduler.Register("space.probes.sweep", async (_, _) => await probes.SweepAsync());
+            await foundations.Scheduler.EnsureRecurringAsync("space.probes.sweep", "sweep", TimeSpan.FromSeconds(30));
             spaceDrones = new SpaceDrones(sim, ships, dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: {message}"));
             foundations.Scheduler.Register("space.containers.sweep", async (_, _) => await containers.SweepAsync());
             await foundations.Scheduler.EnsureRecurringAsync("space.containers.sweep", "sweep", TimeSpan.FromSeconds(30));

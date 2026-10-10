@@ -729,3 +729,21 @@ Source order: the SDE and the wiki first (A4's breacher section, which this trac
   is gone. Changing B7's end is a client-visible change and is not made here. Source: EVE.js `cynosuralField` lifetime (explosionDelay 600000 ms, from the SDE).
 - **Lateness: up to 30 s for the record.** ADR 0012 consequences accept a sweep interval of up to 30 s for lifetimes of 30 s and more; a field lives ten minutes.
 - **NOT RUN: the client.** No graphical client on this host; the field's appearance after a restart is not seen in the client.
+
+## Track A5: scanner probes, launch and recall (2026-10-10)
+
+Source order: the SDE for numbers (explosionDelay 281 and radius 162; the core probe type 30013, explosion delay 4 000 000 ms, no radius), then the EVE University wiki where it decides, then EveJS and eve-logic.
+
+- **Launch: the reference's checks, in its order, built.** `LaunchProbes(moduleID, count)` (EveJS `Handle_LaunchProbes`, `_resolveValidatedProbeLaunchContext`): not in space (`DeniedShipChanged`), the launcher is not the pilot's in the ship, is not a probe launcher (group 481), is not online, has no probe loaded (`NoCharges`), the loaded charge is not a probe (group 479), fewer loaded than asked (`You do not have enough loaded scanner probes.`), or more than eight active (`You cannot control more than eight active probes.`). Tests: `ScanProbeHostTests`.
+- **Eight per pilot per system.** `MAX_ACTIVE_PROBES` (EveJS `probeRuntimeState`). A probe that is recalled or has gone no longer counts.
+- **Placement: a ring of ten kilometres.** Probe *i* of the active ones goes at the ship's position plus `10 km × (cos, 0, sin)` of `2π i / 8` (EveJS `buildLaunchOffset`, `DEFAULT_LAUNCH_RING_RADIUS_METERS`). The scan range and range step are left for the client to set (`rangeStep` 7, `scanRange` 0, as EveJS sends them at launch).
+- **Life: the charge's explosion delay, else an hour.** Attribute 281, rounded to whole seconds (EveJS `Math.round(expiryDelayMs / 1000)`); a type with none lives one hour (`DEFAULT_PROBE_EXPIRY_SECONDS`). The core probe lives 4 000 s.
+- **Expiry at the sweep, every 30 s.** EveJS purges expired probes at each probe call; here `space.probes.sweep` removes them, so a probe can be up to 30 s late. Accepted (ADR 0012 consequences). The pilot is told `OnRemoveProbe` when it is in space.
+- **Recall: no refund.** `scanMgr.DestroyProbe` removes the probe and tells the pilot `OnRemoveProbe` (EveJS `removeCharacterProbes` gives no charge back).
+- **Ball radius: attribute 162 when the type has one, else 40 m.** The core probes of the SDE carry no radius; 40 m is a choice, not a source value.
+- **Charge use: the stack is spent, not refunded.** The stack loaded in the launcher loses the probes launched; an emptied stack is removed (`SpendProbesAsync`).
+- **One probe launcher per ship.** The ship's group limit refuses a second (`MaxGroupFitted`), as the fitting rules do.
+- **NOT BUILT: scanning, probe states and warp.** The scan itself (`scanMgr` system scans and their results), probe warp, reconnection to lost probes and the lifecycle notifications `OnProbesIdle`, `OnSystemScanStarted`, `OnSystemScanStopped`, `OnProbeWarpStart` and `OnProbeWarpEnd` are not built. Probes stay in state idle.
+- **LIMITATION: a restart keeps the records but not the balls.** The records are in `space.scan_probes`, so the sweep still ends them on time; the balls are not put back in space when a ship comes into the system, as cynosural fields are. Restoring probes is the next step of this track.
+- **NOT RUN: the client.** No graphical client or MITM capture on this host; the probe's place in the client's probe scanner is not seen.
+

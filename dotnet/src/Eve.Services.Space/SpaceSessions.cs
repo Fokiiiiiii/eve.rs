@@ -16,7 +16,7 @@ using ModuleAttributes = Eve.Services.Space.Effects.ModuleAttributes;
 
 namespace Eve.Services.Space;
 
-public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules, ISpaceHealth, ISpaceHulls, ISpaceNpcs, ISpaceDeath, ISpaceRounds, Eve.Services.ICharacterEntryHook
+public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpaceModules, ISpaceHealth, ISpaceHulls, ISpaceNpcs, ISpaceDeath, ISpaceRounds, ISpaceProbes, Eve.Services.ICharacterEntryHook
 {
     /// <summary>How long a ship that has undocked cannot be hurt (the reference's: 30 seconds).</summary>
     public const long UndockInvulnerabilityTicks = 300_000_000;
@@ -321,6 +321,15 @@ private readonly TransitionRuntime _transitions;
 
     public ClientSession? ClientSessionOf(ulong sessionId) =>
         _pilots.TryGetValue(sessionId, out var pilot) ? pilot.Session : null;
+
+    /// <summary>The scanner probes of the ships in space (set by the composition root). A launch or a recall is refused as not wired while there are none.</summary>
+    public SpaceProbes? Probes { get; set; }
+
+    public Task LaunchAsync(ClientSession session, long moduleId, int count, CancellationToken cancellationToken) =>
+        (Probes ?? throw Notify("Scanner probes are not wired on this server.")).LaunchAsync(session, moduleId, count, cancellationToken);
+
+    public Task RecallAsync(ClientSession session, long probeId, CancellationToken cancellationToken) =>
+        (Probes ?? throw Notify("Scanner probes are not wired on this server.")).RecallAsync(session, probeId, cancellationToken);
 
     /// <summary>The session of the pilot whose ship is <paramref name="shipId"/> and is in space, or null (a ship a scanner reads the capacitor of).</summary>
     public ClientSession? SessionOfShip(long shipId) =>

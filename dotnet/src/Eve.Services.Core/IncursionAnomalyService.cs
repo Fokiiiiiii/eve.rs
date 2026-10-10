@@ -19,14 +19,19 @@ public sealed class IncursionAnomalyService : IService
 
     private readonly Func<ServiceCall, ValueTask<PyValue>>? _signalTrackerRegister;
 
+    /// <summary>The recall of a probe (scanMgr <c>DestroyProbe</c>): the probe leaves space and its pilot is told.</summary>
+    private readonly Func<ClientSession, long, CancellationToken, ValueTask>? _recallProbe;
+
     public IncursionAnomalyService(
         string serviceName,
         Func<CancellationToken, ValueTask<IReadOnlyList<JsonObject>>> readIncursions,
         Func<long, CancellationToken, ValueTask<IReadOnlyList<JsonObject>>> readAnomalies,
         IService? fallback = null,
         Func<long>? nowUnixMs = null,
-        Func<ServiceCall, ValueTask<PyValue>>? signalTrackerRegister = null)
+        Func<ServiceCall, ValueTask<PyValue>>? signalTrackerRegister = null,
+        Func<ClientSession, long, CancellationToken, ValueTask>? recallProbe = null)
     {
+        _recallProbe = recallProbe;
         if (serviceName is not (MapName or TaleManagerName or ScanManagerName))
             throw new ArgumentOutOfRangeException(nameof(serviceName), serviceName, "Unsupported incursion/anomaly service.");
         ArgumentNullException.ThrowIfNull(readIncursions);
@@ -64,6 +69,7 @@ public sealed class IncursionAnomalyService : IService
             (ScanManagerName, "GetFullState") => await GetFullStateAsync(call),
             (ScanManagerName, "GetSystemScanMgr") => GetSystemScanMgr(call),
             (ScanManagerName, "SignalTrackerRegister") => await SignalTrackerRegisterAsync(call),
+            (ScanManagerName, "DestroyProbe") => await DestroyProbeAsync(call),
             _ => PyNone.Instance,
         };
     }
@@ -72,7 +78,7 @@ public sealed class IncursionAnomalyService : IService
     {
         MapName => method is "GetIncursionGlobalReport" or "GetSystemsInIncursions",
         TaleManagerName => method is "GetGlobalWorldEventTales" or "get_active_tales_by_template",
-        ScanManagerName => method is "GetFullState" or "GetSystemScanMgr" or "SignalTrackerRegister",
+        ScanManagerName => method is "GetFullState" or "GetSystemScanMgr" or "SignalTrackerRegister" or "DestroyProbe",
         _ => false,
     };
 
@@ -169,6 +175,18 @@ public sealed class IncursionAnomalyService : IService
         return new PySubStruct(new PySubStream(Py.Tuple(
             new PyStr(objectId),
             new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs())))));
+    }
+
+    /// <summary><c>DestroyProbe(probeID)</c> on the scan manager: the probe is recalled (see <see cref="_recallProbe"/>); a call with no probe does nothing.</summary>
+    private async ValueTask<PyValue> DestroyProbeAsync(ServiceCall call)
+    {
+        if (_recallProbe is null || call.Session.CharacterId is null || call.Arg(0) is not (PyInt or PyLong))
+        {
+            return PyNone.Instance;
+        }
+        var probeId = call.Arg(0) is PyLong number ? number.Value : ((PyInt)call.Arg(0)).Value;
+        await _recallProbe(call.Session, probeId, call.Cancellation);
+        return PyNone.Instance;
     }
 
     private async ValueTask<PyValue> SignalTrackerRegisterAsync(ServiceCall call) =>

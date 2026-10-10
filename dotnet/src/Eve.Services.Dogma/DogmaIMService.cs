@@ -26,7 +26,7 @@ public sealed partial class DogmaIMService(
     DogmaStatic statics, CharacterShips ships, Func<long> nowUnixMs, SkillBoosterActivationHandler activateBooster,
     CharacterDogmaSync? sync = null, ISpaceTargeting? space = null, ISpaceModules? modules = null, ISpaceHealth? health = null,
     ISpaceRounds? rounds = null, Func<TimeSpan, CancellationToken, Task>? delay = null, Action<string>? log = null, Eve.Scheduler.LocalTimers? localTimers = null, Func<ClientSession, IReadOnlyList<long>, CancellationToken, Task<PyValue>>? injectSkillBooks = null,
-    Func<ClientSession, CancellationToken, ValueTask>? createNewbieShip = null) : IBoundObjectReleaseHandler
+    Func<ClientSession, CancellationToken, ValueTask>? createNewbieShip = null, ISpaceProbes? probes = null) : IBoundObjectReleaseHandler
 {
     private readonly CharacterDogmaSync _sync = sync ?? new CharacterDogmaSync(statics, ships, nowUnixMs);
 

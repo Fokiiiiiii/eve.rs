@@ -624,4 +624,5 @@ Not built, each with its blocker:
 - `scanMgr.RecoverProbes` (the recover action; the reference restores the probe charges to the launcher or the hold, `restoreRecoveredProbeCharges`) and `scanMgr.ReconnectToLostProbes` (the reference replays `OnNewProbe` for the probes that remain): not built. The recall of a probe (`DestroyProbe`, track A5) is built and refunds nothing.
 - `OnProbesIdle`, the probe states warping and returning, and the moon survey probes (mining; section 7).
 - The client was not run: the probe scanner's windows, the result rows and the warp to a result (the existing warp to a point) are not seen in the client. No MITM capture was made: the headless client has no scenario that scans.
+- The completed-scan warp authority (EVE.js `probeScanWarpAuthority.js`): a warp to a probed object is not checked against the scan's 100 percent results (DEVIATIONS "Track A7").
 - A process restart in the middle of a scan is covered by the durable jobs but not exercised by a test.

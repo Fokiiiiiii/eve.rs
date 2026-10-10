@@ -9,7 +9,7 @@ public sealed record JumpFatigueState(long FatigueUntilMs, long CooldownUntilMs)
     public static readonly JumpFatigueState None = new(0, 0);
 }
 
-/// <summary>The jump fatigue in PostgreSQL (the <c>jump_fatigue</c> table of the <c>space</c> schema, migration 0008).</summary>
+/// <summary>The jump fatigue in PostgreSQL (the <c>jump_fatigue</c> table of the <c>space</c> schema, migration 0009).</summary>
 public sealed class PgJumpFatigueStore
 {
     public const string DefaultSchema = "space";

@@ -605,6 +605,7 @@ public sealed partial class SpaceSessions
     /// <summary>Whether two ships take and resist the same (the lists are compared by value; a record's equality would compare them by reference).</summary>
     private static bool SameVitals(SimVitals a, SimVitals b) =>
         a.ShieldCapacity == b.ShieldCapacity && a.ArmorHp == b.ArmorHp && a.StructureHp == b.StructureHp
+        && a.MaxVelocity == b.MaxVelocity && a.Mass == b.Mass
         && a.Resonances.Shield.SequenceEqual(b.Resonances.Shield) && a.Resonances.Armor.SequenceEqual(b.Resonances.Armor)
         && a.Resonances.Structure.SequenceEqual(b.Resonances.Structure);
 

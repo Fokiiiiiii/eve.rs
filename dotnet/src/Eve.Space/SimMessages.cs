@@ -31,7 +31,9 @@ public sealed record SimResonances(IReadOnlyList<double> Shield, IReadOnlyList<d
 /// What a ship can take, in points, and how it resists: dogma's numbers for the ship as it is fitted and flown. <paramref name="ArmorPinned"/> is set while a fitted
 /// Polarized weapon holds the armor's resonances at one: the simulation then keeps them there whatever a reactive armor hardener does.
 /// </summary>
-public sealed record SimVitals(double ShieldCapacity, double ArmorHp, double StructureHp, SimResonances Resonances, bool ArmorPinned = false)
+/// <summary>What the ship takes and resists, and the numbers a running module can change without it being hurt (the maximum velocity of a siege, its mass).
+/// The host compares them to decide whether the simulation must be told the ship again (they are not on the wire).</summary>
+public sealed record SimVitals(double ShieldCapacity, double ArmorHp, double StructureHp, SimResonances Resonances, bool ArmorPinned = false, double MaxVelocity = 0, double Mass = 0)
 {
     /// <summary>Nothing to hurt.</summary>
     public static readonly SimVitals Unhurtable = new(0, 0, 0, SimResonances.None);

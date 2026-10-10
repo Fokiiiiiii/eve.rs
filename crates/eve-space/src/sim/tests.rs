@@ -345,6 +345,36 @@ fn can_placement(id: i64) -> Message {
     }))
 }
 
+/// The host's queries reach the scene (a position, a drop point): before, codes 21 to 23 were refused as unknown, so the host's position queries failed in the
+/// simulation. A drop point is 2,500 m from the ship along its heading.
+#[test]
+fn the_host_queries_are_answered_and_a_drop_point_is_2500_metres_from_the_ship() {
+    let mut sim = undocked();
+    sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
+    let ship = spec().ship_id as f64;
+    let at = sim
+        .handle(Message::Command { session_id: SESSION, command: 23, args: vec![ship] }, NOON + SECOND)
+        .unwrap();
+    let [Message::Position { command: 23, position: here, .. }] = &at[..] else { panic!("{at:?}") };
+    let dropped = sim
+        .handle(Message::Command { session_id: SESSION, command: 25, args: vec![2_500.0] }, NOON + SECOND)
+        .unwrap();
+    let [Message::Position { command: 25, position: there, .. }] = &dropped[..] else {
+        panic!("{dropped:?}")
+    };
+    let length =
+        ((there[0] - here[0]).powi(2) + (there[1] - here[1]).powi(2) + (there[2] - here[2]).powi(2)).sqrt();
+    assert!((length - 2_500.0).abs() < 1e-6, "{dropped:?}");
+
+    let refused = sim
+        .handle(Message::Command { session_id: SESSION, command: 25, args: vec![-1.0] }, NOON + SECOND)
+        .unwrap();
+    assert!(
+        matches!(&refused[..], [Message::Refused { session_id: SESSION, command: 25, .. }]),
+        "{refused:?}"
+    );
+}
+
 #[test]
 fn a_can_is_put_ahead_of_the_pilot_changed_when_something_is_in_it_measured_and_taken_out_of_space_with_each_answered_to_its_pilot()
  {

@@ -75,6 +75,9 @@ public class MobileWarpDisruptorHostTests
         var ball = Assert.Single(rig.Sim.Heard.OfType<SimPlaceDisruptor>());
         Assert.False(ball.Active, "a disruptor is not anchored when it is dropped");
         Assert.Equal(5_000, ball.Range);
+        // dropped at the simulation's point ahead of the ship, with the SDE radius of the type (70 m for the small Mk I)
+        Assert.Equal(new[] { 2_500.0, 0.0, 0.0 }, ball.Position.ToArray());
+        Assert.Equal(70.0, ball.Radius);
         Assert.Equal(system, ball.SolarSystemId);
         var record = (await rig.Deployed.GetAsync(disruptor))!;
         Assert.Equal("mobile_warp_disruptor", record.Kind);

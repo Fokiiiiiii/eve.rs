@@ -111,8 +111,8 @@ public static class SimCommands
     public const byte WarpTo = 8;
     public const byte Jump = 9;
 
-    /// <summary>Jump to a cynosural field lit in another system (the field's id, the destination system and the spool in milliseconds): code 25.</summary>
-    public const byte CynoJump = 25;
+    /// <summary>Jump to a cynosural field lit in another system (the field's id, the destination system and the spool in milliseconds): code 26.</summary>
+    public const byte CynoJump = 26;
 
     /// <summary>Start locking a target (the target's id).</summary>
     public const byte AddTarget = 10;
@@ -155,6 +155,8 @@ public static class SimCommands
 
     /// <summary>Read a body's or ship's current coordinates.</summary>
     public const byte PositionOf = 23;
+    /// <summary>The point a distance ahead of the ship along its heading (protocol 49): where a mobile warp disruptor is dropped.</summary>
+    public const byte DropPoint = 25;
 
     /// <summary>Send the visual half of an in-space login before the later full ballpark bind.</summary>
     public const byte PrimeLoginBallparkVisuals = 24;

@@ -126,6 +126,10 @@ pub enum Command {
     PositionOf {
         target_id: i64,
     },
+    /// The point `distance` metres ahead of the ship along its heading: where a mobile warp disruptor is dropped (host query, code 25, protocol 49).
+    DropPoint {
+        distance: f64,
+    },
     /// Jump through a stargate; `destination_gate` is the gate the client says it leads to (0 when it does not say).
     Jump {
         gate_id: i64,
@@ -153,10 +157,11 @@ impl Command {
             Self::AlignTo { .. } => 7,
             Self::WarpTo { .. } => 8,
             Self::Jump { .. } => 9,
-            Self::CynoJump { .. } => 25,
+            Self::CynoJump { .. } => 26,
             Self::WarpToPoint { .. } => 21,
             Self::ResolveWarpTarget { .. } => 22,
             Self::PositionOf { .. } => 23,
+            Self::DropPoint { .. } => 25,
         }
     }
 }

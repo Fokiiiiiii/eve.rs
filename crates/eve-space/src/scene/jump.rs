@@ -88,6 +88,7 @@ impl Scene {
             gate_id,
             destination_system: *destination_system,
             destination_gate: *leads_to,
+            field_id: None,
             leaves_at,
         });
         let ship_id = id(ship.spec.ship_id);
@@ -124,6 +125,87 @@ impl Scene {
         out
     }
 
+    /// `CmdJumpToFleetModuleBeacon` and `CmdJumpToFleetDeployableBeacon` (command 24): the ship's jump drive spools for `spool_ms`, and the ship then leaves
+    /// for `destination_system` to appear at the cynosural field `field_id` lit there. The stop and the jump-out effect are the stargate jump's; the checks are
+    /// its checks, without the gate. The host has checked the field, the fleet, the range, the fuel and the drive's cooldown.
+    pub(super) fn cyno_jump(
+        &mut self,
+        session: SessionId,
+        field_id: i64,
+        destination_system: i32,
+        spool_ms: f64,
+        now: i64,
+    ) -> Vec<Out> {
+        let code = Command::CynoJump { field_id, destination_system, spool_ms }.code();
+        let refused = |reason: &'static str| vec![Out::Refused { session, command: code, reason }];
+        let Some(pilot) = self.pilots.get(&session) else { return refused("NO_SHIP_IN_SPACE") };
+        if pilot.immobile_until > now {
+            return refused("IMMOBILE");
+        }
+        if pilot.no_jump_until > now {
+            return refused("NO_JUMP_OR_CLOAK");
+        }
+        if pilot.disrupted_until > now {
+            return refused("JUMP_DISRUPTED");
+        }
+        if pilot.jump.is_some() {
+            return refused("STARGATE_JUMP_IN_PROGRESS");
+        }
+        if pilot.docking.is_some() {
+            return refused("DOCKING");
+        }
+        if pilot.flight.is_some() {
+            return refused("IN_WARP");
+        }
+        if destination_system == self.system.id {
+            return refused("WRONG_SOLAR_SYSTEM");
+        }
+        let stamp = self.next_stamp(now);
+        let pilot = self.pilots.get_mut(&session).expect("checked above");
+        let ship = &mut pilot.ship;
+        if !matches!(ship.course, Course::Stop) || ship.speed_fraction > 0.0 || speed_of(ship.velocity) > 0.5
+        {
+            ship.course = Course::Stop;
+            ship.speed_fraction = 0.0;
+            ship.velocity = Vec3::ZERO;
+        }
+        let leaves_at = now + (spool_ms * TICKS_PER_SECOND as f64 / 1000.0).round() as i64;
+        pilot.jump = Some(PendingJump {
+            gate_id: 0,
+            destination_system,
+            destination_gate: 0,
+            field_id: Some(field_id),
+            leaves_at,
+        });
+        let ship_id = id(ship.spec.ship_id);
+        let actions = [
+            payload::action(
+                stamp,
+                "OnSpecialFX",
+                [
+                    ship_id.clone(),
+                    Value::None,
+                    Value::None,
+                    id(field_id),
+                    Value::None,
+                    text("effects.JumpDriveOut"),
+                    int(0),
+                    int(1),
+                    int(0),
+                    int(-1),
+                    Value::None,
+                    Value::None,
+                    int(0),
+                    tuple([int(i64::from(destination_system)), Value::None]),
+                ],
+            ),
+            payload::action(stamp, "Stop", [ship_id]),
+        ];
+        let mut out = self.tell_all(session, actions.into());
+        out.push(Out::Jumping { session, command: code, destination_system, destination_gate: 0 });
+        out
+    }
+
     /// The ships whose jump is due at `now`, and what the ones who watched them go are told. Each ship has left this scene; the caller puts it in
     /// the scene of the system it is going to ([`Scene::arrive`]), or back ([`Scene::restore`]) when that cannot be done.
     pub fn due_jumps(&mut self, now: i64) -> (Vec<Traveller>, Vec<Out>) {
@@ -151,6 +233,7 @@ impl Scene {
                 from_gate: jump.gate_id,
                 to_system: jump.destination_system,
                 to_gate: jump.destination_gate,
+                to_field: jump.field_id,
                 pilot,
             });
         }
@@ -161,15 +244,28 @@ impl Scene {
     /// the ballpark of the new system when its session has changed). Gives the ship back when this system has no such gate.
     pub fn arrive(&mut self, traveller: Traveller, now: i64) -> Result<Vec<Out>, Box<Traveller>> {
         let system = Arc::clone(&self.system);
-        let Some(gate) = system.body(traveller.to_gate).filter(|b| b.kind == BodyKind::Stargate) else {
-            return Err(Box::new(traveller));
+        // a ship that jumped to a field appears by the field while it is lit here; one that came through a gate, by that gate
+        let (position, direction) = if let Some(field_id) = traveller.to_field {
+            let Some(field) = self
+                .deployables
+                .get(&field_id)
+                .filter(|field| field.role == crate::deployable::Role::CynoField && field.ends_at > now)
+            else {
+                return Err(Box::new(traveller));
+            };
+            let mut random = PythonRandom::new(seed_of(traveller.pilot.ship.spec.ship_id, field_id, now));
+            cyno_arrival(field.position, &mut random)
+        } else {
+            let Some(gate) = system.body(traveller.to_gate).filter(|b| b.kind == BodyKind::Stargate) else {
+                return Err(Box::new(traveller));
+            };
+            let mut random = PythonRandom::new(seed_of(traveller.pilot.ship.spec.ship_id, gate.id, now));
+            gate::arrival(gate, traveller.pilot.ship.spec.radius, &mut random)
         };
         if self.pilots.contains_key(&traveller.session) {
             return Err(Box::new(traveller));
         }
         let Traveller { session, mut pilot, .. } = traveller;
-        let mut random = PythonRandom::new(seed_of(pilot.ship.spec.ship_id, gate.id, now));
-        let (position, direction) = gate::arrival(gate, pilot.ship.spec.radius, &mut random);
         pilot.ship.position = position;
         pilot.ship.direction = direction;
         pilot.ship.velocity = Vec3::ZERO;
@@ -187,4 +283,22 @@ impl Scene {
         self.pilots.insert(session, pilot);
         Ok(self.announce_arrival(session, now))
     }
+}
+
+/// How far from a cynosural field a ship that jumped to it appears (the static data's cynosural field spawn radius, attribute 2455 of the generator).
+/// shortcut: one radius for every field type, the ring is at a random bearing and the ship faces the field; the reference's exact landing is not in the sources read.
+pub(crate) const CYNO_ARRIVAL_RADIUS: f64 = 2_455.0;
+
+/// Where a ship that jumped to a field appears and which way it faces: on the ring of [`CYNO_ARRIVAL_RADIUS`] around the field, at a random bearing,
+/// facing the field.
+fn cyno_arrival(field: Vec3, random: &mut PythonRandom) -> (Vec3, Vec3) {
+    let bearing = random.random() * std::f64::consts::TAU;
+    let position = Vec3::new(
+        field.x + CYNO_ARRIVAL_RADIUS * bearing.cos(),
+        field.y,
+        field.z + CYNO_ARRIVAL_RADIUS * bearing.sin(),
+    );
+    let facing = motion::unit(Vec3::new(field.x - position.x, field.y - position.y, field.z - position.z))
+        .unwrap_or(Vec3::new(1.0, 0.0, 0.0));
+    (position, facing)
 }

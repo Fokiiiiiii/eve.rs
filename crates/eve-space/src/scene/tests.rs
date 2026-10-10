@@ -2031,3 +2031,96 @@ pub(crate) fn clear_of_the_station(scene: &mut Scene) {
         pilot.ship.position = eve_destiny::Vec3::new(p.x + offset.0, p.y + offset.1, p.z + offset.2);
     }
 }
+
+/// A cynosural field lit in the destination system (the host's record, put back in space with what is left of its life).
+const CYNO_FIELD: i64 = crate::deployable::DEPLOYABLE_ID_BASE + 900;
+
+fn lit_field_in(scene: &mut Scene, at: Vec3, now: i64) {
+    let placement = crate::link::DeployedPlacement {
+        solar_system_id: scene.solar_system_id(),
+        deployable_id: CYNO_FIELD,
+        name: "Cynosural Field".to_string(),
+        type_id: 21_094,
+        group_id: 2_020,
+        position: [at.x, at.y, at.z],
+        radius: 250.0,
+        owner_id: 4_242,
+        corporation_id: 0,
+        alliance_id: 0,
+        ship_id: 0,
+        lifetime_ms: 600_000.0,
+    };
+    scene.restore_field(placement, now);
+    assert!(scene.deployables.contains_key(&CYNO_FIELD), "the field is in space");
+}
+
+fn cyno_jump(field_id: i64, destination_system: i32, spool_ms: f64) -> Command {
+    Command::CynoJump { field_id, destination_system, spool_ms }
+}
+
+fn distance_between(a: Vec3, b: Vec3) -> f64 {
+    ((a.x - b.x).powi(2) + (a.y - b.y).powi(2) + (a.z - b.z).powi(2)).sqrt()
+}
+
+#[test]
+fn a_cyno_jump_leaves_when_its_spool_is_over_and_appears_on_the_ring_round_the_field_it_lit() {
+    let mut scene = scene_by_a_gate();
+    let destination = other_scene().solar_system_id();
+    let told = scene.command(SESSION, cyno_jump(CYNO_FIELD, destination, 300_000.0), NOON);
+    assert!(
+        told.iter().any(|o| matches!(o, Out::Jumping { destination_system, destination_gate: 0, .. } if *destination_system == destination)),
+        "the spool is told: {told:?}"
+    );
+    assert!(scene.due_jumps(NOON + seconds(299)).0.is_empty(), "the drive is still spooling");
+    let (travellers, _) = scene.due_jumps(NOON + seconds(301));
+    let traveller = travellers.into_iter().next().expect("the ship leaves when the spool is over");
+    assert_eq!(
+        (traveller.to_system, traveller.to_field, traveller.to_gate),
+        (destination, Some(CYNO_FIELD), 0)
+    );
+
+    let field = Vec3::new(1.0e6, 0.0, -2.0e6);
+    let mut there = other_scene();
+    lit_field_in(&mut there, field, NOON + seconds(301));
+    there.arrive(traveller, NOON + seconds(302)).expect("the field is lit there");
+    let ship = there.ship(SESSION, NOON + seconds(302)).unwrap().clone();
+    let apart = distance_between(ship.position, field);
+    assert!((apart - super::jump::CYNO_ARRIVAL_RADIUS).abs() < 1e-6, "{apart} m from the field");
+    assert_eq!((ship.course, ship.speed_fraction), (Course::Stop, 0.0));
+}
+
+#[test]
+fn a_cyno_jump_is_refused_while_disrupted_or_to_the_system_the_ship_is_in() {
+    let mut scene = scene_by_a_gate();
+    let here = scene.solar_system_id();
+    let refused_here = scene.command(SESSION, cyno_jump(CYNO_FIELD, here, 300_000.0), NOON);
+    assert!(
+        matches!(refused_here.as_slice(), [Out::Refused { command: 24, reason: "WRONG_SOLAR_SYSTEM", .. }]),
+        "{refused_here:?}"
+    );
+
+    scene.pilots.get_mut(&SESSION).unwrap().disrupted_until = NOON + seconds(60);
+    let destination = other_scene().solar_system_id();
+    let disrupted = scene.command(SESSION, cyno_jump(CYNO_FIELD, destination, 300_000.0), NOON + seconds(1));
+    assert!(
+        matches!(disrupted.as_slice(), [Out::Refused { command: 24, reason: "JUMP_DISRUPTED", .. }]),
+        "{disrupted:?}"
+    );
+    assert!(scene.due_jumps(NOON + seconds(400)).0.is_empty(), "a refused jump leaves nothing pending");
+}
+
+#[test]
+fn a_ship_whose_field_is_no_longer_lit_at_its_destination_comes_back_to_where_it_was() {
+    let mut scene = scene_by_a_gate();
+    let destination = other_scene().solar_system_id();
+    scene.command(SESSION, cyno_jump(CYNO_FIELD, destination, 300_000.0), NOON);
+    let traveller = scene.due_jumps(NOON + seconds(301)).0.pop().expect("the ship leaves");
+    let mut there = other_scene();
+    let back = there.arrive(traveller, NOON + seconds(302)).expect_err("no field is lit there");
+    let restored = scene.restore(*back, NOON + seconds(302));
+    assert!(
+        scene.ship(SESSION, NOON + seconds(302)).is_some(),
+        "the ship is back in the system it left: {restored:?}"
+    );
+    assert!(there.ship(SESSION, NOON + seconds(302)).is_none());
+}

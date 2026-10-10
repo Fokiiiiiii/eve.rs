@@ -143,6 +143,9 @@ impl Scene {
             }
             Command::PositionOf { target_id } => self.position_of(session, target_id),
             Command::Jump { gate_id, destination_gate } => self.jump(session, gate_id, destination_gate, now),
+            Command::CynoJump { field_id, destination_system, spool_ms } => {
+                self.cyno_jump(session, field_id, destination_system, spool_ms, now)
+            }
             other => self.steer_pilot(session, other, now),
         };
         // the ship was flown: the undocking protection is over (a docking does not end it)

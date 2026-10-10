@@ -131,6 +131,13 @@ pub enum Command {
         gate_id: i64,
         destination_gate: i64,
     },
+    /// Jump to a cynosural field lit in another system (code 24): the ship's drive spools for `spool_ms`, then the ship leaves for
+    /// `destination_system` and appears at the field `field_id` there ([`Scene::arrive`]).
+    CynoJump {
+        field_id: i64,
+        destination_system: i32,
+        spool_ms: f64,
+    },
 }
 
 impl Command {
@@ -146,6 +153,7 @@ impl Command {
             Self::AlignTo { .. } => 7,
             Self::WarpTo { .. } => 8,
             Self::Jump { .. } => 9,
+            Self::CynoJump { .. } => 24,
             Self::WarpToPoint { .. } => 21,
             Self::ResolveWarpTarget { .. } => 22,
             Self::PositionOf { .. } => 23,
@@ -535,6 +543,8 @@ pub(crate) struct PendingJump {
     gate_id: i64,
     destination_system: i32,
     destination_gate: i64,
+    /// The cynosural field a jump drive goes to (0 for a stargate jump); the arrival is at the field, not at a gate.
+    field_id: Option<i64>,
     leaves_at: i64,
 }
 
@@ -546,6 +556,8 @@ pub struct Traveller {
     pub from_gate: i64,
     pub to_system: i32,
     pub to_gate: i64,
+    /// The cynosural field the ship jumped to, when it did not go through a gate (the arrival is at the field).
+    pub to_field: Option<i64>,
     pilot: Pilot,
 }
 

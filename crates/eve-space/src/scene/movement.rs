@@ -308,7 +308,8 @@ pub(super) fn steer(ship: &mut Ship, target: Option<Target>, command: Command) -
         | Command::WarpToPoint { .. }
         | Command::ResolveWarpTarget { .. }
         | Command::PositionOf { .. }
-        | Command::Jump { .. } => Steering::Refused("NOT_A_MOVEMENT"),
+        | Command::Jump { .. }
+        | Command::CynoJump { .. } => Steering::Refused("NOT_A_MOVEMENT"),
         Command::FollowBall { target_id, range } => {
             if !range.is_finite() {
                 return Steering::Refused("BAD_RANGE");

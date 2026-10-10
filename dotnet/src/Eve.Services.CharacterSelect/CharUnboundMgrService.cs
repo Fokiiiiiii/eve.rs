@@ -355,7 +355,8 @@ public sealed partial class CharUnboundMgrService(
             }
 
             AirNpeNotifications.NotifyStateChanged(call.Session, character.Id, airNpeStateChanged);
-            online.CompleteEnter(call.Session.SessionId);
+            if (!online.CompleteEnter(call.Session.SessionId))
+                throw new OperationCanceledException("The session closed during character entry.");
             return None;
         }
         catch
@@ -383,8 +384,8 @@ public sealed partial class CharUnboundMgrService(
                 }
             }
 
-            online.CancelEnter(call.Session.SessionId);
-            if (previousCharacterId is { } restoreCharacterId)
+            var restoredReservation = online.CancelEnter(call.Session.SessionId);
+            if (restoredReservation && previousCharacterId is { } restoreCharacterId)
             {
                 for (var index = changedPreviousHooks.Count - 1; index >= 0; index--)
                 {

@@ -128,6 +128,7 @@ internal sealed partial class CharacterServicesComposition
     private SkillCatalog skillCatalog = default!;
     private PgWalletStore wallets = default!;
     private PgModuleStateStore modules = default!;
+    private PgSavedFittingStore savedFittings = default!;
     private StationCatalog stations = default!;
     private SolarSystemCatalog solarSystems = default!;
     private DogmaStatic dogma = default!;

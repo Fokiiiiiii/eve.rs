@@ -7,6 +7,8 @@ namespace Eve.Services.Core.Tests;
 
 public sealed class UnportedFeatureRpcServicesTests
 {
+    private static readonly FittingMgrCalls NoFittings = new(null!, null!, () => 0);
+
     private static ServiceCall Call(string method, ClientSession? session = null, params PyValue[] args) => new()
     {
         Method = method,
@@ -26,7 +28,7 @@ public sealed class UnportedFeatureRpcServicesTests
             new NodeGraphService(),
             new PeaceTreatyMgrService(),
             new PublicQaToolsServerService(),
-            new CorpFittingMgrService(),
+            new CorpFittingMgrService(NoFittings),
             new CustomAgencyProviderService(),
             new EpicArcStatusService(),
             new SuperWeaponMgrService(),
@@ -80,7 +82,7 @@ public sealed class UnportedFeatureRpcServicesTests
             Assert.Empty(rowset.List);
         });
 
-        Assert.Empty(Assert.IsType<PyList>(await ((IService)new CorpFittingMgrService()).CallAsync(Call("GetCommunityFittings"))).Items);
+        Assert.Empty(Assert.IsType<PyList>(await ((IService)new CorpFittingMgrService(NoFittings)).CallAsync(Call("GetCommunityFittings"))).Items);
         var agency = (IService)new CustomAgencyProviderService();
         Assert.Empty(Assert.IsType<PyList>(await agency.CallAsync(Call("get_content_data"))).Items);
         Assert.Same(PyNone.Instance, await agency.CallAsync(Call("warp_to_content", args: [new PyInt(42)])));
@@ -121,11 +123,6 @@ public sealed class UnportedFeatureRpcServicesTests
             new SubscriptionSettings(),
             new NoOmegaAccounts(),
             () => 0,
-            readCommunityFittings: (actualSession, _) =>
-            {
-                fittingSession = actualSession;
-                return ValueTask.FromResult<IReadOnlyList<PyValue>>([new PyStr("community fitting")]);
-            },
             customAgencyProviderRpcCallbacks: new CustomAgencyProviderRpcCallbacks(
                 ReadContentAsync: (request, _) =>
                 {
@@ -162,7 +159,12 @@ public sealed class UnportedFeatureRpcServicesTests
             });
 
         var byName = services.ToDictionary(service => service.Name);
-        Assert.Equal("community fitting", Assert.IsType<PyStr>(Assert.Single(Assert.IsType<PyList>(await byName["corpFittingMgr"].CallAsync(Call("GetCommunityFittings", session))).Items)).Value);
+        var corp = new CorpFittingMgrService(NoFittings, (actualSession, _) =>
+        {
+            fittingSession = actualSession;
+            return ValueTask.FromResult<IReadOnlyList<PyValue>>([new PyStr("community fitting")]);
+        });
+        Assert.Equal("community fitting", Assert.IsType<PyStr>(Assert.Single(Assert.IsType<PyList>(await ((IService)corp).CallAsync(Call("GetCommunityFittings", session))).Items)).Value);
         Assert.Same(session, fittingSession);
 
         var content = Assert.IsType<PyList>(await byName["custom_agency_provider"].CallAsync(Call("get_content_data", session, new PyInt(7))));

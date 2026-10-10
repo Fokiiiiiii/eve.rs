@@ -585,7 +585,7 @@ public class CoreCatalogTests
         {
                 "abyssal_content_manager", "alphaInjectorMgr", "authentication", "bannedwords", "browserLockdownSvc", "cache", "calendarMgr", "calendarProxy",
                 "chatAuthenticationService", "communityTrackMgr", "contextualOfferMgr", "contractProxy", "dynamicBountyMgr", "ingamereport", "jumpCloneSvc", "jumpTimers", "nonDiminishingInjectionMgr", "overviewPresetMgr", "ProjectDiscovery", "eveguard_report", "expertSystemMgr", "infoGatheringMgr", "kiringMgr", "loginRewardFacilities", "localizationServer", "LPStoreMgr",
-                "corpFittingMgr", "dungeonExplorationMgr", "epicArcStatus", "keeper", "miningScanMgr", "node_graph", "peaceTreatyMgr", "petitioner", "pingService", "posMgr", "publicQaToolsServer", "seasonManager", "subscriptionMgr",
+                "dungeonExplorationMgr", "epicArcStatus", "keeper", "miningScanMgr", "node_graph", "peaceTreatyMgr", "petitioner", "pingService", "posMgr", "publicQaToolsServer", "seasonManager", "subscriptionMgr",
                 "custom_agency_provider", "superWeaponMgr", "tourneyMgr",
                 "raffleMgr", "raffleProxy", "serviceGatewayMgr", "sharedSettingsMgr", "shipStanceMgr",
                 "solarsystemInterferenceMgr", "survey", "warStatisticMgr",

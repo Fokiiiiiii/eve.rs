@@ -135,7 +135,7 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Inventory.NewItem(modifierTypeId, characterId, shipId,
                 Eve.Inventory.ItemFlags.HiddenModifiers, CustomInfo: customInfo), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return new(true, currentStanceId);
+        return new(true, currentStanceId, Changed: changed);
     }
 
     static long? ParseShipStanceSwitchTime(Eve.Inventory.Item item)

@@ -110,7 +110,8 @@ internal static class HostComposition
             readJumpTimers: readJumpTimers,
             readNonDiminishingInjections: readNonDiminishingInjections,
             keeperRpcCallbacks: keeperRpcCallbacks,
-            superWeaponRpcCallbacks: superWeaponCallbacks))
+            superWeaponRpcCallbacks: superWeaponCallbacks,
+            spaceModules: space))
         {
             registry.Register(service);
         }

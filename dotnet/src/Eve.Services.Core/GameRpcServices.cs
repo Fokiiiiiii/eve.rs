@@ -9,7 +9,8 @@ using Eve.Services;
 
 namespace Eve.Services.Core;
 
-public sealed record ShipStanceChange(bool Success, int OldStanceId = 0, string? ErrorCode = null);
+/// <summary>The answer of a stance set: the stance it had, and whether the stance changed (a changed stance is announced and the ship is sent again).</summary>
+public sealed record ShipStanceChange(bool Success, int OldStanceId = 0, string? ErrorCode = null, bool Changed = false);
 
 /// <summary>Optional host data paths for RPCs whose reference services depend on game state.</summary>
 public sealed record GameRpcCallbacks(
@@ -378,7 +379,8 @@ public sealed partial class SharedSettingsMgrService(
 
 [Service("shipStanceMgr")]
 public sealed partial class ShipStanceMgrService(
-    Func<long, int, long, CancellationToken, ValueTask<ShipStanceChange?>>? setShipStanceAsync = null)
+    Func<long, int, long, CancellationToken, ValueTask<ShipStanceChange?>>? setShipStanceAsync = null,
+    Func<ClientSession, CancellationToken, Task>? refreshShipInSpaceAsync = null)
 {
     private static readonly IReadOnlyDictionary<int, IReadOnlyDictionary<int, int>> ModifiersByShipType =
         new Dictionary<int, IReadOnlyDictionary<int, int>>
@@ -408,6 +410,13 @@ public sealed partial class ShipStanceMgrService(
             .ConfigureAwait(false);
         if (result is not { Success: true } success)
             throw Notify(result?.ErrorCode ?? "ITEM_CREATE_FAILED");
+        if (success.Changed)
+        {
+            // after the commit, as the reference does: the client's stance button follows OnStanceActive (shipID, stanceID), and a ship in space is sent again
+            call.Session.SendNotification("OnStanceActive", "charid", InventoryWire.Id(shipId), new PyInt(stanceId));
+            if (refreshShipInSpaceAsync is not null)
+                await refreshShipInSpaceAsync(call.Session, call.Cancellation).ConfigureAwait(false);
+        }
         return new PyInt(success.OldStanceId);
     }
 
